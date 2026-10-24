@@ -8,8 +8,9 @@ use std::{
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::B256;
 use base_consensus_engine::{
-    ConsolidateTask, EngineClient, EngineTask, EngineTaskError, EngineTaskErrorSeverity,
-    EngineTaskErrors, FinalizeTask, Metrics as EngineMetrics, SealTaskError,
+    ConsolidateTask, EngineClient, EngineSyncStateUpdate, EngineTask, EngineTaskError,
+    EngineTaskErrorSeverity, EngineTaskErrors, FinalizeTask, Metrics as EngineMetrics,
+    SealTaskError,
 };
 use opentelemetry::context::FutureExt as OtelFutureExt;
 use tokio::{
@@ -121,7 +122,11 @@ where
     ) -> Self {
         Self {
             processor,
-            sequencer_state: SequencerEngineState::Regular,
+            sequencer_state: if mode.is_isolated() {
+                SequencerEngineState::CatchingUp { catchup: CanonicalUnsafeCatchup::default() }
+            } else {
+                SequencerEngineState::Regular
+            },
             conductor,
             sequencer_stopped,
             sequencer_kind: mode.into(),
@@ -143,11 +148,33 @@ where
         &mut self.sequencer_state
     }
 
+    fn startup_complete(&self, catchup: &CanonicalUnsafeCatchup) -> bool {
+        let engine = self.processor.engine_state();
+        match self.sequencer_kind {
+            SequencerKind::Regular | SequencerKind::Shadow => {
+                catchup.is_complete(engine.sync_state.unsafe_head(), engine.sync_state.safe_head())
+            }
+            SequencerKind::Isolated => {
+                // Equivocation leaves no single canonical parent; stall until reset/restart clears it.
+                engine.el_sync_finished
+                    && catchup.is_at_latest_observed(engine.sync_state.unsafe_head())
+            }
+        }
+    }
+
+    fn complete_startup(&mut self, head: base_protocol::L2BlockInfo) {
+        if self.sequencer_kind == SequencerKind::Isolated {
+            // Deferred canonical tasks must not survive onto the private chain.
+            self.processor.engine_mut().clear();
+        }
+        self.sequencer_state = self.sequencer_kind.completed_state(head);
+    }
+
     /// Validates an authorized admin start against the serialized engine state.
     ///
     /// Conductor supplies its committed head to admin start even when it has no new payload to
-    /// post. That head can release an unobserved non-shadow catch-up, but cannot override known
-    /// gaps or conflicts. The caller must check conductor leadership before requesting activation.
+    /// post. That head can release a regular conductor follower's unobserved catch-up, but cannot
+    /// override known gaps or conflicts. The caller must check conductor leadership before activation.
     /// Shadow starts validate the head without changing catch-up or reconciliation state.
     pub fn prepare_sequencer_start(
         &mut self,
@@ -167,21 +194,22 @@ where
             )));
         }
 
-        // Shadow activation must not release its catch-up or reconciliation gate.
+        // Admin start must not release shadow catch-up or reconciliation.
         if self.is_shadow_sequencer() {
             return Ok(());
         }
-
-        if !self.processor.engine_state().el_sync_finished {
+        if self.sequencer_kind == SequencerKind::Regular
+            && !self.processor.engine_state().el_sync_finished
+        {
             return Err(EngineClientError::ELSyncing);
         }
-
         if let SequencerEngineState::CatchingUp { catchup } = &self.sequencer_state {
             if catchup.is_faulted() {
                 return Err(EngineClientError::ShadowBufferFaulted);
             }
-
-            if catchup.has_observations() && !catchup.is_complete(head, sync_state.safe_head()) {
+            let unobserved_follower =
+                self.sequencer_kind == SequencerKind::Regular && !catchup.has_observations();
+            if !unobserved_follower && !self.startup_complete(catchup) {
                 return Err(EngineClientError::ELSyncing);
             }
         }
@@ -190,7 +218,7 @@ where
             self.sequencer_state,
             SequencerEngineState::Regular | SequencerEngineState::CatchingUp { .. }
         ) {
-            self.sequencer_state = self.sequencer_kind.completed_state(head);
+            self.complete_startup(head);
         }
         Ok(())
     }
@@ -235,14 +263,12 @@ where
         let sync_state = self.processor.engine_state().sync_state;
         let head = sync_state.unsafe_head();
 
-        let (kind, faulted, complete) = match &self.sequencer_state {
-            SequencerEngineState::CatchingUp { catchup } => (
-                self.sequencer_kind,
-                catchup.is_faulted(),
-                catchup.is_complete(head, sync_state.safe_head()),
-            ),
-            _ => return Ok(false),
+        let SequencerEngineState::CatchingUp { catchup } = &self.sequencer_state else {
+            return Ok(false);
         };
+        let kind = self.sequencer_kind;
+        let faulted = catchup.is_faulted();
+        let complete = self.startup_complete(catchup);
 
         match (kind, faulted, complete) {
             (_, true, _) => {
@@ -256,7 +282,7 @@ where
                     .await;
             }
             (_, _, false) => {
-                warn!(target: "engine", "Deferring sequencer reset until canonical catch-up completes");
+                warn!(target: "engine", "Deferring sequencer reset until canonical startup completes");
                 responder
                     .finish(ResetRequestOutcome::Deferred, head, Err(EngineClientError::ELSyncing))
                     .await;
@@ -270,27 +296,27 @@ where
                     )
                     .await;
             }
-            (SequencerKind::Shadow, _, _) => {
+            (SequencerKind::Shadow | SequencerKind::Isolated, _, _) => {
                 info!(
                     target: "engine",
                     canonical_head = head.block_info.number,
                     canonical_hash = %head.block_info.hash,
-                    "Shadow canonical catch-up completed"
+                    "Private sequencer canonical startup completed"
                 );
-                self.sequencer_state = kind.completed_state(head);
+                self.complete_startup(head);
                 self.unsafe_head_tx.send_replace(head);
                 responder
                     .finish(ResetRequestOutcome::from_unsafe_heads(head, head), head, Ok(()))
                     .await;
             }
-            (SequencerKind::Regular | SequencerKind::Isolated, _, _) => {
+            (SequencerKind::Regular, _, _) => {
                 info!(
                     target: "engine",
                     canonical_head = head.block_info.number,
                     canonical_hash = %head.block_info.hash,
                     "Sequencer canonical catch-up completed"
                 );
-                self.sequencer_state = kind.completed_state(head);
+                self.complete_startup(head);
                 return Ok(false);
             }
         }
@@ -378,6 +404,29 @@ where
             return Err(EngineError::ShadowInternalReset);
         }
         Ok(())
+    }
+
+    async fn probe_isolated_el_sync(&mut self) {
+        let SequencerEngineState::CatchingUp { catchup } = &self.sequencer_state else {
+            return;
+        };
+        if self.startup_complete(catchup) {
+            return;
+        }
+        let Some(head) = catchup.latest_observed_head() else { return };
+        let unsafe_head = self.processor.engine_state().sync_state.unsafe_head();
+        let same_head = head.block_info.number == unsafe_head.block_info.number
+            && head.block_info.hash == unsafe_head.block_info.hash;
+        if !same_head && head.block_info.number <= unsafe_head.block_info.number {
+            return;
+        }
+
+        let client = Arc::clone(self.processor.client());
+        let rollup = Arc::clone(self.processor.rollup());
+        let update = EngineSyncStateUpdate { unsafe_head: Some(head), ..Default::default() };
+        if let Err(err) = self.processor.engine_mut().probe_el_sync(client, rollup, update).await {
+            warn!(target: "engine", error = %err, "Isolated canonical EL sync probe failed; will retry");
+        }
     }
 
     async fn advance_canonical_catchup(&mut self) -> Result<(), EngineError> {
@@ -482,12 +531,18 @@ where
                     }
                 };
             }
-            match bootstrap_role {
-                BootstrapRole::ConductorFollower => {
-                    self.processor.bootstrap_conductor_follower(opt_head).await
-                }
-                BootstrapRole::ActiveSequencer => {
-                    self.processor.bootstrap_active_sequencer(opt_head, at_genesis).await
+            if self.sequencer_kind == SequencerKind::Isolated {
+                // Follow validator EL sync: a follower probe can declare sync at the local head
+                // before canonical gossip arrives.
+                self.processor.bootstrap_validator(opt_head).await;
+            } else {
+                match bootstrap_role {
+                    BootstrapRole::ConductorFollower => {
+                        self.processor.bootstrap_conductor_follower(opt_head).await
+                    }
+                    BootstrapRole::ActiveSequencer => {
+                        self.processor.bootstrap_active_sequencer(opt_head, at_genesis).await
+                    }
                 }
             }
 
@@ -543,18 +598,25 @@ where
                 let recv_wait_timer = base_metrics::timed!(
                     EngineMetrics::engine_processor_recv_wait_duration_seconds()
                 );
-                let recv_result = if self.processor.engine_state().el_sync_finished {
+                let recv_result = if (self.processor.engine_state().el_sync_finished
+                    && self.sequencer_kind != SequencerKind::Isolated)
+                    || self.is_isolated_active()
+                {
                     request_channel.recv().await
                 } else {
                     tokio::select! {
                         request = request_channel.recv() => request,
                         _ = el_sync_probe_interval.tick() => {
                             drop(recv_wait_timer);
-                            let active_sequencer = self.resolve_bootstrap_role().await
-                                == BootstrapRole::ActiveSequencer;
-                            self.processor
-                                .probe_sequencer_el_sync(active_sequencer)
-                                .await;
+                            if self.sequencer_kind == SequencerKind::Isolated {
+                                self.probe_isolated_el_sync().await;
+                            } else {
+                                let active_sequencer = self.resolve_bootstrap_role().await
+                                    == BootstrapRole::ActiveSequencer;
+                                self.processor
+                                    .probe_sequencer_el_sync(active_sequencer)
+                                    .await;
+                            }
                             continue;
                         }
                     }
@@ -682,7 +744,20 @@ where
                     EngineActorRequest::ProcessUnsafeL2BlockRequest(envelope) => {
                         match &mut self.sequencer_state {
                             SequencerEngineState::CatchingUp { catchup } => {
-                                catchup.buffer_payload(*envelope);
+                                match self.sequencer_kind {
+                                    SequencerKind::Regular | SequencerKind::Shadow => {
+                                        catchup.buffer_payload(*envelope)
+                                    }
+                                    SequencerKind::Isolated => {
+                                        if let Err(err) = catchup.observe_isolated_payload(
+                                            &envelope,
+                                            &self.processor.rollup().genesis,
+                                        ) {
+                                            warn!(target: "engine", error = %err, "Failed to decode isolated canonical EL sync target");
+                                        }
+                                        self.processor.handle_external_unsafe_l2_block(*envelope);
+                                    }
+                                }
                             }
                             SequencerEngineState::ShadowActive(gate) => {
                                 gate.buffer_payload(*envelope);
@@ -794,25 +869,33 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::{sync::Arc, time::Duration};
 
+    use alloy_eips::BlockNumberOrTag;
     use alloy_primitives::B256;
-    use alloy_rpc_types_engine::ExecutionPayloadV1;
+    use alloy_rpc_types_engine::{
+        ExecutionPayloadV1, ForkchoiceUpdated, PayloadStatus, PayloadStatusEnum,
+    };
+    use base_common_consensus::BaseTxEnvelope;
     use base_common_genesis::RollupConfig;
     use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
     use base_consensus_engine::{
-        Engine, EngineState,
-        test_utils::{MockEngineClient, TestEngineStateBuilder, test_engine_client_builder},
+        ConsolidateTask, Engine, EngineState, EngineTask,
+        test_utils::{
+            MockEngineClient, TestAttributesBuilder, TestEngineStateBuilder,
+            encoded_l1_info_deposit_tx, test_block_info, test_engine_client_builder,
+        },
     };
-    use base_protocol::{BlockInfo, L2BlockInfo};
+    use base_protocol::{BlockInfo, L1BlockInfoBedrock, L2BlockInfo};
     use jsonrpsee::core::ClientError;
     use rstest::rstest;
-    use tokio::sync::watch;
+    use tokio::sync::{mpsc, watch};
 
     use super::{BootstrapRole, SequencerEngineRequestCoordinator, SequencerEngineState};
     use crate::{
-        CanonicalUnsafeCatchup, Conductor, ConductorError, EngineProcessor, MockConductor,
-        MockEngineDerivationClient, NodeOperatingMode, ShadowReconciliationGate,
+        CanonicalUnsafeCatchup, Conductor, ConductorError, EngineActorRequest, EngineClientError,
+        EngineProcessor, EngineRequestReceiver, MockConductor, MockEngineDerivationClient,
+        NodeOperatingMode, ResetOrigin, ResetReason, ResetRequest, ShadowReconciliationGate,
     };
 
     fn coordinator(
@@ -838,6 +921,343 @@ mod tests {
         SequencerEngineRequestCoordinator::new(processor, mode, conductor, stopped, unsafe_head_tx)
     }
 
+    fn payload(number: u64, hash: u8) -> BaseExecutionPayloadEnvelope {
+        BaseExecutionPayloadEnvelope {
+            execution_payload: BaseExecutionPayload::V1(ExecutionPayloadV1 {
+                block_number: number,
+                block_hash: B256::with_last_byte(hash),
+                parent_hash: B256::ZERO,
+                fee_recipient: Default::default(),
+                state_root: B256::ZERO,
+                receipts_root: B256::ZERO,
+                logs_bloom: Default::default(),
+                prev_randao: B256::ZERO,
+                gas_limit: 30_000_000,
+                gas_used: 0,
+                timestamp: number,
+                extra_data: Default::default(),
+                base_fee_per_gas: Default::default(),
+                transactions: vec![encoded_l1_info_deposit_tx(L1BlockInfoBedrock::default())],
+            }),
+            parent_beacon_block_root: None,
+        }
+    }
+
+    fn isolated_startup_coordinator()
+    -> SequencerEngineRequestCoordinator<MockEngineClient, MockEngineDerivationClient> {
+        let head = test_block_info(100);
+        let state = TestEngineStateBuilder::new()
+            .with_finalized_head(test_block_info(0))
+            .with_el_sync_finished(false)
+            .build();
+        let (state_tx, _) = watch::channel(state);
+        let (queue_tx, _) = watch::channel(0usize);
+        let client = Arc::new(
+            test_engine_client_builder()
+                .with_block_info_by_tag(BlockNumberOrTag::Latest, head)
+                .with_fork_choice_updated_v3_response(ForkchoiceUpdated {
+                    payload_status: PayloadStatus {
+                        status: PayloadStatusEnum::Syncing,
+                        latest_valid_hash: None,
+                    },
+                    payload_id: None,
+                })
+                .build(),
+        );
+        let mut derivation = MockEngineDerivationClient::new();
+        derivation.expect_notify_sync_completed().returning(|_| Ok(()));
+        let processor = EngineProcessor::new(
+            client,
+            Arc::new(RollupConfig::default()),
+            derivation,
+            Engine::new(state, state_tx, queue_tx),
+        );
+        let (head_tx, _) = watch::channel(head);
+        SequencerEngineRequestCoordinator::new(
+            processor,
+            NodeOperatingMode::IsolatedSequencer,
+            None,
+            true,
+            head_tx,
+        )
+    }
+
+    async fn request_start(
+        request_tx: &mpsc::Sender<EngineActorRequest>,
+    ) -> Result<(), EngineClientError> {
+        let (result_tx, mut result_rx) = mpsc::channel(1);
+        request_tx
+            .send(EngineActorRequest::ResetRequest(Box::new(ResetRequest {
+                result_tx,
+                origin: ResetOrigin::Sequencer,
+                reason: ResetReason::SequencerStartup,
+            })))
+            .await
+            .expect("startup request");
+        tokio::time::timeout(Duration::from_secs(5), result_rx.recv())
+            .await
+            .expect("startup timed out")
+            .expect("startup response")
+    }
+
+    #[rstest]
+    #[case::stale(99)]
+    #[case::same_height_different_hash(100)]
+    #[tokio::test(start_paused = true)]
+    async fn isolated_probe_never_rewinds_bootstrapped_head(#[case] number: u64) {
+        let mut coordinator = isolated_startup_coordinator();
+        let client = Arc::clone(coordinator.processor.client());
+        let state_rx = coordinator.processor.engine_mut().state_subscribe();
+        client
+            .set_fork_choice_updated_v3_response(ForkchoiceUpdated {
+                payload_status: PayloadStatus {
+                    status: PayloadStatusEnum::Valid,
+                    latest_valid_hash: None,
+                },
+                payload_id: None,
+            })
+            .await;
+        let mut gossip = payload(number, 1);
+        let block = gossip.execution_payload.clone().try_into_block::<BaseTxEnvelope>().unwrap();
+        gossip.execution_payload =
+            BaseExecutionPayload::from_block_unchecked(block.hash_slow(), &block).0;
+        let (request_tx, request_rx) = mpsc::channel(8);
+        let handle = coordinator.start(request_rx);
+        request_tx
+            .send(EngineActorRequest::ProcessUnsafeL2BlockRequest(Box::new(gossip)))
+            .await
+            .unwrap();
+        assert!(matches!(request_start(&request_tx).await, Err(EngineClientError::ELSyncing)));
+        let bootstrapped_head = state_rx.borrow().sync_state.unsafe_head();
+
+        tokio::time::sleep(Duration::from_secs(6)).await;
+        let activation = request_start(&request_tx).await;
+        drop(request_tx);
+        handle.await.unwrap().expect_err("closed request channel");
+
+        assert!(client.storage().read().await.fork_choice_updated_v3_requests.is_empty());
+        assert_eq!(state_rx.borrow().sync_state.unsafe_head(), bootstrapped_head);
+        assert!(matches!(activation, Err(EngineClientError::ELSyncing)));
+    }
+
+    #[rstest]
+    #[case::already_at_tip(true)]
+    #[case::sync_finishes_after_last_gossip(false)]
+    #[tokio::test(start_paused = true)]
+    async fn isolated_activates_without_further_gossip(#[case] already_at_tip: bool) {
+        let coordinator = isolated_startup_coordinator();
+        let client = Arc::clone(coordinator.processor.client());
+        let mut gossip = payload(500, 1);
+        let block = gossip.execution_payload.clone().try_into_block::<BaseTxEnvelope>().unwrap();
+        gossip.execution_payload =
+            BaseExecutionPayload::from_block_unchecked(block.hash_slow(), &block).0;
+        let head =
+            L2BlockInfo::from_block_and_genesis(&block, &RollupConfig::default().genesis).unwrap();
+        if already_at_tip {
+            client.set_block_info_by_tag(BlockNumberOrTag::Latest, head).await;
+        }
+        client
+            .set_new_payload_v2_response(PayloadStatus {
+                status: PayloadStatusEnum::Valid,
+                latest_valid_hash: None,
+            })
+            .await;
+        let (request_tx, request_rx) = mpsc::channel(8);
+        let handle = coordinator.start(request_rx);
+        request_tx
+            .send(EngineActorRequest::ProcessUnsafeL2BlockRequest(Box::new(gossip)))
+            .await
+            .unwrap();
+        assert!(matches!(request_start(&request_tx).await, Err(EngineClientError::ELSyncing)));
+
+        client
+            .set_fork_choice_updated_v3_response(ForkchoiceUpdated {
+                payload_status: PayloadStatus {
+                    status: PayloadStatusEnum::Valid,
+                    latest_valid_hash: None,
+                },
+                payload_id: None,
+            })
+            .await;
+        // Allow more than the five-second probe interval without sending further gossip.
+        tokio::time::sleep(Duration::from_secs(6)).await;
+        let activation = request_start(&request_tx).await;
+        drop(request_tx);
+        handle.await.unwrap().expect_err("closed request channel");
+        activation.expect("EL has the observed canonical tip and should allow isolated startup");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn isolated_startup_inserts_gossip_and_defers_until_el_synced_head() {
+        let mut coordinator = isolated_startup_coordinator();
+        let client = Arc::clone(coordinator.processor.client());
+        let state_rx = coordinator.processor.engine_mut().state_subscribe();
+        let mut queue_rx = coordinator.processor.engine_mut().queue_length_subscribe();
+        let mut gossip = payload(500, 1);
+        let block = gossip.execution_payload.clone().try_into_block::<BaseTxEnvelope>().unwrap();
+        gossip.execution_payload =
+            BaseExecutionPayload::from_block_unchecked(block.hash_slow(), &block).0;
+        let (request_tx, request_rx) = mpsc::channel(8);
+        let handle = coordinator.start(request_rx);
+
+        assert!(matches!(request_start(&request_tx).await, Err(EngineClientError::ELSyncing)));
+        tokio::time::sleep(Duration::from_secs(6)).await;
+        assert!(matches!(request_start(&request_tx).await, Err(EngineClientError::ELSyncing)));
+        assert!(!state_rx.borrow().el_sync_finished);
+        assert!(client.storage().read().await.fork_choice_updated_v3_requests.is_empty());
+
+        request_tx
+            .send(EngineActorRequest::ProcessUnsafeL2BlockRequest(Box::new(gossip.clone())))
+            .await
+            .expect("gossip request");
+        tokio::time::timeout(Duration::from_secs(5), queue_rx.wait_for(|length| *length == 1))
+            .await
+            .expect("external insert was not queued")
+            .expect("queue watch closed");
+        client
+            .set_new_payload_v2_response(PayloadStatus {
+                status: PayloadStatusEnum::Valid,
+                latest_valid_hash: None,
+            })
+            .await;
+        assert!(matches!(request_start(&request_tx).await, Err(EngineClientError::ELSyncing)));
+        assert!(client.last_new_payload_v2().await.is_some());
+        assert!(!state_rx.borrow().el_sync_finished);
+
+        client
+            .set_fork_choice_updated_v3_response(ForkchoiceUpdated {
+                payload_status: PayloadStatus {
+                    status: PayloadStatusEnum::Valid,
+                    latest_valid_hash: None,
+                },
+                payload_id: None,
+            })
+            .await;
+        request_tx
+            .send(EngineActorRequest::ProcessUnsafeL2BlockRequest(Box::new(gossip.clone())))
+            .await
+            .expect("synced gossip request");
+        request_start(&request_tx).await.expect("isolated activation");
+        let head = state_rx.borrow().sync_state.unsafe_head();
+        assert!(state_rx.borrow().el_sync_finished);
+        assert_eq!(
+            (head.block_info.number, head.block_info.hash),
+            (500, gossip.execution_payload.block_hash())
+        );
+
+        request_tx
+            .send(EngineActorRequest::ProcessUnsafeL2BlockRequest(Box::new(payload(501, 2))))
+            .await
+            .expect("post-activation gossip request");
+        let (result_tx, mut result_rx) = mpsc::channel(1);
+        request_tx
+            .send(EngineActorRequest::PrepareSequencerStart {
+                expected_hash: head.block_info.hash,
+                result_tx,
+            })
+            .await
+            .expect("request barrier");
+        result_rx.recv().await.expect("barrier response").expect("idempotent activation");
+        assert_eq!(state_rx.borrow().sync_state.unsafe_head(), head);
+        assert_eq!(*queue_rx.borrow(), 0);
+        let fcu_count = client.storage().read().await.fork_choice_updated_v3_requests.len();
+        tokio::time::sleep(Duration::from_secs(6)).await;
+        drop(request_tx);
+        handle.await.expect("engine task").expect_err("closed request channel");
+        assert_eq!(client.storage().read().await.fork_choice_updated_v3_requests.len(), fcu_count);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn isolated_probe_retries_newer_gossip_until_valid() {
+        let mut coordinator = isolated_startup_coordinator();
+        let client = Arc::clone(coordinator.processor.client());
+        let state_rx = coordinator.processor.engine_mut().state_subscribe();
+        client
+            .set_new_payload_v2_response(PayloadStatus {
+                status: PayloadStatusEnum::Valid,
+                latest_valid_hash: None,
+            })
+            .await;
+        let mut gossip = payload(500, 1);
+        let block = gossip.execution_payload.clone().try_into_block::<BaseTxEnvelope>().unwrap();
+        gossip.execution_payload =
+            BaseExecutionPayload::from_block_unchecked(block.hash_slow(), &block).0;
+        let (request_tx, request_rx) = mpsc::channel(8);
+        let handle = coordinator.start(request_rx);
+        request_tx
+            .send(EngineActorRequest::ProcessUnsafeL2BlockRequest(Box::new(gossip)))
+            .await
+            .unwrap();
+        assert!(matches!(request_start(&request_tx).await, Err(EngineClientError::ELSyncing)));
+        let mut gossip = payload(501, 2);
+        let block = gossip.execution_payload.clone().try_into_block::<BaseTxEnvelope>().unwrap();
+        gossip.execution_payload =
+            BaseExecutionPayload::from_block_unchecked(block.hash_slow(), &block).0;
+        let target_hash = gossip.execution_payload.block_hash();
+        request_tx
+            .send(EngineActorRequest::ProcessUnsafeL2BlockRequest(Box::new(gossip)))
+            .await
+            .unwrap();
+        assert!(matches!(request_start(&request_tx).await, Err(EngineClientError::ELSyncing)));
+        client
+            .set_fork_choice_updated_v3_response(ForkchoiceUpdated {
+                payload_status: PayloadStatus {
+                    status: PayloadStatusEnum::Valid,
+                    latest_valid_hash: None,
+                },
+                payload_id: None,
+            })
+            .await;
+        tokio::time::sleep(Duration::from_secs(6)).await;
+        let activation = request_start(&request_tx).await;
+        drop(request_tx);
+        handle.await.unwrap().expect_err("closed request channel");
+        activation.expect("probe must confirm the newer gossip target");
+        assert_eq!(state_rx.borrow().sync_state.unsafe_head().block_info.hash, target_hash);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn isolated_conflict_stops_probe_retries() {
+        let coordinator = isolated_startup_coordinator();
+        let client = Arc::clone(coordinator.processor.client());
+        client
+            .set_new_payload_v2_response(PayloadStatus {
+                status: PayloadStatusEnum::Valid,
+                latest_valid_hash: None,
+            })
+            .await;
+        let mut gossip = payload(500, 1);
+        let mut block =
+            gossip.execution_payload.clone().try_into_block::<BaseTxEnvelope>().unwrap();
+        gossip.execution_payload =
+            BaseExecutionPayload::from_block_unchecked(block.hash_slow(), &block).0;
+        let mut conflicting = gossip.clone();
+        block.header.timestamp += 1;
+        conflicting.execution_payload =
+            BaseExecutionPayload::from_block_unchecked(block.hash_slow(), &block).0;
+        let (request_tx, request_rx) = mpsc::channel(8);
+        let handle = coordinator.start(request_rx);
+        request_tx
+            .send(EngineActorRequest::ProcessUnsafeL2BlockRequest(Box::new(gossip)))
+            .await
+            .unwrap();
+        assert!(matches!(request_start(&request_tx).await, Err(EngineClientError::ELSyncing)));
+        tokio::time::sleep(Duration::from_secs(6)).await;
+        request_tx
+            .send(EngineActorRequest::ProcessUnsafeL2BlockRequest(Box::new(conflicting)))
+            .await
+            .unwrap();
+        assert!(matches!(
+            request_start(&request_tx).await,
+            Err(EngineClientError::ShadowBufferFaulted)
+        ));
+        let fcu_count = client.storage().read().await.fork_choice_updated_v3_requests.len();
+        tokio::time::sleep(Duration::from_secs(6)).await;
+        drop(request_tx);
+        handle.await.unwrap().expect_err("closed request channel");
+        assert_eq!(client.storage().read().await.fork_choice_updated_v3_requests.len(), fcu_count);
+    }
+
     #[tokio::test]
     async fn active_sequencer_without_conductor_starts_regular() {
         let coordinator = coordinator(false, false, None);
@@ -858,6 +1278,7 @@ mod tests {
         let mut conductor = MockConductor::new();
         conductor.expect_leader().never();
         let coordinator = coordinator(true, false, Some(Arc::new(conductor)));
+        assert!(matches!(coordinator.sequencer_state(), SequencerEngineState::Regular));
         assert_eq!(coordinator.resolve_bootstrap_role().await, BootstrapRole::ConductorFollower);
     }
 
@@ -898,6 +1319,7 @@ mod tests {
     #[case::different_branch(100, true, &[(100, 99)], false, false)]
     #[case::private_tail(100, true, &[(99, 99)], false, false)]
     #[case::faulted(100, true, &[(100, 100), (100, 99)], false, false)]
+    #[case::faulted_and_el_syncing(100, false, &[(100, 100), (100, 99)], false, false)]
     #[case::shadow_catchup(100, true, &[], true, true)]
     #[case::shadow_caught_up(100, true, &[(100, 100)], true, true)]
     #[case::shadow_el_syncing(100, false, &[], true, true)]
@@ -943,31 +1365,16 @@ mod tests {
             SequencerEngineRequestCoordinator::new(processor, mode, None, true, head_tx);
         let mut catchup = CanonicalUnsafeCatchup::default();
         for &(number, hash) in observations {
-            catchup.buffer_payload(BaseExecutionPayloadEnvelope {
-                execution_payload: BaseExecutionPayload::V1(ExecutionPayloadV1 {
-                    block_number: number,
-                    block_hash: B256::with_last_byte(hash),
-                    parent_hash: B256::ZERO,
-                    fee_recipient: Default::default(),
-                    state_root: B256::ZERO,
-                    receipts_root: B256::ZERO,
-                    logs_bloom: Default::default(),
-                    prev_randao: B256::ZERO,
-                    gas_limit: 30_000_000,
-                    gas_used: 0,
-                    timestamp: number,
-                    extra_data: Default::default(),
-                    base_fee_per_gas: Default::default(),
-                    transactions: vec![],
-                }),
-                parent_beacon_block_root: None,
-            });
+            catchup.buffer_payload(payload(number, hash));
         }
         catchup.commit(head);
         *coordinator.sequencer_state_mut() = SequencerEngineState::CatchingUp { catchup };
 
         let result = coordinator.prepare_sequencer_start(B256::with_last_byte(requested_hash));
         assert_eq!(result.is_ok(), accepted, "{result:?}");
+        if !shadow && requested_hash == 100 && !el_synced {
+            assert!(matches!(result, Err(EngineClientError::ELSyncing)));
+        }
         assert_eq!(
             matches!(coordinator.sequencer_state(), SequencerEngineState::Regular),
             accepted && !shadow
@@ -994,34 +1401,19 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn isolated_sequencer_bootstraps_as_follower() {
-        let (state_tx, _) = watch::channel(EngineState::default());
-        let (queue_tx, _) = watch::channel(0usize);
-        let engine = Engine::new(EngineState::default(), state_tx, queue_tx);
-        let processor = EngineProcessor::new(
-            Arc::new(test_engine_client_builder().build()),
-            Arc::new(RollupConfig::default()),
-            MockEngineDerivationClient::new(),
-            engine,
-        );
-        let (unsafe_head_tx, _) = watch::channel(L2BlockInfo::default());
-        let coordinator = SequencerEngineRequestCoordinator::new(
-            processor,
-            NodeOperatingMode::IsolatedSequencer,
-            None,
-            false,
-            unsafe_head_tx,
-        );
-        assert_eq!(coordinator.resolve_bootstrap_role().await, BootstrapRole::ConductorFollower);
-    }
-
     #[rstest]
     #[case::caught_up(&[(100, 100)], true)]
     #[case::gap(&[(102, 102)], false)]
-    fn isolated_start_stops_following_canonical_chain(
+    #[case::no_gossip(&[], false)]
+    #[case::wrong_hash(&[(100, 99)], false)]
+    #[case::stale_gossip(&[(99, 99)], false)]
+    #[case::conflict(&[(100, 100), (100, 99)], false)]
+    #[tokio::test]
+    async fn isolated_activation_requires_el_synced_canonical_head(
         #[case] observations: &[(u64, u8)],
         #[case] accepted: bool,
+        #[values(false, true)] el_synced: bool,
+        #[values(false, true)] startup_reset: bool,
     ) {
         let head = L2BlockInfo {
             block_info: BlockInfo {
@@ -1034,7 +1426,7 @@ mod tests {
         let state = TestEngineStateBuilder::new()
             .with_unsafe_head(head)
             .with_safe_head(L2BlockInfo::default())
-            .with_el_sync_finished(true)
+            .with_el_sync_finished(el_synced)
             .build();
         let (state_tx, _) = watch::channel(state);
         let (queue_tx, _) = watch::channel(0usize);
@@ -1052,37 +1444,45 @@ mod tests {
             true,
             head_tx,
         );
-        let mut catchup = CanonicalUnsafeCatchup::default();
+        let SequencerEngineState::CatchingUp { catchup } = coordinator.sequencer_state_mut() else {
+            panic!("isolated coordinator must start in catch-up");
+        };
         for &(number, hash) in observations {
-            catchup.buffer_payload(BaseExecutionPayloadEnvelope {
-                execution_payload: BaseExecutionPayload::V1(ExecutionPayloadV1 {
-                    block_number: number,
-                    block_hash: B256::with_last_byte(hash),
-                    parent_hash: B256::ZERO,
-                    fee_recipient: Default::default(),
-                    state_root: B256::ZERO,
-                    receipts_root: B256::ZERO,
-                    logs_bloom: Default::default(),
-                    prev_randao: B256::ZERO,
-                    gas_limit: 30_000_000,
-                    gas_used: 0,
-                    timestamp: number,
-                    extra_data: Default::default(),
-                    base_fee_per_gas: Default::default(),
-                    transactions: vec![],
-                }),
-                parent_beacon_block_root: None,
-            });
+            catchup.observe_payload(&payload(number, hash));
         }
-        catchup.commit(head);
-        *coordinator.sequencer_state_mut() = SequencerEngineState::CatchingUp { catchup };
+        let faulted = catchup.is_faulted();
 
-        assert_eq!(coordinator.prepare_sequencer_start(head.block_info.hash).is_ok(), accepted);
+        let accepted = accepted && el_synced;
+        let queue_rx = coordinator.processor.engine_mut().queue_length_subscribe();
+        coordinator.processor.enqueue(EngineTask::Consolidate(Box::new(ConsolidateTask::new(
+            Arc::clone(coordinator.processor.client()),
+            Arc::clone(coordinator.processor.rollup()),
+            TestAttributesBuilder::new().with_parent(head).build(),
+        ))));
+        let result = if startup_reset {
+            let (result_tx, mut result_rx) = mpsc::channel(1);
+            coordinator
+                .handle_reset_request(ResetRequest {
+                    result_tx,
+                    origin: ResetOrigin::Sequencer,
+                    reason: ResetReason::SequencerStartup,
+                })
+                .await
+                .expect("startup activation must not reset the canonical parent");
+            result_rx.recv().await.expect("startup response")
+        } else {
+            coordinator.prepare_sequencer_start(head.block_info.hash)
+        };
+        assert_eq!(result.is_ok(), accepted);
+        if faulted {
+            assert!(matches!(result, Err(EngineClientError::ShadowBufferFaulted)));
+        }
+        assert_eq!(*queue_rx.borrow(), usize::from(!accepted));
+        assert_eq!(coordinator.processor.engine_state().sync_state.unsafe_head(), head);
         assert_eq!(
             matches!(coordinator.sequencer_state(), SequencerEngineState::IsolatedActive),
             accepted
         );
-        // Once active, an isolated sequencer never resumes following the canonical chain.
         if accepted {
             assert!(coordinator.prepare_sequencer_start(head.block_info.hash).is_ok());
             assert!(matches!(coordinator.sequencer_state(), SequencerEngineState::IsolatedActive));
