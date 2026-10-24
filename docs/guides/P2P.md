@@ -725,9 +725,9 @@ Transaction gossip on the DevP2P network is disabled. `--rollup.discovery.v4` en
 discv4 discovery protocol (disabled by default since Base uses discv5).
 `--rollup.txpool-ordering` selects between `coinbase-tip` and `timestamp` ordering strategies.
 
-The standard reth network flags still apply: `--network.addr` and `--network.port` control the RLPx
-bind address (default port 30303), `--network.discovery.disable-discovery` turns off all peer
-discovery, and `--network.discovery.bootnodes` provides custom boot node addresses.
+The standard reth network flags still apply: `--addr` and `--port` control the RLPx
+bind address (default port 30303), `--disable-discovery` turns off all peer
+discovery, and `--bootnodes` provides custom boot node addresses.
 
 
 ## How the two stacks interact at runtime
