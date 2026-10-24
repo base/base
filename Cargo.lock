@@ -5269,6 +5269,7 @@ dependencies = [
 name = "base-node-runner"
 version = "0.0.0"
 dependencies = [
+ "alloy-consensus 2.5.0",
  "alloy-eips 2.5.0",
  "alloy-genesis",
  "alloy-primitives",
@@ -5276,6 +5277,7 @@ dependencies = [
  "alloy-rpc-client",
  "alloy-rpc-types",
  "alloy-rpc-types-engine",
+ "alloy-signer 2.5.0",
  "base-common-consensus",
  "base-common-evm",
  "base-common-genesis",
