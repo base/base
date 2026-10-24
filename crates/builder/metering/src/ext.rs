@@ -21,10 +21,11 @@ pub trait BaseApiExt {
         meter: MeterBundleResponse,
     ) -> RpcResult<()>;
 
-    /// Operator runtime override that enables or disables the shared
-    /// [`MeteringStore`](crate::MeteringStore) (`base_setMeteringInformation`,
-    /// simulated bundle lookups, and the Flashblocks builder's use of stored
-    /// metering data) in memory. Because the native payload builder shares
+    /// Operator runtime override that enables or disables reads from the shared
+    /// [`MeteringStore`](crate::MeteringStore) (simulated bundle lookups and
+    /// the Flashblocks builder's use of stored metering data) in memory;
+    /// `base_setMeteringInformation` writes are still accepted while disabled,
+    /// and only reads return nothing. Because the native payload builder shares
     /// this store, `setMeteringEnabled(false)` also makes native
     /// `check_simulated_usage` a no-op while native `check_executed_usage`
     /// continues running against `--payload.resource-metering-schedule`.

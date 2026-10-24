@@ -1001,9 +1001,9 @@ mod tests {
             let store = args.build_metering_store();
             assert!(store.is_enabled());
             let provider: SharedMeteringProvider = Arc::new(store);
-            // `into_builder_config` runs before Reth installs its Prometheus recorder on both
-            // `base-builder` and `base sequencer`; the counter must be recorded by the post-install
-            // startup hook rather than lost to the pre-launch no-op recorder.
+            // `base sequencer` performs `into_builder_config` before Reth installs its
+            // recorder during launch; record the counter from the post-install startup
+            // hook so it is not lost there.
             let config = args
                 .into_builder_config(provider)
                 .expect("live enabled-without-schedule config must boot without error");
