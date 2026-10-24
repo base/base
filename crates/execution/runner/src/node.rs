@@ -125,7 +125,12 @@ impl BaseNode {
                     .with_additional_trusted_delegation_targets(
                         self.args.mempool_trusted_delegation_targets.iter().copied(),
                     )
-                    .with_allowlisted_payers(self.args.mempool_allowlisted_payers.iter().copied()),
+                    .with_allowlisted_payers(self.args.mempool_allowlisted_payers.iter().copied())
+                    .with_validity_pool_limits(
+                        self.args.validity_pool_max_count,
+                        self.args.validity_pool_max_size_bytes(),
+                        self.args.validity_pool_max_account_slots,
+                    ),
             )
             .executor(BaseExecutorBuilder::default())
             .payload(BasePayloadServiceBuilder::new(

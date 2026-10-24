@@ -39,6 +39,11 @@ where
 }
 
 impl BestTransactionLane {
+    /// Returns the lane as a `(sender, nonce_key)` key.
+    pub const fn id(self) -> (Address, U256) {
+        (self.sender, self.nonce_key)
+    }
+
     /// Returns the sequential lane for a transaction, or `None` for an independent nonce-free
     /// EIP-8130 transaction.
     pub fn for_transaction<T>(transaction: &Arc<ValidPoolTransaction<T>>) -> Option<Self>

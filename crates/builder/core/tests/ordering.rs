@@ -131,15 +131,33 @@ async fn predicates_delay_priority_without_blocking_nonce_descendants() -> eyre:
         .raw_request::<_, ()>("base_insertValidatedTransaction".into(), (validated_parent,))
         .await?;
 
-    let child_hash = *driver
+    // A nonce lane holds one validity class, so the child carries a trivially satisfied
+    // predicate. It is ready as soon as its parent executes.
+    let child = driver
         .create_transaction()
         .with_signer(&accounts[0])
         .with_nonce(1)
         .with_to(Address::random())
         .with_max_priority_fee_per_gas(90)
-        .send()
-        .await?
-        .tx_hash();
+        .build()
+        .await;
+    let child_hash = child.tx_hash();
+    let validated_child = ValidatedTransaction {
+        sender: accounts[0].address(),
+        raw: child.encoded_2718().into(),
+        metering: None,
+        extensions: TransactionValidity {
+            validity: vec![ValidityPredicate::BlockNumber {
+                op: ValidityOperator::GreaterThanOrEqual,
+                value: U256::ZERO,
+            }],
+            validity_signature: None,
+        },
+    };
+    driver
+        .provider()
+        .raw_request::<_, ()>("base_insertValidatedTransaction".into(), (validated_child,))
+        .await?;
     let trigger_hash = *driver
         .create_transaction()
         .with_signer(&accounts[1])

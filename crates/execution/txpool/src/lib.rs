@@ -70,6 +70,9 @@ pub use parking::{
     ParkableTransactionPool, ParkedBestTransactions,
 };
 
+mod protocol_authorizations;
+pub use protocol_authorizations::ProtocolAuthorizations;
+
 mod pool;
 pub use pool::{AccountStateDiff, BaseTransactionPool};
 
@@ -80,6 +83,12 @@ pub use state_diff_maintain::{
 
 mod pool_error_label;
 pub use pool_error_label::PoolRejectionLabel;
+
+mod pool_admission_error;
+pub use pool_admission_error::PoolAdmissionError;
+
+mod validity_pool;
+pub use validity_pool::{TransactionClass, ValidityPoolConfig};
 
 mod builder;
 pub use builder::{
@@ -92,7 +101,7 @@ pub use wire::{
 };
 
 mod two_d_nonce_pool;
-pub use two_d_nonce_pool::SidecarSenderIds;
+pub use two_d_nonce_pool::{AccountReadiness, InsertContext, NoncePoolMode, SidecarSenderIds};
 
 mod metrics;
 pub use metrics::{GuardMetrics, ValidatorMetrics, ValidityPoolMetrics, ValiditySignatureMetrics};

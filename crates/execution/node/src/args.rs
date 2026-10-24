@@ -377,6 +377,22 @@ pub struct RollupArgs {
     #[arg(long = "rollup.txpool-max-inflight-delegated-slots", default_value_t = 4)]
     pub max_inflight_delegated_slots: usize,
 
+    /// Maximum transactions held by the separate validity transaction store, which holds every
+    /// transaction submitted with validity predicates. Defaults to the normal pending-pool count
+    /// limit (`--txpool.pending-max-count`), as an independent allowance.
+    #[arg(long = "rollup.validity-pool-max-count")]
+    pub validity_pool_max_count: Option<usize>,
+
+    /// Maximum summed size, in mebibytes, of the validity transaction store. Defaults to the normal
+    /// pending-pool size limit (`--txpool.pending-max-size`), as an independent allowance.
+    #[arg(long = "rollup.validity-pool-max-size-mb")]
+    pub validity_pool_max_size_mb: Option<u64>,
+
+    /// Maximum validity transactions one non-local sender may hold. Defaults to the normal
+    /// per-account slot limit (`--txpool.max-account-slots`), as an independent allowance.
+    #[arg(long = "rollup.validity-pool-max-account-slots")]
+    pub validity_pool_max_account_slots: Option<usize>,
+
     /// Maximum inflight EIP-8130 transactions per non-locked sender account.
     #[arg(long = "rollup.mempool-sender-limit", default_value_t = DEFAULT_SIGNATURE_LIMIT)]
     pub mempool_sender_limit: u32,
@@ -506,6 +522,13 @@ pub struct RollupArgs {
     pub upgrade_signal_l1_rpc: UpgradeSignalL1RpcArgs,
 }
 
+impl RollupArgs {
+    /// Returns the validity store's size limit override in bytes.
+    pub fn validity_pool_max_size_bytes(&self) -> Option<usize> {
+        self.validity_pool_max_size_mb.map(mib_to_usize)
+    }
+}
+
 impl HasRollupArgs for RollupArgs {
     fn rollup_args(&self) -> &RollupArgs {
         self
@@ -521,6 +544,9 @@ impl Default for RollupArgs {
             min_suggested_priority_fee: 1_000_000,
             txpool_ordering: TxpoolOrdering::default(),
             max_inflight_delegated_slots: 4,
+            validity_pool_max_count: None,
+            validity_pool_max_size_mb: None,
+            validity_pool_max_account_slots: None,
             mempool_sender_limit: DEFAULT_SIGNATURE_LIMIT,
             mempool_payer_limit: DEFAULT_PAYMENT_LIMIT,
             mempool_trusted_delegation_targets: Vec::new(),
@@ -620,6 +646,28 @@ mod tests {
         ])
         .args;
         assert_eq!(args, expected_args);
+    }
+
+    #[test]
+    fn test_parse_validity_pool_limits() {
+        let default_args = CommandParser::<RollupArgs>::parse_from(["reth"]).args;
+        assert_eq!(default_args.validity_pool_max_count, None);
+        assert_eq!(default_args.validity_pool_max_size_bytes(), None);
+        assert_eq!(default_args.validity_pool_max_account_slots, None);
+
+        let args = CommandParser::<RollupArgs>::parse_from([
+            "reth",
+            "--rollup.validity-pool-max-count",
+            "100",
+            "--rollup.validity-pool-max-size-mb",
+            "2",
+            "--rollup.validity-pool-max-account-slots",
+            "8",
+        ])
+        .args;
+        assert_eq!(args.validity_pool_max_count, Some(100));
+        assert_eq!(args.validity_pool_max_size_bytes(), Some(2 * 1024 * 1024));
+        assert_eq!(args.validity_pool_max_account_slots, Some(8));
     }
 
     #[test]

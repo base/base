@@ -134,6 +134,63 @@ at `ingress` and `builder`, independently of generic extension errors.
 sidecars to help operators assess migration readiness. RPC signature errors carry
 the same stable rejection reason in their `data` field.
 
+### Separate validity transaction store
+
+Every transaction submitted with validity predicates lives in a separate validity store inside
+`BaseTransactionPool`, whatever its nonce shape: account (protocol) nonce, EIP-8130 2D-nonce
+channel, or nonce-free. Normal transactions stay in the protocol pool and the EIP-8130 sidecar.
+The validity store has its own capacity and its own EIP-8130 admission guard, so validity and
+normal traffic never evict or rate-limit each other. The guards are separate ledgers: a payer's
+combined reservations across both can exceed either ledger's allowance, and execution still
+checks funds.
+
+| Flag | Default |
+| --- | --- |
+| `--rollup.validity-pool-max-count` | the normal pending count cap (`--txpool.pending-max-count`) |
+| `--rollup.validity-pool-max-size-mb` | the normal pending size cap (`--txpool.pending-max-size`) |
+| `--rollup.validity-pool-max-account-slots` | the normal per-sender cap (`--txpool.max-account-slots`) |
+
+Defaults are copied as independent allowances, so enabling validity traffic can roughly double
+pool memory. Fee floors, locality, replacement price bumps and EIP-7702 delegated-account limits
+follow the normal pool configuration. EIP-7702 limits count both classes: a transaction may not
+authorize an address that holds more than the delegated slot limit across the protocol pool and
+the validity store, and an authorization pooled in either one limits its authority's
+account-nonce transactions in the other.
+
+Account-nonce lanes in the validity store rank like the protocol pool: a transaction is pending
+when every nonce from the canonical account nonce up to it is pooled, the lane's cumulative cost
+through it fits the sender balance, and its fee cap covers the pending base fee. The block gas
+limit is checked at insertion. Canonical nonce changes advance the lane even when this node never
+stored the mined transaction. A reorg that rolls the account nonce back queues the lane until the
+gap fills, where the protocol pool keeps its earlier pending flags. A transaction blocked only by
+its fee cap is reported in the base fee subpool.
+
+Validation reads canonical state, which can trail account updates the store already applied, such
+as a flashblock that executed part of a lane. The store remembers each account's latest update for
+64 updates, so an insertion never moves an account cursor backward or recreates a consumed nonce;
+only an authoritative update (a reorg or account reload) moves it back. A remembered update's
+balance backs the lane together with its nonce; an update that leaves the balance unchanged
+keeps the validated one. A validation older than that window is rejected with
+`PoolAdmissionError::StaleAccountState` (rejection label `stale_account_state`); resubmitting
+revalidates it.
+
+Within one sequential lane, `(sender, nonce_key)` with key zero meaning the account nonce, all
+pooled transactions share one class. Adding a transaction of the other class fails with
+`PoolAdmissionError::LaneConflict` (rejection label `lane_conflict`). The one exception is a
+replacement of a lone incumbent at the same nonce that meets the replacement price bump: the
+replacement is stored first and the incumbent is then removed and reported as discarded, so a
+lookup can briefly see both. A nonce-free transaction's replay id is its slot: a same-replay-id
+transaction of the other class must meet the replacement price bump and then replaces it the same
+way.
+
+Builders read one stream that merges the normal stores with the validity store by priority;
+normal transactions win equal-priority ties. Invalidating a candidate only skips the rest of its
+own store's lane.
+
+The validity store reports `txpool.validity.pooled` (transactions) and
+`txpool.validity.pooled_bytes`. Reth's `transaction_pool` gauges describe only the protocol pool,
+and `txpool.guard.tracked` sums both guards.
+
 ## Usage
 
 Add the dependency to your `Cargo.toml`:

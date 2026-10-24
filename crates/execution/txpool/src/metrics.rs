@@ -100,6 +100,10 @@ base_metrics::define_metrics! {
     #[describe("Validity transactions admitted to the pool, labeled by whether the admission replaced an existing same-sender/nonce transaction or added a new pool entry")]
     #[label(name = "outcome", default = ["added", "replaced"])]
     admitted: counter,
+    #[describe("Transactions held by the separate validity transaction store, pending and queued")]
+    pooled: gauge,
+    #[describe("Summed in-memory size in bytes of the transactions held by the validity store")]
+    pooled_bytes: gauge,
 }
 
 impl ValidityPoolMetrics {
@@ -110,6 +114,12 @@ impl ValidityPoolMetrics {
     /// `replaced` over that sum is the replacement rate.
     pub fn record_admission(replaced: bool) {
         Self::admitted(if replaced { "replaced" } else { "added" }).increment(1);
+    }
+
+    /// Records the validity store's current transaction count and size.
+    pub fn record_store_size(count: usize, size_bytes: usize) {
+        Self::pooled().set(count as f64);
+        Self::pooled_bytes().set(size_bytes as f64);
     }
 }
 

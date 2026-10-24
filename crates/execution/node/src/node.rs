@@ -30,7 +30,7 @@ use base_execution_rpc::{
 use base_execution_txpool::{
     BaseOrdering, BasePooledTransaction, BasePooledTx, BaseTransactionPool,
     BaseTransactionValidator, GuardLimits, ParkableTransactionPool, TimestampedTransaction,
-    maintain_state_diff_invalidation,
+    ValidityPoolConfig, maintain_state_diff_invalidation,
 };
 use reth_chain_state::CanonStateSubscriptions;
 use reth_chainspec::{BaseFeeParams, ChainSpecProvider, EthChainSpec, Hardforks};
@@ -277,7 +277,12 @@ impl BaseNode {
                     .with_additional_trusted_delegation_targets(
                         self.args.mempool_trusted_delegation_targets.iter().copied(),
                     )
-                    .with_allowlisted_payers(self.args.mempool_allowlisted_payers.iter().copied()),
+                    .with_allowlisted_payers(self.args.mempool_allowlisted_payers.iter().copied())
+                    .with_validity_pool_limits(
+                        self.args.validity_pool_max_count,
+                        self.args.validity_pool_max_size_bytes(),
+                        self.args.validity_pool_max_account_slots,
+                    ),
             )
             .payload(BasePayloadServiceBuilder::new(
                 BasePayloadBuilder::new()
@@ -812,6 +817,12 @@ pub struct BasePoolBuilder<T = BasePooledTransaction> {
     pub additional_trusted_delegation_targets: AddressSet,
     /// Operator-allowlisted EIP-8130 payers.
     pub allowlisted_payers: AddressSet,
+    /// Validity store transaction count cap; `None` copies the normal pending-pool cap.
+    pub validity_pool_max_count: Option<usize>,
+    /// Validity store size cap in bytes; `None` copies the normal pending-pool cap.
+    pub validity_pool_max_size_bytes: Option<usize>,
+    /// Validity store per-sender slot cap; `None` copies the normal account slot cap.
+    pub validity_pool_max_account_slots: Option<usize>,
     /// Marker for the pooled transaction type.
     _pd: core::marker::PhantomData<T>,
 }
@@ -824,6 +835,9 @@ impl<T> Default for BasePoolBuilder<T> {
             guard_limits: GuardLimits::default(),
             additional_trusted_delegation_targets: AddressSet::default(),
             allowlisted_payers: AddressSet::default(),
+            validity_pool_max_count: None,
+            validity_pool_max_size_bytes: None,
+            validity_pool_max_account_slots: None,
             _pd: Default::default(),
         }
     }
@@ -839,6 +853,9 @@ impl<T> Clone for BasePoolBuilder<T> {
                 .additional_trusted_delegation_targets
                 .clone(),
             allowlisted_payers: self.allowlisted_payers.clone(),
+            validity_pool_max_count: self.validity_pool_max_count,
+            validity_pool_max_size_bytes: self.validity_pool_max_size_bytes,
+            validity_pool_max_account_slots: self.validity_pool_max_account_slots,
             _pd: core::marker::PhantomData,
         }
     }
@@ -879,6 +896,20 @@ impl<T> BasePoolBuilder<T> {
         self.allowlisted_payers = payers.into_iter().collect();
         self
     }
+
+    /// Overrides the separate validity store's count, byte size and per-sender slot caps. Each
+    /// `None` copies the matching normal-pool limit as an independent allowance.
+    pub const fn with_validity_pool_limits(
+        mut self,
+        max_count: Option<usize>,
+        max_size_bytes: Option<usize>,
+        max_account_slots: Option<usize>,
+    ) -> Self {
+        self.validity_pool_max_count = max_count;
+        self.validity_pool_max_size_bytes = max_size_bytes;
+        self.validity_pool_max_account_slots = max_account_slots;
+        self
+    }
 }
 
 impl<Node, T, Evm> PoolBuilder<Node, Evm> for BasePoolBuilder<T>
@@ -900,6 +931,9 @@ where
             guard_limits,
             additional_trusted_delegation_targets,
             allowlisted_payers,
+            validity_pool_max_count,
+            validity_pool_max_size_bytes,
+            validity_pool_max_account_slots,
             ..
         } = self;
 
@@ -936,8 +970,15 @@ where
             final_pool_config.clone(),
         );
         let allowlisted_payer_count = allowlisted_payers.len();
-        let transaction_pool =
-            BaseTransactionPool::new(transaction_pool, ordering).with_guard_limits(guard_limits);
+        let validity_pool_config = ValidityPoolConfig::from_pool_config(&final_pool_config)
+            .with_overrides(
+                validity_pool_max_count,
+                validity_pool_max_size_bytes,
+                validity_pool_max_account_slots,
+            );
+        let transaction_pool = BaseTransactionPool::new(transaction_pool, ordering)
+            .with_guard_limits(guard_limits)
+            .with_validity_pool_config(validity_pool_config);
         spawn_maintenance_tasks(ctx, transaction_pool.clone(), &final_pool_config)?;
         let state_diff_events = BroadcastStream::new(ctx.provider().subscribe_to_canonical_state());
         ctx.task_executor().spawn_critical_task(
@@ -952,6 +993,9 @@ where
             payer_limit = guard_limits.payment_limit,
             allowlisted_payer_limit = guard_limits.allowlisted_payment_limit,
             allowlisted_payers = allowlisted_payer_count,
+            validity_pool_max_count = validity_pool_config.max_count,
+            validity_pool_max_size_bytes = validity_pool_config.max_size_bytes,
+            validity_pool_max_account_slots = validity_pool_config.max_account_slots,
             "Transaction pool initialized"
         );
         debug!(target: "reth::cli", "Spawned txpool maintenance tasks");

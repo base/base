@@ -6,7 +6,7 @@ use reth_transaction_pool::{
     BestTransactions, TransactionOrdering, ValidPoolTransaction, error::InvalidPoolTransactionError,
 };
 
-use crate::{BasePooledTx, BestTransactionPriority};
+use crate::{BasePooledTx, BestTransactionLane, BestTransactionPriority};
 
 /// Merges best-transaction iterators from two stores by complete priority.
 ///
@@ -75,6 +75,22 @@ where
             (None, None) => None,
         }
     }
+
+    /// Whether invalidating `invalid` also invalidates the buffered `candidate`: a source skips
+    /// the rest of an invalidated sequential lane, and nothing else for a nonce-free
+    /// transaction.
+    fn invalidates(
+        invalid: &Arc<ValidPoolTransaction<T>>,
+        candidate: &Arc<ValidPoolTransaction<T>>,
+    ) -> bool {
+        BestTransactionLane::for_transaction(invalid).map_or_else(
+            || invalid.hash() == candidate.hash(),
+            |lane| {
+                BestTransactionLane::for_transaction(candidate)
+                    .is_some_and(|candidate| candidate.id() == lane.id())
+            },
+        )
+    }
 }
 
 impl<T: BasePooledTx, O> std::fmt::Debug for MergeBestTransactions<T, O>
@@ -116,13 +132,17 @@ where
     O: TransactionOrdering<Transaction = T>,
 {
     fn mark_invalid(&mut self, transaction: &Self::Item, kind: InvalidPoolTransactionError) {
-        if (self.secondary_owns)(&transaction.transaction) {
-            self.next_secondary = None;
-            self.secondary.mark_invalid(transaction, kind);
+        let (next, source) = if (self.secondary_owns)(&transaction.transaction) {
+            (&mut self.next_secondary, &mut self.secondary)
         } else {
-            self.next_primary = None;
-            self.primary.mark_invalid(transaction, kind);
+            (&mut self.next_primary, &mut self.primary)
+        };
+        // The source has already advanced past a buffered candidate, so dropping an unrelated
+        // one would lose it for this iteration and could offer its lane's successor without it.
+        if next.as_ref().is_some_and(|candidate| Self::invalidates(transaction, candidate)) {
+            *next = None;
         }
+        source.mark_invalid(transaction, kind);
     }
 
     fn no_updates(&mut self) {
@@ -378,5 +398,59 @@ mod tests {
         merged.mark_invalid(&first, InvalidPoolTransactionError::Underpriced);
 
         assert!(merged.next().is_none());
+    }
+
+    /// Discards `parked` after `normal` was yielded while an unrelated lane head is buffered,
+    /// then returns the hashes the iterator still offers.
+    fn offered_after_delayed_invalidation(
+        merged: &mut MergeBestTransactions<
+            BasePooledTransaction,
+            BaseOrdering<BasePooledTransaction>,
+        >,
+        parked: &Arc<ValidPoolTransaction<BasePooledTransaction>>,
+    ) -> Vec<alloy_primitives::TxHash> {
+        assert_eq!(merged.next().map(|tx| *tx.hash()), Some(*parked.hash()));
+        assert!(
+            merged.next().is_some_and(|tx| tx.transaction.eip8130_nonce_channel_key().is_none())
+        );
+        merged.mark_invalid(parked, InvalidPoolTransactionError::Underpriced);
+        std::iter::from_fn(|| merged.next()).map(|tx| *tx.hash()).collect()
+    }
+
+    #[test]
+    fn delayed_invalidation_keeps_an_unrelated_buffered_lane_head() {
+        let lane = signer();
+        let parked = valid_pool_transaction(signed_tx(&signer(), U256::from(1), 0, 2_000, 2_000));
+        let normal = valid_pool_transaction(signed_tx(&signer(), U256::ZERO, 0, 1_500, 1_500));
+        let head = valid_pool_transaction(signed_tx(&lane, U256::from(2), 0, 1_000, 1_000));
+        let successor = valid_pool_transaction(signed_tx(&lane, U256::from(2), 1, 900, 900));
+        let expected = vec![*head.hash(), *successor.hash()];
+        let sidecar = || {
+            Box::new(StaticBestTransactions::new(vec![
+                Arc::clone(&parked),
+                Arc::clone(&head),
+                Arc::clone(&successor),
+            ]))
+        };
+        let merge = |primary, secondary| {
+            MergeBestTransactions::new(
+                primary,
+                secondary,
+                BasePooledTransaction::is_eip8130_sidecar_transaction,
+                BaseOrdering::coinbase_tip(),
+                0,
+            )
+        };
+
+        // The buffered head sits in the merge that receives the invalidation.
+        let mut merged =
+            merge(Box::new(StaticBestTransactions::new(vec![Arc::clone(&normal)])), sidecar());
+        assert_eq!(offered_after_delayed_invalidation(&mut merged, &parked), expected);
+
+        // The buffered head sits in a nested merge the invalidation is routed to.
+        let inner =
+            merge(Box::new(StaticBestTransactions::new(vec![Arc::clone(&normal)])), sidecar());
+        let mut merged = merge(Box::new(inner), Box::new(StaticBestTransactions::new(Vec::new())));
+        assert_eq!(offered_after_delayed_invalidation(&mut merged, &parked), expected);
     }
 }

@@ -1,4 +1,5 @@
-//! Base transaction-pool wrapper that combines the protocol pool with a 2D nonce sidecar.
+//! Base transaction-pool wrapper that combines the protocol pool with a 2D nonce sidecar and a
+//! separate validity transaction store.
 
 use std::{collections::HashMap, fmt, sync::Arc};
 
@@ -22,7 +23,7 @@ use reth_transaction_pool::{
     TransactionListenerKind, TransactionOrigin, TransactionPool, TransactionPoolExt,
     TransactionValidationOutcome, TransactionValidationTaskExecutor, TransactionValidator,
     ValidPoolTransaction,
-    error::InvalidPoolTransactionError,
+    error::{Eip7702PoolTransactionError, InvalidPoolTransactionError},
     pool::{AddedTransactionState, QueuedReason, TransactionEvent},
 };
 use tokio::{
@@ -32,12 +33,16 @@ use tokio::{
 use tracing::debug;
 
 use crate::{
-    Admission, BasePooledTx, BaseTransactionValidator, FlashblockExpiry, GuardLimits, GuardMetrics,
-    InvalidationCause, InvalidationKey, LimitRejection, MempoolGuard, ParkableBestTransactions,
-    ParkableTransactionPool, ParkedBestTransactions, PredicateContext, StateDiffInvalidation,
+    Admission, BasePooledTx, BaseTransactionValidator, BestTransactionLane, FlashblockExpiry,
+    GuardLimits, GuardMetrics, InvalidationCause, InvalidationKey, LimitRejection, MempoolGuard,
+    ParkableBestTransactions, ParkableTransactionPool, ParkedBestTransactions, PoolAdmissionError,
+    PredicateContext, StateDiffInvalidation, TransactionClass, ValidityPoolConfig,
     ValidityPoolMetrics,
     best::MergeBestTransactions,
-    two_d_nonce_pool::{InsertOutcome, LaneId, LaneUpdate, SidecarLimits, TwoDNoncePool},
+    two_d_nonce_pool::{
+        InsertContext, InsertOutcome, LaneId, LaneUpdate, NoncePoolMode, SidecarLimits,
+        TwoDNoncePool,
+    },
 };
 
 const SIDE_CAR_EVENT_CHANNEL_SIZE: usize = 1024;
@@ -98,7 +103,15 @@ impl AccountStateDiff {
     }
 }
 
-/// Wrapper around reth's transaction pool that adds a 2D nonce sidecar for EIP-8130 channels.
+/// Wrapper around reth's transaction pool that adds a 2D nonce sidecar for EIP-8130 channels
+/// and a separate store for validity transactions.
+///
+/// Every transaction carrying validity predicates lives in the validity store, with its own
+/// capacity and admission guard, so validity traffic never evicts or rate-limits normal
+/// transactions and normal traffic never evicts validity ones. Within one sequential lane
+/// `(sender, nonce_key)` all pooled transactions share one class: an addition of the other class
+/// is rejected with [`PoolAdmissionError::LaneConflict`], except for a fee-bumped replacement of
+/// a lone same-nonce incumbent, which moves the lane to the new class.
 pub struct BaseTransactionPool<
     Client,
     S,
@@ -115,9 +128,14 @@ pub struct BaseTransactionPool<
         Pool<TransactionValidationTaskExecutor<BaseTransactionValidator<Client, T, Evm>>, O, S>,
     ordering: O,
     nonce_pool: Arc<RwLock<TwoDNoncePool<T>>>,
+    /// Every transaction carrying validity predicates, in every nonce shape.
+    validity_pool: Arc<RwLock<TwoDNoncePool<T>>>,
+    /// Event listeners for both custom stores.
     listeners: Arc<RwLock<SidecarListeners<T>>>,
-    /// Shared admission and invalidation ledger for EIP-8130 transactions.
+    /// Admission and invalidation ledger for normal EIP-8130 transactions.
     guard: Arc<RwLock<MempoolGuard>>,
+    /// Independent admission and invalidation ledger for validity EIP-8130 transactions.
+    validity_guard: Arc<RwLock<MempoolGuard>>,
     /// Block and flashblock deadline index for validity transactions, including
     /// EIP-1559 advanced submissions.
     block_expiry: Arc<RwLock<crate::BlockExpiryIndex>>,
@@ -127,6 +145,11 @@ pub struct BaseTransactionPool<
     /// deadline eviction, so a same-nonce submission cannot race the sweep.
     /// Validation itself remains outside this lock.
     protocol_admission_lock: Arc<Mutex<()>>,
+    /// EIP-7702 authorities of protocol-pool transactions, recorded at admission under
+    /// `protocol_admission_lock` and forgotten when the facade removes the transaction. Reth's
+    /// internal evictions are not reported, so hashes it no longer holds are also dropped when
+    /// their authority is read and on every canonical update.
+    protocol_authorizations: Arc<Mutex<crate::ProtocolAuthorizations>>,
 }
 
 impl<Client, S, Evm, T, O> fmt::Debug for BaseTransactionPool<Client, S, Evm, T, O>
@@ -157,11 +180,14 @@ where
             protocol_pool: self.protocol_pool.clone(),
             ordering: self.ordering.clone(),
             nonce_pool: Arc::clone(&self.nonce_pool),
+            validity_pool: Arc::clone(&self.validity_pool),
             listeners: Arc::clone(&self.listeners),
             guard: Arc::clone(&self.guard),
+            validity_guard: Arc::clone(&self.validity_guard),
             block_expiry: Arc::clone(&self.block_expiry),
             published_flashblock: Arc::clone(&self.published_flashblock),
             protocol_admission_lock: Arc::clone(&self.protocol_admission_lock),
+            protocol_authorizations: Arc::clone(&self.protocol_authorizations),
         }
     }
 }
@@ -198,22 +224,53 @@ where
         let config = protocol_pool.config();
         let nonce_pool = TwoDNoncePool::new(config.price_bumps)
             .with_limits(SidecarLimits::from_pool_config(config));
+        let validity_pool =
+            Self::new_validity_pool(&protocol_pool, ValidityPoolConfig::from_pool_config(config));
         Self {
             protocol_pool,
             ordering,
             nonce_pool: Arc::new(RwLock::new(nonce_pool)),
+            validity_pool: Arc::new(RwLock::new(validity_pool)),
             listeners: Arc::new(RwLock::new(SidecarListeners::default())),
             guard: Arc::new(RwLock::new(MempoolGuard::unlimited())),
+            validity_guard: Arc::new(RwLock::new(MempoolGuard::unlimited())),
             block_expiry: Arc::new(RwLock::new(crate::BlockExpiryIndex::new())),
             published_flashblock: Arc::new(RwLock::new(None)),
             protocol_admission_lock: Arc::new(Mutex::new(())),
+            protocol_authorizations: Arc::new(Mutex::new(Default::default())),
         }
     }
 
-    /// Configures EIP-8130 admission limits. Call before sharing the pool.
+    fn new_validity_pool(
+        protocol_pool: &Pool<
+            TransactionValidationTaskExecutor<BaseTransactionValidator<Client, T, Evm>>,
+            O,
+            S,
+        >,
+        validity: ValidityPoolConfig,
+    ) -> TwoDNoncePool<T> {
+        let config = protocol_pool.config();
+        let block_info = protocol_pool.block_info();
+        let mut pool = TwoDNoncePool::new(config.price_bumps)
+            .with_mode(NoncePoolMode::Validity)
+            .with_limits(SidecarLimits::for_validity(config, &validity));
+        pool.set_block_info(block_info.block_gas_limit, block_info.pending_basefee);
+        pool
+    }
+
+    /// Configures EIP-8130 admission limits. The normal and validity stores each get an
+    /// independent ledger with these limits. Call before sharing the pool.
     #[must_use]
     pub fn with_guard_limits(self, limits: GuardLimits) -> Self {
         *self.guard.write() = MempoolGuard::new(limits);
+        *self.validity_guard.write() = MempoolGuard::new(limits);
+        self
+    }
+
+    /// Configures the validity store's capacity. Call before sharing the pool.
+    #[must_use]
+    pub fn with_validity_pool_config(self, config: ValidityPoolConfig) -> Self {
+        *self.validity_pool.write() = Self::new_validity_pool(&self.protocol_pool, config);
         self
     }
 
@@ -252,8 +309,226 @@ where
         self.protocol_pool.validator()
     }
 
-    fn is_sidecar_transaction(&self, transaction: &T) -> bool {
-        transaction.is_eip8130_sidecar_transaction()
+    /// Returns whether a transaction is stored in a custom store (the validity store or the
+    /// EIP-8130 sidecar) rather than the protocol pool.
+    fn is_custom_store_transaction(transaction: &T) -> bool {
+        TransactionClass::is_validity(transaction) || transaction.is_eip8130_sidecar_transaction()
+    }
+
+    /// Returns the custom store and guard that own transactions of `class`.
+    fn custom_store(
+        &self,
+        class: TransactionClass,
+    ) -> (&RwLock<TwoDNoncePool<T>>, &RwLock<MempoolGuard>) {
+        match class {
+            TransactionClass::Normal => (&self.nonce_pool, &self.guard),
+            TransactionClass::Validity => (&self.validity_pool, &self.validity_guard),
+        }
+    }
+
+    fn custom_stores(&self) -> [&RwLock<TwoDNoncePool<T>>; 2] {
+        [&self.nonce_pool, &self.validity_pool]
+    }
+
+    fn guards(&self) -> [&RwLock<MempoolGuard>; 2] {
+        [&self.guard, &self.validity_guard]
+    }
+
+    fn custom_get(&self, hash: &TxHash) -> Option<Arc<ValidPoolTransaction<T>>> {
+        self.nonce_pool.read().get(hash).or_else(|| self.validity_pool.read().get(hash))
+    }
+
+    /// Merges the normal stores (protocol pool and sidecar) with the validity store into one
+    /// stream ordered by complete priority; normal transactions win equal-priority ties.
+    fn merged_best_transactions(
+        &self,
+        attributes: BestTransactionsAttributes,
+    ) -> MergeBestTransactions<T, O> {
+        let base_fee = attributes.basefee;
+        let normal = MergeBestTransactions::new(
+            self.protocol_pool.best_transactions_with_attributes(attributes),
+            Box::new(self.nonce_pool.read().best_transactions(self.ordering.clone(), base_fee)),
+            T::is_eip8130_sidecar_transaction,
+            self.ordering.clone(),
+            base_fee,
+        );
+        MergeBestTransactions::new(
+            Box::new(normal),
+            Box::new(self.validity_pool.read().best_transactions(self.ordering.clone(), base_fee)),
+            TransactionClass::is_validity::<T>,
+            self.ordering.clone(),
+            base_fee,
+        )
+    }
+
+    /// Re-ranks validity key-zero lanes against the protocol pool's current block gas limit
+    /// and pending base fee, announcing transactions whose pending state changed.
+    fn sync_validity_block_info(&self) {
+        let block_info = self.protocol_pool.block_info();
+        let update = self
+            .validity_pool
+            .write()
+            .set_block_info(block_info.block_gas_limit, block_info.pending_basefee);
+        self.listeners.write().on_lane_moved(&update);
+    }
+
+    /// Applies a canonical update to the validity store: prunes mined transactions, moves
+    /// key-zero cursors to the changed accounts' nonces (backward only on a reorg), expires
+    /// nonce-free entries and re-ranks lanes against the new block.
+    fn maintain_validity_store(
+        &self,
+        block_hash: B256,
+        mined_transactions: &[TxHash],
+        changed_accounts: &[(Address, Option<U256>, Option<u64>)],
+        is_reorg: bool,
+    ) {
+        let mut validity_pool = self.validity_pool.write();
+        let pruned = validity_pool.prune_mined(mined_transactions);
+        let accounts = validity_pool.apply_account_updates(changed_accounts, is_reorg);
+        // `protocol_pool.on_canonical_state_change` has already advanced the
+        // validator's head clock and block info to this block.
+        let expired = validity_pool
+            .remove_expired_nonce_free(self.validator().validator().block_timestamp_ms());
+        let block_info = self.protocol_pool.block_info();
+        let fees =
+            validity_pool.set_block_info(block_info.block_gas_limit, block_info.pending_basefee);
+        // Validity store maintenance lock order is validity_pool -> listeners -> guard.
+        let mut listeners = self.listeners.write();
+        if !pruned.removed.is_empty() {
+            listeners.on_mined(&pruned.removed, block_hash);
+        }
+        listeners.on_lane_update(&pruned.lanes);
+        listeners.on_lane_update(&accounts);
+        listeners.on_discarded(&expired);
+        listeners.on_lane_moved(&fees);
+        let mut guard = self.validity_guard.write();
+        for transaction in pruned
+            .removed
+            .iter()
+            .chain(&pruned.lanes.discarded)
+            .chain(&accounts.discarded)
+            .chain(&expired)
+        {
+            guard.release(transaction.hash());
+        }
+        drop(guard);
+        drop(listeners);
+        drop(validity_pool);
+        // Mined hashes already left the block-expiry index with the canonical update.
+        self.forget_block_expiry(
+            pruned
+                .lanes
+                .discarded
+                .iter()
+                .chain(&accounts.discarded)
+                .chain(&expired)
+                .map(|transaction| *transaction.hash()),
+        );
+    }
+
+    fn record_validity_store_size(&self) {
+        let validity_pool = self.validity_pool.read();
+        ValidityPoolMetrics::record_store_size(validity_pool.len(), validity_pool.size());
+    }
+
+    /// Publishes a custom store's lane changes and releases discarded transactions from `guard`.
+    fn publish_lane_update(&self, update: &LaneUpdate<T>, guard: &RwLock<MempoolGuard>) {
+        self.listeners.write().on_lane_update(update);
+        if !update.discarded.is_empty() {
+            let mut guard = guard.write();
+            for transaction in &update.discarded {
+                guard.release(transaction.hash());
+            }
+        }
+        self.forget_block_expiry(update.discarded.iter().map(|transaction| *transaction.hash()));
+    }
+
+    /// Enforces lane exclusivity for `transaction`, called under `protocol_admission_lock`.
+    /// A nonce-free transaction's lane is its replay id.
+    ///
+    /// Returns the opposite-class incumbent a same-slot cross-class addition replaces. That is
+    /// allowed only when the incumbent is the sole pooled transaction in the lane and the
+    /// addition meets its replacement price bump; any other addition to a lane holding the other
+    /// class fails with [`PoolAdmissionError::LaneConflict`]. A hash already pooled in the other
+    /// class is [`PoolErrorKind::AlreadyImported`]. Only the transaction's own lane is read.
+    ///
+    /// [`PoolErrorKind::AlreadyImported`]: reth_transaction_pool::error::PoolErrorKind::AlreadyImported
+    fn cross_class_incumbent(
+        &self,
+        transaction: &T,
+    ) -> PoolResult<Option<Arc<ValidPoolTransaction<T>>>> {
+        let hash = *transaction.hash();
+        let class = TransactionClass::of(transaction);
+        let imported = match class {
+            TransactionClass::Normal => self.validity_pool.read().contains(&hash),
+            TransactionClass::Validity => {
+                self.nonce_pool.read().contains(&hash) || self.protocol_pool.get(&hash).is_some()
+            }
+        };
+        if imported {
+            return Err(reth_transaction_pool::error::PoolError::new(
+                hash,
+                reth_transaction_pool::error::PoolErrorKind::AlreadyImported,
+            ));
+        }
+        let Some(lane) = BestTransactionLane::for_pooled_transaction(transaction) else {
+            // A nonce-free transaction's replay id is its slot: the same rules apply to a
+            // replay-id incumbent in the other class's store.
+            let incumbent = transaction.eip8130_replay_id().and_then(|replay_id| {
+                let opposite = match class {
+                    TransactionClass::Normal => &self.validity_pool,
+                    TransactionClass::Validity => &self.nonce_pool,
+                };
+                opposite.read().nonce_free_transaction(&replay_id)
+            });
+            return match incumbent {
+                Some(incumbent)
+                    if incumbent.transaction.is_replacement_underpriced(
+                        transaction,
+                        &self.protocol_pool.config().price_bumps,
+                    ) =>
+                {
+                    Err(reth_transaction_pool::error::PoolError::new(
+                        hash,
+                        reth_transaction_pool::error::PoolErrorKind::ReplacementUnderpriced,
+                    ))
+                }
+                incumbent => Ok(incumbent),
+            };
+        };
+        let lane_id = (lane.sender, lane.nonce_key);
+        let occupants = match class {
+            TransactionClass::Normal => self.validity_pool.read().lane_transactions(&lane_id),
+            TransactionClass::Validity if lane.nonce_key.is_zero() => {
+                self.protocol_pool.get_transactions_by_sender(lane.sender)
+            }
+            TransactionClass::Validity => self.nonce_pool.read().lane_transactions(&lane_id),
+        };
+        match occupants.as_slice() {
+            [] => Ok(None),
+            [incumbent] if incumbent.nonce() == transaction.nonce() => {
+                if incumbent.transaction.is_replacement_underpriced(
+                    transaction,
+                    &self.protocol_pool.config().price_bumps,
+                ) {
+                    return Err(reth_transaction_pool::error::PoolError::new(
+                        hash,
+                        reth_transaction_pool::error::PoolErrorKind::ReplacementUnderpriced,
+                    ));
+                }
+                Ok(Some(Arc::clone(incumbent)))
+            }
+            _ => Err(PoolAdmissionError::LaneConflict.into_pool_error(hash)),
+        }
+    }
+
+    /// Removes the incumbent a cross-class replacement superseded, after the replacement was
+    /// stored. Its listeners receive a terminal `Discarded`, unlike a same-store replacement's
+    /// `Replaced`, and its guard record is released.
+    fn remove_cross_class_incumbent(&self, incumbent: &Arc<ValidPoolTransaction<T>>) {
+        let hash = *incumbent.hash();
+        let removed = self.remove_dropped_across_pools(vec![hash]);
+        self.release_from_guard(&removed);
     }
 
     fn limit_rejection_error(
@@ -286,43 +561,55 @@ where
             diff.push_exact_keys(&mut exact);
             diff.push_nonce_advances(&mut advances);
         }
-        self.nonce_pool.write().apply_balance_updates(
-            diffs.iter().filter_map(|diff| Some((diff.address, diff.balance?))),
-        );
-        let (behind, lane_moves) = self.resolve_nonce_advances(&advances);
-        // Move lane cursors before releasing what fell behind them, so a
-        // successor that stays pending is not re-announced as promoted.
+        let accounts: Vec<_> =
+            diffs.iter().map(|diff| (diff.address, diff.balance, diff.nonce)).collect();
         let mut removed = Vec::new();
-        if !lane_moves.is_empty() {
-            let mut nonce_pool = self.nonce_pool.write();
-            let mut listeners = self.listeners.write();
-            let mut update = LaneUpdate::default();
-            for (lane_id, nonce) in lane_moves {
-                update.extend(nonce_pool.advance_lane_nonce(lane_id, nonce));
+        let mut cursor_discards = Vec::new();
+        let mut dropped = Vec::new();
+        for class in [TransactionClass::Normal, TransactionClass::Validity] {
+            let (store, guard) = self.custom_store(class);
+            // Protocol nonces move validity key-zero lane cursors even when the transaction
+            // that advanced them was never pooled here; the sidecar holds no key-zero lanes.
+            let update = store.write().apply_account_updates(&accounts, false);
+            self.publish_lane_update(&update, guard);
+            cursor_discards.extend(update.discarded);
+            let (behind, lane_moves) = self.resolve_nonce_advances(guard, store, &advances);
+            // Move lane cursors before releasing what fell behind them, so a
+            // successor that stays pending is not re-announced as promoted.
+            if !lane_moves.is_empty() {
+                let mut update = LaneUpdate::default();
+                {
+                    let mut store = store.write();
+                    for (lane_id, nonce) in lane_moves {
+                        update.extend(store.advance_lane_nonce(lane_id, nonce));
+                    }
+                }
+                self.publish_lane_update(&update, guard);
+                removed.extend(update.discarded);
             }
-            listeners.on_lane_update(&update);
-            let mut guard = self.guard.write();
-            for transaction in &update.discarded {
-                guard.release(transaction.hash());
-            }
-            removed.extend(update.discarded);
-        }
-        let dropped = {
-            let mut guard = self.guard.write();
-            let mut dropped = guard.invalidate_exact(exact);
+            let mut guard = guard.write();
+            dropped.extend(guard.invalidate_exact(exact.clone()));
             dropped.extend(behind.into_iter().filter(|hash| guard.release(hash)));
             for diff in diffs {
                 if let Some(balance) = diff.balance {
                     dropped.extend(guard.on_balance_changed(diff.address, balance));
                 }
             }
-            dropped
-        };
-        removed.extend(self.remove_dropped_across_pools(dropped));
-        GuardMetrics::record_state_diff_invalidations(removed.len());
-        if !removed.is_empty() {
-            debug!(count = removed.len(), "EIP-8130 transactions invalidated by state diff");
         }
+        removed.extend(self.remove_dropped_across_pools(dropped));
+        // A guarded EIP-8130 transaction the account update discarded is invalidated too; the
+        // standard validity transactions it discards were never guarded.
+        let guarded_cursor_discards = cursor_discards
+            .iter()
+            .filter(|transaction| transaction.transaction.as_eip8130().is_some())
+            .count();
+        let invalidated = removed.len() + guarded_cursor_discards;
+        GuardMetrics::record_state_diff_invalidations(invalidated);
+        if invalidated > 0 {
+            debug!(count = invalidated, "EIP-8130 transactions invalidated by state diff");
+        }
+        removed.extend(cursor_discards);
+        self.record_validity_store_size();
         removed
     }
 
@@ -335,7 +622,8 @@ where
         // Keep classification-generation changes atomic with protocol admission.
         let _admission_guard = self.protocol_admission_lock.lock();
         self.validator().validator().clear_limit_class_cache();
-        let dropped = self.guard.write().invalidate_all();
+        let mut dropped = self.guard.write().invalidate_all();
+        dropped.extend(self.validity_guard.write().invalidate_all());
         let removed = self.remove_dropped_across_pools(dropped);
         GuardMetrics::record_bulk_invalidations(removed.len(), cause);
         removed
@@ -348,6 +636,8 @@ where
     /// cursor moves to.
     fn resolve_nonce_advances(
         &self,
+        guard: &RwLock<MempoolGuard>,
+        store: &RwLock<TwoDNoncePool<T>>,
         advances: &[(InvalidationKey, u64)],
     ) -> (Vec<TxHash>, Vec<(LaneId, u64)>) {
         let mut behind = Vec::new();
@@ -356,10 +646,10 @@ where
             return (behind, lane_moves);
         }
         let watchers: Vec<_> = {
-            let guard = self.guard.read();
+            let guard = guard.read();
             advances.iter().map(|(key, nonce)| (key, *nonce, guard.watchers(key))).collect()
         };
-        let nonce_pool = self.nonce_pool.read();
+        let nonce_pool = store.read();
         for (key, nonce, hashes) in watchers {
             let mut moved_lane = None;
             for hash in hashes {
@@ -399,30 +689,58 @@ where
         if dropped.is_empty() {
             return Vec::new();
         }
-        let (protocol_hashes, sidecar_hashes) = self.partition_hashes_by_pool(dropped);
+        let [protocol_hashes, sidecar_hashes, validity_hashes] =
+            self.partition_hashes_by_pool(dropped);
         let mut removed = if protocol_hashes.is_empty() {
             Vec::new()
         } else {
             self.protocol_pool.remove_transactions(protocol_hashes)
         };
-        if !sidecar_hashes.is_empty() {
-            let sidecar_removed = self.nonce_pool.write().remove_transactions(&sidecar_hashes);
-            if !sidecar_removed.is_empty() {
-                self.listeners.write().on_discarded(&sidecar_removed);
+        for (store, hashes) in
+            self.custom_stores().into_iter().zip([sidecar_hashes, validity_hashes])
+        {
+            if hashes.is_empty() {
+                continue;
             }
-            removed.extend(sidecar_removed);
+            let store_removed = store.write().remove_transactions(&hashes);
+            if !store_removed.is_empty() {
+                self.listeners.write().on_discarded(&store_removed);
+            }
+            removed.extend(store_removed);
         }
+        self.record_validity_store_size();
+        self.forget_block_expiry(removed.iter().map(|transaction| *transaction.hash()));
+        self.forget_protocol_authorizations(removed.iter().map(|transaction| *transaction.hash()));
         removed
     }
 
+    /// Drops removed transactions from the block-expiry index, so it tracks only pooled
+    /// transactions. Call without holding a store lock.
+    fn forget_block_expiry(&self, hashes: impl IntoIterator<Item = TxHash>) {
+        let mut hashes = hashes.into_iter().peekable();
+        if hashes.peek().is_none() {
+            return;
+        }
+        let mut block_expiry = self.block_expiry.write();
+        for hash in hashes {
+            block_expiry.remove(&hash);
+        }
+    }
+
+    /// Releases removed transactions from whichever guard tracks them. Hashes are unique across
+    /// stores, so releasing from both ledgers frees exactly the owning record.
     fn release_from_guard(&self, removed: &[Arc<ValidPoolTransaction<T>>]) {
         if removed.is_empty() {
             return;
         }
-        let mut guard = self.guard.write();
-        for transaction in removed {
-            guard.release(transaction.hash());
+        for guard in self.guards() {
+            let mut guard = guard.write();
+            for transaction in removed {
+                guard.release(transaction.hash());
+            }
         }
+        self.forget_block_expiry(removed.iter().map(|transaction| *transaction.hash()));
+        self.forget_protocol_authorizations(removed.iter().map(|transaction| *transaction.hash()));
     }
 
     /// Invalidates guarded transactions whose effective expiry has elapsed as of
@@ -440,7 +758,14 @@ where
         // Do not expire a protocol reservation between guard and reth insertion.
         let _admission_guard = self.protocol_admission_lock.lock();
         let horizon = now / InvalidationKey::EXPIRY_BUCKET_SECS;
-        let (dropped, bucket_count) = self.guard.write().invalidate_expiry_buckets_through(horizon);
+        let mut dropped = Vec::new();
+        let mut bucket_count = 0;
+        for guard in self.guards() {
+            let (guard_dropped, guard_buckets) =
+                guard.write().invalidate_expiry_buckets_through(horizon);
+            dropped.extend(guard_dropped);
+            bucket_count += guard_buckets;
+        }
         GuardMetrics::expiry_buckets_fired().increment(bucket_count as u64);
         let removed = self.remove_dropped_across_pools(dropped);
         GuardMetrics::record_expiry_invalidations(removed.len());
@@ -603,39 +928,45 @@ where
     }
 
     fn reconcile_guard(&self) {
-        let tracked = self.guard.read().tracked_hashes();
-        if tracked.is_empty() {
-            return;
+        let mut released = 0;
+        for class in [TransactionClass::Normal, TransactionClass::Validity] {
+            released += self.reconcile_guard_for(class);
         }
-        let nonce_pool = self.nonce_pool.read();
-        let stale: Vec<_> = tracked
-            .into_iter()
-            .filter(|hash| self.protocol_pool.get(hash).is_none() && !nonce_pool.contains(hash))
-            .collect();
-        drop(nonce_pool);
+        GuardMetrics::record_reconcile_releases(released);
+    }
+
+    /// Releases records in `class`'s guard whose transaction left its stores without a release.
+    fn reconcile_guard_for(&self, class: TransactionClass) -> usize {
+        let (store, guard) = self.custom_store(class);
+        let tracked = guard.read().tracked_hashes();
+        if tracked.is_empty() {
+            return 0;
+        }
+        let pooled = |store: &TwoDNoncePool<T>, hash: &TxHash| {
+            store.contains(hash)
+                || (class == TransactionClass::Normal && self.protocol_pool.get(hash).is_some())
+        };
+        let stale: Vec<_> = {
+            let store = store.read();
+            tracked.into_iter().filter(|hash| !pooled(&store, hash)).collect()
+        };
         if stale.is_empty() {
-            return;
+            return 0;
         }
 
         // Recheck only stale candidates under admission serialization. The
         // initial full scan stays outside this critical section, while a
         // reserved-before-insert transaction cannot be mistaken for an orphan.
         let _admission_guard = self.protocol_admission_lock.lock();
-        let nonce_pool = self.nonce_pool.read();
-        let stale: Vec<_> = stale
-            .into_iter()
-            .filter(|hash| self.protocol_pool.get(hash).is_none() && !nonce_pool.contains(hash))
-            .collect();
-        drop(nonce_pool);
-        if stale.is_empty() {
-            return;
-        }
-        let mut guard = self.guard.write();
+        let stale: Vec<_> = {
+            let store = store.read();
+            stale.into_iter().filter(|hash| !pooled(&store, hash)).collect()
+        };
+        let mut guard = guard.write();
         for hash in &stale {
             guard.release(hash);
         }
-        drop(guard);
-        GuardMetrics::record_reconcile_releases(stale.len());
+        stale.len()
     }
 
     fn protocol_replacement_hash(&self, sender: Address, nonce: u64) -> Option<TxHash> {
@@ -706,10 +1037,8 @@ where
         validated: TransactionValidationOutcome<T>,
     ) -> PoolResult<AddedTransactionOutcome> {
         let _admission_guard = self.protocol_admission_lock.lock();
-        // Reject stale validation before reth can replace the currently pooled transaction.
-        self.ensure_protocol_classification_current(hash, &validated)?;
-        self.ensure_not_published_expired(hash, &validated)?;
-        self.ensure_eip8130_fits_block_gas_limit(hash, &validated)?;
+        let incumbent = self.precheck_protocol_admission(hash, &validated)?;
+        let authorities = Self::protocol_authorities(&validated);
         let replaced = self.protocol_replacement_hash(sender, nonce);
         // Reserve guard capacity before reth publishes insertion events. A
         // tracked replacement bypasses this check and is reaccounted after the
@@ -741,11 +1070,163 @@ where
             }
         };
         self.gate_protocol_admission(hash, replaced, pre_admitted)?;
+        self.record_protocol_authorizations(hash, replaced, authorities);
+        let replaced = self.finish_protocol_cross_class(hash, replaced, incumbent);
         self.register_block_expiry(hash, block_expiry_bound, flashblock_expiry_bound, replaced);
         if is_validity {
             ValidityPoolMetrics::record_admission(replaced.is_some());
         }
         Ok(outcome)
+    }
+
+    /// Checks every protocol admission entry point runs under `protocol_admission_lock` before
+    /// reth sees the transaction, so stale validation cannot replace a pooled transaction.
+    /// Returns the cross-class incumbent the admission replaces.
+    fn precheck_protocol_admission(
+        &self,
+        hash: TxHash,
+        validated: &TransactionValidationOutcome<T>,
+    ) -> PoolResult<Option<Arc<ValidPoolTransaction<T>>>> {
+        self.ensure_protocol_classification_current(hash, validated)?;
+        self.ensure_not_published_expired(hash, validated)?;
+        self.ensure_eip8130_fits_block_gas_limit(hash, validated)?;
+        let incumbent = self.protocol_cross_class_incumbent(validated)?;
+        self.ensure_cross_class_delegation_limits(TransactionClass::Normal, validated)?;
+        Ok(incumbent)
+    }
+
+    /// The EIP-7702 authorities a validated transaction carries.
+    fn protocol_authorities(validated: &TransactionValidationOutcome<T>) -> Vec<Address> {
+        match validated {
+            TransactionValidationOutcome::Valid { authorities: Some(authorities), .. } => {
+                authorities.clone()
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    /// Records the authorities of a protocol admission once the protocol pool holds it, and
+    /// forgets the protocol transaction it replaced.
+    fn record_protocol_authorizations(
+        &self,
+        hash: TxHash,
+        replaced: Option<TxHash>,
+        authorities: Vec<Address>,
+    ) {
+        // Most admissions carry no authorization and replace nothing: skip the lookups.
+        if (authorities.is_empty() && replaced.is_none()) || self.protocol_pool.get(&hash).is_none()
+        {
+            return;
+        }
+        if let Some(replaced) =
+            replaced.filter(|replaced| self.protocol_pool.get(replaced).is_none())
+        {
+            self.forget_protocol_authorizations([replaced]);
+        }
+        self.protocol_authorizations
+            .lock()
+            .record(hash, authorities, |hash| self.protocol_pool.get(hash).is_some());
+    }
+
+    /// Drops removed protocol transactions from the authorization index.
+    fn forget_protocol_authorizations(&self, hashes: impl IntoIterator<Item = TxHash>) {
+        let mut hashes = hashes.into_iter().peekable();
+        if hashes.peek().is_none() {
+            return;
+        }
+        let mut protocol_authorizations = self.protocol_authorizations.lock();
+        for hash in hashes {
+            protocol_authorizations.forget(&hash);
+        }
+    }
+
+    /// Applies the protocol pool's EIP-7702 rules across the protocol pool and the validity
+    /// store, called under `protocol_admission_lock`. Each side enforces them for its own
+    /// transactions; this adds what lies in the other one. A transaction may not authorize an
+    /// address holding more than the delegated slot limit across both, and a protocol-nonce
+    /// transaction whose sender the other side authorizes is limited to that many executable
+    /// transactions without a nonce gap. Validity-store senders are checked by the store, given
+    /// [`InsertContext::pending_delegation`].
+    fn ensure_cross_class_delegation_limits(
+        &self,
+        class: TransactionClass,
+        validated: &TransactionValidationOutcome<T>,
+    ) -> PoolResult<()> {
+        let TransactionValidationOutcome::Valid { transaction, state_nonce, authorities, .. } =
+            validated
+        else {
+            return Ok(());
+        };
+        let transaction = transaction.transaction();
+        let hash = *transaction.hash();
+        let limit = self.protocol_pool.config().max_inflight_delegated_slot_limit;
+        let eip7702_error = |error| {
+            reth_transaction_pool::error::PoolError::new(
+                hash,
+                reth_transaction_pool::error::PoolErrorKind::InvalidTransaction(
+                    InvalidPoolTransactionError::Eip7702(error),
+                ),
+            )
+        };
+        let validity_pool = self.validity_pool.read();
+        let reserved = authorities.iter().flatten().any(|authority| {
+            validity_pool.sender_count(authority)
+                + self.protocol_pool.get_transactions_by_sender(*authority).len()
+                > limit
+        });
+        if reserved {
+            return Err(eip7702_error(Eip7702PoolTransactionError::AuthorityReserved));
+        }
+        let account_lane = BestTransactionLane::for_pooled_transaction(transaction)
+            .is_some_and(|lane| lane.nonce_key.is_zero());
+        if class == TransactionClass::Validity
+            || !account_lane
+            || !validity_pool.has_pending_authorization(&transaction.sender())
+        {
+            return Ok(());
+        }
+        drop(validity_pool);
+        let pending = self.protocol_pool.get_pending_transactions_by_sender(transaction.sender());
+        if pending.is_empty() {
+            if transaction.nonce().saturating_sub(*state_nonce) >= limit as u64 {
+                return Err(eip7702_error(Eip7702PoolTransactionError::OutOfOrderTxFromDelegated));
+            }
+        } else if pending.iter().all(|pooled| pooled.nonce() != transaction.nonce())
+            && pending.len() >= limit
+        {
+            return Err(eip7702_error(Eip7702PoolTransactionError::InflightTxLimitReached));
+        }
+        Ok(())
+    }
+
+    /// Returns whether a protocol-pool transaction authorizes `address`, dropping recorded
+    /// hashes the protocol pool no longer holds.
+    fn has_protocol_authorization(&self, address: &Address) -> bool {
+        self.protocol_authorizations
+            .lock()
+            .retain_pooled_for(address, |hash| self.protocol_pool.get(hash).is_some())
+    }
+
+    fn protocol_cross_class_incumbent(
+        &self,
+        validated: &TransactionValidationOutcome<T>,
+    ) -> PoolResult<Option<Arc<ValidPoolTransaction<T>>>> {
+        validated
+            .as_valid_transaction()
+            .map_or(Ok(None), |transaction| self.cross_class_incumbent(transaction.transaction()))
+    }
+
+    /// Removes a cross-class incumbent once the protocol pool holds its replacement, and
+    /// returns the hash the admission replaced.
+    fn finish_protocol_cross_class(
+        &self,
+        hash: TxHash,
+        replaced: Option<TxHash>,
+        incumbent: Option<Arc<ValidPoolTransaction<T>>>,
+    ) -> Option<TxHash> {
+        let incumbent = incumbent.filter(|_| self.protocol_pool.get(&hash).is_some())?;
+        self.remove_cross_class_incumbent(&incumbent);
+        replaced.or_else(|| Some(*incumbent.hash()))
     }
 
     fn gate_protocol_admission(
@@ -809,42 +1290,50 @@ where
         Ok(())
     }
 
-    fn partition_hashes_by_pool(&self, hashes: Vec<TxHash>) -> (Vec<TxHash>, Vec<TxHash>) {
+    /// Splits hashes into protocol, sidecar and validity store members. Unknown hashes go to
+    /// the protocol pool, which ignores them.
+    fn partition_hashes_by_pool(&self, hashes: Vec<TxHash>) -> [Vec<TxHash>; 3] {
         let nonce_pool = self.nonce_pool.read();
+        let validity_pool = self.validity_pool.read();
         let mut protocol_hashes = Vec::with_capacity(hashes.len());
         let mut sidecar_hashes = Vec::new();
+        let mut validity_hashes = Vec::new();
 
         for hash in hashes {
             if nonce_pool.contains(&hash) {
                 sidecar_hashes.push(hash);
+            } else if validity_pool.contains(&hash) {
+                validity_hashes.push(hash);
             } else {
                 protocol_hashes.push(hash);
             }
         }
 
-        (protocol_hashes, sidecar_hashes)
+        [protocol_hashes, sidecar_hashes, validity_hashes]
     }
 
-    async fn add_sidecar_transaction(
+    async fn add_custom_transaction(
         &self,
         origin: TransactionOrigin,
         transaction: T,
     ) -> PoolResult<AddedTransactionOutcome> {
-        let balance_epoch = self.nonce_pool.read().balance_epoch();
+        let (store, _) = self.custom_store(TransactionClass::of(&transaction));
+        let balance_epoch = store.read().balance_epoch();
         let validated = self.validator().validate_transaction(origin, transaction).await;
-        self.add_validated_sidecar_transaction(validated, origin, balance_epoch)
+        self.add_validated_custom_transaction(validated, origin, balance_epoch)
     }
 
-    /// Inserts a validated sidecar transaction. `balance_epoch` is the sidecar
-    /// balance epoch read before validation started.
-    fn add_validated_sidecar_transaction(
+    /// Inserts a validated transaction into the custom store of its class: the validity store
+    /// for a transaction with validity predicates, otherwise the EIP-8130 sidecar.
+    /// `balance_epoch` is that store's balance epoch read before validation started.
+    fn add_validated_custom_transaction(
         &self,
         validated: TransactionValidationOutcome<T>,
         origin: TransactionOrigin,
         balance_epoch: u64,
     ) -> PoolResult<AddedTransactionOutcome> {
         // Capture the block-expiry bound before `validated` is consumed by the
-        // match below, mirroring the protocol admission paths. A sidecar (EIP-8130)
+        // match below, mirroring the protocol admission paths. A custom-store
         // transaction carrying block-number validity predicates must be recorded
         // in the block-expiry index so it is evicted once its last valid block
         // passes; a finite 2D-nonce-channel sidecar has no time-based expiry, so
@@ -852,10 +1341,15 @@ where
         let block_expiry_bound = Self::validity_block_expiry_bound(&validated);
         let flashblock_expiry_bound = Self::validity_flashblock_expiry_bound(&validated);
         let _admission_guard = self.protocol_admission_lock.lock();
+        let mut incumbent = None;
         if let Some(transaction) = validated.as_valid_transaction() {
             let hash = *transaction.transaction().hash();
             self.ensure_not_published_expired(hash, &validated)?;
             self.ensure_eip8130_fits_block_gas_limit(hash, &validated)?;
+            incumbent = self.cross_class_incumbent(transaction.transaction())?;
+            if TransactionClass::of(transaction.transaction()) == TransactionClass::Validity {
+                self.ensure_cross_class_delegation_limits(TransactionClass::Validity, &validated)?;
+            }
         }
         match validated {
             TransactionValidationOutcome::Valid {
@@ -863,124 +1357,146 @@ where
                 transaction,
                 propagate,
                 state_nonce,
-                ..
+                bytecode_hash,
+                authorities,
             } => {
-                // Keep the sidecar lock order consistent everywhere: nonce_pool before listeners.
-                let mut nonce_pool = self.nonce_pool.write();
-                let mut listeners = self.listeners.write();
-                let validated = Self::validated_pool_transaction(transaction, origin, propagate);
-                let generation = validated
-                    .transaction
-                    .limit_class()
-                    .map(|class| class.classification_generation);
-                let admission = Self::admission_for(&validated.transaction);
-                let is_validity = !validated.transaction.validity_conditions().is_empty();
-                let sender = validated.sender();
-                let mut outcome = nonce_pool.insert_validated(validated, state_nonce)?;
-                nonce_pool.record_validated_balance(sender, balance, balance_epoch);
-                // nonce_pool serializes sidecar replacement. Never acquire it while holding guard.
-                let mut guard = self.guard.write();
-                // Transactions below the anchored lane cursor are gone whether or
-                // not this insertion is kept.
-                for transaction in &outcome.anchor.discarded {
-                    guard.release(transaction.hash());
-                }
-                listeners.on_discarded(&outcome.anchor.discarded);
-                let current = generation.is_none_or(|generation| {
-                    generation == self.validator().validator().limit_class_cache_generation()
-                });
-                let hash = outcome.outcome.hash;
-                let rejection = if !current {
-                    Some(Self::stale_classification_error(hash))
-                } else if let (Some(replaced), Some(admission)) = (&outcome.replaced, &admission) {
-                    guard
-                        .check_replacement(replaced.hash(), admission)
-                        .err()
-                        .map(|rejection| Self::limit_rejection_error(hash, rejection))
-                } else {
-                    None
-                };
-                if let Some(error) = rejection {
-                    let removed = nonce_pool.remove_transactions(&[hash]);
-                    listeners.on_discarded(&removed);
-                    listeners.on_lane_moved(&outcome.anchor);
-                    if let Some(replaced) = &outcome.replaced {
-                        let restored = ValidPoolTransaction {
-                            transaction_id: replaced.transaction_id,
-                            transaction: replaced.transaction.clone(),
-                            propagate: replaced.propagate,
-                            timestamp: replaced.timestamp,
-                            origin: replaced.origin,
-                            authority_ids: replaced.authority_ids.clone(),
-                        };
-                        if nonce_pool.insert_validated(restored, state_nonce).is_err() {
-                            guard.release(replaced.hash());
-                            listeners.on_discarded(std::slice::from_ref(replaced));
-                        }
-                        nonce_pool.record_validated_balance(sender, balance, balance_epoch);
+                // Hashes this admission removed from the store, dropped from the block-expiry
+                // index once the store locks are released.
+                let mut forgotten: Vec<TxHash> = Vec::new();
+                // Every exit past a successful store insertion changed the store, so a validity
+                // admission refreshes the store gauges once the locks are released.
+                let refresh_validity_gauges =
+                    TransactionClass::of(transaction.transaction()) == TransactionClass::Validity;
+                let result = 'admit: {
+                    let class = TransactionClass::of(transaction.transaction());
+                    let (store, guard) = self.custom_store(class);
+                    let pending_delegation = class == TransactionClass::Validity
+                        && self.has_protocol_authorization(&transaction.transaction().sender());
+                    // Keep the custom-store lock order consistent everywhere: store before listeners.
+                    let mut nonce_pool = store.write();
+                    let mut listeners = self.listeners.write();
+                    let validated =
+                        Self::validated_pool_transaction(transaction, origin, propagate);
+                    // A classification invalidation advances the generation under the admission
+                    // lock, so rejecting a stale one before touching the store is atomic with
+                    // it and leaves any incumbent untouched.
+                    if validated.transaction.limit_class().is_some_and(|class| {
+                        class.classification_generation
+                            != self.validator().validator().limit_class_cache_generation()
+                    }) {
+                        break 'admit Err(Self::stale_classification_error(*validated.hash()));
                     }
-                    return Err(error);
-                }
-                match (&outcome.replaced, admission) {
-                    (Some(replaced), Some(admission)) => {
+                    let admission = Self::admission_for(&validated.transaction);
+                    let is_validity = class == TransactionClass::Validity;
+                    let context = InsertContext {
+                        state_nonce,
+                        balance: Some((balance, balance_epoch)),
+                        bytecode_hash,
+                        authorities,
+                        pending_delegation,
+                    };
+                    let hash = *validated.hash();
+                    let mut guard = guard.write();
+                    // Settle guard capacity before touching the store, so a rejection leaves any
+                    // incumbent in place. Only an incumbent holding a guard record lends its
+                    // capacity to the replacement; a standard transaction holds none, so its
+                    // replacement is charged like a fresh submission.
+                    let guarded_incumbent = admission
+                        .as_ref()
+                        .and_then(|_| nonce_pool.replacement_target(&validated.transaction))
+                        .map(|incumbent| *incumbent.hash())
+                        .filter(|incumbent| guard.contains(incumbent));
+                    let reserved = match (&admission, guarded_incumbent) {
+                        (Some(admission), Some(incumbent)) => {
+                            if let Err(rejection) = guard.check_replacement(&incumbent, admission) {
+                                break 'admit Err(Self::limit_rejection_error(hash, rejection));
+                            }
+                            false
+                        }
+                        (Some(admission), None) => {
+                            if let Err(rejection) = guard.try_admit(admission.clone()) {
+                                break 'admit Err(Self::limit_rejection_error(hash, rejection));
+                            }
+                            true
+                        }
+                        (None, _) => false,
+                    };
+                    let mut outcome = match nonce_pool.insert(validated, context) {
+                        Ok(outcome) => outcome,
+                        Err(error) => {
+                            if reserved {
+                                guard.release(&hash);
+                            }
+                            break 'admit Err(error);
+                        }
+                    };
+                    // Transactions below the anchored lane cursor are gone.
+                    for transaction in &outcome.anchor.discarded {
+                        guard.release(transaction.hash());
+                    }
+                    forgotten.extend(outcome.anchor.discarded.iter().map(|tx| *tx.hash()));
+                    listeners.on_discarded(&outcome.anchor.discarded);
+                    if let Some(replaced) = &outcome.replaced {
                         guard.release(replaced.hash());
+                    }
+                    if let (Some(admission), Some(_)) = (admission, guarded_incumbent) {
                         guard.insert_forced(admission);
                     }
-                    (Some(replaced), None) => {
-                        guard.release(replaced.hash());
+                    let mut evicted = nonce_pool.evict_over_capacity();
+                    for transaction in &evicted {
+                        guard.release(transaction.hash());
                     }
-                    (None, Some(admission)) => {
-                        if let Err(rejection) = guard.try_admit(admission) {
-                            let hash = outcome.outcome.hash;
-                            let removed = nonce_pool.remove_transactions(&[hash]);
-                            listeners.on_discarded(&removed);
-                            listeners.on_lane_moved(&outcome.anchor);
-                            return Err(Self::limit_rejection_error(hash, rejection));
-                        }
+                    drop(guard);
+                    let inserted_hash = outcome.outcome.hash;
+                    let survived = |moved: &Arc<ValidPoolTransaction<T>>| {
+                        !evicted.iter().any(|transaction| transaction.hash() == moved.hash())
+                    };
+                    outcome.anchor.promoted.retain(survived);
+                    outcome.anchor.queued.retain(|(moved, _)| survived(moved));
+                    outcome.promoted.retain(survived);
+                    outcome.demoted.retain(|(moved, _)| survived(moved));
+                    if evicted.iter().any(|transaction| *transaction.hash() == inserted_hash) {
+                        evicted.retain(|transaction| *transaction.hash() != inserted_hash);
+                        evicted.extend(outcome.replaced);
+                        forgotten.extend(evicted.iter().map(|tx| *tx.hash()));
+                        listeners.on_discarded(&evicted);
+                        listeners.on_lane_moved(&outcome.anchor);
+                        break 'admit Err(reth_transaction_pool::error::PoolError::new(
+                            inserted_hash,
+                            reth_transaction_pool::error::PoolErrorKind::DiscardedOnInsert,
+                        ));
                     }
-                    (None, None) => {}
-                }
-                let mut evicted = nonce_pool.evict_over_capacity();
-                for transaction in &evicted {
-                    guard.release(transaction.hash());
-                }
-                drop(guard);
-                let inserted_hash = outcome.outcome.hash;
-                let survived = |moved: &Arc<ValidPoolTransaction<T>>| {
-                    !evicted.iter().any(|transaction| transaction.hash() == moved.hash())
-                };
-                outcome.anchor.promoted.retain(survived);
-                outcome.anchor.queued.retain(survived);
-                outcome.promoted.retain(survived);
-                if evicted.iter().any(|transaction| *transaction.hash() == inserted_hash) {
-                    evicted.retain(|transaction| *transaction.hash() != inserted_hash);
-                    evicted.extend(outcome.replaced);
+                    forgotten.extend(evicted.iter().map(|tx| *tx.hash()));
                     listeners.on_discarded(&evicted);
-                    listeners.on_lane_moved(&outcome.anchor);
-                    return Err(reth_transaction_pool::error::PoolError::new(
+                    listeners.on_inserted(&nonce_pool, &outcome);
+                    // Record the block-expiry bound after a successful insertion,
+                    // dropping the replaced hash's stale entry in the same pass.
+                    // Release the store locks first so the block-expiry index is
+                    // not acquired while holding the store.
+                    let mut replaced_hash =
+                        outcome.replaced.as_ref().map(|replaced| *replaced.hash());
+                    drop(listeners);
+                    drop(nonce_pool);
+                    if let Some(incumbent) = incumbent {
+                        self.remove_cross_class_incumbent(&incumbent);
+                        replaced_hash = replaced_hash.or_else(|| Some(*incumbent.hash()));
+                    }
+                    if is_validity {
+                        ValidityPoolMetrics::record_admission(replaced_hash.is_some());
+                    }
+                    self.register_block_expiry(
                         inserted_hash,
-                        reth_transaction_pool::error::PoolErrorKind::DiscardedOnInsert,
-                    ));
+                        block_expiry_bound,
+                        flashblock_expiry_bound,
+                        replaced_hash,
+                    );
+                    Ok(outcome.outcome)
+                };
+                self.forget_block_expiry(forgotten);
+                if refresh_validity_gauges {
+                    self.record_validity_store_size();
                 }
-                listeners.on_discarded(&evicted);
-                listeners.on_inserted(&nonce_pool, &outcome);
-                if is_validity {
-                    ValidityPoolMetrics::record_admission(outcome.replaced.is_some());
-                }
-                // Record the block-expiry bound after a successful insertion,
-                // dropping the replaced hash's stale entry in the same pass.
-                // Release the sidecar locks first so the block-expiry index is
-                // not acquired while holding the nonce pool.
-                let replaced_hash = outcome.replaced.as_ref().map(|replaced| *replaced.hash());
-                drop(listeners);
-                drop(nonce_pool);
-                self.register_block_expiry(
-                    inserted_hash,
-                    block_expiry_bound,
-                    flashblock_expiry_bound,
-                    replaced_hash,
-                );
-                Ok(outcome.outcome)
+                result
             }
             TransactionValidationOutcome::Invalid(transaction, error) => {
                 Err(reth_transaction_pool::error::PoolError::new(
@@ -1115,17 +1631,22 @@ where
 
     fn pool_size(&self) -> PoolSize {
         let mut size = self.protocol_pool.pool_size();
-        let nonce_pool = self.nonce_pool.read();
-        let (pending, queued) = nonce_pool.pending_and_queued_txn_count();
-        let pending_size: usize =
-            nonce_pool.pending_transactions().iter().map(|tx| tx.transaction.size()).sum();
-        let queued_size: usize =
-            nonce_pool.queued_transactions().iter().map(|tx| tx.transaction.size()).sum();
-        size.pending += pending;
-        size.pending_size += pending_size;
-        size.queued += queued;
-        size.queued_size += queued_size;
-        size.total += pending + queued;
+        for store in self.custom_stores() {
+            let store = store.read();
+            let (pending, queued) = store.pending_and_queued_txn_count();
+            let pending_size: usize =
+                store.pending_transactions().iter().map(|tx| tx.transaction.size()).sum();
+            let queued_size: usize =
+                store.queued_transactions().iter().map(|tx| tx.transaction.size()).sum();
+            let (basefee, basefee_size) = store.basefee_count_and_size();
+            size.pending += pending;
+            size.pending_size += pending_size;
+            size.basefee += basefee;
+            size.basefee_size += basefee_size;
+            size.queued += queued - basefee;
+            size.queued_size += queued_size.saturating_sub(basefee_size);
+            size.total += pending + queued;
+        }
         size
     }
 
@@ -1138,15 +1659,14 @@ where
         origin: TransactionOrigin,
         transaction: Self::Transaction,
     ) -> PoolResult<TransactionEvents> {
-        if !self.is_sidecar_transaction(&transaction) {
+        if !Self::is_custom_store_transaction(&transaction) {
             let hash = *transaction.hash();
             let sender = transaction.sender();
             let nonce = transaction.nonce();
             let validated = self.validator().validate_transaction(origin, transaction).await;
             let _admission_guard = self.protocol_admission_lock.lock();
-            self.ensure_protocol_classification_current(hash, &validated)?;
-            self.ensure_not_published_expired(hash, &validated)?;
-            self.ensure_eip8130_fits_block_gas_limit(hash, &validated)?;
+            let incumbent = self.precheck_protocol_admission(hash, &validated)?;
+            let authorities = Self::protocol_authorities(&validated);
             let replaced = self.protocol_replacement_hash(sender, nonce);
             let pre_admitted = self.pre_admit_protocol_transaction(hash, replaced, &validated)?;
             // Capture the block-expiry bound and validity-lane flag before
@@ -1165,6 +1685,8 @@ where
                     }
                 };
             self.gate_protocol_admission(hash, replaced, pre_admitted)?;
+            self.record_protocol_authorizations(hash, replaced, authorities);
+            let replaced = self.finish_protocol_cross_class(hash, replaced, incumbent);
             self.register_block_expiry(hash, block_expiry_bound, flashblock_expiry_bound, replaced);
             if is_validity {
                 ValidityPoolMetrics::record_admission(replaced.is_some());
@@ -1174,7 +1696,7 @@ where
 
         let hash = *transaction.hash();
         let (events, listener) = self.listeners.write().subscribe_hash(hash);
-        if let Err(error) = self.add_sidecar_transaction(origin, transaction).await {
+        if let Err(error) = self.add_custom_transaction(origin, transaction).await {
             self.listeners.write().unsubscribe_hash_listener(&hash, &listener);
             return Err(error);
         }
@@ -1186,8 +1708,8 @@ where
         origin: TransactionOrigin,
         transaction: Self::Transaction,
     ) -> PoolResult<AddedTransactionOutcome> {
-        if self.is_sidecar_transaction(&transaction) {
-            self.add_sidecar_transaction(origin, transaction).await
+        if Self::is_custom_store_transaction(&transaction) {
+            self.add_custom_transaction(origin, transaction).await
         } else {
             let hash = *transaction.hash();
             let sender = transaction.sender();
@@ -1212,7 +1734,10 @@ where
         &self,
         transactions: Vec<(TransactionOrigin, Self::Transaction)>,
     ) -> Vec<PoolResult<AddedTransactionOutcome>> {
-        if transactions.iter().any(|(_, transaction)| self.is_sidecar_transaction(transaction)) {
+        if transactions
+            .iter()
+            .any(|(_, transaction)| Self::is_custom_store_transaction(transaction))
+        {
             let mut results = Vec::with_capacity(transactions.len());
             for (origin, transaction) in transactions {
                 results.push(self.add_transaction(origin, transaction).await);
@@ -1239,9 +1764,9 @@ where
 
     fn transaction_event_listener(&self, tx_hash: TxHash) -> Option<TransactionEvents> {
         self.protocol_pool.transaction_event_listener(tx_hash).or_else(|| {
-            self.nonce_pool
-                .read()
-                .contains(&tx_hash)
+            self.custom_stores()
+                .into_iter()
+                .any(|store| store.read().contains(&tx_hash))
                 .then(|| self.listeners.write().subscribe_hash(tx_hash).0)
         })
     }
@@ -1270,14 +1795,16 @@ where
 
     fn pooled_transaction_hashes(&self) -> Vec<TxHash> {
         let mut hashes = self.protocol_pool.pooled_transaction_hashes();
-        hashes.extend(
-            self.nonce_pool
-                .read()
-                .all_transactions()
-                .into_iter()
-                .filter(|transaction| transaction.propagate)
-                .map(|transaction| *transaction.hash()),
-        );
+        for store in self.custom_stores() {
+            hashes.extend(
+                store
+                    .read()
+                    .all_transactions()
+                    .into_iter()
+                    .filter(|transaction| transaction.propagate)
+                    .map(|transaction| *transaction.hash()),
+            );
+        }
         hashes
     }
 
@@ -1287,12 +1814,13 @@ where
             return hashes;
         }
 
-        let nonce_pool = self.nonce_pool.read();
-        for transaction in nonce_pool.all_transactions() {
-            if transaction.propagate {
-                hashes.push(*transaction.hash());
-                if hashes.len() >= max {
-                    break;
+        for store in self.custom_stores() {
+            for transaction in store.read().all_transactions() {
+                if transaction.propagate {
+                    hashes.push(*transaction.hash());
+                    if hashes.len() >= max {
+                        return hashes;
+                    }
                 }
             }
         }
@@ -1301,13 +1829,15 @@ where
 
     fn pooled_transactions(&self) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
         let mut transactions = self.protocol_pool.pooled_transactions();
-        transactions.extend(
-            self.nonce_pool
-                .read()
-                .all_transactions()
-                .into_iter()
-                .filter(|transaction| transaction.propagate),
-        );
+        for store in self.custom_stores() {
+            transactions.extend(
+                store
+                    .read()
+                    .all_transactions()
+                    .into_iter()
+                    .filter(|transaction| transaction.propagate),
+            );
+        }
         transactions
     }
 
@@ -1320,12 +1850,13 @@ where
             return transactions;
         }
 
-        let nonce_pool = self.nonce_pool.read();
-        for transaction in nonce_pool.all_transactions() {
-            if transaction.propagate {
-                transactions.push(transaction);
-                if transactions.len() >= max {
-                    break;
+        for store in self.custom_stores() {
+            for transaction in store.read().all_transactions() {
+                if transaction.propagate {
+                    transactions.push(transaction);
+                    if transactions.len() >= max {
+                        return transactions;
+                    }
                 }
             }
         }
@@ -1369,9 +1900,7 @@ where
         tx_hash: TxHash,
     ) -> Option<Recovered<<Self::Transaction as PoolTransaction>::Pooled>> {
         self.protocol_pool.get_pooled_transaction_element(tx_hash).or_else(|| {
-            self.nonce_pool
-                .read()
-                .get(&tx_hash)
+            self.custom_get(&tx_hash)
                 .and_then(|transaction| transaction.transaction.clone().try_into_pooled().ok())
         })
     }
@@ -1384,33 +1913,21 @@ where
             block_info.pending_basefee,
             block_info.pending_blob_fee.map(|fee| u64::try_from(fee).unwrap_or(u64::MAX)),
         );
-        let base_fee = best_transactions_attributes.basefee;
-        Box::new(MergeBestTransactions::new(
-            self.protocol_pool.best_transactions_with_attributes(best_transactions_attributes),
-            Box::new(self.nonce_pool.read().best_transactions(self.ordering.clone(), base_fee)),
-            T::is_eip8130_sidecar_transaction,
-            self.ordering.clone(),
-            base_fee,
-        ))
+        self.best_transactions_with_attributes(best_transactions_attributes)
     }
 
     fn best_transactions_with_attributes(
         &self,
         best_transactions_attributes: BestTransactionsAttributes,
     ) -> Box<dyn BestTransactions<Item = Arc<ValidPoolTransaction<Self::Transaction>>>> {
-        let base_fee = best_transactions_attributes.basefee;
-        Box::new(MergeBestTransactions::new(
-            self.protocol_pool.best_transactions_with_attributes(best_transactions_attributes),
-            Box::new(self.nonce_pool.read().best_transactions(self.ordering.clone(), base_fee)),
-            T::is_eip8130_sidecar_transaction,
-            self.ordering.clone(),
-            base_fee,
-        ))
+        Box::new(self.merged_best_transactions(best_transactions_attributes))
     }
 
     fn pending_transactions(&self) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
         let mut transactions = self.protocol_pool.pending_transactions();
-        transactions.extend(self.nonce_pool.read().pending_transactions());
+        for store in self.custom_stores() {
+            transactions.extend(store.read().pending_transactions());
+        }
         transactions
     }
 
@@ -1420,9 +1937,11 @@ where
         nonce: u64,
     ) -> Option<Arc<ValidPoolTransaction<Self::Transaction>>> {
         // Channelized nonce sequences and nonce-free replay ids live in separate
-        // namespaces from account nonces, so this sender+nonce lookup
-        // intentionally remains protocol-only.
-        self.protocol_pool.get_pending_transaction_by_sender_and_nonce(sender, nonce)
+        // namespaces from account nonces, so this sender+nonce lookup reads only
+        // the protocol pool and the validity store's key-zero lane.
+        self.protocol_pool.get_pending_transaction_by_sender_and_nonce(sender, nonce).or_else(
+            || self.validity_pool.read().pending_lane_transaction(&(sender, U256::ZERO), nonce),
+        )
     }
 
     fn pending_transactions_max(
@@ -1434,36 +1953,49 @@ where
             return transactions;
         }
 
-        let remaining = max - transactions.len();
-        transactions
-            .extend(self.nonce_pool.read().pending_transactions().into_iter().take(remaining));
+        for store in self.custom_stores() {
+            let remaining = max - transactions.len();
+            transactions.extend(store.read().pending_transactions().into_iter().take(remaining));
+            if transactions.len() >= max {
+                break;
+            }
+        }
         transactions
     }
 
     fn queued_transactions(&self) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
         let mut transactions = self.protocol_pool.queued_transactions();
-        transactions.extend(self.nonce_pool.read().queued_transactions());
+        for store in self.custom_stores() {
+            transactions.extend(store.read().queued_transactions());
+        }
         transactions
     }
 
     fn pending_and_queued_txn_count(&self) -> (usize, usize) {
-        let (pending, queued) = self.protocol_pool.pending_and_queued_txn_count();
-        let (sidecar_pending, sidecar_queued) =
-            self.nonce_pool.read().pending_and_queued_txn_count();
-        (pending + sidecar_pending, queued + sidecar_queued)
+        let (mut pending, mut queued) = self.protocol_pool.pending_and_queued_txn_count();
+        for store in self.custom_stores() {
+            let (store_pending, store_queued) = store.read().pending_and_queued_txn_count();
+            pending += store_pending;
+            queued += store_queued;
+        }
+        (pending, queued)
     }
 
     fn all_transactions(&self) -> AllPoolTransactions<Self::Transaction> {
         let mut transactions = self.protocol_pool.all_transactions();
-        let nonce_pool = self.nonce_pool.read();
-        transactions.pending.extend(nonce_pool.pending_transactions());
-        transactions.queued.extend(nonce_pool.queued_transactions());
+        for store in self.custom_stores() {
+            let store = store.read();
+            transactions.pending.extend(store.pending_transactions());
+            transactions.queued.extend(store.queued_transactions());
+        }
         transactions
     }
 
     fn all_transaction_hashes(&self) -> Vec<TxHash> {
         let mut hashes = self.protocol_pool.all_transaction_hashes();
-        hashes.extend(self.nonce_pool.read().all_hashes());
+        for store in self.custom_stores() {
+            hashes.extend(store.read().all_hashes());
+        }
         hashes
     }
 
@@ -1472,9 +2004,11 @@ where
         sender: Address,
     ) -> AllPoolTransactions<Self::Transaction> {
         let mut transactions = self.protocol_pool.all_transactions_by_sender(sender);
-        let nonce_pool = self.nonce_pool.read();
-        transactions.pending.extend(nonce_pool.pending_transactions_by_sender(sender));
-        transactions.queued.extend(nonce_pool.queued_transactions_by_sender(sender));
+        for store in self.custom_stores() {
+            let store = store.read();
+            transactions.pending.extend(store.pending_transactions_by_sender(sender));
+            transactions.queued.extend(store.queued_transactions_by_sender(sender));
+        }
         transactions
     }
 
@@ -1482,15 +2016,21 @@ where
         &self,
         hashes: Vec<TxHash>,
     ) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
-        let (protocol_hashes, sidecar_hashes) = self.partition_hashes_by_pool(hashes);
+        let [protocol_hashes, sidecar_hashes, validity_hashes] =
+            self.partition_hashes_by_pool(hashes);
         let mut removed = self.protocol_pool.remove_transactions(protocol_hashes);
         self.release_from_guard(&removed);
-        let sidecar_removed = self.nonce_pool.write().remove_transactions(&sidecar_hashes);
-        if !sidecar_removed.is_empty() {
-            self.listeners.write().on_discarded(&sidecar_removed);
+        for (store, hashes) in
+            self.custom_stores().into_iter().zip([sidecar_hashes, validity_hashes])
+        {
+            let store_removed = store.write().remove_transactions(&hashes);
+            if !store_removed.is_empty() {
+                self.listeners.write().on_discarded(&store_removed);
+            }
+            self.release_from_guard(&store_removed);
+            removed.extend(store_removed);
         }
-        self.release_from_guard(&sidecar_removed);
-        removed.extend(sidecar_removed);
+        self.record_validity_store_size();
         removed
     }
 
@@ -1498,16 +2038,21 @@ where
         &self,
         hashes: Vec<TxHash>,
     ) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
-        let (protocol_hashes, sidecar_hashes) = self.partition_hashes_by_pool(hashes);
+        let [protocol_hashes, sidecar_hashes, validity_hashes] =
+            self.partition_hashes_by_pool(hashes);
         let mut removed = self.protocol_pool.remove_transactions_and_descendants(protocol_hashes);
         self.release_from_guard(&removed);
-        let sidecar_removed =
-            self.nonce_pool.write().remove_transactions_and_descendants(&sidecar_hashes);
-        if !sidecar_removed.is_empty() {
-            self.listeners.write().on_discarded(&sidecar_removed);
+        for (store, hashes) in
+            self.custom_stores().into_iter().zip([sidecar_hashes, validity_hashes])
+        {
+            let store_removed = store.write().remove_transactions_and_descendants(&hashes);
+            if !store_removed.is_empty() {
+                self.listeners.write().on_discarded(&store_removed);
+            }
+            self.release_from_guard(&store_removed);
+            removed.extend(store_removed);
         }
-        self.release_from_guard(&sidecar_removed);
-        removed.extend(sidecar_removed);
+        self.record_validity_store_size();
         removed
     }
 
@@ -1517,12 +2062,15 @@ where
     ) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
         let mut removed = self.protocol_pool.remove_transactions_by_sender(sender);
         self.release_from_guard(&removed);
-        let sidecar_removed = self.nonce_pool.write().remove_transactions_by_sender(sender);
-        if !sidecar_removed.is_empty() {
-            self.listeners.write().on_discarded(&sidecar_removed);
+        for store in self.custom_stores() {
+            let store_removed = store.write().remove_transactions_by_sender(sender);
+            if !store_removed.is_empty() {
+                self.listeners.write().on_discarded(&store_removed);
+            }
+            self.release_from_guard(&store_removed);
+            removed.extend(store_removed);
         }
-        self.release_from_guard(&sidecar_removed);
-        removed.extend(sidecar_removed);
+        self.record_validity_store_size();
         removed
     }
 
@@ -1530,19 +2078,25 @@ where
         &self,
         hashes: Vec<TxHash>,
     ) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
-        let (protocol_hashes, sidecar_hashes) = self.partition_hashes_by_pool(hashes);
+        let [protocol_hashes, sidecar_hashes, validity_hashes] =
+            self.partition_hashes_by_pool(hashes);
         let mut removed = self.protocol_pool.prune_transactions(protocol_hashes);
         self.release_from_guard(&removed);
-        let pruned = {
-            let mut nonce_pool = self.nonce_pool.write();
-            let pruned = nonce_pool.prune_mined(&sidecar_hashes);
-            self.listeners.write().on_lane_update(&pruned.lanes);
-            pruned
-        };
-        self.release_from_guard(&pruned.removed);
-        self.release_from_guard(&pruned.lanes.discarded);
-        removed.extend(pruned.removed);
-        removed.extend(pruned.lanes.discarded);
+        for (store, hashes) in
+            self.custom_stores().into_iter().zip([sidecar_hashes, validity_hashes])
+        {
+            let pruned = {
+                let mut store = store.write();
+                let pruned = store.prune_mined(&hashes);
+                self.listeners.write().on_lane_update(&pruned.lanes);
+                pruned
+            };
+            self.release_from_guard(&pruned.removed);
+            self.release_from_guard(&pruned.lanes.discarded);
+            removed.extend(pruned.removed);
+            removed.extend(pruned.lanes.discarded);
+        }
+        self.record_validity_store_size();
         removed
     }
 
@@ -1556,7 +2110,9 @@ where
         }
 
         let nonce_pool = self.nonce_pool.read();
-        announcement.retain_by_hash(|hash| !nonce_pool.contains(hash));
+        let validity_pool = self.validity_pool.read();
+        announcement
+            .retain_by_hash(|hash| !nonce_pool.contains(hash) && !validity_pool.contains(hash));
     }
 
     fn retain_contains<A>(&self, announcement: &mut A)
@@ -1564,27 +2120,41 @@ where
         A: HandleMempoolData,
     {
         let nonce_pool = self.nonce_pool.read();
+        let validity_pool = self.validity_pool.read();
         announcement.retain_by_hash(|hash| {
-            self.protocol_pool.get(hash).is_some() || nonce_pool.contains(hash)
+            self.protocol_pool.get(hash).is_some()
+                || nonce_pool.contains(hash)
+                || validity_pool.contains(hash)
         });
     }
 
     fn get(&self, tx_hash: &TxHash) -> Option<Arc<ValidPoolTransaction<Self::Transaction>>> {
-        self.protocol_pool.get(tx_hash).or_else(|| self.nonce_pool.read().get(tx_hash))
+        self.protocol_pool.get(tx_hash).or_else(|| self.custom_get(tx_hash))
     }
 
     fn get_all(&self, txs: Vec<TxHash>) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
         let nonce_pool = self.nonce_pool.read();
+        let validity_pool = self.validity_pool.read();
         txs.into_iter()
-            .filter_map(|tx| self.protocol_pool.get(&tx).or_else(|| nonce_pool.get(&tx)))
+            .filter_map(|tx| {
+                self.protocol_pool
+                    .get(&tx)
+                    .or_else(|| nonce_pool.get(&tx))
+                    .or_else(|| validity_pool.get(&tx))
+            })
             .collect()
     }
 
     fn on_propagated(&self, txs: PropagatedTransactions) {
         let nonce_pool = self.nonce_pool.read();
+        let validity_pool = self.validity_pool.read();
         let protocol_txs = PropagatedTransactions(
-            txs.0.into_iter().filter(|(hash, _)| !nonce_pool.contains(hash)).collect(),
+            txs.0
+                .into_iter()
+                .filter(|(hash, _)| !nonce_pool.contains(hash) && !validity_pool.contains(hash))
+                .collect(),
         );
+        drop(validity_pool);
         drop(nonce_pool);
         self.protocol_pool.on_propagated(protocol_txs)
     }
@@ -1594,7 +2164,9 @@ where
         sender: Address,
     ) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
         let mut transactions = self.protocol_pool.get_transactions_by_sender(sender);
-        transactions.extend(self.nonce_pool.read().transactions_by_sender(sender));
+        for store in self.custom_stores() {
+            transactions.extend(store.read().transactions_by_sender(sender));
+        }
         transactions
     }
 
@@ -1604,13 +2176,15 @@ where
     ) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
         let mut transactions =
             self.protocol_pool.get_pending_transactions_with_predicate(&mut predicate);
-        transactions.extend(
-            self.nonce_pool
-                .read()
-                .pending_transactions()
-                .into_iter()
-                .filter(|transaction| predicate(transaction)),
-        );
+        for store in self.custom_stores() {
+            transactions.extend(
+                store
+                    .read()
+                    .pending_transactions()
+                    .into_iter()
+                    .filter(|transaction| predicate(transaction)),
+            );
+        }
         transactions
     }
 
@@ -1619,7 +2193,9 @@ where
         sender: Address,
     ) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
         let mut transactions = self.protocol_pool.get_pending_transactions_by_sender(sender);
-        transactions.extend(self.nonce_pool.read().pending_transactions_by_sender(sender));
+        for store in self.custom_stores() {
+            transactions.extend(store.read().pending_transactions_by_sender(sender));
+        }
         transactions
     }
 
@@ -1628,7 +2204,9 @@ where
         sender: Address,
     ) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
         let mut transactions = self.protocol_pool.get_queued_transactions_by_sender(sender);
-        transactions.extend(self.nonce_pool.read().queued_transactions_by_sender(sender));
+        for store in self.custom_stores() {
+            transactions.extend(store.read().queued_transactions_by_sender(sender));
+        }
         transactions
     }
 
@@ -1636,7 +2214,9 @@ where
         &self,
         sender: Address,
     ) -> Option<Arc<ValidPoolTransaction<Self::Transaction>>> {
-        self.protocol_pool.get_highest_transaction_by_sender(sender)
+        self.protocol_pool
+            .get_highest_transaction_by_sender(sender)
+            .or_else(|| self.validity_pool.read().highest_lane_transaction(&(sender, U256::ZERO)))
     }
 
     fn get_highest_consecutive_transaction_by_sender(
@@ -1644,7 +2224,13 @@ where
         sender: Address,
         on_chain_nonce: u64,
     ) -> Option<Arc<ValidPoolTransaction<Self::Transaction>>> {
-        self.protocol_pool.get_highest_consecutive_transaction_by_sender(sender, on_chain_nonce)
+        self.protocol_pool
+            .get_highest_consecutive_transaction_by_sender(sender, on_chain_nonce)
+            .or_else(|| {
+                self.validity_pool
+                    .read()
+                    .highest_consecutive_lane_transaction(&(sender, U256::ZERO), on_chain_nonce)
+            })
     }
 
     fn get_transaction_by_sender_and_nonce(
@@ -1652,7 +2238,9 @@ where
         sender: Address,
         nonce: u64,
     ) -> Option<Arc<ValidPoolTransaction<Self::Transaction>>> {
-        self.protocol_pool.get_transaction_by_sender_and_nonce(sender, nonce)
+        self.protocol_pool
+            .get_transaction_by_sender_and_nonce(sender, nonce)
+            .or_else(|| self.validity_pool.read().lane_transaction(&(sender, U256::ZERO), nonce))
     }
 
     fn get_transactions_by_origin(
@@ -1660,13 +2248,15 @@ where
         origin: TransactionOrigin,
     ) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
         let mut transactions = self.protocol_pool.get_transactions_by_origin(origin);
-        transactions.extend(
-            self.nonce_pool
-                .read()
-                .all_transactions()
-                .into_iter()
-                .filter(|transaction| transaction.origin == origin),
-        );
+        for store in self.custom_stores() {
+            transactions.extend(
+                store
+                    .read()
+                    .all_transactions()
+                    .into_iter()
+                    .filter(|transaction| transaction.origin == origin),
+            );
+        }
         transactions
     }
 
@@ -1675,20 +2265,24 @@ where
         origin: TransactionOrigin,
     ) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
         let mut transactions = self.protocol_pool.get_pending_transactions_by_origin(origin);
-        transactions.extend(
-            self.nonce_pool
-                .read()
-                .pending_transactions()
-                .into_iter()
-                .filter(|transaction| transaction.origin == origin),
-        );
+        for store in self.custom_stores() {
+            transactions.extend(
+                store
+                    .read()
+                    .pending_transactions()
+                    .into_iter()
+                    .filter(|transaction| transaction.origin == origin),
+            );
+        }
         transactions
     }
 
     fn unique_senders(&self) -> AddressSet {
         let mut senders = self.protocol_pool.unique_senders();
-        for sender in self.nonce_pool.read().unique_senders() {
-            senders.insert(sender);
+        for store in self.custom_stores() {
+            for sender in store.read().unique_senders() {
+                senders.insert(sender);
+            }
         }
         senders
     }
@@ -1769,13 +2363,7 @@ where
         attributes: BestTransactionsAttributes,
     ) -> Box<dyn ParkableBestTransactions<Self::Transaction>> {
         let base_fee = attributes.basefee;
-        let merged = MergeBestTransactions::new(
-            self.protocol_pool.best_transactions_with_attributes(attributes),
-            Box::new(self.nonce_pool.read().best_transactions(self.ordering.clone(), base_fee)),
-            T::is_eip8130_sidecar_transaction,
-            self.ordering.clone(),
-            base_fee,
-        );
+        let merged = self.merged_best_transactions(attributes);
         Box::new(ParkedBestTransactions::new(merged, self.ordering.clone(), base_fee))
     }
 }
@@ -1792,7 +2380,8 @@ where
     type Block = <TransactionValidationTaskExecutor<BaseTransactionValidator<Client, T, Evm>> as TransactionValidator>::Block;
 
     fn set_block_info(&self, info: BlockInfo) {
-        self.protocol_pool.set_block_info(info)
+        self.protocol_pool.set_block_info(info);
+        self.sync_validity_block_info();
     }
 
     fn on_canonical_state_change(
@@ -1812,16 +2401,30 @@ where
                 // The new branch can rebuild an earlier block or restart its flashblock indices.
                 *self.published_flashblock.write() = None;
             }
-            let mut guard = self.guard.write();
-            for hash in &mined_transactions {
-                guard.release(hash);
+            for guard in self.guards() {
+                let mut guard = guard.write();
+                for hash in &mined_transactions {
+                    guard.release(hash);
+                }
             }
             let mut block_expiry = self.block_expiry.write();
             for hash in &mined_transactions {
                 block_expiry.remove(hash);
             }
         }
+        let changed_accounts: Vec<_> = update
+            .changed_accounts
+            .iter()
+            .map(|account| (account.address, Some(account.balance), Some(account.nonce)))
+            .collect();
+        let is_reorg = update.update_kind == PoolUpdateKind::Reorg;
         self.protocol_pool.on_canonical_state_change(update);
+        self.forget_protocol_authorizations(mined_transactions.iter().copied());
+        // Once per block, drop what the protocol pool evicted or dropped on its own.
+        self.protocol_authorizations
+            .lock()
+            .retain_pooled(|hash| self.protocol_pool.get(hash).is_some());
+        self.maintain_validity_store(block_hash, &mined_transactions, &changed_accounts, is_reorg);
         {
             let mut nonce_pool = self.nonce_pool.write();
             let pruned = nonce_pool.prune_mined(&mined_transactions);
@@ -1849,7 +2452,9 @@ where
         self.expire_due_buckets(now);
         self.expire_by_block(block_number);
         self.reconcile_guard();
-        GuardMetrics::tracked().set(self.guard.read().len() as f64);
+        GuardMetrics::tracked()
+            .set((self.guard.read().len() + self.validity_guard.read().len()) as f64);
+        self.record_validity_store_size();
     }
 
     fn update_accounts(&self, accounts: Vec<ChangedAccount>) {
@@ -1857,14 +2462,24 @@ where
         // dropped reservation cannot be recreated from an older validation
         // snapshot after reth publishes the transaction.
         let _admission_guard = self.protocol_admission_lock.lock();
-        self.nonce_pool.write().apply_balance_updates(
-            accounts.iter().map(|account| (account.address, account.balance)),
-        );
+        // A reloaded account is authoritative, so it may move validity key-zero
+        // cursors backward as well as forward.
+        let account_updates: Vec<_> = accounts
+            .iter()
+            .map(|account| (account.address, Some(account.balance), Some(account.nonce)))
+            .collect();
+        for class in [TransactionClass::Normal, TransactionClass::Validity] {
+            let (store, guard) = self.custom_store(class);
+            let update = store.write().apply_account_updates(&account_updates, true);
+            self.publish_lane_update(&update, guard);
+        }
         let dropped = {
-            let mut guard = self.guard.write();
             let mut dropped = Vec::new();
-            for account in &accounts {
-                dropped.extend(guard.on_balance_changed(account.address, account.balance));
+            for guard in self.guards() {
+                let mut guard = guard.write();
+                for account in &accounts {
+                    dropped.extend(guard.on_balance_changed(account.address, account.balance));
+                }
             }
             dropped
         };
@@ -1887,9 +2502,12 @@ where
             .filter(|hash| self.protocol_pool.get(hash).is_none())
             .collect();
         let mut guard = self.guard.write();
-        for hash in discarded {
-            guard.release(&hash);
+        for hash in &discarded {
+            guard.release(hash);
         }
+        drop(guard);
+        self.forget_protocol_authorizations(discarded);
+        self.record_validity_store_size();
     }
 
     fn delete_blob(&self, tx: B256) {
@@ -2006,13 +2624,23 @@ impl<T: BasePooledTx> SidecarListeners<T> {
             AddedTransactionState::Queued(reason) => {
                 self.broadcast_hash_event(&hash, TransactionEvent::Queued);
                 self.broadcast_all(FullTransactionEvent::Queued(hash, Some(reason.clone())));
-                self.broadcast_new(NewTransactionEvent { subpool: SubPool::Queued, transaction });
+                // Like the protocol pool, a transaction only its fee cap parks is in the base
+                // fee subpool.
+                let subpool = if matches!(reason, QueuedReason::InsufficientBaseFee) {
+                    SubPool::BaseFee
+                } else {
+                    SubPool::Queued
+                };
+                self.broadcast_new(NewTransactionEvent { subpool, transaction });
             }
         }
 
         self.on_lane_moved(&outcome.anchor);
         for promoted in &outcome.promoted {
             self.broadcast_pending_transaction(promoted);
+        }
+        for (demoted, reason) in &outcome.demoted {
+            self.broadcast_queued(demoted.hash(), reason.clone());
         }
     }
 
@@ -2027,11 +2655,14 @@ impl<T: BasePooledTx> SidecarListeners<T> {
         for promoted in &update.promoted {
             self.broadcast_pending_transaction(promoted);
         }
-        for queued in &update.queued {
-            let hash = *queued.hash();
-            self.broadcast_hash_event(&hash, TransactionEvent::Queued);
-            self.broadcast_all(FullTransactionEvent::Queued(hash, Some(QueuedReason::NonceGap)));
+        for (queued, reason) in &update.queued {
+            self.broadcast_queued(queued.hash(), reason.clone());
         }
+    }
+
+    fn broadcast_queued(&mut self, hash: &TxHash, reason: QueuedReason) {
+        self.broadcast_hash_event(hash, TransactionEvent::Queued);
+        self.broadcast_all(FullTransactionEvent::Queued(*hash, Some(reason)));
     }
 
     fn on_mined(&mut self, transactions: &[Arc<ValidPoolTransaction<T>>], block_hash: B256) {
@@ -2149,10 +2780,12 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use alloy_consensus::{
-        SignableTransaction, Transaction, TxEip1559,
+        SignableTransaction, Transaction, TxEip1559, TxEip7702,
         transaction::{Recovered, SignerRecoverable},
     };
-    use alloy_eips::{eip1559::ETHEREUM_BLOCK_GAS_LIMIT_30M, eip2718::Encodable2718};
+    use alloy_eips::{
+        eip1559::ETHEREUM_BLOCK_GAS_LIMIT_30M, eip2718::Encodable2718, eip7702::Authorization,
+    };
     use alloy_primitives::{Bytes, TxKind, U256};
     use alloy_signer::SignerSync;
     use alloy_signer_local::PrivateKeySigner;
@@ -2903,7 +3536,8 @@ mod tests {
             .expect_err("sidecar transaction above the cap must be rejected");
         assert!(error.to_string().contains("sender EIP-8130 signature limit"));
         assert!(sidecar_pool.get(&over_hash).is_none());
-        assert!(matches!(over_events.next().await, Some(TransactionEvent::Discarded)));
+        // Rejected before it reached the store, the transaction was never announced.
+        assert!(over_events.next().now_or_never().is_none());
     }
 
     /// Without the Keystore a signer's key can never change, so the sender
@@ -3584,7 +4218,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn stale_sidecar_replacement_restores_original_transaction() {
+    async fn stale_sidecar_replacement_keeps_original_transaction() {
         let (pool, client) = build_integration_pool();
         let signer = signer();
         fund(&client, signer.address());
@@ -3602,18 +4236,19 @@ mod tests {
         pool.validator().validator().clear_limit_class_cache();
 
         let error = pool
-            .add_validated_sidecar_transaction(validated, TransactionOrigin::Local, balance_epoch)
+            .add_validated_custom_transaction(validated, TransactionOrigin::Local, balance_epoch)
             .expect_err("stale classification must reject the replacement");
         assert!(error.to_string().contains("classification changed during validation"));
         assert!(pool.get(&replacement_hash).is_none());
         assert!(pool.get(&original_hash).is_some());
         assert!(pool.guard.read().contains(&original_hash));
         assert!(!pool.guard.read().contains(&replacement_hash));
-        assert!(matches!(replacement_events.next().await, Some(TransactionEvent::Discarded)));
+        // Rejected before it reached the store, the replacement was never announced.
+        assert!(replacement_events.next().now_or_never().is_none());
     }
 
     #[tokio::test]
-    async fn rolled_back_insert_still_announces_the_anchored_lane() {
+    async fn stale_insert_leaves_the_anchored_lane_untouched() {
         let (pool, client) = build_integration_pool();
         let signer = signer();
         fund(&client, signer.address());
@@ -3649,15 +4284,13 @@ mod tests {
         };
         pool.validator().validator().clear_limit_class_cache();
 
-        pool.add_validated_sidecar_transaction(validated, TransactionOrigin::Local, balance_epoch)
-            .expect_err("stale classification must roll back the insert");
+        pool.add_validated_custom_transaction(validated, TransactionOrigin::Local, balance_epoch)
+            .expect_err("stale classification must reject the insert");
 
+        // The stale validation's state view never reaches the store: the lane stays queued.
         let pending = pool.nonce_pool.read().pending_transactions();
-        assert!(pending.iter().any(|transaction| *transaction.hash() == queued_hash));
-        assert!(matches!(
-            queued_events.next().now_or_never(),
-            Some(Some(TransactionEvent::Pending))
-        ));
+        assert!(pending.iter().all(|transaction| *transaction.hash() != queued_hash));
+        assert!(queued_events.next().now_or_never().is_none());
     }
 
     #[tokio::test]
@@ -3703,11 +4336,7 @@ mod tests {
         };
 
         let error = pool
-            .add_validated_sidecar_transaction(
-                validated,
-                TransactionOrigin::External,
-                balance_epoch,
-            )
+            .add_validated_custom_transaction(validated, TransactionOrigin::External, balance_epoch)
             .expect_err("the cheapest tail is the inserted transaction");
         assert!(matches!(error.kind, PoolErrorKind::DiscardedOnInsert));
 
@@ -4399,7 +5028,7 @@ mod tests {
         let validated =
             pool.validator().validate_transaction(TransactionOrigin::External, transaction).await;
         set_balance(pool, sender, balance);
-        pool.add_validated_sidecar_transaction(
+        pool.add_validated_custom_transaction(
             validated,
             TransactionOrigin::External,
             balance_epoch,
@@ -4851,7 +5480,9 @@ mod tests {
                 update_kind: PoolUpdateKind::Commit,
             });
             assert_eq!(pool.get(&hash).is_some(), remains_live);
-            assert_eq!(pool.guard.read().contains(&hash), remains_live);
+            // A transaction with validity predicates is guarded by the validity store's guard.
+            assert_eq!(pool.validity_guard.read().contains(&hash), remains_live);
+            assert!(!pool.guard.read().contains(&hash));
         }
     }
 
@@ -4932,5 +5563,1010 @@ mod tests {
         assert!(listeners.new_all.is_empty());
         assert!(listeners.new_propagate.is_empty());
         assert!(listeners.all_events.is_empty());
+    }
+
+    /// A 1559 transaction carrying a block-number validity predicate that holds for any test head.
+    fn validity_1559(
+        signer: &PrivateKeySigner,
+        nonce: u64,
+        max_fee_per_gas: u128,
+        max_priority_fee_per_gas: u128,
+    ) -> BasePooledTransaction {
+        signed_1559_with_fees(signer, nonce, max_fee_per_gas, max_priority_fee_per_gas)
+            .with_validity_predicates(vec![ValidityPredicate::BlockNumber {
+                op: ValidityOperator::LessThanOrEqual,
+                value: U256::from(1_000_000),
+            }])
+    }
+
+    fn assert_lane_conflict(result: PoolResult<AddedTransactionOutcome>) {
+        let error = result.expect_err("opposite-class lane addition must be rejected");
+        assert_eq!(
+            PoolAdmissionError::from_pool_error(&error),
+            Some(&PoolAdmissionError::LaneConflict)
+        );
+    }
+
+    /// Pending and queued nonces of `sender`'s protocol-nonce lane, sorted.
+    fn lane_nonces(pool: &IntegrationPool, sender: Address) -> (Vec<u64>, Vec<u64>) {
+        let snapshot = pool.all_transactions_by_sender(sender);
+        let nonces = |transactions: &[Arc<ValidPoolTransaction<BasePooledTransaction>>]| {
+            let mut nonces: Vec<_> = transactions.iter().map(|tx| tx.nonce()).collect();
+            nonces.sort_unstable();
+            nonces
+        };
+        (nonces(&snapshot.pending), nonces(&snapshot.queued))
+    }
+
+    fn canonical_update(
+        pool: &IntegrationPool,
+        number: u64,
+        accounts: Vec<ChangedAccount>,
+        update_kind: PoolUpdateKind,
+    ) {
+        let block = SealedBlock::seal_slow(BaseBlock {
+            header: alloy_consensus::Header { number, ..Default::default() },
+            body: Default::default(),
+        });
+        pool.on_canonical_state_change(CanonicalStateUpdate {
+            new_tip: &block,
+            pending_block_base_fee: pool.block_info().pending_basefee,
+            pending_block_blob_fee: None,
+            changed_accounts: accounts,
+            mined_transactions: Vec::new(),
+            update_kind,
+        });
+    }
+
+    #[tokio::test]
+    async fn validity_transaction_is_stored_apart_from_normal_pools() {
+        let (pool, client) = build_integration_pool();
+        let sender = signer();
+        fund(&client, sender.address());
+
+        let transaction = validity_1559(&sender, 0, 1_000, 0);
+        let hash = *transaction.hash();
+        pool.add_transaction(TransactionOrigin::External, transaction).await.unwrap();
+
+        assert!(pool.validity_pool.read().contains(&hash));
+        assert!(pool.protocol_pool.get(&hash).is_none());
+        assert!(pool.get(&hash).is_some());
+        assert_eq!(pool.pool_size().pending, 1);
+        assert!(is_best(&pool, hash));
+        assert_eq!(
+            pool.get_pending_transaction_by_sender_and_nonce(sender.address(), 0)
+                .map(|tx| *tx.hash()),
+            Some(hash)
+        );
+    }
+
+    #[tokio::test]
+    async fn validity_and_normal_capacity_never_evict_each_other() {
+        let mut config = PoolConfig::default();
+        config.pending_limit.max_txs = 1;
+        let (pool, client) = build_integration_pool_with_config(config);
+        let pool = pool.with_validity_pool_config(ValidityPoolConfig {
+            max_count: 1,
+            max_size_bytes: usize::MAX,
+            max_account_slots: 16,
+        });
+        let [normal_a, normal_b, validity_a, validity_b] = std::array::from_fn(|_| signer());
+        for account in [&normal_a, &normal_b, &validity_a, &validity_b] {
+            fund(&client, account.address());
+        }
+
+        let normal = signed_1559_with_fees(&normal_a, 0, 1_000, 0);
+        let normal_hash = *normal.hash();
+        pool.add_transaction(TransactionOrigin::External, normal).await.unwrap();
+        pool.add_transaction(TransactionOrigin::External, validity_1559(&validity_a, 0, 1_000, 0))
+            .await
+            .unwrap();
+
+        // A full validity store sheds validity transactions only.
+        let _ = pool
+            .add_transaction(TransactionOrigin::External, validity_1559(&validity_b, 0, 2_000, 1))
+            .await;
+        assert!(pool.get(&normal_hash).is_some());
+        let validity_survivors = pool.validity_pool.read().all_hashes();
+        assert_eq!(validity_survivors.len(), 1);
+
+        // A full normal pool sheds normal transactions only.
+        let _ = pool
+            .add_transaction(
+                TransactionOrigin::External,
+                signed_1559_with_fees(&normal_b, 0, 2_000, 1),
+            )
+            .await;
+        assert_eq!(pool.validity_pool.read().all_hashes(), validity_survivors);
+        assert_eq!(pool.protocol_pool.pool_size().total, 1);
+    }
+
+    #[tokio::test]
+    async fn opposite_class_addition_to_a_lane_is_rejected() {
+        let (pool, client) = build_integration_pool();
+        let [normal_first, validity_first] = std::array::from_fn(|_| signer());
+        fund(&client, normal_first.address());
+        fund(&client, validity_first.address());
+
+        pool.add_transaction(TransactionOrigin::External, signed_1559(&normal_first, 0))
+            .await
+            .unwrap();
+        assert_lane_conflict(
+            pool.add_transaction(
+                TransactionOrigin::External,
+                validity_1559(&normal_first, 1, 1_000, 0),
+            )
+            .await,
+        );
+
+        pool.add_transaction(
+            TransactionOrigin::External,
+            validity_1559(&validity_first, 0, 1_000, 0),
+        )
+        .await
+        .unwrap();
+        assert_lane_conflict(
+            pool.add_transaction(TransactionOrigin::External, signed_1559(&validity_first, 1))
+                .await,
+        );
+
+        // A 2D-nonce lane is its own lane: a validity channel beside a normal account nonce lane
+        // is allowed.
+        pool.add_transaction(
+            TransactionOrigin::External,
+            signed_channel_tx(&normal_first, U256::from(1), 0, 1_000).with_validity_predicates(
+                vec![ValidityPredicate::BlockNumber {
+                    op: ValidityOperator::LessThanOrEqual,
+                    value: U256::from(1_000_000),
+                }],
+            ),
+        )
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn fee_bumped_replacement_switches_a_sole_incumbent_lane_class() {
+        let (pool, client) = build_integration_pool();
+        let sender = signer();
+        fund(&client, sender.address());
+
+        let normal = signed_1559_with_fees(&sender, 0, 1_000, 0);
+        let normal_hash = *normal.hash();
+        pool.add_transaction(TransactionOrigin::External, normal).await.unwrap();
+
+        // Without the price bump the incumbent stays.
+        let error = pool
+            .add_transaction(TransactionOrigin::External, validity_1559(&sender, 0, 1_001, 0))
+            .await
+            .unwrap_err();
+        assert!(matches!(error.kind, PoolErrorKind::ReplacementUnderpriced));
+        assert!(pool.get(&normal_hash).is_some());
+
+        let validity = validity_1559(&sender, 0, 2_000, 1_000);
+        let validity_hash = *validity.hash();
+        pool.add_transaction(TransactionOrigin::External, validity).await.unwrap();
+        assert!(pool.get(&normal_hash).is_none());
+        assert!(pool.validity_pool.read().contains(&validity_hash));
+
+        // And back: a bumped normal transaction replaces the lone validity incumbent.
+        let normal = signed_1559_with_fees(&sender, 0, 4_000, 2_000);
+        let normal_hash = *normal.hash();
+        pool.add_transaction(TransactionOrigin::External, normal).await.unwrap();
+        assert!(pool.get(&validity_hash).is_none());
+        assert!(pool.protocol_pool.get(&normal_hash).is_some());
+
+        // A same-nonce replacement is a conflict once the lane holds more than the incumbent.
+        pool.add_transaction(TransactionOrigin::External, signed_1559(&sender, 1)).await.unwrap();
+        assert_lane_conflict(
+            pool.add_transaction(
+                TransactionOrigin::External,
+                validity_1559(&sender, 0, 8_000, 4_000),
+            )
+            .await,
+        );
+    }
+
+    /// Key-zero validity lanes rank like the protocol pool: each scenario runs the same nonce
+    /// sequence through both stores and compares pending and queued nonces.
+    #[tokio::test]
+    async fn validity_account_nonce_lane_readiness_matches_protocol_pool() {
+        let fee_per_tx = U256::from(50_000u64 * 1_000);
+        let scenarios: [(&str, U256, Vec<u64>); 3] = [
+            ("contiguous and funded", U256::from(1_000_000_000_000u64), vec![0, 1, 2]),
+            ("nonce gap", U256::from(1_000_000_000_000u64), vec![0, 2, 3]),
+            ("cumulative cost exceeds balance", fee_per_tx * U256::from(2), vec![0, 1, 2]),
+        ];
+        for (scenario, balance, nonces) in scenarios {
+            let mut observed = Vec::new();
+            for validity in [false, true] {
+                let (pool, client) = build_integration_pool();
+                let sender = signer();
+                client.add_account(sender.address(), ExtendedAccount::new(0, balance));
+                for nonce in &nonces {
+                    let transaction = if validity {
+                        validity_1559(&sender, *nonce, 1_000, 0)
+                    } else {
+                        signed_1559_with_fees(&sender, *nonce, 1_000, 0)
+                    };
+                    pool.add_transaction(TransactionOrigin::External, transaction).await.unwrap();
+                }
+                observed.push(lane_nonces(&pool, sender.address()));
+            }
+            assert_eq!(observed[0], observed[1], "{scenario}");
+        }
+    }
+
+    #[tokio::test]
+    async fn validity_account_nonce_lane_follows_block_fee_and_canonical_nonce_like_protocol_pool()
+    {
+        let mut observed = Vec::new();
+        for validity in [false, true] {
+            let (pool, client) = build_integration_pool();
+            let sender = signer();
+            let address = sender.address();
+            let balance = U256::from(1_000_000_000_000u64);
+            client.add_account(address, ExtendedAccount::new(0, balance));
+            for nonce in 0..3 {
+                let transaction = if validity {
+                    validity_1559(&sender, nonce, 1_000, 0)
+                } else {
+                    signed_1559_with_fees(&sender, nonce, 1_000, 0)
+                };
+                pool.add_transaction(TransactionOrigin::External, transaction).await.unwrap();
+            }
+            let mut steps = vec![lane_nonces(&pool, address)];
+
+            // A pending base fee above every max fee parks the lane; lowering it restores it.
+            pool.set_block_info(BlockInfo { pending_basefee: 2_000, ..pool.block_info() });
+            steps.push(lane_nonces(&pool, address));
+            pool.set_block_info(BlockInfo { pending_basefee: 0, ..pool.block_info() });
+            steps.push(lane_nonces(&pool, address));
+
+            // The canonical nonce advances past a transaction this node never saw mined.
+            canonical_update(
+                &pool,
+                1,
+                vec![ChangedAccount { address, nonce: 1, balance }],
+                PoolUpdateKind::Commit,
+            );
+            steps.push(lane_nonces(&pool, address));
+
+            observed.push(steps);
+
+            if validity {
+                // A reorg rolls the canonical nonce back, opening a gap below the lane. The
+                // validity store queues the lane until the gap fills; the protocol pool keeps
+                // the stale pending flags it computed before the rollback.
+                canonical_update(
+                    &pool,
+                    1,
+                    vec![ChangedAccount { address, nonce: 0, balance }],
+                    PoolUpdateKind::Reorg,
+                );
+                assert_eq!(lane_nonces(&pool, address), (vec![], vec![1, 2]));
+                assert!(!pool.best_transactions().any(|tx| tx.sender() == address));
+            }
+        }
+        assert_eq!(observed[0], observed[1]);
+        assert_eq!(observed[1][3], (vec![1, 2], vec![]));
+    }
+
+    #[tokio::test]
+    async fn builder_merges_validity_and_normal_by_priority_and_invalidates_owning_lane() {
+        let (pool, client) = build_integration_pool();
+        let [normal, validity] = std::array::from_fn(|_| signer());
+        fund(&client, normal.address());
+        fund(&client, validity.address());
+
+        let normal_tx = signed_1559_with_fees(&normal, 0, 1_000, 1);
+        let normal_hash = *normal_tx.hash();
+        pool.add_transaction(TransactionOrigin::External, normal_tx).await.unwrap();
+        let validity_head = validity_1559(&validity, 0, 1_000, 500);
+        let validity_head_hash = *validity_head.hash();
+        pool.add_transaction(TransactionOrigin::External, validity_head).await.unwrap();
+        pool.add_transaction(TransactionOrigin::External, validity_1559(&validity, 1, 1_000, 500))
+            .await
+            .unwrap();
+
+        let mut best = pool.best_transactions();
+        let first = best.next().expect("higher-tip validity transaction");
+        assert_eq!(*first.hash(), validity_head_hash);
+        best.mark_invalid(&first, InvalidPoolTransactionError::Underpriced);
+        let rest: Vec<_> = best.map(|tx| *tx.hash()).collect();
+        assert_eq!(rest, vec![normal_hash]);
+    }
+
+    /// Queued events a validity listener received so far, by hash.
+    fn drain_queued_events(
+        events: &mut AllTransactionsEvents<BasePooledTransaction>,
+    ) -> Vec<(TxHash, Option<QueuedReason>)> {
+        let mut queued = Vec::new();
+        while let Some(Some(event)) = events.next().now_or_never() {
+            if let FullTransactionEvent::Queued(hash, reason) = event {
+                queued.push((hash, reason));
+            }
+        }
+        queued
+    }
+
+    #[tokio::test]
+    async fn validity_lane_reports_basefee_subpool_and_real_queued_reasons() {
+        let (pool, client) = build_integration_pool();
+        let sender = signer();
+        fund(&client, sender.address());
+        pool.set_block_info(BlockInfo { pending_basefee: 500, ..pool.block_info() });
+        let mut new_events =
+            pool.listeners.write().subscribe_new_transactions(TransactionListenerKind::All);
+        let mut all_events = pool.listeners.write().subscribe_all();
+
+        let head = validity_1559(&sender, 0, 1_000, 0);
+        let head_hash = *head.hash();
+        let parked = validity_1559(&sender, 1, 400, 0);
+        let parked_hash = *parked.hash();
+        pool.add_transaction(TransactionOrigin::External, head).await.unwrap();
+        pool.add_transaction(TransactionOrigin::External, parked).await.unwrap();
+
+        // A funded, contiguous transaction blocked only by its fee cap is in the base fee
+        // subpool, as the protocol pool reports it.
+        let size = pool.pool_size();
+        assert_eq!((size.pending, size.basefee, size.queued), (1, 1, 0));
+        let subpools: Vec<_> =
+            std::iter::from_fn(|| new_events.try_recv().ok()).map(|event| event.subpool).collect();
+        assert_eq!(subpools, vec![SubPool::Pending, SubPool::BaseFee]);
+        assert_eq!(
+            drain_queued_events(&mut all_events),
+            vec![(parked_hash, Some(QueuedReason::InsufficientBaseFee))]
+        );
+
+        // A base fee rise parks the head for its fee cap, not for a nonce gap.
+        pool.set_block_info(BlockInfo { pending_basefee: 2_000, ..pool.block_info() });
+        assert_eq!(
+            drain_queued_events(&mut all_events),
+            vec![(head_hash, Some(QueuedReason::InsufficientBaseFee))]
+        );
+        let size = pool.pool_size();
+        assert_eq!((size.pending, size.basefee, size.queued), (0, 1, 1));
+
+        // Once fees allow both, a balance covering only the head parks its successor for funds.
+        pool.set_block_info(BlockInfo { pending_basefee: 0, ..pool.block_info() });
+        drain_queued_events(&mut all_events);
+        set_balance(&pool, sender.address(), U256::from(50_000u64 * 1_000));
+        assert_eq!(
+            drain_queued_events(&mut all_events),
+            vec![(parked_hash, Some(QueuedReason::InsufficientBalance))]
+        );
+    }
+
+    #[tokio::test]
+    async fn validity_removals_leave_the_block_expiry_index() {
+        let (pool, client) = build_integration_pool();
+        let pool = pool.with_validity_pool_config(ValidityPoolConfig {
+            max_count: 1,
+            max_size_bytes: usize::MAX,
+            max_account_slots: 16,
+        });
+        let [first, second, third] = std::array::from_fn(|_| signer());
+        for account in [&first, &second, &third] {
+            fund(&client, account.address());
+        }
+
+        // Capacity eviction: the store keeps one transaction and the index tracks only it.
+        pool.add_transaction(TransactionOrigin::External, validity_1559(&first, 0, 1_000, 0))
+            .await
+            .unwrap();
+        let _ = pool
+            .add_transaction(TransactionOrigin::External, validity_1559(&second, 0, 2_000, 1))
+            .await;
+        assert_eq!(pool.validity_pool.read().len(), 1);
+        assert_eq!(pool.block_expiry.read().len(), 1);
+
+        // Explicit removal.
+        let survivor = pool.validity_pool.read().all_hashes();
+        pool.remove_transactions(survivor);
+        assert!(pool.block_expiry.read().is_empty());
+
+        // A canonical nonce advance past a pooled transaction this node never saw mined.
+        pool.add_transaction(TransactionOrigin::External, validity_1559(&third, 0, 1_000, 0))
+            .await
+            .unwrap();
+        assert_eq!(pool.block_expiry.read().len(), 1);
+        canonical_update(
+            &pool,
+            1,
+            vec![ChangedAccount {
+                address: third.address(),
+                nonce: 1,
+                balance: U256::from(1_000_000_000_000u64),
+            }],
+            PoolUpdateKind::Commit,
+        );
+        assert_eq!(pool.validity_pool.read().len(), 0);
+        assert!(pool.block_expiry.read().is_empty());
+    }
+
+    #[tokio::test]
+    async fn nonce_free_replay_id_replacement_spans_validity_classes() {
+        let (pool, client) = build_zenith_integration_pool();
+        let signer = signer();
+        fund(&client, signer.address());
+        let expiry = INTEGRATION_POOL_NOW_MS + 1;
+        let with_predicate = |transaction: BasePooledTransaction| {
+            transaction.with_validity_predicates(vec![ValidityPredicate::BlockNumber {
+                op: ValidityOperator::LessThanOrEqual,
+                value: U256::from(1_000_000),
+            }])
+        };
+
+        let normal = self_paid_eoa_8130(&signer, Eip8130Constants::NONCE_KEY_MAX, 0, expiry, 1_000);
+        let normal_hash = *normal.hash();
+        pool.add_transaction(TransactionOrigin::Local, normal).await.unwrap();
+
+        // The same replay id with predicates must pay the replacement bump.
+        let underpriced = with_predicate(self_paid_eoa_8130(
+            &signer,
+            Eip8130Constants::NONCE_KEY_MAX,
+            0,
+            expiry,
+            1_001,
+        ));
+        let error = pool.add_transaction(TransactionOrigin::Local, underpriced).await.unwrap_err();
+        assert!(matches!(error.kind, PoolErrorKind::ReplacementUnderpriced));
+        assert!(pool.get(&normal_hash).is_some());
+
+        // A bumped one replaces the incumbent, so only one transaction holds the replay id.
+        let validity = with_predicate(self_paid_eoa_8130(
+            &signer,
+            Eip8130Constants::NONCE_KEY_MAX,
+            0,
+            expiry,
+            2_000,
+        ));
+        let validity_hash = *validity.hash();
+        pool.add_transaction(TransactionOrigin::Local, validity).await.unwrap();
+        assert!(pool.validity_pool.read().contains(&validity_hash));
+        assert!(pool.get(&normal_hash).is_none());
+        assert!(!pool.guard.read().contains(&normal_hash));
+    }
+
+    /// The flashblock builder advances accounts intra-block before its next iterator; an
+    /// admission validated against the trailing canonical state must not undo that.
+    #[tokio::test]
+    async fn validity_admission_keeps_an_intra_block_account_advance() {
+        let (pool, client) = build_integration_pool();
+        let sender = signer();
+        let address = sender.address();
+        let balance = U256::from(1_000_000_000_000_000_000u64);
+        fund(&client, address);
+        for nonce in 0..2 {
+            pool.add_transaction(
+                TransactionOrigin::External,
+                validity_1559(&sender, nonce, 1_000, 0),
+            )
+            .await
+            .unwrap();
+        }
+
+        pool.update_accounts(vec![ChangedAccount { address, nonce: 1, balance }]);
+        let next = validity_1559(&sender, 2, 1_000, 0);
+        let next_hash = *next.hash();
+        pool.add_transaction(TransactionOrigin::External, next).await.unwrap();
+
+        assert_eq!(lane_nonces(&pool, address), (vec![1, 2], vec![]));
+        assert!(is_best(&pool, next_hash));
+    }
+
+    /// An EIP-7702 transaction from `signer` authorizing `authority` to delegate its code.
+    fn signed_7702(
+        signer: &PrivateKeySigner,
+        nonce: u64,
+        authority: &PrivateKeySigner,
+    ) -> BasePooledTransaction {
+        signed_7702_with_tip(signer, nonce, authority, 0)
+    }
+
+    /// [`signed_7702`] paying `max_priority_fee_per_gas`.
+    fn signed_7702_with_tip(
+        signer: &PrivateKeySigner,
+        nonce: u64,
+        authority: &PrivateKeySigner,
+        max_priority_fee_per_gas: u128,
+    ) -> BasePooledTransaction {
+        let authorization = Authorization {
+            chain_id: U256::from(test_chain_id()),
+            address: Address::repeat_byte(0xDD),
+            nonce: 0,
+        };
+        let authorization_signature =
+            authority.sign_hash_sync(&authorization.signature_hash()).unwrap();
+        let tx = TxEip7702 {
+            chain_id: test_chain_id(),
+            nonce,
+            gas_limit: 100_000,
+            max_fee_per_gas: 1_000,
+            max_priority_fee_per_gas,
+            to: Address::repeat_byte(0xEE),
+            value: U256::ZERO,
+            access_list: Default::default(),
+            authorization_list: vec![authorization.into_signed(authorization_signature)],
+            input: Bytes::new(),
+        };
+        let signature = signer.sign_hash_sync(&tx.signature_hash()).unwrap();
+        let envelope = BaseTxEnvelope::Eip7702(tx.into_signed(signature));
+        let recovered = envelope.clone().try_into_recovered().unwrap();
+        BasePooledTransaction::new(recovered, envelope.encode_2718_len())
+    }
+
+    fn assert_eip7702_error(
+        result: PoolResult<AddedTransactionOutcome>,
+        expected: Eip7702PoolTransactionError,
+    ) {
+        let error = result.expect_err("EIP-7702 rules must reject the transaction");
+        assert!(
+            matches!(
+                &error.kind,
+                PoolErrorKind::InvalidTransaction(InvalidPoolTransactionError::Eip7702(error))
+                    if std::mem::discriminant(error) == std::mem::discriminant(&expected)
+            ),
+            "unexpected error {error:?}"
+        );
+    }
+
+    /// Admits `transaction` through `add_transaction`, or `add_transaction_and_subscribe` when
+    /// `subscribed`.
+    async fn admit(
+        pool: &IntegrationPool,
+        transaction: BasePooledTransaction,
+        subscribed: bool,
+    ) -> PoolResult<AddedTransactionOutcome> {
+        let hash = *transaction.hash();
+        if subscribed {
+            pool.add_transaction_and_subscribe(TransactionOrigin::External, transaction)
+                .await
+                .map(|_| AddedTransactionOutcome { hash, state: AddedTransactionState::Pending })
+        } else {
+            pool.add_transaction(TransactionOrigin::External, transaction).await
+        }
+    }
+
+    #[tokio::test]
+    async fn eip7702_delegation_limits_span_validity_classes() {
+        for subscribed in [false, true] {
+            let (pool, client) = build_integration_pool();
+            let [authority, sponsor, delegated, validity_sponsor, validity_delegated] =
+                std::array::from_fn(|_| signer());
+            for account in
+                [&authority, &sponsor, &delegated, &validity_sponsor, &validity_delegated]
+            {
+                fund(&client, account.address());
+            }
+
+            // A normal transaction may not authorize an address the validity store fills.
+            for nonce in 0..2 {
+                admit(&pool, validity_1559(&authority, nonce, 1_000, 0), subscribed).await.unwrap();
+            }
+            assert_eip7702_error(
+                admit(&pool, signed_7702(&sponsor, 0, &authority), subscribed).await,
+                Eip7702PoolTransactionError::AuthorityReserved,
+            );
+
+            // A protocol-pool authorization limits the authority's validity transactions.
+            admit(&pool, signed_7702(&sponsor, 0, &delegated), subscribed).await.unwrap();
+            admit(&pool, validity_1559(&delegated, 0, 1_000, 0), subscribed).await.unwrap();
+            assert_eip7702_error(
+                admit(&pool, validity_1559(&delegated, 1, 1_000, 0), subscribed).await,
+                Eip7702PoolTransactionError::InflightTxLimitReached,
+            );
+
+            // A validity-store authorization limits the authority's normal transactions.
+            let validity_authorization = signed_7702(&validity_sponsor, 0, &validity_delegated)
+                .with_validity_predicates(vec![ValidityPredicate::BlockNumber {
+                    op: ValidityOperator::LessThanOrEqual,
+                    value: U256::from(1_000_000),
+                }]);
+            admit(&pool, validity_authorization, subscribed).await.unwrap();
+            admit(&pool, signed_1559(&validity_delegated, 0), subscribed).await.unwrap();
+            assert_eip7702_error(
+                admit(&pool, signed_1559(&validity_delegated, 1), subscribed).await,
+                Eip7702PoolTransactionError::InflightTxLimitReached,
+            );
+        }
+    }
+
+    #[test]
+    fn validity_insertion_past_a_gap_behind_a_blocked_head_reports_the_gap() {
+        let mut nonce_pool =
+            TwoDNoncePool::new(PriceBumpConfig::default()).with_mode(NoncePoolMode::Validity);
+        let mut listeners = SidecarListeners::default();
+        let signer = signer();
+        let context = InsertContext {
+            balance: Some((U256::from(1_000_000_000_000u64), nonce_pool.balance_epoch())),
+            ..Default::default()
+        };
+        nonce_pool.set_block_info(ETHEREUM_BLOCK_GAS_LIMIT_30M, 2_000);
+        nonce_pool
+            .insert(valid_pool_transaction(validity_1559(&signer, 0, 1_000, 0)), context.clone())
+            .unwrap();
+        let mut all_events = listeners.subscribe_all();
+
+        let outcome = nonce_pool
+            .insert(valid_pool_transaction(validity_1559(&signer, 2, 3_000, 0)), context)
+            .unwrap();
+        listeners.on_inserted(&nonce_pool, &outcome);
+
+        let queued: Vec<_> = std::iter::from_fn(|| all_events.next().now_or_never().flatten())
+            .filter_map(|event| match event {
+                FullTransactionEvent::Queued(_, reason) => Some(reason),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(queued, vec![Some(QueuedReason::NonceGap)]);
+    }
+
+    /// The intra-block update also lowers the balance: an admission validated against the
+    /// trailing canonical balance must not fund the lane past what the update left.
+    #[tokio::test]
+    async fn validity_admission_keeps_an_intra_block_balance_reduction() {
+        let (pool, client) = build_integration_pool();
+        let sender = signer();
+        let address = sender.address();
+        fund(&client, address);
+        for nonce in 0..2 {
+            pool.add_transaction(
+                TransactionOrigin::External,
+                validity_1559(&sender, nonce, 1_000, 0),
+            )
+            .await
+            .unwrap();
+        }
+
+        // What the executed nonce 0 left covers exactly one more transaction.
+        let one_transaction = U256::from(50_000u64 * 1_000);
+        pool.update_accounts(vec![ChangedAccount { address, nonce: 1, balance: one_transaction }]);
+        let next = validity_1559(&sender, 2, 1_000, 0);
+        let next_hash = *next.hash();
+        let added = pool.add_transaction(TransactionOrigin::External, next).await.unwrap();
+
+        assert!(matches!(
+            added.state,
+            AddedTransactionState::Queued(QueuedReason::InsufficientBalance)
+        ));
+        assert_eq!(lane_nonces(&pool, address), (vec![1], vec![2]));
+        assert!(!is_best(&pool, next_hash));
+    }
+
+    #[tokio::test]
+    async fn protocol_authorization_index_tracks_each_pooled_authorization_once() {
+        let (pool, client) = build_integration_pool();
+        let [sponsor, authority] = std::array::from_fn(|_| signer());
+        fund(&client, sponsor.address());
+        let authorization = signed_7702(&sponsor, 0, &authority);
+        let hash = *authorization.hash();
+        let index_sizes = |pool: &IntegrationPool| {
+            let index = pool.protocol_authorizations.lock();
+            (index.authorizations_of(&authority.address()), index.len())
+        };
+
+        // Removal forgets the authorization, so re-admission records it afresh.
+        for _ in 0..3 {
+            pool.add_transaction(TransactionOrigin::External, authorization.clone()).await.unwrap();
+            assert_eq!(index_sizes(&pool), (1, 1));
+            pool.remove_transactions(vec![hash]);
+            assert_eq!(index_sizes(&pool), (0, 0));
+        }
+
+        // Maintenance while the final admission stays pooled keeps exactly one reference.
+        pool.add_transaction(TransactionOrigin::External, authorization).await.unwrap();
+        canonical_update(&pool, 1, vec![], PoolUpdateKind::Commit);
+        assert_eq!(index_sizes(&pool), (1, 1));
+        assert!(pool.has_protocol_authorization(&authority.address()));
+
+        pool.remove_transactions(vec![hash]);
+        assert_eq!(index_sizes(&pool), (0, 0));
+        assert!(!pool.has_protocol_authorization(&authority.address()));
+    }
+
+    /// A parked validity transaction discarded after a normal one was yielded must not drop the
+    /// unrelated validity lane head the merge had already buffered.
+    #[tokio::test]
+    async fn discarding_a_parked_validity_transaction_keeps_a_buffered_lane_head() {
+        let (pool, client) = build_integration_pool();
+        let [parked_sender, normal, lane] = std::array::from_fn(|_| signer());
+        for account in [&parked_sender, &normal, &lane] {
+            fund(&client, account.address());
+        }
+        let parked = validity_1559(&parked_sender, 0, 3_000, 2_000);
+        let parked_hash = *parked.hash();
+        let normal_tx = signed_1559_with_fees(&normal, 0, 3_000, 1_500);
+        let normal_hash = *normal_tx.hash();
+        let head = validity_1559(&lane, 0, 3_000, 1_000);
+        let successor = validity_1559(&lane, 1, 3_000, 900);
+        let expected = vec![*head.hash(), *successor.hash()];
+        for transaction in [parked, normal_tx, head, successor] {
+            pool.add_transaction(TransactionOrigin::External, transaction).await.unwrap();
+        }
+
+        let mut best = pool.best_transactions_with_attributes_and_parking(
+            BestTransactionsAttributes::new(0, None),
+        );
+        let first = best.next().expect("highest-tip validity transaction");
+        assert_eq!(*first.hash(), parked_hash);
+        best.park(&first);
+        assert_eq!(best.next().map(|tx| *tx.hash()), Some(normal_hash));
+        assert!(best.discard_parked(parked_hash, InvalidPoolTransactionError::Underpriced));
+
+        // Each yielded transaction commits, releasing its lane successor.
+        let rest: Vec<_> = std::iter::from_fn(|| {
+            let transaction = best.next()?;
+            best.mark_committed(&transaction);
+            Some(*transaction.hash())
+        })
+        .collect();
+        assert_eq!(rest, expected);
+    }
+
+    #[tokio::test]
+    async fn protocol_authorization_index_stays_bounded_under_capacity_eviction() {
+        let (pool, client) = build_integration_pool_with_config(PoolConfig {
+            pending_limit: SubPoolLimit::new(1, usize::MAX),
+            ..PoolConfig::default()
+        });
+
+        // Each better-paying authorization evicts the previous one from the full pool, and no
+        // canonical update or authority lookup runs in between.
+        let mut last = None;
+        for tip in 1..=20u128 {
+            let [sponsor, authority] = std::array::from_fn(|_| signer());
+            fund(&client, sponsor.address());
+            let transaction = signed_7702_with_tip(&sponsor, 0, &authority, tip);
+            last = Some((*transaction.hash(), authority.address()));
+            pool.add_transaction(TransactionOrigin::External, transaction).await.unwrap();
+        }
+
+        let (hash, authority) = last.unwrap();
+        assert!(pool.protocol_pool.get(&hash).is_some());
+        let index = pool.protocol_authorizations.lock();
+        assert!(index.len() <= 3, "evicted authorizations accumulated: {}", index.len());
+        assert!(index.backlog() <= 6, "reconciliation backlog grew: {}", index.backlog());
+        assert_eq!(index.authorizations_of(&authority), 1);
+    }
+
+    #[tokio::test]
+    async fn a_plain_replacement_forgets_the_authorization_it_replaced() {
+        let (pool, client) = build_integration_pool();
+        let [sponsor, authority] = std::array::from_fn(|_| signer());
+        fund(&client, sponsor.address());
+        let authorization = signed_7702(&sponsor, 0, &authority);
+        pool.add_transaction(TransactionOrigin::External, authorization).await.unwrap();
+        assert_eq!(pool.protocol_authorizations.lock().len(), 1);
+
+        // A fee-bumped transaction without authorizations replaces it at the same nonce.
+        pool.add_transaction(
+            TransactionOrigin::External,
+            signed_1559_with_fees(&sponsor, 0, 3_000, 2_000),
+        )
+        .await
+        .unwrap();
+
+        assert!(pool.protocol_authorizations.lock().is_empty());
+        assert!(!pool.has_protocol_authorization(&authority.address()));
+    }
+
+    /// The `txpool.validity.pooled` gauge value in `snapshot`, if recorded.
+    fn validity_pooled_gauge(
+        snapshot: Vec<(
+            metrics_util::CompositeKey,
+            Option<metrics::Unit>,
+            Option<metrics::SharedString>,
+            metrics_util::debugging::DebugValue,
+        )>,
+    ) -> Option<f64> {
+        snapshot.into_iter().find_map(|(key, _, _, value)| match value {
+            metrics_util::debugging::DebugValue::Gauge(value)
+                if key.key().name() == "txpool.validity.pooled" =>
+            {
+                Some(value.into_inner())
+            }
+            _ => None,
+        })
+    }
+
+    /// A replacement evicted on insertion still removed its incumbent from the validity store,
+    /// so the gauges follow it.
+    #[tokio::test]
+    async fn replacement_discarded_on_insert_refreshes_store_gauges() {
+        let (pool, client) = build_integration_pool();
+        let [sender, authority] = std::array::from_fn(|_| signer());
+        fund(&client, sender.address());
+        let incumbent = validity_1559(&sender, 0, 500, 0);
+        // Room for the incumbent only: the larger replacement exceeds the byte cap.
+        let pool = pool.with_validity_pool_config(ValidityPoolConfig {
+            max_count: 16,
+            max_size_bytes: incumbent.size(),
+            max_account_slots: 16,
+        });
+        pool.add_transaction(TransactionOrigin::External, incumbent).await.unwrap();
+        let replacement =
+            signed_7702_with_tip(&sender, 0, &authority, 0).with_validity_predicates(vec![
+                ValidityPredicate::BlockNumber {
+                    op: ValidityOperator::LessThanOrEqual,
+                    value: U256::from(1_000_000),
+                },
+            ]);
+        let epoch = pool.validity_pool.read().balance_epoch();
+        let validated =
+            pool.validator().validate_transaction(TransactionOrigin::External, replacement).await;
+
+        let recorder = metrics_util::debugging::DebuggingRecorder::new();
+        let snapshotter = recorder.snapshotter();
+        let result = metrics::with_local_recorder(&recorder, || {
+            pool.add_validated_custom_transaction(validated, TransactionOrigin::External, epoch)
+        });
+
+        let error = result.expect_err("the replacement exceeds the byte cap");
+        assert!(matches!(error.kind, PoolErrorKind::DiscardedOnInsert));
+        assert_eq!(pool.validity_pool.read().len(), 0);
+        assert_eq!(validity_pooled_gauge(snapshotter.snapshot().into_vec()), Some(0.0));
+    }
+
+    /// A replacement validated before a feed gap is stale: rejecting it must leave the incumbent
+    /// pooled with its authorization still limiting the authority.
+    #[tokio::test]
+    async fn stale_validity_replacement_keeps_the_incumbent_authorization() {
+        let (pool, client) = build_zenith_integration_pool();
+        let [sponsor, authority] = std::array::from_fn(|_| signer());
+        fund(&client, sponsor.address());
+        fund(&client, authority.address());
+        let incumbent = signed_7702(&sponsor, 0, &authority).with_validity_predicates(vec![
+            ValidityPredicate::BlockNumber {
+                op: ValidityOperator::LessThanOrEqual,
+                value: U256::from(1_000_000),
+            },
+        ]);
+        let incumbent_hash = *incumbent.hash();
+        pool.add_transaction(TransactionOrigin::External, incumbent).await.unwrap();
+        let replacement = signed_8130(&sponsor, U256::ZERO, 0, 0, 2_000, 1_000_000)
+            .with_validity_predicates(vec![ValidityPredicate::BlockNumber {
+                op: ValidityOperator::LessThanOrEqual,
+                value: U256::from(1_000_000),
+            }]);
+        let epoch = pool.validity_pool.read().balance_epoch();
+        let validated =
+            pool.validator().validate_transaction(TransactionOrigin::External, replacement).await;
+
+        pool.invalidate_all_tracked_transactions(InvalidationCause::FeedGap);
+        let result =
+            pool.add_validated_custom_transaction(validated, TransactionOrigin::External, epoch);
+
+        assert!(result.is_err(), "a stale classification must be rejected");
+        assert!(pool.validity_pool.read().contains(&incumbent_hash));
+        pool.add_transaction(TransactionOrigin::External, signed_1559(&authority, 0))
+            .await
+            .unwrap();
+        assert_eip7702_error(
+            pool.add_transaction(TransactionOrigin::External, signed_1559(&authority, 1)).await,
+            Eip7702PoolTransactionError::InflightTxLimitReached,
+        );
+    }
+
+    /// A standard validity transaction holds no guard capacity, so replacing it with an
+    /// EIP-8130 transaction is charged exactly like a fresh submission.
+    #[tokio::test]
+    async fn replacing_an_unguarded_validity_transaction_is_charged_like_a_fresh_one() {
+        let (pool, client) = build_zenith_integration_pool();
+        let pool = pool.with_guard_limits(GuardLimits { signature_limit: 0, ..Default::default() });
+        let [sender, fresh_sender] = std::array::from_fn(|_| signer());
+        fund(&client, sender.address());
+        fund(&client, fresh_sender.address());
+        let predicates = || {
+            vec![ValidityPredicate::BlockNumber {
+                op: ValidityOperator::LessThanOrEqual,
+                value: U256::from(1_000_000),
+            }]
+        };
+        let incumbent = validity_1559(&sender, 0, 1_000, 0);
+        let incumbent_hash = *incumbent.hash();
+        pool.add_transaction(TransactionOrigin::External, incumbent).await.unwrap();
+
+        let fresh = pool
+            .add_transaction(
+                TransactionOrigin::External,
+                signed_8130(&fresh_sender, U256::ZERO, 0, 0, 2_000, 1_000_000)
+                    .with_validity_predicates(predicates()),
+            )
+            .await
+            .expect_err("the exhausted guard must reject a fresh submission");
+        let replacement = pool
+            .add_transaction(
+                TransactionOrigin::External,
+                signed_8130(&sender, U256::ZERO, 0, 0, 2_000, 1_000_000)
+                    .with_validity_predicates(predicates()),
+            )
+            .await
+            .expect_err("the exhausted guard must reject the replacement");
+
+        assert_eq!(replacement.kind.to_string(), fresh.kind.to_string());
+        assert!(pool.validity_pool.read().contains(&incumbent_hash));
+        assert!(pool.guard.read().tracked_hashes().is_empty());
+        assert!(pool.validity_guard.read().tracked_hashes().is_empty());
+    }
+
+    /// A trivially satisfied block-number validity predicate.
+    fn any_block_predicate() -> Vec<ValidityPredicate> {
+        vec![ValidityPredicate::BlockNumber {
+            op: ValidityOperator::LessThanOrEqual,
+            value: U256::from(1_000_000),
+        }]
+    }
+
+    /// A validity EIP-8130 transaction consumed by an external account-nonce advance is an
+    /// EIP-8130 state-diff invalidation, counted once.
+    #[tokio::test]
+    async fn externally_consumed_validity_8130_counts_as_a_state_diff_invalidation() {
+        let (pool, client) = build_integration_pool();
+        let sender = signer();
+        fund(&client, sender.address());
+        let guarded = self_paid_eoa_8130(&sender, U256::ZERO, 0, 0, 1_000)
+            .with_validity_predicates(any_block_predicate());
+        let guarded_hash = *guarded.hash();
+        pool.add_transaction(TransactionOrigin::External, guarded).await.unwrap();
+        assert!(pool.validity_guard.read().contains(&guarded_hash));
+
+        let recorder = metrics_util::debugging::DebuggingRecorder::new();
+        let snapshotter = recorder.snapshotter();
+        let removed = metrics::with_local_recorder(&recorder, || {
+            pool.apply_state_diff(&[AccountStateDiff {
+                address: sender.address(),
+                nonce: Some(1),
+                ..Default::default()
+            }])
+        });
+
+        assert!(removed.iter().any(|transaction| *transaction.hash() == guarded_hash));
+        let invalidated = snapshotter.snapshot().into_vec().into_iter().find_map(
+            |(key, _, _, value)| match value {
+                metrics_util::debugging::DebugValue::Counter(value)
+                    if key.key().name() == "txpool.guard.invalidated"
+                        && key.key().labels().any(|label| {
+                            label.key() == "cause" && label.value() == "state_diff"
+                        }) =>
+                {
+                    Some(value)
+                }
+                _ => None,
+            },
+        );
+        assert_eq!(invalidated, Some(1));
+    }
+
+    /// A queued successor does not strip the coinbase-tip rank of the cumulatively funded
+    /// validity account-lane head ahead of it.
+    #[tokio::test]
+    async fn a_funded_validity_head_keeps_its_tip_rank_behind_a_queued_successor() {
+        let (pool, client) = build_integration_pool();
+        let [sender, other] = std::array::from_fn(|_| signer());
+        client
+            .add_account(sender.address(), ExtendedAccount::new(0, U256::from(5) * tipping_fees()));
+        fund(&client, other.address());
+        // Each transaction costs three times the tipping fees: only nonce 0 is funded.
+        let tip = U256::from(2) * tipping_fees();
+        let head =
+            tipping_eoa_8130(&sender, None, 0, tip).with_validity_predicates(any_block_predicate());
+        let head_hash = *head.hash();
+        let successor =
+            tipping_eoa_8130(&sender, None, 1, tip).with_validity_predicates(any_block_predicate());
+        let successor_hash = *successor.hash();
+        pool.add_transaction(TransactionOrigin::External, head).await.unwrap();
+        pool.add_transaction(TransactionOrigin::External, successor).await.unwrap();
+        pool.add_transaction(
+            TransactionOrigin::External,
+            signed_1559_with_fees(&other, 0, 1_000, 1),
+        )
+        .await
+        .unwrap();
+
+        let best = best_hashes(&pool);
+        assert_eq!(best.first(), Some(&head_hash), "the funded tip outranks priority fee 1");
+        assert!(!best.contains(&successor_hash));
     }
 }
