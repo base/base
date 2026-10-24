@@ -12,8 +12,8 @@ use base_execution_payload_builder::{
 };
 
 use crate::{
-    ExecutionMeteringMode, NoopMeteringProvider, RejectionCache, RestingPredicateMode,
-    SharedMeteringProvider,
+    BuilderMetrics, ExecutionMeteringMode, NoopMeteringProvider, RejectionCache,
+    ResourceMeteringConfig, RestingPredicateMode, SharedMeteringProvider,
 };
 
 /// Configuration values for the flashblocks builder.
@@ -78,6 +78,9 @@ pub struct BuilderConfig {
 
     /// Resource metering provider
     pub metering_provider: SharedMeteringProvider,
+    /// Resource-unit metering used to throttle transactions in the native
+    /// payload builder.
+    pub resource_metering: ResourceMeteringConfig,
 
     /// Cache of permanently rejected transaction hashes, shared across blocks.
     /// Transactions in this cache are skipped by the iterator without re-evaluation.
@@ -126,6 +129,7 @@ impl core::fmt::Debug for BuilderConfig {
             .field("predicate_bucket_ordered_threshold", &self.predicate_bucket_ordered_threshold)
             .field("resting_predicate_mode", &self.resting_predicate_mode)
             .field("metering_provider", &self.metering_provider)
+            .field("resource_metering", &self.resource_metering)
             .field("rejection_cache_size", &self.rejection_cache.entry_count())
             .field("manifest_precheck_enabled", &self.manifest_precheck_enabled)
             .field("state_provider_metrics", &self.state_provider_metrics)
@@ -135,6 +139,7 @@ impl core::fmt::Debug for BuilderConfig {
 
 impl Default for BuilderConfig {
     fn default() -> Self {
+        let metering_provider: SharedMeteringProvider = Arc::new(NoopMeteringProvider);
         Self {
             block_time: Duration::from_secs(2),
             block_time_leeway: Duration::from_millis(500),
@@ -152,10 +157,24 @@ impl Default for BuilderConfig {
             predicate_eval_hard_cutoff: Duration::from_millis(10),
             predicate_bucket_ordered_threshold: DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD,
             resting_predicate_mode: RestingPredicateMode::Off,
-            metering_provider: Arc::new(NoopMeteringProvider),
+            metering_provider: Arc::clone(&metering_provider),
+            resource_metering: ResourceMeteringConfig {
+                provider: metering_provider,
+                ..ResourceMeteringConfig::default()
+            },
             rejection_cache: RejectionCache::default(),
             manifest_precheck_enabled: true,
             state_provider_metrics: false,
+        }
+    }
+}
+
+impl BuilderConfig {
+    /// Records startup resource-metering configuration metrics once the node's
+    /// Prometheus recorder is installed.
+    pub fn record_startup_metrics(&self) {
+        if self.resource_metering.enabled && self.resource_metering.schedule.is_empty() {
+            BuilderMetrics::resource_metering_schedule_missing_total().increment(1);
         }
     }
 }
