@@ -559,74 +559,46 @@ mod tests {
                     }
                 }
 
-                // Both latest and earliest blocks are None -> early return default; DB untouched.
+                // Each case hits an early return in `run_inner` that yields the default output:
+                // - no blocks at all,
+                // - latest block present but earliest missing,
+                // - interval smaller than `min_block_interval`.
                 #[tokio::test]
-                async fn run_inner_where_latest_block_is_none() {
-                    let dir = TempDir::new().unwrap();
-                    let store: BaseProofsStorage<Arc<$storage>> =
-                        BaseProofsStorage::from(Arc::new($storage::new(dir.path()).expect("env")));
+                async fn run_inner_early_returns_default_output() {
+                    let new_store = || {
+                        let dir = TempDir::new().unwrap();
+                        let store: BaseProofsStorage<Arc<$storage>> = BaseProofsStorage::from(
+                            Arc::new($storage::new(dir.path()).expect("env")),
+                        );
+                        (store, dir)
+                    };
 
-                    let earliest = store.get_earliest_block_number().unwrap();
-                    let latest = store.get_latest_block_number().unwrap();
-                    assert!(earliest.is_none());
-                    assert!(latest.is_none());
+                    // Both latest and earliest are None.
+                    let (store, _dir) = new_store();
+                    let pruner =
+                        BaseProofStoragePruner::new(store, MockBlockHashReader::new(), 10, 1000);
+                    assert_eq!(pruner.run_inner().expect("ok"), PrunerOutput::default());
 
-                    let block_hash_reader = MockBlockHashReader::new();
-                    let pruner = BaseProofStoragePruner::new(store, block_hash_reader, 10, 1000);
-                    let out = pruner.run_inner().expect("ok");
-                    assert_eq!(out, PrunerOutput::default(), "should early-return default output");
-                }
-
-                // The earliest block is None, but the latest block exists -> early return default.
-                #[tokio::test]
-                async fn run_inner_earliest_none_real_db() {
-                    let dir = TempDir::new().unwrap();
-                    let store: BaseProofsStorage<Arc<$storage>> =
-                        BaseProofsStorage::from(Arc::new($storage::new(dir.path()).expect("env")));
-
-                    // Write a single block to set *latest* only.
+                    // Only latest is set.
+                    let (store, _dir) = new_store();
                     store
                         .store_trie_updates(block(3, B256::ZERO), BlockStateDiff::default())
-                        .expect("store b1");
+                        .expect("store b3");
+                    assert!(store.get_earliest_block_number().unwrap().is_none());
+                    let pruner =
+                        BaseProofStoragePruner::new(store, MockBlockHashReader::new(), 1, 1000);
+                    assert_eq!(pruner.run_inner().expect("ok"), PrunerOutput::default());
 
-                    let earliest = store.get_earliest_block_number().unwrap();
-                    let latest = store.get_latest_block_number().unwrap();
-                    assert!(earliest.is_none(), "earliest must remain None");
-                    assert_eq!(latest.unwrap().0, 3);
-
-                    let block_hash_reader = MockBlockHashReader::new();
-                    let pruner = BaseProofStoragePruner::new(store, block_hash_reader, 1, 1000);
-                    let out = pruner.run_inner().expect("ok");
-                    assert_eq!(out, PrunerOutput::default(), "should early-return default output");
-                }
-
-                // interval < min_block_interval -> "Nothing to prune" path; default output.
-                #[tokio::test]
-                async fn run_inner_interval_too_small_real_db() {
-                    let dir = TempDir::new().unwrap();
-                    let store: BaseProofsStorage<Arc<$storage>> =
-                        BaseProofsStorage::from(Arc::new($storage::new(dir.path()).expect("env")));
-
-                    // Set earliest=4 explicitly
-                    let earliest_num = 4u64;
+                    // Earliest=4, latest=5 gives interval=1, below min_block_interval=2.
+                    let (store, _dir) = new_store();
                     let h4 = b256(4);
-                    store.set_earliest_block_number(earliest_num, h4).expect("set earliest");
-
-                    // Set latest=5 by storing block 5
-                    let b5 = block(5, h4);
-                    store.store_trie_updates(b5, BlockStateDiff::default()).expect("store b5");
-
-                    // Sanity: earliest=4, latest=5 => interval=1
-                    let e = store.get_earliest_block_number().unwrap().unwrap();
-                    let l = store.get_latest_block_number().unwrap().unwrap();
-                    assert_eq!(e.0, 4);
-                    assert_eq!(l.0, 5);
-
-                    // Require min_block_interval=2 (or greater) so interval < min
-                    let block_hash_reader = MockBlockHashReader::new();
-                    let pruner = BaseProofStoragePruner::new(store, block_hash_reader, 2, 1000);
-                    let out = pruner.run_inner().expect("ok");
-                    assert_eq!(out, PrunerOutput::default(), "no pruning should occur");
+                    store.set_earliest_block_number(4, h4).expect("set earliest");
+                    store
+                        .store_trie_updates(block(5, h4), BlockStateDiff::default())
+                        .expect("store b5");
+                    let pruner =
+                        BaseProofStoragePruner::new(store, MockBlockHashReader::new(), 2, 1000);
+                    assert_eq!(pruner.run_inner().expect("ok"), PrunerOutput::default());
                 }
             }
         };
