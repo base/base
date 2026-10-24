@@ -139,9 +139,9 @@ Besides tests, `just ci` / `just pr` run several static checks:
 | Feature flags | `zepter format features && zepter` | Validates Cargo feature propagation across the workspace |
 | Links | `lychee --config ./lychee.toml .` | Checks for dead links across the repo |
 
-Each has a `just check::<name>` recipe (e.g. `just check::clippy`, `just check::udeps`) — run
-`just check` to list them all. `just fix` auto-fixes formatting, clippy, and zepter issues where
-possible.
+Each, except Links and Feature flags (`just lychee`, `just zepter`), has a `just check::<name>`
+recipe (e.g. `just check::clippy`, `just check::udeps`) — run `just check` to list them all.
+`just fix` auto-fixes formatting, clippy, and zepter issues where possible.
 
 
 ## CI Pipeline
