@@ -475,19 +475,19 @@ impl BlockWatcher {
             return Ok(None);
         };
         let observed_at = Instant::now();
-        let timestamp_ms = Self::block_timestamp_ms(&block);
 
         Ok(Some(ObservedBlock {
             observation: BlockObservation {
                 number: block.header.number,
                 observed_at,
-                timestamp_ms: Some(timestamp_ms),
+                // Second-resolution fallbacks would put up to 999 ms of error into 10 ms buckets.
+                timestamp_ms: block.header.timestamp_ms,
             },
             tx_hashes: block.transactions.hashes().collect(),
             gas_used: block.header.gas_used,
             gas_limit: block.header.gas_limit,
             base_fee: u128::from(block.header.base_fee_per_gas.unwrap_or_default()),
-            timestamp_ms,
+            timestamp_ms: Self::block_timestamp_ms(&block),
         }))
     }
 

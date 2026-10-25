@@ -41,7 +41,8 @@ pub struct BlockObservation {
     /// Local time when the load-test process observed the block. Used as the
     /// landing time for transactions first seen in this block.
     pub observed_at: Instant,
-    /// Block header timestamp in milliseconds, when the observer read it.
+    /// Block header millisecond timestamp, when the observer read one. `None` for headers
+    /// with only second-resolution timestamps.
     pub timestamp_ms: Option<u64>,
 }
 
