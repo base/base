@@ -133,7 +133,8 @@ struct ResultsTrackerInner {
 struct PendingTransaction {
     from: Address,
     submit_time: Instant,
-    /// Wall-clock submission time, comparable with block timestamps.
+    /// Wall-clock time a submission RPC last accepted the transaction (registration time until
+    /// then), comparable with block timestamps.
     submitted_at: SystemTime,
     /// Whether in-flight accounting was already released (e.g. by flashblock confirmation).
     in_flight_released: bool,
@@ -214,6 +215,18 @@ impl ResultsTracker {
                 observed_gas_count: 0,
             })),
             pulse_tx,
+        }
+    }
+
+    /// Restamps pending transactions a submission RPC just accepted, so a retried batch is
+    /// measured from the send that succeeded rather than from its first attempt.
+    pub fn accepted_transactions(&self, tx_hashes: &[TxHash]) {
+        let accepted_at = SystemTime::now();
+        let mut inner = self.inner.write();
+        for tx_hash in tx_hashes {
+            if let Some(pending) = inner.pending.get_mut(tx_hash) {
+                pending.submitted_at = accepted_at;
+            }
         }
     }
 
@@ -762,6 +775,28 @@ mod tests {
             (earliest..=latest).contains(&offset),
             "offset {offset} outside {earliest}..={latest}"
         );
+    }
+
+    #[test]
+    fn acceptance_restamps_submission_time() {
+        let from = addr();
+        let tx_hash = TxHash::repeat_byte(1);
+        let tracker = ResultsTracker::new(&[from]);
+        tracker.begin_measurement(6, Some(1));
+        tracker.sent_transactions(vec![sent(tx_hash, from, true)]);
+        std::thread::sleep(Duration::from_millis(50));
+        tracker.accepted_transactions(&[tx_hash]);
+        let accepted_ms = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64;
+
+        let block = BlockObservation {
+            number: 7,
+            observed_at: Instant::now(),
+            timestamp_ms: Some(accepted_ms),
+        };
+        tracker.on_new_block_hashes(block, vec![tx_hash]);
+
+        let offset = tracker.drain_confirmed_metrics()[0].submit_offset_ms.unwrap();
+        assert!((-10..=0).contains(&offset), "offset {offset} must count from acceptance");
     }
 
     #[test]

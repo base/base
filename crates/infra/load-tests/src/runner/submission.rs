@@ -1100,6 +1100,15 @@ impl SubmissionPipeline {
             let mut retry_rate_limited_error = None;
             let mut terminal_rejection_error = None;
 
+            let accepted: Vec<TxHash> = batch
+                .txs
+                .iter()
+                .zip(&batch_results)
+                .filter(|(_, result)| matches!(result, BatchSendResult::Success(_)))
+                .map(|(signed, _)| signed.tx_hash)
+                .collect();
+            ctx.results_tracker.accepted_transactions(&accepted);
+
             for (signed, result) in batch.txs.into_iter().zip(batch_results) {
                 match result {
                     BatchSendResult::Success(hash) => {
