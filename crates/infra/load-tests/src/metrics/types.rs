@@ -379,6 +379,9 @@ pub struct ConfigSummary {
     pub target_gps: Option<u64>,
     /// Expected cadence between canonical blocks.
     pub block_time: String,
+    /// Fixed submission interval, when the target rate is sent by time instead of per block.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub steady_submission_interval: Option<String>,
     /// Deterministic account seed.
     pub seed: u64,
     /// Chain ID.

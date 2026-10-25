@@ -230,6 +230,8 @@ struct BlockAlignedEnqueueConfig {
     controller: MempoolDepthController,
     fallback_block_gas_limit: u64,
     block_time: Duration,
+    /// Fixed refill cadence that replaces block-driven refills (`steady_submission_interval`).
+    steady_submission_interval: Option<Duration>,
     presign_target_gas: u128,
     max_in_flight_per_sender: usize,
     max_total_in_flight: usize,
@@ -322,6 +324,8 @@ pub struct MempoolDepthController {
     block_time: Duration,
     capacity_gas: u128,
     measurement_started_at: Instant,
+    /// Sends exactly the rate budget each cycle instead of refilling to a depth target.
+    steady: bool,
 }
 
 impl MempoolDepthController {
@@ -338,7 +342,15 @@ impl MempoolDepthController {
             capacity_gas,
             measurement_started_at,
             confirmation_latency: Duration::ZERO,
+            steady: false,
         }
+    }
+
+    /// With a target rate, ignores the depth target so each cycle sends the gas due since the
+    /// last one. The ceiling and sender capacity still bound what is in flight.
+    pub const fn with_steady_submission(mut self, steady: bool) -> Self {
+        self.steady = steady;
+        self
     }
 
     /// Uses canonical confirmation latency to budget a bounded in-flight window.
@@ -387,7 +399,11 @@ impl MempoolDepthController {
                 .div_ceil(Duration::from_secs(1).as_nanos());
             cumulative_target.saturating_sub(confirmed_gas).min(floor_gas)
         });
-        let desired_gas = floor_gas.saturating_add(catchup).min(ceiling_gas);
+        let desired_gas = if self.steady && self.target_gps.is_some() {
+            ceiling_gas
+        } else {
+            floor_gas.saturating_add(catchup).min(ceiling_gas)
+        };
         let wanted = desired_gas.saturating_sub(depth_gas);
         let capacity_headroom = self.capacity_gas.saturating_sub(depth_gas);
         let rate_headroom = self.target_gps.map_or(u128::MAX, |target_gps| {
@@ -825,7 +841,8 @@ impl LoadRunner {
                 self.config.block_time,
                 u128::from(capacity as u64).saturating_mul(u128::from(initial_avg_gas)),
                 start,
-            );
+            )
+            .with_steady_submission(self.config.steady_submission_interval.is_some());
             Self::enqueue_block_aligned_transactions(
                 &mut PresignEnqueueState {
                     submission_pipeline: &submission_pipeline,
@@ -841,6 +858,7 @@ impl LoadRunner {
                     controller: depth_controller,
                     fallback_block_gas_limit: block_gas_limit,
                     block_time: self.config.block_time,
+                    steady_submission_interval: self.config.steady_submission_interval,
                     presign_target_gas: floor_gas.saturating_mul(2).min(
                         u128::from(capacity as u64).saturating_mul(u128::from(initial_avg_gas)),
                     ),
@@ -1625,8 +1643,9 @@ impl LoadRunner {
         stop_flag: &AtomicBool,
         drain_state: &mut EnqueueDrainState<'_>,
     ) -> Result<()> {
-        let safety_interval =
-            (config.block_time / 4).clamp(Duration::from_millis(1), Duration::from_millis(250));
+        let safety_interval = config.steady_submission_interval.unwrap_or_else(|| {
+            (config.block_time / 4).clamp(Duration::from_millis(1), Duration::from_millis(250))
+        });
         let mut safety_tick = tokio::time::interval(safety_interval);
         safety_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let mut last_block_gas_limit = config.fallback_block_gas_limit;
@@ -1701,7 +1720,11 @@ impl LoadRunner {
                     }
                 }
                 _ = safety_tick.tick() => {
-                    if last_pulse_at.elapsed() >= fallback_refill_interval {
+                    // Steady submission refills on every tick, so arrivals do not depend on
+                    // when canonical blocks are observed.
+                    if config.steady_submission_interval.is_some()
+                        || last_pulse_at.elapsed() >= fallback_refill_interval
+                    {
                         Self::run_refill_cycle(
                             enqueue_state,
                             InclusionPulse::safety(Instant::now()),
@@ -2602,6 +2625,32 @@ mod tests {
     }
 
     #[test]
+    fn steady_controller_sends_the_rate_budget_regardless_of_depth() {
+        let started = Instant::now();
+        let controller = MempoolDepthController::new(
+            Some(1_000_000),
+            Duration::from_secs(2),
+            10_000_000,
+            started,
+        )
+        .with_steady_submission(true);
+
+        // Depth already meets the 2M floor, which stops a block-aligned refill (see the test
+        // above). Steady submission still sends the 1M due: 2M of target minus 1M offered.
+        let plan = controller.plan(
+            started + Duration::from_secs(2),
+            30_000_000,
+            2_000_000,
+            2_000_000,
+            1_000_000,
+        );
+
+        assert_eq!(plan.desired_gas, plan.ceiling_gas);
+        assert_eq!(plan.inject_gas, 1_000_000);
+        assert_eq!(plan.limited_by, InjectLimit::Rate);
+    }
+
+    #[test]
     fn controller_cannot_inject_past_two_block_ceiling() {
         let started = Instant::now();
         let controller = MempoolDepthController::new(
@@ -2690,6 +2739,7 @@ mod tests {
                         ),
                         fallback_block_gas_limit: 30_000_000,
                         block_time: Duration::from_secs(2),
+                        steady_submission_interval: None,
                         presign_target_gas: 0,
                         max_in_flight_per_sender: 1,
                         max_total_in_flight: 1,
@@ -2799,6 +2849,7 @@ mod tests {
                     ),
                     fallback_block_gas_limit: 30_000_000,
                     block_time: Duration::from_millis(200),
+                    steady_submission_interval: None,
                     presign_target_gas: 0,
                     max_in_flight_per_sender: 1,
                     max_total_in_flight: 1,
