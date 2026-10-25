@@ -54,9 +54,10 @@ const CONFIRMATION_DRAIN_TIMEOUT: Duration = Duration::from_secs(200);
 const DRAIN_STALL_TIMEOUT: Duration = Duration::from_secs(20);
 const SIGNED_BATCH_SIZE: usize = 200;
 const PRESIGN_CHANNEL_BUFFER: usize = 2;
-/// Intervals of gas one steady-submission cycle may send: two lets a late tick catch up while a
-/// backlog left by a stall drains at twice the target rate rather than in one burst.
-const STEADY_CATCHUP_INTERVALS: u128 = 2;
+/// Multiple of the target rate a steady-submission cycle may send over the time since the previous
+/// cycle: late cycles still catch up, while a backlog left by a stall drains at twice the target
+/// rate rather than in one burst.
+const STEADY_CATCHUP_RATE: u128 = 2;
 const IDLE_SLEEP: Duration = Duration::from_millis(10);
 const PRESIGN_RECHECK_INTERVAL: Duration = Duration::from_millis(100);
 const PREFILL_TIMEOUT: Duration = Duration::from_secs(300);
@@ -130,6 +131,8 @@ struct SenderNonceReset {
 struct EnqueueProgress {
     presigned_generated: u64,
     offered_gas: u128,
+    /// When the previous refill cycle ran.
+    last_cycle_at: Option<Instant>,
 }
 
 /// Live TUI / snapshot updates while the enqueue loop owns the collector.
@@ -330,6 +333,8 @@ pub struct MempoolDepthController {
     /// Steady submission interval: send the rate budget each cycle instead of refilling to a
     /// depth target.
     steady_interval: Option<Duration>,
+    /// When the previous refill cycle ran; bounds a steady cycle's catch-up.
+    previous_cycle_at: Option<Instant>,
 }
 
 impl MempoolDepthController {
@@ -347,15 +352,23 @@ impl MempoolDepthController {
             measurement_started_at,
             confirmation_latency: Duration::ZERO,
             steady_interval: None,
+            previous_cycle_at: None,
         }
     }
 
     /// With a target rate, ignores the depth target so each cycle sends the gas due since the
     /// last one. The ceiling and sender capacity still bound what is in flight, and each cycle
-    /// sends at most [`STEADY_CATCHUP_INTERVALS`] intervals of gas, so a backlog left by a
-    /// stall drains at a bounded rate instead of in one burst.
+    /// sends at most [`STEADY_CATCHUP_RATE`] times the gas due over the time since the previous
+    /// cycle (one interval for the first), so a backlog left by a stall drains at a bounded rate
+    /// instead of in one burst.
     pub const fn with_steady_submission(mut self, interval: Option<Duration>) -> Self {
         self.steady_interval = interval;
+        self
+    }
+
+    /// Records when the previous refill cycle ran, for the steady catch-up bound.
+    pub const fn with_previous_cycle(mut self, previous_cycle_at: Option<Instant>) -> Self {
+        self.previous_cycle_at = previous_cycle_at;
         self
     }
 
@@ -421,12 +434,17 @@ impl MempoolDepthController {
                 .saturating_sub(offered_gas)
         });
         let rate_headroom = match (self.steady_interval, self.target_gps) {
-            (Some(interval), Some(target_gps)) => rate_headroom.min(
-                u128::from(target_gps)
-                    .saturating_mul(interval.as_nanos())
-                    .saturating_mul(STEADY_CATCHUP_INTERVALS)
-                    .div_ceil(Duration::from_secs(1).as_nanos()),
-            ),
+            (Some(interval), Some(target_gps)) => {
+                let window = self
+                    .previous_cycle_at
+                    .map_or(interval, |previous| now.saturating_duration_since(previous));
+                rate_headroom.min(
+                    u128::from(target_gps)
+                        .saturating_mul(window.as_nanos())
+                        .saturating_mul(STEADY_CATCHUP_RATE)
+                        .div_ceil(Duration::from_secs(1).as_nanos()),
+                )
+            }
             _ => rate_headroom,
         };
         let inject_gas = wanted.min(capacity_headroom).min(rate_headroom);
@@ -731,7 +749,8 @@ impl LoadRunner {
             },
         ));
 
-        let mut progress = EnqueueProgress { presigned_generated: 0, offered_gas: 0 };
+        let mut progress =
+            EnqueueProgress { presigned_generated: 0, offered_gas: 0, last_cycle_at: None };
         let mut presign_buffer = PresignBuffer::new(sender_count);
 
         if let Some(display) = self.display.as_ref() {
@@ -1877,13 +1896,18 @@ impl LoadRunner {
         let depth_gas = drain_state.mempool_depth_gas();
         let block_gas_limit = canonical.map_or(fallback_block_gas_limit, |block| block.gas_limit);
         let (_, canonical_p99) = drain_state.collector.rolling_p50_p99();
-        let plan = config.controller.with_confirmation_latency(canonical_p99).plan(
-            cycle_started,
-            block_gas_limit,
-            depth_gas,
-            drain_state.results_tracker.confirmed_gas(),
-            enqueue_state.progress.offered_gas,
-        );
+        let plan = config
+            .controller
+            .with_confirmation_latency(canonical_p99)
+            .with_previous_cycle(enqueue_state.progress.last_cycle_at)
+            .plan(
+                cycle_started,
+                block_gas_limit,
+                depth_gas,
+                drain_state.results_tracker.confirmed_gas(),
+                enqueue_state.progress.offered_gas,
+            );
+        enqueue_state.progress.last_cycle_at = Some(cycle_started);
         let buffered_before = enqueue_state.buffer.buffered_gas();
         let mut sender_slots: HashMap<Address, u64> = drain_state
             .queued_per_sender
@@ -2677,12 +2701,51 @@ mod tests {
         )
         .with_steady_submission(Some(interval));
 
-        // Ten seconds behind (4 Ggas owed) with an empty pool: block-aligned catch-up would send
-        // up to the 160M ceiling at once. Steady sends at most two intervals: 16M.
-        let plan = controller.plan(started + Duration::from_secs(10), 160_000_000, 0, 0, 0);
+        // Ten seconds behind (4 Ggas owed) with an empty pool, 20 ms after the previous cycle:
+        // block-aligned catch-up would send up to the 160M ceiling at once. Steady sends twice
+        // the 8M due over those 20 ms: 16M.
+        let now = started + Duration::from_secs(10);
+        let plan =
+            controller.with_previous_cycle(Some(now - interval)).plan(now, 160_000_000, 0, 0, 0);
 
         assert_eq!(plan.inject_gas, 16_000_000);
         assert_eq!(plan.limited_by, InjectLimit::Rate);
+
+        // A cycle 2 ms after the previous one, such as a canonical pulse right after a tick,
+        // gets only its own share.
+        let plan = controller.with_previous_cycle(Some(now - Duration::from_millis(2))).plan(
+            now,
+            160_000_000,
+            0,
+            0,
+            0,
+        );
+        assert_eq!(plan.inject_gas, 1_600_000);
+    }
+
+    #[test]
+    fn steady_controller_lets_a_late_cycle_catch_up() {
+        let started = Instant::now();
+        let controller = MempoolDepthController::new(
+            Some(400_000_000),
+            Duration::from_millis(200),
+            u128::MAX,
+            started,
+        )
+        .with_steady_submission(Some(Duration::from_millis(20)));
+
+        // The previous cycle ran 100 ms ago and everything due until then was sent, so 40M is
+        // due now. A per-cycle cap of two 20 ms intervals would send only 16M and lose rate.
+        let now = started + Duration::from_secs(10);
+        let plan = controller.with_previous_cycle(Some(now - Duration::from_millis(100))).plan(
+            now,
+            160_000_000,
+            0,
+            0,
+            3_960_000_000,
+        );
+
+        assert_eq!(plan.inject_gas, 40_000_000);
     }
 
     #[test]
@@ -2732,7 +2795,8 @@ mod tests {
         let (_submit_event_tx, mut submit_event_rx) = mpsc::channel(8);
         let (_signed_chunk_tx, mut signed_chunk_rx) = mpsc::channel(1);
         let (base_fee_tx, _base_fee_rx) = tokio::sync::watch::channel(1_u128);
-        let mut progress = EnqueueProgress { presigned_generated: 0, offered_gas: 0 };
+        let mut progress =
+            EnqueueProgress { presigned_generated: 0, offered_gas: 0, last_cycle_at: None };
         let mut presign_buffer = PresignBuffer::new(1);
         let pipeline = test_pipeline(&results_tracker, mpsc::channel(1).0);
         let next_submit_batch_id = AtomicU64::new(0);
@@ -2853,7 +2917,8 @@ mod tests {
         let (_submit_event_tx, mut submit_event_rx) = mpsc::channel(8);
         let (_signed_chunk_tx, mut signed_chunk_rx) = mpsc::channel(1);
         let (base_fee_tx, _base_fee_rx) = tokio::sync::watch::channel(1_u128);
-        let mut progress = EnqueueProgress { presigned_generated: 0, offered_gas: 0 };
+        let mut progress =
+            EnqueueProgress { presigned_generated: 0, offered_gas: 0, last_cycle_at: None };
         let mut presign_buffer = PresignBuffer::new(1);
         let pipeline = test_pipeline(&results_tracker, mpsc::channel(1).0);
         let next_submit_batch_id = AtomicU64::new(0);
