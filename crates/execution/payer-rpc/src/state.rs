@@ -13,7 +13,7 @@ pub trait PayerChainState: Send + Sync + 'static {
     /// The next unused nonce of `sender` in the `nonce_key` channel.
     async fn nonce(&self, sender: Address, nonce_key: U256) -> Result<U256, ErrorObjectOwned>;
 
-    /// Runs `request`, returning the simulation's JSON-RPC error when it reverts, halts, or
+    /// Runs `request`, returning the simulation's JSON-RPC error when it reverts, is rejected, or
     /// cannot run.
     async fn simulate(&self, request: BaseTransactionRequest) -> Result<(), ErrorObjectOwned>;
 }
