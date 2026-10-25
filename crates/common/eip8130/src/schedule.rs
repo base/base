@@ -37,6 +37,9 @@ impl Eip8130GasSchedule {
     /// EIP-2200 `original != current` "dirty" case). Repricing a dirty slot only
     /// adjusts the gas meter, so it costs a warm storage read.
     pub const SSTORE_DIRTY: u64 = Self::WARM_SLOAD;
+    /// Cold account access, charged intrinsically for the first call's target
+    /// as EIP-2780 charges `tx.to`. Tracks the EVM's cold account access cost.
+    pub const COLD_ACCOUNT_ACCESS: u64 = 2_600;
 
     // ── EIP-2028 data availability ───────────────────────────────────────────
     /// Cost of a zero byte of serialized transaction data.
@@ -47,8 +50,8 @@ impl Eip8130GasSchedule {
     // ── EIP-7623 calldata floor ──────────────────────────────────────────────
     /// `TOTAL_COST_FLOOR_PER_TOKEN`: the per-token gas an EIP-7623 transaction
     /// pays for data availability under the floor branch. An 8130 transaction has
-    /// no single `data` field, so the floor is evaluated over the serialized
-    /// transaction (one token per zero byte, four per non-zero byte). A data-heavy
+    /// no single `data` field, so the floor is evaluated over the metered payload
+    /// (one token per zero byte, four per non-zero byte). A data-heavy
     /// transaction whose execution is cheap pays `payload_tokens * this` instead
     /// of the standard `payload_tokens * TX_DATA_ZERO_BYTE`, so it cannot post data
     /// availability more cheaply than a standard EIP-7623 transaction on the same
