@@ -2702,7 +2702,11 @@ mod tests {
                 async {
                     let first_observed_at = Instant::now();
                     results_tracker.on_new_block_hashes(
-                        BlockObservation { number: 11, observed_at: first_observed_at },
+                        BlockObservation {
+                            number: 11,
+                            observed_at: first_observed_at,
+                            timestamp_ms: None,
+                        },
                         Vec::new(),
                     );
                     pulse_tx
@@ -2725,7 +2729,11 @@ mod tests {
 
                     let second_observed_at = Instant::now();
                     results_tracker.on_new_block_hashes(
-                        BlockObservation { number: 12, observed_at: second_observed_at },
+                        BlockObservation {
+                            number: 12,
+                            observed_at: second_observed_at,
+                            timestamp_ms: None,
+                        },
                         Vec::new(),
                     );
                     pulse_tx
