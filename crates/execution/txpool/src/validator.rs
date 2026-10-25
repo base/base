@@ -1204,14 +1204,12 @@ where
         // Execution reprices them precisely.
         let intrinsic = IntrinsicGas::compute(
             signed,
-            encoded.as_ref(),
             &IntrinsicGasInput::worst_case(sender, nonce_key_first_use, keystore),
         )
         .map_err(Self::map_intrinsic_gas_error)?;
         // EIP-7623 calldata floor: a `gas_limit` below the floor branch is
-        // invalid. Sender-intrinsic gas is checked too, matching execution, so
-        // a floor rate repriced below the standard data rate cannot admit an
-        // underfunded transaction.
+        // invalid. Sender-intrinsic gas is checked too, matching execution,
+        // since the floor excludes the state-dependent costs.
         if signed.tx().gas_limit < intrinsic.sender_floor()
             || intrinsic.execution_gas_available(signed.tx().gas_limit).is_none()
         {
@@ -1221,7 +1219,7 @@ where
         // metered on top of it is bounded by the per-transaction gas cap,
         // matching execution.
         if self.chain_spec().is_azul_active_at_timestamp(now)
-            && FeeCheck::max_chargeable_gas(signed.tx().gas_limit, intrinsic.payer_floor)
+            && FeeCheck::max_chargeable_gas(signed.tx().gas_limit, intrinsic.payer_reserve())
                 > MAX_TX_GAS_LIMIT_OSAKA
         {
             return Err(InvalidTransactionError::GasLimitTooHigh.into());
@@ -1234,7 +1232,7 @@ where
         FeeCheck::validate_balance(
             payer_account.balance,
             signed.tx().gas_limit,
-            intrinsic.payer_floor,
+            intrinsic.payer_reserve(),
             signed.tx().max_fee_per_gas,
         )
         .map_err(|_| {
@@ -1243,7 +1241,7 @@ where
                     got: payer_account.balance,
                     expected: FeeCheck::max_fee_charge(
                         signed.tx().gas_limit,
-                        intrinsic.payer_floor,
+                        intrinsic.payer_reserve(),
                         signed.tx().max_fee_per_gas,
                     ),
                 }
@@ -1350,7 +1348,7 @@ where
 
         let gas_charge = FeeCheck::max_fee_charge(
             signed.tx().gas_limit,
-            intrinsic.payer_floor,
+            intrinsic.payer_reserve(),
             signed.tx().max_fee_per_gas,
         );
         let additional_fee = if self.requires_l1_data_gas_fee() {
@@ -1360,7 +1358,7 @@ where
                 &encoded,
                 U256::from(FeeCheck::max_chargeable_gas(
                     signed.tx().gas_limit,
-                    intrinsic.payer_floor,
+                    intrinsic.payer_reserve(),
                 )),
                 spec_id,
             )

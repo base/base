@@ -70,24 +70,32 @@ formula:
 
 ```text
 intrinsic_gas = AA_BASE_COST + tx_payload_cost + nonce_key_cost + value_transfer_cost
-              + bytecode_cost + account_changes_cost + sender_auth_cost + payer_auth_cost
+              + bytecode_cost + account_changes_cost + sender_auth_cost
+              + first_call_cost + payer_auth_cost
 ```
+
+The pricing follows the [EIP-2780](https://eips.ethereum.org/EIPS/eip-2780)
+resource-based intrinsic gas: a self-paid k1 transaction pays EIP-2780's
+amount for the same transaction plus the 2,100 Keystore read in its k1
+authentication cost.
 
 | Component | Source |
 |---|---|
-| `base` | `AA_BASE_COST` (15,000) |
-| `payload` | EIP-2028 data-availability cost (16/non-zero, 4/zero byte) over the EIP-2718 serialization of the signed transaction with an empty `payer_auth` — the *standard* rate, subject to the EIP-7623 calldata floor below |
+| `base` | `AA_BASE_COST` (9,000): EIP-2780's 12,000 base less the ECDSA recovery the k1 authentication cost carries |
+| `payload` | EIP-2028 data-availability cost (16/non-zero, 4/zero byte) over the RLP of `account_changes`, `calls` and `metadata`, plus `sender_auth` unless it is a k1 signature — the *standard* rate, subject to the EIP-7623 calldata floor below. The envelope (nonces, fees, `gas_limit`, validity window) is not metered, as in EIP-2780 |
 | `payload_floor` | EIP-7623 calldata floor over the same bytes: `TX_TOTAL_COST_FLOOR_PER_TOKEN` (10) per payload token instead of the standard 4, so a data-heavy transaction cannot post data availability more cheaply than a standard EIP-7623 transaction on the same chain (always `>= payload`) |
+| `first_call` | `2,600` cold account access for the first call's target (the first call of the first non-empty phase), as EIP-2780 charges `tx.to`; `0` when `calls` is empty or the target is the sender |
 | `nonce_key` | protocol nonce (`nonce_key == 0`) `0`, even on first use: it is the account nonce, bumped without touching the nonce manager and covered by `AA_BASE_COST` as a legacy transaction's base cost covers its nonce; nonce-free `13,000`; otherwise first-use `22,100` / existing `5,000` (a cold SLOAD plus an SSTORE set or reset) |
 | `value_transfer` | `6,000` per call with `value > 0` and `to != sender` |
 | `bytecode` | per create entry: `32,000 + 200 · code_len` |
 | `account_changes` | per create entry: one fresh packed `account_state` write plus one fresh `actor_config` slot write per initial actor; policy actors set `policy_commitment`/`policy_manager`, while ungated actors pay the cold zero-to-zero touches that preserve access warming; per config-change entry: a packed `account_state` write covering the sequence advance and lock read — the first access to that slot in the transaction (create bootstrap or first config change) is a cold zero-to-nonzero write, later same-account bumps are only a warm SLOAD + dirty SSTORE (`200`, the slot was already modified earlier in the transaction) — its `auth` cost, and each mutated actor/policy slot; revokes conservatively price all three actor/policy resets, except each revoke slot execution resolves to be an empty zero-to-zero touch is discounted by the reset-vs-cold-noop delta (an inline secp256k1 self revoke discounts its always-empty `actor_config` slot plus each policy slot — `manager`/`commitment` — whose stored value is zero, so three empty slots when ungated and one to three when policy-gated, since the EIP permits a gated actor to carry a zero manager and/or commitment); a self-actor change adds no separate bump — its inline-self write is already covered by the config-change `account_state` cost and its `actor_config(self)` home by the per-change slot cost; per delegation entry: the `4,600` indicator deposit |
-| `sender_auth` / `payer_auth` | authenticator execution gas + one cold config/state SLOAD; `sender_auth` adds (from Zenith, which brings the Keystore) one cold `policy_manager` SLOAD when the resolved sender actor has `SCOPE_POLICY`, while a payer only needs its sponsor scope and resolves no policy; `payer_auth` adds the data cost of the `payer_auth` bytes and is `0` for self-pay. `payer_auth_cost` prices those bytes at the standard EIP-2028 rate; `payer_floor` prices them at the EIP-7623 floor rate, is the ceiling used for the payer's pre-charge, the EIP-7825 cap and the block gas reservation, and must not exceed `MAX_AUTHENTICATION_GAS` (100,000) |
+| `sender_auth` / `payer_auth` | authenticator execution gas + one cold config/state SLOAD; `sender_auth` adds (from Zenith, which brings the Keystore) one cold `policy_manager` SLOAD when the resolved sender actor has `SCOPE_POLICY`, while a payer only needs its sponsor scope and resolves no policy; `payer_auth` is `0` for self-pay. A k1 signature's bytes are covered by its authentication cost; any other `payer_auth` adds its bytes at the standard EIP-2028 rate to `payer_auth_cost` and at the EIP-7623 floor rate to `payer_data_floor`. `payer_reserve = max(payer_auth_cost, payer_data_floor)` is the ceiling used for the payer's pre-charge, the EIP-7825 cap and the block gas reservation, and must not exceed `MAX_AUTHENTICATION_GAS` (100,000) |
 
 A value-bearing call to an account that does not exist also pays `25,000` for
 account creation when it runs, since existence is only known at dispatch.
 Dispatching a call also pays EIP-2929 account access gas for its target, as a
-`CALL` would: `2,600` when the target is cold and `100` when it is warm. When
+`CALL` would: `2,600` when the target is cold and `100` when it is warm. The
+first call's target is already paid by `first_call`, so it pays nothing here. When
 the target is an EIP-7702 delegated account, the call pays the same again for
 the delegation target: `2,600` when it is cold and `100` when it is warm. The
 precompiles, the coinbase, the sender, the payer, and every account the
@@ -105,20 +113,21 @@ sender_intrinsic`.
 Following [EIP-7623](https://eips.ethereum.org/EIPS/eip-7623), the sender's
 metered gas is floored so a transaction that posts many bytes relative to its
 execution cannot drive the maximum block size back up. An 8130 transaction has
-no single `data` field — its bytes live in `account_changes`, `sender_auth`,
-`calls`, `metadata`, and `payer_auth` — so the floor is evaluated over the
-serialized transaction:
+no single `data` field, so the floor is evaluated over the metered payload. As
+in EIP-2780, one floor covers the whole transaction, and its base keeps the
+base, authentication, recipient and value charges while dropping the
+state-dependent ones (`nonce_key`, `bytecode`, `account_changes`):
 
 ```text
-sender_floor = (sender_intrinsic - payload) + payload_floor
+sender_floor = base + sender_auth + first_call + value_transfer + payload_floor
 metered_gas  = max(sender_intrinsic + execution_gas_used + payer_auth_cost,
-                   sender_floor + payer_floor)
+                   sender_floor + payer_data_floor)
 ```
 
-`sender_floor >= sender_intrinsic`, so a `gas_limit` below the floor is rejected
-at mempool acceptance and at inclusion. The `payer_auth` bytes follow the same
-rule as the sender's: they settle at the standard rate (`payer_auth_cost`) unless
-the floor binds, and the payer is pre-charged at the floor rate (`payer_floor`). The `10`-per-token rate is normative structure: an L2-profile
+A `gas_limit` below either `sender_floor` or `sender_intrinsic` is rejected at
+mempool acceptance and at inclusion. Metered `payer_auth` bytes add to the
+floor through `payer_data_floor` rather than having a floor of their own, and
+the payer is pre-charged `payer_reserve`. The `10`-per-token rate is normative structure: an L2-profile
 chain may reprice `TX_TOTAL_COST_FLOOR_PER_TOKEN` but must not set it below the
 standard `4` or drop the floor.
 

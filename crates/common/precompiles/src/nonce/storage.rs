@@ -76,17 +76,17 @@ impl NonceManagerStorage<'_> {
     /// reclaimable as long as no more than this many nonce-free transactions are
     /// included within one window.
     ///
-    /// The cheapest nonce-free transaction costs at least 31,000 gas
-    /// (`AA_BASE_COST` 15,000, `NONCE_FREE_COST` 13,000, K1 sender auth 3,000),
-    /// rounded down to 30,000. The buffer is sized for blocks of up to 600M gas
-    /// every 2 s (equivalently 60M gas per 200 ms Denim block, since Denim scales
-    /// the gas limit down with the block interval): 300M gas/s, or 10,000
-    /// nonce-free transactions per second. Over the 30 s window that is
-    /// `10,000 × 30 = 300,000` live entries. Sustained nonce-free throughput above
-    /// 300M gas/s fails with [`INonceManager::ExpiringNonceSetFull`] rather than
-    /// admitting a replay. `replay_buffer_covers_peak_nonce_free_throughput` pins
-    /// this sizing.
-    pub const REPLAY_BUFFER_CAPACITY: u32 = 300_000;
+    /// The cheapest nonce-free transaction costs at least 27,100 gas
+    /// (`AA_BASE_COST` 9,000, `NONCE_FREE_COST` 13,000, k1 sender auth 5,100).
+    /// The buffer is sized for blocks of up to 600M gas every 2 s (equivalently
+    /// 60M gas per 200 ms Denim block, since Denim scales the gas limit down
+    /// with the block interval): 300M gas/s, or about 11,070 nonce-free
+    /// transactions per second. Over the 30 s window that is at most 332,100
+    /// live entries, rounded up to 340,000. Sustained nonce-free
+    /// throughput above that fails with [`INonceManager::ExpiringNonceSetFull`]
+    /// rather than admitting a replay.
+    /// `replay_buffer_covers_peak_nonce_free_throughput` pins this sizing.
+    pub const REPLAY_BUFFER_CAPACITY: u32 = 340_000;
 
     /// Maximum validity-window span accepted for a nonce-free transaction, in
     /// **milliseconds** (`NONCE_FREE_EXPIRY_WINDOW` in the EIP-8130 constant
@@ -270,6 +270,7 @@ impl NonceManagerStorage<'_> {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, B256, U256, address};
+    use base_common_eip8130::Eip8130GasSchedule;
     use base_precompile_storage::{
         BasePrecompileError, Handler, HashMapStorageProvider, StorageCtx, StorageKey,
     };
@@ -575,17 +576,21 @@ mod tests {
     /// `(block_gas_limit / min_tx_gas) * ceil(window / block_time)`, which must
     /// not exceed [`NonceManagerStorage::REPLAY_BUFFER_CAPACITY`].
     ///
-    /// This test pins the throughput ceiling the buffer is sized for (matching
-    /// the "~10k TPS for ~30s" note on `REPLAY_BUFFER_CAPACITY`). Raising
-    /// [`NonceManagerStorage::NONCE_FREE_EXPIRY_WINDOW`] without growing the
-    /// buffer (or shrinking the supported gas limit) breaks the invariant and
-    /// fails here — a deliberate fork-level tripwire.
+    /// This test pins the throughput ceiling the buffer is sized for. Raising
+    /// [`NonceManagerStorage::NONCE_FREE_EXPIRY_WINDOW`] or lowering the
+    /// cheapest nonce-free transaction's gas without growing the buffer (or
+    /// shrinking the supported gas limit) breaks the invariant and fails here —
+    /// a deliberate fork-level tripwire.
     #[test]
     fn replay_buffer_covers_peak_nonce_free_throughput() {
         // Conservative Base worst-case chain parameters.
         const BLOCK_GAS_LIMIT: u64 = 600_000_000;
         const BLOCK_TIME_SECS: u64 = 2;
-        const MIN_TX_GAS: u64 = 30_000;
+        // The cheapest nonce-free transaction, before its payload bytes.
+        const MIN_TX_GAS: u64 = Eip8130GasSchedule::AA_BASE_COST
+            + Eip8130GasSchedule::NONCE_FREE_COST
+            + Eip8130GasSchedule::AUTH_EXEC_K1
+            + Eip8130GasSchedule::COLD_SLOAD;
 
         let max_txs_per_block = BLOCK_GAS_LIMIT / MIN_TX_GAS;
         // NONCE_FREE_EXPIRY_WINDOW is in milliseconds; the block cadence is in
