@@ -783,19 +783,19 @@ mod tests {
         let tracker = ResultsTracker::new(&[from]);
         tracker.begin_measurement(6, Some(1));
         tracker.sent_transactions(vec![sent(tx_hash, from, true)]);
-        std::thread::sleep(Duration::from_millis(50));
-        tracker.accepted_transactions(&[tx_hash], SystemTime::now());
-        let accepted_ms = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64;
+        // A retried send that succeeded 30 ms before the block timestamp, long after registration.
+        let block_timestamp_ms = 4_000_000_000_000;
+        let sent_at = UNIX_EPOCH + Duration::from_millis(block_timestamp_ms - 30);
+        tracker.accepted_transactions(&[tx_hash], sent_at);
 
         let block = BlockObservation {
             number: 7,
             observed_at: Instant::now(),
-            timestamp_ms: Some(accepted_ms),
+            timestamp_ms: Some(block_timestamp_ms),
         };
         tracker.on_new_block_hashes(block, vec![tx_hash]);
 
-        let offset = tracker.drain_confirmed_metrics()[0].submit_offset_ms.unwrap();
-        assert!((-10..=0).contains(&offset), "offset {offset} must count from acceptance");
+        assert_eq!(tracker.drain_confirmed_metrics()[0].submit_offset_ms, Some(-30));
     }
 
     #[test]
