@@ -54,6 +54,9 @@ const CONFIRMATION_DRAIN_TIMEOUT: Duration = Duration::from_secs(200);
 const DRAIN_STALL_TIMEOUT: Duration = Duration::from_secs(20);
 const SIGNED_BATCH_SIZE: usize = 200;
 const PRESIGN_CHANNEL_BUFFER: usize = 2;
+/// Intervals of gas one steady-submission cycle may send: two lets a late tick catch up while a
+/// backlog left by a stall drains at twice the target rate rather than in one burst.
+const STEADY_CATCHUP_INTERVALS: u128 = 2;
 const IDLE_SLEEP: Duration = Duration::from_millis(10);
 const PRESIGN_RECHECK_INTERVAL: Duration = Duration::from_millis(100);
 const PREFILL_TIMEOUT: Duration = Duration::from_secs(300);
@@ -324,8 +327,9 @@ pub struct MempoolDepthController {
     block_time: Duration,
     capacity_gas: u128,
     measurement_started_at: Instant,
-    /// Sends exactly the rate budget each cycle instead of refilling to a depth target.
-    steady: bool,
+    /// Steady submission interval: send the rate budget each cycle instead of refilling to a
+    /// depth target.
+    steady_interval: Option<Duration>,
 }
 
 impl MempoolDepthController {
@@ -342,14 +346,16 @@ impl MempoolDepthController {
             capacity_gas,
             measurement_started_at,
             confirmation_latency: Duration::ZERO,
-            steady: false,
+            steady_interval: None,
         }
     }
 
     /// With a target rate, ignores the depth target so each cycle sends the gas due since the
-    /// last one. The ceiling and sender capacity still bound what is in flight.
-    pub const fn with_steady_submission(mut self, steady: bool) -> Self {
-        self.steady = steady;
+    /// last one. The ceiling and sender capacity still bound what is in flight, and each cycle
+    /// sends at most [`STEADY_CATCHUP_INTERVALS`] intervals of gas, so a backlog left by a
+    /// stall drains at a bounded rate instead of in one burst.
+    pub const fn with_steady_submission(mut self, interval: Option<Duration>) -> Self {
+        self.steady_interval = interval;
         self
     }
 
@@ -399,7 +405,7 @@ impl MempoolDepthController {
                 .div_ceil(Duration::from_secs(1).as_nanos());
             cumulative_target.saturating_sub(confirmed_gas).min(floor_gas)
         });
-        let desired_gas = if self.steady && self.target_gps.is_some() {
+        let desired_gas = if self.steady_interval.is_some() && self.target_gps.is_some() {
             ceiling_gas
         } else {
             floor_gas.saturating_add(catchup).min(ceiling_gas)
@@ -414,6 +420,15 @@ impl MempoolDepthController {
                 .div_ceil(Duration::from_secs(1).as_nanos())
                 .saturating_sub(offered_gas)
         });
+        let rate_headroom = match (self.steady_interval, self.target_gps) {
+            (Some(interval), Some(target_gps)) => rate_headroom.min(
+                u128::from(target_gps)
+                    .saturating_mul(interval.as_nanos())
+                    .saturating_mul(STEADY_CATCHUP_INTERVALS)
+                    .div_ceil(Duration::from_secs(1).as_nanos()),
+            ),
+            _ => rate_headroom,
+        };
         let inject_gas = wanted.min(capacity_headroom).min(rate_headroom);
         let limited_by = if wanted == 0 {
             InjectLimit::Nothing
@@ -842,7 +857,7 @@ impl LoadRunner {
                 u128::from(capacity as u64).saturating_mul(u128::from(initial_avg_gas)),
                 start,
             )
-            .with_steady_submission(self.config.steady_submission_interval.is_some());
+            .with_steady_submission(self.config.steady_submission_interval);
             Self::enqueue_block_aligned_transactions(
                 &mut PresignEnqueueState {
                     submission_pipeline: &submission_pipeline,
@@ -2633,7 +2648,7 @@ mod tests {
             10_000_000,
             started,
         )
-        .with_steady_submission(true);
+        .with_steady_submission(Some(Duration::from_secs(1)));
 
         // Depth already meets the 2M floor, which stops a block-aligned refill (see the test
         // above). Steady submission still sends the 1M due: 2M of target minus 1M offered.
@@ -2647,6 +2662,26 @@ mod tests {
 
         assert_eq!(plan.desired_gas, plan.ceiling_gas);
         assert_eq!(plan.inject_gas, 1_000_000);
+        assert_eq!(plan.limited_by, InjectLimit::Rate);
+    }
+
+    #[test]
+    fn steady_controller_drains_a_backlog_without_bursting() {
+        let started = Instant::now();
+        let interval = Duration::from_millis(20);
+        let controller = MempoolDepthController::new(
+            Some(400_000_000),
+            Duration::from_millis(200),
+            u128::MAX,
+            started,
+        )
+        .with_steady_submission(Some(interval));
+
+        // Ten seconds behind (4 Ggas owed) with an empty pool: block-aligned catch-up would send
+        // up to the 160M ceiling at once. Steady sends at most two intervals: 16M.
+        let plan = controller.plan(started + Duration::from_secs(10), 160_000_000, 0, 0, 0);
+
+        assert_eq!(plan.inject_gas, 16_000_000);
         assert_eq!(plan.limited_by, InjectLimit::Rate);
     }
 
