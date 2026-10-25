@@ -184,7 +184,7 @@ impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
     /// Sets the validity predicates required for this transaction's inclusion.
     ///
     /// Conditions are compiled once into timing bounds and separate state groups.
-    /// The submitted batch is retained only for lossless builder forwarding.
+    /// Partitions index a single batch retained for lossless builder forwarding.
     #[must_use]
     pub fn with_validity_predicates(
         mut self,
@@ -1142,12 +1142,8 @@ mod tests {
             transaction.size(),
             bare_size
                 + core::mem::size_of::<crate::ValidityConditions>()
-                + transaction.validity_conditions().heap_size()
-        );
-        assert!(
-            transaction.validity_conditions().heap_size()
-                >= 19 * core::mem::size_of::<ValidityPredicate>(),
-            "submitted spare capacity plus the two state predicates must be counted"
+                + 4 * core::mem::size_of::<ValidityPredicate>()
+                + 2 * core::mem::size_of::<usize>()
         );
     }
 

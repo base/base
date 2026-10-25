@@ -127,25 +127,25 @@ impl ValidityBounds {
 
 /// Conditions compiled at ingress for repeated pool and builder checks.
 ///
-/// Timing comparisons are reduced to bounds. State predicates are partitioned
-/// by type; timing always gates state reads. The submitted count is retained
+/// Timing comparisons are reduced to bounds. State partitions index a single
+/// owned batch, preserving submission order for forwarding without duplicating
+/// predicates. Timing always gates state reads. The submitted count is retained
 /// because transaction ordering uses it, even when redundant bounds collapse.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ValidityConditions {
     block: ValidityBounds,
     flashblock: ValidityBounds,
-    balance: Vec<ValidityPredicate>,
-    nonce: Vec<ValidityPredicate>,
-    storage: Vec<ValidityPredicate>,
-    /// Original wire batch, used only when forwarding to a builder.
-    submitted: Vec<ValidityPredicate>,
+    balance: Box<[usize]>,
+    nonce: Box<[usize]>,
+    storage: Box<[usize]>,
+    /// Original wire batch, shared by evaluation and lossless builder forwarding.
+    submitted: Box<[ValidityPredicate]>,
 }
 
 impl ValidityConditions {
     /// Compiles submitted predicates without modifying the wire representation.
     pub fn new(predicates: Vec<ValidityPredicate>) -> Self {
-        // Count partitions before cloning large predicates so larger batches do not
-        // repeatedly grow buffers, and small partitions do not retain minimum Vec capacity.
+        // Allocate each partition once; only indices, not predicates, are duplicated.
         let mut balance_count = 0;
         let mut nonce_count = 0;
         let mut storage_count = 0;
@@ -165,13 +165,13 @@ impl ValidityConditions {
                 _ => {}
             }
         }
-        let mut conditions = Self { submitted: predicates, ..Self::default() };
-        conditions.balance.reserve_exact(balance_count);
-        conditions.nonce.reserve_exact(nonce_count);
-        conditions.storage.reserve_exact(storage_count);
+        let mut conditions = Self { submitted: predicates.into_boxed_slice(), ..Self::default() };
+        let mut balance = Vec::with_capacity(balance_count);
+        let mut nonce = Vec::with_capacity(nonce_count);
+        let mut storage = Vec::with_capacity(storage_count);
         conditions.block.excluded.reserve_exact(block_exclusions);
         conditions.flashblock.excluded.reserve_exact(flashblock_exclusions);
-        for predicate in &conditions.submitted {
+        for (index, predicate) in conditions.submitted.iter().enumerate() {
             match predicate {
                 ValidityPredicate::BlockNumber { op, value } => {
                     conditions.block.insert(*op, *value)
@@ -179,11 +179,14 @@ impl ValidityConditions {
                 ValidityPredicate::FlashblockIndex { op, value } => {
                     conditions.flashblock.insert(*op, *value)
                 }
-                ValidityPredicate::Balance { .. } => conditions.balance.push(predicate.clone()),
-                ValidityPredicate::Nonce { .. } => conditions.nonce.push(predicate.clone()),
-                ValidityPredicate::Storage { .. } => conditions.storage.push(predicate.clone()),
+                ValidityPredicate::Balance { .. } => balance.push(index),
+                ValidityPredicate::Nonce { .. } => nonce.push(index),
+                ValidityPredicate::Storage { .. } => storage.push(index),
             }
         }
+        conditions.balance = balance.into_boxed_slice();
+        conditions.nonce = nonce.into_boxed_slice();
+        conditions.storage = storage.into_boxed_slice();
         conditions
     }
 
@@ -193,9 +196,9 @@ impl ValidityConditions {
         EMPTY.get_or_init(Self::default)
     }
 
-    /// Original predicates for lossless builder forwarding; never used for evaluation.
+    /// Original predicates in submission order for lossless builder forwarding.
     pub const fn submitted(&self) -> &[ValidityPredicate] {
-        self.submitted.as_slice()
+        &self.submitted
     }
 
     /// Block-number bounds.
@@ -220,7 +223,11 @@ impl ValidityConditions {
 
     /// State predicates in balance, nonce, then storage order.
     pub fn state_predicates(&self) -> impl Iterator<Item = &ValidityPredicate> {
-        self.balance.iter().chain(&self.nonce).chain(&self.storage)
+        self.balance
+            .iter()
+            .chain(self.nonce.iter())
+            .chain(self.storage.iter())
+            .map(|&index| &self.submitted[index])
     }
 
     /// Normalized predicates in evaluation order, for parking and resting checks.
@@ -246,9 +253,15 @@ impl ValidityConditions {
             ValidityPredicate::FlashblockIndex { op, value } => {
                 self.flashblock.contains(*op, *value)
             }
-            ValidityPredicate::Balance { .. } => self.balance.contains(predicate),
-            ValidityPredicate::Nonce { .. } => self.nonce.contains(predicate),
-            ValidityPredicate::Storage { .. } => self.storage.contains(predicate),
+            ValidityPredicate::Balance { .. } => {
+                self.balance.iter().any(|&index| self.submitted[index] == *predicate)
+            }
+            ValidityPredicate::Nonce { .. } => {
+                self.nonce.iter().any(|&index| self.submitted[index] == *predicate)
+            }
+            ValidityPredicate::Storage { .. } => {
+                self.storage.iter().any(|&index| self.submitted[index] == *predicate)
+            }
         }
     }
 
@@ -272,11 +285,9 @@ impl ValidityConditions {
     pub const fn heap_size(&self) -> usize {
         self.block.heap_size()
             + self.flashblock.heap_size()
-            + (self.balance.capacity()
-                + self.nonce.capacity()
-                + self.storage.capacity()
-                + self.submitted.capacity())
-                * core::mem::size_of::<ValidityPredicate>()
+            + (self.balance.len() + self.nonce.len() + self.storage.len())
+                * core::mem::size_of::<usize>()
+            + self.submitted.len() * core::mem::size_of::<ValidityPredicate>()
     }
 }
 
@@ -407,31 +418,64 @@ mod tests {
     }
 
     #[test]
-    fn heap_size_counts_spare_capacity_in_every_backing_vector() {
-        let mut conditions = ValidityConditions {
-            balance: Vec::with_capacity(3),
-            nonce: Vec::with_capacity(5),
-            storage: Vec::with_capacity(7),
-            submitted: Vec::with_capacity(11),
-            ..Default::default()
-        };
-        conditions.block.excluded.reserve_exact(4);
-        conditions.flashblock.excluded.reserve_exact(6);
-        conditions.block.insert(ValidityOperator::NotEqual, U256::ONE);
-        conditions.flashblock.insert(ValidityOperator::NotEqual, U256::ONE);
+    fn ingestion_discards_spare_capacity_but_counts_exclusions() {
+        let mut submitted = Vec::with_capacity(100);
+        submitted.extend([
+            ValidityPredicate::BlockNumber { op: NotEqual, value: U256::ONE },
+            ValidityPredicate::FlashblockIndex { op: NotEqual, value: U256::ONE },
+        ]);
+        let conditions = ValidityConditions::new(submitted);
         assert_eq!(
             conditions.heap_size(),
-            26 * core::mem::size_of::<ValidityPredicate>() + 10 * core::mem::size_of::<U256>()
+            2 * core::mem::size_of::<ValidityPredicate>() + 2 * core::mem::size_of::<U256>()
         );
+        assert_eq!(conditions.len(), 2);
+    }
 
-        let mut submitted = Vec::with_capacity(13);
-        submitted.push(ValidityPredicate::BlockNumber {
-            op: ValidityOperator::GreaterThan,
-            value: U256::ZERO,
-        });
-        let conditions = ValidityConditions::new(submitted);
-        assert_eq!(conditions.heap_size(), 13 * core::mem::size_of::<ValidityPredicate>());
-        assert_eq!(conditions.len(), 1);
+    #[test]
+    fn indexed_partitions_preserve_large_interleaved_batches_with_bounded_overhead() {
+        for count in [0, 1, 16, 300] {
+            let mut submitted = Vec::with_capacity(count * 6);
+            let mut balances = Vec::new();
+            let mut nonces = Vec::new();
+            let mut storage = Vec::new();
+            for value in 0..count {
+                let value = U256::from(value);
+                let balance =
+                    ValidityPredicate::Balance { address: Address::ZERO, op: Equal, value };
+                let nonce = ValidityPredicate::Nonce { address: Address::ZERO, op: Equal, value };
+                let slot = ValidityPredicate::Storage {
+                    address: Address::ZERO,
+                    slot: value,
+                    mask: U256::MAX,
+                    op: Equal,
+                    value,
+                };
+                submitted.extend([slot.clone(), nonce.clone(), balance.clone()]);
+                balances.push(balance);
+                nonces.push(nonce);
+                storage.push(slot);
+            }
+            let expected = submitted.clone();
+            let conditions = ValidityConditions::new(submitted);
+            assert_eq!(conditions.submitted(), expected);
+            assert_eq!(conditions.len(), 3 * count);
+            assert_eq!(conditions.is_empty(), count == 0);
+            assert!(
+                conditions.state_predicates().eq(balances.iter().chain(&nonces).chain(&storage))
+            );
+            for predicate in &expected {
+                assert!(conditions.contains(predicate));
+            }
+            // Indexing may add at most 10% to the single owned batch, not another copy.
+            let payload_bytes = core::mem::size_of_val(expected.as_slice());
+            assert!(conditions.heap_size() <= payload_bytes + payload_bytes / 10);
+            assert!(!conditions.contains(&ValidityPredicate::Balance {
+                address: Address::repeat_byte(1),
+                op: Equal,
+                value: U256::ZERO,
+            }));
+        }
     }
 
     #[test]
@@ -485,6 +529,10 @@ mod tests {
             ]
         );
         assert!(normalized[2..].iter().all(|predicate| matches!(predicate, Cow::Borrowed(_))));
+        // Evaluation must borrow the original batch rather than a second predicate allocation.
+        for (actual, index) in conditions.state_predicates().zip([4, 2, 0]) {
+            assert!(core::ptr::eq(actual, &conditions.submitted()[index]));
+        }
         for predicate in [&normalized_block, &flashblock, &balance, &nonce, &storage] {
             assert!(conditions.contains(predicate));
         }
