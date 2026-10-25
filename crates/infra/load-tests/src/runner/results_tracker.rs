@@ -218,14 +218,13 @@ impl ResultsTracker {
         }
     }
 
-    /// Restamps pending transactions a submission RPC just accepted, so a retried batch is
-    /// measured from the send that succeeded rather than from its first attempt.
-    pub fn accepted_transactions(&self, tx_hashes: &[TxHash]) {
-        let accepted_at = SystemTime::now();
+    /// Restamps pending transactions a submission RPC accepted with the start of that attempt,
+    /// so a retried batch is measured from the send that succeeded rather than its first one.
+    pub fn accepted_transactions(&self, tx_hashes: &[TxHash], sent_at: SystemTime) {
         let mut inner = self.inner.write();
         for tx_hash in tx_hashes {
             if let Some(pending) = inner.pending.get_mut(tx_hash) {
-                pending.submitted_at = accepted_at;
+                pending.submitted_at = sent_at;
             }
         }
     }
@@ -785,7 +784,7 @@ mod tests {
         tracker.begin_measurement(6, Some(1));
         tracker.sent_transactions(vec![sent(tx_hash, from, true)]);
         std::thread::sleep(Duration::from_millis(50));
-        tracker.accepted_transactions(&[tx_hash]);
+        tracker.accepted_transactions(&[tx_hash], SystemTime::now());
         let accepted_ms = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64;
 
         let block = BlockObservation {
