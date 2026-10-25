@@ -61,8 +61,10 @@ impl PayerRejection {
     }
 
     /// The rejection for a phase-0 simulation that failed with `error`: `EXECUTION_REVERTED`
-    /// for a revert, carrying its data, and `INVALID_TRANSACTION` for a halt or a transaction
-    /// the EVM refuses, such as one whose sender cannot pay.
+    /// for a revert, carrying its data, and `INVALID_TRANSACTION` for an EIP-8130 rejection
+    /// (`-32003`), such as an account change that fails to apply. A failed call, including one
+    /// that runs out of gas or moves value the sender lacks, reverts the phase, so it arrives
+    /// as a revert.
     ///
     /// Returns `None` for any other error, which says nothing reliable about the transaction.
     /// reth shares `-32000` between request checks and node failures such as execution
@@ -124,18 +126,16 @@ mod tests {
 
     #[test]
     fn reports_a_refused_simulation_as_an_invalid_transaction() {
-        let halt = ErrorObjectOwned::owned(
+        let reason = "EIP-8130 transaction rejected: unsupported account change type";
+        let refused = ErrorObjectOwned::owned(
             EthRpcErrorCode::TransactionRejected.code(),
-            "out of gas",
+            reason,
             None::<()>,
         );
 
-        let rejection = PayerRejection::for_phase_zero(&halt).unwrap();
+        let rejection = PayerRejection::for_phase_zero(&refused).unwrap();
 
-        assert_eq!(
-            data(&rejection),
-            json!({ "code": "INVALID_TRANSACTION", "reason": "out of gas" })
-        );
+        assert_eq!(data(&rejection), json!({ "code": "INVALID_TRANSACTION", "reason": reason }));
     }
 
     #[test]
