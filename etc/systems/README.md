@@ -316,11 +316,11 @@ just devnet bench da --rpc-url "$BASE_MAINNET_RPC" --from 53091727 --to 53095326
 ```
 
 The encoder's L1 clock advances every 12 s of block time and every submission counts as included
-at once. `<output-dir>/da-result.json` holds the range's gas, transactions and their bytes, the L1
-transactions, blobs and frame bytes the encoder produced, and rates over block time: gas per
-second, frame bytes per second, bytes per gas, compression ratio, blobs per L1 slot, blob fill,
-and the gas per second that full blobs at the 14-blob L1 target carry at this range's bytes per
-gas. Mainnet ranges read over RPC check the encoder against the blob bytes Base posted.
+at once. `<output-dir>/da-result.json` holds the range's gas, its non-deposit transactions and
+their bytes, the L1 transactions, blobs and frame bytes the encoder produced, and rates over block
+time: gas per second, frame bytes per second, bytes per gas, compression ratio, blobs per L1 slot,
+blob fill, and the gas per second that full blobs at the 14-blob L1 target carry at this range's
+bytes per gas. Mainnet ranges read over RPC check the encoder against the blob bytes Base posted.
 
 ## Compare 2s and 200ms fairly
 

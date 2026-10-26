@@ -68,7 +68,7 @@ pub struct DaResult {
     pub seconds: f64,
     /// Gas used by the range.
     pub gas_used: u64,
-    /// Transactions in the range, deposits included.
+    /// Non-deposit transactions in the range, the ones batches carry.
     pub transactions: u64,
     /// EIP-2718 bytes of those transactions.
     pub transaction_bytes: u64,
@@ -215,9 +215,11 @@ impl DaMeter {
         let number = block.header.number;
         let (_, first_ms) = *self.first.get_or_insert((number, timestamp_ms));
         self.gas_used += block.header.gas_used;
-        self.transactions += block.body.transactions.len() as u64;
-        self.transaction_bytes +=
-            block.body.transactions.iter().map(|tx| tx.encode_2718_len() as u64).sum::<u64>();
+        // Batches leave out deposits, which derivation rebuilds from L1.
+        for tx in block.body.transactions.iter().filter(|tx| !tx.is_deposit()) {
+            self.transactions += 1;
+            self.transaction_bytes += tx.encode_2718_len() as u64;
+        }
         // Channels close after a number of L1 blocks, so L1 time follows the range's own clock.
         let slot = (timestamp_ms - first_ms) / L1_SLOT_MS;
         // L1 passing a submitted channel's timeout makes the encoder resubmit it, counting it twice.
