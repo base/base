@@ -45,6 +45,12 @@ pub use metrics::{
 mod deferrals;
 pub use deferrals::{BlockDeferrals, DeferralJournal};
 
+mod resting;
+pub use resting::{
+    RESTING_UNSEEN_RETAINED_BLOCKS, RestingCarryOver, RestingMember, RestingPredicateMode,
+    RestingPredicateStore, RestingPredicates,
+};
+
 mod inclusion;
 pub use inclusion::{FLOW_STANDARD, FLOW_VALIDITY, InclusionFlow, InclusionTracker};
 

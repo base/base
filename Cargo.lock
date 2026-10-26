@@ -4583,6 +4583,7 @@ dependencies = [
  "base-execution-txpool",
  "base-metrics",
  "base-observability-events",
+ "clap",
  "criterion",
  "derive_more 2.1.1",
  "metrics",
@@ -4612,6 +4613,7 @@ dependencies = [
  "revm",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror 2.0.19",
  "tracing",
 ]
