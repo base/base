@@ -35,6 +35,12 @@ pub use benchmark_report::{
     VisualizerSequencerMetrics, VisualizerValidatorMetrics,
 };
 
+mod replay_cli;
+pub use replay_cli::{
+    LatencySummary, REPLAY_METRICS_FILE, REPLAY_RESULT_FILE, ReplayBenchmarkArgs,
+    ReplayBlockTiming, ReplayMode, ReplayResult,
+};
+
 mod config;
 pub use config::{
     ANVIL_ACCOUNT_0, ANVIL_ACCOUNT_1, ANVIL_ACCOUNT_2, ANVIL_ACCOUNT_3, ANVIL_ACCOUNT_4,

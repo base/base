@@ -30,6 +30,7 @@ mod snapshot_boundary;
 pub use snapshot_boundary::SnapshotBoundary;
 
 mod snapshot_stack;
+pub(crate) use snapshot_stack::snapshot_persistence_backpressure_threshold;
 pub use snapshot_stack::{SnapshotL2Stack, SnapshotL2StackConfig};
 
 mod shadow_sequencer;

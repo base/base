@@ -59,6 +59,8 @@ pub enum BenchmarkCommand {
     Snapshot(Box<SnapshotBenchmarkArgs>),
     /// Aggregate selected snapshot run artifacts into one report metadata file.
     Aggregate(AggregateBenchmarkArgs),
+    /// Replay blocks exported by a snapshot run into one validator on a restored snapshot.
+    Replay(crate::ReplayBenchmarkArgs),
 }
 
 /// Arguments for a fresh-devnet benchmark.
@@ -243,6 +245,7 @@ impl BenchmarkCli {
             Some(BenchmarkCommand::Local(args)) => args.run().await,
             Some(BenchmarkCommand::Snapshot(args)) => args.run().await,
             Some(BenchmarkCommand::Aggregate(args)) => args.run(),
+            Some(BenchmarkCommand::Replay(args)) => args.run().await,
         }
     }
 }

@@ -32,7 +32,9 @@ const SNAPSHOT_ADVANCE_TIMEOUT: Duration = Duration::from_secs(60);
 /// Keeps Reth's default 16-block persistence-backpressure window equivalent in wall-clock time.
 /// At a 200ms cadence, 160 blocks provide the same 32 seconds of persistence headroom as 16
 /// two-second blocks instead of stalling Engine API intake after only 3.2 seconds.
-const fn snapshot_persistence_backpressure_threshold(interval: DevnetBlockInterval) -> u64 {
+pub(crate) const fn snapshot_persistence_backpressure_threshold(
+    interval: DevnetBlockInterval,
+) -> u64 {
     match interval {
         DevnetBlockInterval::TwoSeconds => 16,
         DevnetBlockInterval::TwoHundredMilliseconds => 160,
