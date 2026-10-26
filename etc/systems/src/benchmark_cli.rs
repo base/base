@@ -11,10 +11,10 @@ use std::{
         atomic::{AtomicBool, Ordering},
     },
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
-use alloy_primitives::Address;
+use alloy_primitives::{Address, B256};
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types_eth::BlockNumberOrTag;
 use alloy_signer_local::PrivateKeySigner;
@@ -27,12 +27,15 @@ use base_load_tests::{
 use chrono::{DateTime, SecondsFormat, Utc};
 use clap::{Args, Parser, Subcommand};
 use eyre::{Result, WrapErr};
+use futures::{StreamExt, stream};
 use serde::{Deserialize, Serialize};
 use tokio::process::Command;
+use tracing::info;
 
 use crate::{
-    ANVIL_ACCOUNT_1, ANVIL_ACCOUNT_5, B20PrecompileClient, DevnetBlockInterval, DevnetConfig,
-    DevnetL2State, DevnetPrefund, PrometheusBlockCollector, SnapshotBenchmarkReportConfig,
+    ANVIL_ACCOUNT_1, ANVIL_ACCOUNT_5, B20PrecompileClient, BlockExportWriter, DevnetBlockInterval,
+    DevnetConfig, DevnetL2State, DevnetPrefund, EXPORT_BLOCKS_FILE, ExportedBlock,
+    PrometheusBlockCollector, ReplayManifest, SnapshotBenchmarkReportConfig,
     SnapshotBenchmarkResult, SnapshotBlockMetrics, SnapshotChainConfig, SnapshotL2Stack,
     SystemTestStack, SystemTestStackBuilder, VisualizerMetadata, VisualizerRun,
     VisualizerRunResult, VisualizerSequencerMetrics, VisualizerValidatorMetrics,
@@ -56,6 +59,8 @@ pub enum BenchmarkCommand {
     Snapshot(Box<SnapshotBenchmarkArgs>),
     /// Aggregate selected snapshot run artifacts into one report metadata file.
     Aggregate(AggregateBenchmarkArgs),
+    /// Replay blocks exported by a snapshot run into one validator on a restored snapshot.
+    Replay(crate::ReplayBenchmarkArgs),
 }
 
 /// Arguments for a fresh-devnet benchmark.
@@ -198,6 +203,13 @@ pub struct SnapshotBenchmarkArgs {
     /// process immediately because snapshot datadirs are disposable.
     #[arg(long, default_value_t = 0)]
     pub shutdown_timeout_seconds: u64,
+    /// Directory to export every block produced after the snapshot boundary to, for a later
+    /// `base-bench replay` on a restored copy of the same snapshot.
+    ///
+    /// Writes `<dir>/blocks.jsonl` (one engine payload per line, in order) and then
+    /// `<dir>/replay.json`, whose presence marks a complete export. A failed export fails the run.
+    #[arg(long, env = "BASE_BENCH_EXPORT_BLOCKS")]
+    pub export_blocks: Option<PathBuf>,
 }
 
 /// Wei minted to the benchmark's ephemeral funder in the first local descendant (1000 ETH).
@@ -206,6 +218,8 @@ const PREFUND_AMOUNT_WEI: u128 = 1_000_000_000_000_000_000_000;
 /// benchmark load cannot raise the base fee and strand already-submitted transaction nonce lanes.
 const SNAPSHOT_BENCHMARK_EIP1559_ELASTICITY: u32 = 1;
 const RESULT_FILE_NAME: &str = "benchmark-result.json";
+/// Concurrent full-block requests to the builder while exporting produced blocks.
+const EXPORT_FETCH_CONCURRENCY: usize = 16;
 const LOCAL_RESULT_FILE_NAME: &str = "load-test-result.json";
 const FRESH_DEVNET_BLOCK_TIME: Duration = Duration::from_secs(2);
 const FRESH_DEVNET_AZUL_ACTIVATION_BLOCK: u64 = 0;
@@ -231,6 +245,7 @@ impl BenchmarkCli {
             Some(BenchmarkCommand::Local(args)) => args.run().await,
             Some(BenchmarkCommand::Snapshot(args)) => args.run().await,
             Some(BenchmarkCommand::Aggregate(args)) => args.run(),
+            Some(BenchmarkCommand::Replay(args)) => args.run().await,
         }
     }
 }
@@ -1044,23 +1059,33 @@ impl SnapshotBenchmarkArgs {
             std::process::exit(if output_result.is_ok() { 0 } else { 1 });
         }
 
-        let shutdown_result =
-            Self::shutdown_with_deadline(stack, self.shutdown_timeout_seconds).await;
+        let shutdown_result = Self::shutdown_with_deadline(
+            "snapshot stack",
+            stack.shutdown(),
+            self.shutdown_timeout_seconds,
+        )
+        .await;
         output_result?;
         shutdown_result
     }
 
-    /// Gracefully shuts down the stack, but terminates the process if runtime destruction remains
+    /// Runs a graceful node shutdown, but terminates the process if runtime destruction remains
     /// blocked after the deadline. A native thread is used because the Tokio runtime itself may be
-    /// the component waiting on a non-cancellable blocking state-root task.
-    async fn shutdown_with_deadline(stack: SnapshotL2Stack, timeout_seconds: u64) -> Result<()> {
+    /// the component waiting on a non-cancellable blocking state-root task. Shared by the snapshot
+    /// and replay commands.
+    pub async fn shutdown_with_deadline(
+        component: &str,
+        shutdown: impl Future<Output = Result<()>>,
+        timeout_seconds: u64,
+    ) -> Result<()> {
         let complete = Arc::new(AtomicBool::new(false));
         let watchdog_complete = Arc::clone(&complete);
+        let component = component.to_string();
         thread::spawn(move || {
             thread::sleep(Duration::from_secs(timeout_seconds));
             if !watchdog_complete.load(Ordering::Acquire) {
                 eprintln!(
-                    "snapshot stack shutdown exceeded {timeout_seconds}s after result output; forcing failed process exit"
+                    "{component} shutdown exceeded {timeout_seconds}s after result output; forcing failed process exit"
                 );
                 let _ = std::io::stderr().flush();
                 // The result path was explicitly flushed before teardown. A graceful shutdown is
@@ -1070,7 +1095,7 @@ impl SnapshotBenchmarkArgs {
             }
         });
 
-        let result = stack.shutdown().await;
+        let result = shutdown.await;
         complete.store(true, Ordering::Release);
         result
     }
@@ -1126,6 +1151,19 @@ impl SnapshotBenchmarkArgs {
             .ok_or_else(|| eyre::eyre!("load test did not report a measurement end block"))?;
         let sequencer_metrics = sequencer_metrics.finish(measurement_end).await?;
         stack.stop_sequencer().await?;
+        if let Some(export_dir) = &self.export_blocks {
+            // Export while the builder is idle and before the validator starts, so the fetches
+            // do not perturb validator metrics.
+            self.export_produced_blocks(
+                export_dir,
+                &builder_rpc,
+                stack.boundary().head.number,
+                stack.boundary().head.hash,
+                block_interval,
+            )
+            .await
+            .wrap_err_with(|| format!("failed to export blocks to {}", export_dir.display()))?;
+        }
         let validator = if self.client_datadir.is_some() {
             let client_rpc = stack.client_rpc_url()?;
             let validator_metrics = PrometheusBlockCollector::start(
@@ -1172,6 +1210,79 @@ impl SnapshotBenchmarkArgs {
             validator_blocks,
         };
         Ok((result, output.run_error))
+    }
+
+    /// Writes every block the builder holds after the snapshot boundary to `dir`, including setup
+    /// blocks before the measured window, which change state the replay depends on.
+    pub async fn export_produced_blocks(
+        &self,
+        dir: &Path,
+        rpc_url: &url::Url,
+        boundary_number: u64,
+        boundary_hash: B256,
+        block_interval: DevnetBlockInterval,
+    ) -> Result<ReplayManifest> {
+        let started = Instant::now();
+        let provider = RootProvider::<Base>::new_http(rpc_url.clone());
+        let head = provider
+            .get_block_number()
+            .await
+            .wrap_err_with(|| format!("failed to read the builder head from {rpc_url}"))?;
+        eyre::ensure!(
+            head > boundary_number,
+            "builder head {head} is not past snapshot boundary {boundary_number}"
+        );
+        let mut writer = BlockExportWriter::create(dir)?;
+        let mut blocks = stream::iter(boundary_number + 1..=head)
+            .map(|number| {
+                let provider = &provider;
+                async move {
+                    provider
+                        .get_block_by_number(BlockNumberOrTag::Number(number))
+                        .full()
+                        .await
+                        .wrap_err_with(|| format!("failed to fetch block {number} from {rpc_url}"))?
+                        .ok_or_else(|| eyre::eyre!("block {number} is unavailable from {rpc_url}"))
+                }
+            })
+            .buffered(EXPORT_FETCH_CONCURRENCY);
+        let mut parent_hash = boundary_hash;
+        let mut first_block_timestamp = None;
+        while let Some(block) = blocks.next().await {
+            let block = ExportedBlock::from_rpc_block(block?);
+            eyre::ensure!(
+                block.envelope.execution_payload.parent_hash() == parent_hash,
+                "block {} does not extend {parent_hash}",
+                block.number
+            );
+            parent_hash = block.hash;
+            first_block_timestamp
+                .get_or_insert_with(|| block.envelope.execution_payload.timestamp());
+            writer.write(&block)?;
+        }
+        let manifest = writer.finish(ReplayManifest {
+            chain: self.chain.clone(),
+            rollup_config: self.rollup_config.clone(),
+            block_interval_ms: block_interval.duration().as_millis() as u64,
+            boundary_number,
+            boundary_hash,
+            first_block_timestamp: first_block_timestamp.unwrap_or_default(),
+            last_number: 0,
+            last_hash: B256::ZERO,
+            last_state_root: B256::ZERO,
+            block_count: 0,
+        })?;
+        let bytes = fs::metadata(dir.join(EXPORT_BLOCKS_FILE))
+            .wrap_err("failed to stat exported blocks")?
+            .len();
+        info!(
+            blocks = manifest.block_count,
+            bytes,
+            elapsed_ms = started.elapsed().as_millis() as u64,
+            dir = %dir.display(),
+            "exported produced blocks for replay"
+        );
+        Ok(manifest)
     }
 
     /// Fetches every canonical block in the measured window from the builder.
@@ -1324,6 +1435,7 @@ mod tests {
         assert!(args.block_gas_limit.is_none());
         assert_eq!(args.metrics_scrape_interval_ms.get(), 1000);
         assert_eq!(args.shutdown_timeout_seconds, 0);
+        assert!(args.export_blocks.is_none());
     }
 
     #[test]
@@ -1351,6 +1463,8 @@ mod tests {
             "12000000000",
             "--metrics-scrape-interval-ms",
             "200",
+            "--export-blocks",
+            "/boot/export",
         ]);
 
         let Some(BenchmarkCommand::Snapshot(args)) = cli.command else {
@@ -1361,6 +1475,7 @@ mod tests {
         assert_eq!(args.block_gas_limit.map(NonZeroU64::get), Some(12_000_000_000));
         assert_eq!(args.metrics_scrape_interval_ms.get(), 200);
         assert_eq!(args.shutdown_timeout_seconds, 30);
+        assert_eq!(args.export_blocks.as_deref(), Some(std::path::Path::new("/boot/export")));
     }
 
     #[test]

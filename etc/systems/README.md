@@ -226,6 +226,16 @@ written before the command returns the error.
 Omit `--client-datadir` to run only the builder and the standalone sequencer: the run skips the
 validator phase and its outputs.
 
+Pass `--export-blocks <dir>` (or `BASE_BENCH_EXPORT_BLOCKS`) to keep the run's blocks for a later
+validator replay on a restored copy of the same snapshot, without a second datadir. After the
+sequencer stops, the run fetches every builder block after the snapshot boundary, setup blocks
+included, and writes `<dir>/blocks.jsonl`: one JSON line per block in order, holding its number,
+hash, millisecond timestamp, state root, payload version, and the engine payload envelope exactly
+as produced. It then writes `<dir>/replay.json`, with the chain, rollup config, block interval,
+boundary, first block timestamp, and the last block's hash and state root the replay must reach.
+The manifest is written last, so its presence marks a complete export; a failed export fails the
+run. Put the directory outside the restored datadirs so restoring the snapshot does not erase it.
+
 `--output-dir` is one self-contained `base/benchmark` run directory. It receives
 `benchmark-result.json`, `metadata.json`, `metrics-sequencer.json`, `load-test-result.json`, and,
 with a client datadir, `metrics-validator.json`. Set `BASE_BENCH_CLIENT_VERSION` to a stable
@@ -263,6 +273,35 @@ as `blake2f-2s-run-1` and `blake2f-200ms-run-1` to distinguish repetitions. A
 5,000-transaction global in-flight cap is exactly one 400M-gas block of queue headroom at the
 configured 80,000 gas limit per transaction, which keeps the builder saturated without leaving an
 oversized submission backlog at cutoff.
+
+## Replay exported blocks into a validator
+
+`base-bench replay` measures a validator without a second restored datadir. A snapshot run with
+`--export-blocks <dir>` writes every produced block to `<dir>/blocks.jsonl` and then
+`<dir>/replay.json`. Restore the same snapshot again and replay the export into it:
+
+```bash
+just devnet bench replay \
+  --datadir "$RESTORED_DATADIR" \
+  --export-dir "$EXPORT_DIR" \
+  --output-dir results/account-create-2s-replay
+```
+
+The command rebuilds the run's chain spec from the manifest (chain, rollup config, cadence, and
+the first block's timestamp, where 200ms runs activate Denim), starts one execution node on
+`--datadir`, and requires its head to be the export boundary. Each block is then inserted with
+`engine_newPayload` (V2 to V4, by payload version) and made canonical with
+`engine_forkchoiceUpdatedV3`, keeping the snapshot's safe and finalized heads. Both calls must
+return `VALID`. By default blocks are sent as fast as the node accepts them; `--paced` sends each
+block at its recorded offset from the first block and records how late it was.
+
+`<output-dir>/replay-result.json` holds the manifest, mode, block count, wall time, blocks per
+second, `newPayload` and forkchoice latency (mean, p50, p99, max), paced lag, the node's final
+hash and state root, `match`, and per-block timings. A complete replay also writes
+`metrics-validator.json` in the snapshot benchmark's format; without pacing, several blocks often
+land in one scrape, so its counter deltas are averages across those blocks. The command exits
+nonzero if any block is rejected or the final hash or state root differs from the manifest. The
+replay mutates `--datadir`; restore it again before another run.
 
 ## Compare 2s and 200ms fairly
 

@@ -29,16 +29,6 @@ const SNAPSHOT_STARTUP_LEAD: Duration = Duration::from_secs(30);
 const SNAPSHOT_EL_READY_TIMEOUT: Duration = Duration::from_secs(30);
 const SNAPSHOT_ADVANCE_TIMEOUT: Duration = Duration::from_secs(60);
 
-/// Keeps Reth's default 16-block persistence-backpressure window equivalent in wall-clock time.
-/// At a 200ms cadence, 160 blocks provide the same 32 seconds of persistence headroom as 16
-/// two-second blocks instead of stalling Engine API intake after only 3.2 seconds.
-const fn snapshot_persistence_backpressure_threshold(interval: DevnetBlockInterval) -> u64 {
-    match interval {
-        DevnetBlockInterval::TwoSeconds => 16,
-        DevnetBlockInterval::TwoHundredMilliseconds => 160,
-    }
-}
-
 /// Configuration for an L1-free snapshot-backed L2 stack.
 #[derive(Debug, Clone)]
 pub struct SnapshotL2StackConfig {
@@ -106,9 +96,9 @@ impl SnapshotL2Stack {
             extra_extensions: Vec::new(),
             validity_signature_mode: ValiditySignatureMode::Off,
             persistence_threshold: Some(0),
-            persistence_backpressure_threshold: Some(snapshot_persistence_backpressure_threshold(
-                block_interval,
-            )),
+            persistence_backpressure_threshold: Some(
+                block_interval.snapshot_persistence_backpressure_threshold(),
+            ),
             txpool_max_transactions: Some(150_000),
             txpool_max_size_mb: Some(1_024),
             txpool_max_account_slots: Some(1_024),
@@ -157,9 +147,9 @@ impl SnapshotL2Stack {
             p2p_port: container.and_then(|value| value.client_p2p_port),
             metrics_port: None,
             persistence_threshold: Some(0),
-            persistence_backpressure_threshold: Some(snapshot_persistence_backpressure_threshold(
-                block_interval,
-            )),
+            persistence_backpressure_threshold: Some(
+                block_interval.snapshot_persistence_backpressure_threshold(),
+            ),
             tx_forwarding_config: None,
             upgrade_signal: None,
             extra_extensions: Vec::new(),
@@ -497,21 +487,18 @@ mod tests {
     use base_execution_chainspec::BaseChainSpec;
     use reth_ethereum_forks::ForkCondition;
 
-    use super::{
-        SNAPSHOT_STARTUP_LEAD, SnapshotL2Stack, snapshot_persistence_backpressure_threshold,
-    };
+    use super::{SNAPSHOT_STARTUP_LEAD, SnapshotL2Stack};
     use crate::DevnetBlockInterval;
 
     #[test]
     fn persistence_backpressure_window_scales_with_cadence() {
         assert_eq!(
-            snapshot_persistence_backpressure_threshold(DevnetBlockInterval::TwoSeconds),
+            DevnetBlockInterval::TwoSeconds.snapshot_persistence_backpressure_threshold(),
             16
         );
         assert_eq!(
-            snapshot_persistence_backpressure_threshold(
-                DevnetBlockInterval::TwoHundredMilliseconds
-            ),
+            DevnetBlockInterval::TwoHundredMilliseconds
+                .snapshot_persistence_backpressure_threshold(),
             160
         );
     }

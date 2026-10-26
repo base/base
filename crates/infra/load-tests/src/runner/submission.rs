@@ -7,7 +7,7 @@ use std::{
         Arc,
         atomic::{AtomicBool, AtomicU64, Ordering},
     },
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime},
 };
 
 use alloy_consensus::transaction::SignableTransaction;
@@ -1036,6 +1036,7 @@ impl SubmissionPipeline {
                     validity_signature: signed.validity_signature,
                 })
                 .collect();
+            let attempt_started_at = SystemTime::now();
             let batch_results = match ctx.submission_batch_rpcs[rpc_index]
                 .send_raw_transactions(&submit_items, ctx.submit_request_limiter.as_deref())
                 .await
@@ -1099,6 +1100,15 @@ impl SubmissionPipeline {
             let mut retry_rejected_error = None;
             let mut retry_rate_limited_error = None;
             let mut terminal_rejection_error = None;
+
+            let accepted: Vec<TxHash> = batch
+                .txs
+                .iter()
+                .zip(&batch_results)
+                .filter(|(_, result)| matches!(result, BatchSendResult::Success(_)))
+                .map(|(signed, _)| signed.tx_hash)
+                .collect();
+            ctx.results_tracker.accepted_transactions(&accepted, attempt_started_at);
 
             for (signed, result) in batch.txs.into_iter().zip(batch_results) {
                 match result {

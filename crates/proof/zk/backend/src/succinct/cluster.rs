@@ -244,7 +244,7 @@ impl ClusterZkProver {
             async {
                 // The upstream constructor consumes the endpoint string, and the proof config
                 // needs to retain it for request submission.
-                ClusterServiceClient::new(cluster_rpc.clone()).await.map_err(|error| {
+                ClusterServiceClient::new(cluster_rpc.clone(), None).await.map_err(|error| {
                     SuccinctZkProverBuildError::boxed_operation(
                         "failed to create SP1 cluster client",
                         error.into(),
