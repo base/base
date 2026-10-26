@@ -1059,23 +1059,33 @@ impl SnapshotBenchmarkArgs {
             std::process::exit(if output_result.is_ok() { 0 } else { 1 });
         }
 
-        let shutdown_result =
-            Self::shutdown_with_deadline(stack, self.shutdown_timeout_seconds).await;
+        let shutdown_result = Self::shutdown_with_deadline(
+            "snapshot stack",
+            stack.shutdown(),
+            self.shutdown_timeout_seconds,
+        )
+        .await;
         output_result?;
         shutdown_result
     }
 
-    /// Gracefully shuts down the stack, but terminates the process if runtime destruction remains
+    /// Runs a graceful node shutdown, but terminates the process if runtime destruction remains
     /// blocked after the deadline. A native thread is used because the Tokio runtime itself may be
-    /// the component waiting on a non-cancellable blocking state-root task.
-    async fn shutdown_with_deadline(stack: SnapshotL2Stack, timeout_seconds: u64) -> Result<()> {
+    /// the component waiting on a non-cancellable blocking state-root task. Shared by the snapshot
+    /// and replay commands.
+    pub async fn shutdown_with_deadline(
+        component: &str,
+        shutdown: impl Future<Output = Result<()>>,
+        timeout_seconds: u64,
+    ) -> Result<()> {
         let complete = Arc::new(AtomicBool::new(false));
         let watchdog_complete = Arc::clone(&complete);
+        let component = component.to_string();
         thread::spawn(move || {
             thread::sleep(Duration::from_secs(timeout_seconds));
             if !watchdog_complete.load(Ordering::Acquire) {
                 eprintln!(
-                    "snapshot stack shutdown exceeded {timeout_seconds}s after result output; forcing failed process exit"
+                    "{component} shutdown exceeded {timeout_seconds}s after result output; forcing failed process exit"
                 );
                 let _ = std::io::stderr().flush();
                 // The result path was explicitly flushed before teardown. A graceful shutdown is
@@ -1085,7 +1095,7 @@ impl SnapshotBenchmarkArgs {
             }
         });
 
-        let result = stack.shutdown().await;
+        let result = shutdown.await;
         complete.store(true, Ordering::Release);
         result
     }

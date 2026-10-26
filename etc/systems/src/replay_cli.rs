@@ -13,11 +13,7 @@ use std::{
     io::Write as _,
     num::NonZeroU64,
     path::{Path, PathBuf},
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
-    thread,
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -40,8 +36,8 @@ use tracing::warn;
 use crate::{
     ChainSpecSource, DevnetBlockInterval, ExportedBlock, InProcessClient, InProcessClientConfig,
     InProcessNodeRuntime, LocalBenchmarkArgs, PrometheusBlockCollector, ReplayManifest,
-    SnapshotBenchmarkReportConfig, SnapshotChainConfig, SnapshotL2Stack, VisualizerBlockMetrics,
-    l2::snapshot_persistence_backpressure_threshold, read_export_manifest, read_exported_blocks,
+    SnapshotBenchmarkArgs, SnapshotBenchmarkReportConfig, SnapshotChainConfig, SnapshotL2Stack,
+    VisualizerBlockMetrics, read_export_manifest, read_exported_blocks,
 };
 
 /// File the replay result is written to inside `--output-dir`.
@@ -219,9 +215,9 @@ impl ReplayBenchmarkArgs {
             metrics_port: None,
             // Same persistence settings as the snapshot benchmark's follow client.
             persistence_threshold: Some(0),
-            persistence_backpressure_threshold: Some(snapshot_persistence_backpressure_threshold(
-                block_interval,
-            )),
+            persistence_backpressure_threshold: Some(
+                block_interval.snapshot_persistence_backpressure_threshold(),
+            ),
             tx_forwarding_config: None,
             validity_signature_mode: ValiditySignatureMode::Off,
             upgrade_signal: None,
@@ -241,8 +237,12 @@ impl ReplayBenchmarkArgs {
             // destructors that can wait on non-cancellable Reth work.
             std::process::exit(if output_result.is_ok() { 0 } else { 1 });
         }
-        let shutdown_result =
-            Self::shutdown_with_deadline(client, self.shutdown_timeout_seconds).await;
+        let shutdown_result = SnapshotBenchmarkArgs::shutdown_with_deadline(
+            "replay node",
+            client.shutdown(),
+            self.shutdown_timeout_seconds,
+        )
+        .await;
         output_result?;
         shutdown_result
     }
@@ -423,8 +423,10 @@ impl ReplayBenchmarkArgs {
         let gas_used = payload.as_v1().gas_used;
         let transaction_count = payload.as_v1().transactions.len() as u64;
 
+        // Copy the payload before starting the timer so `newPayloadMs` measures only the node.
+        let request = payload.clone();
         let started = Instant::now();
-        let status = match payload.clone() {
+        let status = match request {
             BaseExecutionPayload::V1(payload) => {
                 engine
                     .new_payload_v2(ExecutionPayloadInputV2 {
@@ -626,25 +628,6 @@ impl ReplayBenchmarkArgs {
             }
         }
         Ok(())
-    }
-
-    /// Shuts the node down, but exits the process if runtime destruction stays blocked.
-    async fn shutdown_with_deadline(client: InProcessClient, timeout_seconds: u64) -> Result<()> {
-        let complete = Arc::new(AtomicBool::new(false));
-        let watchdog_complete = Arc::clone(&complete);
-        thread::spawn(move || {
-            thread::sleep(Duration::from_secs(timeout_seconds));
-            if !watchdog_complete.load(Ordering::Acquire) {
-                eprintln!(
-                    "replay node shutdown exceeded {timeout_seconds}s after result output; forcing failed process exit"
-                );
-                let _ = std::io::stderr().flush();
-                std::process::exit(1);
-            }
-        });
-        let result = client.shutdown().await;
-        complete.store(true, Ordering::Release);
-        result
     }
 
     fn millis(duration: Duration) -> f64 {

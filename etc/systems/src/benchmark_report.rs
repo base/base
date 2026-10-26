@@ -259,7 +259,7 @@ impl SnapshotBenchmarkReportConfig {
     }
 
     /// Converts a zero-based sample index to the equivalent position on a two-second block axis.
-    pub(crate) fn normalized_block_number(index: usize, block_interval_ms: u64) -> f64 {
+    pub fn normalized_block_number(index: usize, block_interval_ms: u64) -> f64 {
         const REFERENCE_BLOCK_INTERVAL_MS: f64 = 2_000.0;
         (index as f64 + 1.0) * block_interval_ms as f64 / REFERENCE_BLOCK_INTERVAL_MS
     }
@@ -278,7 +278,7 @@ impl SnapshotBenchmarkReportConfig {
     }
 
     /// Adds a block's gas and transaction totals to its scraped metrics, in the visualizer's keys.
-    pub(crate) fn block_visualizer_metrics(
+    pub fn block_visualizer_metrics(
         mut metrics: BTreeMap<String, f64>,
         gas_used: u64,
         transaction_count: u64,
