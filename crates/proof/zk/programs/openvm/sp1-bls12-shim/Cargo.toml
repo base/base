@@ -1,6 +1,6 @@
 [package]
 name = "sp1_bls12_381"
-version = "0.8.0-sp1-6.0.0"
+version = "0.8.0-sp1-6.10.0"
 edition = "2021"
 publish = false
 description = "bls12_381 wrapper so kzg-rs uses OpenVM intrinsics instead of SP1 syscalls."
