@@ -63,6 +63,7 @@ serde_json.workspace = true
 derive_more.workspace = true
 metrics = { workspace = true, optional = true }
 moka = { workspace = true, features = ["sync"] }
+clap = { workspace = true, optional = true, features = ["derive"] }
 
 [dev-dependencies]
 reth-provider.workspace = true
@@ -72,6 +73,7 @@ metrics-exporter-prometheus.workspace = true
 reth-revm = { workspace = true, features = ["test-utils"] }
 base-observability-events = { workspace = true, features = ["test-utils"] }
 criterion.workspace = true
+tempfile.workspace = true
 
 [[bench]]
 name = "resource_metering"
@@ -81,8 +83,13 @@ harness = false
 name = "validity_conditions"
 harness = false
 
+[[bench]]
+name = "native_build_loop"
+harness = false
+
 [features]
 default = [ "metrics" ]
+clap = [ "dep:clap" ]
 metrics = [
 	"base-common-evm/metrics",
 	"base-metrics/metrics",
