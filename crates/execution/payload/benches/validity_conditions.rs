@@ -317,6 +317,17 @@ fn ingest(c: &mut Criterion) {
     group.finish();
 }
 
+/// Evaluation before predicates were compiled at ingestion: scan the submitted batch in order.
+fn full_scan(
+    predicates: &[ValidityPredicate],
+    db: &mut InMemoryDB,
+    context: &PredicateContext,
+) -> Option<usize> {
+    predicates
+        .iter()
+        .position(|predicate| !predicate.matches(db, context).expect("in-memory reads cannot fail"))
+}
+
 fn evaluate(c: &mut Criterion) {
     let mut group = c.benchmark_group("validity_conditions/evaluate");
     for mix in MIXES {
@@ -335,6 +346,20 @@ fn evaluate(c: &mut Criterion) {
                 let result =
                     ValidityPredicateKey::first_unsatisfied(&conditions, &mut db, &EXPIRED_CONTEXT)
                         .expect("in-memory reads cannot fail");
+                assert!(result.is_some());
+            });
+        });
+        // Baseline: the pre-compilation evaluation, which scanned the submitted batch in order
+        // and evaluated timing predicates as ordinary predicates.
+        group.bench_function(BenchmarkId::new("full_scan_pass", mix.name), |b| {
+            b.iter(|| {
+                let result = full_scan(conditions.submitted(), &mut db, &CONTEXT);
+                assert!(result.is_none());
+            });
+        });
+        group.bench_function(BenchmarkId::new("full_scan_timing_reject", mix.name), |b| {
+            b.iter(|| {
+                let result = full_scan(conditions.submitted(), &mut db, &EXPIRED_CONTEXT);
                 assert!(result.is_some());
             });
         });
