@@ -43,6 +43,8 @@ use crate::{PortPool, config::BUILDER, setup::BUILDER_ENODE_ID};
 pub struct InProcessBuilderConfig {
     /// Runtime sizing policy for the execution node.
     pub runtime: InProcessNodeRuntime,
+    /// Opt-in state sharing with the native payload builder.
+    pub engine_sharing: super::BuilderEngineSharingConfig,
     /// Pre-built chain specification.
     pub chain_spec: Arc<BaseChainSpec>,
     /// Existing caller-owned datadir. A temporary datadir is created when omitted.
@@ -463,6 +465,7 @@ fn create_node_config(
     }
 
     config.runtime.bound_engine_memory(&mut node_config);
+    config.engine_sharing.apply(&mut node_config)?;
     if let Some(persistence_threshold) = config.persistence_threshold {
         node_config.engine.persistence_threshold = persistence_threshold;
     }

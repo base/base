@@ -82,6 +82,7 @@ impl SnapshotL2Stack {
 
         let builder = InProcessBuilder::start(InProcessBuilderConfig {
             runtime: InProcessNodeRuntime::Host,
+            engine_sharing: config.snapshot.builder_engine,
             chain_spec: Arc::clone(&chain_spec),
             datadir: Some(config.snapshot.builder_datadir),
             jwt_secret,

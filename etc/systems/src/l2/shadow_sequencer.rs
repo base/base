@@ -86,6 +86,7 @@ impl ShadowSequencer {
             .wrap_err("Failed to parse shadow builder L2 chain spec")?;
         let builder = InProcessBuilder::start(InProcessBuilderConfig {
             runtime: InProcessNodeRuntime::SystemTest,
+            engine_sharing: Default::default(),
             chain_spec,
             datadir: None,
             jwt_secret: config.jwt_secret,

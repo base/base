@@ -218,6 +218,7 @@ impl L2Stack {
         // 1. Start the builder (in-process EL).
         let builder_config = InProcessBuilderConfig {
             runtime: InProcessNodeRuntime::SystemTest,
+            engine_sharing: Default::default(),
             chain_spec: builder_chain_spec,
             datadir: config.builder_datadir,
             jwt_secret: config.jwt_secret,

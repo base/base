@@ -1,7 +1,10 @@
 //! Bounded Rayon runtime configuration for in-process test nodes.
 
+use clap::Args;
+use eyre::{Result, ensure};
 use reth_node_core::node_config::NodeConfig;
 use reth_tasks::{RayonConfig, RuntimeConfig};
+use serde::{Deserialize, Serialize};
 
 /// Runtime sizing policy for an in-process execution node.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -30,6 +33,33 @@ impl InProcessNodeRuntime {
         if self == Self::SystemTest {
             node_config.engine.cross_block_cache_size = TestNodeRuntime::CROSS_BLOCK_CACHE_SIZE_MB;
         }
+    }
+}
+
+/// Opt-in engine state shared with the native payload builder.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Args)]
+pub struct BuilderEngineSharingConfig {
+    /// Share the engine's sparse trie with the native builder (requires at least five CPUs).
+    #[arg(long = "engine.share-sparse-trie-with-payload-builder")]
+    pub share_sparse_trie_with_payload_builder: bool,
+    /// Share the engine's execution cache with the native builder.
+    #[arg(long = "engine.share-execution-cache-with-payload-builder")]
+    pub share_execution_cache_with_payload_builder: bool,
+}
+
+impl BuilderEngineSharingConfig {
+    /// Apply explicit sharing settings without changing the engine's pool sizing.
+    pub fn apply<C>(self, node_config: &mut NodeConfig<C>) -> Result<()> {
+        ensure!(
+            !self.share_sparse_trie_with_payload_builder
+                || node_config.engine.tree_config().has_enough_parallelism(),
+            "sparse-trie sharing requires at least five available CPUs"
+        );
+        node_config.engine.share_sparse_trie_with_payload_builder =
+            self.share_sparse_trie_with_payload_builder;
+        node_config.engine.share_execution_cache_with_payload_builder =
+            self.share_execution_cache_with_payload_builder;
+        Ok(())
     }
 }
 
@@ -64,5 +94,65 @@ impl TestNodeRuntime {
             state_trie_overlay_worker_threads: Some(Self::WORKER_POOL_THREADS),
             ..Default::default()
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Defaults preserve the disabled engine settings; cache-only sharing is independently opt-in.
+    #[test]
+    fn sharing_defaults_and_cache_opt_in() {
+        let mut node = NodeConfig::default();
+        BuilderEngineSharingConfig::default().apply(&mut node).unwrap();
+        assert!(!node.engine.share_sparse_trie_with_payload_builder, "sparse sharing stays off");
+        assert!(!node.engine.share_execution_cache_with_payload_builder, "cache sharing stays off");
+        BuilderEngineSharingConfig {
+            share_execution_cache_with_payload_builder: true,
+            ..Default::default()
+        }
+        .apply(&mut node)
+        .unwrap();
+        assert!(
+            node.engine.share_execution_cache_with_payload_builder,
+            "cache flag reaches EngineArgs"
+        );
+        assert!(
+            !node.engine.share_sparse_trie_with_payload_builder,
+            "cache sharing does not imply sparse sharing"
+        );
+    }
+
+    /// Sparse sharing either reaches `EngineArgs` or fails clearly on a small host.
+    #[test]
+    fn sparse_sharing_requires_parallelism() {
+        let mut node = NodeConfig::default();
+        let supported = node.engine.tree_config().has_enough_parallelism();
+        let result = BuilderEngineSharingConfig {
+            share_sparse_trie_with_payload_builder: true,
+            share_execution_cache_with_payload_builder: true,
+        }
+        .apply(&mut node);
+        if supported {
+            result.expect("supported hosts must accept sparse sharing");
+            assert!(
+                node.engine.share_sparse_trie_with_payload_builder,
+                "sparse flag reaches EngineArgs"
+            );
+            assert!(
+                node.engine.share_execution_cache_with_payload_builder,
+                "cache flag reaches EngineArgs"
+            );
+        } else {
+            assert!(
+                result.unwrap_err().to_string().contains("at least five"),
+                "small hosts must fail clearly"
+            );
+            assert!(
+                !node.engine.share_sparse_trie_with_payload_builder,
+                "failed validation leaves flags unchanged"
+            );
+        }
     }
 }

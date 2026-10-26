@@ -212,6 +212,9 @@ pub struct SnapshotBenchmarkArgs {
     /// `<dir>/replay.json`, whose presence marks a complete export. A failed export fails the run.
     #[arg(long, env = "BASE_BENCH_EXPORT_BLOCKS")]
     pub export_blocks: Option<PathBuf>,
+    /// Opt-in state sharing for the snapshot's native payload builder.
+    #[command(flatten)]
+    pub builder_engine: crate::BuilderEngineSharingConfig,
 }
 
 /// Wei minted to the benchmark's ephemeral funder in the first local descendant (1000 ETH).
@@ -986,6 +989,7 @@ impl SnapshotBenchmarkArgs {
         snapshot.block_interval = block_interval;
         snapshot.block_gas_limit = self.block_gas_limit.map(NonZeroU64::get);
         snapshot.eip1559_elasticity_override = Some(SNAPSHOT_BENCHMARK_EIP1559_ELASTICITY);
+        snapshot.builder_engine = self.builder_engine;
         snapshot.prefund =
             Some(DevnetPrefund { address: funder_key.address(), amount: PREFUND_AMOUNT_WEI });
 
@@ -1439,6 +1443,41 @@ mod tests {
         assert_eq!(args.metrics_scrape_interval_ms.get(), 1000);
         assert_eq!(args.shutdown_timeout_seconds, 0);
         assert!(args.export_blocks.is_none());
+        assert_eq!(
+            args.builder_engine,
+            crate::BuilderEngineSharingConfig::default(),
+            "sharing defaults stay disabled"
+        );
+    }
+
+    /// Both sharing CLI flags reach the configuration passed to the snapshot launcher.
+    #[test]
+    fn parses_snapshot_builder_sharing() {
+        let cli = BenchmarkCli::parse_from([
+            "base-bench",
+            "snapshot",
+            "--builder-datadir",
+            "/snapshot/builder",
+            "--load-test-config",
+            "load.yaml",
+            "--output-dir",
+            "results",
+            "--scenario",
+            "sharing",
+            "--engine.share-sparse-trie-with-payload-builder",
+            "--engine.share-execution-cache-with-payload-builder",
+        ]);
+        let Some(BenchmarkCommand::Snapshot(args)) = cli.command else {
+            panic!("expected snapshot benchmark command");
+        };
+        assert!(
+            args.builder_engine.share_sparse_trie_with_payload_builder,
+            "sparse flag is parsed"
+        );
+        assert!(
+            args.builder_engine.share_execution_cache_with_payload_builder,
+            "cache flag is parsed"
+        );
     }
 
     #[test]
