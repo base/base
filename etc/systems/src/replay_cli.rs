@@ -55,6 +55,8 @@ pub const REPLAY_METRICS_FILE: &str = "metrics-validator.json";
 const UNREACHABLE_PEER_ENODE: &str = "enode://79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798483ada7726a3c4655da4fbfc0e1108a8fd17b448a68554199c47d08ffb10d4b8@127.0.0.1:1";
 /// Placeholder `rollup.sequencer` URL; the replay node receives no transactions to forward.
 const UNUSED_SEQUENCER_URL: &str = "http://127.0.0.1:1";
+/// Exported blocks decoded ahead of the engine calls, off the async runtime.
+const PREFETCH_BLOCKS: usize = 64;
 
 /// Arguments for replaying an exported snapshot run into one validator node.
 #[derive(Debug, Args)]
@@ -340,11 +342,30 @@ impl ReplayBenchmarkArgs {
     ) -> ReplayRun {
         let mut blocks = Vec::with_capacity(manifest.block_count as usize);
         let mut first_timestamp_ms = None;
-        let replay_start = Instant::now();
+        // Read and decode on a blocking thread so JSON decoding neither stalls the runtime the
+        // node shares nor counts toward replay time; the clock starts at the first decoded block.
+        let (decoded_tx, mut decoded_rx) = tokio::sync::mpsc::channel(PREFETCH_BLOCKS);
+        let export_dir = self.export_dir.clone();
+        let reader = tokio::task::spawn_blocking(move || match read_exported_blocks(&export_dir) {
+            Ok(exported) => {
+                for block in exported {
+                    if decoded_tx.blocking_send(block).is_err() {
+                        return;
+                    }
+                }
+            }
+            Err(error) => {
+                let _ = decoded_tx.blocking_send(Err(error));
+            }
+        });
+        let mut replay_start = None;
         let error = async {
-            for (index, block) in read_exported_blocks(&self.export_dir)?.enumerate() {
+            let mut index = 0u64;
+            while let Some(block) = decoded_rx.recv().await {
+                let replay_start = *replay_start.get_or_insert_with(Instant::now);
                 let block = block?;
-                let expected_number = manifest.boundary_number + 1 + index as u64;
+                let expected_number = manifest.boundary_number + 1 + index;
+                index += 1;
                 ensure!(
                     block.number == expected_number,
                     "exported block {} is out of order; expected {expected_number}",
@@ -370,7 +391,11 @@ impl ReplayBenchmarkArgs {
         }
         .await
         .err();
-        ReplayRun { blocks, wall_time: replay_start.elapsed(), error }
+        let wall_time = replay_start.map(|start| start.elapsed()).unwrap_or_default();
+        // Closing the channel stops the reader if the replay ended early.
+        drop(decoded_rx);
+        let _ = reader.await;
+        ReplayRun { blocks, wall_time, error }
     }
 
     /// Inserts one block with `newPayload` and makes it canonical with a forkchoice update.
