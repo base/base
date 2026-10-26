@@ -127,8 +127,8 @@ impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
 
     /// Sets the validity predicates required for this transaction's inclusion.
     ///
-    /// Conditions are compiled once into timing bounds and separate state groups.
-    /// The submitted batch is retained only for lossless builder forwarding.
+    /// Conditions are compiled once into timing bounds and separate state groups;
+    /// each predicate is stored exactly once and re-combined for builder forwarding.
     #[must_use]
     pub fn with_validity_predicates(
         mut self,
@@ -140,10 +140,9 @@ impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
         self
     }
 
-    /// Returns the submitted predicates for lossless builder forwarding.
+    /// Returns every submitted predicate, regrouped by kind, for builder forwarding.
     /// Pool and builder checks must use [`Self::validity_conditions`] instead.
-    #[must_use]
-    pub fn validity_predicates(&self) -> &[crate::ValidityPredicate] {
+    pub fn validity_predicates(&self) -> impl Iterator<Item = &crate::ValidityPredicate> {
         self.validity_conditions().submitted()
     }
 
@@ -416,14 +415,6 @@ where
 pub trait BasePooledTx: PoolTransaction + DataAvailabilitySized {
     /// Returns the EIP-2718 encoded bytes of the transaction.
     fn encoded_2718(&self) -> Cow<'_, Bytes>;
-
-    /// Returns submitted predicates for builder forwarding, not repeated evaluation.
-    ///
-    /// Derived from [`Self::validity_conditions`] so forwarding and enforcement
-    /// use the same ingested metadata.
-    fn validity_predicates(&self) -> &[crate::ValidityPredicate] {
-        self.validity_conditions().submitted()
-    }
 
     /// Returns the compiled conditions used for pool and builder enforcement.
     ///
@@ -925,7 +916,7 @@ mod tests {
     }
 
     #[test]
-    fn validity_clones_share_lossless_batch_count_and_allocated_size() {
+    fn validity_clones_share_partitioned_batch_count_and_allocated_size() {
         let transaction = eip8130_pooled(U256::ZERO);
         let bare_size = transaction.size();
         let balance = ValidityPredicate::Balance {
@@ -938,13 +929,13 @@ mod tests {
             value: U256::from(9),
         };
         let mut submitted = Vec::with_capacity(17);
-        submitted.extend([balance.clone(), block.clone(), block, balance]);
-        let expected = submitted.clone();
+        submitted.extend([balance.clone(), block.clone(), block.clone(), balance.clone()]);
+        // Forwarding yields timing predicates first, then state partitions.
+        let expected = [block.clone(), block, balance.clone(), balance];
         let transaction = transaction.with_validity_predicates(submitted);
         let cloned = transaction.clone();
         assert!(core::ptr::eq(transaction.validity_conditions(), cloned.validity_conditions()));
-        assert_eq!(cloned.validity_predicates(), expected);
-        assert_eq!(BasePooledTx::validity_predicates(&cloned), expected);
+        assert_eq!(cloned.validity_predicates().cloned().collect::<Vec<_>>(), expected);
         assert_eq!(cloned.validity_conditions().len(), 4);
         assert_eq!(cloned.validity_conditions().block().min(), Some(U256::from(10)));
         assert_eq!(transaction.size(), cloned.size());
@@ -954,10 +945,10 @@ mod tests {
                 + core::mem::size_of::<crate::ValidityConditions>()
                 + transaction.validity_conditions().heap_size()
         );
-        assert!(
-            transaction.validity_conditions().heap_size()
-                >= 19 * core::mem::size_of::<ValidityPredicate>(),
-            "submitted spare capacity plus the two state predicates must be counted"
+        assert_eq!(
+            transaction.validity_conditions().heap_size(),
+            4 * core::mem::size_of::<ValidityPredicate>(),
+            "each predicate is stored once; submitted spare capacity is not retained"
         );
     }
 
@@ -971,11 +962,7 @@ mod tests {
         let transaction =
             eip8130_pooled(U256::ZERO).with_validity_predicates(vec![predicate.clone()]);
 
-        assert_eq!(transaction.validity_predicates(), core::slice::from_ref(&predicate));
-        assert_eq!(
-            BasePooledTx::validity_predicates(&transaction),
-            core::slice::from_ref(&predicate)
-        );
+        assert_eq!(transaction.validity_predicates().collect::<Vec<_>>(), [&predicate]);
         assert!(transaction.validity_conditions().contains(&predicate));
         let cloned = transaction.clone();
         assert!(core::ptr::eq(transaction.validity_conditions(), cloned.validity_conditions()));
