@@ -28,8 +28,8 @@ use tracing::debug;
 use crate::{
     Admission, BasePooledTx, BaseTransactionValidator, FlashblockExpiry, GuardLimits, GuardMetrics,
     InvalidationCause, InvalidationKey, LimitRejection, MempoolGuard, ParkableBestTransactions,
-    ParkableTransactionPool, ParkedBestTransactions, PredicateContext, StateDiffInvalidation,
-    ValidityPoolMetrics,
+    ParkableTransactionPool, ParkedBestTransactions, PredicateContext,
+    RECEIVED_FLASHBLOCK_MAX_LEAD, StateDiffInvalidation, ValidityPoolMetrics,
     best::MergeBestTransactions,
     two_d_nonce_pool::{InsertOutcome, TwoDNoncePool},
 };
@@ -926,6 +926,18 @@ where
 
     fn expire_published(&self, block_number: u64, flashblock_index: u64) -> usize {
         let _admission_guard = self.protocol_admission_lock.lock();
+        // The tip is read under the admission lock so a concurrent canonical commit cannot
+        // move it between the bound check and the recorded position.
+        let tip = self.protocol_pool.block_info().last_seen_block_number;
+        if block_number <= tip || block_number > tip.saturating_add(RECEIVED_FLASHBLOCK_MAX_LEAD) {
+            debug!(
+                block = block_number,
+                flashblock = flashblock_index,
+                tip,
+                "ignoring received flashblock outside the canonical tip window"
+            );
+            return 0;
+        }
         self.expire_published_locked(block_number, flashblock_index)
     }
 }
@@ -2890,6 +2902,7 @@ mod tests {
     #[tokio::test]
     async fn received_publication_frees_same_nonce_slot_without_publishing() {
         let (pool, client) = build_integration_pool();
+        pool.set_block_info(BlockInfo { last_seen_block_number: 100, ..pool.block_info() });
         let signer = signer();
         fund(&client, signer.address());
         let predicates = vec![
@@ -2934,6 +2947,50 @@ mod tests {
             .with_validity_predicates(predicates);
         let error = pool.add_transaction(TransactionOrigin::Local, late).await.unwrap_err();
         assert!(error.to_string().contains("validity deadline expired"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn received_publication_outside_tip_window_does_not_latch_pool() {
+        let (pool, client) = build_integration_pool();
+        pool.set_block_info(BlockInfo { last_seen_block_number: 100, ..pool.block_info() });
+        let signer = signer();
+        fund(&client, signer.address());
+        let deadline = |block: u64| {
+            vec![
+                ValidityPredicate::BlockNumber {
+                    op: ValidityOperator::LessThanOrEqual,
+                    value: U256::from(block),
+                },
+                ValidityPredicate::FlashblockIndex {
+                    op: ValidityOperator::LessThanOrEqual,
+                    value: U256::from(1),
+                },
+            ]
+        };
+        let original = self_paid_eoa_8130(&signer, U256::ZERO, 0, 0, 1_000)
+            .with_validity_predicates(deadline(101));
+        let original_hash = *original.hash();
+        pool.add_transaction(TransactionOrigin::Local, original).await.unwrap();
+
+        // A stream far ahead of this node's chain (another network, a corrupt frame) must neither
+        // evict nor become the position that later admissions are judged against.
+        assert_eq!(pool.expire_published(1_000_000, 0), 0);
+        assert!(pool.get(&original_hash).is_some());
+        let next_block = self_paid_eoa_8130(&signer, U256::ZERO, 1, 0, 1_000)
+            .with_validity_predicates(deadline(102));
+        let next_block_hash = *next_block.hash();
+        pool.add_transaction(TransactionOrigin::Local, next_block)
+            .await
+            .expect("a deadline in the next block is still admissible");
+
+        // Already-canonical positions and positions more than the allowed lead ahead are
+        // ignored; the furthest allowed lead is recorded and expires only what it passed.
+        assert_eq!(pool.expire_published(100, 5), 0);
+        assert_eq!(pool.expire_published(100 + RECEIVED_FLASHBLOCK_MAX_LEAD + 1, 0), 0);
+        assert!(pool.get(&original_hash).is_some());
+        assert_eq!(pool.expire_published(100 + RECEIVED_FLASHBLOCK_MAX_LEAD, 0), 1);
+        assert!(pool.get(&original_hash).is_none());
+        assert!(pool.get(&next_block_hash).is_some());
     }
 
     #[tokio::test]

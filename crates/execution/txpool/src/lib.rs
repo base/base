@@ -50,7 +50,9 @@ pub use validity::{
 };
 
 mod block_expiry;
-pub use block_expiry::{BlockExpiryIndex, ExpiryPosition, FlashblockExpiry};
+pub use block_expiry::{
+    BlockExpiryIndex, ExpiryPosition, FlashblockExpiry, RECEIVED_FLASHBLOCK_MAX_LEAD,
+};
 
 mod transaction;
 pub use transaction::{

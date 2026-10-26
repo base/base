@@ -22,9 +22,17 @@ pub trait FlashblockExpiry: Clone + Send + Sync + 'static {
 
     /// Records a flashblock published elsewhere and evicts transactions whose deadline it
     /// passed, returning how many were evicted. Positions at or behind the last recorded one
-    /// are ignored.
+    /// are ignored, as are positions outside [`RECEIVED_FLASHBLOCK_MAX_LEAD`] of the pool's
+    /// canonical tip: the stream is not authoritative here, and a stray position would
+    /// otherwise reject every later deadline until a reorg.
     fn expire_published(&self, block_number: u64, flashblock_index: u64) -> usize;
 }
+
+/// Furthest a received flashblock may run ahead of the pool's canonical tip and still be
+/// recorded by [`FlashblockExpiry::expire_published`], in blocks. The builder works on the
+/// block after the tip; one more absorbs a follower that has not yet imported the sealed
+/// block. Beyond that the position is dropped, and block commit expires the deadline.
+pub const RECEIVED_FLASHBLOCK_MAX_LEAD: u64 = 2;
 
 /// An inclusive validity deadline, ordered by block number before flashblock index.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
