@@ -28,6 +28,9 @@ use base_common_rpc_types_engine::BaseExecutionPayload;
 use base_consensus_engine::BaseEngineClient;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_txpool::ValiditySignatureMode;
+use base_node_core::args::{ProofsHistoryDbBackend, RollupArgs};
+use base_node_runner::BaseNodeExtension;
+use base_proofs_extension::ProofsHistoryExtension;
 use clap::Args;
 use eyre::{Result, WrapErr, ensure};
 use serde::Serialize;
@@ -35,9 +38,10 @@ use tracing::warn;
 
 use crate::{
     ChainSpecSource, DevnetBlockInterval, ExportedBlock, InProcessClient, InProcessClientConfig,
-    InProcessNodeRuntime, LocalBenchmarkArgs, PrometheusBlockCollector, ReplayManifest,
-    SnapshotBenchmarkArgs, SnapshotBenchmarkReportConfig, SnapshotChainConfig, SnapshotL2Stack,
-    VisualizerBlockMetrics, read_export_manifest, read_exported_blocks,
+    InProcessNodeRuntime, LocalBenchmarkArgs, PrometheusBlockCollector, ProofsSummary,
+    ReplayManifest, ReplayProofsProbe, SnapshotBenchmarkArgs, SnapshotBenchmarkReportConfig,
+    SnapshotChainConfig, SnapshotL2Stack, VisualizerBlockMetrics, read_export_manifest,
+    read_exported_blocks,
 };
 
 /// File the replay result is written to inside `--output-dir`.
@@ -77,6 +81,11 @@ pub struct ReplayBenchmarkArgs {
     /// process immediately because the restored datadir is disposable.
     #[arg(long, default_value_t = 0)]
     pub shutdown_timeout_seconds: u64,
+    /// Proof-history store matching the datadir, such as `<datadir>/proofs` from
+    /// `base snapshot download --proofs`. Starts the node with proof history and records how far
+    /// it trails the inserted head.
+    #[arg(long)]
+    pub proofs_dir: Option<PathBuf>,
 }
 
 /// How blocks were scheduled.
@@ -182,6 +191,9 @@ pub struct ReplayResult {
     pub error: Option<String>,
     /// Per-block timings in replay order.
     pub blocks: Vec<ReplayBlockTiming>,
+    /// Proofs mode only. Recorded without a threshold; it does not affect `match`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub proofs: Option<ProofsSummary>,
 }
 
 /// Blocks inserted before the replay finished or failed.
@@ -198,6 +210,10 @@ impl ReplayBenchmarkArgs {
         let manifest = read_export_manifest(&self.export_dir)?;
         let (chain_spec, block_interval) = Self::replay_chain_spec(&manifest)?;
         Self::prepare_output_dir(&self.output_dir)?;
+        // A missing directory would start an empty store that never covers a block.
+        if let Some(dir) = &self.proofs_dir {
+            ensure!(dir.is_dir(), "proofs directory {} does not exist", dir.display());
+        }
 
         let jwt_secret = JwtSecret::random();
         let client = InProcessClient::start(InProcessClientConfig {
@@ -221,7 +237,23 @@ impl ReplayBenchmarkArgs {
             tx_forwarding_config: None,
             validity_signature_mode: ValiditySignatureMode::Off,
             upgrade_signal: None,
-            extra_extensions: Vec::new(),
+            extra_extensions: self
+                .proofs_dir
+                .iter()
+                .map(|dir| {
+                    Box::new(ProofsHistoryExtension::new(RollupArgs {
+                        proofs_history: true,
+                        proofs_history_storage_path: Some(dir.clone()),
+                        // The backend must match the store; `CURRENT` marks RocksDB.
+                        proofs_history_db: if dir.join("CURRENT").exists() {
+                            ProofsHistoryDbBackend::Rocksdb
+                        } else {
+                            ProofsHistoryDbBackend::Mdbx
+                        },
+                        ..Default::default()
+                    })) as Box<dyn BaseNodeExtension>
+                })
+                .collect(),
         })
         .await
         .wrap_err("failed to start replay node")?;
@@ -278,14 +310,24 @@ impl ReplayBenchmarkArgs {
         .await
         .wrap_err("failed to connect to the replay node's engine API")?;
 
+        let probe = self
+            .proofs_dir
+            .is_some()
+            .then(|| ReplayProofsProbe::start(rpc_url.clone(), manifest.boundary_number));
         let metrics = PrometheusBlockCollector::start(
             rpc_url,
             client.metrics_url()?,
             Duration::from_millis(self.metrics_scrape_interval_ms.get()),
         )
         .await?;
-        let run = self.replay_blocks(&engine, &manifest, safe, finalized).await;
+        let run = self
+            .replay_blocks(&engine, &manifest, safe, finalized, probe.as_ref().map(|p| &p.head))
+            .await;
         let replayed_all = run.error.is_none();
+        let proofs = match probe {
+            Some(probe) => Some(probe.finish().await?),
+            None => None,
+        };
 
         // After a rejected block the node may not answer; record an unknown final head (zeros,
         // so `match` is false) and keep the result rather than losing the timings and error.
@@ -298,12 +340,15 @@ impl ReplayBenchmarkArgs {
                 }
                 Err(error) => return Err(error),
             };
-        let result = Self::summarize(
-            manifest,
-            if self.paced { ReplayMode::Paced } else { ReplayMode::Unpaced },
-            run,
-            (final_number, final_hash, final_state_root),
-        );
+        let result = ReplayResult {
+            proofs,
+            ..Self::summarize(
+                manifest,
+                if self.paced { ReplayMode::Paced } else { ReplayMode::Unpaced },
+                run,
+                (final_number, final_hash, final_state_root),
+            )
+        };
         let result_path = self.output_dir.join(REPLAY_RESULT_FILE);
         LocalBenchmarkArgs::write_json(&result_path, &result, "replay result")?;
         println!("replay result: {}", result_path.display());
@@ -339,6 +384,7 @@ impl ReplayBenchmarkArgs {
         manifest: &ReplayManifest,
         safe: B256,
         finalized: B256,
+        head: Option<&tokio::sync::watch::Sender<u64>>,
     ) -> ReplayRun {
         let mut blocks = Vec::with_capacity(manifest.block_count as usize);
         let mut first_timestamp_ms = None;
@@ -380,6 +426,9 @@ impl ReplayBenchmarkArgs {
                     None
                 };
                 blocks.push(Self::insert(engine, &block, safe, finalized, lag).await?);
+                if let Some(head) = head {
+                    head.send_replace(block.number);
+                }
             }
             ensure!(
                 blocks.len() as u64 == manifest.block_count,
@@ -524,6 +573,7 @@ impl ReplayBenchmarkArgs {
                 && final_state_root == manifest.last_state_root,
             error: run.error.map(|error| format!("{error:#}")),
             blocks: run.blocks,
+            proofs: None,
             manifest,
         }
     }
@@ -698,6 +748,28 @@ mod tests {
         assert_eq!(args.export_dir.to_string_lossy(), "/boot/export");
         assert!(!args.paced);
         assert_eq!(args.shutdown_timeout_seconds, 0);
+        assert!(args.proofs_dir.is_none());
+    }
+
+    #[test]
+    fn parses_proofs_mode() {
+        let cli = BenchmarkCli::parse_from([
+            "base-bench",
+            "replay",
+            "--datadir",
+            "/snapshot/restored",
+            "--export-dir",
+            "/boot/export",
+            "--output-dir",
+            "results/replay",
+            "--proofs-dir",
+            "/snapshot/restored/proofs",
+        ]);
+
+        let Some(BenchmarkCommand::Replay(args)) = cli.command else {
+            panic!("expected replay command");
+        };
+        assert_eq!(args.proofs_dir.unwrap().to_string_lossy(), "/snapshot/restored/proofs");
     }
 
     #[test]
