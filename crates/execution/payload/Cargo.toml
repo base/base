@@ -77,6 +77,10 @@ criterion.workspace = true
 name = "resource_metering"
 harness = false
 
+[[bench]]
+name = "validity_conditions"
+harness = false
+
 [features]
 default = [ "metrics" ]
 metrics = [

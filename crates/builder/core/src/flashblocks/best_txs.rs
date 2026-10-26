@@ -679,7 +679,8 @@ mod tests {
         transaction: &ValidPoolTransaction<BasePooledTransaction>,
     ) {
         iterator.park_current();
-        iterator.rest(*transaction.hash(), &transaction.transaction.validity_predicates()[0]);
+        let predicate = transaction.transaction.validity_predicates().next().unwrap();
+        iterator.rest(*transaction.hash(), predicate);
     }
 
     #[test]
@@ -788,7 +789,8 @@ mod tests {
 
         let first = iterator.next(()).unwrap();
         park_unsatisfied(&mut iterator, &first);
-        iterator.rest(*resting.hash(), &first.transaction.validity_predicates()[1]);
+        let unrelated = first.transaction.validity_predicates().nth(1).unwrap();
+        iterator.rest(*resting.hash(), unrelated);
 
         iterator.refresh_iterator(parkable(&pool));
         assert!(iterator.next(()).is_none());
@@ -852,13 +854,13 @@ mod tests {
     #[test]
     fn off_mode_does_not_track_resting_transactions() {
         let resting = validity_transaction(0, 0, 10, vec![balance_at_least(WATCHED, 1)]);
-        let predicates = resting.transaction.validity_predicates();
+        let predicate = resting.transaction.validity_predicates().next().unwrap();
         let mut iterator = BestFlashblocksTxs::new(
             parkable(&pending_pool(&[Arc::clone(&resting)])),
             test_rejection_cache(),
         );
 
-        iterator.rest(*resting.hash(), &predicates[0]);
+        iterator.rest(*resting.hash(), predicate);
 
         assert!(!iterator.is_resting(*resting.hash(), resting.transaction.validity_conditions()));
     }
