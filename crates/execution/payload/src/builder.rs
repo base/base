@@ -1004,6 +1004,15 @@ where
         let can_finalize_early = self.is_denim_active();
         let resource_metering = &self.builder_config.resource_metering;
         let mut resource_throttled = 0u64;
+        // Only deposits can write the L1 block info predeploy, so the scalar left in state by the
+        // sequencer transactions holds for every pool candidate in this scan.
+        let da_footprint_gas_scalar = self
+            .chain_spec
+            .is_jovian_active_at_timestamp(self.attributes().timestamp())
+            .then(|| {
+                L1BlockInfo::fetch_da_footprint_gas_scalar(builder.evm_mut().db_mut())
+                    .expect("DA footprint should always be available from the database post jovian")
+            });
         while let Some(pooled) = best_txs.next(()) {
             let tx = &pooled.transaction;
             if self.cancel.is_cancelled() {
@@ -1337,18 +1346,7 @@ where
                 continue;
             }
 
-            let tx_encoded = tx.encoded_2718().into_owned();
-            let tx = tx.clone_into_consensus();
-
-            let da_footprint_gas_scalar = self
-                .chain_spec
-                .is_jovian_active_at_timestamp(self.attributes().timestamp())
-                .then_some(
-                    L1BlockInfo::fetch_da_footprint_gas_scalar(builder.evm_mut().db_mut()).expect(
-                        "DA footprint should always be available from the database post jovian",
-                    ),
-                );
-
+            // Checked before cloning the candidate: in a full block most candidates stop here.
             if info.is_tx_over_limits(
                 tx_da_size,
                 block_gas_limit,
@@ -1369,9 +1367,12 @@ where
                         false,
                     );
                 }
-                Self::skip_current(&mut best_txs, tx.signer(), tx.nonce(), replay_independent);
+                Self::skip_current(&mut best_txs, tx.sender(), tx.nonce(), replay_independent);
                 continue;
             }
+
+            let tx_encoded = tx.encoded_2718().into_owned();
+            let tx = tx.clone_into_consensus();
 
             // A sequencer's block should never contain blob or deposit transactions from the pool.
             if tx.is_eip4844() || tx.is_deposit() {
