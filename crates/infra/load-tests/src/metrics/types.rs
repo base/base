@@ -54,6 +54,10 @@ pub struct TransactionMetrics {
     /// When canonical inclusion was observed (used by the rolling window).
     #[serde(skip)]
     pub confirmed_at: Option<Instant>,
+    /// Milliseconds from the inclusion block's timestamp to submission; negative when
+    /// submitted before it. `None` when the block's timestamp was not observed.
+    #[serde(skip)]
+    pub submit_offset_ms: Option<i64>,
 }
 
 impl TransactionMetrics {
@@ -76,6 +80,7 @@ impl TransactionMetrics {
             reverted: false,
             cohort: SubmitCohortLabel::Plain,
             confirmed_at: None,
+            submit_offset_ms: None,
         }
     }
 
