@@ -83,6 +83,8 @@ pub struct ProofsSummary {
     /// Inserted head minus `debug_proofsSyncStatus.latest`, sampled when the head moves; heads
     /// inserted during a status call are not sampled.
     pub head_lag_blocks: CountSummary,
+    /// Status calls that failed, timed out or returned no `latest` block, and so gave no sample.
+    pub failed_probes: u64,
     /// Per JSON-RPC method name.
     pub methods: BTreeMap<String, ProofsMethodSummary>,
     /// JSON size of each `debug_executePayload` witness, in bytes.
@@ -94,6 +96,8 @@ pub struct ProofsSummary {
 pub struct ProofsSamples {
     /// Inserted head minus proof-history head.
     pub head_lag_blocks: Vec<u64>,
+    /// Status calls that gave no lag sample.
+    pub failed_probes: u64,
     /// Successful-call latencies in milliseconds and the error count, per method.
     pub methods: BTreeMap<&'static str, (Vec<f64>, u64)>,
     /// Witness sizes in bytes.
@@ -109,6 +113,7 @@ impl ProofsSamples {
         });
         ProofsSummary {
             head_lag_blocks: CountSummary::from_values(&self.head_lag_blocks),
+            failed_probes: self.failed_probes,
             methods: methods.collect(),
             witness_bytes: CountSummary::from_values(&self.witness_bytes),
         }
@@ -163,6 +168,7 @@ impl ReplayProofsProbe {
                 provider.raw_request::<_, serde_json::Value>("debug_proofsSyncStatus".into(), ());
             let status = Self::timed(&samples, "debug_proofsSyncStatus", status).await;
             let Some(latest) = status.and_then(|status| status["latest"].as_u64()) else {
+                samples.lock().unwrap().failed_probes += 1;
                 continue;
             };
             samples.lock().unwrap().head_lag_blocks.push(head.saturating_sub(latest));
@@ -289,6 +295,7 @@ mod tests {
     fn summary_reports_lag_witness_size_and_errors_per_method() {
         let mut samples = ProofsSamples {
             head_lag_blocks: vec![0, 3, 1],
+            failed_probes: 2,
             witness_bytes: vec![4_096],
             ..Default::default()
         };
@@ -298,6 +305,7 @@ mod tests {
         let summary = samples.summarize();
 
         assert_eq!(summary.head_lag_blocks, CountSummary { samples: 3, p50: 1, p99: 3, max: 3 });
+        assert_eq!(summary.failed_probes, 2);
         assert_eq!(summary.witness_bytes.max, 4_096);
         let execute = summary.methods["debug_executePayload"];
         assert_eq!(
