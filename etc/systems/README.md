@@ -274,6 +274,35 @@ as `blake2f-2s-run-1` and `blake2f-200ms-run-1` to distinguish repetitions. A
 configured 80,000 gas limit per transaction, which keeps the builder saturated without leaving an
 oversized submission backlog at cutoff.
 
+## Replay exported blocks into a validator
+
+`base-bench replay` measures a validator without a second restored datadir. A snapshot run with
+`--export-blocks <dir>` writes every produced block to `<dir>/blocks.jsonl` and then
+`<dir>/replay.json`. Restore the same snapshot again and replay the export into it:
+
+```bash
+just devnet bench replay \
+  --datadir "$RESTORED_DATADIR" \
+  --export-dir "$EXPORT_DIR" \
+  --output-dir results/account-create-2s-replay
+```
+
+The command rebuilds the run's chain spec from the manifest (chain, rollup config, cadence, and
+the first block's timestamp, where 200ms runs activate Denim), starts one execution node on
+`--datadir`, and requires its head to be the export boundary. Each block is then inserted with
+`engine_newPayload` (V2 to V4, by payload version) and made canonical with
+`engine_forkchoiceUpdatedV3`, keeping the snapshot's safe and finalized heads. Both calls must
+return `VALID`. By default blocks are sent as fast as the node accepts them; `--paced` sends each
+block at its recorded offset from the first block and records how late it was.
+
+`<output-dir>/replay-result.json` holds the manifest, mode, block count, wall time, blocks per
+second, `newPayload` and forkchoice latency (mean, p50, p99, max), paced lag, the node's final
+hash and state root, `match`, and per-block timings. A complete replay also writes
+`metrics-validator.json` in the snapshot benchmark's format; without pacing, several blocks often
+land in one scrape, so its counter deltas are averages across those blocks. The command exits
+nonzero if any block is rejected or the final hash or state root differs from the manifest. The
+replay mutates `--datadir`; restore it again before another run.
+
 ## Compare 2s and 200ms fairly
 
 One restored datadir pair is one run. A run mutates both datadirs and they are not restartable. For every
