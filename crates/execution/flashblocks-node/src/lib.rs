@@ -10,5 +10,8 @@
 mod extension;
 pub use extension::FlashblocksExtension;
 
+mod pool_expiry;
+pub use pool_expiry::PoolExpiringReceiver;
+
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_harness;

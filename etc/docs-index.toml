@@ -355,8 +355,8 @@ summary = "Proofs-history ExEx: versioned MDBX trie store serving historical eth
 digest = "13927f28e4"
 
 ["crates/execution/flashblocks-node/README.md"]
-summary = "FlashblocksExtension for the Base node: install_ext usage (install last), CLI flags (--flashblocks-url, --max-pending-blocks-depth, cached-execution), and the state, subscriber, RPC components."
-digest = "557e4ec2a8"
+summary = "FlashblocksExtension for the Base node: install_ext usage (install last), CLI flags (--flashblocks-url, --max-pending-blocks-depth, cached-execution), state, subscriber, RPC, and pool deadline expiry."
+digest = "bda32eab6a"
 
 ["crates/execution/flashblocks-node/tests/README.md"]
 summary = "Explains why flashblocks-node integration tests live in tests/ (public API only, single compilation unit with test utils) versus private-internals unit tests in src/. Read before adding tests."
