@@ -95,6 +95,7 @@ base-prover-service-protocol = { workspace = true, features = ["rpc-server"] }
 # tokio
 tokio-util.workspace = true
 tokio = { workspace = true, features = ["full", "rt-multi-thread", "macros"] }
+futures.workspace = true
 
 # rpc
 axum = { workspace = true, features = ["http1", "tokio"] }
@@ -162,7 +163,6 @@ sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "chrono", "j
 
 # misc
 anyhow.workspace = true
-futures.workspace = true
 indicatif.workspace = true
 tokio-tungstenite.workspace = true
 
