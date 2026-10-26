@@ -22,9 +22,9 @@ REVIEWED_RE = re.compile(r"<!-- pr-review:reviewed=([0-9a-f]{7,40}) -->")
 STATUS_START = "<!-- pr-review:status -->"
 STATUS_END = "<!-- /pr-review:status -->"
 RERUN_HELP = ("Reviews run when a pull request is opened or marked ready for review, not on every push. "
-              "To review the latest commit, comment `/review` on this pull request; the review then posts a new "
-              "summary in place of this one. Members of the Base organization with write access to "
-              "this repository can do this.")
+              "To review the latest commit, comment `/review` followed by that commit's full 40-character "
+              "SHA on this pull request; the review then posts a new summary in place of this one. Members "
+              "of the Base organization with write access to this repository can do this.")
 
 # Ordered most to least severe.
 SEVERITIES = {
@@ -107,30 +107,33 @@ def reviewed_sha(body: str) -> str | None:
 
 
 def status_block(reviewed: str, *, unreviewed: int | None, compare_url: str, files_url: str,
-                 uncountable: bool = False, unknown: bool = False) -> str:
+                 head: str | None = None, uncountable: bool = False, unknown: bool = False) -> str:
     """The line that says how far the pull request has moved past the reviewed commit.
 
     `unreviewed` is the number of commits pushed since, 0 if none, or None when they cannot be counted:
     because the branch was rewritten, or, with `uncountable`, because the pull request has more commits than
-    GitHub will list.
+    GitHub will list. `head` is the pull request's head commit now, when it is known: a `/review` request
+    must name the commit to review in full, so the line names it for the person asking.
     """
     short = reviewed[:7]
+    # A head the line can name in full; a placeholder when it could not be read.
+    ask = f"`/review {head}`" if head else "`/review <full head commit SHA>`"
     if unknown:
         # The lookup failed. Do not claim the review is current; the next push or `/review` corrects this.
         line = (f"Reviewed `{short}`. Whether newer commits were pushed could not be checked. "
-                f"[View all changes]({files_url}) · comment `/review` to review the latest commit.")
+                f"[View all changes]({files_url}) · comment {ask} to review the latest commit.")
     elif uncountable:
         line = (f"⚠️ **This pull request has too many commits to count the ones pushed after `{short}`.** "
-                f"[View all changes]({files_url}) · comment `/review` to review them.")
+                f"[View all changes]({files_url}) · comment {ask} to review them.")
     elif unreviewed == 0:
         line = f"✅ Reviewed `{short}`, the latest commit."
     elif unreviewed is None:
         line = (f"⚠️ **The branch was rewritten after the review of `{short}`**, so the commits that have not "
-                f"been reviewed cannot be counted. [View all changes]({files_url}) · comment `/review` to review them.")
+                f"been reviewed cannot be counted. [View all changes]({files_url}) · comment {ask} to review them.")
     else:
         noun, verb = ("commit", "has") if unreviewed == 1 else ("commits", "have")
         line = (f"⚠️ **{unreviewed} {noun} pushed after `{short}` {verb} not been reviewed.** "
-                f"[View the diff]({compare_url}) · comment `/review` to review {'it' if unreviewed == 1 else 'them'}.")
+                f"[View the diff]({compare_url}) · comment {ask} to review {'it' if unreviewed == 1 else 'them'}.")
     return f"{STATUS_START}\n> {line}\n{STATUS_END}"
 
 

@@ -2,8 +2,12 @@ name: Claude Code Review
 
 # The review is expensive, so it does not run on every push:
 #  - once, when a pull request is opened or marked ready for review;
-#  - again when a member of the Base organization who has write access to this repository comments `/review`.
+#  - again when a member of the Base organization who has write access to this repository comments
+#    `/review` followed by the full 40-character SHA of the commit to review.
 # A push only updates one line of the review comment, which counts the commits that have not been reviewed.
+# A `/review` names the commit to review exactly, so that a push after the comment cannot change what the
+# review reads: a request for a commit that is no longer the head is refused, and never followed to a
+# newer commit.
 on:
   pull_request:
     types: [opened, ready_for_review, synchronize]
@@ -47,6 +51,7 @@ jobs:
     timeout-minutes: 2
     outputs:
       allowed: ${{ steps.check.outputs.allowed }}
+      head_sha: ${{ steps.check.outputs.head_sha }}
     steps:
       - name: Check the request
         id: check
@@ -56,6 +61,7 @@ jobs:
           EVENT: ${{ github.event_name }}
           NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
           COMMENTER: ${{ github.event.comment.user.login }}
+          COMMENT_BODY: ${{ github.event.comment.body }}
         run: |
           set -euo pipefail
           if [ "$EVENT" = issue_comment ]; then
@@ -66,6 +72,14 @@ jobs:
               echo "allowed=false" >> "$GITHUB_OUTPUT"
               exit 0
             fi
+            # A `/review` must name the exact commit to review, so that a push after the comment cannot
+            # change what the review reads. The full 40-character SHA makes the request unambiguous.
+            if ! [[ "$COMMENT_BODY" =~ ^/review[[:space:]]+([0-9a-fA-F]{40})[[:space:]]*$ ]]; then
+              echo "::notice::Not reviewing: a /review request must name the commit to review, in the form '/review ' followed by its full 40-character SHA."
+              echo "allowed=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "head_sha=${BASH_REMATCH[1],,}" >> "$GITHUB_OUTPUT"
           else
             # Opening a pull request or marking it ready reviews it once; a second ready event must not buy another.
             existing=$(gh api "repos/$REPO/issues/$NUMBER/comments" --paginate --jq \
@@ -94,9 +108,10 @@ jobs:
     # It will not work on other runners
     # Runs only for a request that the `authorize` job let through: a pull request that is opened or marked
     # ready (not a draft, not a fork: secrets and the runner group are unavailable to forks, and it has no
-    # review yet), or a `/review` comment, alone or followed by a space or a line break, from a member of the
-    # organization with write access. Everything that can refuse a request is decided in `authorize`, before
-    # this job joins the concurrency group below, because GitHub keeps one waiting run per group.
+    # review yet), or a `/review` comment naming the full 40-character SHA of the commit to review, from a
+    # member of the organization with write access. Everything that can refuse a request is decided in
+    # `authorize`, before this job joins the concurrency group below, because GitHub keeps one waiting run
+    # per group.
     # `!cancelled()` is there so that a skipped `authorize` (a push, a draft, a fork) skips this job cleanly.
     if: >-
       !cancelled() && needs.authorize.result == 'success' && needs.authorize.outputs.allowed == 'true'
@@ -129,6 +144,7 @@ jobs:
           NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
           EVENT: ${{ github.event_name }}
           COMMENT_BODY: ${{ github.event.comment.body }}
+          PINNED_SHA: ${{ needs.authorize.outputs.head_sha }}
         run: |
           set -euo pipefail
           # Whether the commenter may ask was decided by the `authorize` job; this is a second look at the text.
@@ -152,6 +168,14 @@ jobs:
           if ! [[ "$head_sha" =~ ^[0-9a-f]{40}$ ]]; then
             echo "::error::Unexpected head commit from the API."
             exit 1
+          fi
+          # A `/review` pins the commit to review, so that a push after the comment cannot change what the
+          # review reads. If the head is no longer the commit named in the comment, refuse: the person can
+          # check the new head and ask again for the commit they mean.
+          if [ "$EVENT" = issue_comment ] && [ "$head_sha" != "$PINNED_SHA" ]; then
+            echo "::notice::Not reviewing: the pull request's head is now $head_sha, not the commit named in the /review comment. Check that commit and comment /review $head_sha to review it."
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
           # A second look at what `authorize` checked, taken after any wait in the concurrency group: a review
           # that was running when `authorize` ran has posted its summary by now.
@@ -214,9 +238,12 @@ jobs:
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           EVENT: ${{ github.event_name }}
 
-      # The script exits with 3 when the pull request's head is no longer the commit that was checked out. The
-      # review runs once per pull request, so it must not be lost to a push that landed a moment earlier:
-      # follow the pull request to its new head and try once more.
+      # The script exits with 3 when the pull request's head is no longer the commit that was checked out.
+      # A `/review` names that commit, so the review must never follow the pull request to a newer one: a
+      # push that landed between the comment and this check would otherwise be reviewed in its place. The
+      # job fails instead, and the notice says what to ask for. A `pull_request` run pinned nothing, so it
+      # follows the pull request to its new head and tries once more, so the review is not lost to a push
+      # that landed a moment earlier.
       - name: Review pull request
         if: steps.pr.outputs.ok == 'true'
         run: |
@@ -225,12 +252,16 @@ jobs:
           review || code=$?
           if [ "$code" -eq 3 ]; then
             head=$(gh api "repos/$REPO/pulls/$NUMBER" --jq .head.sha)
-            echo "::notice::The pull request moved to $head while the review started; reviewing that commit."
             [[ "$head" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::Unexpected head commit from the API."; exit 1; }
-            git fetch --depth 1 origin "$head"
-            git checkout --detach "$head"
-            code=0
-            review || code=$?
+            if [ "$EVENT" = issue_comment ]; then
+              echo "::notice::The pull request moved to $head while the review was starting, so nothing was reviewed. Check that commit and comment /review $head to review it."
+            else
+              echo "::notice::The pull request moved to $head while the review started; reviewing that commit."
+              git fetch --depth 1 origin "$head"
+              git checkout --detach "$head"
+              code=0
+              review || code=$?
+            fi
           fi
           exit "$code"
         env:

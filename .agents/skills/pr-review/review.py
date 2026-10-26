@@ -86,8 +86,10 @@ class HeadMovedError(ReviewError):
     """The pull request's head is not the commit that was checked out for the agents to read."""
 
 
-# Exit status for HeadMovedError. The workflow follows the pull request to its new head and tries once more,
-# because a review that runs once per pull request must not be lost to a push that landed a moment earlier.
+# Exit status for HeadMovedError. A review that a `pull_request` event started pinned no commit, so the
+# workflow follows the pull request to its new head and tries once more, because a review that runs once
+# per pull request must not be lost to a push that landed a moment earlier. A review a `/review` comment
+# started is never followed: the comment names the commit to review, so the workflow refuses instead.
 EXIT_HEAD_MOVED = 3
 # Exit status for SetupError: the machine, not the review, needs attention.
 EXIT_SETUP = 4
@@ -1298,7 +1300,7 @@ def status_line(number: int, repo: str, reviewed: str) -> str:
             unreviewed, uncountable = None, True
     return render.status_block(
         reviewed, unreviewed=unreviewed, compare_url=f"https://github.com/{repo}/compare/{reviewed}...{head}",
-        files_url=f"https://github.com/{repo}/pull/{number}/files", uncountable=uncountable)
+        files_url=f"https://github.com/{repo}/pull/{number}/files", head=head, uncountable=uncountable)
 
 
 def status_for(ctx: Context) -> str | None:

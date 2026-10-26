@@ -701,7 +701,11 @@ class WorkflowTests(unittest.TestCase):
     def test_the_comment_text_never_reaches_a_shell_script_directly(self) -> None:
         # Interpolating it into `run:` would let a comment inject commands into a job that holds secrets.
         self.assertIn("COMMENT_BODY: ${{ github.event.comment.body }}", self.review_job)
-        self.assertNotIn("github.event.comment.body", self.authorize_job.split("steps:", 1)[1])
+        # The gate reads the comment through the environment too, and nowhere else.
+        authorize_steps = self.authorize_job.split("steps:", 1)[1]
+        self.assertEqual([line.strip() for line in authorize_steps.splitlines()
+                          if "github.event.comment.body" in line],
+                         ["COMMENT_BODY: ${{ github.event.comment.body }}"])
         for block in self.text.split("run: |")[1:]:
             script = block.split("\n      - ", 1)[0]
             self.assertNotIn("${{ github.event.comment", script)
@@ -731,9 +735,41 @@ class WorkflowTests(unittest.TestCase):
         self.assertNotIn("npm install", self.status_job)
         self.assertIn("github.event.action == 'synchronize'", self.job_if(self.status_job))
 
+    def test_a_review_comment_must_name_the_commit_to_review(self) -> None:
+        # A `/review` pins the commit, so that a push after the comment cannot change what the review
+        # reads. A request that does not name a full 40-character commit is refused before the review
+        # job's concurrency group, like any other request that will not be honored.
+        script = self.authorize_job.split("- name: Check the request\n", 1)[1].split("run: |", 1)[1]
+        self.assertIn("=~ ^/review[[:space:]]+([0-9a-fA-F]{40})[[:space:]]*$", script)
+        self.assertIn("must name the commit to review", script)
+        self.assertIn('echo "head_sha=${BASH_REMATCH[1],,}" >> "$GITHUB_OUTPUT"', script)
+        self.assertIn("head_sha: ${{ steps.check.outputs.head_sha }}", self.authorize_job)
+
+    def test_a_review_only_runs_for_the_commit_the_comment_named(self) -> None:
+        # The head is read from the API, so a push that landed after the comment is not what is reviewed:
+        # the request is refused, and the person can check the new head and ask again.
+        self.assertIn("PINNED_SHA: ${{ needs.authorize.outputs.head_sha }}", self.review_job)
+        step = self.review_job.split("- name: Find the pull request\n", 1)[1].split("\n      - ", 1)[0]
+        self.assertIn('[ "$EVENT" = issue_comment ] && [ "$head_sha" != "$PINNED_SHA" ]', step)
+        self.assertIn("not the commit named in the /review comment", step)
+
     def test_a_review_that_loses_a_race_with_a_push_follows_the_pull_request(self) -> None:
-        self.assertIn('[ "$code" -eq 3 ]', self.review_job)
+        # A review started by opening or marking ready a pull request pinned no commit, so it follows the
+        # pull request to its new head once instead of being lost.
+        step = self.review_job.split("- name: Review pull request\n", 1)[1].split("\n      - ", 1)[0]
+        self.assertIn('[ "$code" -eq 3 ]', step)
+        follow = step.split("\n            else\n", 1)[1].split("\n            fi", 1)[0]
+        self.assertIn("git checkout --detach", follow)
         self.assertIn(f"EXIT_HEAD_MOVED = {review.EXIT_HEAD_MOVED}", (review.SKILL_DIR / "review.py").read_text())
+
+    def test_a_review_requested_by_a_comment_never_follows_a_push(self) -> None:
+        # A `/review` names the commit to review exactly; following the pull request to a newer head would
+        # let a push after the comment change what is reviewed.
+        step = self.review_job.split("- name: Review pull request\n", 1)[1].split("\n      - ", 1)[0]
+        comment_branch = step.split('if [ "$EVENT" = issue_comment ]; then', 1)[1].split("\n            else", 1)[0]
+        self.assertIn("nothing was reviewed", comment_branch)
+        self.assertIn("comment /review", comment_branch)
+        self.assertNotIn("checkout --detach", comment_branch)
 
     def test_the_review_job_installs_a_pinned_cli_before_checkout_and_hands_the_gateway_settings_to_the_script(
             self) -> None:
@@ -1381,6 +1417,17 @@ class StatusTests(unittest.TestCase):
         self.assertIn("rewritten", rewritten)
         self.assertIn("[View all changes](https://x/files)", rewritten)
 
+    def test_the_status_line_names_the_commit_to_ask_for(self) -> None:
+        # A `/review` must name the commit to review in full, so a line that knows the head names it for
+        # the reader to copy; one that could not read the head says what is wanted instead.
+        head = "f" * 40
+        named = render.status_block(self.REVIEWED, unreviewed=2, compare_url="https://x/c",
+                                    files_url="https://x/f", head=head)
+        self.assertIn(f"comment `/review {head}` to review", named)
+        unnamed = render.status_block(self.REVIEWED, unreviewed=2, compare_url="https://x/c",
+                                      files_url="https://x/f")
+        self.assertIn("comment `/review <full head commit SHA>` to review", unnamed)
+
     def test_replacing_the_status_block_changes_only_that_block(self) -> None:
         body = self.summary_body()
         new = render.status_block(self.REVIEWED, unreviewed=2, compare_url="https://x/c", files_url="https://x/f")
@@ -1585,7 +1632,7 @@ class CommitCountTests(unittest.TestCase):
                 block = review.status_for(ctx)
             self.assertIn("could not be checked", block)
             self.assertNotIn("✅", block)  # "✅ Reviewed ..., the latest commit." is the claim of being current
-            self.assertIn("comment `/review`", block)
+            self.assertIn("comment `/review <full head commit SHA>`", block)
 
     def test_a_summary_built_without_any_status_does_not_claim_to_be_current_either(self) -> None:
         text = render.render_summary(overview=None, new=[], outside=[], threads=[], reopened=set(), fixed=set(),
