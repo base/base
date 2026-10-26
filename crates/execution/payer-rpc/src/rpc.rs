@@ -173,11 +173,12 @@ where
                     PayerRejection::temporarily_unavailable(PAYER_UNREACHABLE_RPC_ERROR)
                 });
         }
-        // The cached body is shared, so it must carry the payer's own token order rather than
-        // the order this caller's `preferredTokens` would produce.
+        // The cached body is shared, so it must carry every offer kind in the payer's own token
+        // order rather than what this caller's `kinds` and `preferredTokens` hints would produce.
         let mut shared_request = request.clone();
         if let Some(object) = shared_request.as_object_mut() {
             object.remove("preferredTokens");
+            object.remove("kinds");
         }
         let result = self.client.request::<_, Value>("payer_getTerms", (&shared_request,)).await;
         *unreachable_at = None;
@@ -285,10 +286,10 @@ mod tests {
         SequencerClient::new_http_with_headers(sequencer.base_url(), vec![]).unwrap()
     }
 
-    fn terms_request(from_byte: u8) -> Value {
+    fn terms_request(sender_byte: u8) -> Value {
         json!({
             "chainId": "0x2105",
-            "from": format!("0x{:040x}", from_byte),
+            "sender": format!("0x{:040x}", sender_byte),
             "calls": [{ "to": "0x0000000000000000000000000000000000000002" }]
         })
     }
@@ -644,7 +645,7 @@ mod tests {
         slow.assert_calls(1);
     }
     #[tokio::test]
-    async fn orders_cached_tokens_by_each_request_preference() {
+    async fn caches_terms_without_request_hints_and_orders_tokens_per_request() {
         let sequencer = MockServer::start();
         let usdc = "0x00000000000000000000000000000000000000aa";
         let response = json!({
@@ -658,13 +659,17 @@ mod tests {
             }]
         });
         let mock = sequencer.mock(|when, then| {
-            when.method(POST).body_includes("payer_getTerms").body_excludes("preferredTokens");
+            when.method(POST)
+                .body_includes("payer_getTerms")
+                .body_excludes("preferredTokens")
+                .body_excludes("kinds");
             rpc_result(then, response.clone());
         });
         let api = PayerApiImpl::new(everest_provider(), client(&sequencer), passing_state(), true);
 
         let mut prefers_usdc = terms_request(1);
         prefers_usdc["preferredTokens"] = json!([usdc]);
+        prefers_usdc["kinds"] = json!(["token"]);
         let first = api.get_terms(prefers_usdc).await.unwrap();
         let no_preference = api.get_terms(terms_request(2)).await.unwrap();
 

@@ -29,11 +29,7 @@ impl PayerRequestFilter {
         if request_chain_id != chain_id {
             return Err(PayerRequestError::ChainIdMismatch);
         }
-        let from =
-            object.get("from").and_then(Value::as_str).ok_or(PayerRequestError::MissingFrom)?;
-        if Address::from_str(from).is_err() {
-            return Err(PayerRequestError::MissingFrom);
-        }
+        Self::validate_sender(object)?;
 
         match (Self::intent_field(object.get("calls"))?, Self::intent_field(object.get("frames"))?)
         {
@@ -81,6 +77,26 @@ impl PayerRequestFilter {
         u64::from_str_radix(hex_digits, 16).ok()
     }
 
+    /// Requires the sender as `sender` or its alias `from`, equal when both are present.
+    fn validate_sender(object: &Map<String, Value>) -> Result<(), PayerRequestError> {
+        let address = |field| {
+            object
+                .get(field)
+                .map(|value| {
+                    value
+                        .as_str()
+                        .and_then(|raw| Address::from_str(raw).ok())
+                        .ok_or(PayerRequestError::MissingSender)
+                })
+                .transpose()
+        };
+        match (address("sender")?, address("from")?) {
+            (None, None) => Err(PayerRequestError::MissingSender),
+            (Some(sender), Some(from)) if sender != from => Err(PayerRequestError::SenderMismatch),
+            _ => Ok(()),
+        }
+    }
+
     const fn intent_field(value: Option<&Value>) -> Result<IntentField<'_>, PayerRequestError> {
         match value {
             None | Some(Value::Null) => Ok(IntentField::Absent),
@@ -124,9 +140,12 @@ pub enum PayerRequestError {
     /// `chainId` is not this node's chain.
     #[error("payer request chainId does not match this node")]
     ChainIdMismatch,
-    /// `payer_getTerms` is missing a sender address.
-    #[error("payer_getTerms requires from")]
-    MissingFrom,
+    /// `payer_getTerms` has no sender address in `sender` or its alias `from`.
+    #[error("payer_getTerms requires a sender address")]
+    MissingSender,
+    /// `payer_getTerms` carries both `sender` and `from`, naming different addresses.
+    #[error("payer_getTerms sender and from must match")]
+    SenderMismatch,
     /// `payer_getTerms` carries both `calls` and `frames`, or one of them is not a list.
     #[error("payer_getTerms accepts at most one of calls or frames, as a list")]
     IntentShape,
@@ -155,7 +174,7 @@ mod tests {
     fn terms() -> Value {
         json!({
             "chainId": "0x2105",
-            "from": "0x0000000000000000000000000000000000000001",
+            "sender": "0x0000000000000000000000000000000000000001",
             "calls": [{ "to": "0x0000000000000000000000000000000000000002" }]
         })
     }
@@ -163,6 +182,44 @@ mod tests {
     #[test]
     fn get_terms_accepts_a_call_intent() {
         assert!(PayerRequestFilter::validate_get_terms(&terms(), CHAIN_ID).is_ok());
+    }
+
+    #[test]
+    fn get_terms_takes_the_sender_as_sender_or_from() {
+        let sender = "0x0000000000000000000000000000000000000001";
+        let mut from = terms();
+        from.as_object_mut().unwrap().remove("sender");
+        from["from"] = json!(sender);
+        assert!(PayerRequestFilter::validate_get_terms(&from, CHAIN_ID).is_ok());
+
+        let mut both = terms();
+        both["from"] = json!(sender);
+        assert!(PayerRequestFilter::validate_get_terms(&both, CHAIN_ID).is_ok());
+
+        let mut neither = terms();
+        neither.as_object_mut().unwrap().remove("sender");
+        assert_eq!(
+            PayerRequestFilter::validate_get_terms(&neither, CHAIN_ID),
+            Err(PayerRequestError::MissingSender)
+        );
+
+        let mut malformed = terms();
+        malformed["from"] = json!("0x01");
+        assert_eq!(
+            PayerRequestFilter::validate_get_terms(&malformed, CHAIN_ID),
+            Err(PayerRequestError::MissingSender)
+        );
+    }
+
+    #[test]
+    fn get_terms_rejects_a_sender_and_from_that_differ() {
+        let mut request = terms();
+        request["from"] = json!("0x0000000000000000000000000000000000000002");
+
+        assert_eq!(
+            PayerRequestFilter::validate_get_terms(&request, CHAIN_ID),
+            Err(PayerRequestError::SenderMismatch)
+        );
     }
 
     #[test]
