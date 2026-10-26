@@ -35,11 +35,12 @@ use base_execution_txpool::ValiditySignatureMode;
 use clap::Args;
 use eyre::{Result, WrapErr, ensure};
 use serde::Serialize;
+use tracing::warn;
 
 use crate::{
     ChainSpecSource, DevnetBlockInterval, ExportedBlock, InProcessClient, InProcessClientConfig,
     InProcessNodeRuntime, LocalBenchmarkArgs, PrometheusBlockCollector, ReplayManifest,
-    SnapshotChainConfig, SnapshotL2Stack, VisualizerBlockMetrics,
+    SnapshotBenchmarkReportConfig, SnapshotChainConfig, SnapshotL2Stack, VisualizerBlockMetrics,
     l2::snapshot_persistence_backpressure_threshold, read_export_manifest, read_exported_blocks,
 };
 
@@ -284,8 +285,17 @@ impl ReplayBenchmarkArgs {
         let run = self.replay_blocks(&engine, &manifest, safe, finalized).await;
         let replayed_all = run.error.is_none();
 
+        // After a rejected block the node may not answer; record an unknown final head (zeros,
+        // so `match` is false) and keep the result rather than losing the timings and error.
         let (final_number, final_hash, final_state_root) =
-            Self::block_header(&provider, BlockNumberOrTag::Latest).await?;
+            match Self::block_header(&provider, BlockNumberOrTag::Latest).await {
+                Ok(head) => head,
+                Err(error) if run.error.is_some() => {
+                    warn!(%error, "could not read the node head after a rejected block");
+                    (0, B256::ZERO, B256::ZERO)
+                }
+                Err(error) => return Err(error),
+            };
         let result = Self::summarize(
             manifest,
             if self.paced { ReplayMode::Paced } else { ReplayMode::Unpaced },
@@ -504,26 +514,21 @@ impl ReplayBenchmarkArgs {
             .iter()
             .enumerate()
             .map(|(index, block)| {
-                let mut execution_metrics =
-                    metrics.get(&block.number).cloned().ok_or_else(|| {
-                        eyre::eyre!(
-                            "Prometheus sample for replayed block {} is missing",
-                            block.number
-                        )
-                    })?;
-                execution_metrics.insert("gas/per_block".to_string(), block.gas_used as f64);
-                execution_metrics
-                    .insert("gas/per_second".to_string(), block.gas_used as f64 / block_seconds);
-                execution_metrics
-                    .insert("transactions/per_block".to_string(), block.transaction_count as f64);
-                execution_metrics.insert(
-                    "transactions/per_second".to_string(),
-                    block.transaction_count as f64 / block_seconds,
-                );
+                let scraped = metrics.get(&block.number).cloned().ok_or_else(|| {
+                    eyre::eyre!("Prometheus sample for replayed block {} is missing", block.number)
+                })?;
                 Ok(VisualizerBlockMetrics {
-                    block_number: (index as f64 + 1.0) * interval_ms as f64 / 2_000.0,
+                    block_number: SnapshotBenchmarkReportConfig::normalized_block_number(
+                        index,
+                        interval_ms,
+                    ),
                     timestamp: block.timestamp_ms,
-                    execution_metrics,
+                    execution_metrics: SnapshotBenchmarkReportConfig::block_visualizer_metrics(
+                        scraped,
+                        block.gas_used,
+                        block.transaction_count,
+                        block_seconds,
+                    ),
                 })
             })
             .collect()

@@ -259,7 +259,7 @@ impl SnapshotBenchmarkReportConfig {
     }
 
     /// Converts a zero-based sample index to the equivalent position on a two-second block axis.
-    fn normalized_block_number(index: usize, block_interval_ms: u64) -> f64 {
+    pub(crate) fn normalized_block_number(index: usize, block_interval_ms: u64) -> f64 {
         const REFERENCE_BLOCK_INTERVAL_MS: f64 = 2_000.0;
         (index as f64 + 1.0) * block_interval_ms as f64 / REFERENCE_BLOCK_INTERVAL_MS
     }
@@ -269,13 +269,27 @@ impl SnapshotBenchmarkReportConfig {
         block: &SnapshotBlockMetrics,
         block_seconds: f64,
     ) -> BTreeMap<String, f64> {
-        let mut metrics = block.prometheus_metrics.clone();
-        metrics.insert("gas/per_block".to_string(), block.gas_used as f64);
-        metrics.insert("gas/per_second".to_string(), block.gas_used as f64 / block_seconds);
-        metrics.insert("transactions/per_block".to_string(), block.transaction_count as f64);
+        Self::block_visualizer_metrics(
+            block.prometheus_metrics.clone(),
+            block.gas_used,
+            block.transaction_count,
+            block_seconds,
+        )
+    }
+
+    /// Adds a block's gas and transaction totals to its scraped metrics, in the visualizer's keys.
+    pub(crate) fn block_visualizer_metrics(
+        mut metrics: BTreeMap<String, f64>,
+        gas_used: u64,
+        transaction_count: u64,
+        block_seconds: f64,
+    ) -> BTreeMap<String, f64> {
+        metrics.insert("gas/per_block".to_string(), gas_used as f64);
+        metrics.insert("gas/per_second".to_string(), gas_used as f64 / block_seconds);
+        metrics.insert("transactions/per_block".to_string(), transaction_count as f64);
         metrics.insert(
             "transactions/per_second".to_string(),
-            block.transaction_count as f64 / block_seconds,
+            transaction_count as f64 / block_seconds,
         );
         metrics
     }
