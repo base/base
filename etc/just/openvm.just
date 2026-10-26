@@ -26,14 +26,10 @@ build-elf: require-cargo-openvm
     mkdir -p "{{ _openvm_elf }}"
     cd "{{ _openvm_dir }}/range/ethereum" && cargo openvm build --ignore-rust-version --output-dir "{{ _openvm_elf }}"
 
-# Execute the range guest locally and print the revealed boot digest (defaults to the demo's last witness)
+# Execute the range guest locally and print the revealed boot digest (defaults to openvm-dump's output in elf/)
 run input=(_openvm_elf / "input.json"): require-vmexe
     cd "{{ _openvm_dir }}/range/ethereum" && cargo openvm run \
         --exe "{{ _openvm_elf }}/range.vmexe" --config openvm.toml --input {{ quote(input) }}
-
-# Open the basectl TUI and prove one zeronet block live
-demo:
-    cargo run -p basectl -- monitor openvm
 
 # Remove built OpenVM artifacts
 clean-elfs:
