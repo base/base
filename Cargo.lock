@@ -6443,6 +6443,7 @@ dependencies = [
  "base-common-chains",
  "base-common-consensus",
  "base-common-flashblocks",
+ "base-common-flz",
  "base-common-genesis",
  "base-common-network",
  "base-common-precompiles",
