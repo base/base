@@ -53,6 +53,8 @@ pub struct ProofsSummary {
     /// Inserted head minus `debug_proofsSyncStatus.latest`, sampled when the head moves; heads
     /// inserted during a status call are not sampled.
     pub head_lag_blocks: CountSummary,
+    /// Status calls that failed, timed out or returned no `latest` block, and so gave no sample.
+    pub failed_probes: u64,
 }
 
 /// Prober on its own thread and runtime, so its calls stay off the runtime that serves the
@@ -61,7 +63,7 @@ pub struct ProofsSummary {
 pub struct ReplayProofsProbe {
     /// Latest inserted block number, published by the replay loop.
     pub head: watch::Sender<u64>,
-    thread: JoinHandle<Result<Vec<u64>>>,
+    thread: JoinHandle<Result<(Vec<u64>, u64)>>,
 }
 
 impl ReplayProofsProbe {
@@ -83,30 +85,41 @@ impl ReplayProofsProbe {
     pub async fn finish(self) -> Result<ProofsSummary> {
         drop(self.head);
         let thread = self.thread;
-        let lags = tokio::task::spawn_blocking(move || thread.join())
+        let (lags, failed_probes) = tokio::task::spawn_blocking(move || thread.join())
             .await?
             .map_err(|_| eyre::eyre!("proofs probe thread panicked"))??;
-        Ok(ProofsSummary { head_lag_blocks: CountSummary::from_values(&lags) })
+        Ok(ProofsSummary { head_lag_blocks: CountSummary::from_values(&lags), failed_probes })
     }
 
     async fn run(
         provider: RootProvider<Base>,
         mut head_rx: watch::Receiver<u64>,
-    ) -> Result<Vec<u64>> {
+    ) -> Result<(Vec<u64>, u64)> {
         let mut lags = Vec::new();
+        let mut failed = 0;
         while head_rx.changed().await.is_ok() {
             let head = *head_rx.borrow_and_update();
             let status =
                 provider.raw_request::<_, serde_json::Value>("debug_proofsSyncStatus".into(), ());
             match tokio::time::timeout(PROBE_CALL_TIMEOUT, status).await {
-                Ok(Ok(status)) => {
-                    lags.extend(status["latest"].as_u64().map(|l| head.saturating_sub(l)))
+                Ok(Ok(status)) => match status["latest"].as_u64() {
+                    Some(latest) => lags.push(head.saturating_sub(latest)),
+                    None => {
+                        failed += 1;
+                        warn!(%status, "debug_proofsSyncStatus returned no latest block");
+                    }
+                },
+                Ok(Err(error)) => {
+                    failed += 1;
+                    warn!(%error, "debug_proofsSyncStatus failed");
                 }
-                Ok(Err(error)) => warn!(%error, "debug_proofsSyncStatus failed"),
-                Err(_) => warn!("debug_proofsSyncStatus timed out"),
+                Err(_) => {
+                    failed += 1;
+                    warn!("debug_proofsSyncStatus timed out");
+                }
             }
         }
-        Ok(lags)
+        Ok((lags, failed))
     }
 }
 
