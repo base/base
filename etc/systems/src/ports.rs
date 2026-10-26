@@ -4,25 +4,24 @@ use std::{
     fs::{self, File, OpenOptions},
     net::{Ipv4Addr, TcpListener, UdpSocket},
     path::PathBuf,
-    sync::Mutex,
 };
-
-/// Claims in the current process, held until it exits so the file locks outlive the call.
-static CLAIMED: Mutex<Vec<File>> = Mutex::new(Vec::new());
 
 /// A pool of loopback ports that concurrent test processes claim without colliding.
 ///
 /// Picking a port by binding port 0 and releasing it races: another process, or the kernel handing
 /// out an ephemeral port, can take it before the node binds it. Nextest runs every test in its own
 /// process, so an in-process counter cannot coordinate them either. Instead each port in a fixed
-/// range has a lock file, and a port is claimed by locking its file. The lock is held until the
-/// process exits, which is as long as any node in a test needs it.
+/// range has a lock file, and a port is claimed by locking its file. The pool owns its claims:
+/// keep it alive until the node has shut down. Dropping it releases all its ports, including on
+/// startup failure or panic. Lock files must not be unlinked: other processes may hold the inode.
 ///
 /// The range sits below the kernel's default ephemeral range, so ports handed out by the OS for
 /// outgoing connections or port-0 binds cannot land in it. Each port is reserved for both TCP and
 /// UDP.
-#[derive(Debug, Clone, Copy)]
-pub struct PortPool;
+#[derive(Debug, Default)]
+pub struct PortPool {
+    claimed: Vec<File>,
+}
 
 impl PortPool {
     /// First port in the pool.
@@ -35,7 +34,7 @@ impl PortPool {
     /// # Panics
     ///
     /// Panics if every port in the pool is taken, or the lock directory cannot be created.
-    pub fn claim() -> u16 {
+    pub fn claim(&mut self) -> u16 {
         let dir = Self::lock_dir();
         fs::create_dir_all(&dir).expect("failed to create the system-test port lock directory");
 
@@ -54,7 +53,7 @@ impl PortPool {
             if lock.try_lock().is_err() || !Self::is_free(port) {
                 continue;
             }
-            CLAIMED.lock().expect("claimed ports lock poisoned").push(lock);
+            self.claimed.push(lock);
             return port;
         }
         panic!("all {} system-test pool ports are in use", Self::LEN);
@@ -75,6 +74,7 @@ impl PortPool {
 mod tests {
     use std::{
         collections::HashSet,
+        fs::OpenOptions,
         process::{Command, Stdio},
         thread,
         time::Duration,
@@ -89,7 +89,8 @@ mod tests {
 
     #[test]
     fn claims_are_unique_and_inside_the_pool() {
-        let ports: Vec<u16> = (0..64).map(|_| PortPool::claim()).collect();
+        let mut pool = PortPool::default();
+        let ports: Vec<u16> = (0..64).map(|_| pool.claim()).collect();
         assert_eq!(ports.iter().collect::<HashSet<_>>().len(), ports.len());
         assert!(
             ports
@@ -101,11 +102,30 @@ mod tests {
     #[test]
     fn threads_claim_disjoint_ports() {
         let handles: Vec<_> = (0..8)
-            .map(|_| thread::spawn(|| (0..32).map(|_| PortPool::claim()).collect::<Vec<_>>()))
+            .map(|_| {
+                thread::spawn(|| {
+                    let mut pool = PortPool::default();
+                    let ports = (0..32).map(|_| pool.claim()).collect::<Vec<_>>();
+                    (pool, ports)
+                })
+            })
             .collect();
-        let ports: Vec<u16> =
-            handles.into_iter().flat_map(|handle| handle.join().unwrap()).collect();
+        let claims: Vec<_> = handles.into_iter().map(|handle| handle.join().unwrap()).collect();
+        let ports: Vec<_> = claims.iter().flat_map(|(_, ports)| ports).collect();
         assert_eq!(ports.iter().collect::<HashSet<_>>().len(), ports.len());
+    }
+
+    #[test]
+    fn dropping_pool_releases_claims() {
+        let mut pool = PortPool::default();
+        let port = pool.claim();
+        let lock = OpenOptions::new()
+            .write(true)
+            .open(PortPool::lock_dir().join(format!("{port}.lock")))
+            .unwrap();
+        assert!(lock.try_lock().is_err(), "live pool must retain its claim");
+        drop(pool);
+        lock.try_lock().expect("dropped pool must release its claim");
     }
 
     /// Claims ports and keeps them held, so sibling processes overlap in time. Does nothing unless
@@ -115,8 +135,8 @@ mod tests {
         if std::env::var_os(CHILD_ENV).is_none() {
             return;
         }
-        let ports: Vec<String> =
-            (0..PORTS_PER_PROCESS).map(|_| PortPool::claim().to_string()).collect();
+        let mut pool = PortPool::default();
+        let ports: Vec<String> = (0..PORTS_PER_PROCESS).map(|_| pool.claim().to_string()).collect();
         println!("CLAIMED {}", ports.join(","));
         thread::sleep(Duration::from_secs(3));
     }

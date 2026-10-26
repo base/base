@@ -34,7 +34,7 @@ pub struct NetworkBuilder {
 
 impl From<NetworkConfig> for NetworkBuilder {
     fn from(config: NetworkConfig) -> Self {
-        Self::new(
+        let mut builder = Self::new(
             config.rollup_config,
             config.unsafe_block_signer,
             config.gossip_address,
@@ -54,7 +54,9 @@ impl From<NetworkConfig> for NetworkBuilder {
         .with_topic_scoring(config.topic_scoring)
         .with_gater_config(config.gater_config)
         .with_connection_limits_config(config.connection_limits_config)
-        .with_max_identify_peerstore_peers(config.max_identify_peerstore_peers)
+        .with_max_identify_peerstore_peers(config.max_identify_peerstore_peers);
+        builder.gossip = builder.gossip.with_reuse_listener_port(config.reuse_listener_port);
+        builder
     }
 }
 

@@ -23,13 +23,14 @@ use base_upgrade_signal::{
 };
 use eyre::{Result, WrapErr};
 use tokio::{
-    task::{AbortHandle, JoinHandle},
+    task::JoinHandle,
     time::{MissedTickBehavior, interval},
 };
+use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 use url::Url;
 
-use super::in_process_consensus::wait_for_rpc;
+use super::{ConsensusTask, in_process_consensus::wait_for_rpc};
 use crate::PortPool;
 
 /// Configuration for starting an in-process follow-mode consensus node.
@@ -63,7 +64,7 @@ pub struct InProcessFollowConsensusConfig {
 pub struct InProcessFollowConsensus {
     rpc_addr: SocketAddr,
     rollup_config: Arc<RollupConfig>,
-    handle: Option<JoinHandle<()>>,
+    task: Option<ConsensusTask>,
     upgrade_signal_handle: Option<JoinHandle<()>>,
 }
 
@@ -105,7 +106,8 @@ impl InProcessFollowConsensus {
         }
 
         let rollup_config = Arc::new(rollup_config);
-        let rpc_port = config.rpc_port.unwrap_or_else(PortPool::claim);
+        let mut ports = PortPool::default();
+        let rpc_port = config.rpc_port.unwrap_or_else(|| ports.claim());
         let rpc_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), rpc_port);
 
         let engine_config = EngineConfig {
@@ -150,25 +152,24 @@ impl InProcessFollowConsensus {
             insert_delay: config.insert_delay,
         });
 
+        let cancellation = CancellationToken::new();
+        let node_cancellation = cancellation.clone();
         let (startup_tx, startup_rx) = tokio::sync::oneshot::channel();
-        let handle = tokio::spawn(async move {
+        let task = ConsensusTask::spawn(cancellation.clone(), async move {
+            let _ports = ports;
             info!(rpc_port = rpc_port, "starting in-process follow consensus node");
-            if let Err(e) = node.start().await {
+            if let Err(e) = node.start_with_cancellation(node_cancellation).await {
                 let _ = startup_tx.send(eyre::eyre!("follow consensus node failed: {e}"));
             }
         });
 
         tokio::select! {
             result = startup_rx => {
-                handle.abort();
                 let error = result.wrap_err("startup channel closed")?;
                 return Err(error).wrap_err("follow consensus node failed during startup");
             }
             result = wait_for_rpc(rpc_addr, "follow consensus RPC") => {
-                if let Err(error) = result {
-                    handle.abort();
-                    return Err(error);
-                }
+                result?;
             }
         }
 
@@ -180,19 +181,19 @@ impl InProcessFollowConsensus {
                     signal_config,
                     l1_rpc_url,
                     l2_chain_id,
-                    handle.abort_handle(),
+                    cancellation.clone(),
                 )
             })
             .transpose()?;
 
-        Ok(Self { rpc_addr, rollup_config, handle: Some(handle), upgrade_signal_handle })
+        Ok(Self { rpc_addr, rollup_config, task: Some(task), upgrade_signal_handle })
     }
 
     fn spawn_upgrade_signal_monitor(
         signal_config: UpgradeSignalConfig,
         l1_rpc_url: Url,
         l2_chain_id: u64,
-        node_abort: AbortHandle,
+        node_cancellation: CancellationToken,
     ) -> Result<JoinHandle<()>> {
         let reader = signal_config.reader(l1_rpc_url)?;
         Ok(tokio::spawn(async move {
@@ -213,7 +214,7 @@ impl InProcessFollowConsensus {
                 // Mirror production fail-closed: when a scheduled upgrade this node cannot support is
                 // activating imminently, stop the follow node itself rather than fork off the
                 // network. Production cancels the shared token and exits the process; here the
-                // equivalent is aborting the follow node task (not just this monitor loop), so the
+                // equivalent is cancelling the follow node (not just this monitor loop), so the
                 // node stops following past activation.
                 if let UpgradeSignalPollOutcome::HaltNode {
                     upgrade_id, activation_timestamp, ..
@@ -223,9 +224,9 @@ impl InProcessFollowConsensus {
                         target: "upgrade_signal",
                         upgrade = %upgrade_id.contract_id(),
                         activation_timestamp,
-                        "in-process follow node failing closed: aborting follow node task"
+                        "in-process follow node failing closed: cancelling follow node"
                     );
-                    node_abort.abort();
+                    node_cancellation.cancel();
                     break;
                 }
             }
@@ -248,21 +249,13 @@ impl InProcessFollowConsensus {
         &self.rollup_config
     }
 
-    /// Stops the in-process follow consensus task and waits for Tokio to observe the abort.
+    /// Cancels the in-process follow consensus node and waits for its actors to stop.
     pub async fn shutdown(mut self) {
         if let Some(handle) = self.upgrade_signal_handle.take() {
             handle.abort();
         }
-        if let Some(mut handle) = self.handle.take() {
-            handle.abort();
-            tokio::select! {
-                result = &mut handle => {
-                    let _ = result;
-                }
-                () = tokio::time::sleep(Duration::from_secs(5)) => {
-                    drop(handle);
-                }
-            }
+        if let Some(task) = self.task.take() {
+            task.shutdown().await;
         }
     }
 }
@@ -270,9 +263,6 @@ impl InProcessFollowConsensus {
 impl Drop for InProcessFollowConsensus {
     fn drop(&mut self) {
         if let Some(handle) = self.upgrade_signal_handle.take() {
-            handle.abort();
-        }
-        if let Some(handle) = self.handle.take() {
             handle.abort();
         }
     }
