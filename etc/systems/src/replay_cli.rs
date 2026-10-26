@@ -205,6 +205,9 @@ pub struct ReplayResult {
     /// FastLZ/Fjord estimate over successfully inserted replay blocks, including setup blocks.
     #[serde(rename = "da_usage", default, skip_serializing_if = "Option::is_none")]
     pub da_usage: Option<crate::DaUsageSummary>,
+    /// Comparable snapshot DA summary over the manifest's complete (start, end] window.
+    #[serde(rename = "da_usage_measured", default, skip_serializing_if = "Option::is_none")]
+    pub da_usage_measured: Option<crate::DaUsageSummary>,
 }
 
 /// Blocks inserted before the replay finished or failed.
@@ -628,10 +631,40 @@ impl ReplayBenchmarkArgs {
                 run.blocks.iter().map(|block| &block.da),
                 manifest.block_interval_ms,
             ),
+            da_usage_measured: Self::measured_da_usage(&manifest, &run.blocks),
             blocks: run.blocks,
             proofs: None,
             manifest,
         }
+    }
+
+    /// Matches the snapshot collector's measurement-anchor-exclusive, end-inclusive window.
+    fn measured_da_usage(
+        manifest: &ReplayManifest,
+        blocks: &[ReplayBlockTiming],
+    ) -> Option<crate::DaUsageSummary> {
+        let start = manifest.measurement_start_block?;
+        let end = manifest.measurement_end_block?;
+        let count = end.checked_sub(start)?;
+        if count == 0 || start < manifest.boundary_number || end > manifest.last_number {
+            return None;
+        }
+        let measured = blocks
+            .iter()
+            .filter(|block| block.number > start && block.number <= end)
+            .collect::<Vec<_>>();
+        if measured.len() as u64 != count
+            || !measured
+                .iter()
+                .enumerate()
+                .all(|(offset, block)| block.number == start + 1 + offset as u64)
+        {
+            return None;
+        }
+        crate::DaUsageSummary::from_blocks(
+            measured.iter().map(|block| &block.da),
+            manifest.block_interval_ms,
+        )
     }
 
     /// Joins per-block Prometheus samples with block totals in the visualizer format used by the
@@ -768,6 +801,8 @@ mod tests {
             last_hash: B256::repeat_byte(2),
             last_state_root: B256::repeat_byte(3),
             block_count: 2,
+            measurement_start_block: None,
+            measurement_end_block: None,
         }
     }
 
@@ -782,6 +817,92 @@ mod tests {
             new_payload_ms,
             forkchoice_ms: 1.0,
             lag_ms,
+        }
+    }
+
+    #[test]
+    fn replay_measured_da_matches_exact_snapshot_window() {
+        let mut export = manifest(200);
+        export.last_number = 30_000_004;
+        export.block_count = 4;
+        export.measurement_start_block = Some(30_000_001);
+        export.measurement_end_block = Some(30_000_003);
+        let blocks = [1000, 100, 300, 10000]
+            .into_iter()
+            .enumerate()
+            .map(|(index, bytes)| {
+                let mut block = timing(30_000_001 + index as u64, 2.0, None);
+                block.da = crate::BlockDaMetrics {
+                    da_bytes_estimated: Some(bytes),
+                    tx_bytes_raw: Some(2 * bytes),
+                    non_deposit_transaction_count: Some(1),
+                };
+                block
+            })
+            .collect::<Vec<_>>();
+        let summarize = |manifest, blocks| {
+            ReplayBenchmarkArgs::summarize(
+                manifest,
+                ReplayMode::Unpaced,
+                ReplayRun { blocks, wall_time: Duration::from_secs(9), error: None },
+                (0, B256::ZERO, B256::ZERO),
+            )
+        };
+        let result = summarize(export.clone(), blocks.clone());
+        let all = result.da_usage.as_ref().expect("all-block DA retained");
+        assert_eq!(all.block_count, 4, "all-block summary still includes setup/drain");
+        assert_eq!(all.da_bytes_estimated.total, 11400, "all-block total unchanged");
+        let measured = result.da_usage_measured.as_ref().expect("complete measurement range");
+        assert_eq!(measured.block_count, 2, "exclude the start anchor and blocks after end");
+        assert_eq!(measured.measurement_seconds, 0.4, "same duration as snapshot");
+        assert_eq!(measured.non_deposit_transaction_count, 2, "only measured transactions");
+        assert_eq!(
+            measured.da_bytes_estimated,
+            crate::ByteUsageSummary {
+                total: 400,
+                mean_per_block: 200.0,
+                p50_per_block: 100,
+                p99_per_block: 300,
+                max_per_block: 300,
+                per_second: 1000.0,
+                per_non_deposit_tx: Some(200.0),
+            },
+            "exact snapshot-comparable FastLZ statistics"
+        );
+        assert_eq!(measured.tx_bytes_raw.total, 800, "exact measured raw-byte total");
+        assert_eq!(measured.tx_bytes_raw.per_second, 2000.0, "exact measured raw-byte rate");
+        assert!(
+            serde_json::to_value(&result).unwrap().get("da_usage_measured").is_some(),
+            "measured summary is emitted under its documented JSON name"
+        );
+        let legacy = summarize(manifest(200), blocks.clone());
+        assert!(legacy.da_usage_measured.is_none(), "legacy manifest has no measured summary");
+        assert!(
+            serde_json::to_value(legacy).unwrap().get("da_usage_measured").is_none(),
+            "legacy output must omit unknown measurement data"
+        );
+        let partial = summarize(export.clone(), blocks[..2].to_vec());
+        assert!(partial.da_usage_measured.is_none(), "incomplete replay must not undercount");
+        let mut incomplete_metrics = blocks.clone();
+        incomplete_metrics[2].da = crate::BlockDaMetrics::default();
+        assert!(
+            summarize(export.clone(), incomplete_metrics).da_usage_measured.is_none(),
+            "incomplete byte metrics must not produce a measured summary"
+        );
+        for (start, end) in [
+            (None, Some(30_000_003)),
+            (Some(30_000_001), None),
+            (Some(30_000_001), Some(30_000_001)),
+            (Some(29_999_999), Some(30_000_003)),
+            (Some(30_000_001), Some(30_000_005)),
+        ] {
+            let mut invalid = export.clone();
+            invalid.measurement_start_block = start;
+            invalid.measurement_end_block = end;
+            assert!(
+                summarize(invalid, blocks.clone()).da_usage_measured.is_none(),
+                "missing, empty or out-of-export ranges must be omitted: {start:?} {end:?}"
+            );
         }
     }
 

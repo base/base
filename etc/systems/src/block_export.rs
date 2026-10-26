@@ -49,6 +49,12 @@ pub struct ReplayManifest {
     pub last_state_root: B256,
     /// Exported block count: `last_number - boundary_number`.
     pub block_count: u64,
+    /// Measurement anchor block (excluded), matching the snapshot's measured window.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub measurement_start_block: Option<u64>,
+    /// Last block included in the snapshot's measured window.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub measurement_end_block: Option<u64>,
 }
 
 /// One produced block as the engine API payload that inserts it.
@@ -363,7 +369,33 @@ mod tests {
             last_hash: B256::ZERO,
             last_state_root: B256::ZERO,
             block_count: 0,
+            measurement_start_block: None,
+            measurement_end_block: None,
         }
+    }
+
+    #[test]
+    fn manifest_measurement_window_is_optional_and_round_trips() {
+        let legacy = manifest(100, B256::ZERO);
+        let json = serde_json::to_value(&legacy).expect("serialize legacy manifest");
+        assert!(json.get("measurementStartBlock").is_none(), "legacy start must be omitted");
+        assert!(json.get("measurementEndBlock").is_none(), "legacy end must be omitted");
+        let decoded: ReplayManifest = serde_json::from_value(json).expect("old manifest parses");
+        assert_eq!(decoded.measurement_start_block, None, "legacy start is unknown");
+        assert_eq!(decoded.measurement_end_block, None, "legacy end is unknown");
+        let current = ReplayManifest {
+            measurement_start_block: Some(101),
+            measurement_end_block: Some(103),
+            ..legacy
+        };
+        let json = serde_json::to_value(&current).expect("serialize measurement range");
+        assert_eq!(json["measurementStartBlock"], 101, "start anchor is persisted");
+        assert_eq!(json["measurementEndBlock"], 103, "inclusive end is persisted");
+        assert_eq!(
+            serde_json::from_value::<ReplayManifest>(json).unwrap(),
+            current,
+            "new range fields must survive export/replay JSON"
+        );
     }
 
     #[test]
