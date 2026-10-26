@@ -21,9 +21,6 @@ pub use flashblocks::FlashblocksView;
 mod home;
 pub use home::HomeView;
 
-mod openvm;
-pub use openvm::OpenVmView;
-
 mod pods;
 pub use pods::PodsView;
 

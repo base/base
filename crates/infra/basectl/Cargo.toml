@@ -45,7 +45,6 @@ alloy-eips = { workspace = true, features = ["std"] }
 serde_json = { workspace = true, features = ["std"] }
 alloy-sol-types = { workspace = true, features = ["std"] }
 jsonrpsee = { workspace = true, features = ["http-client"] }
-reqwest = { workspace = true, features = ["json", "multipart"] }
 alloy-primitives = { workspace = true, features = ["serde"] }
 alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 base-consensus-rpc = { workspace = true, features = ["client"] }

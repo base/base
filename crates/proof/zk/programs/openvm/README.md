@@ -35,32 +35,14 @@ just openvm build-elf
 
 Artifacts land in `elf/` (gitignored), same pattern as Succinct.
 
-## Showcase
+## Run
 
-Opens the TUI and proves one live block from the active network (zeronet by
-default): `openvm-dump` fetches the witness from RPCs, then an Axiom Edge
-manager executes the guest, proves the STARK on its GPU workers, and wraps it
-into an EVM (halo2) proof. Each step is one row; the Prove row fills as app
-segments land, and a failed step shows the reason inline.
-
-```bash
-OPENVM_EDGE_URL=<edge manager URL> just openvm demo
-# or: OPENVM_EDGE_URL=... cargo run -p basectl -- monitor openvm
-```
-
-Press `z` from the home menu to open it on the current network. `p` restarts the
-prove and `Esc` aborts it (and cancels the Edge proof). The network needs
-`l1_beacon_rpc` and `consensus_node_rpc` configured. The manager must serve
-program `range` version 1, transpiled from this guest's ELF with the same Edge
-build that generated its keys.
-
-To re-execute the demo's last witness locally and print the boot digest:
+Dump a live block's witness with [`openvm-dump`](../../../../../etc/tools/openvm-dump/README.md)
+into `elf/`, then execute it locally and print the boot digest:
 
 ```bash
 just openvm run
 ```
-
-## Run
 
 The guest still deserializes rkyv `DefaultWitnessData`, same as Succinct. OpenVM
 `read_vec` length-prefixes that payload, so the host must frame it as an OpenVM
