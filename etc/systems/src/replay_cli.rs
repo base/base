@@ -210,10 +210,15 @@ impl ReplayBenchmarkArgs {
         let manifest = read_export_manifest(&self.export_dir)?;
         let (chain_spec, block_interval) = Self::replay_chain_spec(&manifest)?;
         Self::prepare_output_dir(&self.output_dir)?;
-        // A missing directory would start an empty store that never covers a block.
-        if let Some(dir) = &self.proofs_dir {
-            ensure!(dir.is_dir(), "proofs directory {} does not exist", dir.display());
-        }
+        // Opening a directory without a store would create an empty one that covers no block.
+        let proofs_store = match &self.proofs_dir {
+            Some(dir) if dir.join("CURRENT").exists() => {
+                Some((dir, ProofsHistoryDbBackend::Rocksdb))
+            }
+            Some(dir) if dir.join("mdbx.dat").exists() => Some((dir, ProofsHistoryDbBackend::Mdbx)),
+            Some(dir) => eyre::bail!("{} holds no RocksDB or MDBX proofs store", dir.display()),
+            None => None,
+        };
 
         let jwt_secret = JwtSecret::random();
         let client = InProcessClient::start(InProcessClientConfig {
@@ -237,19 +242,13 @@ impl ReplayBenchmarkArgs {
             tx_forwarding_config: None,
             validity_signature_mode: ValiditySignatureMode::Off,
             upgrade_signal: None,
-            extra_extensions: self
-                .proofs_dir
-                .iter()
-                .map(|dir| {
+            extra_extensions: proofs_store
+                .into_iter()
+                .map(|(dir, proofs_history_db)| {
                     Box::new(ProofsHistoryExtension::new(RollupArgs {
                         proofs_history: true,
                         proofs_history_storage_path: Some(dir.clone()),
-                        // The backend must match the store; `CURRENT` marks RocksDB.
-                        proofs_history_db: if dir.join("CURRENT").exists() {
-                            ProofsHistoryDbBackend::Rocksdb
-                        } else {
-                            ProofsHistoryDbBackend::Mdbx
-                        },
+                        proofs_history_db,
                         ..Default::default()
                     })) as Box<dyn BaseNodeExtension>
                 })
@@ -325,7 +324,9 @@ impl ReplayBenchmarkArgs {
             .await;
         let replayed_all = run.error.is_none();
         let proofs = match probe {
-            Some(probe) => Some(probe.finish().await?),
+            Some(probe) => {
+                probe.finish().await.inspect_err(|error| warn!(%error, "proofs probe failed")).ok()
+            }
             None => None,
         };
 
