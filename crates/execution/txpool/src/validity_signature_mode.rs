@@ -4,7 +4,7 @@ use std::{fmt, str::FromStr};
 
 use alloy_primitives::Signature;
 
-use crate::{ValidityAuthorizationError, ValidityPredicate};
+use crate::ValidityAuthorizationError;
 
 /// Signature policy shared by forwarding ingress and builders.
 ///
@@ -28,21 +28,13 @@ impl ValiditySignatureMode {
     /// signatures with [`crate::ValidityAuthorization`].
     pub const fn check(
         self,
-        predicates: &[ValidityPredicate],
+        has_predicates: bool,
         signature: Option<&Signature>,
     ) -> Result<(), ValidityAuthorizationError> {
-        if matches!(self, Self::Off) {
-            return Ok(());
-        }
-        if predicates.is_empty() {
-            return if signature.is_some() {
-                Err(ValidityAuthorizationError::UnexpectedSignature)
-            } else {
-                Ok(())
-            };
-        }
-        match (self, signature.is_some()) {
-            (Self::Required, false) => Err(ValidityAuthorizationError::MissingSignature),
+        match (self, has_predicates, signature.is_some()) {
+            (Self::Off, _, _) => Ok(()),
+            (_, false, true) => Err(ValidityAuthorizationError::UnexpectedSignature),
+            (Self::Required, true, false) => Err(ValidityAuthorizationError::MissingSignature),
             _ => Ok(()),
         }
     }
@@ -93,6 +85,6 @@ mod tests {
         #[case] expected: Result<(), ValidityAuthorizationError>,
     ) {
         let signature = Signature::new(U256::ZERO, U256::ZERO, false);
-        assert_eq!(mode.check(&[], Some(&signature)), expected);
+        assert_eq!(mode.check(false, Some(&signature)), expected);
     }
 }
