@@ -15,6 +15,12 @@ pub use utils::unique_name;
 mod b20;
 pub use b20::{B20CreateConfig, B20PrecompileClient};
 
+mod block_export;
+pub use block_export::{
+    BlockExportWriter, EXPORT_BLOCKS_FILE, EXPORT_MANIFEST_FILE, ExportedBlock, ReplayManifest,
+    read_export_manifest, read_exported_blocks,
+};
+
 mod benchmark_cli;
 pub use benchmark_cli::{
     AggregateBenchmarkArgs, BenchmarkCli, BenchmarkCommand, LocalBenchmarkArgs,

@@ -226,6 +226,16 @@ written before the command returns the error.
 Omit `--client-datadir` to run only the builder and the standalone sequencer: the run skips the
 validator phase and its outputs.
 
+Pass `--export-blocks <dir>` (or `BASE_BENCH_EXPORT_BLOCKS`) to keep the run's blocks for a later
+validator replay on a restored copy of the same snapshot, without a second datadir. After the
+sequencer stops, the run fetches every builder block after the snapshot boundary, setup blocks
+included, and writes `<dir>/blocks.jsonl`: one JSON line per block in order, holding its number,
+hash, millisecond timestamp, state root, payload version, and the engine payload envelope exactly
+as produced. It then writes `<dir>/replay.json`, with the chain, rollup config, block interval,
+boundary, first block timestamp, and the last block's hash and state root the replay must reach.
+The manifest is written last, so its presence marks a complete export; a failed export fails the
+run. Put the directory outside the restored datadirs so restoring the snapshot does not erase it.
+
 `--output-dir` is one self-contained `base/benchmark` run directory. It receives
 `benchmark-result.json`, `metadata.json`, `metrics-sequencer.json`, `load-test-result.json`, and,
 with a client datadir, `metrics-validator.json`. Set `BASE_BENCH_CLIENT_VERSION` to a stable
