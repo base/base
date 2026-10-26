@@ -14,9 +14,7 @@ use tracing::debug;
 /// published. A node that only follows that stream learned of the deadline no earlier than the
 /// next block commit, so an unbumped same-nonce replacement submitted in between was rejected as
 /// underpriced against a transaction the builder had already dropped. Recording the published
-/// position here closes that gap for transaction ingress on mempool and RPC nodes. The pool
-/// bounds the recorded position against its canonical tip, so this receiver forwards every
-/// flashblock unconditionally and leaves the trust decision to the pool.
+/// position here closes that gap for transaction ingress on mempool and RPC nodes.
 #[derive(Debug)]
 pub struct PoolExpiringReceiver<Receiver, Pool> {
     receiver: Arc<Receiver>,
