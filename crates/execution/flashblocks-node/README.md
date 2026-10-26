@@ -60,6 +60,9 @@ The `FlashblocksExtension` wires up:
    validity transactions whose `(block, flashblock)` deadline has been published are evicted
    immediately, matching the builder. Transaction ingress is mempool-node first, so without this
    an unbumped same-nonce replacement would be rejected as underpriced until the block commits.
+   The stream is not authoritative for the pool: flashblocks already canonical or more than
+   `RECEIVED_FLASHBLOCK_MAX_LEAD` blocks ahead of the local tip are ignored, so a stray or
+   misdirected stream cannot evict live transactions or latch a position that rejects later ones.
 
 ## License
 
