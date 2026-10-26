@@ -1,7 +1,7 @@
 //! Proofs mode of `base-bench replay`: while blocks are inserted into a proofs-enabled node,
 //! records how far proof history trails the head.
 
-use std::thread::JoinHandle;
+use std::{thread::JoinHandle, time::Duration};
 
 use alloy_provider::{Provider, RootProvider};
 use base_common_network::Base;
@@ -10,6 +10,9 @@ use serde::Serialize;
 use tokio::sync::watch;
 use tracing::warn;
 use url::Url;
+
+/// Bound on each probe call, so a node that stops answering cannot hold back the result.
+const PROBE_CALL_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Nearest-rank percentiles of integer samples.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
@@ -47,7 +50,8 @@ impl CountSummary {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProofsSummary {
-    /// Inserted head minus `debug_proofsSyncStatus.latest`, sampled after each inserted block.
+    /// Inserted head minus `debug_proofsSyncStatus.latest`, sampled when the head moves; heads
+    /// inserted during a status call are not sampled.
     pub head_lag_blocks: CountSummary,
 }
 
@@ -92,14 +96,14 @@ impl ReplayProofsProbe {
         let mut lags = Vec::new();
         while head_rx.changed().await.is_ok() {
             let head = *head_rx.borrow_and_update();
-            match provider
-                .raw_request::<_, serde_json::Value>("debug_proofsSyncStatus".into(), ())
-                .await
-            {
-                Ok(status) => {
+            let status =
+                provider.raw_request::<_, serde_json::Value>("debug_proofsSyncStatus".into(), ());
+            match tokio::time::timeout(PROBE_CALL_TIMEOUT, status).await {
+                Ok(Ok(status)) => {
                     lags.extend(status["latest"].as_u64().map(|l| head.saturating_sub(l)))
                 }
-                Err(error) => warn!(%error, "debug_proofsSyncStatus failed"),
+                Ok(Err(error)) => warn!(%error, "debug_proofsSyncStatus failed"),
+                Err(_) => warn!("debug_proofsSyncStatus timed out"),
             }
         }
         Ok(lags)
