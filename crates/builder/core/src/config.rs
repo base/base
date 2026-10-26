@@ -73,7 +73,8 @@ pub struct BuilderConfig {
     /// Number of parked predicates that converts one state bucket to ordered wakeups.
     pub predicate_bucket_ordered_threshold: usize,
 
-    /// Whether validity transactions resting under an unchanged predicate are held back.
+    /// Whether validity transactions resting under an unchanged predicate are held back. The
+    /// resting set carries across flashblocks and across blocks this builder finishes in sequence.
     pub resting_predicate_mode: RestingPredicateMode,
 
     /// Resource metering provider

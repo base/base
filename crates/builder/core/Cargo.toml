@@ -55,7 +55,7 @@ reth-payload-primitives.workspace = true
 base-execution-chainspec.workspace = true
 base-execution-consensus.workspace = true
 reth-basic-payload-builder.workspace = true
-base-execution-payload-builder.workspace = true
+base-execution-payload-builder = { workspace = true, features = ["clap"] }
 reth-ipc = { workspace = true, optional = true }
 reth-payload-builder-primitives.workspace = true
 reth-node-core = { workspace = true, features = ["otlp"] }

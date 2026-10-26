@@ -10,7 +10,7 @@ use alloy_evm::{
     Evm as AlloyEvm,
     block::{CommitChanges, TxResult},
 };
-use alloy_primitives::{Address, B256, TxHash, U256};
+use alloy_primitives::{Address, B256, TxHash, U256, map::B256Set};
 use alloy_rpc_types_debug::ExecutionWitness;
 use alloy_rpc_types_engine::PayloadId;
 use base_common_chains::Upgrades;
@@ -57,9 +57,9 @@ use crate::{
     Attributes, BasePayloadBuilderAttributes, BlockDeferrals, BuilderMetrics,
     CoinbaseTipAffordability, InclusionTracker, MeteringProvider, ParkableBestPayloadTransactions,
     ParkablePayloadTransactions, ParkedPredicateIndex, PayloadPrimitives, PredicateLoadTracker,
-    PredicateReadRecorder, RejectionCacheMetrics, StateChangeEffects, ValidityMetrics,
-    ValidityPredicateEvaluation, config::BaseBuilderConfig, error::BasePayloadBuilderError,
-    payload::BaseBuiltPayload,
+    PredicateReadRecorder, RejectionCacheMetrics, RestingPredicateStore, RestingPredicates,
+    StateChangeEffects, ValidityMetrics, ValidityPredicateEvaluation, config::BaseBuilderConfig,
+    error::BasePayloadBuilderError, payload::BaseBuiltPayload,
 };
 
 macro_rules! emit_native_validity_event {
@@ -111,6 +111,8 @@ pub struct BasePayloadBuilder<
     pub client: Client,
     /// Settings for the builder, e.g. DA settings.
     pub config: BaseBuilderConfig,
+    /// Validity transactions resting from the last block this builder finished.
+    pub resting_predicates: RestingPredicateStore,
     /// Marker for the payload attributes type.
     _pd: PhantomData<Attrs>,
 }
@@ -127,6 +129,7 @@ where
             pool: self.pool.clone(),
             client: self.client.clone(),
             config: self.config.clone(),
+            resting_predicates: self.resting_predicates.clone(),
             _pd: PhantomData,
         }
     }
@@ -141,13 +144,20 @@ impl<Pool, Client, Evm, Attrs> BasePayloadBuilder<Pool, Client, Evm, Attrs> {
     }
 
     /// Configures the builder with the given [`BaseBuilderConfig`].
-    pub const fn with_builder_config(
+    pub fn with_builder_config(
         pool: Pool,
         client: Client,
         evm_config: Evm,
         config: BaseBuilderConfig,
     ) -> Self {
-        Self { pool, client, evm_config, config, _pd: PhantomData }
+        Self {
+            pool,
+            client,
+            evm_config,
+            config,
+            resting_predicates: RestingPredicateStore::default(),
+            _pd: PhantomData,
+        }
     }
 }
 
@@ -205,9 +215,11 @@ where
         tracing::Span::current().record("parent_num", ctx.parent().number());
 
         let pool = self.pool.clone();
-        let builder = Builder::new(best).with_permanent_eviction(move |hashes| {
-            let _ = pool.remove_transactions(hashes);
-        });
+        let builder = Builder::new(best)
+            .with_permanent_eviction(move |hashes| {
+                let _ = pool.remove_transactions(hashes);
+            })
+            .with_resting_predicates(self.resting_predicates.clone());
 
         let state_provider = crate::BuilderStateProvider::new(
             self.client.state_by_block_hash(ctx.parent().hash())?,
@@ -341,18 +353,31 @@ pub struct Builder<'a, Txs> {
     /// Permanently removes mempool transactions that exceeded a per-transaction resource limit.
     #[debug(skip)]
     evict_permanently_rejected: Box<dyn FnOnce(Vec<TxHash>) + 'a>,
+    /// Carries resting validity transactions between builds when the carried mode is enabled.
+    resting_predicates: Option<RestingPredicateStore>,
 }
 
 impl<'a, Txs> Builder<'a, Txs> {
     /// Creates a new [`Builder`].
     pub fn new(best: impl FnOnce(BestTransactionsAttributes) -> Txs + Send + Sync + 'a) -> Self {
-        Self { best: Box::new(best), evict_permanently_rejected: Box::new(|_| {}) }
+        Self {
+            best: Box::new(best),
+            evict_permanently_rejected: Box::new(|_| {}),
+            resting_predicates: None,
+        }
     }
 
     /// Sets the callback used to permanently remove mempool transactions that exceeded a
     /// per-transaction resource limit.
     pub fn with_permanent_eviction(mut self, evict: impl FnOnce(Vec<TxHash>) + 'a) -> Self {
         self.evict_permanently_rejected = Box::new(evict);
+        self
+    }
+
+    /// Sets the store that carries resting validity transactions from one finished block to the
+    /// next.
+    pub fn with_resting_predicates(mut self, store: RestingPredicateStore) -> Self {
+        self.resting_predicates = Some(store);
         self
     }
 }
@@ -378,7 +403,7 @@ impl<Txs> Builder<'_, Txs> {
         >,
         Attrs: Attributes<Transaction = N::SignedTx>,
     {
-        let Self { best, evict_permanently_rejected } = self;
+        let Self { best, evict_permanently_rejected, resting_predicates } = self;
         debug!(target: "payload_builder", id=%ctx.payload_id(), parent_header = ?ctx.parent().hash(), parent_number = ctx.parent().number(), "building new payload");
 
         let mut db = State::builder().with_database(db).with_bundle_update().build();
@@ -404,9 +429,30 @@ impl<Txs> Builder<'_, Txs> {
         let mut info = ctx.execute_sequencer_transactions(&mut builder)?;
 
         // 3. if mem pool transactions are requested we execute them
+        let mut resting = None;
         if !ctx.attributes().no_tx_pool() {
+            // Without flashblocks, resting transactions only carry across blocks, from Denim on.
+            resting = resting_predicates
+                .as_ref()
+                .filter(|_| {
+                    ctx.builder_config.resting_predicate_mode.is_enabled() && ctx.is_denim_active()
+                })
+                .map(|store| {
+                    let mut resting =
+                        store.take(ctx.builder_config.predicate_bucket_ordered_threshold);
+                    // The transitions hold the system calls and deposits applied on top of the
+                    // parent state.
+                    let carry_over = resting.begin_block(
+                        ctx.parent().hash(),
+                        ctx.parent().number().saturating_add(1),
+                        builder.evm_mut().db_mut().transition_state.as_ref(),
+                    );
+                    ValidityMetrics::record_resting_carry_over(&carry_over);
+                    resting
+                });
             let best_txs = best(ctx.best_transaction_attributes(builder.evm_mut().block()));
-            let cancelled = ctx.execute_best_transactions(&mut info, &mut builder, best_txs)?;
+            let cancelled =
+                ctx.execute_best_transactions(&mut info, &mut builder, best_txs, resting.as_mut())?;
             if !info.permanently_rejected_txs.is_empty() {
                 let rejected = std::mem::take(&mut info.permanently_rejected_txs);
                 let count = rejected.len();
@@ -473,6 +519,10 @@ impl<Txs> Builder<'_, Txs> {
 
         let sealed_block = Arc::new(block.sealed_block().clone());
         debug!(target: "payload_builder", id=%ctx.payload_id(), sealed_block_header = ?sealed_block.header(), "sealed built block");
+        if let (Some(mut resting), Some(store)) = (resting, resting_predicates) {
+            resting.end_block(sealed_block.hash());
+            store.put(resting);
+        }
 
         let execution_outcome =
             BlockExecutionOutput { state: db.take_bundle(), result: execution_result };
@@ -895,6 +945,7 @@ where
         mut best_txs: impl ParkablePayloadTransactions<
             Transaction: PoolTransaction<Consensus = TxTy<Evm::Primitives>> + BasePooledTx,
         >,
+        mut resting: Option<&mut RestingPredicates>,
     ) -> Result<Option<()>, PayloadBuilderError>
     where
         Builder: BlockBuilder<Primitives = Evm::Primitives>,
@@ -927,6 +978,13 @@ where
         let mut validity_candidates_evaluated = 0_u64;
         let mut validity_candidates_deferred = 0_u64;
         let mut predicate_eval_cutoff_hit = false;
+        let resting_mode = self.builder_config.resting_predicate_mode;
+        // Carried resting transactions held back unevaluated in this build. A commit that wakes one
+        // promotes it so the scan evaluates it at its priority position.
+        let mut parked_resting = B256Set::default();
+        // Counted locally and recorded once per build, so the loop does no metric lookups.
+        let mut carried_parked = 0_u64;
+        let mut carried_shadow_mismatches = 0_u64;
 
         let block_timestamp = self.attributes().timestamp();
         let can_finalize_early = self.is_denim_active();
@@ -987,6 +1045,20 @@ where
             }
 
             if has_validity_predicates
+                && resting_mode.is_enforced()
+                && let Some(resting) = resting.as_deref_mut()
+                && resting.hold(tx_hash, tx.validity_conditions()).is_some()
+            {
+                // No commit since the recorded predicate was found unsatisfied changed the state it
+                // reads, so evaluating it again would park it again. The deferral was reported
+                // when it started resting, so this hot path emits nothing per member.
+                best_txs.park_current();
+                parked_resting.insert(tx_hash);
+                carried_parked += 1;
+                continue;
+            }
+
+            if has_validity_predicates
                 && predicate_eval_duration.is_some_and(|duration| {
                     duration >= self.builder_config.predicate_eval_hard_cutoff
                 })
@@ -1032,6 +1104,25 @@ where
                 };
                 *predicate_eval_duration.get_or_insert(Duration::ZERO) +=
                     evaluation_start.elapsed();
+                if let Some(resting) = resting.as_deref_mut() {
+                    match &evaluation {
+                        Ok(ValidityPredicateEvaluation::Unsatisfied {
+                            predicate,
+                            expired: false,
+                            ..
+                        }) => resting.rest(tx_hash, predicate.clone()),
+                        Ok(ValidityPredicateEvaluation::Matched)
+                            if !resting_mode.is_enforced()
+                                && resting.member(tx_hash, tx.validity_conditions()).is_some() =>
+                        {
+                            carried_shadow_mismatches += 1;
+                            resting.remove(tx_hash);
+                        }
+                        _ => {
+                            resting.remove(tx_hash);
+                        }
+                    }
+                }
                 match evaluation {
                     Ok(ValidityPredicateEvaluation::Matched) => {
                         ValidityMetrics::validity_predicate_evaluations_total("matched")
@@ -1290,6 +1381,7 @@ where
             }
 
             let mut state_change_effects = StateChangeEffects::default();
+            let mut resting_woken = Vec::new();
             let mut pending_resource_usage = None;
             let mut executed_decision = None;
             let gas_output = match builder.execute_transaction_with_commit_condition(
@@ -1312,6 +1404,9 @@ where
                             state_change_effects =
                                 predicate_index.affected_by_state(&result_and_state.state);
                             predicate_bucket_wakeups += state_change_effects.woken_buckets as u64;
+                        }
+                        if let Some(resting) = resting.as_deref() {
+                            resting_woken = resting.woken_by_state(&result_and_state.state);
                         }
                         CommitChanges::Yes
                     }
@@ -1394,6 +1489,14 @@ where
             }
 
             best_txs.mark_current_committed();
+            if let Some(resting) = resting.as_deref_mut() {
+                for woken in resting_woken {
+                    resting.remove(woken);
+                    if parked_resting.remove(&woken) {
+                        best_txs.promote(woken);
+                    }
+                }
+            }
             let predicates_need_rescan = !state_change_effects.affected_transactions.is_empty();
             let predicate_rescan_start = Instant::now();
             for (rescanned, parked_hash) in
@@ -1432,6 +1535,9 @@ where
                         ValidityMetrics::validity_predicate_evaluations_total("rescan_matched")
                             .increment(1);
                         predicate_index.remove(parked_hash);
+                        if let Some(resting) = resting.as_deref_mut() {
+                            resting.remove(parked_hash);
+                        }
                         best_txs.promote(parked_hash);
                     }
                     Ok(ValidityPredicateEvaluation::Unsatisfied { predicate, .. }) => {
@@ -1439,6 +1545,9 @@ where
                             "rescan_not_satisfied",
                         )
                         .increment(1);
+                        if let Some(resting) = resting.as_deref_mut() {
+                            resting.rest(parked_hash, predicate.clone());
+                        }
                         predicate_index.reindex(parked_hash, predicate);
                     }
                     Err(error) => {
@@ -1451,6 +1560,9 @@ where
                             "failed to re-read validity predicate state"
                         );
                         predicate_index.remove(parked_hash);
+                        if let Some(resting) = resting.as_deref_mut() {
+                            resting.remove(parked_hash);
+                        }
                         best_txs.discard_parked(parked_hash);
                     }
                 }
@@ -1503,6 +1615,14 @@ where
             predicate_bucket_wakeups,
             &predicate_index,
         );
+        if carried_parked > 0 {
+            ValidityMetrics::resting_predicate_parked_total().increment(carried_parked);
+            ValidityMetrics::resting_predicate_carried_parked_total().increment(carried_parked);
+        }
+        if carried_shadow_mismatches > 0 {
+            ValidityMetrics::resting_predicate_shadow_mismatches_total()
+                .increment(carried_shadow_mismatches);
+        }
         if resource_throttled > 0 {
             info!(
                 target: "payload_builder",
@@ -1564,13 +1684,14 @@ mod tests {
             PayloadStateRootHandle, StateRootComputeOutcome, StateRootSink, StateRootUpdateStream,
         },
     };
-    use revm::{Database, state::EvmState};
+    use revm::{Database, database::TransitionState, state::EvmState};
 
     use super::{BasePayloadBuilderCtx, Builder, ExecutionInfo};
     use crate::{
-        BasePayloadBuilderAttributes, MeteringProvider, NoopMeteringProvider,
-        ParkablePayloadTransactions, ResourceMeteringConfig, ResourceMeteringDimension,
-        ResourceMeteringOperation, ResourceMeteringSchedule, SharedMeteringProvider,
+        BasePayloadBuilderAttributes, DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD, MeteringProvider,
+        NoopMeteringProvider, ParkablePayloadTransactions, ResourceMeteringConfig,
+        ResourceMeteringDimension, ResourceMeteringOperation, ResourceMeteringSchedule,
+        RestingPredicateMode, RestingPredicateStore, SharedMeteringProvider,
         config::BaseBuilderConfig, payload::EthPayloadBuilderAttributes,
     };
 
@@ -1735,6 +1856,15 @@ mod tests {
     where
         Txs: ParkablePayloadTransactions<Transaction = BasePooledTransaction> + Send + Sync,
     {
+        let provider = funded_provider(funded_senders);
+        Builder::new(|_| transactions)
+            .build(StateProviderDatabase::new(&provider), &provider, Some(state_root_handle()), ctx)
+            .expect("payload must build")
+    }
+
+    /// A parent state with the `BaseTime` predeploy and `funded_senders` holding the maximum
+    /// balance.
+    fn funded_provider(funded_senders: &[Address]) -> StateProviderTest {
         let mut storage = HashMap::default();
         storage.insert(
             StorageKey::from(BaseTime::ADMIN_SLOT.to_be_bytes::<32>()),
@@ -1755,9 +1885,7 @@ mod tests {
                 HashMap::default(),
             );
         }
-        Builder::new(|_| transactions)
-            .build(StateProviderDatabase::new(&provider), &provider, Some(state_root_handle()), ctx)
-            .expect("payload must build")
+        provider
     }
 
     fn build_pool_payload_with<Txs>(
@@ -1781,26 +1909,7 @@ mod tests {
     where
         Txs: ParkablePayloadTransactions<Transaction = BasePooledTransaction> + Send + Sync,
     {
-        let mut storage = HashMap::default();
-        storage.insert(
-            StorageKey::from(BaseTime::ADMIN_SLOT.to_be_bytes::<32>()),
-            U256::from_be_slice(Predeploys::PROXY_ADMIN.as_slice()),
-        );
-        let mut provider = StateProviderTest::default();
-        provider.insert_account(
-            Predeploys::BASE_TIME,
-            Account::default(),
-            Some(BaseTime::proxy_bytecode()),
-            storage,
-        );
-        for sender in funded_senders {
-            provider.insert_account(
-                *sender,
-                Account { balance: U256::MAX, ..Default::default() },
-                None,
-                HashMap::default(),
-            );
-        }
+        let provider = funded_provider(funded_senders);
         Builder::new(|_| transactions)
             .with_permanent_eviction(evict)
             .build(StateProviderDatabase::new(&provider), &provider, Some(state_root_handle()), ctx)
@@ -1994,8 +2103,10 @@ mod tests {
     #[test]
     fn native_builder_includes_transaction_with_matching_block_predicate() {
         let event_capture = TransactionEventCapture::install();
-        let transaction =
-            pool_transaction(0).with_validity_predicates(vec![ValidityPredicate::BlockNumber {
+        // Event capture is process-global, so this transaction must not share a hash with other
+        // tests, such as the flashblock-index rejection test that uses `pool_transaction(0)`.
+        let transaction = pool_transaction_to(0, Address::repeat_byte(0x4d), U256::ZERO)
+            .with_validity_predicates(vec![ValidityPredicate::BlockNumber {
                 op: ValidityOperator::Equal,
                 value: U256::ONE,
             }]);
@@ -2199,6 +2310,174 @@ mod tests {
             .map(|transaction| *transaction.tx_hash())
             .collect::<Vec<_>>();
         assert_eq!(included_hashes, vec![trigger_hash, gated_hash]);
+    }
+
+    /// A store holding a set finished as `tip` in which `transaction` rests under `predicate`.
+    fn resting_store(
+        tip: B256,
+        transaction: &BasePooledTransaction,
+        predicate: ValidityPredicate,
+    ) -> RestingPredicateStore {
+        let store = RestingPredicateStore::default();
+        let mut resting = store.take(DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD);
+        resting.begin_block(B256::ZERO, 0, Some(&TransitionState::default()));
+        resting.rest(*transaction.hash(), predicate);
+        resting.end_block(tip);
+        store.put(resting);
+        store
+    }
+
+    /// Builds one block at `timestamp` with the resting `mode`, returning the included hashes and
+    /// the block hash.
+    fn build_carrying_resting_at(
+        timestamp: u64,
+        mode: RestingPredicateMode,
+        store: &RestingPredicateStore,
+        transactions: Vec<BasePooledTransaction>,
+    ) -> (Vec<TxHash>, B256) {
+        let mut ctx = pool_payload_context(timestamp);
+        ctx.builder_config.resting_predicate_mode = mode;
+        let funded_senders =
+            transactions.iter().map(|transaction| transaction.sender()).collect::<Vec<_>>();
+        let provider = funded_provider(&funded_senders);
+        let outcome = Builder::new(|_| TestParkableTransactions::new(transactions))
+            .with_resting_predicates(store.clone())
+            .build(StateProviderDatabase::new(&provider), &provider, Some(state_root_handle()), ctx)
+            .expect("payload must build");
+        let (BuildOutcomeKind::Better { payload } | BuildOutcomeKind::Freeze(payload)) = outcome
+        else {
+            panic!("expected a built payload, got {outcome:?}")
+        };
+        let included = payload.block().body().transactions.iter().map(|tx| tx.tx_hash()).collect();
+        (included, payload.block().hash())
+    }
+
+    /// Builds one Denim block with the resting `mode`, returning the included hashes and the
+    /// block hash.
+    fn build_carrying_resting(
+        mode: RestingPredicateMode,
+        store: &RestingPredicateStore,
+        transactions: Vec<BasePooledTransaction>,
+    ) -> (Vec<TxHash>, B256) {
+        build_carrying_resting_at(DENIM_TIMESTAMP, mode, store, transactions)
+    }
+
+    fn pool_parent_hash() -> B256 {
+        pool_payload_context(DENIM_TIMESTAMP).parent().hash()
+    }
+
+    /// The set records `gated` as resting although its predicate holds, so whether it is included
+    /// shows whether the build evaluated it.
+    #[test]
+    fn native_builder_skips_evaluating_carried_resting_transactions_only_when_enforced() {
+        let watched_address = Address::repeat_byte(0x47);
+        let holds = ValidityPredicate::Balance {
+            address: watched_address,
+            op: ValidityOperator::Equal,
+            value: U256::ZERO,
+        };
+        let gated = pool_transaction_to(0, Address::repeat_byte(0x58), U256::ZERO)
+            .with_validity_predicates(vec![holds.clone()]);
+        let gated_hash = *gated.hash();
+
+        for (mode, evaluated) in [
+            (RestingPredicateMode::Off, true),
+            (RestingPredicateMode::Shadow, true),
+            (RestingPredicateMode::Enforce, false),
+        ] {
+            let store = resting_store(pool_parent_hash(), &gated, holds.clone());
+            let (included, _) = build_carrying_resting(mode, &store, vec![gated.clone()]);
+            assert_eq!(included.contains(&gated_hash), evaluated, "mode {mode:?}");
+        }
+    }
+
+    #[test]
+    fn native_builder_discards_a_resting_set_finished_on_another_parent() {
+        let watched_address = Address::repeat_byte(0x48);
+        let holds = ValidityPredicate::Balance {
+            address: watched_address,
+            op: ValidityOperator::Equal,
+            value: U256::ZERO,
+        };
+        let gated = pool_transaction_to(0, Address::repeat_byte(0x59), U256::ZERO)
+            .with_validity_predicates(vec![holds.clone()]);
+        let gated_hash = *gated.hash();
+        let store = resting_store(B256::repeat_byte(0x99), &gated, holds);
+
+        let (included, _) =
+            build_carrying_resting(RestingPredicateMode::Enforce, &store, vec![gated]);
+
+        assert_eq!(included, [gated_hash]);
+    }
+
+    /// A commit that satisfies a carried predicate includes the transaction exactly where the
+    /// build without carried resting includes it.
+    #[test]
+    fn native_builder_includes_a_carried_resting_transaction_once_its_state_changes() {
+        let watched_address = Address::repeat_byte(0x49);
+        let blocker = ValidityPredicate::Balance {
+            address: watched_address,
+            op: ValidityOperator::Equal,
+            value: U256::ONE,
+        };
+        let gated = pool_transaction_to(0, Address::repeat_byte(0x5a), U256::ZERO)
+            .with_validity_predicates(vec![blocker.clone()]);
+        let trigger = pool_transaction_to(0, watched_address, U256::ONE);
+        let expected = vec![*trigger.hash(), *gated.hash()];
+
+        for mode in [RestingPredicateMode::Off, RestingPredicateMode::Enforce] {
+            let store = resting_store(pool_parent_hash(), &gated, blocker.clone());
+            let (included, _) =
+                build_carrying_resting(mode, &store, vec![gated.clone(), trigger.clone()]);
+            assert_eq!(included, expected, "mode {mode:?}");
+        }
+    }
+
+    #[test]
+    fn native_builder_carries_unsatisfied_transactions_into_the_next_block() {
+        let watched_address = Address::repeat_byte(0x4a);
+        let blocker = ValidityPredicate::Balance {
+            address: watched_address,
+            op: ValidityOperator::Equal,
+            value: U256::ONE,
+        };
+        let gated = pool_transaction_to(0, Address::repeat_byte(0x5b), U256::ZERO)
+            .with_validity_predicates(vec![blocker]);
+        let store = RestingPredicateStore::default();
+
+        let (included, block_hash) =
+            build_carrying_resting(RestingPredicateMode::Enforce, &store, vec![gated.clone()]);
+
+        assert!(included.is_empty());
+        let mut resting = store.take(DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD);
+        let carry_over = resting.begin_block(block_hash, 2, Some(&TransitionState::default()));
+        assert_eq!(carry_over.carried, 1);
+        assert!(resting.member(*gated.hash(), gated.validity_conditions()).is_some());
+    }
+
+    /// Without flashblocks, resting transactions only carry across blocks, which needs Denim.
+    #[test]
+    fn native_builder_ignores_the_resting_set_when_off_or_before_denim() {
+        let watched_address = Address::repeat_byte(0x4b);
+        let blocker = ValidityPredicate::Balance {
+            address: watched_address,
+            op: ValidityOperator::Equal,
+            value: U256::ONE,
+        };
+        let gated = pool_transaction_to(0, Address::repeat_byte(0x5c), U256::ZERO)
+            .with_validity_predicates(vec![blocker]);
+
+        for (timestamp, mode) in [
+            (DENIM_TIMESTAMP, RestingPredicateMode::Off),
+            (DENIM_TIMESTAMP - 1, RestingPredicateMode::Enforce),
+        ] {
+            let store = RestingPredicateStore::default();
+            build_carrying_resting_at(timestamp, mode, &store, vec![gated.clone()]);
+            assert!(
+                store.take(DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD).is_empty(),
+                "timestamp {timestamp}, mode {mode:?}"
+            );
+        }
     }
 
     #[test]
@@ -2785,7 +3064,8 @@ mod tests {
 
         let invalid = Arc::new(Mutex::new(Vec::new()));
         let transactions = TestParkableTransactions::recording(vec![tx], invalid);
-        ctx.execute_best_transactions(&mut info, &mut builder, transactions).expect("mempool scan");
+        ctx.execute_best_transactions(&mut info, &mut builder, transactions, None)
+            .expect("mempool scan");
         let nonce_after = builder
             .evm_mut()
             .db_mut()

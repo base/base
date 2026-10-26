@@ -11,6 +11,8 @@ use revm::state::EvmState;
 pub struct RestingStats {
     /// Resting transactions parked without being yielded.
     pub parked: u64,
+    /// Of [`Self::parked`], transactions whose predicate was found unsatisfied in an earlier block.
+    pub carried_parked: u64,
     /// Time spent checking and parking resting transactions.
     pub duration: Duration,
 }
@@ -18,13 +20,17 @@ pub struct RestingStats {
 /// Lifecycle callbacks for validity transactions resting in a payload job.
 ///
 /// A transaction rests once the build loop finds one of its predicates unsatisfied. It stays
-/// unsatisfied until a later commit in the same block changes the state that predicate reads, so
-/// an iterator implementing this trait may hold it back in later flashblocks instead of yielding
-/// it to be evaluated again. The default methods hold nothing back.
+/// unsatisfied until a later commit changes the state that predicate reads, so an iterator
+/// implementing this trait may hold it back in later flashblocks, or later blocks, instead of
+/// yielding it to be evaluated again. The default methods hold nothing back.
 pub trait RestingPayloadTransactions {
     /// Records that `predicate` was unsatisfied for `transaction_hash` at the current build
     /// position.
     fn rest(&mut self, _transaction_hash: TxHash, _predicate: &ValidityPredicate) {}
+
+    /// Records that the build loop evaluated a transaction and is not leaving it parked under an
+    /// unsatisfied predicate.
+    fn release(&mut self, _transaction_hash: TxHash) {}
 
     /// Wakes transactions resting on state changed by one committed transaction.
     fn record_committed_state(&mut self, _state: &EvmState) {}
