@@ -221,6 +221,16 @@ impl G1Affine {
         bls12_381::G1Affine::from_compressed_unchecked(bytes).map(Self)
     }
 
+    /// Decode from uncompressed bytes without curve or subgroup checks.
+    pub fn from_uncompressed_unchecked(bytes: &[u8; 96]) -> CtOption<Self> {
+        bls12_381::G1Affine::from_uncompressed_unchecked(bytes).map(Self)
+    }
+
+    /// Serialize to 96 uncompressed bytes.
+    pub fn to_uncompressed(&self) -> [u8; 96] {
+        self.0.to_uncompressed()
+    }
+
     /// Returns true if this is the identity.
     pub fn is_identity(&self) -> Choice {
         self.0.is_identity()
@@ -283,6 +293,16 @@ impl G2Affine {
     /// Decode from compressed bytes without subgroup checks.
     pub fn from_compressed_unchecked(bytes: &[u8; 96]) -> CtOption<Self> {
         bls12_381::G2Affine::from_compressed_unchecked(bytes).map(Self)
+    }
+
+    /// Decode from uncompressed bytes without curve or subgroup checks.
+    pub fn from_uncompressed_unchecked(bytes: &[u8; 192]) -> CtOption<Self> {
+        bls12_381::G2Affine::from_uncompressed_unchecked(bytes).map(Self)
+    }
+
+    /// Serialize to 192 uncompressed bytes.
+    pub fn to_uncompressed(&self) -> [u8; 192] {
+        self.0.to_uncompressed()
     }
 }
 

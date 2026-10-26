@@ -4,6 +4,7 @@ use std::{
     fmt::Write as _,
     fs,
     io::{self, Write as _},
+    num::NonZeroU64,
     path::PathBuf,
     sync::Arc,
 };
@@ -96,6 +97,9 @@ impl OpenVmRangeDump {
                 end_block,
                 l1_head: L1HeadSource::Pinned(l1_head),
                 schedule_l2_block_number: None,
+                // Commit only the range's final output root.
+                intermediate_block_interval: NonZeroU64::new(end_block - start_block)
+                    .ok_or_else(|| eyre::eyre!("block range is empty"))?,
             })
             .await
             .map_err(|error| eyre::eyre!("failed to generate range witness: {error}"))?;
