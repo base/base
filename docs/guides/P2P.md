@@ -612,18 +612,15 @@ nodes and DNS-based discovery.
 ### The BaseNetworkBuilder
 
 The [`BaseNetworkBuilder`](https://github.com/base/base/blob/main/crates/execution/node/src/node.rs)
-is the component that configures reth's network for Base. It has two configuration knobs:
+is the component that configures reth's network for Base. It has one configuration knob:
 
 ```rust
 pub struct BaseNetworkBuilder {
-    pub disable_txpool_gossip: bool,
     pub disable_discovery_v4: bool,
 }
 ```
 
-The `disable_txpool_gossip` flag is particularly important for rollup nodes. When a node is
-configured with a sequencer endpoint (meaning it should forward transactions to the sequencer rather
-than including them in blocks itself), transaction pool gossip is disabled. This prevents the node
+Transaction pool gossip is always disabled. This prevents the node
 from broadcasting pending transactions to the rest of the network, because in a rollup the sequencer
 is the only entity that orders transactions.
 
@@ -725,9 +722,9 @@ Transaction gossip on the DevP2P network is disabled. `--rollup.discovery.v4` en
 discv4 discovery protocol (disabled by default since Base uses discv5).
 `--rollup.txpool-ordering` selects between `coinbase-tip` and `timestamp` ordering strategies.
 
-The standard reth network flags still apply: `--network.addr` and `--network.port` control the RLPx
-bind address (default port 30303), `--network.discovery.disable-discovery` turns off all peer
-discovery, and `--network.discovery.bootnodes` provides custom boot node addresses.
+The standard reth network flags still apply: `--addr` and `--port` control the RLPx
+bind address (default port 30303), `--disable-discovery` turns off all peer
+discovery, and `--bootnodes` provides custom boot node addresses.
 
 
 ## How the two stacks interact at runtime

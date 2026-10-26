@@ -21,9 +21,6 @@ on:
         required: false
         type: boolean
         default: false
-      allow_registry_login:
-        required: true
-        type: boolean
 env:
   CARGO_TERM_COLOR: always
   RUSTC_WRAPPER: "sccache"
@@ -56,6 +53,7 @@ jobs:
         with:
           filters: |
             docker:
+              - '.depot/workflows/ci-core.yml'
               - 'etc/docker/Dockerfile.*'
               - 'etc/docker/docker-bake.hcl'
               - 'etc/scripts/node/**'
@@ -235,13 +233,6 @@ jobs:
           fetch-depth: 1
       - name: Set up Depot CLI
         uses: depot/setup-action@91bc8495a33ebfc504ffc89e5674379ccf23c29c # v1
-      - name: Login to GHCR
-        if: inputs.allow_registry_login
-        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
-        with:
-          registry: ghcr.io
-          username: ${{ vars.GHCR_USERNAME }}
-          password: ${{ secrets.GHCR_TOKEN }}
       - name: Build Docker image
         run: >-
           depot bake --project "${{ vars.DEPOT_PROJECT_ID }}"

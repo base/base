@@ -21,7 +21,7 @@ pub use payloads::{
     AerodromeClPayload, B20TransferPayload, CalldataPayload, DOUBLE_COUNTER_GAS_LIMIT,
     DoubleCounterPayload, EIP8430_TRANSFER_GAS_LIMIT, Eip8430TransferPayload, Erc20Payload,
     OsakaPayload, Payload, PrecompileLooper, PrecompilePayload, StoragePayload, TransferPayload,
-    UniswapV3Payload, recover_real_tokens,
+    UniswapV3Payload, encode_erc20_approve, recover_real_tokens,
 };
 pub(crate) use payloads::{b20_salt_for, b20_token_for};
 

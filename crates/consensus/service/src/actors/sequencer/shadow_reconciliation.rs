@@ -3,11 +3,11 @@
 use std::collections::{BTreeMap, VecDeque};
 
 use alloy_primitives::B256;
+use base_common_genesis::ChainGenesis;
 use base_common_rpc_types_engine::BaseExecutionPayloadEnvelope;
-use base_protocol::{AttributesWithParent, L2BlockInfo};
+use base_protocol::{AttributesWithParent, FromBlockError, L2BlockInfo};
 use tracing::debug;
 
-use super::CatchupGap;
 use crate::{EngineClientError, NodeOperatingMode, SequencerConfig};
 
 /// The kind of sequencer a node runs as, fixed for the life of the process.
@@ -15,7 +15,7 @@ use crate::{EngineClientError, NodeOperatingMode, SequencerConfig};
 pub enum SequencerKind {
     /// Sequences on the canonical chain.
     Regular,
-    /// Stops following canonical inputs after startup catch-up and produces a private chain.
+    /// Syncs through the EL, then drops canonical inputs and produces a private chain.
     Isolated,
     /// Produces private blocks and reconciles them with the canonical chain.
     Shadow,
@@ -32,7 +32,7 @@ impl From<NodeOperatingMode> for SequencerKind {
 }
 
 impl SequencerKind {
-    /// Returns the engine state entered once catch-up completes at the canonical `head`.
+    /// Returns the engine state entered once canonical startup completes at `head`.
     pub fn completed_state(self, head: L2BlockInfo) -> SequencerEngineState {
         match self {
             Self::Regular => SequencerEngineState::Regular,
@@ -49,24 +49,26 @@ impl SequencerKind {
 pub enum SequencerEngineState {
     /// No canonical catch-up or shadow reconciliation routing is active.
     Regular,
-    /// The sequencer is following canonical safe derivation and unsafe gossip.
+    /// The sequencer is following canonical inputs before private block production.
     CatchingUp {
-        /// Rolling canonical unsafe payload buffer shared by follower sequencers.
+        /// Canonical observations, with payloads retained by regular followers and shadows.
         catchup: CanonicalUnsafeCatchup,
     },
     /// Private block production is active and canonical inputs are buffered for reconciliation.
     ShadowActive(Box<ShadowReconciliationGate>),
-    /// An isolated sequencer finished startup catch-up and now drops all canonical inputs so
+    /// An isolated sequencer finished EL sync and now drops all canonical inputs so
     /// they cannot reorg its private chain.
     IsolatedActive,
 }
 
-/// Rolling canonical unsafe payloads retained while safe derivation catches up.
+/// Canonical gossip observations, optionally retaining payloads for ordered catch-up.
 #[derive(Debug, Default)]
 pub struct CanonicalUnsafeCatchup {
     payloads: BTreeMap<u64, BaseExecutionPayloadEnvelope>,
     observations: BTreeMap<u64, B256>,
     highest_observed: Option<(u64, B256)>,
+    // Boxing keeps SequencerEngineState and ConfiguredEngineReceiver below Clippy's large-enum limit.
+    latest_observed_head: Option<Box<L2BlockInfo>>,
     faulted: bool,
 }
 
@@ -77,6 +79,20 @@ impl CanonicalUnsafeCatchup {
     /// Retains an authenticated canonical payload in the rolling recent window.
     pub fn buffer_payload(&mut self, envelope: BaseExecutionPayloadEnvelope) {
         let number = envelope.execution_payload.block_number();
+        let observed = self.observations.contains_key(&number);
+        self.observe_payload(&envelope);
+        if self.faulted || observed {
+            return;
+        }
+        self.payloads.insert(number, envelope);
+        while self.payloads.len() > Self::MAX_PAYLOADS {
+            self.payloads.pop_first();
+        }
+    }
+
+    /// Records a canonical observation and faults on conflicting hashes at an observed height.
+    pub fn observe_payload(&mut self, envelope: &BaseExecutionPayloadEnvelope) {
+        let number = envelope.execution_payload.block_number();
         let hash = envelope.execution_payload.block_hash();
         if self.faulted {
             return;
@@ -84,6 +100,7 @@ impl CanonicalUnsafeCatchup {
         if let Some(existing_hash) = self.observations.get(&number) {
             if *existing_hash != hash {
                 self.faulted = true;
+                self.latest_observed_head = None;
             }
             return;
         }
@@ -91,20 +108,47 @@ impl CanonicalUnsafeCatchup {
         if self.highest_observed.is_none_or(|(highest, _)| number > highest) {
             self.highest_observed = Some((number, hash));
         }
-        self.payloads.insert(number, envelope);
-        while self.payloads.len() > Self::MAX_PAYLOADS {
-            self.payloads.pop_first();
-        }
         while self.observations.len() > Self::MAX_PAYLOADS {
             self.observations.pop_first();
         }
     }
 
-    /// Returns the contiguous canonical suffix that can extend `anchor` now.
+    /// Observes isolated gossip, decoding a probe target only for a new highest observation.
     ///
-    /// Buffered payloads are kept until [`Self::commit`], so `anchor` may be a block that the
-    /// engine has not acknowledged yet.
-    pub fn contiguous_payloads(&self, anchor: L2BlockInfo) -> Vec<BaseExecutionPayloadEnvelope> {
+    /// # Errors
+    /// Returns an error when the new highest payload cannot be decoded into an L2 block reference.
+    pub fn observe_isolated_payload(
+        &mut self,
+        envelope: &BaseExecutionPayloadEnvelope,
+        genesis: &ChainGenesis,
+    ) -> Result<(), FromBlockError> {
+        let number = envelope.execution_payload.block_number();
+        if self.faulted || self.highest_observed.is_some_and(|(highest, _)| number <= highest) {
+            self.observe_payload(envelope);
+            return Ok(());
+        }
+        let head = L2BlockInfo::from_payload_and_genesis(
+            envelope.execution_payload.clone(),
+            envelope.parent_beacon_block_root,
+            genesis,
+        )?;
+        self.observe_payload(envelope);
+        self.latest_observed_head = Some(Box::new(head));
+        Ok(())
+    }
+
+    /// Returns the latest decoded gossip head, cleared on conflicting observations.
+    pub fn latest_observed_head(&self) -> Option<L2BlockInfo> {
+        self.latest_observed_head.as_deref().copied()
+    }
+
+    /// Returns the contiguous canonical suffix that can extend `anchor` now.
+    pub fn contiguous_payloads(
+        &mut self,
+        anchor: L2BlockInfo,
+    ) -> Vec<BaseExecutionPayloadEnvelope> {
+        self.payloads.retain(|number, _| *number > anchor.block_info.number);
+
         let mut number = anchor.block_info.number.saturating_add(1);
         let mut parent = anchor.block_info.hash;
         let mut payloads = Vec::new();
@@ -119,16 +163,10 @@ impl CanonicalUnsafeCatchup {
         payloads
     }
 
-    /// Returns the blocks missing between `anchor` and the oldest buffered payload.
-    pub fn gap(&self, anchor: L2BlockInfo) -> Option<CatchupGap> {
-        let (&oldest, payload) =
-            self.payloads.range(anchor.block_info.number.saturating_add(1)..).next()?;
-        let first = anchor.block_info.number.saturating_add(1);
-        (oldest > first).then(|| CatchupGap {
-            first,
-            last: oldest - 1,
-            tip_hash: payload.execution_payload.parent_hash(),
-        })
+    /// Returns whether `head` matches the latest canonical gossip by number and hash.
+    pub fn is_at_latest_observed(&self, head: L2BlockInfo) -> bool {
+        !self.faulted
+            && self.highest_observed == Some((head.block_info.number, head.block_info.hash))
     }
 
     /// Removes payloads acknowledged by the execution engine.
@@ -371,12 +409,15 @@ impl ShadowReconciliationGate {
 mod tests {
     use alloy_primitives::{Address, B256, Bloom, U256};
     use alloy_rpc_types_engine::ExecutionPayloadV1;
+    use base_common_consensus::BaseTxEnvelope;
+    use base_common_genesis::RollupConfig;
     use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
-    use base_consensus_engine::test_utils::TestAttributesBuilder;
-    use base_protocol::{BlockInfo, L2BlockInfo};
+    use base_consensus_engine::test_utils::{TestAttributesBuilder, encoded_l1_info_deposit_tx};
+    use base_protocol::{BlockInfo, L1BlockInfoBedrock, L2BlockInfo};
+    use rstest::rstest;
 
     use super::{CanonicalUnsafeCatchup, ShadowReconciliationGate};
-    use crate::{CatchupGap, EngineClientError};
+    use crate::EngineClientError;
 
     fn head(number: u64, hash: B256) -> L2BlockInfo {
         L2BlockInfo {
@@ -426,20 +467,77 @@ mod tests {
     }
 
     #[test]
-    fn catchup_gap_spans_head_to_oldest_buffered_payload() {
-        let anchor = head(10, B256::with_last_byte(10));
+    fn latest_observed_requires_exact_canonical_head_without_safe_derivation() {
         let mut catchup = CanonicalUnsafeCatchup::default();
-        assert_eq!(catchup.gap(anchor), None);
+        catchup.observe_payload(&payload(500, B256::with_last_byte(14), B256::with_last_byte(15)));
+        assert!(!catchup.is_at_latest_observed(head(10, B256::with_last_byte(10))));
+        assert!(!catchup.is_at_latest_observed(head(500, B256::with_last_byte(99))));
+        assert!(catchup.is_at_latest_observed(head(500, B256::with_last_byte(15))));
+        assert!(catchup.payloads.is_empty());
+    }
 
-        catchup.buffer_payload(payload(15, B256::with_last_byte(14), B256::with_last_byte(15)));
-        catchup.buffer_payload(payload(14, B256::with_last_byte(13), B256::with_last_byte(14)));
+    enum ExpectedObservedHead {
+        Incoming,
+        Initial,
+    }
 
-        assert_eq!(
-            catchup.gap(anchor),
-            Some(CatchupGap { first: 11, last: 13, tip_hash: B256::with_last_byte(13) })
-        );
-        assert_eq!(catchup.gap(head(13, B256::with_last_byte(13))), None);
-        assert_eq!(catchup.gap(head(15, B256::with_last_byte(15))), None);
+    #[rstest]
+    #[case::new_highest(501, false, false, Some(ExpectedObservedHead::Incoming))]
+    #[case::duplicate(500, false, false, Some(ExpectedObservedHead::Initial))]
+    #[case::older(499, false, false, Some(ExpectedObservedHead::Initial))]
+    #[case::conflict(500, true, false, None)]
+    #[case::undecodable(501, false, true, Some(ExpectedObservedHead::Initial))]
+    fn isolated_target_tracks_accepted_observations(
+        #[case] number: u64,
+        #[case] conflicting: bool,
+        #[case] undecodable: bool,
+        #[case] expected: Option<ExpectedObservedHead>,
+    ) {
+        let canonical_payload = |number, timestamp_offset| {
+            let BaseExecutionPayload::V1(mut raw) =
+                payload(number, B256::ZERO, B256::ZERO).execution_payload
+            else {
+                panic!("V1 fixture");
+            };
+            raw.transactions = vec![encoded_l1_info_deposit_tx(L1BlockInfoBedrock::default())];
+            let mut block =
+                BaseExecutionPayload::V1(raw).try_into_block::<BaseTxEnvelope>().unwrap();
+            block.header.timestamp += timestamp_offset;
+            let head =
+                L2BlockInfo::from_block_and_genesis(&block, &RollupConfig::default().genesis)
+                    .unwrap();
+            (
+                BaseExecutionPayloadEnvelope {
+                    execution_payload: BaseExecutionPayload::from_block_unchecked(
+                        block.hash_slow(),
+                        &block,
+                    )
+                    .0,
+                    parent_beacon_block_root: None,
+                },
+                head,
+            )
+        };
+        let mut catchup = CanonicalUnsafeCatchup::default();
+        let (initial, initial_head) = canonical_payload(500, 0);
+        catchup.observe_isolated_payload(&initial, &RollupConfig::default().genesis).unwrap();
+        assert_eq!(catchup.latest_observed_head(), Some(initial_head));
+        let (mut incoming, incoming_head) = canonical_payload(number, u64::from(conflicting));
+        if undecodable {
+            let BaseExecutionPayload::V1(raw) = &mut incoming.execution_payload else {
+                panic!("V1 fixture");
+            };
+            raw.transactions.clear();
+        }
+
+        let result = catchup.observe_isolated_payload(&incoming, &RollupConfig::default().genesis);
+
+        let expected = expected.map(|head| match head {
+            ExpectedObservedHead::Incoming => incoming_head,
+            ExpectedObservedHead::Initial => initial_head,
+        });
+        assert_eq!(result.is_err(), undecodable);
+        assert_eq!(catchup.latest_observed_head(), expected);
     }
 
     #[test]
@@ -482,7 +580,6 @@ mod tests {
         catchup.buffer_payload(payload(11, B256::with_last_byte(10), B256::with_last_byte(11)));
         let safe = head(12, B256::with_last_byte(12));
         assert!(catchup.contiguous_payloads(safe).is_empty());
-        catchup.commit(safe);
 
         assert!(catchup.is_complete(safe, safe));
     }

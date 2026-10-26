@@ -97,5 +97,6 @@ let bal = wallet.account.balance();
 - Keep modules and actor loops focused; put state-specific logic on the type that owns it.
 - Document contracts and non-obvious reasons, not code narration or change history; keep docs consistent with behavior.
 - Preserve historical fork behavior and parity across execution paths; test both old and new fork behavior.
-- Avoid unnecessary I/O, cloning, and allocation on hot paths; benchmark production code when claiming performance gains.
+- Cost hot-path work at its production frequency, not per call. Hot paths and their rates are listed in [docs/guides/HOT_PATH_PERFORMANCE_REVIEW.md](docs/guides/HOT_PATH_PERFORMANCE_REVIEW.md). Keep allocation, cloning, serialization, I/O, and metric-handle lookups out of per-candidate work, and do not scan pool-sized collections per candidate or rejection.
+- Measure default-off features with the feature enabled, and benchmark production code when claiming performance gains.
 - Make async lifetimes explicit: bound waits, distinguish retryable from terminal errors, and clean up tasks on failure and shutdown.
