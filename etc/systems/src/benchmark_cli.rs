@@ -1169,6 +1169,7 @@ impl SnapshotBenchmarkArgs {
                 stack.boundary().head.number,
                 stack.boundary().head.hash,
                 block_interval,
+                summary.measurement_start_block.zip(summary.measurement_end_block),
             )
             .await
             .wrap_err_with(|| format!("failed to export blocks to {}", export_dir.display()))?;
@@ -1234,6 +1235,7 @@ impl SnapshotBenchmarkArgs {
         boundary_number: u64,
         boundary_hash: B256,
         block_interval: DevnetBlockInterval,
+        measurement_window: Option<(u64, u64)>,
     ) -> Result<ReplayManifest> {
         let started = Instant::now();
         let provider = RootProvider::<Base>::new_http(rpc_url.clone());
@@ -1284,6 +1286,8 @@ impl SnapshotBenchmarkArgs {
             last_hash: B256::ZERO,
             last_state_root: B256::ZERO,
             block_count: 0,
+            measurement_start_block: measurement_window.map(|(start, _)| start),
+            measurement_end_block: measurement_window.map(|(_, end)| end),
         })?;
         let bytes = fs::metadata(dir.join(EXPORT_BLOCKS_FILE))
             .wrap_err("failed to stat exported blocks")?

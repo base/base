@@ -364,8 +364,13 @@ Snapshot totals cover the measured sequencer window; replay totals cover success
 exported blocks, including setup blocks. Rates use block count times cadence, not replay wall
 time. Byte accounting runs after the respective timed window using fetched full blocks or the
 local export; it adds no measurement-window RPCs. Missing old fields remain unknown, not zero;
-an incomplete window has no summary. L1Block's DA scalar and the DA gas-footprint constraint
+an incomplete window has no summary. `L1Block`'s DA scalar and the DA gas-footprint constraint
 are not reported because they require separate state reads.
+
+New exports also persist optional `measurementStartBlock` (excluded) and `measurementEndBlock`
+(included) in `replay.json`. Replay retains its all-block `da_usage` and adds
+`da_usage_measured` over that exact snapshot window only when the complete range and byte
+metrics are available. Legacy manifests and incomplete replay ranges omit the measured summary.
 
 ## Compare 2s and 200ms fairly
 
