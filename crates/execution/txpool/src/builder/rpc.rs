@@ -264,8 +264,9 @@ where
             ErrorObjectOwned::owned(ErrorCode::InvalidParams.code(), error.to_string(), None::<()>)
         })?;
         // Every extension implementation must obey this builder's local rollout policy.
+        let has_validity_predicates = !pool_tx.validity_conditions().is_empty();
         self.validity_signature_mode
-            .check(pool_tx.validity_predicates(), pool_tx.validity_signature().as_ref())
+            .check(has_validity_predicates, pool_tx.validity_signature().as_ref())
             .map_err(|error| {
                 ValiditySignatureMetrics::rejected("builder", error.as_label()).increment(1);
                 ErrorObjectOwned::owned(
@@ -274,7 +275,7 @@ where
                     Some(error.as_label()),
                 )
             })?;
-        if !pool_tx.validity_predicates().is_empty() {
+        if has_validity_predicates {
             ValiditySignatureMetrics::accepted(
                 "builder",
                 if pool_tx.validity_signature().is_some() { "signed" } else { "unsigned" },
