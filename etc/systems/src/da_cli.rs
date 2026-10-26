@@ -9,8 +9,8 @@ use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types_engine::{CancunPayloadFields, PraguePayloadFields};
 use alloy_rpc_types_eth::BlockNumberOrTag;
 use base_batcher_encoder::{
-    BatchEncoder, BatchPipeline, BlobPayload, DaEgress, EncoderConfig, StepResult,
-    SubmissionPayload,
+    BatchEncoder, BatchPipeline, BlobPayload, DaEgress, DerivationReconciliation, EncoderConfig,
+    StepResult, SubmissionPayload,
 };
 use base_common_consensus::BaseBlock;
 use base_common_network::Base;
@@ -148,6 +148,7 @@ impl DaBenchmarkArgs {
 struct DaMeter {
     encoder: BatchEncoder,
     channel_duration: u64,
+    channel_timeout: u64,
     l1_head: u64,
     unreleased: VecDeque<(u64, BlockInfo)>,
     first: Option<(u64, u64)>,
@@ -165,10 +166,13 @@ impl DaMeter {
     fn new(chain: SnapshotChainConfig) -> Result<Self> {
         let config = EncoderConfig::default();
         let channel_duration = config.max_channel_duration;
-        let encoder = BatchEncoder::new(chain.resolve()?.rollup_config, config)?;
+        let rollup_config = chain.resolve()?.rollup_config;
+        let channel_timeout = EncoderConfig::confirmation_channel_timeout(&rollup_config);
+        let encoder = BatchEncoder::new(rollup_config, config)?;
         Ok(Self {
             encoder,
             channel_duration,
+            channel_timeout,
             l1_head: 0,
             unreleased: VecDeque::new(),
             first: None,
@@ -215,7 +219,15 @@ impl DaMeter {
         self.transaction_bytes +=
             block.body.transactions.iter().map(|tx| tx.encode_2718_len() as u64).sum::<u64>();
         // Channels close after a number of L1 blocks, so L1 time follows the range's own clock.
-        self.l1_head = (timestamp_ms - first_ms) / L1_SLOT_MS;
+        let slot = (timestamp_ms - first_ms) / L1_SLOT_MS;
+        // L1 passing a submitted channel's timeout makes the encoder resubmit it, counting it twice.
+        ensure!(
+            slot - self.l1_head < self.channel_timeout,
+            "block {number} is {} L1 slots after the previous block, at or past the {}-slot channel timeout",
+            slot - self.l1_head,
+            self.channel_timeout
+        );
+        self.l1_head = slot;
         self.encoder.advance_l1_head(self.l1_head);
         let info = BlockInfo::new(
             block.header.hash_slow(),
@@ -238,8 +250,16 @@ impl DaMeter {
             safe = Some(info);
             self.unreleased.pop_front();
         }
+        // A stalled channel is expected here: its tail is confirmed before it is released.
         if let Some(info) = safe {
-            self.encoder.reconcile_derivation(info, self.l1_head);
+            ensure!(
+                !matches!(
+                    self.encoder.reconcile_derivation(info, self.l1_head),
+                    DerivationReconciliation::SafeHeadMismatch
+                ),
+                "the encoder could not release block {}",
+                info.number
+            );
         }
         Ok(())
     }
@@ -348,5 +368,16 @@ mod tests {
         assert_eq!(result.gas_per_second, 80_000_000.0 / 960.0);
         let ratio = result.frame_bytes as f64 / result.transaction_bytes as f64;
         assert!((0.9..1.1).contains(&ratio), "frame bytes per transaction byte {ratio}");
+    }
+
+    /// A gap as long as the channel timeout would double count resubmitted channels, so it fails.
+    #[test]
+    fn rejects_a_gap_past_the_channel_timeout() {
+        let mut meter = DaMeter::new(SnapshotChainConfig::default()).unwrap();
+        let first = block(B256::ZERO, 1);
+        let second = block(first.header.hash_slow(), 2);
+        meter.add(first, TIMESTAMP * 1_000).unwrap();
+        let err = meter.add(second, (TIMESTAMP + 60 * 12) * 1_000).unwrap_err();
+        assert!(err.to_string().contains("channel timeout"), "{err}");
     }
 }
