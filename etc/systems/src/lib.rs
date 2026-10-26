@@ -28,6 +28,9 @@ pub use benchmark_cli::{
     LocalBenchmarkWorkloadResult, LocalBenchmarkWorkloadResults, SnapshotBenchmarkArgs,
 };
 
+mod benchmark_da;
+pub use benchmark_da::{BlockDaMetrics, ByteUsageSummary, DaUsageSummary};
+
 mod benchmark_report;
 pub use benchmark_report::{
     SnapshotBenchmarkReportConfig, SnapshotBenchmarkResult, SnapshotBlockMetrics,

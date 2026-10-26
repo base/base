@@ -1215,6 +1215,10 @@ impl SnapshotBenchmarkArgs {
             client_rpc_url: validator.map(|(client_rpc, _)| client_rpc.to_string()),
             funder_address,
             load_test: summary,
+            da_usage: crate::DaUsageSummary::from_blocks(
+                blocks.iter().map(|block| &block.da),
+                block_interval.duration().as_millis() as u64,
+            ),
             blocks,
             validator_blocks,
         };
@@ -1336,6 +1340,10 @@ impl SnapshotBenchmarkArgs {
             let prometheus_metrics = prometheus_metrics.get(&number).cloned().ok_or_else(|| {
                 eyre::eyre!("Prometheus sample for block {number} from {rpc_url} is missing")
             })?;
+            let transaction_count = block.transactions.len() as u64;
+            let da = crate::BlockDaMetrics::from_transactions(
+                block.transactions.into_transactions().map(|tx| tx.inner.inner.into_inner()),
+            );
             blocks.push(SnapshotBlockMetrics {
                 number: block.header.number,
                 hash: block.header.hash,
@@ -1346,7 +1354,8 @@ impl SnapshotBenchmarkArgs {
                     .unwrap_or_else(|| block.header.timestamp.saturating_mul(1_000)),
                 gas_used: block.header.gas_used,
                 gas_limit: block.header.gas_limit,
-                transaction_count: block.transactions.len() as u64,
+                transaction_count,
+                da,
                 prometheus_metrics,
             });
         }

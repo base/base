@@ -33,7 +33,7 @@ use base_node_runner::BaseNodeExtension;
 use base_proofs_extension::ProofsHistoryExtension;
 use clap::Args;
 use eyre::{Result, WrapErr, ensure};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tracing::warn;
 
 use crate::{
@@ -138,7 +138,7 @@ impl LatencySummary {
 }
 
 /// Engine timings for one replayed block.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ReplayBlockTiming {
     /// Block number.
@@ -151,6 +151,9 @@ pub struct ReplayBlockTiming {
     pub gas_used: u64,
     /// Transactions in the block, including system and deposit transactions.
     pub transaction_count: u64,
+    /// Non-deposit byte totals computed from the export after replay timing stops.
+    #[serde(flatten, default)]
+    pub da: crate::BlockDaMetrics,
     /// `engine_newPayload` round trip.
     pub new_payload_ms: f64,
     /// `engine_forkchoiceUpdated` round trip.
@@ -198,6 +201,10 @@ pub struct ReplayResult {
     /// Proofs mode only. Recorded without a threshold; it does not affect `match`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub proofs: Option<ProofsSummary>,
+
+    /// FastLZ/Fjord estimate over successfully inserted replay blocks, including setup blocks.
+    #[serde(rename = "da_usage", default, skip_serializing_if = "Option::is_none")]
+    pub da_usage: Option<crate::DaUsageSummary>,
 }
 
 /// Blocks inserted before the replay finished or failed.
@@ -326,9 +333,10 @@ impl ReplayBenchmarkArgs {
             Duration::from_millis(self.metrics_scrape_interval_ms.get()),
         )
         .await?;
-        let run = self
+        let mut run = self
             .replay_blocks(&engine, &manifest, safe, finalized, probe.as_ref().map(|p| &p.head))
             .await;
+        self.collect_da_metrics(&mut run.blocks).await?;
         let replayed_all = run.error.is_none();
         let proofs = match probe {
             Some(probe) => {
@@ -382,6 +390,41 @@ impl ReplayBenchmarkArgs {
             result.manifest.last_hash,
             result.manifest.last_state_root
         );
+        Ok(())
+    }
+
+    /// Computes byte metrics from local export bytes only after the replay clock has stopped.
+    async fn collect_da_metrics(&self, blocks: &mut [ReplayBlockTiming]) -> Result<()> {
+        if blocks.is_empty() {
+            return Ok(());
+        }
+        let expected = blocks.iter().map(|block| (block.number, block.hash)).collect::<Vec<_>>();
+        let dir = self.export_dir.clone();
+        let totals = tokio::task::spawn_blocking(move || -> Result<Vec<crate::BlockDaMetrics>> {
+            read_exported_blocks(&dir)?
+                .take(expected.len())
+                .zip(expected)
+                .map(|(block, (number, hash))| {
+                    let block = block?;
+                    ensure!(
+                        (block.number, block.hash) == (number, hash),
+                        "DA metrics export differs from replayed block {number}"
+                    );
+                    crate::BlockDaMetrics::from_encoded_transactions(
+                        &block.envelope.execution_payload.as_v1().transactions,
+                    )
+                })
+                .collect()
+        })
+        .await
+        .wrap_err("DA metrics reader failed")??;
+        ensure!(
+            totals.len() == blocks.len(),
+            "DA metrics export is shorter than the replayed range"
+        );
+        for (block, da) in blocks.iter_mut().zip(totals) {
+            block.da = da;
+        }
         Ok(())
     }
 
@@ -533,6 +576,7 @@ impl ReplayBenchmarkArgs {
             gas_used,
             transaction_count,
             new_payload_ms: Self::millis(new_payload),
+            da: crate::BlockDaMetrics::default(),
             forkchoice_ms: Self::millis(forkchoice),
             lag_ms: lag.map(Self::millis),
         })
@@ -580,6 +624,10 @@ impl ReplayBenchmarkArgs {
             matches: final_hash == manifest.last_hash
                 && final_state_root == manifest.last_state_root,
             error: run.error.map(|error| format!("{error:#}")),
+            da_usage: crate::DaUsageSummary::from_blocks(
+                run.blocks.iter().map(|block| &block.da),
+                manifest.block_interval_ms,
+            ),
             blocks: run.blocks,
             proofs: None,
             manifest,
@@ -730,10 +778,99 @@ mod tests {
             timestamp_ms: FIRST_BLOCK_TIMESTAMP * 1_000,
             gas_used: 21_000,
             transaction_count: 2,
+            da: crate::BlockDaMetrics::default(),
             new_payload_ms,
             forkchoice_ms: 1.0,
             lag_ms,
         }
+    }
+
+    #[test]
+    fn old_replay_block_json_has_unknown_byte_metrics() {
+        let block: ReplayBlockTiming = serde_json::from_value(serde_json::json!({
+            "number": 1, "hash": B256::ZERO, "timestampMs": 1000,
+            "gasUsed": 21000, "transactionCount": 1,
+            "newPayloadMs": 2.0, "forkchoiceMs": 1.0,
+        }))
+        .expect("pre-DA replay timing JSON must remain readable");
+        assert_eq!(block.da, crate::BlockDaMetrics::default(), "old replay DA is unknown");
+    }
+
+    #[tokio::test]
+    async fn replay_da_is_populated_from_local_export_after_timing() {
+        use alloy_consensus::{SignableTransaction, TxEip1559};
+        use alloy_eips::Encodable2718;
+        use alloy_primitives::{Sealable, Signature};
+        use base_common_consensus::{BaseTxEnvelope, TxDeposit};
+        use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
+
+        let dir = tempfile::tempdir().unwrap();
+        let tx: BaseTxEnvelope =
+            TxEip1559::default().into_signed(Signature::test_signature()).into();
+        let raw = tx.encoded_2718();
+        let deposit = BaseTxEnvelope::Deposit(TxDeposit::default().seal_slow());
+        let block = crate::ExportedBlock {
+            number: 1,
+            hash: B256::with_last_byte(1),
+            timestamp_ms: 1000,
+            state_root: B256::ZERO,
+            payload_version: 4,
+            envelope: BaseExecutionPayloadEnvelope {
+                parent_beacon_block_root: Some(B256::ZERO),
+                execution_payload: BaseExecutionPayload::from_block_unchecked(
+                    B256::with_last_byte(1),
+                    &alloy_consensus::Block {
+                        header: alloy_consensus::Header {
+                            withdrawals_root: Some(B256::ZERO),
+                            parent_beacon_block_root: Some(B256::ZERO),
+                            requests_hash: Some(alloy_eips::eip7685::EMPTY_REQUESTS_HASH),
+                            blob_gas_used: Some(0),
+                            excess_blob_gas: Some(0),
+                            ..Default::default()
+                        },
+                        body: alloy_consensus::BlockBody {
+                            transactions: vec![deposit, tx],
+                            withdrawals: Some(Default::default()),
+                            ..Default::default()
+                        },
+                    },
+                )
+                .0,
+            },
+        };
+        std::fs::write(
+            dir.path().join(crate::EXPORT_BLOCKS_FILE),
+            format!("{}\n", serde_json::to_string(&block).unwrap()),
+        )
+        .unwrap();
+        let cli = BenchmarkCli::parse_from([
+            "base-bench",
+            "replay",
+            "--datadir",
+            "/unused",
+            "--export-dir",
+            dir.path().to_str().unwrap(),
+            "--output-dir",
+            "/unused-output",
+        ]);
+        let Some(BenchmarkCommand::Replay(args)) = cli.command else {
+            panic!("replay command");
+        };
+        let mut blocks = vec![timing(1, 2.0, None)];
+        args.collect_da_metrics(&mut blocks).await.expect("local export DA metrics");
+        assert_eq!(blocks[0].da.da_bytes_estimated, Some(100), "one non-deposit Fjord minimum");
+        assert_eq!(blocks[0].da.tx_bytes_raw, Some(raw.len() as u64), "deposit bytes excluded");
+        assert_eq!(blocks[0].da.non_deposit_transaction_count, Some(1), "deposit excluded");
+        let result = ReplayBenchmarkArgs::summarize(
+            manifest(200),
+            ReplayMode::Unpaced,
+            ReplayRun { blocks, wall_time: Duration::from_secs(9), error: None },
+            (0, B256::ZERO, B256::ZERO),
+        );
+        let da = result.da_usage.expect("replay summary must contain DA");
+        assert_eq!(da.measurement_seconds, 0.2, "DA rate uses cadence, not 9s replay wall time");
+        assert_eq!(da.da_bytes_estimated.per_second, 500.0, "exact replay DA rate");
+        assert_eq!(result.wall_time_ms, 9000.0, "DA collection must not change replay timing");
     }
 
     #[test]
