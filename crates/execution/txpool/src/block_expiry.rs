@@ -4,7 +4,12 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use alloy_primitives::TxHash;
 
-/// Coordinates successful flashblock publication with deadline eviction and admission.
+/// Coordinates flashblock publication with deadline eviction and admission.
+///
+/// The builder publishes and expires in one critical section. A node that follows the
+/// builder's flashblock stream (a mempool or RPC node) only observes publication, so it
+/// expires from the received position instead of waiting for the block to commit; until then
+/// an expired transaction would still hold its same-nonce slot against an unbumped replacement.
 pub trait FlashblockExpiry: Clone + Send + Sync + 'static {
     /// Publishes while holding the admission lock, then evicts expired transactions.
     /// A failed publication must leave the pool unchanged.
@@ -14,6 +19,11 @@ pub trait FlashblockExpiry: Clone + Send + Sync + 'static {
         flashblock_index: u64,
         publish: impl FnOnce() -> Result<R, E>,
     ) -> Result<(R, usize), E>;
+
+    /// Records a flashblock published elsewhere and evicts transactions whose deadline it
+    /// passed, returning how many were evicted. Positions at or behind the last recorded one
+    /// are ignored.
+    fn expire_published(&self, block_number: u64, flashblock_index: u64) -> usize;
 }
 
 /// An inclusive validity deadline, ordered by block number before flashblock index.
