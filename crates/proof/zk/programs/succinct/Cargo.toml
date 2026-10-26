@@ -41,8 +41,8 @@ base-proof = { path = "../../../proof", default-features = false }
 base-proof-zk-utils = { path = "../../utils" }
 
 # SP1 (must match the cargo-prove Docker tag)
-sp1-lib = { version = "=6.8.1", features = ["verify"] }
-sp1-zkvm = { version = "=6.8.1", features = ["verify"] }
+sp1-lib = { version = "=6.10.0", features = ["verify"] }
+sp1-zkvm = { version = "=6.10.0", features = ["verify"] }
 
 # alloy (must match root Cargo.toml versions)
 alloy-consensus = { version = "2.0.5", default-features = false }
@@ -74,9 +74,9 @@ codegen-units = 16
 # the zkVM target (`target_os = "zkvm"`).  On native builds the
 # patches are no-ops.
 [patch.crates-io]
-tiny-keccak = { git = "https://github.com/sp1-patches/tiny-keccak", tag = "patch-2.0.2-sp1-6.2.0" }
-p256 = { git = "https://github.com/sp1-patches/elliptic-curves", tag = "patch-p256-13.2-sp1-6.2.0" }
-k256 = { git = "https://github.com/sp1-patches/elliptic-curves", tag = "patch-k256-13.4-sp1-6.2.0" }
-substrate-bn = { git = "https://github.com/sp1-patches/bn", tag = "patch-0.6.0-sp1-6.2.0-substrate-bn" }
-sha2 = { git = "https://github.com/sp1-patches/RustCrypto-hashes", package = "sha2", tag = "patch-sha2-0.10.9-sp1-6.2.0" }
-sha3 = { git = "https://github.com/sp1-patches/RustCrypto-hashes", package = "sha3", tag = "patch-sha3-0.10.8-sp1-6.2.0" }
+tiny-keccak = { git = "https://github.com/sp1-patches/tiny-keccak", tag = "patch-2.0.2-sp1-6.10.0" }
+p256 = { git = "https://github.com/sp1-patches/elliptic-curves", tag = "patch-p256-13.2-sp1-6.10.0" }
+k256 = { git = "https://github.com/sp1-patches/elliptic-curves", tag = "patch-k256-13.4-sp1-6.10.0" }
+substrate-bn = { git = "https://github.com/sp1-patches/bn", tag = "patch-0.6.0-sp1-6.10.0-substrate-bn" }
+sha2 = { git = "https://github.com/sp1-patches/RustCrypto-hashes", package = "sha2", tag = "patch-sha2-0.10.9-sp1-6.10.0" }
+sha3 = { git = "https://github.com/sp1-patches/RustCrypto-hashes", package = "sha3", tag = "patch-sha3-0.10.8-sp1-6.10.0" }
