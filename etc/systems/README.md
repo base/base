@@ -201,6 +201,14 @@ funder, deposits funds to it in the first local descendant, replaces placeholder
 YAML with dynamically allocated builder endpoints, runs the load generator, writes JSON, and shuts
 the stack down. It does not own the caller-provided snapshot datadirs.
 
+Snapshot runs can opt into native-builder state sharing with
+`--engine.share-sparse-trie-with-payload-builder` and
+`--engine.share-execution-cache-with-payload-builder`. Both default to false.
+These settings affect the basic builder selected at Denim for 200 ms runs, not
+the Flashblocks builder. Sparse sharing requires at least five available CPUs;
+an unsupported host fails rather than silently ignoring the option. Host-derived
+worker-pool sizing is unchanged. The options are CLI-only, not load-test YAML keys.
+
 For the end-to-end workflow, including disposable snapshot restores, report artifact conventions, and
 how `--benchmark-run`, `--scenario`, and `--run-id` select runs in `base/benchmark`, see
 [Snapshot Benchmarking](../../docs/guides/SNAPSHOT_BENCHMARKS.md).

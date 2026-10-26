@@ -97,6 +97,7 @@ async fn standalone_dev_chain_persists_and_restores_schedule() -> Result<()> {
     let queue = StandaloneImpersonationQueue::default();
     let builder = InProcessBuilder::start(InProcessBuilderConfig {
         runtime: InProcessNodeRuntime::Host,
+        engine_sharing: Default::default(),
         chain_spec: Arc::clone(&chain_spec),
         datadir: None,
         jwt_secret,

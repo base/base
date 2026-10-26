@@ -49,6 +49,7 @@ async fn standalone_sequencer_paces_historical_denim_activation() -> Result<()> 
     let jwt_secret = JwtSecret::random();
     let builder = InProcessBuilder::start(InProcessBuilderConfig {
         runtime: InProcessNodeRuntime::Host,
+        engine_sharing: Default::default(),
         chain_spec: Arc::clone(&chain_spec),
         datadir: None,
         jwt_secret,
