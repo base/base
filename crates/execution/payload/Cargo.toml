@@ -61,6 +61,8 @@ derive_more.workspace = true
 serde_json.workspace = true
 moka = { workspace = true, features = ["sync"] }
 metrics = { workspace = true, optional = true }
+parking_lot.workspace = true
+clap = { workspace = true, optional = true, features = ["derive"] }
 
 [dev-dependencies]
 reth-provider.workspace = true
@@ -77,6 +79,7 @@ harness = false
 
 [features]
 default = [ "metrics" ]
+clap = [ "dep:clap" ]
 metrics = [
 	"base-common-evm/metrics",
 	"base-metrics/metrics",

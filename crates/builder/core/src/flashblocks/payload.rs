@@ -26,7 +26,7 @@ use base_execution_consensus::{calculate_receipt_root_no_memo, isthmus};
 use base_execution_evm::{BaseEvmConfig, BaseNextBlockEnvAttributes};
 use base_execution_payload_builder::{
     BaseBuiltPayload, BasePayloadBuilderAttributes, BuilderMetrics as SharedBuilderMetrics,
-    ValidityMetrics,
+    RestingPredicateStore, RestingPredicates, ValidityMetrics,
 };
 use base_execution_txpool::AccountStateDiff;
 use base_observability_events::{GlobalTransactionEventWriter, TransactionEventType};
@@ -122,6 +122,8 @@ pub(super) struct BasePayloadBuilder<Pool, Client> {
     pub outputs: BuilderOutputs,
     /// Last flashblock emitted by this builder instance.
     last_emitted_flashblock_id: Arc<LastEmittedFlashblockId>,
+    /// Validity transactions resting from the last block this builder finished.
+    resting_predicates: RestingPredicateStore,
 }
 
 impl<Pool, Client> BasePayloadBuilder<Pool, Client> {
@@ -140,6 +142,7 @@ impl<Pool, Client> BasePayloadBuilder<Pool, Client> {
             config,
             outputs,
             last_emitted_flashblock_id: Arc::default(),
+            resting_predicates: RestingPredicateStore::default(),
         }
     }
 
@@ -300,6 +303,23 @@ where
         BuilderMetrics::sequencer_tx_duration().record(sequencer_tx_time);
         BuilderMetrics::sequencer_tx_gauge().set(sequencer_tx_time);
 
+        // Resting transactions carry across flashblocks and across the blocks this builder finishes
+        // in sequence. Checked against the parent before the fallback build merges the transitions,
+        // which hold the system calls and deposits applied on top of the parent state.
+        let resting = (!ctx.attributes().no_tx_pool
+            && self.config.resting_predicate_mode.is_enabled())
+        .then(|| {
+            let mut resting =
+                self.resting_predicates.take(self.config.predicate_bucket_ordered_threshold);
+            let carry_over = resting.begin_block(
+                ctx.parent().hash(),
+                ctx.block_number(),
+                state.transition_state.as_ref(),
+            );
+            ValidityMetrics::record_resting_carry_over(&carry_over);
+            resting
+        });
+
         // We adjust our flashblocks timings based on time_drift if dynamic adjustment enable
         let (flashblocks_per_block, first_flashblock_offset) =
             self.calculate_flashblocks(timestamp);
@@ -424,7 +444,10 @@ where
             ),
             self.config.rejection_cache.clone(),
         )
-        .with_resting_predicate_mode(self.config.resting_predicate_mode);
+        .with_resting_predicate_mode(self.config.resting_predicate_mode)
+        .with_resting_predicates(resting.unwrap_or_else(|| {
+            RestingPredicates::new(self.config.predicate_bucket_ordered_threshold)
+        }));
         let interval = self.config.flashblocks_interval;
         let (tx, mut rx) = mpsc::channel((self.config.flashblocks_per_block() + 1) as usize);
 
@@ -490,7 +513,7 @@ where
                     &span,
                     "Payload building complete, target flashblock count reached",
                 );
-                return self.finalize_payload(&mut state, &ctx, &mut info);
+                return self.finalize_block(&mut state, &ctx, &mut info, &mut best_txs);
             }
 
             // build first flashblock immediately
@@ -517,7 +540,7 @@ where
                         &span,
                         "Payload building complete, job cancelled or target flashblock count reached",
                     );
-                    return self.finalize_payload(&mut state, &ctx, &mut info);
+                    return self.finalize_block(&mut state, &ctx, &mut info, &mut best_txs);
                 }
                 Err(err) => {
                     error!(
@@ -543,7 +566,7 @@ where
                         &span,
                         "Payload building complete, channel closed or job cancelled",
                     );
-                    return self.finalize_payload(&mut state, &ctx, &mut info);
+                    return self.finalize_block(&mut state, &ctx, &mut info, &mut best_txs);
                 }
             }
         }
@@ -950,6 +973,30 @@ where
         );
 
         span.record("flashblock_count", ctx.flashblock_index());
+    }
+
+    /// Finalizes the payload and carries the resting set into the next block.
+    ///
+    /// The finalized payload is the one returned to the payload resolver, so its hash is the parent
+    /// the next block is checked against.
+    fn finalize_block<DB, P>(
+        &self,
+        state: &mut State<DB>,
+        ctx: &BasePayloadBuilderCtx,
+        info: &mut ExecutionInfo,
+        best_txs: &mut NextBestFlashblocksTxs<Pool>,
+    ) -> Result<BaseBuiltPayload, PayloadBuilderError>
+    where
+        DB: Database<Error = ProviderError> + AsRef<P>,
+        P: StateRootProvider + HashedPostStateProvider + StorageRootProvider,
+    {
+        let payload = self.finalize_payload(state, ctx, info)?;
+        if self.config.resting_predicate_mode.is_enabled() {
+            let mut resting = best_txs.take_resting_predicates();
+            resting.end_block(payload.block().hash());
+            self.resting_predicates.put(resting);
+        }
+        Ok(payload)
     }
 
     /// Finalize the payload by computing the state root.
