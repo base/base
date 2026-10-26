@@ -2,10 +2,9 @@
 
 use clap::Args;
 use eyre::{Result, ensure};
-use serde::{Deserialize, Serialize};
-
 use reth_node_core::node_config::NodeConfig;
 use reth_tasks::{RayonConfig, RuntimeConfig};
+use serde::{Deserialize, Serialize};
 
 /// Runtime sizing policy for an in-process execution node.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
