@@ -124,7 +124,7 @@ mod tests {
         );
     }
 
-    /// Sparse sharing either reaches EngineArgs or fails clearly on a small host.
+    /// Sparse sharing either reaches `EngineArgs` or fails clearly on a small host.
     #[test]
     fn sparse_sharing_requires_parallelism() {
         let mut node = NodeConfig::default();
