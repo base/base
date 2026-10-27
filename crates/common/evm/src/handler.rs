@@ -255,15 +255,20 @@ where
 
         post_execution::refund(evm.ctx().cfg().gas_params(), exec_result.gas_mut(), eip7702_refund);
 
-        // Gas limit pricing: the whole declared gas budget is billable and reported, for
-        // deposits too, so the header gas_used is a function of the block body. Zeroing the
+        // Gas limit pricing: a non-deposit transaction is billed and reported for the whole
+        // declared gas budget it reserved, so the sequencer's revenue per gas is exactly the
+        // tip it was ranked by and padding the limit costs what it reserves. Zeroing the
         // remaining gas and the refund here makes the floor check, the caller reimbursement,
         // the beneficiary reward, and the receipt all observe `gas_used == gas_limit`.
+        // Deposits pay no L2 fee and are not ordered by tip, so they keep metered gas.
         // Simulation (`disable_fee_charge`) keeps metered gas so `eth_estimateGas` still
         // finds the gas a call needs.
         let ctx = evm.ctx();
         let cfg = ctx.cfg();
-        if cfg.spec().charges_gas_limit() && !cfg.is_fee_charge_disabled() {
+        if cfg.spec().charges_gas_limit()
+            && !cfg.is_fee_charge_disabled()
+            && ctx.tx().tx_type() != DEPOSIT_TRANSACTION_TYPE
+        {
             let gas = exec_result.gas_mut();
             gas.spend_all();
             gas.set_refund(0);
@@ -1222,15 +1227,15 @@ mod tests {
         assert_eq!(simulated.beneficiary, U256::ZERO);
     }
 
-    /// Deposits pay no L2 execution fee, but under gas limit pricing they report their gas
-    /// limit so the header `gas_used` stays a function of the block body (S9).
+    /// Deposits are not ordered by tip and pay no L2 execution fee, so gas limit pricing leaves
+    /// them alone: a deposit reports its metered gas and pays nothing on either upgrade (S9).
     #[test]
-    fn test_gas_limit_pricing_deposit_reports_limit_and_pays_nothing() {
+    fn test_gas_limit_pricing_leaves_deposits_metered_and_unpaid() {
         let metered = execute_glp_tx(BaseUpgrade::Everest, None, None, GLP_GAS_LIMIT, true, false);
         assert_eq!(metered.tx_gas_used, 21_000);
 
         let priced = execute_glp_tx(BaseUpgrade::Zenith, None, None, GLP_GAS_LIMIT, true, false);
-        assert_eq!(priced.tx_gas_used, GLP_GAS_LIMIT);
+        assert_eq!(priced.tx_gas_used, 21_000, "deposits must keep metered gas");
         assert!(priced.success);
         assert_eq!(priced.caller_paid, U256::ZERO);
         assert_eq!(priced.beneficiary, U256::ZERO);

@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
 # Demo for gas limit pricing (docs/guides/GAS_LIMIT_PRICING.md).
 #
-# Sends several plain ETH transfers that each declare a large gas limit but only
-# need ~21,000 gas, then shows that on a Zenith devnet the sender is debited for
-# the full declared limit: receipt gasUsed == gasLimit, the balance delta equals
+# Models a padded transaction (the shape used to game tip-per-gas ordering): several
+# plain ETH transfers that each declare a large gas limit but only need ~21,000 gas.
+# On a Zenith devnet the sender is debited for the full declared limit: receipt
+# gasUsed == gasLimit, the balance delta equals
 # sum(value + gasUsed * effectiveGasPrice + l1Fee), eth_estimateGas still returns
-# the metered requirement, and the block's gasUsed is the sum of declared limits.
+# the metered requirement, and each block's gasUsed counts the declared limits of
+# its user transactions (deposits stay metered). It also prints what the same
+# transfers would have cost at metered gas: the cost multiplier padding now carries.
 #
 # Usage (from the repository root, after `just devnet up-single zenith`):
 #   ./etc/scripts/devnet/gas-limit-pricing-demo.sh [rpc-url]
@@ -76,15 +79,21 @@ done
 
 BAL_AFTER="$(cast balance "$FROM" --rpc-url "$RPC")"
 
-# Block gasUsed and the declared limits of every transaction in each touched block.
+# Block gasUsed, the declared limits of the user transactions, and the metered gas of the
+# deposits in each touched block (deposits are not priced by gas limit).
 blocks="{}"
+deposit_receipts="{}"
 for number in $(jq -r '[.[].blockNumber] | unique | .[]' <<<"$receipts"); do
     number="$(cast to-dec "$number")"
     block="$(cast block "$number" --full --rpc-url "$RPC" --json)"
     blocks="$(jq -c --arg n "$number" --argjson b "$block" '. + {($n): $b}' <<<"$blocks")"
+    for hash in $(jq -r '.transactions[] | select(.type == "0x7e") | .hash' <<<"$block"); do
+        receipt="$(cast receipt "$hash" --rpc-url "$RPC" --json)"
+        deposit_receipts="$(jq -c --arg h "$hash" --argjson r "$receipt" '. + {($h): $r}' <<<"$deposit_receipts")"
+    done
 done
 
-RECEIPTS="$receipts" BLOCKS="$blocks" python3 - "$BAL_BEFORE" "$BAL_AFTER" "$ESTIMATE" "$GAS_LIMIT" "$VALUE_WEI" <<'PY'
+RECEIPTS="$receipts" BLOCKS="$blocks" DEPOSIT_RECEIPTS="$deposit_receipts" python3 - "$BAL_BEFORE" "$BAL_AFTER" "$ESTIMATE" "$GAS_LIMIT" "$VALUE_WEI" <<'PY'
 import json, os, sys
 
 def n(x):
@@ -98,6 +107,7 @@ def n(x):
 bal_before, bal_after, estimate, gas_limit, value = (n(a) for a in sys.argv[1:6])
 receipts = json.loads(os.environ["RECEIPTS"])
 blocks = json.loads(os.environ["BLOCKS"])
+deposit_receipts = json.loads(os.environ["DEPOSIT_RECEIPTS"])
 
 print(f"{'tx':<14}{'block':>8}{'status':>8}{'gasUsed':>12}{'effGasPrice':>14}{'l1Fee':>16}{'charged (wei)':>24}")
 expected = 0
@@ -131,10 +141,13 @@ if metered_expected:
 print()
 print("block accounting:")
 for number, b in sorted(blocks.items(), key=lambda kv: n(kv[0])):
-    txs = b.get("transactions", [])
-    limits = sum(n(t.get("gas")) for t in txs if isinstance(t, dict))
-    print(f"  block {n(number)}: gasUsed={n(b.get('gasUsed'))} sum(declared tx gas limits)={limits} txs={len(txs)}"
-          + ("  <- header gasUsed is derivable from the body" if n(b.get("gasUsed")) == limits else "  <- differs (pre-Zenith block or metered deposits)"))
+    txs = [t for t in b.get("transactions", []) if isinstance(t, dict)]
+    # Deposits (type 0x7e) are not priced by gas limit and keep metered gas.
+    user_limits = sum(n(t.get("gas")) for t in txs if n(t.get("type")) != 0x7E)
+    deposit_gas = sum(n(deposit_receipts.get(t["hash"], {}).get("gasUsed")) for t in txs if n(t.get("type")) == 0x7E)
+    header = n(b.get("gasUsed"))
+    print(f"  block {n(number)}: gasUsed={header} sum(user tx gas limits)={user_limits} deposit gasUsed={deposit_gas} txs={len(txs)}"
+          + ("  <- header counts the reserved capacity" if header == user_limits + deposit_gas else "  <- differs (pre-Zenith block)"))
 
 ok = all_limit and residual >= 0 and all(n(r["status"]) == 1 for r in receipts)
 print()

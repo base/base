@@ -860,9 +860,9 @@ mod tests {
         }
     }
 
-    /// Under gas limit pricing the block's `gas_used` is the sum of the declared gas limits:
-    /// every receipt reports its transaction's limit and the header follows, so the value a
-    /// pipelined validator derives from the block body matches the executed header (S2, S3).
+    /// Under gas limit pricing the block's `gas_used` is the sum of the declared gas limits of
+    /// its user transactions: every receipt reports its transaction's limit and the header
+    /// follows, so the block fills by the capacity the builder reserved and paid for (S2, S3).
     /// On the latest scheduled upgrade the same block reports metered gas.
     #[test]
     fn gas_limit_pricing_header_gas_used_is_sum_of_declared_limits() {
@@ -917,7 +917,7 @@ mod tests {
         assert_eq!(
             header_gas_used(BaseUpgrade::Zenith),
             TX_GAS_LIMITS.iter().sum::<u64>(),
-            "gas limit pricing: header gas_used is derivable from the body alone",
+            "gas limit pricing: header gas_used is the reserved capacity",
         );
         assert_eq!(
             header_gas_used(BaseUpgrade::Everest),
