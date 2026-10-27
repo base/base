@@ -298,6 +298,18 @@ In `etc/systems/tests`, using `SystemTestStackBuilder::with_base_zenith_activati
 
 ### Tier 4: full suite
 
+### Demo
+
+[`etc/scripts/devnet/gas-limit-pricing-demo.sh`](../../etc/scripts/devnet/gas-limit-pricing-demo.sh) shows the rule on a local devnet. Start one with Zenith scheduled and run the script once the chain passes the activation block (100 by default):
+
+```sh
+just devnet up-single zenith
+./etc/scripts/devnet/gas-limit-pricing-demo.sh            # waits for block 100, then runs
+TX_COUNT=10 GAS_LIMIT=5000000 ./etc/scripts/devnet/gas-limit-pricing-demo.sh
+```
+
+It sends `TX_COUNT` plain transfers from a prefunded devnet account, each declaring `GAS_LIMIT` gas (default 1,000,000) for a call that needs about 21,000, then prints per-transaction receipts and checks: every receipt's `gasUsed` equals the declared limit (S2); the sender's balance delta equals `sum(value + gasUsed * effectiveGasPrice + l1Fee)` (S1); `eth_estimateGas` still returns the metered requirement (S6); and each touched block's header `gasUsed` equals the sum of its transactions' declared gas limits (S3). It also prints what the same transfers would have cost at metered gas. Running it against a devnet without Zenith (`just devnet up-single`) shows the pre-activation behavior: `gasUsed` of 21,000 and a balance delta to match.
+
 ### Testing the pipelining property
 
 Pipelined agreement is not implemented by this POC, so it cannot be tested end to end yet. What can be tested now is the property the fee rule promises pipelining: everything a validator needs to agree on a block is a function of the block body, the parent header, and the parent state. The tests below are staged by what exists.
