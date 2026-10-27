@@ -8,7 +8,7 @@ use reth_node_core::args::TraceArgs;
 use crate::{
     commands::BaseCommand,
     config::{ChainArg, ChainResolver},
-    surface::CliSurface,
+    surface::{CliSurface, IgnoredFlag},
 };
 
 base_cli_utils::define_log_args!("BASE_NODE");
@@ -51,6 +51,10 @@ pub(crate) struct BaseCli {
     /// The command to run.
     #[command(subcommand)]
     pub(crate) command: BaseCommand,
+
+    /// Unsupported flags dropped by [`CliSurface::strip_unsupported`], logged once tracing starts.
+    #[arg(skip)]
+    pub(crate) ignored: Vec<IgnoredFlag>,
 }
 
 impl BaseCli {
@@ -60,7 +64,10 @@ impl BaseCli {
         I: IntoIterator<Item = T>,
         T: Into<OsString> + Clone,
     {
-        let mut command = CliSurface::apply(Self::command());
+        let derived = Self::command();
+        let (args, ignored) =
+            CliSurface::strip_unsupported(&derived, args.into_iter().map(Into::into).collect());
+        let mut command = CliSurface::apply(derived);
         let matches = command.try_get_matches_from_mut(args)?;
         CliSurface::validate(&mut command, &matches)?;
         let mut cli =
@@ -68,6 +75,7 @@ impl BaseCli {
         if let Some(chain) = CliSurface::subcommand_cli_chain(&matches) {
             cli.chain = Some(chain);
         }
+        cli.ignored = ignored;
         Ok(cli)
     }
 
@@ -100,6 +108,7 @@ impl BaseCli {
                 .init_with_trace_args(&self.traces, &[])
                 .wrap_err("failed to initialize tracing")?;
         }
+        self.ignored.iter().for_each(IgnoredFlag::warn);
 
         let metrics_enabled = self.metrics.enabled;
         MetricsConfig::from(self.metrics)

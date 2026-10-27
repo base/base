@@ -8,8 +8,8 @@ Unified Base node binary.
 one process, but accept only a Base-chosen set of their flags. `-h`/`--help` lists the curated
 flags needed to run a node; `--help-all` adds the advanced flags, such as transaction pool limits,
 transaction forwarding, metering, and upgrade-signal settings. Any other execution, consensus, or
-builder flag is rejected on the command line, and its environment variable is ignored. The full
-lists live in `src/surface.rs`. Supported consensus flags keep their `BASE_NODE_*` environment
+builder flag is ignored, whether it comes from the command line or its environment variable, and
+the node logs a warning naming it at startup. The full lists live in `src/surface.rs`. Supported consensus flags keep their `BASE_NODE_*` environment
 variables (for example `BASE_NODE_L1_ETH_RPC` for `--l1.rpc`), and `--chain` uses `BASE_CHAIN`.
 
 Some flags were renamed to Base conventions. The old spellings are still accepted (the renames
@@ -26,9 +26,7 @@ also apply to `base follow`, `base bootnode`, `base dev`, `base execution`, and 
 
 Consensus calls the embedded execution node's Engine API in memory, so Engine API transport
 flags such as `--authrpc.port`, `--authrpc.jwtsecret`, `--l2-engine-jwt-secret`, and
-`--l2-engine-timeout` are among the rejected flags, with an error that explains why. Environment
-values for rejected flags (such as `BASE_NODE_L2_ENGINE_AUTH` in env files shared with the
-standalone binaries) are ignored rather than rejected.
+`--l2-engine-timeout` are among the ignored flags, with a warning that explains why.
 
 When migrating from the standalone binaries, note that `base-consensus --port` (consensus RPC) is
 now `--consensus.rpc.port`; in `base`, `--port` is the execution P2P port.
