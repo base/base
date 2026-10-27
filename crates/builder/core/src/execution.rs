@@ -34,6 +34,11 @@ pub struct ResourceLimits {
     pub tx_execution_time_limit_us: Option<u128>,
     /// Maximum cumulative uncompressed (EIP-2718 encoded) block size in bytes (optional).
     pub block_uncompressed_size_limit: Option<u64>,
+    /// Maximum declared gas limit per transaction (optional). Set from `max_gas_per_txn` when
+    /// gas limit pricing is active: the declared limit is then the billed and reported gas, so
+    /// the cap is known before execution and a transaction above it is rejected without
+    /// running it. Without gas limit pricing the cap is applied to metered gas after execution.
+    pub tx_gas_limit: Option<u64>,
 }
 
 /// Resource usage for a single transaction.
@@ -258,6 +263,8 @@ impl ExecutionInfo {
     ///   maximum allowed DA limit per block.
     /// - execution time limit: if configured with metering data, ensures the transaction's
     ///   predicted execution time does not exceed the per-transaction limit.
+    /// - tx gas limit cap: if configured (gas limit pricing), ensures the declared gas limit
+    ///   does not exceed the per-transaction gas cap.
     pub fn is_tx_over_limits(
         &self,
         tx: &TxResources,
@@ -317,6 +324,15 @@ impl ExecutionInfo {
                     block_limit: limit,
                 });
             }
+        }
+
+        // Under gas limit pricing the declared limit is what the transaction is billed and
+        // reported as using, so the per-transaction gas cap is decided here instead of after
+        // execution. Same permanent rejection as the post-execution check.
+        if let Some(cap) = limits.tx_gas_limit
+            && tx.gas_limit > cap
+        {
+            return Err(TxnExecutionError::MaxGasUsageExceeded);
         }
 
         // Check execution time limits (if metering data is available)
@@ -597,6 +613,41 @@ mod tests {
         let limits = ResourceLimits { block_uncompressed_size_limit: None, ..default_limits() };
         let tx =
             TxResources { gas_limit: 21_000, uncompressed_size: 1_000_000, ..Default::default() };
+
+        assert!(info.is_tx_over_limits(&tx, &limits).is_ok());
+    }
+
+    // ==================== Gas Limit Pricing Tests ====================
+
+    /// With a declared-limit cap (gas limit pricing), a padded limit above the cap is rejected
+    /// before execution with the same permanent error the post-execution check uses.
+    #[test]
+    fn test_tx_gas_limit_cap_rejects_declared_limit_above_cap() {
+        let info = ExecutionInfo::with_capacity(10);
+        let limits = ResourceLimits { tx_gas_limit: Some(25_000), ..default_limits() };
+        let tx = TxResources { gas_limit: 1_000_000, ..Default::default() };
+
+        let err = info.is_tx_over_limits(&tx, &limits).unwrap_err();
+        assert!(matches!(err, TxnExecutionError::MaxGasUsageExceeded));
+        assert!(err.is_permanent());
+    }
+
+    #[test]
+    fn test_tx_gas_limit_cap_admits_declared_limit_at_cap() {
+        let info = ExecutionInfo::with_capacity(10);
+        let limits = ResourceLimits { tx_gas_limit: Some(25_000), ..default_limits() };
+        let tx = TxResources { gas_limit: 25_000, ..Default::default() };
+
+        assert!(info.is_tx_over_limits(&tx, &limits).is_ok());
+    }
+
+    /// Without gas limit pricing the cap is not applied to the declared limit (it is applied to
+    /// metered gas after execution), so a padded limit is admitted here.
+    #[test]
+    fn test_tx_gas_limit_cap_none_means_no_pre_execution_limit() {
+        let info = ExecutionInfo::with_capacity(10);
+        let limits = ResourceLimits { tx_gas_limit: None, ..default_limits() };
+        let tx = TxResources { gas_limit: 1_000_000, ..Default::default() };
 
         assert!(info.is_tx_over_limits(&tx, &limits).is_ok());
     }
