@@ -208,7 +208,9 @@ just devnet up everest
 ```
 
 Zenith is the permanently unscheduled, genesis-only gate for future hardfork feature testing.
-Zenith mode additionally activates Everest and Zenith at block 100:
+Zenith mode additionally activates Everest and Zenith at block 100. From Zenith the devnet bills
+every non-deposit transaction for its full `gas_limit` (gas-limit fee billing; see
+`crates/common/evm/README.md`), so receipts report `gasUsed == gas limit`:
 
 ```bash
 just devnet up zenith

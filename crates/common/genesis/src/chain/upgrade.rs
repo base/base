@@ -82,7 +82,9 @@ hardfork!(
     ///
     /// [`Zenith`](BaseUpgrade::Zenith) is a hardfork for future experimental features. It is
     /// genesis-configurable but not contract-backed, since the L1 upgrade-signal contract does
-    /// not yet recognise it.
+    /// not yet recognise it. It currently gates the gas-limit fee billing proof of concept, under
+    /// which non-deposit transactions pay for their full declared `gas_limit` (see
+    /// `BaseSpecId::is_gas_limit_billing_enabled` in `base-common-evm`).
     ///
     /// When building a list of upgrades for a chain, it's still expected to zip with
     /// [`EthereumHardfork`](alloy_hardforks::EthereumHardfork).
@@ -123,7 +125,8 @@ hardfork!(
         Denim,
         /// Everest: Fifth Base-specific network upgrade. Unscheduled for now.
         Everest,
-        /// Zenith: hardfork for future experimental features.
+        /// Zenith: hardfork for future experimental features. Gates the gas-limit fee billing
+        /// proof of concept.
         Zenith,
     }
 );
@@ -136,7 +139,8 @@ impl BaseUpgrade {
     ///
     /// These are the upgrades that participate in the reth/revm hardfork schedule. Excludes the
     /// contract-only [`Delta`](Self::Delta) and [`PectraBlobSchedule`](Self::PectraBlobSchedule)
-    /// upgrades, and [`Zenith`](Self::Zenith), which does not yet change EVM execution.
+    /// upgrades, and [`Zenith`](Self::Zenith), which is genesis-only and never scheduled on a
+    /// real chain (it gates experimental execution changes on devnets).
     pub const EXECUTION_VARIANTS: [Self; 14] = [
         Self::Bedrock,
         Self::Regolith,
