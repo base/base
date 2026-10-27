@@ -42,7 +42,8 @@ these shared or `BASE_BATCHER_*` names.
 
 `base rpc` starts a validator-oriented node by launching an embedded execution node and an embedded
 consensus node in the same process. The consensus node calls the execution node's Engine API
-handlers in memory, with no socket, IPC, or JWT in between.
+handlers in memory, with no socket, IPC, or JWT in between. Engine API calls also skip JSON-RPC
+encoding; L2 reads, such as block queries, are still dispatched as JSON-RPC into the auth module.
 
 The execution CLI surface is shared with the standalone execution binaries through
 `base-execution-cli`. `base rpc` intentionally filters out flags for roles it does not run, including
@@ -74,7 +75,8 @@ simulation nodes.
 
 `base sequencer` starts a sequencing node by launching an embedded execution node, embedded
 Flashblocks builder, and embedded consensus node in the same process. The consensus node calls the
-execution node's Engine API handlers in memory, with no socket, IPC, or JWT in between.
+execution node's Engine API handlers in memory, with no socket, IPC, or JWT in between. Engine API
+calls also skip JSON-RPC encoding; L2 reads are still dispatched as JSON-RPC into the auth module.
 
 The command accepts the shared execution flags, builder flags, and sequencer consensus flags. It
 requires L1 execution and beacon RPC endpoints, and sequencer mode requires a signing key provided
