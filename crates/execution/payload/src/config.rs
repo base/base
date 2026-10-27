@@ -159,13 +159,15 @@ impl Default for ResourceMeteringConfig {
 impl ResourceMeteringConfig {
     /// Builds a shared config from startup flags.
     ///
-    /// `--enable-metering` turns on `base_meterBundle`. The native payload
-    /// builder throttles transactions against resource-unit budgets only when
-    /// that flag is set and a non-empty schedule file is loaded. A missing
-    /// schedule leaves those budgets inactive so mempool clients can serve
-    /// meterBundle without a builder schedule. An empty schedule file fails
-    /// closed because the operator asked to load a schedule and it has no
-    /// dimensions.
+    /// `--builder.enable-resource-metering` (`BUILDER_ENABLE_RESOURCE_METERING`)
+    /// gates builder metering on `base-builder` and `base sequencer`;
+    /// `--enable-metering` (`ENABLE_METERING`) gates `base_meterBundle` and the
+    /// standalone execution node's native schedule. The native payload builder
+    /// throttles transactions against resource-unit budgets only when `enabled`
+    /// is set and a non-empty schedule file is loaded. A missing schedule leaves
+    /// those budgets inactive so mempool clients can serve `base_meterBundle`
+    /// without a builder schedule. An empty schedule file fails closed because
+    /// the operator asked to load a schedule and it has no dimensions.
     pub fn from_parts(
         enabled: bool,
         schedule_path: Option<&Path>,
