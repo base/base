@@ -61,14 +61,16 @@ payment = effective_tip_per_gas * gas_used   known after it executes
 
 ### How a sender games it
 
-Because `gas_limit` costs nothing for ranking and the tip is only paid on `gas_used`, a sender can buy the top of the block cheaply:
+Because the tip is only paid on `gas_used`, and `gas_limit` neither affects the rank nor costs anything unless it is used, a sender can buy the top of the block cheaply and keep the option to do real work from there:
 
 1. Set `max_priority_fee_per_gas` far above the market tip, say 20x. The pool ranks the transaction first; nothing about `gas_limit` or the eventual `gas_used` affects that.
-2. Declare a large `gas_limit`, up to the EIP-7825 cap of `2^24`. This costs nothing beyond a temporary balance hold (`gas_limit * max_fee_per_gas` must be affordable and is refunded for the unused part), and it reserves that much of the block's admission budget.
+2. Declare a `gas_limit` sized for the full success path (say 500,000, or anything up to the EIP-7825 cap of `2^24`). The limit plays no part in the rank; what it buys is the option to execute the whole opportunity from the top slot if it is there. Today that option is free: the sender only needs `gas_limit * max_fee_per_gas` to be affordable as a temporary hold, and the unused part is refunded after execution.
 3. Make the transaction exit early in the common case: check a predicate, and `STOP` or revert when it fails. `gas_used` is a few tens of thousands.
 4. The bill is `20x tip * ~25,000 gas`, about what an honest transaction pays for `1x tip * 500,000 gas`, for a position ahead of every honest transaction. Repeat every block.
 
-The honest transaction bidding for that position has to raise its own tip, and it pays that tip on all of the gas it really uses. The builder cannot filter the probe, because the early exit is only visible after executing it. Searchers do a milder version of this unintentionally with loose predicate bounds and a limit sized for the success path; a spammer does it on purpose, with many such transactions, to hold the top of the block and crowd out other senders for a fraction of what the position is worth.
+The honest transaction bidding for that position has to raise its own tip, and it pays that tip on all of the gas it really uses. The builder cannot filter the probe, because the early exit is only visible after executing it. Searchers do a milder version of this unintentionally with loose predicate bounds and a limit sized for the success path; a spammer does it on purpose, with many such transactions, to hold the top of the block for a fraction of what the position is worth.
+
+A probe that always exits early and declares a tight limit is not the problem: it ranks first too, but it takes only the 25,000 gas it pays for and captures nothing. The harm comes from the combination of a cheap rank and a free option on a large amount of gas, and the rule removes the free option rather than the rank.
 
 ### Why it is a problem for the chain
 
@@ -90,9 +92,9 @@ Today the probe buys a 20x higher rank for the same money. Under gas limit prici
 The consequences for the chain:
 
 - **Ordering is not what it says.** The top of the block goes to whoever is willing to bid per gas on gas they will not use, not to whoever pays the most for the space.
-- **Spam is cheap.** A sender can reserve a large share of the block's admission budget, and of the builder's execution time, for the cost of the gas an early exit consumes.
+- **Optionality is free.** A sender can hold the right to execute a large amount of gas from the top of every block and pay only when the opportunity materialises; everyone else's bids are set against that free option.
 - **Builder work is wasted.** The builder admits and executes high-`tip` transactions first. When they exit early it has spent time on them for a fraction of the revenue the bid implied, and only learns that after executing. It cannot filter them beforehand, because `gas_used` is not knowable before execution.
-- **Capacity is reserved for free.** Admission reserves `gas_limit`; the sender pays for `gas_used`. The difference is capacity nobody paid for.
+- **Admission and payment disagree.** Admission reserves `gas_limit` and accounting then adds only `gas_used`, so the reservation is released as soon as the transaction executes. The builder can neither plan on declared limits nor charge for them; the declared gas is a claim on capacity that is never paid for and never honoured.
 
 The common cause is that the pool and the builder reason about `gas_limit` and the fee is settled on `gas_used`. Charging `gas_limit` removes the gap.
 
