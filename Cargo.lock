@@ -3212,7 +3212,10 @@ dependencies = [
  "base-observability-events",
  "clap",
  "eyre",
+ "metrics",
+ "metrics-exporter-prometheus",
  "rstest",
+ "tempfile",
  "tracing",
 ]
 
