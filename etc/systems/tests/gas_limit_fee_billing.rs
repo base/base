@@ -128,7 +128,10 @@ async fn zenith_bills_transactions_for_their_gas_limit() -> Result<()> {
     // Gas estimation is a simulation that bills nothing, so it still converges on the real
     // requirement rather than on the request's gas limit.
     let estimate = builder
-        .estimate_gas(transfer_request(&signer, builder.get_transaction_count(signer.address()).await?))
+        .estimate_gas(transfer_request(
+            &signer,
+            builder.get_transaction_count(signer.address()).await?,
+        ))
         .await?;
     assert_eq!(estimate, TRANSFER_GAS_USED, "eth_estimateGas must keep reporting the real need");
 
@@ -228,7 +231,10 @@ fn transfer_request(signer: &PrivateKeySigner, nonce: u64) -> BaseTransactionReq
 }
 
 /// Sends the over-provisioned transfer and reads back how it was settled.
-async fn send_transfer(provider: &RootProvider<Base>, signer: &PrivateKeySigner) -> Result<Settlement> {
+async fn send_transfer(
+    provider: &RootProvider<Base>,
+    signer: &PrivateKeySigner,
+) -> Result<Settlement> {
     let sender = signer.address();
     let nonce = provider.get_transaction_count(sender).await?;
     let transaction = transfer_request(signer, nonce)
@@ -253,7 +259,8 @@ async fn send_transfer(provider: &RootProvider<Base>, signer: &PrivateKeySigner)
     );
 
     let delta = async |address: Address| -> Result<U256> {
-        let before = provider.get_balance(address).block_id(BlockId::number(block_number - 1)).await?;
+        let before =
+            provider.get_balance(address).block_id(BlockId::number(block_number - 1)).await?;
         let after = provider.get_balance(address).block_id(BlockId::number(block_number)).await?;
         Ok(after.abs_diff(before))
     };
