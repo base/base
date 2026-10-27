@@ -129,12 +129,12 @@ With the rule, the pool's ranking key and the sender's payment are the same numb
 
 Consequences:
 
-- **Fair ordering.** Ranking by `tip` is exactly ranking by revenue per unit of reserved block space, because revenue is `tip * B`. A transaction cannot outrank another while paying less for the same space; the only way to rank higher is to pay more per gas on all the gas you declare.
+- **Fair ordering.** For standard transactions, ranking by `tip` is exactly ranking by protocol tip revenue per unit of reserved block space, because that revenue is `tip * gas_limit`. A transaction cannot outrank another while paying less per unit of the space it reserved; the only way to rank higher is to pay more per gas on all the gas you declare. Static EIP-8130 coinbase tips are ranked by `coinbase_tip / gas_limit` while the reservation is `gas_limit + payer_auth` and settlement also credits the priority fee, so for them the ranking key is an approximation of revenue per reserved gas rather than exactly it; see [Risks](#risks-and-open-questions).
 - **Transparent ordering.** A sender can compute what any position in the block costs from public information (`tip`, `gas_limit`, the base fee) before submitting. Nothing about the price depends on how the transaction runs.
-- **Spam and probing are priced.** A padded probe pays `gas_limit / gas_used` times more than today (67x in the example above). Reserving the block's admission budget costs the full price of that budget. Reverted and early-exit transactions pay the same as successful ones for the same declared limit.
+- **Spam and probing are priced.** A padded probe pays `gas_limit / gas_used` times more than today (80x in the example above, where its rank also ends up costing 67x what the honest transaction pays). Reserving the block's admission budget costs the full price of that budget. Reverted and early-exit transactions pay the same as successful ones for the same declared limit.
 - **Searchers adapt by tightening.** The rational response is a limit sized for the real path and predicates checked as cheaply and early as possible, or off-chain. Loose bounds are still allowed; they just cost what they reserve. Searchers already optimize gas; the limit becomes one more thing to optimize.
-- **Builder effort tracks revenue.** The builder learns a transaction's revenue (`tip * B`) before executing it, so the high-`tip` transactions it executes first are the ones that pay the most. Early exits no longer convert admitted capacity into a refund, and the per-transaction gas cap can be decided before execution ([Change 3](#change-3-builder-per-transaction-gas-cap)). `gas_headroom` metrics become exact because admission and accounting agree.
-- **Capacity is paid for.** Header `gasUsed` counts reserved gas, so a block full by reservation reads as full to EIP-1559. The base fee responds to the demand for block space that was actually allocated, and senders are paid back for tightening limits with more transactions per block.
+- **Builder effort tracks revenue.** The builder knows a transaction's tip revenue (`tip * B`) before executing it, so the high-`tip` transactions it executes first are the ones that pay the most per unit of the capacity they take. Early exits no longer convert admitted capacity into a refund, and the per-transaction gas cap can be decided before execution ([Change 3](#change-3-builder-per-transaction-gas-cap)). `gas_headroom` metrics become exact because admission and accounting agree. The rule prices reservation; it does not claim to order transactions by total payment or by execution effort.
+- **Capacity is paid for.** Header `gasUsed` counts reserved gas, so a block full by reservation reads as full to EIP-1559 whenever execution gas is the binding term of the Jovian base-fee input (`max(gasUsed, blobGasUsed)`). The base fee then responds to the demand for block space that was actually allocated, and senders are paid back for tightening limits with more transactions per block.
 
 ## Alternatives considered
 
@@ -243,7 +243,7 @@ The cap thereby becomes a cap on declared limits. Operators that set it should e
 
 ### What does not change
 
-- Transaction pool ordering ([`crates/execution/txpool`](../../crates/execution/txpool)): `UnifiedTipOrdering` keeps ranking by `effective_tip_per_gas`, or by `coinbase_tip / gas_limit` for static EIP-8130 tips. The rule makes that ranking revenue-exact; it does not touch it.
+- Transaction pool ordering ([`crates/execution/txpool`](../../crates/execution/txpool)): `UnifiedTipOrdering` keeps ranking by `effective_tip_per_gas`, or by `coinbase_tip / gas_limit` for static EIP-8130 tips. The rule makes the standard-transaction ranking revenue-exact; it does not touch the ordering code.
 - Transaction validity, intrinsic gas, nonce and balance checks, and the EIP-7825 cap: the pool and handler balance check already requires `gas_limit * max_fee + value + L1 fee + operator fee`, so a transaction that is admissible today can pay the new fee.
 - Builder admission: it already reserves `gas_limit (+ payer_auth)` against the block gas limit.
 - Opcode gas schedule, `GAS` opcode, call stipends, and the 63/64 rule: the EVM meters gas internally so execution is identical.
@@ -257,11 +257,11 @@ The cap thereby becomes a cap on declared limits. Operators that set it should e
 
 **Searchers and bots.** The cost of a position in the block is `tip * gas_limit`, computable before submission. Probes and loosely bounded transactions pay for the gas they declare, so limits should be sized for the real path and predicates checked early or off-chain. A high `tip` on a padded limit no longer buys cheap priority.
 
-**Receipts and explorers.** `gasUsed == gasLimit` for every user transaction. `effectiveGasPrice * gasUsed + l1Fee (+ operatorFee)` still equals the amount debited. Explorers that display "gas used / gas limit" utilisation will show 100% for user transactions; they need traces or `eth_estimateGas` for metered gas. Deposit receipts are unchanged.
+**Receipts and explorers.** `gasUsed == gasLimit` for every standard user transaction, and `gasUsed == gasLimit + payer_auth` for sponsored EIP-8130 transactions. `effectiveGasPrice * gasUsed + l1Fee (+ operatorFee)` still equals the amount debited. Explorers that display "gas used / gas limit" utilisation will show 100% for user transactions; they need traces or `eth_estimateGas` for metered gas. Deposit receipts are unchanged.
 
-**Base fee.** Header `gasUsed` becomes reserved gas for user transactions, so a block that is full by reservation reads as full to EIP-1559 and the base fee rises. Target and elasticity are unchanged in the POC; the base fee will trend higher after activation until limits tighten. The data scan below quantifies the step.
+**Base fee.** Header `gasUsed` becomes reserved gas for user transactions. Jovian feeds `max(gasUsed, blobGasUsed)` into the EIP-1559 update ([`compute_jovian_base_fee`](../../crates/execution/chainspec/src/basefee.rs)), so the base fee rises where execution gas is the binding term and is unaffected in blocks where the DA footprint already dominates. Target and elasticity are unchanged in the POC; the expectation is a higher base fee after activation until limits tighten, and the data scan below tests that expectation rather than assuming it.
 
-**Sequencer and vaults.** Tip revenue and `BaseFeeVault` inflows increase by the aggregate `gas_limit - gas_used` of user transactions. The operator fee is computed on `gas_limit` and no longer refunded.
+**Sequencer and vaults.** Tip revenue and `BaseFeeVault` inflows increase by each user transaction's `gas_limit - gas_used` at its own tip and base fee. The operator fee is computed on `gas_limit` and no longer refunded.
 
 **Builder.** Revenue per transaction is known at admission. `max_gas_per_txn` is enforced before execution. Admission and accounting agree, so a block admits at most `block_gas_limit` of declared gas; today it can admit more as long as the metered sum fits. Expect fewer, better-paid transactions per block until wallets and searchers tighten limits.
 
@@ -269,7 +269,7 @@ The cap thereby becomes a cap on declared limits. Operators that set it should e
 
 | Endpoint | Behavior |
 |---|---|
-| `eth_estimateGas` | Unchanged: runs with `disable_fee_charge`, so the hook does not fire and the search sees metered gas. The result is now also exactly what the user is billed for if they use it as the limit. |
+| `eth_estimateGas` | Unchanged: runs with `disable_fee_charge`, so the hook does not fire and the search sees metered gas. The result is now also exactly what a standard transaction is billed for if it is used as the limit (sponsored EIP-8130 transactions are billed `payer_auth` on top; see [Risks](#risks-and-open-questions)). |
 | `eth_call` | Unchanged for the same reason. |
 | `eth_simulateV1` | Observes the rule in both `validation` modes, because the pinned reth never sets `disable_fee_charge` for it (it only disables EIP-3607, the nonce check, and the base-fee check): each simulated call's `gasUsed` is its gas limit, matching a real block. A call that omits `gas` is given the block's remaining gas and is therefore reported as consuming all of it, so later calls in the same simulated block default to a limit of 0, and the full-limit `gasUsed` is also subtracted from the request-wide `--rpc.gascap` budget (`GasLimitReached`). Base owns its `simulate_v1` ([`crates/execution/rpc/src/eth/call.rs`](../../crates/execution/rpc/src/eth/call.rs)); whether it should disable fee charging when `validation` is false is an open follow-up, not changed by the POC, and needs a multi-call `eth_simulateV1` test under Zenith either way. |
 | `eth_getTransactionReceipt`, `eth_getBlockByNumber` | `gasUsed`, `cumulativeGasUsed`, header `gasUsed` report billable gas for user transactions. |
@@ -300,7 +300,7 @@ The POC works when all of the following hold on a devnet with Zenith active, and
 | S10 | A proof of a Zenith block containing gas-limit-priced transactions verifies. | System test (`in_process_zk`-style) |
 | S11 | Out-of-gas behavior, revert behavior, and all per-opcode gas in traces are identical with and without Zenith. | Unit (handler), trace comparison in the system test |
 | S12 | Without Zenith, the full workspace test suite passes with no assertion changes. | `just test`, `just devnet tests` |
-| S13 | Ordering is revenue-exact: for any two user transactions in a block, the one ranked higher by the pool paid the sequencer at least as much per unit of reserved gas, and a padded transaction pays `gasLimit / gasUsed` times what it would pay at metered gas. | Builder test, adversarial devnet run |
+| S13 | Ordering is revenue-exact for standard transactions: for any two standard user transactions in a block, the one ranked higher by the pool paid the sequencer at least as much tip per unit of reserved gas, and a padded transaction pays `gasLimit / gasUsed` times what it would pay at metered gas. | Builder test, adversarial devnet run |
 | S14 | A transaction whose reserved gas exceeds `--builder.max_gas_per_txn` is rejected before execution under Zenith and after execution otherwise. | Unit (builder) |
 
 ### Tier 1: unit tests
@@ -356,7 +356,7 @@ just devnet up-single zenith
 TX_COUNT=10 GAS_LIMIT=5000000 ./etc/scripts/devnet/gas-limit-pricing-demo.sh
 ```
 
-It sends `TX_COUNT` plain transfers from a prefunded devnet account, each declaring `GAS_LIMIT` gas (default 1,000,000) for a call that needs about 21,000, then prints per-transaction receipts and checks: every receipt's `gasUsed` equals the declared limit (S2); the sender's balance delta equals `sum(value + gasUsed * effectiveGasPrice + l1Fee)` (S1); `eth_estimateGas` still returns the metered requirement (S6); and each touched block's header `gasUsed` equals the sum of its user transactions' declared limits plus its deposits' metered gas (S3). It also prints what the same transfers would have cost at metered gas and the resulting cost multiplier, which is the price padding now carries. Running it against a devnet without Zenith (`just devnet up-single`) shows the pre-activation behavior: `gasUsed` of 21,000 and a balance delta to match.
+It sends `TX_COUNT` plain transfers from a prefunded devnet account, each declaring `GAS_LIMIT` gas (default 1,000,000) for a call that needs 21,000, then prints per-transaction receipts and asserts (the script exits non-zero if any fails): every receipt's `gasUsed` equals the declared limit (S2); the sender's balance delta equals `sum(value + gasUsed * effectiveGasPrice + l1Fee + operatorFee)` exactly, with the operator fee computed from the receipt's `operatorFeeScalar` and `operatorFeeConstant` (S1); `eth_estimateGas` returns the metered 21,000 (S6); and each touched block's header `gasUsed` equals the sum of its user transactions' declared limits plus its deposits' metered gas (S3). It also prints what the same transfers would have cost at metered gas and the resulting cost multiplier, which is the price padding now carries. Running it against a devnet without Zenith (`just devnet up-single`) shows the pre-activation behavior and fails: `gasUsed` of 21,000 and a balance delta to match.
 
 ### Mainnet data scan
 
@@ -365,15 +365,16 @@ Not a correctness test, but part of validating the design: scan a recent range o
 - the distribution of `gas_limit / gas_used`, and how concentrated low utilisation is in the top tip percentiles, which measures how much of today's ordering is bought with gas that is not used;
 - the fee multiplier senders would have paid, which sizes the user communication;
 - the share of blocks whose reserved gas exceeds the EIP-1559 target, and the resulting base-fee trajectory, which informs any target change in the specification phase;
-- how often an `eth_estimateGas`-sized limit would have run out of gas, which bounds how far limits can tighten.
+- how often an `eth_estimateGas`-sized limit would have run out of gas, which bounds how far limits can tighten. Receipts cannot answer this: post-refund `gasUsed` is not the minimum feasible limit (EIP-150 forwarding and gas-dependent code paths break that inference). This item needs `eth_estimateGas` against an archive node at the parent state of a sample of transactions, compared with the limit they actually declared.
 
-This needs no re-execution: `gasLimit` and `gasUsed` are in the transactions and receipts.
+Except for the last item, the scan needs no re-execution: `gasLimit` and `gasUsed` are in the transactions and receipts.
 
 ## Risks and open questions
 
 - **Fee shock.** Users with 2x to 5x padded limits see 2x to 5x execution fees. Mitigations: measurement first, wallet outreach, and an announcement window. `--builder.max_gas_per_txn`, now a cap on declared limits, bounds the worst case below EIP-7825's `2^24`.
 - **Estimation becomes load-bearing.** `eth_estimateGas` results that are too low turn into out-of-gas failures that pay the full limit; results that are high are paid in full. Calls whose gas depends on state at inclusion time (swaps, auctions) cannot be estimated exactly, so some padding remains rational and is now a visible cost. The data scan should report how often the optimistic estimate would have failed.
 - **Honest searchers pay for uncertainty.** A searcher whose opportunity may disappear before inclusion pays for the success-path limit either way. This is the intended incentive (check predicates cheaply, bound the limit), but it is a real cost shift from the sequencer to searchers and should be communicated as such.
+- **Static EIP-8130 coinbase tips are ranked on an approximate denominator.** `UnifiedTipOrdering` ranks a static coinbase tip by `coinbase_tip / gas_limit`, but the transaction reserves and is billed `gas_limit + payer_auth`, any EIP-1559 priority fee it also pays is not in the key, and the builder only counts the coinbase transfer as revenue once phase 0 commits. For these transactions the rule prices reservation correctly but the ranking key is not exactly revenue per reserved gas. Whether the pool should divide by `gas_limit + payer_auth` and add the priority fee is a txpool follow-up, not part of this POC.
 - **Semantics of `gasUsed`.** The field changes meaning for user transactions for a widely used audience. Explorer and indexer owners should review before the rule is specified, and the metered gas should remain reachable through traces.
 - **Base-fee transition.** Reserved gas is higher than metered gas, so the base fee steps up after activation until limits tighten. Decide, from the data scan, whether to change the target or elasticity alongside activation or accept the transition.
 - **Fewer transactions per block at first.** Admission and accounting now agree, so a block holds at most `block_gas_limit` of declared gas instead of admitting more as long as metered gas fits. Until limits tighten, blocks carry fewer transactions. The data scan's utilisation distribution sizes this.

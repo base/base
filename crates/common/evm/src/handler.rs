@@ -557,10 +557,12 @@ mod tests {
     /// Guards the assumption behind the `eip8037_child_gas` tests below: Base never maps to an
     /// Ethereum spec at or after Amsterdam, so revm's EIP-8037 state gas stays off on every Base
     /// upgrade. Those tests mirror revm's reservoir accounting, not Base-specific behavior. When
-    /// this test fails, Glamsterdam is being wired up: re-verify them against revm.
+    /// this test fails, Glamsterdam is being wired up: re-verify them against revm. Zenith is
+    /// included because the gas limit pricing hook relies on `Gas::spend_all` leaving no
+    /// reservoir behind.
     #[test]
     fn test_eip8037_state_gas_disabled_on_all_base_upgrades() {
-        for upgrade in BaseUpgrade::EXECUTION_VARIANTS {
+        for upgrade in BaseUpgrade::EXECUTION_VARIANTS.into_iter().chain([BaseUpgrade::Zenith]) {
             let cfg = CfgEnv::new().with_spec_and_mainnet_gas_params(BaseSpecId::new(upgrade));
             assert!(!cfg.enable_amsterdam_eip8037, "EIP-8037 enabled on {upgrade:?}");
         }
