@@ -1815,7 +1815,8 @@ impl Eip8130Executor {
             BaseContextTr + ContextTr<Db = DB, Tx = BaseTransaction<TxEnv>, Block = BlockEnv>,
     {
         // Sender-intrinsic + call gas, less the EIP-3529-capped refund, plus payer
-        // authentication. Shared with the estimate path so they cannot diverge.
+        // authentication; or, under gas limit pricing, the reserved budget. See
+        // [`Self::billable_gas`] for how this relates to the estimate path.
         let billable_gas = Self::billable_gas(outcome, calls, spec);
 
         let fee = U256::from(billable_gas)

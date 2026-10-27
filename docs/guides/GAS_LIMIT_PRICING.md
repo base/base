@@ -59,7 +59,7 @@ All consensus fee logic lives in `base-common-evm`, which is `no_std` and shared
 
 | Phase | Today | Depends on execution? |
 |---|---|---|
-| `validate_against_state_and_deduct_caller` | Deducts `gas_limit * max_fee_per_gas` (revm `calculate_caller_fee`), the L1 data fee, and the operator fee computed on `gas_limit` (`L1BlockInfo::tx_cost`). | No. The pre-charge is already a gas-limit charge. |
+| `validate_against_state_and_deduct_caller` | Checks the caller can afford `gas_limit * max_fee_per_gas`, then deducts `gas_limit * effective_gas_price` (revm `calculate_caller_fee`), the L1 data fee, and the operator fee computed on `gas_limit` (`L1BlockInfo::tx_cost`). | No. The pre-charge is already a gas-limit charge. |
 | `refund` | revm `post_execution::refund`: adds the EIP-7702 refund and caps the refund at `gas_used / 5` (EIP-3529). | Yes. |
 | `eip7623_check_gas_floor` | Raises spent gas to the calldata floor if execution used less. | Yes. |
 | `reimburse_caller` | Returns `(remaining + refunded) * effective_gas_price` plus the operator fee refund (`L1BlockInfo::operator_fee_refund`: operator fee on `gas_limit` minus operator fee on `gas_used`). | Yes. |
@@ -82,7 +82,7 @@ The builder already reserves by limit: [`ExecutionInfo::is_tx_over_limits`](../.
 
 ### RPC
 
-reth's `eth_call` and `eth_estimateGas` set `cfg.disable_fee_charge = true` before executing. `eth_estimateGas` reads `res.result.tx_gas_used()` from an unconstrained execution to seed its binary search; if that value were `gas_limit`, the search would collapse and return the cap. The POC therefore couples gas limit pricing to fee charging being enabled.
+reth's `eth_call` and `eth_estimateGas` set `cfg.disable_fee_charge = true` before executing. `eth_estimateGas` reads `res.result.tx_gas_used()` from an unconstrained execution to seed its binary search; if that value were `gas_limit`, the search would collapse and return the cap. The POC therefore couples gas limit pricing to fee charging being enabled. `eth_simulateV1` does not set the flag in the pinned reth (it only disables the nonce and base-fee checks when `validation` is false), so it observes the rule; see [Effects](#effects).
 
 ## Proposed rule
 
@@ -147,7 +147,7 @@ When the feature graduates, the predicate moves to the named upgrade and nothing
 
 ### Change 1: standard and deposit transactions
 
-Hook `BaseHandler::refund`. revm's `post_execution` runs `refund -> eip7623_check_gas_floor -> reimburse_caller -> reward_beneficiary -> ResultGas`, so zeroing remaining gas and the refund counter here makes every later step, including the receipt, observe `gas_used = gas_limit`.
+Hook `BaseHandler::refund`. revm 43's `post_execution` runs `refund -> build ResultGas -> eip7623_check_gas_floor -> reimburse_caller -> reward_beneficiary`, so zeroing remaining gas and the refund counter in `refund` makes every later step, including the `ResultGas` that becomes the receipt, observe `gas_used = gas_limit`. `Gas::spend_all` clears only the remaining regular gas, so the refund counter must be zeroed explicitly.
 
 ```rust
 // crates/common/evm/src/handler.rs
@@ -228,7 +228,8 @@ fn billable_gas(outcome: &Eip8130Outcome, calls: &CallsResult, spec: BaseSpecId)
 | Endpoint | Behavior |
 |---|---|
 | `eth_estimateGas` | Unchanged: runs with `disable_fee_charge`, so the hook does not fire and the search sees metered gas. The result is now also exactly what the user is billed for if they use it as the limit. |
-| `eth_call`, `eth_simulateV1` (default) | Unchanged for the same reason. `eth_simulateV1` with `validation: true` enables fee charging; its `gasUsed` equals the call's gas limit, matching a real block. |
+| `eth_call` | Unchanged for the same reason. |
+| `eth_simulateV1` | Observes the rule in both `validation` modes, because the pinned reth never sets `disable_fee_charge` for it: each simulated call's `gasUsed` is its gas limit, matching a real block. A call that omits `gas` is given the block's remaining gas and is therefore reported as consuming all of it, so later calls in the same simulated block do not fit. Base owns its `simulate_v1` ([`crates/execution/rpc/src/eth/call.rs`](../../crates/execution/rpc/src/eth/call.rs)); whether it should disable fee charging when `validation` is false is an open follow-up, not changed by the POC. |
 | `eth_getTransactionReceipt`, `eth_getBlockByNumber` | `gasUsed`, `cumulativeGasUsed`, header `gasUsed` report billable gas. |
 | `debug_traceTransaction`, `trace_*` | Replay with fee charging enabled; top-level `gasUsed` equals `gas_limit`. Per-opcode `gas`/`gasCost` are metered and unchanged. |
 | `eth_feeHistory` `gasUsedRatio` | Reflects reservation, which is the intended signal. |
@@ -331,6 +332,7 @@ Not a correctness test, but part of validating the design: scan a recent range o
 - **Semantics of `gasUsed`.** The field changes meaning for a widely used audience. Explorer and indexer owners should review before the rule is specified, and the metered gas should remain reachable through traces.
 - **Base-fee transition.** Reserved gas is higher than metered gas, so the base fee steps up after activation until limits tighten. Decide, from the data scan, whether to change the target or elasticity alongside activation or accept the transition.
 - **EIP-8130 payer authentication.** Charging `payer_auth` at the full reserved amount is consistent with reservation but differs from today's floor-versus-standard-rate settlement. Confirm this matches the intended EIP-8130 fee model.
+- **EIP-8130 and `disable_fee_charge`.** `Eip8130Executor::execute` settles fees regardless of `cfg.disable_fee_charge` (pre-existing), so a signed execute-mode EIP-8130 transaction run under that flag reports the reserved budget rather than metered gas. EIP-8130 estimation goes through `simulate`, which is unaffected, so normal RPC paths are fine; the exemption is by execution mode, not by the flag.
 - **Deposit `gasUsed` regression to Bedrock shape.** Tooling that was updated for Regolith (deposit `gasUsed` metered) sees deposits report `gasLimit` again. Low impact, but it should be in the specification.
 - **Divergence from the OP Stack fee model.** Base-specific execution rules already exist (Azul onward), but this rule needs a specification entry, and shared tooling that assumes `gasUsed < gasLimit` for successful calls must be checked.
 
