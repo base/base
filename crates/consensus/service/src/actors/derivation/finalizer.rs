@@ -66,13 +66,13 @@ pub struct L2Finalizer {
     /// candidates derived from the L1 blocks the safe head itself was built from. `None` before
     /// the first confirmation, and after a reset moved the safe head to a block this finalizer did
     /// not confirm.
+    confirmed_safe_head: Option<(L2BlockInfo, BlockInfo)>,
     /// Inclusion blocks already verified canonical, keyed by L1 block number.
     ///
     /// A finalized L1 height is immutable, so one verification covers every L2 block a batch in
     /// that block produced, however many safe-head confirmations arrive afterwards. Entries are
     /// pruned in [`Self::try_finalize_next`] once derivation has advanced past them.
     verified_inclusions: BTreeMap<L1BlockNumber, B256>,
-    confirmed_safe_head: Option<(L2BlockInfo, BlockInfo)>,
 }
 
 impl L2Finalizer {
