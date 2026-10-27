@@ -807,7 +807,7 @@ impl BasePayloadBuilderCtx {
                 diag.txs_considered = num_txs_considered;
                 diag.txs_included =
                     (info.executed_transactions.len() as u64).saturating_sub(min_tx_index);
-                return Ok(diag);
+                break;
             }
 
             num_txs_considered += 1;
@@ -1907,6 +1907,36 @@ mod tests {
 
         BasePayloadBuilderCtx::skip_current(&mut txs, Address::ZERO, 0, false);
         assert_eq!((txs.committed, txs.invalid), (1, 1));
+    }
+
+    /// Interval cancellation still records the completed selection slice, including zero work.
+    #[cfg(feature = "metrics")]
+    #[test]
+    fn cancelled_flashblock_records_evaluation_totals() {
+        let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+        let handle = recorder.handle();
+        metrics::with_local_recorder(&recorder, || {
+            let ctx = test_builder_context();
+            let mut best_txs = LimitRejectionTransactions::new(0, 1, ctx.cancel.clone());
+            ctx.cancel.cancel();
+            let db = StateProviderDatabase::new(NoopProvider::default().into_evm_state_provider());
+            let mut state = State::builder().with_database(db).with_bundle_update().build();
+            let mut info = ExecutionInfo::default();
+            let diag = ctx.execute_best_transactions(
+                &mut info, &mut BlockDeferrals::default(), &mut state, &mut best_txs,
+                &ResourceLimits::default(),
+            ).expect("interval cancellation returns the completed selection slice");
+            assert!(diag.cancelled, "selection observes the interval cancellation");
+            assert_eq!(info.predicate_evaluations, 0, "cancelled empty slice adds no evaluations");
+            assert_eq!(info.predicate_evaluation_seconds, 0.0, "cancelled empty slice adds no time");
+        });
+        let rendered = handle.render();
+        assert!(rendered.lines().any(|line| line ==
+            "base_builder_validity_predicate_evaluations_per_flashblock_count 1"),
+            "exactly one cancelled flashblock observation is recorded");
+        assert!(rendered.lines().any(|line| line ==
+            "base_builder_validity_predicate_evaluations_per_flashblock_sum 0"),
+            "the cancelled empty flashblock has exactly zero evaluations");
     }
 
     #[test]

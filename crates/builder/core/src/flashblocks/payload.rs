@@ -405,6 +405,9 @@ where
         }
 
         if skip_flashblocks_building {
+            ValidityMetrics::validity_predicate_evaluations_per_block().record(0.0);
+            ValidityMetrics::validity_predicate_eval_duration_per_canonical_block().record(0.0);
+            ValidityMetrics::resting_predicates().set(0.0);
             let total_block_building_time = block_build_start_time.elapsed();
             BuilderMetrics::total_block_built_duration().record(total_block_building_time);
             BuilderMetrics::total_block_built_gauge().set(total_block_building_time);
@@ -988,10 +991,6 @@ where
 
         // Record validity-predicate state loads accumulated across the block's flashblocks.
         ValidityMetrics::record_predicate_loads(&info.predicate_loads);
-        ValidityMetrics::validity_predicate_evaluations_per_block()
-            .record(info.predicate_evaluations as f64);
-        ValidityMetrics::validity_predicate_eval_duration_per_canonical_block()
-            .record(info.predicate_evaluation_seconds);
 
         // Record validity inclusion and EIP-1559 fee revenue for the block.
         SharedBuilderMetrics::record_inclusion(&info.inclusion);
@@ -1022,6 +1021,10 @@ where
         DB: Database<Error = ProviderError>,
     {
         let payload = self.finalize_payload(state, proof_provider, ctx, info)?;
+        ValidityMetrics::validity_predicate_evaluations_per_block()
+            .record(info.predicate_evaluations as f64);
+        ValidityMetrics::validity_predicate_eval_duration_per_canonical_block()
+            .record(info.predicate_evaluation_seconds);
         if self.config.resting_predicate_mode.is_enabled() {
             let mut resting = best_txs.take_resting_predicates();
             ValidityMetrics::resting_predicates().set(resting.len() as f64);
