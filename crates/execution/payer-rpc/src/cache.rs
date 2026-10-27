@@ -95,13 +95,6 @@ impl TermsCache {
         self.lock().as_ref()?.served(Instant::now())
     }
 
-    /// Whether `request` can be answered from the shared entry. A `frames` request needs offers
-    /// carrying the payer's frames for an EIP-8141 frame transaction, which the entry, shared
-    /// with EIP-8130 requests, does not hold.
-    pub fn serves(request: &Value) -> bool {
-        request.get("frames").is_none_or(Value::is_null)
-    }
-
     /// Stores `response` until the shortest offer `ttl`, capped at
     /// [`MAX_GET_TERMS_CACHE_SECS`]. A response with no positive `ttl`, such
     /// as one with no offers, clears the cache.
@@ -413,13 +406,6 @@ mod tests {
 
         cache.clear_on(&answer(rejection("TEMPORARILY_UNAVAILABLE")));
         assert!(cache.get_stale().is_none());
-    }
-
-    #[test]
-    fn serves_every_request_but_one_for_a_frame_transaction() {
-        assert!(TermsCache::serves(&json!({ "calls": [] })));
-        assert!(TermsCache::serves(&json!({})));
-        assert!(!TermsCache::serves(&json!({ "frames": [{}] })));
     }
 
     #[test]

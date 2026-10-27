@@ -202,8 +202,8 @@ where
             invalid_params(error)
         })?;
         match &self.cache {
-            Some(cache) if TermsCache::serves(&request) => self.cached_terms(cache, &request).await,
-            _ => self.forward("payer_getTerms", &request).await,
+            Some(cache) => self.cached_terms(cache, &request).await,
+            None => self.forward("payer_getTerms", &request).await,
         }
     }
 
@@ -616,33 +616,6 @@ mod tests {
         }
         slow.assert_calls(1);
     }
-    #[tokio::test]
-    async fn forwards_frame_transaction_requests_past_the_shared_entry() {
-        let sequencer = MockServer::start();
-        let calls = sequencer.mock(|when, then| {
-            when.method(POST).body_includes("payer_getTerms").body_includes("calls");
-            rpc_result(then, terms_response());
-        });
-        let frames = sequencer.mock(|when, then| {
-            when.method(POST).body_includes("payer_getTerms").body_includes("frames");
-            rpc_result(then, json!({ "options": [] }));
-        });
-        let api = PayerApiImpl::new(everest_provider(), client(&sequencer), passing_state(), true);
-        let mut frame_request = terms_request(2);
-        frame_request.as_object_mut().unwrap().remove("calls");
-        frame_request["frames"] = json!([{ "mode": "0x1" }]);
-
-        assert_terms(api.get_terms(terms_request(1)).await.unwrap());
-        for _ in 0..2 {
-            let served = api.get_terms(frame_request.clone()).await.unwrap();
-            assert_eq!(served, json!({ "options": [] }));
-        }
-        assert_terms(api.get_terms(terms_request(3)).await.unwrap());
-
-        calls.assert_calls(1);
-        frames.assert_calls(2);
-    }
-
     #[tokio::test]
     async fn caches_terms_without_request_hints_and_orders_tokens_per_request() {
         let sequencer = MockServer::start();
