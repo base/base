@@ -366,6 +366,17 @@ real_token_setup:
 
 `reverse_min_amount` and `reverse_max_amount` on `uniswap_v3` and `aerodrome_cl` set the amount range for `token_out → token_in` swaps. Use these when the two tokens have different decimal scales; when omitted, the reverse range matches the forward range.
 
+On `uniswap_v3`, `reverse_amounts: auto` instead derives the reverse range before the run: it reads `sqrtPriceX96` from the router factory's pool for `token_in`/`token_out`/`fee` and converts `min_amount` and `max_amount` into `token_out` raw units at that price, so both directions move equal value and sustained runs do not drain one token. It cannot be combined with `reverse_min_amount` or `reverse_max_amount`, and fails when the pool does not exist or an amount converts to zero. The derived range is logged at info.
+
+```yaml
+  - weight: 100
+    type: uniswap_v3
+    # router, token_in (WETH), token_out (USDC) and fee as above.
+    min_amount: "10000000000000" # WETH wei
+    max_amount: "100000000000000"
+    reverse_amounts: auto # USDC raw units at the pool price
+```
+
 #### Running multiple load tests
 
 - Tune `target_gps`, `block_time`, and sender count appropriately. Omit `target_gps` to keep one

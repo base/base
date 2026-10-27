@@ -493,6 +493,7 @@ impl LoadRunner {
                 "b20 run salt not set; call prepare_payloads before run".into(),
             ));
         }
+        self.derive_reverse_swap_amounts().await?;
 
         self.collector.reset();
         self.stop_flag.store(false, Ordering::SeqCst);

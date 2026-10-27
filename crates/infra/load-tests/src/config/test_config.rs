@@ -253,6 +253,15 @@ pub enum OsakaTarget {
     ModexpOsaka,
 }
 
+/// How a `uniswap_v3` workload sizes its `token_out → token_in` swaps.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReverseAmounts {
+    /// Converts the forward amount range into `token_out` units at the pool price read during
+    /// setup, so both directions move equal value and neither balance drains.
+    Auto,
+}
+
 /// Transaction type configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -344,6 +353,9 @@ pub enum TxTypeConfig {
         /// Maximum amount when swapping `token_out` to `token_in`.
         #[serde(default)]
         reverse_max_amount: Option<U256>,
+        /// Derives the reverse range from the pool price; excludes the explicit reverse amounts.
+        #[serde(default)]
+        reverse_amounts: Option<ReverseAmounts>,
     },
     /// B-20 precompile token transfer. Each sender creates and transfers its own token, created
     /// per run during setup.
@@ -799,6 +811,7 @@ impl TestConfig {
                 max_amount,
                 reverse_min_amount,
                 reverse_max_amount,
+                reverse_amounts,
             } => {
                 let max_u24: u32 = (1 << 24) - 1;
                 if *fee > max_u24 {
@@ -807,6 +820,14 @@ impl TestConfig {
                     )));
                 }
                 validate_swap_amounts(*min_amount, *max_amount, "uniswap_v3")?;
+                let derive_reverse_amounts = reverse_amounts.is_some();
+                if derive_reverse_amounts
+                    && (reverse_min_amount.is_some() || reverse_max_amount.is_some())
+                {
+                    return Err(BaselineError::Config(
+                        "uniswap_v3 reverse_amounts: auto cannot be combined with reverse_min_amount or reverse_max_amount".into(),
+                    ));
+                }
                 let reverse_min_amount = reverse_min_amount.unwrap_or(*min_amount);
                 let reverse_max_amount = reverse_max_amount.unwrap_or(*max_amount);
                 validate_swap_amounts(
@@ -827,6 +848,7 @@ impl TestConfig {
                     max_amount: *max_amount,
                     reverse_min_amount,
                     reverse_max_amount,
+                    derive_reverse_amounts,
                 }
             }
             TxTypeConfig::AerodromeCl {
@@ -1447,6 +1469,58 @@ transactions:
             }
             _ => panic!("expected UniswapV3"),
         }
+    }
+
+    fn uniswap_v3_reverse(reverse: &str) -> Result<TxType> {
+        let yaml = config_yaml(&format!(
+            r#"
+transactions:
+  - weight: 10
+    type: uniswap_v3
+    router: "0x1010101010101010101010101010101010101010"
+    token_in: "0x1111111111111111111111111111111111111111"
+    token_out: "0x2222222222222222222222222222222222222222"
+    min_amount: "10000000000000"
+    max_amount: "100000000000000"
+{reverse}"#
+        ));
+        let load = TestConfig::from_yaml(&yaml).unwrap().to_load_config(Some(1337))?;
+        Ok(load.transactions[0].tx_type.clone())
+    }
+
+    #[test]
+    fn uniswap_v3_reverse_amounts_auto_defers_reverse_range_to_setup() {
+        let tx = uniswap_v3_reverse("    reverse_amounts: auto\n").unwrap();
+        assert!(matches!(tx, TxType::UniswapV3 { derive_reverse_amounts: true, .. }));
+    }
+
+    #[test]
+    fn uniswap_v3_reverse_amounts_auto_rejects_explicit_reverse_amounts() {
+        for explicit in ["reverse_min_amount: \"10000\"", "reverse_max_amount: \"100000\""] {
+            let err = uniswap_v3_reverse(&format!("    reverse_amounts: auto\n    {explicit}\n"))
+                .unwrap_err();
+            assert!(err.to_string().contains("cannot be combined"), "{explicit}: {err}");
+        }
+    }
+
+    #[test]
+    fn uniswap_v3_explicit_reverse_amounts_are_kept() {
+        let tx = uniswap_v3_reverse(
+            "    reverse_min_amount: \"10000\"\n    reverse_max_amount: \"100000\"\n",
+        )
+        .unwrap();
+        let TxType::UniswapV3 {
+            reverse_min_amount,
+            reverse_max_amount,
+            derive_reverse_amounts,
+            ..
+        } = tx
+        else {
+            panic!("expected UniswapV3");
+        };
+        assert_eq!(reverse_min_amount, U256::from(10_000));
+        assert_eq!(reverse_max_amount, U256::from(100_000));
+        assert!(!derive_reverse_amounts);
     }
 
     #[test]

@@ -125,6 +125,7 @@ impl WorkloadGenerator {
                     max_amount,
                     reverse_min_amount,
                     reverse_max_amount,
+                    ..
                 } => {
                     generator = generator.with_payload(
                         UniswapV3Payload::new(
@@ -274,6 +275,7 @@ mod tests {
                     max_amount: U256::from(1),
                     reverse_min_amount: U256::from(1),
                     reverse_max_amount: U256::from(1),
+                    derive_reverse_amounts: false,
                 },
             },
             TxConfig {

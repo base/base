@@ -219,6 +219,8 @@ pub enum TxType {
         reverse_min_amount: U256,
         /// Maximum amount when swapping `token_out` to `token_in`.
         reverse_max_amount: U256,
+        /// Replaces the reverse range with the forward range priced at the pool before the run.
+        derive_reverse_amounts: bool,
     },
     /// Aerodrome Slipstream (concentrated liquidity) swap.
     AerodromeCl {
