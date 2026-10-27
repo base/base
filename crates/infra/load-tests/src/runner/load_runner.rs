@@ -35,7 +35,7 @@ use crate::{
     },
     workload::{
         AccountPool, ChainPrepContext, KeyStream, PREP_CONCURRENCY, RealTokenRecoverySummary,
-        RealTokenSetup, SeededRng, WorkloadGenerator, recover_real_tokens,
+        RealTokenSetup, SeededRng, UniswapV3Payload, WorkloadGenerator, recover_real_tokens,
     },
 };
 
@@ -436,6 +436,68 @@ impl LoadRunner {
         }
         if ctx.outputs.needs_sender_refresh {
             self.refresh_sender_state().await?;
+        }
+        Ok(())
+    }
+
+    /// Prices the forward range of each `reverse_amounts: auto` swap at its pool and uses the
+    /// result as the reverse range, so generated amounts stay fixed for the run.
+    pub(super) async fn derive_reverse_swap_amounts(&mut self) -> Result<()> {
+        let mut derived = false;
+        for tx in &mut self.config.transactions {
+            let TxType::UniswapV3 {
+                router,
+                token_in,
+                token_out,
+                fee,
+                min_amount,
+                max_amount,
+                reverse_min_amount,
+                reverse_max_amount,
+                derive_reverse_amounts: derive @ true,
+                ..
+            } = &mut tx.tx_type
+            else {
+                continue;
+            };
+            let sqrt_price_x96 = UniswapV3Payload::read_sqrt_price_x96(
+                &self.client,
+                *router,
+                *token_in,
+                *token_out,
+                *fee,
+            )
+            .await?;
+            *reverse_min_amount = UniswapV3Payload::amount_at_price(
+                *min_amount,
+                sqrt_price_x96,
+                *token_in,
+                *token_out,
+            )?;
+            *reverse_max_amount = UniswapV3Payload::amount_at_price(
+                *max_amount,
+                sqrt_price_x96,
+                *token_in,
+                *token_out,
+            )?;
+            *derive = false;
+            derived = true;
+            info!(
+                token_in = %token_in,
+                token_out = %token_out,
+                fee = *fee,
+                sqrt_price_x96 = %sqrt_price_x96,
+                reverse_min_amount = %reverse_min_amount,
+                reverse_max_amount = %reverse_max_amount,
+                "derived uniswap_v3 reverse swap amounts from pool price"
+            );
+        }
+        if derived {
+            self.generator = WorkloadGenerator::from_tx_configs(
+                self.workload_config(),
+                &self.config.transactions,
+                self.b20_run_salt,
+            )?;
         }
         Ok(())
     }

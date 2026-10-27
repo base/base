@@ -1,5 +1,6 @@
 use alloy_network::TransactionBuilder;
-use alloy_primitives::{Address, Bytes, U160, U256, Uint};
+use alloy_primitives::{Address, Bytes, U160, U256, U512, Uint};
+use alloy_provider::Provider;
 use alloy_rpc_types::TransactionRequest;
 use alloy_sol_types::{SolCall, sol};
 use async_trait::async_trait;
@@ -9,7 +10,8 @@ type U24 = Uint<24, 1>;
 
 use super::Payload;
 use crate::{
-    Result,
+    BaselineError, Result,
+    rpc::{QueryProvider, RpcResultExt},
     workload::{SeededRng, chain_prep::ChainPrepContext},
 };
 
@@ -28,6 +30,24 @@ sol! {
         function exactInputSingle(
             ExactInputSingleParams calldata params
         ) external payable returns (uint256 amountOut);
+
+        function factory() external view returns (address);
+    }
+
+    interface IUniswapV3Factory {
+        function getPool(address tokenA, address tokenB, uint24 fee) external view returns (address);
+    }
+
+    interface IUniswapV3Pool {
+        function slot0() external view returns (
+            uint160 sqrtPriceX96,
+            int24 tick,
+            uint16 observationIndex,
+            uint16 observationCardinality,
+            uint16 observationCardinalityNext,
+            uint8 feeProtocol,
+            bool unlocked
+        );
     }
 }
 
@@ -62,6 +82,77 @@ impl UniswapV3Payload {
             },
             Call { to: router, value: U256::ZERO, data: data.clone() },
         ])
+    }
+
+    /// Reads `sqrtPriceX96` of the pool the router uses for `token_in`/`token_out` at `fee`.
+    pub async fn read_sqrt_price_x96(
+        client: &QueryProvider,
+        router: Address,
+        token_in: Address,
+        token_out: Address,
+        fee: u32,
+    ) -> Result<U256> {
+        let call = |to: Address, input: Vec<u8>| {
+            client.call(TransactionRequest::default().with_to(to).with_input(input).into())
+        };
+        let decode_error = |error: alloy_sol_types::Error| {
+            BaselineError::Config(format!("uniswap_v3 reverse_amounts: auto: {error}"))
+        };
+        let data = call(router, IUniswapV3Router::factoryCall {}.abi_encode())
+            .await
+            .rpc("eth_call factory")?;
+        let factory =
+            IUniswapV3Router::factoryCall::abi_decode_returns(&data).map_err(decode_error)?;
+        let get_pool = IUniswapV3Factory::getPoolCall {
+            tokenA: token_in,
+            tokenB: token_out,
+            fee: U24::from(fee),
+        };
+        let data = call(factory, get_pool.abi_encode()).await.rpc("eth_call getPool")?;
+        let pool =
+            IUniswapV3Factory::getPoolCall::abi_decode_returns(&data).map_err(decode_error)?;
+        if pool == Address::ZERO {
+            return Err(BaselineError::Config(format!(
+                "uniswap_v3 reverse_amounts: auto: no pool for {token_in}/{token_out} at fee {fee}"
+            )));
+        }
+        let data =
+            call(pool, IUniswapV3Pool::slot0Call {}.abi_encode()).await.rpc("eth_call slot0")?;
+        let slot0 = IUniswapV3Pool::slot0Call::abi_decode_returns(&data).map_err(decode_error)?;
+        Ok(U256::from(slot0.sqrtPriceX96))
+    }
+
+    /// Converts `amount` of `token_in` into `token_out` raw units at `sqrt_price_x96`, rounded to
+    /// the nearest unit.
+    ///
+    /// Uniswap prices token1 in token0 raw units as `(sqrt_price_x96 / 2^96)^2`, and token0 is
+    /// the lower address, so decimals need no separate handling.
+    pub fn amount_at_price(
+        amount: U256,
+        sqrt_price_x96: U256,
+        token_in: Address,
+        token_out: Address,
+    ) -> Result<U256> {
+        if sqrt_price_x96.is_zero() {
+            return Err(BaselineError::Config(
+                "uniswap_v3 reverse_amounts: auto: pool is not initialized".into(),
+            ));
+        }
+        let sqrt_price = U512::from(sqrt_price_x96);
+        let price = sqrt_price * sqrt_price;
+        let q192 = U512::from(1) << 192;
+        let (numerator, denominator) = if token_in < token_out {
+            (U512::from(amount) * price, q192)
+        } else {
+            (U512::from(amount) * q192, price)
+        };
+        let converted = (numerator + denominator / U512::from(2)) / denominator;
+        if converted.is_zero() || converted > U512::from(u128::MAX) {
+            return Err(BaselineError::Config(format!(
+                "uniswap_v3 reverse_amounts: auto: amount {amount} converts to {converted} token_out units; must be between 1 and u128::MAX"
+            )));
+        }
+        Ok(U256::from(converted))
     }
 
     /// Enables native approval-and-swap batching without changing ordinary swaps.
@@ -413,5 +504,50 @@ mod tests {
 
         assert!(saw_forward, "expected at least one forward swap");
         assert!(saw_reverse, "expected at least one reverse swap");
+    }
+
+    /// 18-decimal WETH priced at 2,320 6-decimal USDC, with WETH as either pool token.
+    #[test]
+    fn amount_at_price_converts_raw_units_for_both_token_orders() {
+        let low = Address::repeat_byte(0x11);
+        let high = Address::repeat_byte(0x22);
+        // sqrt(2320e6 / 1e18) * 2^96: WETH is token0, USDC is token1.
+        let weth_token0 = U256::from(3_816_133_648_877_761_641_136_391u128);
+        // sqrt(1e18 / 2320e6) * 2^96: USDC is token0, WETH is token1.
+        let weth_token1 = U256::from(1_644_885_193_481_793_810_834_651_330_288_053u128);
+        for (weth_wei, usdc_units) in
+            [(10_000_000_000_000u64, 23_200u64), (100_000_000_000_000, 232_000)]
+        {
+            for (sqrt_price, weth, usdc) in [(weth_token0, low, high), (weth_token1, high, low)] {
+                assert_eq!(
+                    UniswapV3Payload::amount_at_price(U256::from(weth_wei), sqrt_price, weth, usdc)
+                        .unwrap(),
+                    U256::from(usdc_units),
+                    "WETH -> USDC"
+                );
+                assert_eq!(
+                    UniswapV3Payload::amount_at_price(
+                        U256::from(usdc_units),
+                        sqrt_price,
+                        usdc,
+                        weth
+                    )
+                    .unwrap(),
+                    U256::from(weth_wei),
+                    "USDC -> WETH"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn amount_at_price_rejects_zero_results_and_uninitialized_pools() {
+        let weth = Address::repeat_byte(0x11);
+        let usdc = Address::repeat_byte(0x22);
+        let sqrt_price = U256::from(3_816_133_648_877_761_641_136_391u128);
+        assert!(
+            UniswapV3Payload::amount_at_price(U256::from(100), sqrt_price, weth, usdc).is_err()
+        );
+        assert!(UniswapV3Payload::amount_at_price(U256::from(1), U256::ZERO, weth, usdc).is_err());
     }
 }

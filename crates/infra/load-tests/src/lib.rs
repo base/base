@@ -6,8 +6,8 @@ mod config;
 pub use config::{
     OsakaTarget, PrecompileTarget, PredicateAddressConfig, PredicateSlotConfig,
     PredicateValueConfig, RealTokenAcquisitionConfig, RealTokenPairTokenConfig,
-    RealTokenSetupConfig, TestConfig, TxTypeConfig, ValidityConfig, ValidityPredicateConfig,
-    ValiditySigningMode, WeightedTxType, WorkloadConfig,
+    RealTokenSetupConfig, ReverseAmounts, TestConfig, TxTypeConfig, ValidityConfig,
+    ValidityPredicateConfig, ValiditySigningMode, WeightedTxType, WorkloadConfig,
 };
 
 mod executor;

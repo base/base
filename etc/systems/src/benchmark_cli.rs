@@ -217,8 +217,9 @@ pub struct SnapshotBenchmarkArgs {
     pub builder_engine: crate::BuilderEngineSharingConfig,
 }
 
-/// Wei minted to the benchmark's ephemeral funder in the first local descendant (1000 ETH).
-const PREFUND_AMOUNT_WEI: u128 = 1_000_000_000_000_000_000_000;
+/// Wei minted to the benchmark's ephemeral funder in the first local descendant (1,000,000 ETH),
+/// so per-sender `funding_amount` is never limited by the prefund.
+const PREFUND_AMOUNT_WEI: u128 = 1_000_000_000_000_000_000_000_000;
 /// Use the full block gas limit as the EIP-1559 target in snapshot benchmarks, so synthetic
 /// benchmark load cannot raise the base fee and strand already-submitted transaction nonce lanes.
 const SNAPSHOT_BENCHMARK_EIP1559_ELASTICITY: u32 = 1;
