@@ -16,8 +16,11 @@
 //! The budget indexes hashes only. The pool owns the transactions and drives
 //! every mutation: [`ValidityBudget::plan_admission`] under the admission lock,
 //! [`ValidityBudget::commit`] once reth has accepted the transaction, and
-//! [`ValidityBudget::remove`] or [`ValidityBudget::retain`] when transactions
-//! leave the pool by inclusion, replacement, expiry, or reth's own eviction.
+//! [`ValidityBudget::remove`] when transactions leave the pool by inclusion,
+//! replacement, or expiry. Evictions reth performs on its own are reconciled once
+//! per canonical block: the pool prunes [`ValidityBudget::tracked_hashes`] to the
+//! ones reth no longer holds (one `retain_unknown` scan) and removes those under
+//! the admission lock, so a dropped hash resubmitted in between stays counted.
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -260,16 +263,6 @@ impl ValidityBudget {
         self.size -= size;
         true
     }
-
-    /// Drops every counted hash for which `keep` returns `false`, returning them.
-    /// Reconciles the budget with evictions the pool performed on its own.
-    pub fn retain(&mut self, mut keep: impl FnMut(&TxHash) -> bool) -> Vec<TxHash> {
-        let stale: Vec<TxHash> = self.entries.keys().filter(|hash| !keep(hash)).copied().collect();
-        for hash in &stale {
-            self.remove(hash);
-        }
-        stale
-    }
 }
 
 #[cfg(test)]
@@ -391,17 +384,6 @@ mod tests {
         assert!(!budget.remove(&hash(1)));
         assert!(budget.is_empty());
         assert_eq!(budget.size(), 0);
-    }
-
-    #[test]
-    fn retain_drops_only_rejected_hashes() {
-        let mut budget =
-            filled(SubPoolLimit::new(10, 1_000), &[(1, 1, 10), (2, 2, 20), (3, 3, 30)]);
-        let mut stale = budget.retain(|hash| *hash != TxHash::repeat_byte(2));
-        stale.sort();
-        assert_eq!(stale, vec![hash(2)]);
-        assert_eq!(budget.tracked_hashes(), vec![hash(1), hash(3)]);
-        assert_eq!(budget.size(), 40);
     }
 
     #[test]
