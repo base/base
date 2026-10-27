@@ -8,8 +8,6 @@
 //! with the builder on every block.
 
 mod common;
-#[path = "common/everest.rs"]
-mod everest;
 
 use std::time::Duration;
 
@@ -28,10 +26,16 @@ use base_system_tests::{ANVIL_ACCOUNT_1, SystemTestStackBuilder};
 use eyre::{OptionExt, Result, WrapErr, ensure};
 use tokio::time::{sleep, timeout};
 
-use crate::common::{L2_CHAIN_ID, wait_for_block};
+use crate::common::{
+    BASE_AZUL_ACTIVATION_BLOCK, BASE_BERYL_ACTIVATION_BLOCK, L1_CHAIN_ID, L2_CHAIN_ID,
+    wait_for_block,
+};
 
-/// Zenith activates after the Everest schedule used by [`everest::start_everest_stack`]
-/// (Everest at block 7), leaving a few blocks of pre-Zenith runway.
+/// The schedule leading up to Zenith mirrors the Everest system tests (Everest at block 7), so
+/// the post-Zenith chain carries every real upgrade; Zenith follows a few blocks later, leaving
+/// pre-Zenith runway for the first transfer.
+const BASE_COBALT_ACTIVATION_BLOCK: u64 = 5;
+const BASE_EVEREST_ACTIVATION_BLOCK: u64 = 7;
 const ZENITH_ACTIVATION_BLOCK: u64 = 14;
 /// A plain transfer needs 21k gas; the limit is deliberately ~5x that.
 const TRANSFER_GAS_USED: u64 = 21_000;
@@ -72,11 +76,19 @@ impl Settlement {
 async fn zenith_bills_transactions_for_their_gas_limit() -> Result<()> {
     base_node_runner::test_utils::init_silenced_tracing();
 
-    let (system, builder) = everest::start_everest_stack(
-        SystemTestStackBuilder::new().with_base_zenith_activation_block(ZENITH_ACTIVATION_BLOCK),
-    )
-    .await?;
+    let system = SystemTestStackBuilder::new()
+        .with_l1_chain_id(L1_CHAIN_ID)
+        .with_l2_chain_id(L2_CHAIN_ID)
+        .with_base_azul_activation_block(BASE_AZUL_ACTIVATION_BLOCK)
+        .with_base_beryl_activation_block(BASE_BERYL_ACTIVATION_BLOCK)
+        .with_base_cobalt_activation_block(BASE_COBALT_ACTIVATION_BLOCK)
+        .with_base_everest_activation_block(BASE_EVEREST_ACTIVATION_BLOCK)
+        .with_base_zenith_activation_block(ZENITH_ACTIVATION_BLOCK)
+        .build()
+        .await?;
+    let builder = system.l2_builder_provider()?;
     let client = system.l2_client_provider()?;
+    wait_for_block(&builder, BASE_EVEREST_ACTIVATION_BLOCK + 1).await?;
     let signer = PrivateKeySigner::from_bytes(&ANVIL_ACCOUNT_1.private_key)?;
     let rollup_config: RollupConfig =
         serde_json::from_slice(&std::fs::read(system.l2_deployment().rollup_config_path())?)?;
