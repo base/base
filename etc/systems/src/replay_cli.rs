@@ -11,7 +11,7 @@ use std::{
     collections::BTreeMap,
     fs,
     io::Write as _,
-    num::NonZeroU64,
+    num::{NonZeroU64, NonZeroUsize},
     path::{Path, PathBuf},
     sync::Arc,
     time::{Duration, Instant},
@@ -86,6 +86,10 @@ pub struct ReplayBenchmarkArgs {
     /// it trails the inserted head.
     #[arg(long)]
     pub proofs_dir: Option<PathBuf>,
+    /// Proofs mode only: blocks probed at once with the proof host's L2 calls; blocks proof
+    /// history covers while all are busy are skipped.
+    #[arg(long, default_value = "2")]
+    pub proofs_concurrency: NonZeroUsize,
 }
 
 /// How blocks were scheduled.
@@ -309,10 +313,13 @@ impl ReplayBenchmarkArgs {
         .await
         .wrap_err("failed to connect to the replay node's engine API")?;
 
-        let probe = self
-            .proofs_dir
-            .is_some()
-            .then(|| ReplayProofsProbe::start(rpc_url.clone(), manifest.boundary_number));
+        let probe = self.proofs_dir.is_some().then(|| {
+            ReplayProofsProbe::start(
+                rpc_url.clone(),
+                self.proofs_concurrency,
+                manifest.boundary_number,
+            )
+        });
         let metrics = PrometheusBlockCollector::start(
             rpc_url,
             client.metrics_url()?,
@@ -771,6 +778,7 @@ mod tests {
             panic!("expected replay command");
         };
         assert_eq!(args.proofs_dir.unwrap().to_string_lossy(), "/snapshot/restored/proofs");
+        assert_eq!(args.proofs_concurrency.get(), 2);
     }
 
     #[test]

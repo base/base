@@ -45,7 +45,9 @@ pub use replay_cli::{
 };
 
 mod replay_proofs;
-pub use replay_proofs::{CountSummary, ProofsSummary, ReplayProofsProbe};
+pub use replay_proofs::{
+    CountSummary, ProofsMethodSummary, ProofsSamples, ProofsSummary, ReplayProofsProbe,
+};
 
 mod config;
 pub use config::{
