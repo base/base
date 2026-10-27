@@ -22,7 +22,7 @@ These example activation timestamps are 2030-03-17 17:46:40 UTC / 12:46:40 EST. 
 
 ## Pinned implementation inventory
 
-The stack pins revm **43.0.3**, alloy-evm **0.39.0**, and Base Reth **base-v2.7.0.1**, commit `de52d8204b08e52b4dc719d7b4e59b6c7ef93b2c`. Paths below are relative to the named upstream Cargo package. These are implementation snapshots, not a promise that future revisions of the Amsterdam meta-EIP have the same contents.
+The stack pins revm **43.0.3**, alloy-evm **0.39.0**, and Base Reth **base-v2.7.0.2**, commit `bbea4dcd4dce78699d8103c5a279fd6cfcc53641`. Paths below are relative to the named upstream Cargo package. These are implementation snapshots, not a promise that future revisions of the Amsterdam meta-EIP have the same contents.
 
 | EIP | Upstream implementation and gate | Base status |
 | --- | --- | --- |

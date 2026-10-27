@@ -292,6 +292,7 @@ async fn run_inner(
                 .await
                 .rpc("read deploy64 nonce")?;
             let prepared = PreparedTransaction {
+                native: false,
                 from: signer.address(),
                 to: None,
                 value: U256::ZERO,
@@ -392,6 +393,7 @@ mod tests {
         SubmissionPipeline::sign_at_nonce(
             signer,
             &PreparedTransaction {
+                native: false,
                 from: signer.address(),
                 to: None,
                 value: U256::ZERO,
@@ -581,6 +583,7 @@ mod tests {
         let server = MockServer::start();
         let signer = PrivateKeySigner::random();
         let prepared = PreparedTransaction {
+            native: false,
             from: signer.address(),
             to: None,
             value: U256::ZERO,

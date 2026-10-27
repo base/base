@@ -534,20 +534,22 @@ mod tests {
         assert_eq!(gas.refunded(), 0);
     }
 
-    /// Guards the assumption behind the `eip8037_child_gas` tests below: Base never maps to an
-    /// Ethereum spec at or after Amsterdam, so revm's EIP-8037 state gas stays off on every Base
-    /// upgrade. Those tests mirror revm's reservoir accounting, not Base-specific behavior. When
-    /// this test fails, Glamsterdam is being wired up: re-verify them against revm.
+    /// Verifies the Base fork boundary for the reservoir accounting tested below.
+    /// Before Denim, EIP-8037 stays disabled; Denim and later upgrades select Amsterdam.
+    /// The child-gas tests mirror revm's reservoir accounting, now reachable on Base
+    /// from Denim onward, and must remain consistent with that upstream handling.
     #[test]
-    fn test_eip8037_state_gas_disabled_on_all_base_upgrades() {
+    fn test_eip8037_state_gas_activates_at_denim() {
         for upgrade in BaseUpgrade::EXECUTION_VARIANTS {
             let cfg = CfgEnv::new().with_spec_and_mainnet_gas_params(BaseSpecId::new(upgrade));
-            assert!(!cfg.enable_amsterdam_eip8037, "EIP-8037 enabled on {upgrade:?}");
+            let expected =
+                matches!(upgrade, BaseUpgrade::Denim | BaseUpgrade::Everest | BaseUpgrade::Zenith);
+            assert_eq!(cfg.enable_amsterdam_eip8037, expected, "EIP-8037 gate on {upgrade:?}");
         }
     }
 
-    /// Child gas with state gas set by hand. EIP-8037 is off on Base today, so this state is not
-    /// reachable in production; see `test_eip8037_state_gas_disabled_on_all_base_upgrades`.
+    /// Child gas with state gas set by hand, modeling the post-Denim reservoir.
+    /// See `test_eip8037_state_gas_activates_at_denim` for the Base activation boundary.
     fn eip8037_child_gas() -> Gas {
         let mut gas = Gas::new(100);
         let tracker = gas.tracker_mut();
