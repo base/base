@@ -1,8 +1,6 @@
-use std::sync::Arc;
-
 use base_builder_core::{BuilderConfig, FlashblocksServiceBuilder, NodeBounds, PoolBounds};
 use base_execution_evm::BaseEvmConfig;
-use base_execution_payload_builder::{ResourceMeteringConfig, config::BaseBuilderConfig};
+use base_execution_payload_builder::config::BaseBuilderConfig;
 use base_node_core::{
     BaseConsensusBuilder, BaseEngineTypes, BaseExecutorBuilder, BaseNetworkBuilder,
     node::BasePoolBuilder,
@@ -73,10 +71,7 @@ impl MultiplexingServiceBuilder {
             predicate_bucket_ordered_threshold: self
                 .builder_config
                 .predicate_bucket_ordered_threshold,
-            resource_metering: ResourceMeteringConfig {
-                provider: Arc::clone(&self.builder_config.metering_provider),
-                ..ResourceMeteringConfig::default()
-            },
+            resource_metering: self.builder_config.resource_metering.clone(),
             rejection_cache: self.builder_config.rejection_cache.clone(),
             state_provider_metrics,
             resting_predicate_mode: self.builder_config.resting_predicate_mode,
@@ -99,6 +94,7 @@ where
             !(self.routing_config.cutover_enabled && self.basic_only),
             "payload builder cutover and basic-only modes are mutually exclusive"
         );
+        self.builder_config.record_startup_metrics();
 
         // Reth's own flag drives build-loop state-read timing, so the builder and the engine's
         // validation path are instrumented by the same switch.
@@ -208,7 +204,10 @@ impl BasePayloadServiceBuilder for MultiplexingServiceBuilder {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use alloy_primitives::TxHash;
+    use base_execution_payload_builder::{ResourceMeteringConfig, ResourceMeteringSchedule};
 
     use super::*;
 
@@ -221,6 +220,42 @@ mod tests {
 
         let native = MultiplexingServiceBuilder::new(builder_config).native_payload_config(false);
         assert!(native.rejection_cache.contains_key(&hash));
+        assert!(!native.resource_metering.enabled);
+        assert!(native.resource_metering.schedule.is_empty());
+        assert!(!native.resource_metering.is_active());
+        assert!(Arc::ptr_eq(&native.resource_metering.provider, &provider));
+    }
+
+    #[test]
+    fn native_payload_config_propagates_configured_resource_metering_schedule() {
+        let schedule = ResourceMeteringSchedule::from_json(
+            r#"{
+                "version": 1,
+                "dimensions": [{
+                    "name": "compute",
+                    "blockLimit": 1000,
+                    "transactionLimit": 500,
+                    "baseGasWeight": 1,
+                    "operations": [{"name": "SSTORE", "gasUsedWeight": 2, "countCost": 10}],
+                    "dryRun": true
+                }]
+            }"#,
+        )
+        .expect("valid schedule");
+
+        let mut builder_config = BuilderConfig::default();
+        let provider = Arc::clone(&builder_config.metering_provider);
+        builder_config.resource_metering = ResourceMeteringConfig {
+            enabled: true,
+            schedule: Arc::new(schedule),
+            provider: Arc::clone(&provider),
+        };
+
+        let native = MultiplexingServiceBuilder::new(builder_config).native_payload_config(false);
+        assert!(native.resource_metering.enabled);
+        assert!(native.resource_metering.is_active());
+        assert_eq!(native.resource_metering.schedule.dimensions.len(), 1);
+        assert_eq!(native.resource_metering.schedule.dimensions[0].name, "compute");
         assert!(Arc::ptr_eq(&native.resource_metering.provider, &provider));
     }
 }

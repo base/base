@@ -104,6 +104,10 @@ base_metrics::define_metrics! {
     metering_store_ttl_expirations: counter,
     #[describe("Size of MeteringStore")]
     metering_store_size: gauge,
+    #[describe(
+        "Builder started with resource metering enabled but no resource-metering schedule configured"
+    )]
+    resource_metering_schedule_missing_total: counter,
     #[describe("Transactions inserted into the rejection cache")]
     rejection_cache_insertions: counter,
     #[describe("Transactions skipped by the rejection cache (P2P re-insertion prevented)")]
