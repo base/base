@@ -209,6 +209,36 @@ the Flashblocks builder. Sparse sharing requires at least five available CPUs;
 an unsupported host fails rather than silently ignoring the option. Host-derived
 worker-pool sizing is unchanged. The options are CLI-only, not load-test YAML keys.
 
+### Predicate evaluation diagnostics
+
+Snapshot benchmark results include builder predicate diagnostics in each block's
+`prometheus_metrics` and a `predicate_summary` with mean, nearest-rank p50/p99,
+and sum of those per-block samples. The `reth_base_builder_` metric families are:
+
+- `validity_predicate_evaluation_duration`: transaction evaluation latency in seconds;
+  its observation count includes primary evaluations and rescans.
+- `validity_predicate_evaluations_per_flashblock` and
+  `validity_predicate_eval_duration_per_flashblock`: attempts and evaluation seconds
+  accumulated during each flashblock build.
+- `validity_predicate_evaluations_per_block` and
+  `validity_predicate_eval_duration_per_canonical_block`: attempts and evaluation
+  seconds accumulated across the canonical block build.
+- `resting_predicates`: resting transactions at the latest completed block build;
+  zero when resting-predicate tracking is disabled.
+- `validity_predicate_evaluations_per_second`: evaluation attempts divided by the
+  actual elapsed time between scrapes.
+
+The collector retains distribution `_avg`, `_sum`, and `_count` values. With the
+default one-second scrape interval, individual 200 ms flashblocks cannot be
+identified: builder-side distributions retain their aggregate counts and time.
+Counter and distribution totals are divided evenly across intervening canonical
+blocks; gauges are latest-scrape observations. Summary quantiles describe these
+attributed block samples, not individual evaluation latencies or flashblocks.
+Only additive sample sums represent benchmark totals; a sum of gauges or averages
+is not a population count or total evaluation time. Native builders emit canonical
+block distributions, not flashblock distributions. Existing legacy per-build
+timing metrics remain unchanged.
+
 For the end-to-end workflow, including disposable snapshot restores, report artifact conventions, and
 how `--benchmark-run`, `--scenario`, and `--run-id` select runs in `base/benchmark`, see
 [Snapshot Benchmarking](../../docs/guides/SNAPSHOT_BENCHMARKS.md).

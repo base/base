@@ -526,6 +526,8 @@ impl<Txs> Builder<'_, Txs> {
 
         let sealed_block = Arc::new(block.sealed_block().clone());
         debug!(target: "payload_builder", id=%ctx.payload_id(), sealed_block_header = ?sealed_block.header(), "sealed built block");
+        ValidityMetrics::resting_predicates()
+            .set(resting.as_ref().map_or(0, |resting| resting.len()) as f64);
         if let (Some(mut resting), Some(store)) = (resting, resting_predicates) {
             resting.end_block(sealed_block.hash());
             store.put(resting);
@@ -976,6 +978,8 @@ where
             ParkedPredicateIndex::new(self.builder_config.predicate_bucket_ordered_threshold);
         let mut predicate_loads = PredicateLoadTracker::default();
         let mut evaluation_counters = ValidityEvaluationCounters::default();
+        let predicate_latency = ValidityMetrics::validity_predicate_evaluation_duration();
+        let mut predicate_evaluations = 0_u64;
         let mut predicate_eval_duration = None;
         let mut predicate_bucket_wakeups = 0;
         let mut validity_consideration_index = 0_u64;
@@ -1116,8 +1120,10 @@ where
                         &predicate_context,
                     )
                 };
-                *predicate_eval_duration.get_or_insert(Duration::ZERO) +=
-                    evaluation_start.elapsed();
+                let elapsed = evaluation_start.elapsed();
+                *predicate_eval_duration.get_or_insert(Duration::ZERO) += elapsed;
+                predicate_latency.record(elapsed.as_secs_f64());
+                predicate_evaluations += 1;
                 if let Some(resting) = resting.as_deref_mut() {
                     match &evaluation {
                         Ok(ValidityPredicateEvaluation::Unsatisfied {
@@ -1540,8 +1546,10 @@ where
                         &predicate_context,
                     )
                 };
-                *predicate_eval_duration.get_or_insert(Duration::ZERO) +=
-                    evaluation_start.elapsed();
+                let elapsed = evaluation_start.elapsed();
+                *predicate_eval_duration.get_or_insert(Duration::ZERO) += elapsed;
+                predicate_latency.record(elapsed.as_secs_f64());
+                predicate_evaluations += 1;
                 match evaluation {
                     Ok(ValidityPredicateEvaluation::Matched) => {
                         evaluation_counters.increment(ValidityEvaluationOutcome::RescanMatched, 1);
@@ -1621,6 +1629,10 @@ where
             }
         }
 
+        ValidityMetrics::validity_predicate_evaluations_per_block()
+            .record(predicate_evaluations as f64);
+        ValidityMetrics::validity_predicate_eval_duration_per_canonical_block()
+            .record(predicate_eval_duration.unwrap_or_default().as_secs_f64());
         if let Some(predicate_eval_duration) = predicate_eval_duration {
             ValidityMetrics::record_predicate_eval_duration(predicate_eval_duration);
         }

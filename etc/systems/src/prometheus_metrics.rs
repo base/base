@@ -1,6 +1,6 @@
 //! Per-block Prometheus metric collection for benchmarked execution nodes.
 
-use std::{collections::BTreeMap, time::Duration};
+use std::{collections::BTreeMap, time::{Duration, Instant}};
 
 use alloy_provider::{Provider, RootProvider};
 use base_common_network::Base;
@@ -70,6 +70,15 @@ const VISUALIZER_METRICS: &[&str] = &[
     "reth_tree_root_sparse_trie_reveal_multiproof_duration_histogram_avg",
     "reth_tree_root_sparse_trie_total_duration_histogram",
     "reth_tree_root_sparse_trie_total_duration_histogram_avg",
+];
+
+/// Predicate distributions retained even when several flashblocks fall between scrapes.
+const PREDICATE_DISTRIBUTIONS: &[&str] = &[
+    "reth_base_builder_validity_predicate_evaluation_duration",
+    "reth_base_builder_validity_predicate_evaluations_per_flashblock",
+    "reth_base_builder_validity_predicate_eval_duration_per_flashblock",
+    "reth_base_builder_validity_predicate_evaluations_per_block",
+    "reth_base_builder_validity_predicate_eval_duration_per_canonical_block",
 ];
 
 #[derive(Debug, Clone, Copy)]
@@ -182,6 +191,10 @@ impl PrometheusSnapshot {
             if count_delta > 0.0 {
                 metrics.insert(format!("{key}_avg"), sum_delta / count_delta);
             }
+            if PREDICATE_DISTRIBUTIONS.contains(&key.as_str()) {
+                metrics.insert(format!("{key}_sum"), sum_delta / divisor);
+                metrics.insert(format!("{key}_count"), count_delta / divisor);
+            }
         }
         metrics
     }
@@ -271,6 +284,7 @@ impl PrometheusBlockCollector {
         let task = tokio::spawn(async move {
             let mut previous = initial;
             let mut last_head = initial_head;
+            let mut last_scrape = Instant::now();
             let mut samples = BTreeMap::new();
             loop {
                 let head = provider.get_block_number().await?;
@@ -278,6 +292,18 @@ impl PrometheusBlockCollector {
                     let current = Self::scrape(&client, &metrics_url).await?;
                     let block_count = head - last_head;
                     let mut metrics = current.delta_for_blocks(&previous, block_count);
+                    let elapsed = last_scrape.elapsed().as_secs_f64();
+                    last_scrape = Instant::now();
+                    if let Some(evaluations) = metrics.get(
+                        "reth_base_builder_validity_predicate_evaluation_duration_count",
+                    ).copied() {
+                        if elapsed > 0.0 {
+                            metrics.insert(
+                                "reth_base_builder_validity_predicate_evaluations_per_second".to_string(),
+                                evaluations * block_count as f64 / elapsed,
+                            );
+                        }
+                    }
                     metrics.retain(|name, _| Self::is_visualizer_metric(name));
                     metrics.insert(
                         "benchmark/prometheus_blocks_per_scrape".to_string(),
@@ -337,12 +363,35 @@ impl PrometheusBlockCollector {
     /// by `base/benchmark`'s `ChartGrid`, including its compatibility aliases.
     pub fn is_visualizer_metric(name: &str) -> bool {
         VISUALIZER_METRICS.contains(&name)
+            || matches!(name, "reth_base_builder_resting_predicates"
+                | "reth_base_builder_validity_predicate_evaluations_per_second")
+            || ["_avg", "_sum", "_count"].iter().any(|suffix| {
+                name.strip_suffix(suffix)
+                    .is_some_and(|base| PREDICATE_DISTRIBUTIONS.contains(&base))
+            })
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{PrometheusBlockCollector, PrometheusSnapshot};
+
+    /// Predicate distributions retain exact totals across a multi-block scrape.
+    #[test]
+    fn predicate_scrapes_preserve_totals_and_parked_gauge() {
+        let previous = PrometheusSnapshot::parse(
+            "# TYPE reth_base_builder_validity_predicate_evaluations_per_flashblock histogram\nreth_base_builder_validity_predicate_evaluations_per_flashblock_sum 2\nreth_base_builder_validity_predicate_evaluations_per_flashblock_count 1\n",
+        );
+        let current = PrometheusSnapshot::parse(
+            "# TYPE reth_base_builder_validity_predicate_evaluations_per_flashblock histogram\nreth_base_builder_validity_predicate_evaluations_per_flashblock_sum 14\nreth_base_builder_validity_predicate_evaluations_per_flashblock_count 5\n# TYPE reth_base_builder_resting_predicates gauge\nreth_base_builder_resting_predicates 7\n",
+        );
+        let mut delta = current.delta_for_blocks(&previous, 2);
+        delta.retain(|name, _| PrometheusBlockCollector::is_visualizer_metric(name));
+        assert_eq!(delta["reth_base_builder_validity_predicate_evaluations_per_flashblock_avg"], 3.0, "four flashblocks evaluated twelve transactions");
+        assert_eq!(delta["reth_base_builder_validity_predicate_evaluations_per_flashblock_sum"], 6.0, "twelve evaluations attributed over two blocks");
+        assert_eq!(delta["reth_base_builder_validity_predicate_evaluations_per_flashblock_count"], 2.0, "four flashblocks attributed over two blocks");
+        assert_eq!(delta["reth_base_builder_resting_predicates"], 7.0, "the parked gauge is not divided by block count");
+    }
 
     #[test]
     fn computes_counter_and_histogram_deltas() {

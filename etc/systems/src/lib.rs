@@ -30,6 +30,7 @@ pub use benchmark_cli::{
 
 mod benchmark_report;
 pub use benchmark_report::{
+    PredicateMetricSummary,
     SnapshotBenchmarkReportConfig, SnapshotBenchmarkResult, SnapshotBlockMetrics,
     VisualizerBlockMetrics, VisualizerMetadata, VisualizerRun, VisualizerRunResult,
     VisualizerSequencerMetrics, VisualizerValidatorMetrics,

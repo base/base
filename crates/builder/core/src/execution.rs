@@ -228,6 +228,10 @@ pub struct ExecutionInfo {
     pub da_footprint_scalar: Option<u16>,
     /// Validity-predicate state loads accumulated across the block's flashblock builds.
     pub predicate_loads: PredicateLoadTracker,
+    /// Transaction predicate evaluation attempts, including rescans, across all flashblocks.
+    pub predicate_evaluations: u64,
+    /// Total predicate evaluation time across all flashblocks, in seconds.
+    pub predicate_evaluation_seconds: f64,
     /// Validity inclusion and EIP-1559 fee revenue accumulated across the block.
     pub inclusion: InclusionTracker,
 }
@@ -246,6 +250,8 @@ impl ExecutionInfo {
             extra: Default::default(),
             da_footprint_scalar: None,
             predicate_loads: PredicateLoadTracker::default(),
+            predicate_evaluations: 0,
+            predicate_evaluation_seconds: 0.0,
             inclusion: InclusionTracker::default(),
         }
     }

@@ -988,6 +988,10 @@ where
 
         // Record validity-predicate state loads accumulated across the block's flashblocks.
         ValidityMetrics::record_predicate_loads(&info.predicate_loads);
+        ValidityMetrics::validity_predicate_evaluations_per_block()
+            .record(info.predicate_evaluations as f64);
+        ValidityMetrics::validity_predicate_eval_duration_per_canonical_block()
+            .record(info.predicate_evaluation_seconds);
 
         // Record validity inclusion and EIP-1559 fee revenue for the block.
         SharedBuilderMetrics::record_inclusion(&info.inclusion);
@@ -1020,8 +1024,11 @@ where
         let payload = self.finalize_payload(state, proof_provider, ctx, info)?;
         if self.config.resting_predicate_mode.is_enabled() {
             let mut resting = best_txs.take_resting_predicates();
+            ValidityMetrics::resting_predicates().set(resting.len() as f64);
             resting.end_block(payload.block().hash());
             self.resting_predicates.put(resting);
+        } else {
+            ValidityMetrics::resting_predicates().set(0.0);
         }
         Ok(payload)
     }

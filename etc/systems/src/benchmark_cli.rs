@@ -1213,6 +1213,7 @@ impl SnapshotBenchmarkArgs {
             client_rpc_url: validator.map(|(client_rpc, _)| client_rpc.to_string()),
             funder_address,
             load_test: summary,
+            predicate_summary: SnapshotBenchmarkResult::summarize_predicates(&blocks),
             blocks,
             validator_blocks,
         };

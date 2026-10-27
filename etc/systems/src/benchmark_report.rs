@@ -32,6 +32,53 @@ pub struct SnapshotBenchmarkResult {
     pub blocks: Vec<SnapshotBlockMetrics>,
     /// Follow-client copy of the canonical measured window; empty without a follow client.
     pub validator_blocks: Vec<SnapshotBlockMetrics>,
+    /// Statistics over scrape-attributed per-block predicate samples, not individual evaluations.
+    pub predicate_summary: BTreeMap<String, PredicateMetricSummary>,
+}
+
+/// Statistics over finite per-block metric samples; quantiles use nearest rank.
+#[derive(Debug, Serialize)]
+pub struct PredicateMetricSummary {
+    /// Sum of samples; additive metrics represent benchmark totals.
+    pub total: f64,
+    /// Arithmetic mean of the block samples.
+    pub mean: f64,
+    /// Nearest-rank median of the block samples.
+    pub p50: f64,
+    /// Nearest-rank 99th percentile of the block samples.
+    pub p99: f64,
+}
+
+impl PredicateMetricSummary {
+    /// Summarizes finite samples; an empty series has zero statistics.
+    pub fn from_samples(mut samples: Vec<f64>) -> Self {
+        samples.retain(|value| value.is_finite());
+        samples.sort_by(f64::total_cmp);
+        let total = samples.iter().sum();
+        let count = samples.len();
+        let percentile = |pct: usize| {
+            samples.get((count * pct).div_ceil(100).saturating_sub(1)).copied().unwrap_or_default()
+        };
+        Self { total, mean: if count == 0 { 0.0 } else { total / count as f64 },
+            p50: percentile(50), p99: percentile(99) }
+    }
+}
+
+impl SnapshotBenchmarkResult {
+    /// Summarizes predicate diagnostics attributed to the measured canonical block window.
+    pub fn summarize_predicates(blocks: &[SnapshotBlockMetrics]) -> BTreeMap<String, PredicateMetricSummary> {
+        let mut series: BTreeMap<String, Vec<f64>> = BTreeMap::new();
+        for block in blocks {
+            for (name, value) in &block.prometheus_metrics {
+                if name.starts_with("reth_base_builder_validity_predicate_")
+                    || name == "reth_base_builder_resting_predicates" {
+                    series.entry(name.clone()).or_default().push(*value);
+                }
+            }
+        }
+        series.into_iter().map(|(name, values)|
+            (name, PredicateMetricSummary::from_samples(values))).collect()
+    }
 }
 
 /// Canonical metrics for one block in the measured benchmark window.
@@ -334,6 +381,19 @@ mod tests {
 
     use super::{SnapshotBenchmarkReportConfig, SnapshotBenchmarkResult, SnapshotBlockMetrics};
 
+    /// Predicate summary statistics retain exact totals and nearest-rank percentiles.
+    #[test]
+    fn predicate_summary_has_exact_totals_and_percentiles() {
+        let samples = [2.0, 4.0, 6.0, 8.0];
+        let summary = super::PredicateMetricSummary::from_samples(samples.to_vec());
+        assert_eq!(summary.total, 20.0, "all four block values contribute to the total");
+        assert_eq!(summary.mean, 5.0, "mean uses all four measured blocks");
+        assert_eq!(summary.p50, 4.0, "nearest-rank median is the second sample");
+        assert_eq!(summary.p99, 8.0, "nearest-rank p99 is the final sample");
+        let json = serde_json::to_value(summary).unwrap();
+        assert_eq!(json["total"], 20.0, "the summary total reaches result JSON");
+    }
+
     #[test]
     fn writes_visualizer_data_contract() {
         let output = tempfile::tempdir().unwrap();
@@ -346,8 +406,9 @@ mod tests {
             "blake2f-200ms".to_string(),
             "base/v0.0.0-test123".to_string(),
         );
-        let result = SnapshotBenchmarkResult {
+        let mut result = SnapshotBenchmarkResult {
             chain_id: 8453,
+            predicate_summary: BTreeMap::new(),
             block_interval_ms: 200,
             boundary_number: 9,
             boundary_hash: B256::ZERO,
@@ -396,6 +457,16 @@ transactions:
                 prometheus_metrics: BTreeMap::new(),
             }],
         };
+        let name = "reth_base_builder_validity_predicate_evaluations_per_block_sum";
+        result.blocks[0].prometheus_metrics.insert(name.to_string(), 12.0);
+        result.predicate_summary = SnapshotBenchmarkResult::summarize_predicates(&result.blocks);
+        let json = serde_json::to_value(&result).unwrap();
+        assert_eq!(json["blocks"][0]["prometheus_metrics"][name], 12.0,
+            "the exact per-block evaluation count reaches result JSON");
+        assert_eq!(json["predicate_summary"][name]["total"], 12.0,
+            "the summary retains the exact evaluation total");
+        assert_eq!(json["predicate_summary"][name]["p99"], 12.0,
+            "a single block has exactly its own value at p99");
 
         report.write_visualizer_bundle(&result).unwrap();
 
@@ -444,6 +515,7 @@ transactions:
         );
         let result = SnapshotBenchmarkResult {
             chain_id: 8453,
+            predicate_summary: BTreeMap::new(),
             block_interval_ms: 2_000,
             boundary_number: 9,
             boundary_hash: B256::ZERO,

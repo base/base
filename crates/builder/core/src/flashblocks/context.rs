@@ -631,10 +631,16 @@ impl BasePayloadBuilderCtx {
     /// until the first call, so a `Some` result also records that at least one
     /// predicate was evaluated during the build; this gates the per-block
     /// histogram so blocks without validity transactions emit no observation.
-    fn accumulate_elapsed<T>(total: &mut Option<Duration>, f: impl FnOnce() -> T) -> T {
+    fn accumulate_elapsed<T>(
+        total: &mut Option<Duration>,
+        record: impl FnOnce(Duration),
+        f: impl FnOnce() -> T,
+    ) -> T {
         let start = Instant::now();
         let value = f();
-        *total.get_or_insert(Duration::ZERO) += start.elapsed();
+        let elapsed = start.elapsed();
+        *total.get_or_insert(Duration::ZERO) += elapsed;
+        record(elapsed);
         value
     }
 
@@ -780,6 +786,8 @@ impl BasePayloadBuilderCtx {
         let predicate_context =
             PredicateContext { block_number, flashblock_index: self.flashblock_index() };
         let mut evaluation_counters = ValidityEvaluationCounters::default();
+        let predicate_latency = ValidityMetrics::validity_predicate_evaluation_duration();
+        let mut predicate_evaluations = 0_u64;
 
         // Total validity-predicate evaluation time (inclusive of the state loads each
         // evaluation performs) across this flashblock build. `None` until the first
@@ -844,7 +852,9 @@ impl BasePayloadBuilderCtx {
             let mut predicate_expired = false;
             let blocking_predicate = if has_validity_predicates {
                 validity_candidates_evaluated += 1;
-                match Self::accumulate_elapsed(&mut predicate_eval_total, || {
+                predicate_evaluations += 1;
+                match Self::accumulate_elapsed(&mut predicate_eval_total,
+                    |elapsed| predicate_latency.record(elapsed.as_secs_f64()), || {
                     let mut recorder =
                         PredicateReadRecorder::new(&mut **evm.db_mut(), &mut info.predicate_loads);
                     ValidityPredicateEvaluation::evaluate(
@@ -1459,8 +1469,10 @@ impl BasePayloadBuilderCtx {
                     );
                     continue;
                 };
+                predicate_evaluations += 1;
                 let blocking_predicate =
-                    match Self::accumulate_elapsed(&mut predicate_eval_total, || {
+                    match Self::accumulate_elapsed(&mut predicate_eval_total,
+                        |elapsed| predicate_latency.record(elapsed.as_secs_f64()), || {
                         let mut recorder = PredicateReadRecorder::new(
                             &mut **evm.db_mut(),
                             &mut info.predicate_loads,
@@ -1560,6 +1572,13 @@ impl BasePayloadBuilderCtx {
         if let Some(predicate_eval_total) = predicate_eval_total {
             ValidityMetrics::record_predicate_eval_duration(predicate_eval_total);
         }
+        let evaluation_seconds = predicate_eval_total.unwrap_or_default().as_secs_f64();
+        ValidityMetrics::validity_predicate_eval_duration_per_flashblock()
+            .record(evaluation_seconds);
+        ValidityMetrics::validity_predicate_evaluations_per_flashblock()
+            .record(predicate_evaluations as f64);
+        info.predicate_evaluations += predicate_evaluations;
+        info.predicate_evaluation_seconds += evaluation_seconds;
         let resting_stats = best_txs.take_resting_stats();
         if resting_stats.parked > 0 {
             ValidityMetrics::resting_predicate_parked_total().increment(resting_stats.parked);
