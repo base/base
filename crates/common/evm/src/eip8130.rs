@@ -665,9 +665,19 @@ impl Eip8130Executor {
         // the limit also covers the net charge (which never exceeds it). The
         // EIP-7623 floor raises the returned limit for a data-heavy transaction so
         // it is never rejected at admission (`gas_limit >= sender_floor`).
-        let estimate_gas = outcome
-            .floored_sender_gas(outcome.sender_intrinsic.saturating_add(feasible_pool))
-            .saturating_add(outcome.payer_auth);
+        //
+        // Under gas limit pricing the declared limit is billed as-is and payer
+        // authentication is billed on top of it, so folding `payer_auth` into the
+        // returned limit would charge it twice; the estimate is then the sender
+        // budget alone, and `gas_limit + payer_auth` at that limit is exactly the
+        // settled gas.
+        let sender_budget =
+            outcome.floored_sender_gas(outcome.sender_intrinsic.saturating_add(feasible_pool));
+        let estimate_gas = if evm.ctx().cfg().spec().charges_gas_limit() {
+            sender_budget
+        } else {
+            sender_budget.saturating_add(outcome.payer_auth)
+        };
         Self::end_inspection(
             evm,
             inspection,
@@ -3235,6 +3245,77 @@ mod tests {
         let sender_gas = intrinsic.sender_intrinsic() + call_gas;
         assert!(sender_gas > intrinsic.sender_floor(), "execution must clear the floor");
         assert_eq!(outcome.result.tx_gas_used(), sender_gas + intrinsic.payer_auth_standard);
+    }
+
+    /// Under gas limit pricing the estimate excludes payer authentication, so a
+    /// sponsored transaction submitted at `gas_limit = estimate` settles exactly
+    /// `estimate + payer_auth` (the reserved budget) rather than paying for payer
+    /// authentication twice, and still succeeds at that limit. Without gas limit
+    /// pricing the estimate keeps `payer_auth` folded in as call-pool headroom.
+    #[test]
+    fn gas_limit_pricing_estimate_excludes_payer_auth_so_it_is_not_billed_twice() {
+        let key = signing_key(0x38);
+        let sender = eoa_address(&key);
+        let payer_key = signing_key(0x39);
+        let payer = eoa_address(&payer_key);
+        let target = address!("0x00000000000000000000000000000000000000ca");
+        let initial = U256::from(10u64).pow(U256::from(18u64));
+
+        let sign = |tx: TxEip8130| {
+            let sender_auth = eoa_sig(&key, tx.sender_signature_hash());
+            let payer_auth = eoa_sig(&payer_key, tx.payer_signature_hash(sender));
+            Eip8130Signed::new(tx, sender_auth, payer_auth)
+        };
+        let tx = TxEip8130 {
+            payer: Some(Eip8130Constants::OPEN_PAYER),
+            calls: vec![vec![Call { to: target, value: U256::ZERO, data: Bytes::new() }]],
+            ..base_tx()
+        };
+        let signed = sign(tx.clone());
+        let envelope = BaseTxEnvelope::Eip8130(signed.clone());
+        let encoded: Bytes = alloy_eips::eip2718::Encodable2718::encoded_2718(&envelope).into();
+        let payer_auth =
+            IntrinsicGas::compute(&signed, &encoded, &IntrinsicGasInput::new(sender, true))
+                .expect("intrinsic gas")
+                .payer_auth;
+        assert!(payer_auth > 0, "a sponsored transaction meters payer authentication");
+
+        let estimate = |zenith: bool| {
+            let evm = evm_with_accounts(initial, payer, &[(target, bytes!("00"))]);
+            let mut evm = if zenith { with_zenith(evm) } else { evm };
+            evm.ctx_mut().tx = into_base_tx(&signed);
+            evm.ctx_mut().tx.base.caller = sender;
+            if let Some(parts) = evm.ctx_mut().tx.eip8130.as_mut() {
+                parts.mode = Eip8130ExecutionMode::Simulate;
+            }
+            let result = Eip8130Executor::simulate(&mut evm).expect("estimate succeeds");
+            assert!(result.is_success(), "estimate should report success, got {result:?}");
+            result.tx_gas_used()
+        };
+        let settle_at = |zenith: bool, gas_limit: u64| {
+            let signed = sign(TxEip8130 { gas_limit, ..tx.clone() });
+            let evm = evm_with_accounts(initial, payer, &[(target, bytes!("00"))]);
+            let mut evm = if zenith { with_zenith(evm) } else { evm };
+            let outcome = evm.transact_raw(into_base_tx(&signed)).expect("sponsored tx executes");
+            assert!(outcome.result.is_success(), "expected success, got {:?}", outcome.result);
+            (outcome.result.tx_gas_used(), initial - outcome.state[&payer].info.balance)
+        };
+
+        // Zenith: the estimate is the sender budget; executing at that limit
+        // settles the reserved budget, `estimate + payer_auth`, once.
+        let zenith_estimate = estimate(true);
+        let (settled, paid) = settle_at(true, zenith_estimate);
+        assert_eq!(settled, zenith_estimate + payer_auth);
+        assert_eq!(
+            paid,
+            U256::from(settled) * U256::from(u128::from(BASE_FEE) + tx.max_priority_fee_per_gas)
+        );
+
+        // Pre-Zenith: the estimate still folds payer authentication in as headroom,
+        // and settlement bills metered gas, which is below the estimate.
+        let everest_estimate = estimate(false);
+        let (metered, _) = settle_at(false, everest_estimate);
+        assert!(metered < everest_estimate, "metered charge must be below the estimate");
     }
 
     /// The sender estimates an open payer transaction before any payer has

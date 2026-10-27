@@ -201,7 +201,9 @@ fn billable_gas(outcome: &Eip8130Outcome, calls: &CallsResult, spec: BaseSpecId)
 }
 ```
 
-`settle_fees` already derives the fee, base-fee amount, tip, and operator fee from `billable_gas`, refunds `prepay - total_cost` to the payer, and returns `billable_gas` as the receipt gas. The pre-charge bounds `gas_limit + payer_auth` at the effective price, so the subtraction cannot underflow. `simulate` stays on the gross metered amount so EIP-8130 estimation keeps working.
+`settle_fees` already derives the fee, base-fee amount, tip, and operator fee from `billable_gas`, refunds `prepay - total_cost` to the payer, and returns `billable_gas` as the receipt gas. The pre-charge bounds `gas_limit + payer_auth` at the effective price, so the subtraction cannot underflow.
+
+`simulate` (EIP-8130 estimation) stays on the gross metered amount, with one adjustment: today it returns `sender_budget + payer_auth` as the suggested `gas_limit`, folding payer authentication in as call-pool headroom that costs nothing under metered billing. Under gas limit pricing that limit is billed as-is and `payer_auth` is billed on top, so a transaction submitted at `gas_limit = estimate` would pay for payer authentication twice. When `charges_gas_limit()` is active the estimate is therefore the sender budget alone; executing at that limit settles exactly `estimate + payer_auth`.
 
 ### What does not change
 
@@ -343,7 +345,7 @@ Not a correctness test, but part of validating the design: scan a recent range o
 - **Estimation becomes load-bearing.** `eth_estimateGas` results that are too low turn into out-of-gas failures that pay the full limit; results that are high are paid in full. Calls whose gas depends on state at inclusion time (swaps, auctions) cannot be estimated exactly, so some padding remains rational. The data scan should report how often the optimistic estimate would have failed.
 - **Semantics of `gasUsed`.** The field changes meaning for a widely used audience. Explorer and indexer owners should review before the rule is specified, and the metered gas should remain reachable through traces.
 - **Base-fee transition.** Reserved gas is higher than metered gas, so the base fee steps up after activation until limits tighten. Decide, from the data scan, whether to change the target or elasticity alongside activation or accept the transition.
-- **EIP-8130 payer authentication.** Charging `payer_auth` at the full reserved amount is consistent with reservation but differs from today's floor-versus-standard-rate settlement. Confirm this matches the intended EIP-8130 fee model.
+- **EIP-8130 payer authentication.** Charging `payer_auth` at the full reserved amount is consistent with reservation but differs from today's floor-versus-standard-rate settlement, and the estimate no longer includes it, so `eth_estimateGas * gasPrice` understates a sponsored transaction's total by `payer_auth * gasPrice` (inherent to metering payer authentication on top of `gas_limit`). Confirm this matches the intended EIP-8130 fee model.
 - **EIP-8130 and `disable_fee_charge`.** `Eip8130Executor::execute` settles fees regardless of `cfg.disable_fee_charge` (pre-existing), so a signed execute-mode EIP-8130 transaction run under that flag reports the reserved budget rather than metered gas. EIP-8130 estimation goes through `simulate`, which is unaffected, so normal RPC paths are fine; the exemption is by execution mode, not by the flag.
 - **Deposit `gasUsed` regression to Bedrock shape.** Tooling that was updated for Regolith (deposit `gasUsed` metered) sees deposits report `gasLimit` again. Low impact, but it should be in the specification.
 - **Divergence from the OP Stack fee model.** Base-specific execution rules already exist (Azul onward), but this rule needs a specification entry, and shared tooling that assumes `gasUsed < gasLimit` for successful calls must be checked.
