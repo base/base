@@ -120,13 +120,21 @@ where
 
     /// Handles a [`Signal`] received over the derivation signal receiver channel.
     async fn signal(&mut self, signal: Signal) {
-        if let Signal::Reset(ResetSignal { l2_safe_head: _reset_safe_head }) = signal {
-            Metrics::derivation_l1_origin().absolute(_reset_safe_head.l1_origin.number);
-            // Clear the finalization queue on reset.
-            self.finalizer.clear();
+        if let Signal::Reset(ResetSignal { l2_safe_head: reset_safe_head }) = signal {
+            Metrics::derivation_l1_origin().absolute(reset_safe_head.l1_origin.number);
+            // Keep the candidates that the reset still allows to be finalized. Clearing the
+            // whole queue used to lose every block at or below the reset safe head, which is
+            // never re-derived, so a reset rate above the L1 finality cadence starved
+            // finalization indefinitely.
+            self.finalizer.retain_valid_after_reset(reset_safe_head);
             // Discard any in-flight derived_from so that a stale pre-reset L1 inclusion
             // block is never recorded for a post-reset safe head confirmation.
             self.pending_derived_from = None;
+            // Retained candidates may already be covered by the finalized L1 signal that was
+            // kept across earlier resets, and no new L1 finality update is guaranteed soon.
+            if let Err(e) = self.try_finalize_pending().await {
+                error!(target: "derivation", error = %e, "failed to finalize pending L2 blocks after reset");
+            }
 
             // Reset the SafeDB on pipeline reset.
             //
@@ -454,4 +462,219 @@ pub enum DerivationError {
     /// An invalid state transition occurred.
     #[error(transparent)]
     StateTransitionError(#[from] DerivationStateTransitionError),
+}
+
+#[cfg(test)]
+mod tests {
+    //! Unit tests for the reset handling of the [`DerivationActor`].
+    //!
+    //! The pipeline double is hand-rolled rather than mocked with `mockall`: [`Pipeline`] is
+    //! defined in `base-consensus-derive`, so an automock would have to live in that crate's test
+    //! surface, and the double only needs to return a fixed `StepResult` so the actor never
+    //! derives anything on its own.
+
+    use std::sync::Arc;
+
+    use alloy_eips::BlockNumHash;
+    use base_common_genesis::RollupConfig;
+    use base_common_rpc_types_engine::BasePayloadAttributes;
+    use base_consensus_derive::{
+        Pipeline, PipelineError, PipelineResult, ResetSignal, Signal, SignalReceiver, StepResult,
+    };
+    use base_consensus_safedb::SafeHeadListener;
+    use base_protocol::{AttributesWithParent, BlockInfo, L2BlockInfo};
+    use mockall::predicate::eq;
+    use tokio::sync::{mpsc, watch};
+
+    use super::{super::engine_client::MockDerivationEngineClient, DerivationActor};
+    use crate::{DerivationActorRequest, test_utils::FakeSafeDB};
+
+    /// A [`Pipeline`] double that reports end-of-data on every step and records reset signals.
+    #[derive(Debug)]
+    struct IdlePipeline {
+        rollup_config: Arc<RollupConfig>,
+        origin: Option<BlockInfo>,
+    }
+
+    impl IdlePipeline {
+        fn new() -> Self {
+            Self { rollup_config: Arc::new(RollupConfig::default()), origin: None }
+        }
+    }
+
+    impl Iterator for IdlePipeline {
+        type Item = AttributesWithParent;
+
+        fn next(&mut self) -> Option<Self::Item> {
+            None
+        }
+    }
+
+    impl base_consensus_derive::OriginProvider for IdlePipeline {
+        fn origin(&self) -> Option<BlockInfo> {
+            self.origin
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl Pipeline for IdlePipeline {
+        fn peek(&self) -> Option<&AttributesWithParent> {
+            None
+        }
+
+        async fn step(&mut self, _cursor: L2BlockInfo) -> StepResult {
+            StepResult::StepFailed(PipelineError::Eof.temp())
+        }
+
+        fn rollup_config(&self) -> &RollupConfig {
+            &self.rollup_config
+        }
+
+        async fn system_config_by_l2_hash(
+            &mut self,
+            _hash: alloy_primitives::B256,
+        ) -> PipelineResult<base_common_genesis::SystemConfig> {
+            Err(PipelineError::MissingOrigin.crit())
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl SignalReceiver for IdlePipeline {
+        async fn signal(&mut self, signal: Signal) -> PipelineResult<()> {
+            if let Signal::Reset(ResetSignal { l2_safe_head }) = signal {
+                self.origin = Some(BlockInfo {
+                    number: l2_safe_head.l1_origin.number,
+                    hash: l2_safe_head.l1_origin.hash,
+                    ..Default::default()
+                });
+            }
+            Ok(())
+        }
+    }
+
+    /// Builds a derived [`AttributesWithParent`] for the L2 block after `parent_number`, with
+    /// `inclusion_number` as the L1 inclusion block (`derived_from`).
+    fn attrs(parent_number: u64, inclusion_number: u64) -> AttributesWithParent {
+        let parent = L2BlockInfo {
+            block_info: BlockInfo { number: parent_number, ..Default::default() },
+            l1_origin: BlockNumHash::default(),
+            seq_num: 0,
+        };
+        let derived_from = BlockInfo { number: inclusion_number, ..Default::default() };
+        AttributesWithParent::new(
+            BasePayloadAttributes::default(),
+            parent,
+            Some(derived_from),
+            false,
+        )
+    }
+
+    fn l1_at(number: u64) -> BlockInfo {
+        BlockInfo { number, ..Default::default() }
+    }
+
+    fn safe_head_at(number: u64, origin_number: u64) -> L2BlockInfo {
+        L2BlockInfo {
+            block_info: BlockInfo { number, ..Default::default() },
+            l1_origin: BlockNumHash { number: origin_number, ..Default::default() },
+            seq_num: 0,
+        }
+    }
+
+    /// Builds an actor with no inbound traffic and a mock engine client that records the
+    /// finalized L2 block numbers it is handed.
+    fn test_actor(
+        engine_client: MockDerivationEngineClient,
+    ) -> (
+        DerivationActor<MockDerivationEngineClient, IdlePipeline>,
+        mpsc::Sender<DerivationActorRequest>,
+    ) {
+        let (request_tx, request_rx) = mpsc::channel(16);
+        let (origin_tx, _origin_rx) = watch::channel(None);
+        let actor = DerivationActor::new(
+            engine_client,
+            tokio_util::sync::CancellationToken::new(),
+            request_rx,
+            IdlePipeline::new(),
+            Arc::new(FakeSafeDB::default()) as Arc<dyn SafeHeadListener>,
+            origin_tx,
+        );
+        (actor, request_tx)
+    }
+
+    #[tokio::test]
+    async fn derivation_resets_do_not_starve_finalization() {
+        let mut engine_client = MockDerivationEngineClient::new();
+        engine_client.expect_send_finalized_l2_block().times(1).with(eq(502)).returning(|_| Ok(()));
+        let (mut actor, _request_tx) = test_actor(engine_client);
+
+        // L1 finality has already reached block 100, and the derivation pipeline has derived L2
+        // blocks whose batches were included in L1 blocks that are not final yet.
+        assert!(
+            actor
+                .handle_derivation_actor_request(DerivationActorRequest::ProcessFinalizedL1Block(
+                    Box::new(l1_at(100))
+                ))
+                .await
+                .is_ok()
+        );
+        for (l2_parent, inclusion) in [(500, 105), (501, 107), (502, 110)] {
+            actor.finalizer.enqueue_for_finalization(&attrs(l2_parent, inclusion));
+        }
+
+        // The pipeline resets repeatedly while the safe head keeps advancing.
+        for _ in 0..3 {
+            actor.signal(ResetSignal { l2_safe_head: safe_head_at(503, 112) }.signal()).await;
+        }
+
+        // Finalized L1 now covers the inclusion block of the second derived block.
+        actor
+            .handle_derivation_actor_request(DerivationActorRequest::ProcessFinalizedL1Block(
+                Box::new(l1_at(108)),
+            ))
+            .await
+            .expect("finalized L1 update failed");
+    }
+
+    #[tokio::test]
+    async fn reset_rolling_back_the_safe_head_never_finalizes_above_it() {
+        let mut engine_client = MockDerivationEngineClient::new();
+        engine_client.expect_send_finalized_l2_block().times(1).with(eq(480)).returning(|_| Ok(()));
+        let (mut actor, _request_tx) = test_actor(engine_client);
+
+        actor.finalizer.enqueue_for_finalization(&attrs(479, 105));
+        actor.finalizer.enqueue_for_finalization(&attrs(599, 108));
+
+        // The reset rolls the safe head back below the second candidate. Both inclusion blocks
+        // sit at or below the reset origin, so only the rollback drops the second candidate.
+        actor.signal(ResetSignal { l2_safe_head: safe_head_at(500, 110) }.signal()).await;
+
+        actor
+            .handle_derivation_actor_request(DerivationActorRequest::ProcessFinalizedL1Block(
+                Box::new(l1_at(120)),
+            ))
+            .await
+            .expect("finalized L1 update failed");
+    }
+
+    #[tokio::test]
+    async fn reset_drops_candidates_included_above_the_reset_origin() {
+        let mut engine_client = MockDerivationEngineClient::new();
+        engine_client.expect_send_finalized_l2_block().times(1).with(eq(480)).returning(|_| Ok(()));
+        let (mut actor, _request_tx) = test_actor(engine_client);
+
+        // Both candidates are below the reset safe head, but only the first was included at or
+        // below the L1 block the pipeline resumes from.
+        actor.finalizer.enqueue_for_finalization(&attrs(479, 100));
+        actor.finalizer.enqueue_for_finalization(&attrs(489, 101));
+
+        actor.signal(ResetSignal { l2_safe_head: safe_head_at(500, 100) }.signal()).await;
+
+        actor
+            .handle_derivation_actor_request(DerivationActorRequest::ProcessFinalizedL1Block(
+                Box::new(l1_at(120)),
+            ))
+            .await
+            .expect("finalized L1 update failed");
+    }
 }
