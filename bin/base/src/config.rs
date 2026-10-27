@@ -41,18 +41,16 @@ impl FromStr for ChainArg {
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         let selector = value.to_ascii_lowercase();
-        // Accept both the Base-centric selectors (`mainnet`/`sepolia`/`zeronet`/
-        // `dev`) and the legacy namespaced names (`base`/`base-sepolia`/
-        // `base-zeronet`/`dev`) used by the former split `base-reth-node`,
-        // normalizing either to the canonical selector so the rest of the
-        // pipeline only ever sees a selector. Anything unrecognized is treated as
-        // a path to a TOML chain config file.
-        Ok(ChainConfig::by_any_name(&selector)
-            .and_then(ChainConfig::base_chain_selector)
-            .map_or_else(
-                || Self::File(PathBuf::from(value)),
-                |selector| Self::BuiltIn(selector.to_owned()),
-            ))
+        // Accept the Base-centric selectors (`mainnet`/`sepolia`/`zeronet`/`dev`), the legacy
+        // namespaced names (`base`/`base-sepolia`/`base-zeronet`/`dev`), and built-in L2 chain
+        // IDs, normalizing all of them to the canonical selector. Anything unrecognized is
+        // treated as a path to a TOML chain config file.
+        let config = ChainConfig::by_any_name(&selector)
+            .or_else(|| value.parse::<u64>().ok().and_then(ChainConfig::by_chain_id));
+        Ok(config.and_then(ChainConfig::base_chain_selector).map_or_else(
+            || Self::File(PathBuf::from(value)),
+            |selector| Self::BuiltIn(selector.to_owned()),
+        ))
     }
 }
 
@@ -264,6 +262,13 @@ mod tests {
 
             Ok(())
         });
+    }
+
+    #[test]
+    fn parses_l2_chain_ids_as_builtin_selectors() {
+        assert_eq!("8453".parse::<ChainArg>().unwrap(), ChainArg::BuiltIn("mainnet".to_owned()));
+        assert_eq!("84532".parse::<ChainArg>().unwrap(), ChainArg::BuiltIn("sepolia".to_owned()));
+        assert_eq!("999".parse::<ChainArg>().unwrap(), ChainArg::File(PathBuf::from("999")));
     }
 
     #[test]
