@@ -2,6 +2,7 @@
 
 use std::collections::BTreeMap;
 
+use alloy_primitives::B256;
 use base_protocol::{AttributesWithParent, BlockInfo, L2BlockInfo};
 
 /// An internal type alias for L1 block numbers.
@@ -36,6 +37,16 @@ pub struct PendingFinalization {
 /// blocks up to several L1 blocks before their data was actually finalized.
 ///
 /// [`L2BlockInfo::l1_origin`]: base_protocol::L2BlockInfo::l1_origin
+///
+/// # One verification per finalized inclusion block
+///
+/// The actor promotes a candidate only after confirming that its inclusion block is canonical on
+/// the finalized L1 chain, and that answer is final: an inclusion block at or below the finalized
+/// L1 height cannot be replaced afterwards. [`Self::mark_inclusion_verified`] records the verified
+/// identity so the actor does not repeat the L1 request for every L2 block the same batch
+/// produced, which a node catching up would otherwise do once per derived block. The record is
+/// keyed by height but holds the hash, so a different block at a verified height is still checked,
+/// and [`Self::try_finalize_next`] prunes the entries derivation has moved past.
 #[derive(Debug, Default)]
 pub struct L2Finalizer {
     /// A map of `L1 inclusion block number -> highest derived L2 block number` included in that
@@ -55,6 +66,12 @@ pub struct L2Finalizer {
     /// candidates derived from the L1 blocks the safe head itself was built from. `None` before
     /// the first confirmation, and after a reset moved the safe head to a block this finalizer did
     /// not confirm.
+    /// Inclusion blocks already verified canonical, keyed by L1 block number.
+    ///
+    /// A finalized L1 height is immutable, so one verification covers every L2 block a batch in
+    /// that block produced, however many safe-head confirmations arrive afterwards. Entries are
+    /// pruned in [`Self::try_finalize_next`] once derivation has advanced past them.
+    verified_inclusions: BTreeMap<L1BlockNumber, B256>,
     confirmed_safe_head: Option<(L2BlockInfo, BlockInfo)>,
 }
 
@@ -106,8 +123,10 @@ impl L2Finalizer {
     /// Returns the candidate that finalizing up to `finalized_l1_number` would promote, without
     /// removing it from the queue.
     ///
-    /// Callers must confirm that [`PendingFinalization::inclusion`] is still canonical before
-    /// calling [`Self::try_finalize_next`], which drains every entry at or below this candidate.
+    /// Callers must confirm that [`PendingFinalization::inclusion`] is canonical before calling
+    /// [`Self::try_finalize_next`], which drains every entry at or below this candidate. They can
+    /// skip the L1 request when [`Self::verified_inclusion`] already answered for that block.
+    ///
     pub fn pending_candidate(
         &self,
         finalized_l1_number: L1BlockNumber,
@@ -119,6 +138,21 @@ impl L2Finalizer {
     /// be canonical.
     pub fn drop_candidate(&mut self, inclusion_block_number: L1BlockNumber) {
         self.awaiting_finalization.remove(&inclusion_block_number);
+    }
+    /// Returns whether `inclusion` was already verified canonical, so the caller can skip the
+    /// L1 request.
+    ///
+    /// The hit requires the same hash, not just the same height: a different block at a verified
+    /// height is a different inclusion identity and has to be checked on its own.
+    pub fn verified_inclusion(&self, inclusion: BlockInfo) -> bool {
+        self.verified_inclusions
+            .get(&inclusion.number)
+            .is_some_and(|verified| *verified == inclusion.hash)
+    }
+
+    /// Records that `inclusion` is canonical on the finalized L1 chain.
+    pub fn mark_inclusion_verified(&mut self, inclusion: BlockInfo) {
+        self.verified_inclusions.insert(inclusion.number, inclusion.hash);
     }
 
     /// Records the safe head the engine confirmed, and the L1 inclusion block derivation produced
@@ -211,15 +245,16 @@ impl L2Finalizer {
     ) -> Option<L2BlockNumber> {
         // Find the highest safe L2 block that is contained within the finalized chain,
         // that the finalizer is aware of.
-        let result = self
-            .awaiting_finalization
-            .range(..=new_finalized_l1_block.number)
-            .next_back()?
-            .1
-            .l2_block;
+        let (&inclusion_number, pending) =
+            self.awaiting_finalization.range(..=new_finalized_l1_block.number).next_back()?;
+        let l2_block = pending.l2_block;
         // Drain the queue of all L1 blocks contained in the finalized L1 chain.
         self.awaiting_finalization.retain(|&number, _| number > new_finalized_l1_block.number);
-        Some(result)
+        // Derivation produces batches in L1 order, so no candidate below the promoted inclusion
+        // block can appear again and its verification is no longer needed. The promoted block
+        // stays: further L2 blocks can still arrive from it.
+        self.verified_inclusions = self.verified_inclusions.split_off(&inclusion_number);
+        Some(l2_block)
     }
 }
 
@@ -566,6 +601,35 @@ mod tests {
         assert_eq!(f.try_finalize_next(l1_at(5)), Some(20));
         // Queue is now empty; an older signal cannot regress to a stale entry.
         assert!(f.try_finalize_next(l1_at(2)).is_none());
+    }
+
+    #[test]
+    fn verified_inclusion_requires_the_same_hash() {
+        let mut f = L2Finalizer::default();
+        let inclusion_a = inclusion_at(120, 0xa);
+
+        assert!(!f.verified_inclusion(inclusion_a));
+        f.mark_inclusion_verified(inclusion_a);
+
+        assert!(f.verified_inclusion(inclusion_a));
+        // A different block at the verified height is a different identity: it has to be checked.
+        assert!(!f.verified_inclusion(inclusion_at(120, 0xb)));
+    }
+
+    #[test]
+    fn verified_inclusions_are_pruned_once_derivation_advances() {
+        let mut f = L2Finalizer::default();
+        let kept = inclusion_at(120, 0xa);
+        f.mark_inclusion_verified(inclusion_at(118, 0xa));
+        f.mark_inclusion_verified(kept);
+        f.enqueue_for_finalization(&attrs_included_at(499, kept));
+
+        assert_eq!(f.try_finalize_next(l1_at(120)), Some(500));
+
+        // Batches are derived in L1 order, so nothing below the promoted block can come back; the
+        // promoted block itself can still produce more L2 blocks.
+        assert!(!f.verified_inclusion(inclusion_at(118, 0xa)));
+        assert!(f.verified_inclusion(kept));
     }
 
     #[test]
