@@ -668,6 +668,75 @@ mod tests {
         assert!(gas < 41_000, "calibrated {gas} gas includes the first-write cost");
     }
 
+    #[tokio::test]
+    async fn reverse_amounts_auto_prices_reverse_swaps_at_the_pool() {
+        let anvil = Anvil::new().spawn();
+        let provider: RootProvider = RootProvider::new_http(anvil.endpoint_url());
+        let (router, factory, pool) =
+            (Address::repeat_byte(0x10), Address::repeat_byte(0x20), Address::repeat_byte(0x30));
+        // sqrt(2320e6 / 1e18) * 2^96: 2,320 token_out (6 decimals) per token_in (18 decimals).
+        let sqrt_price_x96 = U256::from(3_816_133_648_877_761_641_136_391u128);
+        // Each stub returns `word` padded to `len` bytes: PUSH32 word, MSTORE at 0, RETURN.
+        for (contract, word, len) in [
+            (router, factory.into_word().0, 32u8),
+            (factory, pool.into_word().0, 32),
+            (pool, sqrt_price_x96.to_be_bytes::<32>(), 224),
+        ] {
+            let mut code = vec![0x7f];
+            code.extend_from_slice(&word);
+            code.extend_from_slice(&[0x60, 0x00, 0x52, 0x60, len, 0x60, 0x00, 0xf3]);
+            let _: () = provider
+                .raw_request("anvil_setCode".into(), (contract, Bytes::from(code)))
+                .await
+                .unwrap();
+        }
+        let config = LoadConfig {
+            transaction_submission_rpcs: vec![anvil.endpoint_url()],
+            query_rpc: anvil.endpoint_url(),
+            chain_id: anvil.chain_id(),
+            account_count: 1,
+            transactions: vec![TxConfig {
+                weight: 100,
+                tx_type: TxType::UniswapV3 {
+                    native: false,
+                    router,
+                    token_in: Address::repeat_byte(0x11),
+                    token_out: Address::repeat_byte(0x22),
+                    fee: 500,
+                    min_amount: U256::from(10_000_000_000_000u64),
+                    max_amount: U256::from(10_000_000_000_000u64),
+                    reverse_min_amount: U256::from(10_000_000_000_000u64),
+                    reverse_max_amount: U256::from(10_000_000_000_000u64),
+                    derive_reverse_amounts: true,
+                },
+            }],
+            ..LoadConfig::devnet()
+        };
+        let mut runner = LoadRunner::new(config).expect("valid config");
+
+        runner.derive_reverse_swap_amounts().await.expect("pool price is readable");
+
+        let TxType::UniswapV3 { reverse_min_amount, derive_reverse_amounts, .. } =
+            runner.config.transactions[0].tx_type
+        else {
+            panic!("expected UniswapV3");
+        };
+        assert_eq!(reverse_min_amount, U256::from(23_200), "forward amount at the pool price");
+        assert!(!derive_reverse_amounts, "amounts are derived once per run");
+        let amounts: std::collections::BTreeSet<_> = (0..32)
+            .map(|_| {
+                let tx = runner.generator.generate_payload(Address::ZERO, Address::ZERO).unwrap();
+                // amountIn is the fifth word of exactInputSingle's arguments.
+                U256::from_be_slice(&tx.input.input().unwrap()[132..164])
+            })
+            .collect();
+        assert_eq!(
+            amounts,
+            [U256::from(23_200), U256::from(10_000_000_000_000u64)].into(),
+            "the run generator swaps derived reverse amounts"
+        );
+    }
+
     #[test]
     fn b20_odd_sender_count_adds_funded_partner() {
         let config = LoadConfig {
