@@ -607,12 +607,22 @@ impl PendingBlocks {
             })
             .unwrap_or_default();
 
+        // The receipt's `gas_used` is what the block was charged for this transaction. Under
+        // gas-limit fee billing (Zenith) that is the declared `gas_limit`, not the gas the
+        // result reports, so hand the receipt value to `CachedExecutor::commit_transaction` as
+        // the billed gas whenever the two differ.
+        let billed_gas = self
+            .get_receipt(*tx_hash)
+            .map(|r| r.inner.gas_used)
+            .filter(|gas_used| *gas_used != result.tx_gas_used());
+
         let base_tx_result = BaseTxResult {
             inner: eth_tx_result,
             is_deposit,
             sender,
             depositor,
             eip8130_committed_phases,
+            billed_gas,
         };
 
         Some(base_tx_result)
