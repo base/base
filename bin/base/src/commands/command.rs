@@ -47,13 +47,13 @@ pub(crate) enum BaseCommand {
     /// Update the base binary to the latest release.
     #[command(name = "update")]
     Update(Box<UpdateCommand>),
-    /// Execution-layer maintenance utilities (use this group's own --chain flag).
+    /// Execution-layer maintenance utilities.
     #[command(name = "reth")]
     Reth(Box<RethCommand>),
-    /// Manage storage of historical proofs in the fault-proof window (uses its own --chain flag).
+    /// Manage storage of historical proofs in the fault-proof window.
     #[command(name = "proofs")]
     Proofs(Box<base_proofs::Command<BaseChainSpecParser>>),
-    /// Snapshot manifest generation and download utilities (uses its own --chain flag).
+    /// Snapshot manifest generation and download utilities.
     #[command(name = "snapshot")]
     Snapshot(Box<SnapshotCommand>),
 }
@@ -102,13 +102,11 @@ impl BaseCommand {
 mod tests {
     use std::{net::TcpListener, process::Command, thread, time::Duration};
 
-    use clap::Parser;
-
     use crate::{cli::BaseCli, config::ChainResolver};
 
     #[test]
     fn rejects_legacy_node_rpc_path() {
-        let err = BaseCli::try_parse_from(["base", "node", "rpc"]).unwrap_err();
+        let err = BaseCli::try_parse_curated(["base", "node", "rpc"]).unwrap_err();
 
         let rendered = err.to_string();
         assert!(rendered.contains("node"));
@@ -116,7 +114,7 @@ mod tests {
 
     #[test]
     fn rejects_legacy_flat_db_path() {
-        let err = BaseCli::try_parse_from(["base", "db", "--help"]).unwrap_err();
+        let err = BaseCli::try_parse_curated(["base", "db", "--help"]).unwrap_err();
 
         let rendered = err.to_string();
         assert!(rendered.contains("db"));
@@ -124,7 +122,7 @@ mod tests {
 
     #[test]
     fn rejects_legacy_flat_snapshot_manifest_path() {
-        let err = BaseCli::try_parse_from(["base", "snapshot-manifest", "--help"]).unwrap_err();
+        let err = BaseCli::try_parse_curated(["base", "snapshot-manifest", "--help"]).unwrap_err();
 
         let rendered = err.to_string();
         assert!(rendered.contains("snapshot-manifest"));
@@ -132,22 +130,22 @@ mod tests {
 
     #[test]
     fn accepts_reth_help() {
-        let err = BaseCli::try_parse_from(["base", "reth", "--help"]).unwrap_err();
+        let err = BaseCli::try_parse_curated(["base", "reth", "--help"]).unwrap_err();
 
         assert_eq!(err.kind(), clap::error::ErrorKind::DisplayHelp);
     }
 
     #[test]
     fn accepts_snapshot_help() {
-        let err = BaseCli::try_parse_from(["base", "snapshot", "--help"]).unwrap_err();
+        let err = BaseCli::try_parse_curated(["base", "snapshot", "--help"]).unwrap_err();
 
         assert_eq!(err.kind(), clap::error::ErrorKind::DisplayHelp);
     }
 
     #[test]
     fn rejects_top_level_chain_for_reth_subcommands() {
-        let cli =
-            BaseCli::try_parse_from(["base", "--chain", "sepolia", "reth", "db", "stats"]).unwrap();
+        let cli = BaseCli::try_parse_curated(["base", "--chain", "sepolia", "reth", "db", "stats"])
+            .unwrap();
         let err = cli.command.run(ChainResolver::new(cli.chain), false).unwrap_err();
 
         assert!(err.to_string().contains("base reth"));
@@ -213,8 +211,6 @@ mod tests {
             &metrics_addr,
             "--port",
             "0",
-            "--authrpc.port",
-            "0",
             "--rpc.port",
             "0",
             "--disable-discovery",
@@ -236,7 +232,7 @@ mod tests {
                 "0",
             ]);
         }
-        let cli = BaseCli::parse_from(args);
+        let cli = BaseCli::parse_curated(args);
         assert!(!cli.metrics.enabled);
         drop(metrics_listener);
         // Debug builds of the unified launch future need more than the default worker stack.

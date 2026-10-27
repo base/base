@@ -162,8 +162,6 @@ impl FromExtensionConfig for ImpersonationRpcExtension {
 mod tests {
     use std::{fs, net::Ipv4Addr};
 
-    use clap::Parser;
-
     use crate::{cli::BaseCli, commands::BaseCommand, config::ChainResolver};
 
     #[test]
@@ -181,7 +179,7 @@ mod tests {
             } else {
                 args.extend(["--trusted-peers", peer]);
             }
-            let BaseCommand::Dev(dev) = BaseCli::try_parse_from(args).unwrap().command else {
+            let BaseCommand::Dev(dev) = BaseCli::try_parse_curated(args).unwrap().command else {
                 panic!("expected dev command");
             };
             let error = dev.run(ChainResolver::new(None).resolve().unwrap()).unwrap_err();
@@ -192,7 +190,7 @@ mod tests {
 
     #[test]
     fn requires_only_datadir_and_binds_p2p_to_an_unused_loopback_port() {
-        let cli = BaseCli::try_parse_from(["base", "dev", "--dir", "/tmp/dev data"]).unwrap();
+        let cli = BaseCli::try_parse_curated(["base", "dev", "--dir", "/tmp/dev data"]).unwrap();
         let BaseCommand::Dev(dev) = cli.command else {
             panic!("expected dev command");
         };
@@ -203,10 +201,10 @@ mod tests {
         assert_eq!(dev.execution.rpc.http_api, Some("all".parse().unwrap()));
         assert_eq!(dev.execution.rpc.ws_api, dev.execution.rpc.http_api);
 
-        let error = BaseCli::try_parse_from(["base", "dev"]).unwrap_err();
+        let error = BaseCli::try_parse_curated(["base", "dev"]).unwrap_err();
         assert_eq!(error.kind(), clap::error::ErrorKind::MissingRequiredArgument);
 
-        let cli = BaseCli::try_parse_from([
+        let cli = BaseCli::try_parse_curated([
             "base",
             "dev",
             "--dir",
