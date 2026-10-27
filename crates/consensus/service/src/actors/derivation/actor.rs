@@ -123,18 +123,15 @@ where
         if let Signal::Reset(ResetSignal { l2_safe_head: reset_safe_head }) = signal {
             Metrics::derivation_l1_origin().absolute(reset_safe_head.l1_origin.number);
             // Keep the candidates that the reset still allows to be finalized. Clearing the
-            // whole queue used to lose every block at or below the reset safe head, which is
+            // whole queue used to lose every block at or below the confirmed safe head, which is
             // never re-derived, so a reset rate above the L1 finality cadence starved
-            // finalization indefinitely.
+            // finalization indefinitely. Nothing is finalized here: retention only keeps
+            // candidates at or below the last confirmed safe head, and those were already offered
+            // to the engine by the finalized L1 signal they were confirmed with.
             self.finalizer.retain_valid_after_reset(&reset_safe_head);
             // Discard any in-flight derived_from so that a stale pre-reset L1 inclusion
             // block is never recorded for a post-reset safe head confirmation.
             self.pending_derived_from = None;
-            // Retained candidates may already be covered by the finalized L1 signal that was
-            // kept across earlier resets, and no new L1 finality update is guaranteed soon.
-            if let Err(e) = self.try_finalize_pending().await {
-                error!(target: "derivation", error = %e, "failed to finalize pending L2 blocks after reset");
-            }
 
             // Reset the SafeDB on pipeline reset.
             //
@@ -483,6 +480,7 @@ mod tests {
     use std::sync::Arc;
 
     use alloy_eips::BlockNumHash;
+    use alloy_primitives::B256;
     use base_common_genesis::RollupConfig;
     use base_common_rpc_types_engine::BasePayloadAttributes;
     use base_consensus_derive::{
@@ -633,7 +631,8 @@ mod tests {
         // L1 traversal on an origin that trails the L1 block the newest batch landed in, and the
         // engine confirms the safe head each time before the next reset.
         for step in 0..3u64 {
-            let safe_head = safe_head_at(503, 104 + 2 * step);
+            let mut safe_head = safe_head_at(503 + step, 104 + 2 * step);
+            safe_head.block_info.hash = B256::with_last_byte(1 + step as u8);
             actor.pending_derived_from = Some(l1_at(110));
             actor
                 .handle_derivation_actor_request(
@@ -648,6 +647,29 @@ mod tests {
         actor
             .handle_derivation_actor_request(DerivationActorRequest::ProcessFinalizedL1Block(
                 Box::new(l1_at(108)),
+            ))
+            .await
+            .expect("finalized L1 update failed");
+    }
+
+    #[tokio::test]
+    async fn reset_above_the_confirmed_safe_head_drops_unconfirmed_candidates() {
+        let mut engine_client = MockDerivationEngineClient::new();
+        engine_client.expect_send_finalized_l2_block().times(1).with(eq(500)).returning(|_| Ok(()));
+        let (mut actor, _request_tx) = test_actor(engine_client);
+
+        actor.finalizer.confirm_safe_head(&safe_head_at(500, 110), Some(l1_at(112)));
+        actor.finalizer.enqueue_for_finalization(&attrs(499, 110)); // l2=500, confirmed
+        actor.finalizer.enqueue_for_finalization(&attrs(500, 112)); // l2=501, in flight
+
+        // The reset walks back from the unsafe head and moves the safe head well above the last
+        // confirmed block, so the block the engine holds at 501 need not be the one derivation
+        // sent and must not be finalized.
+        actor.signal(ResetSignal { l2_safe_head: safe_head_at(900, 300) }.signal()).await;
+
+        actor
+            .handle_derivation_actor_request(DerivationActorRequest::ProcessFinalizedL1Block(
+                Box::new(l1_at(400)),
             ))
             .await
             .expect("finalized L1 update failed");
@@ -690,6 +712,7 @@ mod tests {
         engine_client.expect_send_finalized_l2_block().times(1).with(eq(480)).returning(|_| Ok(()));
         let (mut actor, _request_tx) = test_actor(engine_client);
 
+        actor.finalizer.confirm_safe_head(&safe_head_at(600, 100), Some(l1_at(108)));
         actor.finalizer.enqueue_for_finalization(&attrs(479, 105));
         actor.finalizer.enqueue_for_finalization(&attrs(599, 108));
 
@@ -712,7 +735,8 @@ mod tests {
         let (mut actor, _request_tx) = test_actor(engine_client);
 
         // Both candidates are below the reset safe head, but only the first was included at or
-        // below the L1 block the pipeline resumes from.
+        // below the L1 range the engine's safe chain was built from.
+        actor.finalizer.confirm_safe_head(&safe_head_at(600, 100), Some(l1_at(101)));
         actor.finalizer.enqueue_for_finalization(&attrs(479, 100));
         actor.finalizer.enqueue_for_finalization(&attrs(489, 101));
 
