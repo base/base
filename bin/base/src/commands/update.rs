@@ -73,20 +73,18 @@ impl UpdateCommand {
 
 #[cfg(test)]
 mod tests {
-    use clap::Parser;
-
     use crate::{cli::BaseCli, commands::BaseCommand};
 
     #[test]
     fn parses_update_command() {
-        let cli = BaseCli::parse_from(["base", "update"]);
+        let cli = BaseCli::parse_curated(["base", "update"]);
 
         assert!(matches!(cli.command, BaseCommand::Update(_)));
     }
 
     #[test]
     fn parses_update_command_with_version() {
-        let cli = BaseCli::parse_from(["base", "update", "--install", "v0.6.0"]);
+        let cli = BaseCli::parse_curated(["base", "update", "--install", "v0.6.0"]);
         let BaseCommand::Update(update) = cli.command else {
             panic!("expected update command");
         };
@@ -96,7 +94,7 @@ mod tests {
 
     #[test]
     fn parses_update_installer_command() {
-        let cli = BaseCli::parse_from(["base", "update", "--update-installer"]);
+        let cli = BaseCli::parse_curated(["base", "update", "--update-installer"]);
         let BaseCommand::Update(update) = cli.command else {
             panic!("expected update command");
         };
@@ -106,7 +104,7 @@ mod tests {
 
     #[test]
     fn parses_force_flag() {
-        let cli = BaseCli::parse_from(["base", "update", "--force"]);
+        let cli = BaseCli::parse_curated(["base", "update", "--force"]);
         let BaseCommand::Update(update) = cli.command else {
             panic!("expected update command");
         };
@@ -116,7 +114,7 @@ mod tests {
 
     #[test]
     fn rejects_update_installer_with_version() {
-        let err = BaseCli::try_parse_from([
+        let err = BaseCli::try_parse_curated([
             "base",
             "update",
             "--update-installer",
