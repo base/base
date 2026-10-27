@@ -39,6 +39,8 @@ The POC touches two consensus sites in `base-common-evm` (a hook in `BaseHandler
 
 ## Problem: a fixed time budget spent on transactions that pay for none of it
 
+In one paragraph: the builder has a fixed 10 ms budget per flashblock for evaluating validity-transaction predicates. Every validity transaction in the pool needs some of that time before it can be included, and the budget is handed out in priority-fee order. The transactions that get prioritised are the ones bidding the highest fee per gas, and today a searcher can bid very high because the transaction reverts when its opportunity is gone, uses little gas, and therefore pays little. So the 10 ms goes to transactions that revert and pay almost nothing, the budget runs out, and the transactions behind them, the ones that would have executed, used a lot of gas, and paid for it, are deferred and never included in that flashblock. Pricing by `gas_limit` fixes this: a reverting transaction pays the same as the execution it was sized for, so bidding high on a probe that usually reverts stops being cheap, and the budget flows to transactions whose bids are real.
+
 ### How the builder spends its time
 
 A flashblock is built in a 200 ms window. The builder pulls candidates from the pool in priority-fee order and, for each one, does work before it knows whether the transaction is worth anything:
