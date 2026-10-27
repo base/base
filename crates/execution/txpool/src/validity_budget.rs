@@ -76,6 +76,33 @@ impl ValidityAdmission {
     }
 }
 
+/// Operator bounds for the validity budget. Each unset bound defaults to a share of
+/// the pending subpool limit, so the budget is on by default and tracks the pool it
+/// protects: a node with the reth defaults gets 5,000 transactions / 10 MB, mainnet's
+/// 100,000 / 50 MB pending pool gets 50,000 / 25 MB.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ValidityLimitOverrides {
+    /// Maximum validity transactions, or `None` for the default share of the pending limit.
+    pub max_txs: Option<usize>,
+    /// Maximum combined encoded bytes, or `None` for the default share of the pending limit.
+    pub max_size: Option<usize>,
+}
+
+impl ValidityLimitOverrides {
+    /// Unset bounds default to the pending limit divided by this, so standard
+    /// transactions always keep at least half of the pending pool.
+    pub const PENDING_DIVISOR: usize = 2;
+
+    /// Resolves the budget against the configured pending subpool limit.
+    #[must_use]
+    pub fn resolve(self, pending: SubPoolLimit) -> SubPoolLimit {
+        SubPoolLimit::new(
+            self.max_txs.unwrap_or(pending.max_txs / Self::PENDING_DIVISOR),
+            self.max_size.unwrap_or(pending.max_size / Self::PENDING_DIVISOR),
+        )
+    }
+}
+
 /// Count and byte budget for validity transactions in the protocol pool.
 ///
 /// Residents are ordered by `(priority, hash)` ascending so the cheapest is
@@ -365,5 +392,27 @@ mod tests {
             budget.commit(admission);
         }
         assert_eq!(budget.len(), 256);
+    }
+
+    #[test]
+    fn unset_overrides_take_half_of_the_pending_limit() {
+        let pending = SubPoolLimit::new(100_000, 50 * 1024 * 1024);
+        assert_eq!(
+            ValidityLimitOverrides::default().resolve(pending),
+            SubPoolLimit::new(50_000, 25 * 1024 * 1024)
+        );
+        assert_eq!(
+            ValidityLimitOverrides::default().resolve(SubPoolLimit::default()),
+            SubPoolLimit::new(5_000, 10 * 1024 * 1024)
+        );
+    }
+
+    #[test]
+    fn set_overrides_win_independently() {
+        let pending = SubPoolLimit::new(100_000, 50 * 1024 * 1024);
+        let overrides = ValidityLimitOverrides { max_txs: Some(7), max_size: None };
+        assert_eq!(overrides.resolve(pending), SubPoolLimit::new(7, 25 * 1024 * 1024));
+        let overrides = ValidityLimitOverrides { max_txs: None, max_size: Some(9) };
+        assert_eq!(overrides.resolve(pending), SubPoolLimit::new(50_000, 9));
     }
 }

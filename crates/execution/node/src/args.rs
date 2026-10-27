@@ -11,12 +11,10 @@ use alloy_primitives::Address;
 use base_execution_trie::{MdbxProofsStorageOptions, RocksdbProofsStorageOptions};
 use base_execution_txpool::{
     DEFAULT_ALLOWLISTED_PAYMENT_LIMIT, DEFAULT_PAYMENT_LIMIT, DEFAULT_SIGNATURE_LIMIT,
+    ValidityLimitOverrides,
 };
 use base_upgrade_signal::{UpgradeSignalArgs, UpgradeSignalL1RpcArgs};
 use clap::{ArgAction, ValueEnum, builder::ArgPredicate};
-use reth_transaction_pool::{
-    SubPoolLimit, TXPOOL_SUBPOOL_MAX_SIZE_MB_DEFAULT, TXPOOL_SUBPOOL_MAX_TXS_DEFAULT,
-};
 
 /// Default proofs history window: 15 days of blocks at 200ms block time.
 pub const DEFAULT_PROOFS_HISTORY_WINDOW_BLOCKS: u64 = 6_480_000;
@@ -387,14 +385,15 @@ pub struct RollupArgs {
     /// to its sender. This budget caps their count so they cannot crowd standard
     /// transactions out of `--txpool.pending-max-count`; past it a newcomer must outbid
     /// the lowest-priority resting validity transaction. Standard transactions are not
-    /// counted.
-    #[arg(long = "rollup.txpool-validity-max-count", default_value_t = TXPOOL_SUBPOOL_MAX_TXS_DEFAULT)]
-    pub txpool_validity_max_count: usize,
+    /// counted. Defaults to half of `--txpool.pending-max-count`.
+    #[arg(long = "rollup.txpool-validity-max-count")]
+    pub txpool_validity_max_count: Option<usize>,
 
     /// Maximum combined encoded size, in MB, of validity-predicate transactions the
-    /// protocol pool holds. See `--rollup.txpool-validity-max-count`.
-    #[arg(long = "rollup.txpool-validity-max-size", default_value_t = TXPOOL_SUBPOOL_MAX_SIZE_MB_DEFAULT)]
-    pub txpool_validity_max_size: usize,
+    /// protocol pool holds. See `--rollup.txpool-validity-max-count`. Defaults to half
+    /// of `--txpool.pending-max-size`.
+    #[arg(long = "rollup.txpool-validity-max-size")]
+    pub txpool_validity_max_size: Option<usize>,
 
     /// Maximum inflight EIP-8130 transactions per non-locked sender account.
     #[arg(long = "rollup.mempool-sender-limit", default_value_t = DEFAULT_SIGNATURE_LIMIT)]
@@ -532,12 +531,15 @@ impl HasRollupArgs for RollupArgs {
 }
 
 impl RollupArgs {
-    /// Validity transaction budget for the protocol pool, with the size converted from MB.
-    pub const fn validity_limit(&self) -> SubPoolLimit {
-        SubPoolLimit::new(
-            self.txpool_validity_max_count,
-            self.txpool_validity_max_size * 1024 * 1024,
-        )
+    /// Operator bounds for the validity budget, with the size converted from MB.
+    pub const fn validity_limit(&self) -> ValidityLimitOverrides {
+        ValidityLimitOverrides {
+            max_txs: self.txpool_validity_max_count,
+            max_size: match self.txpool_validity_max_size {
+                Some(mb) => Some(mb * 1024 * 1024),
+                None => None,
+            },
+        }
     }
 }
 
@@ -550,8 +552,8 @@ impl Default for RollupArgs {
             min_suggested_priority_fee: 1_000_000,
             txpool_ordering: TxpoolOrdering::default(),
             max_inflight_delegated_slots: 4,
-            txpool_validity_max_count: TXPOOL_SUBPOOL_MAX_TXS_DEFAULT,
-            txpool_validity_max_size: TXPOOL_SUBPOOL_MAX_SIZE_MB_DEFAULT,
+            txpool_validity_max_count: None,
+            txpool_validity_max_size: None,
             mempool_sender_limit: DEFAULT_SIGNATURE_LIMIT,
             mempool_payer_limit: DEFAULT_PAYMENT_LIMIT,
             mempool_trusted_delegation_targets: Vec::new(),
@@ -657,14 +659,14 @@ mod tests {
     fn test_parse_validity_limit_default() {
         let args = CommandParser::<RollupArgs>::parse_from(["reth"]).args;
         assert_eq!(args, RollupArgs::default());
-        assert_eq!(args.validity_limit(), SubPoolLimit::default());
+        assert_eq!(args.validity_limit(), ValidityLimitOverrides::default());
     }
 
     #[test]
     fn test_parse_validity_limit_override() {
         let expected_args = RollupArgs {
-            txpool_validity_max_count: 50_000,
-            txpool_validity_max_size: 25,
+            txpool_validity_max_count: Some(50_000),
+            txpool_validity_max_size: Some(25),
             ..Default::default()
         };
         let args = CommandParser::<RollupArgs>::parse_from([
@@ -676,7 +678,10 @@ mod tests {
         ])
         .args;
         assert_eq!(args, expected_args);
-        assert_eq!(args.validity_limit(), SubPoolLimit::new(50_000, 25 * 1024 * 1024));
+        assert_eq!(
+            args.validity_limit(),
+            ValidityLimitOverrides { max_txs: Some(50_000), max_size: Some(25 * 1024 * 1024) }
+        );
     }
 
     #[test]

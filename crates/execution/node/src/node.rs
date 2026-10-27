@@ -30,7 +30,7 @@ use base_execution_rpc::{
 use base_execution_txpool::{
     BaseOrdering, BasePooledTransaction, BasePooledTx, BaseTransactionPool,
     BaseTransactionValidator, GuardLimits, ParkableTransactionPool, TimestampedTransaction,
-    maintain_state_diff_invalidation,
+    ValidityLimitOverrides, maintain_state_diff_invalidation,
 };
 use reth_chain_state::CanonStateSubscriptions;
 use reth_chainspec::{BaseFeeParams, ChainSpecProvider, EthChainSpec, Hardforks};
@@ -65,7 +65,7 @@ use reth_rpc_api::{DebugApiServer, eth::RpcTypes};
 use reth_rpc_server_types::RethRpcModule;
 use reth_tracing::tracing::{debug, info};
 use reth_transaction_pool::{
-    EthPoolTransaction, PoolPooledTx, PoolTransaction, SubPoolLimit, TransactionPool,
+    EthPoolTransaction, PoolPooledTx, PoolTransaction, TransactionPool,
     TransactionValidationTaskExecutor, blobstore::DiskFileBlobStore,
 };
 use reth_trie_common::KeccakKeyHasher;
@@ -807,8 +807,9 @@ pub struct BasePoolBuilder<T = BasePooledTransaction> {
     pub ordering: BaseOrdering<T>,
     /// Maximum inflight EIP-7702 delegated account transactions per sender.
     pub max_inflight_delegated_slots: usize,
-    /// Count and byte budget for validity-predicate transactions in the protocol pool.
-    pub validity_limit: SubPoolLimit,
+    /// Operator bounds for the validity-predicate transaction budget; unset bounds
+    /// default to a share of the pending limit.
+    pub validity_limit: ValidityLimitOverrides,
     /// Per-account EIP-8130 admission caps.
     pub guard_limits: GuardLimits,
     /// Additional trusted EIP-7702 delegation targets for locked payers.
@@ -824,7 +825,7 @@ impl<T> Default for BasePoolBuilder<T> {
         Self {
             ordering: BaseOrdering::default(),
             max_inflight_delegated_slots: 4,
-            validity_limit: SubPoolLimit::default(),
+            validity_limit: ValidityLimitOverrides::default(),
             guard_limits: GuardLimits::default(),
             additional_trusted_delegation_targets: AddressSet::default(),
             allowlisted_payers: AddressSet::default(),
@@ -862,8 +863,8 @@ impl<T> BasePoolBuilder<T> {
         self
     }
 
-    /// Sets the count and byte budget for validity-predicate transactions.
-    pub const fn with_validity_limit(mut self, validity_limit: SubPoolLimit) -> Self {
+    /// Sets the operator bounds for the validity-predicate transaction budget.
+    pub const fn with_validity_limit(mut self, validity_limit: ValidityLimitOverrides) -> Self {
         self.validity_limit = validity_limit;
         self
     }
@@ -940,6 +941,7 @@ where
 
         let mut final_pool_config = ctx.pool_config();
         final_pool_config.max_inflight_delegated_slot_limit = max_inflight_delegated_slots;
+        let validity_limit = validity_limit.resolve(final_pool_config.pending_limit);
 
         let transaction_pool = reth_transaction_pool::Pool::new(
             validator,

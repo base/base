@@ -690,9 +690,8 @@ where
 
     /// Drops budget entries whose transactions reth evicted on its own (subpool
     /// limits, lifetime, nonce pruning), which the wrapper cannot observe
-    /// synchronously. An entry is only created after reth accepted the
-    /// transaction, so an entry without a pooled transaction is always stale.
-    /// Over-counting until the next reconciliation only makes the budget stricter.
+    /// synchronously. Over-counting until the next reconciliation only makes the
+    /// budget stricter.
     fn reconcile_validity_budget(&self) {
         let tracked = self.validity_budget.read().tracked_hashes();
         if tracked.is_empty() {
@@ -703,8 +702,17 @@ where
         if stale.is_empty() {
             return;
         }
+
+        // Recheck only stale candidates under admission serialization, as
+        // `reconcile_guard` does. A dropped hash resubmitted and committed between
+        // the scan and the removal is a live resident again, and dropping its
+        // entry would under-count.
+        let _admission_guard = self.protocol_admission_lock.lock();
         let mut budget = self.validity_budget.write();
-        let released = stale.iter().filter(|hash| budget.remove(hash)).count();
+        let released = stale
+            .iter()
+            .filter(|hash| self.protocol_pool.get(hash).is_none() && budget.remove(hash))
+            .count();
         drop(budget);
         ValidityPoolMetrics::record_budget_reconciled(released);
     }

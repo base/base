@@ -56,7 +56,9 @@ fee could push standard transactions out of `--txpool.pending-max-count`.
 
 `ValidityBudget` caps how many validity transactions, and how many encoded bytes of them,
 the protocol pool holds (`--rollup.txpool-validity-max-count`,
-`--rollup.txpool-validity-max-size` in MB; defaults match reth's subpool defaults). The
+`--rollup.txpool-validity-max-size` in MB; each defaults to half of the matching
+`--txpool.pending-max-*` bound, so standard transactions always keep at least half of
+the pending pool). The
 budget is planned under the admission lock before reth sees the transaction and committed
 once reth accepts it. When full, a newcomer must strictly outbid the cheapest resting
 validity transaction, by maximum priority fee per gas, which is then evicted; an equal or
