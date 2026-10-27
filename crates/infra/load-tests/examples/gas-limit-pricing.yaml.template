@@ -1,0 +1,47 @@
+# Local devnet gas-limit pricing demo profile (see docs/guides/GAS_LIMIT_PRICING.md).
+# Rendered by `just load-test gas-limit-pricing`; do not run this template directly.
+#
+# Every sender submits validity transactions carrying always-true predicates. The 30% priority-lead
+# cohort sends `revert_probe` calls: a 20x tip, a 2M declared gas limit, and a selector
+# `DoubleCounter` does not implement, so each probe passes its predicates and reverts after
+# ~21-25k gas. The remaining 70% send honest `double_counter` increments at the baseline tip. The
+# summary's `by_cohort` breakdown compares what each cohort reserved, used, and paid.
+
+transaction_submission_rpcs:
+  - "http://localhost:7545"
+query_rpc: "http://localhost:7545"
+txpool_nodes:
+  - "http://localhost:7545"
+  - "http://localhost:8545"
+  - "http://localhost:8645"
+flashblocks_ws: "ws://localhost:7111"
+
+sender_count: 400
+target_gps: 600000000
+block_time: "200ms"
+in_flight_per_sender: 12
+max_total_in_flight: 4800
+max_concurrent_submit_requests: 64
+batch_size: 1
+duration: "60s"
+seed: 8675309
+# 2 ETH per sender: the pool admits a probe only when the sender can cover
+# gas_limit * max_fee for every one of its in-flight transactions.
+funding_amount: "2000000000000000000"
+
+transactions:
+  - weight: 100
+    type: double_counter
+    contract: "__DOUBLE_COUNTER__"
+
+validity:
+  ratio: 1.0
+  priority_lead_ratio: 0.30
+  priority_lead_multiplier: 20
+  priority_fee_divisor: 1
+  priority_lead_payload:
+    type: revert_probe
+    contract: "__DOUBLE_COUNTER__"
+    gas_limit: 2000000
+  predicates:
+__VALIDITY_PREDICATES__

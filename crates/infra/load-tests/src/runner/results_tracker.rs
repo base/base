@@ -25,6 +25,8 @@ pub struct SentTransaction {
     pub tx_hash: TxHash,
     /// Sender address used for in-flight accounting.
     pub from: Address,
+    /// Gas limit declared by the signed transaction.
+    pub gas_limit: u64,
     /// Calibrated execution gas used for pacing.
     pub estimated_gas: u64,
     /// Whether this transaction belongs to the measured cohort.
@@ -139,6 +141,7 @@ struct PendingTransaction {
     /// Whether in-flight accounting was already released (e.g. by flashblock confirmation).
     in_flight_released: bool,
     measured: bool,
+    gas_limit: u64,
     estimated_gas: u64,
     cohort: SubmitCohort,
 }
@@ -251,6 +254,7 @@ impl ResultsTracker {
                     submitted_at,
                     in_flight_released: flashblock_observed_at.is_some(),
                     measured,
+                    gas_limit: transaction.gas_limit,
                     estimated_gas: transaction.estimated_gas,
                     cohort: transaction.cohort,
                 },
@@ -644,6 +648,7 @@ impl ResultsTrackerInner {
             Some(block.number),
         );
         metrics.cohort = pending.cohort.to_metric_label();
+        metrics.gas_limit = pending.gas_limit;
         metrics.confirmed_at = Some(block.observed_at);
         metrics.submit_offset_ms = block
             .timestamp_ms
@@ -706,6 +711,7 @@ mod tests {
         SentTransaction {
             tx_hash,
             from,
+            gas_limit: 200_000,
             estimated_gas: 21_000,
             measured,
             cohort: SubmitCohort::Plain,
@@ -816,6 +822,7 @@ mod tests {
         assert_eq!(metrics[0].block_number, Some(7), "block number from polled block");
         assert!(metrics[0].block_latency.is_some(), "landing latency must be recorded");
         assert_eq!(metrics[0].gas_used, 0, "gas backfilled later by receipt pass");
+        assert_eq!(metrics[0].gas_limit, 200_000, "declared limit is known at landing time");
         assert!(!metrics[0].reverted, "revert backfilled later by receipt pass");
         assert_eq!(tracker.landed_block_numbers(), vec![7], "block 7 tracked for receipt pass");
         assert_eq!(tracker.total_in_flight(), 0, "landing releases in-flight slot");
