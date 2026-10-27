@@ -54,7 +54,8 @@ pub use block_expiry::{BlockExpiryIndex, ExpiryPosition, FlashblockExpiry};
 
 mod validity_budget;
 pub use validity_budget::{
-    ValidityAdmission, ValidityBudget, ValidityBudgetRejection, ValidityLimitOverrides,
+    TrackedValidityHashes, ValidityAdmission, ValidityBudget, ValidityBudgetRejection,
+    ValidityLimitOverrides,
 };
 
 mod transaction;

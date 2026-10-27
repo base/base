@@ -35,7 +35,8 @@ use crate::{
     Admission, BasePooledTx, BaseTransactionValidator, FlashblockExpiry, GuardLimits, GuardMetrics,
     InvalidationCause, InvalidationKey, LimitRejection, MempoolGuard, ParkableBestTransactions,
     ParkableTransactionPool, ParkedBestTransactions, PredicateContext, StateDiffInvalidation,
-    ValidityAdmission, ValidityBudget, ValidityBudgetRejection, ValidityPoolMetrics,
+    TrackedValidityHashes, ValidityAdmission, ValidityBudget, ValidityBudgetRejection,
+    ValidityPoolMetrics,
     best::MergeBestTransactions,
     two_d_nonce_pool::{InsertOutcome, LaneId, LaneUpdate, SidecarLimits, TwoDNoncePool},
 };
@@ -693,13 +694,14 @@ where
     /// synchronously. Over-counting until the next reconciliation only makes the
     /// budget stricter.
     fn reconcile_validity_budget(&self) {
-        let tracked = self.validity_budget.read().tracked_hashes();
-        if tracked.is_empty() {
+        let mut stale = TrackedValidityHashes(self.validity_budget.read().tracked_hashes());
+        if stale.0.is_empty() {
             return;
         }
-        let stale: Vec<_> =
-            tracked.into_iter().filter(|hash| self.protocol_pool.get(hash).is_none()).collect();
-        if stale.is_empty() {
+        // One pool lock for the whole scan: `retain_unknown` keeps only the hashes
+        // reth no longer holds.
+        self.protocol_pool.retain_unknown(&mut stale);
+        if stale.0.is_empty() {
             return;
         }
 
@@ -710,6 +712,7 @@ where
         let _admission_guard = self.protocol_admission_lock.lock();
         let mut budget = self.validity_budget.write();
         let released = stale
+            .0
             .iter()
             .filter(|hash| self.protocol_pool.get(hash).is_none() && budget.remove(hash))
             .count();
@@ -857,11 +860,11 @@ where
                 ));
             }
         };
-        // Commit the budget only for a gated-in transaction; a replaced hash has
-        // left reth either way and stops counting.
+        // Commit the budget only for a transaction that is still pooled after the
+        // gate; a replaced hash has left reth either way and stops counting.
         let gated = self.gate_protocol_admission(hash, replaced, pre_admitted);
         self.commit_validity_admission(
-            gated.is_ok().then_some(validity_admission).flatten(),
+            matches!(gated, Ok(true)).then_some(validity_admission).flatten(),
             replaced,
         );
         gated?;
@@ -872,12 +875,15 @@ where
         Ok(outcome)
     }
 
+    /// Reconciles guard bookkeeping after reth accepted `hash`, returning whether
+    /// the transaction is still pooled. `Ok(false)` means a concurrent removal took
+    /// it between reth's insert and this gate; its reservations are released.
     fn gate_protocol_admission(
         &self,
         hash: TxHash,
         replaced: Option<TxHash>,
         pre_admitted: bool,
-    ) -> PoolResult<()> {
+    ) -> PoolResult<bool> {
         let Some(transaction) = self.protocol_pool.get(&hash) else {
             let mut guard = self.guard.write();
             if pre_admitted {
@@ -885,7 +891,7 @@ where
             } else if let Some(replaced) = replaced {
                 guard.release(&replaced);
             }
-            return Ok(());
+            return Ok(false);
         };
         let mut guard = self.guard.write();
         let replaced_was_tracked = replaced.is_some_and(|hash| guard.release(&hash));
@@ -894,7 +900,7 @@ where
             if pre_admitted {
                 guard.release(&hash);
             }
-            return Ok(());
+            return Ok(true);
         };
         let current = transaction.transaction.limit_class().is_some_and(|class| {
             class.classification_generation
@@ -915,7 +921,7 @@ where
         }
         if replaced_was_tracked {
             guard.insert_forced(admission);
-            return Ok(());
+            return Ok(true);
         }
         if pre_admitted && !guard.contains(&hash) {
             // A reservation that vanished despite admission serialization was
@@ -930,7 +936,7 @@ where
             self.protocol_pool.remove_transactions(vec![hash]);
             return Err(Self::limit_rejection_error(hash, rejection));
         }
-        Ok(())
+        Ok(true)
     }
 
     fn partition_hashes_by_pool(&self, hashes: Vec<TxHash>) -> (Vec<TxHash>, Vec<TxHash>) {
@@ -1295,7 +1301,7 @@ where
                 };
             let gated = self.gate_protocol_admission(hash, replaced, pre_admitted);
             self.commit_validity_admission(
-                gated.is_ok().then_some(validity_admission).flatten(),
+                matches!(gated, Ok(true)).then_some(validity_admission).flatten(),
                 replaced,
             );
             gated?;
@@ -5485,5 +5491,57 @@ mod tests {
         let (pool, _client) = build_integration_pool();
         let limit = pool.validity_budget.read().limit();
         assert_eq!(limit, SubPoolLimit::new(usize::MAX, usize::MAX));
+    }
+
+    /// Fills a pool with `count` resting validity transactions, drops `stale` of them
+    /// behind the wrapper's back, and times one budget reconciliation against the real
+    /// reth pool (one `retain_unknown` scan plus the locked recheck of the stale set).
+    async fn run_reconcile_validity_budget_wall_clock(count: usize, stale: usize) {
+        let config = PoolConfig {
+            pending_limit: SubPoolLimit::new(count * 2, usize::MAX),
+            basefee_limit: SubPoolLimit::new(count * 2, usize::MAX),
+            queued_limit: SubPoolLimit::new(count * 2, usize::MAX),
+            ..PoolConfig::default()
+        };
+        let (pool, client) = build_integration_pool_with_config(config);
+        let pool = pool.with_validity_limit(SubPoolLimit::new(count, usize::MAX));
+
+        let setup_started = Instant::now();
+        let mut hashes = Vec::with_capacity(count);
+        for _ in 0..count {
+            let transaction = resting_validity_1559(&funded_signer(&client), 0, 1);
+            hashes.push(*transaction.hash());
+            pool.add_transaction(TransactionOrigin::Local, transaction).await.unwrap();
+        }
+        let setup_elapsed = setup_started.elapsed();
+        assert_eq!(pool.validity_budget_usage().0, count);
+
+        // Bypass the wrapper so the budget keeps counting the dropped hashes.
+        pool.protocol_pool.remove_transactions(hashes[..stale].to_vec());
+
+        let reconcile_started = Instant::now();
+        pool.reconcile_validity_budget();
+        let reconcile_elapsed = reconcile_started.elapsed();
+        assert_eq!(pool.validity_budget_usage().0, count - stale);
+
+        let noop_started = Instant::now();
+        pool.reconcile_validity_budget();
+        let noop_elapsed = noop_started.elapsed();
+
+        eprintln!(
+            "{count:>6} validity residents, {stale} stale: setup={setup_elapsed:?}, reconcile={reconcile_elapsed:?}, reconcile_noop={noop_elapsed:?}"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "wall-clock diagnostic; run explicitly in release mode with --ignored --nocapture"]
+    async fn reconcile_validity_budget_wall_clock_10k() {
+        run_reconcile_validity_budget_wall_clock(10_000, 100).await;
+    }
+
+    #[tokio::test]
+    #[ignore = "wall-clock diagnostic; run explicitly in release mode with --ignored --nocapture"]
+    async fn reconcile_validity_budget_wall_clock_50k() {
+        run_reconcile_validity_budget_wall_clock(50_000, 500).await;
     }
 }

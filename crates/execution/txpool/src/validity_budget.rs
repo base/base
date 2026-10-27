@@ -22,6 +22,7 @@
 use std::collections::{BTreeMap, HashMap};
 
 use alloy_primitives::TxHash;
+use reth_eth_wire_types::HandleMempoolData;
 use reth_transaction_pool::SubPoolLimit;
 
 /// Why a validity transaction cannot be admitted under the budget.
@@ -73,6 +74,26 @@ impl ValidityAdmission {
     /// Residents that must leave the pool to make room, lowest priority first.
     pub fn evicted(&self) -> &[TxHash] {
         &self.evicted
+    }
+}
+
+/// Budget hashes under reconciliation. Implements [`HandleMempoolData`] so reth's
+/// `retain_unknown` can prune the still-pooled ones under a single pool lock,
+/// leaving the hashes the budget counts but the pool no longer holds.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TrackedValidityHashes(pub Vec<TxHash>);
+
+impl HandleMempoolData for TrackedValidityHashes {
+    fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    fn retain_by_hash(&mut self, mut f: impl FnMut(&TxHash) -> bool) {
+        self.0.retain(|hash| f(hash));
     }
 }
 
