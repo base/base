@@ -38,15 +38,41 @@ The POC touches two consensus sites in `base-common-evm` (a hook in `BaseHandler
 
 ## Problem: ordering is by a bid nobody has to pay
 
-The sequencer orders user transactions by their bid per unit of gas. [`UnifiedTipOrdering`](../../crates/execution/txpool/src/ordering.rs) ranks a standard transaction by `effective_tip_per_gas` (its priority fee per gas at the current base fee) and a statically-decodable EIP-8130 coinbase tip by `tip / gas_limit`. In both cases the ranking key is money per unit of gas, and the gas the pool and the builder reason about is the declared `gas_limit`: the builder admits a transaction only if `cumulative_gas_used + gas_limit (+ payer_auth) <= block_gas_limit` ([`ExecutionInfo::is_tx_over_limits`](../../crates/builder/core/src/execution.rs)), and the pool's balance check requires the sender to be able to pay `gas_limit * max_fee_per_gas`.
+### How ordering works today
 
-The payment is not on that gas. After execution the sender pays `gas_used * effective_gas_price`, the sequencer receives `gas_used * tip`, and the unused `gas_limit - gas_used` is reimbursed. So a transaction's rank is set by `tip`, but what it pays for the rank is `tip * gas_used`, and `gas_used` is unknown until the transaction has executed.
+A sender signs three gas-related fields into a standard transaction: `gas_limit` (the most gas the transaction may consume), `max_fee_per_gas` (the ceiling on the total price per gas, base fee plus tip), and `max_priority_fee_per_gas` (the sequencer's cut per gas; a legacy transaction has a single `gas_price` instead). None of them says how much gas the transaction will use; that is only known after it executes.
 
-That gap is exploitable without breaking any rule:
+The pool ranks transactions before anything executes, from those signed fields and the current base fee:
 
-- A sender declares a high `tip` and a large `gas_limit`, and submits a call that exits early (a predicate check that fails, a revert, a no-op) and uses a few tens of thousands of gas. It outranks every honest transaction with a lower `tip`, takes its place at the front of the block, and pays `tip` on a small `gas_used`.
-- Honest senders bidding for the same position have to raise their `tip` on all of the gas they really use. A searcher who will execute 500,000 gas of real work bids against a spammer who will execute 25,000 and pays twenty times less per unit of rank.
-- Legitimate searchers do a milder version of this unintentionally: they declare loose predicate bounds and a limit sized for the success path, and when the opportunity is gone at execution time the transaction exits early. They still got the ordering benefit of the full bid while paying for the exit path.
+```text
+effective_tip_per_gas = min(max_fee_per_gas - base_fee, max_priority_fee_per_gas)   // EIP-1559
+                      = gas_price - base_fee                                          // legacy
+                      = not includable, if max_fee_per_gas < base_fee
+```
+
+[`UnifiedTipOrdering::priority`](../../crates/execution/txpool/src/ordering.rs) uses this rate as the ranking key for standard transactions (stored as `tip / 1`, so `gas_limit` does not enter the comparison) and `coinbase_tip / gas_limit` for statically decodable EIP-8130 coinbase tips; ties go to fewer validity predicates. The builder then pulls transactions from the pool in that order, admits each one if its declared `gas_limit (+ payer_auth)` fits the remaining block gas, executes it, and only then learns `gas_used`. In normal conditions `max_fee_per_gas` sits well above the base fee, so `max_priority_fee_per_gas` is the effective tip and is the knob that buys position.
+
+After execution the sender pays `effective_tip_per_gas * gas_used` to the sequencer and `base_fee * gas_used` to the `BaseFeeVault` (plus the L1 data fee and operator fee), and the pre-charged `gas_limit - gas_used` is refunded. Rank and payment are therefore decided at different times from different quantities:
+
+```text
+rank    = effective_tip_per_gas              known when the transaction arrives
+payment = effective_tip_per_gas * gas_used   known after it executes
+```
+
+### How a sender games it
+
+Because `gas_limit` costs nothing for ranking and the tip is only paid on `gas_used`, a sender can buy the top of the block cheaply:
+
+1. Set `max_priority_fee_per_gas` far above the market tip, say 20x. The pool ranks the transaction first; nothing about `gas_limit` or the eventual `gas_used` affects that.
+2. Declare a large `gas_limit`, up to the EIP-7825 cap of `2^24`. This costs nothing beyond a temporary balance hold (`gas_limit * max_fee_per_gas` must be affordable and is refunded for the unused part), and it reserves that much of the block's admission budget.
+3. Make the transaction exit early in the common case: check a predicate, and `STOP` or revert when it fails. `gas_used` is a few tens of thousands.
+4. The bill is `20x tip * ~25,000 gas`, about what an honest transaction pays for `1x tip * 500,000 gas`, for a position ahead of every honest transaction. Repeat every block.
+
+The honest transaction bidding for that position has to raise its own tip, and it pays that tip on all of the gas it really uses. The builder cannot filter the probe, because the early exit is only visible after executing it. Searchers do a milder version of this unintentionally with loose predicate bounds and a limit sized for the success path; a spammer does it on purpose, with many such transactions, to hold the top of the block and crowd out other senders for a fraction of what the position is worth.
+
+### Why it is a problem for the chain
+
+The gas the pool and the builder reason about is the declared `gas_limit`: the builder admits a transaction only if `cumulative_gas_used + gas_limit (+ payer_auth) <= block_gas_limit` ([`ExecutionInfo::is_tx_over_limits`](../../crates/builder/core/src/execution.rs)), and the pool's balance check requires the sender to be able to pay `gas_limit * max_fee_per_gas`. The fee is settled on `gas_used`. Everything below follows from that mismatch.
 
 Worked example at a base fee of 0.01 gwei and a market tip of 1 gwei:
 
@@ -59,7 +85,7 @@ Worked example at a base fee of 0.01 gwei and a market tip of 1 gwei:
 | Pays the sequencer today (`tip * gas_used`) | 0.0005 ETH | 0.0005 ETH |
 | Pays the sequencer under gas limit pricing (`tip * gas_limit`) | 0.0006 ETH | 0.04 ETH |
 
-Today the probe buys a 20x higher rank for the same money. Under gas limit pricing the same rank costs 67x more, and a probe that wants to be cheap has to declare a tight limit, which caps the work it can do if the opportunity is there.
+Today the probe buys a 20x higher rank for the same money. Under gas limit pricing the probe pays 80x what it paid before and its rank costs 67x what the honest transaction pays; a probe that wants to be cheap has to declare a tight limit, which caps the work it can do if the opportunity is there.
 
 The consequences for the chain:
 
