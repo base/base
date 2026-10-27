@@ -18,7 +18,7 @@ services:
       - "30303:30303/udp" # execution P2P UDP
       - "7545:9545" # consensus RPC
       - "9222:9222" # consensus P2P TCP
-      - "9222:9222/udp" # consensus P2P UDP
+      - "9223:9223/udp" # consensus P2P UDP
     volumes:
       - ${HOST_DATA_DIR:-./reth-data}:/data
     env_file:
