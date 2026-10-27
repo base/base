@@ -14,6 +14,9 @@ use base_execution_txpool::{
 };
 use base_upgrade_signal::{UpgradeSignalArgs, UpgradeSignalL1RpcArgs};
 use clap::{ArgAction, ValueEnum, builder::ArgPredicate};
+use reth_transaction_pool::{
+    SubPoolLimit, TXPOOL_SUBPOOL_MAX_SIZE_MB_DEFAULT, TXPOOL_SUBPOOL_MAX_TXS_DEFAULT,
+};
 
 /// Default proofs history window: 15 days of blocks at 200ms block time.
 pub const DEFAULT_PROOFS_HISTORY_WINDOW_BLOCKS: u64 = 6_480_000;
@@ -377,6 +380,22 @@ pub struct RollupArgs {
     #[arg(long = "rollup.txpool-max-inflight-delegated-slots", default_value_t = 4)]
     pub max_inflight_delegated_slots: usize,
 
+    /// Maximum number of validity-predicate transactions the protocol pool holds.
+    ///
+    /// Validity transactions share reth's subpools with standard transactions, and a
+    /// transaction whose predicates never hold rests until its block deadline at no cost
+    /// to its sender. This budget caps their count so they cannot crowd standard
+    /// transactions out of `--txpool.pending-max-count`; past it a newcomer must outbid
+    /// the lowest-priority resting validity transaction. Standard transactions are not
+    /// counted.
+    #[arg(long = "rollup.txpool-validity-max-count", default_value_t = TXPOOL_SUBPOOL_MAX_TXS_DEFAULT)]
+    pub txpool_validity_max_count: usize,
+
+    /// Maximum combined encoded size, in MB, of validity-predicate transactions the
+    /// protocol pool holds. See `--rollup.txpool-validity-max-count`.
+    #[arg(long = "rollup.txpool-validity-max-size", default_value_t = TXPOOL_SUBPOOL_MAX_SIZE_MB_DEFAULT)]
+    pub txpool_validity_max_size: usize,
+
     /// Maximum inflight EIP-8130 transactions per non-locked sender account.
     #[arg(long = "rollup.mempool-sender-limit", default_value_t = DEFAULT_SIGNATURE_LIMIT)]
     pub mempool_sender_limit: u32,
@@ -512,6 +531,16 @@ impl HasRollupArgs for RollupArgs {
     }
 }
 
+impl RollupArgs {
+    /// Validity transaction budget for the protocol pool, with the size converted from MB.
+    pub const fn validity_limit(&self) -> SubPoolLimit {
+        SubPoolLimit::new(
+            self.txpool_validity_max_count,
+            self.txpool_validity_max_size * 1024 * 1024,
+        )
+    }
+}
+
 impl Default for RollupArgs {
     fn default() -> Self {
         Self {
@@ -521,6 +550,8 @@ impl Default for RollupArgs {
             min_suggested_priority_fee: 1_000_000,
             txpool_ordering: TxpoolOrdering::default(),
             max_inflight_delegated_slots: 4,
+            txpool_validity_max_count: TXPOOL_SUBPOOL_MAX_TXS_DEFAULT,
+            txpool_validity_max_size: TXPOOL_SUBPOOL_MAX_SIZE_MB_DEFAULT,
             mempool_sender_limit: DEFAULT_SIGNATURE_LIMIT,
             mempool_payer_limit: DEFAULT_PAYMENT_LIMIT,
             mempool_trusted_delegation_targets: Vec::new(),
@@ -620,6 +651,32 @@ mod tests {
         ])
         .args;
         assert_eq!(args, expected_args);
+    }
+
+    #[test]
+    fn test_parse_validity_limit_default() {
+        let args = CommandParser::<RollupArgs>::parse_from(["reth"]).args;
+        assert_eq!(args, RollupArgs::default());
+        assert_eq!(args.validity_limit(), SubPoolLimit::default());
+    }
+
+    #[test]
+    fn test_parse_validity_limit_override() {
+        let expected_args = RollupArgs {
+            txpool_validity_max_count: 50_000,
+            txpool_validity_max_size: 25,
+            ..Default::default()
+        };
+        let args = CommandParser::<RollupArgs>::parse_from([
+            "reth",
+            "--rollup.txpool-validity-max-count",
+            "50000",
+            "--rollup.txpool-validity-max-size",
+            "25",
+        ])
+        .args;
+        assert_eq!(args, expected_args);
+        assert_eq!(args.validity_limit(), SubPoolLimit::new(50_000, 25 * 1024 * 1024));
     }
 
     #[test]

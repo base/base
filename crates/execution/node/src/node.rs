@@ -65,7 +65,7 @@ use reth_rpc_api::{DebugApiServer, eth::RpcTypes};
 use reth_rpc_server_types::RethRpcModule;
 use reth_tracing::tracing::{debug, info};
 use reth_transaction_pool::{
-    EthPoolTransaction, PoolPooledTx, PoolTransaction, TransactionPool,
+    EthPoolTransaction, PoolPooledTx, PoolTransaction, SubPoolLimit, TransactionPool,
     TransactionValidationTaskExecutor, blobstore::DiskFileBlobStore,
 };
 use reth_trie_common::KeccakKeyHasher;
@@ -269,6 +269,7 @@ impl BaseNode {
                 BasePoolBuilder::default()
                     .with_ordering(ordering)
                     .with_max_inflight_delegated_slots(max_inflight_delegated_slots)
+                    .with_validity_limit(self.args.validity_limit())
                     .with_guard_limits(GuardLimits {
                         signature_limit: mempool_sender_limit,
                         payment_limit: mempool_payer_limit,
@@ -806,6 +807,8 @@ pub struct BasePoolBuilder<T = BasePooledTransaction> {
     pub ordering: BaseOrdering<T>,
     /// Maximum inflight EIP-7702 delegated account transactions per sender.
     pub max_inflight_delegated_slots: usize,
+    /// Count and byte budget for validity-predicate transactions in the protocol pool.
+    pub validity_limit: SubPoolLimit,
     /// Per-account EIP-8130 admission caps.
     pub guard_limits: GuardLimits,
     /// Additional trusted EIP-7702 delegation targets for locked payers.
@@ -821,6 +824,7 @@ impl<T> Default for BasePoolBuilder<T> {
         Self {
             ordering: BaseOrdering::default(),
             max_inflight_delegated_slots: 4,
+            validity_limit: SubPoolLimit::default(),
             guard_limits: GuardLimits::default(),
             additional_trusted_delegation_targets: AddressSet::default(),
             allowlisted_payers: AddressSet::default(),
@@ -834,6 +838,7 @@ impl<T> Clone for BasePoolBuilder<T> {
         Self {
             ordering: self.ordering.clone(),
             max_inflight_delegated_slots: self.max_inflight_delegated_slots,
+            validity_limit: self.validity_limit,
             guard_limits: self.guard_limits,
             additional_trusted_delegation_targets: self
                 .additional_trusted_delegation_targets
@@ -854,6 +859,12 @@ impl<T> BasePoolBuilder<T> {
     /// Sets the maximum inflight EIP-7702 delegated account transactions per sender.
     pub const fn with_max_inflight_delegated_slots(mut self, limit: usize) -> Self {
         self.max_inflight_delegated_slots = limit;
+        self
+    }
+
+    /// Sets the count and byte budget for validity-predicate transactions.
+    pub const fn with_validity_limit(mut self, validity_limit: SubPoolLimit) -> Self {
+        self.validity_limit = validity_limit;
         self
     }
 
@@ -897,6 +908,7 @@ where
         let Self {
             ordering,
             max_inflight_delegated_slots,
+            validity_limit,
             guard_limits,
             additional_trusted_delegation_targets,
             allowlisted_payers,
@@ -936,8 +948,9 @@ where
             final_pool_config.clone(),
         );
         let allowlisted_payer_count = allowlisted_payers.len();
-        let transaction_pool =
-            BaseTransactionPool::new(transaction_pool, ordering).with_guard_limits(guard_limits);
+        let transaction_pool = BaseTransactionPool::new(transaction_pool, ordering)
+            .with_guard_limits(guard_limits)
+            .with_validity_limit(validity_limit);
         spawn_maintenance_tasks(ctx, transaction_pool.clone(), &final_pool_config)?;
         let state_diff_events = BroadcastStream::new(ctx.provider().subscribe_to_canonical_state());
         ctx.task_executor().spawn_critical_task(
@@ -948,6 +961,8 @@ where
         info!(
             target: "reth::cli",
             max_inflight_delegated_slots = max_inflight_delegated_slots,
+            validity_max_count = validity_limit.max_txs,
+            validity_max_size = validity_limit.max_size,
             sender_limit = guard_limits.signature_limit,
             payer_limit = guard_limits.payment_limit,
             allowlisted_payer_limit = guard_limits.allowlisted_payment_limit,

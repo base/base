@@ -18,10 +18,10 @@ use reth_transaction_pool::{
     AddedTransactionOutcome, AllPoolTransactions, AllTransactionsEvents, BestTransactions,
     BestTransactionsAttributes, BlobStore, BlobStoreError, BlockInfo, FullTransactionEvent,
     GetPooledTransactionLimit, NewBlobSidecar, NewTransactionEvent, Pool, PoolResult, PoolSize,
-    PoolTransaction, PoolUpdateKind, PropagatedTransactions, SubPool, TransactionEvents,
-    TransactionListenerKind, TransactionOrigin, TransactionPool, TransactionPoolExt,
-    TransactionValidationOutcome, TransactionValidationTaskExecutor, TransactionValidator,
-    ValidPoolTransaction,
+    PoolTransaction, PoolUpdateKind, PropagatedTransactions, SubPool, SubPoolLimit,
+    TransactionEvents, TransactionListenerKind, TransactionOrigin, TransactionPool,
+    TransactionPoolExt, TransactionValidationOutcome, TransactionValidationTaskExecutor,
+    TransactionValidator, ValidPoolTransaction,
     error::InvalidPoolTransactionError,
     pool::{AddedTransactionState, QueuedReason, TransactionEvent},
 };
@@ -35,7 +35,7 @@ use crate::{
     Admission, BasePooledTx, BaseTransactionValidator, FlashblockExpiry, GuardLimits, GuardMetrics,
     InvalidationCause, InvalidationKey, LimitRejection, MempoolGuard, ParkableBestTransactions,
     ParkableTransactionPool, ParkedBestTransactions, PredicateContext, StateDiffInvalidation,
-    ValidityPoolMetrics,
+    ValidityAdmission, ValidityBudget, ValidityBudgetRejection, ValidityPoolMetrics,
     best::MergeBestTransactions,
     two_d_nonce_pool::{InsertOutcome, LaneId, LaneUpdate, SidecarLimits, TwoDNoncePool},
 };
@@ -127,6 +127,9 @@ pub struct BaseTransactionPool<
     /// deadline eviction, so a same-nonce submission cannot race the sweep.
     /// Validation itself remains outside this lock.
     protocol_admission_lock: Arc<Mutex<()>>,
+    /// Count and byte budget for validity transactions in the protocol pool.
+    /// Planned and committed under `protocol_admission_lock`.
+    validity_budget: Arc<RwLock<ValidityBudget>>,
 }
 
 impl<Client, S, Evm, T, O> fmt::Debug for BaseTransactionPool<Client, S, Evm, T, O>
@@ -162,6 +165,7 @@ where
             block_expiry: Arc::clone(&self.block_expiry),
             published_flashblock: Arc::clone(&self.published_flashblock),
             protocol_admission_lock: Arc::clone(&self.protocol_admission_lock),
+            validity_budget: Arc::clone(&self.validity_budget),
         }
     }
 }
@@ -207,6 +211,7 @@ where
             block_expiry: Arc::new(RwLock::new(crate::BlockExpiryIndex::new())),
             published_flashblock: Arc::new(RwLock::new(None)),
             protocol_admission_lock: Arc::new(Mutex::new(())),
+            validity_budget: Arc::new(RwLock::new(ValidityBudget::unlimited())),
         }
     }
 
@@ -215,6 +220,19 @@ where
     pub fn with_guard_limits(self, limits: GuardLimits) -> Self {
         *self.guard.write() = MempoolGuard::new(limits);
         self
+    }
+
+    /// Caps the validity transactions the protocol pool holds. Call before sharing the pool.
+    #[must_use]
+    pub fn with_validity_limit(self, limit: SubPoolLimit) -> Self {
+        *self.validity_budget.write() = ValidityBudget::new(limit);
+        self
+    }
+
+    /// Validity transactions currently counted against the budget, as `(transactions, bytes)`.
+    pub fn validity_budget_usage(&self) -> (usize, usize) {
+        let budget = self.validity_budget.read();
+        (budget.len(), budget.size())
     }
 
     /// Builds guard admission metadata carried by a validated EIP-8130 transaction.
@@ -269,6 +287,15 @@ where
         };
         debug!(reason = GuardMetrics::rejection_reason(rejection), "EIP-8130 admission rejected");
         reth_transaction_pool::error::PoolError::other(hash, reason)
+    }
+
+    fn validity_budget_rejection_error(
+        hash: TxHash,
+        rejection: ValidityBudgetRejection,
+    ) -> reth_transaction_pool::error::PoolError {
+        ValidityPoolMetrics::record_budget_rejection(rejection);
+        debug!(reason = rejection.label(), "validity admission rejected by budget");
+        reth_transaction_pool::error::PoolError::other(hash, rejection.to_string())
     }
 
     /// Applies canonical state changes and evicts affected EIP-8130 transactions.
@@ -412,6 +439,7 @@ where
             }
             removed.extend(sidecar_removed);
         }
+        self.release_from_budget(&removed);
         removed
     }
 
@@ -422,6 +450,18 @@ where
         let mut guard = self.guard.write();
         for transaction in removed {
             guard.release(transaction.hash());
+        }
+    }
+
+    /// Stops counting removed validity transactions against the budget. A no-op
+    /// for the common standard transaction that was never counted.
+    fn release_from_budget(&self, removed: &[Arc<ValidPoolTransaction<T>>]) {
+        if removed.is_empty() {
+            return;
+        }
+        let mut budget = self.validity_budget.write();
+        for transaction in removed {
+            budget.remove(transaction.hash());
         }
     }
 
@@ -593,13 +633,80 @@ where
         removed.len()
     }
 
-    /// Returns whether a validated transaction carries validity predicates, for
-    /// lane-churn accounting. Invalid outcomes carry no pooled transaction and
-    /// are never counted.
-    fn has_validity_predicates(validated: &TransactionValidationOutcome<T>) -> bool {
-        validated
-            .as_valid_transaction()
-            .is_some_and(|transaction| !transaction.transaction().validity_conditions().is_empty())
+    /// Plans the validity budget admission for a validated transaction, or `None`
+    /// when it carries no predicates and is never counted. Called under
+    /// `protocol_admission_lock`; a full budget rejects before reth sees the transaction.
+    fn plan_validity_admission(
+        &self,
+        hash: TxHash,
+        replaced: Option<TxHash>,
+        validated: &TransactionValidationOutcome<T>,
+    ) -> PoolResult<Option<ValidityAdmission>> {
+        let Some(transaction) = validated.as_valid_transaction().map(|valid| valid.transaction())
+        else {
+            return Ok(None);
+        };
+        if transaction.validity_conditions().is_empty() {
+            return Ok(None);
+        }
+        self.validity_budget
+            .read()
+            .plan_admission(
+                hash,
+                transaction.priority_fee_or_price(),
+                transaction.size(),
+                replaced.as_ref(),
+            )
+            .map(Some)
+            .map_err(|rejection| Self::validity_budget_rejection_error(hash, rejection))
+    }
+
+    /// Applies a planned validity admission once reth has accepted the transaction:
+    /// releases the replaced hash, counts the newcomer, and evicts the residents the
+    /// plan displaced. Called under `protocol_admission_lock`.
+    fn commit_validity_admission(
+        &self,
+        admission: Option<ValidityAdmission>,
+        replaced: Option<TxHash>,
+    ) {
+        if admission.is_none() && replaced.is_none() {
+            return;
+        }
+        let evicted = {
+            let mut budget = self.validity_budget.write();
+            if let Some(replaced) = replaced {
+                budget.remove(&replaced);
+            }
+            admission.map(|admission| budget.commit(admission)).unwrap_or_default()
+        };
+        if evicted.is_empty() {
+            return;
+        }
+        let removed = self.protocol_pool.remove_transactions(evicted);
+        self.release_from_guard(&removed);
+        ValidityPoolMetrics::record_budget_evictions(removed.len());
+        debug!(count = removed.len(), "validity transactions evicted by budget");
+    }
+
+    /// Drops budget entries whose transactions reth evicted on its own (subpool
+    /// limits, lifetime, nonce pruning), which the wrapper cannot observe
+    /// synchronously. An entry is only created after reth accepted the
+    /// transaction, so an entry without a pooled transaction is always stale.
+    /// Over-counting until the next reconciliation only makes the budget stricter.
+    fn reconcile_validity_budget(&self) {
+        let tracked = self.validity_budget.read().tracked_hashes();
+        if tracked.is_empty() {
+            return;
+        }
+        let stale: Vec<_> =
+            tracked.into_iter().filter(|hash| self.protocol_pool.get(hash).is_none()).collect();
+        if stale.is_empty() {
+            return;
+        }
+        let mut budget = self.validity_budget.write();
+        let released = stale.iter().filter(|hash| budget.remove(hash)).count();
+        drop(budget);
+        ValidityPoolMetrics::record_budget_reconciled(released);
     }
 
     fn reconcile_guard(&self) {
@@ -711,15 +818,17 @@ where
         self.ensure_not_published_expired(hash, &validated)?;
         self.ensure_eip8130_fits_block_gas_limit(hash, &validated)?;
         let replaced = self.protocol_replacement_hash(sender, nonce);
+        // Plan the validity budget before reserving guard capacity so a budget
+        // rejection needs no rollback, and before reth publishes insertion events.
+        let validity_admission = self.plan_validity_admission(hash, replaced, &validated)?;
         // Reserve guard capacity before reth publishes insertion events. A
         // tracked replacement bypasses this check and is reaccounted after the
         // protocol pool atomically accepts the fee bump.
         let pre_admitted = self.pre_admit_protocol_transaction(hash, replaced, &validated)?;
-        // Capture the block-expiry bound and validity-lane flag before
-        // `validated` is consumed below.
+        // Capture the block-expiry bound before `validated` is consumed below.
         let block_expiry_bound = Self::validity_block_expiry_bound(&validated);
         let flashblock_expiry_bound = Self::validity_flashblock_expiry_bound(&validated);
-        let is_validity = Self::has_validity_predicates(&validated);
+        let is_validity = validity_admission.is_some();
         let mut outcomes =
             self.protocol_pool.inner().add_transactions(origin, std::iter::once(validated));
         let outcome = match outcomes.pop() {
@@ -740,7 +849,14 @@ where
                 ));
             }
         };
-        self.gate_protocol_admission(hash, replaced, pre_admitted)?;
+        // Commit the budget only for a gated-in transaction; a replaced hash has
+        // left reth either way and stops counting.
+        let gated = self.gate_protocol_admission(hash, replaced, pre_admitted);
+        self.commit_validity_admission(
+            gated.is_ok().then_some(validity_admission).flatten(),
+            replaced,
+        );
+        gated?;
         self.register_block_expiry(hash, block_expiry_bound, flashblock_expiry_bound, replaced);
         if is_validity {
             ValidityPoolMetrics::record_admission(replaced.is_some());
@@ -1153,12 +1269,12 @@ where
             self.ensure_not_published_expired(hash, &validated)?;
             self.ensure_eip8130_fits_block_gas_limit(hash, &validated)?;
             let replaced = self.protocol_replacement_hash(sender, nonce);
+            let validity_admission = self.plan_validity_admission(hash, replaced, &validated)?;
             let pre_admitted = self.pre_admit_protocol_transaction(hash, replaced, &validated)?;
-            // Capture the block-expiry bound and validity-lane flag before
-            // `validated` is consumed below.
+            // Capture the block-expiry bound before `validated` is consumed below.
             let block_expiry_bound = Self::validity_block_expiry_bound(&validated);
             let flashblock_expiry_bound = Self::validity_flashblock_expiry_bound(&validated);
-            let is_validity = Self::has_validity_predicates(&validated);
+            let is_validity = validity_admission.is_some();
             let events =
                 match self.protocol_pool.inner().add_transaction_and_subscribe(origin, validated) {
                     Ok(events) => events,
@@ -1169,7 +1285,12 @@ where
                         return Err(error);
                     }
                 };
-            self.gate_protocol_admission(hash, replaced, pre_admitted)?;
+            let gated = self.gate_protocol_admission(hash, replaced, pre_admitted);
+            self.commit_validity_admission(
+                gated.is_ok().then_some(validity_admission).flatten(),
+                replaced,
+            );
+            gated?;
             self.register_block_expiry(hash, block_expiry_bound, flashblock_expiry_bound, replaced);
             if is_validity {
                 ValidityPoolMetrics::record_admission(replaced.is_some());
@@ -1488,6 +1609,7 @@ where
         let (protocol_hashes, sidecar_hashes) = self.partition_hashes_by_pool(hashes);
         let mut removed = self.protocol_pool.remove_transactions(protocol_hashes);
         self.release_from_guard(&removed);
+        self.release_from_budget(&removed);
         let sidecar_removed = self.nonce_pool.write().remove_transactions(&sidecar_hashes);
         if !sidecar_removed.is_empty() {
             self.listeners.write().on_discarded(&sidecar_removed);
@@ -1504,6 +1626,7 @@ where
         let (protocol_hashes, sidecar_hashes) = self.partition_hashes_by_pool(hashes);
         let mut removed = self.protocol_pool.remove_transactions_and_descendants(protocol_hashes);
         self.release_from_guard(&removed);
+        self.release_from_budget(&removed);
         let sidecar_removed =
             self.nonce_pool.write().remove_transactions_and_descendants(&sidecar_hashes);
         if !sidecar_removed.is_empty() {
@@ -1520,6 +1643,7 @@ where
     ) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
         let mut removed = self.protocol_pool.remove_transactions_by_sender(sender);
         self.release_from_guard(&removed);
+        self.release_from_budget(&removed);
         let sidecar_removed = self.nonce_pool.write().remove_transactions_by_sender(sender);
         if !sidecar_removed.is_empty() {
             self.listeners.write().on_discarded(&sidecar_removed);
@@ -1536,6 +1660,7 @@ where
         let (protocol_hashes, sidecar_hashes) = self.partition_hashes_by_pool(hashes);
         let mut removed = self.protocol_pool.prune_transactions(protocol_hashes);
         self.release_from_guard(&removed);
+        self.release_from_budget(&removed);
         let pruned = {
             let mut nonce_pool = self.nonce_pool.write();
             let pruned = nonce_pool.prune_mined(&sidecar_hashes);
@@ -1822,6 +1947,10 @@ where
             for hash in &mined_transactions {
                 block_expiry.remove(hash);
             }
+            let mut validity_budget = self.validity_budget.write();
+            for hash in &mined_transactions {
+                validity_budget.remove(hash);
+            }
         }
         self.protocol_pool.on_canonical_state_change(update);
         {
@@ -1851,7 +1980,10 @@ where
         self.expire_due_buckets(now);
         self.expire_by_block(block_number);
         self.reconcile_guard();
+        self.reconcile_validity_budget();
         GuardMetrics::tracked().set(self.guard.read().len() as f64);
+        let (budget_transactions, budget_bytes) = self.validity_budget_usage();
+        ValidityPoolMetrics::record_budget_occupancy(budget_transactions, budget_bytes);
     }
 
     fn update_accounts(&self, accounts: Vec<ChangedAccount>) {
@@ -4983,5 +5115,367 @@ mod tests {
         assert!(listeners.new_all.is_empty());
         assert!(listeners.new_propagate.is_empty());
         assert!(listeners.all_events.is_empty());
+    }
+
+    /// A storage predicate the mock provider never satisfies, so the transaction
+    /// rests in the pool until something removes it.
+    fn resting_predicate() -> ValidityPredicate {
+        ValidityPredicate::Storage {
+            address: Address::repeat_byte(0xAB),
+            slot: U256::ZERO,
+            mask: U256::MAX,
+            op: ValidityOperator::Equal,
+            value: U256::from(1),
+        }
+    }
+
+    /// An EIP-1559 validity transaction that rests, bidding `tip` wei per gas.
+    fn resting_validity_1559(
+        signer: &PrivateKeySigner,
+        nonce: u64,
+        tip: u128,
+    ) -> BasePooledTransaction {
+        signed_1559_with_fees(signer, nonce, 10_000 + tip, tip)
+            .with_validity_predicates(vec![resting_predicate()])
+    }
+
+    fn build_budgeted_pool(
+        limit: SubPoolLimit,
+    ) -> (IntegrationPool, MockEthProvider<BasePrimitives, Arc<BaseChainSpec>>) {
+        let (pool, client) = build_integration_pool();
+        (pool.with_validity_limit(limit), client)
+    }
+
+    fn funded_signer(
+        client: &MockEthProvider<BasePrimitives, Arc<BaseChainSpec>>,
+    ) -> PrivateKeySigner {
+        let signer = signer();
+        fund(client, signer.address());
+        signer
+    }
+
+    /// Commits `number` with `mined` transactions, the way canonical maintenance does.
+    fn commit_block(pool: &IntegrationPool, number: u64, mined: Vec<TxHash>) {
+        let block = SealedBlock::seal_slow(BaseBlock {
+            header: alloy_consensus::Header {
+                number,
+                gas_limit: pool.block_info().block_gas_limit,
+                timestamp: INTEGRATION_POOL_NOW_SECS + number,
+                ..Default::default()
+            },
+            body: Default::default(),
+        });
+        pool.on_canonical_state_change(CanonicalStateUpdate {
+            new_tip: &block,
+            pending_block_base_fee: 0,
+            pending_block_blob_fee: None,
+            changed_accounts: Vec::new(),
+            mined_transactions: mined,
+            update_kind: PoolUpdateKind::Commit,
+        });
+    }
+
+    #[tokio::test]
+    async fn validity_budget_evicts_the_cheapest_resting_validity_transaction_at_capacity() {
+        let (pool, client) = build_budgeted_pool(SubPoolLimit::new(2, usize::MAX));
+        let cheap = resting_validity_1559(&funded_signer(&client), 0, 1);
+        let mid = resting_validity_1559(&funded_signer(&client), 0, 2);
+        let standard = signed_1559(&funded_signer(&client), 0);
+        let rich = resting_validity_1559(&funded_signer(&client), 0, 3);
+        let (cheap_hash, mid_hash, standard_hash, rich_hash) =
+            (*cheap.hash(), *mid.hash(), *standard.hash(), *rich.hash());
+        let expected_size = mid.size() + rich.size();
+
+        for transaction in [cheap, mid, standard] {
+            pool.add_transaction(TransactionOrigin::Local, transaction).await.unwrap();
+        }
+        assert_eq!(pool.validity_budget_usage().0, 2);
+
+        // The builder insert path admits batches through the same budget.
+        let outcomes = pool.add_transactions(TransactionOrigin::Local, vec![rich]).await;
+        outcomes.into_iter().for_each(|outcome| {
+            outcome.unwrap();
+        });
+
+        assert!(pool.get(&cheap_hash).is_none(), "cheapest validity transaction is evicted");
+        assert!(pool.get(&mid_hash).is_some());
+        assert!(pool.get(&rich_hash).is_some());
+        assert!(pool.get(&standard_hash).is_some(), "standard transactions are untouched");
+        assert_eq!(pool.validity_budget_usage(), (2, expected_size));
+        assert_eq!(pool.pool_size().pending, 3);
+    }
+
+    #[tokio::test]
+    async fn validity_budget_rejects_a_bid_that_does_not_outbid_the_cheapest_resident() {
+        let (pool, client) = build_budgeted_pool(SubPoolLimit::new(2, usize::MAX));
+        let residents = [
+            resting_validity_1559(&funded_signer(&client), 0, 2),
+            resting_validity_1559(&funded_signer(&client), 0, 3),
+        ];
+        let resident_hashes: Vec<_> = residents.iter().map(|tx| *tx.hash()).collect();
+        for transaction in residents {
+            pool.add_transaction(TransactionOrigin::Local, transaction).await.unwrap();
+        }
+
+        for tip in [1, 2] {
+            let newcomer = resting_validity_1559(&funded_signer(&client), 0, tip);
+            let hash = *newcomer.hash();
+            let error = pool.add_transaction(TransactionOrigin::Local, newcomer).await.unwrap_err();
+            assert!(error.to_string().contains("validity pool is full"), "{error}");
+            assert!(pool.get(&hash).is_none());
+        }
+        for hash in &resident_hashes {
+            assert!(pool.get(hash).is_some(), "residents survive a losing bid");
+        }
+        assert_eq!(pool.validity_budget_usage().0, 2);
+        assert_eq!(pool.pool_size().pending, 2);
+    }
+
+    #[tokio::test]
+    async fn validity_budget_does_not_count_standard_transactions() {
+        let (pool, client) = build_budgeted_pool(SubPoolLimit::new(1, usize::MAX));
+        let validity = resting_validity_1559(&funded_signer(&client), 0, 1);
+        let validity_size = validity.size();
+        pool.add_transaction(TransactionOrigin::Local, validity).await.unwrap();
+
+        for _ in 0..5 {
+            let standard = signed_1559(&funded_signer(&client), 0);
+            pool.add_transaction(TransactionOrigin::Local, standard).await.unwrap();
+        }
+
+        assert_eq!(pool.validity_budget_usage(), (1, validity_size));
+        assert_eq!(pool.pool_size().pending, 6);
+    }
+
+    #[tokio::test]
+    async fn validity_budget_enforces_the_byte_limit() {
+        let probe = resting_validity_1559(&signer(), 0, 1);
+        let size = probe.size();
+        let (pool, client) =
+            build_budgeted_pool(SubPoolLimit::new(usize::MAX, size * 2 + size / 2));
+
+        let cheap = resting_validity_1559(&funded_signer(&client), 0, 1);
+        let mid = resting_validity_1559(&funded_signer(&client), 0, 2);
+        let cheap_hash = *cheap.hash();
+        for transaction in [cheap, mid] {
+            pool.add_transaction(TransactionOrigin::Local, transaction).await.unwrap();
+        }
+        assert_eq!(pool.validity_budget_usage(), (2, size * 2));
+
+        let rich = resting_validity_1559(&funded_signer(&client), 0, 3);
+        pool.add_transaction(TransactionOrigin::Local, rich).await.unwrap();
+        assert!(pool.get(&cheap_hash).is_none(), "bytes are freed from the cheapest resident");
+        assert_eq!(pool.validity_budget_usage(), (2, size * 2));
+
+        let (oversized_pool, client) = build_budgeted_pool(SubPoolLimit::new(usize::MAX, size - 1));
+        let oversized = resting_validity_1559(&funded_signer(&client), 0, 1_000);
+        let error =
+            oversized_pool.add_transaction(TransactionOrigin::Local, oversized).await.unwrap_err();
+        assert!(error.to_string().contains("exceeds the validity pool size limit"), "{error}");
+        assert_eq!(oversized_pool.validity_budget_usage(), (0, 0));
+    }
+
+    #[tokio::test]
+    async fn fee_bump_replacement_of_a_resting_validity_transaction_reuses_its_budget_slot() {
+        let (pool, client) = build_budgeted_pool(SubPoolLimit::new(1, usize::MAX));
+        let signer = funded_signer(&client);
+        let original = resting_validity_1559(&signer, 0, 100);
+        let original_hash = *original.hash();
+        pool.add_transaction(TransactionOrigin::Local, original).await.unwrap();
+
+        // A full budget still admits the fee bump: the replaced slot is credited first.
+        let replacement = signed_1559_with_fees(&signer, 0, 20_000, 200)
+            .with_validity_predicates(vec![resting_predicate()]);
+        let replacement_hash = *replacement.hash();
+        let replacement_size = replacement.size();
+        pool.add_transaction(TransactionOrigin::Local, replacement).await.unwrap();
+
+        assert!(pool.get(&original_hash).is_none());
+        assert!(pool.get(&replacement_hash).is_some());
+        assert_eq!(pool.validity_budget_usage(), (1, replacement_size));
+    }
+
+    #[tokio::test]
+    async fn replacing_a_resting_validity_transaction_with_a_standard_one_releases_the_budget() {
+        let (pool, client) = build_budgeted_pool(SubPoolLimit::new(1, usize::MAX));
+        let signer = funded_signer(&client);
+        let validity = resting_validity_1559(&signer, 0, 100);
+        pool.add_transaction(TransactionOrigin::Local, validity).await.unwrap();
+
+        let standard = signed_1559_with_fees(&signer, 0, 20_000, 200);
+        pool.add_transaction(TransactionOrigin::Local, standard).await.unwrap();
+        assert_eq!(pool.validity_budget_usage(), (0, 0));
+
+        let other = resting_validity_1559(&funded_signer(&client), 0, 1);
+        pool.add_transaction(TransactionOrigin::Local, other)
+            .await
+            .expect("the freed slot admits an unrelated validity transaction");
+        assert_eq!(pool.validity_budget_usage().0, 1);
+    }
+
+    #[tokio::test]
+    async fn replacing_a_standard_transaction_with_a_validity_one_needs_a_budget_slot() {
+        let (pool, client) = build_budgeted_pool(SubPoolLimit::new(1, usize::MAX));
+        let resident = resting_validity_1559(&funded_signer(&client), 0, 50);
+        let resident_hash = *resident.hash();
+        pool.add_transaction(TransactionOrigin::Local, resident).await.unwrap();
+
+        let signer = funded_signer(&client);
+        let standard = signed_1559_with_fees(&signer, 0, 10_000, 10);
+        let standard_hash = *standard.hash();
+        pool.add_transaction(TransactionOrigin::Local, standard).await.unwrap();
+
+        // A standard transaction's slot is not budget credit, so the bump must outbid the resident.
+        let underpriced = signed_1559_with_fees(&signer, 0, 20_000, 20)
+            .with_validity_predicates(vec![resting_predicate()]);
+        let error = pool.add_transaction(TransactionOrigin::Local, underpriced).await.unwrap_err();
+        assert!(error.to_string().contains("validity pool is full"), "{error}");
+        assert!(
+            pool.get(&standard_hash).is_some(),
+            "a rejected bump keeps the replaced transaction"
+        );
+
+        let outbid = signed_1559_with_fees(&signer, 0, 20_000, 60)
+            .with_validity_predicates(vec![resting_predicate()]);
+        let outbid_hash = *outbid.hash();
+        pool.add_transaction(TransactionOrigin::Local, outbid).await.unwrap();
+        assert!(pool.get(&standard_hash).is_none());
+        assert!(pool.get(&resident_hash).is_none(), "the outbid resident is evicted");
+        assert!(pool.get(&outbid_hash).is_some());
+        assert_eq!(pool.validity_budget_usage().0, 1);
+    }
+
+    #[tokio::test]
+    async fn mined_validity_transactions_release_the_budget() {
+        let (pool, client) = build_budgeted_pool(SubPoolLimit::new(1, usize::MAX));
+        let mined = resting_validity_1559(&funded_signer(&client), 0, 1);
+        let mined_hash = *mined.hash();
+        pool.add_transaction(TransactionOrigin::Local, mined).await.unwrap();
+
+        commit_block(&pool, 1, vec![mined_hash]);
+        assert!(pool.get(&mined_hash).is_none());
+        assert_eq!(pool.validity_budget_usage(), (0, 0));
+
+        let next = resting_validity_1559(&funded_signer(&client), 0, 1);
+        pool.add_transaction(TransactionOrigin::Local, next).await.unwrap();
+        assert_eq!(pool.validity_budget_usage().0, 1);
+    }
+
+    #[tokio::test]
+    async fn explicitly_removed_validity_transactions_release_the_budget() {
+        let (pool, client) = build_budgeted_pool(SubPoolLimit::new(2, usize::MAX));
+        let by_hash = resting_validity_1559(&funded_signer(&client), 0, 1);
+        let by_sender_signer = funded_signer(&client);
+        let by_sender = resting_validity_1559(&by_sender_signer, 0, 2);
+        let by_hash_hash = *by_hash.hash();
+        for transaction in [by_hash, by_sender] {
+            pool.add_transaction(TransactionOrigin::Local, transaction).await.unwrap();
+        }
+        assert_eq!(pool.validity_budget_usage().0, 2);
+
+        assert_eq!(pool.remove_transactions(vec![by_hash_hash]).len(), 1);
+        assert_eq!(pool.validity_budget_usage().0, 1);
+        assert_eq!(pool.remove_transactions_by_sender(by_sender_signer.address()).len(), 1);
+        assert_eq!(pool.validity_budget_usage(), (0, 0));
+    }
+
+    #[tokio::test]
+    async fn block_expiry_releases_the_budget() {
+        let (pool, client) = build_budgeted_pool(SubPoolLimit::new(1, usize::MAX));
+        let expiring = signed_1559_with_fees(&funded_signer(&client), 0, 10_000, 1)
+            .with_validity_predicates(vec![
+                resting_predicate(),
+                ValidityPredicate::BlockNumber {
+                    op: ValidityOperator::LessThanOrEqual,
+                    value: U256::from(100),
+                },
+            ]);
+        let expiring_hash = *expiring.hash();
+        pool.add_transaction(TransactionOrigin::Local, expiring).await.unwrap();
+        assert_eq!(pool.validity_budget_usage().0, 1);
+
+        commit_block(&pool, 99, Vec::new());
+        assert!(pool.get(&expiring_hash).is_some());
+        assert_eq!(pool.validity_budget_usage().0, 1);
+
+        commit_block(&pool, 100, Vec::new());
+        assert!(pool.get(&expiring_hash).is_none());
+        assert_eq!(pool.validity_budget_usage(), (0, 0));
+    }
+
+    #[tokio::test]
+    async fn flashblock_expiry_releases_the_budget() {
+        let (pool, client) = build_budgeted_pool(SubPoolLimit::new(1, usize::MAX));
+        let expiring = signed_1559_with_fees(&funded_signer(&client), 0, 10_000, 1)
+            .with_validity_predicates(vec![
+                resting_predicate(),
+                ValidityPredicate::BlockNumber {
+                    op: ValidityOperator::LessThanOrEqual,
+                    value: U256::from(100),
+                },
+                ValidityPredicate::FlashblockIndex {
+                    op: ValidityOperator::LessThanOrEqual,
+                    value: U256::from(2),
+                },
+            ]);
+        let expiring_hash = *expiring.hash();
+        pool.add_transaction(TransactionOrigin::Local, expiring).await.unwrap();
+
+        assert_eq!(publish(&pool, 100, 2), 1);
+        assert!(pool.get(&expiring_hash).is_none());
+        assert_eq!(pool.validity_budget_usage(), (0, 0));
+    }
+
+    #[tokio::test]
+    async fn reconciliation_releases_validity_transactions_reth_evicted_on_its_own() {
+        let config =
+            PoolConfig { pending_limit: SubPoolLimit::new(1, usize::MAX), ..PoolConfig::default() };
+        let (pool, client) = build_integration_pool_with_config(config);
+        let pool = pool.with_validity_limit(SubPoolLimit::new(2, usize::MAX));
+
+        let cheap = resting_validity_1559(&funded_signer(&client), 0, 1);
+        let mid = resting_validity_1559(&funded_signer(&client), 0, 2);
+        let (cheap_hash, mid_hash) = (*cheap.hash(), *mid.hash());
+        for transaction in [cheap, mid] {
+            pool.add_transaction(TransactionOrigin::Local, transaction).await.unwrap();
+        }
+        // reth's pending limit evicted the cheapest without the wrapper seeing it.
+        assert!(pool.get(&cheap_hash).is_none());
+        assert!(pool.get(&mid_hash).is_some());
+        assert_eq!(pool.validity_budget_usage().0, 2, "over-counted until reconciliation");
+
+        commit_block(&pool, 1, Vec::new());
+        assert_eq!(pool.validity_budget_usage().0, 1);
+
+        let rich = resting_validity_1559(&funded_signer(&client), 0, 3);
+        let rich_hash = *rich.hash();
+        pool.add_transaction(TransactionOrigin::Local, rich).await.unwrap();
+        assert!(pool.get(&rich_hash).is_some());
+    }
+
+    #[tokio::test]
+    async fn budget_eviction_of_a_protocol_nonce_eip8130_validity_transaction_releases_its_guard_slot()
+     {
+        let (pool, client) = build_budgeted_pool(SubPoolLimit::new(1, usize::MAX));
+        let signer = funded_signer(&client);
+        let resident = self_paid_eoa_8130(&signer, U256::ZERO, 0, 0, 1_000)
+            .with_validity_predicates(vec![resting_predicate()]);
+        let resident_hash = *resident.hash();
+        pool.add_transaction(TransactionOrigin::Local, resident).await.unwrap();
+        assert!(pool.guard.read().contains(&resident_hash));
+        assert_eq!(pool.validity_budget_usage().0, 1);
+
+        let outbid = resting_validity_1559(&funded_signer(&client), 0, 1_000_000);
+        pool.add_transaction(TransactionOrigin::Local, outbid).await.unwrap();
+        assert!(pool.get(&resident_hash).is_none());
+        assert!(!pool.guard.read().contains(&resident_hash), "eviction frees guard capacity");
+        assert_eq!(pool.validity_budget_usage().0, 1);
+    }
+
+    #[test]
+    fn unconfigured_pool_budget_is_unlimited() {
+        let (pool, _client) = build_integration_pool();
+        let limit = pool.validity_budget.read().limit();
+        assert_eq!(limit, SubPoolLimit::new(usize::MAX, usize::MAX));
     }
 }

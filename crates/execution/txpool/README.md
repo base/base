@@ -46,6 +46,30 @@ modules.merge_configured(api.into_rpc())?;
 Extension payloads must serialize as a JSON map (a braced struct, not a unit struct) and must avoid
 `u128`/`i128` fields, which `serde_json` cannot represent through `#[serde(flatten)]`.
 
+### Validity pool budget
+
+Validity transactions (transactions with off-chain predicates) share reth's `pending`,
+`basefee`, and `queued` subpools with standard transactions, and reth evicts by priority
+without regard to kind. A validity transaction whose predicates never hold rests in the
+pool until its block deadline and is never charged, so a flood of them at a high priority
+fee could push standard transactions out of `--txpool.pending-max-count`.
+
+`ValidityBudget` caps how many validity transactions, and how many encoded bytes of them,
+the protocol pool holds (`--rollup.txpool-validity-max-count`,
+`--rollup.txpool-validity-max-size` in MB; defaults match reth's subpool defaults). The
+budget is planned under the admission lock before reth sees the transaction and committed
+once reth accepts it. When full, a newcomer must strictly outbid the cheapest resting
+validity transaction, by maximum priority fee per gas, which is then evicted; an equal or
+lower bid is rejected, so a sender cannot rotate the resident set for free. Standard
+transactions are never counted and always keep `pending_limit - budget` slots. EIP-8130
+transactions in the 2D nonce sidecar have their own capacity and are not counted.
+
+The budget indexes hashes only. Entries are released on inclusion, replacement, explicit
+removal, and block or flashblock expiry; evictions reth performs on its own are reconciled
+once per canonical block, so between blocks the budget can only over-count, which makes it
+stricter, never looser. `txpool.validity.budget_{transactions,bytes}` report occupancy and
+`txpool.validity.budget_{rejected,evicted,reconciled}` count its decisions.
+
 ### Signed validity predicates
 
 `TransactionValidity` carries off-chain predicates separately from the signed Ethereum

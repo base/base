@@ -100,6 +100,17 @@ base_metrics::define_metrics! {
     #[describe("Validity transactions admitted to the pool, labeled by whether the admission replaced an existing same-sender/nonce transaction or added a new pool entry")]
     #[label(name = "outcome", default = ["added", "replaced"])]
     admitted: counter,
+    #[describe("Validity transactions rejected at admission by the validity pool budget")]
+    #[label(name = "reason", default = ["underpriced", "oversized"])]
+    budget_rejected: counter,
+    #[describe("Resting validity transactions evicted by the validity pool budget to admit a higher-priority validity transaction")]
+    budget_evicted: counter,
+    #[describe("Budget entries dropped at reconciliation because reth had already evicted the transaction")]
+    budget_reconciled: counter,
+    #[describe("Validity transactions currently counted against the validity pool budget")]
+    budget_transactions: gauge,
+    #[describe("Encoded bytes of validity transactions currently counted against the validity pool budget")]
+    budget_bytes: gauge,
 }
 
 impl ValidityPoolMetrics {
@@ -110,6 +121,31 @@ impl ValidityPoolMetrics {
     /// `replaced` over that sum is the replacement rate.
     pub fn record_admission(replaced: bool) {
         Self::admitted(if replaced { "replaced" } else { "added" }).increment(1);
+    }
+
+    /// Records a validity transaction the budget turned away before reth saw it.
+    pub fn record_budget_rejection(rejection: crate::ValidityBudgetRejection) {
+        Self::budget_rejected(rejection.label()).increment(1);
+    }
+
+    /// Records residents the budget evicted to admit a higher bid.
+    pub fn record_budget_evictions(count: usize) {
+        if count > 0 {
+            Self::budget_evicted().increment(count as u64);
+        }
+    }
+
+    /// Records entries released because the transaction had already left the pool.
+    pub fn record_budget_reconciled(count: usize) {
+        if count > 0 {
+            Self::budget_reconciled().increment(count as u64);
+        }
+    }
+
+    /// Publishes the budget's current occupancy.
+    pub fn record_budget_occupancy(transactions: usize, bytes: usize) {
+        Self::budget_transactions().set(transactions as f64);
+        Self::budget_bytes().set(bytes as f64);
     }
 }
 
