@@ -405,8 +405,8 @@ mod tests {
     use alloy_evm::{
         EvmEnv, EvmFactory, ToTxEnv, block::BlockExecutorFactory, precompiles::PrecompilesMap,
     };
-    use alloy_hardforks::ForkCondition;
-    use alloy_primitives::{Address, Bytes, Signature, U256, address, bytes, keccak256, uint};
+    use alloy_hardforks::{EthereumHardfork, EthereumHardforks, ForkCondition};
+    use alloy_primitives::{Address, Bytes, Signature, TxKind, U256, address, bytes, keccak256, uint};
     use base_common_chains::{BaseUpgradeExt, ChainUpgrades};
     use base_common_consensus::{
         BaseTxEnvelope, Call, Eip8130Constants, Eip8130Signed, Predeploys, TxEip8130,
@@ -498,16 +498,16 @@ mod tests {
         db
     }
 
-    fn build_executor<'a>(
+    fn build_executor<'a, Spec: Upgrades>(
         db: &'a mut revm::database::State<InMemoryDB>,
         receipt_builder: &'a AlloyReceiptBuilder,
-        base_chain_upgrades: &'a ChainUpgrades,
+        base_chain_upgrades: &'a Spec,
         gas_limit: u64,
         jovian_timestamp: u64,
     ) -> BaseBlockExecutor<
         BaseEvm<&'a mut revm::database::State<InMemoryDB>, NoOpInspector, PrecompilesMap>,
         &'a AlloyReceiptBuilder,
-        &'a ChainUpgrades,
+        &'a Spec,
     > {
         let ctx = Context::base()
             .with_db(db)
@@ -533,9 +533,35 @@ mod tests {
         )
     }
 
-    /// A signed-by-nobody legacy transaction from the pre-funded zero address with `nonce`.
+    /// Test-only upgrade schedule: [`ChainUpgrades`] cannot carry the genesis-only Zenith gate
+    /// (it is off the execution fork ladder), so this layers a Zenith activation on top of it the
+    /// way a genesis-configured `BaseChainSpec` does.
+    #[derive(Debug, Clone)]
+    struct ZenithUpgrades {
+        inner: ChainUpgrades,
+        zenith: ForkCondition,
+    }
+
+    impl EthereumHardforks for ZenithUpgrades {
+        fn ethereum_fork_activation(&self, fork: EthereumHardfork) -> ForkCondition {
+            self.inner.ethereum_fork_activation(fork)
+        }
+    }
+
+    impl Upgrades for ZenithUpgrades {
+        fn fork_condition(&self, fork: BaseUpgrade) -> ForkCondition {
+            if fork == BaseUpgrade::Zenith { self.zenith } else { self.inner.fork_condition(fork) }
+        }
+    }
+
+    /// A signed-by-nobody legacy transfer from the pre-funded zero address with `nonce`.
     fn legacy_tx(nonce: u64, gas_limit: u64) -> Recovered<BaseTxEnvelope> {
-        let tx_inner = TxLegacy { nonce, gas_limit, ..Default::default() };
+        let tx_inner = TxLegacy {
+            nonce,
+            gas_limit,
+            to: TxKind::Call(Address::repeat_byte(0xaa)),
+            ..Default::default()
+        };
         Recovered::new_unchecked(
             BaseTxEnvelope::Legacy(tx_inner.into_signed(Signature::new(
                 Default::default(),
@@ -548,17 +574,21 @@ mod tests {
 
     /// Fills a 250k-gas block with 100k-limit transfers under `upgrade`, returning the gas each
     /// accepted transaction was charged against the block and the executor's final state. The
-    /// block schedules Jovian and Zenith at `timestamp`, so `upgrade` selects the active rules.
+    /// schedule activates Zenith one second after Jovian; `upgrade` picks the block's side of it.
     fn fill_block_with_transfers(upgrade: BaseUpgrade) -> (Vec<u64>, u64, Vec<u64>, bool) {
         const TX_GAS_LIMIT: u64 = 100_000;
         const BLOCK_GAS_LIMIT: u64 = 250_000;
         const TIMESTAMP: u64 = 1746806402;
 
         let mut db = prepare_jovian_db(0);
-        let base_chain_upgrades = ChainUpgrades::new(BaseUpgrade::mainnet().into_iter().chain(vec![
-            (BaseUpgrade::Jovian, ForkCondition::Timestamp(TIMESTAMP)),
-            (BaseUpgrade::Zenith, ForkCondition::Timestamp(TIMESTAMP)),
-        ]));
+        let base_chain_upgrades = ZenithUpgrades {
+            inner: ChainUpgrades::new(
+                BaseUpgrade::mainnet()
+                    .into_iter()
+                    .chain(vec![(BaseUpgrade::Jovian, ForkCondition::Timestamp(TIMESTAMP - 1))]),
+            ),
+            zenith: ForkCondition::Timestamp(TIMESTAMP),
+        };
         let receipt_builder = AlloyReceiptBuilder::default();
         let mut executor = build_executor(
             &mut db,
@@ -568,6 +598,10 @@ mod tests {
             TIMESTAMP,
         );
         executor.evm.ctx_mut().cfg.spec = BaseSpecId::new(upgrade);
+        // The schedule activates Zenith at `TIMESTAMP`; pre-Zenith runs use a block before it.
+        if upgrade != BaseUpgrade::Zenith {
+            executor.evm.ctx_mut().block.timestamp = U256::from(TIMESTAMP - 1);
+        }
         let billing = executor.is_gas_limit_billing();
 
         let mut charged = Vec::new();

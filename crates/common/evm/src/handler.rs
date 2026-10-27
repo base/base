@@ -1270,7 +1270,7 @@ mod tests {
                     .kind(TxKind::Call(recipient))
                     .value(FEE_FLOW_VALUE)
                     .gas_limit(FEE_FLOW_GAS_LIMIT)
-                    .gas_price(FEE_FLOW_BASE_FEE as u128),
+                    .gas_price(0),
             )
             .source_hash(B256::from([1u8; 32]))
             .mint(mint.to::<u128>())
