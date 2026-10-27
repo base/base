@@ -526,8 +526,10 @@ impl<Txs> Builder<'_, Txs> {
 
         let sealed_block = Arc::new(block.sealed_block().clone());
         debug!(target: "payload_builder", id=%ctx.payload_id(), sealed_block_header = ?sealed_block.header(), "sealed built block");
-        ValidityMetrics::resting_predicates()
-            .set(resting.as_ref().map_or(0, |resting| resting.len()) as f64);
+        if !ctx.attributes().no_tx_pool() {
+            ValidityMetrics::resting_predicates()
+                .set(resting.as_ref().map_or(0, |resting| resting.len()) as f64);
+        }
         if let (Some(mut resting), Some(store)) = (resting, resting_predicates) {
             resting.end_block(sealed_block.hash());
             store.put(resting);

@@ -11,7 +11,7 @@ use base_common_evm::BaseTransactionError;
 use derive_more::Display;
 use thiserror::Error;
 
-use crate::{InclusionTracker, PredicateLoadTracker};
+use crate::{InclusionTracker, PredicateLoadTracker, ValidityMetrics};
 
 /// Resource limits configuration for transaction and block constraints.
 ///
@@ -237,6 +237,14 @@ pub struct ExecutionInfo {
 }
 
 impl ExecutionInfo {
+    /// Records one completed or cancelled flashblock slice and accumulates its block totals.
+    pub fn record_predicate_evaluations(&mut self, count: u64, seconds: f64) {
+        ValidityMetrics::validity_predicate_evaluations_per_flashblock().record(count as f64);
+        ValidityMetrics::validity_predicate_eval_duration_per_flashblock().record(seconds);
+        self.predicate_evaluations += count;
+        self.predicate_evaluation_seconds += seconds;
+    }
+
     /// Create a new instance with allocated slots.
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
@@ -342,6 +350,28 @@ impl ExecutionInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Evaluation totals accumulate across flashblocks without losing earlier slices.
+    #[cfg(feature = "metrics")]
+    #[test]
+    fn predicate_evaluation_totals_accumulate_across_flashblocks() {
+        let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+        let handle = recorder.handle();
+        let mut info = ExecutionInfo::default();
+        metrics::with_local_recorder(&recorder, || {
+            info.record_predicate_evaluations(3, 0.25);
+            info.record_predicate_evaluations(5, 0.5);
+        });
+        assert_eq!(info.predicate_evaluations, 8, "both flashblock slices contribute every attempt");
+        assert_eq!(info.predicate_evaluation_seconds, 0.75, "both flashblock slices contribute all evaluation time");
+        let rendered = handle.render();
+        assert!(rendered.lines().any(|line| line ==
+            "base_builder_validity_predicate_evaluations_per_flashblock_sum 8"),
+            "the exported flashblock total is exactly eight evaluations");
+        assert!(rendered.lines().any(|line| line ==
+            "base_builder_validity_predicate_evaluations_per_flashblock_count 2"),
+            "exactly two flashblock slices are exported");
+    }
 
     /// Helper to create default limits with block gas limit set
     fn default_limits() -> ResourceLimits {

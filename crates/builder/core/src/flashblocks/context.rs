@@ -631,6 +631,7 @@ impl BasePayloadBuilderCtx {
     /// until the first call, so a `Some` result also records that at least one
     /// predicate was evaluated during the build; this gates the per-block
     /// histogram so blocks without validity transactions emit no observation.
+    /// Calls `record` with the same elapsed duration after each evaluation.
     fn accumulate_elapsed<T>(
         total: &mut Option<Duration>,
         record: impl FnOnce(Duration),
@@ -807,7 +808,11 @@ impl BasePayloadBuilderCtx {
                 diag.txs_considered = num_txs_considered;
                 diag.txs_included =
                     (info.executed_transactions.len() as u64).saturating_sub(min_tx_index);
-                break;
+                info.record_predicate_evaluations(
+                    predicate_evaluations,
+                    predicate_eval_total.unwrap_or_default().as_secs_f64(),
+                );
+                return Ok(diag);
             }
 
             num_txs_considered += 1;
@@ -1572,13 +1577,10 @@ impl BasePayloadBuilderCtx {
         if let Some(predicate_eval_total) = predicate_eval_total {
             ValidityMetrics::record_predicate_eval_duration(predicate_eval_total);
         }
-        let evaluation_seconds = predicate_eval_total.unwrap_or_default().as_secs_f64();
-        ValidityMetrics::validity_predicate_eval_duration_per_flashblock()
-            .record(evaluation_seconds);
-        ValidityMetrics::validity_predicate_evaluations_per_flashblock()
-            .record(predicate_evaluations as f64);
-        info.predicate_evaluations += predicate_evaluations;
-        info.predicate_evaluation_seconds += evaluation_seconds;
+        info.record_predicate_evaluations(
+            predicate_evaluations,
+            predicate_eval_total.unwrap_or_default().as_secs_f64(),
+        );
         let resting_stats = best_txs.take_resting_stats();
         if resting_stats.parked > 0 {
             ValidityMetrics::resting_predicate_parked_total().increment(resting_stats.parked);

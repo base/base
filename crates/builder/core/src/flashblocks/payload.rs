@@ -405,9 +405,11 @@ where
         }
 
         if skip_flashblocks_building {
-            ValidityMetrics::validity_predicate_evaluations_per_block().record(0.0);
-            ValidityMetrics::validity_predicate_eval_duration_per_canonical_block().record(0.0);
-            ValidityMetrics::resting_predicates().set(0.0);
+            if !ctx.attributes().no_tx_pool {
+                ValidityMetrics::validity_predicate_evaluations_per_block().record(0.0);
+                ValidityMetrics::validity_predicate_eval_duration_per_canonical_block().record(0.0);
+                ValidityMetrics::resting_predicates().set(0.0);
+            }
             let total_block_building_time = block_build_start_time.elapsed();
             BuilderMetrics::total_block_built_duration().record(total_block_building_time);
             BuilderMetrics::total_block_built_gauge().set(total_block_building_time);
