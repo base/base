@@ -8,10 +8,11 @@ use ExecutionMeteringLimitExceeded::TransactionExecutionTime;
 use alloy_primitives::{Address, U256};
 use base_common_consensus::{BaseReceipt, BaseTransactionSigned};
 use base_common_evm::BaseTransactionError;
+use base_execution_payload_builder::ValidityMetrics;
 use derive_more::Display;
 use thiserror::Error;
 
-use crate::{InclusionTracker, PredicateLoadTracker, ValidityMetrics};
+use crate::{InclusionTracker, PredicateLoadTracker};
 
 /// Resource limits configuration for transaction and block constraints.
 ///
