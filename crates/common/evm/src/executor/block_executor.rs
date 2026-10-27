@@ -406,7 +406,9 @@ mod tests {
         EvmEnv, EvmFactory, ToTxEnv, block::BlockExecutorFactory, precompiles::PrecompilesMap,
     };
     use alloy_hardforks::{EthereumHardfork, EthereumHardforks, ForkCondition};
-    use alloy_primitives::{Address, Bytes, Signature, TxKind, U256, address, bytes, keccak256, uint};
+    use alloy_primitives::{
+        Address, Bytes, Signature, TxKind, U256, address, bytes, keccak256, uint,
+    };
     use base_common_chains::{BaseUpgradeExt, ChainUpgrades};
     use base_common_consensus::{
         BaseTxEnvelope, Call, Eip8130Constants, Eip8130Signed, Predeploys, TxEip8130,

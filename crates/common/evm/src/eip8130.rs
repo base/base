@@ -1841,8 +1841,7 @@ impl Eip8130Executor {
         let fastlz_size = ctx.tx.enveloped_tx_fastlz_size;
         let l1_cost =
             ctx.chain_mut().calculate_tx_l1_cost_with_fastlz_size(encoded, fastlz_size, spec);
-        let operator_cost =
-            ctx.chain().operator_fee_charge(encoded, U256::from(charged_gas), spec);
+        let operator_cost = ctx.chain().operator_fee_charge(encoded, U256::from(charged_gas), spec);
 
         // Refund the surplus of the worst-case pre-charge. The pre-charge bounds
         // every component above (full `gas_limit`/operator at the effective

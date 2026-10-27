@@ -283,20 +283,17 @@ where
         // caller, so it keeps the actual-usage accounting.
         let gas_limit_billing =
             spec.is_gas_limit_billing_enabled() && !evm.ctx().cfg().is_fee_charge_disabled();
-        let billed_gas = if gas_limit_billing {
-            frame_result.gas().limit()
-        } else {
-            frame_result.gas().used()
-        };
+        let billed_gas =
+            if gas_limit_billing { frame_result.gas().limit() } else { frame_result.gas().used() };
         let basefee = evm.ctx().block().basefee() as u128;
 
         if gas_limit_billing {
             // Priority tip on the full `gas_limit`; the base-fee share goes to the vault below.
             let (block, tx, _, journal, _, _) = evm.ctx().all_mut();
             let coinbase_gas_price = tx.effective_gas_price(basefee).saturating_sub(basefee);
-            journal.load_account_mut(block.beneficiary())?.incr_balance(U256::from(
-                coinbase_gas_price.saturating_mul(billed_gas as u128),
-            ));
+            journal
+                .load_account_mut(block.beneficiary())?
+                .incr_balance(U256::from(coinbase_gas_price.saturating_mul(billed_gas as u128)));
         } else {
             self.mainnet.reward_beneficiary(evm, frame_result)?;
         }
@@ -1086,7 +1083,11 @@ mod tests {
     /// transaction consumes. `recipient_code` is deployed at the recipient (empty for a plain
     /// transfer). `fee_charge_disabled` mirrors the `eth_call` / `eth_estimateGas` simulation
     /// configuration.
-    fn run_fee_flow(upgrade: BaseUpgrade, recipient_code: Bytes, fee_charge_disabled: bool) -> FeeFlow {
+    fn run_fee_flow(
+        upgrade: BaseUpgrade,
+        recipient_code: Bytes,
+        fee_charge_disabled: bool,
+    ) -> FeeFlow {
         let caller = Address::repeat_byte(0x55);
         let recipient = Address::repeat_byte(0x66);
         let beneficiary = Address::repeat_byte(0x77);
@@ -1110,11 +1111,7 @@ mod tests {
         let mut evm = Context::base()
             .with_db(db)
             .with_chain(fee_flow_l1_block_info())
-            .with_block(BlockEnv {
-                basefee: FEE_FLOW_BASE_FEE,
-                beneficiary,
-                ..Default::default()
-            })
+            .with_block(BlockEnv { basefee: FEE_FLOW_BASE_FEE, beneficiary, ..Default::default() })
             .with_cfg(cfg)
             .build_base();
 
@@ -1255,11 +1252,7 @@ mod tests {
         let mut evm = Context::base()
             .with_db(db)
             .with_chain(fee_flow_l1_block_info())
-            .with_block(BlockEnv {
-                basefee: FEE_FLOW_BASE_FEE,
-                beneficiary,
-                ..Default::default()
-            })
+            .with_block(BlockEnv { basefee: FEE_FLOW_BASE_FEE, beneficiary, ..Default::default() })
             .with_cfg(CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Zenith)))
             .build_base();
 
