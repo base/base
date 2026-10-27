@@ -5,8 +5,11 @@ Unified Base node binary.
 ## Flags
 
 `base rpc` and `base sequencer` embed execution, consensus, and (for `sequencer`) the builder in
-one process. `-h`/`--help` lists the curated, Base-owned flags; `--help-all` lists every
-advanced flag, all of which remain accepted. Consensus flags keep their `BASE_NODE_*` environment
+one process, but accept only a Base-chosen set of their flags. `-h`/`--help` lists the curated
+flags needed to run a node; `--help-all` adds the advanced flags, such as transaction pool limits,
+transaction forwarding, metering, and upgrade-signal settings. Any other execution, consensus, or
+builder flag is rejected on the command line, and its environment variable is ignored. The full
+lists live in `src/surface.rs`. Supported consensus flags keep their `BASE_NODE_*` environment
 variables (for example `BASE_NODE_L1_ETH_RPC` for `--l1.rpc`), and `--chain` uses `BASE_CHAIN`.
 
 Some flags were renamed to Base conventions. The old spellings are still accepted (the renames
@@ -22,10 +25,10 @@ also apply to `base follow`, `base bootnode`, `base dev`, `base execution`, and 
 | `--builder.max_gas_per_txn`               | `--builder.max-gas-per-txn`                 |
 
 Consensus calls the embedded execution node's Engine API in memory, so Engine API transport
-flags are rejected on `base rpc` and `base sequencer`: `--authrpc.addr`, `--authrpc.port`,
-`--authrpc.jwtsecret`, `--auth-ipc`, `--disable-auth-server`, `--l2-engine-jwt-secret`,
-`--l2-engine-jwt-encoded`, and `--l2-engine-timeout`. Environment values for these flags (such as
-`BASE_NODE_L2_ENGINE_AUTH` in existing env files) are ignored rather than rejected.
+flags such as `--authrpc.port`, `--authrpc.jwtsecret`, `--l2-engine-jwt-secret`, and
+`--l2-engine-timeout` are among the rejected flags, with an error that explains why. Environment
+values for rejected flags (such as `BASE_NODE_L2_ENGINE_AUTH` in env files shared with the
+standalone binaries) are ignored rather than rejected.
 
 When migrating from the standalone binaries, note that `base-consensus --port` (consensus RPC) is
 now `--consensus.rpc.port`; in `base`, `--port` is the execution P2P port.
