@@ -526,6 +526,7 @@ impl LoadRunner {
                 "b20 run salt not set; call prepare_payloads before run".into(),
             ));
         }
+
         self.derive_reverse_swap_amounts().await?;
 
         self.collector.reset();
@@ -2404,6 +2405,7 @@ mod tests {
             nonce_reset_rx,
             validity_router: crate::runner::ValidityRouter::new(&config),
             query_client: runner.client.clone(),
+            gas_estimator: None,
         };
         let mut generator = runner.generator;
         let mut keys = runner.recipient_keys;

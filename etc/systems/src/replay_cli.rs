@@ -90,6 +90,9 @@ pub struct ReplayBenchmarkArgs {
     /// history covers while all are busy are skipped.
     #[arg(long, default_value = "2")]
     pub proofs_concurrency: NonZeroUsize,
+    /// Disable modeled batcher/blob DA output (enabled by default, outside replay timing).
+    #[arg(long)]
+    pub skip_da: bool,
 }
 
 /// How blocks were scheduled.
@@ -198,16 +201,18 @@ pub struct ReplayResult {
     pub error: Option<String>,
     /// Per-block timings in replay order.
     pub blocks: Vec<ReplayBlockTiming>,
-    /// Proofs mode only. Recorded without a threshold; it does not affect `match`.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub proofs: Option<ProofsSummary>,
-
     /// FastLZ/Fjord estimate over successfully inserted replay blocks, including setup blocks.
     #[serde(rename = "da_usage", default, skip_serializing_if = "Option::is_none")]
     pub da_usage: Option<crate::DaUsageSummary>,
     /// Comparable snapshot DA summary over the manifest's complete (start, end] window.
     #[serde(rename = "da_usage_measured", default, skip_serializing_if = "Option::is_none")]
     pub da_usage_measured: Option<crate::DaUsageSummary>,
+    /// Modeled batcher frame/blob output over the measured range, or the full legacy export.
+    #[serde(rename = "da_model", default, skip_serializing_if = "Option::is_none")]
+    pub da_model: Option<crate::DaResult>,
+    /// Proofs mode only. Recorded without a threshold; it does not affect `match`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub proofs: Option<ProofsSummary>,
 }
 
 /// Blocks inserted before the replay finished or failed.
@@ -359,7 +364,7 @@ impl ReplayBenchmarkArgs {
                 }
                 Err(error) => return Err(error),
             };
-        let result = ReplayResult {
+        let mut result = ReplayResult {
             proofs,
             ..Self::summarize(
                 manifest,
@@ -368,6 +373,17 @@ impl ReplayBenchmarkArgs {
                 (final_number, final_hash, final_state_root),
             )
         };
+        if !self.skip_da && replayed_all {
+            let dir = self.export_dir.clone();
+            let range = result
+                .manifest
+                .measurement_start_block
+                .zip(result.manifest.measurement_end_block)
+                .map(|(start, end)| (start + 1, end));
+            result.da_model = Some(
+                crate::DaBenchmarkArgs::write_export_model(dir, range, &self.output_dir).await?,
+            );
+        }
         let result_path = self.output_dir.join(REPLAY_RESULT_FILE);
         LocalBenchmarkArgs::write_json(&result_path, &result, "replay result")?;
         println!("replay result: {}", result_path.display());
@@ -515,6 +531,7 @@ impl ReplayBenchmarkArgs {
             BaseExecutionPayload::V2(_) => 2,
             BaseExecutionPayload::V3(_) => 3,
             BaseExecutionPayload::V4(_) => 4,
+            BaseExecutionPayload::V5(_) => 5,
         };
         ensure!(
             version == block.payload_version,
@@ -551,6 +568,9 @@ impl ReplayBenchmarkArgs {
             }
             BaseExecutionPayload::V4(payload) => {
                 engine.new_payload_v4(payload, parent_beacon_block_root).await
+            }
+            BaseExecutionPayload::V5(payload) => {
+                engine.new_payload_v5(payload, parent_beacon_block_root).await
             }
         }
         .wrap_err_with(|| format!("newPayload failed for block {}", block.number))?;
@@ -633,6 +653,7 @@ impl ReplayBenchmarkArgs {
             ),
             da_usage_measured: Self::measured_da_usage(&manifest, &run.blocks),
             blocks: run.blocks,
+            da_model: None,
             proofs: None,
             manifest,
         }
@@ -717,11 +738,24 @@ impl ReplayBenchmarkArgs {
             rollup_config: manifest.rollup_config.clone(),
         }
         .resolve()?;
-        let chain_spec = SnapshotL2Stack::chain_spec(
+        let mut chain_spec = SnapshotL2Stack::chain_spec(
             (*chain.chain_spec).clone(),
             manifest.first_block_timestamp,
             block_interval,
         );
+        if block_interval == DevnetBlockInterval::TwoHundredMilliseconds {
+            let rollup = SnapshotL2Stack::anchored_rollup_config(
+                (*chain.rollup_config).clone(),
+                manifest.boundary_number,
+                manifest.first_block_timestamp,
+                block_interval,
+            )?;
+            // Replay must validate the same local schedule as the exporting builder.
+            if let Some(schedule) = rollup.denim_timestamp_schedule() {
+                chain_spec.local_denim_timestamp_schedule =
+                    Some(Arc::new(std::sync::OnceLock::from(schedule)));
+            }
+        }
         Ok((chain_spec, block_interval))
     }
 
@@ -782,7 +816,7 @@ mod tests {
     use base_common_chains::Upgrades;
     use base_common_genesis::BaseUpgrade;
     use clap::Parser;
-    use reth_ethereum_forks::ForkCondition;
+    use reth_ethereum_forks::{EthereumHardfork, EthereumHardforks, ForkCondition};
 
     use super::{LatencySummary, ReplayBenchmarkArgs, ReplayBlockTiming, ReplayMode, ReplayRun};
     use crate::{BenchmarkCli, BenchmarkCommand, DevnetBlockInterval, ReplayManifest};
@@ -818,6 +852,30 @@ mod tests {
             forkchoice_ms: 1.0,
             lag_ms,
         }
+    }
+
+    #[test]
+    fn replay_model_has_the_same_json_key_as_snapshot() {
+        let mut result = ReplayBenchmarkArgs::summarize(
+            manifest(200),
+            ReplayMode::Unpaced,
+            ReplayRun { blocks: Vec::new(), wall_time: Duration::ZERO, error: None },
+            (0, B256::ZERO, B256::ZERO),
+        );
+        result.da_model = Some(
+            serde_json::from_value(serde_json::json!({
+                "first_block": 1, "last_block": 2, "seconds": 0.4, "gas_used": 2_000_000,
+                "transactions": 2, "transaction_bytes": 1000, "l1_transactions": 1,
+                "blobs": 1, "frame_bytes": 500, "gas_per_second": 5_000_000.0,
+                "frame_bytes_per_second": 1250.0, "bytes_per_gas": 0.00025,
+                "compression_ratio": 2.0, "blobs_per_l1_slot": 30.0, "blob_fill": 0.01,
+                "blob_target_gas_per_second": 1.0
+            }))
+            .expect("DA model fixture"),
+        );
+        let json = serde_json::to_value(result).expect("serialize replay model");
+        assert_eq!(json["da_model"]["frame_bytes"], 500, "snapshot/replay model key must match");
+        assert!(json.get("daModel").is_none(), "do not silently rename the modeled summary");
     }
 
     #[test]
@@ -1013,6 +1071,7 @@ mod tests {
         assert_eq!(args.datadir.to_string_lossy(), "/snapshot/restored");
         assert_eq!(args.export_dir.to_string_lossy(), "/boot/export");
         assert!(!args.paced);
+        assert!(!args.skip_da, "modeled DA must be enabled without any flags");
         assert_eq!(args.shutdown_timeout_seconds, 0);
         assert!(args.proofs_dir.is_none());
     }
@@ -1114,6 +1173,27 @@ mod tests {
         );
         assert!(!chain_spec.is_denim_active_at_timestamp(FIRST_BLOCK_TIMESTAMP - 1));
         assert!(chain_spec.is_denim_active_at_timestamp(FIRST_BLOCK_TIMESTAMP));
+        let schedule = chain_spec.denim_timestamp_schedule().unwrap().expect("local schedule");
+        for offset in 0..6 {
+            assert_eq!(
+                schedule.block_timestamp_millis(30_000_001 + offset),
+                FIRST_BLOCK_TIMESTAMP * 1_000 + offset * 200,
+                "replay must validate exported block {offset} on the builder's anchored schedule",
+            );
+        }
+        assert_eq!(
+            chain_spec.fork(EthereumHardfork::Amsterdam),
+            ForkCondition::Timestamp(FIRST_BLOCK_TIMESTAMP),
+            "replay must preserve the snapshot's paired Denim/Amsterdam boundary",
+        );
+        assert!(
+            !chain_spec.is_amsterdam_active_at_timestamp(FIRST_BLOCK_TIMESTAMP - 1),
+            "replay must not activate Amsterdam before the first exported block",
+        );
+        assert!(
+            chain_spec.is_amsterdam_active_at_timestamp(FIRST_BLOCK_TIMESTAMP),
+            "the first replayed benchmark block must execute Amsterdam rules",
+        );
     }
 
     #[test]

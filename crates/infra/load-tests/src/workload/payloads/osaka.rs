@@ -180,6 +180,7 @@ mod tests {
             .expect("wallet-complete CREATE");
         assert_eq!(calibration.kind(), TxKind::Create, "calibration must remain CREATE");
         let prepared = PreparedTransaction {
+            native: false,
             from: signer.address(),
             to: None,
             value: U256::ZERO,

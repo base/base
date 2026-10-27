@@ -1365,7 +1365,8 @@ where
 }
 
 /// Network primitive types used by Base networks.
-pub type BaseNetworkPrimitives = BasicNetworkPrimitives<BasePrimitives, BasePooledTransaction>;
+pub type BaseNetworkPrimitives =
+    BasicNetworkPrimitives<BasePrimitives, base_common_consensus::BasePooledTransaction>;
 
 #[cfg(test)]
 mod tests {

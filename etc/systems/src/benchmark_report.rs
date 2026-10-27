@@ -37,6 +37,9 @@ pub struct SnapshotBenchmarkResult {
     /// FastLZ/Fjord estimate and raw EIP-2718 bytes over the measured sequencer window.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub da_usage: Option<DaUsageSummary>,
+    /// Modeled batcher frame/blob output over the measured window, not observed L1 usage.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub da_model: Option<crate::DaResult>,
 }
 
 /// Canonical metrics for one block in the measured benchmark window.
@@ -230,6 +233,11 @@ impl SnapshotBenchmarkReportConfig {
             ("TransactionPayload".to_string(), serde_json::Value::String(transaction_payload)),
             ("ClientVersion".to_string(), serde_json::Value::String(self.client_version.clone())),
         ]);
+        let mut artifacts =
+            BTreeMap::from([("loadTestResult".to_string(), "load-test-result.json".to_string())]);
+        if result.da_model.is_some() {
+            artifacts.insert("daModel".to_string(), crate::DA_RESULT_FILE.to_string());
+        }
         let metadata = VisualizerMetadata {
             runs: vec![VisualizerRun {
                 id: self.run_id.clone(),
@@ -251,10 +259,7 @@ impl SnapshotBenchmarkReportConfig {
                     validator_metrics: (!validator_metrics.is_empty()).then_some(
                         VisualizerValidatorMetrics { gas_per_second: validator_gas_per_second },
                     ),
-                    artifacts: BTreeMap::from([(
-                        "loadTestResult".to_string(),
-                        "load-test-result.json".to_string(),
-                    )]),
+                    artifacts,
                 },
                 created_at: Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true),
             }],
@@ -394,6 +399,7 @@ transactions:
                 ),
                 ..Default::default()
             },
+            da_model: None,
             da_usage: None,
             blocks: vec![SnapshotBlockMetrics {
                 number: 10,
@@ -476,6 +482,7 @@ transactions:
             client_rpc_url: None,
             funder_address: Address::ZERO,
             load_test: MetricsSummary::default(),
+            da_model: None,
             da_usage: None,
             blocks: vec![SnapshotBlockMetrics {
                 number: 10,

@@ -497,7 +497,7 @@ mod tests {
     use reth_ethereum_forks::{EthereumHardfork, EthereumHardforks, ForkCondition, Hardfork};
 
     use super::{SNAPSHOT_STARTUP_LEAD, SnapshotL2Stack};
-    use crate::DevnetBlockInterval;
+    use crate::{DevnetBlockInterval, DevnetConfig, DevnetL2State, SnapshotChainConfig};
 
     #[test]
     fn persistence_backpressure_window_scales_with_cadence() {
@@ -739,7 +739,57 @@ mod tests {
     }
 
     #[test]
-    fn two_second_snapshot_preserves_canonical_fork_schedule() {
+    fn builder_only_mainnet_snapshot_activates_amsterdam() {
+        let datadir = tempfile::tempdir().expect("builder datadir must be available");
+        let config =
+            DevnetConfig::snapshot(datadir.path().into(), None, SnapshotChainConfig::default())
+                .expect("builder-only mainnet config must resolve");
+        config.validate().expect("builder-only config must not require a client datadir");
+        let DevnetL2State::Snapshot(snapshot) = config.l2_state else {
+            panic!("snapshot configuration must select snapshot state");
+        };
+        assert_eq!(snapshot.client_datadir, None, "this run must not launch a validator");
+        let chain = snapshot.chain.resolve().expect("mainnet chain must resolve");
+        assert_eq!(chain.l2_chain_id, 8453, "builder-only fixture must use Base mainnet");
+        let mut canonical = (*chain.rollup_config).clone();
+        canonical.clear_upgrade_activation_timestamp(BaseUpgrade::Denim);
+        let mut original = (*chain.chain_spec).clone();
+        original.set_fork(BaseUpgrade::Denim, ForkCondition::Never);
+        original.set_fork(EthereumHardfork::Amsterdam, ForkCondition::Never);
+        let activation = 2_000_000_001;
+        let interval = DevnetBlockInterval::TwoHundredMilliseconds;
+        let spec = SnapshotL2Stack::chain_spec(original, activation, interval);
+        let rollup =
+            SnapshotL2Stack::anchored_rollup_config(canonical, 48_526_665, activation, interval)
+                .expect("builder-only schedule must anchor without a client");
+        assert_eq!(
+            rollup.l2_block_timestamp_parts(48_526_666),
+            (activation, 0),
+            "first builder-only benchmark block must begin at T",
+        );
+        for (timestamp, active, upgrade) in [
+            (activation - 1, false, BaseUpgrade::Cobalt),
+            (activation, true, BaseUpgrade::Denim),
+            (rollup.l2_block_timestamp(48_526_666), true, BaseUpgrade::Denim),
+        ] {
+            assert_eq!(
+                (
+                    spec.is_amsterdam_active_at_timestamp(timestamp),
+                    spec.is_denim_active_at_timestamp(timestamp)
+                ),
+                (active, rollup.is_denim_active(timestamp)),
+                "builder-only Amsterdam and CL Denim must agree at {timestamp}",
+            );
+            assert_eq!(
+                BaseUpgrade::from_timestamp(&spec, timestamp).into_eth_spec(),
+                upgrade.into_eth_spec(),
+                "builder-only EVM must use Osaka before T and Amsterdam from the first block",
+            );
+        }
+    }
+
+    #[test]
+    fn two_second_snapshot_disables_local_denim_and_amsterdam() {
         for original in [BaseChainSpec::mainnet(), BaseChainSpec::sepolia()] {
             let spec = SnapshotL2Stack::chain_spec(
                 original.clone(),
@@ -748,11 +798,15 @@ mod tests {
             );
             for fork in [BaseUpgrade::Denim.boxed(), EthereumHardfork::Amsterdam.boxed()] {
                 assert_eq!(
-                    spec.fork(fork.clone()),
-                    original.fork(fork),
-                    "two-second snapshots must leave canonical fork times unchanged",
+                    spec.fork(fork),
+                    ForkCondition::Never,
+                    "two-second snapshots must keep both local fork gates disabled",
                 );
             }
+            assert_eq!(
+                spec.genesis, original.genesis,
+                "local scheduling preserves canonical genesis"
+            );
         }
     }
 
