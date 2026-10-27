@@ -860,9 +860,6 @@ mod tests {
         }
     }
 
-    /// The committed phase count of an EIP-8130 transaction travels with its execution result, so
-    /// a receipt built on a different thread from the one that executed the transaction (as in a
-    /// split execute-on-worker, commit-on-coordinator pipeline) still sees it.
     /// Under gas limit pricing the block's `gas_used` is the sum of the declared gas limits:
     /// every receipt reports its transaction's limit and the header follows, so the value a
     /// pipelined validator derives from the block body matches the executed header (S2, S3).
@@ -929,6 +926,9 @@ mod tests {
         );
     }
 
+    /// The committed phase count of an EIP-8130 transaction travels with its execution result, so
+    /// a receipt built on a different thread from the one that executed the transaction (as in a
+    /// split execute-on-worker, commit-on-coordinator pipeline) still sees it.
     #[test]
     fn eip8130_committed_phases_survive_execution_on_another_thread() {
         const CHAIN_ID: u64 = 8453;
