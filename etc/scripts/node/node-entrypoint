@@ -102,6 +102,9 @@ MODE="rpc"
 if [[ -n "${BASE_NODE_SOURCE_L2_RPC:-}" ]]; then
   echo "Running in follow mode because BASE_NODE_SOURCE_L2_RPC is set"
   MODE="follow"
+  if [[ -z "${BASE_NODE_L2_RPC_URL:-}" ]]; then
+    ADDITIONAL_ARGS="$ADDITIONAL_ARGS --l2-rpc-url=http://localhost:$RPC_PORT"
+  fi
 fi
 
 # Only rpc mode runs consensus P2P. A failed lookup must not keep the node down.
