@@ -401,15 +401,25 @@ In `etc/systems/tests`, using `SystemTestStackBuilder::with_base_zenith_activati
 
 ### Demo
 
-[`etc/scripts/devnet/gas-limit-pricing-demo.sh`](../../etc/scripts/devnet/gas-limit-pricing-demo.sh) shows the rule on a local devnet with the padded-transaction shape. Start a devnet with Zenith scheduled and run the script once the chain passes the activation block (100 by default):
+Two scripts, both run from the repository root against the Docker devnet.
+
+**End-to-end: the probe flood.** [`etc/scripts/devnet/gas-limit-pricing-demo.sh`](../../etc/scripts/devnet/gas-limit-pricing-demo.sh) reproduces the problem and shows the rule closing it on one chain, before and after Zenith activates:
 
 ```sh
-just devnet up-single zenith
-./etc/scripts/devnet/gas-limit-pricing-demo.sh            # waits for block 100, then runs
-TX_COUNT=10 GAS_LIMIT=5000000 ./etc/scripts/devnet/gas-limit-pricing-demo.sh
+L2_BUILDER_PREDICATE_EVAL_HARD_CUTOFF_MS=2 L2_BASE_ZENITH_BLOCK=400 just devnet up-single zenith
+./etc/scripts/devnet/gas-limit-pricing-demo.sh
 ```
 
-It sends `TX_COUNT` plain transfers from a prefunded devnet account, each declaring `GAS_LIMIT` gas (default 1,000,000) for a call that needs 21,000, then prints per-transaction receipts and asserts (the script exits non-zero if any fails): every receipt's `gasUsed` equals the declared limit (S2); the sender's balance delta equals `sum(value + gasUsed * effectiveGasPrice + l1Fee + operatorFee)` exactly, with the operator fee computed from the receipt's `operatorFeeScalar` and `operatorFeeConstant` (S1); `eth_estimateGas` returns the metered 21,000 (S6); and each touched block's header `gasUsed` equals the sum of its user transactions' declared limits plus its deposits' metered gas (S3). It also prints what the same transfers would have cost at metered gas and the resulting cost multiplier, which is the price padding now carries. Running it against a devnet without Zenith (`just devnet up-single`) shows the pre-activation behavior and fails: `gasUsed` of 21,000 and a balance delta to match.
+It drives `just load-test gas-limit-pricing` (see [`crates/infra/load-tests`](../../crates/infra/load-tests/README.md)) twice. The workload is 400 validity-transaction senders against a freshly deployed `DoubleCounter`, every transaction carrying 63 always-true storage predicates plus the required `block_number` expiry bound (the 64-predicate cap) so each one costs the builder a full predicate evaluation. Thirty percent of the senders are *probes*: a 20x priority fee, a declared limit of 2,000,000 gas, and a call that reverts after about 22,000 gas (an unknown selector). The rest are *honest*: the market tip, a 100,000 limit, and `increment2()`, which succeeds using about 45,000 gas. The first run finishes before the activation block (metered billing), the second after it (gas limit pricing). For each phase the script reads the per-cohort receipts from the load tester's summary (`LOAD_TEST_OUTPUT`) and the builder's Prometheus counters before and after, and prints:
+
+- per cohort: confirmed, reverted, gas used, gas declared, and the fee paid in total and per transaction;
+- builder: validity candidates evaluated and deferred, how many deferrals were `budget_exhausted`, how many flashblock builds hit the predicate cutoff, validity transactions included, validity gas billed, and validity-flow priority-fee revenue to the sequencer.
+
+What it shows. Under Everest the probes outrank the honest transactions and pay about as much each as one honest transaction (`20 * tip * 22k` vs `tip * 45k`), while consuming the predicate budget first; with the cutoff lowered to 2 ms the `budget_exhausted` deferrals are visible. Under Zenith the same flood pays `20 * tip * 2,000,000` per probe, about 90x more per probe and about 400x an honest transaction, and the sequencer's validity-flow revenue rises accordingly. The script asserts that under Zenith every cohort's billed gas equals its declared gas, that probes reverted, that a probe pays at least 100x an honest transaction, and that the probe's per-transaction cost rose at least 20x from the metered phase; it exits non-zero otherwise. The deferral counts are similar in both phases because the load generator does not react to prices; the point is that the behaviour producing them is no longer cheap, and the economic response is what the mainnet data scan measures.
+
+`L2_BASE_ZENITH_BLOCK` must leave room for the metered phase (about 150 s of setup and load); if the head is already past activation the script runs the Zenith phase alone. `L2_BUILDER_PREDICATE_EVAL_HARD_CUTOFF_MS` is passed to the single-mode builder by `etc/docker/docker-compose.yml`; at the production default of 10 ms a 400-sender flood on a laptop does not reach the cutoff, and `just load-test validity-stress` scale is needed to show the deferrals.
+
+**Settlement check.** [`etc/scripts/devnet/gas-limit-pricing-settlement-check.sh`](../../etc/scripts/devnet/gas-limit-pricing-settlement-check.sh) is the small exact-arithmetic check of the rule itself, with no load tester: it sends `TX_COUNT` plain transfers from a prefunded account, each declaring `GAS_LIMIT` gas (default 1,000,000) for a call that needs 21,000, and asserts that every receipt's `gasUsed` equals the declared limit (S2); that the sender's balance delta equals `sum(value + gasUsed * effectiveGasPrice + l1Fee + operatorFee)` exactly, with the operator fee computed from the receipt's `operatorFeeScalar` and `operatorFeeConstant` (S1); that `eth_estimateGas` returns the metered 21,000 (S6); and that each touched block's header `gasUsed` equals its user transactions' declared limits plus its deposits' metered gas (S3). It also prints what the transfers would have cost at metered gas. Run it after block 100 on `just devnet up-single zenith`; against a devnet without Zenith it shows the pre-activation behaviour and fails.
 
 ### Mainnet data scan
 

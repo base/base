@@ -1,169 +1,225 @@
 #!/usr/bin/env bash
-# Demo for gas limit pricing (docs/guides/GAS_LIMIT_PRICING.md).
+# End-to-end demo for gas limit pricing (docs/guides/GAS_LIMIT_PRICING.md).
 #
-# Models a padded transaction (the shape used to game tip-per-gas ordering): several
-# plain ETH transfers that each declare a large gas limit but only need ~21,000 gas.
-# On a Zenith devnet the sender is debited for the full declared limit: receipt
-# gasUsed == gasLimit, the balance delta equals
-# sum(value + gasUsed * effectiveGasPrice + l1Fee), eth_estimateGas still returns
-# the metered requirement, and each block's gasUsed counts the declared limits of
-# its user transactions (deposits stay metered). It also prints what the same
-# transfers would have cost at metered gas: the cost multiplier padding now carries.
+# Reproduces the problem the rule solves and shows the rule closing it, on one devnet:
 #
-# Usage (from the repository root, after `just devnet up-single zenith`):
-#   ./etc/scripts/devnet/gas-limit-pricing-demo.sh [rpc-url]
+#   1. A flood of "probe" validity transactions (30% of senders) bids a 20x priority fee,
+#      declares a 2,000,000 gas limit, passes 64 storage predicates, and reverts after ~22k gas.
+#      Honest validity transactions (70% of senders) bid the market tip, declare 100,000 gas,
+#      pass the same predicates, and succeed (`DoubleCounter.increment2`).
+#   2. Before Zenith activates (metered billing), the probes sort to the front of every
+#      flashblock, consume the builder's predicate-evaluation budget
+#      (`--builder.predicate-eval-hard-cutoff-ms`) and execution window, and pay the sequencer
+#      `20x tip * ~22k gas` each: about what one honest transaction pays.
+#   3. After Zenith activates (gas limit pricing), the same flood pays `20x tip * 2,000,000`
+#      per probe, win or lose. The builder's validity-flow priority-fee revenue and the probe
+#      cohort's fees rise by roughly `2,000,000 / 22,000`; the honest cohort's by `100,000 / ~45,000`.
+#
+# The load generator does not adapt to prices, so predicate-budget deferrals look alike in both
+# phases; what the demo shows is that the behaviour that causes them stops being cheap. The
+# economic response (fewer probes at high tips) is measured on mainnet, not here.
+#
+# Usage (from the repository root):
+#   L2_BUILDER_PREDICATE_EVAL_HARD_CUTOFF_MS=2 L2_BASE_ZENITH_BLOCK=400 just devnet up-single zenith
+#   ./etc/scripts/devnet/gas-limit-pricing-demo.sh
+#
+# The first phase must finish before activation, so schedule Zenith at least ~400 blocks
+# (~800 s at 2 s/block) out; the script skips the metered phase if there is not enough time
+# and still runs the gas-limit-priced phase. Lowering the predicate cutoff lets a 400-sender
+# flood exhaust the budget on a laptop; at the production default (10 ms) use
+# `just load-test validity-stress` scale instead.
 #
 # Environment overrides:
-#   TX_COUNT   number of transactions to send            (default 5)
-#   GAS_LIMIT  declared gas limit per transaction        (default 1000000)
-#   SENDER_KEY private key of the funded devnet sender   (default ANVIL_ACCOUNT_3_KEY)
+#   RPC             builder RPC                     (default $L2_BUILDER_RPC_URL from common.sh)
+#   PROMETHEUS_URL  devnet Prometheus               (default http://localhost:9090)
+#   ZENITH_BLOCK    activation block                (default $L2_BASE_ZENITH_BLOCK or 100)
+#   OUT_DIR         where phase summaries are kept  (default: a fresh mktemp dir)
+#   PHASE_SECONDS   expected wall time of one load phase incl. setup (default 150)
+#   SKIP_EVEREST=1  do not run the metered phase even if there is time
 #
-# Requires Foundry's `cast`, `jq`, and `python3`.
+# Requires Foundry (`cast`, `forge`), `jq`, `curl`, `python3`, `cargo`, `just`.
 set -euo pipefail
 
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 
-RPC="${1:-$L2_BUILDER_RPC_URL}"
-TX_COUNT="${TX_COUNT:-5}"
-GAS_LIMIT="${GAS_LIMIT:-1000000}"
-PK="${SENDER_KEY:-$ANVIL_ACCOUNT_3_KEY}"
-TO="$ANVIL_ACCOUNT_4_ADDR"
-VALUE_WEI=1
-ZENITH_BLOCK="${L2_BASE_ZENITH_BLOCK:-100}"
+RPC="${RPC:-$L2_BUILDER_RPC_URL}"
+PROMETHEUS_URL="${PROMETHEUS_URL:-http://localhost:9090}"
+ZENITH_BLOCK="${ZENITH_BLOCK:-${L2_BASE_ZENITH_BLOCK:-100}}"
+OUT_DIR="${OUT_DIR:-$(mktemp -d "${TMPDIR:-/tmp}/gas-limit-pricing-demo.XXXXXX")}"
+PHASE_SECONDS="${PHASE_SECONDS:-150}"
+BLOCK_SECONDS=2
+JOB="l2_builder"
 
-for tool in cast jq python3; do
+for tool in cast forge jq curl python3 cargo just; do
     command -v "$tool" >/dev/null 2>&1 || { echo "ERROR: $tool is required" >&2; exit 1; }
 done
+mkdir -p "$OUT_DIR"
 
-FROM="$(cast wallet address --private-key "$PK")"
-CHAIN_ID="$(cast chain-id --rpc-url "$RPC")"
+head_block() { cast block-number --rpc-url "$RPC"; }
+
+# Raw counter / histogram-sum totals from the builder. Counters only increase, so the
+# difference between two snapshots is the activity inside a phase.
+METRIC_QUERIES=(
+    "cutoff_builds=sum(reth_base_builder_validity_predicate_eval_cutoff_builds_total{job=\"$JOB\"})"
+    "budget_exhausted=sum(reth_base_builder_validity_predicate_evaluations_total{job=\"$JOB\",outcome=\"budget_exhausted\"})"
+    "candidates_deferred=sum(reth_base_builder_validity_predicate_candidates_deferred_per_build_sum{job=\"$JOB\"})"
+    "candidates_evaluated=sum(reth_base_builder_validity_predicate_candidates_evaluated_per_build_sum{job=\"$JOB\"})"
+    "validity_txs_included=sum(reth_base_builder_txs_included_per_block_sum{job=\"$JOB\",flow=\"validity\"})"
+    "validity_priority_fee_wei=sum(reth_base_builder_priority_fee_revenue_wei_sum{job=\"$JOB\",flow=\"validity\"})"
+    "validity_gas_used=sum(reth_base_builder_tx_gas_used_per_block_sum{job=\"$JOB\",flow=\"validity\"})"
+)
+
+snapshot_metrics() {
+    local out="$1" json="{}"
+    for entry in "${METRIC_QUERIES[@]}"; do
+        local name="${entry%%=*}" query="${entry#*=}" value
+        value="$(curl -fsS --max-time 5 -G --data-urlencode "query=$query" "$PROMETHEUS_URL/api/v1/query" 2>/dev/null \
+            | jq -r '.data.result[0].value[1] // "0"' 2>/dev/null || echo "unavailable")"
+        json="$(jq -c --arg k "$name" --arg v "$value" '. + {($k): $v}' <<<"$json")"
+    done
+    printf '%s\n' "$json" >"$out"
+}
+
+run_phase() {
+    local name="$1"
+    echo ""
+    echo "=== Phase: $name (head block $(head_block), Zenith at $ZENITH_BLOCK) ==="
+    snapshot_metrics "$OUT_DIR/$name.before.json"
+    LOAD_TEST_OUTPUT="$OUT_DIR/$name.summary.json" just load-test gas-limit-pricing
+    snapshot_metrics "$OUT_DIR/$name.after.json"
+    echo "phase $name done at head block $(head_block); summary: $OUT_DIR/$name.summary.json"
+}
 
 echo "=== Gas limit pricing demo ==="
-echo "rpc=$RPC chain_id=$CHAIN_ID sender=$FROM recipient=$TO"
-echo "txs=$TX_COUNT declared_gas_limit=$GAS_LIMIT value=${VALUE_WEI}wei"
-echo ""
+echo "rpc=$RPC chain_id=$(cast chain-id --rpc-url "$RPC") prometheus=$PROMETHEUS_URL out=$OUT_DIR"
+echo "predicate cutoff: ${L2_BUILDER_PREDICATE_EVAL_HARD_CUTOFF_MS:-10 (builder default; set L2_BUILDER_PREDICATE_EVAL_HARD_CUTOFF_MS before 'just devnet up-single zenith' to lower it)} ms"
 
-head="$(cast block-number --rpc-url "$RPC")"
-if [ "$head" -lt "$ZENITH_BLOCK" ]; then
-    echo "Zenith (gas limit pricing) activates at block $ZENITH_BLOCK; head is $head."
-    echo "Waiting for activation (set L2_BASE_ZENITH_BLOCK if the devnet uses another block)..."
-    while [ "$(cast block-number --rpc-url "$RPC")" -lt "$ZENITH_BLOCK" ]; do sleep 1; done
-    echo "Zenith active."
-    echo ""
+echo ""
+echo "Building the load tester (so the metered phase is not spent compiling)..."
+cargo build --quiet -p base-load-tests -p base-load-tester-bin --examples
+
+head="$(head_block)"
+everest_ran=false
+if [ "${SKIP_EVEREST:-0}" = "1" ]; then
+    echo "Skipping the metered phase (SKIP_EVEREST=1)."
+elif [ "$head" -ge "$ZENITH_BLOCK" ]; then
+    echo "Head $head is already past Zenith ($ZENITH_BLOCK); skipping the metered phase."
+    echo "For the before/after comparison start the devnet with e.g. L2_BASE_ZENITH_BLOCK=400."
+else
+    remaining=$(( (ZENITH_BLOCK - head) * BLOCK_SECONDS ))
+    if [ "$remaining" -lt "$PHASE_SECONDS" ]; then
+        echo "Only ~${remaining}s until Zenith; a phase needs ~${PHASE_SECONDS}s. Skipping the metered phase."
+    else
+        run_phase everest
+        everest_ran=true
+    fi
 fi
 
-ESTIMATE="$(cast estimate --from "$FROM" "$TO" --value "$VALUE_WEI" --rpc-url "$RPC")"
-echo "eth_estimateGas for one transfer: $ESTIMATE gas (metered requirement, unchanged by the rule)"
-
-BAL_BEFORE="$(cast balance "$FROM" --rpc-url "$RPC")"
-NONCE="$(cast nonce "$FROM" --rpc-url "$RPC")"
-echo "sender balance before: $BAL_BEFORE wei (nonce $NONCE)"
 echo ""
+echo "Waiting for Zenith (block $ZENITH_BLOCK) plus two blocks..."
+while [ "$(head_block)" -lt "$((ZENITH_BLOCK + 2))" ]; do sleep 2; done
+run_phase zenith
 
-echo "Sending $TX_COUNT transfers with --gas-limit $GAS_LIMIT ..."
-hashes=()
-for ((i = 0; i < TX_COUNT; i++)); do
-    hash="$(cast send "$TO" --value "$VALUE_WEI" --gas-limit "$GAS_LIMIT" --nonce "$((NONCE + i))" \
-        --private-key "$PK" --rpc-url "$RPC" --chain-id "$CHAIN_ID" --async)"
-    hashes+=("$hash")
-    echo "  sent $hash"
-done
 echo ""
-
-echo "Waiting for receipts..."
-receipts="[]"
-for hash in "${hashes[@]}"; do
-    receipt="$(cast receipt "$hash" --rpc-url "$RPC" --json)"
-    receipts="$(jq -c --argjson r "$receipt" '. + [$r]' <<<"$receipts")"
-done
-
-BAL_AFTER="$(cast balance "$FROM" --rpc-url "$RPC")"
-
-# Block gasUsed, the declared limits of the user transactions, and the metered gas of the
-# deposits in each touched block (deposits are not priced by gas limit).
-blocks="{}"
-deposit_receipts="{}"
-for number in $(jq -r '[.[].blockNumber] | unique | .[]' <<<"$receipts"); do
-    number="$(cast to-dec "$number")"
-    block="$(cast block "$number" --full --rpc-url "$RPC" --json)"
-    blocks="$(jq -c --arg n "$number" --argjson b "$block" '. + {($n): $b}' <<<"$blocks")"
-    for hash in $(jq -r '.transactions[] | select(.type == "0x7e") | .hash' <<<"$block"); do
-        receipt="$(cast receipt "$hash" --rpc-url "$RPC" --json)"
-        deposit_receipts="$(jq -c --arg h "$hash" --argjson r "$receipt" '. + {($h): $r}' <<<"$deposit_receipts")"
-    done
-done
-
-RECEIPTS="$receipts" BLOCKS="$blocks" DEPOSIT_RECEIPTS="$deposit_receipts" python3 - "$BAL_BEFORE" "$BAL_AFTER" "$ESTIMATE" "$GAS_LIMIT" "$VALUE_WEI" <<'PY'
+OUT_DIR="$OUT_DIR" EVEREST_RAN="$everest_ran" python3 - <<'PY'
 import json, os, sys
 
-def n(x):
-    if x is None:
-        return 0
-    if isinstance(x, int):
-        return x
-    s = str(x)
-    return int(s, 16) if s.startswith("0x") else int(s)
+out = os.environ["OUT_DIR"]
+phases = (["everest"] if os.environ["EVEREST_RAN"] == "true" else []) + ["zenith"]
+PROBE, HONEST = "validity_pass_priority_lead", "validity_pass"
+ETH = 10**18
 
-bal_before, bal_after, estimate, gas_limit, value = (n(a) for a in sys.argv[1:6])
-receipts = json.loads(os.environ["RECEIPTS"])
-blocks = json.loads(os.environ["BLOCKS"])
-deposit_receipts = json.loads(os.environ["DEPOSIT_RECEIPTS"])
+def load(path):
+    with open(path) as f:
+        return json.load(f)
 
-# Operator fee (Isthmus onward) on the billed gas, from the receipt's L1Block parameters:
-# Jovian prices it as gas * scalar * 100 + constant (OPERATOR_FEE_JOVIAN_MULTIPLIER).
-def operator_fee(r, gas):
-    scalar, constant = n(r.get("operatorFeeScalar")), n(r.get("operatorFeeConstant"))
-    return gas * scalar * 100 + constant
+def num(x):
+    try:
+        return float(x)
+    except (TypeError, ValueError):
+        return None
 
-print(f"{'tx':<14}{'block':>8}{'status':>8}{'gasUsed':>12}{'effGasPrice':>14}{'l1Fee':>16}{'operatorFee':>14}{'charged (wei)':>24}")
-expected = 0
-metered_expected = 0
-all_limit = True
-for r in receipts:
-    gas_used, price, l1 = n(r.get("gasUsed")), n(r.get("effectiveGasPrice")), n(r.get("l1Fee"))
-    op_fee = operator_fee(r, gas_used)
-    charged = value + gas_used * price + l1 + op_fee
-    expected += charged
-    metered_expected += value + estimate * price + l1 + operator_fee(r, estimate)
-    all_limit &= gas_used == gas_limit
-    print(f"{r['transactionHash'][:12]:<14}{n(r['blockNumber']):>8}{n(r['status']):>8}{gas_used:>12}{price:>14}{l1:>16}{op_fee:>14}{charged:>24}")
+def metric_delta(phase, key):
+    before, after = load(f"{out}/{phase}.before.json"), load(f"{out}/{phase}.after.json")
+    b, a = num(before.get(key)), num(after.get(key))
+    return None if b is None or a is None else a - b
 
-delta = bal_before - bal_after
+def cohorts(phase):
+    summary = load(f"{out}/{phase}.summary.json")
+    return {c["cohort"]: c for c in summary.get("by_cohort", [])}
+
+failures = []
+rows = {}
+for phase in phases:
+    by = cohorts(phase)
+    print(f"--- {phase}: per-cohort settlement (from receipts) ---")
+    print(f"{'cohort':<30}{'confirmed':>10}{'reverted':>10}{'gas used':>16}{'gas limit':>16}{'fee (ETH)':>14}{'fee/tx (ETH)':>16}")
+    for label, name in ((PROBE, "probes (20x tip, 2M limit)"), (HONEST, "honest (1x tip, 100k limit)")):
+        c = by.get(label)
+        if not c:
+            failures.append(f"{phase}: no confirmed transactions in cohort {label}")
+            continue
+        fee = int(c.get("total_fee_wei", 0))
+        per_tx = fee / c["confirmed"] if c["confirmed"] else 0
+        rows[(phase, label)] = c
+        print(f"{name:<30}{c['confirmed']:>10}{c['reverted']:>10}{c['total_gas']:>16}{c.get('total_gas_limit', 0):>16}{fee / ETH:>14.6f}{per_tx / ETH:>16.9f}")
+    print(f"--- {phase}: builder (Prometheus deltas over the phase) ---")
+    for key, label in (
+        ("candidates_evaluated", "validity candidates evaluated"),
+        ("candidates_deferred", "validity candidates deferred"),
+        ("budget_exhausted", "  of which: predicate budget exhausted"),
+        ("cutoff_builds", "flashblock builds that hit the predicate cutoff"),
+        ("validity_txs_included", "validity transactions included"),
+        ("validity_gas_used", "validity gas billed (header accounting)"),
+    ):
+        d = metric_delta(phase, key)
+        print(f"  {label:<48}{'unavailable' if d is None else f'{d:,.0f}'}")
+    rev = metric_delta(phase, "validity_priority_fee_wei")
+    print(f"  {'validity priority-fee revenue to the sequencer':<48}{'unavailable' if rev is None else f'{rev / ETH:.6f} ETH'}")
+    rows[(phase, "revenue")] = rev
+    print()
+
+# Checks.
+z_probe, z_honest = rows.get(("zenith", PROBE)), rows.get(("zenith", HONEST))
+if z_probe and z_honest:
+    for label, c in ((PROBE, z_probe), (HONEST, z_honest)):
+        if c.get("total_gas_limit") and c["total_gas"] != c["total_gas_limit"]:
+            failures.append(f"zenith {label}: receipts report {c['total_gas']} gas but {c['total_gas_limit']} was declared; gas limit pricing should bill the limit")
+    if z_probe["reverted"] == 0:
+        failures.append("zenith probes: none reverted; the probe payload must revert")
+    probe_per_tx = int(z_probe["total_fee_wei"]) / z_probe["confirmed"]
+    honest_per_tx = int(z_honest["total_fee_wei"]) / z_honest["confirmed"]
+    ratio = probe_per_tx / honest_per_tx if honest_per_tx else float("inf")
+    print(f"zenith: a probe pays {ratio:.1f}x what an honest transaction pays (expected ~ 20 * 2,000,000 / 100,000 = 400x)")
+    if ratio < 100:
+        failures.append(f"zenith: probe/honest fee ratio {ratio:.1f}x is below 100x")
+
+e_probe = rows.get(("everest", PROBE))
+if e_probe and z_probe:
+    e_per_tx = int(e_probe["total_fee_wei"]) / e_probe["confirmed"]
+    z_per_tx = int(z_probe["total_fee_wei"]) / z_probe["confirmed"]
+    mult = z_per_tx / e_per_tx if e_per_tx else float("inf")
+    print(f"probe cost per transaction: metered {e_per_tx / ETH:.9f} ETH -> gas limit priced {z_per_tx / ETH:.9f} ETH ({mult:.1f}x; expected ~ 2,000,000 / gas used)")
+    if mult < 20:
+        failures.append(f"probe cost rose only {mult:.1f}x; expected at least 20x")
+    e_h = rows.get(("everest", HONEST))
+    if e_h:
+        e_ratio = (e_per_tx) / (int(e_h["total_fee_wei"]) / e_h["confirmed"])
+        print(f"everest: a probe paid {e_ratio:.1f}x what an honest transaction paid, for a 20x higher rank")
+    e_rev, z_rev = rows.get(("everest", "revenue")), rows.get(("zenith", "revenue"))
+    if e_rev and z_rev:
+        print(f"sequencer validity-flow priority-fee revenue: {e_rev / ETH:.6f} ETH -> {z_rev / ETH:.6f} ETH ({z_rev / e_rev:.1f}x) for the same flood")
+
+for phase in phases:
+    d = metric_delta(phase, "budget_exhausted")
+    if d is not None and d == 0:
+        print(f"note: {phase}: the predicate budget was never exhausted; lower L2_BUILDER_PREDICATE_EVAL_HARD_CUTOFF_MS or raise sender_count to reproduce the deferrals")
+
 print()
-print(f"receipt gasUsed == declared gas limit ({gas_limit}) for every tx: {'yes' if all_limit else 'NO'}")
-print(f"sender balance delta:                                       {delta} wei")
-print(f"sum(value + gasUsed*effectiveGasPrice + l1Fee + operatorFee): {expected} wei")
-balance_ok = delta == expected
-if balance_ok:
-    print("balance delta matches the receipts exactly.")
-else:
-    print(f"MISMATCH: balance delta differs from the receipt sum by {delta - expected} wei.")
-
-# eth_estimateGas must still find the metered requirement: a plain transfer is 21,000 gas
-# (the EIP-7623 floor cannot raise a calldata-free call), far below the padded limit.
-estimate_ok = estimate == 21_000
-print(f"eth_estimateGas is the metered 21,000, not the declared limit: {'yes' if estimate_ok else 'NO (' + str(estimate) + ')'}")
-print()
-print(f"what the same transfers would have cost at metered gas ({estimate} each): {metered_expected} wei")
-if metered_expected:
-    print(f"gas limit pricing multiplier on the execution fee: {gas_limit / estimate:.1f}x; total paid {expected / metered_expected:.2f}x")
-
-print()
-print("block accounting:")
-blocks_ok = True
-for number, b in sorted(blocks.items(), key=lambda kv: n(kv[0])):
-    txs = [t for t in b.get("transactions", []) if isinstance(t, dict)]
-    # Deposits (type 0x7e) are not priced by gas limit and keep metered gas.
-    user_limits = sum(n(t.get("gas")) for t in txs if n(t.get("type")) != 0x7E)
-    deposit_gas = sum(n(deposit_receipts.get(t["hash"], {}).get("gasUsed")) for t in txs if n(t.get("type")) == 0x7E)
-    header = n(b.get("gasUsed"))
-    block_ok = header == user_limits + deposit_gas
-    blocks_ok &= block_ok
-    print(f"  block {n(number)}: gasUsed={header} sum(user tx gas limits)={user_limits} deposit gasUsed={deposit_gas} txs={len(txs)}"
-          + ("  <- header counts the reserved capacity" if block_ok else "  <- MISMATCH (pre-Zenith block?)"))
-
-ok = all_limit and balance_ok and estimate_ok and blocks_ok and all(n(r["status"]) == 1 for r in receipts)
-print()
-print("RESULT: PASS" if ok else "RESULT: FAIL")
-sys.exit(0 if ok else 1)
+if failures:
+    for f in failures:
+        print(f"FAIL: {f}")
+    print("RESULT: FAIL")
+    sys.exit(1)
+print("RESULT: PASS")
 PY
