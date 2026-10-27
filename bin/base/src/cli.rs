@@ -1,11 +1,14 @@
+use std::ffi::OsString;
+
 use base_cli_utils::{LogConfig, MetricsConfig};
-use clap::Parser;
+use clap::{CommandFactory, FromArgMatches, Parser};
 use eyre::WrapErr;
 use reth_node_core::args::TraceArgs;
 
 use crate::{
     commands::BaseCommand,
     config::{ChainArg, ChainResolver},
+    surface::CliSurface,
 };
 
 base_cli_utils::define_log_args!("BASE_NODE");
@@ -21,12 +24,16 @@ base_cli_utils::define_metrics_args!("BASE_NODE", 9090);
     long_about = None
 )]
 pub(crate) struct BaseCli {
-    /// Chain selection.
-    ///
-    /// Uses a distinct clap `id` so nested reth-derived subcommands (e.g. `base reth db`) can
-    /// register their own globally-propagated `--chain` arg without colliding at value-access
-    /// time in [`FromArgMatches`].
-    #[arg(id = "base_chain", long = "chain", short = 'c', env = "BASE_CHAIN")]
+    // A distinct clap `id` lets nested reth-derived subcommands (e.g. `base reth db`) register
+    // their own globally-propagated `--chain` without colliding at value-access time.
+    /// Legacy top-level chain selector, hidden from help; node subcommands take `--chain`.
+    #[arg(
+        id = "base_chain",
+        long = "chain",
+        short = 'c',
+        value_name = "CHAIN",
+        env = "BASE_CHAIN"
+    )]
     pub(crate) chain: Option<ChainArg>,
 
     /// Logging configuration.
@@ -47,6 +54,33 @@ pub(crate) struct BaseCli {
 }
 
 impl BaseCli {
+    /// Parses arguments through the curated [`CliSurface`].
+    pub(crate) fn try_parse_curated<I, T>(args: I) -> Result<Self, clap::Error>
+    where
+        I: IntoIterator<Item = T>,
+        T: Into<OsString> + Clone,
+    {
+        let mut command = CliSurface::apply(Self::command());
+        let matches = command.try_get_matches_from_mut(args)?;
+        CliSurface::validate(&mut command, &matches)?;
+        let mut cli =
+            Self::from_arg_matches(&matches).map_err(|error| error.format(&mut command))?;
+        if let Some(chain) = CliSurface::subcommand_cli_chain(&matches) {
+            cli.chain = Some(chain);
+        }
+        Ok(cli)
+    }
+
+    /// Parses arguments through the curated [`CliSurface`], panicking on error.
+    #[cfg(test)]
+    pub(crate) fn parse_curated<I, T>(args: I) -> Self
+    where
+        I: IntoIterator<Item = T>,
+        T: Into<OsString> + Clone,
+    {
+        Self::try_parse_curated(args).unwrap_or_else(|error| panic!("{error}"))
+    }
+
     /// Runs the selected command with shared process initialization.
     pub(crate) fn run(self) -> eyre::Result<()> {
         // Tonic captures the runtime during OTLP initialization. Keep it alive while the
@@ -84,7 +118,6 @@ mod tests {
     use std::{ffi::OsStr, process::Command, time::Duration};
 
     use axum::{Router, body::Bytes, routing::post};
-    use clap::{CommandFactory, Parser};
     use tokio::{
         net::TcpListener,
         sync::{mpsc, oneshot},
@@ -125,7 +158,7 @@ mod tests {
                 } else if flavor == "sequencer" {
                     args.extend(["--p2p.sequencer.key.path", "/tmp/sequencer-key"]);
                 }
-                let cli = BaseCli::try_parse_from(args).unwrap();
+                let cli = BaseCli::try_parse_curated(args).unwrap();
                 assert_eq!(cli.traces.otlp.unwrap().as_str(), "http://localhost:4317/");
                 assert_eq!(cli.traces.service_name, "unified-test");
                 assert_eq!(cli.traces.sample_ratio, Some(0.25));
@@ -200,7 +233,7 @@ mod tests {
         });
 
         let otlp_arg = format!("--tracing-otlp={endpoint}");
-        let cli = BaseCli::try_parse_from([
+        let cli = BaseCli::try_parse_curated([
             "base",
             "--chain",
             "dev",
@@ -254,7 +287,7 @@ mod tests {
 
     #[test]
     fn parses_batcher_configuration() {
-        let cli = BaseCli::try_parse_from([
+        let cli = BaseCli::try_parse_curated([
             "base",
             "batcher",
             "--l1-rpc-url",
@@ -286,7 +319,8 @@ mod tests {
     #[test]
     fn batcher_uses_shared_observability_settings() {
         let args = ["base", "batcher", "--l1-rpc-url", "http://localhost:8545"];
-        let cli = BaseCli::try_parse_from(args.into_iter().chain(BATCHER_SEQUENCER_URLS)).unwrap();
+        let cli =
+            BaseCli::try_parse_curated(args.into_iter().chain(BATCHER_SEQUENCER_URLS)).unwrap();
         assert_eq!(cli.metrics.port, 9090);
         let command = BaseCli::command();
         for (flag, env) in [
@@ -303,7 +337,7 @@ mod tests {
         for flag in ["--l1-eth-rpc", "--l1-rpc-url", "--l1"] {
             let args = ["base", "batcher", flag, "http://localhost:8545"];
             let cli =
-                BaseCli::try_parse_from(args.into_iter().chain(BATCHER_SEQUENCER_URLS)).unwrap();
+                BaseCli::try_parse_curated(args.into_iter().chain(BATCHER_SEQUENCER_URLS)).unwrap();
             let BaseCommand::Batcher(batcher) = cli.command else {
                 panic!("expected batcher");
             };
@@ -325,14 +359,15 @@ mod tests {
     fn batcher_rejects_top_level_chain_selection() {
         let args =
             ["base", "--chain", "sepolia", "batcher", "--l1-rpc-url", "http://localhost:8545"];
-        let cli = BaseCli::try_parse_from(args.into_iter().chain(BATCHER_SEQUENCER_URLS)).unwrap();
+        let cli =
+            BaseCli::try_parse_curated(args.into_iter().chain(BATCHER_SEQUENCER_URLS)).unwrap();
         let error = cli.command.run(ChainResolver::new(cli.chain), false).unwrap_err();
         assert!(error.to_string().contains("`base batcher` manages its own chain configuration"));
     }
 
     #[test]
     fn parses_default_chain_for_rpc() {
-        let cli = BaseCli::parse_from([
+        let cli = BaseCli::parse_curated([
             "base",
             "rpc",
             "--l1-eth-rpc",
@@ -347,33 +382,34 @@ mod tests {
 
     #[test]
     fn parses_named_chain_selector() {
-        let cli = BaseCli::parse_from(["base", "-c", "sepolia", "bootnode"]);
+        let cli = BaseCli::parse_curated(["base", "-c", "sepolia", "bootnode"]);
 
         assert!(matches!(cli.chain, Some(ChainArg::BuiltIn(ref name)) if name == "sepolia"));
     }
 
     #[test]
-    fn rejects_chain_after_subcommand() {
-        // `--chain` is no longer globally propagated so nested reth subcommands can register
-        // their own `--chain` arg without clap `Long option names must be unique` collisions.
-        // Callers must supply `--chain` before the subcommand: `base --chain sepolia bootnode`.
-        let err = BaseCli::try_parse_from(["base", "bootnode", "--chain", "sepolia"]).unwrap_err();
+    fn accepts_chain_after_node_subcommand() {
+        let cli = BaseCli::parse_curated(["base", "bootnode", "--chain", "sepolia"]);
 
-        assert!(err.to_string().contains("unexpected argument '--chain'"));
+        assert!(matches!(cli.chain, Some(ChainArg::BuiltIn(ref name)) if name == "sepolia"));
     }
 
     #[test]
     fn parses_path_chain_selector() {
-        let cli = BaseCli::parse_from(["base", "--chain", "./chain.toml", "bootnode"]);
+        let cli = BaseCli::parse_curated(["base", "--chain", "./chain.toml", "bootnode"]);
 
         assert!(matches!(cli.chain, Some(ChainArg::File(_))));
     }
 
     #[test]
-    fn chain_arg_uses_base_chain_env_var() {
-        let command = BaseCli::command();
-        let chain_arg =
-            command.get_arguments().find(|arg| arg.get_long() == Some("chain")).unwrap();
+    fn node_chain_arg_uses_base_chain_env_var() {
+        let command = CliSurface::apply(BaseCli::command());
+        let chain_arg = command
+            .find_subcommand("rpc")
+            .unwrap()
+            .get_arguments()
+            .find(|arg| arg.get_long() == Some("chain"))
+            .unwrap();
 
         assert_eq!(chain_arg.get_env(), Some(OsStr::new("BASE_CHAIN")));
     }
@@ -381,7 +417,7 @@ mod tests {
     #[test]
     fn rejects_multiple_chain_selectors() {
         let err =
-            BaseCli::try_parse_from(["base", "-c", "mainnet", "--chain", "sepolia", "bootnode"])
+            BaseCli::try_parse_curated(["base", "-c", "mainnet", "--chain", "sepolia", "bootnode"])
                 .unwrap_err();
 
         let rendered = err.to_string();
@@ -390,8 +426,8 @@ mod tests {
 
     #[test]
     fn preserves_base_chain_alongside_reth_subcommand_chain() {
-        let cli =
-            BaseCli::try_parse_from(["base", "--chain", "sepolia", "reth", "db", "stats"]).unwrap();
+        let cli = BaseCli::try_parse_curated(["base", "--chain", "sepolia", "reth", "db", "stats"])
+            .unwrap();
 
         assert!(matches!(cli.chain, Some(ChainArg::BuiltIn(ref name)) if name == "sepolia"));
         assert!(matches!(cli.command, BaseCommand::Reth(_)));
