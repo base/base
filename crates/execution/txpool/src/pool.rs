@@ -1100,6 +1100,11 @@ where
         let expired = self.expire_published_locked(block_number, flashblock_index);
         Ok((result, expired))
     }
+
+    fn expire_published(&self, block_number: u64, flashblock_index: u64) -> usize {
+        let _admission_guard = self.protocol_admission_lock.lock();
+        self.expire_published_locked(block_number, flashblock_index)
+    }
 }
 
 impl<Client, S, Evm, T, O> TransactionPool for BaseTransactionPool<Client, S, Evm, T, O>
@@ -4643,6 +4648,55 @@ mod tests {
         assert!(pool.get(&hash).is_none());
         pool.add_transaction(TransactionOrigin::Local, signed_1559(&signer, 0)).await.unwrap();
         assert!(pool.get(&hash).is_some());
+    }
+
+    #[tokio::test]
+    async fn received_publication_frees_same_nonce_slot_without_publishing() {
+        let (pool, client) = build_integration_pool();
+        let signer = signer();
+        fund(&client, signer.address());
+        let predicates = vec![
+            ValidityPredicate::BlockNumber {
+                op: ValidityOperator::LessThanOrEqual,
+                value: U256::from(101),
+            },
+            ValidityPredicate::FlashblockIndex {
+                op: ValidityOperator::LessThanOrEqual,
+                value: U256::from(2),
+            },
+        ];
+        let original = self_paid_eoa_8130(&signer, U256::ZERO, 0, 0, 1_000)
+            .with_validity_predicates(predicates.clone());
+        let original_hash = *original.hash();
+        pool.add_transaction(TransactionOrigin::Local, original).await.unwrap();
+
+        // Same nonce and fees as the original; the gas limit only makes it a distinct transaction.
+        let unbumped = || signed_8130(&signer, U256::ZERO, 0, 0, 1_000, 999_999);
+
+        // A follower observes flashblock 1 of the deadline block: the deadline still holds, so an
+        // unbumped same-nonce replacement is priced against the original.
+        assert_eq!(pool.expire_published(101, 1), 0);
+        let early = unbumped();
+        let err = pool.add_transaction(TransactionOrigin::Local, early).await.unwrap_err();
+        assert!(matches!(err.kind, PoolErrorKind::ReplacementUnderpriced), "got {err:?}");
+        assert!(pool.get(&original_hash).is_some());
+
+        // Observing the deadline flashblock evicts the original and frees the slot, and a stale
+        // position received afterwards is ignored.
+        assert_eq!(pool.expire_published(101, 2), 1);
+        assert!(pool.get(&original_hash).is_none());
+        assert_eq!(pool.expire_published(101, 0), 0);
+        let replacement = unbumped();
+        let replacement_hash = *replacement.hash();
+        pool.add_transaction(TransactionOrigin::Local, replacement)
+            .await
+            .expect("unbumped replacement is admitted once the deadline flashblock is received");
+        assert!(pool.get(&replacement_hash).is_some());
+
+        let late = self_paid_eoa_8130(&signer, U256::ZERO, 0, 0, 1_001)
+            .with_validity_predicates(predicates);
+        let error = pool.add_transaction(TransactionOrigin::Local, late).await.unwrap_err();
+        assert!(error.to_string().contains("validity deadline expired"), "{error}");
     }
 
     #[tokio::test]

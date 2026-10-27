@@ -226,9 +226,10 @@ pub struct Args {
     )]
     pub predicate_bucket_ordered_threshold: usize,
 
-    /// Hold back validity transactions whose predicate was unsatisfied earlier in the block until
-    /// a commit changes the state it reads: off, shadow (track and count mismatches only), or
-    /// enforce.
+    /// Hold back validity transactions whose predicate was found unsatisfied until a state change
+    /// wakes them: off, shadow (track and count mismatches only), or enforce. Resting transactions
+    /// carry across flashblocks and across blocks this builder finishes in sequence; the native
+    /// builder carries them across blocks from Denim onward.
     #[arg(long = "builder.resting-predicates", value_enum, default_value = "off")]
     pub resting_predicate_mode: RestingPredicateMode,
 

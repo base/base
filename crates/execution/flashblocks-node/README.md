@@ -56,6 +56,10 @@ The `FlashblocksExtension` wires up:
 2. **Canonical Subscription**: Reconciles pending state with canonical blocks
 3. **RPC Extensions**: Provides extended Ethereum RPC methods with flashblock awareness
 4. **WebSocket Subscriber**: Connects to and streams updates from the flashblock service
+5. **Pool Deadline Expiry**: Records each received flashblock in the local transaction pool so
+   validity transactions whose `(block, flashblock)` deadline has been published are evicted
+   immediately, matching the builder. Transaction ingress is mempool-node first, so without this
+   an unbumped same-nonce replacement would be rejected as underpriced until the block commits.
 
 ## License
 

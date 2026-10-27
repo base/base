@@ -54,6 +54,10 @@ const CONFIRMATION_DRAIN_TIMEOUT: Duration = Duration::from_secs(200);
 const DRAIN_STALL_TIMEOUT: Duration = Duration::from_secs(20);
 const SIGNED_BATCH_SIZE: usize = 200;
 const PRESIGN_CHANNEL_BUFFER: usize = 2;
+/// Multiple of the target rate a steady-submission cycle may send over the time since the previous
+/// cycle: late cycles still catch up, while a backlog left by a stall drains at twice the target
+/// rate rather than in one burst.
+const STEADY_CATCHUP_RATE: u128 = 2;
 const IDLE_SLEEP: Duration = Duration::from_millis(10);
 const PRESIGN_RECHECK_INTERVAL: Duration = Duration::from_millis(100);
 const PREFILL_TIMEOUT: Duration = Duration::from_secs(300);
@@ -127,6 +131,8 @@ struct SenderNonceReset {
 struct EnqueueProgress {
     presigned_generated: u64,
     offered_gas: u128,
+    /// When the previous refill cycle ran.
+    last_cycle_at: Option<Instant>,
 }
 
 /// Live TUI / snapshot updates while the enqueue loop owns the collector.
@@ -230,6 +236,8 @@ struct BlockAlignedEnqueueConfig {
     controller: MempoolDepthController,
     fallback_block_gas_limit: u64,
     block_time: Duration,
+    /// Fixed refill cadence that replaces block-driven refills (`steady_submission_interval`).
+    steady_submission_interval: Option<Duration>,
     presign_target_gas: u128,
     max_in_flight_per_sender: usize,
     max_total_in_flight: usize,
@@ -322,6 +330,11 @@ pub struct MempoolDepthController {
     block_time: Duration,
     capacity_gas: u128,
     measurement_started_at: Instant,
+    /// Steady submission interval: send the rate budget each cycle instead of refilling to a
+    /// depth target.
+    steady_interval: Option<Duration>,
+    /// When the previous refill cycle ran; bounds a steady cycle's catch-up.
+    previous_cycle_at: Option<Instant>,
 }
 
 impl MempoolDepthController {
@@ -338,7 +351,25 @@ impl MempoolDepthController {
             capacity_gas,
             measurement_started_at,
             confirmation_latency: Duration::ZERO,
+            steady_interval: None,
+            previous_cycle_at: None,
         }
+    }
+
+    /// With a target rate, ignores the depth target so each cycle sends the gas due since the
+    /// last one. The ceiling and sender capacity still bound what is in flight, and each cycle
+    /// sends at most [`STEADY_CATCHUP_RATE`] times the gas due over the time since the previous
+    /// cycle (one interval for the first), so a backlog left by a stall drains at a bounded rate
+    /// instead of in one burst.
+    pub const fn with_steady_submission(mut self, interval: Option<Duration>) -> Self {
+        self.steady_interval = interval;
+        self
+    }
+
+    /// Records when the previous refill cycle ran, for the steady catch-up bound.
+    pub const fn with_previous_cycle(mut self, previous_cycle_at: Option<Instant>) -> Self {
+        self.previous_cycle_at = previous_cycle_at;
+        self
     }
 
     /// Uses canonical confirmation latency to budget a bounded in-flight window.
@@ -387,7 +418,11 @@ impl MempoolDepthController {
                 .div_ceil(Duration::from_secs(1).as_nanos());
             cumulative_target.saturating_sub(confirmed_gas).min(floor_gas)
         });
-        let desired_gas = floor_gas.saturating_add(catchup).min(ceiling_gas);
+        let desired_gas = if self.steady_interval.is_some() && self.target_gps.is_some() {
+            ceiling_gas
+        } else {
+            floor_gas.saturating_add(catchup).min(ceiling_gas)
+        };
         let wanted = desired_gas.saturating_sub(depth_gas);
         let capacity_headroom = self.capacity_gas.saturating_sub(depth_gas);
         let rate_headroom = self.target_gps.map_or(u128::MAX, |target_gps| {
@@ -398,6 +433,20 @@ impl MempoolDepthController {
                 .div_ceil(Duration::from_secs(1).as_nanos())
                 .saturating_sub(offered_gas)
         });
+        let rate_headroom = match (self.steady_interval, self.target_gps) {
+            (Some(interval), Some(target_gps)) => {
+                let window = self
+                    .previous_cycle_at
+                    .map_or(interval, |previous| now.saturating_duration_since(previous));
+                rate_headroom.min(
+                    u128::from(target_gps)
+                        .saturating_mul(window.as_nanos())
+                        .saturating_mul(STEADY_CATCHUP_RATE)
+                        .div_ceil(Duration::from_secs(1).as_nanos()),
+                )
+            }
+            _ => rate_headroom,
+        };
         let inject_gas = wanted.min(capacity_headroom).min(rate_headroom);
         let limited_by = if wanted == 0 {
             InjectLimit::Nothing
@@ -700,7 +749,8 @@ impl LoadRunner {
             },
         ));
 
-        let mut progress = EnqueueProgress { presigned_generated: 0, offered_gas: 0 };
+        let mut progress =
+            EnqueueProgress { presigned_generated: 0, offered_gas: 0, last_cycle_at: None };
         let mut presign_buffer = PresignBuffer::new(sender_count);
 
         if let Some(display) = self.display.as_ref() {
@@ -825,7 +875,8 @@ impl LoadRunner {
                 self.config.block_time,
                 u128::from(capacity as u64).saturating_mul(u128::from(initial_avg_gas)),
                 start,
-            );
+            )
+            .with_steady_submission(self.config.steady_submission_interval);
             Self::enqueue_block_aligned_transactions(
                 &mut PresignEnqueueState {
                     submission_pipeline: &submission_pipeline,
@@ -841,6 +892,7 @@ impl LoadRunner {
                     controller: depth_controller,
                     fallback_block_gas_limit: block_gas_limit,
                     block_time: self.config.block_time,
+                    steady_submission_interval: self.config.steady_submission_interval,
                     presign_target_gas: floor_gas.saturating_mul(2).min(
                         u128::from(capacity as u64).saturating_mul(u128::from(initial_avg_gas)),
                     ),
@@ -1625,8 +1677,9 @@ impl LoadRunner {
         stop_flag: &AtomicBool,
         drain_state: &mut EnqueueDrainState<'_>,
     ) -> Result<()> {
-        let safety_interval =
-            (config.block_time / 4).clamp(Duration::from_millis(1), Duration::from_millis(250));
+        let safety_interval = config.steady_submission_interval.unwrap_or_else(|| {
+            (config.block_time / 4).clamp(Duration::from_millis(1), Duration::from_millis(250))
+        });
         let mut safety_tick = tokio::time::interval(safety_interval);
         safety_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let mut last_block_gas_limit = config.fallback_block_gas_limit;
@@ -1701,7 +1754,11 @@ impl LoadRunner {
                     }
                 }
                 _ = safety_tick.tick() => {
-                    if last_pulse_at.elapsed() >= fallback_refill_interval {
+                    // Steady submission refills on every tick, so arrivals do not depend on
+                    // when canonical blocks are observed.
+                    if config.steady_submission_interval.is_some()
+                        || last_pulse_at.elapsed() >= fallback_refill_interval
+                    {
                         Self::run_refill_cycle(
                             enqueue_state,
                             InclusionPulse::safety(Instant::now()),
@@ -1839,13 +1896,18 @@ impl LoadRunner {
         let depth_gas = drain_state.mempool_depth_gas();
         let block_gas_limit = canonical.map_or(fallback_block_gas_limit, |block| block.gas_limit);
         let (_, canonical_p99) = drain_state.collector.rolling_p50_p99();
-        let plan = config.controller.with_confirmation_latency(canonical_p99).plan(
-            cycle_started,
-            block_gas_limit,
-            depth_gas,
-            drain_state.results_tracker.confirmed_gas(),
-            enqueue_state.progress.offered_gas,
-        );
+        let plan = config
+            .controller
+            .with_confirmation_latency(canonical_p99)
+            .with_previous_cycle(enqueue_state.progress.last_cycle_at)
+            .plan(
+                cycle_started,
+                block_gas_limit,
+                depth_gas,
+                drain_state.results_tracker.confirmed_gas(),
+                enqueue_state.progress.offered_gas,
+            );
+        enqueue_state.progress.last_cycle_at = Some(cycle_started);
         let buffered_before = enqueue_state.buffer.buffered_gas();
         let mut sender_slots: HashMap<Address, u64> = drain_state
             .queued_per_sender
@@ -2602,6 +2664,91 @@ mod tests {
     }
 
     #[test]
+    fn steady_controller_sends_the_rate_budget_regardless_of_depth() {
+        let started = Instant::now();
+        let controller = MempoolDepthController::new(
+            Some(1_000_000),
+            Duration::from_secs(2),
+            10_000_000,
+            started,
+        )
+        .with_steady_submission(Some(Duration::from_secs(1)));
+
+        // Depth already meets the 2M floor, which stops a block-aligned refill (see the test
+        // above). Steady submission still sends the 1M due: 2M of target minus 1M offered.
+        let plan = controller.plan(
+            started + Duration::from_secs(2),
+            30_000_000,
+            2_000_000,
+            2_000_000,
+            1_000_000,
+        );
+
+        assert_eq!(plan.desired_gas, plan.ceiling_gas);
+        assert_eq!(plan.inject_gas, 1_000_000);
+        assert_eq!(plan.limited_by, InjectLimit::Rate);
+    }
+
+    #[test]
+    fn steady_controller_drains_a_backlog_without_bursting() {
+        let started = Instant::now();
+        let interval = Duration::from_millis(20);
+        let controller = MempoolDepthController::new(
+            Some(400_000_000),
+            Duration::from_millis(200),
+            u128::MAX,
+            started,
+        )
+        .with_steady_submission(Some(interval));
+
+        // Ten seconds behind (4 Ggas owed) with an empty pool, 20 ms after the previous cycle:
+        // block-aligned catch-up would send up to the 160M ceiling at once. Steady sends twice
+        // the 8M due over those 20 ms: 16M.
+        let now = started + Duration::from_secs(10);
+        let plan =
+            controller.with_previous_cycle(Some(now - interval)).plan(now, 160_000_000, 0, 0, 0);
+
+        assert_eq!(plan.inject_gas, 16_000_000);
+        assert_eq!(plan.limited_by, InjectLimit::Rate);
+
+        // A cycle 2 ms after the previous one, such as a canonical pulse right after a tick,
+        // gets only its own share.
+        let plan = controller.with_previous_cycle(Some(now - Duration::from_millis(2))).plan(
+            now,
+            160_000_000,
+            0,
+            0,
+            0,
+        );
+        assert_eq!(plan.inject_gas, 1_600_000);
+    }
+
+    #[test]
+    fn steady_controller_lets_a_late_cycle_catch_up() {
+        let started = Instant::now();
+        let controller = MempoolDepthController::new(
+            Some(400_000_000),
+            Duration::from_millis(200),
+            u128::MAX,
+            started,
+        )
+        .with_steady_submission(Some(Duration::from_millis(20)));
+
+        // The previous cycle ran 100 ms ago and everything due until then was sent, so 40M is
+        // due now. A per-cycle cap of two 20 ms intervals would send only 16M and lose rate.
+        let now = started + Duration::from_secs(10);
+        let plan = controller.with_previous_cycle(Some(now - Duration::from_millis(100))).plan(
+            now,
+            160_000_000,
+            0,
+            0,
+            3_960_000_000,
+        );
+
+        assert_eq!(plan.inject_gas, 40_000_000);
+    }
+
+    #[test]
     fn controller_cannot_inject_past_two_block_ceiling() {
         let started = Instant::now();
         let controller = MempoolDepthController::new(
@@ -2648,7 +2795,8 @@ mod tests {
         let (_submit_event_tx, mut submit_event_rx) = mpsc::channel(8);
         let (_signed_chunk_tx, mut signed_chunk_rx) = mpsc::channel(1);
         let (base_fee_tx, _base_fee_rx) = tokio::sync::watch::channel(1_u128);
-        let mut progress = EnqueueProgress { presigned_generated: 0, offered_gas: 0 };
+        let mut progress =
+            EnqueueProgress { presigned_generated: 0, offered_gas: 0, last_cycle_at: None };
         let mut presign_buffer = PresignBuffer::new(1);
         let pipeline = test_pipeline(&results_tracker, mpsc::channel(1).0);
         let next_submit_batch_id = AtomicU64::new(0);
@@ -2690,6 +2838,7 @@ mod tests {
                         ),
                         fallback_block_gas_limit: 30_000_000,
                         block_time: Duration::from_secs(2),
+                        steady_submission_interval: None,
                         presign_target_gas: 0,
                         max_in_flight_per_sender: 1,
                         max_total_in_flight: 1,
@@ -2702,7 +2851,11 @@ mod tests {
                 async {
                     let first_observed_at = Instant::now();
                     results_tracker.on_new_block_hashes(
-                        BlockObservation { number: 11, observed_at: first_observed_at },
+                        BlockObservation {
+                            number: 11,
+                            observed_at: first_observed_at,
+                            timestamp_ms: None,
+                        },
                         Vec::new(),
                     );
                     pulse_tx
@@ -2725,7 +2878,11 @@ mod tests {
 
                     let second_observed_at = Instant::now();
                     results_tracker.on_new_block_hashes(
-                        BlockObservation { number: 12, observed_at: second_observed_at },
+                        BlockObservation {
+                            number: 12,
+                            observed_at: second_observed_at,
+                            timestamp_ms: None,
+                        },
                         Vec::new(),
                     );
                     pulse_tx
@@ -2768,7 +2925,8 @@ mod tests {
         let (_submit_event_tx, mut submit_event_rx) = mpsc::channel(8);
         let (_signed_chunk_tx, mut signed_chunk_rx) = mpsc::channel(1);
         let (base_fee_tx, _base_fee_rx) = tokio::sync::watch::channel(1_u128);
-        let mut progress = EnqueueProgress { presigned_generated: 0, offered_gas: 0 };
+        let mut progress =
+            EnqueueProgress { presigned_generated: 0, offered_gas: 0, last_cycle_at: None };
         let mut presign_buffer = PresignBuffer::new(1);
         let pipeline = test_pipeline(&results_tracker, mpsc::channel(1).0);
         let next_submit_batch_id = AtomicU64::new(0);
@@ -2799,6 +2957,7 @@ mod tests {
                     ),
                     fallback_block_gas_limit: 30_000_000,
                     block_time: Duration::from_millis(200),
+                    steady_submission_interval: None,
                     presign_target_gas: 0,
                     max_in_flight_per_sender: 1,
                     max_total_in_flight: 1,

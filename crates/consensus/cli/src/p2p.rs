@@ -674,6 +674,7 @@ impl P2PArgs {
             discovery_randomize: self.discovery_randomize.map(Duration::from_secs),
             enr_update: !static_ip,
             gossip_address,
+            reuse_listener_port: true,
             keypair,
             unsafe_block_signer,
             gossip_config,

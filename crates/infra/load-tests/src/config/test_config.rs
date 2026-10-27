@@ -97,6 +97,12 @@ pub struct TestConfig {
     #[serde(default = "default_block_time")]
     pub block_time: String,
 
+    /// Optional fixed interval (for example, "20ms") at which to submit `target_gps` worth of gas
+    /// per elapsed time, instead of refilling once per observed block. Arrivals then stay even no
+    /// matter when the builder stops taking transactions for a block. Requires `target_gps`.
+    #[serde(default)]
+    pub steady_submission_interval: Option<String>,
+
     /// Seed for deterministic account generation (used if mnemonic not provided).
     ///
     /// Defaults to `12345` for reproducible single-run testing and fund recovery. Concurrent runs
@@ -174,6 +180,7 @@ impl Default for TestConfig {
             measurement_blocks: None,
             target_gps: Some(20_000_000),
             block_time: default_block_time(),
+            steady_submission_interval: None,
             seed: 12345,
             chain_id: None,
             transactions: vec![WeightedTxType { weight: 100, tx_type: TxTypeConfig::Transfer }],
@@ -207,6 +214,7 @@ impl fmt::Debug for TestConfig {
             .field("measurement_blocks", &self.measurement_blocks)
             .field("target_gps", &self.target_gps)
             .field("block_time", &self.block_time)
+            .field("steady_submission_interval", &self.steady_submission_interval)
             .field("seed", &self.seed)
             .field("chain_id", &self.chain_id)
             .field("transactions", &self.transactions)
@@ -495,6 +503,16 @@ impl TestConfig {
         if self.parse_block_time()?.is_zero() {
             return Err(BaselineError::Config("block_time must be > 0".into()));
         }
+        if let Some(interval) = self.parse_steady_submission_interval()? {
+            if interval.is_zero() {
+                return Err(BaselineError::Config("steady_submission_interval must be > 0".into()));
+            }
+            if self.target_gps.is_none() {
+                return Err(BaselineError::Config(
+                    "steady_submission_interval requires target_gps".into(),
+                ));
+            }
+        }
 
         self.validity.validate()?;
 
@@ -576,6 +594,20 @@ impl TestConfig {
         })
     }
 
+    /// Parses the optional fixed submission interval.
+    pub fn parse_steady_submission_interval(&self) -> Result<Option<Duration>> {
+        self.steady_submission_interval
+            .as_deref()
+            .map(|interval| {
+                humantime::parse_duration(interval.trim()).map_err(|e| {
+                    BaselineError::Config(format!(
+                        "invalid steady_submission_interval '{interval}': {e}"
+                    ))
+                })
+            })
+            .transpose()
+    }
+
     /// Parses the funding amount string into a U256.
     pub fn parse_funding_amount(&self) -> Result<alloy_primitives::U256> {
         self.funding_amount.parse().map_err(|e| {
@@ -622,6 +654,7 @@ impl TestConfig {
             measurement_blocks: self.measurement_blocks,
             target_gps: self.target_gps,
             block_time: self.block_time.clone(),
+            steady_submission_interval: self.steady_submission_interval.clone(),
             seed: self.seed,
             chain_id: self.chain_id,
             transactions: serde_json::to_value(&self.transactions)
@@ -674,6 +707,7 @@ impl TestConfig {
 
         let duration = self.parse_duration()?;
         let block_time = self.parse_block_time()?;
+        let steady_submission_interval = self.parse_steady_submission_interval()?;
 
         let transactions = if self.transactions.is_empty() {
             vec![TxConfig { weight: 100, tx_type: TxType::Transfer }]
@@ -694,6 +728,7 @@ impl TestConfig {
             target_gps: self.target_gps,
             block_gas_limit: None,
             block_time,
+            steady_submission_interval,
             separate_setup: None,
             duration,
             measurement_blocks: self.measurement_blocks,
@@ -919,6 +954,37 @@ block_time: 0s
         let error = TestConfig::from_yaml(yaml).unwrap_err();
 
         assert!(error.to_string().contains("block_time must be > 0"));
+    }
+
+    #[test]
+    fn parses_steady_submission_interval() {
+        let yaml = r#"
+transaction_submission_rpcs: http://localhost:8545
+target_gps: 400000000
+block_time: 200ms
+steady_submission_interval: 20ms
+"#;
+
+        let config = TestConfig::from_yaml(yaml).unwrap();
+
+        assert_eq!(
+            config.to_load_config(Some(8453)).unwrap().steady_submission_interval,
+            Some(Duration::from_millis(20))
+        );
+        assert_eq!(config.to_summary().steady_submission_interval.as_deref(), Some("20ms"));
+    }
+
+    #[test]
+    fn rejects_steady_submission_without_target_rate() {
+        let yaml = r#"
+transaction_submission_rpcs: http://localhost:8545
+target_gps: null
+steady_submission_interval: 20ms
+"#;
+
+        let error = TestConfig::from_yaml(yaml).unwrap_err();
+
+        assert!(error.to_string().contains("steady_submission_interval requires target_gps"));
     }
 
     #[test]

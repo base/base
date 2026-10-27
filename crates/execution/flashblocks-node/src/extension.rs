@@ -1,5 +1,6 @@
 //! Contains the [`FlashblocksExtension`] which wires up the flashblocks feature
-//! (canonical block subscription and RPC surface) on the Base node builder.
+//! (flashblock subscription, pool deadline expiry, canonical block subscription and RPC
+//! surface) on the Base node builder.
 
 use std::sync::Arc;
 
@@ -11,6 +12,8 @@ use base_node_runner::{BaseNodeExtension, FromExtensionConfig, NodeHooks};
 use reth_chain_state::CanonStateSubscriptions;
 use tokio_stream::{StreamExt, wrappers::BroadcastStream};
 use tracing::info;
+
+use crate::PoolExpiringReceiver;
 
 /// Helper struct that wires the Flashblocks feature (canonical subscription and RPC) into the node builder.
 #[derive(Debug)]
@@ -35,20 +38,23 @@ impl BaseNodeExtension for FlashblocksExtension {
         };
 
         let state = cfg.state;
-        let mut subscriber = FlashblocksSubscriber::new(
-            Arc::clone(&state),
-            cfg.websocket_url,
-            cfg.subscriber_ping_interval,
-        );
-
         let state_for_canonical = Arc::clone(&state);
         let state_for_rpc = Arc::clone(&state);
         let state_for_start = state;
 
-        // Start state processor, subscriber, and canonical subscription after node is started
+        // Start state processor, subscriber, and canonical subscription after node is started.
+        // The subscriber also records each received flashblock in the local pool so validity
+        // transactions expire at flashblock cadence on nodes that only follow the stream.
         let hooks = hooks.add_node_started_hook(move |ctx| {
             info!(message = "Starting Flashblocks state processor");
             state_for_start.start(ctx.provider().clone());
+            let receiver =
+                PoolExpiringReceiver::new(Arc::clone(&state_for_start), ctx.pool().clone());
+            let mut subscriber = FlashblocksSubscriber::new(
+                Arc::new(receiver),
+                cfg.websocket_url,
+                cfg.subscriber_ping_interval,
+            );
             subscriber.start();
 
             let mut canonical_stream =
