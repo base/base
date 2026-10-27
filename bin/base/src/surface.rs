@@ -7,8 +7,9 @@ use crate::config::ChainArg;
 /// Base-owned visibility, naming, and rejection rules layered over the derived `base` CLI.
 ///
 /// `base rpc` and `base sequencer` flatten the full execution, consensus, and builder argument
-/// sets. Every flag stays parseable, but `-h`/`--help` only lists the curated ones below;
-/// `--help-all` lists everything.
+/// sets. Only the curated and advanced flags below are supported: `-h`/`--help` lists the curated
+/// ones, `--help-all` adds the advanced ones, and every other flag is hidden, rejected on the
+/// command line, and detached from its environment variable.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct CliSurface;
 
@@ -17,7 +18,7 @@ impl CliSurface {
     pub(crate) const NODE_COMMANDS: [&str; 7] =
         ["rpc", "sequencer", "follow", "bootnode", "dev", "execution", "consensus"];
 
-    /// Node subcommands whose help lists only curated flags and rejects [`Self::UNSUPPORTED`].
+    /// Node subcommands that accept only curated and advanced flags.
     pub(crate) const CURATED_COMMANDS: [&str; 2] = ["rpc", "sequencer"];
 
     /// Flags renamed to Base conventions. The old spelling stays accepted as a hidden alias.
@@ -45,8 +46,7 @@ impl CliSurface {
     /// memory: the auth port and address are overwritten, no socket or JWT is used between the
     /// two layers, and disabling the auth server would remove the in-memory auth module.
     ///
-    /// Only command-line use is rejected. Values from env (for example `BASE_NODE_L2_ENGINE_AUTH`
-    /// in operator env files shared with the standalone binaries) are ignored.
+    /// These are rejected like any other unsupported flag, with an Engine API specific reason.
     pub(crate) const UNSUPPORTED: &[&str] = &[
         "authrpc.addr",
         "authrpc.port",
@@ -109,6 +109,87 @@ impl CliSurface {
         ("conductor.rpc", "Sequencer"),
     ];
 
+    /// Advanced flags supported on both curated commands, listed only by `--help-all`.
+    pub(crate) const ADVANCED_FLAGS: &[&str] = &[
+        "execution-chain",
+        "l1.config-file",
+        "l2.config-file",
+        "l1.slot-duration-override",
+        "l1.verifier-confs",
+        "l1.dangerously-override-da-batch-inbox",
+        "l1.dangerously-override-da-batcher-sender",
+        "txpool.nolocals",
+        "txpool.max-account-slots",
+        "txpool.max-batch-size",
+        "txpool.pending-max-count",
+        "txpool.pending-max-size",
+        "txpool.basefee-max-count",
+        "txpool.basefee-max-size",
+        "txpool.queued-max-count",
+        "txpool.queued-max-size",
+        "rollup.txpool-max-inflight-delegated-slots",
+        "rpc.gascap",
+        "rpc.txfeecap",
+        "rpc.eth-proof-window",
+        "rpc.execution-forwarding-endpoint",
+        "ipcpath",
+        "p2p-secret-key-hex",
+        "disable-discovery",
+        "rollup.discovery.v4",
+        "p2p.bootnodes-file",
+        "p2p.scoring",
+        "upgrade-signal.contract",
+        "upgrade-signal.mode",
+        "upgrade-signal.l1-block-tag",
+        "upgrade-signal.l1-rpc",
+        "payload.resource-metering-schedule",
+        "validity-signature-mode",
+        "enable-shadow-indexer",
+        "shadow-indexer.db-host",
+        "shadow-indexer.db-port",
+        "shadow-indexer.db-name",
+        "shadow-indexer.db-user",
+        "shadow-indexer.db-password",
+        "shadow-indexer.max-connections",
+        "shadow-indexer.connection-timeout",
+        "shadow-indexer.retention",
+        "shadow-indexer.retention-interval",
+    ];
+
+    /// Advanced flags supported only on `base rpc`.
+    pub(crate) const RPC_ADVANCED_FLAGS: &[&str] = &[
+        "rpc.forwarding-endpoint",
+        "enable-tx-forwarding",
+        "builder-rpc-urls",
+        "rollup.payer-enabled",
+        "rollup.payer",
+        "enable-metering",
+        "metering.metered-opcodes",
+        "validity-max-predicates",
+        "validity-max-expiry-secs",
+        "enable-transaction-event-journal",
+        "flashblocks-url",
+    ];
+
+    /// Advanced flags supported only on `base sequencer`.
+    pub(crate) const SEQUENCER_ADVANCED_FLAGS: &[&str] = &[
+        "p2p.sequencer.key",
+        "sequencer.l1-confs",
+        "rollup.sequencer",
+        "rollup.sequencer-headers",
+        "rollup.chain-block-time",
+        "builder.max-gas-per-txn",
+        "builder.enable-resource-metering",
+        "builder.payload-builder-cutover",
+        "builder.transaction-events.enabled",
+        "builder.transaction-events.network",
+        "builder.transaction-events.file-path",
+        "telemetry.sampling-ratio",
+        "flashblocks.addr",
+        "flashblocks.port",
+        "flashblocks.block-time",
+    ];
+
     /// Help text replacing upstream text that is ambiguous in a combined node or leaks rustdoc.
     pub(crate) const HELP: &[(&str, &str)] = &[
         ("datadir", "Directory for all node data"),
@@ -141,6 +222,24 @@ impl CliSurface {
         }
     }
 
+    /// Returns the command-specific advanced flags for a node command.
+    pub(crate) fn command_advanced_flags(name: &str) -> &'static [&'static str] {
+        match name {
+            "rpc" => Self::RPC_ADVANCED_FLAGS,
+            "sequencer" => Self::SEQUENCER_ADVANCED_FLAGS,
+            _ => &[],
+        }
+    }
+
+    /// Returns whether a curated node command supports a flag, by its long name.
+    pub(crate) fn supports(name: &str, long: &str) -> bool {
+        Self::NODE_FLAGS.iter().chain(Self::command_flags(name)).any(|(flag, _)| *flag == long)
+            || Self::ADVANCED_FLAGS
+                .iter()
+                .chain(Self::command_advanced_flags(name))
+                .any(|flag| *flag == long)
+    }
+
     /// Applies the curated surface to the derived `base` command.
     pub(crate) fn apply(command: Command) -> Command {
         let command = command.mut_arg("base_chain", |arg| arg.hide(true));
@@ -150,7 +249,7 @@ impl CliSurface {
             })
         });
         Self::CURATED_COMMANDS.into_iter().fold(command, |command, name| {
-            command.mut_subcommand(name, |sub| Self::curate(sub, Self::command_flags(name)))
+            command.mut_subcommand(name, |sub| Self::curate(sub, name))
         })
     }
 
@@ -185,11 +284,8 @@ impl CliSurface {
     }
 
     /// Hides, annotates, and adds `--help-all` to one curated node command.
-    pub(crate) fn curate(
-        command: Command,
-        extra: &'static [(&'static str, &'static str)],
-    ) -> Command {
-        Self::map_args(command, |arg| Self::curate_arg(arg, extra))
+    pub(crate) fn curate(command: Command, name: &'static str) -> Command {
+        Self::map_args(command, |arg| Self::curate_arg(arg, name))
             .disable_help_flag(true)
             .arg(
                 Arg::new("help")
@@ -219,16 +315,18 @@ impl CliSurface {
     }
 
     /// Applies visibility, heading, and help rules to a single argument.
-    pub(crate) fn curate_arg(arg: Arg, extra: &'static [(&'static str, &'static str)]) -> Arg {
+    pub(crate) fn curate_arg(arg: Arg, name: &str) -> Arg {
         let Some(long) = arg.get_long().map(str::to_owned) else {
             return arg.hide_short_help(true);
         };
-        if Self::UNSUPPORTED.contains(&long.as_str()) {
-            return arg.hide(true);
+        if !Self::supports(name, &long) {
+            return arg.hide(true).env(None::<&str>);
         }
-        let Some((_, heading)) =
-            Self::NODE_FLAGS.iter().chain(extra).find(|(flag, _)| *flag == long)
-        else {
+        let curated = Self::NODE_FLAGS
+            .iter()
+            .chain(Self::command_flags(name))
+            .find(|(flag, _)| *flag == long);
+        let Some((_, heading)) = curated else {
             return arg.hide_short_help(true);
         };
         let mut arg = arg.help_heading((*heading != Self::DEFAULT_HEADING).then_some(*heading));
@@ -255,7 +353,7 @@ impl CliSurface {
             .fold(arg.alias(None).long(new).alias(old), |arg, alias| arg.alias(alias))
     }
 
-    /// Rejects node command lines that pass `--chain` twice or use an [`Self::UNSUPPORTED`] flag.
+    /// Rejects node command lines that pass `--chain` twice or use an unsupported flag.
     pub(crate) fn validate(command: &mut Command, matches: &ArgMatches) -> Result<(), clap::Error> {
         let Some((name, sub_matches)) = matches.subcommand() else {
             return Ok(());
@@ -280,20 +378,24 @@ impl CliSurface {
         }
         let used = sub
             .get_arguments()
-            .filter(|arg| arg.get_long().is_some_and(|long| Self::UNSUPPORTED.contains(&long)))
+            .filter(|arg| !arg.is_global_set())
+            .filter(|arg| arg.get_long().is_some_and(|long| !Self::supports(name, long)))
             .find(|arg| from_cli(sub_matches, arg.get_id().as_str()))
             .and_then(Arg::get_long)
             .map(str::to_owned);
         let Some(long) = used else {
             return Ok(());
         };
+        let reason = if Self::UNSUPPORTED.contains(&long.as_str()) {
+            "consensus calls the embedded execution node's Engine API in memory, so Engine API \
+             ports, JWTs, and timeouts do not apply"
+                .to_owned()
+        } else {
+            format!("run `base {name} --help-all` to list supported flags")
+        };
         Err(sub.error(
-            ErrorKind::ArgumentConflict,
-            format!(
-                "`--{long}` is not supported by `base {name}`: consensus calls the embedded \
-                 execution node's Engine API in memory, so Engine API ports, JWTs, and \
-                 timeouts do not apply"
-            ),
+            ErrorKind::UnknownArgument,
+            format!("`--{long}` is not supported by `base {name}`: {reason}"),
         ))
     }
 }
@@ -343,8 +445,14 @@ mod tests {
         for (flag, _) in CliSurface::SEQUENCER_FLAGS {
             assert!(sequencer.contains(*flag), "missing sequencer --{flag}");
         }
-        for flag in CliSurface::UNSUPPORTED {
+        for flag in CliSurface::UNSUPPORTED.iter().chain(CliSurface::ADVANCED_FLAGS) {
             assert!(rpc.contains(*flag) && sequencer.contains(*flag), "missing --{flag}");
+        }
+        for flag in CliSurface::RPC_ADVANCED_FLAGS {
+            assert!(rpc.contains(*flag), "missing rpc --{flag}");
+        }
+        for flag in CliSurface::SEQUENCER_ADVANCED_FLAGS {
+            assert!(sequencer.contains(*flag), "missing sequencer --{flag}");
         }
         let bootnode = longs(&command, "bootnode");
         for (_, new) in CliSurface::RENAMES {
@@ -391,8 +499,33 @@ mod tests {
         assert!(!help.contains("flashblocks"));
 
         let help_all = rpc.render_long_help().to_string();
-        assert!(help_all.contains("--engine.persistence-threshold"));
+        assert!(help_all.contains("--txpool.max-account-slots"));
+        assert!(!help_all.contains("--engine.persistence-threshold"));
         assert!(!help_all.contains("--authrpc.port"));
+    }
+
+    #[test]
+    fn accepts_advanced_flags() {
+        assert!(parse(&["base", "rpc", "--txpool.max-account-slots", "32"]).is_ok());
+        assert!(parse(&["base", "rpc", "--enable-metering"]).is_ok());
+        assert!(parse(&["base", "sequencer", "--sequencer.l1-confs", "4"]).is_ok());
+    }
+
+    #[test]
+    fn rejects_flags_outside_the_supported_surface() {
+        for args in [
+            &["base", "rpc", "--engine.persistence-threshold", "4"][..],
+            &["base", "rpc", "--auth-ipc.path", "/data/engine.ipc"],
+            &["base", "sequencer", "--disable-dns-discovery"],
+        ] {
+            let err = parse(args).unwrap_err();
+            assert!(err.to_string().contains("--help-all` to list supported flags"), "{err}");
+        }
+    }
+
+    #[test]
+    fn global_flags_stay_supported() {
+        assert!(parse(&["base", "rpc", "-vvv", "--logs.stdout.format", "json"]).is_ok());
     }
 
     #[test]
@@ -434,11 +567,6 @@ mod tests {
     }
 
     #[test]
-    fn auth_ipc_path_stays_supported() {
-        assert!(parse(&["base", "rpc", "--auth-ipc.path", "/data/engine.ipc"]).is_ok());
-    }
-
-    #[test]
     fn bootnode_accepts_renamed_flags() {
         let cli =
             BaseCli::try_parse_curated(["base", "bootnode", "--l2.config-file", "/rollup.json"])
@@ -466,6 +594,7 @@ mod tests {
             .env("BASE_CHAIN", "mainnet")
             .env("BASE_NODE_L2_ENGINE_AUTH", "/tmp/jwt.hex")
             .env("BASE_NODE_PORT", "tcp://10.0.0.1:30303")
+            .env("BASE_NODE_L1_RPC_TIMEOUT_MS", "not-a-number")
             .output()
             .unwrap();
 
