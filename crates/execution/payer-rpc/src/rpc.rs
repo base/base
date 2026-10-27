@@ -157,11 +157,12 @@ where
                 });
         }
         // The cached body is shared, so it must carry every offer kind in the payer's own token
-        // order rather than what this caller's `kinds` and `preferredTokens` hints would produce.
+        // order and currency rather than what this caller's hints would produce.
         let mut shared_request = request.clone();
         if let Some(object) = shared_request.as_object_mut() {
             object.remove("preferredTokens");
             object.remove("kinds");
+            object.remove("fiatCurrency");
         }
         let result = self.client.request::<_, Value>("payer_getTerms", (&shared_request,)).await;
         *unreachable_at = None;
@@ -172,7 +173,7 @@ where
             }
             Err(error) => {
                 if let Some(answer) = PayerRejection::from_upstream(&error) {
-                    cache.clear();
+                    cache.clear_on(&answer);
                     return Err(answer);
                 }
                 *unreachable_at = Some(Instant::now());
@@ -201,8 +202,8 @@ where
             invalid_params(error)
         })?;
         match &self.cache {
-            Some(cache) => self.cached_terms(cache, &request).await,
-            None => self.forward("payer_getTerms", &request).await,
+            Some(cache) if TermsCache::serves(&request) => self.cached_terms(cache, &request).await,
+            _ => self.forward("payer_getTerms", &request).await,
         }
     }
 
@@ -616,6 +617,33 @@ mod tests {
         slow.assert_calls(1);
     }
     #[tokio::test]
+    async fn forwards_frame_transaction_requests_past_the_shared_entry() {
+        let sequencer = MockServer::start();
+        let calls = sequencer.mock(|when, then| {
+            when.method(POST).body_includes("payer_getTerms").body_includes("calls");
+            rpc_result(then, terms_response());
+        });
+        let frames = sequencer.mock(|when, then| {
+            when.method(POST).body_includes("payer_getTerms").body_includes("frames");
+            rpc_result(then, json!({ "options": [] }));
+        });
+        let api = PayerApiImpl::new(everest_provider(), client(&sequencer), passing_state(), true);
+        let mut frame_request = terms_request(2);
+        frame_request.as_object_mut().unwrap().remove("calls");
+        frame_request["frames"] = json!([{ "mode": "0x1" }]);
+
+        assert_terms(api.get_terms(terms_request(1)).await.unwrap());
+        for _ in 0..2 {
+            let served = api.get_terms(frame_request.clone()).await.unwrap();
+            assert_eq!(served, json!({ "options": [] }));
+        }
+        assert_terms(api.get_terms(terms_request(3)).await.unwrap());
+
+        calls.assert_calls(1);
+        frames.assert_calls(2);
+    }
+
+    #[tokio::test]
     async fn caches_terms_without_request_hints_and_orders_tokens_per_request() {
         let sequencer = MockServer::start();
         let usdc = "0x00000000000000000000000000000000000000aa";
@@ -633,7 +661,8 @@ mod tests {
             when.method(POST)
                 .body_includes("payer_getTerms")
                 .body_excludes("preferredTokens")
-                .body_excludes("kinds");
+                .body_excludes("kinds")
+                .body_excludes("fiatCurrency");
             rpc_result(then, response.clone());
         });
         let api = PayerApiImpl::new(everest_provider(), client(&sequencer), passing_state(), true);
@@ -641,6 +670,7 @@ mod tests {
         let mut prefers_usdc = terms_request(1);
         prefers_usdc["preferredTokens"] = json!([usdc]);
         prefers_usdc["kinds"] = json!(["token"]);
+        prefers_usdc["fiatCurrency"] = json!("EUR");
         let first = api.get_terms(prefers_usdc).await.unwrap();
         let no_preference = api.get_terms(terms_request(2)).await.unwrap();
 

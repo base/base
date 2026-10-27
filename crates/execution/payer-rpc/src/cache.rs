@@ -5,6 +5,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use jsonrpsee::types::ErrorObjectOwned;
 use serde_json::Value;
 use tokio::sync::{Mutex as AsyncMutex, MutexGuard};
 
@@ -22,6 +23,9 @@ const PAYMENT_INSUFFICIENT: &str = "PAYMENT_INSUFFICIENT";
 
 /// Rejection while the payer is paused or cannot price.
 const TEMPORARILY_UNAVAILABLE: &str = "TEMPORARILY_UNAVAILABLE";
+
+/// The offer kind whose terms are the same for every sender.
+const TOKEN_OFFER: &str = "token";
 
 /// One shared `payer_getTerms` body, refetched on demand at most every
 /// [`GET_TERMS_FRESH_FOR`].
@@ -91,16 +95,35 @@ impl TermsCache {
         self.lock().as_ref()?.served(Instant::now())
     }
 
+    /// Whether `request` can be answered from the shared entry. A `frames` request needs offers
+    /// carrying the payer's frames for an EIP-8141 frame transaction, which the entry, shared
+    /// with EIP-8130 requests, does not hold.
+    pub fn serves(request: &Value) -> bool {
+        request.get("frames").is_none_or(Value::is_null)
+    }
+
     /// Stores `response` until the shortest offer `ttl`, capped at
     /// [`MAX_GET_TERMS_CACHE_SECS`]. A response with no positive `ttl`, such
     /// as one with no offers, clears the cache.
+    ///
+    /// Only token offers are shared, without the `gasEstimate` and `paymentAmount` sized for the
+    /// intent that fetched them. A response with sponsorship terms or declines, which depend on
+    /// the sender, is not stored and leaves the cache as it was.
     pub fn insert(&self, response: &Value) {
         self.insert_at(response, Instant::now());
     }
 
-    /// Drops the cached response, for when the payer answers with an error.
-    pub fn clear(&self) {
-        *self.lock() = None;
+    /// Drops the cached response when the payer answers `payer_getTerms` with
+    /// `TEMPORARILY_UNAVAILABLE`, so its last terms are not served while it is paused. An error
+    /// about the request itself, such as invalid params or calls that revert, leaves it.
+    pub fn clear_on(&self, answer: &ErrorObjectOwned) {
+        let code = answer
+            .data()
+            .and_then(|data| serde_json::from_str::<Value>(data.get()).ok())
+            .and_then(|data| data.get("code").and_then(Value::as_str).map(str::to_owned));
+        if code.as_deref() == Some(TEMPORARILY_UNAVAILABLE) {
+            *self.lock() = None;
+        }
     }
 
     /// Marks the response stale when `rejection`, a `payer_sendTransaction`
@@ -182,9 +205,12 @@ impl TermsCache {
             *entry = None;
             return;
         };
+        let Some(shared) = Self::shared_terms(response) else {
+            return;
+        };
         let forced = entry.as_ref().is_some_and(|entry| entry.stale);
         *entry = Some(CachedTerms {
-            response: response.clone(),
+            response: shared,
             fetched_at: now,
             ttl: Duration::from_secs(ttl_secs),
             stale: false,
@@ -194,6 +220,25 @@ impl TermsCache {
 
     fn lock(&self) -> std::sync::MutexGuard<'_, Option<CachedTerms>> {
         self.entry.lock().unwrap_or_else(|error| error.into_inner())
+    }
+
+    /// `response` without the amounts sized for its request, or `None` when it carries an offer
+    /// other than a token offer.
+    fn shared_terms(response: &Value) -> Option<Value> {
+        let mut shared = response.clone();
+        for option in CachedTerms::options(&mut shared) {
+            if option.get("kind").and_then(Value::as_str) != Some(TOKEN_OFFER) {
+                return None;
+            }
+            let tokens = option.get_mut("tokens").and_then(Value::as_array_mut);
+            for token in tokens.into_iter().flatten().filter_map(Value::as_object_mut) {
+                token.remove("paymentAmount");
+            }
+        }
+        if let Some(object) = shared.as_object_mut() {
+            object.remove("gasEstimate");
+        }
+        Some(shared)
     }
 
     /// Shortest positive offer `ttl` in `response`, capped at [`MAX_GET_TERMS_CACHE_SECS`].
@@ -335,6 +380,46 @@ mod tests {
         let later = now + GET_TERMS_FRESH_FOR;
         cache.invalidate_at(Some(&rejection("PAYMENT_INSUFFICIENT")), later);
         assert!(cache.get_at(now).is_none());
+    }
+
+    #[test]
+    fn shares_only_token_terms_without_the_amounts_sized_for_one_intent() {
+        let cache = TermsCache::new();
+        let now = Instant::now();
+        let mut quoted = terms(60);
+        quoted["gasEstimate"] = json!({ "gasLimit": "0x11170", "maxFeePerGas": "0x1" });
+        quoted["options"][0]["tokens"][0]["paymentAmount"] = json!("0x11170");
+        cache.insert_at(&quoted, now);
+        assert_eq!(cache.get_at(now), Some(terms(60)));
+
+        let mut sponsored = terms(60);
+        sponsored["options"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({ "kind": "sponsored", "payer": "0x01", "ttl": 60 }));
+        cache.insert_at(&sponsored, now);
+        assert_eq!(cache.get_at(now), Some(terms(60)));
+    }
+
+    #[test]
+    fn clears_only_when_the_payer_cannot_quote_anyone() {
+        let cache = TermsCache::new();
+        cache.insert(&terms(60));
+        let answer = |data: Value| ErrorObjectOwned::owned(-32000, "PAYER_REJECTED", Some(data));
+
+        cache.clear_on(&ErrorObjectOwned::owned(-32602, "invalid params", None::<()>));
+        cache.clear_on(&answer(rejection("EXECUTION_REVERTED")));
+        assert!(cache.get().is_some());
+
+        cache.clear_on(&answer(rejection("TEMPORARILY_UNAVAILABLE")));
+        assert!(cache.get_stale().is_none());
+    }
+
+    #[test]
+    fn serves_every_request_but_one_for_a_frame_transaction() {
+        assert!(TermsCache::serves(&json!({ "calls": [] })));
+        assert!(TermsCache::serves(&json!({})));
+        assert!(!TermsCache::serves(&json!({ "frames": [{}] })));
     }
 
     #[test]
