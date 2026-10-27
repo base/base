@@ -89,7 +89,9 @@ In `Deriving` the actor calls `pipeline.step()` in a loop. Each call either retu
 
 The `AwaitingSafeHeadConfirmation` state persists until the engine actor confirms the attributes by calling back through `QueuedEngineDerivationClient::send_new_engine_safe_head()`. That call generates a `ProcessEngineSafeHeadUpdateRequest`, which records the new safe head in the `SafeDB` (paired with the L1 block from `pending_derived_from`) and transitions back to `Deriving` to produce the next batch of attributes.
 
-The `L2Finalizer` struct tracks finalization by maintaining a `BTreeMap<u64, u64>` from L1 block number to the highest L2 block number derived in that epoch. When the L1 watcher reports a new finalized L1 block, the actor calls `L2Finalizer::try_finalize_next()`, which scans the map for all entries at or below the finalized L1 number, drains them, and returns the highest L2 block number. That number is forwarded to the engine as a `ProcessFinalizedL2BlockNumberRequest`.
+The `L2Finalizer` struct tracks finalization by maintaining a `BTreeMap<u64, u64>` from L1 inclusion block number to the highest L2 block number whose batch that L1 block carried. The inclusion block is not the L2 block's epoch origin: a batch can land in any L1 block at or after its epoch, so only the inclusion block proves that the inputs are final. When the L1 watcher reports a new finalized L1 block, the actor calls `L2Finalizer::try_finalize_next()`, which scans the map for all entries at or below the finalized L1 number, drains them, and returns the highest L2 block number. That number is forwarded to the engine as a `ProcessFinalizedL2BlockNumberRequest`.
+
+A derivation reset does not clear the map. The pipeline restarts from the reset's safe head, so L2 blocks at or below it are never re-derived and their entries would never be recreated; `L2Finalizer::retain_valid_after_reset()` keeps them instead. To keep the L1 range the retained safe head was built from, the actor records the inclusion block of each confirmed safe head with `L2Finalizer::confirm_safe_head()`.
 
 ## Sequencer Actor
 

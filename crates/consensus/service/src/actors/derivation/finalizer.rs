@@ -39,6 +39,14 @@ pub struct L2Finalizer {
     /// This survives derivation resets so that re-derived L2 blocks can be finalized without
     /// waiting for the L1 watcher to emit the same finalized block again.
     finalized_l1_block: Option<BlockInfo>,
+    /// The safe head the engine last confirmed, paired with the L1 inclusion block derivation
+    /// produced it from.
+    ///
+    /// Survives derivation resets so that a reset which keeps this safe head can also keep the
+    /// candidates derived from the L1 blocks the safe head itself was built from. `None` before
+    /// the first confirmation, and after a reset moved the safe head to a block this finalizer did
+    /// not confirm.
+    confirmed_safe_head: Option<(L2BlockInfo, BlockInfo)>,
 }
 
 impl L2Finalizer {
@@ -81,6 +89,15 @@ impl L2Finalizer {
         self.try_finalize_next(self.finalized_l1_block?)
     }
 
+    /// Records the safe head the engine confirmed, and the L1 inclusion block derivation produced
+    /// it from, so that a later reset can tell how far its candidates are still trustworthy.
+    ///
+    /// `inclusion` is [`None`] for safe heads derivation did not produce, such as a safe head
+    /// adopted during EL sync; the reset path then falls back to the safe head's epoch origin.
+    pub fn confirm_safe_head(&mut self, safe_head: &L2BlockInfo, inclusion: Option<BlockInfo>) {
+        self.confirmed_safe_head = inclusion.map(|inclusion| (*safe_head, inclusion));
+    }
+
     /// Drops the entries that a derivation reset invalidated, keeping every entry that the reset
     /// still allows to be finalized.
     ///
@@ -91,34 +108,65 @@ impl L2Finalizer {
     /// starve finalization whenever they arrive faster than L1 finality advances, so the queue is
     /// filtered instead of cleared.
     ///
-    /// An entry survives only when both of these hold:
+    /// An entry survives when its L2 block is at or below `l2_safe_head.block_info.number` and its
+    /// L1 inclusion block is at or below [`Self::trusted_inclusion_upto`]:
     ///
-    /// - Its L2 block is at or below `l2_safe_head.block_info.number`. Entries above the safe head
-    ///   belong to blocks the reset rolled back; they are re-derived and re-queued once the
-    ///   pipeline confirms them again, and finalizing one now would finalize a reorged-out block.
-    /// - Its L1 inclusion block is at or below `l2_safe_head.l1_origin.number`. The pipeline
-    ///   resumes L1 traversal at that origin, so inclusion blocks above it are re-read from the
-    ///   L1 provider and their L2 mapping may move to a different inclusion block; those entries
-    ///   are dropped and recreated from canonical data. Inclusion blocks at or below the origin
-    ///   are not revisited by the pipeline, so the recorded mapping stays the one derivation
-    ///   produced for them.
+    /// - The L2 bound is the safety-critical one. Entries above the safe head belong to blocks the
+    ///   reset rolled back; they are re-derived and re-queued once the pipeline confirms them
+    ///   again, and finalizing one now would finalize a reorged-out block.
+    /// - The L1 bound keeps only the L1 range the reset can still vouch for. A reorg can move the
+    ///   inclusion block of an L2 block, and an entry whose inclusion moved records L2 finality
+    ///   against the wrong L1 height.
     ///
-    /// The two bounds are independent. Retaining on the inclusion bound alone would still allow a
+    /// The two bounds are independent: retaining on the L1 bound alone would still allow a
     /// rolled-back block to be finalized, and retaining on the L2 bound alone would trust an
-    /// inclusion block the reset pipeline is about to re-derive.
+    /// inclusion block that may have moved.
     ///
     /// # Canonicity of retained inclusion blocks
     ///
-    /// A retained entry can only be finalized once its inclusion block number is at or below the
-    /// finalized L1 block, and finalized L1 blocks are never reorged. An L1 reorg below the reset
-    /// origin can therefore only move inclusion blocks that sit *above* finalized L1, where
-    /// [`Self::try_finalize_next`] can never select them. That is why the entries need no separate
-    /// canonicality check on their inclusion hash.
-    pub fn retain_valid_after_reset(&mut self, l2_safe_head: L2BlockInfo) {
+    /// Finalized L1 is never reorged, so a candidate is only selected once its recorded inclusion
+    /// height is final. A reorg can still replace a recorded inclusion block before its height
+    /// finalizes, so retention stops at the inclusion block of the confirmed safe head: the L1
+    /// range the engine's safe chain was built from. A reorg below that range abandons the safe
+    /// head itself, which derivation cannot roll back and the finalizer cannot repair; the block
+    /// that gets finalized is still the one the engine holds at or below its safe head.
+    pub fn retain_valid_after_reset(&mut self, l2_safe_head: &L2BlockInfo) {
+        let trusted_inclusion = self.trusted_inclusion_upto(l2_safe_head);
         let safe_l2_number = l2_safe_head.block_info.number;
-        let reset_l1_origin = l2_safe_head.l1_origin.number;
         self.awaiting_finalization
-            .retain(|&inclusion, &mut l2| l2 <= safe_l2_number && inclusion <= reset_l1_origin);
+            .retain(|&inclusion, &mut l2| l2 <= safe_l2_number && inclusion <= trusted_inclusion);
+    }
+
+    /// Returns the highest L1 inclusion block number that a reset to `l2_safe_head` still
+    /// vouches for.
+    ///
+    /// When the engine confirms a safe head, the actor records the inclusion block derivation
+    /// produced it from, which sits at or above the safe head's epoch origin: a batch is always
+    /// included at or after its epoch, and in practice a block or two after it. Keeping candidates
+    /// up to that inclusion block is what makes retention independent of the reset rate; falling
+    /// back to the epoch origin alone would drop every candidate derived in the last L1 block or
+    /// two before each reset, so a dense enough reset stream would still starve finalization.
+    ///
+    /// The recorded inclusion block is the one the safe head's own inputs came from, so a
+    /// candidate at or below it can only ever finalize an L2 block the engine already holds at or
+    /// below its safe head, which derivation never revisits.
+    ///
+    /// A reset that moved the safe head to a block this finalizer did not confirm has no such
+    /// record: the reset is rebuilding that block's inputs, so only its epoch origin is kept.
+    fn trusted_inclusion_upto(&mut self, l2_safe_head: &L2BlockInfo) -> L1BlockNumber {
+        match self.confirmed_safe_head {
+            Some((confirmed, inclusion))
+                if confirmed.block_info.number == l2_safe_head.block_info.number
+                    && confirmed.block_info.hash == l2_safe_head.block_info.hash =>
+            {
+                inclusion.number.max(l2_safe_head.l1_origin.number)
+            }
+            Some(_) => {
+                self.confirmed_safe_head = None;
+                l2_safe_head.l1_origin.number
+            }
+            None => l2_safe_head.l1_origin.number,
+        }
     }
 
     /// Attempts to find L2 blocks that can be finalized based on the new finalized L1 block.
@@ -150,11 +198,16 @@ mod tests {
     use super::L2Finalizer;
 
     /// Build a minimal [`AttributesWithParent`] whose derived L2 block number is
-    /// `l2_parent_number + 1` and whose L1 inclusion block is `inclusion_number`.
-    fn attrs(l2_parent_number: u64, inclusion_number: u64) -> AttributesWithParent {
+    /// `l2_parent_number + 1`, whose L1 epoch origin is `epoch_number`, and whose L1 inclusion
+    /// block is `inclusion_number`.
+    fn attrs_at(
+        l2_parent_number: u64,
+        epoch_number: u64,
+        inclusion_number: u64,
+    ) -> AttributesWithParent {
         let parent = L2BlockInfo {
             block_info: BlockInfo { number: l2_parent_number, ..Default::default() },
-            l1_origin: BlockNumHash::default(),
+            l1_origin: BlockNumHash { number: epoch_number, ..Default::default() },
             seq_num: 0,
         };
         let derived_from = BlockInfo { number: inclusion_number, ..Default::default() };
@@ -164,6 +217,11 @@ mod tests {
             Some(derived_from),
             false,
         )
+    }
+
+    /// Build attributes with a zero epoch origin.
+    fn attrs(l2_parent_number: u64, inclusion_number: u64) -> AttributesWithParent {
+        attrs_at(l2_parent_number, 0, inclusion_number)
     }
 
     /// Build a [`BlockInfo`] representing a finalized L1 block at `number`.
@@ -244,7 +302,7 @@ mod tests {
         f.process_finalized_l1_block(l1_at(5));
         f.enqueue_for_finalization(&attrs(4, 1));
 
-        f.retain_valid_after_reset(safe_head_at(100, 10));
+        f.retain_valid_after_reset(&safe_head_at(100, 10));
         f.enqueue_for_finalization(&attrs(9, 5));
 
         assert_eq!(f.try_finalize_pending(), Some(10));
@@ -265,9 +323,11 @@ mod tests {
             let inclusion = finalized_l1_number + finality_lag;
             f.enqueue_for_finalization(&attrs(500 + step, inclusion));
 
-            // Resets keep the safe head and resume L1 traversal from an origin above the
-            // inclusion block of everything derived so far.
-            f.retain_valid_after_reset(safe_head_at(501 + step, inclusion + 1));
+            // A batch lands a block or two after the epoch of the block it carries, so the safe
+            // head's epoch origin trails the inclusion block of its own batch.
+            let safe_head = safe_head_at(501 + step, inclusion - 2);
+            f.confirm_safe_head(&safe_head, Some(l1_at(inclusion)));
+            f.retain_valid_after_reset(&safe_head);
 
             finalized_l1_number += 1;
             if let Some(l2) = f.process_finalized_l1_block(l1_at(finalized_l1_number)) {
@@ -280,13 +340,57 @@ mod tests {
     }
 
     #[test]
+    fn confirmed_inclusion_keeps_candidates_above_the_epoch_origin() {
+        let mut f = L2Finalizer::default();
+        f.enqueue_for_finalization(&attrs(495, 119)); // l2=496
+        f.enqueue_for_finalization(&attrs(499, 120)); // l2=500 is the safe head itself
+
+        // The safe head's epoch origin (118) trails the inclusion block of its own batch (120),
+        // so an epoch-only bound would drop every candidate derived from the last L1 blocks.
+        let safe_head = safe_head_at(500, 118);
+        f.confirm_safe_head(&safe_head, Some(l1_at(120)));
+        f.retain_valid_after_reset(&safe_head);
+
+        assert_eq!(f.try_finalize_next(l1_at(1_000)), Some(500));
+    }
+
+    #[test]
+    fn reset_without_a_confirmed_inclusion_trusts_only_the_epoch_origin() {
+        let mut f = L2Finalizer::default();
+        f.enqueue_for_finalization(&attrs(495, 119));
+        f.enqueue_for_finalization(&attrs(499, 120));
+
+        // Nothing confirmed this safe head, so its epoch origin is the only L1 block the reset can
+        // vouch for.
+        f.retain_valid_after_reset(&safe_head_at(500, 118));
+
+        assert!(f.try_finalize_next(l1_at(1_000)).is_none());
+    }
+
+    #[test]
+    fn reset_that_moves_the_safe_head_drops_the_confirmation() {
+        let mut f = L2Finalizer::default();
+        f.confirm_safe_head(&safe_head_at(600, 130), Some(l1_at(132)));
+        f.enqueue_for_finalization(&attrs(479, 125)); // l2=480, below the rolled-back head
+        f.enqueue_for_finalization(&attrs(499, 131)); // l2=500, included above the new origin
+
+        // The reset moved the safe head to a block this finalizer never confirmed, so the
+        // confirmation no longer applies and only the new epoch origin is trusted.
+        let rolled_back = safe_head_at(500, 128);
+        f.retain_valid_after_reset(&rolled_back);
+
+        // The stale confirmation contributed no trust: l2=500 was included above the new origin.
+        assert_eq!(f.try_finalize_next(l1_at(1_000)), Some(480));
+    }
+
+    #[test]
     fn reset_drops_candidates_above_the_new_safe_head() {
         // A reset that rolls the safe head back must not leave candidates above it behind.
         let mut f = L2Finalizer::default();
         f.enqueue_for_finalization(&attrs(479, 105)); // l2=480, within the rolled-back chain
         f.enqueue_for_finalization(&attrs(599, 108)); // l2=600, reorged out
 
-        f.retain_valid_after_reset(safe_head_at(500, 110));
+        f.retain_valid_after_reset(&safe_head_at(500, 110));
 
         assert_eq!(f.try_finalize_next(l1_at(1_000)), Some(480));
     }
@@ -299,7 +403,7 @@ mod tests {
         f.enqueue_for_finalization(&attrs(479, 100)); // inclusion == origin
         f.enqueue_for_finalization(&attrs(489, 101)); // inclusion above origin
 
-        f.retain_valid_after_reset(safe_head_at(500, 100));
+        f.retain_valid_after_reset(&safe_head_at(500, 100));
 
         assert_eq!(f.try_finalize_next(l1_at(1_000)), Some(480));
     }
@@ -308,12 +412,12 @@ mod tests {
     fn inclusion_block_bounds_the_epoch_origin() {
         // A batch may be included in any L1 block at or after its epoch origin, so the epoch
         // origin never proves that the L1 inputs are final on its own. Finalization follows the
-        // inclusion block: an entry included above the finalized height is not eligible even
-        // when its epoch is already final.
+        // inclusion block: the entry is not eligible when finalized L1 has covered the block's
+        // epoch but not the L1 block its batch was actually included in.
         let mut f = L2Finalizer::default();
-        f.enqueue_for_finalization(&attrs(9, 20)); // l2=10 included at L1 20
+        f.enqueue_for_finalization(&attrs_at(9, 18, 20)); // l2=10, epoch 18, included at L1 20
 
-        assert!(f.try_finalize_next(l1_at(15)).is_none());
+        assert!(f.try_finalize_next(l1_at(19)).is_none());
         assert_eq!(f.try_finalize_next(l1_at(20)), Some(10));
     }
 

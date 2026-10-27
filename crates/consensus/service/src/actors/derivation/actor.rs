@@ -126,7 +126,7 @@ where
             // whole queue used to lose every block at or below the reset safe head, which is
             // never re-derived, so a reset rate above the L1 finality cadence starved
             // finalization indefinitely.
-            self.finalizer.retain_valid_after_reset(reset_safe_head);
+            self.finalizer.retain_valid_after_reset(&reset_safe_head);
             // Discard any in-flight derived_from so that a stale pre-reset L1 inclusion
             // block is never recorded for a post-reset safe head confirmation.
             self.pending_derived_from = None;
@@ -299,7 +299,8 @@ where
                 // `pending_derived_from` is set in `attempt_derivation` just before the attrs
                 // are sent to the engine. It is `None` only for EL-sync safe heads that were
                 // not produced by local derivation; in that case fall back to epoch origin.
-                let l1_block = self.pending_derived_from.take().unwrap_or(BlockInfo {
+                let derived_from = self.pending_derived_from.take();
+                let l1_block = derived_from.unwrap_or(BlockInfo {
                     number: safe_head.l1_origin.number,
                     hash: safe_head.l1_origin.hash,
                     parent_hash: B256::ZERO,
@@ -311,12 +312,18 @@ where
                     error!(target: "derivation", error = %e, "failed to record safe head update");
                 }
 
+                // Remember which L1 block this safe head's inputs came from. A later reset keeps
+                // the derived candidates up to that inclusion block rather than only up to the
+                // safe head's epoch origin, which is what makes retention independent of how
+                // often the pipeline resets.
+                self.finalizer.confirm_safe_head(safe_head.as_ref(), derived_from);
+
                 self.derivation_state_machine
                     .update(&DerivationStateUpdate::NewAttributesConfirmed(safe_head))?;
 
-                // A reset clears derived candidates, but the finalized L1 signal is retained.
-                // Retry after the rebuilt safe head is confirmed, matching op-node's
-                // safe-derived finalization trigger.
+                // A reset keeps the candidates it could not invalidate, and the finalized L1
+                // signal is retained. Retry after the rebuilt safe head is confirmed, matching
+                // op-node's safe-derived finalization trigger.
                 self.try_finalize_pending().await?;
 
                 self.attempt_derivation().await?;
@@ -622,15 +629,56 @@ mod tests {
             actor.finalizer.enqueue_for_finalization(&attrs(l2_parent, inclusion));
         }
 
-        // The pipeline resets repeatedly while the safe head keeps advancing.
-        for _ in 0..3 {
-            actor.signal(ResetSignal { l2_safe_head: safe_head_at(503, 112) }.signal()).await;
+        // The pipeline resets repeatedly while the safe head keeps advancing. Each reset rebases
+        // L1 traversal on an origin that trails the L1 block the newest batch landed in, and the
+        // engine confirms the safe head each time before the next reset.
+        for step in 0..3u64 {
+            let safe_head = safe_head_at(503, 104 + 2 * step);
+            actor.pending_derived_from = Some(l1_at(110));
+            actor
+                .handle_derivation_actor_request(
+                    DerivationActorRequest::ProcessEngineSafeHeadUpdateRequest(Box::new(safe_head)),
+                )
+                .await
+                .expect("safe head update failed");
+            actor.signal(ResetSignal { l2_safe_head: safe_head }.signal()).await;
         }
 
         // Finalized L1 now covers the inclusion block of the second derived block.
         actor
             .handle_derivation_actor_request(DerivationActorRequest::ProcessFinalizedL1Block(
                 Box::new(l1_at(108)),
+            ))
+            .await
+            .expect("finalized L1 update failed");
+    }
+
+    #[tokio::test]
+    async fn reset_keeps_candidates_derived_from_the_confirmed_safe_head() {
+        let mut engine_client = MockDerivationEngineClient::new();
+        engine_client.expect_send_finalized_l2_block().times(1).with(eq(502)).returning(|_| Ok(()));
+        let (mut actor, _request_tx) = test_actor(engine_client);
+
+        // The pipeline derived L2 block 502 from a batch included in L1 block 110, well above the
+        // block's epoch origin (106), and the engine confirmed 502 as the safe head.
+        actor.finalizer.enqueue_for_finalization(&attrs(501, 110));
+        actor.pending_derived_from = Some(l1_at(110));
+        actor
+            .handle_derivation_actor_request(
+                DerivationActorRequest::ProcessEngineSafeHeadUpdateRequest(Box::new(safe_head_at(
+                    502, 106,
+                ))),
+            )
+            .await
+            .expect("safe head update failed");
+
+        // A reset keeps the candidate: the confirmation recorded the L1 range the safe head was
+        // built from, which includes the L1 block its own batch landed in.
+        actor.signal(ResetSignal { l2_safe_head: safe_head_at(502, 106) }.signal()).await;
+
+        actor
+            .handle_derivation_actor_request(DerivationActorRequest::ProcessFinalizedL1Block(
+                Box::new(l1_at(110)),
             ))
             .await
             .expect("finalized L1 update failed");
