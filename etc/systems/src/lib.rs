@@ -44,6 +44,9 @@ pub use replay_cli::{
     ReplayBlockTiming, ReplayMode, ReplayResult,
 };
 
+mod replay_proofs;
+pub use replay_proofs::{CountSummary, ProofsSummary, ReplayProofsProbe};
+
 mod config;
 pub use config::{
     ANVIL_ACCOUNT_0, ANVIL_ACCOUNT_1, ANVIL_ACCOUNT_2, ANVIL_ACCOUNT_3, ANVIL_ACCOUNT_4,
