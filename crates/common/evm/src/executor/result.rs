@@ -19,6 +19,11 @@ pub struct BaseTxResult<H, T> {
     /// committed. Zero for every other transaction type. Carried with the result so the receipt
     /// can be built on a different thread from the one that executed the transaction.
     pub eip8130_committed_phases: u64,
+    /// Gas charged to the block for this transaction when gas-limit fee billing (Zenith) is
+    /// active: the full declared `gas_limit` of a non-deposit transaction, regardless of how
+    /// much it consumed. `None` keeps the gas the result reports as used, which is the
+    /// pre-billing behavior and also the EIP-8130 and deposit case.
+    pub billed_gas: Option<u64>,
 }
 
 impl<H: Send + 'static, T: Send + 'static> TxResultTrait for BaseTxResult<H, T> {

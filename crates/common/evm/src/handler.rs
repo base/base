@@ -237,6 +237,13 @@ where
             && !evm.ctx().cfg().is_fee_charge_disabled()
         {
             let spec = evm.ctx().cfg().spec();
+            // Gas-limit fee billing: the sender was charged `gas_limit` at the effective price
+            // (plus the L1 fee and the operator fee on `gas_limit`) up front, and keeps none of
+            // it back. Unused gas, EIP-3529 refunds and the operator-fee surplus all stay
+            // charged, so the fee a transaction pays is fixed by its declared `gas_limit`.
+            if spec.is_gas_limit_billing_enabled() {
+                return Ok(());
+            }
             additional_refund = evm.ctx().chain().operator_fee_refund(frame_result.gas(), spec);
         }
 
@@ -270,12 +277,32 @@ where
             return Ok(());
         }
 
-        self.mainnet.reward_beneficiary(evm, frame_result)?;
+        let spec = evm.ctx().cfg().spec();
+        // Gas-limit fee billing settles every fee component on the declared `gas_limit`;
+        // otherwise on the gas actually used. Fee-charge-disabled simulation never bills the
+        // caller, so it keeps the actual-usage accounting.
+        let gas_limit_billing =
+            spec.is_gas_limit_billing_enabled() && !evm.ctx().cfg().is_fee_charge_disabled();
+        let billed_gas = if gas_limit_billing {
+            frame_result.gas().limit()
+        } else {
+            frame_result.gas().used()
+        };
         let basefee = evm.ctx().block().basefee() as u128;
+
+        if gas_limit_billing {
+            // Priority tip on the full `gas_limit`; the base-fee share goes to the vault below.
+            let (block, tx, _, journal, _, _) = evm.ctx().all_mut();
+            let coinbase_gas_price = tx.effective_gas_price(basefee).saturating_sub(basefee);
+            journal.load_account_mut(block.beneficiary())?.incr_balance(U256::from(
+                coinbase_gas_price.saturating_mul(billed_gas as u128),
+            ));
+        } else {
+            self.mainnet.reward_beneficiary(evm, frame_result)?;
+        }
 
         let ctx = evm.ctx();
         let enveloped = ctx.tx().enveloped_tx().cloned();
-        let spec = ctx.cfg().spec();
         let l1_block_info = ctx.chain_mut();
 
         let Some(enveloped_tx) = &enveloped else {
@@ -286,15 +313,11 @@ where
 
         let l1_cost = l1_block_info.calculate_tx_l1_cost(enveloped_tx, spec);
         let operator_fee_cost = if spec.is_enabled_in(BaseUpgrade::Isthmus) {
-            l1_block_info.operator_fee_charge(
-                enveloped_tx,
-                U256::from(frame_result.gas().used()),
-                spec,
-            )
+            l1_block_info.operator_fee_charge(enveloped_tx, U256::from(billed_gas), spec)
         } else {
             U256::ZERO
         };
-        let base_fee_amount = U256::from(basefee.saturating_mul(frame_result.gas().used() as u128));
+        let base_fee_amount = U256::from(basefee.saturating_mul(billed_gas as u128));
 
         // Send fees to their respective recipients
         for (recipient, amount) in [

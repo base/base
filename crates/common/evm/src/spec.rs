@@ -34,6 +34,26 @@ impl BaseSpecId {
         other as u8 <= self.0 as u8
     }
 
+    /// Returns `true` when non-deposit transactions are billed for their full declared
+    /// `gas_limit` instead of the gas they consume (gas-limit fee billing).
+    ///
+    /// Gas-limit fee billing is a proof of concept gated on the [`Zenith`](BaseUpgrade::Zenith)
+    /// testing gate. When active:
+    ///
+    /// - the sender keeps no refund for unused or EIP-3529-refunded gas, so the fee is
+    ///   `gas_limit * effective_gas_price` (plus the L1 data fee) and is known before execution;
+    /// - the coinbase tip, the base fee burned to the `BaseFeeVault` and the operator fee are all
+    ///   computed on `gas_limit`;
+    /// - block gas accounting (`header.gas_used`, receipt `cumulative_gas_used`) charges each
+    ///   transaction its full reserved gas, so a block's gas fullness is also known before
+    ///   execution.
+    ///
+    /// Deposit transactions pay no fee and are unaffected. Fee-charge-disabled simulation
+    /// (`eth_call`, `eth_estimateGas`) keeps reporting actual gas consumption.
+    pub const fn is_gas_limit_billing_enabled(self) -> bool {
+        self.is_enabled_in(BaseUpgrade::Zenith)
+    }
+
     /// Parses the [`BaseSpecId`] from the chain spec and block header.
     pub fn from_header(chain_spec: impl Upgrades, header: impl BlockHeader) -> Self {
         Self::from_timestamp(chain_spec, header.timestamp())

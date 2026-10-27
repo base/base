@@ -1816,7 +1816,15 @@ impl Eip8130Executor {
     {
         // Sender-intrinsic + call gas, less the EIP-3529-capped refund, plus payer
         // authentication. Shared with the estimate path so they cannot diverge.
-        let billable_gas = Self::billable_gas(outcome, calls);
+        //
+        // Gas-limit fee billing instead bills the whole worst-case pre-charge: the full
+        // `gas_limit` plus payer authentication, exactly the gas `prepay` reserved, so the
+        // payer's refund below is zero and the fee is fixed before the `calls` run.
+        let billable_gas = if spec.is_gas_limit_billing_enabled() {
+            FeeCheck::max_chargeable_gas(outcome.gas_limit, outcome.payer_auth)
+        } else {
+            Self::billable_gas(outcome, calls)
+        };
 
         let fee = U256::from(billable_gas)
             .checked_mul(U256::from(outcome.effective))
