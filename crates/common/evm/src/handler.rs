@@ -1047,6 +1047,7 @@ mod tests {
             "stale authorizer transaction must not make the next EXTCODESIZE(authorizer) warm"
         );
     }
+
     /// Fee settlement of one non-deposit transaction, read from the post-transaction state.
     struct FeeFlow {
         /// What the caller's balance dropped by, including the transferred `value`.
