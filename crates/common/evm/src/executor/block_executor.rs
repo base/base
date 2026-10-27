@@ -493,6 +493,28 @@ mod tests {
         &'a AlloyReceiptBuilder,
         &'a ChainUpgrades,
     > {
+        build_executor_at(
+            db,
+            receipt_builder,
+            base_chain_upgrades,
+            gas_limit,
+            jovian_timestamp,
+            BaseUpgrade::Jovian,
+        )
+    }
+
+    fn build_executor_at<'a>(
+        db: &'a mut revm::database::State<InMemoryDB>,
+        receipt_builder: &'a AlloyReceiptBuilder,
+        base_chain_upgrades: &'a ChainUpgrades,
+        gas_limit: u64,
+        timestamp: u64,
+        spec: BaseUpgrade,
+    ) -> BaseBlockExecutor<
+        BaseEvm<&'a mut revm::database::State<InMemoryDB>, NoOpInspector, PrecompilesMap>,
+        &'a AlloyReceiptBuilder,
+        &'a ChainUpgrades,
+    > {
         let ctx = Context::base()
             .with_db(db)
             .with_chain(L1BlockInfo {
@@ -501,11 +523,11 @@ mod tests {
                 ..Default::default()
             })
             .with_block(BlockEnv {
-                timestamp: U256::from(jovian_timestamp),
+                timestamp: U256::from(timestamp),
                 gas_limit,
                 ..Default::default()
             })
-            .modify_cfg_chained(|cfg| cfg.spec = BaseSpecId::new(BaseUpgrade::Jovian));
+            .modify_cfg_chained(|cfg| cfg.spec = BaseSpecId::new(spec));
 
         let evm = ctx.build_with_inspector(NoOpInspector {});
 
@@ -841,6 +863,72 @@ mod tests {
     /// The committed phase count of an EIP-8130 transaction travels with its execution result, so
     /// a receipt built on a different thread from the one that executed the transaction (as in a
     /// split execute-on-worker, commit-on-coordinator pipeline) still sees it.
+    /// Under gas limit pricing the block's `gas_used` is the sum of the declared gas limits:
+    /// every receipt reports its transaction's limit and the header follows, so the value a
+    /// pipelined validator derives from the block body matches the executed header (S2, S3).
+    /// On the latest scheduled upgrade the same block reports metered gas.
+    #[test]
+    fn gas_limit_pricing_header_gas_used_is_sum_of_declared_limits() {
+        const TIMESTAMP: u64 = 1746806402;
+        const TX_GAS_LIMITS: [u64; 2] = [100_000, 250_000];
+        const BLOCK_GAS_LIMIT: u64 = 1_000_000;
+        const PLAIN_TRANSFER_GAS: u64 = 21_000;
+
+        let header_gas_used = |spec: BaseUpgrade| {
+            let mut db = prepare_jovian_db(0);
+            let base_chain_upgrades =
+                ChainUpgrades::new(BaseUpgrade::mainnet().into_iter().chain(vec![
+                    (BaseUpgrade::Jovian, ForkCondition::Timestamp(TIMESTAMP)),
+                    (spec, ForkCondition::Timestamp(TIMESTAMP)),
+                ]));
+            let receipt_builder = AlloyReceiptBuilder::default();
+            let mut executor = build_executor_at(
+                &mut db,
+                &receipt_builder,
+                &base_chain_upgrades,
+                BLOCK_GAS_LIMIT,
+                TIMESTAMP,
+                spec,
+            );
+
+            for (nonce, gas_limit) in TX_GAS_LIMITS.into_iter().enumerate() {
+                let tx = Recovered::new_unchecked(
+                    BaseTxEnvelope::Legacy(
+                        TxLegacy {
+                            nonce: nonce as u64,
+                            gas_limit,
+                            to: Address::with_last_byte(0xee).into(),
+                            ..Default::default()
+                        }
+                        .into_signed(Signature::new(
+                            Default::default(),
+                            Default::default(),
+                            Default::default(),
+                        )),
+                    ),
+                    Address::ZERO,
+                );
+                executor.execute_transaction(&tx).expect("transfer executes");
+            }
+
+            let receipts_sum = executor.receipts.last().unwrap().cumulative_gas_used();
+            let (_, result) = executor.finish().expect("block finishes");
+            assert_eq!(result.gas_used, receipts_sum, "header gas_used must equal the receipts");
+            result.gas_used
+        };
+
+        assert_eq!(
+            header_gas_used(BaseUpgrade::Zenith),
+            TX_GAS_LIMITS.iter().sum::<u64>(),
+            "gas limit pricing: header gas_used is derivable from the body alone",
+        );
+        assert_eq!(
+            header_gas_used(BaseUpgrade::Everest),
+            PLAIN_TRANSFER_GAS * TX_GAS_LIMITS.len() as u64,
+            "pre-activation: header gas_used is metered",
+        );
+    }
+
     #[test]
     fn eip8130_committed_phases_survive_execution_on_another_thread() {
         const CHAIN_ID: u64 = 8453;

@@ -34,6 +34,13 @@ impl BaseSpecId {
         other as u8 <= self.0 as u8
     }
 
+    /// Returns true if transactions are billed for their declared gas limit rather than their
+    /// metered gas (gas limit pricing). Gated on the experimental Zenith upgrade; see
+    /// `docs/guides/GAS_LIMIT_PRICING.md`.
+    pub const fn charges_gas_limit(self) -> bool {
+        self.is_enabled_in(BaseUpgrade::Zenith)
+    }
+
     /// Parses the [`BaseSpecId`] from the chain spec and block header.
     pub fn from_header(chain_spec: impl Upgrades, header: impl BlockHeader) -> Self {
         Self::from_timestamp(chain_spec, header.timestamp())

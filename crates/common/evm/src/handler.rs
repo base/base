@@ -255,6 +255,20 @@ where
 
         post_execution::refund(evm.ctx().cfg().gas_params(), exec_result.gas_mut(), eip7702_refund);
 
+        // Gas limit pricing: the whole declared gas budget is billable and reported, for
+        // deposits too, so the header gas_used is a function of the block body. Zeroing the
+        // remaining gas and the refund here makes the floor check, the caller reimbursement,
+        // the beneficiary reward, and the receipt all observe `gas_used == gas_limit`.
+        // Simulation (`disable_fee_charge`) keeps metered gas so `eth_estimateGas` still
+        // finds the gas a call needs.
+        let ctx = evm.ctx();
+        let cfg = ctx.cfg();
+        if cfg.spec().charges_gas_limit() && !cfg.is_fee_charge_disabled() {
+            let gas = exec_result.gas_mut();
+            gas.spend_all();
+            gas.set_refund(0);
+        }
+
         Ok(())
     }
 
@@ -397,7 +411,8 @@ where
 #[cfg(test)]
 mod tests {
 
-    use alloy_primitives::uint;
+    use alloy_evm::Evm;
+    use alloy_primitives::{address, keccak256, uint};
     use base_common_consensus::Predeploys;
     use revm::{
         InspectEvm,
@@ -1026,5 +1041,207 @@ mod tests {
             clean_result.result.tx_gas_used(),
             "stale authorizer transaction must not make the next EXTCODESIZE(authorizer) warm"
         );
+    }
+
+    // ---- Gas limit pricing (docs/guides/GAS_LIMIT_PRICING.md) ----
+
+    const GLP_CALLER: Address = address!("0x00000000000000000000000000000000000000c1");
+    const GLP_TARGET: Address = address!("0x00000000000000000000000000000000000000c2");
+    const GLP_BENEFICIARY: Address = address!("0x00000000000000000000000000000000000000bb");
+    const GLP_BASEFEE: u64 = 1_000;
+    const GLP_TIP: u128 = 7;
+    const GLP_GAS_LIMIT: u64 = 100_000;
+    const GLP_INITIAL_BALANCE: U256 = uint!(1_000_000_000_000_U256);
+
+    /// Fee settlement observed after executing one transaction: what the caller paid and
+    /// what each recipient received, plus the gas the receipt would report.
+    #[derive(Debug, PartialEq, Eq)]
+    struct Settlement {
+        tx_gas_used: u64,
+        final_refunded: u64,
+        caller_paid: U256,
+        beneficiary: U256,
+        base_fee_vault: U256,
+        success: bool,
+    }
+
+    /// Executes a plain non-deposit transaction from `GLP_CALLER` to `GLP_TARGET` (deployed
+    /// with `code`, or empty) at `spec`, with zero L1 and operator fees so the settlement is
+    /// the EIP-1559 component alone.
+    fn execute_glp_tx(
+        spec: BaseUpgrade,
+        code: Option<Bytes>,
+        storage: Option<(U256, U256)>,
+        gas_limit: u64,
+        deposit: bool,
+        disable_fee_charge: bool,
+    ) -> Settlement {
+        let mut db = InMemoryDB::default();
+        db.insert_account_info(
+            GLP_CALLER,
+            AccountInfo { balance: GLP_INITIAL_BALANCE, ..Default::default() },
+        );
+        if let Some(code) = code {
+            db.insert_account_info(
+                GLP_TARGET,
+                AccountInfo {
+                    code_hash: keccak256(&code),
+                    code: Some(Bytecode::new_raw(code)),
+                    ..Default::default()
+                },
+            );
+        }
+        if let Some((slot, value)) = storage {
+            db.insert_account_storage(GLP_TARGET, slot, value).unwrap();
+        }
+
+        let mut cfg = CfgEnv::new_with_spec(BaseSpecId::new(spec));
+        cfg.disable_fee_charge = disable_fee_charge;
+        let base =
+            TxEnv::builder().caller(GLP_CALLER).kind(TxKind::Call(GLP_TARGET)).gas_limit(gas_limit);
+        // Deposits carry no gas price (`TxEnv::from_recovered_tx(TxDeposit)` leaves it zero).
+        let tx = if deposit {
+            BaseTransaction::builder().base(base).source_hash(B256::from([1u8; 32])).build_fill()
+        } else {
+            BaseTransaction::builder()
+                .base(
+                    base.gas_price(u128::from(GLP_BASEFEE) + GLP_TIP)
+                        .gas_priority_fee(Some(GLP_TIP)),
+                )
+                .enveloped_tx(Some(bytes!("FACADE")))
+                .build_fill()
+        };
+        let mut evm = Context::base()
+            .with_db(db)
+            .with_chain(L1BlockInfo { l2_block: Some(U256::ZERO), ..Default::default() })
+            .with_block(BlockEnv {
+                basefee: GLP_BASEFEE,
+                beneficiary: GLP_BENEFICIARY,
+                ..Default::default()
+            })
+            .with_cfg(cfg)
+            .build_with_inspector(NoOpInspector);
+
+        let outcome = evm.transact_raw(tx).expect("transaction should execute");
+        let balance =
+            |addr: Address| outcome.state.get(&addr).map_or(U256::ZERO, |acc| acc.info.balance);
+        Settlement {
+            tx_gas_used: outcome.result.tx_gas_used(),
+            final_refunded: outcome.result.gas().final_refunded(),
+            caller_paid: GLP_INITIAL_BALANCE - balance(GLP_CALLER),
+            beneficiary: balance(GLP_BENEFICIARY),
+            base_fee_vault: balance(Predeploys::BASE_FEE_VAULT),
+            success: outcome.result.is_success(),
+        }
+    }
+
+    fn glp_settlement_for(gas: u64) -> Settlement {
+        Settlement {
+            tx_gas_used: gas,
+            final_refunded: 0,
+            caller_paid: U256::from(gas) * U256::from(u128::from(GLP_BASEFEE) + GLP_TIP),
+            beneficiary: U256::from(gas) * U256::from(GLP_TIP),
+            base_fee_vault: U256::from(gas) * U256::from(GLP_BASEFEE),
+            success: true,
+        }
+    }
+
+    /// Latest scheduled upgrade: gas limit pricing is off, so the plain transfer is billed
+    /// and reported at its metered 21,000 gas. Pins the pre-activation path.
+    #[test]
+    fn test_gas_limit_pricing_off_bills_metered_gas() {
+        assert!(!BaseSpecId::new(BaseUpgrade::Everest).charges_gas_limit());
+        let settlement =
+            execute_glp_tx(BaseUpgrade::Everest, None, None, GLP_GAS_LIMIT, false, false);
+        assert_eq!(settlement, glp_settlement_for(21_000));
+    }
+
+    /// Zenith: the caller pays for the declared limit, the sequencer and the base-fee vault
+    /// are paid on the limit, and the receipt reports the limit (S1, S2, S4).
+    #[test]
+    fn test_gas_limit_pricing_bills_declared_gas_limit() {
+        assert!(BaseSpecId::new(BaseUpgrade::Zenith).charges_gas_limit());
+        let settlement =
+            execute_glp_tx(BaseUpgrade::Zenith, None, None, GLP_GAS_LIMIT, false, false);
+        assert_eq!(settlement, glp_settlement_for(GLP_GAS_LIMIT));
+    }
+
+    /// An EIP-3529 SSTORE-clear refund lowers the metered bill before Zenith and has no effect
+    /// on the bill or the reported gas under gas limit pricing (S5).
+    #[test]
+    fn test_gas_limit_pricing_ignores_refunds() {
+        // PUSH1 0, PUSH1 0, SSTORE, STOP: clears slot 0 (pre-seeded to 1) for a refund.
+        let code = bytes!("600060005500");
+        let seeded = Some((U256::ZERO, U256::from(1)));
+
+        let metered = execute_glp_tx(
+            BaseUpgrade::Everest,
+            Some(code.clone()),
+            seeded,
+            GLP_GAS_LIMIT,
+            false,
+            false,
+        );
+        assert!(metered.success);
+        assert!(metered.final_refunded > 0, "the clear must earn a refund pre-Zenith");
+        assert!(metered.tx_gas_used < GLP_GAS_LIMIT);
+
+        let priced =
+            execute_glp_tx(BaseUpgrade::Zenith, Some(code), seeded, GLP_GAS_LIMIT, false, false);
+        assert_eq!(priced, glp_settlement_for(GLP_GAS_LIMIT));
+    }
+
+    /// Out of gas already bills the full limit today, so the worst case is unchanged by gas
+    /// limit pricing; only the success-path discount goes away (S11).
+    #[test]
+    fn test_gas_limit_pricing_out_of_gas_matches_pre_activation() {
+        // JUMPDEST, PUSH1 0, JUMP: spins until out of gas.
+        let code = bytes!("5b600056");
+        let metered = execute_glp_tx(
+            BaseUpgrade::Everest,
+            Some(code.clone()),
+            None,
+            GLP_GAS_LIMIT,
+            false,
+            false,
+        );
+        let priced =
+            execute_glp_tx(BaseUpgrade::Zenith, Some(code), None, GLP_GAS_LIMIT, false, false);
+        assert!(!metered.success && !priced.success);
+        assert_eq!(metered, priced);
+        assert_eq!(priced.caller_paid, glp_settlement_for(GLP_GAS_LIMIT).caller_paid);
+    }
+
+    /// Simulation runs with fee charging disabled and must keep metered gas so
+    /// `eth_estimateGas` still finds what a call needs (S6).
+    #[test]
+    fn test_gas_limit_pricing_simulation_keeps_metered_gas() {
+        let simulated = execute_glp_tx(BaseUpgrade::Zenith, None, None, GLP_GAS_LIMIT, false, true);
+        assert_eq!(simulated.tx_gas_used, 21_000);
+        assert_eq!(simulated.caller_paid, U256::ZERO);
+        assert_eq!(simulated.beneficiary, U256::ZERO);
+    }
+
+    /// Deposits pay no L2 execution fee, but under gas limit pricing they report their gas
+    /// limit so the header `gas_used` stays a function of the block body (S9).
+    #[test]
+    fn test_gas_limit_pricing_deposit_reports_limit_and_pays_nothing() {
+        let metered = execute_glp_tx(BaseUpgrade::Everest, None, None, GLP_GAS_LIMIT, true, false);
+        assert_eq!(metered.tx_gas_used, 21_000);
+
+        let priced = execute_glp_tx(BaseUpgrade::Zenith, None, None, GLP_GAS_LIMIT, true, false);
+        assert_eq!(priced.tx_gas_used, GLP_GAS_LIMIT);
+        assert!(priced.success);
+        assert_eq!(priced.caller_paid, U256::ZERO);
+        assert_eq!(priced.beneficiary, U256::ZERO);
+        assert_eq!(priced.base_fee_vault, U256::ZERO);
+    }
+
+    /// Gas limit pricing is off on every upgrade in the execution fork ladder.
+    #[test]
+    fn test_gas_limit_pricing_off_on_all_scheduled_upgrades() {
+        for upgrade in BaseUpgrade::EXECUTION_VARIANTS {
+            assert!(!BaseSpecId::new(upgrade).charges_gas_limit(), "enabled on {upgrade:?}");
+        }
     }
 }
