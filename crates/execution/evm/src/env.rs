@@ -5,6 +5,7 @@ use base_common_chains::Upgrades;
 use base_common_evm::BaseSpecId;
 #[cfg(feature = "std")]
 use base_common_rpc_types_engine::ExecutionData;
+use base_execution_consensus::expected_slot_number;
 use reth_chainspec::EthChainSpec;
 use reth_primitives_traits::constants::MAX_TX_GAS_LIMIT_OSAKA;
 use revm::{
@@ -57,7 +58,8 @@ impl BaseEvmEnvBuilder {
             gas_limit: header.gas_limit,
             basefee: header.base_fee_per_gas.unwrap_or_default(),
             blob_excess_gas_and_price,
-            slot_num: 0,
+            slot_num: expected_slot_number(chain_spec, header.timestamp, header.number)
+                .unwrap_or_default(),
         };
 
         EvmEnv { cfg_env, block_env }
@@ -84,7 +86,12 @@ impl BaseEvmEnvBuilder {
             gas_limit: attributes.gas_limit,
             basefee: base_fee_per_gas,
             blob_excess_gas_and_price,
-            slot_num: 0,
+            slot_num: expected_slot_number(
+                chain_spec,
+                attributes.timestamp,
+                parent.number.saturating_add(1),
+            )
+            .unwrap_or_default(),
         };
 
         EvmEnv { cfg_env, block_env }
@@ -116,7 +123,7 @@ impl BaseEvmEnvBuilder {
             gas_limit: payload.payload.as_v1().gas_limit,
             basefee: payload.payload.as_v1().base_fee_per_gas.to(),
             blob_excess_gas_and_price,
-            slot_num: 0,
+            slot_num: expected_slot_number(chain_spec, timestamp, block_number).unwrap_or_default(),
         };
 
         EvmEnv { cfg_env, block_env }
@@ -139,6 +146,108 @@ mod tests {
     use revm::context_interface::Cfg;
 
     use super::*;
+
+    /// Execute SLOTNUM through all production environment paths, including the fork boundary.
+    #[cfg(feature = "std")]
+    #[test]
+    fn slotnum_returns_l2_number_for_execution_building_and_payloads() {
+        use alloy_evm::{Evm, EvmFactory};
+        use alloy_primitives::{Address, B256, bytes};
+        use base_common_consensus::BaseBlock;
+        use base_common_evm::{BaseEvmFactory, BaseHaltReason, BaseTransaction, L1BlockInfo};
+        use revm::{
+            context::TxEnv,
+            context_interface::result::{ExecutionResult, HaltReason},
+            database::InMemoryDB,
+            state::{AccountInfo, Bytecode},
+        };
+
+        let chain = BaseChainSpecBuilder::default()
+            .chain(1.into())
+            .genesis(Genesis::default())
+            .azul_activated()
+            .with_fork(BaseUpgrade::Denim, ForkCondition::Timestamp(100))
+            .with_fork(reth_chainspec::EthereumHardfork::Amsterdam, ForkCondition::Timestamp(100))
+            .build();
+        for timestamp in [99, 100] {
+            let number = 48_526_667;
+            let header = Header {
+                number,
+                timestamp,
+                gas_limit: 40_000_000,
+                base_fee_per_gas: Some(0),
+                ..Default::default()
+            };
+            let parent = Header { number: number - 1, ..header.clone() };
+            let attributes = BaseNextBlockEnvAttributes {
+                timestamp,
+                suggested_fee_recipient: Address::ZERO,
+                prev_randao: B256::ZERO,
+                gas_limit: header.gas_limit,
+                parent_beacon_block_root: None,
+                extra_data: Default::default(),
+                slot_number: Some(number),
+            };
+            let payload = ExecutionData::from_block_slow(&BaseBlock {
+                header: header.clone(),
+                body: Default::default(),
+            });
+            for (path, env) in [
+                ("execution", BaseEvmEnvBuilder::evm_env(&header, &chain)),
+                ("building", BaseEvmEnvBuilder::next_evm_env(&parent, &attributes, 0, &chain)),
+                ("payload", BaseEvmEnvBuilder::payload_evm_env(&payload, &chain)),
+            ] {
+                assert_eq!(env.block_env.number, U256::from(number), "{path} block number");
+                assert_eq!(
+                    env.block_env.slot_num,
+                    if timestamp >= 100 { number } else { 0 },
+                    "{path} must share the header slot rule at timestamp {timestamp}",
+                );
+                let caller = Address::repeat_byte(0x11);
+                let contract = Address::repeat_byte(0x22);
+                let mut db = InMemoryDB::default();
+                db.insert_account_info(
+                    caller,
+                    AccountInfo { balance: U256::from(10u64).pow(U256::from(18)), ..Default::default() },
+                );
+                db.insert_account_info(
+                    contract,
+                    AccountInfo {
+                        nonce: 1,
+                        code: Some(Bytecode::new_legacy(bytes!("4b5f5260205ff3"))),
+                        ..Default::default()
+                    },
+                );
+                let mut evm = BaseEvmFactory::default().create_evm(db, env);
+                evm.ctx_mut().chain = L1BlockInfo {
+                    l2_block: Some(U256::from(number)),
+                    operator_fee_scalar: Some(U256::ZERO),
+                    operator_fee_constant: Some(U256::ZERO),
+                    ..Default::default()
+                };
+                let tx = BaseTransaction::builder()
+                    .base(TxEnv::builder().caller(caller).kind(contract.into()).gas_limit(100_000))
+                    .enveloped_tx(Some(bytes!("FACADE")))
+                    .build_fill();
+                let result = evm.transact(tx).expect("SLOTNUM transaction must be valid").result;
+                if timestamp >= 100 {
+                    assert!(result.is_success(), "{path} SLOTNUM must execute: {result:?}");
+                    assert_eq!(
+                        result.output().map(|bytes| U256::from_be_slice(bytes)),
+                        Some(U256::from(number)),
+                        "{path} SLOTNUM must return the exact L2 block number",
+                    );
+                } else {
+                    assert!(
+                        matches!(result, ExecutionResult::Halt {
+                            reason: BaseHaltReason::Base(HaltReason::NotActivated), ..
+                        }),
+                        "{path} SLOTNUM must remain unavailable before Amsterdam: {result:?}",
+                    );
+                }
+            }
+        }
+    }
 
     /// Denim enables upstream Amsterdam; Everest inherits it without resetting L1 prices.
     #[test]

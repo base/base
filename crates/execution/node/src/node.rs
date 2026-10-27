@@ -1249,6 +1249,13 @@ impl BaseDiscoveryConfig {
 }
 
 impl BaseNetworkBuilder {
+    /// Advertises Base's supported state-healing protocol alongside the default eth protocols.
+    fn with_base_protocols<N: NetworkPrimitives>(
+        builder: NetworkConfigBuilder<N>,
+    ) -> NetworkConfigBuilder<N> {
+        builder.with_snap(true)
+    }
+
     /// Returns the [`NetworkConfig`] that contains the settings to launch the p2p network.
     ///
     /// This applies the configured [`BaseNetworkBuilder`] settings.
@@ -1264,6 +1271,7 @@ impl BaseNetworkBuilder {
         let args = &ctx.config().network;
         let network_builder = ctx
             .network_config_builder()?
+            .apply(Self::with_base_protocols)
             // apply discovery settings
             .apply(|builder| {
                 let external_addr = if args.discovery.disable_discovery {
@@ -1372,6 +1380,24 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
+
+    #[test]
+    fn base_network_advertises_snap_two_by_default() {
+        let config = BaseNetworkBuilder::with_base_protocols(
+            NetworkConfigBuilder::<BaseNetworkPrimitives>::with_rng_secret_key(
+                reth_tasks::Runtime::test(),
+            ),
+        )
+        .build_with_noop_provider(Arc::new(BaseChainSpec::mainnet()));
+        let snap: Vec<_> = config.hello_message.protocols.iter()
+            .filter(|protocol| protocol.cap.name == "snap").collect();
+        assert_eq!(snap.len(), 1, "Base must advertise exactly one snap capability by default");
+        assert_eq!(snap[0].cap.version, 2, "Base must advertise snap/2, not snap/1");
+        assert!(
+            config.hello_message.protocols.iter().any(|protocol| protocol.cap.name == "eth"),
+            "enabling snap must preserve eth capabilities",
+        );
+    }
 
     #[test]
     fn payload_builder_preserves_manifest_precheck_setting() {
