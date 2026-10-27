@@ -2398,6 +2398,52 @@ mod tests {
         assert_eq!(base_fee, U256::from(gas_limit) * U256::from(BASE_FEE));
     }
 
+    /// The validity-transaction probe shape: an EIP-8130 transaction whose call checks for an
+    /// opportunity and reverts when it is gone. Metered billing makes the revert nearly free;
+    /// gas limit pricing bills the reserved budget whether the call reverts or not, so the
+    /// probe costs the same as the execution it was sized for (S8, S13).
+    #[test]
+    fn gas_limit_pricing_bills_a_reverting_eip8130_probe_its_declared_budget() {
+        let key = signing_key(0x24);
+        let sender = eoa_address(&key);
+        let probe_target = address!("0x00000000000000000000000000000000000000cb");
+        // PUSH1 0, PUSH1 0, REVERT: the opportunity check failed.
+        let reverting = bytes!("60006000fd");
+        let tx = TxEip8130 {
+            calls: vec![vec![Call { to: probe_target, value: U256::ZERO, data: Bytes::new() }]],
+            ..base_tx()
+        };
+        let gas_limit = tx.gas_limit;
+        let effective = u128::from(BASE_FEE) + tx.max_priority_fee_per_gas;
+        let signed = eoa_signed(tx, &key);
+        let initial_balance = U256::from(10u64).pow(U256::from(18u64));
+
+        let settle = |zenith: bool| {
+            let evm =
+                evm_with_accounts(initial_balance, sender, &[(probe_target, reverting.clone())]);
+            let mut evm = if zenith { with_zenith(evm) } else { evm };
+            let outcome = evm.transact_raw(into_base_tx(&signed)).expect("probe is included");
+            assert!(
+                !outcome.result.is_success(),
+                "the probe must revert, got {:?}",
+                outcome.result
+            );
+            let balance =
+                |addr: Address| outcome.state.get(&addr).map_or(U256::ZERO, |acc| acc.info.balance);
+            (outcome.result.tx_gas_used(), initial_balance - balance(sender), balance(BENEFICIARY))
+        };
+
+        let (metered_gas, metered_paid, metered_tip) = settle(false);
+        assert!(metered_gas < gas_limit / 4, "a metered revert must be cheap, got {metered_gas}");
+        assert_eq!(metered_paid, U256::from(metered_gas) * U256::from(effective));
+
+        let (gas, paid, tip) = settle(true);
+        assert_eq!(gas, gas_limit, "the reverting probe must report its declared budget");
+        assert_eq!(paid, U256::from(gas_limit) * U256::from(effective));
+        assert_eq!(tip, U256::from(gas_limit) * U256::from(effective - u128::from(BASE_FEE)));
+        assert!(tip > metered_tip * U256::from(4u64), "the sequencer must earn the full bid");
+    }
+
     /// A dispatched call carrying `value` moves that wei from the sender to the
     /// call target, matching mainnet `CALL` value semantics.
     #[test]

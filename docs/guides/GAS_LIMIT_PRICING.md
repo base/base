@@ -1,11 +1,11 @@
 # Gas Limit Pricing
 
-This document covers gas limit pricing: charging a Base transaction for the gas it reserves (its declared `gas_limit`) instead of the gas it consumes (metered `gas_used`). The purpose is fair and transparent transaction ordering. The sequencer ranks transactions by priority fee per gas, but a transaction pays that fee only on the gas it ends up using, so a sender can buy a top rank with a high per-gas bid on a large limit and then use almost none of it. Charging the limit makes the bid and the payment the same quantity, which makes that trick cost what it claims and makes spam expensive. The doc describes the problem, the rule, the design decisions, and a proof of concept (POC) gated on the Zenith experimental upgrade so the change can be exercised on a devnet before it is specified as a real network upgrade.
+This document covers gas limit pricing: charging a Base transaction for the gas it reserves (its declared `gas_limit`) instead of the gas it consumes (metered `gas_used`). The purpose is to stop the sequencer's fixed block-building time budget from being spent on transactions that pay almost nothing for it. The builder evaluates and executes candidates in priority-fee order within a fixed window, and validity-transaction predicate evaluation has its own hard budget (10 ms of each 200 ms flashblock). A searcher can bid a high fee per gas, pass the predicate check, and revert when the opportunity is gone; metered billing makes that revert nearly free, so a flood of such transactions consumes the budget ahead of transactions that would have been included and paid. Charging the declared limit makes a reverting probe cost what the execution it was sized for would have cost, so the top of the fee order, and the time budget it buys, costs its face value. The doc describes the problem, the rule, the design decisions, and a proof of concept (POC) gated on the Zenith experimental upgrade so the change can be exercised on a devnet before it is specified as a real network upgrade.
 
 ## Contents
 
 - [Summary](#summary)
-- [Problem: ordering is by a bid nobody has to pay](#problem-ordering-is-by-a-bid-nobody-has-to-pay)
+- [Problem: a fixed time budget spent on transactions that pay for none of it](#problem-a-fixed-time-budget-spent-on-transactions-that-pay-for-none-of-it)
 - [Where the fee is decided today](#where-the-fee-is-decided-today)
 - [Proposed rule](#proposed-rule)
 - [What the rule fixes](#what-the-rule-fixes)
@@ -26,6 +26,7 @@ This document covers gas limit pricing: charging a Base transaction for the gas 
 
 Decisions:
 
+- **The target is the builder's time budget.** Candidates are evaluated and executed in priority-fee order inside a 200 ms flashblock, with a 10 ms hard budget for validity-predicate evaluation. A high-tip transaction that passes its predicate and then reverts is included for `tip * gas_used` on a small `gas_used`, so a flood of them takes the budget from transactions that would have paid. Charging the limit makes the reverting probe cost what its execution path would have cost.
 - **Billable gas is the declared gas limit.** Every non-system fee component that is priced per gas (EIP-1559 base fee, priority fee, operator fee) is charged on `gas_limit`, with no post-execution reimbursement. The L1 data fee is unchanged.
 - **Ordering is unchanged.** The pool and builder keep ranking by priority fee per gas. The rule does not change how transactions are ranked; it changes what a rank costs, so that the ranking key (`tip` per gas) times the reserved gas is exactly what the sender pays.
 - **`gasUsed` reports billable gas.** Receipt `gasUsed`, `cumulativeGasUsed`, and header `gasUsed` count declared gas limits for user transactions, so `fee = gasUsed * effectiveGasPrice + l1Fee + operatorFee` still holds and the block fills by the capacity the builder reserved and the senders paid for.
@@ -36,49 +37,64 @@ Decisions:
 
 The POC touches two consensus sites in `base-common-evm` (a hook in `BaseHandler::refund` and a branch in `Eip8130Executor::billable_gas`) and moves one builder check (`--builder.max_gas_per_txn`) in front of execution. RPC simulation keeps metered gas because it runs with fee charging disabled.
 
-## Problem: ordering is by a bid nobody has to pay
+## Problem: a fixed time budget spent on transactions that pay for none of it
 
-### How ordering works today
+### How the builder spends its time
 
-A sender signs three gas-related fields into a standard transaction: `gas_limit` (the most gas the transaction may consume), `max_fee_per_gas` (the ceiling on the total price per gas, base fee plus tip), and `max_priority_fee_per_gas` (the sequencer's cut per gas; a legacy transaction has a single `gas_price` instead). None of them says how much gas the transaction will use; that is only known after it executes.
+A flashblock is built in a 200 ms window. The builder pulls candidates from the pool in priority-fee order and, for each one, does work before it knows whether the transaction is worth anything:
 
-The pool ranks transactions before anything executes, from those signed fields and the current base fee:
+1. **Predicate evaluation** for validity transactions (EIP-8130 transactions that carry validity conditions such as "pool price above X"). The builder reads the state the predicate names and decides whether the transaction is live. This has a hard per-flashblock budget, `predicate_eval_hard_cutoff`, 10 ms by default ([`crates/builder/core/src/config.rs`](../../crates/builder/core/src/config.rs)). Once cumulative predicate-evaluation time reaches it, every remaining validity-gated candidate in that flashblock is deferred without being evaluated ([`flashblocks/context.rs`](../../crates/builder/core/src/flashblocks/context.rs), `predicate_eval_budget_exhausted`), and so is every parked transaction that a committed state change would otherwise have woken. The budget exists because, without it, predicate evaluation alone was pushing p99 build time to 190 ms of the 200 ms window.
+2. **Execution** of candidates whose predicates matched (or that have none). Only now does the builder learn `gas_used` and whether the call reverted.
+
+Both steps are consumed in priority-fee order. Whoever bids the highest fee per gas is evaluated first and executed first, and whatever time they take is unavailable to everyone behind them. The loop ends when the flashblock timer fires, whether or not it has reached the rest of the pool.
+
+### How ordering and payment are decided
+
+A sender signs three gas-related fields: `gas_limit`, `max_fee_per_gas`, and `max_priority_fee_per_gas` (or a legacy `gas_price`). None of them says how much gas the transaction will use. The pool ranks before anything executes:
 
 ```text
 effective_tip_per_gas = min(max_fee_per_gas - base_fee, max_priority_fee_per_gas)   // EIP-1559
                       = gas_price - base_fee                                          // legacy
-                      = not includable, if max_fee_per_gas < base_fee
 ```
 
-[`UnifiedTipOrdering::priority`](../../crates/execution/txpool/src/ordering.rs) uses this rate as the ranking key for standard transactions (stored as `tip / 1`, so `gas_limit` does not enter the comparison) and `coinbase_tip / gas_limit` for statically decodable EIP-8130 coinbase tips; ties go to fewer validity predicates. The builder then pulls transactions from the pool in that order, admits each one if its declared `gas_limit (+ payer_auth)` fits the remaining block gas, executes it, and only then learns `gas_used`. In normal conditions `max_fee_per_gas` sits well above the base fee, so `max_priority_fee_per_gas` is the effective tip and is the knob that buys position.
-
-After execution the sender pays `effective_tip_per_gas * gas_used` to the sequencer and `base_fee * gas_used` to the `BaseFeeVault` (plus the L1 data fee and operator fee), and the pre-charged `gas_limit - gas_used` is refunded. Rank and payment are therefore decided at different times from different quantities:
+[`UnifiedTipOrdering::priority`](../../crates/execution/txpool/src/ordering.rs) uses this rate as the ranking key for standard transactions (`gas_limit` is not in the key) and `coinbase_tip / gas_limit` for statically decodable EIP-8130 coinbase tips. After execution the sender pays `effective_tip_per_gas * gas_used` to the sequencer and `base_fee * gas_used` to the `BaseFeeVault`, and the pre-charged `gas_limit - gas_used` is refunded. A reverted transaction is included and pays the same way, on the gas it consumed before reverting.
 
 ```text
 rank    = effective_tip_per_gas              known when the transaction arrives
 payment = effective_tip_per_gas * gas_used   known after it executes
 ```
 
-### How a sender games it
+### The useless transaction
 
-Because the tip is only paid on `gas_used`, and `gas_limit` neither affects the rank nor costs anything unless it is used, a sender can buy the top of the block cheaply and keep the option to do real work from there:
+An atomic arbitrage searcher sends a transaction that checks whether an opportunity exists and executes it if so. The execution path needs a lot of gas, so the declared `gas_limit` is sized for it (about 40x the median gas actually used, per the sequencer team's mainnet measurements). The check path is short: when the opportunity is gone by the time the transaction runs, it reverts after a few tens of thousands of gas.
 
-1. Set `max_priority_fee_per_gas` far above the market tip, say 20x. The pool ranks the transaction first; nothing about `gas_limit` or the eventual `gas_used` affects that.
-2. Declare a `gas_limit` sized for the full success path (say 500,000, or anything up to the EIP-7825 cap of `2^24`). The limit plays no part in the rank; what it buys is the option to execute the whole opportunity from the top slot if it is there. Today that option is free: the sender only needs `gas_limit * max_fee_per_gas` to be affordable as a temporary hold, and the unused part is refunded after execution.
-3. Make the transaction exit early in the common case: check a predicate, and `STOP` or revert when it fails. `gas_used` is a few tens of thousands.
-4. The bill is `20x tip * ~25,000 gas`, about what an honest transaction pays for `1x tip * 500,000 gas`, for a position ahead of every honest transaction. Repeat every block, from many accounts.
+Under metered billing the two outcomes cost very differently:
 
-What gets crowded out is the builder's time, not block gas. A flashblock is built in a 200 ms window; the selection loop pulls candidates in tip order and stops when the timer fires ([`flashblocks/context.rs`](../../crates/builder/core/src/flashblocks/context.rs), `while let Some(pooled) = best_txs.next(()) { if self.cancel.is_cancelled() { return } ... }`). Every candidate costs predicate evaluation and execution before the builder learns anything about it. A flood of high-tip probes from many accounts sorts to the front and consumes the window; competitors further down the tip order are never reached before it closes. Block gas is not the constraint: admission checks `cumulative_gas_used + gas_limit` against the flashblock budget, but after execution only metered gas is added (`info.cumulative_gas_used += gas_used`), so a 2,000,000-limit probe that uses 25,000 leaves 1,975,000 for the next transaction. Reverted transactions are still included and pay only metered gas, so each losing probe costs `tip * 25,000`.
+| Outcome | `gas_used` | Pays the sequencer |
+|---|---|---|
+| Opportunity exists, executes | ~500,000 | `tip * 500,000` |
+| Opportunity gone, reverts | ~25,000 | `tip * 25,000` |
 
-The honest transaction bidding for that position has to raise its own tip, and it pays that tip on all of the gas it really uses; if it is far enough down the order it is not considered at all. The builder cannot filter the probe, because the early exit is only visible after executing it. Searchers do a milder version of this unintentionally with loose predicate bounds and a limit sized for the success path; a searcher who understands the loop does it on purpose, with many such transactions, to hold the top of the block and the build window for a fraction of what the position is worth.
+So the searcher can bid a very high `tip`, 20x the market, and still pay less for a losing probe than an honest transaction pays for a successful one. The high tip puts the probe at the front of the order; the revert keeps it cheap; the large `gas_limit` keeps the option to execute if the opportunity is there. Send many of them, from many accounts, every flashblock.
 
-The large `gas_limit` is what makes the flood worth sending: it must cover the winning path (observed at about 40x median usage for atomic arbitrage on mainnet, per the sequencer team's measurements), and today the unused part is refunded, so a losing probe costs `tip * 25,000` while a winning one captures the opportunity. Charging the limit makes every probe cost what a winning execution would. The searcher then either pays the full limit on every revert or tightens the limit and loses the ability to execute the opportunity from that slot; either way, flooding stops being profitable.
+The effect on the builder:
 
-What the rule does not change: a pure griefer who sends tight-limit (25,000 gas) high-tip reverting transactions pays the same under either rule and still costs the builder one candidate's worth of time each. That is spending real money per transaction with no upside, a different threat from the profitable abuse above, and it is addressed by builder-side time budgets and metering rather than by the fee rule.
+- The predicate budget is spent on the probes. They sort first, so their predicates are evaluated first; by the time 10 ms is gone, candidates further down the order are deferred unevaluated, including ones whose predicates would have matched and whose execution would have paid full fees.
+- The execution window is spent on the probes that pass. Each one is executed, reverts, and is included for `tip * 25,000`.
+- Competing searchers and ordinary senders are either not considered or, to be considered, must bid a tip that they pay on all of the gas they actually use.
 
-### Why it is a problem for the chain
+Block gas is not what runs out. Admission checks `cumulative_gas_used + gas_limit` against the flashblock budget, but after execution only metered gas is added (`info.cumulative_gas_used += gas_used`), so a 2,000,000-limit probe that uses 25,000 leaves 1,975,000 for the next transaction. The scarce resource is time, and the fee market does not price it, because the fee is settled on a quantity (`gas_used`) that a reverting transaction keeps small on purpose.
 
-The gas the pool and the builder reason about is the declared `gas_limit`: the builder admits a transaction only if `cumulative_gas_used + gas_limit (+ payer_auth) <= block_gas_limit` ([`ExecutionInfo::is_tx_over_limits`](../../crates/builder/core/src/execution.rs)), and the pool's balance check requires the sender to be able to pay `gas_limit * max_fee_per_gas`. The fee is settled on `gas_used`. Everything below follows from that mismatch.
+### What charging the limit does
+
+Charge `tip * gas_limit` instead, and the two outcomes cost the same:
+
+| Outcome | Pays the sequencer under gas limit pricing |
+|---|---|
+| Opportunity exists, executes | `tip * gas_limit` |
+| Opportunity gone, reverts | `tip * gas_limit` |
+
+A 20x-tip probe sized for 500,000 gas now pays `20 * tip * 500,000` every time it is included, win or lose: 20x what the honest transaction pays, which is what a 20x bid should cost. The searcher's options are to bid a tip they are willing to pay on the whole limit (so they no longer sit ahead of everyone for free), to tighten predicates so the transaction is not included unless the opportunity is really there (so it stops being executed and reverting), or to shrink the limit (and lose the ability to execute from that slot). Each of these takes probes out of the front of the order, which is where the budget was going.
 
 Worked example at a base fee of 0.01 gwei and a market tip of 1 gwei:
 
@@ -91,16 +107,13 @@ Worked example at a base fee of 0.01 gwei and a market tip of 1 gwei:
 | Pays the sequencer today (`tip * gas_used`) | 0.0005 ETH | 0.0005 ETH |
 | Pays the sequencer under gas limit pricing (`tip * gas_limit`) | 0.0006 ETH | 0.04 ETH |
 
-Today the probe buys a 20x higher rank for the same money. Under gas limit pricing the probe pays 80x what it paid before and its rank costs 67x what the honest transaction pays; a probe that wants to be cheap has to declare a tight limit, which caps the work it can do if the opportunity is there.
+Today the probe buys a 20x higher rank for the same money. Under gas limit pricing the probe pays 80x what it paid before and its rank costs 67x what the honest transaction pays.
 
-The consequences for the chain:
+### What the rule does and does not fix
 
-- **Ordering is not what it says.** The top of the block, and the build window, go to whoever is willing to bid per gas on gas they will not use, not to whoever pays the most for the space.
-- **Optionality is free.** A sender can hold the right to execute a large amount of gas from the top of every block and pay only when the opportunity materialises; everyone else's bids are set against that free option.
-- **Build time is wasted and revenue is displaced.** The builder evaluates and executes high-`tip` transactions first. When they exit early it has spent part of a 200 ms window on them for a fraction of the revenue the bid implied, and the transactions it did not reach would have paid full fees on real gas. It cannot filter the probes beforehand, because `gas_used` is not knowable before execution.
-- **Admission and payment disagree.** Admission reserves `gas_limit` and accounting then adds only `gas_used`, so the reservation is released as soon as the transaction executes. The builder can neither plan on declared limits nor charge for them; the declared gas is a claim on capacity that is never paid for and never honoured.
+It fixes the profitable version of the problem: a reverting probe can no longer be cheap, so sending many of them at a high tip is no longer a winning strategy, and the predicate and execution budgets go to transactions whose bids are real. It also makes ordering transparent: the price of a position is `tip * gas_limit`, computable from public inputs before submission, and the sequencer knows a transaction's revenue before executing it.
 
-The common cause is that the pool and the builder reason about `gas_limit` and the fee is settled on `gas_used`. Charging `gas_limit` removes the gap.
+It does not price predicate evaluation itself. A validity transaction whose predicate does not match is not included and pays nothing under either rule, so a sender who keeps submitting high-tip transactions with predicates that rarely match still consumes evaluation time for free; what the rule removes is the incentive to make those predicates loose. And it does not change the build loop: a griefer who sends tight-limit (25,000 gas) high-tip reverting transactions pays the same under either rule and still costs one candidate's worth of time each. Both residuals are builder time-budget problems (pricing or capping predicate evaluation per sender, per-candidate execution budgets) rather than fee-rule problems, and they are out of scope here.
 
 ## Where the fee is decided today
 
@@ -161,6 +174,7 @@ With the rule, the pool's ranking key and the sender's payment are the same numb
 
 Consequences:
 
+- **The time budget goes to bids that are real.** A transaction at the front of the priority-fee order now pays its bid on its whole declared limit whether it executes or reverts, so holding the front of the order with reverting probes costs the full price of the executions they were sized for. Fewer probes are sent at high tips, and the predicate and execution budgets reach transactions further down the order.
 - **Fair ordering.** For standard transactions, ranking by `tip` is exactly ranking by protocol tip revenue per unit of reserved block space, because that revenue is `tip * gas_limit`. A transaction cannot outrank another while paying less per unit of the space it reserved; the only way to rank higher is to pay more per gas on all the gas you declare. Static EIP-8130 coinbase tips are ranked by `coinbase_tip / gas_limit` while the reservation is `gas_limit + payer_auth` and settlement also credits the priority fee, so for them the ranking key is an approximation of revenue per reserved gas rather than exactly it; see [Risks](#risks-and-open-questions).
 - **Transparent ordering.** A sender can compute what any position in the block costs from public information (`tip`, `gas_limit`, the base fee) before submitting. Nothing about the price depends on how the transaction runs.
 - **Spam and probing are priced.** A padded probe pays `gas_limit / gas_used` times more than today (80x in the example above, where its rank also ends up costing 67x what the honest transaction pays). Reserving the block's admission budget costs the full price of that budget. Reverted and early-exit transactions pay the same as successful ones for the same declared limit.
@@ -175,6 +189,8 @@ Consequences:
 | Rank by total bid, `tip * gas_limit` | Keep metered payment; order by the product. | Ranks a large transaction with a low per-gas tip above small ones, so it is not a per-gas market any more; and the padded probe still pays `tip * gas_used`, so reserving capacity stays cheap. The ranking changes but the payment gap remains. |
 | Rank by realised payment, `tip * gas_used` | Execute, then order by what was paid. | Requires executing every candidate before ordering it, which is the builder cost this change wants to remove, and the probe still pays little for the space it reserved. Also makes ordering depend on execution, so a sender cannot know its position's price before submitting. |
 | Penalise reverts | Charge the limit only when the transaction fails. | A probe that exits early with `STOP` is a successful transaction. The attack does not need a revert. |
+| Simulate before ordering | Execute candidates first, then order by what they actually pay. | Simulation is the time the builder is running out of; this spends more of it per candidate, not less. |
+| Price predicate evaluation | Charge validity transactions for each predicate check, matched or not. | Complementary, not a substitute: it prices the evaluation step but leaves a passed-then-reverted probe cheap. Worth pursuing separately for the residual described in [the problem section](#what-the-rule-does-and-does-not-fix). |
 | Pool heuristics on `gas_limit / gas_used` | Track senders' past utilisation and deprioritise padders. | Gameable with fresh addresses; punishes honest senders whose gas is state-dependent; and adds per-sender state to the pool's hot path. Does not change what anyone pays. |
 | Partial charge | Bill `gas_used + p * (gas_limit - gas_used)`. | For any `p < 1` the probe still pays less per unit of rank than the honest transaction, by a factor of about `1/p`; the gap shrinks but stays. Could inform a transition if the data scan shows a large shock, at the cost of the invariants above. |
 | Fee on `gas_limit`, `gasUsed` stays metered | Change only `reimburse_caller` and `reward_beneficiary`. | Breaks `fee = gasUsed * effectiveGasPrice`, which explorers and wallets compute today, so every fee display becomes wrong. Header `gasUsed` stays metered, so the block keeps admitting far more declared gas than its limit and the base fee never sees the reserved demand. |
@@ -287,7 +303,7 @@ The cap thereby becomes a cap on declared limits. Operators that set it should e
 
 **Users.** The execution component of the fee rises from `gas_used * price` to `gas_limit * price`. A transaction that fails out-of-gas already pays its full limit today, so the worst case is unchanged; the change removes the success-path discount. Wallet padding becomes a direct cost, so wallets should move toward tight `eth_estimateGas` results. Trimming too far turns into out-of-gas failures that still pay the full limit; this tradeoff is measured in the validation plan.
 
-**Searchers and bots.** The cost of a position in the block is `tip * gas_limit`, computable before submission. Probes and loosely bounded transactions pay for the gas they declare, so limits should be sized for the real path and predicates checked early or off-chain. A high `tip` on a padded limit no longer buys cheap priority.
+**Searchers and bots.** The cost of a position in the block is `tip * gas_limit`, computable before submission. Probes and loosely bounded transactions pay for the gas they declare whether they execute or revert, so limits should be sized for the real path and predicates made tight enough that the transaction is not included unless the opportunity is there. A high `tip` on a padded limit no longer buys cheap priority or cheap evaluation time. Expect atomic arbitrage transaction counts to fall and their revert rate to fall with them; the sequencer team's expectation is that revenue from that segment stays roughly flat because bids are discounted for revert risk and opportunities are acted on more selectively.
 
 **Receipts and explorers.** `gasUsed == gasLimit` for every standard user transaction, and `gasUsed == gasLimit + payer_auth` for sponsored EIP-8130 transactions. `effectiveGasPrice * gasUsed + l1Fee (+ operatorFee)` still equals the amount debited. Explorers that display "gas used / gas limit" utilisation will show 100% for user transactions; they need traces or `eth_estimateGas` for metered gas. Deposit receipts are unchanged.
 
@@ -332,7 +348,8 @@ The POC works when all of the following hold on a devnet with Zenith active, and
 | S10 | A proof of a Zenith block containing gas-limit-priced transactions verifies. | System test (`in_process_zk`-style) |
 | S11 | Out-of-gas behavior, revert behavior, and all per-opcode gas in traces are identical with and without Zenith. | Unit (handler), trace comparison in the system test |
 | S12 | Without Zenith, the full workspace test suite passes with no assertion changes. | `just test`, `just devnet tests` |
-| S13 | Ordering is revenue-exact for standard transactions: for any two standard user transactions in a block, the one ranked higher by the pool paid the sequencer at least as much tip per unit of reserved gas, and a padded transaction pays `gasLimit / gasUsed` times what it would pay at metered gas. | Builder test, adversarial devnet run |
+| S13 | A reverting probe pays its declared limit: a standard or EIP-8130 transaction whose call reverts after a small amount of gas is billed `tip * gasLimit` (`+ payer_auth`) and the sequencer receives it, the same as a successful execution at that limit; metered under Everest. For any two standard user transactions in a block, the one ranked higher paid at least as much tip per unit of reserved gas. | Unit (handler, eip8130), system test |
+| S15 | Under a flood of high-tip reverting validity transactions, the predicate-evaluation cutoff is hit and lower-tip candidates are deferred under Everest while the probes are included for metered gas; under Zenith each included probe pays its full declared limit. | System test (probe flood) |
 | S14 | A transaction whose reserved gas exceeds `--builder.max_gas_per_txn` is rejected before execution under Zenith and after execution otherwise. | Unit (builder) |
 
 ### Tier 1: unit tests
@@ -342,13 +359,14 @@ In `handler.rs` (`#[cfg(test)] mod tests`), executing single transactions agains
 - Zenith, plain transfer with `gas_limit = 100_000`: `tx_gas_used == 100_000`; caller debited `100_000 * effective_gas_price`; beneficiary credited `100_000 * tip`; `BaseFeeVault` credited `100_000 * basefee` (S1, S2, S4).
 - Zenith with an SSTORE clear that earns an EIP-3529 refund: refund is zero and the settlement is the same as the plain transfer (S5).
 - Zenith, out of gas: identical settlement to Everest, since out of gas already bills the limit (S11).
+- Zenith, the probe shape (call reverts after its check): billed and reported at the full declared limit, sequencer paid `tip * gas_limit`; metered and cheap on Everest (S13).
 - Zenith, `disable_fee_charge`: `tx_gas_used == 21_000`, nothing debited (S6).
 - Zenith deposit (`source_hash` set): `tx_gas_used == 21_000` as on Everest; nothing debited, nothing credited (S9).
 - Everest: the plain transfer is billed 21,000; `test_consume_gas`, `test_revert_gas`, `test_consume_gas_with_refund`, and the rest of the existing module pass unchanged (S12).
 - `charges_gas_limit()` is false for every variant in `BaseUpgrade::EXECUTION_VARIANTS`.
 - EIP-8037 guard: `test_eip8037_state_gas_disabled_on_all_base_upgrades` still passes, so `spend_all` leaving the reservoir alone is safe.
 
-In `eip8130.rs`: `billable_gas == gas_limit + payer_auth` under Zenith regardless of `call_gas_spent`, floor, and refunds; a self-pay EIP-8130 transaction settles at its declared budget; the estimate excludes `payer_auth` under Zenith so a sponsored transaction at `gas_limit = estimate` settles `estimate + payer_auth` once; Everest unchanged (S8).
+In `eip8130.rs`: `billable_gas == gas_limit + payer_auth` under Zenith regardless of `call_gas_spent`, floor, and refunds; a self-pay EIP-8130 transaction settles at its declared budget; an EIP-8130 probe whose call reverts settles at its declared budget and the sequencer receives the full tip, while Everest bills the metered revert (S13); the estimate excludes `payer_auth` under Zenith so a sponsored transaction at `gas_limit = estimate` settles `estimate + payer_auth` once; Everest unchanged (S8).
 
 In `builder/core/src/execution.rs`: with `tx_gas_limit` set, a declared limit above the cap is rejected with the permanent `MaxGasUsageExceeded` before execution, a limit at the cap is admitted, `payer_auth` counts toward the cap, and with `tx_gas_limit` unset nothing is checked before execution (S14).
 
@@ -366,13 +384,14 @@ To add: a block that also carries the L1 attributes deposit, asserting header `g
 In `etc/systems/tests`, using `SystemTestStackBuilder::with_base_zenith_activation_block` as `builder_cutover.rs` does, with a sibling run without Zenith:
 
 1. **Fee and receipt invariants.** Fund an account, send a plain transfer with `gas_limit = 1_000_000` and a non-zero tip. Assert S1 from `eth_getBalance` before and after (using `l1Fee` and `operatorFee` from the Base receipt), S2 and S3 from the receipt and `eth_getBlockByNumber`, and S6 from `eth_estimateGas` on the same call (expect `21_000`, allow the EIP-7623 floor). Compare `debug_traceTransaction` per-opcode gas with the pre-Zenith run (S11).
-2. **Ordering is paid for.** Submit, in the same block, the two transactions from the [worked example](#problem-ordering-is-by-a-bid-nobody-has-to-pay): an honest transaction (`tip = t`, `gas_limit` close to its `gas_used`) and a padded probe (`tip = 20t`, `gas_limit` 80x its `gas_used`, exits with `STOP`). Assert the probe is ordered first in both runs, that its sequencer payment under Zenith is `20t * gas_limit` (80x its own pre-Zenith payment, about 67x the honest transaction's with the example's numbers), and that under Everest it paid about the same as the honest transaction (S13).
-3. **Reservation under adversarial load.** Flood the devnet with transactions that declare the EIP-7825 cap (`2^24` gas) and exit after about 25,000 gas. Assert each pays `2^24 * effectiveGasPrice`, that a block's header `gasUsed` reaches the block gas limit while metered execution stays near zero, that the number of such transactions per block is bounded by `block_gas_limit / 2^24`, and that the base fee rises across consecutive blocks per EIP-1559. Under Everest the same flood fits many more transactions per block and pays a fraction of the price (S13).
-4. **Builder and validator agreement.** Run the builder and client together across activation and assert the client follows every builder block (the `smoke_test_builder_and_client_block_sync` pattern); run the sync-parity fuzz profile with Zenith enabled (S7).
-5. **Invalid payload rejection.** Submit a `newPayload` whose header `gasUsed` is the metered sum for a block after activation and assert the client returns `INVALID` (the `invalid_new_payload.rs` pattern) (S7).
-6. **EIP-8130.** Run the existing `eip8130.rs` system test with Zenith and assert the payer debit is `(gas_limit + payer_auth) * effective_gas_price + l1Fee + operatorFee` (S8).
-7. **Proving.** Run the in-process proof test on a Zenith block containing the transfer above (S10).
-8. **Zenith off.** Run the same suite without Zenith; every assertion about metered gas must hold as today (S12).
+2. **The probe pays.** Submit, in the same block, the two transactions from the [worked example](#what-charging-the-limit-does): an honest transaction (`tip = t`, `gas_limit` close to its `gas_used`) and a padded probe (`tip = 20t`, `gas_limit` 80x its `gas_used`, reverts after its check). Assert the probe is ordered first in both runs, that its sequencer payment under Zenith is `20t * gas_limit` (80x its own pre-Zenith payment, about 67x the honest transaction's with the example's numbers), and that under Everest it paid about the same as the honest transaction (S13).
+3. **Probe flood against the predicate budget.** From many accounts, submit enough high-tip validity transactions whose predicates match and whose calls revert to exhaust `predicate_eval_hard_cutoff` (set it low in the test builder config), plus lower-tip validity transactions whose predicates match and whose calls succeed. Under Everest, assert the builder reports `predicate_eval_budget_exhausted` deferrals, the honest transactions are deferred to a later flashblock, and each included probe paid metered gas. Under Zenith, assert each included probe paid its full declared limit at its tip, so the flood's cost per flashblock equals the executions it was sized for (S15). This is the test that pins the problem the rule is for; the behavioural change (fewer probes submitted) is economic and is measured on mainnet, not in a devnet.
+4. **Reservation under adversarial load.** Flood the devnet with transactions that declare the EIP-7825 cap (`2^24` gas) and exit after about 25,000 gas. Assert each pays `2^24 * effectiveGasPrice`, that a block's header `gasUsed` reaches the block gas limit while metered execution stays near zero, that the number of such transactions per block is bounded by `block_gas_limit / 2^24`, and that the base fee rises across consecutive blocks per EIP-1559. Under Everest the same flood fits many more transactions per block and pays a fraction of the price (S13).
+5. **Builder and validator agreement.** Run the builder and client together across activation and assert the client follows every builder block (the `smoke_test_builder_and_client_block_sync` pattern); run the sync-parity fuzz profile with Zenith enabled (S7).
+6. **Invalid payload rejection.** Submit a `newPayload` whose header `gasUsed` is the metered sum for a block after activation and assert the client returns `INVALID` (the `invalid_new_payload.rs` pattern) (S7).
+7. **EIP-8130.** Run the existing `eip8130.rs` system test with Zenith and assert the payer debit is `(gas_limit + payer_auth) * effective_gas_price + l1Fee + operatorFee` (S8).
+8. **Proving.** Run the in-process proof test on a Zenith block containing the transfer above (S10).
+9. **Zenith off.** Run the same suite without Zenith; every assertion about metered gas must hold as today (S12).
 
 ### Tier 4: full suite
 
