@@ -36,7 +36,8 @@ pub use derivation::{
     ChainProviderCanonicalChain, DerivationActor, DerivationActorRequest, DerivationClientError,
     DerivationClientResult, DerivationEngineClient, DerivationError, DerivationState,
     DerivationStateMachine, DerivationStateTransitionError, DerivationStateUpdate,
-    L1CanonicalChain, L2Finalizer, PendingFinalization, QueuedDerivationEngineClient,
+    L1CanonicalChain, L1CanonicalChainError, L2Finalizer, PendingFinalization,
+    QueuedDerivationEngineClient,
 };
 
 mod l1_watcher;

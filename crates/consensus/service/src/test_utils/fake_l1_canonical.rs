@@ -3,7 +3,7 @@
 use async_trait::async_trait;
 use base_protocol::BlockInfo;
 
-use crate::L1CanonicalChain;
+use crate::{L1CanonicalChain, L1CanonicalChainError};
 
 /// Reports every L1 block as canonical.
 ///
@@ -15,7 +15,7 @@ pub struct AlwaysCanonical;
 
 #[async_trait]
 impl L1CanonicalChain for AlwaysCanonical {
-    async fn is_canonical(&self, _block: BlockInfo) -> Result<bool, String> {
+    async fn is_canonical(&self, _block: BlockInfo) -> Result<bool, L1CanonicalChainError> {
         Ok(true)
     }
 }

@@ -86,7 +86,14 @@ impl L2Finalizer {
         self.awaiting_finalization
             .entry(inclusion.number)
             .and_modify(|pending| {
-                pending.l2_block = pending.l2_block.max(attributes.block_number());
+                // A different block at the same height is a different inclusion identity, and the
+                // entry has to describe the L1 block that produced its highest L2 block. Keeping the
+                // first hash would make the canonicality check verify the wrong block, discarding
+                // candidates that are valid or promoting ones that are not.
+                if attributes.block_number() >= pending.l2_block {
+                    pending.l2_block = attributes.block_number();
+                    pending.inclusion = inclusion;
+                }
             })
             .or_insert_with(|| PendingFinalization {
                 inclusion,
@@ -131,7 +138,13 @@ impl L2Finalizer {
         &self,
         finalized_l1_number: L1BlockNumber,
     ) -> Option<PendingFinalization> {
-        self.awaiting_finalization.range(..=finalized_l1_number).next_back().map(|(_, c)| *c)
+        // The highest eligible *L2* block, not the entry with the highest inclusion block: a reset
+        // replay can derive a higher L2 block from a lower inclusion block, and selecting by
+        // inclusion would drain that entry without ever finalizing its block.
+        self.awaiting_finalization
+            .range(..=finalized_l1_number)
+            .map(|(_, pending)| *pending)
+            .max_by_key(|pending| pending.l2_block)
     }
 
     /// Drops the candidate included in `inclusion_block_number`, whose L1 block turned out not to
@@ -230,9 +243,25 @@ impl L2Finalizer {
             l2_safe_head.l1_origin.number
         };
 
-        self.awaiting_finalization.retain(|&inclusion, pending| {
-            pending.l2_block <= safe_l2_number && inclusion <= trusted_inclusion
-        });
+        // A batch can carry blocks above the last confirmed safe head as well as below it. The
+        // blocks above it are rolled back and re-derived, but the ones at or below it are never
+        // re-derived, so clamping the entry keeps the confirmed work instead of dropping it along
+        // with the unconfirmed block that happened to share its inclusion block. Clamping is
+        // conservative: a confirmed block's inclusion block is at or below the entry's.
+        let mut retained = BTreeMap::new();
+        for (inclusion, pending) in std::mem::take(&mut self.awaiting_finalization) {
+            if inclusion > trusted_inclusion {
+                continue;
+            }
+            retained.insert(
+                inclusion,
+                PendingFinalization {
+                    inclusion: pending.inclusion,
+                    l2_block: pending.l2_block.min(safe_l2_number),
+                },
+            );
+        }
+        self.awaiting_finalization = retained;
     }
 
     /// Attempts to find L2 blocks that can be finalized based on the new finalized L1 block.
@@ -245,16 +274,15 @@ impl L2Finalizer {
     ) -> Option<L2BlockNumber> {
         // Find the highest safe L2 block that is contained within the finalized chain,
         // that the finalizer is aware of.
-        let (&inclusion_number, pending) =
-            self.awaiting_finalization.range(..=new_finalized_l1_block.number).next_back()?;
-        let l2_block = pending.l2_block;
-        // Drain the queue of all L1 blocks contained in the finalized L1 chain.
+        let candidate = self.pending_candidate(new_finalized_l1_block.number)?;
+        // Drain the queue of all L1 blocks contained in the finalized L1 chain. Every drained entry
+        // is covered by the promoted block, which is the highest eligible one.
         self.awaiting_finalization.retain(|&number, _| number > new_finalized_l1_block.number);
         // Derivation produces batches in L1 order, so no candidate below the promoted inclusion
         // block can appear again and its verification is no longer needed. The promoted block
         // stays: further L2 blocks can still arrive from it.
-        self.verified_inclusions = self.verified_inclusions.split_off(&inclusion_number);
-        Some(l2_block)
+        self.verified_inclusions = self.verified_inclusions.split_off(&candidate.inclusion.number);
+        Some(candidate.l2_block)
     }
 }
 
@@ -316,6 +344,15 @@ mod tests {
     /// Build a [`BlockInfo`] representing a finalized L1 block at `number`.
     fn l1_at(number: u64) -> BlockInfo {
         BlockInfo { number, ..Default::default() }
+    }
+
+    /// Build a confirmed safe head at `number` whose epoch origin is `origin_number`.
+    fn safe_head(number: u64, origin_number: u64) -> L2BlockInfo {
+        L2BlockInfo {
+            block_info: BlockInfo { number, ..Default::default() },
+            l1_origin: BlockNumHash { number: origin_number, ..Default::default() },
+            seq_num: 0,
+        }
     }
 
     /// Records `finalized_l1` and promotes whatever it makes eligible, the way the actor does once
@@ -513,7 +550,8 @@ mod tests {
 
     #[test]
     fn reset_drops_candidates_above_the_new_safe_head() {
-        // A reset that rolls the safe head back must not leave candidates above it behind.
+        // A reset that rolls the safe head back must not leave candidates above it behind, but the
+        // confirmed block at the rollback height is never re-derived and has to survive.
         let mut f = L2Finalizer::default();
         f.confirm_safe_head(&safe_head_at(600, 100), Some(l1_at(108)));
         f.enqueue_for_finalization(&attrs(479, 105)); // l2=480, within the rolled-back chain
@@ -521,7 +559,9 @@ mod tests {
 
         f.retain_valid_after_reset(&safe_head_at(500, 110));
 
-        assert_eq!(f.try_finalize_next(l1_at(1_000)), Some(480));
+        // L2 600 is gone with the rolled-back chain; 500 is clamped to the reset head and kept.
+        assert_eq!(f.pending_candidate(1_000).expect("candidate").l2_block, 500);
+        assert_eq!(f.try_finalize_next(l1_at(1_000)), Some(500));
     }
 
     #[test]
@@ -601,6 +641,57 @@ mod tests {
         assert_eq!(f.try_finalize_next(l1_at(5)), Some(20));
         // Queue is now empty; an older signal cannot regress to a stale entry.
         assert!(f.try_finalize_next(l1_at(2)).is_none());
+    }
+
+    #[test]
+    fn enqueuing_a_replaced_inclusion_at_one_height_keeps_the_new_identity() {
+        let mut f = L2Finalizer::default();
+        // A retained candidate whose batch landed in 120/A, followed by a post-reorg block from
+        // 120/B. The entry has to describe the block that produced its highest L2 block, otherwise
+        // the canonicality check verifies the wrong identity and drops the valid candidate.
+        f.enqueue_for_finalization(&attrs_included_at(499, inclusion_at(120, 0xa)));
+        f.enqueue_for_finalization(&attrs_included_at(500, inclusion_at(120, 0xb)));
+
+        let candidate = f.pending_candidate(200).expect("candidate should be queued");
+        assert_eq!(candidate.l2_block, 501);
+        assert_eq!(candidate.inclusion.hash, inclusion_at(120, 0xb).hash);
+    }
+
+    #[test]
+    fn reset_keeps_confirmed_work_under_an_inclusion_with_unconfirmed_blocks() {
+        let mut f = L2Finalizer::default();
+        // L2 500 and 501 both came from the batch in L1 120; the engine confirmed 500 only.
+        let inclusion = inclusion_at(120, 0xa);
+        f.enqueue_for_finalization(&attrs_included_at(499, inclusion));
+        f.enqueue_for_finalization(&attrs_included_at(500, inclusion));
+        f.confirm_safe_head(&safe_head(500, 118), Some(inclusion));
+
+        // The reset rolls back to 500, which is never re-derived, so its entry must survive even
+        // though the unconfirmed block above it does not.
+        f.retain_valid_after_reset(&safe_head(500, 118));
+
+        assert_eq!(record_and_finalize(&mut f, l1_at(120)), Some(500));
+
+        // A reset to 501 keeps nothing: 501 was never confirmed and is re-derived.
+        let mut f = L2Finalizer::default();
+        f.enqueue_for_finalization(&attrs_included_at(499, inclusion));
+        f.enqueue_for_finalization(&attrs_included_at(500, inclusion));
+        f.confirm_safe_head(&safe_head(500, 118), Some(inclusion));
+        f.retain_valid_after_reset(&safe_head(501, 118));
+        assert!(f.pending_candidate(200).is_none(), "unconfirmed work must not survive");
+    }
+
+    #[test]
+    fn reset_replay_that_inverts_inclusion_and_l2_order_promotes_the_highest_block() {
+        let mut f = L2Finalizer::default();
+        // Retained: L2 500 came from the batch in L1 120. A reset replay then re-derives 501 from
+        // a *lower* inclusion block, so inclusion order no longer follows L2 order.
+        f.enqueue_for_finalization(&attrs_included_at(499, inclusion_at(120, 0xa)));
+        f.enqueue_for_finalization(&attrs_included_at(500, inclusion_at(119, 0xa)));
+
+        // Finalizing L1 120 makes both eligible; the higher L2 block must be the one promoted, or
+        // its entry is drained without ever being finalized.
+        assert_eq!(f.try_finalize_next(l1_at(120)), Some(501));
     }
 
     #[test]

@@ -12,7 +12,7 @@ pub use finalizer::{L2Finalizer, PendingFinalization};
 mod l1_canonical;
 #[cfg(test)]
 pub use l1_canonical::MockL1CanonicalChain;
-pub use l1_canonical::{ChainProviderCanonicalChain, L1CanonicalChain};
+pub use l1_canonical::{ChainProviderCanonicalChain, L1CanonicalChain, L1CanonicalChainError};
 
 mod request;
 pub use request::{DerivationActorRequest, DerivationClientError, DerivationClientResult};
