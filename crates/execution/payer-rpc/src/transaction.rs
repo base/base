@@ -4,7 +4,6 @@ use alloy_primitives::{Address, U256};
 use base_common_consensus::{
     BaseTxEnvelope, Eip8130Constants, Eip8130Signed, decode_2718_canonical,
 };
-use base_common_rpc_types::{BaseTransactionRequest, Eip8130RequestFields};
 use thiserror::Error;
 
 /// An EIP-8130 transaction that names a payer, leaves `payer_auth` for it to fill, and carries
@@ -13,11 +12,6 @@ use thiserror::Error;
 pub struct PayerTransaction {
     signed: Eip8130Signed,
     sender: Address,
-    /// The key that signed for a declared sender, when it is not the sender's own.
-    signer: Option<Address>,
-    /// Whether the signing actor is known, so phase 0 runs under its policy. A non-K1
-    /// authenticator under the keystore does not recover an address to name it by.
-    simulable: bool,
 }
 
 impl PayerTransaction {
@@ -50,7 +44,7 @@ impl PayerTransaction {
         let Some(sender) = signed.explicit_sender() else {
             let sender =
                 signed.recover_sender().map_err(|_| PayerTransactionError::SenderSignature)?;
-            return Ok(Self { signed, sender, signer: None, simulable: true });
+            return Ok(Self { signed, sender });
         };
         let k1_signature =
             signed.sender_auth().strip_prefix(Eip8130Constants::K1_AUTHENTICATOR.as_slice());
@@ -58,14 +52,14 @@ impl PayerTransaction {
             if !keystore {
                 return Err(PayerTransactionError::UnsupportedSenderAuthenticator);
             }
-            return Ok(Self { signed, sender, signer: None, simulable: false });
+            return Ok(Self { signed, sender });
         };
         let signer = Eip8130Signed::recover_raw_k1(signed.tx().sender_signature_hash(), signature)
             .map_err(|_| PayerTransactionError::SenderSignature)?;
         if signer != sender && !keystore {
             return Err(PayerTransactionError::SenderMismatch);
         }
-        Ok(Self { signed, sender, signer: (signer != sender).then_some(signer), simulable: true })
+        Ok(Self { signed, sender })
     }
 
     /// The sender and `nonce_key` whose nonce this transaction uses, or `None` for a nonce-free
@@ -83,53 +77,6 @@ impl PayerTransaction {
             return Err(PayerTransactionError::NonceUsed);
         }
         Ok(())
-    }
-
-    /// Returns whether this transaction waits behind an earlier nonce in its channel, given
-    /// `next`, the next unused nonce. Its phase 0 may then depend on a transaction not yet
-    /// mined, so a simulation at the latest block says nothing about it.
-    pub fn is_queued(&self, next: U256) -> bool {
-        U256::from(self.signed.tx().nonce_sequence) > next
-    }
-
-    /// This transaction cut to its first call phase, as an EIP-8130 `eth_call` request.
-    ///
-    /// It keeps the transaction's fees, account changes, expiry, and payer, so the phase runs as
-    /// it would on chain. `gas_limit` is dropped, so the phase runs at the simulation's gas cap:
-    /// the simulation charges worst-case intrinsic gas, so a tight limit that covers real
-    /// execution could run out there, and gas sufficiency is left to the payer and the pool.
-    /// `valid_after` is dropped: the simulated block trails the wall clock, so a window about to
-    /// open would read as not yet valid. A transaction without calls
-    /// yields a request without calls.
-    ///
-    /// Returns `None` when the signing actor is not known, since phase 0 would run under the
-    /// wrong actor's policy.
-    pub fn phase_zero_request(&self) -> Option<BaseTransactionRequest> {
-        if !self.simulable {
-            return None;
-        }
-        let tx = self.signed.tx();
-        let fields = Eip8130RequestFields {
-            nonce_key: Some(tx.nonce_key),
-            account_changes: Some(tx.account_changes.clone()),
-            calls: Some(tx.calls.iter().take(1).cloned().collect()),
-            valid_after: None,
-            valid_before: Some(tx.valid_before),
-            metadata: Some(tx.metadata.clone()),
-            sender: tx.sender,
-            sender_auth: Some(self.signed.sender_auth().clone()),
-            payer: tx.payer,
-            payer_auth: None,
-            sender_actor_id: self.signer.map(|signer| signer.into_word()),
-        };
-        Some(
-            BaseTransactionRequest::default()
-                .from(self.sender)
-                .chain_id(tx.chain_id)
-                .max_fee_per_gas(tx.max_fee_per_gas)
-                .max_priority_fee_per_gas(tx.max_priority_fee_per_gas)
-                .eip8130_fields(fields),
-        )
     }
 }
 
@@ -212,23 +159,14 @@ mod tests {
     }
 
     #[test]
-    fn accepts_an_eoa_transaction_and_simulates_only_its_first_phase() {
+    fn accepts_an_eoa_transaction_from_the_key_that_signed_it() {
         let signer = PrivateKeySigner::random();
-        let mut tx = transaction(None, payer());
-        tx.valid_after = u64::MAX - 1;
-        tx.valid_before = u64::MAX;
+        let tx = transaction(None, payer());
         let raw = encode(tx.clone(), signature(&signer, &tx).to_vec(), Bytes::new());
 
-        let request =
-            PayerTransaction::decode(&raw, CHAIN_ID, false).unwrap().phase_zero_request().unwrap();
+        let transaction = PayerTransaction::decode(&raw, CHAIN_ID, false).unwrap();
 
-        assert_eq!(request.as_ref().from, Some(signer.address()));
-        assert_eq!(request.as_ref().gas, None);
-        let fields = request.as_eip8130().unwrap();
-        assert_eq!(fields.calls, Some(vec![vec![call(0x11)]]));
-        assert_eq!(fields.payer, payer());
-        assert_eq!(fields.payer_auth, None);
-        assert_eq!((fields.valid_after, fields.valid_before), (None, Some(u64::MAX)));
+        assert_eq!(transaction.nonce_channel(), Some((signer.address(), U256::ZERO)));
     }
 
     #[test]
@@ -280,8 +218,6 @@ mod tests {
         assert_eq!(transaction.check_nonce(U256::from(4)), Err(PayerTransactionError::NonceUsed));
         assert_eq!(transaction.check_nonce(U256::from(3)), Ok(()));
         assert_eq!(transaction.check_nonce(U256::from(2)), Ok(()));
-        assert!(!transaction.is_queued(U256::from(3)));
-        assert!(transaction.is_queued(U256::from(2)));
     }
 
     #[test]
@@ -331,12 +267,8 @@ mod tests {
         passkey_auth.extend_from_slice(&[0x01; 64]);
         let passkey = encode(tx, passkey_auth, Bytes::new());
 
-        let request = PayerTransaction::decode(&own_key, CHAIN_ID, false)
-            .unwrap()
-            .phase_zero_request()
-            .unwrap();
-        assert_eq!(request.as_ref().from, Some(sender.address()));
-        assert_eq!(request.as_eip8130().unwrap().sender_actor_id, None);
+        let own_key = PayerTransaction::decode(&own_key, CHAIN_ID, false).unwrap();
+        assert_eq!(own_key.nonce_channel(), Some((sender.address(), U256::ZERO)));
         assert_eq!(
             PayerTransaction::decode(&other_key, CHAIN_ID, false).unwrap_err(),
             PayerTransactionError::SenderMismatch
@@ -360,17 +292,9 @@ mod tests {
         forged[84] = 0x00;
         let forged = encode(tx, forged, Bytes::new());
 
-        let request = PayerTransaction::decode(&session, CHAIN_ID, true)
-            .unwrap()
-            .phase_zero_request()
-            .unwrap();
-        assert_eq!(request.as_ref().from, Some(sender.address()));
-        assert_eq!(
-            request.as_eip8130().unwrap().sender_actor_id,
-            Some(session_key.address().into_word())
-        );
-        let passkey = PayerTransaction::decode(&passkey, CHAIN_ID, true).unwrap();
-        assert!(passkey.phase_zero_request().is_none());
+        let session = PayerTransaction::decode(&session, CHAIN_ID, true).unwrap();
+        assert_eq!(session.nonce_channel(), Some((sender.address(), U256::ZERO)));
+        assert!(PayerTransaction::decode(&passkey, CHAIN_ID, true).is_ok());
         assert_eq!(
             PayerTransaction::decode(&forged, CHAIN_ID, true).unwrap_err(),
             PayerTransactionError::SenderSignature

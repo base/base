@@ -527,12 +527,6 @@ impl BaseTransactionRequest {
         self
     }
 
-    /// Sets the EIP-8130 simulation fields for the transaction.
-    pub fn eip8130_fields(mut self, eip8130: Eip8130RequestFields) -> Self {
-        self.eip8130 = eip8130;
-        self
-    }
-
     /// Builds [`BaseTypedTransaction`] from this builder. See [`TransactionRequest::build_typed_tx`]
     /// for more info.
     ///

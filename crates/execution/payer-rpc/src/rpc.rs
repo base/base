@@ -84,15 +84,14 @@ where
             .ok_or_else(|| invalid_params(PAYER_PRE_EVEREST_RPC_ERROR))
     }
 
-    /// Rejects a transaction the payer would reject, without forwarding it: one that does not
-    /// decode, does not leave a payer to co-sign, lacks a valid sender signature, reuses a
-    /// nonce, or whose phase 0 fails at the latest block.
+    /// Rejects a transaction the payer would reject as `INVALID_TRANSACTION`, without forwarding
+    /// it: one that does not decode, does not leave a payer to co-sign, lacks a valid sender
+    /// signature, or reuses a nonce.
     ///
-    /// A state read that fails, a phase 0 whose signing actor is not known, or a transaction
-    /// queued behind an earlier nonce of its sender, whose phase 0 may depend on a transaction
-    /// not yet mined, passes the transaction on, since the payer checks it too. A nonce that
-    /// cannot be read leaves it unknown whether the transaction is queued, so it passes on
-    /// without a simulation.
+    /// Execution is left to the payer, which simulates before co-signing and answers a failed
+    /// payment with a more specific rejection than the node could, such as
+    /// `SENDER_BALANCE_INSUFFICIENT` with other offers to switch to. A nonce that cannot be read
+    /// passes the transaction on, since the payer checks it too.
     async fn check_transaction(&self, raw: &[u8], timestamp: u64) -> RpcResult<()> {
         let keystore = self.provider.chain_spec().is_zenith_active_at_timestamp(timestamp);
         let transaction =
@@ -100,35 +99,19 @@ where
                 debug!(error = %error, "rejected payer_sendTransaction transaction before forward");
                 PayerRejection::invalid_transaction(error)
             })?;
-        if let Some((sender, nonce_key)) = transaction.nonce_channel() {
-            match self.state.nonce(sender, nonce_key).await {
-                Ok(next) => {
-                    transaction.check_nonce(next).map_err(|error| {
-                        debug!(error = %error, "rejected payer_sendTransaction nonce before forward");
-                        PayerRejection::invalid_transaction(error)
-                    })?;
-                    if transaction.is_queued(next) {
-                        return Ok(());
-                    }
-                }
-                Err(error) => {
-                    warn!(error = %error, "payer_sendTransaction nonce could not be read");
-                    return Ok(());
-                }
+        let Some((sender, nonce_key)) = transaction.nonce_channel() else {
+            return Ok(());
+        };
+        match self.state.nonce(sender, nonce_key).await {
+            Ok(next) => transaction.check_nonce(next).map_err(|error| {
+                debug!(error = %error, "rejected payer_sendTransaction nonce before forward");
+                PayerRejection::invalid_transaction(error)
+            }),
+            Err(error) => {
+                warn!(error = %error, "payer_sendTransaction nonce could not be read");
+                Ok(())
             }
         }
-        let Some(request) = transaction.phase_zero_request() else {
-            return Ok(());
-        };
-        let Err(error) = self.state.simulate(request).await else {
-            return Ok(());
-        };
-        let Some(rejection) = PayerRejection::for_phase_zero(&error) else {
-            warn!(error = %error, "payer_sendTransaction phase 0 could not be simulated");
-            return Ok(());
-        };
-        debug!(error = %error, "payer_sendTransaction phase 0 failed before forward");
-        Err(rejection)
     }
 
     /// Forwards `method`, rejecting it as `TEMPORARILY_UNAVAILABLE` when the payer does not
@@ -180,7 +163,6 @@ mod tests {
 
     use alloy_eips::Encodable2718;
     use alloy_primitives::{Address, Bytes, U256, hex};
-    use alloy_rpc_types_eth::error::EthRpcErrorCode;
     use alloy_signer::SignerSync;
     use alloy_signer_local::PrivateKeySigner;
     use base_common_chains::ChainConfig;
@@ -236,25 +218,15 @@ mod tests {
         ErrorObjectOwned::owned(code, message, Some("0x"))
     }
 
-    /// State under which every nonce is unused and every phase 0 succeeds.
+    /// State under which every nonce is unused.
     fn passing_state() -> MockPayerChainState {
         let mut state = MockPayerChainState::new();
         state.expect_nonce().returning(|_, _| Ok(U256::ZERO));
-        state.expect_simulate().returning(|_| Ok(()));
         state
     }
 
-    /// State under which every phase 0 fails with `code`.
-    fn failing_simulation(code: i32, message: &'static str) -> MockPayerChainState {
-        let mut state = MockPayerChainState::new();
-        state.expect_nonce().returning(|_, _| Ok(U256::ZERO));
-        state.expect_simulate().returning(move |_| Err(state_error(code, message)));
-        state
-    }
-
-    /// A `payer_sendTransaction` request for an EOA-signed transaction paid by `payer`, at
-    /// `nonce_sequence` in its channel.
-    fn send_request_paid_by(payer: Option<Address>, nonce_sequence: u64) -> Value {
+    /// A `payer_sendTransaction` request for an EOA-signed transaction paid by `payer`.
+    fn send_request_paid_by(payer: Option<Address>) -> Value {
         let signer = PrivateKeySigner::random();
         let call = Call { to: Address::repeat_byte(0x11), value: U256::ZERO, data: Bytes::new() };
         let tx = TxEip8130 {
@@ -263,7 +235,6 @@ mod tests {
             gas_limit: 100_000,
             calls: vec![vec![call]],
             payer,
-            nonce_sequence,
             ..Default::default()
         };
         let sender_auth = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap().as_bytes();
@@ -272,7 +243,7 @@ mod tests {
     }
 
     fn send_request() -> Value {
-        send_request_paid_by(Some(Address::repeat_byte(0xaa)), 0)
+        send_request_paid_by(Some(Address::repeat_byte(0xaa)))
     }
 
     fn rejection_data(error: &ErrorObjectOwned) -> Value {
@@ -427,29 +398,9 @@ mod tests {
         let api =
             PayerApiImpl::new(everest_provider(), client(&sequencer), MockPayerChainState::new());
 
-        let error =
-            api.send_transaction(send_request_paid_by(None, 0)).await.expect_err("no payer");
+        let error = api.send_transaction(send_request_paid_by(None)).await.expect_err("no payer");
 
         assert_eq!(rejection_data(&error)["code"], "INVALID_TRANSACTION");
-        mock.assert_calls(0);
-    }
-
-    #[tokio::test]
-    async fn rejects_a_transaction_whose_first_phase_reverts_without_forwarding() {
-        let sequencer = MockServer::start();
-        let mock = sequencer.mock(|when, then| {
-            when.method(POST);
-            then.status(500);
-        });
-        let state =
-            failing_simulation(EthRpcErrorCode::ExecutionError.code(), "execution reverted");
-        let api = PayerApiImpl::new(everest_provider(), client(&sequencer), state);
-
-        let error = api.send_transaction(send_request()).await.expect_err("reverted");
-
-        let data = rejection_data(&error);
-        assert_eq!(data["code"], "EXECUTION_REVERTED");
-        assert_eq!(data["revert"], json!({ "phase": 0, "data": "0x" }));
         mock.assert_calls(0);
     }
 
@@ -473,7 +424,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn forwards_a_transaction_whose_nonce_cannot_be_read_without_simulating_it() {
+    async fn forwards_a_transaction_whose_nonce_cannot_be_read() {
         let sequencer = MockServer::start();
         let mock = sequencer.mock(|when, then| {
             when.method(POST).body_includes("payer_sendTransaction");
@@ -483,58 +434,6 @@ mod tests {
         state.expect_nonce().returning(|_, _| {
             Err(state_error(ErrorCode::InternalError.code(), "state unavailable"))
         });
-        state.expect_simulate().never();
-        let api = PayerApiImpl::new(everest_provider(), client(&sequencer), state);
-
-        api.send_transaction(send_request()).await.unwrap();
-
-        mock.assert_calls(1);
-    }
-
-    #[tokio::test]
-    async fn forwards_a_transaction_whose_simulation_cannot_run() {
-        let sequencer = MockServer::start();
-        let mock = sequencer.mock(|when, then| {
-            when.method(POST).body_includes("payer_sendTransaction");
-            rpc_result(then, json!({ "transactionHash": format!("0x{}", "11".repeat(32)) }));
-        });
-        let state = failing_simulation(ErrorCode::InternalError.code(), "state unavailable");
-        let api = PayerApiImpl::new(everest_provider(), client(&sequencer), state);
-
-        api.send_transaction(send_request()).await.unwrap();
-
-        mock.assert_calls(1);
-    }
-
-    #[tokio::test]
-    async fn forwards_a_queued_transaction_without_simulating_its_first_phase() {
-        let sequencer = MockServer::start();
-        let mock = sequencer.mock(|when, then| {
-            when.method(POST).body_includes("payer_sendTransaction");
-            rpc_result(then, json!({ "transactionHash": format!("0x{}", "11".repeat(32)) }));
-        });
-        let mut state = MockPayerChainState::new();
-        state.expect_nonce().returning(|_, _| Ok(U256::ZERO));
-        state.expect_simulate().never();
-        let api = PayerApiImpl::new(everest_provider(), client(&sequencer), state);
-
-        let queued = send_request_paid_by(Some(Address::repeat_byte(0xaa)), 1);
-        api.send_transaction(queued).await.unwrap();
-
-        mock.assert_calls(1);
-    }
-
-    #[tokio::test]
-    async fn forwards_a_transaction_whose_simulation_times_out() {
-        let sequencer = MockServer::start();
-        let mock = sequencer.mock(|when, then| {
-            when.method(POST).body_includes("payer_sendTransaction");
-            rpc_result(then, json!({ "transactionHash": format!("0x{}", "11".repeat(32)) }));
-        });
-        let state = failing_simulation(
-            EthRpcErrorCode::InvalidInput.code(),
-            "execution aborted (timeout = 5s)",
-        );
         let api = PayerApiImpl::new(everest_provider(), client(&sequencer), state);
 
         api.send_transaction(send_request()).await.unwrap();
