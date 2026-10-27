@@ -197,6 +197,32 @@ delay is measured for logging but is no longer included in the JSON output.
 | `zeronet.yaml` | Base Zeronet | Requires `FUNDER_KEY` |
 
 EIP-8430 examples require Everest activation and native transaction support on the target.
+
+`eip8430-swap-mainnet-snapshot.yaml` exercises app-style token swaps on an
+Everest-active local mainnet snapshot. The existing `uniswap_v3` workload accepts
+`native: true` (default: `false`): each native transaction contains one phase with
+an ERC20 approval for the exact input amount followed by the swap. It uses the
+existing random-direction amounts and real-token setup. The declared gas ceiling
+is 500,000; calibration measures the native batch receipt for pacing.
+
+Set `sender_count: 1` for a single actor, or `sender_count: 16` for actors
+contending on the same pool. All actors use the configured router and token pair.
+The existing setup wraps WETH, acquires the pair token and approves the router;
+the measured native batch still explicitly sets its exact allowance before each
+swap. Token inventories can run out during sustained random-direction traffic.
+These are synthetic load swaps with zero minimum output, not trading strategies.
+
+Native and ordinary swaps cannot share a router/token allowance in one run:
+native batches consume their exact approvals, while ordinary swaps rely on setup
+allowances. Configuration rejects overlapping positive-weight routes.
+
+Native swaps use `eth_sendRawTransaction` and cannot be combined with validity
+sidecars. They do not implement storage-predicate limit orders or timestamp
+windows. No contracts are deployed by this profile; use only a local snapshot
+with the configured contracts and test funds, never a public RPC.
+
+The transfer profiles (`eip8430-transfer.yaml` and the synthetic mainnet mix)
+have the following properties.
 They use the existing `Eip8130Signed` consensus implementation (type `0x79`), ECDSA EOA
 authentication, self-payment, and nonce key zero, sharing each sender's protocol nonce
 stream with ordinary transactions. Calibration submits the same native envelope as measured

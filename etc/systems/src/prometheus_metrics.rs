@@ -260,8 +260,9 @@ pub struct PrometheusBlockCollector {
 }
 
 impl PrometheusBlockCollector {
-    /// Starts polling an execution RPC head and scraping its Prometheus endpoint.
-    pub async fn start(rpc_url: Url, metrics_url: Url) -> Result<Self> {
+    /// Starts polling an execution RPC head and scraping its Prometheus endpoint at most once per
+    /// `scrape_interval`.
+    pub async fn start(rpc_url: Url, metrics_url: Url, scrape_interval: Duration) -> Result<Self> {
         let provider = RootProvider::<Base>::new_http(rpc_url);
         let client = reqwest::Client::new();
         let initial_head = provider.get_block_number().await?;
@@ -293,9 +294,10 @@ impl PrometheusBlockCollector {
                 }
                 tokio::select! {
                     // Rendering Reth's full endpoint is expensive enough to perturb 200ms block
-                    // production when requested continuously. Canonical block totals remain exact;
-                    // diagnostic counters are explicitly attributed across this scrape interval.
-                    _ = tokio::time::sleep(Duration::from_secs(1)) => {}
+                    // production when requested continuously, so callers bound the scrape rate.
+                    // Canonical block totals remain exact; diagnostic counters are explicitly
+                    // attributed across this scrape interval.
+                    _ = tokio::time::sleep(scrape_interval) => {}
                     changed = end_receiver.changed() => {
                         changed.wrap_err("metric collector completion channel closed")?;
                     }

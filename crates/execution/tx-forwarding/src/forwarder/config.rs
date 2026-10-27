@@ -11,11 +11,12 @@ pub(crate) const UNLIMITED_BATCH_BUFFER_LIMIT: usize = 1024;
 /// `base_insertValidatedTransaction`.
 /// An isolated request is sent immediately, but any other requests already
 /// waiting in the queue are drained into the same batch (capped at
-/// `max_batch_size`). When the sliding window rate limit is hit, incoming
-/// transactions buffer and flush as a single batch once the window opens.
+/// `max_batch_size`). While the rate limit holds the next send back, incoming
+/// transactions buffer and flush as a single batch when it is due.
 #[derive(Debug, Clone)]
 pub(crate) struct ForwarderConfig {
-    /// Maximum RPC requests per second per forwarder (sliding window). 0 = unlimited.
+    /// Average RPC requests per second per forwarder; after an idle second requests go out with
+    /// little spacing, which grows as the budget is spent. 0 = unlimited.
     pub(crate) max_rps: u32,
     /// Maximum transactions per RPC request. 0 = unlimited.
     pub(crate) max_batch_size: usize,

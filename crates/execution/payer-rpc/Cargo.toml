@@ -16,7 +16,6 @@ workspace = true
 # base
 base-common-consensus = { workspace = true, features = ["k256"] }
 base-execution-eip8130-rpc.workspace = true
-base-common-rpc-types.workspace = true
 base-execution-rpc.workspace = true
 base-common-chains.workspace = true
 base-node-runner.workspace = true
@@ -26,7 +25,6 @@ reth-storage-api.workspace = true
 reth-chainspec.workspace = true
 
 # alloy
-alloy-rpc-types-eth.workspace = true
 alloy-primitives.workspace = true
 alloy-consensus.workspace = true
 alloy-eips.workspace = true
@@ -43,15 +41,14 @@ tracing.workspace = true
 [dev-dependencies]
 # base
 base-node-runner = { workspace = true, features = ["test-utils"] }
-base-test-utils = { workspace = true, features = ["contracts"] }
 base-execution-chainspec.workspace = true
+base-test-utils.workspace = true
 
 # reth
 reth-provider = { workspace = true, features = ["test-utils"] }
 
 # alloy
 alloy-signer-local.workspace = true
-alloy-sol-types.workspace = true
 alloy-genesis.workspace = true
 alloy-signer.workspace = true
 

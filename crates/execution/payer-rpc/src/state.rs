@@ -2,7 +2,6 @@
 
 use alloy_eips::BlockId;
 use alloy_primitives::{Address, U256};
-use base_common_rpc_types::BaseTransactionRequest;
 use base_execution_eip8130_rpc::Eip8130EthApiOverrideServer;
 use jsonrpsee::{core::async_trait, types::ErrorObjectOwned};
 
@@ -12,13 +11,9 @@ use jsonrpsee::{core::async_trait, types::ErrorObjectOwned};
 pub trait PayerChainState: Send + Sync + 'static {
     /// The next unused nonce of `sender` in the `nonce_key` channel.
     async fn nonce(&self, sender: Address, nonce_key: U256) -> Result<U256, ErrorObjectOwned>;
-
-    /// Runs `request`, returning the simulation's JSON-RPC error when it reverts, is rejected, or
-    /// cannot run.
-    async fn simulate(&self, request: BaseTransactionRequest) -> Result<(), ErrorObjectOwned>;
 }
 
-/// [`PayerChainState`] over the node's EIP-8130 `eth_getTransactionCount` and `eth_call`.
+/// [`PayerChainState`] over the node's EIP-8130 `eth_getTransactionCount`.
 #[derive(Debug)]
 pub struct Eip8130ChainState<Api> {
     api: Api,
@@ -35,9 +30,5 @@ impl<Api> Eip8130ChainState<Api> {
 impl<Api: Eip8130EthApiOverrideServer> PayerChainState for Eip8130ChainState<Api> {
     async fn nonce(&self, sender: Address, nonce_key: U256) -> Result<U256, ErrorObjectOwned> {
         self.api.get_transaction_count(sender, Some(BlockId::latest()), Some(nonce_key)).await
-    }
-
-    async fn simulate(&self, request: BaseTransactionRequest) -> Result<(), ErrorObjectOwned> {
-        self.api.call(request, Some(BlockId::latest()), None, None).await.map(drop)
     }
 }
