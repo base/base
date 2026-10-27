@@ -93,6 +93,8 @@ The `L2Finalizer` struct tracks finalization by maintaining a `BTreeMap<u64, u64
 
 A derivation reset does not clear the map. The pipeline restarts from the reset's safe head, so L2 blocks at or below it are never re-derived and their entries would never be recreated; `L2Finalizer::retain_valid_after_reset()` keeps them instead. To keep the L1 range the retained safe head was built from, the actor records the inclusion block of each confirmed safe head with `L2Finalizer::confirm_safe_head()`.
 
+Keeping a candidate is not the same as proving it. An unchanged L2 safe head says which L2 chain the engine holds, not whether the L1 batch behind it is still canonical: an L1 reorg can replace the block a batch landed in, because sync-start only validates a block's epoch origin. Each candidate therefore stores the full L1 inclusion block, and before promoting the candidate the actor calls `L1CanonicalChain::is_canonical()` on it. A candidate whose inclusion block was replaced is dropped; a lookup error defers finalization to the next finalized L1 signal. Nothing is finalized on an unverified inclusion block. The lookup runs once per finalization event, not per derived block.
+
 ## Sequencer Actor
 
 The sequencer actor owns the block production loop. It runs a `tokio::select!` with five arms in priority order: cancellation, admin queries, the seal pipeline step, the build ticker (gated on `sealer.is_none()`), and initial reset retries before the main loop starts.
