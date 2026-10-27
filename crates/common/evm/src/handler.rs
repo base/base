@@ -1050,4 +1050,239 @@ mod tests {
             "stale authorizer transaction must not make the next EXTCODESIZE(authorizer) warm"
         );
     }
+    /// Fee settlement of one non-deposit transaction, read from the post-transaction state.
+    struct FeeFlow {
+        /// What the caller's balance dropped by, including the transferred `value`.
+        caller_paid: U256,
+        coinbase: U256,
+        base_fee_vault: U256,
+        operator_fee_vault: U256,
+        l1_fee_vault: U256,
+        gas_used: u64,
+    }
+
+    const FEE_FLOW_GAS_LIMIT: u64 = 100_000;
+    const FEE_FLOW_BASE_FEE: u64 = 1_000;
+    const FEE_FLOW_PRIORITY_FEE: u128 = 500;
+    const FEE_FLOW_VALUE: U256 = uint!(7_U256);
+    const FEE_FLOW_ENVELOPE: Bytes = bytes!("FACADE");
+
+    /// Chain context shared by the fee-flow fixtures: non-zero L1 fee scalars so the L1 fee
+    /// is observable, and Isthmus operator-fee scalars so the operator fee depends on gas.
+    fn fee_flow_l1_block_info() -> L1BlockInfo {
+        L1BlockInfo {
+            l2_block: Some(U256::ZERO),
+            l1_base_fee: U256::from(1_000),
+            l1_base_fee_scalar: U256::from(1_000),
+            l1_blob_base_fee: Some(U256::from(1)),
+            l1_blob_base_fee_scalar: Some(U256::from(1)),
+            operator_fee_scalar: Some(U256::from(2)),
+            operator_fee_constant: Some(U256::from(50)),
+            ..Default::default()
+        }
+    }
+
+    /// Runs a `caller` → `recipient` call under `upgrade` with a gas limit far above what the
+    /// transaction consumes. `recipient_code` is deployed at the recipient (empty for a plain
+    /// transfer). `fee_charge_disabled` mirrors the `eth_call` / `eth_estimateGas` simulation
+    /// configuration.
+    fn run_fee_flow(upgrade: BaseUpgrade, recipient_code: Bytes, fee_charge_disabled: bool) -> FeeFlow {
+        let caller = Address::repeat_byte(0x55);
+        let recipient = Address::repeat_byte(0x66);
+        let beneficiary = Address::repeat_byte(0x77);
+        let initial = U256::from(10u64.pow(18));
+
+        let mut db = InMemoryDB::default();
+        db.insert_account_info(caller, AccountInfo { balance: initial, ..Default::default() });
+        if !recipient_code.is_empty() {
+            db.insert_account_info(
+                recipient,
+                AccountInfo {
+                    code_hash: alloy_primitives::keccak256(&recipient_code),
+                    code: Some(Bytecode::new_raw(recipient_code)),
+                    ..Default::default()
+                },
+            );
+        }
+
+        let mut cfg = CfgEnv::new_with_spec(BaseSpecId::new(upgrade));
+        cfg.disable_fee_charge = fee_charge_disabled;
+        let mut evm = Context::base()
+            .with_db(db)
+            .with_chain(fee_flow_l1_block_info())
+            .with_block(BlockEnv {
+                basefee: FEE_FLOW_BASE_FEE,
+                beneficiary,
+                ..Default::default()
+            })
+            .with_cfg(cfg)
+            .build_base();
+
+        let tx = BaseTransaction::builder()
+            .base(
+                TxEnv::builder()
+                    .caller(caller)
+                    .kind(TxKind::Call(recipient))
+                    .value(FEE_FLOW_VALUE)
+                    .gas_limit(FEE_FLOW_GAS_LIMIT)
+                    .gas_price(FEE_FLOW_BASE_FEE as u128 + FEE_FLOW_PRIORITY_FEE)
+                    .gas_priority_fee(Some(FEE_FLOW_PRIORITY_FEE)),
+            )
+            .enveloped_tx(Some(FEE_FLOW_ENVELOPE))
+            .build_fill();
+        let outcome = evm.transact(tx).expect("transaction should execute");
+
+        let balance = |address: Address| {
+            outcome.state.get(&address).map(|account| account.info.balance).unwrap_or_default()
+        };
+        FeeFlow {
+            caller_paid: initial - balance(caller),
+            coinbase: balance(beneficiary),
+            base_fee_vault: balance(Predeploys::BASE_FEE_VAULT),
+            operator_fee_vault: balance(Predeploys::OPERATOR_FEE_VAULT),
+            l1_fee_vault: balance(Predeploys::L1_FEE_VAULT),
+            gas_used: outcome.result.tx_gas_used(),
+        }
+    }
+
+    /// The operator fee the fee-flow chain context charges for `gas` under `upgrade`.
+    fn fee_flow_operator_fee(gas: u64, upgrade: BaseUpgrade) -> U256 {
+        fee_flow_l1_block_info().operator_fee_charge(
+            &FEE_FLOW_ENVELOPE,
+            U256::from(gas),
+            BaseSpecId::new(upgrade),
+        )
+    }
+
+    /// `PUSH1 0 PUSH1 0 REVERT`: reverts immediately, leaving most of the gas limit unused.
+    const REVERTING_CODE: Bytes = bytes!("60006000fd");
+
+    /// Before Zenith every fee component is settled on the gas actually used, and the caller
+    /// is reimbursed the unused remainder of its gas limit.
+    #[rstest]
+    #[case::transfer(Bytes::new())]
+    #[case::revert(REVERTING_CODE)]
+    fn pre_zenith_fees_settle_on_gas_used(#[case] recipient_code: Bytes) {
+        const EFFECTIVE_GAS_PRICE: u128 = FEE_FLOW_BASE_FEE as u128 + FEE_FLOW_PRIORITY_FEE;
+        let upgrade = BaseUpgrade::Everest;
+
+        let flow = run_fee_flow(upgrade, recipient_code.clone(), false);
+        let gas_used = flow.gas_used;
+        assert!(gas_used < FEE_FLOW_GAS_LIMIT, "fixture must leave gas unused: {gas_used}");
+
+        let value_transferred = if recipient_code.is_empty() { FEE_FLOW_VALUE } else { U256::ZERO };
+        let operator_fee = fee_flow_operator_fee(gas_used, upgrade);
+        assert_eq!(flow.coinbase, U256::from(FEE_FLOW_PRIORITY_FEE * gas_used as u128));
+        assert_eq!(flow.base_fee_vault, U256::from(FEE_FLOW_BASE_FEE as u128 * gas_used as u128));
+        assert_eq!(flow.operator_fee_vault, operator_fee);
+        assert!(flow.l1_fee_vault > U256::ZERO, "fixture must charge an L1 fee");
+        assert_eq!(
+            flow.caller_paid,
+            value_transferred
+                + U256::from(EFFECTIVE_GAS_PRICE * gas_used as u128)
+                + flow.l1_fee_vault
+                + operator_fee,
+        );
+    }
+
+    /// From Zenith (gas-limit fee billing) the caller pays for its full `gas_limit` whether or
+    /// not the transaction uses it: no unused-gas reimbursement, and the coinbase tip, the base
+    /// fee burned to the vault and the operator fee are all computed on `gas_limit`. The L1
+    /// data fee is unchanged, and the execution result still reports the gas actually used.
+    #[rstest]
+    #[case::transfer(Bytes::new())]
+    #[case::revert(REVERTING_CODE)]
+    fn zenith_fees_settle_on_gas_limit(#[case] recipient_code: Bytes) {
+        const EFFECTIVE_GAS_PRICE: u128 = FEE_FLOW_BASE_FEE as u128 + FEE_FLOW_PRIORITY_FEE;
+        let upgrade = BaseUpgrade::Zenith;
+        assert!(BaseSpecId::new(upgrade).is_gas_limit_billing_enabled());
+        assert!(!BaseSpecId::new(BaseUpgrade::Everest).is_gas_limit_billing_enabled());
+
+        let before = run_fee_flow(BaseUpgrade::Everest, recipient_code.clone(), false);
+        let flow = run_fee_flow(upgrade, recipient_code.clone(), false);
+
+        // Execution itself is unchanged: same gas consumption, same L1 data fee.
+        assert_eq!(flow.gas_used, before.gas_used);
+        assert!(flow.gas_used < FEE_FLOW_GAS_LIMIT);
+        assert_eq!(flow.l1_fee_vault, before.l1_fee_vault);
+
+        let billed_gas = FEE_FLOW_GAS_LIMIT as u128;
+        let value_transferred = if recipient_code.is_empty() { FEE_FLOW_VALUE } else { U256::ZERO };
+        let operator_fee = fee_flow_operator_fee(FEE_FLOW_GAS_LIMIT, upgrade);
+        assert_eq!(flow.coinbase, U256::from(FEE_FLOW_PRIORITY_FEE * billed_gas));
+        assert_eq!(flow.base_fee_vault, U256::from(FEE_FLOW_BASE_FEE as u128 * billed_gas));
+        assert_eq!(flow.operator_fee_vault, operator_fee);
+        assert!(flow.operator_fee_vault > before.operator_fee_vault);
+        assert_eq!(
+            flow.caller_paid,
+            value_transferred
+                + U256::from(EFFECTIVE_GAS_PRICE * billed_gas)
+                + flow.l1_fee_vault
+                + operator_fee,
+            "the fee must be fixed by gas_limit, independent of execution",
+        );
+        // Everything the caller paid beyond value and L1 fee reached a fee recipient: billing
+        // on the limit neither mints nor burns ETH.
+        assert_eq!(
+            flow.caller_paid - value_transferred - flow.l1_fee_vault,
+            flow.coinbase + flow.base_fee_vault + flow.operator_fee_vault,
+        );
+    }
+
+    /// Fee-charge-disabled simulation (`eth_call`, `eth_estimateGas`) is untouched by gas-limit
+    /// billing: nothing is debited from the caller or paid to the coinbase, and the reported gas
+    /// stays the actual consumption, so gas estimation keeps converging on the real requirement.
+    #[test]
+    fn zenith_fee_charge_disabled_simulation_bills_nothing() {
+        let flow = run_fee_flow(BaseUpgrade::Zenith, Bytes::new(), true);
+        assert_eq!(flow.caller_paid, FEE_FLOW_VALUE);
+        assert_eq!(flow.coinbase, U256::ZERO);
+        assert!(flow.gas_used < FEE_FLOW_GAS_LIMIT);
+        assert_eq!(flow.gas_used, run_fee_flow(BaseUpgrade::Everest, Bytes::new(), true).gas_used);
+    }
+
+    /// Deposits pay no execution fee before or after Zenith: the depositor's balance only moves
+    /// by `mint` and `value`, and the coinbase receives nothing for the deposit's gas limit.
+    #[test]
+    fn zenith_deposit_pays_no_gas_limit_fee() {
+        let caller = Address::repeat_byte(0x55);
+        let recipient = Address::repeat_byte(0x66);
+        let beneficiary = Address::repeat_byte(0x77);
+        let mint = U256::from(1_000_000u64);
+
+        let mut db = InMemoryDB::default();
+        db.insert_account_info(caller, AccountInfo::default());
+        let mut evm = Context::base()
+            .with_db(db)
+            .with_chain(fee_flow_l1_block_info())
+            .with_block(BlockEnv {
+                basefee: FEE_FLOW_BASE_FEE,
+                beneficiary,
+                ..Default::default()
+            })
+            .with_cfg(CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Zenith)))
+            .build_base();
+
+        let tx = BaseTransaction::builder()
+            .base(
+                TxEnv::builder()
+                    .caller(caller)
+                    .kind(TxKind::Call(recipient))
+                    .value(FEE_FLOW_VALUE)
+                    .gas_limit(FEE_FLOW_GAS_LIMIT)
+                    .gas_price(FEE_FLOW_BASE_FEE as u128),
+            )
+            .source_hash(B256::from([1u8; 32]))
+            .mint(mint.to::<u128>())
+            .build_fill();
+        let outcome = evm.transact(tx).expect("deposit should execute");
+        assert!(outcome.result.is_success());
+
+        let balance = |address: Address| {
+            outcome.state.get(&address).map(|account| account.info.balance).unwrap_or_default()
+        };
+        assert_eq!(balance(caller), mint - FEE_FLOW_VALUE);
+        assert_eq!(balance(beneficiary), U256::ZERO);
+        assert_eq!(balance(Predeploys::BASE_FEE_VAULT), U256::ZERO);
+    }
 }

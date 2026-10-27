@@ -272,15 +272,12 @@ where
         };
 
         // Gas-limit fee billing: block gas accounting mirrors the fee. A non-deposit transaction
-        // occupies its full declared `gas_limit` in the block however much it consumed, so
+        // occupies the gas it reserved above in the block however much it consumed, so
         // `header.gas_used` and the receipt's `cumulative_gas_used` describe the quantity the
-        // sender was billed for and a block's gas fullness is known before execution. An
-        // EIP-8130 result already reports its billed gas (`gas_limit + payer_auth`), so it is
-        // left to the result.
-        let billed_gas = (self.is_gas_limit_billing()
-            && !is_deposit
-            && tx.tx().ty() != EIP8130_TRANSACTION_TYPE)
-            .then_some(tx.tx().gas_limit());
+        // sender was billed for and a block's gas fullness is known before execution. For
+        // EIP-8130 the reserved `gas_limit + payer_auth` is the same worst-case amount the
+        // payer is charged for (see `Eip8130Executor::settle_fees`).
+        let billed_gas = (self.is_gas_limit_billing() && !is_deposit).then_some(reserved_gas);
 
         // Fetch the depositor account from the database for the deposit nonce.
         // This *only* needs to be done post-Regolith for deposit transactions.
@@ -534,6 +531,95 @@ mod tests {
             base_chain_upgrades,
             receipt_builder,
         )
+    }
+
+    /// A signed-by-nobody legacy transaction from the pre-funded zero address with `nonce`.
+    fn legacy_tx(nonce: u64, gas_limit: u64) -> Recovered<BaseTxEnvelope> {
+        let tx_inner = TxLegacy { nonce, gas_limit, ..Default::default() };
+        Recovered::new_unchecked(
+            BaseTxEnvelope::Legacy(tx_inner.into_signed(Signature::new(
+                Default::default(),
+                Default::default(),
+                Default::default(),
+            ))),
+            Address::ZERO,
+        )
+    }
+
+    /// Fills a 250k-gas block with 100k-limit transfers under `upgrade`, returning the gas each
+    /// accepted transaction was charged against the block and the executor's final state. The
+    /// block schedules Jovian and Zenith at `timestamp`, so `upgrade` selects the active rules.
+    fn fill_block_with_transfers(upgrade: BaseUpgrade) -> (Vec<u64>, u64, Vec<u64>, bool) {
+        const TX_GAS_LIMIT: u64 = 100_000;
+        const BLOCK_GAS_LIMIT: u64 = 250_000;
+        const TIMESTAMP: u64 = 1746806402;
+
+        let mut db = prepare_jovian_db(0);
+        let base_chain_upgrades = ChainUpgrades::new(BaseUpgrade::mainnet().into_iter().chain(vec![
+            (BaseUpgrade::Jovian, ForkCondition::Timestamp(TIMESTAMP)),
+            (BaseUpgrade::Zenith, ForkCondition::Timestamp(TIMESTAMP)),
+        ]));
+        let receipt_builder = AlloyReceiptBuilder::default();
+        let mut executor = build_executor(
+            &mut db,
+            &receipt_builder,
+            &base_chain_upgrades,
+            BLOCK_GAS_LIMIT,
+            TIMESTAMP,
+        );
+        executor.evm.ctx_mut().cfg.spec = BaseSpecId::new(upgrade);
+        let billing = executor.is_gas_limit_billing();
+
+        let mut charged = Vec::new();
+        let mut third_fits = true;
+        for nonce in 0..3 {
+            match executor.execute_transaction(&legacy_tx(nonce, TX_GAS_LIMIT)) {
+                Ok(gas_output) => charged.push(gas_output.tx_gas_used()),
+                Err(BlockExecutionError::Validation(
+                    BlockValidationError::TransactionGasLimitMoreThanAvailableBlockGas {
+                        transaction_gas_limit,
+                        block_available_gas,
+                    },
+                )) => {
+                    assert_eq!(nonce, 2, "only the third transaction may be refused");
+                    assert_eq!(transaction_gas_limit, TX_GAS_LIMIT);
+                    assert_eq!(block_available_gas, BLOCK_GAS_LIMIT - 2 * TX_GAS_LIMIT);
+                    third_fits = false;
+                }
+                Err(err) => panic!("unexpected execution error: {err:?}"),
+            }
+        }
+        let cumulative =
+            executor.receipts.iter().map(|receipt| receipt.cumulative_gas_used()).collect();
+        assert!(billing == (upgrade == BaseUpgrade::Zenith));
+        (charged, executor.gas_used, cumulative, third_fits)
+    }
+
+    /// Before Zenith a block is charged what its transactions consume: three 100k-limit
+    /// transfers using 21k each fit a 250k block with room to spare.
+    #[test]
+    fn pre_zenith_block_gas_accounts_actual_usage() {
+        let (charged, gas_used, cumulative, third_fits) =
+            fill_block_with_transfers(BaseUpgrade::Jovian);
+        assert_eq!(charged, vec![21_000, 21_000, 21_000]);
+        assert_eq!(gas_used, 63_000);
+        assert_eq!(cumulative, vec![21_000, 42_000, 63_000]);
+        assert!(third_fits);
+    }
+
+    /// From Zenith (gas-limit fee billing) a non-deposit transaction is charged its full
+    /// declared `gas_limit` against the block: the `GasOutput` handed to the payload builder,
+    /// the executor's `gas_used` (the header's) and each receipt's `cumulative_gas_used` all
+    /// carry the limit, so the same three transfers fill the 250k block after two and the third
+    /// is refused before it executes — the block's fullness is known from gas limits alone.
+    #[test]
+    fn zenith_block_gas_accounts_gas_limit() {
+        let (charged, gas_used, cumulative, third_fits) =
+            fill_block_with_transfers(BaseUpgrade::Zenith);
+        assert_eq!(charged, vec![100_000, 100_000]);
+        assert_eq!(gas_used, 200_000);
+        assert_eq!(cumulative, vec![100_000, 200_000]);
+        assert!(!third_fits);
     }
 
     #[test]

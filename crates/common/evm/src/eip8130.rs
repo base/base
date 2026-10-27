@@ -1816,20 +1816,23 @@ impl Eip8130Executor {
     {
         // Sender-intrinsic + call gas, less the EIP-3529-capped refund, plus payer
         // authentication. Shared with the estimate path so they cannot diverge.
-        //
-        // Gas-limit fee billing instead bills the whole worst-case pre-charge: the full
+        let billable_gas = Self::billable_gas(outcome, calls);
+
+        // Gas-limit fee billing charges the whole worst-case pre-charge instead: the full
         // `gas_limit` plus payer authentication, exactly the gas `prepay` reserved, so the
-        // payer's refund below is zero and the fee is fixed before the `calls` run.
-        let billable_gas = if spec.is_gas_limit_billing_enabled() {
+        // payer's refund below is zero and the fee is fixed before the `calls` run. The
+        // result still reports `billable_gas`, the gas actually consumed; the block executor
+        // accounts the reserved gas against the block (see `BaseTxResult::billed_gas`).
+        let charged_gas = if spec.is_gas_limit_billing_enabled() {
             FeeCheck::max_chargeable_gas(outcome.gas_limit, outcome.payer_auth)
         } else {
-            Self::billable_gas(outcome, calls)
+            billable_gas
         };
 
-        let fee = U256::from(billable_gas)
+        let fee = U256::from(charged_gas)
             .checked_mul(U256::from(outcome.effective))
             .ok_or_else(|| BaseTransactionError::eip8130("EIP-8130 fee overflow"))?;
-        let base_fee_amount = U256::from(billable_gas)
+        let base_fee_amount = U256::from(charged_gas)
             .checked_mul(U256::from(outcome.base_fee))
             .ok_or_else(|| BaseTransactionError::eip8130("EIP-8130 base-fee amount overflow"))?;
         let priority_amount = fee
@@ -1839,7 +1842,7 @@ impl Eip8130Executor {
         let l1_cost =
             ctx.chain_mut().calculate_tx_l1_cost_with_fastlz_size(encoded, fastlz_size, spec);
         let operator_cost =
-            ctx.chain().operator_fee_charge(encoded, U256::from(billable_gas), spec);
+            ctx.chain().operator_fee_charge(encoded, U256::from(charged_gas), spec);
 
         // Refund the surplus of the worst-case pre-charge. The pre-charge bounds
         // every component above (full `gas_limit`/operator at the effective
@@ -2664,6 +2667,58 @@ mod tests {
             panic!("expected successful simulation, got {result:?}");
         };
         assert!(logs.is_empty(), "delegation updates emit no protocol logs");
+    }
+
+    /// From Zenith (gas-limit fee billing) an EIP-8130 payer is charged the whole worst-case
+    /// pre-charge — the full `gas_limit` (plus payer authentication, zero for self-pay) at the
+    /// effective price — however little gas the `calls` consume: the base-fee burn and the
+    /// coinbase tip are both computed on `gas_limit`, nothing is refunded, and the result still
+    /// reports the gas actually consumed.
+    #[test]
+    fn zenith_settles_eip8130_fees_on_gas_limit() {
+        let key = signing_key(0x78);
+        let sender = eoa_address(&key);
+        let target = address!("0x00000000000000000000000000000000000000c6");
+
+        let mut tx = base_tx();
+        tx.calls = vec![vec![Call { to: target, value: U256::ZERO, data: Bytes::new() }]];
+        let gas_limit = tx.gas_limit;
+        let priority_fee = tx.max_priority_fee_per_gas;
+        let effective = u128::from(BASE_FEE) + priority_fee;
+        assert!(effective <= tx.max_fee_per_gas, "fixture must not be capped by max_fee");
+        let signed = eoa_signed(tx, &key);
+        let initial = U256::from(10u64).pow(U256::from(18u64));
+
+        let settle = |zenith: bool| {
+            let evm = evm_with_accounts(initial, sender, &[(target, bytes!("00"))]);
+            let mut evm = if zenith { with_zenith(evm) } else { evm };
+            let outcome = evm.transact_raw(into_base_tx(&signed)).expect("tx should execute");
+            assert!(outcome.result.is_success());
+            let balance = |address: Address| {
+                outcome.state.get(&address).map(|acc| acc.info.balance).unwrap_or_default()
+            };
+            (
+                outcome.result.tx_gas_used(),
+                initial - balance(sender),
+                balance(BENEFICIARY),
+                balance(Predeploys::BASE_FEE_VAULT),
+            )
+        };
+
+        // Before Zenith the payer is charged for the gas used and refunded the rest.
+        let (gas_used, paid, tip, burned) = settle(false);
+        assert!(gas_used > 0 && gas_used < gas_limit, "fixture must leave gas unused");
+        assert_eq!(paid, U256::from(effective * u128::from(gas_used)));
+        assert_eq!(tip, U256::from(priority_fee * u128::from(gas_used)));
+        assert_eq!(burned, U256::from(u128::from(BASE_FEE) * u128::from(gas_used)));
+
+        // From Zenith the whole `gas_limit` is billed, while the reported gas stays actual.
+        let (zenith_gas_used, zenith_paid, zenith_tip, zenith_burned) = settle(true);
+        assert!(zenith_gas_used < gas_limit, "result must keep reporting actual consumption");
+        assert_eq!(zenith_paid, U256::from(effective * u128::from(gas_limit)));
+        assert_eq!(zenith_tip, U256::from(priority_fee * u128::from(gas_limit)));
+        assert_eq!(zenith_burned, U256::from(u128::from(BASE_FEE) * u128::from(gas_limit)));
+        assert_eq!(zenith_paid, zenith_tip + zenith_burned, "billing must neither mint nor burn");
     }
 
     #[test]
