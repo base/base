@@ -1,8 +1,16 @@
 //! CLI definition for the challenger binary.
 
+use base_cli_utils::{EnvAlias, NetworkEnv};
 use clap::Parser;
 use eyre::WrapErr;
 use reth_node_core::args::TraceArgs;
+
+/// Canonical network env vars accepted in addition to the `BASE_CHALLENGER_*` names.
+pub(crate) const ENV_ALIASES: &[EnvAlias] = &[
+    EnvAlias::new(NetworkEnv::L1_ETH_RPC, "BASE_CHALLENGER_L1_ETH_RPC"),
+    EnvAlias::new(NetworkEnv::L2_ETH_RPC, "BASE_CHALLENGER_L2_ETH_RPC"),
+    EnvAlias::new(NetworkEnv::PROVER_RPC, "BASE_CHALLENGER_ZK_RPC_URL"),
+];
 
 /// Base Challenger.
 #[derive(Parser)]
@@ -33,5 +41,20 @@ impl Cli {
             base_cli_utils::LogConfig::from(logging).init_with_trace_args(&traces, &[])?;
             base_challenger::ChallengerService::run(config).await
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::CommandFactory;
+
+    use super::*;
+
+    #[test]
+    fn env_aliases_target_declared_env_vars() {
+        let cmd = Cli::command();
+        for alias in ENV_ALIASES {
+            assert!(alias.is_declared_in(&cmd), "{} is not declared", alias.legacy);
+        }
     }
 }

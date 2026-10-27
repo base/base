@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use base_cli_utils::{LogConfig, RuntimeManager};
+use base_cli_utils::{EnvAlias, LogConfig, NetworkEnv, RuntimeManager};
 use base_proof_worker::{
     DEFAULT_JOB_DISCOVERY_LOCK_DURATION_SECONDS, DEFAULT_JOB_DISCOVERY_MAX_CONCURRENT_JOBS,
 };
@@ -23,6 +23,15 @@ use uuid::Uuid;
 
 base_cli_utils::define_log_args!("BASE_PROVER_ZK_HOST");
 base_cli_utils::define_metrics_args!("BASE_PROVER_ZK_HOST", 7303);
+
+/// Canonical network env vars accepted in addition to the existing names.
+pub(crate) const ENV_ALIASES: &[EnvAlias] = &[
+    EnvAlias::new(NetworkEnv::L1_ETH_RPC, "L1_NODE_ADDRESS"),
+    EnvAlias::new(NetworkEnv::L1_BEACON_RPC, "L1_BEACON_ADDRESS"),
+    EnvAlias::new(NetworkEnv::L2_ETH_RPC, "L2_NODE_ADDRESS"),
+    EnvAlias::new(NetworkEnv::ROLLUP_RPC, "BASE_CONSENSUS_ADDRESS"),
+    EnvAlias::new(NetworkEnv::PROVER_WORKER_RPC, "PROVER_SERVICE_ENDPOINT"),
+];
 
 /// ZK prover host worker binary.
 #[derive(Parser)]
@@ -261,5 +270,20 @@ impl WorkerArgs {
         );
         host.run_until_cancelled(cancel).await;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::CommandFactory;
+
+    use super::*;
+
+    #[test]
+    fn env_aliases_target_declared_env_vars() {
+        let cmd = Cli::command();
+        for alias in ENV_ALIASES {
+            assert!(alias.is_declared_in(&cmd), "{} is not declared", alias.legacy);
+        }
     }
 }

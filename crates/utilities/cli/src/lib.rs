@@ -30,6 +30,9 @@ pub use tracing::{LogfmtFormatter, init_test_tracing};
 mod version;
 pub use version::Version;
 
+mod network_env;
+pub use network_env::{EnvAlias, EnvAliasConflict, NetworkEnv};
+
 mod cli;
 
 mod runtime;

@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use alloy_primitives::{Address, B256};
-use base_cli_utils::{LogConfig, RuntimeManager};
+use base_cli_utils::{EnvAlias, LogConfig, NetworkEnv, RuntimeManager};
 #[cfg(any(target_os = "linux", feature = "local"))]
 use base_common_chains::rollup_config;
 #[cfg(any(target_os = "linux", feature = "local"))]
@@ -45,6 +45,15 @@ use uuid::Uuid;
 
 base_cli_utils::define_log_args!("BASE_PROVER_NITRO_HOST");
 base_cli_utils::define_metrics_args!("BASE_PROVER_NITRO_HOST", 7300);
+
+/// Canonical network env vars accepted in addition to the existing names.
+pub(crate) const ENV_ALIASES: &[EnvAlias] = &[
+    EnvAlias::new(NetworkEnv::L1_ETH_RPC, "L1_ETH_URL"),
+    EnvAlias::new(NetworkEnv::L1_BEACON_RPC, "L1_BEACON_URL"),
+    EnvAlias::new(NetworkEnv::L2_ETH_RPC, "L2_ETH_URL"),
+    EnvAlias::new(NetworkEnv::ROLLUP_RPC, "L2_NODE_URL"),
+    EnvAlias::new(NetworkEnv::PROVER_WORKER_RPC, "PROVER_SERVICE_ENDPOINT"),
+];
 
 /// Nitro TEE prover host binary.
 #[derive(Parser)]
@@ -442,6 +451,9 @@ enum WorkerTransportMode {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(any(target_os = "linux", feature = "local"))]
+    use clap::CommandFactory;
+
     use super::*;
 
     fn runtime_args(extra: &[&str]) -> Vec<String> {
@@ -505,5 +517,14 @@ mod tests {
         .unwrap();
         let config = runtime.registration_health_config().unwrap();
         assert_eq!(config.pending_image_hash, Some(B256::repeat_byte(1)));
+    }
+
+    #[test]
+    #[cfg(any(target_os = "linux", feature = "local"))]
+    fn env_aliases_target_declared_env_vars() {
+        let cmd = Cli::command();
+        for alias in ENV_ALIASES {
+            assert!(alias.is_declared_in(&cmd), "{} is not declared", alias.legacy);
+        }
     }
 }

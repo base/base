@@ -15,3 +15,12 @@ for `--instance-cache-ttl-cycles` cycles
 speed up cleanup for genuinely removed instances but increase exposure to
 transient AWS/ALB flakes; longer TTLs protect against flakes but delay real
 cleanup.
+
+## Canonical network env vars
+
+Network endpoints can also be set with the canonical `BASE_*` names shared by the
+proof services. The existing name keeps working; if both are set they must match.
+
+| Canonical | Existing |
+| --- | --- |
+| `BASE_L1_ETH_RPC` | `BASE_REGISTRAR_L1_RPC_URL` |

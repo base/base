@@ -11,6 +11,7 @@ CLI utilities for Base binaries.
 - **`register_version_metrics!`**: Registers `base_info{version="...",binary="..."}` Prometheus metric.
 - **`define_log_args!`**: Generates a `LogArgs` struct with env-var-prefixed logging flags.
 - **`define_metrics_args!`**: Generates a `MetricsArgs` struct with env-var-prefixed Prometheus flags.
+- **`NetworkEnv` / `EnvAlias`**: Canonical network env var names (`BASE_L1_ETH_RPC`, `BASE_ROLLUP_RPC`, ...) and aliasing onto a binary's existing env vars without mutating the process environment. Use `run_cli_main!(Cli, aliases = ALIASES)` or `EnvAlias::parse::<Cli>(ALIASES)`.
 - **`RuntimeManager`**: Tokio runtime creation and OS signal handling (SIGINT + SIGTERM) with `CancellationToken`-based cooperative shutdown.
 
 ## Usage
