@@ -8,8 +8,8 @@ use tracing::instrument;
 
 use super::{
     AerodromeClPayload, B20TransferPayload, CalldataPayload, DoubleCounterPayload, Erc20Payload,
-    OsakaPayload, Payload, PrecompilePayload, SeededRng, StoragePayload, TransferPayload,
-    UniswapV3Payload, chain_prep::ChainPrepContext,
+    OsakaPayload, Payload, PrecompilePayload, RevertProbePayload, SeededRng, StoragePayload,
+    TransferPayload, UniswapV3Payload, chain_prep::ChainPrepContext,
 };
 use crate::{
     BaselineError,
@@ -25,6 +25,15 @@ pub(crate) struct SelectedPayload {
 }
 
 impl SelectedPayload {
+    /// Builds a fixed payload for `tx_type`, bypassing weighted selection.
+    ///
+    /// Used for cohorts that always send one transaction shape, such as the validity
+    /// priority-lead cohort's probe. The payload is not registered with any generator, so
+    /// [`Payload::prepare`] and [`Payload::teardown`] never run for it.
+    pub(crate) fn from_tx_type(tx_type: &TxType, b20_run_salt: Option<B256>) -> Self {
+        Self { payload: WorkloadGenerator::payload_for(tx_type, b20_run_salt) }
+    }
+
     /// Returns true when this payload uses the runner-supplied recipient address.
     pub(crate) fn uses_runner_recipient(&self) -> bool {
         self.payload.uses_runner_recipient()
@@ -69,104 +78,89 @@ impl WorkloadGenerator {
 
         for tx_config in transactions {
             let weight_pct = (tx_config.weight as f64 / total_weight as f64) * 100.0;
-
-            match &tx_config.tx_type {
-                TxType::Transfer => {
-                    generator = generator.with_payload(TransferPayload::default(), weight_pct);
-                }
-                TxType::Eip8430Transfer => {
-                    generator = generator.with_payload(super::Eip8430TransferPayload, weight_pct);
-                }
-                TxType::Calldata { max_size, repeat_count } => {
-                    let payload = CalldataPayload::new(*max_size).with_repeat_count(*repeat_count);
-                    generator = generator.with_payload(payload, weight_pct);
-                }
-                TxType::Erc20 { contract } => {
-                    generator = generator.with_payload(
-                        Erc20Payload::new(*contract, U256::from(1000), U256::from(10000)),
-                        weight_pct,
-                    );
-                }
-                TxType::Storage { contract, slots_per_tx } => {
-                    generator = generator
-                        .with_payload(StoragePayload::new(*contract, *slots_per_tx), weight_pct);
-                }
-                TxType::DoubleCounter { contract } => {
-                    generator =
-                        generator.with_payload(DoubleCounterPayload::new(*contract), weight_pct);
-                }
-                TxType::Precompile { target, blake2f_rounds, iterations, looper_contract } => {
-                    let payload = PrecompilePayload::with_options(
-                        target.clone(),
-                        *blake2f_rounds,
-                        *iterations,
-                        *looper_contract,
-                    );
-                    generator = generator.with_payload(payload, weight_pct);
-                }
-                TxType::B20 => {
-                    let payload = b20_run_salt.map_or_else(
-                        || B20TransferPayload::pending(U256::from(1), U256::from(1)),
-                        |run_salt| B20TransferPayload::new(run_salt, U256::from(1), U256::from(1)),
-                    );
-                    generator = generator.with_payload(payload, weight_pct);
-                }
-                TxType::Osaka { target } => {
-                    generator =
-                        generator.with_payload(OsakaPayload::new(target.clone()), weight_pct);
-                }
-                TxType::UniswapV3 {
-                    native,
-                    router,
-                    token_in,
-                    token_out,
-                    fee,
-                    min_amount,
-                    max_amount,
-                    reverse_min_amount,
-                    reverse_max_amount,
-                } => {
-                    generator = generator.with_payload(
-                        UniswapV3Payload::new(
-                            *router,
-                            *token_in,
-                            *token_out,
-                            *fee,
-                            *min_amount,
-                            *max_amount,
-                            Some((*reverse_min_amount, *reverse_max_amount)),
-                        )
-                        .with_native(*native),
-                        weight_pct,
-                    );
-                }
-                TxType::AerodromeCl {
-                    router,
-                    token_in,
-                    token_out,
-                    tick_spacing,
-                    min_amount,
-                    max_amount,
-                    reverse_min_amount,
-                    reverse_max_amount,
-                } => {
-                    generator = generator.with_payload(
-                        AerodromeClPayload::new(
-                            *router,
-                            *token_in,
-                            *token_out,
-                            *tick_spacing,
-                            *min_amount,
-                            *max_amount,
-                            Some((*reverse_min_amount, *reverse_max_amount)),
-                        ),
-                        weight_pct,
-                    );
-                }
-            }
+            generator
+                .payloads
+                .push((Self::payload_for(&tx_config.tx_type, b20_run_salt), weight_pct));
         }
 
         Ok(generator)
+    }
+
+    /// Builds the payload for one transaction type.
+    ///
+    /// For B-20, a `None` salt installs a pending payload whose run salt is filled during
+    /// [`Self::prepare_all`]; `Some` applies the salt immediately.
+    pub fn payload_for(tx_type: &TxType, b20_run_salt: Option<B256>) -> Arc<dyn Payload> {
+        match tx_type {
+            TxType::Transfer => Arc::new(TransferPayload::default()),
+            TxType::Eip8430Transfer => Arc::new(super::Eip8430TransferPayload),
+            TxType::Calldata { max_size, repeat_count } => {
+                Arc::new(CalldataPayload::new(*max_size).with_repeat_count(*repeat_count))
+            }
+            TxType::Erc20 { contract } => {
+                Arc::new(Erc20Payload::new(*contract, U256::from(1000), U256::from(10000)))
+            }
+            TxType::Storage { contract, slots_per_tx } => {
+                Arc::new(StoragePayload::new(*contract, *slots_per_tx))
+            }
+            TxType::DoubleCounter { contract } => Arc::new(DoubleCounterPayload::new(*contract)),
+            TxType::RevertProbe { contract, gas_limit } => {
+                Arc::new(RevertProbePayload::new(*contract, *gas_limit))
+            }
+            TxType::Precompile { target, blake2f_rounds, iterations, looper_contract } => {
+                Arc::new(PrecompilePayload::with_options(
+                    target.clone(),
+                    *blake2f_rounds,
+                    *iterations,
+                    *looper_contract,
+                ))
+            }
+            TxType::B20 => Arc::new(b20_run_salt.map_or_else(
+                || B20TransferPayload::pending(U256::from(1), U256::from(1)),
+                |run_salt| B20TransferPayload::new(run_salt, U256::from(1), U256::from(1)),
+            )),
+            TxType::Osaka { target } => Arc::new(OsakaPayload::new(target.clone())),
+            TxType::UniswapV3 {
+                native,
+                router,
+                token_in,
+                token_out,
+                fee,
+                min_amount,
+                max_amount,
+                reverse_min_amount,
+                reverse_max_amount,
+            } => Arc::new(
+                UniswapV3Payload::new(
+                    *router,
+                    *token_in,
+                    *token_out,
+                    *fee,
+                    *min_amount,
+                    *max_amount,
+                    Some((*reverse_min_amount, *reverse_max_amount)),
+                )
+                .with_native(*native),
+            ),
+            TxType::AerodromeCl {
+                router,
+                token_in,
+                token_out,
+                tick_spacing,
+                min_amount,
+                max_amount,
+                reverse_min_amount,
+                reverse_max_amount,
+            } => Arc::new(AerodromeClPayload::new(
+                *router,
+                *token_in,
+                *token_out,
+                *tick_spacing,
+                *min_amount,
+                *max_amount,
+                Some((*reverse_min_amount, *reverse_max_amount)),
+            )),
+        }
     }
 
     /// Runs [`Payload::prepare`] for every configured payload.
@@ -264,6 +258,13 @@ mod tests {
             TxConfig { weight: 1, tx_type: TxType::B20 },
             TxConfig {
                 weight: 1,
+                tx_type: TxType::RevertProbe {
+                    contract: Address::repeat_byte(0x12),
+                    gas_limit: 2_000_000,
+                },
+            },
+            TxConfig {
+                weight: 1,
                 tx_type: TxType::UniswapV3 {
                     native: false,
                     router: Address::repeat_byte(0x20),
@@ -300,8 +301,41 @@ mod tests {
 
         assert_eq!(
             generator.payload_names(),
-            vec!["transfer", "calldata", "erc20", "b20", "uniswap_v3", "aerodrome_cl"]
+            vec![
+                "transfer",
+                "calldata",
+                "erc20",
+                "b20",
+                "revert_probe",
+                "uniswap_v3",
+                "aerodrome_cl"
+            ]
         );
+    }
+
+    #[test]
+    fn fixed_payload_generates_through_the_shared_generator() {
+        let contract = Address::repeat_byte(0x12);
+        let mut generator = WorkloadGenerator::from_tx_configs(
+            WorkloadConfig::new("test").with_seed(1),
+            &[TxConfig { weight: 1, tx_type: TxType::Transfer }],
+            None,
+        )
+        .expect("valid configs");
+        let probe = SelectedPayload::from_tx_type(
+            &TxType::RevertProbe { contract, gas_limit: 777_000 },
+            None,
+        );
+
+        assert!(!probe.uses_runner_recipient());
+        let request = generator.generate_selected_payload(
+            &probe,
+            Address::repeat_byte(0x01),
+            Address::repeat_byte(0x02),
+        );
+        assert_eq!(request.to, Some(contract.into()));
+        assert_eq!(request.gas, Some(777_000));
+        assert_eq!(generator.payload_names(), vec!["transfer"], "fixed payload is not installed");
     }
 
     #[test]

@@ -8,6 +8,7 @@
 #   just load-test real-token                            - Real-token swap load test on devnet
 #   just load-test real-token sepolia                    - Real-token swap load test on sepolia
 #   just load-test validity-stress                       - 64-predicate local devnet stress test
+#   just load-test gas-limit-pricing                     - Reverting high-tip probes vs honest validity txs
 #   just load-test recover                               - Recover funds from devnet test accounts
 #   just load-test recover sepolia                       - Recover funds from sepolia test accounts
 #   just load-test real-token-recover sepolia            - Recover real-token funds from sepolia test accounts
@@ -152,6 +153,46 @@ validity-stress *args:
     mutator_pid=$!
 
     echo "Running validity stress test with rendered config: $rendered_config"
+    cargo run -p base-load-tester-bin --bin base-load-tester -- "$rendered_config" {{args}}
+
+# Deploy DoubleCounter and run the gas-limit pricing demo: a priority-lead cohort of high-tip
+# reverting probes competing with honest validity transactions. Set LOAD_TEST_OUTPUT=<path> to
+# keep the JSON summary with its per-cohort breakdown.
+gas-limit-pricing *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    if [ -z "${FUNDER_KEY:-}" ]; then
+        export FUNDER_KEY=0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d
+    fi
+
+    contracts_dir="crates/utilities/test-utils/contracts"
+    template="crates/infra/load-tests/examples/gas-limit-pricing.yaml.template"
+    rendered_config="$(mktemp "${TMPDIR:-/tmp}/base-gas-limit-pricing.XXXXXX.yaml")"
+    trap 'rm -f "$rendered_config"' EXIT
+
+    echo "Installing and building Foundry dependencies..."
+    (cd "$contracts_dir" && forge soldeer install && forge build)
+
+    echo "Deploying DoubleCounter to the running devnet..."
+    deploy_output="$(
+        cd "$contracts_dir"
+        forge script script/DeployDoubleCounter.s.sol:DeployDoubleCounter \
+            --rpc-url http://localhost:7545 \
+            --private-key "$FUNDER_KEY" \
+            --broadcast 2>&1
+    )"
+    printf '%s\n' "$deploy_output"
+    counter="$(printf '%s\n' "$deploy_output" | awk '$1 == "DoubleCounter:" { print $2; exit }')"
+    if [[ ! "$counter" =~ ^0x[[:xdigit:]]{40}$ ]]; then
+        echo "failed to parse DoubleCounter address from forge output" >&2
+        exit 1
+    fi
+
+    cargo run --quiet -p base-load-tests --example render_validity_stress -- \
+        --predicates all-true "$template" "$counter" "$rendered_config"
+
+    echo "Running gas-limit pricing demo with rendered config: $rendered_config"
     cargo run -p base-load-tester-bin --bin base-load-tester -- "$rendered_config" {{args}}
 
 # Run load test against a network indefinitely (Ctrl-C to stop)

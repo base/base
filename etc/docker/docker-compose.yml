@@ -304,6 +304,7 @@ services:
       - --metrics=0.0.0.0:${L2_BUILDER_METRICS_PORT}
       - --builder.enable-resource-metering
       - --builder.payload-builder-cutover
+      - --builder.predicate-eval-hard-cutoff-ms=${L2_BUILDER_PREDICATE_EVAL_HARD_CUTOFF_MS:-10}
       - --txpool.nolocals
       - --rollup.txpool-max-inflight-delegated-slots=32768
       - --txpool.pending-max-count=200000

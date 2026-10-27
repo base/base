@@ -2,7 +2,7 @@ use alloy_primitives::U256;
 use base_execution_txpool::{DEFAULT_MAX_VALIDITY_PREDICATES, ValidityOperator};
 use serde::{Deserialize, Serialize};
 
-use super::parsing::parse_address;
+use super::{TxTypeConfig, parsing::parse_address};
 use crate::{
     runner::{
         BlockNumberBound, PredicateAddress, PredicateValue, SlotTemplate, ValidityPredicateTemplate,
@@ -49,6 +49,12 @@ pub struct ValidityConfig {
     /// Priority-tip divisor for validity-cohort measured transactions.
     pub priority_fee_divisor: u128,
 
+    /// Payload generated for every priority-lead sender instead of the weighted `transactions`
+    /// mix, so the lead cohort can send a different transaction shape (for example
+    /// `revert_probe`) at a higher tip than the bulk. Requires `priority_lead_ratio > 0`.
+    /// Payloads that need chain preparation (B-20, swaps) are not prepared for this slot.
+    pub priority_lead_payload: Option<TxTypeConfig>,
+
     /// Predicate templates attached to each validity-bearing transaction.
     ///
     /// Must be non-empty when `ratio > 0`, and must contain at most
@@ -64,6 +70,7 @@ impl Default for ValidityConfig {
             priority_lead_ratio: 0.0,
             priority_lead_multiplier: 1,
             priority_fee_divisor: 1,
+            priority_lead_payload: None,
             predicates: Vec::new(),
         }
     }
@@ -252,6 +259,14 @@ impl ValidityConfig {
         if self.ratio > 0.0 && self.predicates.is_empty() {
             return Err(BaselineError::Config(
                 "validity.predicates must be non-empty when validity.ratio > 0".into(),
+            ));
+        }
+        if self.priority_lead_payload.is_some()
+            && (self.ratio <= 0.0 || self.priority_lead_ratio <= 0.0)
+        {
+            return Err(BaselineError::Config(
+                "validity.priority_lead_payload requires validity.ratio > 0 and validity.priority_lead_ratio > 0"
+                    .into(),
             ));
         }
         // Surface parse errors (operators, addresses, values) eagerly.
@@ -614,10 +629,31 @@ mod tests {
             priority_lead_ratio: 0.0,
             priority_lead_multiplier: 1,
             priority_fee_divisor: 1,
+            priority_lead_payload: None,
             predicates: vec![predicate; DEFAULT_MAX_VALIDITY_PREDICATES + 1],
         };
         let err = config.validate().unwrap_err();
         assert!(err.to_string().contains("exceeding the maximum"));
+    }
+
+    #[test]
+    fn validate_rejects_lead_payload_without_lead_ratio() {
+        let predicate = ValidityPredicateConfig::Balance {
+            address: PredicateAddressConfig::Sender,
+            op: ">=".into(),
+            value: U256::ZERO,
+        };
+        let mut config = ValidityConfig {
+            ratio: 1.0,
+            priority_lead_payload: Some(TxTypeConfig::Transfer),
+            predicates: vec![predicate],
+            ..Default::default()
+        };
+        let err = config.validate().unwrap_err();
+        assert!(err.to_string().contains("priority_lead_payload requires"));
+
+        config.priority_lead_ratio = 0.25;
+        assert!(config.validate().is_ok());
     }
 
     #[test]
@@ -628,6 +664,7 @@ mod tests {
             priority_lead_ratio: 0.0,
             priority_lead_multiplier: 1,
             priority_fee_divisor: 1,
+            priority_lead_payload: None,
             predicates: vec![ValidityPredicateConfig::Balance {
                 address: PredicateAddressConfig::Sender,
                 op: "==".into(),

@@ -29,13 +29,14 @@ use super::{
     BlockPulse, BlockWatcher, CanonicalHeadWatcher, DisplaySnapshot, FlashblockWatcher, GasPricer,
     InclusionPulse, InclusionSource, LoadRunner, LoadTestDisplay, LoadTestStage,
     PipelineStartConfig, PreparedTransaction, PresignBuffer, QueuedSubmitFailures, ResultsTracker,
-    SignedBatch, SignedTransaction, SubmissionPipeline, SubmitEvent, TxType, ValidityRouter,
+    SignedBatch, SignedTransaction, SubmissionPipeline, SubmitCohort, SubmitEvent, TxType,
+    ValidityRouter,
 };
 use crate::{
     BaselineError, Result,
     metrics::{MetricsCollector, MetricsSummary, PacingCycleObservation, PacingCycleSource},
     rpc::{BaseFeeExt, QueryProvider},
-    workload::{KeyStream, SeededRng, WorkloadGenerator},
+    workload::{KeyStream, SeededRng, SelectedPayload, WorkloadGenerator},
 };
 
 const NONCE_RPC_TIMEOUT: Duration = Duration::from_secs(10);
@@ -86,6 +87,9 @@ struct SignedSender {
 #[derive(Debug)]
 struct PresignProducerState {
     generator: WorkloadGenerator,
+    /// Fixed payload for the validity priority-lead cohort, built once per run. `None` keeps
+    /// the lead cohort on the weighted mix.
+    lead_payload: Option<SelectedPayload>,
     recipient_keys: Option<KeyStream>,
     recipient_rng: SeededRng,
 }
@@ -702,6 +706,11 @@ impl LoadRunner {
             self.b20_run_salt,
         )?;
         let producer_generator = std::mem::replace(&mut self.generator, replacement_generator);
+        let lead_payload = self
+            .config
+            .validity_priority_lead_payload
+            .as_ref()
+            .map(|tx_type| SelectedPayload::from_tx_type(tx_type, self.b20_run_salt));
         let producer_recipient_keys = self.recipient_keys.take();
         let producer_recipient_rng = std::mem::take(&mut self.recipient_rng);
 
@@ -726,6 +735,7 @@ impl LoadRunner {
         let producer_task = tokio::spawn(Self::stream_presigned_transactions(
             PresignProducerState {
                 generator: producer_generator,
+                lead_payload,
                 recipient_keys: producer_recipient_keys,
                 recipient_rng: producer_recipient_rng,
             },
@@ -1312,8 +1322,11 @@ impl LoadRunner {
         Ok(block.header.number)
     }
 
+    /// Prepares `txs_per_sender` requests per sender. Priority-lead validity senders draw from
+    /// `lead_payload` when one is configured; every other sender draws from the weighted mix.
     fn build_sender_jobs(
         generator: &mut WorkloadGenerator,
+        lead_payload: Option<&SelectedPayload>,
         recipient_keys: &mut Option<KeyStream>,
         recipient_rng: &mut SeededRng,
         config: &PresignConfig,
@@ -1345,9 +1358,16 @@ impl LoadRunner {
             let pair_index = Self::b20_partner_index(sender_index, sender_count);
             let pair_recipient = config.sender_addresses[pair_index];
             let cohort = config.validity_router.cohort_for_sender(from);
+            let fixed_payload = match cohort {
+                SubmitCohort::ValidityPassPriorityLead => lead_payload,
+                SubmitCohort::Plain | SubmitCohort::ValidityPass => None,
+            };
             let mut prepared_txs = Vec::with_capacity(txs_per_sender);
             for _ in 0..txs_per_sender {
-                let payload = generator.select_payload()?;
+                let payload = match fixed_payload {
+                    Some(payload) => payload.clone(),
+                    None => generator.select_payload()?,
+                };
                 let sender_pool_recipient =
                     if payload.uses_pair_recipient() { pair_recipient } else { ring_recipient };
                 let to = if payload.uses_runner_recipient() {
@@ -1515,6 +1535,7 @@ impl LoadRunner {
             };
             let sender_jobs = Self::build_sender_jobs(
                 &mut producer_state.generator,
+                producer_state.lead_payload.as_ref(),
                 &mut producer_state.recipient_keys,
                 &mut producer_state.recipient_rng,
                 &config,
@@ -2277,7 +2298,7 @@ mod tests {
         time::{Duration, Instant},
     };
 
-    use alloy_primitives::{Address, Bytes, TxHash};
+    use alloy_primitives::{Address, Bytes, TxHash, U256};
     use tokio::sync::mpsc;
 
     use super::{
@@ -2291,6 +2312,7 @@ mod tests {
             SUBMIT_BATCH_QUEUE_BUFFER, SignedBatch, SignedTransaction, SubmissionPipeline,
             SubmitCohort, SubmitEvent,
         },
+        workload::SelectedPayload,
     };
 
     /// Native envelope selection and fresh-recipient values survive preparation.
@@ -2331,9 +2353,16 @@ mod tests {
         let mut generator = runner.generator;
         let mut keys = runner.recipient_keys;
         let mut rng = crate::workload::SeededRng::new(42);
-        let jobs =
-            LoadRunner::build_sender_jobs(&mut generator, &mut keys, &mut rng, &presign, 1, 0)
-                .expect("native requests must prepare");
+        let jobs = LoadRunner::build_sender_jobs(
+            &mut generator,
+            None,
+            &mut keys,
+            &mut rng,
+            &presign,
+            1,
+            0,
+        )
+        .expect("native requests must prepare");
         assert_eq!(jobs.len(), 2, "exactly one job per sender must be prepared");
         for (i, job) in jobs.iter().enumerate() {
             assert_eq!(job.start_nonce, [7, 9][i], "existing sender nonce must be retained");
@@ -2350,6 +2379,101 @@ mod tests {
                 "pacing must use calibrated gas rather than ceiling"
             );
         }
+    }
+
+    /// Priority-lead validity senders send the configured lead payload with its declared gas
+    /// limit; bulk validity senders stay on the weighted mix.
+    #[tokio::test]
+    async fn lead_payload_replaces_the_mix_for_priority_lead_senders_only() {
+        let counter = Address::repeat_byte(0xcc);
+        let config = crate::runner::LoadConfig {
+            account_count: 32,
+            transactions: vec![crate::runner::TxConfig {
+                weight: 100,
+                tx_type: crate::runner::TxType::DoubleCounter { contract: counter },
+            }],
+            validity_ratio: 1.0,
+            validity_predicates: vec![crate::runner::ValidityPredicateTemplate::FlashblockIndex {
+                op: base_execution_txpool::ValidityOperator::GreaterThanOrEqual,
+                value: U256::ZERO,
+            }],
+            validity_priority_lead_ratio: 0.5,
+            validity_priority_lead_payload: Some(crate::runner::TxType::RevertProbe {
+                contract: counter,
+                gas_limit: 2_000_000,
+            }),
+            ..crate::runner::LoadConfig::devnet()
+        };
+        config.validate().expect("lead payload config is valid");
+        let runner = LoadRunner::new(config.clone()).expect("runner must initialize");
+        let addresses: Vec<_> = runner.accounts.accounts().iter().map(|a| a.address).collect();
+        let (_, rx) = tokio::sync::watch::channel(1);
+        let (signed_chunk_tx, _) = mpsc::channel(1);
+        let (_, nonce_reset_rx) = mpsc::channel(1);
+        let presign = super::PresignConfig {
+            sender_addresses: addresses.clone(),
+            sender_next_nonces: vec![0; addresses.len()],
+            sender_generations: vec![0; addresses.len()],
+            signers: Arc::clone(&runner.signers),
+            nonce_managers: Arc::clone(&runner.nonce_managers),
+            chain_id: config.chain_id,
+            base_fee_rx: rx,
+            max_gas_price: config.max_gas_price,
+            validity_priority_lead_multiplier: 20,
+            validity_priority_fee_divisor: 1,
+            estimated_gas: 50_000,
+            fresh_recipient_ratio: 0.0,
+            signed_chunk_tx,
+            nonce_reset_rx,
+            validity_router: crate::runner::ValidityRouter::new(&config),
+            query_client: runner.client.clone(),
+        };
+        let lead_payload = config
+            .validity_priority_lead_payload
+            .as_ref()
+            .map(|tx_type| SelectedPayload::from_tx_type(tx_type, None));
+        let mut generator = runner.generator;
+        let mut keys = runner.recipient_keys;
+        let mut rng = crate::workload::SeededRng::new(42);
+
+        let jobs = LoadRunner::build_sender_jobs(
+            &mut generator,
+            lead_payload.as_ref(),
+            &mut keys,
+            &mut rng,
+            &presign,
+            2,
+            0,
+        )
+        .expect("requests must prepare");
+
+        let mut lead_txs = 0;
+        let mut bulk_txs = 0;
+        for job in &jobs {
+            for tx in &job.prepared_txs {
+                assert_eq!(tx.to, Some(counter), "both payloads target the counter");
+                assert_eq!(tx.estimated_gas, 50_000, "pacing keeps the calibrated estimate");
+                assert!(!tx.validity.is_empty(), "every sender is on the validity path");
+                match tx.cohort {
+                    SubmitCohort::ValidityPassPriorityLead => {
+                        lead_txs += 1;
+                        assert_eq!(tx.gas_limit, 2_000_000, "probe keeps its declared limit");
+                        assert_eq!(tx.data.as_ref(), &crate::workload::REVERT_PROBE_SELECTOR);
+                    }
+                    SubmitCohort::ValidityPass => {
+                        bulk_txs += 1;
+                        assert_eq!(tx.gas_limit, crate::workload::DOUBLE_COUNTER_GAS_LIMIT);
+                        assert_eq!(
+                            tx.data,
+                            crate::workload::DoubleCounterPayload::encode_increment2()
+                        );
+                    }
+                    SubmitCohort::Plain => panic!("validity_ratio 1.0 leaves no plain senders"),
+                }
+            }
+        }
+        assert!(lead_txs > 0 && bulk_txs > 0, "seeded routing must populate both cohorts");
+        assert_eq!(lead_txs + bulk_txs, 64);
     }
 
     #[test]

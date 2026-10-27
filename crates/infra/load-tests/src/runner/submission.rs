@@ -94,8 +94,9 @@ impl SubmitCohort {
     pub const fn to_metric_label(self) -> crate::metrics::SubmitCohortLabel {
         match self {
             Self::Plain => crate::metrics::SubmitCohortLabel::Plain,
-            Self::ValidityPass | Self::ValidityPassPriorityLead => {
-                crate::metrics::SubmitCohortLabel::ValidityPass
+            Self::ValidityPass => crate::metrics::SubmitCohortLabel::ValidityPass,
+            Self::ValidityPassPriorityLead => {
+                crate::metrics::SubmitCohortLabel::ValidityPassPriorityLead
             }
         }
     }
@@ -989,6 +990,7 @@ impl SubmissionPipeline {
                 .map(|signed| SentTransaction {
                     tx_hash: signed.tx_hash,
                     from: signed.from,
+                    gas_limit: signed.gas_limit,
                     estimated_gas: signed.estimated_gas,
                     measured,
                     cohort: signed.cohort,
@@ -1266,6 +1268,7 @@ impl SubmissionPipeline {
             ctx.results_tracker.sent_transactions(vec![SentTransaction {
                 tx_hash,
                 from: signed.from,
+                gas_limit: signed.gas_limit,
                 estimated_gas: signed.estimated_gas,
                 measured,
                 cohort: signed.cohort,

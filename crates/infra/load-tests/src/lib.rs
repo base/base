@@ -38,10 +38,11 @@ pub use metrics::{
 mod workload;
 pub use workload::{
     AccountPool, AerodromeClPayload, B20TransferPayload, CalldataPayload, ChainPrepContext,
-    ChainPrepOutputs, DOUBLE_COUNTER_GAS_LIMIT, DoubleCounterPayload, EIP8430_TRANSFER_GAS_LIMIT,
-    Eip8430TransferPayload, Erc20Payload, FundedAccount, KeyStream, OsakaPayload, Payload,
-    PrecompileLooper, PrecompilePayload, RealTokenAcquisition, RealTokenPairTokenSetup,
-    RealTokenRecoverySummary, RealTokenSetup, SeededRng, StoragePayload, TransferPayload,
+    ChainPrepOutputs, DEFAULT_REVERT_PROBE_GAS_LIMIT, DOUBLE_COUNTER_GAS_LIMIT,
+    DoubleCounterPayload, EIP8430_TRANSFER_GAS_LIMIT, Eip8430TransferPayload, Erc20Payload,
+    FundedAccount, KeyStream, OsakaPayload, Payload, PrecompileLooper, PrecompilePayload,
+    REVERT_PROBE_SELECTOR, RealTokenAcquisition, RealTokenPairTokenSetup, RealTokenRecoverySummary,
+    RealTokenSetup, RevertProbePayload, SeededRng, StoragePayload, TransferPayload,
     UniswapV3Payload, WorkloadGenerator, encode_erc20_approve, recover_real_tokens,
 };
 

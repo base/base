@@ -206,6 +206,7 @@ mod tests {
         tracker.sent_transactions(vec![SentTransaction {
             tx_hash,
             from: sender,
+            gas_limit: 21_000,
             estimated_gas: 21_000,
             measured: true,
             cohort: SubmitCohort::Plain,

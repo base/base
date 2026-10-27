@@ -27,6 +27,9 @@ just load-test real-token
 # Deploy DoubleCounter and run the 64-predicate validity stress profile
 just load-test validity-stress
 
+# Deploy DoubleCounter and run the gas-limit pricing demo (reverting probes vs honest txs)
+LOAD_TEST_OUTPUT=/tmp/gas-limit-pricing.json just load-test gas-limit-pricing
+
 # Run real-token swaps against a network with predeployed contracts
 FUNDER_KEY=0x... just load-test real-token sepolia
 
@@ -188,6 +191,7 @@ delay is measured for logging but is no longer included in the JSON output.
 | `validity-devnet.yaml` | Local devnet | Validity (conditional) workload; routes half the senders through `base_sendRawTransactionValidity`. Run with `FUNDER_KEY=... just load-test run validity-devnet` |
 | `real-token-devnet.yaml.template` | Local devnet | Rendered by `just load-test real-token` after deploying the devnet WETH/USDC harness |
 | `validity-stress.yaml.template` | Local devnet | Rendered by `just load-test validity-stress` with a freshly deployed `DoubleCounter` |
+| `gas-limit-pricing.yaml.template` | Local devnet | Rendered by `just load-test gas-limit-pricing`; high-tip reverting probes compete with honest validity transactions |
 | `sepolia.yaml` | Base Sepolia | Requires `FUNDER_KEY` |
 | `real-token-sepolia.yaml` | Base Sepolia | Uses predeployed WETH/USDC and the Uniswap V3 swap router; run with `just load-test real-token sepolia`; recover with `just load-test real-token-recover sepolia` |
 | `real-token-mainnet-snapshot.yaml` | Local/shadow Base mainnet snapshot | Wraps funded ETH into WETH, acquires USDC, then runs random-direction Uniswap V3 and Aerodrome CL swaps; run with `just load-test real-token mainnet-snapshot` |
@@ -498,8 +502,43 @@ slots, masks, and offsets accept hex (`0x...`) or decimal strings. At most 64
 predicates may be attached per transaction.
 
 The final summary's `by_cohort` breakdown reports confirmed transactions split
-across the `plain` and `validity_pass` cohorts, so plain traffic can be compared
-against validity traffic when the workload is enabled.
+across the `plain`, `validity_pass`, and `validity_pass_priority_lead` cohorts, so plain
+traffic can be compared against validity traffic when the workload is enabled. Each entry
+carries `confirmed`, `reverted`, `total_gas` (metered `gas_used`), `total_gas_limit` (declared
+limits), `total_fee_wei` (`gas_used * effective_gas_price` summed from receipts), and block
+latency percentiles. The CLI prints the same breakdown as one `By cohort:` line per cohort,
+with the fee in wei and ETH.
+
+##### Gas-limit pricing demo
+
+`just load-test gas-limit-pricing [--continuous ...]` drives the scenario described in the
+[gas limit pricing guide](../../../docs/guides/GAS_LIMIT_PRICING.md): it deploys
+`DoubleCounter`, renders `gas-limit-pricing.yaml.template`, and runs 400 validity senders for
+60 s against the builder RPC on port 7545. Every transaction carries 63 always-true storage reads
+plus the `block_number` expiry bound ingress requires, so predicate evaluation always passes. The
+30% priority-lead cohort uses `validity.priority_lead_payload` to send `revert_probe` calls at a
+20x tip: a call to `DoubleCounter` with the selector `0xdeadbeef`, which it does not implement, so
+the probe reverts after ~21-25k gas while declaring a 2M gas limit. The other 70% send honest
+`double_counter` increments at the baseline tip.
+
+```yaml
+validity:
+  ratio: 1.0
+  priority_lead_ratio: 0.30
+  priority_lead_multiplier: 20
+  priority_lead_payload:        # overrides `transactions` for the priority-lead cohort only
+    type: revert_probe
+    contract: "0x..."           # DoubleCounter
+    gas_limit: 2000000          # default when omitted
+```
+
+Read the `by_cohort` output as the payment comparison: under metered billing the
+`validity_pass_priority_lead` cohort shows `total_gas` near `21-25k * confirmed` and a
+`total_fee_wei` far below what its `total_gas_limit` would cost at its tip, while `validity_pass`
+pays for the gas it used. Under gas-limit pricing the probes' `total_gas` and `total_fee_wei`
+rise to their declared limits. Set `LOAD_TEST_OUTPUT=<path>` to keep the JSON summary.
+`priority_lead_payload` accepts any transaction type, but payloads that need chain preparation
+(B-20, swaps) are not prepared for the lead cohort.
 
 ##### Delayed (fixed future) validity spike
 

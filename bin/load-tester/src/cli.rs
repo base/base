@@ -29,6 +29,9 @@ const RESCUE_CONCURRENCY: usize = 32;
 /// Default number of accounts to scan during rescue.
 const DEFAULT_RESCUE_SCAN_COUNT: usize = 1000;
 
+/// Wei per ETH, for printing cohort fees in ETH.
+const WEI_PER_ETH: f64 = 1e18;
+
 /// The Base load tester CLI.
 #[derive(Parser, Clone, Debug)]
 #[command(
@@ -310,6 +313,21 @@ fn present_load_test_summary(summary: &MetricsSummary) {
             summary.throughput.success_rate()
         );
         println!("Gas: total={}  avg/tx={}", summary.gas.total_gas, summary.gas.avg_gas);
+        if !summary.by_cohort.is_empty() {
+            println!("By cohort:");
+            for cohort in &summary.by_cohort {
+                println!(
+                    "  {}: confirmed={}  reverted={}  gas_used={}  gas_limit={}  fee_wei={}  fee_eth={:.6}",
+                    cohort.cohort.as_str(),
+                    cohort.confirmed,
+                    cohort.reverted,
+                    cohort.total_gas,
+                    cohort.total_gas_limit,
+                    cohort.total_fee_wei,
+                    cohort.total_fee_wei as f64 / WEI_PER_ETH,
+                );
+            }
+        }
         if pacing.undrained_transactions > 0 {
             println!(
                 "Undrained inventory: transactions={}  gas={}",

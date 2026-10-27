@@ -240,3 +240,7 @@ L2_BASE_DENIM_BLOCK=25
 # used for future hardfork feature testing. `just devnet up zenith` defaults this to 100.
 # Leave unset to avoid setting base.zenith during genesis generation.
 # L2_BASE_ZENITH_BLOCK=100
+# Optional: per-flashblock hard budget (ms) for validity-predicate evaluation on the single-mode
+# builder (`--builder.predicate-eval-hard-cutoff-ms`, default 10). The gas limit pricing demo
+# lowers it so a modest probe flood exhausts the budget; see docs/guides/GAS_LIMIT_PRICING.md.
+# L2_BUILDER_PREDICATE_EVAL_HARD_CUTOFF_MS=10

@@ -610,6 +610,7 @@ impl LoadRunner {
                 | TxType::Erc20 { .. }
                 | TxType::Storage { .. }
                 | TxType::DoubleCounter { .. }
+                | TxType::RevertProbe { .. }
                 | TxType::B20
                 | TxType::Precompile { .. }
                 | TxType::Osaka { .. } => {}
@@ -632,6 +633,7 @@ impl LoadRunner {
                 | TxType::Erc20 { .. }
                 | TxType::Storage { .. }
                 | TxType::DoubleCounter { .. }
+                | TxType::RevertProbe { .. }
                 | TxType::B20
                 | TxType::Precompile { .. }
                 | TxType::Osaka { .. } => {}
