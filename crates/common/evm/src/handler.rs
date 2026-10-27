@@ -423,7 +423,7 @@ mod tests {
     use alloy_primitives::uint;
     use base_common_consensus::Predeploys;
     use revm::{
-        InspectEvm,
+        ExecuteEvm, InspectEvm,
         bytecode::Bytecode,
         context::{BlockEnv, CfgEnv, Context, TxEnv},
         database::InMemoryDB,
