@@ -56,8 +56,11 @@ const VISUALIZER_METRICS: &[&str] = &[
     "reth_base_builder_validity_predicate_evaluations_total_outcome_matched",
     "reth_base_builder_validity_predicate_evaluations_total_outcome_not_satisfied",
     "reth_base_builder_validity_predicate_evaluations_total_outcome_read_error",
+    "reth_base_builder_validity_predicate_evaluations_total_outcome_rescan_budget_exhausted",
     "reth_base_builder_validity_predicate_evaluations_total_outcome_rescan_matched",
     "reth_base_builder_validity_predicate_evaluations_total_outcome_rescan_not_satisfied",
+    "reth_base_builder_validity_predicate_evaluations_total_outcome_rescan_read_error",
+    "reth_base_builder_validity_predicate_evaluations_total_outcome_unsupported",
     "reth_base_builder_validity_predicate_rescan_duration_avg",
     "reth_consensus_engine_beacon_backpressure_active",
     "reth_consensus_engine_beacon_block_insert_total_duration_avg",
@@ -538,7 +541,7 @@ reth_base_builder_validity_candidate_handling_duration_count 10
             );
         }
         assert!(!PrometheusBlockCollector::is_visualizer_metric(
-            "reth_base_builder_validity_predicate_evaluations_total_outcome_unsupported"
+            "reth_base_builder_validity_predicate_evaluations_total"
         ));
     }
 }
