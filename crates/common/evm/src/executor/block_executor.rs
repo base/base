@@ -588,7 +588,7 @@ mod tests {
         if upgrade != BaseUpgrade::Zenith {
             executor.evm.ctx_mut().block.timestamp = U256::from(TIMESTAMP - 1);
         }
-        let billing = executor.is_gas_limit_billing();
+        let billing = BaseSpecId::new(upgrade).is_gas_limit_billing_enabled();
 
         let mut charged = Vec::new();
         let mut third_fits = true;

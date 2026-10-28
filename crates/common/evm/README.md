@@ -51,9 +51,9 @@ Open questions the proof of concept does not settle:
 - EIP-3529 storage-clearing and EIP-7702 refunds have no economic effect: they cannot lower the
   limit a sender must declare, and nothing is reimbursed. Keeping the incentive would need
   opcode-level repricing rather than a refund.
-- ERC-4337 bundlers pay for the bundle's `gas_limit` while the EntryPoint refunds measured
+- ERC-4337 bundlers pay for the bundle's `gas_limit` while the `EntryPoint` refunds measured
   `actualGas + preVerificationGas` per op, so the slack lands on the bundler until
-  `preVerificationGas` or the EntryPoint accounting changes.
+  `preVerificationGas` or the `EntryPoint` accounting changes.
 - `eth_simulateV1` reports reserved gas because reth never sets `disable_fee_charge` for it, and
   `Eip8130Executor::execute` settles fees regardless of that flag (pre-existing).
 - Header `gas_used` now counts reserved gas, so the EIP-1559 base fee reacts to reserved demand
