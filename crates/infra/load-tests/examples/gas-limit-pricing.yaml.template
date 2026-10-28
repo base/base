@@ -2,16 +2,16 @@
 # Rendered by `just load-test gas-limit-pricing`; do not run this template directly.
 #
 # Every sender submits validity transactions carrying always-true predicates. The 10% priority-lead
-# cohort sends `revert_probe` calls: a 20x tip, a 500k declared gas limit (about 23x what the call
-# uses), and a selector `DoubleCounter` does not implement, so each probe passes its predicates
-# and reverts after ~21-25k gas. The remaining 90% send honest `double_counter` increments at the
+# cohort sends `revert_arb` calls: a 20x tip, a 500k declared gas limit (about 23x what the call
+# uses), and a selector `DoubleCounter` does not implement, so each reverting arb passes its predicates
+# and reverts after ~21-25k gas. The remaining 90% send regular `double_counter` increments at the
 # baseline tip. The summary's `by_cohort` breakdown compares what each cohort reserved, used, and
 # paid.
 #
 # Sized for the devnet: 200 ms blocks with a 6,000,000 block gas limit, and a builder started with
 # L2_BUILDER_PREDICATE_EVAL_HARD_CUTOFF_MS=2 (about 40 predicate evaluations per block at ~0.05 ms
-# each), so the ~20 probe senders are evaluated first every block and most honest candidates are
-# deferred for `budget_exhausted`, while enough honest transactions still land to compare fees.
+# each), so the ~20 reverting-arb senders are evaluated first every block and most regular candidates are
+# deferred for `budget_exhausted`, while enough regular transactions still land to compare fees.
 
 transaction_submission_rpcs:
   - "http://localhost:7545"
@@ -31,7 +31,7 @@ max_concurrent_submit_requests: 64
 batch_size: 1
 duration: "60s"
 seed: 8675309
-# 1 ETH per sender: the pool admits a probe only when the sender can cover
+# 1 ETH per sender: the pool admits a reverting arb only when the sender can cover
 # gas_limit * max_fee for every one of its in-flight transactions.
 funding_amount: "1000000000000000000"
 
@@ -46,7 +46,7 @@ validity:
   priority_lead_multiplier: 20
   priority_fee_divisor: 1
   priority_lead_payload:
-    type: revert_probe
+    type: revert_arb
     contract: "__DOUBLE_COUNTER__"
     gas_limit: 500000
   predicates:

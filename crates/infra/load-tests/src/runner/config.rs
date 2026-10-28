@@ -181,10 +181,10 @@ pub enum TxType {
         contract: Address,
     },
     /// Call with an unimplemented selector that reverts at dispatch while reserving `gas_limit`.
-    RevertProbe {
+    RevertArb {
         /// Contract whose selector dispatch rejects the call.
         contract: Address,
-        /// Declared gas limit carried by every probe.
+        /// Declared gas limit carried by every reverting arb.
         gas_limit: u64,
     },
     /// Precompile call.
@@ -626,9 +626,9 @@ mod tests {
 
     #[test]
     fn validate_rejects_lead_payload_without_lead_cohort() {
-        let probe = TxType::RevertProbe { contract: Address::repeat_byte(0x11), gas_limit: 1 };
+        let arb = TxType::RevertArb { contract: Address::repeat_byte(0x11), gas_limit: 1 };
         let mut config = LoadConfig::devnet();
-        config.validity_priority_lead_payload = Some(probe);
+        config.validity_priority_lead_payload = Some(arb);
         assert!(config.validate().is_err(), "no validity senders means no lead cohort");
 
         config.validity_ratio = 1.0;

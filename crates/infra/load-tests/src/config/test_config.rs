@@ -16,7 +16,7 @@ use crate::{
     rpc::MAX_BATCH_RPC_SIZE,
     runner::{TxConfig, TxType},
     utils::{BaselineError, Result},
-    workload::{DEFAULT_REVERT_PROBE_GAS_LIMIT, RealTokenSetup},
+    workload::{DEFAULT_REVERT_ARB_GAS_LIMIT, RealTokenSetup},
 };
 
 /// Configuration for a load test, loadable from YAML.
@@ -295,14 +295,14 @@ pub enum TxTypeConfig {
     },
 
     /// Call to `contract` with a selector no test contract implements, so it reverts at
-    /// dispatch after ~21-25k gas while reserving `gas_limit`. Models a searcher probe whose
+    /// dispatch after ~21-25k gas while reserving `gas_limit`. Models a searcher reverting arb whose
     /// opportunity is gone; pair it with `validity.priority_lead_payload` for the gas-limit
     /// pricing demo.
-    RevertProbe {
+    RevertArb {
         /// Contract whose selector dispatch rejects the call (for example `DoubleCounter`).
         contract: Address,
-        /// Declared gas limit carried by every probe.
-        #[serde(default = "default_revert_probe_gas_limit")]
+        /// Declared gas limit carried by every reverting arb.
+        #[serde(default = "default_revert_arb_gas_limit")]
         gas_limit: u64,
     },
 
@@ -412,13 +412,13 @@ const fn default_storage_slots_per_tx() -> u32 {
     10
 }
 
-const fn default_revert_probe_gas_limit() -> u64 {
-    DEFAULT_REVERT_PROBE_GAS_LIMIT
+const fn default_revert_arb_gas_limit() -> u64 {
+    DEFAULT_REVERT_ARB_GAS_LIMIT
 }
 
-/// Lower bound on a revert probe's declared gas limit: the intrinsic cost of a call carrying a
-/// four-byte selector, below which the probe cannot even be included.
-const MIN_REVERT_PROBE_GAS_LIMIT: u64 = 21_064;
+/// Lower bound on a revert arb's declared gas limit: the intrinsic cost of a call carrying a
+/// four-byte selector, below which the reverting arb cannot even be included.
+const MIN_REVERT_ARB_GAS_LIMIT: u64 = 21_064;
 
 /// Upper bound on `slots_per_tx` so the payload's gas limit
 /// (`slots_per_tx * 23_000 + 30_000`) stays under the ~30M per-tx block cap.
@@ -803,13 +803,13 @@ impl TestConfig {
             TxTypeConfig::DoubleCounter { contract } => {
                 TxType::DoubleCounter { contract: *contract }
             }
-            TxTypeConfig::RevertProbe { contract, gas_limit } => {
-                if *gas_limit < MIN_REVERT_PROBE_GAS_LIMIT {
+            TxTypeConfig::RevertArb { contract, gas_limit } => {
+                if *gas_limit < MIN_REVERT_ARB_GAS_LIMIT {
                     return Err(BaselineError::Config(format!(
-                        "revert_probe gas_limit must be >= {MIN_REVERT_PROBE_GAS_LIMIT}"
+                        "revert_arb gas_limit must be >= {MIN_REVERT_ARB_GAS_LIMIT}"
                     )));
                 }
-                TxType::RevertProbe { contract: *contract, gas_limit: *gas_limit }
+                TxType::RevertArb { contract: *contract, gas_limit: *gas_limit }
             }
             TxTypeConfig::Precompile { target, iterations } => {
                 let looper_contract = if *iterations > 1 {
@@ -1609,7 +1609,7 @@ validity:
     }
 
     #[test]
-    fn revert_probe_lead_payload_round_trips_to_runtime() {
+    fn revert_arb_lead_payload_round_trips_to_runtime() {
         let yaml = r#"
 transaction_submission_rpcs: http://localhost:7545
 transactions:
@@ -1621,7 +1621,7 @@ validity:
   priority_lead_ratio: 0.3
   priority_lead_multiplier: 20
   priority_lead_payload:
-    type: revert_probe
+    type: revert_arb
     contract: "0x1111111111111111111111111111111111111111"
     gas_limit: 2000000
   predicates:
@@ -1633,48 +1633,48 @@ validity:
         let contract = address!("1111111111111111111111111111111111111111");
         assert!(matches!(
             config.validity.priority_lead_payload,
-            Some(TxTypeConfig::RevertProbe { contract: c, gas_limit: 2_000_000 }) if c == contract
+            Some(TxTypeConfig::RevertArb { contract: c, gas_limit: 2_000_000 }) if c == contract
         ));
 
         let load = config.to_load_config(Some(1337)).unwrap();
         load.validate().unwrap();
         assert!(matches!(
             load.validity_priority_lead_payload,
-            Some(TxType::RevertProbe { contract: c, gas_limit: 2_000_000 }) if c == contract
+            Some(TxType::RevertArb { contract: c, gas_limit: 2_000_000 }) if c == contract
         ));
         assert!(
             matches!(load.transactions[0].tx_type, TxType::DoubleCounter { .. }),
-            "the weighted mix stays on the honest payload"
+            "the weighted mix stays on the regular payload"
         );
     }
 
     #[test]
-    fn revert_probe_gas_limit_defaults_and_rejects_sub_intrinsic_values() {
+    fn revert_arb_gas_limit_defaults_and_rejects_sub_intrinsic_values() {
         let yaml = config_yaml(
             r#"
 transactions:
   - weight: 100
-    type: revert_probe
+    type: revert_arb
     contract: "0x1111111111111111111111111111111111111111"
 "#,
         );
         let load = TestConfig::from_yaml(&yaml).unwrap().to_load_config(Some(1337)).unwrap();
         assert!(matches!(
             load.transactions[0].tx_type,
-            TxType::RevertProbe { gas_limit: DEFAULT_REVERT_PROBE_GAS_LIMIT, .. }
+            TxType::RevertArb { gas_limit: DEFAULT_REVERT_ARB_GAS_LIMIT, .. }
         ));
 
         let yaml = config_yaml(
             r#"
 transactions:
   - weight: 100
-    type: revert_probe
+    type: revert_arb
     contract: "0x1111111111111111111111111111111111111111"
     gas_limit: 21000
 "#,
         );
         let error = TestConfig::from_yaml(&yaml).unwrap().to_load_config(Some(1337)).unwrap_err();
-        assert!(error.to_string().contains("revert_probe gas_limit must be >="), "{error}");
+        assert!(error.to_string().contains("revert_arb gas_limit must be >="), "{error}");
     }
 
     #[test]

@@ -3,21 +3,21 @@
 #
 # Reproduces the problem the rule solves and shows the rule closing it, on one devnet:
 #
-#   1. A flood of "probe" validity transactions (10% of senders) bids a 20x priority fee,
+#   1. A flood of "reverting arb" validity transactions (10% of senders) bids a 20x priority fee,
 #      declares a 500,000 gas limit, passes 64 predicates, and reverts after ~22k gas.
-#      Honest validity transactions (90% of senders) bid the market tip, declare 100,000 gas,
+#      Regular validity transactions (90% of senders) bid the market tip, declare 100,000 gas,
 #      pass the same predicates, and succeed (`DoubleCounter.increment2`).
-#   2. Before Zenith activates (metered billing), the probes sort to the front of every
+#   2. Before Zenith activates (metered billing), the reverting arbs sort to the front of every
 #      flashblock, consume the builder's predicate-evaluation budget
 #      (`--builder.predicate-eval-hard-cutoff-ms`) and execution window, and pay the sequencer
-#      `20x tip * ~22k gas` each: about what one honest transaction pays.
+#      `20x tip * ~22k gas` each: about what one regular transaction pays.
 #   3. After Zenith activates (gas limit pricing), the same flood pays `20x tip * 500,000`
-#      per probe, win or lose. The builder's validity-flow priority-fee revenue and the probe
-#      cohort's fees rise by roughly `500,000 / 22,000`; the honest cohort's by `100,000 / ~45,000`.
+#      per reverting arb, win or lose. The builder's validity-flow priority-fee revenue and the reverting arb
+#      cohort's fees rise by roughly `500,000 / 22,000`; the regular cohort's by `100,000 / ~45,000`.
 #
 # The load generator does not adapt to prices, so predicate-budget deferrals look alike in both
 # phases; what the demo shows is that the behaviour that causes them stops being cheap. The
-# economic response (fewer probes at high tips) is measured on mainnet, not here.
+# economic response (fewer reverting arbs at high tips) is measured on mainnet, not here.
 #
 # Usage (from the repository root):
 #   L2_BUILDER_PREDICATE_EVAL_HARD_CUTOFF_MS=2 L2_BASE_ZENITH_BLOCK=3000 just devnet up-single zenith
@@ -151,7 +151,7 @@ import json, os, sys
 
 out = os.environ["OUT_DIR"]
 phases = (["everest"] if os.environ["EVEREST_RAN"] == "true" else []) + ["zenith"]
-PROBE, HONEST = "validity_pass_priority_lead", "validity_pass"
+ARB, REGULAR = "validity_pass_priority_lead", "validity_pass"
 ETH = 10**18
 
 def load(path):
@@ -183,7 +183,7 @@ for phase in phases:
     by = cohorts(phase)
     print(f"--- {phase}: per-cohort settlement (from receipts) and inclusion latency ---")
     print(f"{'cohort':<30}{'confirmed':>10}{'reverted':>9}{'gas used':>14}{'gas limit':>14}{'tip/tx (ETH)':>15}{'fee/tx (ETH)':>15}{'p50':>8}{'p95':>8}{'max':>8}")
-    for label, name in ((PROBE, "probes (20x tip, 500k limit)"), (HONEST, "honest (1x tip, 100k limit)")):
+    for label, name in ((ARB, "reverting arbs (20x tip, 500k limit)"), (REGULAR, "regular (1x tip, 100k limit)")):
         c = by.get(label)
         if not c:
             failures.append(f"{phase}: no confirmed transactions in cohort {label}")
@@ -215,34 +215,34 @@ def tip_per_tx(c):
 def fee_per_tx(c):
     return int(c.get("total_fee_wei", 0)) / c["confirmed"]
 
-# The problem: probes are evaluated first, so honest transactions wait.
+# The problem: reverting arbs are evaluated first, so regular transactions wait.
 for phase in phases:
-    p, h = rows.get((phase, PROBE)), rows.get((phase, HONEST))
+    p, h = rows.get((phase, ARB)), rows.get((phase, REGULAR))
     if p and h:
-        print(f"{phase}: inclusion latency p50 probes {dur(p['block_latency']['p50']):.2f}s vs honest {dur(h['block_latency']['p50']):.2f}s; p95 {dur(p['block_latency']['p95']):.2f}s vs {dur(h['block_latency']['p95']):.2f}s (probes are evaluated first; honest candidates wait for budget)")
+        print(f"{phase}: inclusion latency p50 reverting arbs {dur(p['block_latency']['p50']):.2f}s vs regular {dur(h['block_latency']['p50']):.2f}s; p95 {dur(p['block_latency']['p95']):.2f}s vs {dur(h['block_latency']['p95']):.2f}s (reverting arbs are evaluated first; regular candidates wait for budget)")
 
 # Checks on the gas-limit-priced phase.
-z_probe, z_honest = rows.get(("zenith", PROBE)), rows.get(("zenith", HONEST))
-if z_probe and z_honest:
-    for label, c in ((PROBE, z_probe), (HONEST, z_honest)):
+z_arb, z_regular = rows.get(("zenith", ARB)), rows.get(("zenith", REGULAR))
+if z_arb and z_regular:
+    for label, c in ((ARB, z_arb), (REGULAR, z_regular)):
         if c.get("total_gas_limit") and c["total_gas"] != c["total_gas_limit"]:
             failures.append(f"zenith {label}: receipts report {c['total_gas']} gas but {c['total_gas_limit']} was declared; gas limit pricing should bill the limit")
-    if z_probe["reverted"] == 0:
-        failures.append("zenith probes: none reverted; the probe payload must revert")
-    ratio = tip_per_tx(z_probe) / tip_per_tx(z_honest) if tip_per_tx(z_honest) else float("inf")
-    print(f"zenith: a probe pays the sequencer {ratio:.1f}x the tip an honest transaction pays (expected ~ 20 * 500,000 / 100,000 = 100x); total fee incl. base fee {fee_per_tx(z_probe) / fee_per_tx(z_honest):.1f}x")
+    if z_arb["reverted"] == 0:
+        failures.append("zenith reverting arbs: none reverted; the reverting arb payload must revert")
+    ratio = tip_per_tx(z_arb) / tip_per_tx(z_regular) if tip_per_tx(z_regular) else float("inf")
+    print(f"zenith: a reverting arb pays the sequencer {ratio:.1f}x the tip a regular transaction pays (expected ~ 20 * 500,000 / 100,000 = 100x); total fee incl. base fee {fee_per_tx(z_arb) / fee_per_tx(z_regular):.1f}x")
     if ratio < 50:
-        failures.append(f"zenith: probe/honest tip ratio {ratio:.1f}x is below 50x")
+        failures.append(f"zenith: reverting-arb/regular tip ratio {ratio:.1f}x is below 50x")
 
-e_probe, e_honest = rows.get(("everest", PROBE)), rows.get(("everest", HONEST))
-if e_probe and z_probe:
-    mult = tip_per_tx(z_probe) / tip_per_tx(e_probe) if tip_per_tx(e_probe) else float("inf")
-    print(f"probe tip per transaction: metered {tip_per_tx(e_probe) / ETH:.9f} ETH -> gas limit priced {tip_per_tx(z_probe) / ETH:.9f} ETH ({mult:.1f}x; expected ~ 500,000 / gas used, about 23x)")
+e_arb, e_regular = rows.get(("everest", ARB)), rows.get(("everest", REGULAR))
+if e_arb and z_arb:
+    mult = tip_per_tx(z_arb) / tip_per_tx(e_arb) if tip_per_tx(e_arb) else float("inf")
+    print(f"reverting arb tip per transaction: metered {tip_per_tx(e_arb) / ETH:.9f} ETH -> gas limit priced {tip_per_tx(z_arb) / ETH:.9f} ETH ({mult:.1f}x; expected ~ 500,000 / gas used, about 23x)")
     if mult < 10:
-        failures.append(f"probe tip rose only {mult:.1f}x; expected at least 10x")
-    if e_honest:
-        e_ratio = tip_per_tx(e_probe) / tip_per_tx(e_honest) if tip_per_tx(e_honest) else float("inf")
-        print(f"everest: a probe paid the sequencer {e_ratio:.1f}x an honest transaction's tip for a 20x higher rank (it used ~{e_probe['total_gas'] / e_probe['confirmed'] / (e_honest['total_gas'] / e_honest['confirmed']):.2f}x the gas)")
+        failures.append(f"reverting arb tip rose only {mult:.1f}x; expected at least 10x")
+    if e_regular:
+        e_ratio = tip_per_tx(e_arb) / tip_per_tx(e_regular) if tip_per_tx(e_regular) else float("inf")
+        print(f"everest: a reverting arb paid the sequencer {e_ratio:.1f}x a regular transaction's tip for a 20x higher rank (it used ~{e_arb['total_gas'] / e_arb['confirmed'] / (e_regular['total_gas'] / e_regular['confirmed']):.2f}x the gas)")
     e_rev, z_rev = rows.get(("everest", "revenue")), rows.get(("zenith", "revenue"))
     if e_rev and z_rev:
         print(f"sequencer validity-flow priority-fee revenue: {e_rev / ETH:.6f} ETH -> {z_rev / ETH:.6f} ETH ({z_rev / e_rev:.1f}x) for the same flood")

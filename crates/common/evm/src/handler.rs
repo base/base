@@ -1219,12 +1219,12 @@ mod tests {
         assert_eq!(priced.caller_paid, glp_settlement_for(GLP_GAS_LIMIT).caller_paid);
     }
 
-    /// The probe shape from the design doc: a high-tip transaction that checks for an
+    /// The reverting arb shape from the design doc: a high-tip transaction that checks for an
     /// opportunity and reverts when it is not there. Today it pays metered gas, so the revert is
     /// nearly free; under gas limit pricing it pays the full declared limit, the same as a
     /// successful execution would (S1, S11, S13).
     #[test]
-    fn test_gas_limit_pricing_reverting_probe_pays_declared_limit() {
+    fn test_gas_limit_pricing_reverting_arb_pays_declared_limit() {
         // PUSH1 0, PUSH1 0, REVERT: the opportunity check failed.
         let code = bytes!("60006000fd");
         let metered = execute_glp_tx(

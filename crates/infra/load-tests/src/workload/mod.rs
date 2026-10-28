@@ -18,10 +18,10 @@ pub(crate) use chain_prep::{PREP_CONCURRENCY, await_token_balances, encode_erc20
 
 mod payloads;
 pub use payloads::{
-    AerodromeClPayload, B20TransferPayload, CalldataPayload, DEFAULT_REVERT_PROBE_GAS_LIMIT,
+    AerodromeClPayload, B20TransferPayload, CalldataPayload, DEFAULT_REVERT_ARB_GAS_LIMIT,
     DOUBLE_COUNTER_GAS_LIMIT, DoubleCounterPayload, EIP8430_TRANSFER_GAS_LIMIT,
     Eip8430TransferPayload, Erc20Payload, OsakaPayload, Payload, PrecompileLooper,
-    PrecompilePayload, REVERT_PROBE_SELECTOR, RevertProbePayload, StoragePayload, TransferPayload,
+    PrecompilePayload, REVERT_ARB_SELECTOR, RevertArbPayload, StoragePayload, TransferPayload,
     UniswapV3Payload, encode_erc20_approve, recover_real_tokens,
 };
 pub(crate) use payloads::{b20_salt_for, b20_token_for};

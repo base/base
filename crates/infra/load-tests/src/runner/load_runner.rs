@@ -352,8 +352,8 @@ impl LoadRunner {
                         .rpc("confirm calibration transaction")?;
                     (receipt.status(), receipt.gas_used)
                 };
-            // A revert probe reverts by design; its metered gas is still the right pacing input.
-            if !success && !matches!(tx_config.tx_type, TxType::RevertProbe { .. }) {
+            // A revert arb reverts by design; its metered gas is still the right pacing input.
+            if !success && !matches!(tx_config.tx_type, TxType::RevertArb { .. }) {
                 return Err(BaselineError::Transaction(format!(
                     "calibration transaction type {type_index} ({:?}) reverted",
                     tx_config.tx_type

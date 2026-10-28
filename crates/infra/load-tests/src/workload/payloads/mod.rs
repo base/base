@@ -27,8 +27,8 @@ pub use storage::StoragePayload;
 mod double_counter;
 pub use double_counter::{DOUBLE_COUNTER_GAS_LIMIT, DoubleCounterPayload};
 
-mod revert_probe;
-pub use revert_probe::{DEFAULT_REVERT_PROBE_GAS_LIMIT, REVERT_PROBE_SELECTOR, RevertProbePayload};
+mod revert_arb;
+pub use revert_arb::{DEFAULT_REVERT_ARB_GAS_LIMIT, REVERT_ARB_SELECTOR, RevertArbPayload};
 
 mod precompile;
 pub use precompile::PrecompilePayload;

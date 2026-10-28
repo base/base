@@ -8,7 +8,7 @@ use tracing::instrument;
 
 use super::{
     AerodromeClPayload, B20TransferPayload, CalldataPayload, DoubleCounterPayload, Erc20Payload,
-    OsakaPayload, Payload, PrecompilePayload, RevertProbePayload, SeededRng, StoragePayload,
+    OsakaPayload, Payload, PrecompilePayload, RevertArbPayload, SeededRng, StoragePayload,
     TransferPayload, UniswapV3Payload, chain_prep::ChainPrepContext,
 };
 use crate::{
@@ -28,7 +28,7 @@ impl SelectedPayload {
     /// Builds a fixed payload for `tx_type`, bypassing weighted selection.
     ///
     /// Used for cohorts that always send one transaction shape, such as the validity
-    /// priority-lead cohort's probe. The payload is not registered with any generator, so
+    /// priority-lead cohort's reverting arb. The payload is not registered with any generator, so
     /// [`Payload::prepare`] and [`Payload::teardown`] never run for it.
     pub(crate) fn from_tx_type(tx_type: &TxType, b20_run_salt: Option<B256>) -> Self {
         Self { payload: WorkloadGenerator::payload_for(tx_type, b20_run_salt) }
@@ -104,8 +104,8 @@ impl WorkloadGenerator {
                 Arc::new(StoragePayload::new(*contract, *slots_per_tx))
             }
             TxType::DoubleCounter { contract } => Arc::new(DoubleCounterPayload::new(*contract)),
-            TxType::RevertProbe { contract, gas_limit } => {
-                Arc::new(RevertProbePayload::new(*contract, *gas_limit))
+            TxType::RevertArb { contract, gas_limit } => {
+                Arc::new(RevertArbPayload::new(*contract, *gas_limit))
             }
             TxType::Precompile { target, blake2f_rounds, iterations, looper_contract } => {
                 Arc::new(PrecompilePayload::with_options(
@@ -258,7 +258,7 @@ mod tests {
             TxConfig { weight: 1, tx_type: TxType::B20 },
             TxConfig {
                 weight: 1,
-                tx_type: TxType::RevertProbe {
+                tx_type: TxType::RevertArb {
                     contract: Address::repeat_byte(0x12),
                     gas_limit: 2_000_000,
                 },
@@ -306,7 +306,7 @@ mod tests {
                 "calldata",
                 "erc20",
                 "b20",
-                "revert_probe",
+                "revert_arb",
                 "uniswap_v3",
                 "aerodrome_cl"
             ]
@@ -322,14 +322,14 @@ mod tests {
             None,
         )
         .expect("valid configs");
-        let probe = SelectedPayload::from_tx_type(
-            &TxType::RevertProbe { contract, gas_limit: 777_000 },
+        let arb = SelectedPayload::from_tx_type(
+            &TxType::RevertArb { contract, gas_limit: 777_000 },
             None,
         );
 
-        assert!(!probe.uses_runner_recipient());
+        assert!(!arb.uses_runner_recipient());
         let request = generator.generate_selected_payload(
-            &probe,
+            &arb,
             Address::repeat_byte(0x01),
             Address::repeat_byte(0x02),
         );

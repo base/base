@@ -51,7 +51,7 @@ pub struct ValidityConfig {
 
     /// Payload generated for every priority-lead sender instead of the weighted `transactions`
     /// mix, so the lead cohort can send a different transaction shape (for example
-    /// `revert_probe`) at a higher tip than the bulk. Requires `priority_lead_ratio > 0`.
+    /// `revert_arb`) at a higher tip than the bulk. Requires `priority_lead_ratio > 0`.
     /// Payloads that need chain preparation (B-20, swaps) are not prepared for this slot.
     pub priority_lead_payload: Option<TxTypeConfig>,
 

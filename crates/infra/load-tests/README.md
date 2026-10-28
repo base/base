@@ -27,7 +27,7 @@ just load-test real-token
 # Deploy DoubleCounter and run the 64-predicate validity stress profile
 just load-test validity-stress
 
-# Deploy DoubleCounter and run the gas-limit pricing demo (reverting probes vs honest txs)
+# Deploy DoubleCounter and run the gas-limit pricing demo (reverting arbs vs regular txs)
 LOAD_TEST_OUTPUT=/tmp/gas-limit-pricing.json just load-test gas-limit-pricing
 
 # Run real-token swaps against a network with predeployed contracts
@@ -191,7 +191,7 @@ delay is measured for logging but is no longer included in the JSON output.
 | `validity-devnet.yaml` | Local devnet | Validity (conditional) workload; routes half the senders through `base_sendRawTransactionValidity`. Run with `FUNDER_KEY=... just load-test run validity-devnet` |
 | `real-token-devnet.yaml.template` | Local devnet | Rendered by `just load-test real-token` after deploying the devnet WETH/USDC harness |
 | `validity-stress.yaml.template` | Local devnet | Rendered by `just load-test validity-stress` with a freshly deployed `DoubleCounter` |
-| `gas-limit-pricing.yaml.template` | Local devnet | Rendered by `just load-test gas-limit-pricing`; high-tip reverting probes compete with honest validity transactions |
+| `gas-limit-pricing.yaml.template` | Local devnet | Rendered by `just load-test gas-limit-pricing`; high-tip reverting arbs compete with regular validity transactions |
 | `sepolia.yaml` | Base Sepolia | Requires `FUNDER_KEY` |
 | `real-token-sepolia.yaml` | Base Sepolia | Uses predeployed WETH/USDC and the Uniswap V3 swap router; run with `just load-test real-token sepolia`; recover with `just load-test real-token-recover sepolia` |
 | `real-token-mainnet-snapshot.yaml` | Local/shadow Base mainnet snapshot | Wraps funded ETH into WETH, acquires USDC, then runs random-direction Uniswap V3 and Aerodrome CL swaps; run with `just load-test real-token mainnet-snapshot` |
@@ -517,11 +517,11 @@ with the fee in wei and ETH.
 transactions in flight each) for 60 s against the builder RPC on port 7545. Every transaction
 carries 63 always-true storage reads plus the `block_number` expiry bound ingress requires (240
 blocks, 48 s at the devnet's 200 ms cadence), so predicate evaluation always passes. The 10%
-priority-lead cohort uses `validity.priority_lead_payload` to send `revert_probe` calls at a 20x
+priority-lead cohort uses `validity.priority_lead_payload` to send `revert_arb` calls at a 20x
 tip: a call to `DoubleCounter` with the selector `0xdeadbeef`, which it does not implement, so the
-probe reverts after ~21-25k gas while declaring a 500k gas limit. The other 90% send honest
+reverting arb reverts after ~21-25k gas while declaring a 500k gas limit. The other 90% send regular
 `double_counter` increments at the baseline tip. The profile is sized so that a builder started with
-`L2_BUILDER_PREDICATE_EVAL_HARD_CUTOFF_MS=2` evaluates the probes first and defers most honest
+`L2_BUILDER_PREDICATE_EVAL_HARD_CUTOFF_MS=2` evaluates the reverting arbs first and defers most regular
 candidates each block while enough still land to compare fees.
 
 ```yaml
@@ -530,7 +530,7 @@ validity:
   priority_lead_ratio: 0.10
   priority_lead_multiplier: 20
   priority_lead_payload:        # overrides `transactions` for the priority-lead cohort only
-    type: revert_probe
+    type: revert_arb
     contract: "0x..."           # DoubleCounter
     gas_limit: 500000          # default when omitted
 ```
@@ -538,7 +538,7 @@ validity:
 Read the `by_cohort` output as the payment comparison: under metered billing the
 `validity_pass_priority_lead` cohort shows `total_gas` near `21-25k * confirmed` and a
 `total_fee_wei` far below what its `total_gas_limit` would cost at its tip, while `validity_pass`
-pays for the gas it used. Under gas-limit pricing the probes' `total_gas` and `total_fee_wei`
+pays for the gas it used. Under gas-limit pricing the reverting arbs' `total_gas` and `total_fee_wei`
 rise to their declared limits. Set `LOAD_TEST_OUTPUT=<path>` to keep the JSON summary.
 `priority_lead_payload` accepts any transaction type, but payloads that need chain preparation
 (B-20, swaps) are not prepared for the lead cohort.

@@ -474,7 +474,7 @@ mod tests {
         let mut transaction = cohort_transaction(5, gas_used, cohort);
         transaction.gas_limit = gas_limit;
         transaction.gas_price = gas_price;
-        // Honest transactions tip a tenth of the price; probes tip twenty times that, which the
+        // Regular transactions tip a tenth of the price; reverting arbs tip twenty times that, which the
         // effective price caps.
         transaction.priority_fee = match cohort {
             SubmitCohortLabel::ValidityPassPriorityLead => gas_price / 10 * 20,
@@ -530,7 +530,7 @@ mod tests {
 
     #[test]
     fn by_cohort_reports_lead_cohort_payment_against_declared_limit() {
-        // Two honest validity transactions that execute, and three reverting probes that each
+        // Two regular validity transactions that execute, and three reverting arbs that each
         // reserve 2M gas, use 25k, and pay a 20x tip (metered billing: fee follows gas_used).
         let transactions = [
             priced_transaction(100_000, 100_000, 10, false, SubmitCohortLabel::ValidityPass),
@@ -561,24 +561,24 @@ mod tests {
         let by_cohort = MetricsAggregator::compute_by_cohort(&transactions);
 
         assert_eq!(by_cohort.len(), 2, "plain cohort is absent, so only two entries");
-        let honest = &by_cohort[0];
-        assert_eq!(honest.cohort, SubmitCohortLabel::ValidityPass);
-        assert_eq!(honest.confirmed, 2);
-        assert_eq!(honest.reverted, 0);
-        assert_eq!(honest.total_gas, 200_000);
-        assert_eq!(honest.total_gas_limit, 200_000);
-        assert_eq!(honest.total_fee_wei, 2_000_000);
-        assert_eq!(honest.total_priority_fee_wei, 200_000, "tip is a tenth of the price");
+        let regular = &by_cohort[0];
+        assert_eq!(regular.cohort, SubmitCohortLabel::ValidityPass);
+        assert_eq!(regular.confirmed, 2);
+        assert_eq!(regular.reverted, 0);
+        assert_eq!(regular.total_gas, 200_000);
+        assert_eq!(regular.total_gas_limit, 200_000);
+        assert_eq!(regular.total_fee_wei, 2_000_000);
+        assert_eq!(regular.total_priority_fee_wei, 200_000, "tip is a tenth of the price");
 
-        let probes = &by_cohort[1];
-        assert_eq!(probes.cohort, SubmitCohortLabel::ValidityPassPriorityLead);
-        assert_eq!(probes.confirmed, 3);
-        assert_eq!(probes.reverted, 2);
-        assert_eq!(probes.total_gas, 75_000);
-        assert_eq!(probes.total_gas_limit, 6_000_000);
-        assert_eq!(probes.total_fee_wei, 15_000_000);
+        let arbs = &by_cohort[1];
+        assert_eq!(arbs.cohort, SubmitCohortLabel::ValidityPassPriorityLead);
+        assert_eq!(arbs.confirmed, 3);
+        assert_eq!(arbs.reverted, 2);
+        assert_eq!(arbs.total_gas, 75_000);
+        assert_eq!(arbs.total_gas_limit, 6_000_000);
+        assert_eq!(arbs.total_fee_wei, 15_000_000);
         assert_eq!(
-            probes.total_priority_fee_wei, 15_000_000,
+            arbs.total_priority_fee_wei, 15_000_000,
             "a tip above the effective price is capped at the price"
         );
     }

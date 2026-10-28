@@ -2398,7 +2398,7 @@ mod tests {
                 value: U256::ZERO,
             }],
             validity_priority_lead_ratio: 0.5,
-            validity_priority_lead_payload: Some(crate::runner::TxType::RevertProbe {
+            validity_priority_lead_payload: Some(crate::runner::TxType::RevertArb {
                 contract: counter,
                 gas_limit: 2_000_000,
             }),
@@ -2457,8 +2457,11 @@ mod tests {
                 match tx.cohort {
                     SubmitCohort::ValidityPassPriorityLead => {
                         lead_txs += 1;
-                        assert_eq!(tx.gas_limit, 2_000_000, "probe keeps its declared limit");
-                        assert_eq!(tx.data.as_ref(), &crate::workload::REVERT_PROBE_SELECTOR);
+                        assert_eq!(
+                            tx.gas_limit, 2_000_000,
+                            "reverting arb keeps its declared limit"
+                        );
+                        assert_eq!(tx.data.as_ref(), &crate::workload::REVERT_ARB_SELECTOR);
                     }
                     SubmitCohort::ValidityPass => {
                         bulk_txs += 1;
