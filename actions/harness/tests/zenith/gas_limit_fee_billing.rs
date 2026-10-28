@@ -58,7 +58,8 @@ impl ZenithTestEnv {
     /// Builds the next block with one over-provisioned transfer from the harness test account.
     async fn build_block_with_transfer(&mut self) -> BaseBlock {
         let tx = {
-            let mut account = self.sequencer.test_account().lock().expect("test account lock");
+            let account = self.sequencer.test_account();
+            let mut account = account.lock().expect("test account lock");
             account.create_tx(
                 self.harness.rollup_config.l2_chain_id.id(),
                 TxKind::Call(Address::ZERO),
