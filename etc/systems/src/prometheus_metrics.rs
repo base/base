@@ -101,6 +101,8 @@ const VISUALIZER_METRICS: &[&str] = &[
     "reth_tree_root_sparse_trie_reveal_multiproof_duration_histogram_avg",
     "reth_tree_root_sparse_trie_total_duration_histogram",
     "reth_tree_root_sparse_trie_total_duration_histogram_avg",
+    "reth_txpool_validity_admitted_outcome_added",
+    "reth_txpool_validity_admitted_outcome_replaced",
 ];
 
 #[derive(Debug, Clone, Copy)]
