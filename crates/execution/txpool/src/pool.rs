@@ -523,10 +523,19 @@ where
     /// now sits at (anchors only move forward this way); the executable cursor
     /// then follows the standard store's pending run from that anchor. Returns
     /// the transactions discarded for falling below a cursor.
+    ///
+    /// Runs under `protocol_admission_lock`: the target is derived from the
+    /// standard stores' state without holding the validity lock, so a
+    /// concurrent admission anchoring the same lane could otherwise be
+    /// overwritten by a stale cursor and lose its transaction.
     fn sync_validity_lanes(
         &self,
         lanes: impl IntoIterator<Item = (LaneId, Option<u64>)>,
     ) -> Vec<Arc<ValidPoolTransaction<T>>> {
+        debug_assert!(
+            self.protocol_admission_lock.is_locked(),
+            "validity lanes are re-anchored under the admission lock"
+        );
         let mut targets: HashMap<LaneId, Option<u64>> = HashMap::new();
         for (lane_id, nonce) in lanes {
             let entry = targets.entry(lane_id).or_default();
@@ -2023,6 +2032,9 @@ where
         &self,
         hashes: Vec<TxHash>,
     ) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
+        // Removals re-anchor validity lanes from the standard stores' state, so
+        // they are serialized with admission like every other re-anchoring path.
+        let _admission_guard = self.protocol_admission_lock.lock();
         self.remove_from_stores(hashes, RemoveMode::Exact)
     }
 
@@ -2030,6 +2042,7 @@ where
         &self,
         hashes: Vec<TxHash>,
     ) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
+        let _admission_guard = self.protocol_admission_lock.lock();
         self.remove_from_stores(hashes, RemoveMode::WithDescendants)
     }
 
@@ -2037,6 +2050,7 @@ where
         &self,
         sender: Address,
     ) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
+        let _admission_guard = self.protocol_admission_lock.lock();
         let mut removed = self.protocol_pool.remove_transactions_by_sender(sender);
         for store in self.lane_stores() {
             let mut pool = store.pool.write();
@@ -2055,6 +2069,7 @@ where
         &self,
         hashes: Vec<TxHash>,
     ) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
+        let _admission_guard = self.protocol_admission_lock.lock();
         self.remove_from_stores(hashes, RemoveMode::Mined)
     }
 
