@@ -1426,8 +1426,7 @@ impl BasePayloadBuilderCtx {
 
             // Under gas-limit fee billing the block accounts (and the sender pays for) the gas
             // the transaction reserved, not the gas it consumed.
-            let accounted_gas =
-                self.accounted_gas(false, tx.gas_limit(), tx_payer_auth, gas_used);
+            let accounted_gas = self.accounted_gas(false, tx.gas_limit(), tx_payer_auth, gas_used);
             info.cumulative_gas_used += accounted_gas;
             // record tx da size
             info.cumulative_da_bytes_used += tx_da_size;
