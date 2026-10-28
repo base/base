@@ -26,8 +26,8 @@ pub const PAYER_UNREACHABLE_RPC_ERROR: &str = "payer unreachable";
 
 /// Payer methods exposed on the execution RPC.
 ///
-/// `payer_signTransaction` and `payer_getSponsorshipBalance` are intentionally
-/// absent, so callers receive JSON-RPC method-not-found.
+/// `payer_signTransaction` is intentionally absent, so callers receive JSON-RPC
+/// method-not-found.
 #[rpc(server, namespace = "payer")]
 pub trait PayerApi {
     /// Quotes token-payment terms and forwards the request upstream.
@@ -753,6 +753,5 @@ mod tests {
         assert!(names.contains(&"payer_getTerms"));
         assert!(names.contains(&"payer_sendTransaction"));
         assert!(!names.contains(&"payer_signTransaction"));
-        assert!(!names.contains(&"payer_getSponsorshipBalance"));
     }
 }
