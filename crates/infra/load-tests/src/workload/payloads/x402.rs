@@ -3,7 +3,6 @@
 use std::{
     collections::HashMap,
     sync::{Arc, OnceLock},
-    time::Duration,
 };
 
 use alloy_network::TransactionBuilder;
@@ -184,9 +183,8 @@ impl Payload for X402Payload {
     }
 
     async fn prepare(&self, ctx: &mut ChainPrepContext<'_>) -> Result<()> {
-        tokio::time::timeout(Duration::from_secs(300), self.prepare_context(ctx))
-            .await
-            .map_err(|_| BaselineError::Config("x402 setup timed out".into()))?
+        // QueryProvider bounds each x402 RPC; do not cap the shared token acquisition phase.
+        self.prepare_context(ctx).await
     }
 
     fn generate(&self, _rng: &mut SeededRng, from: Address, to: Address) -> TransactionRequest {
