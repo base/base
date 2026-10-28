@@ -683,6 +683,15 @@ where
             block_da_footprint_limit: target_da_footprint_for_batch,
             tx_execution_time_limit_us: ctx.builder_config.max_execution_time_per_tx_us,
             block_uncompressed_size_limit: ctx.builder_config.max_uncompressed_block_size,
+            // Gas-limit fee billing bills and reports the declared limit, so the
+            // per-transaction gas cap is decided on the declared limit before execution.
+            tx_gas_limit: ctx
+                .evm_env
+                .cfg_env
+                .spec
+                .is_gas_limit_billing_enabled()
+                .then_some(ctx.builder_config.max_gas_per_txn)
+                .flatten(),
         };
         let diag = ctx
             .execute_best_transactions(info, deferrals, state, best_txs, &limits)

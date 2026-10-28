@@ -83,7 +83,7 @@ hardfork!(
     /// [`Zenith`](BaseUpgrade::Zenith) is a hardfork for future experimental features. It is
     /// genesis-configurable but not contract-backed, since the L1 upgrade-signal contract does
     /// not yet recognise it. It currently gates the gas-limit fee billing proof of concept, under
-    /// which non-deposit transactions pay for their full declared `gas_limit` (see
+    /// which non-deposit transactions pay for, and report, their full declared `gas_limit` (see
     /// `BaseSpecId::is_gas_limit_billing_enabled` in `base-common-evm`).
     ///
     /// When building a list of upgrades for a chain, it's still expected to zip with

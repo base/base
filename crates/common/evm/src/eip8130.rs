@@ -665,9 +665,19 @@ impl Eip8130Executor {
         // the limit also covers the net charge (which never exceeds it). The
         // EIP-7623 floor raises the returned limit for a data-heavy transaction so
         // it is never rejected at admission (`gas_limit >= sender_floor`).
-        let estimate_gas = outcome
-            .floored_sender_gas(outcome.sender_intrinsic.saturating_add(feasible_pool))
-            .saturating_add(outcome.payer_auth);
+        //
+        // Under gas-limit fee billing the declared limit is billed as-is and payer
+        // authentication is billed on top of it, so folding `payer_auth` into the
+        // returned limit would charge it twice; the estimate is then the sender
+        // budget alone, and `gas_limit + payer_auth` at that limit is exactly the
+        // settled gas.
+        let sender_budget =
+            outcome.floored_sender_gas(outcome.sender_intrinsic.saturating_add(feasible_pool));
+        let estimate_gas = if evm.ctx().cfg().spec().is_gas_limit_billing_enabled() {
+            sender_budget
+        } else {
+            sender_budget.saturating_add(outcome.payer_auth)
+        };
         Self::end_inspection(
             evm,
             inspection,
@@ -1815,24 +1825,14 @@ impl Eip8130Executor {
             BaseContextTr + ContextTr<Db = DB, Tx = BaseTransaction<TxEnv>, Block = BlockEnv>,
     {
         // Sender-intrinsic + call gas, less the EIP-3529-capped refund, plus payer
-        // authentication. Shared with the estimate path so they cannot diverge.
-        let billable_gas = Self::billable_gas(outcome, calls);
+        // authentication; or, under gas-limit fee billing, the whole reserved budget. See
+        // [`Self::billable_gas`] for how this relates to the estimate path.
+        let billable_gas = Self::billable_gas(outcome, calls, spec);
 
-        // Gas-limit fee billing charges the whole worst-case pre-charge instead: the full
-        // `gas_limit` plus payer authentication, exactly the gas `prepay` reserved, so the
-        // payer's refund below is zero and the fee is fixed before the `calls` run. The
-        // result still reports `billable_gas`, the gas actually consumed; the block executor
-        // accounts the reserved gas against the block (see `BaseTxResult::billed_gas`).
-        let charged_gas = if spec.is_gas_limit_billing_enabled() {
-            FeeCheck::max_chargeable_gas(outcome.gas_limit, outcome.payer_auth)
-        } else {
-            billable_gas
-        };
-
-        let fee = U256::from(charged_gas)
+        let fee = U256::from(billable_gas)
             .checked_mul(U256::from(outcome.effective))
             .ok_or_else(|| BaseTransactionError::eip8130("EIP-8130 fee overflow"))?;
-        let base_fee_amount = U256::from(charged_gas)
+        let base_fee_amount = U256::from(billable_gas)
             .checked_mul(U256::from(outcome.base_fee))
             .ok_or_else(|| BaseTransactionError::eip8130("EIP-8130 base-fee amount overflow"))?;
         let priority_amount = fee
@@ -1841,7 +1841,8 @@ impl Eip8130Executor {
         let fastlz_size = ctx.tx.enveloped_tx_fastlz_size;
         let l1_cost =
             ctx.chain_mut().calculate_tx_l1_cost_with_fastlz_size(encoded, fastlz_size, spec);
-        let operator_cost = ctx.chain().operator_fee_charge(encoded, U256::from(charged_gas), spec);
+        let operator_cost =
+            ctx.chain().operator_fee_charge(encoded, U256::from(billable_gas), spec);
 
         // Refund the surplus of the worst-case pre-charge. The pre-charge bounds
         // every component above (full `gas_limit`/operator at the effective
@@ -1910,7 +1911,16 @@ impl Eip8130Executor {
     /// a data-heavy transaction whose `calls` execute cheaply still pays
     /// `sender_floor + payer_floor`. Mirrors revm's `eip7623_check_gas_floor`,
     /// which compares the floor against the post-refund gas used.
-    fn billable_gas(outcome: &Eip8130Outcome, calls: &CallsResult) -> u64 {
+    ///
+    /// Under gas-limit fee billing ([`BaseSpecId::is_gas_limit_billing_enabled`]) the charge
+    /// is the reserved budget instead, `gas_limit + payer_auth`: exactly what `prepay`
+    /// pre-charged and what the block executor and the builder reserve against the block gas
+    /// limit, regardless of what the `calls` consumed. The payer's surplus refund is then zero
+    /// and the fee is fixed before the `calls` run.
+    fn billable_gas(outcome: &Eip8130Outcome, calls: &CallsResult, spec: BaseSpecId) -> u64 {
+        if spec.is_gas_limit_billing_enabled() {
+            return FeeCheck::max_chargeable_gas(outcome.gas_limit, outcome.payer_auth);
+        }
         let gross_used = outcome.sender_intrinsic.saturating_add(calls.call_gas_spent);
         let refund = Self::capped_refund(calls.refund, gross_used);
         outcome.metered_gas(gross_used.saturating_sub(refund))
@@ -2283,6 +2293,7 @@ mod tests {
             bump_protocol_nonce: false,
         };
 
+        let everest = BaseSpecId::new(BaseUpgrade::Everest);
         // Cheap execution: sender_intrinsic + call_gas_spent (110_000) is below the
         // 130_000 floor, so the sender portion is raised to the floor.
         let cheap = CallsResult {
@@ -2293,7 +2304,7 @@ mod tests {
             committed_phases: 0,
         };
         assert_eq!(
-            Eip8130Executor::billable_gas(&base, &cheap),
+            Eip8130Executor::billable_gas(&base, &cheap, everest),
             base.sender_floor + base.payer_auth,
         );
 
@@ -2302,7 +2313,7 @@ mod tests {
         // authentication at the standard rate.
         let heavy = CallsResult { call_gas_spent: 500_000, ..cheap };
         assert_eq!(
-            Eip8130Executor::billable_gas(&base, &heavy),
+            Eip8130Executor::billable_gas(&base, &heavy, everest),
             base.sender_intrinsic + heavy.call_gas_spent + base.payer_auth_standard,
         );
     }
@@ -2671,8 +2682,8 @@ mod tests {
     /// From Zenith (gas-limit fee billing) an EIP-8130 payer is charged the whole worst-case
     /// pre-charge — the full `gas_limit` (plus payer authentication, zero for self-pay) at the
     /// effective price — however little gas the `calls` consume: the base-fee burn and the
-    /// coinbase tip are both computed on `gas_limit`, nothing is refunded, and the result still
-    /// reports the gas actually consumed.
+    /// coinbase tip are both computed on `gas_limit`, nothing is refunded, and the result
+    /// reports that reserved budget as the gas used.
     #[test]
     fn zenith_settles_eip8130_fees_on_gas_limit() {
         let key = signing_key(0x78);
@@ -2711,9 +2722,9 @@ mod tests {
         assert_eq!(tip, U256::from(priority_fee * u128::from(gas_used)));
         assert_eq!(burned, U256::from(u128::from(BASE_FEE) * u128::from(gas_used)));
 
-        // From Zenith the whole `gas_limit` is billed, while the reported gas stays actual.
+        // From Zenith the whole `gas_limit` is billed and reported (self-pay: no payer auth).
         let (zenith_gas_used, zenith_paid, zenith_tip, zenith_burned) = settle(true);
-        assert!(zenith_gas_used < gas_limit, "result must keep reporting actual consumption");
+        assert_eq!(zenith_gas_used, gas_limit, "result must report the reserved budget");
         assert_eq!(zenith_paid, U256::from(effective * u128::from(gas_limit)));
         assert_eq!(zenith_tip, U256::from(priority_fee * u128::from(gas_limit)));
         assert_eq!(zenith_burned, U256::from(u128::from(BASE_FEE) * u128::from(gas_limit)));
@@ -2765,13 +2776,22 @@ mod tests {
         assert_eq!(sim_gas, exec_gas, "pre-Zenith estimate must be exactly the execution charge");
 
         // From Zenith the non-monotonic sender policy gate is pinned worst-case:
-        // this EOA sender is ungated, so the estimate exceeds the execution
-        // charge by exactly one pinned `policy_manager` COLD_SLOAD.
+        // this EOA sender is ungated, so the estimate exceeds the metered
+        // execution charge by exactly one pinned `policy_manager` COLD_SLOAD.
+        // Zenith also enables gas-limit fee billing, so the *settled* charge is the
+        // reserved budget (`gas_limit + payer_auth`), not the metered gas; the
+        // estimate stays metered because it is what a sender should declare.
+        let metered_exec_gas = exec_gas;
         let (exec_gas, sim_gas) = charges(true);
         assert_eq!(
             sim_gas,
-            exec_gas + base_execution_eip8130::Eip8130GasSchedule::COLD_SLOAD,
-            "estimate must be the execution charge plus exactly the pinned policy-gate SLOAD",
+            metered_exec_gas + base_execution_eip8130::Eip8130GasSchedule::COLD_SLOAD,
+            "estimate must be the metered execution charge plus exactly the pinned policy-gate SLOAD",
+        );
+        assert_eq!(
+            exec_gas,
+            base_tx().gas_limit,
+            "gas-limit billing must settle a self-paid transaction at its declared gas limit",
         );
 
         // Estimation never commits: a fresh execution after it still bumps the
@@ -3226,6 +3246,77 @@ mod tests {
         let sender_gas = intrinsic.sender_intrinsic() + call_gas;
         assert!(sender_gas > intrinsic.sender_floor(), "execution must clear the floor");
         assert_eq!(outcome.result.tx_gas_used(), sender_gas + intrinsic.payer_auth_standard);
+    }
+
+    /// Under gas-limit fee billing the estimate excludes payer authentication, so a
+    /// sponsored transaction submitted at `gas_limit = estimate` settles exactly
+    /// `estimate + payer_auth` (the reserved budget) rather than paying for payer
+    /// authentication twice, and still succeeds at that limit. Without gas-limit
+    /// billing the estimate keeps `payer_auth` folded in as call-pool headroom.
+    #[test]
+    fn zenith_estimate_excludes_payer_auth_so_it_is_not_billed_twice() {
+        let key = signing_key(0x38);
+        let sender = eoa_address(&key);
+        let payer_key = signing_key(0x39);
+        let payer = eoa_address(&payer_key);
+        let target = address!("0x00000000000000000000000000000000000000ca");
+        let initial = U256::from(10u64).pow(U256::from(18u64));
+
+        let sign = |tx: TxEip8130| {
+            let sender_auth = eoa_sig(&key, tx.sender_signature_hash());
+            let payer_auth = eoa_sig(&payer_key, tx.payer_signature_hash(sender));
+            Eip8130Signed::new(tx, sender_auth, payer_auth)
+        };
+        let tx = TxEip8130 {
+            payer: Some(Eip8130Constants::OPEN_PAYER),
+            calls: vec![vec![Call { to: target, value: U256::ZERO, data: Bytes::new() }]],
+            ..base_tx()
+        };
+        let signed = sign(tx.clone());
+        let envelope = BaseTxEnvelope::Eip8130(signed.clone());
+        let encoded: Bytes = alloy_eips::eip2718::Encodable2718::encoded_2718(&envelope).into();
+        let payer_auth =
+            IntrinsicGas::compute(&signed, &encoded, &IntrinsicGasInput::new(sender, true))
+                .expect("intrinsic gas")
+                .payer_auth;
+        assert!(payer_auth > 0, "a sponsored transaction meters payer authentication");
+
+        let estimate = |zenith: bool| {
+            let evm = evm_with_accounts(initial, payer, &[(target, bytes!("00"))]);
+            let mut evm = if zenith { with_zenith(evm) } else { evm };
+            evm.ctx_mut().tx = into_base_tx(&signed);
+            evm.ctx_mut().tx.base.caller = sender;
+            if let Some(parts) = evm.ctx_mut().tx.eip8130.as_mut() {
+                parts.mode = Eip8130ExecutionMode::Simulate;
+            }
+            let result = Eip8130Executor::simulate(&mut evm).expect("estimate succeeds");
+            assert!(result.is_success(), "estimate should report success, got {result:?}");
+            result.tx_gas_used()
+        };
+        let settle_at = |zenith: bool, gas_limit: u64| {
+            let signed = sign(TxEip8130 { gas_limit, ..tx.clone() });
+            let evm = evm_with_accounts(initial, payer, &[(target, bytes!("00"))]);
+            let mut evm = if zenith { with_zenith(evm) } else { evm };
+            let outcome = evm.transact_raw(into_base_tx(&signed)).expect("sponsored tx executes");
+            assert!(outcome.result.is_success(), "expected success, got {:?}", outcome.result);
+            (outcome.result.tx_gas_used(), initial - outcome.state[&payer].info.balance)
+        };
+
+        // Zenith: the estimate is the sender budget; executing at that limit settles the
+        // reserved budget, `estimate + payer_auth`, once.
+        let zenith_estimate = estimate(true);
+        let (settled, paid) = settle_at(true, zenith_estimate);
+        assert_eq!(settled, zenith_estimate + payer_auth);
+        assert_eq!(
+            paid,
+            U256::from(settled) * U256::from(u128::from(BASE_FEE) + tx.max_priority_fee_per_gas)
+        );
+
+        // Pre-Zenith: the estimate still folds payer authentication in as headroom, and
+        // settlement bills metered gas, which is below the estimate.
+        let everest_estimate = estimate(false);
+        let (metered, _) = settle_at(false, everest_estimate);
+        assert!(metered < everest_estimate, "metered charge must be below the estimate");
     }
 
     /// The sender estimates an open payer transaction before any payer has

@@ -44,12 +44,14 @@ impl BaseSpecId {
     ///   `gas_limit * effective_gas_price` (plus the L1 data fee) and is known before execution;
     /// - the coinbase tip, the base fee burned to the `BaseFeeVault` and the operator fee are all
     ///   computed on `gas_limit`;
-    /// - block gas accounting (`header.gas_used`, receipt `cumulative_gas_used`) charges each
-    ///   transaction its full reserved gas, so a block's gas fullness is also known before
-    ///   execution.
+    /// - the execution result, receipts and header report the reserved gas (`gas_limit`, or
+    ///   `gas_limit + payer_auth` for EIP-8130) as gas used, so `gasUsed * effectiveGasPrice`
+    ///   remains the fee paid and a block's gas fullness is also known before execution.
     ///
-    /// Deposit transactions pay no fee and are unaffected. Fee-charge-disabled simulation
-    /// (`eth_call`, `eth_estimateGas`) keeps reporting actual gas consumption.
+    /// Implemented by `BaseHandler::refund` (spend the remaining gas, drop the refund) and
+    /// `Eip8130Executor::billable_gas`. Deposit transactions pay no fee and are unaffected.
+    /// Fee-charge-disabled simulation (`eth_call`, `eth_estimateGas`) keeps reporting metered
+    /// gas consumption.
     pub const fn is_gas_limit_billing_enabled(self) -> bool {
         self.is_enabled_in(BaseUpgrade::Zenith)
     }

@@ -128,12 +128,6 @@ where
         Ok(gas_limit)
     }
 
-    /// Whether gas-limit fee billing (gated on Zenith) is active for the block being executed.
-    /// See [`BaseSpecId::is_gas_limit_billing_enabled`](crate::BaseSpecId::is_gas_limit_billing_enabled).
-    fn is_gas_limit_billing(&self) -> bool {
-        self.spec.is_zenith_active_at_timestamp(self.evm.block().timestamp().saturating_to())
-    }
-
     fn jovian_da_footprint_estimation(
         &mut self,
         tx_env: &mut E::Tx,
@@ -271,14 +265,6 @@ where
             0
         };
 
-        // Gas-limit fee billing: block gas accounting mirrors the fee. A non-deposit transaction
-        // occupies the gas it reserved above in the block however much it consumed, so
-        // `header.gas_used` and the receipt's `cumulative_gas_used` describe the quantity the
-        // sender was billed for and a block's gas fullness is known before execution. For
-        // EIP-8130 the reserved `gas_limit + payer_auth` is the same worst-case amount the
-        // payer is charged for (see `Eip8130Executor::settle_fees`).
-        let billed_gas = (self.is_gas_limit_billing() && !is_deposit).then_some(reserved_gas);
-
         // Fetch the depositor account from the database for the deposit nonce.
         // This *only* needs to be done post-Regolith for deposit transactions.
         let depositor = (self.is_regolith && is_deposit)
@@ -296,7 +282,6 @@ where
             sender: *tx.signer(),
             depositor,
             eip8130_committed_phases,
-            billed_gas,
         })
     }
 
@@ -307,10 +292,9 @@ where
             sender: _,
             depositor,
             eip8130_committed_phases,
-            billed_gas,
         } = output;
 
-        let tx_gas_used = billed_gas.unwrap_or_else(|| result.tx_gas_used());
+        let tx_gas_used = result.tx_gas_used();
         let state_gas_used = result.gas().block_state_gas_used();
 
         self.gas_used += tx_gas_used;

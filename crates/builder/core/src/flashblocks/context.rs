@@ -420,33 +420,6 @@ impl BasePayloadBuilderCtx {
         self.chain_spec.is_jovian_active_at_timestamp(self.attributes().timestamp())
     }
 
-    /// Returns true if gas-limit fee billing (gated on Zenith) is active for the payload.
-    ///
-    /// See `BaseSpecId::is_gas_limit_billing_enabled` in `base-common-evm`.
-    pub fn is_gas_limit_billing_active(&self) -> bool {
-        self.chain_spec.is_zenith_active_at_timestamp(self.attributes().timestamp())
-    }
-
-    /// Gas the block accounts to a transaction that consumed `gas_used`.
-    ///
-    /// Under gas-limit fee billing a non-deposit transaction occupies the gas it reserved against
-    /// the block (`gas_limit`, plus `payer_auth` for EIP-8130), mirroring `BaseBlockExecutor`, so
-    /// the receipts and header this builder produces match what a validating node re-executes.
-    /// Otherwise, and for deposits, it is the gas actually used.
-    pub fn accounted_gas(
-        &self,
-        is_deposit: bool,
-        gas_limit: u64,
-        payer_auth: u64,
-        gas_used: u64,
-    ) -> u64 {
-        if self.is_gas_limit_billing_active() && !is_deposit {
-            gas_limit.saturating_add(payer_auth)
-        } else {
-            gas_used
-        }
-    }
-
     /// Returns the chain id
     pub fn chain_id(&self) -> u64 {
         self.chain_spec.chain_id()
@@ -596,14 +569,6 @@ impl BasePayloadBuilderCtx {
                     ))
                 })?;
 
-            // The payer authentication gas an EIP-8130 transaction reserves on top of its
-            // `gas_limit`; it is part of the gas the transaction is accounted for under gas-limit
-            // fee billing. Execution prices the same bytes, so an unpriceable payer authenticator
-            // is rejected there and never reaches the accounting below.
-            let payer_auth = sequencer_tx
-                .as_eip8130()
-                .map_or(0, |signed| IntrinsicGas::max_payer_auth_cost(signed).unwrap_or(0));
-
             let ResultAndState { result, state } = match evm.transact(&sequencer_tx) {
                 Ok(res) => res,
                 Err(err) => {
@@ -620,14 +585,8 @@ impl BasePayloadBuilderCtx {
             };
             let eip8130_committed_phases = Eip8130CommittedPhases::take();
 
-            // add the gas accounted to the transaction to cumulative gas used, before creating
-            // the receipt
-            let gas_used = self.accounted_gas(
-                sequencer_tx.is_deposit(),
-                sequencer_tx.gas_limit(),
-                payer_auth,
-                result.tx_gas_used(),
-            );
+            // add gas used by the transaction to cumulative gas used, before creating the receipt
+            let gas_used = result.tx_gas_used();
             info.cumulative_gas_used += gas_used;
 
             if !sequencer_tx.is_deposit() {
@@ -1424,10 +1383,7 @@ impl BasePayloadBuilderCtx {
                 continue;
             }
 
-            // Under gas-limit fee billing the block accounts (and the sender pays for) the gas
-            // the transaction reserved, not the gas it consumed.
-            let accounted_gas = self.accounted_gas(false, tx.gas_limit(), tx_payer_auth, gas_used);
-            info.cumulative_gas_used += accounted_gas;
+            info.cumulative_gas_used += gas_used;
             // record tx da size
             info.cumulative_da_bytes_used += tx_da_size;
             // record uncompressed tx size
@@ -1441,7 +1397,7 @@ impl BasePayloadBuilderCtx {
                 || {
                     BuilderAcceptedEventData::new(
                         if is_success { "success" } else { "reverted" },
-                        accounted_gas,
+                        gas_used,
                         info,
                         limits,
                         Some(&tx_resources),
@@ -1560,10 +1516,10 @@ impl BasePayloadBuilderCtx {
             let miner_fee = tx
                 .effective_tip_per_gas(base_fee)
                 .expect("fee is always valid; execution succeeded");
-            info.total_fees += U256::from(miner_fee) * U256::from(accounted_gas);
+            info.total_fees += U256::from(miner_fee) * U256::from(gas_used);
             info.inclusion.record(
                 has_validity_predicates,
-                accounted_gas,
+                gas_used,
                 miner_fee,
                 base_fee,
                 coinbase_tip.unwrap_or_default(),

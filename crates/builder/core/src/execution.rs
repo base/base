@@ -34,6 +34,12 @@ pub struct ResourceLimits {
     pub tx_execution_time_limit_us: Option<u128>,
     /// Maximum cumulative uncompressed (EIP-2718 encoded) block size in bytes (optional).
     pub block_uncompressed_size_limit: Option<u64>,
+    /// Maximum reserved gas per transaction (optional): `gas_limit` plus EIP-8130 payer
+    /// authentication. Set from `max_gas_per_txn` when gas-limit fee billing is active: the
+    /// reserved gas is then the billed and reported gas, so the cap is known before execution
+    /// and a transaction above it is rejected without running it. Without gas-limit billing the
+    /// cap is applied to metered gas after execution.
+    pub tx_gas_limit: Option<u64>,
 }
 
 /// Resource usage for a single transaction.
@@ -258,6 +264,8 @@ impl ExecutionInfo {
     ///   maximum allowed DA limit per block.
     /// - execution time limit: if configured with metering data, ensures the transaction's
     ///   predicted execution time does not exceed the per-transaction limit.
+    /// - tx gas limit cap: if configured (gas-limit fee billing), ensures the reserved gas
+    ///   (`gas_limit + payer_auth`) does not exceed the per-transaction gas cap.
     pub fn is_tx_over_limits(
         &self,
         tx: &TxResources,
@@ -317,6 +325,16 @@ impl ExecutionInfo {
                     block_limit: limit,
                 });
             }
+        }
+
+        // Under gas-limit fee billing the reserved gas (`gas_limit`, plus EIP-8130 payer
+        // authentication metered on top of it) is what the transaction is billed and reported
+        // as using, so the per-transaction gas cap is decided here instead of after execution.
+        // Same permanent rejection as the post-execution check.
+        if let Some(cap) = limits.tx_gas_limit
+            && tx.gas_limit.saturating_add(tx.payer_auth) > cap
+        {
+            return Err(TxnExecutionError::MaxGasUsageExceeded);
         }
 
         // Check execution time limits (if metering data is available)
@@ -599,5 +617,33 @@ mod tests {
             TxResources { gas_limit: 21_000, uncompressed_size: 1_000_000, ..Default::default() };
 
         assert!(info.is_tx_over_limits(&tx, &limits).is_ok());
+    }
+
+    /// With a reserved-gas cap (gas-limit fee billing), a padded limit above the cap is rejected
+    /// before execution with the same permanent error the post-execution check uses, payer
+    /// authentication counts toward it, a transaction exactly at the cap is admitted, and the
+    /// check is inert when the cap is unset.
+    #[rstest::rstest]
+    #[case::above_cap(1_000_000, 0, Some(25_000), false)]
+    #[case::payer_auth_counts(25_000, 1, Some(25_000), false)]
+    #[case::payer_auth_within_cap(20_000, 5_000, Some(25_000), true)]
+    #[case::at_cap(25_000, 0, Some(25_000), true)]
+    #[case::unset(1_000_000, 0, None, true)]
+    fn tx_gas_limit_cap_is_decided_on_reserved_gas(
+        #[case] gas_limit: u64,
+        #[case] payer_auth: u64,
+        #[case] cap: Option<u64>,
+        #[case] admitted: bool,
+    ) {
+        let info = ExecutionInfo::with_capacity(10);
+        let limits = ResourceLimits { tx_gas_limit: cap, ..default_limits() };
+        let tx = TxResources { gas_limit, payer_auth, ..Default::default() };
+
+        let result = info.is_tx_over_limits(&tx, &limits);
+        if admitted {
+            assert!(result.is_ok(), "expected admission, got {result:?}");
+        } else {
+            assert!(matches!(result, Err(TxnExecutionError::MaxGasUsageExceeded)));
+        }
     }
 }

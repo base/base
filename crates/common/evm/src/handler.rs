@@ -237,13 +237,6 @@ where
             && !evm.ctx().cfg().is_fee_charge_disabled()
         {
             let spec = evm.ctx().cfg().spec();
-            // Gas-limit fee billing: the sender was charged `gas_limit` at the effective price
-            // (plus the L1 fee and the operator fee on `gas_limit`) up front, and keeps none of
-            // it back. Unused gas, EIP-3529 refunds and the operator-fee surplus all stay
-            // charged, so the fee a transaction pays is fixed by its declared `gas_limit`.
-            if spec.is_gas_limit_billing_enabled() {
-                return Ok(());
-            }
             additional_refund = evm.ctx().chain().operator_fee_refund(frame_result.gas(), spec);
         }
 
@@ -262,6 +255,24 @@ where
 
         post_execution::refund(evm.ctx().cfg().gas_params(), exec_result.gas_mut(), eip7702_refund);
 
+        // Gas-limit fee billing: a non-deposit transaction is billed, and reported, for the
+        // whole `gas_limit` it reserved. Spending the remaining gas and dropping the refund
+        // here makes everything downstream (the EIP-7623 floor, `reimburse_caller`,
+        // `reward_beneficiary`, the operator-fee refund and `ResultGas`) observe
+        // `gas_used == gas_limit` without further special cases, so the receipt's
+        // `gasUsed * effectiveGasPrice` stays the fee that was paid. Deposits pay no fee and keep
+        // their metered gas, and fee-charge-disabled simulation (`eth_call`, `eth_estimateGas`)
+        // keeps metered gas so estimation still finds the gas a call needs.
+        let ctx = evm.ctx();
+        if ctx.cfg().spec().is_gas_limit_billing_enabled()
+            && !ctx.cfg().is_fee_charge_disabled()
+            && ctx.tx().tx_type() != DEPOSIT_TRANSACTION_TYPE
+        {
+            let gas = exec_result.gas_mut();
+            gas.spend_all();
+            gas.set_refund(0);
+        }
+
         Ok(())
     }
 
@@ -277,29 +288,12 @@ where
             return Ok(());
         }
 
-        let spec = evm.ctx().cfg().spec();
-        // Gas-limit fee billing settles every fee component on the declared `gas_limit`;
-        // otherwise on the gas actually used. Fee-charge-disabled simulation never bills the
-        // caller, so it keeps the actual-usage accounting.
-        let gas_limit_billing =
-            spec.is_gas_limit_billing_enabled() && !evm.ctx().cfg().is_fee_charge_disabled();
-        let billed_gas =
-            if gas_limit_billing { frame_result.gas().limit() } else { frame_result.gas().used() };
+        self.mainnet.reward_beneficiary(evm, frame_result)?;
         let basefee = evm.ctx().block().basefee() as u128;
-
-        if gas_limit_billing {
-            // Priority tip on the full `gas_limit`; the base-fee share goes to the vault below.
-            let (block, tx, _, journal, _, _) = evm.ctx().all_mut();
-            let coinbase_gas_price = tx.effective_gas_price(basefee).saturating_sub(basefee);
-            journal
-                .load_account_mut(block.beneficiary())?
-                .incr_balance(U256::from(coinbase_gas_price.saturating_mul(billed_gas as u128)));
-        } else {
-            self.mainnet.reward_beneficiary(evm, frame_result)?;
-        }
 
         let ctx = evm.ctx();
         let enveloped = ctx.tx().enveloped_tx().cloned();
+        let spec = ctx.cfg().spec();
         let l1_block_info = ctx.chain_mut();
 
         let Some(enveloped_tx) = &enveloped else {
@@ -310,11 +304,15 @@ where
 
         let l1_cost = l1_block_info.calculate_tx_l1_cost(enveloped_tx, spec);
         let operator_fee_cost = if spec.is_enabled_in(BaseUpgrade::Isthmus) {
-            l1_block_info.operator_fee_charge(enveloped_tx, U256::from(billed_gas), spec)
+            l1_block_info.operator_fee_charge(
+                enveloped_tx,
+                U256::from(frame_result.gas().used()),
+                spec,
+            )
         } else {
             U256::ZERO
         };
-        let base_fee_amount = U256::from(basefee.saturating_mul(billed_gas as u128));
+        let base_fee_amount = U256::from(basefee.saturating_mul(frame_result.gas().used() as u128));
 
         // Send fees to their respective recipients
         for (recipient, amount) in [
@@ -1186,7 +1184,8 @@ mod tests {
     /// From Zenith (gas-limit fee billing) the caller pays for its full `gas_limit` whether or
     /// not the transaction uses it: no unused-gas reimbursement, and the coinbase tip, the base
     /// fee burned to the vault and the operator fee are all computed on `gas_limit`. The L1
-    /// data fee is unchanged, and the execution result still reports the gas actually used.
+    /// data fee is unchanged, and the execution result reports `gas_limit` as the gas used so
+    /// `gasUsed * effectiveGasPrice` remains the fee paid.
     #[rstest]
     #[case::transfer(Bytes::new())]
     #[case::revert(REVERTING_CODE)]
@@ -1199,9 +1198,10 @@ mod tests {
         let before = run_fee_flow(BaseUpgrade::Everest, recipient_code.clone(), false);
         let flow = run_fee_flow(upgrade, recipient_code.clone(), false);
 
-        // Execution itself is unchanged: same gas consumption, same L1 data fee.
-        assert_eq!(flow.gas_used, before.gas_used);
-        assert!(flow.gas_used < FEE_FLOW_GAS_LIMIT);
+        // The transaction behaves the same (same outcome, same L1 data fee) but is reported at
+        // its gas limit.
+        assert!(before.gas_used < FEE_FLOW_GAS_LIMIT, "fixture must leave gas unused");
+        assert_eq!(flow.gas_used, FEE_FLOW_GAS_LIMIT, "reported gas must be the gas limit");
         assert_eq!(flow.l1_fee_vault, before.l1_fee_vault);
 
         let billed_gas = FEE_FLOW_GAS_LIMIT as u128;
