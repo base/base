@@ -9,6 +9,7 @@ use alloy_eips::{BlockNumHash, BlockNumberOrTag, eip2718::Decodable2718};
 use alloy_primitives::B256;
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types_engine::{ForkchoiceState, JwtSecret};
+use base_builder_core::RestingPredicateMode;
 use base_common_consensus::{BaseBlock, BaseTxEnvelope};
 use base_common_genesis::{BaseUpgrade, ChainGenesis, RollupConfig, SystemConfig, UpgradeConfig};
 use base_common_network::{Base, BaseEngineApi};
@@ -61,6 +62,7 @@ async fn standalone_sequencer_paces_historical_denim_activation() -> Result<()> 
         metrics_port: None,
         payload_builder_cutover: true,
         validity_signature_mode: ValiditySignatureMode::Off,
+        resting_predicate_mode: RestingPredicateMode::Off,
         extra_extensions: Vec::new(),
         block_time: Duration::from_millis(200),
         persistence_threshold: None,
