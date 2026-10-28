@@ -159,14 +159,26 @@ async fn validity_resting_workload_populates_benchmark_series() -> Result<()> {
         assert!(PrometheusBlockCollector::is_visualizer_metric(key), "{key} is not allowlisted");
         assert!(totals.contains_key(key), "{key} missing from scrape");
     }
-    // Nothing was deferred for budget or expired within the window, and coverage stayed full.
+    // Nothing expired within the 30-block window.
     assert_eq!(
         totals.get("reth_base_builder_validity_predicate_evaluations_total_outcome_expired"),
         None,
         "transactions expired before inclusion"
     );
+    // Coverage is a fraction, and it drops below one only when the per-build evaluation budget
+    // deferred candidates. A slow runner may legitimately trip the 10 ms default budget, so the
+    // two series are checked for consistency rather than requiring full coverage.
     let coverage = totals["reth_base_builder_validity_predicate_evaluation_coverage_per_build_avg"];
-    assert!((coverage - 1.0).abs() < 1e-9, "evaluation coverage {coverage} != 1.0");
+    assert!((0.0..=1.0).contains(&coverage), "evaluation coverage {coverage} outside 0..=1");
+    let deferred = totals["reth_base_builder_validity_predicate_candidates_deferred_per_build_avg"];
+    let budget_exhausted = totals.contains_key(
+        "reth_base_builder_validity_predicate_evaluations_total_outcome_budget_exhausted",
+    );
+    assert_eq!(
+        coverage < 1.0,
+        deferred > 0.0 && budget_exhausted,
+        "coverage {coverage}, deferred {deferred}, budget_exhausted {budget_exhausted} disagree"
+    );
 
     Ok(())
 }
