@@ -1,4 +1,5 @@
-//! Merged best-transaction iteration across the protocol pool and 2D nonce sidecar.
+//! Merged best-transaction iteration across the protocol pool, the EIP-8130
+//! sidecar and the validity pool.
 
 use std::sync::Arc;
 
@@ -6,59 +7,59 @@ use reth_transaction_pool::{
     BestTransactions, TransactionOrdering, ValidPoolTransaction, error::InvalidPoolTransactionError,
 };
 
-use crate::{BasePooledTx, BestTransactionPriority};
+use crate::{BasePooledTx, BestTransactionPriority, PoolStore};
 
-/// Merges best-transaction iterators from the protocol pool and the 2D nonce sidecar.
+type BoxedBest<T> = Box<dyn BestTransactions<Item = Arc<ValidPoolTransaction<T>>>>;
+
+/// One store's iterator together with its buffered head.
+struct Source<T: BasePooledTx> {
+    best: BoxedBest<T>,
+    head: Option<Arc<ValidPoolTransaction<T>>>,
+}
+
+/// Merges the best-transaction iterators of every [`PoolStore`] into one
+/// priority order under a single ordering.
+///
+/// Invalidation is routed back to the store that owns the transaction, so a
+/// skipped lane head also parks the rest of its lane.
 pub(crate) struct MergeBestTransactions<T: BasePooledTx, O>
 where
     O: TransactionOrdering<Transaction = T>,
 {
-    protocol: Box<dyn BestTransactions<Item = Arc<ValidPoolTransaction<T>>>>,
-    sidecar: Box<dyn BestTransactions<Item = Arc<ValidPoolTransaction<T>>>>,
+    sources: [Source<T>; PoolStore::ALL.len()],
     ordering: O,
     base_fee: u64,
-    next_protocol: Option<Arc<ValidPoolTransaction<T>>>,
-    next_sidecar: Option<Arc<ValidPoolTransaction<T>>>,
 }
 
 impl<T: BasePooledTx, O> MergeBestTransactions<T, O>
 where
     O: TransactionOrdering<Transaction = T>,
 {
-    /// Creates a merged iterator from the protocol pool and 2D nonce sidecar.
+    /// Creates a merged iterator over the protocol pool, sidecar and validity
+    /// pool iterators, in [`PoolStore::ALL`] order.
     pub(crate) fn new(
-        protocol: Box<dyn BestTransactions<Item = Arc<ValidPoolTransaction<T>>>>,
-        sidecar: Box<dyn BestTransactions<Item = Arc<ValidPoolTransaction<T>>>>,
+        protocol: BoxedBest<T>,
+        sidecar: BoxedBest<T>,
+        validity: BoxedBest<T>,
         ordering: O,
         base_fee: u64,
     ) -> Self {
-        Self { protocol, sidecar, ordering, base_fee, next_protocol: None, next_sidecar: None }
-    }
-
-    fn protocol_is_better(
-        &self,
-        protocol: &Arc<ValidPoolTransaction<T>>,
-        sidecar: &Arc<ValidPoolTransaction<T>>,
-    ) -> bool {
-        let protocol_priority =
-            BestTransactionPriority::new(&self.ordering, protocol, self.base_fee);
-        let sidecar_priority = BestTransactionPriority::new(&self.ordering, sidecar, self.base_fee);
-        protocol_priority >= sidecar_priority
+        let sources = [protocol, sidecar, validity].map(|best| Source { best, head: None });
+        Self { sources, ordering, base_fee }
     }
 
     fn pop_best(&mut self) -> Option<Arc<ValidPoolTransaction<T>>> {
-        match (&self.next_protocol, &self.next_sidecar) {
-            (Some(protocol), Some(sidecar)) => {
-                if self.protocol_is_better(protocol, sidecar) {
-                    self.next_protocol.take()
-                } else {
-                    self.next_sidecar.take()
-                }
+        let mut best: Option<(usize, BestTransactionPriority<O::PriorityValue>)> = None;
+        for (index, source) in self.sources.iter().enumerate() {
+            let Some(head) = &source.head else { continue };
+            let priority = BestTransactionPriority::new(&self.ordering, head, self.base_fee);
+            // Ties go to the earlier store, so a protocol transaction wins over
+            // an equally ranked sidecar or validity one.
+            if best.as_ref().is_none_or(|(_, current)| priority > *current) {
+                best = Some((index, priority));
             }
-            (Some(_), None) => self.next_protocol.take(),
-            (None, Some(_)) => self.next_sidecar.take(),
-            (None, None) => None,
         }
+        self.sources[best?.0].head.take()
     }
 }
 
@@ -79,11 +80,10 @@ where
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
-            if self.next_protocol.is_none() {
-                self.next_protocol = self.protocol.next();
-            }
-            if self.next_sidecar.is_none() {
-                self.next_sidecar = self.sidecar.next();
+            for source in &mut self.sources {
+                if source.head.is_none() {
+                    source.head = source.best.next();
+                }
             }
 
             let transaction = self.pop_best()?;
@@ -101,23 +101,21 @@ where
     O: TransactionOrdering<Transaction = T>,
 {
     fn mark_invalid(&mut self, transaction: &Self::Item, kind: InvalidPoolTransactionError) {
-        if transaction.transaction.is_eip8130_sidecar_transaction() {
-            self.next_sidecar = None;
-            self.sidecar.mark_invalid(transaction, kind);
-        } else {
-            self.next_protocol = None;
-            self.protocol.mark_invalid(transaction, kind);
-        }
+        let source = &mut self.sources[PoolStore::of(&transaction.transaction).index()];
+        source.head = None;
+        source.best.mark_invalid(transaction, kind);
     }
 
     fn no_updates(&mut self) {
-        self.protocol.no_updates();
-        self.sidecar.no_updates();
+        for source in &mut self.sources {
+            source.best.no_updates();
+        }
     }
 
     fn set_skip_blobs(&mut self, skip_blobs: bool) {
-        self.protocol.set_skip_blobs(skip_blobs);
-        self.sidecar.set_skip_blobs(skip_blobs);
+        for source in &mut self.sources {
+            source.best.set_skip_blobs(skip_blobs);
+        }
     }
 }
 
@@ -137,7 +135,10 @@ mod tests {
     use reth_transaction_pool::{TransactionOrigin, identifier::TransactionId};
 
     use super::*;
-    use crate::{BaseOrdering, BasePooledTransaction, TimestampedTransaction};
+    use crate::{
+        BaseOrdering, BasePooledTransaction, TimestampedTransaction, ValidityOperator,
+        ValidityPredicate,
+    };
 
     #[derive(Debug)]
     struct StaticBestTransactions<T: BasePooledTx> {
@@ -265,6 +266,7 @@ mod tests {
         let mut merged = MergeBestTransactions::new(
             Box::new(StaticBestTransactions::new(vec![protocol])),
             Box::new(StaticBestTransactions::new(vec![sidecar])),
+            Box::new(StaticBestTransactions::new(Vec::new())),
             BaseOrdering::coinbase_tip(),
             10,
         );
@@ -279,6 +281,7 @@ mod tests {
         let mut merged = MergeBestTransactions::new(
             Box::new(StaticBestTransactions::new(Vec::new())),
             Box::new(StaticBestTransactions::new(vec![sidecar])),
+            Box::new(StaticBestTransactions::new(Vec::new())),
             BaseOrdering::coinbase_tip(),
             10,
         );
@@ -302,6 +305,7 @@ mod tests {
         let mut merged = MergeBestTransactions::new(
             Box::new(StaticBestTransactions::new(vec![Arc::clone(&older_protocol)])),
             Box::new(StaticBestTransactions::new(vec![newer_sidecar])),
+            Box::new(StaticBestTransactions::new(Vec::new())),
             BaseOrdering::timestamp(),
             10,
         );
@@ -324,6 +328,7 @@ mod tests {
         let mut merged = MergeBestTransactions::new(
             Box::new(StaticBestTransactions::new(vec![older_protocol])),
             Box::new(StaticBestTransactions::new(vec![newer_sidecar])),
+            Box::new(StaticBestTransactions::new(Vec::new())),
             BaseOrdering::coinbase_tip(),
             10,
         );
@@ -344,6 +349,7 @@ mod tests {
         let mut merged = MergeBestTransactions::new(
             Box::new(StaticBestTransactions::new(protocol)),
             Box::new(StaticBestTransactions::new(sidecar)),
+            Box::new(StaticBestTransactions::new(Vec::new())),
             BaseOrdering::coinbase_tip(),
             0,
         );
@@ -358,5 +364,91 @@ mod tests {
         merged.mark_invalid(&first, InvalidPoolTransactionError::Underpriced);
 
         assert!(merged.next().is_none());
+    }
+
+    fn resting_predicates() -> Vec<ValidityPredicate> {
+        vec![ValidityPredicate::BlockNumber {
+            op: ValidityOperator::LessThanOrEqual,
+            value: U256::from(1_000),
+        }]
+    }
+
+    #[test]
+    fn merges_every_store_by_priority() {
+        let protocol = valid_pool_transaction(signed_tx(&signer(), U256::ZERO, 0, 100, 100));
+        let sidecar = valid_pool_transaction(signed_tx(&signer(), U256::from(1), 0, 300, 300));
+        let validity = valid_pool_transaction(
+            signed_tx(&signer(), U256::ZERO, 0, 200, 200)
+                .with_validity_predicates(resting_predicates()),
+        );
+        let expected = [*sidecar.hash(), *validity.hash(), *protocol.hash()];
+
+        let merged = MergeBestTransactions::new(
+            Box::new(StaticBestTransactions::new(vec![protocol])),
+            Box::new(StaticBestTransactions::new(vec![sidecar])),
+            Box::new(StaticBestTransactions::new(vec![validity])),
+            BaseOrdering::coinbase_tip(),
+            0,
+        );
+
+        let order: Vec<_> = merged.map(|transaction| *transaction.hash()).collect();
+        assert_eq!(order, expected);
+    }
+
+    #[test]
+    fn equal_priority_prefers_the_earlier_store() {
+        let protocol = valid_pool_transaction(signed_tx(&signer(), U256::ZERO, 0, 100, 100));
+        let sidecar = valid_pool_transaction(signed_tx(&signer(), U256::from(1), 0, 100, 100));
+        let validity = valid_pool_transaction(
+            signed_tx(&signer(), U256::ZERO, 0, 100, 100)
+                .with_validity_predicates(resting_predicates()),
+        );
+        let expected = [*protocol.hash(), *sidecar.hash(), *validity.hash()];
+
+        let merged = MergeBestTransactions::new(
+            Box::new(StaticBestTransactions::new(vec![protocol])),
+            Box::new(StaticBestTransactions::new(vec![sidecar])),
+            Box::new(StaticBestTransactions::new(vec![validity])),
+            BaseOrdering::coinbase_tip(),
+            0,
+        );
+
+        let order: Vec<_> = merged.map(|transaction| *transaction.hash()).collect();
+        assert_eq!(order, expected);
+    }
+
+    #[test]
+    fn mark_invalid_routes_a_validity_transaction_to_its_own_store() {
+        let validity_signer = signer();
+        let validity = vec![
+            valid_pool_transaction(
+                signed_tx(&validity_signer, U256::ZERO, 0, 500, 500)
+                    .with_validity_predicates(resting_predicates()),
+            ),
+            valid_pool_transaction(
+                signed_tx(&validity_signer, U256::ZERO, 1, 400, 400)
+                    .with_validity_predicates(resting_predicates()),
+            ),
+        ];
+        // A standard transaction from the same sender lives in the protocol
+        // store and must not be parked by the validity lane's invalidation.
+        let protocol =
+            vec![valid_pool_transaction(signed_tx(&validity_signer, U256::ZERO, 2, 100, 100))];
+        let protocol_hash = *protocol[0].hash();
+
+        let mut merged = MergeBestTransactions::new(
+            Box::new(StaticBestTransactions::new(protocol)),
+            Box::new(StaticBestTransactions::new(Vec::new())),
+            Box::new(StaticBestTransactions::new(validity)),
+            BaseOrdering::coinbase_tip(),
+            0,
+        );
+
+        let head = merged.next().expect("validity head");
+        assert_eq!(head.nonce(), 0);
+        merged.mark_invalid(&head, InvalidPoolTransactionError::Underpriced);
+
+        let rest: Vec<_> = merged.map(|transaction| *transaction.hash()).collect();
+        assert_eq!(rest, vec![protocol_hash]);
     }
 }
