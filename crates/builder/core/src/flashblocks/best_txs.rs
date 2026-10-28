@@ -157,18 +157,12 @@ where
                 continue;
             }
 
-            if self.rejection_cache.is_rejected(&hash) {
-                self.rejection_cache_hits
-                    .get_or_insert_with(BuilderMetrics::rejection_cache_hits)
-                    .increment(1);
-                // Only intrinsically invalid transactions enter this cache. Their nonce-lane
-                // descendants cannot execute across the resulting gap, so exclude the lane for
-                // this iterator rather than treating the rejected head as committed.
-                self.inner.mark_invalid(tx.sender(), tx.nonce());
-                self.current_transaction = None;
-                continue;
-            }
-
+            // Resting transactions are checked before the rejection cache: they are most of the
+            // validity candidates a flashblock yields, and their lookup is a single map probe
+            // while a rejection-cache lookup pins a concurrent map. A transaction is released from
+            // the resting set before it can execute, so it is never rejected while resting; a
+            // stale member is parked here, which blocks its nonce lane just as an invalidation
+            // would.
             if self.resting_predicate_mode.is_enforced()
                 && !self.resting.is_empty()
                 && !tx.validity_conditions().is_empty()
@@ -182,6 +176,18 @@ where
                     self.resting_stats.carried_parked += u64::from(was_carried);
                     continue;
                 }
+            }
+
+            if self.rejection_cache.is_rejected(&hash) {
+                self.rejection_cache_hits
+                    .get_or_insert_with(BuilderMetrics::rejection_cache_hits)
+                    .increment(1);
+                // Only intrinsically invalid transactions enter this cache. Their nonce-lane
+                // descendants cannot execute across the resulting gap, so exclude the lane for
+                // this iterator rather than treating the rejected head as committed.
+                self.inner.mark_invalid(tx.sender(), tx.nonce());
+                self.current_transaction = None;
+                continue;
             }
 
             break Some(pooled);
@@ -763,6 +769,32 @@ mod tests {
         assert_eq!(*iterator.next(()).unwrap().hash(), *parent.hash());
         iterator.mark_current_committed();
         assert_eq!(*iterator.next(()).unwrap().hash(), *child.hash());
+    }
+
+    /// A stale resting member that another build rejected is held back with its nonce lane, as the
+    /// rejection cache would exclude it, and the rejection cache excludes it once it is released.
+    #[test]
+    fn rejected_resting_transaction_and_its_lane_stay_excluded() {
+        let resting = validity_transaction(0, 0, 10, vec![balance_at_least(WATCHED, 1)]);
+        let child = transaction(0, 1, 100);
+        let other = transaction(1, 0, 1);
+        let pool = pending_pool(&[Arc::clone(&resting), Arc::clone(&child), Arc::clone(&other)]);
+        let mut iterator = resting_iterator(&pool);
+
+        let first = iterator.next(()).unwrap();
+        park_unsatisfied(&mut iterator, &first);
+        iterator.mark_rejected(&[*resting.hash()]);
+
+        iterator.refresh_iterator(parkable(&pool));
+        assert_eq!(*iterator.next(()).unwrap().hash(), *other.hash());
+        iterator.mark_current_committed();
+        assert!(iterator.next(()).is_none());
+        assert_eq!(iterator.take_resting_stats().parked, 1);
+
+        // Once a state change releases it, the rejection cache excludes it and its descendant.
+        iterator.record_committed_state(&balance_change(WATCHED, 0, 1));
+        iterator.refresh_iterator(parkable(&pool));
+        assert!(iterator.next(()).is_none());
     }
 
     /// A transaction parked by the build loop in the current flashblock is woken by the build
