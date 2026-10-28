@@ -22,6 +22,7 @@ impl NonceManager {
         let storage_features = UpgradeGatedStorageFeatures::from_upgrade(upgrade);
         let precompile = base_precompile!(
             "NonceManager",
+            upgrade: upgrade,
             storage_features: storage_features,
             |ctx, calldata| NonceManagerStorage::new(ctx).dispatch(ctx, calldata),
         );

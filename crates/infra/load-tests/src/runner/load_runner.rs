@@ -48,6 +48,9 @@ pub struct LoadRunner {
     pub(super) config: LoadConfig,
     pub(super) config_summary: Option<ConfigSummary>,
     pub(super) client: QueryProvider,
+    pub(super) gas_estimator: Option<crate::rpc::GasEstimator>,
+    /// Exclusive funding signer reused only by the optional deployment lane during the run.
+    pub(super) deployment_signer: Option<PrivateKeySigner>,
     pub(super) accounts: AccountPool,
     pub(super) generator: WorkloadGenerator,
     pub(super) collector: MetricsCollector,
@@ -172,6 +175,8 @@ impl LoadRunner {
             config,
             config_summary: None,
             client,
+            gas_estimator: None,
+            deployment_signer: None,
             accounts,
             generator,
             collector: MetricsCollector::new(),
@@ -248,6 +253,40 @@ impl LoadRunner {
             debug!(url = %url, "validity endpoint capability probe passed");
         }
         Ok(())
+    }
+
+    /// Applies the shared fork-aware budget after funding initialized its schedule.
+    pub(super) async fn estimate_gas(
+        &self,
+        request: alloy_rpc_types::TransactionRequest,
+        from: Address,
+    ) -> Result<alloy_rpc_types::TransactionRequest> {
+        match &self.gas_estimator {
+            Some(estimator) => estimator.apply(request, from).await,
+            None => crate::rpc::GasEstimator::setup(&self.client, request, from).await,
+        }
+    }
+
+    /// Preserves all partial metrics when either lane fails.
+    pub(super) fn conclude_run(
+        &mut self,
+        mut summary: MetricsSummary,
+        mut error: Option<BaselineError>,
+    ) -> Result<MetricsSummary> {
+        if error.is_none()
+            && let Some(reason) = summary.deploy64.iter().find_map(|result| result.error.as_ref())
+        {
+            error = Some(BaselineError::Transaction(format!("deploy64 workload failed: {reason}")));
+        }
+        if let Some(error) = error {
+            // Stash the real stats gathered so far (submitted/confirmed/failed counts, gas,
+            // latencies) so callers can present them alongside the error instead of an
+            // all-zero summary — plenty of transactions may have landed before the failure.
+            summary.error = Some(error.to_string());
+            self.partial_summary = Some(summary);
+            return Err(error);
+        }
+        Ok(summary)
     }
 
     pub(super) async fn calibrate_avg_gas(&self) -> Result<u64> {
@@ -343,6 +382,7 @@ impl LoadRunner {
                         self.config.primary_submission_rpc().clone(),
                         EthereumWallet::from(account.signer.clone()),
                     );
+                    let request = self.estimate_gas(request, from).await?;
                     let receipt = provider
                         .send_transaction(request)
                         .await

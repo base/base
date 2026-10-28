@@ -680,6 +680,10 @@ pub struct ExecutedPayload<N: NodePrimitives> {
 pub struct ExecutionInfo {
     /// All gas used so far
     pub cumulative_gas_used: u64,
+    /// Regular gas before refunds, used for Amsterdam block capacity.
+    pub block_regular_gas_used: u64,
+    /// State gas after reservoir refills, used for Amsterdam block capacity.
+    pub block_state_gas_used: u64,
     /// Estimated DA size
     pub cumulative_da_bytes_used: u64,
     /// Tracks fees from executed mempool transactions
@@ -703,6 +707,8 @@ impl ExecutionInfo {
     pub fn new() -> Self {
         Self {
             cumulative_gas_used: 0,
+            block_regular_gas_used: 0,
+            block_state_gas_used: 0,
             cumulative_da_bytes_used: 0,
             total_fees: U256::ZERO,
             inclusion: InclusionTracker::default(),
@@ -722,6 +728,13 @@ impl ExecutionInfo {
     ///   per tx.
     /// - block DA limit: if configured, ensures the transaction's DA size does not exceed the
     ///   maximum allowed DA limit per block.
+    ///
+    /// Amsterdam checks independent regular/state budgets; `amsterdam_tx_gas_cap` is the
+    /// regular-gas cap, while the full reservation must fit the remaining state budget.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "admission keeps independent gas, DA, and fork-specific limits explicit"
+    )]
     pub fn is_tx_over_limits(
         &self,
         tx_da_size: u64,
@@ -730,6 +743,7 @@ impl ExecutionInfo {
         block_data_limit: Option<u64>,
         tx_reserved_gas: u64,
         da_footprint_gas_scalar: Option<u16>,
+        amsterdam_tx_gas_cap: Option<u64>,
     ) -> bool {
         if tx_data_limit.is_some_and(|da_limit| tx_da_size > da_limit) {
             return true;
@@ -750,6 +764,11 @@ impl ExecutionInfo {
             }
         }
 
+        if let Some(cap) = amsterdam_tx_gas_cap {
+            return tx_reserved_gas.min(cap)
+                > block_gas_limit.saturating_sub(self.block_regular_gas_used)
+                || tx_reserved_gas > block_gas_limit.saturating_sub(self.block_state_gas_used);
+        }
         self.cumulative_gas_used.saturating_add(tx_reserved_gas) > block_gas_limit
     }
 }
@@ -925,11 +944,13 @@ where
             })?;
 
             let mut pending_resource_usage = None;
+            let mut tx_regular_gas_used = 0;
             let tx_hash = *sequencer_tx.tx_hash();
             let gas_output = match builder.execute_transaction_with_commit_condition(
                 sequencer_tx.clone(),
                 |result| {
                     let result_and_state = result.result();
+                    tx_regular_gas_used = result_and_state.result.gas().block_regular_gas_used();
                     pending_resource_usage = resource_metering.unthrottled_usage(
                         &tx_hash,
                         result_and_state.result.tx_gas_used(),
@@ -969,6 +990,8 @@ where
             };
 
             info.cumulative_gas_used += gas_output.tx_gas_used();
+            info.block_regular_gas_used += tx_regular_gas_used;
+            info.block_state_gas_used += gas_output.state_gas_used();
             // Only committed transactions reach the payload, so skipped pre-includes must not
             // consume the envelope budget.
             info.sequencer_tx_bytes = info
@@ -1400,6 +1423,10 @@ where
                         "DA footprint should always be available from the database post jovian",
                     ),
                 );
+            let cfg = builder.evm_mut().cfg_env();
+            let amsterdam_tx_gas_cap = cfg.enable_amsterdam_eip8037.then_some(
+                cfg.tx_gas_limit_cap.unwrap_or(alloy_eips::eip7825::MAX_TX_GAS_LIMIT_OSAKA),
+            );
 
             if info.is_tx_over_limits(
                 tx_da_size,
@@ -1408,6 +1435,7 @@ where
                 block_da_limit,
                 tx.gas_limit().saturating_add(tx_payer_auth),
                 da_footprint_gas_scalar,
+                amsterdam_tx_gas_cap,
             ) {
                 // we can't fit this transaction into the block, so we need to mark it as
                 // invalid which also removes all dependent transaction from
@@ -1448,6 +1476,7 @@ where
             let mut resting_woken = Vec::new();
             let mut pending_resource_usage = None;
             let mut executed_decision = None;
+            let mut tx_regular_gas_used = 0;
             let mut bal_limit = None;
             let tx_bytes = tx.encode_2718_len() as u64;
             let bal_budget = &mut info.bal_budget;
@@ -1455,6 +1484,7 @@ where
                 WithEncoded::new(tx_encoded, tx.clone()),
                 |result| {
                     let result_and_state = result.result();
+                    tx_regular_gas_used = result_and_state.result.gas().block_regular_gas_used();
                     let decision = resource_metering.check_executed_usage(
                         &tx_hash,
                         result_and_state.result.tx_gas_used(),
@@ -1577,6 +1607,8 @@ where
             };
 
             info.cumulative_gas_used += gas_output.tx_gas_used();
+            info.block_regular_gas_used += tx_regular_gas_used;
+            info.block_state_gas_used += gas_output.state_gas_used();
             info.cumulative_da_bytes_used += tx_da_size;
             if let Some(usage) = pending_resource_usage {
                 resource_metering.apply_accounted_usage(
@@ -1882,10 +1914,10 @@ mod tests {
         let block_gas_limit = 1_000_000;
 
         // gas_limit alone fits exactly (979_000 + 21_000 = 1_000_000).
-        assert!(!info.is_tx_over_limits(0, block_gas_limit, None, None, 21_000, None));
+        assert!(!info.is_tx_over_limits(0, block_gas_limit, None, None, 21_000, None, None));
 
         // payer_auth metered on top (reserved = 21_000 + 2_100) pushes over the block limit.
-        assert!(info.is_tx_over_limits(0, block_gas_limit, None, None, 21_000 + 2_100, None));
+        assert!(info.is_tx_over_limits(0, block_gas_limit, None, None, 21_000 + 2_100, None, None));
     }
 
     #[test]
@@ -1921,6 +1953,77 @@ mod tests {
                 rendered.contains(&format!("base_builder_native_payload_{stage}_duration_count 1"))
             );
         }
+    }
+
+    /// Sequencer state consumption must carry into pool admission and the sealed header.
+    #[test]
+    fn amsterdam_block_gas_sequencer_then_pool() {
+        let sequencer = pool_transaction_to(0, Address::repeat_byte(0x91), U256::ONE);
+        let included = pool_transaction_to(0, Address::repeat_byte(0x92), U256::ONE);
+        let excluded = pool_transaction_to(0, Address::repeat_byte(0x93), U256::ONE);
+        let senders = [sequencer.sender(), included.sender(), excluded.sender()];
+        let expected_hashes = [*sequencer.hash(), *included.hash()];
+        // Each fresh recipient consumes 120 * 1530 state gas. After the sequencer,
+        // the next 400,000-gas reservation fits exactly, but a third does not.
+        let mut ctx = pool_payload_context_with_gas_limit(DENIM_TIMESTAMP, 583_600);
+        ctx.config.attributes.transactions = vec![sequencer_attribute_tx(&sequencer)];
+        let BuildOutcomeKind::Freeze(payload) = build_parkable_pool_payload(
+            ctx,
+            TestParkableTransactions::new(vec![included, excluded]),
+            &senders,
+        ) else {
+            panic!("Amsterdam payload must freeze");
+        };
+        let hashes =
+            payload.block().body().transactions.iter().map(|tx| *tx.tx_hash()).collect::<Vec<_>>();
+        assert_eq!(hashes, expected_hashes, "state budget carries across sequencer and pool");
+        assert_eq!(
+            payload.block().gas_used,
+            367_200,
+            "sealed header uses summed state gas, not receipt fees"
+        );
+    }
+
+    /// Admission reserves the full declared gas against state, and only the cap against regular.
+    #[test]
+    fn amsterdam_block_gas_admission_boundaries() {
+        let cap = alloy_eips::eip7825::MAX_TX_GAS_LIMIT_OSAKA;
+        let mut info = ExecutionInfo::new();
+        info.block_regular_gas_used = 120_000_000 - cap;
+        info.block_state_gas_used = 5_000_000;
+        info.cumulative_gas_used = 119_000_000;
+        assert!(
+            !info.is_tx_over_limits(0, 120_000_000, None, None, 115_000_000, None, Some(cap)),
+            "64 KiB deployment reservation fits both budgets exactly"
+        );
+        assert!(
+            info.is_tx_over_limits(0, 120_000_000, None, None, 115_000_001, None, Some(cap)),
+            "full tx gas, not the regular cap, must fit state capacity"
+        );
+        info.block_regular_gas_used += 1;
+        assert!(
+            info.is_tx_over_limits(0, 120_000_000, None, None, 115_000_000, None, Some(cap)),
+            "regular capacity must independently fit the capped reservation"
+        );
+        assert!(
+            info.is_tx_over_limits(0, 120_000_000, None, None, 115_000_000, None, None),
+            "pre-Amsterdam retains scalar admission"
+        );
+        info.block_regular_gas_used = 0;
+        info.block_state_gas_used = 0;
+        assert!(
+            info.is_tx_over_limits(0, 40_000_000, None, None, 115_000_000, None, Some(cap)),
+            "40M blocks cannot reserve 115M state capacity"
+        );
+        info.block_state_gas_used = 40_000_000 - 23_100;
+        assert!(
+            !info.is_tx_over_limits(0, 40_000_000, None, None, 23_100, None, Some(cap)),
+            "native payer-auth reservation fits exactly"
+        );
+        assert!(
+            info.is_tx_over_limits(0, 40_000_000, None, None, 23_101, None, Some(cap)),
+            "native payer-auth reservation is not omitted from state admission"
+        );
     }
 
     const DENIM_TIMESTAMP: u64 = 1;

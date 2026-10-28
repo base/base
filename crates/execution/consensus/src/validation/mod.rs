@@ -125,6 +125,7 @@ pub fn validate_block_post_execution<R: DepositReceiptExt>(
     block_access_list_hash: Option<B256>,
 ) -> Result<(), ConsensusError> {
     let timestamp = header.timestamp();
+    let amsterdam = chain_spec.is_amsterdam_active_at_timestamp(timestamp);
     validate_block_access_list(&header, &chain_spec, block_access_list_hash)?;
     let trust_precomputed_receipt_root =
         should_trust_precomputed_receipt_root(&chain_spec, timestamp);
@@ -192,9 +193,10 @@ pub fn validate_block_post_execution<R: DepositReceiptExt>(
     // Check if gas used matches the value set in header.
     let cumulative_gas_used =
         receipts.last().map(|receipt| receipt.cumulative_gas_used()).unwrap_or(0);
-    if header.gas_used() != cumulative_gas_used {
+    let block_gas_used = if amsterdam { result.gas_used } else { cumulative_gas_used };
+    if header.gas_used() != block_gas_used {
         return Err(ConsensusError::BlockGasUsed {
-            gas: GotExpected { got: cumulative_gas_used, expected: header.gas_used() },
+            gas: GotExpected { got: block_gas_used, expected: header.gas_used() },
             gas_spent_by_tx: gas_spent_by_transactions(receipts),
         });
     }
@@ -713,6 +715,7 @@ mod tests {
         let header = Header {
             timestamp: JOVIAN_TIMESTAMP,
             blob_gas_used: Some(BLOB_GAS_USED),
+            gas_used: GAS_USED,
             block_access_list_hash: Some(bal_hash),
             ..Default::default()
         };
@@ -858,6 +861,38 @@ mod tests {
 
     fn bal_header(timestamp: u64, block_access_list_hash: Option<B256>) -> Header {
         Header { timestamp, block_access_list_hash, ..Default::default() }
+    }
+
+    /// Amsterdam validates execution's dual-budget result, not receipt fee accumulation.
+    #[test]
+    fn amsterdam_block_gas_header_validation() {
+        for amsterdam in [false, true] {
+            let chainspec =
+                if amsterdam { amsterdam_chainspec() } else { pre_amsterdam_chainspec() };
+            let receipts = vec![deposit_receipt()];
+            let mut header = canonical_header(AMSTERDAM_TIMESTAMP, &receipts);
+            let receipt_gas = header.gas_used;
+            header.blob_gas_used = Some(0);
+            let commitment = amsterdam.then_some(B256::repeat_byte(0x11));
+            header.block_access_list_hash = commitment;
+            let result = BlockExecutionResult::<BaseReceipt> {
+                receipts,
+                requests: Requests::default(),
+                gas_used: 100_453_680,
+                blob_gas_used: 0,
+            };
+            header.gas_used = if amsterdam { result.gas_used } else { receipt_gas };
+            validate_block_post_execution(&header, &chainspec, &result, None, commitment)
+                .expect("fork-appropriate block gas must validate");
+            header.gas_used = if amsterdam { receipt_gas } else { result.gas_used };
+            assert!(
+                matches!(
+                    validate_block_post_execution(&header, &chainspec, &result, None, commitment),
+                    Err(ConsensusError::BlockGasUsed { .. })
+                ),
+                "wrong fork's gas accounting must be rejected"
+            );
+        }
     }
 
     /// A header committing to exactly the list execution recomputed must be accepted.

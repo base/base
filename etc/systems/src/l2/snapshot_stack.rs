@@ -1,7 +1,7 @@
 //! L1-free snapshot-backed L2 stack for development and benchmarking.
 
 use std::{
-    sync::Arc,
+    sync::{Arc, OnceLock},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -14,7 +14,7 @@ use base_consensus_node::StandalonePrefund;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_txpool::ValiditySignatureMode;
 use eyre::{Result, WrapErr, ensure};
-use reth_ethereum_forks::ForkCondition;
+use reth_ethereum_forks::{EthereumHardfork, ForkCondition};
 use url::Url;
 
 use super::{
@@ -73,11 +73,13 @@ impl SnapshotL2Stack {
         let chain = config.snapshot.chain.resolve()?;
         let canonical_rollup_config = Arc::clone(&chain.rollup_config);
         let first_block_timestamp = Self::schedule_anchor(SystemTime::now())?;
-        let chain_spec = Arc::new(Self::chain_spec(
-            (*chain.chain_spec).clone(),
-            first_block_timestamp,
-            block_interval,
-        ));
+        let mut chain_spec =
+            Self::chain_spec((*chain.chain_spec).clone(), first_block_timestamp, block_interval);
+        let local_schedule = Arc::new(OnceLock::new());
+        if block_interval == DevnetBlockInterval::TwoHundredMilliseconds {
+            chain_spec.local_denim_timestamp_schedule = Some(Arc::clone(&local_schedule));
+        }
+        let chain_spec = Arc::new(chain_spec);
         let jwt_secret = JwtSecret::random();
 
         let builder = InProcessBuilder::start(InProcessBuilderConfig {
@@ -131,6 +133,10 @@ impl SnapshotL2Stack {
             first_block_timestamp,
             block_interval,
         )?);
+
+        if let Some(schedule) = rollup_config.denim_timestamp_schedule() {
+            local_schedule.set(schedule).expect("snapshot schedule is initialized only once");
+        }
 
         let builder_rpc_url = builder.rpc_url()?.to_string();
         let client_config = config.snapshot.client_datadir.map(|datadir| InProcessClientConfig {
@@ -323,6 +329,8 @@ impl SnapshotL2Stack {
             }
         };
         chain_spec.set_fork(BaseUpgrade::Denim, denim);
+        // The snapshot's local Denim boundary must move its paired EL hardfork too.
+        chain_spec.set_fork(EthereumHardfork::Amsterdam, denim);
         chain_spec
     }
 
@@ -483,13 +491,13 @@ impl SnapshotL2Stack {
 
 #[cfg(test)]
 mod tests {
-    use base_common_chains::{ChainConfig, Upgrades};
+    use base_common_chains::{BaseUpgradeExt, ChainConfig, Upgrades};
     use base_common_genesis::{BaseUpgrade, SystemConfig};
     use base_execution_chainspec::BaseChainSpec;
-    use reth_ethereum_forks::ForkCondition;
+    use reth_ethereum_forks::{EthereumHardfork, EthereumHardforks, ForkCondition, Hardfork};
 
     use super::{SNAPSHOT_STARTUP_LEAD, SnapshotL2Stack};
-    use crate::DevnetBlockInterval;
+    use crate::{DevnetBlockInterval, DevnetConfig, DevnetL2State, SnapshotChainConfig};
 
     #[test]
     fn persistence_backpressure_window_scales_with_cadence() {
@@ -583,6 +591,223 @@ mod tests {
         assert!(!chain_spec.is_denim_active_at_timestamp(activation - 1));
         assert!(chain_spec.is_denim_active_at_timestamp(activation));
         assert_eq!(chain_spec.fork(BaseUpgrade::Denim), ForkCondition::Timestamp(activation));
+    }
+
+    /// Both execution nodes must follow the CL anchor without changing snapshot identity.
+    #[test]
+    fn subsecond_cl_and_el_share_snapshot_schedule() {
+        let mut mainnet_rollup = ChainConfig::mainnet().rollup_config();
+        mainnet_rollup.clear_upgrade_activation_timestamp(BaseUpgrade::Denim);
+        let mut mainnet_spec = BaseChainSpec::mainnet();
+        mainnet_spec.set_fork(BaseUpgrade::Denim, ForkCondition::Never);
+        mainnet_spec.set_fork(EthereumHardfork::Amsterdam, ForkCondition::Never);
+        assert_eq!(
+            mainnet_spec.fork(EthereumHardfork::Amsterdam),
+            ForkCondition::Never,
+            "mainnet-like fixture must leave Ethereum Amsterdam unset",
+        );
+        assert_eq!(
+            BaseChainSpec::sepolia().fork(EthereumHardfork::Amsterdam),
+            ForkCondition::Timestamp(1_792_605_600),
+            "Sepolia-like fixture must begin with canonically scheduled Amsterdam",
+        );
+        assert_eq!(
+            mainnet_rollup.denim_timestamp_schedule(),
+            None,
+            "mainnet-like CL fixture must leave Denim unset"
+        );
+        assert_eq!(
+            mainnet_spec.denim_timestamp_schedule().unwrap(),
+            None,
+            "mainnet-like EL fixture must leave Denim unset"
+        );
+        for (canonical, mut spec) in [
+            (ChainConfig::sepolia().rollup_config(), BaseChainSpec::sepolia()),
+            (mainnet_rollup, mainnet_spec),
+        ] {
+            let original = spec.clone();
+            let boundary = 48_526_665;
+            let activation = 2_000_000_001;
+            let local_schedule = std::sync::Arc::new(std::sync::OnceLock::new());
+            spec = SnapshotL2Stack::chain_spec(
+                spec,
+                activation,
+                DevnetBlockInterval::TwoHundredMilliseconds,
+            );
+            spec.local_denim_timestamp_schedule = Some(std::sync::Arc::clone(&local_schedule));
+            let builder_spec = std::sync::Arc::new(spec);
+            let client_spec = std::sync::Arc::clone(&builder_spec);
+            let rollup = SnapshotL2Stack::anchored_rollup_config(
+                canonical,
+                boundary,
+                activation,
+                DevnetBlockInterval::TwoHundredMilliseconds,
+            )
+            .expect("non-genesis snapshot must anchor successfully");
+            local_schedule
+                .set(rollup.denim_timestamp_schedule().expect("local Denim is scheduled"))
+                .expect("local schedule must initialize exactly once");
+            assert_eq!(
+                rollup.upgrade_activation_timestamp(BaseUpgrade::Denim),
+                Some(activation),
+                "CL Denim must move to the exact local snapshot boundary",
+            );
+            assert_eq!(
+                (rollup.is_denim_active(activation - 1), rollup.is_denim_active(activation)),
+                (false, true),
+                "CL Denim must activate at T, not before T",
+            );
+            for (node, spec) in [("builder", builder_spec), ("validator", client_spec)] {
+                assert_eq!(
+                    spec.genesis_header, original.genesis_header,
+                    "canonical header and hash must remain unchanged"
+                );
+                assert_eq!(
+                    spec.genesis, original.genesis,
+                    "persisted genesis identity must remain unchanged"
+                );
+                for fork in [BaseUpgrade::Denim.boxed(), EthereumHardfork::Amsterdam.boxed()] {
+                    assert_eq!(
+                        spec.fork(fork),
+                        ForkCondition::Timestamp(activation),
+                        "{node} Denim and Ethereum Amsterdam must share the exact CL boundary",
+                    );
+                }
+                for (timestamp, active, upgrade) in [
+                    (activation - 1, false, BaseUpgrade::Cobalt),
+                    (activation, true, BaseUpgrade::Denim),
+                ] {
+                    assert_eq!(
+                        spec.is_amsterdam_active_at_timestamp(timestamp),
+                        active,
+                        "{node} Amsterdam activation at {timestamp}",
+                    );
+                    assert_eq!(
+                        spec.is_denim_active_at_timestamp(timestamp),
+                        rollup.is_denim_active(timestamp),
+                        "{node} and CL Denim activation must agree at {timestamp}",
+                    );
+                    assert_eq!(
+                        BaseUpgrade::from_timestamp(&*spec, timestamp).into_eth_spec(),
+                        upgrade.into_eth_spec(),
+                        "{node} must use Osaka before T and Amsterdam at T",
+                    );
+                }
+                assert_eq!(
+                    spec.fork(BaseUpgrade::Everest),
+                    original.fork(BaseUpgrade::Everest),
+                    "{node} must not move native transaction / Everest activation",
+                );
+                assert!(
+                    !spec.is_amsterdam_active_at_timestamp(original.genesis.timestamp),
+                    "{node} must not activate Amsterdam at canonical genesis",
+                );
+                let schedule = spec
+                    .denim_timestamp_schedule()
+                    .expect("valid schedule")
+                    .expect("Denim scheduled");
+                for (offset, expected) in [
+                    (1, (activation, 0)),
+                    (2, (activation, 200)),
+                    (5, (activation, 800)),
+                    (6, (activation + 1, 0)),
+                    (17, (activation + 3, 200)),
+                ] {
+                    let number = boundary + offset;
+                    assert_eq!(
+                        rollup.l2_block_timestamp_parts(number),
+                        expected,
+                        "CL timestamp at block {number}"
+                    );
+                    assert_eq!(
+                        schedule.block_timestamp_parts(number),
+                        expected,
+                        "EL timestamp at block {number}"
+                    );
+                    assert!(
+                        spec.is_amsterdam_active_at_timestamp(expected.0),
+                        "{node} Amsterdam must be active at benchmark block {number}",
+                    );
+                    assert_eq!(
+                        spec.is_denim_active_at_timestamp(expected.0),
+                        rollup.is_denim_active(expected.0),
+                        "{node} and CL must agree at benchmark block {number}",
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn builder_only_mainnet_snapshot_activates_amsterdam() {
+        let datadir = tempfile::tempdir().expect("builder datadir must be available");
+        let config =
+            DevnetConfig::snapshot(datadir.path().into(), None, SnapshotChainConfig::default())
+                .expect("builder-only mainnet config must resolve");
+        config.validate().expect("builder-only config must not require a client datadir");
+        let DevnetL2State::Snapshot(snapshot) = config.l2_state else {
+            panic!("snapshot configuration must select snapshot state");
+        };
+        assert_eq!(snapshot.client_datadir, None, "this run must not launch a validator");
+        let chain = snapshot.chain.resolve().expect("mainnet chain must resolve");
+        assert_eq!(chain.l2_chain_id, 8453, "builder-only fixture must use Base mainnet");
+        let mut canonical = (*chain.rollup_config).clone();
+        canonical.clear_upgrade_activation_timestamp(BaseUpgrade::Denim);
+        let mut original = (*chain.chain_spec).clone();
+        original.set_fork(BaseUpgrade::Denim, ForkCondition::Never);
+        original.set_fork(EthereumHardfork::Amsterdam, ForkCondition::Never);
+        let activation = 2_000_000_001;
+        let interval = DevnetBlockInterval::TwoHundredMilliseconds;
+        let spec = SnapshotL2Stack::chain_spec(original, activation, interval);
+        let rollup =
+            SnapshotL2Stack::anchored_rollup_config(canonical, 48_526_665, activation, interval)
+                .expect("builder-only schedule must anchor without a client");
+        assert_eq!(
+            rollup.l2_block_timestamp_parts(48_526_666),
+            (activation, 0),
+            "first builder-only benchmark block must begin at T",
+        );
+        for (timestamp, active, upgrade) in [
+            (activation - 1, false, BaseUpgrade::Cobalt),
+            (activation, true, BaseUpgrade::Denim),
+            (rollup.l2_block_timestamp(48_526_666), true, BaseUpgrade::Denim),
+        ] {
+            assert_eq!(
+                (
+                    spec.is_amsterdam_active_at_timestamp(timestamp),
+                    spec.is_denim_active_at_timestamp(timestamp)
+                ),
+                (active, rollup.is_denim_active(timestamp)),
+                "builder-only Amsterdam and CL Denim must agree at {timestamp}",
+            );
+            assert_eq!(
+                BaseUpgrade::from_timestamp(&spec, timestamp).into_eth_spec(),
+                upgrade.into_eth_spec(),
+                "builder-only EVM must use Osaka before T and Amsterdam from the first block",
+            );
+        }
+    }
+
+    #[test]
+    fn two_second_snapshot_disables_local_denim_and_amsterdam() {
+        for original in [BaseChainSpec::mainnet(), BaseChainSpec::sepolia()] {
+            let spec = SnapshotL2Stack::chain_spec(
+                original.clone(),
+                2_000_000_001,
+                DevnetBlockInterval::TwoSeconds,
+            );
+            for fork in [BaseUpgrade::Denim.boxed(), EthereumHardfork::Amsterdam.boxed()] {
+                assert_eq!(
+                    spec.fork(fork),
+                    ForkCondition::Never,
+                    "two-second snapshots must keep both local fork gates disabled",
+                );
+            }
+            assert_eq!(
+                spec.genesis, original.genesis,
+                "local scheduling preserves canonical genesis"
+            );
+        }
     }
 
     #[test]

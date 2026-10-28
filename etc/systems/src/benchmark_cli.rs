@@ -212,6 +212,9 @@ pub struct SnapshotBenchmarkArgs {
     /// `<dir>/replay.json`, whose presence marks a complete export. A failed export fails the run.
     #[arg(long, env = "BASE_BENCH_EXPORT_BLOCKS")]
     pub export_blocks: Option<PathBuf>,
+    /// Disable modeled batcher/blob DA output (enabled by default, outside measurement).
+    #[arg(long)]
+    pub skip_da: bool,
     /// Opt-in state sharing for the snapshot's native payload builder.
     #[command(flatten)]
     pub builder_engine: crate::BuilderEngineSharingConfig,
@@ -1160,7 +1163,13 @@ impl SnapshotBenchmarkArgs {
             .ok_or_else(|| eyre::eyre!("load test did not report a measurement end block"))?;
         let sequencer_metrics = sequencer_metrics.finish(measurement_end).await?;
         stack.stop_sequencer().await?;
-        if let Some(export_dir) = &self.export_blocks {
+        // An ephemeral export lets the default DA pass reuse V5/BAL export logic without
+        // requiring a flag or retaining large replay artifacts after the result is written.
+        let da_export =
+            (!self.skip_da && self.export_blocks.is_none()).then(tempfile::tempdir).transpose()?;
+        let export_dir =
+            self.export_blocks.as_deref().or_else(|| da_export.as_ref().map(|dir| dir.path()));
+        if let Some(export_dir) = export_dir {
             // Export while the builder is idle and before the validator starts, so the fetches
             // do not perturb validator metrics.
             self.export_produced_blocks(
@@ -1169,6 +1178,7 @@ impl SnapshotBenchmarkArgs {
                 stack.boundary().head.number,
                 stack.boundary().head.hash,
                 block_interval,
+                summary.measurement_start_block.zip(summary.measurement_end_block),
             )
             .await
             .wrap_err_with(|| format!("failed to export blocks to {}", export_dir.display()))?;
@@ -1206,6 +1216,23 @@ impl SnapshotBenchmarkArgs {
             "follow client does not match the builder over the measured block window"
         );
 
+        let da_model = if !self.skip_da {
+            let dir = export_dir.expect("default DA always has an export").to_path_buf();
+            let start = summary
+                .measurement_start_block
+                .ok_or_else(|| eyre::eyre!("DA measurement start block is missing"))?;
+            Some(
+                crate::DaBenchmarkArgs::write_export_model(
+                    dir,
+                    Some((start + 1, measurement_end)),
+                    &self.output_dir,
+                )
+                .await?,
+            )
+        } else {
+            None
+        };
+
         let result = SnapshotBenchmarkResult {
             chain_id: stack.chain_id(),
             block_interval_ms: block_interval.duration().as_millis() as u64,
@@ -1215,6 +1242,11 @@ impl SnapshotBenchmarkArgs {
             client_rpc_url: validator.map(|(client_rpc, _)| client_rpc.to_string()),
             funder_address,
             load_test: summary,
+            da_model,
+            da_usage: crate::DaUsageSummary::from_blocks(
+                blocks.iter().map(|block| &block.da),
+                block_interval.duration().as_millis() as u64,
+            ),
             blocks,
             validator_blocks,
         };
@@ -1230,6 +1262,7 @@ impl SnapshotBenchmarkArgs {
         boundary_number: u64,
         boundary_hash: B256,
         block_interval: DevnetBlockInterval,
+        measurement_window: Option<(u64, u64)>,
     ) -> Result<ReplayManifest> {
         let started = Instant::now();
         let provider = RootProvider::<Base>::new_http(rpc_url.clone());
@@ -1242,6 +1275,12 @@ impl SnapshotBenchmarkArgs {
             "builder head {head} is not past snapshot boundary {boundary_number}"
         );
         let mut writer = BlockExportWriter::create(dir)?;
+        let chain = SnapshotChainConfig {
+            chain: self.chain.clone(),
+            rollup_config: self.rollup_config.clone(),
+        }
+        .resolve()?;
+        let source = base_consensus_node::RemoteL2Client::new(rpc_url.clone(), chain.rollup_config);
         let mut blocks = stream::iter(boundary_number + 1..=head)
             .map(|number| {
                 let provider = &provider;
@@ -1258,7 +1297,14 @@ impl SnapshotBenchmarkArgs {
         let mut parent_hash = boundary_hash;
         let mut first_block_timestamp = None;
         while let Some(block) = blocks.next().await {
-            let block = ExportedBlock::from_rpc_block(block?);
+            let block = block?;
+            let block_access_list = if let Some(expected) = block.header.block_access_list_hash {
+                // Reuse the follow client's hash-addressed fetch and commitment verification.
+                Some(source.get_block_access_list(block.header.hash, expected).await?)
+            } else {
+                None
+            };
+            let block = ExportedBlock::from_rpc_block_with_extras(block, block_access_list);
             eyre::ensure!(
                 block.envelope.execution_payload.parent_hash() == parent_hash,
                 "block {} does not extend {parent_hash}",
@@ -1280,6 +1326,8 @@ impl SnapshotBenchmarkArgs {
             last_hash: B256::ZERO,
             last_state_root: B256::ZERO,
             block_count: 0,
+            measurement_start_block: measurement_window.map(|(start, _)| start),
+            measurement_end_block: measurement_window.map(|(_, end)| end),
         })?;
         let bytes = fs::metadata(dir.join(EXPORT_BLOCKS_FILE))
             .wrap_err("failed to stat exported blocks")?
@@ -1336,6 +1384,10 @@ impl SnapshotBenchmarkArgs {
             let prometheus_metrics = prometheus_metrics.get(&number).cloned().ok_or_else(|| {
                 eyre::eyre!("Prometheus sample for block {number} from {rpc_url} is missing")
             })?;
+            let transaction_count = block.transactions.len() as u64;
+            let da = crate::BlockDaMetrics::from_transactions(
+                block.transactions.into_transactions().map(|tx| tx.inner.inner.into_inner()),
+            );
             blocks.push(SnapshotBlockMetrics {
                 number: block.header.number,
                 hash: block.header.hash,
@@ -1346,7 +1398,8 @@ impl SnapshotBenchmarkArgs {
                     .unwrap_or_else(|| block.header.timestamp.saturating_mul(1_000)),
                 gas_used: block.header.gas_used,
                 gas_limit: block.header.gas_limit,
-                transaction_count: block.transactions.len() as u64,
+                transaction_count,
+                da,
                 prometheus_metrics,
             });
         }
@@ -1445,6 +1498,7 @@ mod tests {
         assert_eq!(args.metrics_scrape_interval_ms.get(), 1000);
         assert_eq!(args.shutdown_timeout_seconds, 0);
         assert!(args.export_blocks.is_none());
+        assert!(!args.skip_da, "modeled DA must be enabled without any flags");
         assert_eq!(
             args.builder_engine,
             crate::BuilderEngineSharingConfig::default(),
@@ -1520,6 +1574,51 @@ mod tests {
         assert_eq!(args.metrics_scrape_interval_ms.get(), 200);
         assert_eq!(args.shutdown_timeout_seconds, 30);
         assert_eq!(args.export_blocks.as_deref(), Some(std::path::Path::new("/boot/export")));
+    }
+
+    #[test]
+    fn parses_builder_only_export_job_arguments() {
+        for limit in ["80000000", "150000000"] {
+            let cli = BenchmarkCli::try_parse_from([
+                "base-bench",
+                "snapshot",
+                "--chain",
+                "mainnet",
+                "--builder-datadir",
+                "/snapshot/builder",
+                "--load-test-config",
+                "load.yaml",
+                "--scenario",
+                "mix",
+                "--block-gas-limit",
+                limit,
+                "--benchmark-run",
+                "snapshot-throughput",
+                "--run-id",
+                "replay-run",
+                "--output-dir",
+                "results/replay-run",
+                "--export-blocks",
+                "/export/replay-run",
+                "--client-version",
+                "benchmark",
+            ])
+            .expect("snapshot export job arguments must parse");
+            let Some(BenchmarkCommand::Snapshot(args)) = cli.command else {
+                panic!("expected snapshot export command");
+            };
+            assert!(args.client_datadir.is_none(), "export must support builder-only runs");
+            assert_eq!(
+                args.block_gas_limit.map(NonZeroU64::get),
+                Some(limit.parse().unwrap()),
+                "job block limit must be preserved"
+            );
+            assert_eq!(
+                args.export_blocks.as_deref(),
+                Some(std::path::Path::new("/export/replay-run")),
+                "export path must be preserved"
+            );
+        }
     }
 
     #[test]

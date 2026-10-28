@@ -348,6 +348,30 @@ time: gas per second, frame bytes per second, bytes per gas, compression ratio, 
 blob fill, and the gas per second that full blobs at the 14-blob L1 target carry at this range's
 bytes per gas. Mainnet ranges read over RPC check the encoder against the blob bytes Base posted.
 
+### Transaction DA estimates
+
+Snapshot `benchmark-result.json` and `replay-result.json` include optional `da_usage` summaries.
+Per-block records add `da_bytes_estimated`, `tx_bytes_raw`, and
+`non_deposit_transaction_count`; deposits are excluded from all three. The estimate uses the
+payload builder's exact FastLZ/Fjord function over EIP-2718 transaction bytes. It is **not** L1
+batcher, frame, or blob bytes. Raw bytes are the uncompressed EIP-2718 lengths.
+
+Each summary labels its `estimator` as `fastlz_fjord` and reports `block_count`,
+`measurement_seconds`, and the non-deposit transaction count. Both byte types report `total`,
+`mean_per_block`, nearest-rank `p50_per_block` and `p99_per_block`, `max_per_block`,
+`per_second`, and `per_non_deposit_tx` (null when there are no non-deposit transactions).
+Snapshot totals cover the measured sequencer window; replay totals cover successfully inserted
+exported blocks, including setup blocks. Rates use block count times cadence, not replay wall
+time. Byte accounting runs after the respective timed window using fetched full blocks or the
+local export; it adds no measurement-window RPCs. Missing old fields remain unknown, not zero;
+an incomplete window has no summary. `L1Block`'s DA scalar and the DA gas-footprint constraint
+are not reported because they require separate state reads.
+
+New exports also persist optional `measurementStartBlock` (excluded) and `measurementEndBlock`
+(included) in `replay.json`. Replay retains its all-block `da_usage` and adds
+`da_usage_measured` over that exact snapshot window only when the complete range and byte
+metrics are available. Legacy manifests and incomplete replay ranges omit the measured summary.
+
 ## Compare 2s and 200ms fairly
 
 One restored datadir pair is one run. A run mutates both datadirs and they are not restartable. For every

@@ -47,7 +47,7 @@ impl OsakaPayload {
     /// CREATE transaction with initcode that exercises the CLZ opcode (EIP-7939).
     ///
     /// Initcode: `CLZ_ITERATIONS × (PUSH1 <rand> + CLZ + POP) + STOP`.
-    /// Leaving `to` unset (None) produces a CREATE transaction.
+    /// Mark CREATE explicitly so the wallet can complete the calibration request.
     fn generate_clz(rng: &mut SeededRng) -> TransactionRequest {
         let mut initcode = Vec::with_capacity(CLZ_ITERATIONS * 4 + 1);
         for _ in 0..CLZ_ITERATIONS {
@@ -59,9 +59,8 @@ impl OsakaPayload {
         initcode.push(0x00); // STOP
 
         TransactionRequest::default()
-            .with_input(Bytes::from(initcode))
+            .with_deploy_code(Bytes::from(initcode))
             .with_gas_limit(CLZ_GAS_LIMIT)
-        // `to` is None → CREATE transaction
     }
 
     /// Call to the P256VERIFY precompile (0x0100) with Osaka gas pricing (EIP-7951).
@@ -130,5 +129,84 @@ impl Payload for OsakaPayload {
             OsakaTarget::P256verifyOsaka => Self::generate_p256verify_osaka(rng),
             OsakaTarget::ModexpOsaka => Self::generate_modexp_osaka(rng),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy_consensus::{Transaction, TxEnvelope};
+    use alloy_eips::Decodable2718;
+    use alloy_primitives::{B256, TxKind, U256};
+    use alloy_signer_local::PrivateKeySigner;
+
+    use super::*;
+    use crate::{Fees, PreparedTransaction, SubmissionPipeline, SubmitCohort};
+
+    #[test]
+    fn clz_create_survives_calibration_and_signing() {
+        let signer = PrivateKeySigner::from_bytes(&B256::repeat_byte(1)).unwrap();
+        let request = OsakaPayload::new(OsakaTarget::Clz).generate(
+            &mut SeededRng::new(1),
+            signer.address(),
+            Address::ZERO,
+        );
+        let initcode = request.input.input().unwrap().clone();
+        assert_eq!(
+            request.to,
+            Some(TxKind::Create),
+            "calibration wallet needs explicit CREATE kind"
+        );
+        assert_eq!(request.gas, Some(80_000), "legacy budget hint is unchanged");
+        assert_eq!(initcode.len(), 601, "150 four-byte CLZ iterations plus STOP");
+        let mut rng = SeededRng::new(1);
+        let mut expected = Vec::new();
+        for _ in 0..150 {
+            expected.extend_from_slice(&[0x60, rng.gen_range(0u8..=255), 0x1e, 0x50]);
+        }
+        expected.push(0x00);
+        assert_eq!(
+            initcode.as_ref(),
+            expected,
+            "initcode semantics and empty returned runtime are unchanged"
+        );
+
+        let calibration = request
+            .with_from(signer.address())
+            .with_nonce(7)
+            .with_chain_id(8453)
+            .with_max_fee_per_gas(1_000_000_000)
+            .with_max_priority_fee_per_gas(1)
+            .build_typed_tx()
+            .expect("wallet-complete CREATE");
+        assert_eq!(calibration.kind(), TxKind::Create, "calibration must remain CREATE");
+        let prepared = PreparedTransaction {
+            native: false,
+            from: signer.address(),
+            to: None,
+            value: U256::ZERO,
+            data: initcode.clone(),
+            gas_limit: 80_000,
+            estimated_gas: 80_000,
+            validity: Vec::new(),
+            cohort: SubmitCohort::Plain,
+        };
+        let signed = SubmissionPipeline::sign_at_nonce(
+            &signer,
+            &prepared,
+            8453,
+            7,
+            Fees { max_fee: 1_000_000_000, priority_fee: 1 },
+        )
+        .expect("presigning CREATE");
+        let decoded = TxEnvelope::decode_2718(&mut signed.raw.as_ref()).unwrap();
+        assert_eq!(
+            decoded.kind(),
+            TxKind::Create,
+            "recipient-free prepared transactions must reconstruct CREATE"
+        );
+        assert_eq!(decoded.nonce(), 7, "nonce unchanged");
+        assert_eq!(decoded.chain_id(), Some(8453), "chain unchanged");
+        assert_eq!(decoded.gas_limit(), 80_000, "declared budget unchanged by signing");
+        assert_eq!(decoded.input(), &initcode, "signed initcode unchanged");
     }
 }

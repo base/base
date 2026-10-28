@@ -9,6 +9,8 @@ use eyre::{Result, WrapErr};
 use serde::{Deserialize, Serialize};
 use tracing::warn;
 
+use crate::{BlockDaMetrics, DaUsageSummary};
+
 /// Machine-readable result from one snapshot benchmark case.
 #[derive(Debug, Serialize)]
 pub struct SnapshotBenchmarkResult {
@@ -32,10 +34,16 @@ pub struct SnapshotBenchmarkResult {
     pub blocks: Vec<SnapshotBlockMetrics>,
     /// Follow-client copy of the canonical measured window; empty without a follow client.
     pub validator_blocks: Vec<SnapshotBlockMetrics>,
+    /// FastLZ/Fjord estimate and raw EIP-2718 bytes over the measured sequencer window.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub da_usage: Option<DaUsageSummary>,
+    /// Modeled batcher frame/blob output over the measured window, not observed L1 usage.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub da_model: Option<crate::DaResult>,
 }
 
 /// Canonical metrics for one block in the measured benchmark window.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct SnapshotBlockMetrics {
     /// Canonical L2 block number.
     pub number: u64,
@@ -51,6 +59,9 @@ pub struct SnapshotBlockMetrics {
     pub gas_limit: u64,
     /// Number of all transactions in the block.
     pub transaction_count: u64,
+    /// Non-deposit byte totals computed after measurement from full canonical transactions.
+    #[serde(flatten, default)]
+    pub da: BlockDaMetrics,
     /// Prometheus gauges and per-block counter/histogram deltas.
     pub prometheus_metrics: BTreeMap<String, f64>,
 }
@@ -222,6 +233,11 @@ impl SnapshotBenchmarkReportConfig {
             ("TransactionPayload".to_string(), serde_json::Value::String(transaction_payload)),
             ("ClientVersion".to_string(), serde_json::Value::String(self.client_version.clone())),
         ]);
+        let mut artifacts =
+            BTreeMap::from([("loadTestResult".to_string(), "load-test-result.json".to_string())]);
+        if result.da_model.is_some() {
+            artifacts.insert("daModel".to_string(), crate::DA_RESULT_FILE.to_string());
+        }
         let metadata = VisualizerMetadata {
             runs: vec![VisualizerRun {
                 id: self.run_id.clone(),
@@ -243,10 +259,7 @@ impl SnapshotBenchmarkReportConfig {
                     validator_metrics: (!validator_metrics.is_empty()).then_some(
                         VisualizerValidatorMetrics { gas_per_second: validator_gas_per_second },
                     ),
-                    artifacts: BTreeMap::from([(
-                        "loadTestResult".to_string(),
-                        "load-test-result.json".to_string(),
-                    )]),
+                    artifacts,
                 },
                 created_at: Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true),
             }],
@@ -333,6 +346,20 @@ mod tests {
     use base_load_tests::{MetricsSummary, TestConfig, ThroughputMetrics};
 
     use super::{SnapshotBenchmarkReportConfig, SnapshotBenchmarkResult, SnapshotBlockMetrics};
+    use crate::BlockDaMetrics;
+
+    #[test]
+    fn old_snapshot_block_json_has_unknown_byte_metrics() {
+        let block: SnapshotBlockMetrics = serde_json::from_value(serde_json::json!({
+            "number": 10, "hash": B256::ZERO, "timestamp": 1, "timestamp_ms": 1000,
+            "gas_used": 21000, "gas_limit": 120000000, "transaction_count": 1,
+            "prometheus_metrics": {},
+        }))
+        .expect("pre-DA snapshot block JSON must remain readable");
+        assert_eq!(block.da, BlockDaMetrics::default(), "old data must not look like zero DA");
+        let json = serde_json::to_value(block).unwrap();
+        assert!(json.get("da_bytes_estimated").is_none(), "unknown DA stays absent");
+    }
 
     #[test]
     fn writes_visualizer_data_contract() {
@@ -372,6 +399,8 @@ transactions:
                 ),
                 ..Default::default()
             },
+            da_model: None,
+            da_usage: None,
             blocks: vec![SnapshotBlockMetrics {
                 number: 10,
                 hash: B256::ZERO,
@@ -380,6 +409,7 @@ transactions:
                 gas_used: 400_000_000,
                 gas_limit: 400_000_000,
                 transaction_count: 19_047,
+                da: BlockDaMetrics::default(),
                 prometheus_metrics: BTreeMap::from([(
                     "reth_base_builder_total_block_built_duration_avg".to_string(),
                     0.1,
@@ -393,6 +423,7 @@ transactions:
                 gas_used: 400_000_000,
                 gas_limit: 400_000_000,
                 transaction_count: 19_047,
+                da: BlockDaMetrics::default(),
                 prometheus_metrics: BTreeMap::new(),
             }],
         };
@@ -451,6 +482,8 @@ transactions:
             client_rpc_url: None,
             funder_address: Address::ZERO,
             load_test: MetricsSummary::default(),
+            da_model: None,
+            da_usage: None,
             blocks: vec![SnapshotBlockMetrics {
                 number: 10,
                 hash: B256::ZERO,
@@ -459,6 +492,7 @@ transactions:
                 gas_used: 21_000,
                 gas_limit: 400_000_000,
                 transaction_count: 1,
+                da: BlockDaMetrics::default(),
                 prometheus_metrics: BTreeMap::new(),
             }],
             validator_blocks: Vec::new(),

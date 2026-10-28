@@ -111,6 +111,7 @@ struct PresignConfig {
     /// Query provider used to read the current block height per prepare round
     /// when resolving offset-based `block_number` validity predicates.
     query_client: QueryProvider,
+    gas_estimator: Option<crate::rpc::GasEstimator>,
 }
 
 #[derive(Debug)]
@@ -486,6 +487,38 @@ impl LoadRunner {
 
     /// Runs the load test and returns metrics summary.
     pub async fn run(&mut self) -> Result<MetricsSummary> {
+        if self.gas_estimator.is_none() {
+            let sender = self
+                .accounts
+                .accounts()
+                .first()
+                .ok_or_else(|| BaselineError::Config("load requires a funded sender".into()))?
+                .address;
+            self.gas_estimator =
+                Some(crate::rpc::GasEstimator::detect(self.client.clone(), sender).await?);
+        }
+
+        if let Some(config) = &self.config.deploy64 {
+            let signer = self.deployment_signer.as_ref().ok_or_else(|| {
+                BaselineError::Config(
+                    "deploy64 requires fund_accounts to initialize its exclusive funding signer"
+                        .into(),
+                )
+            })?;
+            if self.signers.contains_key(&signer.address()) {
+                return Err(BaselineError::Config(
+                    "deploy64 funding signer must not be an ordinary mix sender".into(),
+                ));
+            }
+            super::deploy64::preflight(
+                self.config.primary_submission_rpc().clone(),
+                signer,
+                config,
+                self.config.max_gas_price,
+            )
+            .await?;
+        }
+
         if self.b20_run_salt.is_none()
             && self.config.transactions.iter().any(|t| matches!(t.tx_type, TxType::B20))
         {
@@ -493,6 +526,7 @@ impl LoadRunner {
                 "b20 run salt not set; call prepare_payloads before run".into(),
             ));
         }
+
         self.derive_reverse_swap_amounts().await?;
 
         self.collector.reset();
@@ -747,6 +781,7 @@ impl LoadRunner {
                 nonce_reset_rx,
                 validity_router: self.validity_router.clone(),
                 query_client: self.client.clone(),
+                gas_estimator: self.gas_estimator.clone(),
             },
         ));
 
@@ -859,6 +894,23 @@ impl LoadRunner {
             Self::publish_handshake(started_file.as_deref())?;
         }
 
+        let deployment_stop = CancellationToken::new();
+        let _deployment_guard = deployment_stop.clone().drop_guard();
+        let deployment_task = if prefill_result.is_ok() {
+            self.config.deploy64.clone().map(|config| {
+                super::deploy64::start(
+                    self.config.primary_submission_rpc().clone(),
+                    self.deployment_signer.clone().expect("validated deployment signer"),
+                    self.config.chain_id,
+                    config,
+                    self.config.max_gas_price,
+                    deployment_stop.clone(),
+                )
+            })
+        } else {
+            None
+        };
+
         let enqueue_deadline = self.config.duration.map(|d| start + d);
         let enqueue_result = if let Err(err) = prefill_result {
             Err(err)
@@ -928,6 +980,7 @@ impl LoadRunner {
             )
             .await
         };
+        deployment_stop.cancel();
         self.collector.set_pacing_duration(start.elapsed());
 
         let finished_file = self.config.separate_setup.as_deref().map(|dir| dir.join("finished"));
@@ -1242,6 +1295,9 @@ impl LoadRunner {
             self.config_summary.clone(),
             self.fresh_recipient_count(),
         );
+        if let Some(task) = deployment_task {
+            summary.deploy64 = task.finish().await;
+        }
         let measurement_window = results_tracker.measurement_window();
         summary.measurement_start_block = measurement_window.start_block;
         summary.measurement_end_block = measurement_window.end_block;
@@ -1250,15 +1306,7 @@ impl LoadRunner {
             info!(fresh_recipient_count, "fresh recipient generation complete");
         }
 
-        if let Some(err) = open_loop_enqueue_error {
-            // Stash the real stats gathered so far (submitted/confirmed/failed counts, gas,
-            // latencies) so callers can present them alongside the error instead of an
-            // all-zero summary — plenty of transactions may have landed before the failure.
-            summary.error = Some(err.to_string());
-            self.partial_summary = Some(summary);
-            return Err(err);
-        }
-        Ok(summary)
+        self.conclude_run(summary, open_loop_enqueue_error)
     }
 
     async fn sender_start_nonces(&self, sender_addresses: &[Address]) -> Result<Vec<u64>> {
@@ -1514,7 +1562,7 @@ impl LoadRunner {
             } else {
                 0
             };
-            let sender_jobs = Self::build_sender_jobs(
+            let mut sender_jobs = Self::build_sender_jobs(
                 &mut producer_state.generator,
                 &mut producer_state.recipient_keys,
                 &mut producer_state.recipient_rng,
@@ -1522,6 +1570,35 @@ impl LoadRunner {
                 chunk_per_sender,
                 current_block,
             )?;
+
+            if let Some(estimator) = &config.gas_estimator {
+                // Bounded parallelism across senders; preserve nonce/payload order within each.
+                // Validity cohorts use these same prepared budgets before signing.
+                use futures::{StreamExt, TryStreamExt};
+                sender_jobs = futures::stream::iter(sender_jobs.into_iter().map(|mut job| {
+                    let estimator = estimator.clone();
+                    async move {
+                        for prepared in &mut job.prepared_txs {
+                            let request = alloy_rpc_types::TransactionRequest {
+                                to: prepared.to.map(Into::into),
+                                value: Some(prepared.value),
+                                input: prepared.data.clone().into(),
+                                gas: Some(prepared.gas_limit),
+                                ..Default::default()
+                            };
+                            prepared.gas_limit = estimator
+                                .apply(request, prepared.from)
+                                .await?
+                                .gas
+                                .expect("estimated request has gas");
+                        }
+                        Ok::<_, BaselineError>(job)
+                    }
+                }))
+                .buffered(32)
+                .try_collect()
+                .await?;
+            }
 
             let base_fee = *config.base_fee_rx.borrow_and_update();
             let signed_by_sender = Self::sign_sender_jobs(
@@ -2328,6 +2405,7 @@ mod tests {
             nonce_reset_rx,
             validity_router: crate::runner::ValidityRouter::new(&config),
             query_client: runner.client.clone(),
+            gas_estimator: None,
         };
         let mut generator = runner.generator;
         let mut keys = runner.recipient_keys;

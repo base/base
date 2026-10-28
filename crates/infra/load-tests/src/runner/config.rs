@@ -256,6 +256,8 @@ pub const DEFAULT_MAX_IN_FLIGHT_PER_SENDER: usize = 16;
 /// Configuration for a load test run.
 #[derive(Debug, Clone)]
 pub struct LoadConfig {
+    /// Optional separately paced full 64 `KiB` deployments; excluded from ordinary mix calibration.
+    pub deploy64: Option<super::deploy64::Deploy64Config>,
     /// HTTP JSON-RPC endpoints used for sharded transaction submission.
     pub transaction_submission_rpcs: Vec<Url>,
     /// HTTP JSON-RPC endpoint used for read/query operations.
@@ -344,6 +346,7 @@ impl LoadConfig {
             query_rpc: "http://localhost:8545".parse().expect("valid default query_rpc"),
             txpool_nodes: Vec::new(),
             chain_id: 84538453,
+            deploy64: None,
             account_count: 10,
             seed: 42,
             mnemonic: None,
@@ -420,6 +423,14 @@ impl LoadConfig {
                         ));
                     }
                 }
+            }
+        }
+        if let Some(config) = &self.deploy64 {
+            config.validate()?;
+            if self.duration.is_none() && self.measurement_blocks.is_none() {
+                return Err(BaselineError::Config(
+                    "deploy64 requires a finite duration or measurement_blocks; continuous mode is not supported".into(),
+                ));
             }
         }
         if self.account_count == 0 {

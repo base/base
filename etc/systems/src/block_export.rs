@@ -49,6 +49,12 @@ pub struct ReplayManifest {
     pub last_state_root: B256,
     /// Exported block count: `last_number - boundary_number`.
     pub block_count: u64,
+    /// Measurement anchor block (excluded), matching the snapshot's measured window.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub measurement_start_block: Option<u64>,
+    /// Last block included in the snapshot's measured window.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub measurement_end_block: Option<u64>,
 }
 
 /// One produced block as the engine API payload that inserts it.
@@ -63,7 +69,7 @@ pub struct ExportedBlock {
     pub timestamp_ms: u64,
     /// Post-state root.
     pub state_root: B256,
-    /// Execution payload version (1 to 4), which selects the `newPayload` method.
+    /// Execution payload version (1 to 5), which selects the `newPayload` method.
     pub payload_version: u8,
     /// Payload and parent beacon block root exactly as produced, including every system and
     /// deposit transaction.
@@ -74,6 +80,14 @@ impl ExportedBlock {
     /// Converts a full RPC block, as returned by `eth_getBlockByNumber` with transactions, into
     /// its engine payload. Mirrors the follow client's conversion.
     pub fn from_rpc_block(block: <Base as alloy_network::Network>::BlockResponse) -> Self {
+        Self::from_rpc_block_with_extras(block, None)
+    }
+
+    /// Converts a full RPC block with its separately fetched Amsterdam block access list.
+    pub fn from_rpc_block_with_extras(
+        block: <Base as alloy_network::Network>::BlockResponse,
+        block_access_list: Option<alloy_primitives::Bytes>,
+    ) -> Self {
         let timestamp_ms = block
             .header
             .timestamp_ms
@@ -89,13 +103,17 @@ impl ExportedBlock {
             header: block.header.inner,
             body: BlockBody { transactions, ommers: Vec::new(), withdrawals: block.withdrawals },
         };
-        let (execution_payload, _sidecar) =
-            BaseExecutionPayload::from_block_unchecked(hash, &consensus_block);
+        let (execution_payload, _sidecar) = BaseExecutionPayload::from_block_unchecked_with_extras(
+            hash,
+            &consensus_block,
+            block_access_list,
+        );
         let payload_version = match execution_payload {
             BaseExecutionPayload::V1(_) => 1,
             BaseExecutionPayload::V2(_) => 2,
             BaseExecutionPayload::V3(_) => 3,
             BaseExecutionPayload::V4(_) => 4,
+            BaseExecutionPayload::V5(_) => 5,
         };
         Self {
             number,
@@ -330,6 +348,45 @@ mod tests {
     }
 
     #[test]
+    fn exported_amsterdam_block_preserves_access_list_slot_and_hash() {
+        let bal = Bytes::from_static(&[0xc0]); // RLP empty block access list.
+        let mut block = rpc_block(101, B256::repeat_byte(7), true);
+        let mut header = block.header.inner.inner.clone();
+        header.block_access_list_hash = Some(alloy_primitives::keccak256(&bal));
+        header.slot_number = Some(101);
+        block.header.inner = alloy_rpc_types_eth::Header::new(header);
+        let hash = block.header.hash;
+        let exported = ExportedBlock::from_rpc_block_with_extras(block, Some(bal.clone()));
+        assert_eq!(exported.payload_version, 5, "Amsterdam export must select newPayloadV5");
+        let decoded: ExportedBlock = serde_json::from_str(
+            &serde_json::to_string(&exported).expect("serialize Amsterdam export"),
+        )
+        .expect("deserialize Amsterdam export");
+        let BaseExecutionPayload::V5(payload) = &decoded.envelope.execution_payload else {
+            panic!("Amsterdam export must retain its V5 fields");
+        };
+        assert_eq!(payload.block_access_list, bal, "raw BAL must survive JSON export");
+        assert_eq!(payload.slot_number, 101, "slot number must survive JSON export");
+        let sidecar = BaseExecutionPayloadSidecar::v4(
+            CancunPayloadFields {
+                parent_beacon_block_root: decoded.envelope.parent_beacon_block_root.unwrap(),
+                versioned_hashes: Vec::new(),
+            },
+            PraguePayloadFields::new(RequestsOrHash::Hash(EMPTY_REQUESTS_HASH)),
+        );
+        let rebuilt: Block<BaseTxEnvelope> = decoded
+            .envelope
+            .execution_payload
+            .try_into_block_with_sidecar(&sidecar)
+            .expect("rebuild Amsterdam payload");
+        assert_eq!(
+            rebuilt.header.hash_slow(),
+            hash,
+            "replay must reconstruct the exact header hash"
+        );
+    }
+
+    #[test]
     fn exported_v3_block_round_trips_to_the_same_hash() {
         assert_round_trip(false, 3);
     }
@@ -363,7 +420,33 @@ mod tests {
             last_hash: B256::ZERO,
             last_state_root: B256::ZERO,
             block_count: 0,
+            measurement_start_block: None,
+            measurement_end_block: None,
         }
+    }
+
+    #[test]
+    fn manifest_measurement_window_is_optional_and_round_trips() {
+        let legacy = manifest(100, B256::ZERO);
+        let json = serde_json::to_value(&legacy).expect("serialize legacy manifest");
+        assert!(json.get("measurementStartBlock").is_none(), "legacy start must be omitted");
+        assert!(json.get("measurementEndBlock").is_none(), "legacy end must be omitted");
+        let decoded: ReplayManifest = serde_json::from_value(json).expect("old manifest parses");
+        assert_eq!(decoded.measurement_start_block, None, "legacy start is unknown");
+        assert_eq!(decoded.measurement_end_block, None, "legacy end is unknown");
+        let current = ReplayManifest {
+            measurement_start_block: Some(101),
+            measurement_end_block: Some(103),
+            ..legacy
+        };
+        let json = serde_json::to_value(&current).expect("serialize measurement range");
+        assert_eq!(json["measurementStartBlock"], 101, "start anchor is persisted");
+        assert_eq!(json["measurementEndBlock"], 103, "inclusive end is persisted");
+        assert_eq!(
+            serde_json::from_value::<ReplayManifest>(json).unwrap(),
+            current,
+            "new range fields must survive export/replay JSON"
+        );
     }
 
     #[test]

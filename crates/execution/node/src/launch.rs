@@ -20,7 +20,7 @@ impl BaseLaunchPolicy {
     /// serial path. This is forced rather than defaulted so the divergent path cannot be enabled
     /// from configuration; a Base-aware ordered admission hook is the follow-up that would let it
     /// be re-enabled.
-    pub fn force_serial_import(engine: &mut EngineArgs) {
+    pub const fn force_serial_import(engine: &mut EngineArgs) {
         engine.bal_parallel_execution_disabled = true;
     }
 }
