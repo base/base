@@ -79,6 +79,10 @@ tokio = { workspace = true, features = ["time", "rt-multi-thread", "macros"] }
 name = "ingest_codec"
 harness = false
 
+[[bench]]
+name = "best_transactions"
+harness = false
+
 [features]
 default = [ "metrics" ]
 metrics = [

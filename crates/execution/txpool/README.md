@@ -159,7 +159,10 @@ sender's nonce `n + 1` before `n`: a validity head continuing a standard run wai
 until the merge has yielded the transaction before it, and standard transactions
 queued right behind a validity run are released by the merge once that run has
 been yielded, so a predicate-delayed transaction does not keep its descendants out
-of the same block.
+of the same block. The lanes that straddle stores are indexed incrementally
+(`TwoDNoncePool::lanes_ahead_of_state`, `shared_lanes_pending_end`), so building
+the iterator costs those lanes plus each store's own snapshot, not the pool sizes;
+`benches/best_transactions.rs` measures it at mainnet scale.
 
 Capacity defaults to reth's pending subpool limit (`--txpool.pending-max-count`,
 `--txpool.pending-max-size`, `--txpool.max-account-slots`) and is overridable with

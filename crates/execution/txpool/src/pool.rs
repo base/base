@@ -1,7 +1,11 @@
 //! Base transaction-pool wrapper that combines the reth protocol pool with an
 //! EIP-8130 2D nonce sidecar and a separate validity pool.
 
-use std::{collections::HashMap, fmt, sync::Arc};
+use std::{
+    collections::{HashMap, VecDeque},
+    fmt,
+    sync::Arc,
+};
 
 use alloy_eips::{
     eip4844::{BlobAndProofV1, BlobAndProofV2, BlobCellsAndProofsV1},
@@ -1108,6 +1112,7 @@ where
             self.remove_cross_store_replaced(cross, hash);
         }
         self.register_block_expiry(hash, block_expiry_bound, flashblock_expiry_bound, replaced);
+        self.share_validity_lane((sender, U256::ZERO));
         self.sync_validity_lanes([((sender, U256::ZERO), None)]);
         Ok(result)
     }
@@ -1416,6 +1421,21 @@ where
                     flashblock_expiry_bound,
                     replaced_hash,
                 );
+                match store {
+                    PoolStore::Sidecar => {
+                        if let Some(lane_id) = lane_id {
+                            self.share_validity_lane(lane_id);
+                        }
+                    }
+                    PoolStore::Validity => {
+                        if let Some(lane_id) =
+                            lane_id.filter(|lane_id| self.standard_store_holds_lane(*lane_id))
+                        {
+                            self.validity.pool.write().mark_shared_lane(lane_id);
+                        }
+                    }
+                    PoolStore::Protocol => {}
+                }
                 if store == PoolStore::Sidecar {
                     // Validity lanes on the channels this insertion extended or
                     // the eviction shortened follow the sidecar's pending run.
@@ -1500,65 +1520,86 @@ where
         attributes: BestTransactionsAttributes,
     ) -> MergeBestTransactions<T, O> {
         let base_fee = attributes.basefee;
-        let protocol = self.protocol_pool.best_transactions_with_attributes(attributes);
-        // Lock order: sidecar before validity, and never both while reading
-        // the other's queue.
-        let (sidecar, sidecar_queued) = {
-            let sidecar = self.sidecar.pool.read();
+        // Cross-store lane bookkeeping is read from the validity pool's
+        // incremental indexes, so this costs the lanes that straddle stores,
+        // not the pool sizes. Lock order: sidecar before validity, so the
+        // shared lanes are snapshotted and released before the sidecar lookups.
+        let (anchors, shared_lanes) = {
+            let validity = self.validity.pool.read();
             (
-                sidecar.best_transactions(self.ordering.clone(), base_fee),
-                sidecar.queued_transactions(),
+                validity.lanes_ahead_of_state().clone(),
+                validity.shared_lanes_pending_end().collect::<Vec<_>>(),
             )
         };
-        let validity = self.validity.pool.read();
-        let bridged = Self::bridged_descendants(
-            &validity,
-            self.protocol_pool.queued_transactions().into_iter().chain(sidecar_queued),
-        );
+        let bridged = self.bridged_descendants(shared_lanes);
+        let protocol = self.protocol_pool.best_transactions_with_attributes(attributes);
+        let sidecar = self.sidecar.pool.read().best_transactions(self.ordering.clone(), base_fee);
+        let validity = self.validity.pool.read().best_transactions(self.ordering.clone(), base_fee);
         MergeBestTransactions::new(
             protocol,
             Box::new(sidecar),
-            Box::new(validity.best_transactions(self.ordering.clone(), base_fee)),
+            Box::new(validity),
             self.ordering.clone(),
             base_fee,
         )
-        .with_external_anchors(validity.lanes_ahead_of_state())
+        .with_external_anchors(anchors)
         .with_bridged_descendants(bridged)
     }
 
-    /// Picks, from the standard stores' queued transactions, the consecutive
-    /// runs that start right where a validity lane's pending run ends. Their
-    /// own store queues them behind the gap the validity run fills, so only the
-    /// merge can release them, after that run.
-    ///
-    /// Runs once per build over the queued set (bounded by the queued subpool
-    /// limits and empty in steady state), not per candidate.
+    /// For each validity lane that shares its nonce space with a standard
+    /// store, the consecutive run that store holds from where the validity
+    /// lane's pending run ends. The store queues those transactions behind the
+    /// gap the validity run fills, so only the merge can release them, after
+    /// that run.
     fn bridged_descendants(
-        validity: &TwoDNoncePool<T>,
-        queued: impl IntoIterator<Item = Arc<ValidPoolTransaction<T>>>,
+        &self,
+        shared_lanes: impl IntoIterator<Item = (LaneId, u64)>,
     ) -> BridgedDescendants<T> {
-        // Per lane: the queued transactions from where the validity run ends on.
-        let mut ends: HashMap<LaneId, u64> = HashMap::new();
-        let mut runs = BridgedDescendants::<T>::default();
-        for transaction in queued {
-            let Some(lane_id) = Self::lane_id_of(&transaction.transaction) else { continue };
-            let Some(end) = validity.lane_pending_end(&lane_id) else { continue };
-            if transaction.nonce() >= end {
-                ends.insert(lane_id, end);
-                runs.entry(lane_id).or_default().push_back(transaction);
+        let mut bridged = BridgedDescendants::default();
+        for (lane_id, end) in shared_lanes {
+            let run: VecDeque<_> =
+                (end..).map_while(|nonce| self.standard_transaction(lane_id, nonce)).collect();
+            if !run.is_empty() {
+                bridged.insert(lane_id, run);
             }
         }
-        runs.retain(|lane_id, run| {
-            run.make_contiguous().sort_unstable_by_key(|transaction| transaction.nonce());
-            let contiguous = run
-                .iter()
-                .zip(ends[lane_id]..)
-                .take_while(|(transaction, nonce)| transaction.nonce() == *nonce)
-                .count();
-            run.truncate(contiguous);
-            !run.is_empty()
-        });
-        runs
+        bridged
+    }
+
+    /// The transaction the standard store owning `lane_id` holds at `nonce`,
+    /// pending or queued.
+    fn standard_transaction(
+        &self,
+        lane_id: LaneId,
+        nonce: u64,
+    ) -> Option<Arc<ValidPoolTransaction<T>>> {
+        let (sender, nonce_key) = lane_id;
+        if nonce_key.is_zero() {
+            self.protocol_pool.get_transaction_by_sender_and_nonce(sender, nonce)
+        } else {
+            self.sidecar.pool.read().lane_transaction(&lane_id, nonce)
+        }
+    }
+
+    /// Records that `lane_id` now has transactions in both the validity pool
+    /// and its standard store, so builds look for standard descendants behind
+    /// the validity run. Called from both stores' admission paths, so the two
+    /// meet whichever arrives second.
+    fn share_validity_lane(&self, lane_id: LaneId) {
+        if self.validity.pool.read().lane_cursor(&lane_id).is_none() {
+            return;
+        }
+        self.validity.pool.write().mark_shared_lane(lane_id);
+    }
+
+    /// Whether the standard store owning `lane_id` holds any transaction in it.
+    fn standard_store_holds_lane(&self, lane_id: LaneId) -> bool {
+        let (sender, nonce_key) = lane_id;
+        if nonce_key.is_zero() {
+            self.protocol_pool.get_highest_transaction_by_sender(sender).is_some()
+        } else {
+            self.sidecar.pool.read().lane_cursor(&lane_id).is_some()
+        }
     }
 }
 
@@ -2398,12 +2439,7 @@ where
                     .map(|(address, nonce)| ((address, U256::ZERO), Some(nonce))),
             );
             touched_lanes.extend(
-                self.validity
-                    .pool
-                    .read()
-                    .lanes_ahead_of_state()
-                    .into_keys()
-                    .map(|lane| (lane, None)),
+                self.validity.pool.read().lanes_ahead_of_state().keys().map(|lane| (*lane, None)),
             );
             self.sync_validity_lanes(touched_lanes);
         }
@@ -6561,6 +6597,32 @@ mod tests {
         let first_three: Vec<_> =
             pool.best_transactions().take(3).map(|transaction| *transaction.hash()).collect();
         assert_eq!(first_three, other_validity);
+    }
+
+    /// The standard descendants may be in their store before the validity
+    /// transaction arrives, and the validity lane may come and go.
+    #[tokio::test]
+    async fn standard_descendants_admitted_before_the_validity_run_are_bridged_too() {
+        let (pool, client) = build_integration_pool();
+        let signer = funded_signer(&client);
+        let standard1 = add(&pool, signed_1559(&signer, 1)).await;
+        let standard2 = add(&pool, signed_1559(&signer, 2)).await;
+        assert!(best_hashes(&pool).is_empty());
+
+        let validity0 = add(&pool, validity_1559(&signer, 0, 1_000)).await;
+        assert_eq!(best_hashes(&pool), vec![validity0, standard1, standard2]);
+
+        // A fresh validity lane meets the waiting descendants again.
+        pool.remove_transactions(vec![validity0]);
+        assert!(best_hashes(&pool).is_empty());
+        let validity0 = add(&pool, validity_1559(&signer, 0, 1_100)).await;
+        assert_eq!(best_hashes(&pool), vec![validity0, standard1, standard2]);
+
+        // Mining the validity transaction promotes the descendants in reth itself.
+        commit_block(&pool, 1, vec![account_at(signer.address(), 1)], vec![validity0]);
+        assert_gone(&pool, validity0);
+        assert!(is_pending(&pool, standard1) && is_pending(&pool, standard2));
+        assert_eq!(best_hashes(&pool), vec![standard1, standard2]);
     }
 
     #[tokio::test]

@@ -197,6 +197,11 @@ struct SidecarUsage {
     /// Advanced by every batch of balance updates, so a balance read during
     /// validation can be ordered against them.
     balance_epoch: u64,
+    /// Each sender's live transactions, so a change in the sender's backing
+    /// reaches them without scanning the pool.
+    sender_hashes: HashMap<Address, HashSet<TxHash>>,
+    /// The backing last applied to each sender's transactions.
+    applied_backing: HashMap<Address, bool>,
 }
 
 impl SidecarUsage {
@@ -206,6 +211,7 @@ impl SidecarUsage {
         *self.per_sender.entry(sender).or_default() += 1;
         *self.sender_costs.entry(sender).or_default() +=
             U512::from(*transaction.transaction.cost());
+        self.sender_hashes.entry(sender).or_default().insert(*transaction.hash());
     }
 
     fn remove<T: BasePooledTx>(&mut self, transaction: &ValidPoolTransaction<T>) {
@@ -214,12 +220,17 @@ impl SidecarUsage {
         if let Some(cost) = self.sender_costs.get_mut(&sender) {
             *cost -= U512::from(*transaction.transaction.cost());
         }
+        if let Some(hashes) = self.sender_hashes.get_mut(&sender) {
+            hashes.remove(transaction.hash());
+        }
         if let Some(count) = self.per_sender.get_mut(&sender) {
             *count -= 1;
             if *count == 0 {
                 self.per_sender.remove(&sender);
                 self.sender_costs.remove(&sender);
                 self.sender_balances.remove(&sender);
+                self.sender_hashes.remove(&sender);
+                self.applied_backing.remove(&sender);
             }
         }
         self.sender_ids.release(transaction.sender_id());
@@ -228,13 +239,20 @@ impl SidecarUsage {
         }
     }
 
-    fn apply_balance_updates(&mut self, updates: impl IntoIterator<Item = (Address, U256)>) {
+    /// Returns the senders whose balance was recorded.
+    fn apply_balance_updates(
+        &mut self,
+        updates: impl IntoIterator<Item = (Address, U256)>,
+    ) -> Vec<Address> {
         self.balance_epoch += 1;
+        let mut recorded = Vec::new();
         for (sender, balance) in updates {
             if self.per_sender.contains_key(&sender) {
                 self.sender_balances.insert(sender, (Some(balance), self.balance_epoch));
+                recorded.push(sender);
             }
         }
+        recorded
     }
 
     fn record_validated_balance(&mut self, sender: Address, balance: U256, epoch: u64) {
@@ -352,6 +370,13 @@ pub(crate) struct TwoDNoncePool<T: BasePooledTx> {
     eviction_order: BTreeSet<EvictionKey>,
     /// The key each lane's tail currently holds in `eviction_order`.
     lane_candidates: HashMap<LaneId, EvictionKey>,
+    /// Lanes whose executable cursor sits past their canonical anchor, with
+    /// that anchor. Kept in step with `lanes` so a build never scans them.
+    ahead_of_state: HashMap<LaneId, u64>,
+    /// Lanes another store also holds transactions in, flagged by the owner
+    /// when the two meet. Cleared with the lane; a flag may outlive the other
+    /// store's transactions, so readers verify before relying on it.
+    shared_lanes: HashSet<LaneId>,
 }
 
 impl<T: BasePooledTx> TwoDNoncePool<T> {
@@ -367,6 +392,8 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
             protocol_nonce_lanes: false,
             eviction_order: BTreeSet::new(),
             lane_candidates: HashMap::default(),
+            ahead_of_state: HashMap::default(),
+            shared_lanes: HashSet::default(),
         }
     }
 
@@ -479,18 +506,27 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
 
     /// Re-ranks `lane_id`'s tail after the lane changed. Must follow every lane
     /// mutation: the tail, and whether it is pending, depend on the whole lane.
-    fn refresh_lane_candidate(&mut self, lane_id: LaneId) {
+    /// Brings every per-lane index in line with `lane_id` after it changed:
+    /// its eviction candidate, its ahead-of-state anchor and its shared flag.
+    fn refresh_lane_indexes(&mut self, lane_id: LaneId) {
         if let Some(previous) = self.lane_candidates.remove(&lane_id) {
             self.eviction_order.remove(&previous);
         }
-        let Some(key) = self.lanes.get(&lane_id).and_then(|lane| {
-            let (_, tail) = lane.transactions.last_key_value()?;
-            Some(self.eviction_key(tail, lane.queued_transactions().next().is_none()))
-        }) else {
+        let Some(lane) = self.lanes.get(&lane_id) else {
+            self.ahead_of_state.remove(&lane_id);
+            self.shared_lanes.remove(&lane_id);
             return;
         };
-        self.eviction_order.insert(key);
-        self.lane_candidates.insert(lane_id, key);
+        if lane.next_nonce > lane.state_nonce {
+            self.ahead_of_state.insert(lane_id, lane.state_nonce);
+        } else {
+            self.ahead_of_state.remove(&lane_id);
+        }
+        if let Some((_, tail)) = lane.transactions.last_key_value() {
+            let key = self.eviction_key(tail, lane.queued_transactions().next().is_none());
+            self.eviction_order.insert(key);
+            self.lane_candidates.insert(lane_id, key);
+        }
     }
 
     /// Returns true if the sidecar already contains the hash.
@@ -684,7 +720,10 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
             self.nonce_free.insert(replay_id, Arc::clone(&transaction));
             self.usage.add(&transaction);
             self.eviction_order.insert(self.eviction_key(&transaction, true));
-            self.hashes.insert(hash, transaction);
+            self.hashes.insert(hash, Arc::clone(&transaction));
+            let sender = transaction.sender();
+            self.refresh_tip_backing(sender);
+            transaction.transaction.set_coinbase_tip_backed(self.usage.tip_backed(&sender));
             return Ok(InsertOutcome {
                 outcome: AddedTransactionOutcome { hash, state: AddedTransactionState::Pending },
                 replaced,
@@ -774,7 +813,9 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
             Vec::new()
         };
 
-        self.refresh_lane_candidate(lane_id);
+        self.refresh_lane_indexes(lane_id);
+        self.refresh_tip_backing(sender);
+        transaction.transaction.set_coinbase_tip_backed(self.usage.tip_backed(&sender));
         Ok(InsertOutcome {
             outcome: AddedTransactionOutcome { hash, state },
             replaced,
@@ -823,6 +864,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
         }
         lane.state_nonce = cursor.state_nonce;
         if lane.next_nonce == cursor.next_nonce {
+            self.refresh_lane_indexes(lane_id);
             return update;
         }
         let pending_before: HashSet<TxHash> = lane
@@ -854,7 +896,10 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
         if lane.transactions.is_empty() {
             self.lanes.remove(&lane_id);
         }
-        self.refresh_lane_candidate(lane_id);
+        self.refresh_lane_indexes(lane_id);
+        if !update.discarded.is_empty() {
+            self.refresh_tip_backing(lane_id.0);
+        }
         update
     }
 
@@ -934,12 +979,24 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
 
     /// Lanes whose executable cursor sits past their canonical anchor, i.e.
     /// those relying on another store's pending run, with that anchor.
-    pub(crate) fn lanes_ahead_of_state(&self) -> HashMap<LaneId, u64> {
-        self.lanes
-            .iter()
-            .filter(|(_, lane)| lane.next_nonce > lane.state_nonce)
-            .map(|(id, lane)| (*id, lane.state_nonce))
-            .collect()
+    pub(crate) const fn lanes_ahead_of_state(&self) -> &HashMap<LaneId, u64> {
+        &self.ahead_of_state
+    }
+
+    /// Flags `lane_id` as one another store also holds transactions in. No-op
+    /// for a lane this pool does not hold.
+    pub(crate) fn mark_shared_lane(&mut self, lane_id: LaneId) {
+        if self.lanes.contains_key(&lane_id) {
+            self.shared_lanes.insert(lane_id);
+        }
+    }
+
+    /// The shared lanes that currently have a pending run, with the nonce
+    /// right after that run.
+    pub(crate) fn shared_lanes_pending_end(&self) -> impl Iterator<Item = (LaneId, u64)> + '_ {
+        self.shared_lanes.iter().filter_map(|lane_id| {
+            self.lanes.get(lane_id).and_then(NonceLane::pending_end).map(|end| (*lane_id, end))
+        })
     }
 
     /// Removes the exact transactions by hash without advancing lane state.
@@ -1095,7 +1152,9 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
         &mut self,
         updates: impl IntoIterator<Item = (Address, U256)>,
     ) {
-        self.usage.apply_balance_updates(updates);
+        for sender in self.usage.apply_balance_updates(updates) {
+            self.refresh_tip_backing(sender);
+        }
     }
 
     /// Records the sender balance a validation read after observing balance
@@ -1108,6 +1167,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
     /// next update or validation.
     pub(crate) fn record_validated_balance(&mut self, sender: Address, balance: U256, epoch: u64) {
         self.usage.record_validated_balance(sender, balance, epoch);
+        self.refresh_tip_backing(sender);
     }
 
     /// Returns a best-transactions iterator snapshot.
@@ -1115,7 +1175,9 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
     /// Unlike the protocol pool, the sidecar never queues a transaction on its
     /// sender's balance, so a sender's coinbase tips rank its transactions only
     /// while its balance covers the summed `cost()` of all its sidecar
-    /// transactions.
+    /// transactions. That backing is kept on the transactions as costs and
+    /// balances change (see `refresh_tip_backing`), so the snapshot costs the
+    /// pending lanes, not every transaction.
     pub(crate) fn best_transactions<O>(
         &self,
         ordering: O,
@@ -1124,16 +1186,6 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
     where
         O: TransactionOrdering<Transaction = T>,
     {
-        for transaction in self
-            .lanes
-            .values()
-            .flat_map(NonceLane::consecutive_pending_transactions)
-            .chain(self.nonce_free.values())
-        {
-            transaction
-                .transaction
-                .set_coinbase_tip_backed(self.usage.tip_backed(&transaction.sender()));
-        }
         BestTwoDTransactions::new(
             &self.lanes,
             &self.nonce_free,
@@ -1151,6 +1203,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
             self.hashes.remove(&hash);
             self.usage.remove(&transaction);
             self.eviction_order.remove(&self.eviction_key(&transaction, true));
+            self.refresh_tip_backing(transaction.sender());
             return Some(transaction);
         }
         let transaction = self.hashes.get(&hash)?;
@@ -1164,8 +1217,28 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
         }
         self.hashes.remove(&hash);
         self.usage.remove(&transaction);
-        self.refresh_lane_candidate(lane_id);
+        self.refresh_lane_indexes(lane_id);
+        self.refresh_tip_backing(lane_id.0);
         Some(transaction)
+    }
+
+    /// Re-derives whether `sender`'s balance backs its coinbase tips and, when
+    /// that changed, records it on every live transaction of the sender.
+    /// Called after each change to the sender's summed cost or balance, so
+    /// [`Self::best_transactions`] never has to walk the pool for it.
+    fn refresh_tip_backing(&mut self, sender: Address) {
+        if !self.usage.per_sender.contains_key(&sender) {
+            return;
+        }
+        let backed = self.usage.tip_backed(&sender);
+        if self.usage.applied_backing.insert(sender, backed) == Some(backed) {
+            return;
+        }
+        for hash in self.usage.sender_hashes.get(&sender).into_iter().flatten() {
+            if let Some(transaction) = self.hashes.get(hash) {
+                transaction.transaction.set_coinbase_tip_backed(backed);
+            }
+        }
     }
 }
 
@@ -2596,7 +2669,7 @@ mod tests {
         let outcome = pool.insert_validated_at(head, cursor).unwrap();
         assert!(matches!(outcome.outcome.state, AddedTransactionState::Pending));
         assert_eq!(pool.lane_cursor(&lane), Some(cursor));
-        assert_eq!(pool.lanes_ahead_of_state(), HashMap::from_iter([(lane, 0)]));
+        assert_eq!(*pool.lanes_ahead_of_state(), HashMap::from_iter([(lane, 0)]));
         assert_eq!(hashes(&pool.pending_transactions()), vec![head_hash]);
         assert!(pool.lane_pending_transaction(&lane, 2).is_some());
         assert!(pool.highest_consecutive_from(&lane, 1).is_none(), "below the cursor");
@@ -2617,6 +2690,12 @@ mod tests {
         let (second_hash, third_hash) = (*second.hash(), *third.hash());
         pool.insert_validated_at(second, ahead).unwrap();
         pool.insert_validated_at(third, ahead).unwrap();
+
+        // The run in front was mined up to the cursor: the lane no longer depends on it.
+        pool.set_lane_cursor(lane, LaneCursor::at(2));
+        assert!(pool.lanes_ahead_of_state().is_empty());
+        pool.set_lane_cursor(lane, ahead);
+        assert_eq!(*pool.lanes_ahead_of_state(), HashMap::from_iter([(lane, 0)]));
 
         // The standard run in front disappeared: nothing is executable, nothing is lost.
         let update = pool.set_lane_cursor(lane, LaneCursor::at(0));
