@@ -3,7 +3,6 @@
 use std::str::FromStr;
 
 use alloy_primitives::{Address, hex};
-use base_common_consensus::Eip8130Constants;
 use serde_json::{Map, Value};
 use thiserror::Error;
 
@@ -29,19 +28,8 @@ impl PayerRequestFilter {
         if request_chain_id != chain_id {
             return Err(PayerRequestError::ChainIdMismatch);
         }
-        let from =
-            object.get("from").and_then(Value::as_str).ok_or(PayerRequestError::MissingFrom)?;
-        if Address::from_str(from).is_err() {
-            return Err(PayerRequestError::MissingFrom);
-        }
-
-        match (Self::intent_field(object.get("calls"))?, Self::intent_field(object.get("frames"))?)
-        {
-            (IntentField::Absent, IntentField::Absent) => Ok(()),
-            (IntentField::Array(calls), IntentField::Absent) => Self::validate_calls(calls),
-            (IntentField::Absent, IntentField::Array(frames)) => Self::validate_frames(frames),
-            (IntentField::Array(_), IntentField::Array(_)) => Err(PayerRequestError::IntentShape),
-        }
+        Self::validate_sender(object)?;
+        Self::validate_calls(object.get("calls"))
     }
 
     /// Checks a `payer_sendTransaction` body and returns its decoded transaction bytes.
@@ -81,32 +69,39 @@ impl PayerRequestFilter {
         u64::from_str_radix(hex_digits, 16).ok()
     }
 
-    const fn intent_field(value: Option<&Value>) -> Result<IntentField<'_>, PayerRequestError> {
-        match value {
-            None | Some(Value::Null) => Ok(IntentField::Absent),
-            Some(Value::Array(items)) => Ok(IntentField::Array(items)),
-            Some(_) => Err(PayerRequestError::IntentShape),
+    /// Requires the sender as `sender` or its alias `from`, equal when both are present.
+    fn validate_sender(object: &Map<String, Value>) -> Result<(), PayerRequestError> {
+        let address = |field| {
+            object
+                .get(field)
+                .map(|value| {
+                    value
+                        .as_str()
+                        .and_then(|raw| Address::from_str(raw).ok())
+                        .ok_or(PayerRequestError::MissingSender)
+                })
+                .transpose()
+        };
+        match (address("sender")?, address("from")?) {
+            (None, None) => Err(PayerRequestError::MissingSender),
+            (Some(sender), Some(from)) if sender != from => Err(PayerRequestError::SenderMismatch),
+            _ => Ok(()),
         }
     }
 
-    fn validate_calls(calls: &[Value]) -> Result<(), PayerRequestError> {
+    /// Requires `calls`, when present, to be a list of call objects. A request without calls asks
+    /// for the payer's general terms.
+    fn validate_calls(calls: Option<&Value>) -> Result<(), PayerRequestError> {
+        let calls = match calls {
+            None | Some(Value::Null) => return Ok(()),
+            Some(Value::Array(calls)) => calls,
+            Some(_) => return Err(PayerRequestError::InvalidCalls),
+        };
         if calls.iter().any(|call| call.get("to").and_then(Value::as_str).is_none()) {
             return Err(PayerRequestError::InvalidCalls);
         }
         Ok(())
     }
-
-    const fn validate_frames(frames: &[Value]) -> Result<(), PayerRequestError> {
-        if frames.is_empty() || frames.len() > Eip8130Constants::MAX_CALL_PHASES_PER_TX {
-            return Err(PayerRequestError::InvalidFrames);
-        }
-        Ok(())
-    }
-}
-
-enum IntentField<'a> {
-    Absent,
-    Array(&'a Vec<Value>),
 }
 
 /// A payer request rejected before it is forwarded.
@@ -124,18 +119,15 @@ pub enum PayerRequestError {
     /// `chainId` is not this node's chain.
     #[error("payer request chainId does not match this node")]
     ChainIdMismatch,
-    /// `payer_getTerms` is missing a sender address.
-    #[error("payer_getTerms requires from")]
-    MissingFrom,
-    /// `payer_getTerms` carries both `calls` and `frames`, or one of them is not a list.
-    #[error("payer_getTerms accepts at most one of calls or frames, as a list")]
-    IntentShape,
-    /// A call in `calls` is missing `to`.
+    /// `payer_getTerms` has no sender address in `sender` or its alias `from`.
+    #[error("payer_getTerms requires a sender address")]
+    MissingSender,
+    /// `payer_getTerms` carries both `sender` and `from`, naming different addresses.
+    #[error("payer_getTerms sender and from must match")]
+    SenderMismatch,
+    /// `calls` is not a list, or a call in it is missing `to`.
     #[error("payer_getTerms calls must be a list of call objects")]
     InvalidCalls,
-    /// `frames` is empty or has more entries than an EIP-8130 transaction has call phases.
-    #[error("payer_getTerms frames must be a non-empty list")]
-    InvalidFrames,
     /// `transaction` is missing, empty, or larger than the size cap.
     #[error("payer_sendTransaction requires a hex-encoded transaction")]
     InvalidTransaction,
@@ -155,7 +147,7 @@ mod tests {
     fn terms() -> Value {
         json!({
             "chainId": "0x2105",
-            "from": "0x0000000000000000000000000000000000000001",
+            "sender": "0x0000000000000000000000000000000000000001",
             "calls": [{ "to": "0x0000000000000000000000000000000000000002" }]
         })
     }
@@ -163,6 +155,44 @@ mod tests {
     #[test]
     fn get_terms_accepts_a_call_intent() {
         assert!(PayerRequestFilter::validate_get_terms(&terms(), CHAIN_ID).is_ok());
+    }
+
+    #[test]
+    fn get_terms_takes_the_sender_as_sender_or_from() {
+        let sender = "0x0000000000000000000000000000000000000001";
+        let mut from = terms();
+        from.as_object_mut().unwrap().remove("sender");
+        from["from"] = json!(sender);
+        assert!(PayerRequestFilter::validate_get_terms(&from, CHAIN_ID).is_ok());
+
+        let mut both = terms();
+        both["from"] = json!(sender);
+        assert!(PayerRequestFilter::validate_get_terms(&both, CHAIN_ID).is_ok());
+
+        let mut neither = terms();
+        neither.as_object_mut().unwrap().remove("sender");
+        assert_eq!(
+            PayerRequestFilter::validate_get_terms(&neither, CHAIN_ID),
+            Err(PayerRequestError::MissingSender)
+        );
+
+        let mut malformed = terms();
+        malformed["from"] = json!("0x01");
+        assert_eq!(
+            PayerRequestFilter::validate_get_terms(&malformed, CHAIN_ID),
+            Err(PayerRequestError::MissingSender)
+        );
+    }
+
+    #[test]
+    fn get_terms_rejects_a_sender_and_from_that_differ() {
+        let mut request = terms();
+        request["from"] = json!("0x0000000000000000000000000000000000000002");
+
+        assert_eq!(
+            PayerRequestFilter::validate_get_terms(&request, CHAIN_ID),
+            Err(PayerRequestError::SenderMismatch)
+        );
     }
 
     #[test]
@@ -177,12 +207,12 @@ mod tests {
     }
 
     #[test]
-    fn get_terms_accepts_at_most_one_intent() {
-        let mut both = terms();
-        both["frames"] = json!([{ "mode": "0x2" }]);
+    fn get_terms_accepts_a_list_of_calls_or_none() {
+        let mut not_a_list = terms();
+        not_a_list["calls"] = json!({ "to": "0x0000000000000000000000000000000000000002" });
         assert_eq!(
-            PayerRequestFilter::validate_get_terms(&both, CHAIN_ID),
-            Err(PayerRequestError::IntentShape)
+            PayerRequestFilter::validate_get_terms(&not_a_list, CHAIN_ID),
+            Err(PayerRequestError::InvalidCalls)
         );
 
         let mut neither = terms();
@@ -192,20 +222,6 @@ mod tests {
         let mut no_calls = terms();
         no_calls["calls"] = json!([]);
         assert!(PayerRequestFilter::validate_get_terms(&no_calls, CHAIN_ID).is_ok());
-    }
-
-    #[test]
-    fn get_terms_accepts_frames_up_to_the_call_phase_limit() {
-        let mut request = terms();
-        request.as_object_mut().unwrap().remove("calls");
-        request["frames"] = json!(vec![json!({}); Eip8130Constants::MAX_CALL_PHASES_PER_TX]);
-        assert!(PayerRequestFilter::validate_get_terms(&request, CHAIN_ID).is_ok());
-
-        request["frames"] = json!(vec![json!({}); Eip8130Constants::MAX_CALL_PHASES_PER_TX + 1]);
-        assert_eq!(
-            PayerRequestFilter::validate_get_terms(&request, CHAIN_ID),
-            Err(PayerRequestError::InvalidFrames)
-        );
     }
 
     #[test]

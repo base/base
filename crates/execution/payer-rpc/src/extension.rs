@@ -14,13 +14,17 @@ use crate::{Eip8130ChainState, PayerApiImpl, PayerApiServer};
 /// front of the payer ends a slow call and its error reaches the wallet.
 pub const PAYER_UPSTREAM_TIMEOUT: Duration = Duration::from_secs(15);
 
-/// Upstream payer endpoint.
+/// Upstream payer endpoint and whether `payer_getTerms` responses are cached.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PayerRpcConfig {
     /// Payer JSON-RPC URL. Callers pass the sequencer URL when the payer is served there.
     pub upstream_url: String,
     /// HTTP headers sent upstream, in `name=value` form.
     pub upstream_headers: Vec<String>,
+    /// Cache successful `payer_getTerms` responses as one shared entry.
+    ///
+    /// Enable this only when the payer returns the same token catalog for every request.
+    pub cache_get_terms: bool,
 }
 
 /// Registers `payer_getTerms` and `payer_sendTransaction` on the execution RPC.
@@ -40,7 +44,8 @@ impl BaseNodeExtension for PayerRpcExtension {
             )?;
             let state =
                 Eip8130ChainState::new(Eip8130EthApiExt::new(ctx.registry.eth_api().clone()));
-            let api = PayerApiImpl::new(ctx.provider().clone(), client, state);
+            let api =
+                PayerApiImpl::new(ctx.provider().clone(), client, state, config.cache_get_terms);
             ctx.modules.merge_configured(api.into_rpc())?;
             Ok(())
         })

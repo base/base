@@ -7,6 +7,9 @@
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
+mod cache;
+pub use cache::{GET_TERMS_FRESH_FOR, MAX_GET_TERMS_CACHE_SECS, RefetchOutcome, TermsCache};
+
 mod extension;
 pub use extension::{PAYER_UPSTREAM_TIMEOUT, PayerRpcConfig, PayerRpcExtension};
 
