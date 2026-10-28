@@ -36,6 +36,9 @@ for tool in cast jq python3; do
     command -v "$tool" >/dev/null 2>&1 || { echo "ERROR: $tool is required" >&2; exit 1; }
 done
 
+# Newer Foundry versions wrap `--json` output in a `{data, errors, ...}` envelope.
+unwrap() { jq -c 'if type == "object" and has("data") and has("schema_version") then .data else . end'; }
+
 FROM="$(cast wallet address --private-key "$PK")"
 CHAIN_ID="$(cast chain-id --rpc-url "$RPC")"
 
@@ -74,7 +77,7 @@ echo ""
 echo "Waiting for receipts..."
 receipts="[]"
 for hash in "${hashes[@]}"; do
-    receipt="$(cast receipt "$hash" --rpc-url "$RPC" --json)"
+    receipt="$(cast receipt "$hash" --rpc-url "$RPC" --json | unwrap)"
     receipts="$(jq -c --argjson r "$receipt" '. + [$r]' <<<"$receipts")"
 done
 
@@ -86,10 +89,10 @@ blocks="{}"
 deposit_receipts="{}"
 for number in $(jq -r '[.[].blockNumber] | unique | .[]' <<<"$receipts"); do
     number="$(cast to-dec "$number")"
-    block="$(cast block "$number" --full --rpc-url "$RPC" --json)"
+    block="$(cast block "$number" --full --rpc-url "$RPC" --json | unwrap)"
     blocks="$(jq -c --arg n "$number" --argjson b "$block" '. + {($n): $b}' <<<"$blocks")"
     for hash in $(jq -r '.transactions[] | select(.type == "0x7e") | .hash' <<<"$block"); do
-        receipt="$(cast receipt "$hash" --rpc-url "$RPC" --json)"
+        receipt="$(cast receipt "$hash" --rpc-url "$RPC" --json | unwrap)"
         deposit_receipts="$(jq -c --arg h "$hash" --argjson r "$receipt" '. + {($h): $r}' <<<"$deposit_receipts")"
     done
 done
