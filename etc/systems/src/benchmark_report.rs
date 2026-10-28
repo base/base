@@ -39,8 +39,9 @@ pub struct SnapshotBenchmarkResult {
 /// Statistics over finite per-block metric samples; quantiles use nearest rank.
 #[derive(Debug, Serialize)]
 pub struct PredicateMetricSummary {
-    /// Sum of samples; additive metrics represent benchmark totals.
-    pub total: f64,
+    /// Benchmark total, present only for additive sums and counts.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total: Option<f64>,
     /// Arithmetic mean of the block samples.
     pub mean: f64,
     /// Nearest-rank median of the block samples.
@@ -59,7 +60,7 @@ impl PredicateMetricSummary {
         let percentile = |pct: usize| {
             samples.get((count * pct).div_ceil(100).saturating_sub(1)).copied().unwrap_or_default()
         };
-        Self { total, mean: if count == 0 { 0.0 } else { total / count as f64 },
+        Self { total: Some(total), mean: if count == 0 { 0.0 } else { total / count as f64 },
             p50: percentile(50), p99: percentile(99) }
     }
 }
@@ -76,8 +77,13 @@ impl SnapshotBenchmarkResult {
                 }
             }
         }
-        series.into_iter().map(|(name, values)|
-            (name, PredicateMetricSummary::from_samples(values))).collect()
+        series.into_iter().map(|(name, values)| {
+            let mut summary = PredicateMetricSummary::from_samples(values);
+            if !name.ends_with("_sum") && !name.ends_with("_count") {
+                summary.total = None;
+            }
+            (name, summary)
+        }).collect()
     }
 }
 
@@ -386,12 +392,31 @@ mod tests {
     fn predicate_summary_has_exact_totals_and_percentiles() {
         let samples = [2.0, 4.0, 6.0, 8.0];
         let summary = super::PredicateMetricSummary::from_samples(samples.to_vec());
-        assert_eq!(summary.total, 20.0, "all four block values contribute to the total");
+        assert_eq!(summary.total, Some(20.0), "all four block values contribute to the total");
         assert_eq!(summary.mean, 5.0, "mean uses all four measured blocks");
         assert_eq!(summary.p50, 4.0, "nearest-rank median is the second sample");
         assert_eq!(summary.p99, 8.0, "nearest-rank p99 is the final sample");
         let json = serde_json::to_value(summary).unwrap();
         assert_eq!(json["total"], 20.0, "the summary total reaches result JSON");
+    }
+
+    /// Only additive predicate samples have a meaningful benchmark total.
+    #[test]
+    fn predicate_summary_omits_nonadditive_totals() {
+        let names = ["validity_predicate_evaluation_duration_sum", "validity_predicate_evaluation_duration_count",
+            "validity_predicate_evaluation_duration_avg", "validity_predicate_evaluations_per_second", "resting_predicates"];
+        let blocks = [SnapshotBlockMetrics { number: 1, hash: B256::ZERO, timestamp: 0, timestamp_ms: 0,
+            gas_used: 0, gas_limit: 0, transaction_count: 0, prometheus_metrics: names.iter()
+                .map(|name| (format!("reth_base_builder_{name}"), 3.0)).collect() }];
+        let json = serde_json::to_value(SnapshotBenchmarkResult::summarize_predicates(&blocks)).unwrap();
+        for (index, name) in names.iter().enumerate() {
+            let summary = &json[format!("reth_base_builder_{name}")];
+            assert_eq!(summary.get("total").is_some(), index < 2, "only additive totals: {name}");
+            if index < 2 {
+                assert_eq!(summary["total"], 3.0, "additive samples retain their exact total: {name}");
+            }
+            assert_eq!(summary["mean"], 3.0, "every series retains its exact mean: {name}");
+        }
     }
 
     #[test]

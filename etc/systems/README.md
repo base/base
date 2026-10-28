@@ -222,7 +222,9 @@ and sum of those per-block samples. The `reth_base_builder_` metric families are
   accumulated during each flashblock build.
 - `validity_predicate_evaluations_per_block` and
   `validity_predicate_eval_duration_per_canonical_block`: attempts and evaluation
-  seconds accumulated across the canonical block build.
+  seconds accumulated across a completed flashblocks block build, or each native
+  build attempt (including interval rebuilds and cancelled attempts). Native
+  observations are not one-to-one with canonical blocks.
 - `resting_predicates`: resting transactions at the latest completed block build;
   zero when resting-predicate tracking is disabled.
 - `validity_predicate_evaluations_per_second`: evaluation attempts divided by the
@@ -235,8 +237,8 @@ Counter and distribution totals are divided evenly across intervening canonical
 blocks; gauges are latest-scrape observations. Summary quantiles describe these
 attributed block samples, not individual evaluation latencies or flashblocks.
 Only additive sample sums represent benchmark totals; a sum of gauges or averages
-is not a population count or total evaluation time. Native builders emit canonical
-block distributions, not flashblock distributions. Existing legacy per-build
+is not a population count or total evaluation time. Native builders emit per-build
+attempt distributions, not flashblock distributions. Existing legacy per-build
 timing metrics remain unchanged.
 
 For the end-to-end workflow, including disposable snapshot restores, report artifact conventions, and

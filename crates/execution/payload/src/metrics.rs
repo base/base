@@ -321,23 +321,6 @@ mod tests {
 
     use super::*;
 
-    /// Completed builds record exact evaluated counts and the current resting population.
-    #[test]
-    fn records_predicate_build_counts_and_resting_gauge() {
-        let recorder = PrometheusBuilder::new().build_recorder();
-        let handle = recorder.handle();
-        metrics::with_local_recorder(&recorder, || {
-            ValidityMetrics::validity_predicate_evaluations_per_flashblock().record(4.0);
-            ValidityMetrics::resting_predicates().set(7.0);
-            ValidityMetrics::resting_predicates().set(3.0);
-        });
-        let samples: Vec<_> = handle.render().lines()
-            .filter(|line| !line.is_empty() && !line.starts_with('#'))
-            .map(str::to_owned).collect();
-        assert!(samples.contains(&"base_builder_validity_predicate_evaluations_per_flashblock_sum 4".to_string()), "exactly four transaction evaluations were recorded");
-        assert!(samples.contains(&"base_builder_validity_predicate_evaluations_per_flashblock_count 1".to_string()), "exactly one flashblock was recorded");
-        assert!(samples.contains(&"base_builder_resting_predicates 3".to_string()), "gauge replaces seven parked transactions with exactly three");
-    }
 
     #[test]
     fn records_predicate_metrics() {

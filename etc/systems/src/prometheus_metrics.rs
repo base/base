@@ -199,6 +199,14 @@ impl PrometheusSnapshot {
         metrics
     }
 
+    /// Computes evaluation throughput over wall time, treating a reset as a fresh counter.
+    pub fn predicate_evaluations_per_second(&self, previous: &Self, elapsed: Duration) -> Option<f64> {
+        let key = "reth_base_builder_validity_predicate_evaluation_duration";
+        let count = self.distributions.get(key)?.count?;
+        let previous_count = previous.distributions.get(key).and_then(|sample| sample.count.as_ref());
+        (elapsed > Duration::ZERO).then(|| Self::counter_delta(count, previous_count) / elapsed.as_secs_f64())
+    }
+
     fn insert_scalar(
         scalars: &mut BTreeMap<String, ScalarSample>,
         key: String,
@@ -292,18 +300,12 @@ impl PrometheusBlockCollector {
                     let current = Self::scrape(&client, &metrics_url).await?;
                     let block_count = head - last_head;
                     let mut metrics = current.delta_for_blocks(&previous, block_count);
-                    let elapsed = last_scrape.elapsed().as_secs_f64();
-                    last_scrape = Instant::now();
-                    if let Some(evaluations) = metrics.get(
-                        "reth_base_builder_validity_predicate_evaluation_duration_count",
-                    ).copied() {
-                        if elapsed > 0.0 {
-                            metrics.insert(
-                                "reth_base_builder_validity_predicate_evaluations_per_second".to_string(),
-                                evaluations * block_count as f64 / elapsed,
-                            );
-                        }
+                    if let Some(rate) = current.predicate_evaluations_per_second(&previous, last_scrape.elapsed()) {
+                        metrics.insert(
+                            "reth_base_builder_validity_predicate_evaluations_per_second".to_string(), rate,
+                        );
                     }
+                    last_scrape = Instant::now();
                     metrics.retain(|name, _| Self::is_visualizer_metric(name));
                     metrics.insert(
                         "benchmark/prometheus_blocks_per_scrape".to_string(),
@@ -355,12 +357,10 @@ impl PrometheusBlockCollector {
         Ok(PrometheusSnapshot::parse(&response.text().await?))
     }
 
-    /// Returns whether a flattened metric is rendered by the benchmark visualizer.
+    /// Returns whether a flattened metric is retained in the report artifacts.
     ///
-    /// This intentionally uses exact metric names rather than broad metric-family prefixes. The
-    /// latter pull in one sample for every flashblock, gas bucket, and label combination, even
-    /// though the report UI cannot display them. Keep this list in sync with the metrics rendered
-    /// by `base/benchmark`'s `ChartGrid`, including its compatibility aliases.
+    /// Exact names bound cardinality to ChartGrid metrics, compatibility aliases and predicate
+    /// diagnostics. Predicate diagnostics are retained in JSON even without a dedicated UI chart.
     pub fn is_visualizer_metric(name: &str) -> bool {
         VISUALIZER_METRICS.contains(&name)
             || matches!(name, "reth_base_builder_resting_predicates"
@@ -375,6 +375,18 @@ impl PrometheusBlockCollector {
 #[cfg(test)]
 mod tests {
     use super::{PrometheusBlockCollector, PrometheusSnapshot};
+
+    /// Rates use elapsed wall time and treat a counter reset as a fresh count.
+    #[test]
+    fn predicate_rate_uses_elapsed_time_and_resets() {
+        let snapshot = |count| PrometheusSnapshot::parse(&format!(
+            "# TYPE reth_base_builder_validity_predicate_evaluation_duration histogram\nreth_base_builder_validity_predicate_evaluation_duration_sum 1\nreth_base_builder_validity_predicate_evaluation_duration_count {count}\n"));
+        assert_eq!(snapshot(8).predicate_evaluations_per_second(&snapshot(2), std::time::Duration::from_secs(2)), Some(3.0), "six evaluations over two seconds");
+        assert_eq!(snapshot(8).predicate_evaluations_per_second(&snapshot(2), std::time::Duration::from_millis(500)), Some(12.0), "fractional elapsed seconds are preserved");
+        assert_eq!(PrometheusSnapshot::default().predicate_evaluations_per_second(&snapshot(2), std::time::Duration::from_secs(1)), None, "missing observations have no rate");
+        assert_eq!(snapshot(1).predicate_evaluations_per_second(&snapshot(8), std::time::Duration::from_secs(2)), Some(0.5), "reset uses the new single evaluation");
+        assert_eq!(snapshot(8).predicate_evaluations_per_second(&snapshot(2), std::time::Duration::ZERO), None, "zero elapsed time has no rate");
+    }
 
     /// Predicate distributions retain exact totals across a multi-block scrape.
     #[test]

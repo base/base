@@ -1728,6 +1728,13 @@ mod tests {
     };
 
     use super::*;
+    use alloy_consensus::SignableTransaction;
+    use alloy_primitives::Signature;
+    use base_common_consensus::BaseTxEnvelope;
+    use base_execution_txpool::{BaseOrdering, ParkedBestTransactions, ValidityOperator, ValidityPredicate};
+    use reth_transaction_pool::pool::PendingPool;
+    use revm::{database::InMemoryDB, state::AccountInfo};
+    use crate::flashblocks::ParkableBestPayloadTransactions;
     use crate::{
         ParkablePayloadTransactions, RestingPayloadTransactions, test_utils::sign_base_tx,
     };
@@ -1745,6 +1752,55 @@ mod tests {
         let parent_header = Header { gas_limit: 30_000_000, timestamp: 0, ..Default::default() };
         let parent = Arc::new(SealedHeader::seal_slow(parent_header));
         BasePayloadBuilderCtx::for_test(chain_spec, parent)
+    }
+
+    /// Runs real predicate selection through primary scan, state wakeup, rescan and promotion.
+    #[cfg(feature = "metrics")]
+    #[test]
+    fn flashblock_predicate_metrics_cover_evaluation_sites() {
+        let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+        let handle = recorder.handle();
+        metrics::with_local_recorder(&recorder, || {
+            let ctx = test_builder_context();
+            let watched = Address::repeat_byte(0x44);
+            let make_tx = |sender, to, value, predicates, tip| {
+                let tx = TxEip1559 { chain_id: 901, gas_limit: 21_000,
+                    max_fee_per_gas: 1_000_000_000, max_priority_fee_per_gas: tip,
+                    to: TxKind::Call(to), value, ..Default::default() };
+                let envelope = BaseTxEnvelope::Eip1559(tx.into_signed(Signature::test_signature()));
+                let signed = BaseTransactionSigned::from(envelope);
+                let recovered = Recovered::new_unchecked(signed, sender);
+                let size = recovered.encode_2718_len();
+                let mut candidate = pooled_candidate(BasePooledTransaction::new(recovered, size).with_validity_predicates(predicates));
+                Arc::get_mut(&mut candidate).unwrap().transaction_id = TransactionId::new((tip as u64).into(), 0);
+                candidate
+            };
+            let sender = Address::repeat_byte(0x55);
+            let trigger_sender = Address::repeat_byte(0x66);
+            let gated = make_tx(sender, Address::repeat_byte(0x77), U256::ZERO,
+                vec![ValidityPredicate::Balance { address: watched, op: ValidityOperator::Equal, value: U256::ONE }], 2);
+            let trigger = make_tx(trigger_sender, watched, U256::ONE, vec![], 1);
+            let mut pool = PendingPool::new(BaseOrdering::coinbase_tip());
+            pool.add_transaction(gated, 0);
+            pool.add_transaction(trigger, 0);
+            let txs = ParkableBestPayloadTransactions::new(Box::new(ParkedBestTransactions::new(
+                pool.best(), BaseOrdering::coinbase_tip(), 0,
+            )));
+            let mut txs = crate::flashblocks::BestFlashblocksTxs::new(txs, Default::default());
+            let mut db = InMemoryDB::default();
+            for sender in [sender, trigger_sender] {
+                db.insert_account_info(sender, AccountInfo::from_balance(U256::from(10u128.pow(18))));
+            }
+            let mut state = State::builder().with_database(db).with_bundle_update().build();
+            let mut info = ExecutionInfo::default();
+            ctx.execute_best_transactions(&mut info, &mut BlockDeferrals::default(), &mut state, &mut txs,
+                &ResourceLimits { block_gas_limit: 30_000_000, ..Default::default() }).expect("selection succeeds");
+            assert_eq!(info.executed_transactions.len(), 2, "trigger and gated transaction are included");
+            assert_eq!(info.predicate_evaluations, 3, "initial rejection, rescan and promoted evaluation all count");
+        });
+        let rendered = handle.render();
+        assert!(rendered.lines().any(|line| line == "base_builder_validity_predicate_evaluation_duration_count 3"),
+            "exactly three real predicate evaluations record latency: {rendered}");
     }
 
     fn pooled_test_transaction() -> BasePooledTransaction {

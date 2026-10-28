@@ -982,7 +982,7 @@ where
         let mut evaluation_counters = ValidityEvaluationCounters::default();
         let predicate_latency = ValidityMetrics::validity_predicate_evaluation_duration();
         let mut predicate_evaluations = 0_u64;
-        let mut predicate_eval_duration = None;
+        let mut predicate_eval_duration: Option<Duration> = None;
         let mut predicate_bucket_wakeups = 0;
         let mut validity_consideration_index = 0_u64;
         // A blocked transaction is parked again each time a promotion re-yields it. Post-Denim
@@ -1013,6 +1013,9 @@ where
         while let Some(pooled) = best_txs.next(()) {
             let tx = &pooled.transaction;
             if self.cancel.is_cancelled() {
+                ValidityMetrics::validity_predicate_evaluations_per_block().record(predicate_evaluations as f64);
+                ValidityMetrics::validity_predicate_eval_duration_per_canonical_block()
+                    .record(predicate_eval_duration.unwrap_or_default().as_secs_f64());
                 return Ok(Some(()));
             }
             if can_finalize_early && self.cancel.is_finalization_requested() {
@@ -1397,6 +1400,9 @@ where
             }
 
             if self.cancel.is_cancelled() {
+                ValidityMetrics::validity_predicate_evaluations_per_block().record(predicate_evaluations as f64);
+                ValidityMetrics::validity_predicate_eval_duration_per_canonical_block()
+                    .record(predicate_eval_duration.unwrap_or_default().as_secs_f64());
                 return Ok(Some(()));
             }
 
@@ -2099,6 +2105,7 @@ mod tests {
     struct FinalizeAfterFirstTransaction {
         transactions: TestParkableTransactions,
         calls: usize,
+        cancel_job: bool,
         // Models the resolver retaining its clone until the finalized payload is returned.
         cancel: ManuallyDrop<CancelOnDrop>,
     }
@@ -2109,6 +2116,9 @@ mod tests {
         fn next(&mut self, _ctx: ()) -> Option<Self::Transaction> {
             self.calls += 1;
             if self.calls == 2 {
+                if self.cancel_job {
+                    drop(CancelOnDrop::clone(&self.cancel));
+                }
                 self.cancel.request_finalization();
             }
             self.transactions.next(())
@@ -2139,6 +2149,30 @@ mod tests {
         }
     }
 
+    /// Cancelled scans still publish the completed predicate work from that build attempt.
+    #[cfg(feature = "metrics")]
+    #[test]
+    fn cancelled_native_predicate_metrics() {
+        let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+        let handle = recorder.handle();
+        metrics::with_local_recorder(&recorder, || {
+            let ctx = pool_payload_context(DENIM_TIMESTAMP);
+            let first = pool_transaction(0).with_validity_predicates(vec![ValidityPredicate::BlockNumber {
+                op: ValidityOperator::Equal, value: U256::ONE }]);
+            let sender = first.sender();
+            let transactions = FinalizeAfterFirstTransaction { transactions: TestParkableTransactions::new(vec![first, pool_transaction(1)]),
+                calls: 0, cancel_job: true, cancel: ManuallyDrop::new(ctx.cancel.clone()) };
+            let outcome = build_parkable_pool_payload(ctx, transactions, &[sender]);
+            assert!(matches!(outcome, BuildOutcomeKind::Cancelled), "job cancellation wins");
+        });
+        let rendered = handle.render();
+        for expected in ["base_builder_validity_predicate_evaluations_per_block_sum 1",
+            "base_builder_validity_predicate_evaluations_per_block_count 1",
+            "base_builder_validity_predicate_eval_duration_per_canonical_block_count 1"] {
+            assert!(rendered.lines().any(|line| line == expected), "cancelled work metric {expected}: {rendered}");
+        }
+    }
+
     #[test]
     fn pre_denim_ignores_finalization_requests() {
         let ctx = pool_payload_context(DENIM_TIMESTAMP - 1);
@@ -2146,6 +2180,7 @@ mod tests {
         let transactions = FinalizeAfterFirstTransaction {
             transactions: TestParkableTransactions::new(vec![pool_transaction(0)]),
             calls: 0,
+            cancel_job: false,
             cancel: ManuallyDrop::new(ctx.cancel.clone()),
         };
 
@@ -2164,6 +2199,7 @@ mod tests {
                 pool_transaction(1),
             ]),
             calls: 0,
+            cancel_job: false,
             cancel: ManuallyDrop::new(ctx.cancel.clone()),
         };
 
@@ -2383,6 +2419,49 @@ mod tests {
             .map(|transaction| *transaction.tx_hash())
             .collect::<Vec<_>>();
         assert_eq!(included_hashes, vec![trigger_hash, gated_hash]);
+    }
+
+    /// Real selection records primary evaluations, a state-triggered rescan, and re-yield.
+    #[cfg(feature = "metrics")]
+    #[test]
+    fn native_predicate_metrics_cover_evaluation_sites() {
+        let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+        let handle = recorder.handle();
+        metrics::with_local_recorder(&recorder, native_builder_promotes_transaction_after_predicate_state_changes);
+        let rendered = handle.render();
+        for expected in [
+            "base_builder_validity_predicate_evaluation_duration_count 3",
+            "base_builder_validity_predicate_evaluations_per_block_sum 3",
+            "base_builder_validity_predicate_evaluations_per_block_count 1",
+            "base_builder_validity_predicate_eval_duration_per_canonical_block_count 1",
+        ] {
+            assert!(rendered.lines().any(|line| line == expected), "missing exact production metric {expected}: {rendered}");
+        }
+    }
+
+    /// Finalization samples the real resting set; consensus-only replay must not overwrite it.
+    #[cfg(feature = "metrics")]
+    #[test]
+    fn native_predicate_finalization_and_shadow_metrics() {
+        let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+        let handle = recorder.handle();
+        metrics::with_local_recorder(&recorder, || {
+            native_builder_carries_unsatisfied_transactions_into_the_next_block();
+            let before = handle.render();
+            for expected in ["base_builder_resting_predicates 1",
+                "base_builder_validity_predicate_evaluations_per_block_sum 1",
+                "base_builder_validity_predicate_evaluations_per_block_count 1",
+                "base_builder_validity_predicate_eval_duration_per_canonical_block_count 1"] {
+                assert!(before.lines().any(|line| line == expected), "finalized metric {expected}: {before}");
+            }
+            build_empty_payload(state_root_handle());
+            let after = handle.render();
+            let predicate_lines = |text: &str| text.lines().filter(|line| line.contains("validity_predicate") || line.contains("resting_predicates")).map(str::to_owned).collect::<Vec<_>>();
+            assert_eq!(predicate_lines(&after), predicate_lines(&before), "no-tx-pool replay leaves predicate metrics untouched");
+            build_pool_payload(pool_payload_context(DENIM_TIMESTAMP), TestParkableTransactions::new(vec![]));
+            assert!(handle.render().lines().any(|line| line == "base_builder_resting_predicates 0"),
+                "a real build with tracking off resets the resting gauge");
+        });
     }
 
     /// A store holding a set finished as `tip` in which `transaction` rests under `predicate`.

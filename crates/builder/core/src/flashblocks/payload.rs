@@ -1483,6 +1483,64 @@ mod tests {
     use super::{FlashblocksMetadata, build_block};
     use crate::{ExecutionInfo, flashblocks::context::BasePayloadBuilderCtx};
 
+    /// Exercises finalization and consensus-only replay with a real pool and in-memory provider.
+    #[cfg(feature = "metrics")]
+    #[tokio::test]
+    async fn predicate_finalization_and_shadow_metrics() {
+        use base_common_consensus::BasePrimitives;
+        use base_execution_txpool::{BaseOrdering, BaseTransactionPool, BaseTransactionValidator, ValidityOperator, ValidityPredicate};
+        use reth_provider::test_utils::MockEthProvider;
+        use reth_transaction_pool::{Pool, PoolConfig, blobstore::InMemoryBlobStore, validate::EthTransactionValidatorBuilder};
+        use crate::{RestingPayloadTransactions, RestingPredicateMode};
+        use super::*;
+        let chain_spec = minimal_chain_spec();
+        let client = MockEthProvider::<BasePrimitives>::new().with_chain_spec((*chain_spec).clone()).with_genesis_block();
+        let evm_config = BaseEvmConfig::base(chain_spec.clone());
+        let blobs = InMemoryBlobStore::default();
+        let validator = EthTransactionValidatorBuilder::new(client.clone(), evm_config.clone())
+            .build_with_tasks(reth_tasks::Runtime::test(), blobs.clone()).map(BaseTransactionValidator::new);
+        let ordering = BaseOrdering::<base_execution_txpool::BasePooledTransaction>::default();
+        let pool = BaseTransactionPool::new(Pool::new(validator, ordering.clone(), blobs, PoolConfig::default()), ordering);
+        let (payload_tx, _payload_rx) = mpsc::channel(1);
+        let mut builder = BasePayloadBuilder::new(evm_config, pool, client, BuilderConfig::default(),
+            BuilderOutputs { payload_tx, ws_pub: Arc::new(WebSocketPublisher::new("127.0.0.1:0".parse().unwrap()).unwrap()) });
+        builder.config.resting_predicate_mode = RestingPredicateMode::Enforce;
+        let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+        let handle = recorder.handle();
+        metrics::with_local_recorder(&recorder, || {
+            let ctx = BasePayloadBuilderCtx::for_test(chain_spec.clone(), genesis_header());
+            let db = StateProviderDatabase::new(NoopProvider::default().into_evm_state_provider());
+            let mut state = State::builder().with_database(db).with_bundle_update().build();
+            let proof: StateProviderBox = Box::new(NoopProvider::default());
+            let mut info = ExecutionInfo { predicate_evaluations: 3, predicate_evaluation_seconds: 0.25, ..Default::default() };
+            let mut txs = BestFlashblocksTxs::new(ParkableBestPayloadTransactions::new(
+                base_execution_txpool::ParkableTransactionPool::best_transactions_with_attributes_and_parking(
+                    &builder.pool, reth_transaction_pool::BestTransactionsAttributes::new(0, None))), Default::default())
+                .with_resting_predicate_mode(RestingPredicateMode::Enforce);
+            txs.rest(B256::repeat_byte(1), &ValidityPredicate::Balance { address: Address::ZERO, op: ValidityOperator::Equal, value: U256::ONE });
+            builder.finalize_block(&mut state, &proof, &ctx, &mut info, &mut txs).expect("finalization succeeds");
+            let rendered = handle.render();
+            for expected in ["base_builder_resting_predicates 1",
+                "base_builder_validity_predicate_evaluations_per_block_sum 3",
+                "base_builder_validity_predicate_evaluations_per_block_count 1",
+                "base_builder_validity_predicate_eval_duration_per_canonical_block_sum 0.25",
+                "base_builder_validity_predicate_eval_duration_per_canonical_block_count 1"] {
+                assert!(rendered.lines().any(|line| line == expected), "finalized metric {expected}: {rendered}");
+            }
+            let mut config = ctx.config.clone();
+            config.attributes.no_tx_pool = true;
+            let before: Vec<_> = rendered.lines().filter(|line| line.contains("validity_predicate") || line.contains("resting_predicates")).collect();
+            futures::executor::block_on(builder.build_payload(BuildArguments { config, cached_reads: Default::default(),
+                execution_cache: None, cancel: CancellationToken::new(), publish_guard: Default::default() })).expect("shadow replay succeeds");
+            let after = handle.render();
+            let after: Vec<_> = after.lines().filter(|line| line.contains("validity_predicate") || line.contains("resting_predicates")).collect();
+            assert_eq!(after, before, "shadow replay leaves predicate observations and resting gauge untouched");
+            builder.config.resting_predicate_mode = RestingPredicateMode::Off;
+            builder.finalize_block(&mut state, &proof, &ctx, &mut info, &mut txs).expect("tracking-off finalization succeeds");
+            assert!(handle.render().lines().any(|line| line == "base_builder_resting_predicates 0"), "tracking-off finalization clears the gauge");
+        });
+    }
+
     /// Creates a minimal [`BaseChainSpec`] with all L1 upgrades through Cancun
     /// active at genesis but **no** inherited rollup upgrades (Bedrock, Canyon,
     /// Ecotone, Holocene, Isthmus, Jovian are all absent).
