@@ -118,10 +118,12 @@ async fn zenith_bills_transactions_for_their_gas_limit() -> Result<()> {
     );
     assert_eq!(after.gas_used, TX_GAS_LIMIT, "post-Zenith receipt must report the gas limit");
     assert_settlement_consistent(&after, TX_GAS_LIMIT);
-    assert_eq!(after.l1_fee, before.l1_fee, "the L1 data fee is independent of billing");
+    // The L1 data fee follows the L1 base fee, which moves between blocks, so it is only checked
+    // to still be charged (the settlement equation above accounts for its exact amount).
+    assert!(after.l1_fee > 0, "the L1 data fee must still be charged under gas-limit billing");
     assert!(
-        after.sender_paid > before.sender_paid,
-        "the over-provisioned transfer must cost more under gas-limit billing"
+        after.execution_fee_paid() > before.execution_fee_paid(),
+        "the over-provisioned transfer must cost more in execution fees under gas-limit billing"
     );
     assert_block_gas_matches_receipts(&builder, after.block_number).await?;
 
