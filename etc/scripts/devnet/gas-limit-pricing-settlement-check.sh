@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Settlement check for gas limit pricing (docs/guides/GAS_LIMIT_PRICING.md). The end-to-end
-# demo (probe flood against the builder's predicate budget) is gas-limit-pricing-demo.sh.
+# demo (reverting-arb flood against the builder's predicate budget) is gas-limit-pricing-demo.sh.
 #
 # Models a padded transaction (the shape used to game tip-per-gas ordering): several
 # plain ETH transfers that each declare a large gas limit but only need ~21,000 gas.
