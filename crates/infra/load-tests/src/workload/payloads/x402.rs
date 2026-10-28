@@ -375,6 +375,11 @@ mod tests {
             1000,
             "mainnet mix must normalize to exactly 1000"
         );
+        assert_eq!(
+            config.transactions.iter().map(|tx| tx.weight).collect::<Vec<_>>(),
+            vec![40, 22, 73, 572, 147, 146],
+            "existing workload shares must be preserved with exactly 22 x402 weight units"
+        );
         let x402 = config
             .transactions
             .iter()
@@ -411,6 +416,11 @@ mod tests {
         assert_eq!(request.to, Some(USDC.into()), "settlement must target real Base USDC");
         let input = request.input.input().expect("settlement must contain calldata");
         assert_eq!(input.len(), 292, "nine ABI words plus selector must be encoded");
+        assert_eq!(
+            &input[..4],
+            &[0xe3, 0xee, 0x16, 0x0e],
+            "calldata selector must match USDC transferWithAuthorization"
+        );
         let call = transferWithAuthorizationCall::abi_decode(input).expect("USDC call must decode");
         assert_eq!(call.from, payer.address(), "authorization owner must be payer");
         assert_eq!(call.to, merchant, "merchant must receive settlement");
@@ -426,13 +436,39 @@ mod tests {
             "authorization must expire after seven snapshot days"
         );
         let authorization = TransferWithAuthorization {
-            from: call.from,
-            to: call.to,
-            value: call.value,
-            validAfter: call.validAfter,
-            validBefore: call.validBefore,
+            from: payer.address(),
+            to: merchant,
+            value: U256::from(1),
+            validAfter: U256::from(1_799_999_999),
+            validBefore: U256::from(1_800_604_800),
             nonce: call.nonce,
         };
+        assert_eq!(
+            authorization.eip712_type_hash(),
+            b256!("7c7c6cdb67a18743f49ec6fa9b35f50d52ed05cbed4cc592e13b44501c1a2267"),
+            "authorization typehash must match USDC TRANSFER_WITH_AUTHORIZATION_TYPEHASH"
+        );
+        let expected_signature = payer
+            .sign_hash_sync(&authorization.eip712_signing_hash(&domain))
+            .expect("payer must sign the independently specified authorization");
+        let expected_words = [
+            ("from", U256::from_be_slice(payer.address().as_slice()).to_be_bytes::<32>()),
+            ("to", U256::from_be_slice(merchant.as_slice()).to_be_bytes::<32>()),
+            ("value", U256::from(1).to_be_bytes::<32>()),
+            ("validAfter", U256::from(1_799_999_999).to_be_bytes::<32>()),
+            ("validBefore", U256::from(1_800_604_800).to_be_bytes::<32>()),
+            ("nonce", call.nonce.0),
+            ("v", U256::from(27 + u8::from(expected_signature.v())).to_be_bytes::<32>()),
+            ("r", expected_signature.r().to_be_bytes::<32>()),
+            ("s", expected_signature.s().to_be_bytes::<32>()),
+        ];
+        for (index, (name, expected_word)) in expected_words.iter().enumerate() {
+            assert_eq!(
+                &input[4 + index * 32..4 + (index + 1) * 32],
+                expected_word.as_slice(),
+                "raw ABI word {index} ({name}) must match the canonical USDC argument order"
+            );
+        }
         let signature =
             alloy_primitives::Signature::from_scalars_and_parity(call.r, call.s, call.v == 28);
         assert_eq!(

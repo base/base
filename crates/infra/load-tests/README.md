@@ -300,13 +300,14 @@ is overwritten. Each facilitator uses the preceding funded account as payer, and
 the runner's following recipient as merchant. Random authorization nonces survive
 calibration generator reconstruction. Windows run from one second before setup's
 snapshot timestamp until seven snapshot days later; longer runs must restart setup.
-Each payment transfers one micro-USDC so finite payer balances last through a run.
+Each payment transfers one micro-USDC; other mixed token workloads can still exhaust shared balances.
 
 The mainnet mix generator classifies each transaction emitting canonical USDC
 `AuthorizationUsed` once, before other classes. This is an upper-bound x402 proxy:
 EIP-3009 has other users, and transactions may settle more than one authorization.
-It does not attribute facilitators. Weights use transaction counts, not event counts,
-and normalize to exactly 1,000. Runtime pacing still calibrates actual receipt gas.
+It does not attribute facilitators. The prior sample's relative workload weights are preserved,
+scaled to 978 of 1,000, with x402 inserted at its measured upper-bound share of 22 (2.2%).
+Runtime pacing still calibrates actual receipt gas.
 Benchmark mainnet-mix runs selecting `mainnet-mix-mainnet-snapshot.yaml` after this
 change are not comparable with runs using the earlier mix.
 
