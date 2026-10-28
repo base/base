@@ -26,7 +26,7 @@ is a prerequisite for sequencing transactions before executing them.
 | Sender debit (`BaseHandler::reimburse_caller`) | `gas_used * effective_gas_price`; unused gas, EIP-3529 refunds and the operator-fee surplus are reimbursed | `gas_limit * effective_gas_price`; nothing is reimbursed |
 | Coinbase tip, `BaseFeeVault` burn, `OperatorFeeVault` (`BaseHandler::reward_beneficiary`) | on `gas_used` | on `gas_limit` |
 | EIP-8130 payer (`Eip8130Executor::settle_fees`) | `billable_gas` (sender intrinsic + calls, less refunds, plus payer auth) | the full pre-charge, `gas_limit + payer_auth` |
-| Block gas accounting (`BaseBlockExecutor`) | `header.gas_used` and receipt `cumulative_gas_used` accrue `gas_used` | accrue the gas each transaction reserved (`gas_limit`, or `gas_limit + payer_auth` for EIP-8130), so a receipt's `gasUsed * effectiveGasPrice` is the fee paid and a block's gas fullness follows from gas limits alone |
+| Block gas accounting (`BaseBlockExecutor`, and the flashblocks builder's own receipts) | `header.gas_used` and receipt `cumulative_gas_used` accrue `gas_used` | accrue the gas each transaction reserved (`gas_limit`, or `gas_limit + payer_auth` for EIP-8130), so a receipt's `gasUsed * effectiveGasPrice` is the fee paid and a block's gas fullness follows from gas limits alone |
 | L1 data fee | unchanged | unchanged |
 | Deposit transactions | no fee | no fee, actual gas accounted |
 | `ExecutionResult::gas_used` (traces, resource metering, `eth_estimateGas`, `eth_call`) | actual consumption | actual consumption; fee-charge-disabled simulation bills nothing |
