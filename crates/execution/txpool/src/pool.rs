@@ -6527,6 +6527,42 @@ mod tests {
         assert_eq!(best_hashes(&pool), vec![unrelated]);
     }
 
+    /// The reviewer's second case: a waiting validity head must not starve
+    /// the validity transactions of every other sender.
+    #[tokio::test]
+    async fn a_waiting_validity_head_does_not_starve_other_validity_senders() {
+        let (pool, client) = build_integration_pool();
+        let waiting = funded_signer(&client);
+        let others: Vec<_> = (0..3).map(|_| funded_signer(&client)).collect();
+        let standard0 = add(&pool, signed_1559_with_fees(&waiting, 0, 1_000, 1)).await;
+        let waiting_validity = add(
+            &pool,
+            signed_1559_with_fees(&waiting, 1, 1_000, 900)
+                .with_validity_predicates(resting_predicates()),
+        )
+        .await;
+        let mut other_validity = Vec::new();
+        for (index, other) in others.iter().enumerate() {
+            other_validity.push(
+                add(
+                    &pool,
+                    signed_1559_with_fees(other, 0, 1_000, 500 - index as u128)
+                        .with_validity_predicates(resting_predicates()),
+                )
+                .await,
+            );
+        }
+
+        let mut expected = other_validity.clone();
+        expected.extend([standard0, waiting_validity]);
+        assert_eq!(best_hashes(&pool), expected);
+
+        // A builder that stops before the low-tip predecessor still gets every other lane.
+        let first_three: Vec<_> =
+            pool.best_transactions().take(3).map(|transaction| *transaction.hash()).collect();
+        assert_eq!(first_three, other_validity);
+    }
+
     #[tokio::test]
     async fn channel_validity_successor_waits_for_the_sidecar_head() {
         let (pool, client) = build_integration_pool();
