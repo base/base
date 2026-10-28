@@ -394,9 +394,13 @@ impl BlockWatcher {
                             ) => result,
                         };
                         match result {
-                            Ok(Some((number, hashes))) => {
+                            Ok(Some((number, timestamp_ms, hashes))) => {
                                 results_tracker.on_new_block_hashes(
-                                    BlockObservation { number, observed_at: Instant::now() },
+                                    BlockObservation {
+                                        number,
+                                        observed_at: Instant::now(),
+                                        timestamp_ms,
+                                    },
                                     hashes,
                                 );
                             }
@@ -473,7 +477,12 @@ impl BlockWatcher {
         let observed_at = Instant::now();
 
         Ok(Some(ObservedBlock {
-            observation: BlockObservation { number: block.header.number, observed_at },
+            observation: BlockObservation {
+                number: block.header.number,
+                observed_at,
+                // Second-resolution fallbacks would put up to 999 ms of error into 10 ms buckets.
+                timestamp_ms: block.header.timestamp_ms,
+            },
             tx_hashes: block.transactions.hashes().collect(),
             gas_used: block.header.gas_used,
             gas_limit: block.header.gas_limit,
@@ -490,7 +499,7 @@ impl BlockWatcher {
     async fn fetch_block_hashes(
         provider: &RootProvider<Base>,
         block: BlockNumberOrTag,
-    ) -> std::result::Result<Option<(u64, Vec<TxHash>)>, String> {
+    ) -> std::result::Result<Option<(u64, Option<u64>, Vec<TxHash>)>, String> {
         let block = tokio::time::timeout(BLOCK_RPC_TIMEOUT, async {
             provider.get_block_by_number(block).hashes().await
         })
@@ -501,7 +510,11 @@ impl BlockWatcher {
         let Some(block) = block else {
             return Ok(None);
         };
-        Ok(Some((block.header.number, block.transactions.hashes().collect())))
+        Ok(Some((
+            block.header.number,
+            block.header.timestamp_ms,
+            block.transactions.hashes().collect(),
+        )))
     }
 
     /// Converts a catch-up duration to a block count, rounding partial blocks up.

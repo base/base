@@ -97,6 +97,12 @@ pub struct TestConfig {
     #[serde(default = "default_block_time")]
     pub block_time: String,
 
+    /// Optional fixed interval (for example, "20ms") at which to submit `target_gps` worth of gas
+    /// per elapsed time, instead of refilling once per observed block. Arrivals then stay even no
+    /// matter when the builder stops taking transactions for a block. Requires `target_gps`.
+    #[serde(default)]
+    pub steady_submission_interval: Option<String>,
+
     /// Seed for deterministic account generation (used if mnemonic not provided).
     ///
     /// Defaults to `12345` for reproducible single-run testing and fund recovery. Concurrent runs
@@ -174,6 +180,7 @@ impl Default for TestConfig {
             measurement_blocks: None,
             target_gps: Some(20_000_000),
             block_time: default_block_time(),
+            steady_submission_interval: None,
             seed: 12345,
             chain_id: None,
             transactions: vec![WeightedTxType { weight: 100, tx_type: TxTypeConfig::Transfer }],
@@ -207,6 +214,7 @@ impl fmt::Debug for TestConfig {
             .field("measurement_blocks", &self.measurement_blocks)
             .field("target_gps", &self.target_gps)
             .field("block_time", &self.block_time)
+            .field("steady_submission_interval", &self.steady_submission_interval)
             .field("seed", &self.seed)
             .field("chain_id", &self.chain_id)
             .field("transactions", &self.transactions)
@@ -243,6 +251,15 @@ pub enum OsakaTarget {
     P256verifyOsaka,
     /// MODEXP under Osaka rules: 1 024-byte field limit + min gas 500 (EIP-7823 + EIP-7883).
     ModexpOsaka,
+}
+
+/// How a `uniswap_v3` workload sizes its `token_out → token_in` swaps.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReverseAmounts {
+    /// Converts the forward amount range into `token_out` units at the pool price read during
+    /// setup, so both directions move equal value and neither balance drains.
+    Auto,
 }
 
 /// Transaction type configuration.
@@ -336,6 +353,9 @@ pub enum TxTypeConfig {
         /// Maximum amount when swapping `token_out` to `token_in`.
         #[serde(default)]
         reverse_max_amount: Option<U256>,
+        /// Derives the reverse range from the pool price; excludes the explicit reverse amounts.
+        #[serde(default)]
+        reverse_amounts: Option<ReverseAmounts>,
     },
     /// B-20 precompile token transfer. Each sender creates and transfers its own token, created
     /// per run during setup.
@@ -495,6 +515,16 @@ impl TestConfig {
         if self.parse_block_time()?.is_zero() {
             return Err(BaselineError::Config("block_time must be > 0".into()));
         }
+        if let Some(interval) = self.parse_steady_submission_interval()? {
+            if interval.is_zero() {
+                return Err(BaselineError::Config("steady_submission_interval must be > 0".into()));
+            }
+            if self.target_gps.is_none() {
+                return Err(BaselineError::Config(
+                    "steady_submission_interval requires target_gps".into(),
+                ));
+            }
+        }
 
         self.validity.validate()?;
 
@@ -576,6 +606,20 @@ impl TestConfig {
         })
     }
 
+    /// Parses the optional fixed submission interval.
+    pub fn parse_steady_submission_interval(&self) -> Result<Option<Duration>> {
+        self.steady_submission_interval
+            .as_deref()
+            .map(|interval| {
+                humantime::parse_duration(interval.trim()).map_err(|e| {
+                    BaselineError::Config(format!(
+                        "invalid steady_submission_interval '{interval}': {e}"
+                    ))
+                })
+            })
+            .transpose()
+    }
+
     /// Parses the funding amount string into a U256.
     pub fn parse_funding_amount(&self) -> Result<alloy_primitives::U256> {
         self.funding_amount.parse().map_err(|e| {
@@ -622,6 +666,7 @@ impl TestConfig {
             measurement_blocks: self.measurement_blocks,
             target_gps: self.target_gps,
             block_time: self.block_time.clone(),
+            steady_submission_interval: self.steady_submission_interval.clone(),
             seed: self.seed,
             chain_id: self.chain_id,
             transactions: serde_json::to_value(&self.transactions)
@@ -674,6 +719,7 @@ impl TestConfig {
 
         let duration = self.parse_duration()?;
         let block_time = self.parse_block_time()?;
+        let steady_submission_interval = self.parse_steady_submission_interval()?;
 
         let transactions = if self.transactions.is_empty() {
             vec![TxConfig { weight: 100, tx_type: TxType::Transfer }]
@@ -694,6 +740,7 @@ impl TestConfig {
             target_gps: self.target_gps,
             block_gas_limit: None,
             block_time,
+            steady_submission_interval,
             separate_setup: None,
             duration,
             measurement_blocks: self.measurement_blocks,
@@ -764,6 +811,7 @@ impl TestConfig {
                 max_amount,
                 reverse_min_amount,
                 reverse_max_amount,
+                reverse_amounts,
             } => {
                 let max_u24: u32 = (1 << 24) - 1;
                 if *fee > max_u24 {
@@ -772,6 +820,14 @@ impl TestConfig {
                     )));
                 }
                 validate_swap_amounts(*min_amount, *max_amount, "uniswap_v3")?;
+                let derive_reverse_amounts = reverse_amounts.is_some();
+                if derive_reverse_amounts
+                    && (reverse_min_amount.is_some() || reverse_max_amount.is_some())
+                {
+                    return Err(BaselineError::Config(
+                        "uniswap_v3 reverse_amounts: auto cannot be combined with reverse_min_amount or reverse_max_amount".into(),
+                    ));
+                }
                 let reverse_min_amount = reverse_min_amount.unwrap_or(*min_amount);
                 let reverse_max_amount = reverse_max_amount.unwrap_or(*max_amount);
                 validate_swap_amounts(
@@ -792,6 +848,7 @@ impl TestConfig {
                     max_amount: *max_amount,
                     reverse_min_amount,
                     reverse_max_amount,
+                    derive_reverse_amounts,
                 }
             }
             TxTypeConfig::AerodromeCl {
@@ -919,6 +976,37 @@ block_time: 0s
         let error = TestConfig::from_yaml(yaml).unwrap_err();
 
         assert!(error.to_string().contains("block_time must be > 0"));
+    }
+
+    #[test]
+    fn parses_steady_submission_interval() {
+        let yaml = r#"
+transaction_submission_rpcs: http://localhost:8545
+target_gps: 400000000
+block_time: 200ms
+steady_submission_interval: 20ms
+"#;
+
+        let config = TestConfig::from_yaml(yaml).unwrap();
+
+        assert_eq!(
+            config.to_load_config(Some(8453)).unwrap().steady_submission_interval,
+            Some(Duration::from_millis(20))
+        );
+        assert_eq!(config.to_summary().steady_submission_interval.as_deref(), Some("20ms"));
+    }
+
+    #[test]
+    fn rejects_steady_submission_without_target_rate() {
+        let yaml = r#"
+transaction_submission_rpcs: http://localhost:8545
+target_gps: null
+steady_submission_interval: 20ms
+"#;
+
+        let error = TestConfig::from_yaml(yaml).unwrap_err();
+
+        assert!(error.to_string().contains("steady_submission_interval requires target_gps"));
     }
 
     #[test]
@@ -1381,6 +1469,58 @@ transactions:
             }
             _ => panic!("expected UniswapV3"),
         }
+    }
+
+    fn uniswap_v3_reverse(reverse: &str) -> Result<TxType> {
+        let yaml = config_yaml(&format!(
+            r#"
+transactions:
+  - weight: 10
+    type: uniswap_v3
+    router: "0x1010101010101010101010101010101010101010"
+    token_in: "0x1111111111111111111111111111111111111111"
+    token_out: "0x2222222222222222222222222222222222222222"
+    min_amount: "10000000000000"
+    max_amount: "100000000000000"
+{reverse}"#
+        ));
+        let load = TestConfig::from_yaml(&yaml).unwrap().to_load_config(Some(1337))?;
+        Ok(load.transactions[0].tx_type.clone())
+    }
+
+    #[test]
+    fn uniswap_v3_reverse_amounts_auto_defers_reverse_range_to_setup() {
+        let tx = uniswap_v3_reverse("    reverse_amounts: auto\n").unwrap();
+        assert!(matches!(tx, TxType::UniswapV3 { derive_reverse_amounts: true, .. }));
+    }
+
+    #[test]
+    fn uniswap_v3_reverse_amounts_auto_rejects_explicit_reverse_amounts() {
+        for explicit in ["reverse_min_amount: \"10000\"", "reverse_max_amount: \"100000\""] {
+            let err = uniswap_v3_reverse(&format!("    reverse_amounts: auto\n    {explicit}\n"))
+                .unwrap_err();
+            assert!(err.to_string().contains("cannot be combined"), "{explicit}: {err}");
+        }
+    }
+
+    #[test]
+    fn uniswap_v3_explicit_reverse_amounts_are_kept() {
+        let tx = uniswap_v3_reverse(
+            "    reverse_min_amount: \"10000\"\n    reverse_max_amount: \"100000\"\n",
+        )
+        .unwrap();
+        let TxType::UniswapV3 {
+            reverse_min_amount,
+            reverse_max_amount,
+            derive_reverse_amounts,
+            ..
+        } = tx
+        else {
+            panic!("expected UniswapV3");
+        };
+        assert_eq!(reverse_min_amount, U256::from(10_000));
+        assert_eq!(reverse_max_amount, U256::from(100_000));
+        assert!(!derive_reverse_amounts);
     }
 
     #[test]

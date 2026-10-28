@@ -219,6 +219,8 @@ pub enum TxType {
         reverse_min_amount: U256,
         /// Maximum amount when swapping `token_out` to `token_in`.
         reverse_max_amount: U256,
+        /// Replaces the reverse range with the forward range priced at the pool before the run.
+        derive_reverse_amounts: bool,
     },
     /// Aerodrome Slipstream (concentrated liquidity) swap.
     AerodromeCl {
@@ -273,6 +275,9 @@ pub struct LoadConfig {
     pub block_gas_limit: Option<u64>,
     /// Expected cadence between canonical blocks.
     pub block_time: Duration,
+    /// Optional fixed interval at which to submit `target_gps` worth of gas per elapsed time,
+    /// instead of refilling once per observed block.
+    pub steady_submission_interval: Option<Duration>,
     /// Benchmark-only control directory used to separate setup from measurement.
     pub separate_setup: Option<PathBuf>,
     /// Duration of the load test. `None` means run indefinitely until stopped.
@@ -342,6 +347,7 @@ impl LoadConfig {
             target_gps: None,
             block_gas_limit: None,
             block_time: Duration::from_secs(2),
+            steady_submission_interval: None,
             separate_setup: None,
             duration: Some(Duration::from_secs(30)),
             measurement_blocks: None,
@@ -422,6 +428,14 @@ impl LoadConfig {
         }
         if self.block_time.is_zero() {
             return Err(BaselineError::Config("block_time must be > 0".into()));
+        }
+        if self.steady_submission_interval.is_some_and(|interval| interval.is_zero()) {
+            return Err(BaselineError::Config("steady_submission_interval must be > 0".into()));
+        }
+        if self.steady_submission_interval.is_some() && self.target_gps.is_none() {
+            return Err(BaselineError::Config(
+                "steady_submission_interval requires target_gps".into(),
+            ));
         }
         if self.max_in_flight_per_sender == 0 {
             return Err(BaselineError::Config("max_in_flight_per_sender must be > 0".into()));

@@ -641,7 +641,7 @@ impl ValidatedTransactionExtensions<BasePooledTransaction> for TransactionValidi
 
     fn extract(tx: &ValidPoolTransaction<BasePooledTransaction>) -> Self {
         Self {
-            validity: tx.transaction.validity_predicates().to_vec(),
+            validity: tx.transaction.validity_predicates().cloned().collect(),
             validity_signature: tx.transaction.validity_signature(),
         }
     }
@@ -1012,11 +1012,11 @@ mod tests {
 
         let transaction = extension.apply(transaction).unwrap();
 
-        assert_eq!(transaction.validity_predicates(), expected);
+        assert_eq!(transaction.validity_predicates().cloned().collect::<Vec<_>>(), expected);
     }
 
     #[test]
-    fn apply_compiles_timing_before_state_and_preserves_wire_order() {
+    fn apply_compiles_timing_before_state_and_forwards_timing_first() {
         let signed: BaseTransactionSigned = TxDeposit {
             source_hash: Default::default(),
             from: Address::ZERO,
@@ -1042,7 +1042,7 @@ mod tests {
             op: ValidityOperator::GreaterThanOrEqual,
             value: U256::from(100),
         };
-        // Submitted state-first; stored timing-first.
+        // Submitted state-first; stored and forwarded timing-first.
         let extension = TransactionValidity {
             validity: vec![state_predicate.clone(), timing_predicate.clone()],
             validity_signature: None,
@@ -1051,8 +1051,8 @@ mod tests {
         let transaction = extension.apply(transaction).unwrap();
 
         assert_eq!(
-            transaction.validity_predicates(),
-            [state_predicate.clone(), timing_predicate.clone()]
+            transaction.validity_predicates().cloned().collect::<Vec<_>>(),
+            [timing_predicate.clone(), state_predicate.clone()]
         );
         assert_eq!(
             transaction
@@ -1280,7 +1280,8 @@ mod tests {
         // predicates; unlike the mempool ingress, `apply` must not reject them.
         let transaction = TransactionValidity::default().apply(transaction).unwrap();
 
-        assert!(transaction.validity_predicates().is_empty());
+        assert!(transaction.validity_conditions().is_empty());
+        assert_eq!(transaction.validity_predicates().count(), 0);
     }
 
     #[test]

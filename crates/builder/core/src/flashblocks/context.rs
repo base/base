@@ -885,15 +885,19 @@ impl BasePayloadBuilderCtx {
                     ValidityEvaluationOutcome::Matched
                 };
                 evaluation_counters.increment(outcome, 1);
+                // Only matched candidates pay for the resting lookup.
                 if outcome == ValidityEvaluationOutcome::Matched
                     && best_txs.is_resting(tx_hash, tx.validity_conditions())
                 {
-                    BuilderMetrics::resting_predicate_shadow_mismatches_total().increment(1);
+                    ValidityMetrics::resting_predicate_shadow_mismatches_total().increment(1);
                     debug!(
                         target: "payload_builder",
                         tx_hash = ?tx_hash,
                         "resting validity transaction matched when evaluated"
                     );
+                }
+                if predicate_read_failed || predicate_expired || blocking_predicate.is_none() {
+                    best_txs.release(tx_hash);
                 }
             }
             if predicate_read_failed || blocking_predicate.is_some() {
@@ -1492,12 +1496,14 @@ impl BasePayloadBuilderCtx {
                 evaluation_counters.increment(outcome, 1);
                 if predicate_read_failed {
                     predicate_index.remove(*parked_hash);
+                    best_txs.release(*parked_hash);
                     best_txs.discard_parked(*parked_hash);
                 } else if let Some((_, predicate)) = blocking_predicate {
                     best_txs.rest(*parked_hash, &predicate);
                     predicate_index.reindex(*parked_hash, predicate);
                 } else {
                     predicate_index.remove(*parked_hash);
+                    best_txs.release(*parked_hash);
                     best_txs.promote(*parked_hash);
                 }
             }
@@ -1556,7 +1562,11 @@ impl BasePayloadBuilderCtx {
         }
         let resting_stats = best_txs.take_resting_stats();
         if resting_stats.parked > 0 {
-            BuilderMetrics::resting_predicate_parked_total().increment(resting_stats.parked);
+            ValidityMetrics::resting_predicate_parked_total().increment(resting_stats.parked);
+        }
+        if resting_stats.carried_parked > 0 {
+            ValidityMetrics::resting_predicate_carried_parked_total()
+                .increment(resting_stats.carried_parked);
         }
         let validity_handling = validity_handling + resting_stats.duration;
         if !validity_handling.is_zero() {

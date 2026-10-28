@@ -19,7 +19,8 @@ use tracing::{debug, warn};
 use crate::{
     DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD, MeteringProvider, NoopMeteringProvider,
     RejectionCache, ResourceMeteringError, ResourceMeteringMetrics, ResourceMeteringSchedule,
-    ResourceMeteringUsage, ResourceSample, ResourceThrottlingDecision, SharedMeteringProvider,
+    ResourceMeteringUsage, ResourceSample, ResourceThrottlingDecision, RestingPredicateMode,
+    SharedMeteringProvider,
 };
 
 /// Settings for the Base payload builder.
@@ -53,6 +54,9 @@ pub struct BaseBuilderConfig {
     /// label. Adds overhead to every state read, so it follows reth's
     /// `--engine.state-provider-metrics` and stays off by default.
     pub state_provider_metrics: bool,
+    /// Whether validity transactions whose predicate was found unsatisfied in an earlier block skip
+    /// evaluation until a state change wakes them. Applies from Denim onward.
+    pub resting_predicate_mode: RestingPredicateMode,
 }
 
 impl Default for BaseBuilderConfig {
@@ -66,6 +70,7 @@ impl Default for BaseBuilderConfig {
             resource_metering: ResourceMeteringConfig::default(),
             rejection_cache: RejectionCache::default(),
             state_provider_metrics: false,
+            resting_predicate_mode: RestingPredicateMode::Off,
         }
     }
 }
@@ -86,7 +91,15 @@ impl BaseBuilderConfig {
             resource_metering: ResourceMeteringConfig::default(),
             rejection_cache: RejectionCache::default(),
             state_provider_metrics: false,
+            resting_predicate_mode: RestingPredicateMode::Off,
         }
+    }
+
+    /// Sets the mode for validity transactions resting from an earlier block.
+    #[must_use]
+    pub const fn with_resting_predicate_mode(mut self, mode: RestingPredicateMode) -> Self {
+        self.resting_predicate_mode = mode;
+        self
     }
 
     /// Sets whether build-loop state reads are timed.
@@ -146,13 +159,15 @@ impl Default for ResourceMeteringConfig {
 impl ResourceMeteringConfig {
     /// Builds a shared config from startup flags.
     ///
-    /// `--enable-metering` turns on `base_meterBundle`. The native payload
-    /// builder throttles transactions against resource-unit budgets only when
-    /// that flag is set and a non-empty schedule file is loaded. A missing
-    /// schedule leaves those budgets inactive so mempool clients can serve
-    /// meterBundle without a builder schedule. An empty schedule file fails
-    /// closed because the operator asked to load a schedule and it has no
-    /// dimensions.
+    /// `--builder.enable-resource-metering` (`BUILDER_ENABLE_RESOURCE_METERING`)
+    /// gates builder metering on `base-builder` and `base sequencer`;
+    /// `--enable-metering` (`ENABLE_METERING`) gates `base_meterBundle` and the
+    /// standalone execution node's native schedule. The native payload builder
+    /// throttles transactions against resource-unit budgets only when `enabled`
+    /// is set and a non-empty schedule file is loaded. A missing schedule leaves
+    /// those budgets inactive so mempool clients can serve `base_meterBundle`
+    /// without a builder schedule. An empty schedule file fails closed because
+    /// the operator asked to load a schedule and it has no dimensions.
     pub fn from_parts(
         enabled: bool,
         schedule_path: Option<&Path>,

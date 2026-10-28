@@ -74,8 +74,8 @@ pub struct ResourceMeteringDimension {
     pub operations: Vec<ResourceMeteringOperation>,
     /// Observe over-budget usage without excluding the transaction.
     ///
-    /// Limits take effect unless this flag is set. Dry-run is the explicit
-    /// opt-out used while rolling out a dimension.
+    /// Required in JSON (`dryRun`): set `true` to observe budgets without
+    /// excluding transactions, or `false` to enforce.
     pub dry_run: bool,
 }
 
@@ -98,7 +98,6 @@ struct ResourceMeteringDimensionFile {
     base_gas_weight: u64,
     #[serde(default)]
     operations: Vec<ResourceMeteringOperation>,
-    #[serde(default)]
     dry_run: bool,
 }
 
@@ -992,7 +991,8 @@ mod tests {
                         "name": "SSTORE",
                         "gasUsedWeight": 3,
                         "countCost": 4
-                    }]
+                    }],
+                    "dryRun": false
                 }]
             }"#,
         )
@@ -1022,6 +1022,51 @@ mod tests {
     }
 
     #[test]
+    fn dimension_requires_explicit_dry_run() {
+        let missing_dry_run = ResourceMeteringSchedule::from_json(
+            r#"{
+                "version": 1,
+                "dimensions": [{
+                    "name": "execution",
+                    "blockLimit": 100,
+                    "baseGasWeight": 1
+                }]
+            }"#,
+        );
+        assert!(matches!(missing_dry_run, Err(ResourceMeteringError::ParseJson(_))));
+        let schedule = ResourceMeteringSchedule::from_json(
+            r#"{
+                "version": 1,
+                "dimensions": [
+                    {
+                        "name": "compute",
+                        "blockLimit": 1000,
+                        "transactionLimit": 500,
+                        "baseGasWeight": 1,
+                        "operations": [
+                            {"name": "SSTORE", "gasUsedWeight": 2, "countCost": 10}
+                        ],
+                        "dryRun": true
+                    },
+                    {
+                        "name": "state_updates",
+                        "blockLimit": 800,
+                        "transactionLimit": 400,
+                        "operations": [
+                            {"name": "STATE_CHANGED_STORAGE_SLOT", "countCost": 25}
+                        ],
+                        "dryRun": false
+                    }
+                ]
+            }"#,
+        )
+        .expect("schedule with explicit dryRun on every dimension must parse");
+        assert_eq!(schedule.dimensions.len(), 2);
+        assert!(schedule.dimensions[0].dry_run);
+        assert!(!schedule.dimensions[1].dry_run);
+    }
+
+    #[test]
     fn rejects_unknown_json_fields() {
         let error = ResourceMeteringSchedule::from_json(
             r#"{
@@ -1042,7 +1087,8 @@ mod tests {
                     "name": "cpu",
                     "blockLimit": 100,
                     "transactionLimit": 0,
-                    "baseGasWeight": 1
+                    "baseGasWeight": 1,
+                    "dryRun": false
                 }]
             }"#,
         )
@@ -1418,7 +1464,8 @@ mod tests {
                 "dimensions": [{
                     "name": "cpu",
                     "blockLimit": 100,
-                    "baseGasWeight": 1
+                    "baseGasWeight": 1,
+                    "dryRun": false
                 }]
             }"#,
         )

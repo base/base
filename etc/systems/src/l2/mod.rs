@@ -4,7 +4,10 @@ mod config;
 pub use config::L2ContainerConfig;
 
 mod runtime;
-pub use runtime::{InProcessNodeRuntime, TestNodeRuntime};
+pub use runtime::{BuilderEngineSharingConfig, InProcessNodeRuntime, TestNodeRuntime};
+
+mod consensus_task;
+pub use consensus_task::ConsensusTask;
 
 mod in_process_batcher;
 pub use in_process_batcher::{InProcessBatcher, InProcessBatcherConfig};

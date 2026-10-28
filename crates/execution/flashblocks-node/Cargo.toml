@@ -15,6 +15,8 @@ workspace = true
 # workspace
 base-flashblocks.workspace = true
 base-node-runner.workspace = true
+base-execution-txpool.workspace = true
+base-common-flashblocks.workspace = true
 
 # reth
 reth-chain-state.workspace = true
@@ -43,7 +45,6 @@ tracing = { workspace = true, features = ["std"] }
 # test-utils (optional)
 eyre = { workspace = true, optional = true }
 base-test-utils = { workspace = true, optional = true }
-base-common-flashblocks = { workspace = true, optional = true }
 derive_more = { workspace = true, features = ["deref"], optional = true }
 
 [dev-dependencies]
@@ -51,6 +52,7 @@ derive_more = { workspace = true, features = ["deref"], optional = true }
 base-test-utils = { workspace = true, features = ["contracts"] }
 base-flashblocks-node = { path = ".", features = ["test-utils"] }
 base-node-runner = { workspace = true, features = ["test-utils"] }
+base-txpool-rpc.workspace = true
 
 # alloy (test)
 alloy-signer.workspace = true
@@ -107,7 +109,6 @@ test-utils = [
 	"dep:alloy-primitives",
 	"dep:alloy-rpc-types-engine",
 	"dep:base-common-consensus",
-	"dep:base-common-flashblocks",
 	"dep:base-execution-chainspec",
 	"dep:base-test-utils",
 	"dep:derive_more",

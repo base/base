@@ -31,5 +31,8 @@ tracing.workspace = true
 base-bundles.workspace = true
 
 # misc
-alloy-primitives.workspace = true
 rstest.workspace = true
+metrics.workspace = true
+tempfile.workspace = true
+alloy-primitives.workspace = true
+metrics-exporter-prometheus.workspace = true

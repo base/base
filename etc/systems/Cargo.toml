@@ -35,6 +35,7 @@ base-upgrade-signal.workspace = true
 base-batcher-encoder.workspace = true
 base-batcher-service.workspace = true
 base-flashblocks-node.workspace = true
+base-proofs-extension.workspace = true
 base-consensus-rpc = { workspace = true, features = ["client"] }
 base-protocol = { workspace = true, features = ["serde", "std"] }
 base-node-runner = { workspace = true, features = ["test-utils"] }
@@ -79,6 +80,8 @@ alloy-signer-local = { workspace = true, features = ["mnemonic"] }
 
 # base-alloy
 base-common-network.workspace = true
+base-common-consensus.workspace = true
+base-common-rpc-types-engine = { workspace = true, features = ["serde", "std"] }
 base-common-rpc-types.workspace = true
 base-common-precompiles.workspace = true
 
@@ -93,6 +96,7 @@ base-prover-service-protocol = { workspace = true, features = ["rpc-server"] }
 # tokio
 tokio-util.workspace = true
 tokio = { workspace = true, features = ["full", "rt-multi-thread", "macros"] }
+futures.workspace = true
 
 # rpc
 axum = { workspace = true, features = ["http1", "tokio"] }
@@ -119,7 +123,7 @@ uuid = { workspace = true, features = ["v4"] }
 clap = { workspace = true, features = ["derive", "env"] }
 tracing = { workspace = true, features = ["std"] }
 tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
-serde_json = { workspace = true, features = ["std"] }
+serde_json = { workspace = true, features = ["std", "raw_value"] }
 serde = { workspace = true, features = ["derive", "std"] }
 testcontainers-modules = { workspace = true, features = ["postgres"] }
 testcontainers = { workspace = true, features = ["blocking", "host-port-exposure"] }
@@ -143,9 +147,7 @@ base-consensus-engine = { workspace = true, features = ["test-utils"] }
 alloy-json-rpc.workspace = true
 
 # base-alloy
-base-common-consensus.workspace = true
 base-common-flashblocks.workspace = true
-base-common-rpc-types-engine.workspace = true
 
 # proof
 base-optimism-rpc.workspace = true
@@ -162,7 +164,6 @@ sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "chrono", "j
 
 # misc
 anyhow.workspace = true
-futures.workspace = true
 indicatif.workspace = true
 tokio-tungstenite.workspace = true
 

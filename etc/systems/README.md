@@ -6,6 +6,24 @@ real builder and client execution and consensus components in one managed launch
 applications against a snapshot, use `base dev` instead; see
 [docs/guides/DEVNET.md](../../docs/guides/DEVNET.md).
 
+## Test port ownership
+
+In-process nodes use a node-owned `PortPool` for ports that must be selected before binding.
+Create a pool with `PortPool::default()` and call `pool.claim()`; keep the pool alive through node
+shutdown. Its file locks coordinate ports 20000–29999 across test processes and are released on
+drop, rather than accumulating until process exit. TCP and UDP availability checks also reject
+ports still bound during asynchronous socket cleanup. Explicit caller-supplied ports remain the
+caller's responsibility; services that bind port zero directly continue to use OS allocation.
+
+Consensus task owners request cooperative cancellation on drop, including startup failure.
+If the service has not exited after five seconds, its future is forcibly dropped so unresponsive
+startup or shutdown cannot retain its port claims indefinitely. Explicit follow-node shutdown
+waits for that cleanup rather than detaching the service when the grace period expires.
+
+System-test consensus nodes use fresh outbound TCP ports. libp2p's default listener-port reuse
+binds outbound sockets to a wildcard address, which conflicts with sandbox forwarding listeners
+on other local interfaces. Production consensus keeps listener-port reuse enabled.
+
 ## Snapshot devnet topology
 
 The snapshot mode starts these real local network roles inside one managed launcher process:
@@ -183,6 +201,14 @@ funder, deposits funds to it in the first local descendant, replaces placeholder
 YAML with dynamically allocated builder endpoints, runs the load generator, writes JSON, and shuts
 the stack down. It does not own the caller-provided snapshot datadirs.
 
+Snapshot runs can opt into native-builder state sharing with
+`--engine.share-sparse-trie-with-payload-builder` and
+`--engine.share-execution-cache-with-payload-builder`. Both default to false.
+These settings affect the basic builder selected at Denim for 200 ms runs, not
+the Flashblocks builder. Sparse sharing requires at least five available CPUs;
+an unsupported host fails rather than silently ignoring the option. Host-derived
+worker-pool sizing is unchanged. The options are CLI-only, not load-test YAML keys.
+
 For the end-to-end workflow, including disposable snapshot restores, report artifact conventions, and
 how `--benchmark-run`, `--scenario`, and `--run-id` select runs in `base/benchmark`, see
 [Snapshot Benchmarking](../../docs/guides/SNAPSHOT_BENCHMARKS.md).
@@ -226,6 +252,16 @@ written before the command returns the error.
 Omit `--client-datadir` to run only the builder and the standalone sequencer: the run skips the
 validator phase and its outputs.
 
+Pass `--export-blocks <dir>` (or `BASE_BENCH_EXPORT_BLOCKS`) to keep the run's blocks for a later
+validator replay on a restored copy of the same snapshot, without a second datadir. After the
+sequencer stops, the run fetches every builder block after the snapshot boundary, setup blocks
+included, and writes `<dir>/blocks.jsonl`: one JSON line per block in order, holding its number,
+hash, millisecond timestamp, state root, payload version, and the engine payload envelope exactly
+as produced. It then writes `<dir>/replay.json`, with the chain, rollup config, block interval,
+boundary, first block timestamp, and the last block's hash and state root the replay must reach.
+The manifest is written last, so its presence marks a complete export; a failed export fails the
+run. Put the directory outside the restored datadirs so restoring the snapshot does not erase it.
+
 `--output-dir` is one self-contained `base/benchmark` run directory. It receives
 `benchmark-result.json`, `metadata.json`, `metrics-sequencer.json`, `load-test-result.json`, and,
 with a client datadir, `metrics-validator.json`. Set `BASE_BENCH_CLIENT_VERSION` to a stable
@@ -263,6 +299,54 @@ as `blake2f-2s-run-1` and `blake2f-200ms-run-1` to distinguish repetitions. A
 5,000-transaction global in-flight cap is exactly one 400M-gas block of queue headroom at the
 configured 80,000 gas limit per transaction, which keeps the builder saturated without leaving an
 oversized submission backlog at cutoff.
+
+## Replay exported blocks into a validator
+
+`base-bench replay` measures a validator without a second restored datadir. A snapshot run with
+`--export-blocks <dir>` writes every produced block to `<dir>/blocks.jsonl` and then
+`<dir>/replay.json`. Restore the same snapshot again and replay the export into it:
+
+```bash
+just devnet bench replay \
+  --datadir "$RESTORED_DATADIR" \
+  --export-dir "$EXPORT_DIR" \
+  --output-dir results/account-create-2s-replay
+```
+
+The command rebuilds the run's chain spec from the manifest (chain, rollup config, cadence, and
+the first block's timestamp, where 200ms runs activate Denim), starts one execution node on
+`--datadir`, and requires its head to be the export boundary. Each block is then inserted with
+`engine_newPayload` (V2 to V4, by payload version) and made canonical with
+`engine_forkchoiceUpdatedV3`, keeping the snapshot's safe and finalized heads. Both calls must
+return `VALID`. By default blocks are sent as fast as the node accepts them; `--paced` sends each
+block at its recorded offset from the first block and records how late it was.
+
+`<output-dir>/replay-result.json` holds the manifest, mode, block count, wall time, blocks per
+second, `newPayload` and forkchoice latency (mean, p50, p99, max), paced lag, the node's final
+hash and state root, `match`, and per-block timings. A complete replay also writes
+`metrics-validator.json` in the snapshot benchmark's format; without pacing, several blocks often
+land in one scrape, so its counter deltas are averages across those blocks. The command exits
+nonzero if any block is rejected or the final hash or state root differs from the manifest. The
+replay mutates `--datadir`; restore it again before another run.
+
+## Measure DA bytes for a block range
+
+`base-bench da` runs blocks through the batcher encoder with the Rust batcher's default settings
+and reports the L1 data they need, with no L1. It reads a snapshot run's export or a range from an
+L2 RPC:
+
+```bash
+just devnet bench da --export-dir "$EXPORT_DIR" --output-dir results/account-create-2s-da
+just devnet bench da --rpc-url "$BASE_MAINNET_RPC" --from 53091727 --to 53095326 \
+  --output-dir results/mainnet-da
+```
+
+The encoder's L1 clock advances every 12 s of block time and every submission counts as included
+at once. `<output-dir>/da-result.json` holds the range's gas, its non-deposit transactions and
+their bytes, the L1 transactions, blobs and frame bytes the encoder produced, and rates over block
+time: gas per second, frame bytes per second, bytes per gas, compression ratio, blobs per L1 slot,
+blob fill, and the gas per second that full blobs at the 14-blob L1 target carry at this range's
+bytes per gas. Mainnet ranges read over RPC check the encoder against the blob bytes Base posted.
 
 ## Compare 2s and 200ms fairly
 

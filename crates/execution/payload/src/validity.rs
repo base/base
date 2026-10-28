@@ -10,7 +10,7 @@ use alloy_primitives::{
 use base_execution_txpool::{
     PredicateContext, ValidityConditions, ValidityOperator, ValidityPredicate,
 };
-use revm::{Database, state::EvmState};
+use revm::{Database, database::TransitionState, state::EvmState};
 
 /// The number of parked predicates at which a flat bucket becomes ordered by default.
 pub const DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD: usize = 32;
@@ -193,6 +193,18 @@ impl<T> ParkedPredicateIndex<T> {
         self.transactions.get(&transaction_hash).map(|entry| &entry.predicate)
     }
 
+    /// Returns an indexed transaction and the predicate it is parked under, with one lookup.
+    pub fn entry(&self, transaction_hash: TxHash) -> Option<(&T, &ValidityPredicate)> {
+        self.transactions.get(&transaction_hash).map(|entry| (&entry.transaction, &entry.predicate))
+    }
+
+    /// Returns a mutable indexed transaction and the predicate it is parked under, with one lookup.
+    pub fn entry_mut(&mut self, transaction_hash: TxHash) -> Option<(&mut T, &ValidityPredicate)> {
+        self.transactions
+            .get_mut(&transaction_hash)
+            .map(|entry| (&mut entry.transaction, &entry.predicate))
+    }
+
     /// Replaces a parked transaction's currently unsatisfied predicate.
     pub fn reindex(&mut self, transaction_hash: TxHash, predicate: ValidityPredicate) -> bool {
         let Some(previous) = self.transactions.get(&transaction_hash) else {
@@ -220,46 +232,86 @@ impl<T> ParkedPredicateIndex<T> {
     pub fn affected_by_state(&self, state: &EvmState) -> StateChangeEffects {
         let mut effects = StateChangeEffects::default();
         for (address, account) in state {
+            let destroyed = account.is_selfdestructed();
             // Deleted accounts read as nonce zero, regardless of the retained account info.
-            let new_nonce = if account.is_selfdestructed() { 0 } else { account.info.nonce };
-            if new_nonce != account.original_info().nonce {
-                self.wake_bucket(
-                    &mut effects,
-                    ValidityPredicateKey::Nonce(*address),
-                    U256::from(account.original_info().nonce),
-                    U256::from(new_nonce),
-                );
-            }
-            if account.info.balance != account.original_info().balance {
-                self.wake_bucket(
-                    &mut effects,
-                    ValidityPredicateKey::Balance(*address),
-                    account.original_info().balance,
-                    account.info.balance,
-                );
-            }
-            if account.is_selfdestructed() {
-                for (key, bucket) in &self.blockers {
-                    if matches!(key, ValidityPredicateKey::Storage(key_address, _) if key_address == address)
-                    {
-                        bucket.extend_all(&mut effects.affected_transactions);
-                        effects.woken_buckets += 1;
-                    }
-                }
-            } else {
-                for (slot, value) in &account.storage {
-                    if value.is_changed() {
-                        self.wake_bucket(
-                            &mut effects,
-                            ValidityPredicateKey::Storage(*address, *slot),
-                            value.original_value(),
-                            value.present_value(),
-                        );
-                    }
-                }
-            }
+            let new_nonce = if destroyed { 0 } else { account.info.nonce };
+            self.wake_account(
+                &mut effects,
+                *address,
+                AccountChange {
+                    old_nonce: account.original_info().nonce,
+                    new_nonce,
+                    old_balance: account.original_info().balance,
+                    new_balance: account.info.balance,
+                    storage_destroyed: destroyed,
+                },
+                account
+                    .storage
+                    .iter()
+                    .filter(|(_, value)| value.is_changed())
+                    .map(|(slot, value)| (*slot, value.original_value(), value.present_value())),
+            );
         }
         effects
+    }
+
+    /// Returns parked transactions and index-bucket wakeups triggered by the net changes a
+    /// [`TransitionState`] holds relative to the state it started from.
+    ///
+    /// Builders use it for writes made outside the selection loop, such as pre-execution system
+    /// calls and deposits, which never pass through [`Self::affected_by_state`].
+    pub fn affected_by_transitions(&self, transitions: &TransitionState) -> StateChangeEffects {
+        let mut effects = StateChangeEffects::default();
+        for (address, transition) in &transitions.transitions {
+            let old = transition.previous_info.as_ref();
+            let new = transition.info.as_ref();
+            self.wake_account(
+                &mut effects,
+                *address,
+                AccountChange {
+                    old_nonce: old.map_or(0, |info| info.nonce),
+                    new_nonce: new.map_or(0, |info| info.nonce),
+                    old_balance: old.map_or(U256::ZERO, |info| info.balance),
+                    new_balance: new.map_or(U256::ZERO, |info| info.balance),
+                    storage_destroyed: transition.storage_was_destroyed
+                        || transition.status.was_destroyed(),
+                },
+                transition
+                    .storage
+                    .iter()
+                    .filter(|(_, slot)| slot.is_changed())
+                    .map(|(key, slot)| (*key, slot.previous_or_original_value, slot.present_value)),
+            );
+        }
+        effects
+    }
+
+    /// Returns the number of indexed transactions.
+    pub fn len(&self) -> usize {
+        self.transactions.len()
+    }
+
+    /// Returns the transactions parked under `blocker`.
+    pub fn transactions_blocked_by(&self, blocker: ValidityPredicateKey) -> Vec<TxHash> {
+        let mut hashes = Vec::new();
+        if let Some(bucket) = self.blockers.get(&blocker) {
+            bucket.extend_all(&mut hashes);
+        }
+        hashes
+    }
+
+    /// Removes every entry for which `keep` returns `false` and returns how many were removed.
+    pub fn retain(&mut self, mut keep: impl FnMut(&T) -> bool) -> usize {
+        let removed = self
+            .transactions
+            .iter()
+            .filter(|(_, entry)| !keep(&entry.transaction))
+            .map(|(hash, _)| *hash)
+            .collect::<Vec<_>>();
+        for hash in &removed {
+            self.remove(*hash);
+        }
+        removed.len()
     }
 
     /// Returns the number of parked transactions blocked on each distinct index bucket.
@@ -301,6 +353,44 @@ impl<T> ParkedPredicateIndex<T> {
         }
     }
 
+    fn wake_account(
+        &self,
+        effects: &mut StateChangeEffects,
+        address: Address,
+        change: AccountChange,
+        changed_slots: impl Iterator<Item = (U256, U256, U256)>,
+    ) {
+        if change.new_nonce != change.old_nonce {
+            self.wake_bucket(
+                effects,
+                ValidityPredicateKey::Nonce(address),
+                U256::from(change.old_nonce),
+                U256::from(change.new_nonce),
+            );
+        }
+        if change.new_balance != change.old_balance {
+            self.wake_bucket(
+                effects,
+                ValidityPredicateKey::Balance(address),
+                change.old_balance,
+                change.new_balance,
+            );
+        }
+        if change.storage_destroyed {
+            for (key, bucket) in &self.blockers {
+                if matches!(key, ValidityPredicateKey::Storage(key_address, _) if *key_address == address)
+                {
+                    bucket.extend_all(&mut effects.affected_transactions);
+                    effects.woken_buckets += 1;
+                }
+            }
+        } else {
+            for (slot, old, new) in changed_slots {
+                self.wake_bucket(effects, ValidityPredicateKey::Storage(address, slot), old, new);
+            }
+        }
+    }
+
     fn wake_bucket(
         &self,
         effects: &mut StateChangeEffects,
@@ -312,6 +402,17 @@ impl<T> ParkedPredicateIndex<T> {
         bucket.extend_affected(old, new, &mut effects.affected_transactions);
         effects.woken_buckets += 1;
     }
+}
+
+/// Account fields that validity predicates read, before and after a state change.
+#[derive(Debug, Clone, Copy)]
+struct AccountChange {
+    old_nonce: u64,
+    new_nonce: u64,
+    old_balance: U256,
+    new_balance: U256,
+    /// Whether every storage slot of the account may have changed.
+    storage_destroyed: bool,
 }
 
 impl ValidityPredicateKey {

@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use crate::{
     FLOW_STANDARD, FLOW_VALIDITY, InclusionTracker, ParkedPredicateIndex, PredicateLoadTracker,
+    RestingCarryOver,
 };
 
 base_metrics::define_metrics! {
@@ -58,6 +59,19 @@ base_metrics::define_metrics! {
     #[describe("Validity predicate evaluation attempts")]
     #[label(outcome)]
     validity_predicate_evaluations_total: counter,
+    #[describe("Resting validity transactions carried into a block build from the previous block")]
+    resting_predicate_carried: histogram,
+    #[describe("Resting validity transactions released at block start, by reason")]
+    #[label(reason)]
+    resting_predicate_carry_released_total: counter,
+    #[describe("Block builds that discarded carried resting validity transactions because the parent was not the last block the builder finished")]
+    resting_predicate_carry_resets_total: counter,
+    #[describe("Resting validity transactions parked in the transaction iterator without reaching the build loop")]
+    resting_predicate_parked_total: counter,
+    #[describe("Resting validity transactions whose predicates matched when evaluated in shadow mode")]
+    resting_predicate_shadow_mismatches_total: counter,
+    #[describe("Of the parked resting validity transactions, those carried over from an earlier block")]
+    resting_predicate_carried_parked_total: counter,
 }
 
 base_metrics::define_metrics! {
@@ -133,6 +147,23 @@ impl ValidityMetrics {
         Self::predicate_accounts_loaded_unique().record(tracker.unique_accounts() as f64);
         Self::predicate_slots_loaded_total().record(tracker.slot_reads() as f64);
         Self::predicate_slots_loaded_unique().record(tracker.unique_slots() as f64);
+    }
+
+    /// Records what carrying resting validity transactions into a new block did.
+    pub fn record_resting_carry_over(carry_over: &RestingCarryOver) {
+        if carry_over.reset {
+            Self::resting_predicate_carry_resets_total().increment(1);
+        }
+        for (reason, released) in [
+            ("pre_block_state", carry_over.released_by_state),
+            ("block_number", carry_over.released_by_block_number),
+            ("unseen", carry_over.released_unseen),
+        ] {
+            if released > 0 {
+                Self::resting_predicate_carry_released_total(reason).increment(released as u64);
+            }
+        }
+        Self::resting_predicate_carried().record(carry_over.carried as f64);
     }
 
     /// Records validity-predicate index bucket wakeups and depth distribution for one build.

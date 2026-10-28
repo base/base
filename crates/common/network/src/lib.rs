@@ -14,4 +14,4 @@ mod builder;
 pub use builder::Eip8130BuildError;
 
 mod engine;
-pub use engine::BaseEngineApi;
+pub use engine::{BaseEngineApi, SharedEngineApi};

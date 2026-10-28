@@ -10,7 +10,10 @@ use tower::Service;
 /// An alloy transport that dispatches requests straight into an in-process [`RpcModule`].
 ///
 /// No socket, HTTP, or JWT is involved. Requests and responses are still JSON-encoded because
-/// the module's method handlers only accept JSON-RPC.
+/// the module's method handlers only accept JSON-RPC. [`EngineEndpoint::InMemory`] uses it for
+/// L2 reads and sends Engine API calls to the typed handler instead.
+///
+/// [`EngineEndpoint::InMemory`]: crate::EngineEndpoint::InMemory
 ///
 /// This path does not apply the auth server's body limits. The auth HTTP and IPC servers cap
 /// requests at 128 mebibytes and responses at 750 mebibytes; `raw_json_request` does not.

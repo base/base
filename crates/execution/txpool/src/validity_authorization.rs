@@ -51,7 +51,7 @@ impl ValidityAuthorization {
         sidecar: TransactionValidity,
         mode: ValiditySignatureMode,
     ) -> Result<TransactionValidity, ValidityAuthorizationError> {
-        mode.check(&sidecar.validity, sidecar.validity_signature.as_ref())?;
+        mode.check(!sidecar.validity.is_empty(), sidecar.validity_signature.as_ref())?;
         if mode != ValiditySignatureMode::Off
             && let Some(signature) = &sidecar.validity_signature
         {
@@ -322,7 +322,11 @@ mod tests {
         let inbound = decoded.extensions.apply(inbound).unwrap();
         assert_eq!(inbound.validity_signature(), Some(signature));
         assert_eq!(
-            verify(&inbound, inbound.validity_predicates(), inbound.validity_signature().as_ref(),),
+            verify(
+                &inbound,
+                &inbound.validity_predicates().cloned().collect::<Vec<_>>(),
+                inbound.validity_signature().as_ref(),
+            ),
             Ok(())
         );
         // Replacing predicates through the unsigned API must not retain stale authorization.
@@ -331,7 +335,7 @@ mod tests {
         assert_eq!(
             verify(
                 &unsigned,
-                unsigned.validity_predicates(),
+                &unsigned.validity_predicates().cloned().collect::<Vec<_>>(),
                 unsigned.validity_signature().as_ref(),
             ),
             Err(ValidityAuthorizationError::MissingSignature)
@@ -514,7 +518,7 @@ mod tests {
                     .unwrap();
             let attached = tx.clone().with_validity(validity);
             assert_eq!(attached.validity_signature(), Some(signature));
-            assert_eq!(attached.validity_predicates().len(), predicates.len());
+            assert_eq!(attached.validity_predicates().count(), predicates.len());
         }
     }
 

@@ -50,9 +50,7 @@ fn main() {
         let shadow_indexer_config = ShadowIndexerConfig::try_from(&builder_args.shadow_indexer)?;
         let payload_builder_cutover = builder_args.payload_builder_cutover;
         let basic_payload_builder = builder_args.basic_payload_builder;
-        let builder_config = builder_args
-            .into_builder_config(Arc::clone(&metering_provider))
-            .expect("Failed to convert rollup args to builder config");
+        let builder_config = builder_args.into_builder_config(Arc::clone(&metering_provider))?;
         let da_config = builder_config.da_config.clone();
         let gas_limit_config = builder_config.gas_limit_config.clone();
         let manifest_precheck_enabled = builder_config.manifest_precheck_enabled;

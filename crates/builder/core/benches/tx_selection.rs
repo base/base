@@ -7,7 +7,7 @@
 
 use std::{
     hint::black_box,
-    sync::Arc,
+    sync::{Arc, OnceLock},
     time::{Duration, Instant},
 };
 
@@ -21,6 +21,9 @@ use base_builder_core::{
 };
 use base_common_consensus::{BaseTransactionSigned, BaseTxEnvelope};
 use base_execution_chainspec::BaseChainSpec;
+use base_execution_payload_builder::{
+    DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD, RestingPredicates,
+};
 use base_execution_txpool::{
     BaseOrdering, BasePooledTransaction, ParkedBestTransactions, PredicateContext,
     ValidityOperator, ValidityPredicate,
@@ -38,7 +41,7 @@ use reth_transaction_pool::{
     pool::PendingPool,
 };
 use revm::{
-    database::InMemoryDB,
+    database::{InMemoryDB, TransitionState},
     state::{Account, AccountInfo, EvmState},
 };
 
@@ -451,21 +454,26 @@ fn resting_builder_context() -> BasePayloadBuilderCtx {
     )
 }
 
+type BenchBestTxs = BestFlashblocksTxs<
+    BasePooledTransaction,
+    ParkableBestPayloadTransactions<BasePooledTransaction>,
+>;
+
+fn resting_best_txs(pool: &Pool, mode: RestingPredicateMode) -> BenchBestTxs {
+    BestFlashblocksTxs::new(parkable(pool), RejectionCache::new(1_000, Duration::from_secs(60)))
+        .with_resting_predicate_mode(mode)
+}
+
 /// Runs every flashblock of one block through the build loop and returns the number of
 /// executed transactions.
 fn run_resting_block(
     ctx: &BasePayloadBuilderCtx,
     pool: &Pool,
     state: &mut State<InMemoryDB>,
-    mode: RestingPredicateMode,
+    best: &mut BenchBestTxs,
 ) -> usize {
     let mut info = ExecutionInfo::default();
     let mut deferrals = BlockDeferrals::default();
-    let mut best = BestFlashblocksTxs::new(
-        parkable(pool),
-        RejectionCache::new(1_000, Duration::from_secs(60)),
-    )
-    .with_resting_predicate_mode(mode);
     let mut committed_until = 0;
 
     for flashblock in 0..RESTING_FLASHBLOCKS {
@@ -478,7 +486,7 @@ fn run_resting_block(
             ..Default::default()
         };
         black_box(
-            ctx.execute_best_transactions(&mut info, &mut deferrals, state, &mut best, &limits)
+            ctx.execute_best_transactions(&mut info, &mut deferrals, state, best, &limits)
                 .expect("in-memory execution cannot fail"),
         );
         let committed = info.executed_transactions[committed_until..]
@@ -492,21 +500,29 @@ fn run_resting_block(
     info.executed_transactions.len()
 }
 
+/// Enables transaction events, as production does, for the rest of the process.
+fn enable_transaction_events() {
+    static EVENTS: OnceLock<tempfile::TempDir> = OnceLock::new();
+    EVENTS.get_or_init(|| {
+        let events = tempfile::tempdir().expect("temporary event directory");
+        GlobalTransactionEventWriter::init(Some(TransactionEventWriterConfig {
+            enabled: true,
+            ..TransactionEventWriterConfig::disabled(
+                TransactionEventProducer::BaseBuilder,
+                "bench",
+                events.path().join("events.jsonl"),
+            )
+        }))
+        .expect("event writer initializes");
+        events
+    });
+}
+
 /// Measures a full block in which `resting` validity transactions stay unsatisfied. With
 /// resting predicates off, every flashblock re-evaluates them and emits a deferral event;
 /// enforced, the iterator holds them back after the first evaluation.
 fn resting_predicate_benches(c: &mut Criterion) {
-    let events = tempfile::tempdir().expect("temporary event directory");
-    GlobalTransactionEventWriter::init(Some(TransactionEventWriterConfig {
-        enabled: true,
-        ..TransactionEventWriterConfig::disabled(
-            TransactionEventProducer::BaseBuilder,
-            "bench",
-            events.path().join("events.jsonl"),
-        )
-    }))
-    .expect("event writer initializes");
-
+    enable_transaction_events();
     let ctx = resting_builder_context();
     let mut group = c.benchmark_group("tx_selection/resting_predicates");
     group.sample_size(10);
@@ -519,7 +535,8 @@ fn resting_predicate_benches(c: &mut Criterion) {
                     b.iter_batched(
                         || State::builder().with_database(db.clone()).with_bundle_update().build(),
                         |mut state| {
-                            let executed = run_resting_block(&ctx, &pool, &mut state, mode);
+                            let mut best = resting_best_txs(&pool, mode);
+                            let executed = run_resting_block(&ctx, &pool, &mut state, &mut best);
                             assert_eq!(
                                 executed,
                                 RESTING_FLASHBLOCKS * RESTING_FILLER_PER_FLASHBLOCK
@@ -528,6 +545,57 @@ fn resting_predicate_benches(c: &mut Criterion) {
                         BatchSize::LargeInput,
                     );
                 },
+            );
+        }
+    }
+    group.finish();
+}
+
+/// Blocks built per iteration of the multi-block resting benchmark.
+const RESTING_BLOCKS: u64 = 5;
+
+/// Resting validity transaction counts to measure.
+const RESTING_COUNTS: [usize; 2] = [20_000, 40_000];
+
+/// Builds [`RESTING_BLOCKS`] consecutive blocks under resting `mode`, which carries the resting
+/// set across flashblocks and blocks. Every block builds on the same parent state, so carried
+/// members stay valid.
+fn run_resting_blocks(
+    ctx: &BasePayloadBuilderCtx,
+    pool: &Pool,
+    db: &InMemoryDB,
+    mode: RestingPredicateMode,
+) {
+    let mut resting = RestingPredicates::new(DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD);
+    let mut parent = B256::ZERO;
+    for block in 1..=RESTING_BLOCKS {
+        resting.begin_block(parent, block, Some(&TransitionState::default()));
+        let mut best = resting_best_txs(pool, mode).with_resting_predicates(resting);
+        let mut state = State::builder().with_database(db.clone()).with_bundle_update().build();
+        let executed = run_resting_block(ctx, pool, &mut state, &mut best);
+        assert_eq!(executed, RESTING_FLASHBLOCKS * RESTING_FILLER_PER_FLASHBLOCK);
+        resting = best.take_resting_predicates();
+        parent = B256::from(U256::from(block));
+        resting.end_block(parent);
+    }
+}
+
+/// Measures consecutive blocks with a large set of validity transactions that stay
+/// unsatisfied. Off evaluates them in every flashblock; enforced, only the first flashblock of
+/// the first block does.
+fn multi_block_resting_predicate_benches(c: &mut Criterion) {
+    enable_transaction_events();
+    let ctx = resting_builder_context();
+    let mut group = c.benchmark_group("tx_selection/resting_blocks");
+    group.sample_size(10);
+    for resting in RESTING_COUNTS {
+        let (pool, db) = resting_block(resting);
+        for mode in [RestingPredicateMode::Off, RestingPredicateMode::Enforce] {
+            group.bench_function(
+                format!(
+                    "resting={resting}/blocks={RESTING_BLOCKS}/flashblocks={RESTING_FLASHBLOCKS}/mode={mode:?}"
+                ),
+                |b| b.iter(|| run_resting_blocks(&ctx, &pool, &db, mode)),
             );
         }
     }
@@ -544,7 +612,8 @@ criterion_group!(
     predicate_index_population_benches,
     predicate_index_crossing_benches,
     predicate_index_ordered_churn_benches,
-    resting_predicate_benches
+    resting_predicate_benches,
+    multi_block_resting_predicate_benches
 );
 criterion_main!(benches);
 
