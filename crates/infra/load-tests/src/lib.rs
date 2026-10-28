@@ -41,8 +41,9 @@ pub use workload::{
     ChainPrepOutputs, DOUBLE_COUNTER_GAS_LIMIT, DoubleCounterPayload, EIP8430_TRANSFER_GAS_LIMIT,
     Eip8430TransferPayload, Erc20Payload, FundedAccount, KeyStream, OsakaPayload, Payload,
     PrecompileLooper, PrecompilePayload, RealTokenAcquisition, RealTokenPairTokenSetup,
-    RealTokenRecoverySummary, RealTokenSetup, SeededRng, StoragePayload, TransferPayload,
-    UniswapV3Payload, WorkloadGenerator, encode_erc20_approve, recover_real_tokens,
+    RealTokenRecoverySummary, RealTokenSetup, SeededRng, StoragePayload, TransferPayload, USDC,
+    UniswapV3Payload, WorkloadGenerator, X402Context, X402Payload, encode_erc20_approve,
+    recover_real_tokens,
 };
 
 mod runner;

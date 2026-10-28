@@ -21,6 +21,9 @@ pub use calldata::CalldataPayload;
 mod erc20;
 pub use erc20::Erc20Payload;
 
+mod x402;
+pub use x402::{USDC, X402Context, X402Payload};
+
 mod storage;
 pub use storage::StoragePayload;
 

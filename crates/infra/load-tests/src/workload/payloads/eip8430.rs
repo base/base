@@ -98,8 +98,8 @@ mod tests {
         let baseline = baseline.to_load_config(None).expect("ordinary baseline must convert");
         assert_eq!(
             baseline.transactions.iter().map(|tx| tx.weight).collect::<Vec<_>>(),
-            vec![41, 75, 585, 150, 149],
-            "baseline weights must remain unchanged"
+            vec![40, 22, 73, 572, 147, 146],
+            "baseline weights must preserve prior relative shares with x402 inserted"
         );
         assert!(
             matches!(baseline.transactions[0].tx_type, TxType::Transfer),

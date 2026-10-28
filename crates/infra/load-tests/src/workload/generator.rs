@@ -81,6 +81,12 @@ impl WorkloadGenerator {
                     let payload = CalldataPayload::new(*max_size).with_repeat_count(*repeat_count);
                     generator = generator.with_payload(payload, weight_pct);
                 }
+                TxType::X402 { context } => {
+                    generator = generator.with_payload(
+                        super::X402Payload { context: Arc::clone(context) },
+                        weight_pct,
+                    );
+                }
                 TxType::Erc20 { contract } => {
                     generator = generator.with_payload(
                         Erc20Payload::new(*contract, U256::from(1000), U256::from(10000)),

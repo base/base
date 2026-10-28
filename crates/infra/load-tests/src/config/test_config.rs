@@ -272,6 +272,9 @@ pub enum TxTypeConfig {
     /// EIP-8430 EOA self-pay ETH transfer (requires Everest activation).
     Eip8430Transfer,
 
+    /// Facilitator-paid real USDC EIP-3009 settlement on a mainnet snapshot.
+    X402,
+
     /// ETH transfer with random calldata.
     Calldata {
         /// Maximum calldata size in bytes.
@@ -767,6 +770,14 @@ impl TestConfig {
         let tx_type = match &weighted.tx_type {
             TxTypeConfig::Transfer => TxType::Transfer,
             TxTypeConfig::Eip8430Transfer => TxType::Eip8430Transfer,
+            TxTypeConfig::X402 => {
+                if !self.real_token_setup.as_ref().is_some_and(|setup| setup.enabled) {
+                    return Err(BaselineError::Config(
+                        "x402 requires enabled real_token_setup".into(),
+                    ));
+                }
+                TxType::X402 { context: Default::default() }
+            }
             TxTypeConfig::Calldata { max_size, repeat_count } => {
                 TxType::Calldata { max_size: *max_size, repeat_count: *repeat_count }
             }

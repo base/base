@@ -606,6 +606,7 @@ impl LoadRunner {
                 }
                 TxType::Transfer
                 | TxType::Eip8430Transfer
+                | TxType::X402 { .. }
                 | TxType::Calldata { .. }
                 | TxType::Erc20 { .. }
                 | TxType::Storage { .. }
@@ -628,6 +629,7 @@ impl LoadRunner {
                 }
                 TxType::Transfer
                 | TxType::Eip8430Transfer
+                | TxType::X402 { .. }
                 | TxType::Calldata { .. }
                 | TxType::Erc20 { .. }
                 | TxType::Storage { .. }

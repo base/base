@@ -190,6 +190,7 @@ fn validate_real_token_pair_matches_swaps(
             TxTypeConfig::Transfer
             | TxTypeConfig::Eip8430Transfer
             | TxTypeConfig::Calldata { .. }
+            | TxTypeConfig::X402
             | TxTypeConfig::Erc20 { .. }
             | TxTypeConfig::B20
             | TxTypeConfig::Precompile { .. }
