@@ -505,7 +505,7 @@ The final summary's `by_cohort` breakdown reports confirmed transactions split
 across the `plain`, `validity_pass`, and `validity_pass_priority_lead` cohorts, so plain
 traffic can be compared against validity traffic when the workload is enabled. Each entry
 carries `confirmed`, `reverted`, `total_gas` (metered `gas_used`), `total_gas_limit` (declared
-limits), `total_fee_wei` (`gas_used * effective_gas_price` summed from receipts), and block
+limits), `total_fee_wei` (`gas_used * effective_gas_price` summed from receipts), `total_priority_fee_wei` (`gas_used * signed priority fee`, the tip the sequencer received), and block
 latency percentiles. The CLI prints the same breakdown as one `By cohort:` line per cohort,
 with the fee in wei and ETH.
 
@@ -513,23 +513,26 @@ with the fee in wei and ETH.
 
 `just load-test gas-limit-pricing [--continuous ...]` drives the scenario described in the
 [gas limit pricing guide](../../../docs/guides/GAS_LIMIT_PRICING.md): it deploys
-`DoubleCounter`, renders `gas-limit-pricing.yaml.template`, and runs 400 validity senders for
-60 s against the builder RPC on port 7545. Every transaction carries 63 always-true storage reads
-plus the `block_number` expiry bound ingress requires, so predicate evaluation always passes. The
-30% priority-lead cohort uses `validity.priority_lead_payload` to send `revert_probe` calls at a
-20x tip: a call to `DoubleCounter` with the selector `0xdeadbeef`, which it does not implement, so
-the probe reverts after ~21-25k gas while declaring a 2M gas limit. The other 70% send honest
-`double_counter` increments at the baseline tip.
+`DoubleCounter`, renders `gas-limit-pricing.yaml.template`, and runs 200 validity senders (two
+transactions in flight each) for 60 s against the builder RPC on port 7545. Every transaction
+carries 63 always-true storage reads plus the `block_number` expiry bound ingress requires (240
+blocks, 48 s at the devnet's 200 ms cadence), so predicate evaluation always passes. The 10%
+priority-lead cohort uses `validity.priority_lead_payload` to send `revert_probe` calls at a 20x
+tip: a call to `DoubleCounter` with the selector `0xdeadbeef`, which it does not implement, so the
+probe reverts after ~21-25k gas while declaring a 500k gas limit. The other 90% send honest
+`double_counter` increments at the baseline tip. The profile is sized so that a builder started with
+`L2_BUILDER_PREDICATE_EVAL_HARD_CUTOFF_MS=2` evaluates the probes first and defers most honest
+candidates each block while enough still land to compare fees.
 
 ```yaml
 validity:
   ratio: 1.0
-  priority_lead_ratio: 0.30
+  priority_lead_ratio: 0.10
   priority_lead_multiplier: 20
   priority_lead_payload:        # overrides `transactions` for the priority-lead cohort only
     type: revert_probe
     contract: "0x..."           # DoubleCounter
-    gas_limit: 2000000          # default when omitted
+    gas_limit: 500000          # default when omitted
 ```
 
 Read the `by_cohort` output as the payment comparison: under metered billing the

@@ -58,6 +58,9 @@ pub struct TransactionMetrics {
     /// Gas limit declared by the signed transaction.
     #[serde(default)]
     pub gas_limit: u64,
+    /// Priority fee per gas the transaction was signed with, in wei.
+    #[serde(default)]
+    pub priority_fee: u128,
     /// Gas price in wei.
     pub gas_price: u128,
     /// Block number where transaction was included.
@@ -92,6 +95,7 @@ impl TransactionMetrics {
             flashblocks_latency,
             gas_used,
             gas_limit: 0,
+            priority_fee: 0,
             gas_price,
             block_number,
             reverted: false,
@@ -104,6 +108,12 @@ impl TransactionMetrics {
     /// Returns the transaction cost in wei.
     pub const fn cost_wei(&self) -> u128 {
         self.gas_used as u128 * self.gas_price
+    }
+
+    /// Returns the priority fee paid to the sequencer in wei: the signed tip per gas, capped at
+    /// the effective gas price, times the billed gas.
+    pub fn priority_fee_wei(&self) -> u128 {
+        self.gas_used as u128 * self.priority_fee.min(self.gas_price)
     }
 }
 
@@ -142,6 +152,10 @@ pub struct CohortMetrics {
     /// (`gas_used * effective_gas_price` summed over the cohort).
     #[serde(default)]
     pub total_fee_wei: u128,
+    /// Total priority fee paid to the sequencer by confirmed transactions in this cohort, in wei
+    /// (`gas_used * priority_fee_per_gas` summed over the cohort).
+    #[serde(default)]
+    pub total_priority_fee_wei: u128,
     /// Block landing latency for this cohort's confirmed transactions.
     pub block_latency: LatencyMetrics,
 }

@@ -1,11 +1,17 @@
 # Local devnet gas-limit pricing demo profile (see docs/guides/GAS_LIMIT_PRICING.md).
 # Rendered by `just load-test gas-limit-pricing`; do not run this template directly.
 #
-# Every sender submits validity transactions carrying always-true predicates. The 30% priority-lead
-# cohort sends `revert_probe` calls: a 20x tip, a 2M declared gas limit, and a selector
-# `DoubleCounter` does not implement, so each probe passes its predicates and reverts after
-# ~21-25k gas. The remaining 70% send honest `double_counter` increments at the baseline tip. The
-# summary's `by_cohort` breakdown compares what each cohort reserved, used, and paid.
+# Every sender submits validity transactions carrying always-true predicates. The 10% priority-lead
+# cohort sends `revert_probe` calls: a 20x tip, a 500k declared gas limit (about 23x what the call
+# uses), and a selector `DoubleCounter` does not implement, so each probe passes its predicates
+# and reverts after ~21-25k gas. The remaining 90% send honest `double_counter` increments at the
+# baseline tip. The summary's `by_cohort` breakdown compares what each cohort reserved, used, and
+# paid.
+#
+# Sized for the devnet: 200 ms blocks with a 6,000,000 block gas limit, and a builder started with
+# L2_BUILDER_PREDICATE_EVAL_HARD_CUTOFF_MS=2 (about 40 predicate evaluations per block at ~0.05 ms
+# each), so the ~20 probe senders are evaluated first every block and most honest candidates are
+# deferred for `budget_exhausted`, while enough honest transactions still land to compare fees.
 
 transaction_submission_rpcs:
   - "http://localhost:7545"
@@ -16,18 +22,18 @@ txpool_nodes:
   - "http://localhost:8645"
 flashblocks_ws: "ws://localhost:7111"
 
-sender_count: 400
+sender_count: 200
 target_gps: 600000000
 block_time: "200ms"
-in_flight_per_sender: 12
-max_total_in_flight: 4800
+in_flight_per_sender: 2
+max_total_in_flight: 400
 max_concurrent_submit_requests: 64
 batch_size: 1
 duration: "60s"
 seed: 8675309
-# 2 ETH per sender: the pool admits a probe only when the sender can cover
+# 1 ETH per sender: the pool admits a probe only when the sender can cover
 # gas_limit * max_fee for every one of its in-flight transactions.
-funding_amount: "2000000000000000000"
+funding_amount: "1000000000000000000"
 
 transactions:
   - weight: 100
@@ -36,12 +42,12 @@ transactions:
 
 validity:
   ratio: 1.0
-  priority_lead_ratio: 0.30
+  priority_lead_ratio: 0.10
   priority_lead_multiplier: 20
   priority_fee_divisor: 1
   priority_lead_payload:
     type: revert_probe
     contract: "__DOUBLE_COUNTER__"
-    gas_limit: 2000000
+    gas_limit: 500000
   predicates:
 __VALIDITY_PREDICATES__

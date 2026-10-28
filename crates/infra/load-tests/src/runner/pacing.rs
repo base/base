@@ -2515,6 +2515,7 @@ mod tests {
                 from,
                 nonce: id,
                 gas_limit: 21_000,
+                priority_fee: 0,
                 estimated_gas: 21_000,
                 validity: Vec::new(),
                 cohort: SubmitCohort::Plain,

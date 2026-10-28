@@ -9,9 +9,10 @@ use eyre::{Result, WrapErr, bail, ensure};
 const CONTRACT_PLACEHOLDER: &str = "__DOUBLE_COUNTER__";
 const PREDICATES_PLACEHOLDER: &str = "__VALIDITY_PREDICATES__";
 /// Blocks past the current height at which always-true validity transactions expire. Ingress
-/// requires a finite `block_number` upper bound within its 60 s window; 25 blocks fits both the
-/// 2 s and the 200 ms block cadence.
-const ALL_TRUE_EXPIRY_OFFSET_BLOCKS: u64 = 25;
+/// requires a finite `block_number` upper bound within its 60 s window, measured at the active
+/// block cadence. The demo profile targets the devnet's Denim 200 ms blocks, where 240 blocks is
+/// 48 s: long enough for presigned transactions to be submitted and evaluated, inside the window.
+const ALL_TRUE_EXPIRY_OFFSET_BLOCKS: u64 = 240;
 
 /// Predicate set rendered into the `__VALIDITY_PREDICATES__` placeholder.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -156,19 +157,19 @@ mod tests {
         assert_eq!(result.matches("    - type: block_number").count(), 1);
         assert_eq!(result.matches("      op: \">=\"").count(), 63);
         assert_eq!(result.matches("      op: \"<=\"").count(), 1);
-        assert_eq!(result.matches("      offset: \"25\"").count(), 1);
+        assert_eq!(result.matches("      offset: \"240\"").count(), 1);
         assert_eq!(result.matches("sender_parity").count(), 0, "no gating predicate");
         for slot in 0..63 {
             assert_eq!(result.matches(&format!("        value: \"0x{slot:x}\"")).count(), 1);
         }
         assert_eq!(result.matches(&format!("contract: \"{ADDRESS}\"")).count(), 2);
-        assert!(result.contains("sender_count: 400"));
+        assert!(result.contains("sender_count: 200"));
         assert!(result.contains("duration: \"60s\""));
-        assert!(result.contains("priority_lead_ratio: 0.30"));
+        assert!(result.contains("priority_lead_ratio: 0.10"));
         assert!(result.contains("priority_lead_multiplier: 20"));
         assert!(result.contains("priority_fee_divisor: 1"));
         assert!(result.contains("    type: revert_probe\n"));
-        assert!(result.contains("    gas_limit: 2000000"));
+        assert!(result.contains("    gas_limit: 500000"));
         assert!(!result.contains(PREDICATES_PLACEHOLDER));
         assert!(!result.contains("__DOUBLE_COUNTER__"));
     }

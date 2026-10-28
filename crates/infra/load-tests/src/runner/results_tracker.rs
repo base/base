@@ -27,6 +27,8 @@ pub struct SentTransaction {
     pub from: Address,
     /// Gas limit declared by the signed transaction.
     pub gas_limit: u64,
+    /// Priority fee per gas the transaction was signed with.
+    pub priority_fee: u128,
     /// Calibrated execution gas used for pacing.
     pub estimated_gas: u64,
     /// Whether this transaction belongs to the measured cohort.
@@ -142,6 +144,7 @@ struct PendingTransaction {
     in_flight_released: bool,
     measured: bool,
     gas_limit: u64,
+    priority_fee: u128,
     estimated_gas: u64,
     cohort: SubmitCohort,
 }
@@ -255,6 +258,7 @@ impl ResultsTracker {
                     in_flight_released: flashblock_observed_at.is_some(),
                     measured,
                     gas_limit: transaction.gas_limit,
+                    priority_fee: transaction.priority_fee,
                     estimated_gas: transaction.estimated_gas,
                     cohort: transaction.cohort,
                 },
@@ -649,6 +653,7 @@ impl ResultsTrackerInner {
         );
         metrics.cohort = pending.cohort.to_metric_label();
         metrics.gas_limit = pending.gas_limit;
+        metrics.priority_fee = pending.priority_fee;
         metrics.confirmed_at = Some(block.observed_at);
         metrics.submit_offset_ms = block
             .timestamp_ms
@@ -712,6 +717,7 @@ mod tests {
             tx_hash,
             from,
             gas_limit: 200_000,
+            priority_fee: 0,
             estimated_gas: 21_000,
             measured,
             cohort: SubmitCohort::Plain,

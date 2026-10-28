@@ -109,6 +109,8 @@ impl<'a> MetricsAggregator<'a> {
                 let total_gas: u64 = members.iter().map(|t| t.gas_used).sum();
                 let total_gas_limit: u64 = members.iter().map(|t| t.gas_limit).sum();
                 let total_fee_wei: u128 = members.iter().map(|t| t.cost_wei()).sum();
+                let total_priority_fee_wei: u128 =
+                    members.iter().map(|t| t.priority_fee_wei()).sum();
                 let mut latencies: Vec<Duration> =
                     members.iter().filter_map(|t| t.block_latency).collect();
                 Some(CohortMetrics {
@@ -118,6 +120,7 @@ impl<'a> MetricsAggregator<'a> {
                     total_gas,
                     total_gas_limit,
                     total_fee_wei,
+                    total_priority_fee_wei,
                     block_latency: Self::compute_duration_metrics(&mut latencies),
                 })
             })
@@ -471,6 +474,12 @@ mod tests {
         let mut transaction = cohort_transaction(5, gas_used, cohort);
         transaction.gas_limit = gas_limit;
         transaction.gas_price = gas_price;
+        // Honest transactions tip a tenth of the price; probes tip twenty times that, which the
+        // effective price caps.
+        transaction.priority_fee = match cohort {
+            SubmitCohortLabel::ValidityPassPriorityLead => gas_price / 10 * 20,
+            SubmitCohortLabel::Plain | SubmitCohortLabel::ValidityPass => gas_price / 10,
+        };
         transaction.reverted = reverted;
         transaction
     }
@@ -559,6 +568,7 @@ mod tests {
         assert_eq!(honest.total_gas, 200_000);
         assert_eq!(honest.total_gas_limit, 200_000);
         assert_eq!(honest.total_fee_wei, 2_000_000);
+        assert_eq!(honest.total_priority_fee_wei, 200_000, "tip is a tenth of the price");
 
         let probes = &by_cohort[1];
         assert_eq!(probes.cohort, SubmitCohortLabel::ValidityPassPriorityLead);
@@ -567,6 +577,10 @@ mod tests {
         assert_eq!(probes.total_gas, 75_000);
         assert_eq!(probes.total_gas_limit, 6_000_000);
         assert_eq!(probes.total_fee_wei, 15_000_000);
+        assert_eq!(
+            probes.total_priority_fee_wei, 15_000_000,
+            "a tip above the effective price is capped at the price"
+        );
     }
 
     #[test]

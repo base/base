@@ -207,6 +207,7 @@ mod tests {
             tx_hash,
             from: sender,
             gas_limit: 21_000,
+            priority_fee: 0,
             estimated_gas: 21_000,
             measured: true,
             cohort: SubmitCohort::Plain,

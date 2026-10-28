@@ -317,14 +317,17 @@ fn present_load_test_summary(summary: &MetricsSummary) {
             println!("By cohort:");
             for cohort in &summary.by_cohort {
                 println!(
-                    "  {}: confirmed={}  reverted={}  gas_used={}  gas_limit={}  fee_wei={}  fee_eth={:.6}",
+                    "  {}: confirmed={}  reverted={}  gas_used={}  gas_limit={}  fee_eth={:.6}  tip_eth={:.6}  block_latency p50={:.1?} p95={:.1?} max={:.1?}",
                     cohort.cohort.as_str(),
                     cohort.confirmed,
                     cohort.reverted,
                     cohort.total_gas,
                     cohort.total_gas_limit,
-                    cohort.total_fee_wei,
                     cohort.total_fee_wei as f64 / WEI_PER_ETH,
+                    cohort.total_priority_fee_wei as f64 / WEI_PER_ETH,
+                    cohort.block_latency.p50,
+                    cohort.block_latency.p95,
+                    cohort.block_latency.max,
                 );
             }
         }
