@@ -15,7 +15,10 @@ use reth_storage_api::BlockReaderIdExt;
 use serde_json::Value;
 use tracing::{debug, warn};
 
-use crate::{PayerChainState, PayerRejection, PayerRequestFilter, PayerTransaction, TermsCache};
+use crate::{
+    PayerChainState, PayerRejection, PayerRequestFilter, PayerTransaction, RefetchOutcome,
+    TermsCache,
+};
 
 /// Rejection returned when `payer_*` is called before Everest activates EIP-8430.
 pub const PAYER_PRE_EVEREST_RPC_ERROR: &str = "payer methods require EIP-8430, which is gated \
@@ -144,17 +147,29 @@ where
             return Ok(TermsCache::order_for(request, cached));
         }
         let queued_at = Instant::now();
-        let mut unreachable_at = cache.refreshing().await;
+        let mut last_refetch = cache.refreshing().await;
         if let Some(cached) = cache.get() {
             return Ok(TermsCache::order_for(request, cached));
         }
-        if unreachable_at.is_some_and(|failed_at| failed_at >= queued_at) {
-            return cache
-                .get_stale()
-                .map(|stale| TermsCache::order_for(request, stale))
-                .ok_or_else(|| {
-                    PayerRejection::temporarily_unavailable(PAYER_UNREACHABLE_RPC_ERROR)
-                });
+        let reused = last_refetch
+            .as_ref()
+            .filter(|(finished_at, _)| *finished_at >= queued_at)
+            .map(|(_, outcome)| outcome.clone());
+        match reused {
+            Some(RefetchOutcome::Unreachable) => {
+                return cache
+                    .get_stale()
+                    .map(|stale| TermsCache::order_for(request, stale))
+                    .ok_or_else(|| {
+                        PayerRejection::temporarily_unavailable(PAYER_UNREACHABLE_RPC_ERROR)
+                    });
+            }
+            Some(RefetchOutcome::Unavailable(answer)) => return Err(answer),
+            Some(RefetchOutcome::Unshared) => {
+                drop(last_refetch);
+                return self.forward("payer_getTerms", request).await;
+            }
+            None => {}
         }
         // The cached body is shared, so it must carry every offer kind in the payer's own token
         // order and currency rather than what this caller's hints would produce.
@@ -165,26 +180,38 @@ where
             object.remove("fiatCurrency");
         }
         let result = self.client.request::<_, Value>("payer_getTerms", (&shared_request,)).await;
-        *unreachable_at = None;
-        match result {
-            Ok(response) => {
-                cache.insert(&response);
-                Ok(TermsCache::order_for(request, response))
-            }
-            Err(error) => {
-                if let Some(answer) = PayerRejection::from_upstream(&error) {
-                    cache.clear_on(&answer);
-                    return Err(answer);
+        let (served, outcome) = match result {
+            Ok(response) => match cache.insert(&response) {
+                Some(shared) => {
+                    *last_refetch = None;
+                    return Ok(TermsCache::order_for(request, shared));
                 }
-                *unreachable_at = Some(Instant::now());
-                if let Some(stale) = cache.get_stale() {
-                    warn!(error = %error, "payer unreachable; serving cached payer_getTerms");
-                    return Ok(TermsCache::order_for(request, stale));
+                None => (Ok(TermsCache::order_for(request, response)), RefetchOutcome::Unshared),
+            },
+            Err(error) => match PayerRejection::from_upstream(&error) {
+                Some(answer) if cache.clear_on(&answer) => {
+                    (Err(answer.clone()), RefetchOutcome::Unavailable(answer))
                 }
-                warn!(error = %error, "payer unreachable with no cached payer_getTerms");
-                Err(PayerRejection::temporarily_unavailable(PAYER_UNREACHABLE_RPC_ERROR))
-            }
-        }
+                Some(answer) => (Err(answer), RefetchOutcome::Unshared),
+                None => {
+                    let served = cache.get_stale().map_or_else(
+                        || {
+                            warn!(error = %error, "payer unreachable with no cached payer_getTerms");
+                            Err(PayerRejection::temporarily_unavailable(
+                                PAYER_UNREACHABLE_RPC_ERROR,
+                            ))
+                        },
+                        |stale| {
+                            warn!(error = %error, "payer unreachable; serving cached payer_getTerms");
+                            Ok(TermsCache::order_for(request, stale))
+                        },
+                    );
+                    (served, RefetchOutcome::Unreachable)
+                }
+            },
+        };
+        *last_refetch = Some((Instant::now(), outcome));
+        served
     }
 }
 
@@ -683,6 +710,71 @@ mod tests {
             assert_terms(served.unwrap());
         }
         slow.assert_calls(1);
+    }
+
+    #[tokio::test]
+    async fn requests_queued_behind_a_paused_payer_reuse_its_answer() {
+        let sequencer = MockServer::start();
+        let paused = sequencer.mock(|when, then| {
+            when.method(POST).body_includes("payer_getTerms");
+            rpc_error(then.delay(Duration::from_millis(300)), "TEMPORARILY_UNAVAILABLE");
+        });
+        let api = PayerApiImpl::new(everest_provider(), client(&sequencer), passing_state(), true);
+
+        let (first, second, third) = tokio::join!(
+            api.get_terms(terms_request(1)),
+            api.get_terms(terms_request(2)),
+            api.get_terms(terms_request(3)),
+        );
+
+        for served in [first, second, third] {
+            assert_eq!(rejection_data(&served.unwrap_err())["code"], "TEMPORARILY_UNAVAILABLE");
+        }
+        paused.assert_calls(1);
+    }
+
+    #[tokio::test]
+    async fn requests_queued_behind_an_answer_for_one_request_ask_in_parallel() {
+        const PAYER_DELAY: Duration = Duration::from_millis(400);
+        let sequencer = MockServer::start();
+        let nothing_to_offer = sequencer.mock(|when, then| {
+            when.method(POST).body_includes("payer_getTerms");
+            rpc_result(then.delay(PAYER_DELAY), json!({ "options": [] }));
+        });
+        let api = PayerApiImpl::new(everest_provider(), client(&sequencer), passing_state(), true);
+
+        let started = Instant::now();
+        let (first, second, third) = tokio::join!(
+            api.get_terms(terms_request(1)),
+            api.get_terms(terms_request(2)),
+            api.get_terms(terms_request(3)),
+        );
+
+        for served in [first, second, third] {
+            assert_eq!(served.unwrap(), json!({ "options": [] }));
+        }
+        nothing_to_offer.assert_calls(3);
+        assert!(started.elapsed() < PAYER_DELAY * 3, "queued requests were served one at a time");
+    }
+
+    #[tokio::test]
+    async fn a_miss_serves_the_same_shared_terms_as_a_hit() {
+        let sequencer = MockServer::start();
+        let mut sized = terms_response();
+        sized["gasEstimate"] =
+            json!({ "gasLimit": "0xc350", "maxFeePerGas": "0x1", "maxPriorityFeePerGas": "0x1" });
+        sized["options"][0]["tokens"][0]["paymentAmount"] = json!("0xc350");
+        sequencer.mock(|when, then| {
+            when.method(POST).body_includes("payer_getTerms");
+            rpc_result(then, sized);
+        });
+        let api = PayerApiImpl::new(everest_provider(), client(&sequencer), passing_state(), true);
+
+        let miss = api.get_terms(terms_request(1)).await.unwrap();
+        let hit = api.get_terms(terms_request(2)).await.unwrap();
+
+        assert_eq!(miss, terms_response());
+        assert_terms(hit);
     }
 
     #[tokio::test]

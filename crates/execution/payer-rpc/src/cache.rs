@@ -27,6 +27,17 @@ const TEMPORARILY_UNAVAILABLE: &str = "TEMPORARILY_UNAVAILABLE";
 /// The offer kind whose terms are the same for every sender.
 const TOKEN_OFFER: &str = "token";
 
+/// How a `payer_getTerms` refetch that stored nothing ended, for the requests queued behind it.
+#[derive(Debug, Clone)]
+pub enum RefetchOutcome {
+    /// The payer did not answer; queued requests serve the stale entry, if any.
+    Unreachable,
+    /// The payer answered `TEMPORARILY_UNAVAILABLE`, which holds for every request.
+    Unavailable(ErrorObjectOwned),
+    /// The payer answered for that request alone, so queued requests ask for their own.
+    Unshared,
+}
+
 /// One shared `payer_getTerms` body, refetched on demand at most every
 /// [`GET_TERMS_FRESH_FOR`].
 ///
@@ -36,7 +47,7 @@ const TOKEN_OFFER: &str = "token";
 #[derive(Debug)]
 pub struct TermsCache {
     entry: Mutex<Option<CachedTerms>>,
-    refresh: AsyncMutex<Option<Instant>>,
+    refresh: AsyncMutex<Option<(Instant, RefetchOutcome)>>,
 }
 
 #[derive(Debug, Clone)]
@@ -102,21 +113,26 @@ impl TermsCache {
     /// Only token offers are shared, without the `gasEstimate` and `paymentAmount` sized for the
     /// intent that fetched them. A response with sponsorship terms or declines, which depend on
     /// the sender, is not stored and leaves the cache as it was.
-    pub fn insert(&self, response: &Value) {
-        self.insert_at(response, Instant::now());
+    ///
+    /// Returns the stored body, which is what later requests are served.
+    pub fn insert(&self, response: &Value) -> Option<Value> {
+        self.insert_at(response, Instant::now())
     }
 
     /// Drops the cached response when the payer answers `payer_getTerms` with
-    /// `TEMPORARILY_UNAVAILABLE`, so its last terms are not served while it is paused. An error
-    /// about the request itself, such as invalid params or calls that revert, leaves it.
-    pub fn clear_on(&self, answer: &ErrorObjectOwned) {
+    /// `TEMPORARILY_UNAVAILABLE`, so its last terms are not served while it is paused, and
+    /// returns whether it did. An error about the request itself, such as invalid params or
+    /// calls that revert, leaves it.
+    pub fn clear_on(&self, answer: &ErrorObjectOwned) -> bool {
         let code = answer
             .data()
             .and_then(|data| serde_json::from_str::<Value>(data.get()).ok())
             .and_then(|data| data.get("code").and_then(Value::as_str).map(str::to_owned));
-        if code.as_deref() == Some(TEMPORARILY_UNAVAILABLE) {
+        let unavailable = code.as_deref() == Some(TEMPORARILY_UNAVAILABLE);
+        if unavailable {
             *self.lock() = None;
         }
+        unavailable
     }
 
     /// Marks the response stale when `rejection`, a `payer_sendTransaction`
@@ -132,10 +148,10 @@ impl TermsCache {
     /// Waits for any other refetch to finish, so concurrent misses share one
     /// upstream call.
     ///
-    /// The guard holds when the last refetch failed to reach the payer. Callers
-    /// that queued before that failure reuse it instead of repeating the call,
-    /// so a slow payer delays each of them by one upstream timeout at most.
-    pub async fn refreshing(&self) -> MutexGuard<'_, Option<Instant>> {
+    /// The guard holds when the last refetch finished without storing an entry, and how. Callers
+    /// that queued before it finished reuse that outcome instead of repeating the call one at a
+    /// time, so a slow payer delays each of them by one upstream call at most.
+    pub async fn refreshing(&self) -> MutexGuard<'_, Option<(Instant, RefetchOutcome)>> {
         self.refresh.lock().await
     }
 
@@ -192,23 +208,22 @@ impl TermsCache {
         }
     }
 
-    fn insert_at(&self, response: &Value, now: Instant) {
+    fn insert_at(&self, response: &Value, now: Instant) -> Option<Value> {
         let mut entry = self.lock();
         let Some(ttl_secs) = Self::ttl_secs(response) else {
             *entry = None;
-            return;
+            return None;
         };
-        let Some(shared) = Self::shared_terms(response) else {
-            return;
-        };
+        let shared = Self::shared_terms(response)?;
         let forced = entry.as_ref().is_some_and(|entry| entry.stale);
         *entry = Some(CachedTerms {
-            response: shared,
+            response: shared.clone(),
             fetched_at: now,
             ttl: Duration::from_secs(ttl_secs),
             stale: false,
             forced,
         });
+        Some(shared)
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, Option<CachedTerms>> {
