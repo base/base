@@ -22,13 +22,22 @@ use crate::{
 
 /// EIP-7954's maximum deployed runtime size at Amsterdam.
 const RUNTIME_SIZE: usize = 65_536;
+/// Median zlib-9 compressed/raw ratio of mainnet bytecodes >=16 KiB, sampled 2026-10-28.
+/// Public mainnet.base.org RPC only: blocks 53_212_323..=53_212_422, distinct `to`
+/// runtime codes at the final block plus CREATE inputs, including the USDC implementation.
+/// 1,129 nonempty runtimes and 97 initcodes; 260 >=16 KiB (258 runtimes, 2 initcodes).
+/// Large p10/p25/p50/p75/p90: 0.379107/0.397854/0.453976/0.487867/0.516855.
+/// Overall median: 0.518126. Includes 194 runtimes >=20 KiB; Python Brotli unavailable.
+/// This calibrates zlib compressibility, not an exact batcher DA or opcode distribution.
+const TARGET_COMPRESSION_RATIO: f64 = 0.453_976_207_703_753_7;
 /// EIP-8037 state for one new account and 64 `KiB` of code at the pinned L1 CPSB.
 const STATE_GAS: u64 = 100_453_680;
 /// EIP-7976 calldata floor, including the 14-byte initcode prefix.
 const REGULAR_FLOOR: u64 = 4_219_200;
-/// Exact charged gas for this initcode (eight nonzero runtime bytes, no refunds).
-const RECEIPT_GAS: u64 = 100_776_978;
-/// State plus the regular floor, with one percent rounded-up admission headroom.
+/// Exact charged gas with nonzero filler: each formerly zero byte costs 12 extra gas.
+const RECEIPT_GAS: u64 = 100_776_978 + (RUNTIME_SIZE as u64 - 8) * 12;
+/// State plus the worst-case regular floor, with one percent rounded-up admission headroom.
+/// The existing all-nonzero floor already covers the increased calldata intrinsic cost.
 const GAS_LIMIT: u64 = (STATE_GAS + REGULAR_FLOOR) + (STATE_GAS + REGULAR_FLOOR).div_ceil(100);
 const RECEIPT_TIMEOUT: Duration = Duration::from_secs(60);
 // Allow submission, confirmation, and verification to drain, but never await a worker forever.
@@ -104,10 +113,17 @@ pub struct Deploy64Result {
 
 /// CREATE initcode copying an exactly 64 `KiB` runtime that returns uint256(42).
 /// CREATE addresses remain unique through the exclusive deployer's increasing nonce.
-fn initcode() -> Bytes {
+fn initcode(deploy_index: u64) -> Bytes {
     let mut code = bytes!("62010000600e5f39620100005ff3").to_vec();
     code.extend_from_slice(&[0x60, 0x2a, 0x5f, 0x52, 0x60, 0x20, 0x5f, 0xf3]);
     code.resize(14 + RUNTIME_SIZE, 0);
+    let mut rng = crate::SeededRng::new(deploy_index);
+    // A seed-specific repeated word avoids sharing the compressible tail across deployments.
+    let word: [u8; 32] = std::array::from_fn(|_| rng.gen_range(1..=255));
+    let random_len = ((RUNTIME_SIZE - 8) as f64 * TARGET_COMPRESSION_RATIO) as usize;
+    for (index, byte) in code[22..].iter_mut().enumerate() {
+        *byte = if index < random_len { rng.gen_range(1..=255) } else { word[index % 32] };
+    }
     code.into()
 }
 
@@ -296,7 +312,7 @@ async fn run_inner(
                 from: signer.address(),
                 to: None,
                 value: U256::ZERO,
-                data: initcode(),
+                data: initcode(nonce),
                 gas_limit: GAS_LIMIT,
                 estimated_gas: RECEIPT_GAS,
                 validity: Vec::new(),
@@ -389,6 +405,45 @@ async fn run_inner(
 mod tests {
     use super::*;
 
+    /// The filler must approximate large mainnet contracts rather than compress to nothing.
+    #[test]
+    fn deploy64_padding_compression_matches_mainnet() {
+        let code = initcode(0);
+        let filler = &code[22..];
+        let compressed = miniz_oxide::deflate::compress_to_vec_zlib(filler, 9);
+        let mut brotli = Vec::new();
+        let params = brotli::enc::BrotliEncoderParams { quality: 9, ..Default::default() };
+        brotli::BrotliCompress(&mut &code[..], &mut brotli, &params)
+            .expect("compress initcode");
+        let mut batch = code.to_vec();
+        batch.extend_from_slice(&initcode(1));
+        let mut batch_brotli = Vec::new();
+        brotli::BrotliCompress(&mut &batch[..], &mut batch_brotli, &params)
+            .expect("compress two deployments");
+        assert!(
+            batch_brotli.len() > brotli.len() * 19 / 10,
+            "distinct deployments must retain at least 95% of separate compressed size"
+        );
+        println!(
+            "deploy64 zlib filler={} brotli initcode={} fastlz initcode={} fjord bytes={} batch brotli={}",
+            compressed.len(), brotli.len(), base_common_flz::flz_compress_len(&code),
+            base_common_flz::tx_estimated_size_fjord_bytes(&code), batch_brotli.len()
+        );
+        let ratio = compressed.len() as f64 / filler.len() as f64;
+        assert!(
+            (ratio / TARGET_COMPRESSION_RATIO - 1.0).abs() <= 0.10,
+            "mainnet-like compressed/raw ratio, got {ratio}"
+        );
+    }
+
+    /// Different deployment indices must change the payload without losing reproducibility.
+    #[test]
+    fn deploy64_padding_is_unique_and_deterministic() {
+        let payload = |index: u64| initcode(index);
+        assert_eq!(payload(7), payload(7), "same deployment index must reproduce initcode");
+        assert!(payload(7)[22..] != payload(8)[22..], "different indices must change filler");
+    }
+
     fn signed_for_test(signer: &PrivateKeySigner) -> SignedTransaction {
         SubmissionPipeline::sign_at_nonce(
             signer,
@@ -397,7 +452,7 @@ mod tests {
                 from: signer.address(),
                 to: None,
                 value: U256::ZERO,
-                data: initcode(),
+                data: initcode(0),
                 gas_limit: GAS_LIMIT,
                 estimated_gas: RECEIPT_GAS,
                 validity: Vec::new(),
@@ -587,7 +642,7 @@ mod tests {
             from: signer.address(),
             to: None,
             value: U256::ZERO,
-            data: initcode(),
+            data: initcode(0),
             gas_limit: GAS_LIMIT,
             estimated_gas: RECEIPT_GAS,
             validity: Vec::new(),
@@ -619,7 +674,7 @@ mod tests {
         let pending = provider
             .send_transaction(
                 TransactionRequest::default()
-                    .with_deploy_code(initcode())
+                    .with_deploy_code(initcode(0))
                     .with_from(signer.address())
                     .with_chain_id(8453)
                     .with_nonce(7)
@@ -682,7 +737,7 @@ mod tests {
 
     #[test]
     fn deploy64_exact_payload_budget_and_rate() {
-        let code = initcode();
+        let code = initcode(0);
         assert_eq!(code.len(), 65_550, "14-byte initcode prefix plus full 64 KiB runtime");
         assert_eq!(
             &code[..14],
@@ -694,10 +749,10 @@ mod tests {
             &[0x60, 0x2a, 0x5f, 0x52, 0x60, 0x20, 0x5f, 0xf3],
             "runtime returns42"
         );
-        assert!(code[22..].iter().all(|b| *b == 0), "remaining runtime is STOP padding");
+        assert!(code[22..].iter().all(|b| *b != 0), "unreachable filler has fixed nonzero calldata cost");
         assert_eq!(STATE_GAS, (120 + 65_536) * 1_530, "account plus code state gas");
         assert_eq!(REGULAR_FLOOR, 24_000 + 65_550 * 64, "Amsterdam CREATE calldata floor");
-        assert_eq!(RECEIPT_GAS, STATE_GAS + 323_298, "spent regular plus state, no refund");
+        assert_eq!(RECEIPT_GAS, 101_563_314, "spent regular plus state with nonzero filler, no refund");
         assert_eq!(GAS_LIMIT, 105_719_609, "state plus regular floor plus rounded-up1% margin");
         assert!(check_capacity(120_000_000).is_ok(), "fits120M block");
         assert!(check_capacity(150_000_000).is_ok(), "fits150M block");
@@ -771,7 +826,7 @@ mod tests {
                         .caller(caller)
                         .kind(alloy_primitives::TxKind::Create)
                         .gas_limit(GAS_LIMIT)
-                        .data(initcode()),
+                        .data(initcode(0)),
                 )
                 .enveloped_tx(Some(bytes!("FACADE")))
                 .build_fill();
