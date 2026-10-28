@@ -134,6 +134,36 @@ at `ingress` and `builder`, independently of generic extension errors.
 sidecars to help operators assess migration readiness. RPC signature errors carry
 the same stable rejection reason in their `data` field.
 
+### Validity pool
+
+`BaseTransactionPool` keeps three stores behind one `TransactionPool` surface:
+the reth `Pool` for standard transactions, the EIP-8130 sidecar for finite
+2D-nonce channels and nonce-free transactions, and a validity pool for every
+transaction that carries validity predicates (conditional transactions), whatever
+its envelope type. Validity transactions rest in the pool until a predicate on hot
+state flips or their block or flashblock expiry passes, so the validity pool has
+its own count, size and per-sender caps and evicts only among validity
+transactions. A burst of conditional transactions therefore cannot push standard
+user transactions out of reth's pending subpool, and reth's own eviction cannot
+drop resting validity transactions.
+
+`PoolStore::of` picks the store. A nonce slot `(sender, nonce key, nonce)`, or a
+nonce-free replay id, is held by at most one store at a time: a newcomer bound for
+another store replaces the incumbent under the usual price-bump rule and the
+incumbent's listeners see `Replaced`. Account semantics span the stores: a
+validity transaction right behind reth's or the sidecar's pending run is pending
+(`LaneCursor::next_nonce` follows that run), while a standard transaction behind a
+resting validity transaction stays queued in reth until the nonce gap closes.
+
+Capacity defaults to reth's pending subpool limit (`--txpool.pending-max-count`,
+`--txpool.pending-max-size`, `--txpool.max-account-slots`) and is overridable with
+`--rollup.validity-pool-max-count`, `--rollup.validity-pool-max-size` (megabytes)
+and `--rollup.validity-pool-max-account-slots`; see `ValidityPoolLimits`.
+Occupancy is published as `txpool.validity.pool_transactions` and
+`txpool.validity.pool_bytes`, evictions as `txpool.validity.evicted`, and
+replacements that crossed a store boundary as
+`txpool.validity.cross_store_replaced{direction}`.
+
 ## Usage
 
 Add the dependency to your `Cargo.toml`:
