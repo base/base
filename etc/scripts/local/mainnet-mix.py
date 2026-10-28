@@ -316,7 +316,8 @@ def main():
         if not args.cache:
             parser.error("--cached-only requires --cache")
         with open(args.cache) as cache:
-            rows = sorted((json.loads(line) for line in cache if line.strip()), key=lambda row: row["n"])
+            lines = (line for line in cache if line.endswith("\n") and line.strip())
+            rows = sorted((json.loads(line) for line in lines), key=lambda row: row["n"])
         validate_cache_rows(rows)
         if len(rows) < 2:
             parser.error("--cached-only requires at least two cached blocks")

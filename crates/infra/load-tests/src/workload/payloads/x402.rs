@@ -338,6 +338,29 @@ mod tests {
         );
     }
 
+    /// Missing or disabled token setup must fail before x402 calibration can generate payloads.
+    #[test]
+    fn x402_config_rejects_missing_or_disabled_token_setup() {
+        let mut config: crate::config::TestConfig = serde_yaml::from_str(include_str!(
+            "../../../examples/mainnet-mix-mainnet-snapshot.yaml"
+        ))
+        .expect("mainnet mix must parse");
+        let disabled = config.real_token_setup.clone().map(|mut setup| {
+            setup.enabled = false;
+            setup
+        });
+        for setup in [None, disabled] {
+            config.real_token_setup = setup;
+            let error = config
+                .to_load_config(None)
+                .expect_err("x402 must reject missing or disabled token setup before calibration");
+            assert!(
+                matches!(error, BaselineError::Config(ref message) if message == "x402 requires enabled real_token_setup"),
+                "missing or disabled setup must return the exact x402 config error, got {error}"
+            );
+        }
+    }
+
     /// The mainnet profile must include x402 while preserving exact normalized total weight.
     #[test]
     fn mainnet_mix_contains_x402_with_normalized_weight() {

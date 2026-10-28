@@ -770,7 +770,14 @@ impl TestConfig {
         let tx_type = match &weighted.tx_type {
             TxTypeConfig::Transfer => TxType::Transfer,
             TxTypeConfig::Eip8430Transfer => TxType::Eip8430Transfer,
-            TxTypeConfig::X402 => TxType::X402 { context: Default::default() },
+            TxTypeConfig::X402 => {
+                if !self.real_token_setup.as_ref().is_some_and(|setup| setup.enabled) {
+                    return Err(BaselineError::Config(
+                        "x402 requires enabled real_token_setup".into(),
+                    ));
+                }
+                TxType::X402 { context: Default::default() }
+            }
             TxTypeConfig::Calldata { max_size, repeat_count } => {
                 TxType::Calldata { max_size: *max_size, repeat_count: *repeat_count }
             }
