@@ -82,7 +82,10 @@ impl WorkloadGenerator {
                     generator = generator.with_payload(payload, weight_pct);
                 }
                 TxType::X402 { context } => {
-                    generator = generator.with_payload(super::X402Payload { context: Arc::clone(context) }, weight_pct);
+                    generator = generator.with_payload(
+                        super::X402Payload { context: Arc::clone(context) },
+                        weight_pct,
+                    );
                 }
                 TxType::Erc20 { contract } => {
                     generator = generator.with_payload(
