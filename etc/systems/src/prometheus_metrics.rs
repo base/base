@@ -22,6 +22,20 @@ const VISUALIZER_METRICS: &[&str] = &[
     "reth_base_builder_native_payload_execution_duration_avg",
     "reth_base_builder_native_payload_state_root_duration_avg",
     "reth_base_builder_payload_num_tx_gauge",
+    "reth_base_builder_predicate_accounts_loaded_total_avg",
+    "reth_base_builder_predicate_accounts_loaded_unique_avg",
+    "reth_base_builder_predicate_bucket_depth_avg",
+    "reth_base_builder_predicate_bucket_wakeups_avg",
+    "reth_base_builder_predicate_slots_loaded_total_avg",
+    "reth_base_builder_predicate_slots_loaded_unique_avg",
+    "reth_base_builder_resting_predicate_carried_avg",
+    "reth_base_builder_resting_predicate_carried_parked_total",
+    "reth_base_builder_resting_predicate_carry_released_total_reason_block_number",
+    "reth_base_builder_resting_predicate_carry_released_total_reason_pre_block_state",
+    "reth_base_builder_resting_predicate_carry_released_total_reason_unseen",
+    "reth_base_builder_resting_predicate_carry_resets_total",
+    "reth_base_builder_resting_predicate_parked_total",
+    "reth_base_builder_resting_predicate_shadow_mismatches_total",
     "reth_base_builder_payload_transaction_simulation_duration_avg",
     "reth_base_builder_sequencer_tx_duration_avg",
     "reth_base_builder_state_root_calculation_duration_avg",
@@ -31,6 +45,20 @@ const VISUALIZER_METRICS: &[&str] = &[
     "reth_base_builder_tx_gas_used_per_block_flow_validity_avg",
     "reth_base_builder_txs_included_per_block_flow_standard_avg",
     "reth_base_builder_txs_included_per_block_flow_validity_avg",
+    "reth_base_builder_validity_candidate_handling_duration_avg",
+    "reth_base_builder_validity_predicate_candidates_deferred_per_build_avg",
+    "reth_base_builder_validity_predicate_candidates_evaluated_per_build_avg",
+    "reth_base_builder_validity_predicate_eval_cutoff_builds_total",
+    "reth_base_builder_validity_predicate_eval_duration_per_block_avg",
+    "reth_base_builder_validity_predicate_evaluation_coverage_per_build_avg",
+    "reth_base_builder_validity_predicate_evaluations_total_outcome_budget_exhausted",
+    "reth_base_builder_validity_predicate_evaluations_total_outcome_expired",
+    "reth_base_builder_validity_predicate_evaluations_total_outcome_matched",
+    "reth_base_builder_validity_predicate_evaluations_total_outcome_not_satisfied",
+    "reth_base_builder_validity_predicate_evaluations_total_outcome_read_error",
+    "reth_base_builder_validity_predicate_evaluations_total_outcome_rescan_matched",
+    "reth_base_builder_validity_predicate_evaluations_total_outcome_rescan_not_satisfied",
+    "reth_base_builder_validity_predicate_rescan_duration_avg",
     "reth_consensus_engine_beacon_backpressure_active",
     "reth_consensus_engine_beacon_block_insert_total_duration_avg",
     "reth_consensus_engine_beacon_new_payload_latency_avg",
@@ -449,5 +477,68 @@ reth_base_builder_txs_included_per_block_count{flow="standard"} 5
         delta.retain(|name, _| PrometheusBlockCollector::is_visualizer_metric(name));
         assert_eq!(delta["reth_base_builder_native_payload_build_duration_avg"], 0.05);
         assert_eq!(delta["reth_base_builder_txs_included_per_block_flow_standard_avg"], 130.0);
+    }
+
+    #[test]
+    fn collects_validity_predicate_metrics_rendered_by_the_visualizer() {
+        let previous = PrometheusSnapshot::parse(
+            r#"# TYPE reth_base_builder_validity_predicate_eval_duration_per_block histogram
+reth_base_builder_validity_predicate_eval_duration_per_block_sum 0.2
+reth_base_builder_validity_predicate_eval_duration_per_block_count 2
+# TYPE reth_base_builder_validity_predicate_evaluations_total counter
+reth_base_builder_validity_predicate_evaluations_total{outcome="matched"} 10
+reth_base_builder_validity_predicate_evaluations_total{outcome="not_satisfied"} 40
+# TYPE reth_base_builder_resting_predicate_parked_total counter
+reth_base_builder_resting_predicate_parked_total 100
+# TYPE reth_base_builder_resting_predicate_carry_released_total counter
+reth_base_builder_resting_predicate_carry_released_total{reason="pre_block_state"} 5
+"#,
+        );
+        let current = PrometheusSnapshot::parse(
+            r#"# TYPE reth_base_builder_validity_predicate_eval_duration_per_block histogram
+reth_base_builder_validity_predicate_eval_duration_per_block_sum 0.5
+reth_base_builder_validity_predicate_eval_duration_per_block_count 4
+# TYPE reth_base_builder_validity_predicate_evaluations_total counter
+reth_base_builder_validity_predicate_evaluations_total{outcome="matched"} 13
+reth_base_builder_validity_predicate_evaluations_total{outcome="not_satisfied"} 60
+# TYPE reth_base_builder_resting_predicate_parked_total counter
+reth_base_builder_resting_predicate_parked_total 180
+# TYPE reth_base_builder_resting_predicate_carry_released_total counter
+reth_base_builder_resting_predicate_carry_released_total{reason="pre_block_state"} 7
+# TYPE reth_base_builder_resting_predicate_carried histogram
+reth_base_builder_resting_predicate_carried_sum 90
+reth_base_builder_resting_predicate_carried_count 2
+# TYPE reth_base_builder_validity_candidate_handling_duration histogram
+reth_base_builder_validity_candidate_handling_duration_sum 0.03
+reth_base_builder_validity_candidate_handling_duration_count 10
+"#,
+        );
+        let delta = current.delta(&previous);
+        let expected = [
+            ("reth_base_builder_validity_predicate_eval_duration_per_block_avg", 0.15),
+            ("reth_base_builder_validity_predicate_evaluations_total_outcome_matched", 3.0),
+            ("reth_base_builder_validity_predicate_evaluations_total_outcome_not_satisfied", 20.0),
+            ("reth_base_builder_resting_predicate_parked_total", 80.0),
+            (
+                "reth_base_builder_resting_predicate_carry_released_total_reason_pre_block_state",
+                2.0,
+            ),
+            ("reth_base_builder_resting_predicate_carried_avg", 45.0),
+            ("reth_base_builder_validity_candidate_handling_duration_avg", 0.003),
+        ];
+        for (name, value) in expected {
+            assert!(
+                PrometheusBlockCollector::is_visualizer_metric(name),
+                "{name} must be kept for the visualizer"
+            );
+            assert!(
+                (delta[name] - value).abs() < 1e-9,
+                "{name}: expected {value}, got {}",
+                delta[name]
+            );
+        }
+        assert!(!PrometheusBlockCollector::is_visualizer_metric(
+            "reth_base_builder_validity_predicate_evaluations_total_outcome_unsupported"
+        ));
     }
 }

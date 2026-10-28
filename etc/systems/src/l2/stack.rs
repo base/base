@@ -17,6 +17,7 @@ use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types_engine::JwtSecret;
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
+use base_builder_core::RestingPredicateMode;
 use base_common_genesis::RollupConfig;
 use base_common_network::Base;
 use base_common_rpc_types::BaseTransactionRequest;
@@ -231,6 +232,7 @@ impl L2Stack {
             payload_builder_cutover: config.payload_builder_cutover,
             validity_signature_mode: config.validity_signature_mode,
             extra_extensions: config.extra_builder_extensions,
+            resting_predicate_mode: RestingPredicateMode::Off,
             block_time: Duration::from_secs(rollup_config.block_time),
             persistence_threshold: None,
             persistence_backpressure_threshold: None,
