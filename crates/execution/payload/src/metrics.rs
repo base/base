@@ -65,9 +65,9 @@ base_metrics::define_metrics! {
     validity_predicate_evaluations_per_flashblock: histogram,
     #[describe("Total validity transaction evaluation time per flashblock, in seconds")]
     validity_predicate_eval_duration_per_flashblock: histogram,
-    #[describe("Transaction evaluation attempts including rescans per canonical block build")]
+    #[describe("Transaction evaluation attempts including rescans per flashblocks block build or native build attempt, including cancelled attempts")]
     validity_predicate_evaluations_per_block: histogram,
-    #[describe("Total validity transaction evaluation time per canonical block build, in seconds")]
+    #[describe("Total validity transaction evaluation time per flashblocks block build or native build attempt, including cancelled attempts, in seconds")]
     validity_predicate_eval_duration_per_canonical_block: histogram,
     #[describe("Resting validity transactions remaining at the end of the latest block build")]
     resting_predicates: gauge,
@@ -320,7 +320,6 @@ mod tests {
     use metrics_exporter_prometheus::PrometheusBuilder;
 
     use super::*;
-
 
     #[test]
     fn records_predicate_metrics() {
