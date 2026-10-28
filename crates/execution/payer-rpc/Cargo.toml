@@ -14,7 +14,8 @@ workspace = true
 
 [dependencies]
 # base
-base-common-consensus.workspace = true
+base-common-consensus = { workspace = true, features = ["k256"] }
+base-execution-eip8130-rpc.workspace = true
 base-execution-rpc.workspace = true
 base-common-chains.workspace = true
 base-node-runner.workspace = true
@@ -26,6 +27,7 @@ reth-chainspec.workspace = true
 # alloy
 alloy-primitives.workspace = true
 alloy-consensus.workspace = true
+alloy-eips.workspace = true
 
 # rpc
 jsonrpsee.workspace = true
@@ -37,12 +39,20 @@ tracing.workspace = true
 
 [dev-dependencies]
 # base
+base-node-runner = { workspace = true, features = ["test-utils"] }
 base-execution-chainspec.workspace = true
 base-test-utils.workspace = true
 
 # reth
 reth-provider = { workspace = true, features = ["test-utils"] }
 
+# alloy
+alloy-signer-local.workspace = true
+alloy-genesis.workspace = true
+alloy-signer.workspace = true
+
 # misc
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 httpmock.workspace = true
+mockall.workspace = true
+eyre.workspace = true

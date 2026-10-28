@@ -16,6 +16,11 @@ impl PayerRejection {
     /// JSON-RPC message of a payer rejection.
     pub const MESSAGE: &str = "PAYER_REJECTED";
 
+    /// An `INVALID_TRANSACTION` rejection with `reason`.
+    pub fn invalid_transaction(reason: impl ToString) -> ErrorObjectOwned {
+        Self::error(json!({ "code": "INVALID_TRANSACTION", "reason": reason.to_string() }))
+    }
+
     /// A `TEMPORARILY_UNAVAILABLE` rejection with `reason`, which wallets retry shortly.
     pub fn temporarily_unavailable(reason: impl ToString) -> ErrorObjectOwned {
         Self::error(json!({ "code": "TEMPORARILY_UNAVAILABLE", "reason": reason.to_string() }))
