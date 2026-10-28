@@ -92,6 +92,10 @@ harness = false
 name = "pool_validation_iai"
 harness = false
 
+[[bench]]
+name = "best_transactions"
+harness = false
+
 [features]
 default = [ "metrics" ]
 metrics = [
