@@ -37,7 +37,7 @@ use crate::{
     InvalidationCause, InvalidationKey, LimitRejection, MempoolGuard, ParkableBestTransactions,
     ParkableTransactionPool, ParkedBestTransactions, PoolStore, PredicateContext,
     StateDiffInvalidation, ValidityPoolLimits, ValidityPoolMetrics,
-    best::MergeBestTransactions,
+    best::{BridgedDescendants, MergeBestTransactions},
     two_d_nonce_pool::{
         InsertOutcome, LaneCursor, LaneId, LaneUpdate, SidecarLimits, TwoDNoncePool,
     },
@@ -1500,13 +1500,65 @@ where
         attributes: BestTransactionsAttributes,
     ) -> MergeBestTransactions<T, O> {
         let base_fee = attributes.basefee;
+        let protocol = self.protocol_pool.best_transactions_with_attributes(attributes);
+        // Lock order: sidecar before validity, and never both while reading
+        // the other's queue.
+        let (sidecar, sidecar_queued) = {
+            let sidecar = self.sidecar.pool.read();
+            (
+                sidecar.best_transactions(self.ordering.clone(), base_fee),
+                sidecar.queued_transactions(),
+            )
+        };
+        let validity = self.validity.pool.read();
+        let bridged = Self::bridged_descendants(
+            &validity,
+            self.protocol_pool.queued_transactions().into_iter().chain(sidecar_queued),
+        );
         MergeBestTransactions::new(
-            self.protocol_pool.best_transactions_with_attributes(attributes),
-            Box::new(self.sidecar.pool.read().best_transactions(self.ordering.clone(), base_fee)),
-            Box::new(self.validity.pool.read().best_transactions(self.ordering.clone(), base_fee)),
+            protocol,
+            Box::new(sidecar),
+            Box::new(validity.best_transactions(self.ordering.clone(), base_fee)),
             self.ordering.clone(),
             base_fee,
         )
+        .with_external_anchors(validity.lanes_ahead_of_state())
+        .with_bridged_descendants(bridged)
+    }
+
+    /// Picks, from the standard stores' queued transactions, the consecutive
+    /// runs that start right where a validity lane's pending run ends. Their
+    /// own store queues them behind the gap the validity run fills, so only the
+    /// merge can release them, after that run.
+    ///
+    /// Runs once per build over the queued set (bounded by the queued subpool
+    /// limits and empty in steady state), not per candidate.
+    fn bridged_descendants(
+        validity: &TwoDNoncePool<T>,
+        queued: impl IntoIterator<Item = Arc<ValidPoolTransaction<T>>>,
+    ) -> BridgedDescendants<T> {
+        // Per lane: the queued transactions from where the validity run ends on.
+        let mut ends: HashMap<LaneId, u64> = HashMap::new();
+        let mut runs = BridgedDescendants::<T>::default();
+        for transaction in queued {
+            let Some(lane_id) = Self::lane_id_of(&transaction.transaction) else { continue };
+            let Some(end) = validity.lane_pending_end(&lane_id) else { continue };
+            if transaction.nonce() >= end {
+                ends.insert(lane_id, end);
+                runs.entry(lane_id).or_default().push_back(transaction);
+            }
+        }
+        runs.retain(|lane_id, run| {
+            run.make_contiguous().sort_unstable_by_key(|transaction| transaction.nonce());
+            let contiguous = run
+                .iter()
+                .zip(ends[lane_id]..)
+                .take_while(|(transaction, nonce)| transaction.nonce() == *nonce)
+                .count();
+            run.truncate(contiguous);
+            !run.is_empty()
+        });
+        runs
     }
 }
 
@@ -2350,7 +2402,7 @@ where
                     .pool
                     .read()
                     .lanes_ahead_of_state()
-                    .into_iter()
+                    .into_keys()
                     .map(|lane| (lane, None)),
             );
             self.sync_validity_lanes(touched_lanes);
@@ -5777,9 +5829,10 @@ mod tests {
 
         assert_store(&pool, standard1, PoolStore::Protocol);
         assert!(is_queued(&pool, standard1), "the protocol pool sees a nonce gap");
-        assert_eq!(best_hashes(&pool), vec![validity0]);
         let size = pool.pool_size();
         assert_eq!((size.pending, size.queued), (1, 1));
+        // The merge still releases it, right behind the validity run it waits for.
+        assert_eq!(best_hashes(&pool), vec![validity0, standard1]);
 
         // Dropping the validity transaction leaves the standard one gapped.
         pool.remove_transactions(vec![validity0]);
@@ -5851,7 +5904,7 @@ mod tests {
         let validity1 = add(&pool, validity_1559(&signer, 1, 1_000)).await;
         let standard2 = add(&pool, signed_1559(&signer, 2)).await;
         assert!(is_queued(&pool, standard2), "reth sees a gap at nonce 1");
-        assert_eq!(best_hashes(&pool), vec![standard0, validity1]);
+        assert_eq!(best_hashes(&pool), vec![standard0, validity1, standard2]);
 
         let removed: Vec<_> = pool
             .remove_transactions_and_descendants(vec![standard0])
@@ -5956,12 +6009,14 @@ mod tests {
         assert_eq!(best_hashes(&pool), vec![standard0, standard1, validity2]);
 
         // A validity transaction replacing standard nonce 0 parks standard nonce 1
-        // in reth and, with it, validity nonce 2.
+        // in reth and, with it, validity nonce 2. The merge still bridges the
+        // standard transaction behind the validity head; validity nonce 2 waits
+        // for the next canonical update.
         let validity0 = add(&pool, validity_1559(&signer, 0, 1_100)).await;
         assert_gone(&pool, standard0);
         assert!(is_queued(&pool, standard1));
         assert!(is_queued(&pool, validity2));
-        assert_eq!(best_hashes(&pool), vec![validity0]);
+        assert_eq!(best_hashes(&pool), vec![validity0, standard1]);
     }
 
     #[tokio::test]
@@ -5984,7 +6039,7 @@ mod tests {
         // A sidecar successor behind the validity transaction is gapped.
         let sidecar2 = add(&pool, self_paid_eoa_8130(&signer, channel, 2, 0, 1_000)).await;
         assert!(is_queued(&pool, sidecar2));
-        assert_eq!(best_hashes(&pool), vec![sidecar0, validity1]);
+        assert_eq!(best_hashes(&pool), vec![sidecar0, validity1, sidecar2]);
 
         // Same-slot admission across the sidecar boundary follows the price bump.
         let error = add_err(&pool, self_paid_eoa_8130(&signer, channel, 1, 0, 1_050)).await;
@@ -5999,7 +6054,7 @@ mod tests {
         assert_gone(&pool, sidecar0);
         assert_store(&pool, validity0, PoolStore::Validity);
         assert!(is_queued(&pool, sidecar1) && is_queued(&pool, sidecar2));
-        assert_eq!(best_hashes(&pool), vec![validity0]);
+        assert_eq!(best_hashes(&pool), vec![validity0, sidecar1, sidecar2]);
     }
 
     #[tokio::test]
@@ -6193,8 +6248,8 @@ mod tests {
     #[tokio::test]
     async fn validity_pool_account_slots_cap_transactions_per_sender() {
         let (pool, client) = build_integration_pool();
-        let pool = pool
-            .with_validity_pool_limits(ValidityPoolLimits::inherit().with_max_account_slots(2));
+        let pool =
+            pool.with_validity_pool_limits(ValidityPoolLimits::inherit().with_max_account_slots(2));
         let signer = funded_signer(&client);
         add(&pool, validity_1559(&signer, 1, 1_000)).await;
         add(&pool, validity_1559(&signer, 2, 1_000)).await;
@@ -6378,6 +6433,138 @@ mod tests {
         assert!(yielded.contains(&rich_validity));
         assert!(!yielded.contains(&validity_successor));
         assert!(yielded.contains(&cheap_standard) && yielded.contains(&tipping_standard));
+    }
+
+    /// The reviewer's case: a validity successor that outbids the standard
+    /// transaction in front of it must still come out behind it.
+    #[tokio::test]
+    async fn validity_successor_outbidding_the_standard_run_waits_for_it() {
+        let (pool, client) = build_integration_pool();
+        let signer = funded_signer(&client);
+        let other = funded_signer(&client);
+        let standard0 = add(&pool, signed_1559_with_fees(&signer, 0, 1_000, 1)).await;
+        let rich_validity1 = add(
+            &pool,
+            signed_1559_with_fees(&signer, 1, 1_000, 900)
+                .with_validity_predicates(resting_predicates()),
+        )
+        .await;
+        let rich_validity2 = add(
+            &pool,
+            signed_1559_with_fees(&signer, 2, 1_000, 800)
+                .with_validity_predicates(resting_predicates()),
+        )
+        .await;
+        let unrelated = add(&pool, signed_1559_with_fees(&other, 0, 1_000, 500)).await;
+        assert!(is_pending(&pool, rich_validity1) && is_pending(&pool, rich_validity2));
+
+        // Priority alone would rank the validity transactions first.
+        assert_eq!(
+            best_hashes(&pool),
+            vec![unrelated, standard0, rich_validity1, rich_validity2],
+            "the standard predecessor is released before its validity successors"
+        );
+
+        // Once the builder drops the standard predecessor, its successors stay parked.
+        let mut best = pool.best_transactions();
+        let mut yielded = Vec::new();
+        while let Some(transaction) = best.next() {
+            if *transaction.hash() == standard0 {
+                best.mark_invalid(&transaction, InvalidPoolTransactionError::Underpriced);
+            }
+            yielded.push(*transaction.hash());
+        }
+        assert_eq!(yielded, vec![unrelated, standard0]);
+
+        // Lanes anchored at canonical state need no predecessor and keep their own order.
+        pool.remove_transactions(vec![standard0]);
+        let validity0 = add(
+            &pool,
+            signed_1559_with_fees(&signer, 0, 1_000, 1)
+                .with_validity_predicates(resting_predicates()),
+        )
+        .await;
+        assert_eq!(best_hashes(&pool), vec![unrelated, validity0, rich_validity1, rich_validity2]);
+    }
+
+    /// The builder's case: a predicate-delayed validity transaction must not
+    /// keep the user's standard successors out of the block once it executes.
+    #[tokio::test]
+    async fn standard_descendants_behind_a_validity_run_are_released_after_it() {
+        let (pool, client) = build_integration_pool();
+        let signer = funded_signer(&client);
+        let other = funded_signer(&client);
+        let validity0 = add(
+            &pool,
+            signed_1559_with_fees(&signer, 0, 1_000, 100)
+                .with_validity_predicates(resting_predicates()),
+        )
+        .await;
+        let standard1 = add(&pool, signed_1559_with_fees(&signer, 1, 1_000, 900)).await;
+        let standard2 = add(&pool, signed_1559_with_fees(&signer, 2, 1_000, 950)).await;
+        // Nonce 3 is missing: nonce 4 is not part of the bridged run.
+        let standard4 = add(&pool, signed_1559_with_fees(&signer, 4, 1_000, 999)).await;
+        let unrelated = add(&pool, signed_1559_with_fees(&other, 0, 1_000, 500)).await;
+        assert!(is_queued(&pool, standard1) && is_queued(&pool, standard2));
+
+        assert_eq!(best_hashes(&pool), vec![unrelated, validity0, standard1, standard2]);
+
+        // A dropped validity head takes its standard descendants with it.
+        let mut best = pool.best_transactions();
+        let mut yielded = Vec::new();
+        while let Some(transaction) = best.next() {
+            if *transaction.hash() == validity0 {
+                best.mark_invalid(&transaction, InvalidPoolTransactionError::Underpriced);
+            }
+            yielded.push(*transaction.hash());
+        }
+        assert_eq!(yielded, vec![unrelated, validity0]);
+
+        // A validity run that is itself gapped releases nothing behind it.
+        pool.remove_transactions(vec![validity0]);
+        let validity3 = add(&pool, validity_1559(&signer, 3, 1_000)).await;
+        assert!(is_queued(&pool, validity3) && is_queued(&pool, standard4));
+        assert_eq!(best_hashes(&pool), vec![unrelated]);
+    }
+
+    #[tokio::test]
+    async fn channel_validity_successor_waits_for_the_sidecar_head() {
+        let (pool, client) = build_integration_pool();
+        let signer = funded_signer(&client);
+        let channel = U256::from(4);
+        let sidecar0 = add(&pool, self_paid_eoa_8130(&signer, channel, 0, 0, 1_000)).await;
+        let rich_validity1 = add(
+            &pool,
+            signed_8130(&signer, channel, 1, 0, 1_000, 1_000_000)
+                .with_validity_predicates(resting_predicates()),
+        )
+        .await;
+        // Give the validity successor the higher priority through a tip.
+        let rich_validity1 = {
+            pool.remove_transactions(vec![rich_validity1]);
+            let tipped = TxEip8130 {
+                chain_id: test_chain_id(),
+                sender: None,
+                nonce_key: channel,
+                nonce_sequence: 1,
+                valid_after: 0,
+                valid_before: 0,
+                max_priority_fee_per_gas: 900,
+                max_fee_per_gas: 1_000,
+                gas_limit: 1_000_000,
+                account_changes: Vec::new(),
+                calls: Vec::new(),
+                metadata: Bytes::new(),
+                payer: None,
+            };
+            add(
+                &pool,
+                sign_eoa_8130(&signer, tipped).with_validity_predicates(resting_predicates()),
+            )
+            .await
+        };
+        assert!(is_pending(&pool, rich_validity1));
+        assert_eq!(best_hashes(&pool), vec![sidecar0, rich_validity1]);
     }
 
     #[tokio::test]

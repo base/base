@@ -527,7 +527,9 @@ impl RollupArgs {
     pub fn validity_pool_limits(&self) -> ValidityPoolLimits {
         ValidityPoolLimits {
             max_txs: self.validity_pool_max_count,
-            max_size: self.validity_pool_max_size.map(|megabytes| megabytes.saturating_mul(MIB as usize)),
+            max_size: self
+                .validity_pool_max_size
+                .map(|megabytes| megabytes.saturating_mul(MIB as usize)),
             max_account_slots: self.validity_pool_max_account_slots,
         }
     }

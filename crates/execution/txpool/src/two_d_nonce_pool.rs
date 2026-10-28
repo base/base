@@ -888,7 +888,9 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
     ) -> Option<Arc<ValidPoolTransaction<T>>> {
         let lane = self.lanes.get(lane_id)?;
         let pending_end = lane.pending_end()?;
-        (lane.next_nonce..pending_end).contains(&nonce).then(|| lane.transactions.get(&nonce).cloned())?
+        (lane.next_nonce..pending_end)
+            .contains(&nonce)
+            .then(|| lane.transactions.get(&nonce).cloned())?
     }
 
     /// Returns the live transaction with the highest nonce in `lane_id`.
@@ -931,12 +933,12 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
     }
 
     /// Lanes whose executable cursor sits past their canonical anchor, i.e.
-    /// those relying on another store's pending run.
-    pub(crate) fn lanes_ahead_of_state(&self) -> Vec<LaneId> {
+    /// those relying on another store's pending run, with that anchor.
+    pub(crate) fn lanes_ahead_of_state(&self) -> HashMap<LaneId, u64> {
         self.lanes
             .iter()
             .filter(|(_, lane)| lane.next_nonce > lane.state_nonce)
-            .map(|(id, _)| *id)
+            .map(|(id, lane)| (*id, lane.state_nonce))
             .collect()
     }
 
@@ -1512,14 +1514,13 @@ mod tests {
         let setup_elapsed = setup_started.elapsed();
 
         let snapshot_started = Instant::now();
-        let best =
-            BestTwoDTransactions::new(
-                &lanes,
-                &B256Map::default(),
-                false,
-                BaseOrdering::coinbase_tip(),
-                0,
-            );
+        let best = BestTwoDTransactions::new(
+            &lanes,
+            &B256Map::default(),
+            false,
+            BaseOrdering::coinbase_tip(),
+            0,
+        );
         let snapshot_elapsed = snapshot_started.elapsed();
 
         let drain_started = Instant::now();
@@ -2004,14 +2005,13 @@ mod tests {
         .into_iter()
         .collect();
 
-        let mut best =
-            BestTwoDTransactions::new(
-                &lanes,
-                &B256Map::default(),
-                false,
-                BaseOrdering::coinbase_tip(),
-                0,
-            );
+        let mut best = BestTwoDTransactions::new(
+            &lanes,
+            &B256Map::default(),
+            false,
+            BaseOrdering::coinbase_tip(),
+            0,
+        );
         assert_eq!(best.next().map(|transaction| *transaction.hash()), Some(*transaction.hash()));
         assert!(best.next().is_none());
     }
@@ -2024,8 +2024,14 @@ mod tests {
             valid_pool_transaction(signed_channel_tx(&signer, U256::from(18), u64::MAX, 1_000));
 
         let lane_id = (signer.address(), U256::from(18));
-        pool.lanes
-            .insert(lane_id, NonceLane { state_nonce: u64::MAX, next_nonce: u64::MAX, transactions: BTreeMap::new() });
+        pool.lanes.insert(
+            lane_id,
+            NonceLane {
+                state_nonce: u64::MAX,
+                next_nonce: u64::MAX,
+                transactions: BTreeMap::new(),
+            },
+        );
 
         let outcome = pool.insert_validated(transaction, u64::MAX).unwrap();
 
@@ -2590,7 +2596,7 @@ mod tests {
         let outcome = pool.insert_validated_at(head, cursor).unwrap();
         assert!(matches!(outcome.outcome.state, AddedTransactionState::Pending));
         assert_eq!(pool.lane_cursor(&lane), Some(cursor));
-        assert_eq!(pool.lanes_ahead_of_state(), vec![lane]);
+        assert_eq!(pool.lanes_ahead_of_state(), HashMap::from_iter([(lane, 0)]));
         assert_eq!(hashes(&pool.pending_transactions()), vec![head_hash]);
         assert!(pool.lane_pending_transaction(&lane, 2).is_some());
         assert!(pool.highest_consecutive_from(&lane, 1).is_none(), "below the cursor");
