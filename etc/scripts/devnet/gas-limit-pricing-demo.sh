@@ -5,15 +5,17 @@
 #
 #   1. A flood of "reverting arb" validity transactions (10% of senders) bids a 20x priority fee,
 #      declares a 500,000 gas limit, passes 64 predicates, and reverts after ~22k gas.
-#      Regular validity transactions (90% of senders) bid the market tip, declare 100,000 gas,
-#      pass the same predicates, and succeed (`DoubleCounter.increment2`).
+#      Regular validity transactions (90% of senders) bid the market tip, declare ~122,000 gas,
+#      pass the same predicates, and succeed using ~90% of it (`StorageFiller.fillStorage`, four
+#      fresh slots): the shape of an arbitrage that actually executes.
 #   2. Before Zenith activates (metered billing), the reverting arbs sort to the front of every
 #      flashblock, consume the builder's predicate-evaluation budget
 #      (`--builder.predicate-eval-hard-cutoff-ms`) and execution window, and pay the sequencer
 #      `20x tip * ~22k gas` each: about what one regular transaction pays.
 #   3. After Zenith activates (gas limit pricing), the same flood pays `20x tip * 500,000`
-#      per reverting arb, win or lose. The builder's validity-flow priority-fee revenue and the reverting arb
-#      cohort's fees rise by roughly `500,000 / 22,000`; the regular cohort's by `100,000 / ~45,000`.
+#      per reverting arb, win or lose. The reverting-arb cohort's tips rise by about
+#      `500,000 / 21,000`; the regular cohort's barely move, because it already used ~94% of
+#      what it declared.
 #
 # The load generator does not adapt to prices, so predicate-budget deferrals look alike in both
 # phases; what the demo shows is that the behaviour that causes them stops being cheap. The
@@ -183,7 +185,7 @@ for phase in phases:
     by = cohorts(phase)
     print(f"--- {phase}: per-cohort settlement (from receipts) and inclusion latency ---")
     print(f"{'cohort':<30}{'confirmed':>10}{'reverted':>9}{'gas used':>14}{'gas limit':>14}{'tip/tx (ETH)':>15}{'fee/tx (ETH)':>15}{'p50':>8}{'p95':>8}{'max':>8}")
-    for label, name in ((ARB, "reverting arbs (20x tip, 500k limit)"), (REGULAR, "regular (1x tip, 100k limit)")):
+    for label, name in ((ARB, "reverting arbs (20x tip, 500k limit)"), (REGULAR, "regular (1x tip, ~122k limit)")):
         c = by.get(label)
         if not c:
             failures.append(f"{phase}: no confirmed transactions in cohort {label}")
@@ -193,6 +195,20 @@ for phase in phases:
         lat = c["block_latency"]
         rows[(phase, label)] = c
         print(f"{name:<30}{n:>10}{c['reverted']:>9}{c['total_gas']:>14}{c.get('total_gas_limit', 0):>14}{tip / n / ETH:>15.9f}{fee / n / ETH:>15.9f}{dur(lat['p50']):>7.2f}s{dur(lat['p95']):>7.2f}s{dur(lat['max']):>7.2f}s")
+    summary = load(f"{out}/{phase}.summary.json")
+    tp = summary.get("throughput", {})
+    submitted, confirmed = tp.get("total_submitted", 0), tp.get("total_confirmed", 0)
+    arbs = by.get(ARB, {}).get("confirmed", 0)
+    regular = by.get(REGULAR, {}).get("confirmed", 0)
+    lost = max(submitted - confirmed, 0)
+    rows[(phase, "lost")] = lost
+    rows[(phase, "submitted")] = submitted
+    print(f"  submitted {submitted:,}  ·  included {confirmed:,} ({arbs:,} reverting arbs, {regular:,} regular)  ·  never included {lost:,}")
+    if regular:
+        used = by[REGULAR]["total_gas"] / regular
+        lim = by[REGULAR].get("total_gas_limit", 0) / regular
+        if lim:
+            print(f"  regular transactions use {used / lim * 100:.0f}% of their declared gas ({used:,.0f} of {lim:,.0f})")
     print(f"--- {phase}: builder (Prometheus deltas over the phase) ---")
     for key, label in (
         ("candidates_evaluated", "validity candidates evaluated"),
@@ -230,9 +246,12 @@ if z_arb and z_regular:
     if z_arb["reverted"] == 0:
         failures.append("zenith reverting arbs: none reverted; the reverting arb payload must revert")
     ratio = tip_per_tx(z_arb) / tip_per_tx(z_regular) if tip_per_tx(z_regular) else float("inf")
-    print(f"zenith: a reverting arb pays the sequencer {ratio:.1f}x the tip a regular transaction pays (expected ~ 20 * 500,000 / 100,000 = 100x); total fee incl. base fee {fee_per_tx(z_arb) / fee_per_tx(z_regular):.1f}x")
-    if ratio < 50:
-        failures.append(f"zenith: reverting-arb/regular tip ratio {ratio:.1f}x is below 50x")
+    arb_limit = z_arb["total_gas_limit"] / z_arb["confirmed"]
+    regular_limit = z_regular["total_gas_limit"] / z_regular["confirmed"]
+    expected = 20 * arb_limit / regular_limit if regular_limit else 0
+    print(f"zenith: a reverting arb pays the sequencer {ratio:.1f}x the tip a regular transaction pays (expected ~ 20 * {arb_limit:,.0f} / {regular_limit:,.0f} = {expected:.0f}x); total fee incl. base fee {fee_per_tx(z_arb) / fee_per_tx(z_regular):.1f}x")
+    if ratio < expected / 2:
+        failures.append(f"zenith: reverting-arb/regular tip ratio {ratio:.1f}x is below half the expected {expected:.0f}x")
 
 e_arb, e_regular = rows.get(("everest", ARB)), rows.get(("everest", REGULAR))
 if e_arb and z_arb:
@@ -246,6 +265,9 @@ if e_arb and z_arb:
     e_rev, z_rev = rows.get(("everest", "revenue")), rows.get(("zenith", "revenue"))
     if e_rev and z_rev:
         print(f"sequencer validity-flow priority-fee revenue: {e_rev / ETH:.6f} ETH -> {z_rev / ETH:.6f} ETH ({z_rev / e_rev:.1f}x) for the same flood")
+    e_lost, z_lost = rows.get(("everest", "lost")), rows.get(("zenith", "lost"))
+    if e_lost is not None:
+        print(f"regular transactions never included under metered billing: {e_lost:,} of {rows[('everest', 'submitted')]:,} submitted (the reverting arbs all landed); under gas limit pricing: {z_lost:,} of {rows[('zenith', 'submitted')]:,}")
     e_inc, z_inc = metric_delta("everest", "validity_txs_included"), metric_delta("zenith", "validity_txs_included")
     if e_inc and z_inc:
         print(f"validity transactions included in 60 s: {e_inc:,.0f} -> {z_inc:,.0f} (blocks now fill by declared gas; padding costs capacity as well as fees)")

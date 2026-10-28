@@ -189,8 +189,23 @@ gas-limit-pricing *args:
         exit 1
     fi
 
+    echo "Deploying StorageFiller to the running devnet..."
+    filler_output="$(
+        cd "$contracts_dir"
+        forge create src/StorageFiller.sol:StorageFiller \
+            --rpc-url http://localhost:7545 \
+            --private-key "$FUNDER_KEY" \
+            --broadcast 2>&1
+    )"
+    printf '%s\n' "$filler_output"
+    filler="$(printf '%s\n' "$filler_output" | awk '$1 == "Deployed" && $2 == "to:" { print $3; exit }')"
+    if [[ ! "$filler" =~ ^0x[[:xdigit:]]{40}$ ]]; then
+        echo "failed to parse StorageFiller address from forge output" >&2
+        exit 1
+    fi
+
     cargo run --quiet -p base-load-tests --example render_validity_stress -- \
-        --predicates all-true "$template" "$counter" "$rendered_config"
+        --predicates all-true --storage-filler "$filler" "$template" "$counter" "$rendered_config"
 
     echo "Running gas-limit pricing demo with rendered config: $rendered_config"
     cargo run -p base-load-tester-bin --bin base-load-tester -- "$rendered_config" {{args}}

@@ -8,6 +8,8 @@ use eyre::{Result, WrapErr, bail, ensure};
 
 const CONTRACT_PLACEHOLDER: &str = "__DOUBLE_COUNTER__";
 const PREDICATES_PLACEHOLDER: &str = "__VALIDITY_PREDICATES__";
+/// Optional second contract placeholder for profiles whose regular cohort writes `StorageFiller`.
+const STORAGE_FILLER_PLACEHOLDER: &str = "__STORAGE_FILLER__";
 /// Blocks past the current height at which always-true validity transactions expire. Ingress
 /// requires a finite `block_number` upper bound within its 60 s window, measured at the active
 /// block cadence. The demo profile targets the devnet's Denim 200 ms blocks, where 240 blocks is
@@ -68,11 +70,20 @@ impl Renderer {
         predicates
     }
 
-    fn render(template: &str, address: &str, set: PredicateSet) -> Result<String> {
+    fn is_address(address: &str) -> bool {
+        address.len() == 42
+            && address.starts_with("0x")
+            && address[2..].bytes().all(|byte| byte.is_ascii_hexdigit())
+    }
+
+    fn render(
+        template: &str,
+        address: &str,
+        storage_filler: Option<&str>,
+        set: PredicateSet,
+    ) -> Result<String> {
         ensure!(
-            address.len() == 42
-                && address.starts_with("0x")
-                && address[2..].bytes().all(|byte| byte.is_ascii_hexdigit()),
+            Self::is_address(address),
             "contract address must be a 20-byte 0x-prefixed hex value"
         );
         ensure!(
@@ -80,10 +91,19 @@ impl Renderer {
                 && template.matches(PREDICATES_PLACEHOLDER).count() == 1,
             "template must contain the contract placeholder and exactly one predicates placeholder"
         );
-
-        Ok(template
+        let mut rendered = template
             .replace(CONTRACT_PLACEHOLDER, address)
-            .replace(PREDICATES_PLACEHOLDER, &Self::predicates(address, set)))
+            .replace(PREDICATES_PLACEHOLDER, &Self::predicates(address, set));
+        if rendered.contains(STORAGE_FILLER_PLACEHOLDER) {
+            let filler = storage_filler
+                .ok_or_else(|| eyre::eyre!("template needs --storage-filler <address>"))?;
+            ensure!(
+                Self::is_address(filler),
+                "StorageFiller address must be a 20-byte 0x-prefixed hex value"
+            );
+            rendered = rendered.replace(STORAGE_FILLER_PLACEHOLDER, filler);
+        }
+        Ok(rendered)
     }
 }
 
@@ -91,20 +111,31 @@ fn main() -> Result<()> {
     let mut args = env::args().collect::<Vec<_>>();
     let program = args.first().cloned().unwrap_or_else(|| "render_validity_stress".to_string());
     let usage = format!(
-        "usage: {program} [--predicates parity-gate|all-true] <template> <contract-address> <output>"
+        "usage: {program} [--predicates parity-gate|all-true] [--storage-filler <address>] <template> <contract-address> <output>"
     );
 
     let mut set = PredicateSet::ParityGate;
-    if args.get(1).is_some_and(|arg| arg == "--predicates") {
-        ensure!(args.len() >= 3, "{usage}");
-        set = PredicateSet::parse(&args[2])?;
-        args.drain(1..3);
+    let mut storage_filler = None;
+    loop {
+        match args.get(1).map(String::as_str) {
+            Some("--predicates") => {
+                ensure!(args.len() >= 3, "{usage}");
+                set = PredicateSet::parse(&args[2])?;
+                args.drain(1..3);
+            }
+            Some("--storage-filler") => {
+                ensure!(args.len() >= 3, "{usage}");
+                storage_filler = Some(args[2].clone());
+                args.drain(1..3);
+            }
+            _ => break,
+        }
     }
     ensure!(args.len() == 4, "{usage}");
 
     let template = fs::read_to_string(Path::new(&args[1]))
         .wrap_err_with(|| format!("failed to read template {}", args[1]))?;
-    let rendered = Renderer::render(&template, &args[2], set)?;
+    let rendered = Renderer::render(&template, &args[2], storage_filler.as_deref(), set)?;
     fs::write(Path::new(&args[3]), rendered)
         .wrap_err_with(|| format!("failed to write rendered config {}", args[3]))?;
     Ok(())
@@ -112,15 +143,16 @@ fn main() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{PREDICATES_PLACEHOLDER, PredicateSet, Renderer};
+    use super::{PREDICATES_PLACEHOLDER, PredicateSet, Renderer, STORAGE_FILLER_PLACEHOLDER};
 
     const ADDRESS: &str = "0x1234567890123456789012345678901234567890";
+    const FILLER: &str = "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd";
     const TEMPLATE: &str = include_str!("validity-stress.yaml.template");
     const GAS_LIMIT_PRICING_TEMPLATE: &str = include_str!("gas-limit-pricing.yaml.template");
 
     #[test]
     fn renders_exactly_64_storage_predicates() {
-        let result = Renderer::render(TEMPLATE, ADDRESS, PredicateSet::ParityGate).unwrap();
+        let result = Renderer::render(TEMPLATE, ADDRESS, None, PredicateSet::ParityGate).unwrap();
 
         assert_eq!(result.matches("    - type: storage").count(), 64);
         assert_eq!(result.matches("      mask: \"0x1\"").count(), 1);
@@ -146,12 +178,23 @@ mod tests {
         assert!(last_predicate.contains("      value: \"sender_parity\""));
         assert!(!result.contains(PREDICATES_PLACEHOLDER));
         assert!(!result.contains("__DOUBLE_COUNTER__"));
+        assert!(!result.contains(STORAGE_FILLER_PLACEHOLDER));
+        assert!(
+            Renderer::render(GAS_LIMIT_PRICING_TEMPLATE, ADDRESS, None, PredicateSet::AllTrue)
+                .is_err(),
+            "the demo template needs a StorageFiller address"
+        );
     }
 
     #[test]
     fn renders_all_true_predicates_with_expiry_for_gas_limit_pricing() {
-        let result =
-            Renderer::render(GAS_LIMIT_PRICING_TEMPLATE, ADDRESS, PredicateSet::AllTrue).unwrap();
+        let result = Renderer::render(
+            GAS_LIMIT_PRICING_TEMPLATE,
+            ADDRESS,
+            Some(FILLER),
+            PredicateSet::AllTrue,
+        )
+        .unwrap();
 
         assert_eq!(result.matches("    - type: storage").count(), 63);
         assert_eq!(result.matches("    - type: block_number").count(), 1);
@@ -162,7 +205,20 @@ mod tests {
         for slot in 0..63 {
             assert_eq!(result.matches(&format!("        value: \"0x{slot:x}\"")).count(), 1);
         }
-        assert_eq!(result.matches(&format!("contract: \"{ADDRESS}\"")).count(), 2);
+        assert_eq!(
+            result.matches(&format!("contract: \"{ADDRESS}\"")).count(),
+            1,
+            "revert_arb target"
+        );
+        assert_eq!(
+            result.matches(&format!("contract: \"{FILLER}\"")).count(),
+            1,
+            "regular cohort target"
+        );
+        assert!(
+            result.contains("    type: storage\n    contract: \"")
+                && result.contains("    slots_per_tx: 4")
+        );
         assert!(result.contains("sender_count: 200"));
         assert!(result.contains("duration: \"60s\""));
         assert!(result.contains("priority_lead_ratio: 0.10"));
@@ -178,7 +234,7 @@ mod tests {
     fn rejects_address_without_hex_prefix() {
         let address = ADDRESS.trim_start_matches("0x");
 
-        assert!(Renderer::render(TEMPLATE, address, PredicateSet::ParityGate).is_err());
+        assert!(Renderer::render(TEMPLATE, address, None, PredicateSet::ParityGate).is_err());
     }
 
     #[test]

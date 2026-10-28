@@ -512,17 +512,19 @@ with the fee in wei and ETH.
 ##### Gas-limit pricing demo
 
 `just load-test gas-limit-pricing [--continuous ...]` drives the scenario described in the
-[gas limit pricing guide](../../../docs/guides/GAS_LIMIT_PRICING.md): it deploys
-`DoubleCounter`, renders `gas-limit-pricing.yaml.template`, and runs 200 validity senders (two
+[gas limit pricing guide](../../../docs/guides/GAS_LIMIT_PRICING.md): it deploys `DoubleCounter` and
+`StorageFiller`, renders `gas-limit-pricing.yaml.template`, and runs 200 validity senders (six
 transactions in flight each) for 60 s against the builder RPC on port 7545. Every transaction
 carries 63 always-true storage reads plus the `block_number` expiry bound ingress requires (240
 blocks, 48 s at the devnet's 200 ms cadence), so predicate evaluation always passes. The 10%
 priority-lead cohort uses `validity.priority_lead_payload` to send `revert_arb` calls at a 20x
 tip: a call to `DoubleCounter` with the selector `0xdeadbeef`, which it does not implement, so the
-reverting arb reverts after ~21-25k gas while declaring a 500k gas limit. The other 90% send regular
-`double_counter` increments at the baseline tip. The profile is sized so that a builder started with
-`L2_BUILDER_PREDICATE_EVAL_HARD_CUTOFF_MS=2` evaluates the reverting arbs first and defers most regular
-candidates each block while enough still land to compare fees.
+call reverts after ~21-25k gas while declaring a 500k gas limit. The other 90% are regular
+transactions at the baseline tip: `StorageFiller.fillStorage` writing four fresh slots, which uses
+about 90% of its ~122k declared limit, the shape of an arbitrage that actually executes. The profile
+is sized so that a builder started with `L2_BUILDER_PREDICATE_EVAL_HARD_CUTOFF_MS=2` evaluates the
+reverting arbs first every block and the regular queue outgrows the budget, so some regular
+transactions expire unevaluated.
 
 ```yaml
 validity:
