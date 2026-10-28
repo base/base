@@ -102,7 +102,7 @@ where
     ///
     /// Execution is left to the payer, which simulates before co-signing and answers a failed
     /// payment with a more specific rejection than the node could, such as
-    /// `SENDER_BALANCE_INSUFFICIENT` with other offers to switch to. A nonce that cannot be read
+    /// `SENDER_BALANCE_INSUFFICIENT` with the sender's shortfall. A nonce that cannot be read
     /// passes the transaction on, since the payer checks it too.
     async fn check_transaction(&self, raw: &[u8], timestamp: u64) -> RpcResult<()> {
         let keystore = self.provider.chain_spec().is_zenith_active_at_timestamp(timestamp);
