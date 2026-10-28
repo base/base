@@ -22,6 +22,7 @@ pub use payloads::{
     DoubleCounterPayload, EIP8430_TRANSFER_GAS_LIMIT, Eip8430TransferPayload, Erc20Payload,
     OsakaPayload, Payload, PrecompileLooper, PrecompilePayload, StoragePayload, TransferPayload,
     UniswapV3Payload, encode_erc20_approve, recover_real_tokens,
+    USDC, X402Context, X402Payload,
 };
 pub(crate) use payloads::{b20_salt_for, b20_token_for};
 

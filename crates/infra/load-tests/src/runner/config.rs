@@ -156,6 +156,11 @@ pub enum TxType {
     Transfer,
     /// EIP-8430 EOA self-pay ETH transfer (requires Everest activation).
     Eip8430Transfer,
+    /// Facilitator-paid real USDC EIP-3009 settlement.
+    X402 {
+        /// Snapshot signing state shared across calibration and measured generators.
+        context: std::sync::Arc<std::sync::OnceLock<crate::workload::X402Context>>,
+    },
     /// ETH transfer with random calldata.
     Calldata {
         /// Maximum calldata size in bytes.

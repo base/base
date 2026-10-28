@@ -289,6 +289,28 @@ transactions:
     target: sha256
 ```
 
+#### x402 settlement testing
+
+`type: x402` submits the x402 exact-scheme settlement, a payer-signed USDC
+`transferWithAuthorization`, from a separate gas-paying facilitator. It requires a
+Base mainnet snapshot, at least three accounts, and the existing `real_token_setup`
+WETH-to-USDC acquisition alongside a swap workload. Setup checks the real proxy's
+domain separator, every payer's `balanceOf`, and `isBlacklisted`; no token storage
+is overwritten. Each facilitator uses the preceding funded account as payer, and
+the runner's following recipient as merchant. Random authorization nonces survive
+calibration generator reconstruction. Windows run from one second before setup's
+snapshot timestamp until seven snapshot days later; longer runs must restart setup.
+Each payment transfers one micro-USDC so finite payer balances last through a run.
+
+The mainnet mix generator classifies each transaction emitting canonical USDC
+`AuthorizationUsed` once, before other classes. This is an upper-bound x402 proxy:
+EIP-3009 has other users, and transactions may settle more than one authorization.
+It does not attribute facilitators. Weights use transaction counts, not event counts,
+and normalize to exactly 1,000. Runtime pacing still calibrates actual receipt gas.
+Benchmark mainnet-mix runs selecting `mainnet-mix-mainnet-snapshot.yaml` after this
+change are not comparable with runs using the earlier mix.
+
+
 #### Precompile Testing
 
 All EVM precompiles are supported for load testing:

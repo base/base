@@ -43,6 +43,7 @@ pub use workload::{
     PrecompileLooper, PrecompilePayload, RealTokenAcquisition, RealTokenPairTokenSetup,
     RealTokenRecoverySummary, RealTokenSetup, SeededRng, StoragePayload, TransferPayload,
     UniswapV3Payload, WorkloadGenerator, encode_erc20_approve, recover_real_tokens,
+    USDC, X402Context, X402Payload,
 };
 
 mod runner;

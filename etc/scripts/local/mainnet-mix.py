@@ -9,6 +9,8 @@ load-test run, pass the test node's --rpc and the run's --start/--end with --sam
 the range length.
 
 Each non-deposit transaction takes the first class it matches, in CLASSES order:
+x402 uses USDC AuthorizationUsed transactions as a proxy; other EIP-3009 users are included.
+
 
     transfer        empty calldata
     swap            DEX swap event
@@ -48,6 +50,8 @@ import urllib.request
 BLOCK_TIME = 2
 BLOCKS_PER_BATCH = 2
 DEPOSIT_TYPE = "0x7e"
+USDC = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"
+AUTHORIZATION_USED = "0x98de503528ee59b575ef0c0a2576a82497bfc029a5685b209e9ec333479b10a5"
 TOKEN_SELECTORS = {"0xa9059cbb", "0x23b872dd"}
 AA_SELECTORS = {"0x765e827f", "0x1fad948c"}  # EntryPoint v0.7 and v0.6 handleOps
 USER_OPERATION_EVENT = "0x49628fd1471006c1482da88028e9ce4dbb080b815c9b0344d39e5a8e6ec1419f"
@@ -71,11 +75,12 @@ LIQUIDITY_TOPICS = {
     "0x26f6a048ee9138f2c0ce266f322cb99228e8d619ae2bff30c67f8dcf9d2377b4",  # DecreaseLiquidity
     "0x40d0efd1a53d60ecbf40971b9daf7dc90178c3aadc7aab1765632738fa8b8f01",  # position Collect
 }
-CLASSES = ("transfer", "swap", "liquidity", "aa_bundle", "oracle", "token_transfer", "approval", "token_move",
+CLASSES = ("x402", "transfer", "swap", "liquidity", "aa_bundle", "oracle", "token_transfer", "approval", "token_move",
            "reverted", "no_logs", "other")
 
 
 GENERATOR = dict(
+    x402=("x402",),
     transfer=("transfer",), swap=("swap",), liquidity=("swap",), aa_bundle=("swap", "erc20"), oracle=("b20",),
     token_transfer=("erc20",), approval=("erc20",), token_move=("b20",), reverted=("b20",), no_logs=("b20",),
     other=("b20",),
@@ -95,6 +100,10 @@ CONFIG_TEMPLATE = """\
 # EntryPoint validation or failing calls; reverts run as successful b20 calls) and use less gas per tx: about
 # {load_gas_per_tx} vs mainnet's {gas_per_tx}, so matching gas per block takes {tx_ratio}x mainnet's txs per block.
 # For `base-bench snapshot`: the launcher replaces the RPC URLs and prefunds an ephemeral funder.
+# Includes USDC EIP-3009 as an x402 proxy (not all authorizations are x402).
+# Changed mix: benchmark runs using this YAML are not comparable with earlier mixes.
+# x402 header gas uses observed mainnet proxy gas; runtime pacing calibrates local receipts.
+# Preliminary x402 share; refine with a larger sample and facilitator attribution.
 
 transaction_submission_rpcs: ["http://127.0.0.1:7545"]
 query_rpc: "http://127.0.0.1:7545"
@@ -121,6 +130,7 @@ real_token_setup:
 # Swap amounts: WETH wei forward, USDC units in reverse.
 transactions:
   - {{weight: {transfer}, type: transfer}}
+  - {{weight: {x402}, type: x402}}
   - {{weight: {erc20}, type: erc20, contract: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"}}
   - {{weight: {b20}, type: b20}}
   - {{weight: {uniswap}, type: uniswap_v3, router: "0x2626664c2603336E57B271c5C0b26F421741e481", fee: 500,
@@ -152,6 +162,10 @@ def rpc_batch(url, calls, retries=8):
 def classify(tx, receipt):
     topics = {log["topics"][0] for log in receipt["logs"] if log["topics"]}
     selector = tx["input"][:10]
+    # USDC EIP-3009 is an upper-bound proxy for x402, not facilitator attribution.
+    if any(log.get("address", "").lower() == USDC and log["topics"]
+           and log["topics"][0] == AUTHORIZATION_USED for log in receipt["logs"]):
+        return "x402"
     if tx["input"] == "0x" and tx["to"]:
         return "transfer"
     if topics & SWAP_TOPICS:
@@ -248,8 +262,15 @@ def render(stats):
     for kind, targets in GENERATOR.items():
         for target in targets:
             share[target] += classes[kind]["tx_share"] / len(targets)
-    weight = {target: round(value * WEIGHT_SCALE) for target, value in share.items()}
-    load_gas_per_tx = round(sum(share[t] * LOAD_GAS_PER_TX[t] for t in share) / sum(share.values()))
+    # Largest-remainder normalization preserves exactly WEIGHT_SCALE total weight.
+    total_share = sum(share.values())
+    scaled = {target: value * WEIGHT_SCALE / total_share for target, value in share.items()}
+    weight = {target: int(value) for target, value in scaled.items()}
+    for target in sorted(weight, key=lambda t: scaled[t] - weight[t], reverse=True)[:WEIGHT_SCALE - sum(weight.values())]:
+        weight[target] += 1
+    # x402 has no local replay measurement yet; its header estimate uses observed mainnet gas.
+    gas_estimates = LOAD_GAS_PER_TX | {"x402": classes["x402"]["gas_per_tx"]}
+    load_gas_per_tx = round(sum(share[t] * gas_estimates[t] for t in share) / sum(share.values()))
     gas_per_tx = round(stats["per_block"]["gas"] / stats["per_block"]["txs"])
     class_lines = "\n".join(
         f"#   {kind:<15}{c['tx_share']:7.2%} / {c['gas_share']:7.2%}, {c['gas_per_tx']:>7} -> {'+'.join(GENERATOR[kind])}"
@@ -278,13 +299,23 @@ def main():
     parser.add_argument("--samples", type=int, default=10080, help="blocks sampled evenly across the window")
     parser.add_argument("--workers", type=int, default=4, help="concurrent batch requests")
     parser.add_argument("--cache", help="JSON-lines file of fetched blocks, reused on rerun")
+    parser.add_argument("--cached-only", action="store_true", help="render all complete cached rows without RPC requests")
     parser.add_argument("--out", help="write a load-test config here")
     args = parser.parse_args()
-    end = args.end if args.end is not None else int(rpc_batch(args.rpc, [("eth_blockNumber", [])])[0], 16)
-    start = args.start if args.start is not None else end - int(args.days * 86400 / BLOCK_TIME) + 1
-    count = max(2, min(args.samples, end - start + 1))
-    blocks = [start + round(i * (end - start) / (count - 1)) for i in range(count)]
-    stats = report(blocks, sample(args.rpc, blocks, args.cache, args.workers))
+    if args.cached_only:
+        if not args.cache:
+            parser.error("--cached-only requires --cache")
+        with open(args.cache) as cache:
+            rows = sorted((json.loads(line) for line in cache if line.strip()), key=lambda row: row["n"])
+        if len(rows) < 2:
+            parser.error("--cached-only requires at least two cached blocks")
+        stats = report([row["n"] for row in rows], rows)
+    else:
+        end = args.end if args.end is not None else int(rpc_batch(args.rpc, [("eth_blockNumber", [])])[0], 16)
+        start = args.start if args.start is not None else end - int(args.days * 86400 / BLOCK_TIME) + 1
+        count = max(2, min(args.samples, end - start + 1))
+        blocks = [start + round(i * (end - start) / (count - 1)) for i in range(count)]
+        stats = report(blocks, sample(args.rpc, blocks, args.cache, args.workers))
     print(json.dumps(stats, indent=2))
     if args.out:
         with open(args.out, "w") as out:

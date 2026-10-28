@@ -98,8 +98,8 @@ mod tests {
         let baseline = baseline.to_load_config(None).expect("ordinary baseline must convert");
         assert_eq!(
             baseline.transactions.iter().map(|tx| tx.weight).collect::<Vec<_>>(),
-            vec![41, 75, 585, 150, 149],
-            "baseline weights must remain unchanged"
+            vec![107, 22, 74, 564, 117, 116],
+            "baseline weights must match the regenerated preliminary mainnet sample"
         );
         assert!(
             matches!(baseline.transactions[0].tx_type, TxType::Transfer),
