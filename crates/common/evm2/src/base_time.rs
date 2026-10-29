@@ -104,8 +104,14 @@ impl BaseTime {
         let slot = evm
             .state_mut()
             .storage_slot_untracked(&Predeploys::BASE_TIME, &Self::TIMESTAMP_MILLIS_PART_SLOT)?;
-        let millis_part = slot.as_limbs()[0] & u64::from(u16::MAX);
+        let millis_part = u64::from(Self::decode_timestamp_millis_part(slot));
         Ok(seconds.wrapping_mul(1_000).wrapping_add(millis_part))
+    }
+
+    /// Decodes the millisecond part from the low `uint16` of a
+    /// [`TIMESTAMP_MILLIS_PART_SLOT`](Self::TIMESTAMP_MILLIS_PART_SLOT) value.
+    pub const fn decode_timestamp_millis_part(slot: U256) -> u16 {
+        (slot.as_limbs()[0] & u16::MAX as u64) as u16
     }
 
     /// Installs the `BaseTime` implementation and links its existing proxy before transactions.

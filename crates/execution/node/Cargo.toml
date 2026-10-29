@@ -50,20 +50,11 @@ base-execution-trie = { workspace = true, features = ["metrics"] }
 base-execution-consensus = { workspace = true, features = ["std"] }
 base-execution-evm = { workspace = true, features = ["std", "rpc"] }
 
-# revm with required Base features
-# Note: this must be kept to ensure all features are properly enabled/forwarded
-base-common-evm.workspace = true
-revm = { workspace = true, features = [
-	"secp256k1",
-	"blst",
-	"c-kzg",
-	"memory_limit",
-] }
-
 # ethereum
 alloy-consensus.workspace = true
 alloy-primitives.workspace = true
 base-common-chains.workspace = true
+base-common-evm2.workspace = true
 base-upgrade-signal.workspace = true
 alloy-rpc-types-eth.workspace = true
 base-common-network.workspace = true
@@ -106,8 +97,8 @@ base-node-core = { workspace = true, features = ["test-utils"] }
 reth-node-builder = { workspace = true, features = ["test-utils"] }
 
 alloy-eips.workspace = true
+evm2 = { workspace = true, features = ["std"] }
 criterion = { workspace = true, features = ["html_reports"] }
-base-common-evm.workspace = true
 
 [[bench]]
 name = "provider"
@@ -119,7 +110,6 @@ asm-keccak = [
 	"alloy-primitives/asm-keccak",
 	"base-node-core/asm-keccak",
 	"reth-node-core/asm-keccak",
-	"revm/asm-keccak",
 ]
 keccak-cache-global = [
 	"alloy-primitives/keccak-cache-global",
