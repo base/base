@@ -1,7 +1,8 @@
 //! Base's EVM2 execution type family.
 
-use alloy_primitives::U256;
+use alloy_primitives::{Address, U256};
 use base_common_l1_fees::L1FeeParams;
+use base_precompile_storage::Evm2TxOrigin;
 use evm2::{BaseEvmConfigSelector, Evm, EvmTypesHost};
 
 use crate::{BaseSpecId, BaseTxEnvelope};
@@ -57,4 +58,14 @@ pub struct BaseEvmExt {
     /// Mirrors the revm reference's `L1BlockInfo::l2_block` cache key: the parameters are read
     /// from the `L1Block` predeploy once per block, at its first non-deposit transaction.
     pub l1_fee_params_block: Option<U256>,
+    /// The origin (`tx.origin`) of the transaction currently executing, read by the Base native
+    /// precompiles: the caller of a standard transaction, the depositor of a deposit, or the
+    /// resolved sender of an EIP-8130 transaction.
+    pub tx_origin: Address,
+}
+
+impl Evm2TxOrigin for BaseEvmExt {
+    fn tx_origin(&self) -> Address {
+        self.tx_origin
+    }
 }

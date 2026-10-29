@@ -18,6 +18,9 @@ base-common-genesis.workspace = true
 base-common-eip8130.workspace = true
 base-common-l1-fees.workspace = true
 base-common-consensus.workspace = true
+base-execution-eip8130.workspace = true
+base-precompile-storage = { workspace = true, default-features = false, features = ["evm2", "std"] }
+base-common-precompiles = { workspace = true, default-features = false, features = ["evm2", "std"] }
 
 # evm2
 evm2 = { workspace = true, features = ["std"] }
@@ -35,12 +38,14 @@ alloy-primitives.workspace = true
 # and alloy crates the tests use are already in [dependencies]; Cargo unifies features across both
 # sections, so only the dev-only crates are listed here.
 base-common-evm = { workspace = true, features = ["blst", "c-kzg", "portable", "secp256k1", "std"] }
-# base — the revm precompile set, as the source of truth for the precompile-cap parity test.
-base-common-precompiles.workspace = true
+# base — the revm precompile set, as the source of truth for the precompile parity tests.
+base-common-precompiles = { workspace = true, features = ["revm"] }
 # base — the revm transition hooks + fork schedule, for the transition-parity harness.
 base-common-chains.workspace = true
 
-# alloy — ForkCondition, to build the revm-side fork schedule in the transition-parity harness.
+# alloy — ForkCondition, to build the revm-side fork schedule in the transition-parity harness,
+# and the sol ABI encoders the precompile-calling harnesses use.
+alloy-sol-types.workspace = true
 alloy-hardforks.workspace = true
 
 # revm

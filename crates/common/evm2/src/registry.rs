@@ -82,6 +82,7 @@ impl BaseEvmTypes {
     ) -> HandlerResult<TxResult<Self>> {
         let host = req.host;
         let tx: &TxDeposit = *req.tx;
+        host.ext_mut().tx_origin = tx.from;
 
         // Credit the mint and bump the sender nonce, capturing the pre-bump nonce for a create
         // deposit's contract-address derivation.

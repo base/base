@@ -110,6 +110,7 @@ impl TxHandlerHooks<BaseEvmTypes> for BaseTxHandlerHooks {
         // Charge the upfront gas cost, the L1 data fee, and the operator fee (on the gas limit)
         // from the caller. Both fees are stashed for settlement so it charges/refunds against the
         // exact amounts collected here, without recomputing them.
+        host.ext_mut().tx_origin = caller;
         L1Block::ensure_fee_params(host)?;
         let l1_fee = Self::l1_fee(host, envelope);
         let operator_fee = Self::operator_fee(host, envelope, envelope.gas_limit());
