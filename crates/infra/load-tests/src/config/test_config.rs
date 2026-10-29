@@ -934,6 +934,11 @@ impl TestConfig {
                 }
             }
             TxTypeConfig::UniswapV3Liquidity(payload) => {
+                if !self.real_token_setup.as_ref().is_some_and(|setup| setup.enabled) {
+                    return Err(BaselineError::Config(
+                        "uniswap_v3_liquidity requires enabled real_token_setup".into(),
+                    ));
+                }
                 payload.validate()?;
                 TxType::UniswapV3Liquidity(payload.clone())
             }

@@ -29,9 +29,12 @@ type I24 = Signed<24, 1>;
 
 /// Tick spacings on each side of the setup tick, so swaps rarely move the price out of range.
 const RANGE_SPACINGS: i32 = 100;
-/// The setup position holds this many increases' worth of liquidity, so random-order decreases
-/// (each removing one increase's worth) cannot empty it.
+/// The setup position holds this many increases' worth of liquidity at the setup price.
 const SETUP_MULTIPLIER: u64 = 64;
+/// A decrease removes half an increase's worth, so with `decrease <= increase` the position still
+/// grows on average when the price drifts to a range edge, where an increase adds about half as
+/// much liquidity as at the setup price.
+const DECREASES_PER_INCREASE: u64 = 2;
 const MINT_GAS_LIMIT: u64 = 600_000;
 const POSITION_GAS_LIMIT: u64 = 300_000;
 const MULTICALL_GAS_LIMIT: u64 = 1_200_000;
@@ -97,7 +100,7 @@ pub struct LiquidityOps {
     pub mint: u32,
     /// Adds `amount0`/`amount1` to the sender's setup position.
     pub increase: u32,
-    /// Removes one increase's worth of liquidity from the sender's setup position.
+    /// Removes half an increase's worth of liquidity from the sender's setup position.
     pub decrease: u32,
     /// Collects owed tokens from the sender's setup position.
     pub collect: u32,
@@ -193,7 +196,9 @@ impl UniswapV3LiquidityPayload {
             })?;
         Ok(SenderPosition {
             token_id: event.tokenId,
-            decrease_liquidity: (event.liquidity / u128::from(SETUP_MULTIPLIER)).max(1),
+            decrease_liquidity: (event.liquidity
+                / u128::from(SETUP_MULTIPLIER * DECREASES_PER_INCREASE))
+            .max(1),
         })
     }
 
@@ -497,7 +502,7 @@ mod tests {
         let logs = [mint_log(Address::repeat_byte(0x99), 1, 6_400), mint_log(MANAGER, 42, 6_400)];
         let position = UniswapV3LiquidityPayload::minted_position(MANAGER, &logs).unwrap();
         assert_eq!(position.token_id, U256::from(42), "other contracts' events are ignored");
-        assert_eq!(position.decrease_liquidity, 100, "one decrease removes 1/64 of setup");
+        assert_eq!(position.decrease_liquidity, 50, "one decrease removes 1/128 of setup");
         let tiny = UniswapV3LiquidityPayload::minted_position(MANAGER, &[mint_log(MANAGER, 1, 1)]);
         assert_eq!(tiny.unwrap().decrease_liquidity, 1, "decreases never burn zero liquidity");
         assert!(UniswapV3LiquidityPayload::minted_position(MANAGER, &logs[..1]).is_err());
@@ -525,6 +530,17 @@ mod tests {
         assert!(
             config.parse_real_token_setup(8453).unwrap().is_some(),
             "pool matches setup tokens"
+        );
+
+        let mut no_setup = config.clone();
+        no_setup.real_token_setup = None;
+        no_setup
+            .transactions
+            .retain(|tx| matches!(tx.tx_type, TxTypeConfig::UniswapV3Liquidity(_)));
+        assert_eq!(
+            no_setup.to_load_config(None).unwrap_err().to_string(),
+            "configuration error: uniswap_v3_liquidity requires enabled real_token_setup",
+            "setup mints need real_token_setup"
         );
 
         let mut wrong_pool = config;
