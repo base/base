@@ -4534,6 +4534,7 @@ dependencies = [
  "reth-provider",
  "reth-revm",
  "reth-storage-api",
+ "reth-tasks",
  "reth-transaction-pool",
  "reth-trie-common",
  "reth-trie-parallel",

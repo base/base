@@ -1,21 +1,27 @@
 //! Validity transactions resting under an unsatisfied predicate, carried across block builds.
 
-use std::sync::Arc;
+use std::{
+    collections::BTreeMap,
+    sync::{Arc, mpsc},
+    time::{Duration, Instant},
+};
 
 use alloy_primitives::{B256, TxHash};
 use base_execution_txpool::{PredicateContext, ValidityConditions, ValidityPredicate};
 use parking_lot::Mutex;
+use reth_tasks::Runtime;
 use revm::{database::TransitionState, state::EvmState};
+use tracing::debug_span;
 
-use crate::{ParkedPredicateIndex, ValidityPredicateKey};
+use crate::{ParkedPredicateIndex, ValidityMetrics, ValidityPredicateKey};
 
 /// Blocks a member stays in the set after the last build that yielded it.
 ///
 /// Every state change wakes members whether or not the pool still yields them, so keeping a member
-/// longer only costs memory. Members are swept every this many blocks, so one that left the pool is
-/// dropped after between this many and twice this many blocks, two to four seconds at the 200ms
-/// block time Denim activates. Sweeping every block would walk every member on the block-start
-/// path.
+/// longer only costs memory. A member that left the pool is dropped when the block this many
+/// blocks after the last build that yielded it finishes, two seconds at the 200ms block time Denim
+/// activates. The sweep that drops it only visits the members filed that many blocks ago, and runs
+/// off the build path; see [`RestingPredicateStore::finish`].
 pub const RESTING_UNSEEN_RETAINED_BLOCKS: u64 = 10;
 
 /// Mode for holding back validity transactions that rest under an unchanged predicate.
@@ -53,6 +59,9 @@ pub struct RestingMember {
     pub rested_block: u64,
     /// Block whose build last yielded the transaction.
     pub seen_block: u64,
+    /// Block whose generation lists the member, so the sweep visits it once that block is
+    /// [`RESTING_UNSEEN_RETAINED_BLOCKS`] old.
+    filed_block: u64,
 }
 
 /// What [`RestingPredicates::begin_block`] did to the set.
@@ -64,9 +73,6 @@ pub struct RestingCarryOver {
     pub released_by_state: usize,
     /// Members released because their predicate reads the block number.
     pub released_by_block_number: usize,
-    /// Members dropped by the periodic sweep because no build yielded them for at least
-    /// [`RESTING_UNSEEN_RETAINED_BLOCKS`].
-    pub released_unseen: usize,
     /// Members carried into the new block.
     pub carried: usize,
 }
@@ -89,6 +95,11 @@ pub struct RestingPredicates {
     /// Hash of the block whose final state the members were last checked against. `None` while a
     /// block is being built, so a build that does not finish cannot hand its members on.
     tip: Option<B256>,
+    /// Members by the block they are filed under. A member is filed under the block that rested
+    /// it, and re-filed under its latest seen block when the sweep finds it was seen since, so the
+    /// sweep only visits members old enough to drop. Entries for members that were removed or
+    /// re-filed since are stale and skipped.
+    generations: BTreeMap<u64, Vec<TxHash>>,
 }
 
 impl RestingPredicates {
@@ -99,6 +110,7 @@ impl RestingPredicates {
             ordered_threshold,
             block_number: 0,
             tip: None,
+            generations: BTreeMap::new(),
         }
     }
 
@@ -121,6 +133,7 @@ impl RestingPredicates {
             None => {
                 carry_over.reset = !self.index.is_empty();
                 self.index = ParkedPredicateIndex::new(self.ordered_threshold);
+                self.generations.clear();
             }
             Some(changes) => {
                 for hash in self.index.affected_by_transitions(changes).affected_transactions {
@@ -129,11 +142,6 @@ impl RestingPredicates {
                 for hash in self.index.transactions_blocked_by(ValidityPredicateKey::BlockNumber) {
                     carry_over.released_by_block_number +=
                         usize::from(self.index.remove(hash).is_some());
-                }
-                if block_number.is_multiple_of(RESTING_UNSEEN_RETAINED_BLOCKS) {
-                    let oldest_seen = block_number.saturating_sub(RESTING_UNSEEN_RETAINED_BLOCKS);
-                    carry_over.released_unseen =
-                        self.index.retain(|member| member.seen_block >= oldest_seen);
                 }
             }
         }
@@ -148,6 +156,65 @@ impl RestingPredicates {
         self.tip = Some(block_hash);
     }
 
+    /// Returns whether finishing the block being built is due an unseen sweep, because some
+    /// members are filed under a block at least [`RESTING_UNSEEN_RETAINED_BLOCKS`] old.
+    pub fn sweep_due(&self) -> bool {
+        self.due_generation().is_some_and(|due| {
+            self.generations.first_key_value().is_some_and(|(filed, _)| *filed <= due)
+        })
+    }
+
+    /// Latest block whose generation is old enough to sweep.
+    const fn due_generation(&self) -> Option<u64> {
+        self.block_number.checked_sub(RESTING_UNSEEN_RETAINED_BLOCKS)
+    }
+
+    /// Drops members no build yielded in the last [`RESTING_UNSEEN_RETAINED_BLOCKS`] blocks and
+    /// returns how many were dropped.
+    ///
+    /// Only visits members filed under a block that is old enough: those not seen since are
+    /// dropped and the rest are re-filed under the block that last saw them. Run every block, it
+    /// costs about the members rested or re-filed in one block rather than the whole set.
+    /// Builders run it through [`RestingPredicateStore::finish`], off the path between the
+    /// forkchoice update and flashblock scheduling.
+    pub fn sweep_unseen(&mut self) -> usize {
+        let Some(due) = self.due_generation() else { return 0 };
+        let span = debug_span!(
+            target: "payload_builder",
+            "resting_unseen_sweep",
+            block_number = self.block_number,
+            visited = tracing::field::Empty,
+            released = tracing::field::Empty,
+        );
+        let _entered = span.enter();
+        let start = Instant::now();
+        let (mut visited, mut released) = (0, 0);
+        while let Some(generation) = self.generations.first_entry() {
+            if *generation.key() > due {
+                break;
+            }
+            let (filed, hashes) = generation.remove_entry();
+            visited += hashes.len();
+            for hash in hashes {
+                let Some(member) = self.index.transaction_mut(hash) else { continue };
+                if member.filed_block != filed {
+                    continue;
+                }
+                if member.seen_block > due {
+                    member.filed_block = member.seen_block;
+                    self.generations.entry(member.seen_block).or_default().push(hash);
+                } else {
+                    self.index.remove(hash);
+                    released += 1;
+                }
+            }
+        }
+        ValidityMetrics::record_resting_unseen_sweep(released, start.elapsed());
+        span.record("visited", visited);
+        span.record("released", released);
+        released
+    }
+
     /// Records that `predicate` was unsatisfied for `transaction_hash` at the current build
     /// position.
     ///
@@ -157,9 +224,21 @@ impl RestingPredicates {
         if matches!(predicate, ValidityPredicate::FlashblockIndex { .. }) {
             return;
         }
-        let member =
-            RestingMember { rested_block: self.block_number, seen_block: self.block_number };
+        // A member resting again in the block that filed it is already listed in that block's
+        // generation; listing it twice would only give the sweep a stale entry to skip.
+        let filed = self
+            .index
+            .entry(transaction_hash)
+            .is_some_and(|(member, _)| member.filed_block == self.block_number);
+        let member = RestingMember {
+            rested_block: self.block_number,
+            seen_block: self.block_number,
+            filed_block: self.block_number,
+        };
         self.index.park(transaction_hash, member, predicate);
+        if !filed {
+            self.generations.entry(self.block_number).or_default().push(transaction_hash);
+        }
     }
 
     /// Removes a member, returning whether it was present.
@@ -243,6 +322,50 @@ impl RestingPredicates {
     }
 }
 
+/// A finished block's [`RestingPredicates`], possibly still being swept in the background.
+#[derive(Debug)]
+pub struct FinishingRestingPredicates(Finishing);
+
+#[derive(Debug)]
+enum Finishing {
+    Ready(RestingPredicates),
+    Sweeping(mpsc::Receiver<RestingPredicates>),
+}
+
+impl FinishingRestingPredicates {
+    /// Returns the set, waiting up to `limit` for an unfinished sweep.
+    ///
+    /// Returns `None` when the sweep does not finish in time or its task was dropped without
+    /// returning the set; the caller then starts with an empty set. Time spent waiting is recorded,
+    /// because it delays the build that takes the set.
+    pub fn wait(self, limit: Duration) -> Option<RestingPredicates> {
+        match self.0 {
+            Finishing::Ready(resting) => Some(resting),
+            Finishing::Sweeping(receiver) => match receiver.try_recv() {
+                Ok(resting) => {
+                    ValidityMetrics::record_resting_sweep_wait(Duration::ZERO);
+                    Some(resting)
+                }
+                Err(mpsc::TryRecvError::Empty) => {
+                    let start = Instant::now();
+                    let resting = receiver.recv_timeout(limit);
+                    ValidityMetrics::record_resting_sweep_wait(start.elapsed());
+                    match resting {
+                        Ok(resting) => Some(resting),
+                        // The sweep finishes on its worker and drops the set there.
+                        Err(mpsc::RecvTimeoutError::Timeout) => {
+                            ValidityMetrics::record_resting_sweep_wait_timeout();
+                            None
+                        }
+                        Err(mpsc::RecvTimeoutError::Disconnected) => None,
+                    }
+                }
+                Err(mpsc::TryRecvError::Disconnected) => None,
+            },
+        }
+    }
+}
+
 /// Holds one builder's [`RestingPredicates`] between payload jobs.
 ///
 /// A job takes the set when it starts and puts it back once it finishes a block. A job that fails
@@ -250,18 +373,70 @@ impl RestingPredicates {
 /// most one of them holding the set.
 #[derive(Debug, Clone, Default)]
 pub struct RestingPredicateStore {
-    members: Arc<Mutex<Option<RestingPredicates>>>,
+    members: Arc<Mutex<Option<(FinishingRestingPredicates, B256)>>>,
+    /// Runs end-of-block sweeps in the background. Without one, sweeps run inline in
+    /// [`Self::finish`].
+    executor: Option<Runtime>,
 }
 
 impl RestingPredicateStore {
-    /// Takes the stored set, or creates an empty one with `ordered_threshold`.
-    pub fn take(&self, ordered_threshold: usize) -> RestingPredicates {
-        self.members.lock().take().unwrap_or_else(|| RestingPredicates::new(ordered_threshold))
+    /// Name of the task-executor worker that runs end-of-block sweeps.
+    const SWEEP_WORKER: &'static str = "resting-sweep";
+
+    /// Creates an empty store whose end-of-block sweeps run on `executor`.
+    pub fn new(executor: Runtime) -> Self {
+        Self { members: Arc::default(), executor: Some(executor) }
     }
 
-    /// Stores `resting` for the next job.
-    pub fn put(&self, resting: RestingPredicates) {
-        *self.members.lock() = Some(resting);
+    /// Takes the stored set, or creates an empty one with `ordered_threshold`.
+    ///
+    /// Waits up to `sweep_wait_limit` for a sweep the previous job started. A sweep still running
+    /// after that is abandoned and the set returned empty: the build evaluates every validity
+    /// transaction again, as after a reset, and the sweep drops the old set on its worker.
+    pub fn take(&self, ordered_threshold: usize, sweep_wait_limit: Duration) -> RestingPredicates {
+        let stored = self.members.lock().take();
+        stored
+            .and_then(|(finishing, block_hash)| {
+                let mut resting = finishing.wait(sweep_wait_limit)?;
+                resting.end_block(block_hash);
+                Some(resting)
+            })
+            .unwrap_or_else(|| RestingPredicates::new(ordered_threshold))
+    }
+
+    /// Finishes the selection loop of the block being built.
+    ///
+    /// When an unseen sweep is due it runs on the task executor, so it overlaps the state root and
+    /// the leeway before the next build instead of delaying that build's flashblocks. Hand the
+    /// result to [`Self::put`] once the block is sealed.
+    pub fn finish(&self, mut resting: RestingPredicates) -> FinishingRestingPredicates {
+        if resting.is_empty() {
+            // Every listed member was removed, so every generation entry is stale.
+            resting.generations.clear();
+            return FinishingRestingPredicates(Finishing::Ready(resting));
+        }
+        if !resting.sweep_due() {
+            return FinishingRestingPredicates(Finishing::Ready(resting));
+        }
+        let Some(executor) = &self.executor else {
+            resting.sweep_unseen();
+            return FinishingRestingPredicates(Finishing::Ready(resting));
+        };
+        let (sender, receiver) = mpsc::sync_channel(1);
+        // A persistent named worker, like `Runtime::spawn_drop`, avoids creating a thread per
+        // sweep. The set comes back over a std channel because `take` may wait for it from inside
+        // a payload job's `block_on`, where blocking on a tokio channel panics.
+        let _ = executor.spawn_blocking_named(Self::SWEEP_WORKER, move || {
+            resting.sweep_unseen();
+            // The receiver is gone if the block failed to seal; the set is dropped with it.
+            let _ = sender.send(resting);
+        });
+        FinishingRestingPredicates(Finishing::Sweeping(receiver))
+    }
+
+    /// Stores the set of the block finished as `block_hash` for the next job.
+    pub fn put(&self, resting: FinishingRestingPredicates, block_hash: B256) {
+        *self.members.lock() = Some((resting, block_hash));
     }
 }
 
@@ -279,6 +454,8 @@ mod tests {
     const WATCHED: Address = Address::repeat_byte(0xaa);
     const UNRELATED: Address = Address::repeat_byte(0xbb);
     const PARENT: B256 = B256::repeat_byte(0x01);
+    /// Long enough for any test sweep to finish.
+    const WAIT: Duration = Duration::from_secs(10);
     const BUILT: B256 = B256::repeat_byte(0x02);
 
     fn balance_at_least(address: Address, value: u64) -> ValidityPredicate {
@@ -433,28 +610,140 @@ mod tests {
         assert!(resting.is_empty());
     }
 
+    /// Builds blocks `2..=last_block` on top of [`rested_in_parent`], holding `held` in blocks up
+    /// to `held_through`, and finishes each one through `store`. Returns the set after
+    /// `last_block`.
+    fn carry_through(
+        store: &RestingPredicateStore,
+        resting: RestingPredicates,
+        held: &ValidityConditions,
+        held_through: u64,
+        last_block: u64,
+    ) -> RestingPredicates {
+        store.put(store.finish(resting), PARENT);
+        let mut parent = PARENT;
+        for block in 2..=last_block {
+            let mut resting = store.take(32, WAIT);
+            let carry_over = resting.begin_block(parent, block, Some(&TransitionState::default()));
+            assert!(!carry_over.reset, "block {block} must follow the finished block");
+            if block <= held_through {
+                assert_eq!(resting.hold(hash(0), held), Some(true));
+            }
+            parent = B256::with_last_byte(block as u8);
+            store.put(store.finish(resting), parent);
+        }
+        store.take(32, WAIT)
+    }
+
     #[test]
     fn members_not_yielded_for_the_retention_window_are_dropped() {
         let seen = balance_at_least(WATCHED, 1);
         let unseen = balance_at_least(UNRELATED, 1);
-        let watched = conditions(std::slice::from_ref(&seen));
-        let mut resting = rested_in_parent(&[seen, unseen]);
-        let mut parent = PARENT;
-        // The sweep runs every `RESTING_UNSEEN_RETAINED_BLOCKS` blocks and drops members unseen for
-        // at least that long, so a member last seen in block 1 is gone by block 1 + 2 * window.
-        let last_block = 1 + 2 * RESTING_UNSEEN_RETAINED_BLOCKS;
-        let mut released_unseen = 0;
-        for block in 2..=last_block {
-            released_unseen += resting
-                .begin_block(parent, block, Some(&TransitionState::default()))
-                .released_unseen;
-            assert_eq!(resting.hold(hash(0), &watched), Some(true));
-            parent = B256::with_last_byte(block as u8);
-            resting.end_block(parent);
-        }
-
-        assert_eq!(released_unseen, 1);
+        let held = conditions(std::slice::from_ref(&seen));
+        let store = RestingPredicateStore::default();
+        let window = RESTING_UNSEEN_RETAINED_BLOCKS;
+        // A member last seen in block 1 is dropped when block 1 + window finishes.
+        let rested = || rested_in_parent(&[seen.clone(), unseen.clone()]);
+        assert_eq!(carry_through(&store, rested(), &held, u64::MAX, window).len(), 2);
+        let resting = carry_through(&store, rested(), &held, u64::MAX, 1 + window);
         assert_eq!(resting.len(), 1);
+        assert!(resting.member(hash(0), &held).is_some());
+    }
+
+    #[test]
+    fn member_seen_after_it_was_filed_is_dropped_a_window_after_it_was_last_seen() {
+        let predicate = balance_at_least(WATCHED, 1);
+        let held = conditions(std::slice::from_ref(&predicate));
+        let store = RestingPredicateStore::default();
+        let window = RESTING_UNSEEN_RETAINED_BLOCKS;
+        let last_seen = 5;
+        let rested = || rested_in_parent(std::slice::from_ref(&predicate));
+        // The sweep at block 1 + window re-files the member under block 5 instead of dropping it.
+        assert_eq!(
+            carry_through(&store, rested(), &held, last_seen, last_seen + window - 1).len(),
+            1
+        );
+        assert!(carry_through(&store, rested(), &held, last_seen, last_seen + window).is_empty());
+    }
+
+    #[test]
+    fn resting_again_in_the_same_block_lists_the_member_once() {
+        let predicate = balance_at_least(WATCHED, 1);
+        let mut resting = RestingPredicates::new(32);
+        resting.begin_block(PARENT, 2, Some(&TransitionState::default()));
+        resting.rest(hash(0), predicate.clone());
+        resting.rest(hash(0), predicate);
+        assert_eq!(resting.len(), 1);
+        assert_eq!(resting.generations.get(&2).map(Vec::len), Some(1));
+    }
+
+    #[test]
+    fn block_start_never_sweeps_unseen_members() {
+        let mut resting = rested_in_parent(&[balance_at_least(WATCHED, 1)]);
+        let block = 2 * RESTING_UNSEEN_RETAINED_BLOCKS;
+        // The member was last seen in block 1, long enough ago to be swept, but block start is on
+        // the path to flashblock scheduling and must leave the sweep to the end of a block.
+        let carry_over = resting.begin_block(PARENT, block, Some(&TransitionState::default()));
+        assert_eq!(carry_over, RestingCarryOver { carried: 1, ..Default::default() });
+        assert!(resting.sweep_due());
+        assert_eq!(resting.sweep_unseen(), 1);
+    }
+
+    #[test]
+    fn sweep_runs_on_the_task_executor_and_hands_the_set_on() {
+        let runtime = Runtime::test();
+        let store = RestingPredicateStore::new(runtime);
+        let mut resting = rested_in_parent(&[balance_at_least(WATCHED, 1)]);
+        let block = 2 * RESTING_UNSEEN_RETAINED_BLOCKS;
+        resting.begin_block(PARENT, block, Some(&TransitionState::default()));
+        resting.rest(hash(1), balance_at_least(UNRELATED, 1));
+
+        let finishing = store.finish(resting);
+        assert!(matches!(finishing.0, Finishing::Sweeping(_)));
+        store.put(finishing, BUILT);
+
+        let mut resting = store.take(32, WAIT);
+        assert_eq!(resting.len(), 1, "the member unseen since block 1 is swept");
+        let carry_over = resting.begin_block(BUILT, block + 1, Some(&TransitionState::default()));
+        assert_eq!(carry_over, RestingCarryOver { carried: 1, ..Default::default() });
+    }
+
+    #[test]
+    fn finishing_a_block_without_a_due_sweep_does_not_spawn() {
+        let store = RestingPredicateStore::new(Runtime::test());
+        let mut resting = rested_in_parent(&[balance_at_least(WATCHED, 1)]);
+        resting.begin_block(PARENT, 2, Some(&TransitionState::default()));
+        assert!(matches!(store.finish(resting).0, Finishing::Ready(_)));
+    }
+
+    #[test]
+    fn finishing_an_emptied_set_drops_its_stale_generations() {
+        let store = RestingPredicateStore::new(Runtime::test());
+        let mut resting = RestingPredicates::new(32);
+        resting.begin_block(PARENT, 2, Some(&TransitionState::default()));
+        resting.rest(hash(0), balance_at_least(WATCHED, 1));
+        assert!(resting.remove(hash(0)));
+
+        let Finishing::Ready(resting) = store.finish(resting).0 else {
+            panic!("an empty set must not spawn a sweep");
+        };
+        assert!(resting.generations.is_empty());
+    }
+
+    #[test]
+    fn build_stops_waiting_for_a_slow_sweep_and_starts_empty() {
+        let limit = Duration::from_millis(25);
+        let store = RestingPredicateStore::new(Runtime::test());
+        let (sender, receiver) = mpsc::sync_channel(1);
+        store.put(FinishingRestingPredicates(Finishing::Sweeping(receiver)), PARENT);
+
+        let start = Instant::now();
+        let mut resting = store.take(32, limit);
+        assert!(start.elapsed() >= limit);
+        assert!(resting.is_empty());
+        let carry_over = resting.begin_block(PARENT, 2, Some(&TransitionState::default()));
+        assert_eq!(carry_over, RestingCarryOver::default());
+        drop(sender);
     }
 
     #[test]
@@ -501,13 +790,12 @@ mod tests {
     #[test]
     fn store_hands_the_set_to_the_next_job() {
         let store = RestingPredicateStore::default();
-        let mut resting = store.take(32);
+        let mut resting = store.take(32, WAIT);
         resting.begin_block(B256::ZERO, 1, Some(&TransitionState::default()));
         resting.rest(hash(0), balance_at_least(WATCHED, 1));
-        resting.end_block(PARENT);
-        store.put(resting);
+        store.put(store.finish(resting), PARENT);
 
-        assert_eq!(store.take(32).len(), 1);
-        assert!(store.take(32).is_empty(), "a taken set leaves the store empty");
+        assert_eq!(store.take(32, WAIT).len(), 1);
+        assert!(store.take(32, WAIT).is_empty(), "a taken set leaves the store empty");
     }
 }

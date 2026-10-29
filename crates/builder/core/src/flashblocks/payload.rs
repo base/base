@@ -44,6 +44,7 @@ use reth_provider::{
 use reth_revm::{
     State, database::StateProviderDatabase, db::states::bundle_state::BundleRetention,
 };
+use reth_tasks::Runtime;
 use reth_transaction_pool::TransactionPool;
 use reth_trie::{HashedPostState, updates::TrieUpdates};
 use revm::Database as _;
@@ -51,7 +52,7 @@ use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info, metadata::Level, span, warn};
+use tracing::{debug, debug_span, error, info, metadata::Level, span, warn};
 
 use crate::{
     BlockDeferrals, BuilderConfig, BuilderMetrics, ExecutionInfo, PayloadBuilder, ResourceLimits,
@@ -134,6 +135,7 @@ impl<Pool, Client> BasePayloadBuilder<Pool, Client> {
         client: Client,
         config: BuilderConfig,
         outputs: BuilderOutputs,
+        executor: Runtime,
     ) -> Self {
         Self {
             evm_config,
@@ -142,7 +144,7 @@ impl<Pool, Client> BasePayloadBuilder<Pool, Client> {
             config,
             outputs,
             last_emitted_flashblock_id: Arc::default(),
-            resting_predicates: RestingPredicateStore::default(),
+            resting_predicates: RestingPredicateStore::new(executor),
         }
     }
 
@@ -303,26 +305,37 @@ where
         BuilderMetrics::sequencer_tx_duration().record(sequencer_tx_time);
         BuilderMetrics::sequencer_tx_gauge().set(sequencer_tx_time);
 
+        // Derive the flashblock schedule before carrying the resting set into the block, so the
+        // carry cannot delay the schedule; the timer below takes it out of the first flashblock.
+        let (flashblocks_per_block, first_flashblock_offset) =
+            self.calculate_flashblocks(timestamp);
+        BuilderMetrics::flashblocks_schedule_delay().record(block_build_start_time.elapsed());
+        let resting_carry_start = Instant::now();
+
         // Resting transactions carry across flashblocks and across the blocks this builder finishes
         // in sequence. Checked against the parent before the fallback build merges the transitions,
         // which hold the system calls and deposits applied on top of the parent state.
         let resting = (!ctx.attributes().no_tx_pool
             && self.config.resting_predicate_mode.is_enabled())
         .then(|| {
-            let mut resting =
-                self.resting_predicates.take(self.config.predicate_bucket_ordered_threshold);
+            let _span = debug_span!(target: "payload_builder", "resting_begin_block").entered();
+            let start = Instant::now();
+            // The sweep has already overlapped the previous block's state root and the leeway, so
+            // this rarely waits. Waiting longer than one flashblock would cost more than starting
+            // with an empty set, which only means evaluating every validity transaction again.
+            let mut resting = self.resting_predicates.take(
+                self.config.predicate_bucket_ordered_threshold,
+                self.config.flashblocks_interval,
+            );
             let carry_over = resting.begin_block(
                 ctx.parent().hash(),
                 ctx.block_number(),
                 state.transition_state.as_ref(),
             );
-            ValidityMetrics::record_resting_carry_over(&carry_over);
+            ValidityMetrics::record_resting_carry_over(&carry_over, start.elapsed());
             resting
         });
-
-        // We adjust our flashblocks timings based on time_drift if dynamic adjustment enable
-        let (flashblocks_per_block, first_flashblock_offset) =
-            self.calculate_flashblocks(timestamp);
+        let resting_carry = resting_carry_start.elapsed();
 
         let skip_flashblocks_building = ctx.attributes().no_tx_pool || flashblocks_per_block == 0;
 
@@ -457,7 +470,7 @@ where
             async move {
                 let mut timer = tokio::time::interval_at(
                     tokio::time::Instant::now()
-                        .checked_add(first_flashblock_offset)
+                        .checked_add(first_flashblock_delay(first_flashblock_offset, resting_carry))
                         .expect("can add flashblock offset to current time"),
                     interval,
                 );
@@ -990,11 +1003,16 @@ where
         DB: Database<Error = ProviderError> + AsRef<P>,
         P: StateRootProvider + HashedPostStateProvider + StorageRootProvider,
     {
+        // Start the end-of-block sweep before the state root so the two overlap. The set is only
+        // stored once the block is sealed, so a block that fails to seal does not hand it on.
+        let resting = self
+            .config
+            .resting_predicate_mode
+            .is_enabled()
+            .then(|| self.resting_predicates.finish(best_txs.take_resting_predicates()));
         let payload = self.finalize_payload(state, ctx, info)?;
-        if self.config.resting_predicate_mode.is_enabled() {
-            let mut resting = best_txs.take_resting_predicates();
-            resting.end_block(payload.block().hash());
-            self.resting_predicates.put(resting);
+        if let Some(resting) = resting {
+            self.resting_predicates.put(resting, payload.block().hash());
         }
         Ok(payload)
     }
@@ -1425,9 +1443,22 @@ where
     ))
 }
 
+/// Time from starting the flashblock timer to its first tick.
+///
+/// The resting carry runs after the schedule is derived, so it comes out of the first flashblock
+/// instead of moving the schedule. It never takes more than the whole first flashblock: a first
+/// tick in the past would fire missed ticks back to back and cancel flashblocks before they build
+/// anything. A longer carry delays the schedule by the excess.
+const fn first_flashblock_delay(
+    first_flashblock_offset: Duration,
+    resting_carry: Duration,
+) -> Duration {
+    first_flashblock_offset.saturating_sub(resting_carry)
+}
+
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::{sync::Arc, time::Duration};
 
     use alloy_consensus::{Header, Receipt};
     use alloy_primitives::{Address, B256, Log, U256, map::foldhash::HashMap};
@@ -1440,7 +1471,7 @@ mod tests {
     use reth_provider::{StateProviderBox, noop::NoopProvider};
     use reth_revm::{State, database::StateProviderDatabase};
 
-    use super::{FlashblocksMetadata, build_block};
+    use super::{FlashblocksMetadata, build_block, first_flashblock_delay};
     use crate::{ExecutionInfo, flashblocks::context::BasePayloadBuilderCtx};
 
     /// Creates a minimal [`BaseChainSpec`] with all L1 upgrades through Cancun
@@ -1467,6 +1498,23 @@ mod tests {
     fn genesis_header() -> Arc<SealedHeader> {
         let header = Header { gas_limit: 30_000_000, timestamp: 0, ..Default::default() };
         Arc::new(SealedHeader::seal_slow(header))
+    }
+
+    #[test]
+    fn resting_carry_comes_out_of_the_first_flashblock() {
+        let offset = Duration::from_millis(120);
+        assert_eq!(first_flashblock_delay(offset, Duration::ZERO), offset);
+        assert_eq!(
+            first_flashblock_delay(offset, Duration::from_millis(20)),
+            Duration::from_millis(100)
+        );
+    }
+
+    #[test]
+    fn resting_carry_longer_than_the_first_flashblock_never_starts_the_timer_in_the_past() {
+        let offset = Duration::from_millis(5);
+        assert_eq!(first_flashblock_delay(offset, offset), Duration::ZERO);
+        assert_eq!(first_flashblock_delay(offset, Duration::from_millis(300)), Duration::ZERO);
     }
 
     #[test]
