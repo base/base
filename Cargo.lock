@@ -3646,7 +3646,6 @@ dependencies = [
  "base-precompile-storage",
  "k256 0.13.4",
  "metrics",
- "reth-evm",
  "revm",
  "rstest",
  "serde",
