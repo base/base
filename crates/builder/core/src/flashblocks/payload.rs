@@ -320,8 +320,13 @@ where
         .then(|| {
             let _span = debug_span!(target: "payload_builder", "resting_begin_block").entered();
             let start = Instant::now();
-            let mut resting =
-                self.resting_predicates.take(self.config.predicate_bucket_ordered_threshold);
+            // The sweep has already overlapped the previous block's state root and the leeway, so
+            // this rarely waits. Waiting longer than one flashblock would cost more than starting
+            // with an empty set, which only means evaluating every validity transaction again.
+            let mut resting = self.resting_predicates.take(
+                self.config.predicate_bucket_ordered_threshold,
+                self.config.flashblocks_interval,
+            );
             let carry_over = resting.begin_block(
                 ctx.parent().hash(),
                 ctx.block_number(),

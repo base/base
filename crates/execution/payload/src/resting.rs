@@ -24,14 +24,6 @@ use crate::{ParkedPredicateIndex, ValidityMetrics, ValidityPredicateKey};
 /// off the build path; see [`RestingPredicateStore::finish`].
 pub const RESTING_UNSEEN_RETAINED_BLOCKS: u64 = 10;
 
-/// Longest a block build waits for the previous block's resting sweep before it starts with an
-/// empty set instead.
-///
-/// A sweep normally finishes during the previous block's state root. Starting empty only means the
-/// build evaluates every validity transaction again, as after a reset, so a slow sweep can never
-/// hold up the build's own payload by more than this.
-pub const RESTING_SWEEP_WAIT_LIMIT: Duration = Duration::from_millis(25);
-
 /// Mode for holding back validity transactions that rest under an unchanged predicate.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
@@ -341,12 +333,12 @@ enum Finishing {
 }
 
 impl FinishingRestingPredicates {
-    /// Returns the set, waiting up to [`RESTING_SWEEP_WAIT_LIMIT`] for an unfinished sweep.
+    /// Returns the set, waiting up to `limit` for an unfinished sweep.
     ///
     /// Returns `None` when the sweep does not finish in time or its task was dropped without
     /// returning the set; the caller then starts with an empty set. Time spent waiting is recorded,
     /// because it delays the build that takes the set.
-    pub fn wait(self) -> Option<RestingPredicates> {
+    pub fn wait(self, limit: Duration) -> Option<RestingPredicates> {
         match self.0 {
             Finishing::Ready(resting) => Some(resting),
             Finishing::Sweeping(receiver) => match receiver.try_recv() {
@@ -356,7 +348,7 @@ impl FinishingRestingPredicates {
                 }
                 Err(mpsc::TryRecvError::Empty) => {
                     let start = Instant::now();
-                    let resting = receiver.recv_timeout(RESTING_SWEEP_WAIT_LIMIT);
+                    let resting = receiver.recv_timeout(limit);
                     ValidityMetrics::record_resting_sweep_wait(start.elapsed());
                     match resting {
                         Ok(resting) => Some(resting),
@@ -398,12 +390,14 @@ impl RestingPredicateStore {
 
     /// Takes the stored set, or creates an empty one with `ordered_threshold`.
     ///
-    /// Waits for a sweep the previous job started if it is still running.
-    pub fn take(&self, ordered_threshold: usize) -> RestingPredicates {
+    /// Waits up to `sweep_wait_limit` for a sweep the previous job started. A sweep still running
+    /// after that is abandoned and the set returned empty: the build evaluates every validity
+    /// transaction again, as after a reset, and the sweep drops the old set on its worker.
+    pub fn take(&self, ordered_threshold: usize, sweep_wait_limit: Duration) -> RestingPredicates {
         let stored = self.members.lock().take();
         stored
             .and_then(|(finishing, block_hash)| {
-                let mut resting = finishing.wait()?;
+                let mut resting = finishing.wait(sweep_wait_limit)?;
                 resting.end_block(block_hash);
                 Some(resting)
             })
@@ -460,6 +454,8 @@ mod tests {
     const WATCHED: Address = Address::repeat_byte(0xaa);
     const UNRELATED: Address = Address::repeat_byte(0xbb);
     const PARENT: B256 = B256::repeat_byte(0x01);
+    /// Long enough for any test sweep to finish.
+    const WAIT: Duration = Duration::from_secs(10);
     const BUILT: B256 = B256::repeat_byte(0x02);
 
     fn balance_at_least(address: Address, value: u64) -> ValidityPredicate {
@@ -627,7 +623,7 @@ mod tests {
         store.put(store.finish(resting), PARENT);
         let mut parent = PARENT;
         for block in 2..=last_block {
-            let mut resting = store.take(32);
+            let mut resting = store.take(32, WAIT);
             let carry_over = resting.begin_block(parent, block, Some(&TransitionState::default()));
             assert!(!carry_over.reset, "block {block} must follow the finished block");
             if block <= held_through {
@@ -636,7 +632,7 @@ mod tests {
             parent = B256::with_last_byte(block as u8);
             store.put(store.finish(resting), parent);
         }
-        store.take(32)
+        store.take(32, WAIT)
     }
 
     #[test]
@@ -706,7 +702,7 @@ mod tests {
         assert!(matches!(finishing.0, Finishing::Sweeping(_)));
         store.put(finishing, BUILT);
 
-        let mut resting = store.take(32);
+        let mut resting = store.take(32, WAIT);
         assert_eq!(resting.len(), 1, "the member unseen since block 1 is swept");
         let carry_over = resting.begin_block(BUILT, block + 1, Some(&TransitionState::default()));
         assert_eq!(carry_over, RestingCarryOver { carried: 1, ..Default::default() });
@@ -736,13 +732,14 @@ mod tests {
 
     #[test]
     fn build_stops_waiting_for_a_slow_sweep_and_starts_empty() {
+        let limit = Duration::from_millis(25);
         let store = RestingPredicateStore::new(Runtime::test());
         let (sender, receiver) = mpsc::sync_channel(1);
         store.put(FinishingRestingPredicates(Finishing::Sweeping(receiver)), PARENT);
 
         let start = Instant::now();
-        let mut resting = store.take(32);
-        assert!(start.elapsed() >= RESTING_SWEEP_WAIT_LIMIT);
+        let mut resting = store.take(32, limit);
+        assert!(start.elapsed() >= limit);
         assert!(resting.is_empty());
         let carry_over = resting.begin_block(PARENT, 2, Some(&TransitionState::default()));
         assert_eq!(carry_over, RestingCarryOver::default());
@@ -793,12 +790,12 @@ mod tests {
     #[test]
     fn store_hands_the_set_to_the_next_job() {
         let store = RestingPredicateStore::default();
-        let mut resting = store.take(32);
+        let mut resting = store.take(32, WAIT);
         resting.begin_block(B256::ZERO, 1, Some(&TransitionState::default()));
         resting.rest(hash(0), balance_at_least(WATCHED, 1));
         store.put(store.finish(resting), PARENT);
 
-        assert_eq!(store.take(32).len(), 1);
-        assert!(store.take(32).is_empty(), "a taken set leaves the store empty");
+        assert_eq!(store.take(32, WAIT).len(), 1);
+        assert!(store.take(32, WAIT).is_empty(), "a taken set leaves the store empty");
     }
 }
