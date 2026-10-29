@@ -136,6 +136,14 @@ where
     }
 }
 
+/// Longest a native build waits for the previous block's resting sweep before starting with an
+/// empty set.
+///
+/// The native builder has no leeway: the sweep overlaps only the previous block's state root, and
+/// any wait comes out of a short block's selection time, where re-evaluating every validity
+/// transaction is cheaper than a long wait.
+const RESTING_SWEEP_WAIT_LIMIT: Duration = Duration::from_millis(25);
+
 impl<Pool, Client, Evm, Attrs> BasePayloadBuilder<Pool, Client, Evm, Attrs> {
     /// `BasePayloadBuilder` constructor.
     ///
@@ -452,8 +460,10 @@ impl<Txs> Builder<'_, Txs> {
                 })
                 .map(|store| {
                     let start = Instant::now();
-                    let mut resting =
-                        store.take(ctx.builder_config.predicate_bucket_ordered_threshold);
+                    let mut resting = store.take(
+                        ctx.builder_config.predicate_bucket_ordered_threshold,
+                        RESTING_SWEEP_WAIT_LIMIT,
+                    );
                     // The transitions hold the system calls and deposits applied on top of the
                     // parent state.
                     let carry_over = resting.begin_block(
@@ -1723,7 +1733,7 @@ mod tests {
     };
     use revm::{Database, database::TransitionState, state::EvmState};
 
-    use super::{BasePayloadBuilderCtx, Builder, ExecutionInfo};
+    use super::{BasePayloadBuilderCtx, Builder, ExecutionInfo, RESTING_SWEEP_WAIT_LIMIT};
     use crate::{
         BasePayloadBuilderAttributes, DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD, MeteringProvider,
         NoopMeteringProvider, ParkablePayloadTransactions, ResourceMeteringConfig,
@@ -2395,7 +2405,8 @@ mod tests {
         predicate: ValidityPredicate,
     ) -> RestingPredicateStore {
         let store = RestingPredicateStore::default();
-        let mut resting = store.take(DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD);
+        let mut resting =
+            store.take(DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD, RESTING_SWEEP_WAIT_LIMIT);
         resting.begin_block(B256::ZERO, 0, Some(&TransitionState::default()));
         resting.rest(*transaction.hash(), predicate);
         store.put(store.finish(resting), tip);
@@ -2561,7 +2572,8 @@ mod tests {
             build_carrying_resting(RestingPredicateMode::Enforce, &store, vec![gated.clone()]);
 
         assert!(included.is_empty());
-        let mut resting = store.take(DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD);
+        let mut resting =
+            store.take(DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD, RESTING_SWEEP_WAIT_LIMIT);
         let carry_over = resting.begin_block(block_hash, 2, Some(&TransitionState::default()));
         assert_eq!(carry_over.carried, 1);
         assert!(resting.member(*gated.hash(), gated.validity_conditions()).is_some());
@@ -2586,7 +2598,9 @@ mod tests {
             let store = RestingPredicateStore::default();
             build_carrying_resting_at(timestamp, mode, &store, vec![gated.clone()]);
             assert!(
-                store.take(DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD).is_empty(),
+                store
+                    .take(DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD, RESTING_SWEEP_WAIT_LIMIT)
+                    .is_empty(),
                 "timestamp {timestamp}, mode {mode:?}"
             );
         }

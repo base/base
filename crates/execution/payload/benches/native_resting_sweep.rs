@@ -70,6 +70,8 @@ const FILLER_PER_BLOCK: usize = 120;
 const WARMUP_BLOCKS: u64 = 3 * RESTING_UNSEEN_RETAINED_BLOCKS;
 /// Blocks measured.
 const MEASURED_BLOCKS: u64 = 4 * RESTING_UNSEEN_RETAINED_BLOCKS;
+/// Long enough that a block always waits for the previous block's sweep, so carry includes it.
+const SWEEP_WAIT_LIMIT: Duration = Duration::from_secs(1);
 const TRANSFER_GAS: u64 = 21_000;
 const SENDER_OFFSET: usize = 1_000_000;
 const DENIM_TIMESTAMP: u64 = 1;
@@ -229,7 +231,7 @@ fn main() {
 
     for block in 1..=WARMUP_BLOCKS + MEASURED_BLOCKS {
         let start = Instant::now();
-        let mut resting = store.take(DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD);
+        let mut resting = store.take(DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD, SWEEP_WAIT_LIMIT);
         resting.begin_block(block_hash(block - 1), block, Some(&TransitionState::default()));
         let carry = start.elapsed();
         let carried = resting.len();
