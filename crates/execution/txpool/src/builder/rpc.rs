@@ -4,11 +4,8 @@ use std::{
     time::Instant,
 };
 
-use alloy_consensus::transaction::Recovered;
-use alloy_eips::Decodable2718;
 use alloy_primitives::TxHash;
 use base_bundles::MeterBundleResponse;
-use base_common_consensus::BaseTransactionSigned;
 use base_observability_events::{
     TransactionEventProducer, TransactionEventType, transaction_event,
 };
@@ -19,6 +16,7 @@ use jsonrpsee::{
 };
 use reth_transaction_pool::{
     AddedTransactionOutcome, PoolResult, PoolTransaction, TransactionOrigin, TransactionPool,
+    error::{PoolError, PoolErrorKind},
 };
 use serde_json::{Map, json};
 use tracing::debug;
@@ -159,6 +157,9 @@ where
         debug!(sender = %tx.sender, "rpc::insert_validated_transaction");
         let (origin, pool_tx, metering) = self.prepare_insert(tx)?;
         let (tx_hash, encoded_len) = (*pool_tx.hash(), pool_tx.encoded_length());
+        if let Some(result) = self.already_pooled(tx_hash) {
+            return self.finish_insert(tx_hash, encoded_len, metering, result);
+        }
         let start = Instant::now();
         let result = self.pool.add_transaction(origin, pool_tx).await;
         BuilderApiMetrics::insert_duration().record(start.elapsed().as_secs_f64());
@@ -177,7 +178,13 @@ where
         for (index, tx) in txs.into_iter().enumerate() {
             match self.prepare_insert(tx) {
                 Ok((origin, pool_tx, metering)) => {
-                    admitted.push((index, *pool_tx.hash(), pool_tx.encoded_length(), metering));
+                    let (tx_hash, encoded_len) = (*pool_tx.hash(), pool_tx.encoded_length());
+                    if let Some(result) = self.already_pooled(tx_hash) {
+                        results[index] =
+                            self.finish_insert(tx_hash, encoded_len, metering, result).err();
+                        continue;
+                    }
+                    admitted.push((index, tx_hash, encoded_len, metering));
                     batch.push((origin, pool_tx));
                 }
                 Err(error) => results[index] = Some(error),
@@ -193,6 +200,24 @@ where
             results[index] = self.finish_insert(tx_hash, encoded_len, metering, result).err();
         }
         Ok(results)
+    }
+}
+
+impl<P, E> BuilderApiImpl<P, E>
+where
+    P: TransactionPool<Transaction = BasePooledTransaction>,
+{
+    /// Returns the pool's already-imported verdict for a transaction it already holds.
+    ///
+    /// Every mempool node forwards each transaction to every builder, so most inserts a builder
+    /// receives are duplicates. The pool validates a transaction against state before it checks
+    /// whether it holds the hash, so answering duplicates here skips that validation and the pool
+    /// write lock. A pooled duplicate is reported as already imported even when validation would
+    /// now reject it.
+    fn already_pooled(&self, tx_hash: TxHash) -> Option<PoolResult<AddedTransactionOutcome>> {
+        self.pool
+            .contains(&tx_hash)
+            .then(|| Err(PoolError::new(tx_hash, PoolErrorKind::AlreadyImported)))
     }
 }
 
@@ -238,9 +263,10 @@ where
             ErrorObjectOwned::owned(ErrorCode::InvalidParams.code(), e.to_string(), None::<()>)
         })?;
 
-        // Decode the EIP-2718 transaction bytes
-        let consensus_tx =
-            BaseTransactionSigned::decode_2718(&mut tx.raw.as_ref()).map_err(|e| {
+        // Decode the EIP-2718 bytes, keeping them as the pool transaction's cached encoding so
+        // validation and block building do not re-encode the transaction.
+        let mut pool_tx =
+            BasePooledTransaction::decode_2718_with_sender(tx.raw, sender).map_err(|e| {
                 BuilderApiMetrics::decode_errors().increment(1);
                 ErrorObjectOwned::owned(
                     ErrorCode::InvalidParams.code(),
@@ -248,10 +274,6 @@ where
                     None::<()>,
                 )
             })?;
-        let encoded_len = tx.raw.len();
-
-        let recovered = Recovered::new_unchecked(consensus_tx, sender);
-        let mut pool_tx = BasePooledTransaction::new(recovered, encoded_len);
         let metering = tx.metering;
         if let Some(ref metering) = metering {
             pool_tx = pool_tx.with_metering(metering.clone());

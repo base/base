@@ -97,6 +97,7 @@ impl SnapshotL2Stack {
             extra_extensions: Vec::new(),
             validity_signature_mode: ValiditySignatureMode::Off,
             persistence_threshold: Some(0),
+            resting_predicate_mode: config.snapshot.resting_predicate_mode,
             persistence_backpressure_threshold: Some(
                 block_interval.snapshot_persistence_backpressure_threshold(),
             ),

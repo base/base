@@ -80,6 +80,10 @@ name = "ingest_codec"
 harness = false
 
 [[bench]]
+name = "builder_insert"
+harness = false
+
+[[bench]]
 name = "best_transactions"
 harness = false
 

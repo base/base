@@ -19,8 +19,9 @@ use crate::{ParkedPredicateIndex, ValidityPredicateKey};
 pub const RESTING_UNSEEN_RETAINED_BLOCKS: u64 = 10;
 
 /// Mode for holding back validity transactions that rest under an unchanged predicate.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
+#[serde(rename_all = "snake_case")]
 pub enum RestingPredicateMode {
     /// Resting transactions are not tracked.
     #[default]
