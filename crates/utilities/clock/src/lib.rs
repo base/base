@@ -5,3 +5,6 @@ pub use clock::Clock;
 
 mod system;
 pub use system::SystemClock;
+
+mod offset;
+pub use offset::OffsetClock;
