@@ -117,9 +117,8 @@ mod tests {
     use base_common_consensus::{
         Eip8130Constants, Eip8130Contracts, Eip8130Signed, Eip8130StructuralError,
     };
-    use base_common_evm::{BaseTransaction as BaseRevm, Eip8130ExecutionMode};
+    use base_common_evm2::{Eip8130Simulation, Eip8130SimulationMode};
     use reth_evm_ethereum::EthEvmEnv;
-    use revm::context::TxEnv;
     use serde_json::json;
 
     use super::*;
@@ -133,13 +132,14 @@ mod tests {
     const SENDER: Address = address!("0x00000000000000000000000000000000000000a1");
     const FROM: Address = address!("0x00000000000000000000000000000000000000c3");
 
-    fn sim_tx(request: serde_json::Value) -> BaseRevm<TxEnv> {
+    fn sim_tx(request: serde_json::Value) -> Recovered<BaseTxEnv> {
         let req: BaseTransactionRequest = serde_json::from_value(request).expect("valid request");
-        req.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP).expect("simulation tx")
+        req.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP, Eip8130SimulationMode::Estimate)
+            .expect("simulation tx")
     }
 
-    fn signed(tx: &BaseRevm<TxEnv>) -> &Eip8130Signed {
-        &tx.eip8130.as_ref().expect("eip8130 parts").signed
+    fn signed(tx: &Recovered<BaseTxEnv>) -> &Eip8130Signed {
+        &tx.inner().as_eip8130().expect("eip8130 parts").signed
     }
 
     /// Builds a hex (`0x`-prefixed) authentication blob: an optional 20-byte
@@ -210,7 +210,7 @@ mod tests {
         }))
         .expect("valid request");
         let tx = req
-            .to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP)
+            .to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP, Eip8130SimulationMode::Estimate)
             .expect("a canonical authenticator is priced");
         let s = signed(&tx);
         assert_eq!(s.tx().sender, Some(SENDER), "the blob selects the configured path");
@@ -225,7 +225,7 @@ mod tests {
         }))
         .expect("valid request");
         let tx = req
-            .to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP)
+            .to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP, Eip8130SimulationMode::Estimate)
             .expect("a canonical authenticator is priced");
         let s = signed(&tx);
         assert_eq!(s.tx().sender, Some(SENDER), "the blob selects the configured path");
@@ -300,7 +300,7 @@ mod tests {
         }))
         .expect("valid request");
         assert_eq!(
-            req.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP).err(),
+            req.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP, Eip8130SimulationMode::Estimate).err(),
             Some(Eip8130SimulationRequestError::Structural(
                 Eip8130StructuralError::MalformedSenderAuth
             )),
@@ -322,7 +322,7 @@ mod tests {
         }))
         .expect("valid request");
         let tx = req
-            .to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP)
+            .to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP, Eip8130SimulationMode::Estimate)
             .expect("a canonical authenticator is priced");
         let s = signed(&tx);
         assert_eq!(s.tx().sender, Some(SENDER), "the blob selects the configured path");
@@ -345,7 +345,7 @@ mod tests {
         }))
         .expect("valid request");
         let tx = req
-            .to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP)
+            .to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP, Eip8130SimulationMode::Estimate)
             .expect("a canonical authenticator is priced");
         let s = signed(&tx);
         assert_eq!(s.tx().payer, Some(payer), "the payer is set on the transaction");
@@ -360,7 +360,7 @@ mod tests {
         }))
         .expect("valid request");
         assert_eq!(
-            req.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP).err(),
+            req.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP, Eip8130SimulationMode::Estimate).err(),
             Some(Eip8130SimulationRequestError::SenderFromMismatch),
             "a `from`/`sender` mismatch is rejected rather than guessing the account",
         );
@@ -387,7 +387,7 @@ mod tests {
         let req: BaseTransactionRequest =
             serde_json::from_value(json!({ "calls": [] })).expect("valid request");
         assert_eq!(
-            req.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP).err(),
+            req.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP, Eip8130SimulationMode::Estimate).err(),
             Some(Eip8130SimulationRequestError::MissingSender),
             "an 8130 request with no account is rejected",
         );
@@ -433,7 +433,8 @@ mod tests {
             }))
             .expect("valid request");
             assert_eq!(
-                req.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP).err(),
+                req.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP, Eip8130SimulationMode::Estimate)
+                    .err(),
                 Some(Eip8130SimulationRequestError::Structural(
                     Eip8130StructuralError::MalformedSenderAuth
                 )),
@@ -451,7 +452,7 @@ mod tests {
         }))
         .expect("valid request");
         assert_eq!(
-            req.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP).err(),
+            req.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP, Eip8130SimulationMode::Estimate).err(),
             Some(Eip8130SimulationRequestError::SenderAuthTooLarge),
             "an over-cap sender auth blob is rejected rather than priced",
         );
@@ -468,7 +469,7 @@ mod tests {
         }))
         .expect("valid request");
         assert_eq!(
-            req.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP).err(),
+            req.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP, Eip8130SimulationMode::Estimate).err(),
             Some(Eip8130SimulationRequestError::SenderAuthTooLarge)
         );
     }
@@ -484,7 +485,7 @@ mod tests {
         }))
         .expect("valid request");
         assert_eq!(
-            req.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP).err(),
+            req.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP, Eip8130SimulationMode::Estimate).err(),
             Some(Eip8130SimulationRequestError::PayerAuthTooLarge),
             "an over-cap payer auth blob is rejected rather than priced",
         );
@@ -542,7 +543,7 @@ mod tests {
         }))
         .expect("valid request");
         let tx = req
-            .to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP)
+            .to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP, Eip8130SimulationMode::Estimate)
             .expect("a canonical authenticator is priced");
         let s = signed(&tx);
         assert_eq!(s.tx().payer, Some(payer), "the payer is set on the transaction");
@@ -563,7 +564,7 @@ mod tests {
         }))
         .expect("valid request");
         assert_eq!(
-            req.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP).err(),
+            req.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP, Eip8130SimulationMode::Estimate).err(),
             Some(Eip8130SimulationRequestError::UnrecognizedPayerAuthenticator),
             "an unrecognized payer authenticator selector is rejected rather than priced",
         );
@@ -597,22 +598,25 @@ mod tests {
             "calls": [],
             "senderActorId": actor,
         }));
-        let parts = tx.eip8130.as_ref().expect("eip8130 parts");
-        assert_eq!(parts.mode, Eip8130ExecutionMode::Simulate);
         assert_eq!(
-            parts.simulation_sender_actor_id,
-            Some(actor),
-            "senderActorId must be threaded onto the simulation parts",
+            tx.inner().as_eip8130().expect("eip8130 parts").simulation,
+            Some(Eip8130Simulation {
+                mode: Eip8130SimulationMode::Estimate,
+                sender_actor_id: Some(actor),
+            }),
+            "senderActorId must be threaded onto the simulation request",
         );
     }
 
     #[test]
     fn absent_sender_actor_id_leaves_parts_hint_unset() {
         let tx = sim_tx(json!({ "sender": SENDER, "calls": [] }));
-        let parts = tx.eip8130.as_ref().expect("eip8130 parts");
-        assert_eq!(parts.mode, Eip8130ExecutionMode::Simulate);
         assert_eq!(
-            parts.simulation_sender_actor_id, None,
+            tx.inner().as_eip8130().expect("eip8130 parts").simulation,
+            Some(Eip8130Simulation {
+                mode: Eip8130SimulationMode::Estimate,
+                sender_actor_id: None
+            }),
             "without a hint the simulate path keeps the self-actor default",
         );
     }

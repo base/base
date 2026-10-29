@@ -33,10 +33,7 @@ serde_json = { workspace = true, features = ["alloc"] }
 serde = { workspace = true, features = ["derive", "alloc"] }
 
 # reth
-revm = { workspace = true, optional = true }
 reth-evm = { workspace = true, optional = true }
-alloy-evm = { workspace = true, optional = true }
-base-common-evm = { workspace = true, optional = true }
 base-common-evm2 = { workspace = true, optional = true }
 reth-rpc-convert = { workspace = true, optional = true }
 reth-primitives-traits = { workspace = true, optional = true }
@@ -54,6 +51,8 @@ derive_more = { workspace = true, features = ["as_ref", "deref_mut", "try_from"]
 
 [dev-dependencies]
 rand.workspace = true
+base-common-chains.workspace = true
+evm2 = { workspace = true, features = ["std"] }
 similar-asserts.workspace = true
 reth-evm-ethereum.workspace = true
 k256 = { workspace = true, features = ["ecdsa"] }
@@ -67,16 +66,13 @@ default = [ "std" ]
 std = [
 	"alloy-consensus/std",
 	"alloy-eips/std",
-	"alloy-evm?/std",
 	"alloy-network-primitives/std",
 	"alloy-primitives/std",
 	"alloy-rpc-types-eth/std",
 	"alloy-serde/std",
 	"base-common-consensus/std",
-	"base-common-evm?/std",
 	"derive_more/std",
 	"reth-primitives-traits?/std",
-	"revm?/std",
 	"serde/std",
 	"serde_json/std",
 	"thiserror?/std",
@@ -90,7 +86,6 @@ arbitrary = [
 	"base-common-consensus/arbitrary",
 	"dep:arbitrary",
 	"reth-primitives-traits?/arbitrary",
-	"revm?/arbitrary",
 	"std",
 ]
 k256 = [ "alloy-rpc-types-eth/k256", "base-common-consensus/k256" ]
@@ -101,21 +96,12 @@ serde = [
 	"alloy-primitives/serde",
 	"alloy-rpc-types-eth/serde",
 	"base-common-consensus/serde",
-	"base-common-evm?/serde",
 	"reth-primitives-traits?/serde",
-	"revm?/serde",
 ]
 network = [ "dep:alloy-network" ]
-eip8130 = [
-	"dep:alloy-evm",
-	"dep:base-common-evm",
-	"dep:revm",
-	"dep:thiserror",
-	"std",
-]
+eip8130 = [ "dep:base-common-evm2", "dep:thiserror", "std" ]
 reth = [
 	"dep:alloy-signer",
-	"dep:base-common-evm2",
 	"dep:reth-evm",
 	"dep:reth-primitives-traits",
 	"dep:reth-rpc-convert",
