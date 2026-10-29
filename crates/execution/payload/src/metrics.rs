@@ -61,7 +61,7 @@ base_metrics::define_metrics! {
     validity_predicate_evaluations_total: counter,
     #[describe("Resting validity transactions carried into a block build from the previous block")]
     resting_predicate_carried: histogram,
-    #[describe("Resting validity transactions released at block start, by reason")]
+    #[describe("Resting validity transactions released from the carried set, by reason")]
     #[label(reason)]
     resting_predicate_carry_released_total: counter,
     #[describe("Block builds that discarded carried resting validity transactions because the parent was not the last block the builder finished")]
@@ -72,6 +72,12 @@ base_metrics::define_metrics! {
     resting_predicate_shadow_mismatches_total: counter,
     #[describe("Of the parked resting validity transactions, those carried over from an earlier block")]
     resting_predicate_carried_parked_total: counter,
+    #[describe("Duration of carrying resting validity transactions into a block build, on the path before flashblock scheduling, in seconds")]
+    resting_predicate_begin_block_duration: histogram,
+    #[describe("Duration of the periodic sweep of resting validity transactions no build yielded, run off the build path, in seconds")]
+    resting_predicate_sweep_duration: histogram,
+    #[describe("Time a block build waited for the previous block's resting sweep to finish, in seconds")]
+    resting_predicate_sweep_wait_duration: histogram,
 }
 
 base_metrics::define_metrics! {
@@ -149,21 +155,35 @@ impl ValidityMetrics {
         Self::predicate_slots_loaded_unique().record(tracker.unique_slots() as f64);
     }
 
-    /// Records what carrying resting validity transactions into a new block did.
-    pub fn record_resting_carry_over(carry_over: &RestingCarryOver) {
+    /// Records what carrying resting validity transactions into a new block did, and how long it
+    /// took.
+    pub fn record_resting_carry_over(carry_over: &RestingCarryOver, duration: Duration) {
+        Self::resting_predicate_begin_block_duration().record(duration.as_secs_f64());
         if carry_over.reset {
             Self::resting_predicate_carry_resets_total().increment(1);
         }
         for (reason, released) in [
             ("pre_block_state", carry_over.released_by_state),
             ("block_number", carry_over.released_by_block_number),
-            ("unseen", carry_over.released_unseen),
         ] {
             if released > 0 {
                 Self::resting_predicate_carry_released_total(reason).increment(released as u64);
             }
         }
         Self::resting_predicate_carried().record(carry_over.carried as f64);
+    }
+
+    /// Records one sweep of resting validity transactions no build yielded.
+    pub fn record_resting_unseen_sweep(released: usize, duration: Duration) {
+        if released > 0 {
+            Self::resting_predicate_carry_released_total("unseen").increment(released as u64);
+        }
+        Self::resting_predicate_sweep_duration().record(duration.as_secs_f64());
+    }
+
+    /// Records how long a block build waited for the previous block's resting sweep.
+    pub fn record_resting_sweep_wait(waited: Duration) {
+        Self::resting_predicate_sweep_wait_duration().record(waited.as_secs_f64());
     }
 
     /// Records validity-predicate index bucket wakeups and depth distribution for one build.
