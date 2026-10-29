@@ -35,7 +35,7 @@ use tracing::info;
 
 use crate::{
     ANVIL_ACCOUNT_1, ANVIL_ACCOUNT_5, B20PrecompileClient, BlockExportWriter, DevnetBlockInterval,
-    DevnetConfig, DevnetL2State, DevnetPrefund, EXPORT_BLOCKS_FILE, ExportedBlock,
+    DevnetConfig, DevnetL2State, DevnetPrefund, EXPORT_BLOCKS_FILE, ExportedBlock, PendingFixtures,
     PrometheusBlockCollector, ReplayManifest, SnapshotBenchmarkReportConfig,
     SnapshotBenchmarkResult, SnapshotBlockMetrics, SnapshotChainConfig, SnapshotL2Stack,
     SystemTestStack, SystemTestStackBuilder, VisualizerMetadata, VisualizerRun,
@@ -227,6 +227,12 @@ pub struct SnapshotBenchmarkArgs {
         default_value_t = RestingPredicateMode::Off
     )]
     pub resting_predicate_mode: RestingPredicateMode,
+    /// Interval between `DoubleCounter.increment()` calls from the fixture's mutator account
+    /// while the load test runs, flipping slot 0 so parity-gated validity transactions swap
+    /// between matching and resting. Only used when the workload references
+    /// `__DOUBLE_COUNTER__`; `0` disables the mutator.
+    #[arg(long, env = "BASE_BENCH_DOUBLE_COUNTER_MUTATOR_INTERVAL_MS", default_value_t = 5_000)]
+    pub double_counter_mutator_interval_ms: u64,
 }
 
 /// Wei minted to the benchmark's ephemeral funder in the first local descendant (1,000,000 ETH),
@@ -982,8 +988,7 @@ impl AggregateBenchmarkArgs {
 impl SnapshotBenchmarkArgs {
     /// Starts the devnet, runs the load test, writes results, and shuts down.
     pub async fn run(self) -> Result<()> {
-        let test_config = TestConfig::load(&self.load_test_config)
-            .wrap_err("failed to load benchmark load-test configuration")?;
+        let (test_config, pending_fixtures) = PendingFixtures::load(&self.load_test_config)?;
         let block_interval = Self::block_interval_from_test_config(&test_config)?;
         let funder_key = PrivateKeySigner::random();
         let client_version = self.client_version.clone().ok_or_else(|| {
@@ -1026,8 +1031,9 @@ impl SnapshotBenchmarkArgs {
             .with_devnet_config(devnet)
             .build_snapshot_sequencer()
             .await?;
-        let benchmark_result =
-            self.execute(&mut stack, test_config, block_interval, funder_key).await;
+        let benchmark_result = self
+            .execute(&mut stack, test_config, pending_fixtures, block_interval, funder_key)
+            .await;
 
         // Persist the report before teardown. Reth may have a non-cancellable serial state-root
         // fallback still running after consensus shutdown, and dropping its runtime waits for
@@ -1127,10 +1133,24 @@ impl SnapshotBenchmarkArgs {
         &self,
         stack: &mut SnapshotL2Stack,
         mut test_config: TestConfig,
+        pending_fixtures: Option<PendingFixtures>,
         block_interval: DevnetBlockInterval,
         funder_key: PrivateKeySigner,
     ) -> Result<(SnapshotBenchmarkResult, Option<BaselineError>)> {
         let builder_rpc = stack.builder_rpc_url()?;
+        // Fixtures deploy before the load tester funds its senders, so the funder's nonce stream
+        // is used by one party at a time; the mutator then runs on its own funded key.
+        let mutator = match pending_fixtures {
+            Some(pending) => {
+                let (resolved, deployed) = pending.deploy(&builder_rpc, &funder_key).await?;
+                test_config = resolved;
+                deployed.start_mutator(
+                    &builder_rpc,
+                    Duration::from_millis(self.double_counter_mutator_interval_ms),
+                )
+            }
+            None => None,
+        };
         test_config.transaction_submission_rpcs = vec![builder_rpc.clone()];
         test_config.query_rpc = Some(builder_rpc.clone());
         // Each snapshot benchmark starts a fresh in-process builder, so its txpool
@@ -1166,6 +1186,9 @@ impl SnapshotBenchmarkArgs {
             },
         )
         .await;
+        if let Some(mutator) = mutator {
+            mutator.abort();
+        }
         let output = load_result?;
         let summary = output.summary;
         let measurement_end = summary
