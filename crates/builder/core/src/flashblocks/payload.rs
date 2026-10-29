@@ -312,12 +312,11 @@ where
         BuilderMetrics::sequencer_tx_gauge().set(sequencer_tx_time);
 
         // Derive the flashblock schedule before carrying the resting set into the block, so the
-        // carry cannot delay the schedule; at worst it shortens the first flashblock. The timer
-        // below is anchored to this instant.
+        // carry cannot delay the schedule; the timer below takes it out of the first flashblock.
         let (flashblocks_per_block, first_flashblock_offset) =
             self.calculate_flashblocks(timestamp);
-        let schedule_start = tokio::time::Instant::now();
         BuilderMetrics::flashblocks_schedule_delay().record(block_build_start_time.elapsed());
+        let resting_carry_start = Instant::now();
 
         // Resting transactions carry across flashblocks and across the blocks this builder finishes
         // in sequence. Checked against the parent before the fallback build merges the transitions,
@@ -337,6 +336,7 @@ where
             ValidityMetrics::record_resting_carry_over(&carry_over, start.elapsed());
             resting
         });
+        let resting_carry = resting_carry_start.elapsed();
 
         let skip_flashblocks_building = ctx.attributes().no_tx_pool || flashblocks_per_block == 0;
 
@@ -471,8 +471,8 @@ where
 
             async move {
                 let mut timer = tokio::time::interval_at(
-                    schedule_start
-                        .checked_add(first_flashblock_offset)
+                    tokio::time::Instant::now()
+                        .checked_add(first_flashblock_delay(first_flashblock_offset, resting_carry))
                         .expect("can add flashblock offset to current time"),
                     interval,
                 );
@@ -1466,9 +1466,22 @@ where
     ))
 }
 
+/// Time from starting the flashblock timer to its first tick.
+///
+/// The resting carry runs after the schedule is derived, so it comes out of the first flashblock
+/// instead of moving the schedule. It never takes more than the whole first flashblock: a first
+/// tick in the past would fire missed ticks back to back and cancel flashblocks before they build
+/// anything. A longer carry delays the schedule by the excess.
+const fn first_flashblock_delay(
+    first_flashblock_offset: Duration,
+    resting_carry: Duration,
+) -> Duration {
+    first_flashblock_offset.saturating_sub(resting_carry)
+}
+
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::{sync::Arc, time::Duration};
 
     use alloy_consensus::{Header, Receipt};
     use alloy_primitives::{Address, B256, Log, U256, map::foldhash::HashMap};
@@ -1481,7 +1494,7 @@ mod tests {
     use reth_provider::{EvmStateProviderBox, StateProvider, noop::NoopProvider};
     use reth_revm::{State, database::StateProviderDatabase};
 
-    use super::{FlashblocksMetadata, build_block};
+    use super::{FlashblocksMetadata, build_block, first_flashblock_delay};
     use crate::{ExecutionInfo, flashblocks::context::BasePayloadBuilderCtx};
 
     /// Creates a minimal [`BaseChainSpec`] with all L1 upgrades through Cancun
@@ -1508,6 +1521,23 @@ mod tests {
     fn genesis_header() -> Arc<SealedHeader> {
         let header = Header { gas_limit: 30_000_000, timestamp: 0, ..Default::default() };
         Arc::new(SealedHeader::seal_slow(header))
+    }
+
+    #[test]
+    fn resting_carry_comes_out_of_the_first_flashblock() {
+        let offset = Duration::from_millis(120);
+        assert_eq!(first_flashblock_delay(offset, Duration::ZERO), offset);
+        assert_eq!(
+            first_flashblock_delay(offset, Duration::from_millis(20)),
+            Duration::from_millis(100)
+        );
+    }
+
+    #[test]
+    fn resting_carry_longer_than_the_first_flashblock_never_starts_the_timer_in_the_past() {
+        let offset = Duration::from_millis(5);
+        assert_eq!(first_flashblock_delay(offset, offset), Duration::ZERO);
+        assert_eq!(first_flashblock_delay(offset, Duration::from_millis(300)), Duration::ZERO);
     }
 
     #[test]

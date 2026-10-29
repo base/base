@@ -225,13 +225,21 @@ impl RestingPredicates {
         if matches!(predicate, ValidityPredicate::FlashblockIndex { .. }) {
             return;
         }
+        // A member resting again in the block that filed it is already listed in that block's
+        // generation; listing it twice would only give the sweep a stale entry to skip.
+        let filed = self
+            .index
+            .entry(transaction_hash)
+            .is_some_and(|(member, _)| member.filed_block == self.block_number);
         let member = RestingMember {
             rested_block: self.block_number,
             seen_block: self.block_number,
             filed_block: self.block_number,
         };
         self.index.park(transaction_hash, member, predicate);
-        self.generations.entry(self.block_number).or_default().push(transaction_hash);
+        if !filed {
+            self.generations.entry(self.block_number).or_default().push(transaction_hash);
+        }
     }
 
     /// Removes a member, returning whether it was present.
@@ -639,6 +647,17 @@ mod tests {
             1
         );
         assert!(carry_through(&store, rested(), &held, last_seen, last_seen + window).is_empty());
+    }
+
+    #[test]
+    fn resting_again_in_the_same_block_lists_the_member_once() {
+        let predicate = balance_at_least(WATCHED, 1);
+        let mut resting = RestingPredicates::new(32);
+        resting.begin_block(PARENT, 2, Some(&TransitionState::default()));
+        resting.rest(hash(0), predicate.clone());
+        resting.rest(hash(0), predicate);
+        assert_eq!(resting.len(), 1);
+        assert_eq!(resting.generations.get(&2).map(Vec::len), Some(1));
     }
 
     #[test]
