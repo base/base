@@ -77,6 +77,17 @@ pub trait Payload: Send + Sync + std::fmt::Debug {
     /// Generates a transaction request.
     fn generate(&self, rng: &mut SeededRng, from: Address, to: Address) -> TransactionRequest;
 
+    /// Returns each request gas calibration measures, with its relative weight. Default: one
+    /// generated request.
+    fn calibration_requests(
+        &self,
+        rng: &mut SeededRng,
+        from: Address,
+        to: Address,
+    ) -> Vec<(TransactionRequest, u32)> {
+        vec![(self.generate(rng, from, to), 1)]
+    }
+
     /// Optional chain preparation before the measured load phase. Default: no-op.
     async fn prepare(&self, ctx: &mut ChainPrepContext<'_>) -> Result<()> {
         let _ = ctx;

@@ -221,6 +221,16 @@ impl WorkloadGenerator {
         Ok(self.generate_selected_payload(&payload, from, to))
     }
 
+    /// Returns a selected payload's calibration requests with their relative weights.
+    pub fn calibration_requests(
+        &mut self,
+        from: alloy_primitives::Address,
+        to: alloy_primitives::Address,
+    ) -> Result<Vec<(TransactionRequest, u32)>> {
+        let selected = self.select_payload()?;
+        Ok(selected.payload.calibration_requests(&mut self.rng, from, to))
+    }
+
     /// Selects a payload according to configured weights.
     pub(crate) fn select_payload(&mut self) -> Result<SelectedPayload> {
         if self.payloads.is_empty() {

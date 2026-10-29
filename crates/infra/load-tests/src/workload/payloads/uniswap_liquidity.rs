@@ -113,6 +113,11 @@ impl LiquidityOps {
     pub const fn singles() -> Self {
         Self { mint: 1, increase: 1, decrease: 1, collect: 1, multicall: 0 }
     }
+
+    /// Weights in op-index order: mint, increase, decrease, collect, multicall.
+    pub const fn weights(&self) -> [u32; 5] {
+        [self.mint, self.increase, self.decrease, self.collect, self.multicall]
+    }
 }
 
 /// A sender's setup position.
@@ -176,8 +181,8 @@ impl UniswapV3LiquidityPayload {
         if ops.decrease > ops.increase {
             return error("decrease weight must not exceed increase weight");
         }
-        let weights = [ops.mint, ops.increase, ops.decrease, ops.collect, ops.multicall];
-        if weights.iter().try_fold(0u32, |sum, w| sum.checked_add(*w)).is_none_or(|t| t == 0) {
+        if ops.weights().iter().try_fold(0u32, |sum, w| sum.checked_add(*w)).is_none_or(|t| t == 0)
+        {
             return error("ops weights must sum to 1..=u32::MAX");
         }
         Ok(())
@@ -250,6 +255,30 @@ impl UniswapV3LiquidityPayload {
             amount1Max: u128::MAX,
         };
         INonfungiblePositionManager::collectCall { params }.abi_encode()
+    }
+
+    /// Builds the op at `op`'s index in [`LiquidityOps::weights`] for `from`'s setup position.
+    fn op_request(&self, op: usize, from: Address) -> TransactionRequest {
+        let state = self.positions.get().expect("uniswap_v3_liquidity setup must run first");
+        let position = state.positions[&from];
+        match op {
+            0 => self.request(self.mint(state, from, 1), MINT_GAS_LIMIT),
+            1 => self.request(self.increase(position), POSITION_GAS_LIMIT),
+            2 => self.request(Self::decrease(position), POSITION_GAS_LIMIT),
+            3 => self.request(Self::collect(position, from), POSITION_GAS_LIMIT),
+            _ => {
+                let data = [
+                    self.mint(state, from, 1),
+                    self.increase(position),
+                    Self::decrease(position),
+                    Self::collect(position, from),
+                ]
+                .map(Bytes::from)
+                .to_vec();
+                let call = INonfungiblePositionManager::multicallCall { data };
+                self.request(call.abi_encode(), MULTICALL_GAS_LIMIT)
+            }
+        }
     }
 
     fn request(&self, input: Vec<u8>, gas_limit: u64) -> TransactionRequest {
@@ -356,36 +385,31 @@ impl Payload for UniswapV3LiquidityPayload {
     }
 
     fn generate(&self, rng: &mut SeededRng, from: Address, _to: Address) -> TransactionRequest {
-        let state = self.positions.get().expect("uniswap_v3_liquidity setup must run first");
-        let position = state.positions[&from];
-        let ops = self.ops;
-        let total = ops.mint + ops.increase + ops.decrease + ops.collect + ops.multicall;
-        let pick = rng.gen_range(0..total);
+        let weights = self.ops.weights();
+        let pick = rng.gen_range(0..weights.iter().sum::<u32>());
         let mut threshold = 0;
-        let mut next = |weight: u32| {
-            threshold += weight;
-            pick < threshold
-        };
-        if next(ops.mint) {
-            self.request(self.mint(state, from, 1), MINT_GAS_LIMIT)
-        } else if next(ops.increase) {
-            self.request(self.increase(position), POSITION_GAS_LIMIT)
-        } else if next(ops.decrease) {
-            self.request(Self::decrease(position), POSITION_GAS_LIMIT)
-        } else if next(ops.collect) {
-            self.request(Self::collect(position, from), POSITION_GAS_LIMIT)
-        } else {
-            let data = [
-                self.mint(state, from, 1),
-                self.increase(position),
-                Self::decrease(position),
-                Self::collect(position, from),
-            ]
-            .map(Bytes::from)
-            .to_vec();
-            let call = INonfungiblePositionManager::multicallCall { data };
-            self.request(call.abi_encode(), MULTICALL_GAS_LIMIT)
-        }
+        let op = weights
+            .iter()
+            .position(|weight| {
+                threshold += weight;
+                pick < threshold
+            })
+            .expect("pick is below the weight total");
+        self.op_request(op, from)
+    }
+
+    /// Every op runs at a different gas cost, so calibration measures each enabled op.
+    fn calibration_requests(
+        &self,
+        _rng: &mut SeededRng,
+        from: Address,
+        _to: Address,
+    ) -> Vec<(TransactionRequest, u32)> {
+        let weights = self.ops.weights().into_iter().enumerate();
+        weights
+            .filter(|(_, weight)| *weight > 0)
+            .map(|(op, w)| (self.op_request(op, from), w))
+            .collect()
     }
 }
 
@@ -495,6 +519,34 @@ mod tests {
             let tx = payload.generate(&mut rng, SENDER, Address::ZERO);
             assert_eq!(assert_call(&payload, tx.input.input().unwrap()), "collect");
         }
+    }
+
+    #[test]
+    fn calibrates_every_enabled_op_by_weight() {
+        let payload =
+            sample(LiquidityOps { mint: 3, decrease: 1, increase: 2, multicall: 4, collect: 0 });
+        let mut rng = SeededRng::new(42);
+        let variants = payload.calibration_requests(&mut rng, SENDER, Address::ZERO);
+        let ops: Vec<_> = variants
+            .iter()
+            .map(|(tx, weight)| {
+                let input = tx.input.input().unwrap();
+                let op = INonfungiblePositionManager::multicallCall::abi_decode(input)
+                    .map_or_else(|_| assert_call(&payload, input), |_| "multicall");
+                (op, *weight)
+            })
+            .collect();
+        assert_eq!(
+            ops,
+            [("mint", 3), ("increase", 2), ("decrease", 1), ("multicall", 4)],
+            "one variant per enabled op, in an order where every op is valid"
+        );
+        let transfer = super::super::TransferPayload::default();
+        assert_eq!(
+            transfer.calibration_requests(&mut rng, SENDER, Address::ZERO).len(),
+            1,
+            "other payloads keep a single calibration request"
+        );
     }
 
     #[test]
