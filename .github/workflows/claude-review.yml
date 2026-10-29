@@ -88,8 +88,8 @@ jobs:
             You are reviewing a Pull Request for Base Reth Node — a Rust Ethereum L2 node built on Reth.
 
             CODEBASE:
-            - 4 core crate groups: crates/{client, builder, consensus, shared}
-            - devnet/: system and E2E test infrastructure for Base node
+            - 8 library crate groups: crates/{batcher, builder, common, consensus, execution, infra, proof, utilities}; thin binaries in bin/
+            - acceptance/, actions/, etc/systems/: real-devnet acceptance scenarios, action tests, and system tests
             - Error handling: thiserror enums with From impls
             - Async: tokio, async-trait, arc-swap for lock-free config
             - CI already enforces: clippy (52 rules, -D warnings), rustfmt (2024 edition), cargo-deny, cargo-udeps
@@ -99,7 +99,7 @@ jobs:
             - Focus on correctness, safety, and idiomatic Rust
             - Verify that the logic matches the PR description and intended behavior
             - Look for meaningful redundancy, unnecessary complexity, or missed reuse of existing abstractions
-            - Review code using the PR context and the `gh pr diff` / `gh pr view` commands; do not rely on broad local repo reads
+            - Start from `gh pr diff` / `gh pr view`, then use `Read`/`Grep` on the touched files and their direct callers/callees to inspect unchanged function bodies, data-structure invariants, and call frequency; avoid unrelated repo-wide exploration
             - DO NOT comment on formatting or style — clippy and rustfmt handle that
             - DO NOT post praise, "looks good", or filler comments. If there are no actionable findings, post nothing
             - Use inline comments for specific code feedback via mcp__github_inline_comment__create_inline_comment
@@ -130,8 +130,11 @@ jobs:
             A Critical finding must explain the triggering input/state/config, affected code path, propagated error or panic, why block production or validator progression can halt/stall, and the missing mitigation or test.
 
             HOT-PATH PERFORMANCE FINDINGS:
-            A diff rarely shows how often changed code runs. If the PR touches code reachable from a path listed in the hot-path registry of `docs/guides/HOT_PATH_PERFORMANCE_REVIEW.md` (per-candidate transaction selection, pool admission, native block building, flashblock building and publishing, block execution), run `git show HEAD:docs/guides/HOT_PATH_PERFORMANCE_REVIEW.md` and apply it.
-            Cost added per-unit work at its production frequency. Evaluate default-off features on their enabled branch, because production enables features that tests, benchmarks, and devnet leave off.
+            A diff rarely shows how often changed code runs or what existing code does when given a much larger input population. If the PR touches code reachable from a path listed in the hot-path registry of `docs/guides/HOT_PATH_PERFORMANCE_REVIEW.md` (`crates/execution/txpool`, `crates/execution/payload`, `crates/builder`, or `crates/execution`—covering per-candidate selection/iteration, best-transaction snapshot construction, pool admission/maintenance, pool queries, block/flashblock building, or block execution), run `git show HEAD:docs/guides/HOT_PATH_PERFORMANCE_REVIEW.md` and apply its review procedure:
+            1. Trace each changed or newly-reached function's call frequency from the hot-path registry and read the full body of any unchanged callee or data structure whose call rate or population scale (`10^4–10^5` pooled transactions/lanes) the PR increases.
+            2. Flag `O(L)` or `O(P)` linear scans inside per-candidate methods (`BestTransactions::next`, `pop_best`, `mark_invalid`) that multiply to `O(N · L)` per build; per-flashblock deep copies or `HashMap`/`BinaryHeap` rebuilds over pool-sized collections (`BestTwoDTransactions::new`); repeated `O(m)` lane scans per insert (`O(m²)`); and per-call `HashSet`/`Vec` allocations or full-pool `Arc` clones in cursor updates and `pool_size`/`*_max` helpers.
+            3. Audit PR benchmarks to verify their priority/tip and nonce distributions exercise the worst case (e.g. ready/deferred lanes that do not immediately outbid the block cutoff, and multi-tx lanes) rather than masking super-linear scaling.
+            4. Cost work at its production frequency and evaluate default-off features on their enabled branch, because production enables features that tests, benchmarks, and devnet leave off.
 
             COMMENT MANAGEMENT:
             If you have findings, post one summary using `gh pr comment ${{ github.event.pull_request.number }} --body ...`.
@@ -141,7 +144,7 @@ jobs:
           claude_args: |
             --model claude-opus-5-5
             --effort max
-            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(git ls-files docs),Bash(git show HEAD:docs/:*),Bash(cat /home/runner/.claude/projects/:*),Bash(gh pr comment ${{ github.event.pull_request.number }} --body:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/comments:*),Bash(gh api repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments:*)"
+            --allowedTools "Read,Grep,Glob,mcp__github_inline_comment__create_inline_comment,Bash(git ls-files docs),Bash(git show HEAD:docs/:*),Bash(cat /home/runner/.claude/projects/:*),Bash(gh pr comment ${{ github.event.pull_request.number }} --body:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/comments:*),Bash(gh api repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments:*)"
 
       - name: Remove superseded review summaries
         # A review can post its summary before a later action error.
