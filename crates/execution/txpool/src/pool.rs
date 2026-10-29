@@ -1373,13 +1373,22 @@ where
                     );
                     return Err(error);
                 }
+                // An incumbent from another store stays pooled there until the
+                // newcomer survives eviction below, so its reservation is only
+                // released then; until that point both are reserved, which
+                // `insert_forced` allows.
+                let cross_store_incumbent = tracked_replaced.filter(|_| outcome.replaced.is_none());
                 match (tracked_replaced, admission) {
                     (Some(replaced), Some(admission)) => {
-                        guard.release(&replaced);
+                        if cross_store_incumbent.is_none() {
+                            guard.release(&replaced);
+                        }
                         guard.insert_forced(admission);
                     }
                     (Some(replaced), None) => {
-                        guard.release(&replaced);
+                        if cross_store_incumbent.is_none() {
+                            guard.release(&replaced);
+                        }
                     }
                     (None, Some(admission)) => {
                         if let Err(rejection) = guard.try_admit(admission) {
@@ -1402,8 +1411,13 @@ where
                 for transaction in &evicted {
                     guard.release(transaction.hash());
                 }
-                drop(guard);
                 let inserted_hash = outcome.outcome.hash;
+                let discarded_on_insert =
+                    evicted.iter().any(|transaction| *transaction.hash() == inserted_hash);
+                if !discarded_on_insert && let Some(incumbent) = cross_store_incumbent {
+                    guard.release(&incumbent);
+                }
+                drop(guard);
                 let survived = |moved: &Arc<ValidPoolTransaction<T>>| {
                     !evicted.iter().any(|transaction| transaction.hash() == moved.hash())
                 };
@@ -1413,7 +1427,7 @@ where
                 if store == PoolStore::Validity {
                     ValidityPoolMetrics::record_evictions(evicted.len());
                 }
-                if evicted.iter().any(|transaction| *transaction.hash() == inserted_hash) {
+                if discarded_on_insert {
                     evicted.retain(|transaction| *transaction.hash() != inserted_hash);
                     evicted.extend(outcome.replaced);
                     listeners.on_discarded(&evicted);
@@ -6154,6 +6168,35 @@ mod tests {
         assert_store(&pool, validity0, PoolStore::Validity);
         assert!(is_queued(&pool, sidecar1) && is_queued(&pool, sidecar2));
         assert_eq!(best_hashes(&pool), vec![validity0, sidecar1, sidecar2]);
+    }
+
+    #[tokio::test]
+    async fn a_cross_store_replacement_evicted_on_insert_keeps_the_incumbent_reserved() {
+        let (pool, client) = build_integration_pool();
+        let pool = pool.with_validity_pool_limits(ValidityPoolLimits::inherit().with_max_txs(1));
+        let signer = funded_signer(&client);
+        let channel = U256::from(3);
+        let incumbent = add(&pool, self_paid_eoa_8130(&signer, channel, 0, 0, 1_000)).await;
+        assert!(pool.guard.read().contains(&incumbent));
+        let resting = add(&pool, validity_1559(&funded_signer(&client), 0, 5_000)).await;
+
+        // The bumped validity copy outbids the sidecar incumbent but is the
+        // cheapest member of the full validity pool, so it is evicted on insert.
+        let newcomer = validity_8130(&signer, channel, 0, 1_100);
+        let newcomer_hash = *newcomer.hash();
+        let error = add_err(&pool, newcomer).await;
+        assert!(matches!(error, PoolErrorKind::DiscardedOnInsert), "{error:?}");
+        assert_store(&pool, incumbent, PoolStore::Sidecar);
+        assert_store(&pool, resting, PoolStore::Validity);
+        assert!(pool.guard.read().contains(&incumbent), "the incumbent keeps its reservation");
+        assert!(!pool.guard.read().contains(&newcomer_hash));
+
+        // A replacement that survives eviction takes over the reservation.
+        let replacement = add(&pool, validity_8130(&signer, channel, 0, 6_000)).await;
+        assert_store(&pool, replacement, PoolStore::Validity);
+        assert_gone(&pool, incumbent);
+        assert!(pool.guard.read().contains(&replacement));
+        assert!(!pool.guard.read().contains(&incumbent));
     }
 
     #[tokio::test]
