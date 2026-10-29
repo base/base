@@ -1,8 +1,6 @@
 #![doc = include_str!("../README.md")]
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
-use clap::Parser as _;
-
 mod cli;
 
 #[tokio::main]
@@ -11,7 +9,7 @@ async fn main() {
         .with_service_name("base-proof-tee-registrar")
         .try_init();
     let result: eyre::Result<()> = async {
-        let cli = cli::Cli::parse();
+        let cli = base_cli_utils::EnvAlias::parse::<cli::Cli>(cli::ENV_ALIASES);
         let traces = cli.traces.clone();
         let config = cli.config()?;
         config.log_config.init_with_trace_args(&traces, &[])?;

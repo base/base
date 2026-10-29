@@ -30,6 +30,9 @@ macro_rules! parse_cli {
 }
 
 /// Runs a synchronous Clap CLI as a binary entry point.
+///
+/// Pass `aliases = <&[EnvAlias]>` to also accept canonical env var names; see
+/// [`EnvAlias`](crate::EnvAlias).
 #[macro_export]
 macro_rules! run_cli_main {
     ($cli_type:ty) => {{
@@ -40,10 +43,26 @@ macro_rules! run_cli_main {
             ::std::process::exit(1);
         }
     }};
+    ($cli_type:ty, aliases = $aliases:expr) => {{
+        $crate::init_common!();
+
+        if let Err(err) = $crate::EnvAlias::parse::<$cli_type>($aliases).run() {
+            eprintln!("Error: {err:?}");
+            ::std::process::exit(1);
+        }
+    }};
     (async $cli_type:ty) => {{
         $crate::init_common!();
 
         if let Err(err) = <$cli_type as ::clap::Parser>::parse().run().await {
+            eprintln!("Error: {err:?}");
+            ::std::process::exit(1);
+        }
+    }};
+    (async $cli_type:ty, aliases = $aliases:expr) => {{
+        $crate::init_common!();
+
+        if let Err(err) = $crate::EnvAlias::parse::<$cli_type>($aliases).run().await {
             eprintln!("Error: {err:?}");
             ::std::process::exit(1);
         }

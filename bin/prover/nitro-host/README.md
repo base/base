@@ -32,6 +32,19 @@ cargo run --package base-prover-nitro-host --features local -- local \
 
 The `just tee nitro-local-worker` recipe wraps the same command.
 
+## Canonical network env vars
+
+Network endpoints can also be set with the canonical `BASE_*` names shared by the
+proof services. The existing name keeps working; if both are set they must match.
+
+| Canonical | Existing |
+| --- | --- |
+| `BASE_L1_ETH_RPC` | `L1_ETH_URL` |
+| `BASE_L1_BEACON_RPC` | `L1_BEACON_URL` |
+| `BASE_L2_ETH_RPC` | `L2_ETH_URL` |
+| `BASE_ROLLUP_RPC` | `L2_NODE_URL` |
+| `BASE_PROVER_WORKER_RPC` | `PROVER_SERVICE_ENDPOINT` |
+
 ## Health checks
 
 The registrar-facing RPC server exposes:

@@ -3,6 +3,7 @@
 use std::time::Duration;
 
 use alloy_primitives::Address;
+use base_cli_utils::{EnvAlias, NetworkEnv};
 use base_proof_tee_registrar::{
     DEFAULT_MAX_CONCURRENCY, DEFAULT_MAX_TX_RETRIES, DEFAULT_TX_RETRY_DELAY_SECS,
     INSTANCE_CACHE_TTL_CYCLES, RegistrarConfig, RegistrarError,
@@ -14,6 +15,11 @@ use url::Url;
 
 // Generate env-var helper and CLI structs with the `BASE_REGISTRAR_` prefix.
 base_cli_utils::define_cli_env!("BASE_REGISTRAR");
+
+/// Canonical network env vars accepted in addition to the `BASE_REGISTRAR_*` names.
+pub(crate) const ENV_ALIASES: &[EnvAlias] =
+    &[EnvAlias::new(NetworkEnv::L1_ETH_RPC, "BASE_REGISTRAR_L1_RPC_URL")];
+
 base_cli_utils::define_log_args!("BASE_REGISTRAR");
 base_cli_utils::define_metrics_args!("BASE_REGISTRAR", 7300);
 base_cli_utils::define_health_args!("BASE_REGISTRAR", 8080);
@@ -169,6 +175,8 @@ impl Cli {
 
 #[cfg(test)]
 mod tests {
+    use clap::CommandFactory;
+
     use super::*;
 
     fn required_args() -> Vec<&'static str> {
@@ -273,5 +281,13 @@ mod tests {
         args.extend(["--health.port", "0"]);
 
         assert!(Cli::parse_from(args).config().is_err());
+    }
+
+    #[test]
+    fn env_aliases_target_declared_env_vars() {
+        let cmd = Cli::command();
+        for alias in ENV_ALIASES {
+            assert!(alias.is_declared_in(&cmd), "{} is not declared", alias.legacy);
+        }
     }
 }
