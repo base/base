@@ -18,7 +18,7 @@ use base_common_consensus::Predeploys;
 use base_common_evm::{
     BaseSpecId as RevmBaseSpecId, BaseTransaction, Builder, DefaultBase, L1BlockInfo,
 };
-use base_common_evm2::{BaseEvmTypes, BaseSpecId, BaseTxEnvelope};
+use base_common_evm2::{BaseEvmExt, BaseEvmTypes, BaseSpecId, BaseTxEnvelope};
 use base_common_genesis::BaseUpgrade;
 use base_common_l1_fees::L1FeeParams;
 use evm2::{Evm, Precompiles, env::BlockEnv, ethereum::TxEnvelope, evm::InMemoryDB};
@@ -61,6 +61,13 @@ const fn fee_accounts() -> [Address; 5] {
         Predeploys::BASE_FEE_VAULT,
         Predeploys::OPERATOR_FEE_VAULT,
     ]
+}
+
+/// Marks the block environment's L1 fee parameters as already loaded for block 0, like the revm
+/// reference's preloaded `L1BlockInfo { l2_block: Some(0), .. }`, so execution prices fees from
+/// them instead of reading the (empty) `L1Block` predeploy.
+fn preloaded_l1_fee_params() -> BaseEvmExt {
+    BaseEvmExt { l1_fee_params_block: Some(U256::ZERO), ..Default::default() }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -108,6 +115,7 @@ fn build_evm2(upgrade: BaseUpgrade, balance: U256) -> Evm<'static, BaseEvmTypes>
         ..Default::default()
     };
     Evm::new(spec, block, BaseEvmTypes::tx_registry(), db, Precompiles::base(spec.into()))
+        .with_ext(preloaded_l1_fee_params())
 }
 
 /// Runs the EIP-1559 transfer through evm2 at `upgrade` and captures the fee outcome.

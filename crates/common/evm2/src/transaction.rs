@@ -1,9 +1,9 @@
 //! Base transaction envelope for EVM2.
 
-use alloy_consensus::Transaction;
-use alloy_eips::eip2718::Typed2718;
-use alloy_primitives::Bytes;
-use base_common_consensus::{Eip8130Signed, TxDeposit};
+use alloy_consensus::{EthereumTxEnvelope, Transaction};
+use alloy_eips::{eip2718::Typed2718, eip2930::AccessList, eip7702::SignedAuthorization};
+use alloy_primitives::{B256, Bytes, ChainId, TxKind, U256};
+use base_common_consensus::{BaseTransactionSigned, Eip8130Signed, TxDeposit};
 use evm2::ethereum::TxEnvelope;
 
 /// The Base transaction envelope: a deposit, a standard Ethereum transaction, or an enshrined
@@ -46,6 +46,19 @@ impl BaseTxEnvelope {
         Self::Standard { tx, enveloped }
     }
 
+    /// Builds the execution envelope of a signed Base transaction from its EIP-2718 encoding.
+    pub fn from_signed(tx: BaseTransactionSigned, encoded: Bytes) -> Self {
+        let standard = |tx: EthereumTxEnvelope<_>| Self::standard(TxEnvelope::from(tx), encoded);
+        match tx {
+            BaseTransactionSigned::Legacy(tx) => standard(EthereumTxEnvelope::Legacy(tx)),
+            BaseTransactionSigned::Eip2930(tx) => standard(EthereumTxEnvelope::Eip2930(tx)),
+            BaseTransactionSigned::Eip1559(tx) => standard(EthereumTxEnvelope::Eip1559(tx)),
+            BaseTransactionSigned::Eip7702(tx) => standard(EthereumTxEnvelope::Eip7702(tx)),
+            BaseTransactionSigned::Deposit(tx) => Self::Deposit(tx.into_inner()),
+            BaseTransactionSigned::Eip8130(tx) => Self::Eip8130(tx),
+        }
+    }
+
     /// Returns the deposit transaction, if this envelope is a deposit.
     pub const fn as_deposit(&self) -> Option<&TxDeposit> {
         match self {
@@ -64,15 +77,6 @@ impl BaseTxEnvelope {
         match self {
             Self::Eip8130(tx) => Some(tx),
             Self::Deposit(_) | Self::Standard { .. } => None,
-        }
-    }
-
-    /// Returns the transaction's gas limit.
-    pub fn gas_limit(&self) -> u64 {
-        match self {
-            Self::Standard { tx, .. } => tx.gas_limit(),
-            Self::Deposit(tx) => tx.gas_limit,
-            Self::Eip8130(tx) => tx.gas_limit(),
         }
     }
 
@@ -101,6 +105,87 @@ impl Typed2718 for BaseTxEnvelope {
             Self::Standard { tx, .. } => tx.ty(),
             Self::Eip8130(tx) => tx.ty(),
         }
+    }
+}
+
+/// Forwards a [`Transaction`] method to the wrapped transaction of every variant.
+macro_rules! delegate {
+    ($self:ident.$method:ident($($arg:expr),*)) => {
+        match $self {
+            Self::Deposit(tx) => tx.$method($($arg),*),
+            Self::Standard { tx, .. } => tx.$method($($arg),*),
+            Self::Eip8130(tx) => tx.$method($($arg),*),
+        }
+    };
+}
+
+impl Transaction for BaseTxEnvelope {
+    fn chain_id(&self) -> Option<ChainId> {
+        delegate!(self.chain_id())
+    }
+
+    fn nonce(&self) -> u64 {
+        delegate!(self.nonce())
+    }
+
+    fn gas_limit(&self) -> u64 {
+        delegate!(self.gas_limit())
+    }
+
+    fn gas_price(&self) -> Option<u128> {
+        delegate!(self.gas_price())
+    }
+
+    fn max_fee_per_gas(&self) -> u128 {
+        delegate!(self.max_fee_per_gas())
+    }
+
+    fn max_priority_fee_per_gas(&self) -> Option<u128> {
+        delegate!(self.max_priority_fee_per_gas())
+    }
+
+    fn max_fee_per_blob_gas(&self) -> Option<u128> {
+        delegate!(self.max_fee_per_blob_gas())
+    }
+
+    fn priority_fee_or_price(&self) -> u128 {
+        delegate!(self.priority_fee_or_price())
+    }
+
+    fn effective_gas_price(&self, base_fee: Option<u64>) -> u128 {
+        delegate!(self.effective_gas_price(base_fee))
+    }
+
+    fn is_dynamic_fee(&self) -> bool {
+        delegate!(self.is_dynamic_fee())
+    }
+
+    fn kind(&self) -> TxKind {
+        delegate!(self.kind())
+    }
+
+    fn is_create(&self) -> bool {
+        delegate!(self.is_create())
+    }
+
+    fn value(&self) -> U256 {
+        delegate!(self.value())
+    }
+
+    fn input(&self) -> &Bytes {
+        delegate!(self.input())
+    }
+
+    fn access_list(&self) -> Option<&AccessList> {
+        delegate!(self.access_list())
+    }
+
+    fn blob_versioned_hashes(&self) -> Option<&[B256]> {
+        delegate!(self.blob_versioned_hashes())
+    }
+
+    fn authorization_list(&self) -> Option<&[SignedAuthorization]> {
+        delegate!(self.authorization_list())
     }
 }
 

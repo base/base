@@ -12,12 +12,12 @@
 
 use alloy_consensus::{TxEip1559, transaction::Recovered};
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256};
-use base_common_consensus::{BaseReceiptEnvelope, TxDeposit};
+use base_common_consensus::{BaseReceipt, TxDeposit};
 use base_common_evm::{
     BaseSpecId as RevmBaseSpecId, BaseTransaction, Builder, DefaultBase, L1BlockInfo,
 };
 use base_common_evm2::{
-    BaseBlockExecutionCtx, BaseBlockExecutor, BaseEvmTypes, BaseSpecId, BaseTxEnvelope,
+    BaseBlockExecutionCtx, BaseBlockExecutor, BaseEvmExt, BaseEvmTypes, BaseSpecId, BaseTxEnvelope,
 };
 use base_common_genesis::BaseUpgrade;
 use base_common_l1_fees::L1FeeParams;
@@ -63,6 +63,13 @@ fn l1_fee_params() -> L1FeeParams {
     }
 }
 
+/// Marks the block environment's L1 fee parameters as already loaded for block 0, like the revm
+/// reference's preloaded `L1BlockInfo { l2_block: Some(0), .. }`, so execution prices fees from
+/// them instead of reading the (empty) `L1Block` predeploy.
+fn preloaded_l1_fee_params() -> BaseEvmExt {
+    BaseEvmExt { l1_fee_params_block: Some(U256::ZERO), ..Default::default() }
+}
+
 #[derive(Debug, PartialEq, Eq)]
 struct BlockOutcome {
     successes: Vec<bool>,
@@ -85,7 +92,8 @@ fn run_evm2(upgrade: BaseUpgrade) -> BlockOutcome {
         ..Default::default()
     };
     let evm =
-        Evm::new(spec, block, BaseEvmTypes::tx_registry(), db, Precompiles::base(spec.into()));
+        Evm::new(spec, block, BaseEvmTypes::tx_registry(), db, Precompiles::base(spec.into()))
+            .with_ext(preloaded_l1_fee_params());
     let mut executor = BaseBlockExecutor::new(evm, BaseBlockExecutionCtx::default());
 
     let deposit = BaseTxEnvelope::Deposit(TxDeposit {
@@ -125,8 +133,8 @@ fn run_evm2(upgrade: BaseUpgrade) -> BlockOutcome {
         .receipts
         .iter()
         .map(|r| match r {
-            BaseReceiptEnvelope::Deposit(r) => r.receipt.inner.status.coerce_status(),
-            BaseReceiptEnvelope::Eip1559(r) => r.receipt.status.coerce_status(),
+            BaseReceipt::Deposit(r) => r.inner.status.coerce_status(),
+            BaseReceipt::Eip1559(r) => r.status.coerce_status(),
             other => panic!("unexpected receipt variant: {other:?}"),
         })
         .collect();
