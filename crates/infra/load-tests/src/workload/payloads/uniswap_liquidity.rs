@@ -31,10 +31,10 @@ type I24 = Signed<24, 1>;
 const RANGE_SPACINGS: i32 = 100;
 /// The setup position holds this many increases' worth of liquidity at the setup price.
 const SETUP_MULTIPLIER: u64 = 64;
-/// A decrease removes half an increase's worth, so with `decrease <= increase` the position still
-/// grows on average when the price drifts to a range edge, where an increase adds about half as
-/// much liquidity as at the setup price.
-const DECREASES_PER_INCREASE: u64 = 2;
+/// A decrease removes a quarter of an increase's worth, so with `decrease <= increase` the position
+/// still grows on average when the price drifts to a range edge. There an increase adds 0.49x
+/// (fee 500), 0.43x (fee 3000) or 0.27x (fee 10000) of its setup-price liquidity.
+const DECREASES_PER_INCREASE: u64 = 4;
 const MINT_GAS_LIMIT: u64 = 600_000;
 const POSITION_GAS_LIMIT: u64 = 300_000;
 const MULTICALL_GAS_LIMIT: u64 = 1_200_000;
@@ -100,7 +100,7 @@ pub struct LiquidityOps {
     pub mint: u32,
     /// Adds `amount0`/`amount1` to the sender's setup position.
     pub increase: u32,
-    /// Removes half an increase's worth of liquidity from the sender's setup position.
+    /// Removes a quarter of an increase's worth of liquidity from the sender's setup position.
     pub decrease: u32,
     /// Collects owed tokens from the sender's setup position.
     pub collect: u32,
@@ -502,7 +502,7 @@ mod tests {
         let logs = [mint_log(Address::repeat_byte(0x99), 1, 6_400), mint_log(MANAGER, 42, 6_400)];
         let position = UniswapV3LiquidityPayload::minted_position(MANAGER, &logs).unwrap();
         assert_eq!(position.token_id, U256::from(42), "other contracts' events are ignored");
-        assert_eq!(position.decrease_liquidity, 50, "one decrease removes 1/128 of setup");
+        assert_eq!(position.decrease_liquidity, 25, "one decrease removes 1/256 of setup");
         let tiny = UniswapV3LiquidityPayload::minted_position(MANAGER, &[mint_log(MANAGER, 1, 1)]);
         assert_eq!(tiny.unwrap().decrease_liquidity, 1, "decreases never burn zero liquidity");
         assert!(UniswapV3LiquidityPayload::minted_position(MANAGER, &logs[..1]).is_err());
