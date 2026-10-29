@@ -130,15 +130,12 @@ where
     type Error = EIP1559ParamError;
     type NextBlockEnvCtx = BaseNextBlockEnvAttributes;
     type BlockExecutorFactory = BaseBlockExecutorFactory<ChainSpec>;
-    #[cfg(feature = "std")]
     type BlockAssembler = BaseBlockAssembler<ChainSpec>;
 
-    #[cfg(feature = "std")]
     fn block_executor_factory(&self) -> &Self::BlockExecutorFactory {
         &self.executor_factory
     }
 
-    #[cfg(feature = "std")]
     fn block_assembler(&self) -> &Self::BlockAssembler {
         &self.block_assembler
     }
