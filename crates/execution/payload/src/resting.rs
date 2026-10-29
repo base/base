@@ -399,7 +399,12 @@ impl RestingPredicateStore {
     /// the leeway before the next build instead of delaying that build's flashblocks. Hand the
     /// result to [`Self::put`] once the block is sealed.
     pub fn finish(&self, mut resting: RestingPredicates) -> FinishingRestingPredicates {
-        if !resting.sweep_due() || resting.is_empty() {
+        if resting.is_empty() {
+            // Every listed member was removed, so every generation entry is stale.
+            resting.generations.clear();
+            return FinishingRestingPredicates(Finishing::Ready(resting));
+        }
+        if !resting.sweep_due() {
             return FinishingRestingPredicates(Finishing::Ready(resting));
         }
         let Some(executor) = &self.executor else {
@@ -696,6 +701,20 @@ mod tests {
         let mut resting = rested_in_parent(&[balance_at_least(WATCHED, 1)]);
         resting.begin_block(PARENT, 2, Some(&TransitionState::default()));
         assert!(matches!(store.finish(resting).0, Finishing::Ready(_)));
+    }
+
+    #[test]
+    fn finishing_an_emptied_set_drops_its_stale_generations() {
+        let store = RestingPredicateStore::new(Runtime::test());
+        let mut resting = RestingPredicates::new(32);
+        resting.begin_block(PARENT, 2, Some(&TransitionState::default()));
+        resting.rest(hash(0), balance_at_least(WATCHED, 1));
+        assert!(resting.remove(hash(0)));
+
+        let Finishing::Ready(resting) = store.finish(resting).0 else {
+            panic!("an empty set must not spawn a sweep");
+        };
+        assert!(resting.generations.is_empty());
     }
 
     #[test]
