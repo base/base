@@ -1555,9 +1555,11 @@ where
                 self.bridged_descendants(&sidecar, &validity),
             )
         };
+        // Reth hands back a boxed iterator of a private type, so it is boxed
+        // once more as a `MergeSource`: one allocation per build.
         let protocol = self.protocol_pool.best_transactions_with_attributes(attributes);
         MergeBestTransactions::new(
-            protocol,
+            Box::new(protocol),
             Box::new(sidecar),
             Box::new(validity),
             self.ordering.clone(),
@@ -1687,17 +1689,12 @@ where
     fn pool_size(&self) -> PoolSize {
         let mut size = self.protocol_pool.pool_size();
         for store in self.lane_stores() {
-            let pool = store.pool.read();
-            let (pending, queued) = pool.pending_and_queued_txn_count();
-            let pending_size: usize =
-                pool.pending_transactions().iter().map(|tx| tx.transaction.size()).sum();
-            let queued_size: usize =
-                pool.queued_transactions().iter().map(|tx| tx.transaction.size()).sum();
-            size.pending += pending;
-            size.pending_size += pending_size;
-            size.queued += queued;
-            size.queued_size += queued_size;
-            size.total += pending + queued;
+            let store_size = store.pool.read().pool_size();
+            size.pending += store_size.pending;
+            size.pending_size += store_size.pending_size;
+            size.queued += store_size.queued;
+            size.queued_size += store_size.queued_size;
+            size.total += store_size.total;
         }
         size
     }
@@ -1843,15 +1840,16 @@ where
             if hashes.len() >= max {
                 break;
             }
-            let pool = store.pool.read();
-            for transaction in pool.all_transactions() {
-                if transaction.propagate {
-                    hashes.push(*transaction.hash());
-                    if hashes.len() >= max {
-                        break;
-                    }
-                }
-            }
+            let remaining = max - hashes.len();
+            hashes.extend(
+                store
+                    .pool
+                    .read()
+                    .all_transactions_iter()
+                    .filter(|transaction| transaction.propagate)
+                    .map(|transaction| *transaction.hash())
+                    .take(remaining),
+            );
         }
         hashes
     }
@@ -1880,15 +1878,16 @@ where
             if transactions.len() >= max {
                 break;
             }
-            let pool = store.pool.read();
-            for transaction in pool.all_transactions() {
-                if transaction.propagate {
-                    transactions.push(transaction);
-                    if transactions.len() >= max {
-                        break;
-                    }
-                }
-            }
+            let remaining = max - transactions.len();
+            transactions.extend(
+                store
+                    .pool
+                    .read()
+                    .all_transactions_iter()
+                    .filter(|transaction| transaction.propagate)
+                    .take(remaining)
+                    .cloned(),
+            );
         }
         transactions
     }
@@ -1990,7 +1989,7 @@ where
             }
             let remaining = max - transactions.len();
             transactions
-                .extend(store.pool.read().pending_transactions().into_iter().take(remaining));
+                .extend(store.pool.read().pending_transactions_iter().take(remaining).cloned());
         }
         transactions
     }

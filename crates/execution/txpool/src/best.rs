@@ -1,19 +1,44 @@
 //! Merged best-transaction iteration across the protocol pool, the EIP-8130
 //! sidecar and the validity pool.
 
-use std::{collections::VecDeque, sync::Arc};
+use std::{
+    collections::{BinaryHeap, VecDeque},
+    sync::Arc,
+};
 
 use alloy_primitives::{
     U256,
     map::{HashMap, HashSet},
 };
+use reth_primitives_traits::transaction::error::InvalidTransactionError;
 use reth_transaction_pool::{
     BestTransactions, TransactionOrdering, ValidPoolTransaction, error::InvalidPoolTransactionError,
 };
 
 use crate::{BasePooledTx, BestTransactionPriority, PoolStore, two_d_nonce_pool::LaneId};
 
-type BoxedBest<T> = Box<dyn BestTransactions<Item = Arc<ValidPoolTransaction<T>>>>;
+/// A store's best-transactions iterator as the merge drives it.
+///
+/// When the merge sets a lane's head aside, it asks the store to hold the rest
+/// of that lane rather than pulling the whole lane into the merge one member
+/// at a time. Iterators that cannot hold lanes keep the no-op defaults; the
+/// merge then holds every member it pulls from such a lane itself.
+pub(crate) trait MergeSource<T: BasePooledTx>:
+    BestTransactions<Item = Arc<ValidPoolTransaction<T>>>
+{
+    /// Stops offering members of `lane_id` until [`Self::release_lane`].
+    fn hold_lane(&mut self, _lane_id: &LaneId) {}
+
+    /// Offers the members of a held lane again, from where it stopped.
+    fn release_lane(&mut self, _lane_id: &LaneId) {}
+}
+
+impl<T: BasePooledTx> MergeSource<T>
+    for Box<dyn BestTransactions<Item = Arc<ValidPoolTransaction<T>>>>
+{
+}
+
+type BoxedBest<T> = Box<dyn MergeSource<T>>;
 
 /// Standard transactions a standard store holds queued directly behind a
 /// validity lane's pending run, per lane and in nonce order. Their store never
@@ -21,32 +46,46 @@ type BoxedBest<T> = Box<dyn BestTransactions<Item = Arc<ValidPoolTransaction<T>>
 /// the validity run in front has been yielded.
 pub(crate) type BridgedDescendants<T> = HashMap<LaneId, VecDeque<Arc<ValidPoolTransaction<T>>>>;
 
+/// A buffered transaction with its priority, computed once when it was buffered.
+struct Head<T: BasePooledTx, P: Ord + Clone> {
+    transaction: Arc<ValidPoolTransaction<T>>,
+    priority: BestTransactionPriority<P>,
+}
+
 /// One store's iterator together with its buffered head.
-struct Source<T: BasePooledTx> {
+struct Source<T: BasePooledTx, P: Ord + Clone> {
     best: BoxedBest<T>,
-    head: Option<Arc<ValidPoolTransaction<T>>>,
+    head: Option<Head<T, P>>,
+}
+
+/// A ready lane's front in [`HeldLanes::ready`]; the priority carries the
+/// front's hash, which tells a live entry from one left behind by a pop or drop.
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
+struct ReadyHead<P: Ord + Clone> {
+    priority: BestTransactionPriority<P>,
+    lane_id: LaneId,
 }
 
 /// Transactions held back per lane, in nonce order, until the merge has
 /// yielded the slot right before each lane's front.
 ///
-/// Only lanes whose front has become eligible are offered to
-/// [`MergeBestTransactions::pop_best`], so a round costs the number of ready
-/// lanes, not the number of held ones.
-struct HeldLanes<T: BasePooledTx> {
+/// Ready fronts sit in a heap by priority, so a [`MergeBestTransactions::pop_best`]
+/// round looks at the best one in constant time and a pop costs a logarithm of
+/// the ready lanes, however many lanes are held.
+struct HeldLanes<T: BasePooledTx, P: Ord + Clone> {
     lanes: HashMap<LaneId, VecDeque<Arc<ValidPoolTransaction<T>>>>,
-    ready: HashSet<LaneId>,
+    ready: BinaryHeap<ReadyHead<P>>,
 }
 
-impl<T: BasePooledTx> Default for HeldLanes<T> {
+impl<T: BasePooledTx, P: Ord + Clone> Default for HeldLanes<T, P> {
     fn default() -> Self {
-        Self { lanes: HashMap::default(), ready: HashSet::default() }
+        Self { lanes: HashMap::default(), ready: BinaryHeap::new() }
     }
 }
 
-impl<T: BasePooledTx> HeldLanes<T> {
-    fn from_lanes(lanes: HashMap<LaneId, VecDeque<Arc<ValidPoolTransaction<T>>>>) -> Self {
-        Self { lanes, ready: HashSet::default() }
+impl<T: BasePooledTx, P: Ord + Clone> HeldLanes<T, P> {
+    const fn from_lanes(lanes: HashMap<LaneId, VecDeque<Arc<ValidPoolTransaction<T>>>>) -> Self {
+        Self { lanes, ready: BinaryHeap::new() }
     }
 
     fn holds(&self, lane_id: &LaneId) -> bool {
@@ -59,35 +98,55 @@ impl<T: BasePooledTx> HeldLanes<T> {
     }
 
     /// Marks the lane ready when its front directly follows the yielded `nonce`.
-    fn release_after(&mut self, lane_id: LaneId, nonce: u64) {
-        let follows = self
+    fn release_after(
+        &mut self,
+        lane_id: LaneId,
+        nonce: u64,
+        priority_of: impl Fn(&Arc<ValidPoolTransaction<T>>) -> BestTransactionPriority<P>,
+    ) {
+        let front = self
             .lanes
             .get(&lane_id)
             .and_then(VecDeque::front)
-            .is_some_and(|front| Some(front.nonce()) == nonce.checked_add(1));
-        if follows {
-            self.ready.insert(lane_id);
+            .filter(|front| Some(front.nonce()) == nonce.checked_add(1));
+        if let Some(front) = front {
+            self.ready.push(ReadyHead { priority: priority_of(front), lane_id });
         }
     }
 
-    fn ready_heads(&self) -> impl Iterator<Item = (LaneId, &Arc<ValidPoolTransaction<T>>)> {
-        self.ready.iter().filter_map(|lane_id| {
-            self.lanes.get(lane_id).and_then(VecDeque::front).map(|front| (*lane_id, front))
-        })
-    }
-
-    /// Takes a ready lane's front; the next member waits for it to be yielded.
-    fn pop(&mut self, lane_id: LaneId) -> Option<Arc<ValidPoolTransaction<T>>> {
-        self.ready.remove(&lane_id);
-        self.lanes.get_mut(&lane_id)?.pop_front()
-    }
-
-    /// Drops every held member of `lane_id`; nothing behind an invalid transaction executes.
-    fn drop_lane(&mut self, lane_id: &LaneId) {
-        self.ready.remove(lane_id);
-        if let Some(lane) = self.lanes.get_mut(lane_id) {
-            lane.clear();
+    /// The best ready front, discarding entries whose lane was popped or dropped since.
+    fn peek_ready(&mut self) -> Option<&BestTransactionPriority<P>> {
+        while let Some(top) = self.ready.peek() {
+            let live = self
+                .lanes
+                .get(&top.lane_id)
+                .and_then(VecDeque::front)
+                .is_some_and(|front| front.hash() == top.priority.hash());
+            if live {
+                break;
+            }
+            self.ready.pop();
         }
+        self.ready.peek().map(|top| &top.priority)
+    }
+
+    /// Takes the best ready front; the next member of its lane waits for it to
+    /// be yielded. Lanes left empty are removed.
+    fn pop_ready(&mut self) -> Option<(LaneId, Arc<ValidPoolTransaction<T>>)> {
+        self.peek_ready()?;
+        let lane_id = self.ready.pop()?.lane_id;
+        let lane = self.lanes.get_mut(&lane_id)?;
+        let front = lane.pop_front()?;
+        if lane.is_empty() {
+            self.lanes.remove(&lane_id);
+        }
+        Some((lane_id, front))
+    }
+
+    /// Removes every held member of `lane_id`; nothing behind an invalid
+    /// transaction executes.
+    fn drop_lane(&mut self, lane_id: &LaneId) -> Option<VecDeque<Arc<ValidPoolTransaction<T>>>> {
+        self.lanes.remove(lane_id)
     }
 }
 
@@ -95,8 +154,8 @@ impl<T: BasePooledTx> HeldLanes<T> {
 #[derive(Clone, Copy)]
 enum Candidate {
     Source(usize),
-    Deferred(LaneId),
-    Bridged(LaneId),
+    Deferred,
+    Bridged,
 }
 
 /// Merges the best-transaction iterators of every [`PoolStore`] into one
@@ -109,16 +168,18 @@ enum Candidate {
 /// cross-store successor only once it has yielded the slot right before it,
 /// so the builder never sees nonce `n + 1` ahead of `n` however the two are
 /// priced. A validity head that is not yet released is set aside in
-/// `deferred` and the validity iterator keeps advancing, so one sender's
-/// waiting lane never holds back the others.
+/// `deferred`, its lane is held in the validity iterator, and that iterator
+/// keeps advancing, so one sender's waiting lane never holds back the others.
 ///
-/// Invalidation is routed back to the store that owns the transaction, so a
-/// skipped lane head also parks the rest of its lane in every store.
+/// Invalidation is lane-wide across stores: the store owning the transaction
+/// parks the rest of its lane, any other store's buffered or held member of
+/// the lane is dropped and parked there too, and nothing pulled from the lane
+/// afterwards is offered.
 pub(crate) struct MergeBestTransactions<T: BasePooledTx, O>
 where
     O: TransactionOrdering<Transaction = T>,
 {
-    sources: [Source<T>; PoolStore::ALL.len()],
+    sources: [Source<T, O::PriorityValue>; PoolStore::ALL.len()],
     ordering: O,
     base_fee: u64,
     /// Validity lanes riding another store's pending run, with the canonical
@@ -126,12 +187,15 @@ where
     external_anchors: HashMap<LaneId, u64>,
     /// Validity lane members pulled from their iterator before their
     /// cross-store predecessor was yielded.
-    deferred: HeldLanes<T>,
+    deferred: HeldLanes<T, O::PriorityValue>,
     /// Queued standard transactions behind validity runs; see [`BridgedDescendants`].
-    bridged: HeldLanes<T>,
-    /// Slots `(lane, nonce)` yielded so far in lanes that straddle stores; a
-    /// slot is removed again when its transaction is marked invalid.
-    yielded: HashSet<(LaneId, u64)>,
+    bridged: HeldLanes<T, O::PriorityValue>,
+    /// The latest nonce yielded in each lane that straddles stores. A lane
+    /// yields in nonce order, so this one slot says which successor is next;
+    /// the entry goes when a member of the lane is marked invalid.
+    yielded: HashMap<LaneId, u64>,
+    /// Lanes with a member marked invalid; nothing else pulled from them is offered.
+    invalid_lanes: HashSet<LaneId>,
 }
 
 impl<T: BasePooledTx, O> MergeBestTransactions<T, O>
@@ -155,7 +219,8 @@ where
             external_anchors: HashMap::default(),
             deferred: HeldLanes::default(),
             bridged: HeldLanes::default(),
-            yielded: HashSet::default(),
+            yielded: HashMap::default(),
+            invalid_lanes: HashSet::default(),
         }
     }
 
@@ -184,6 +249,27 @@ where
         Some(((transaction.sender(), nonce_key), transaction.nonce()))
     }
 
+    fn in_lane(transaction: &ValidPoolTransaction<T>, lane_id: &LaneId) -> bool {
+        Self::slot(transaction).is_some_and(|(lane, _)| lane == *lane_id)
+    }
+
+    /// The error a store is handed for a member whose lane predecessor was
+    /// marked invalid: the account's nonce stays behind it. Advisory only:
+    /// the stores park the lane whatever the kind, so `state` is approximate.
+    const fn predecessor_invalid(nonce: u64) -> InvalidPoolTransactionError {
+        InvalidPoolTransactionError::Consensus(InvalidTransactionError::NonceNotConsistent {
+            tx: nonce,
+            state: nonce.saturating_sub(1),
+        })
+    }
+
+    fn priority(
+        &self,
+        transaction: &Arc<ValidPoolTransaction<T>>,
+    ) -> BestTransactionPriority<O::PriorityValue> {
+        BestTransactionPriority::new(&self.ordering, transaction, self.base_fee)
+    }
+
     /// Whether a lane's bookkeeping crosses stores, i.e. yields in it must be remembered.
     fn straddles(&self, lane_id: &LaneId) -> bool {
         self.external_anchors.contains_key(lane_id) || self.bridged.holds(lane_id)
@@ -197,23 +283,30 @@ where
         nonce <= *anchor
             || nonce
                 .checked_sub(1)
-                .is_some_and(|predecessor| self.yielded.contains(&(lane_id, predecessor)))
+                .is_some_and(|predecessor| self.yielded.get(&lane_id) == Some(&predecessor))
     }
 
     /// Buffers the next transaction of every store, setting aside validity
-    /// transactions that are not released yet.
+    /// transactions that are not released yet and dropping members of
+    /// invalidated lanes.
     fn fill_heads(&mut self) {
         for index in 0..self.sources.len() {
             while self.sources[index].head.is_none() {
                 let Some(transaction) = self.sources[index].best.next() else { break };
-                let waiting_lane = (index == PoolStore::Validity.index())
-                    .then(|| Self::slot(&transaction))
-                    .flatten()
-                    .filter(|(lane_id, nonce)| !self.released(*lane_id, *nonce));
-                match waiting_lane {
-                    Some((lane_id, _)) => self.deferred.push(lane_id, transaction),
-                    None => self.sources[index].head = Some(transaction),
+                if let Some((lane_id, nonce)) = Self::slot(&transaction) {
+                    if self.invalid_lanes.contains(&lane_id) {
+                        let kind = Self::predecessor_invalid(nonce);
+                        self.sources[index].best.mark_invalid(&transaction, kind);
+                        continue;
+                    }
+                    if index == PoolStore::Validity.index() && !self.released(lane_id, nonce) {
+                        self.deferred.push(lane_id, transaction);
+                        self.sources[index].best.hold_lane(&lane_id);
+                        continue;
+                    }
                 }
+                let priority = self.priority(&transaction);
+                self.sources[index].head = Some(Head { transaction, priority });
             }
         }
     }
@@ -221,40 +314,49 @@ where
     fn record_yielded(&mut self, transaction: &ValidPoolTransaction<T>) {
         let Some((lane_id, nonce)) = Self::slot(transaction) else { return };
         if self.straddles(&lane_id) {
-            self.yielded.insert((lane_id, nonce));
+            self.yielded.insert(lane_id, nonce);
         }
-        self.deferred.release_after(lane_id, nonce);
-        self.bridged.release_after(lane_id, nonce);
+        let priority_of = |transaction: &Arc<ValidPoolTransaction<T>>| {
+            BestTransactionPriority::new(&self.ordering, transaction, self.base_fee)
+        };
+        self.deferred.release_after(lane_id, nonce, priority_of);
+        self.bridged.release_after(lane_id, nonce, priority_of);
     }
 
     fn pop_best(&mut self) -> Option<Arc<ValidPoolTransaction<T>>> {
-        let mut best: Option<(Candidate, BestTransactionPriority<O::PriorityValue>)> = None;
-        let offer =
-            |candidate: Candidate,
-             head: &Arc<ValidPoolTransaction<T>>,
-             best: &mut Option<(Candidate, BestTransactionPriority<_>)>| {
-                let priority = BestTransactionPriority::new(&self.ordering, head, self.base_fee);
-                // Ties go to the earlier candidate, so a protocol transaction wins
-                // over an equally ranked sidecar, validity, deferred or bridged one.
-                if best.as_ref().is_none_or(|(_, current)| priority > *current) {
-                    *best = Some((candidate, priority));
-                }
-            };
+        let mut best: Option<(Candidate, &BestTransactionPriority<O::PriorityValue>)> = None;
+        // Ties go to the earlier candidate, so a protocol transaction wins over
+        // an equally ranked sidecar, validity, deferred or bridged one.
+        let mut offer = |candidate, priority| {
+            if best.is_none_or(|(_, current)| priority > current) {
+                best = Some((candidate, priority));
+            }
+        };
         for (index, source) in self.sources.iter().enumerate() {
             if let Some(head) = &source.head {
-                offer(Candidate::Source(index), head, &mut best);
+                offer(Candidate::Source(index), &head.priority);
             }
         }
-        for (lane_id, head) in self.deferred.ready_heads() {
-            offer(Candidate::Deferred(lane_id), head, &mut best);
+        if let Some(priority) = self.deferred.peek_ready() {
+            offer(Candidate::Deferred, priority);
         }
-        for (lane_id, head) in self.bridged.ready_heads() {
-            offer(Candidate::Bridged(lane_id), head, &mut best);
+        if let Some(priority) = self.bridged.peek_ready() {
+            offer(Candidate::Bridged, priority);
         }
         match best?.0 {
-            Candidate::Source(index) => self.sources[index].head.take(),
-            Candidate::Deferred(lane_id) => self.deferred.pop(lane_id),
-            Candidate::Bridged(lane_id) => self.bridged.pop(lane_id),
+            Candidate::Source(index) => {
+                self.sources[index].head.take().map(|head| head.transaction)
+            }
+            Candidate::Deferred => {
+                let (lane_id, transaction) = self.deferred.pop_ready()?;
+                // The validity iterator held the rest of the lane while its
+                // head waited; with the head out, let it offer them again.
+                if !self.deferred.holds(&lane_id) {
+                    self.sources[PoolStore::Validity.index()].best.release_lane(&lane_id);
+                }
+                Some(transaction)
+            }
+            Candidate::Bridged => self.bridged.pop_ready().map(|(_, transaction)| transaction),
         }
     }
 }
@@ -294,26 +396,32 @@ where
     O: TransactionOrdering<Transaction = T>,
 {
     fn mark_invalid(&mut self, transaction: &Self::Item, kind: InvalidPoolTransactionError) {
-        let slot = Self::slot(transaction);
-        let source = &mut self.sources[PoolStore::of(&transaction.transaction).index()];
-        // The buffered head may be the invalid transaction's own successor;
-        // another lane's head, or a nonce-free head, stays in the running.
-        let same_lane = |head: &Arc<ValidPoolTransaction<T>>| {
-            slot.is_some_and(|(lane_id, _)| {
-                Self::slot(head).is_some_and(|(head_lane, _)| head_lane == lane_id)
-            })
+        let owner = PoolStore::of(&transaction.transaction).index();
+        let Some((lane_id, _)) = Self::slot(transaction) else {
+            // A nonce-free transaction sequences nothing; only its own store hears of it.
+            self.sources[owner].best.mark_invalid(transaction, kind);
+            return;
         };
-        if source.head.as_ref().is_some_and(same_lane) {
-            source.head = None;
+        // Nothing behind a dropped transaction can execute, whichever store
+        // holds it: park the lane in its own store, drop and park the lane's
+        // members buffered from or held for other stores, and refuse anything
+        // the lane yields from now on.
+        self.invalid_lanes.insert(lane_id);
+        self.yielded.remove(&lane_id);
+        self.sources[owner].best.mark_invalid(transaction, kind);
+        for source in &mut self.sources {
+            if source.head.as_ref().is_some_and(|head| Self::in_lane(&head.transaction, &lane_id))
+                && let Some(head) = source.head.take()
+            {
+                let kind = Self::predecessor_invalid(head.transaction.nonce());
+                source.best.mark_invalid(&head.transaction, kind);
+            }
         }
-        source.best.mark_invalid(transaction, kind);
-        // Nothing behind a dropped transaction can execute: successors held
-        // for it are gone and ones still in their store must not be released.
-        if let Some((lane_id, nonce)) = slot {
-            self.yielded.remove(&(lane_id, nonce));
-            self.deferred.drop_lane(&lane_id);
-            self.bridged.drop_lane(&lane_id);
+        if let Some(front) = self.deferred.drop_lane(&lane_id).as_ref().and_then(VecDeque::front) {
+            let kind = Self::predecessor_invalid(front.nonce());
+            self.sources[PoolStore::Validity.index()].best.mark_invalid(front, kind);
         }
+        self.bridged.drop_lane(&lane_id);
     }
 
     fn no_updates(&mut self) {
@@ -369,6 +477,8 @@ mod tests {
             self.transactions.pop_front()
         }
     }
+
+    impl<T: BasePooledTx> MergeSource<T> for StaticBestTransactions<T> {}
 
     impl<T: BasePooledTx> BestTransactions for StaticBestTransactions<T> {
         fn mark_invalid(&mut self, transaction: &Self::Item, _kind: InvalidPoolTransactionError) {
@@ -809,23 +919,26 @@ mod tests {
     }
 
     #[test]
-    fn mark_invalid_routes_a_validity_transaction_to_its_own_store() {
-        let validity_signer = signer();
+    fn invalidating_a_validity_transaction_parks_its_lane_in_every_store() {
+        // Validity lane (A, 0) holds nonces 0 and 1; a static protocol source
+        // offers nonce 2 of the same lane and a transaction in another lane.
+        let signer_a = signer();
+        let other = PrivateKeySigner::random();
         let validity = vec![
             valid_pool_transaction(
-                signed_tx(&validity_signer, U256::ZERO, 0, 500, 500)
+                signed_tx(&signer_a, U256::ZERO, 0, 500, 500)
                     .with_validity_predicates(resting_predicates()),
             ),
             valid_pool_transaction(
-                signed_tx(&validity_signer, U256::ZERO, 1, 400, 400)
+                signed_tx(&signer_a, U256::ZERO, 1, 400, 400)
                     .with_validity_predicates(resting_predicates()),
             ),
         ];
-        // A standard transaction from the same sender lives in the protocol
-        // store and must not be parked by the validity lane's invalidation.
-        let protocol =
-            vec![valid_pool_transaction(signed_tx(&validity_signer, U256::ZERO, 2, 100, 100))];
-        let protocol_hash = *protocol[0].hash();
+        let protocol = vec![
+            valid_pool_transaction(signed_tx(&signer_a, U256::ZERO, 2, 100, 100)),
+            valid_pool_transaction(signed_tx(&other, U256::ZERO, 0, 50, 50)),
+        ];
+        let other_hash = *protocol[1].hash();
 
         let mut merged = MergeBestTransactions::new(
             Box::new(StaticBestTransactions::new(protocol)),
@@ -839,7 +952,105 @@ mod tests {
         assert_eq!(head.nonce(), 0);
         merged.mark_invalid(&head, InvalidPoolTransactionError::Underpriced);
 
+        // Nothing behind nonce 0 executes, whichever store holds it; other lanes go on.
         let rest: Vec<_> = merged.map(|transaction| *transaction.hash()).collect();
-        assert_eq!(rest, vec![protocol_hash]);
+        assert_eq!(rest, vec![other_hash]);
+    }
+
+    #[test]
+    fn invalidating_a_standard_predecessor_drops_the_buffered_validity_successor() {
+        // Protocol holds (A, 0) plus two other senders; validity holds (A, 1)
+        // and (A, 2) riding (A, 0), plus an unrelated lane. The priorities are
+        // arranged so (A, 1) is pulled into the validity head right after
+        // (A, 0) was yielded, then loses a round to a standard transaction.
+        let (a, b, c, d) = (
+            signer(),
+            PrivateKeySigner::random(),
+            PrivateKeySigner::random(),
+            PrivateKeySigner::random(),
+        );
+        let protocol = vec![
+            valid_pool_transaction(signed_tx(&a, U256::ZERO, 0, 300, 300)),
+            valid_pool_transaction(signed_tx(&b, U256::ZERO, 0, 95, 95)),
+            valid_pool_transaction(signed_tx(&c, U256::ZERO, 0, 50, 50)),
+        ];
+        let validity = vec![
+            valid_pool_transaction(
+                signed_tx(&d, U256::ZERO, 0, 200, 200)
+                    .with_validity_predicates(resting_predicates()),
+            ),
+            valid_pool_transaction(
+                signed_tx(&a, U256::ZERO, 1, 90, 90).with_validity_predicates(resting_predicates()),
+            ),
+            valid_pool_transaction(
+                signed_tx(&a, U256::ZERO, 2, 80, 80).with_validity_predicates(resting_predicates()),
+            ),
+        ];
+        let (b0, c0, d0) = (*protocol[1].hash(), *protocol[2].hash(), *validity[0].hash());
+        let anchors = HashMap::from_iter([((a.address(), U256::ZERO), 0)]);
+
+        let mut merged = MergeBestTransactions::new(
+            Box::new(StaticBestTransactions::new(protocol)),
+            Box::new(StaticBestTransactions::new(Vec::new())),
+            Box::new(StaticBestTransactions::new(validity)),
+            BaseOrdering::coinbase_tip(),
+            0,
+        )
+        .with_external_anchors(anchors);
+
+        let a0 = merged.next().expect("standard (A, 0)");
+        assert_eq!((a0.sender(), a0.nonce()), (a.address(), 0));
+        assert_eq!(merged.next().map(|tx| *tx.hash()), Some(d0));
+        // This round pulls the released (A, 1) into the validity head, where
+        // it loses to (B, 0) and stays buffered.
+        assert_eq!(merged.next().map(|tx| *tx.hash()), Some(b0));
+
+        merged.mark_invalid(&a0, InvalidPoolTransactionError::Underpriced);
+
+        let rest: Vec<_> = merged.map(|transaction| *transaction.hash()).collect();
+        assert_eq!(rest, vec![c0]);
+    }
+
+    #[test]
+    fn ready_held_lanes_are_offered_by_priority() {
+        // Two validity heads release two bridged standard children; the
+        // children are offered against each other and the remaining sources
+        // by priority, not by lane.
+        let (a, b, c) = (signer(), PrivateKeySigner::random(), PrivateKeySigner::random());
+        let validity = vec![
+            valid_pool_transaction(
+                signed_tx(&a, U256::ZERO, 0, 900, 900)
+                    .with_validity_predicates(resting_predicates()),
+            ),
+            valid_pool_transaction(
+                signed_tx(&b, U256::ZERO, 0, 800, 800)
+                    .with_validity_predicates(resting_predicates()),
+            ),
+        ];
+        let child_a = valid_pool_transaction(signed_tx(&a, U256::ZERO, 1, 10, 10));
+        let child_b = valid_pool_transaction(signed_tx(&b, U256::ZERO, 1, 30, 30));
+        let standard_c = valid_pool_transaction(signed_tx(&c, U256::ZERO, 0, 20, 20));
+        let expected = vec![
+            *validity[0].hash(),
+            *validity[1].hash(),
+            *child_b.hash(),
+            *standard_c.hash(),
+            *child_a.hash(),
+        ];
+        let bridged = BridgedDescendants::from_iter([
+            ((a.address(), U256::ZERO), VecDeque::from([child_a])),
+            ((b.address(), U256::ZERO), VecDeque::from([child_b])),
+        ]);
+
+        let merged = MergeBestTransactions::new(
+            Box::new(StaticBestTransactions::new(vec![standard_c])),
+            Box::new(StaticBestTransactions::new(Vec::new())),
+            Box::new(StaticBestTransactions::new(validity)),
+            BaseOrdering::coinbase_tip(),
+            0,
+        )
+        .with_bridged_descendants(bridged);
+
+        assert_eq!(merged.map(|tx| *tx.hash()).collect::<Vec<_>>(), expected);
     }
 }
