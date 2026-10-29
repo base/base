@@ -16,6 +16,7 @@ use alloy_eips::{Encodable2718, eip7685::EMPTY_REQUESTS_HASH, merge::BEACON_NONC
 use alloy_evm::Database;
 use alloy_primitives::{Address, B256, Bloom, U256, logs_bloom, map::foldhash::HashMap};
 use base_builder_publish::WebSocketPublisher;
+use base_clock::GlobalClock;
 use base_common_chains::Upgrades;
 use base_common_consensus::{BaseReceipt, BaseTransactionSigned};
 use base_common_flashblocks::{
@@ -1125,7 +1126,7 @@ where
         // FCU(a) could arrive with `fb_time < delay < block_time - fb_time` - in this case we will issue less flashblocks
         let target_time = std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(timestamp)
             - self.config.flashblocks_leeway_time;
-        let now = std::time::SystemTime::now();
+        let now = GlobalClock::get().now();
         let Some(time_drift) =
             target_time.duration_since(now).ok().filter(|duration| duration.as_millis() > 0)
         else {
