@@ -11,6 +11,7 @@ use alloy_evm::Database;
 use alloy_primitives::B256;
 use alloy_primitives::{Address, BlockHash, Bytes, TxHash, U256};
 use alloy_rpc_types_eth::Withdrawals;
+use base_clock::GlobalClock;
 use base_common_chains::Upgrades;
 use base_common_consensus::{BaseReceipt, BaseTransactionSigned, DepositReceipt, OpTxType};
 use base_common_evm::{BaseReceiptBuilder, BaseSpecId, Eip8130CommittedPhases, L1BlockInfo};
@@ -1073,7 +1074,8 @@ impl BasePayloadBuilderCtx {
                 && resource_usage.is_none()
                 && let Some(wait_duration) = self.builder_config.metering_wait_duration
             {
-                let now_ms = SystemTime::now()
+                let now_ms = GlobalClock::get()
+                    .now()
                     .duration_since(SystemTime::UNIX_EPOCH)
                     .map(|d| d.as_millis())
                     .unwrap_or(0);
