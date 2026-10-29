@@ -167,7 +167,7 @@ impl OpSuccinctWitnessProvider {
         backend: &'static str,
     ) -> Result<SP1Stdin, WitnessError> {
         let params = Self::resolve(request, self.default_sequence_window);
-        let resolved = params.as_ref().ok();
+        let resolved = params.as_ref().ok().copied();
         let span = info_span!(
             "range_witness",
             backend = %backend,
@@ -182,7 +182,19 @@ impl OpSuccinctWitnessProvider {
             intermediate_block_interval = %request.intermediate_block_interval,
         );
         async {
-            info!("starting range witness generation");
+            info!(
+                backend = %backend,
+                start_block = request.start_block_number,
+                end_block = resolved.map(|params| params.end_block),
+                number_of_blocks = request.number_of_blocks_to_prove,
+                sequence_window = resolved.and_then(|params| match params.l1_head {
+                    L1HeadSource::Pinned(_) => None,
+                    L1HeadSource::SequenceWindow { sequence_window } => Some(sequence_window),
+                }),
+                l1_head_source = resolved.map(|params| params.l1_head.variant_name()),
+                intermediate_block_interval = %request.intermediate_block_interval,
+                "starting range witness generation"
+            );
             let result = async {
                 let params = params?;
                 let timer = base_metrics::timed!(Metrics::witness_build_duration_seconds(
@@ -198,7 +210,20 @@ impl OpSuccinctWitnessProvider {
             }
             .await;
             if let Err(error) = &result {
-                error!(error = %error, "range witness generation failed");
+                error!(
+                    error = %error,
+                    backend = %backend,
+                    start_block = request.start_block_number,
+                    end_block = resolved.map(|params| params.end_block),
+                    number_of_blocks = request.number_of_blocks_to_prove,
+                    sequence_window = resolved.and_then(|params| match params.l1_head {
+                        L1HeadSource::Pinned(_) => None,
+                        L1HeadSource::SequenceWindow { sequence_window } => Some(sequence_window),
+                    }),
+                    l1_head_source = resolved.map(|params| params.l1_head.variant_name()),
+                    intermediate_block_interval = %request.intermediate_block_interval,
+                    "range witness generation failed"
+                );
             }
             result
         }
@@ -308,7 +333,13 @@ impl OpSuccinctWitnessProvider {
 
 #[cfg(test)]
 mod tests {
+    use std::{io, sync::Mutex};
+
+    use alloy_provider::ProviderBuilder;
+    use base_proof_zk_witness::fetcher::RPCConfig;
     use base_prover_service_protocol::{ZkBackend, ZkVm};
+    use serde_json::{Value, json};
+    use tracing::Level;
 
     use super::*;
 
@@ -323,6 +354,111 @@ mod tests {
             zk_vm: ZkVm::Sp1,
             zk_backend: ZkBackend::Cluster,
         }
+    }
+
+    #[derive(Clone, Default)]
+    struct LogCapture(Arc<Mutex<Vec<u8>>>);
+
+    impl io::Write for LogCapture {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl LogCapture {
+        fn events(&self) -> Vec<Value> {
+            std::str::from_utf8(&self.0.lock().unwrap())
+                .unwrap()
+                .lines()
+                .map(|line| serde_json::from_str(line).unwrap())
+                .collect()
+        }
+    }
+
+    fn provider() -> OpSuccinctWitnessProvider {
+        let url: url::Url = "http://127.0.0.1:1".parse().unwrap();
+        let fetcher = OPSuccinctDataFetcher {
+            rpc_config: RPCConfig {
+                l1_rpc: url.clone(),
+                l1_beacon_rpc: None,
+                l2_rpc: url.clone(),
+                l2_node_rpc: url.clone(),
+                l1_config_dir: None,
+                l2_config_dir: None,
+            },
+            l1_provider: Arc::new(ProviderBuilder::default().connect_http(url.clone())),
+            l2_provider: Arc::new(ProviderBuilder::default().connect_http(url.clone())),
+            rollup_config: None,
+            rollup_config_path: None,
+            l1_config_path: None,
+        };
+        OpSuccinctWitnessProvider::new(Arc::new(fetcher), 50, url.to_string(), url.to_string())
+    }
+
+    #[tokio::test]
+    async fn range_witness_failure_keeps_request_fields_at_warn_level() {
+        let provider = provider();
+        let capture = LogCapture::default();
+        let writer = capture.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .with_max_level(Level::WARN)
+            .with_writer(move || writer.clone())
+            .finish();
+        let _guard = tracing::subscriber::set_default(subscriber);
+        let request = ZkProofRequest { start_block_number: u64::MAX - 9, ..request() };
+
+        let result = provider.generate_range_witness(&request, "cluster").await;
+
+        assert!(matches!(result, Err(WitnessError::EndBlockOverflow)));
+        let events = capture.events();
+        assert_eq!(events.len(), 1, "the provider must emit exactly one failure event");
+        assert_eq!(events[0]["level"], "ERROR");
+        let fields = &events[0]["fields"];
+        assert_eq!(fields["message"], "range witness generation failed");
+        assert_eq!(fields["backend"], "cluster");
+        assert_eq!(fields["start_block"], json!(18446744073709551606_u64));
+        assert_eq!(fields["number_of_blocks"], 20);
+        assert_eq!(fields["intermediate_block_interval"], "5");
+        assert_eq!(fields["error"], "proof range end block overflowed u64");
+    }
+
+    #[tokio::test]
+    async fn range_witness_start_and_failure_are_logged_once_with_request_fields() {
+        let provider = provider();
+        let capture = LogCapture::default();
+        let writer = capture.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .with_max_level(Level::INFO)
+            .with_writer(move || writer.clone())
+            .finish();
+        let _guard = tracing::subscriber::set_default(subscriber);
+        let request = ZkProofRequest { start_block_number: u64::MAX - 9, ..request() };
+
+        let result = provider.generate_range_witness(&request, "cluster").await;
+
+        assert!(matches!(result, Err(WitnessError::EndBlockOverflow)));
+        let events = capture.events();
+        assert_eq!(events.len(), 2, "the provider must emit one start and one failure event");
+        assert_eq!(events[0]["level"], "INFO");
+        assert_eq!(
+            events[0]["fields"],
+            json!({
+                "message": "starting range witness generation",
+                "backend": "cluster",
+                "start_block": 18446744073709551606_u64,
+                "number_of_blocks": 20,
+                "intermediate_block_interval": "5",
+            })
+        );
+        assert_eq!(events[1]["level"], "ERROR");
+        assert_eq!(events[1]["fields"]["message"], "range witness generation failed");
     }
 
     #[test]
