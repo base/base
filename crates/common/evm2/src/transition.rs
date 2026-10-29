@@ -8,7 +8,7 @@
 //! analogue of the reference's `DatabaseCommit::commit`).
 
 use alloy_primitives::{Address, U256};
-use base_common_genesis::{BaseUpgrade, UpgradeConfig};
+use base_common_genesis::{BaseFeature, BaseUpgrade, UpgradeConfig};
 use evm2::{
     AccountInfo, Evm,
     evm::{
@@ -27,6 +27,11 @@ use crate::BaseEvmTypes;
 pub trait BaseForkActivations {
     /// Returns whether `upgrade` is active at `timestamp`.
     fn is_active_at_timestamp(&self, upgrade: BaseUpgrade, timestamp: u64) -> bool;
+
+    /// Whether a behavior is active according to this schedule's existing activation rules.
+    fn is_feature_active_at_timestamp(&self, feature: BaseFeature, timestamp: u64) -> bool {
+        self.is_active_at_timestamp(feature.activation_upgrade(), timestamp)
+    }
 }
 
 impl BaseForkActivations for UpgradeConfig {

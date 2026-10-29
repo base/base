@@ -1,5 +1,7 @@
 #![doc = include_str!("../README.md")]
 
+pub use base_common_genesis::BaseFeature;
+
 mod spec;
 pub use spec::BaseSpecId;
 
