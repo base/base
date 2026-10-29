@@ -10,9 +10,9 @@ use base_common_chains::Upgrades;
 use base_common_consensus::DepositReceiptExt;
 use base_common_evm2::BaseBlockExecutionCtx;
 use base_execution_consensus::{calculate_receipt_root_no_memo, isthmus};
-#[cfg(feature = "std")]
-use reth_evm::BlockAssembler;
-use reth_evm::{BlockAssemblerInput, BlockExecutionError, BlockExecutorFactory, EvmEnv};
+use reth_evm::{
+    BlockAssembler, BlockAssemblerInput, BlockExecutionError, BlockExecutorFactory, EvmEnv,
+};
 use reth_execution_types::BlockExecutionResult;
 use reth_primitives_traits::{Receipt, SignedTransaction};
 
@@ -134,7 +134,6 @@ impl<ChainSpec> Clone for BaseBlockAssembler<ChainSpec> {
     }
 }
 
-#[cfg(feature = "std")]
 impl<F, ChainSpec> BlockAssembler<F> for BaseBlockAssembler<ChainSpec>
 where
     ChainSpec: Upgrades,
