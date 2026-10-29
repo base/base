@@ -15,6 +15,7 @@ use base_common_genesis::RollupConfig;
 use base_common_network::Base;
 use base_consensus_derive::{Pipeline, SignalReceiver, StatefulAttributesBuilder};
 use base_consensus_engine::{Engine, EngineClient, EngineState, ForkchoiceCheckpointReader};
+use base_consensus_l1::L1Provider;
 use base_consensus_providers::{
     AlloyChainProvider, AlloyL2ChainProvider, OnlineBeaconClient, OnlineBlobProvider,
     OnlinePipeline,
@@ -30,13 +31,14 @@ use crate::{
     AlloyL1BlockFetcher, CheckpointActor, CheckpointClient, CheckpointDB, CheckpointWriter,
     Conductor, ConductorClient, DelayedL1OriginSelectorProvider, DerivationActor, EngineActor,
     EngineActorRequest, EngineConfig, EngineProcessor, EngineRequestReceiver, EngineRpcProcessor,
-    L1OriginSelector, L1WatcherActor, L1WatcherQueryExecutor, L1WatcherQueryProcessor,
-    NetworkActor, NetworkBuilder, NetworkConfig, NodeActor, NodeOperatingMode, PayloadBuilder,
-    PrefetchedChainProvider, PreparedL1Origin, QueuedDerivationEngineClient,
-    QueuedEngineDerivationClient, QueuedEngineRpcClient, QueuedL1WatcherDerivationClient,
-    QueuedNetworkEngineClient, QueuedSequencerAdminAPIClient, QueuedSequencerEngineClient,
-    RecoveryModeGuard, RpcActor, RpcContext, SequencerActor, SequencerConfig,
-    SequencerEngineRequestCoordinator, UpgradeSignalNodeConfig, ValidatorEngineRequestHandler,
+    L1BlobProvider, L1ChainProvider, L1NodeOriginProvider, L1OriginProvider, L1OriginSelector,
+    L1WatcherActor, L1WatcherQueryExecutor, L1WatcherQueryProcessor, NetworkActor, NetworkBuilder,
+    NetworkConfig, NodeActor, NodeOperatingMode, PayloadBuilder, PrefetchedChainProvider,
+    PreparedL1Origin, QueuedDerivationEngineClient, QueuedEngineDerivationClient,
+    QueuedEngineRpcClient, QueuedL1WatcherDerivationClient, QueuedNetworkEngineClient,
+    QueuedSequencerAdminAPIClient, QueuedSequencerEngineClient, RecoveryModeGuard, RpcActor,
+    RpcContext, SequencerActor, SequencerConfig, SequencerEngineRequestCoordinator,
+    UpgradeSignalNodeConfig, ValidatorEngineRequestHandler,
     actors::{BlockStream, NetworkInboundData, QueuedUnsafePayloadGossipClient},
 };
 
@@ -144,6 +146,9 @@ pub struct RollupNode {
     pub safedb_path: Option<PathBuf>,
     /// Optional upgrade signal configuration for the consensus node.
     pub upgrade_signal_config: Option<UpgradeSignalNodeConfig>,
+    /// In-process L1 provider read by derivation and the sequencer instead of the L1 RPC and
+    /// beacon API.
+    pub l1_provider: Option<L1Provider>,
 }
 
 impl RollupNode {
@@ -170,11 +175,17 @@ impl RollupNode {
     fn create_attributes_builder(
         &self,
         origin_rx: watch::Receiver<Option<PreparedL1Origin>>,
-    ) -> StatefulAttributesBuilder<PrefetchedChainProvider, AlloyL2ChainProvider> {
-        let l1_fallback_provider = AlloyChainProvider::new_with_trust(
-            self.sequencer_l1_provider.clone(),
-            DERIVATION_PROVIDER_CACHE_SIZE,
-            self.l1_config.trust_rpc,
+    ) -> StatefulAttributesBuilder<PrefetchedChainProvider<L1ChainProvider>, AlloyL2ChainProvider>
+    {
+        let l1_fallback_provider = self.l1_provider.clone().map_or_else(
+            || {
+                L1ChainProvider::Rpc(AlloyChainProvider::new_with_trust(
+                    self.sequencer_l1_provider.clone(),
+                    DERIVATION_PROVIDER_CACHE_SIZE,
+                    self.l1_config.trust_rpc,
+                ))
+            },
+            L1ChainProvider::Node,
         );
         let l1_derivation_provider = PrefetchedChainProvider::new(origin_rx, l1_fallback_provider);
         let l2_derivation_provider = AlloyL2ChainProvider::new_with_trust(
@@ -195,13 +206,21 @@ impl RollupNode {
     async fn create_pipeline(
         &self,
         l1_head_number: base_consensus_providers::L1HeadNumber,
-    ) -> OnlinePipeline {
+    ) -> OnlinePipeline<L1ChainProvider, L1BlobProvider> {
         // Create the caching L1/L2 EL providers for derivation.
-        let l1_derivation_provider = AlloyChainProvider::new_with_trust(
-            self.l1_config.engine_provider.clone(),
-            DERIVATION_PROVIDER_CACHE_SIZE,
-            self.l1_config.trust_rpc,
-        );
+        let (l1_derivation_provider, blob_provider) = match &self.l1_provider {
+            Some(l1) => (L1ChainProvider::Node(l1.clone()), L1BlobProvider::Node(l1.clone())),
+            None => (
+                L1ChainProvider::Rpc(AlloyChainProvider::new_with_trust(
+                    self.l1_config.engine_provider.clone(),
+                    DERIVATION_PROVIDER_CACHE_SIZE,
+                    self.l1_config.trust_rpc,
+                )),
+                L1BlobProvider::Rpc(
+                    OnlineBlobProvider::init(self.l1_config.beacon_client.clone()).await,
+                ),
+            ),
+        };
         let l2_derivation_provider = AlloyL2ChainProvider::new_with_trust(
             self.l2_provider.clone(),
             Arc::clone(&self.config),
@@ -212,7 +231,7 @@ impl RollupNode {
         OnlinePipeline::new_polled_with_da_batcher_sender_override(
             Arc::clone(&self.config),
             Arc::clone(&self.l1_config.chain_config),
-            OnlineBlobProvider::init(self.l1_config.beacon_client.clone()).await,
+            blob_provider,
             l1_derivation_provider,
             l2_derivation_provider,
             l1_head_number,
@@ -486,11 +505,18 @@ impl RollupNode {
         let node_mode = self.mode();
         // Create the sequencer if needed
         let (sequencer_actor, sequencer_admin_client) = if node_mode.is_sequencer() {
-            let delayed_l1_provider = DelayedL1OriginSelectorProvider::new(
-                self.sequencer_l1_provider.clone(),
-                l1_head_updates_rx,
-                self.sequencer_config.l1_conf_delay,
-            );
+            let delayed_l1_provider = match &self.l1_provider {
+                Some(l1) => L1OriginProvider::Node(L1NodeOriginProvider {
+                    l1: l1.clone(),
+                    l1_head: l1_head_updates_rx,
+                    confirmation_depth: self.sequencer_config.l1_conf_delay,
+                }),
+                None => L1OriginProvider::Rpc(DelayedL1OriginSelectorProvider::new(
+                    self.sequencer_l1_provider.clone(),
+                    l1_head_updates_rx,
+                    self.sequencer_config.l1_conf_delay,
+                )),
+            };
             let delayed_origin_selector =
                 L1OriginSelector::new(Arc::clone(&self.config), delayed_l1_provider);
             let attributes_builder =

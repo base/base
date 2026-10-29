@@ -1,6 +1,6 @@
 //! Confirmation-depth-filtered L1 chain provider.
 //!
-//! Wraps an [`AlloyChainProvider`] to enforce an L1 confirmation depth cutoff on
+//! Wraps a [`ChainProvider`] to enforce an L1 confirmation depth cutoff on
 //! `block_info_by_number` lookups. This prevents the derivation pipeline from reading
 //! L1 blocks that are too close to the chain tip, matching the behaviour of the reference node's
 //! `ConfDepth` wrapper.
@@ -30,31 +30,31 @@ pub type L1HeadNumber = Arc<AtomicU64>;
 /// error for any block `n` where `n + conf_depth > l1_head`. This causes the derivation
 /// pipeline to yield and retry later, matching the behavior of the reference node's `ConfDepth` wrapper.
 ///
-/// All other methods delegate to the inner [`AlloyChainProvider`] unchanged.
+/// All other methods delegate to the inner provider unchanged.
 #[derive(Debug, Clone)]
-pub struct ConfDepthProvider {
+pub struct ConfDepthProvider<C = AlloyChainProvider> {
     /// The inner chain provider.
-    inner: AlloyChainProvider,
+    inner: C,
     /// The current L1 head block number, updated atomically by the L1 watcher.
     l1_head_number: L1HeadNumber,
     /// The number of L1 blocks to keep distance from the head.
     conf_depth: u64,
 }
 
-impl ConfDepthProvider {
+impl<C> ConfDepthProvider<C> {
     /// Creates a new [`ConfDepthProvider`].
-    pub const fn new(
-        inner: AlloyChainProvider,
-        l1_head_number: L1HeadNumber,
-        conf_depth: u64,
-    ) -> Self {
+    pub const fn new(inner: C, l1_head_number: L1HeadNumber, conf_depth: u64) -> Self {
         Self { inner, l1_head_number, conf_depth }
     }
 }
 
 #[async_trait]
-impl ChainProvider for ConfDepthProvider {
-    type Error = AlloyChainProviderError;
+impl<C> ChainProvider for ConfDepthProvider<C>
+where
+    C: ChainProvider + Send,
+    C::Error: From<AlloyChainProviderError> + Send,
+{
+    type Error = C::Error;
 
     async fn header_by_hash(&mut self, hash: B256) -> Result<Header, Self::Error> {
         self.inner.header_by_hash(hash).await
@@ -67,7 +67,7 @@ impl ChainProvider for ConfDepthProvider {
             // BlockNotFound maps to a Temporary pipeline error, causing the pipeline
             // to yield and retry once the chain advances.
             if l1_head > 0 && l1_head.saturating_sub(number) < self.conf_depth {
-                return Err(AlloyChainProviderError::BlockNotFound(number.into()));
+                return Err(AlloyChainProviderError::BlockNotFound(number.into()).into());
             }
         }
         self.inner.block_info_by_number(number).await

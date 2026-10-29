@@ -12,4 +12,4 @@ pub use selector::MockOriginSelector;
 pub use selector::{L1OriginSelector, L1OriginSelectorError, OriginSelector};
 
 mod prefetched_chain_provider;
-pub use prefetched_chain_provider::{PrefetchedChainProvider, PrefetchedChainProviderError};
+pub use prefetched_chain_provider::PrefetchedChainProvider;
