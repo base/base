@@ -543,9 +543,17 @@ where
         }
         let mut discarded = Vec::new();
         for (lane_id, nonce) in targets {
-            let Some(cursor) = self.validity.pool.read().lane_cursor(&lane_id) else {
-                continue;
+            let (cursor, shared) = {
+                let validity = self.validity.pool.read();
+                let Some(cursor) = validity.lane_cursor(&lane_id) else { continue };
+                (cursor, validity.is_shared_lane(&lane_id))
             };
+            // Every change to a lane's standard run passes through here, so
+            // this is where a shared flag is dropped once the standard store
+            // holds nothing in the lane; the next admission in it re-flags.
+            if shared && !self.standard_store_holds_lane(lane_id) {
+                self.validity.pool.write().unmark_shared_lane(&lane_id);
+            }
             let state_nonce =
                 nonce.map_or(cursor.state_nonce, |nonce| nonce.max(cursor.state_nonce));
             let target = LaneCursor {
@@ -1600,7 +1608,8 @@ where
     /// Records that `lane_id` now has transactions in both the validity pool
     /// and its standard store, so builds look for standard descendants behind
     /// the validity run. Called from both stores' admission paths, so the two
-    /// meet whichever arrives second.
+    /// meet whichever arrives second; `sync_validity_lanes` clears the flag
+    /// once the standard store has emptied the lane again.
     fn share_validity_lane(&self, lane_id: LaneId) {
         if self.validity.pool.read().lane_cursor(&lane_id).is_none() {
             return;
@@ -6638,6 +6647,18 @@ mod tests {
         pool.remove_transactions(vec![validity0]);
         assert!(best_hashes(&pool).is_empty());
         let validity0 = add(&pool, validity_1559(&signer, 0, 1_100)).await;
+        assert_eq!(best_hashes(&pool), vec![validity0, standard1, standard2]);
+
+        // The shared flag follows the standard store's hold on the lane: it is
+        // dropped once nothing standard is left and set again by the next admission.
+        let lane = (signer.address(), U256::ZERO);
+        assert!(pool.validity.pool.read().is_shared_lane(&lane));
+        pool.remove_transactions(vec![standard1, standard2]);
+        assert!(!pool.validity.pool.read().is_shared_lane(&lane));
+        assert_eq!(best_hashes(&pool), vec![validity0]);
+        let standard1 = add(&pool, signed_1559(&signer, 1)).await;
+        let standard2 = add(&pool, signed_1559(&signer, 2)).await;
+        assert!(pool.validity.pool.read().is_shared_lane(&lane));
         assert_eq!(best_hashes(&pool), vec![validity0, standard1, standard2]);
 
         // Mining the validity transaction promotes the descendants in reth itself.

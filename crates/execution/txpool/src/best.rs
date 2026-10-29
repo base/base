@@ -297,10 +297,13 @@ where
         let slot = Self::slot(transaction);
         let source = &mut self.sources[PoolStore::of(&transaction.transaction).index()];
         // The buffered head may be the invalid transaction's own successor;
-        // another lane's head stays in the running.
-        if source.head.as_ref().is_some_and(|head| {
-            Self::slot(head).map(|(lane_id, _)| lane_id) == slot.map(|(lane_id, _)| lane_id)
-        }) {
+        // another lane's head, or a nonce-free head, stays in the running.
+        let same_lane = |head: &Arc<ValidPoolTransaction<T>>| {
+            slot.is_some_and(|(lane_id, _)| {
+                Self::slot(head).is_some_and(|(head_lane, _)| head_lane == lane_id)
+            })
+        };
+        if source.head.as_ref().is_some_and(same_lane) {
             source.head = None;
         }
         source.best.mark_invalid(transaction, kind);
@@ -337,7 +340,8 @@ mod tests {
     use alloy_signer_local::PrivateKeySigner;
     use base_common_chains::ChainConfig;
     use base_common_consensus::{
-        BasePooledTransaction as ConsensusPooledTransaction, Eip8130Signed, TxEip8130,
+        BasePooledTransaction as ConsensusPooledTransaction, Eip8130Constants, Eip8130Signed,
+        TxEip8130,
     };
     use reth_transaction_pool::{TransactionOrigin, identifier::TransactionId};
 
@@ -776,6 +780,32 @@ mod tests {
         let head = merged.next().expect("validity head");
         merged.mark_invalid(&head, InvalidPoolTransactionError::Underpriced);
         assert_eq!(merged.count(), 0);
+    }
+
+    #[test]
+    fn marking_a_nonce_free_transaction_invalid_keeps_another_nonce_free_head() {
+        let nonce_free = |tip| {
+            valid_pool_transaction(signed_tx(
+                &signer(),
+                Eip8130Constants::NONCE_KEY_MAX,
+                0,
+                tip,
+                1_000,
+            ))
+        };
+        let (first, second) = (nonce_free(900), nonce_free(800));
+        assert!(first.transaction.is_eip8130_nonce_free());
+        let second_hash = *second.hash();
+        let mut merged = MergeBestTransactions::new(
+            Box::new(StaticBestTransactions::new(Vec::new())),
+            Box::new(StaticBestTransactions::new(vec![first, second])),
+            Box::new(StaticBestTransactions::new(Vec::new())),
+            BaseOrdering::coinbase_tip(),
+            0,
+        );
+        let head = merged.next().expect("first nonce-free transaction");
+        merged.mark_invalid(&head, InvalidPoolTransactionError::Underpriced);
+        assert_eq!(merged.next().map(|transaction| *transaction.hash()), Some(second_hash));
     }
 
     #[test]

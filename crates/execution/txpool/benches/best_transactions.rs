@@ -1,8 +1,8 @@
-//! Per-build cost of `best_transactions` on a `BaseTransactionPool` of mainnet size.
+//! Per-build cost of `best_transactions` on a large `BaseTransactionPool`.
 //!
-//! The builder creates one merged best-transactions iterator per flashblock (about 10 per block,
-//! ~4×10^5/day) and per native block after Denim. Each arm measures that path with reth's
-//! pending and queued subpools and the validity pool filled to production scale:
+//! The builder creates one merged best-transactions iterator per flashblock (about 10 per block)
+//! and per native block after Denim. Each arm measures that path with reth's pending and queued
+//! subpools and the validity pool filled to the order of their configured limits:
 //!
 //! - `snapshot`: creating the iterator, which includes the cross-store lane bookkeeping the
 //!   merge needs (validity lanes riding a standard run, standard transactions queued behind a
@@ -44,11 +44,11 @@ use reth_transaction_pool::{
 type Client = MockEthProvider<BasePrimitives, Arc<BaseChainSpec>>;
 type BenchPool = BaseTransactionPool<Client, InMemoryBlobStore, BaseEvmConfig>;
 
-/// Reth's pending subpool on a mainnet builder.
+/// Standard transactions pending in reth, one per sender.
 const PENDING_STANDARD: usize = 10_000;
-/// Reth's queued subpool limit on mainnet.
+/// Standard transactions queued in reth behind a nonce gap; also the queued subpool limit.
 const QUEUED_STANDARD: usize = 20_000;
-/// The resting validity set observed on mainnet.
+/// Resting validity transactions, one per sender.
 const VALIDITY: usize = 25_000;
 /// Senders holding a validity transaction with a standard one queued behind it.
 const SHARED_LANES: usize = 1_000;
@@ -131,12 +131,12 @@ async fn add(pool: &BenchPool, transactions: Vec<BasePooledTransaction>) {
     }
 }
 
-/// A pool at mainnet scale. `shared_lanes` senders hold both a resting validity transaction at
-/// nonce 0 and a standard transaction at nonce 1, which reth queues behind the gap.
+/// A pool filled to the sizes above. `shared_lanes` senders hold both a resting validity
+/// transaction at nonce 0 and a standard transaction at nonce 1, which reth queues behind the gap.
 ///
 /// The runtime hosting the validation tasks is returned with the pool so it outlives the
 /// measurement.
-fn mainnet_pool(shared_lanes: usize) -> (BenchPool, tokio::runtime::Runtime) {
+fn large_pool(shared_lanes: usize) -> (BenchPool, tokio::runtime::Runtime) {
     let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap();
     let pool = runtime.block_on(async {
         let (pool, client) = build_pool();
@@ -171,7 +171,7 @@ fn best_transactions_benches(c: &mut Criterion) {
     let mut group = c.benchmark_group("txpool/best_transactions");
     group.sample_size(20);
     for (name, shared_lanes) in [("isolated", 0), ("shared", SHARED_LANES)] {
-        let (pool, _runtime) = mainnet_pool(shared_lanes);
+        let (pool, _runtime) = large_pool(shared_lanes);
         group.bench_with_input(BenchmarkId::new("snapshot", name), &pool, |b, pool| {
             b.iter(|| black_box(pool.best_transactions()));
         });

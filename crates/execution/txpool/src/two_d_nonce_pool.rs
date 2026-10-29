@@ -991,6 +991,16 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
         }
     }
 
+    /// Clears the shared flag once the other store holds nothing in `lane_id`.
+    pub(crate) fn unmark_shared_lane(&mut self, lane_id: &LaneId) {
+        self.shared_lanes.remove(lane_id);
+    }
+
+    /// Whether `lane_id` is flagged as shared with another store.
+    pub(crate) fn is_shared_lane(&self, lane_id: &LaneId) -> bool {
+        self.shared_lanes.contains(lane_id)
+    }
+
     /// The shared lanes that currently have a pending run, with the nonce
     /// right after that run.
     pub(crate) fn shared_lanes_pending_end(&self) -> impl Iterator<Item = (LaneId, u64)> + '_ {
