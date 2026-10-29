@@ -14,7 +14,7 @@ use alloy_rpc_types_engine::{
     BlobsBundleV1, BlobsBundleV2, ExecutionPayloadEnvelopeV2, ExecutionPayloadFieldV2,
     ExecutionPayloadV1, ExecutionPayloadV3, PayloadAttributes as EthPayloadAttributes, PayloadId,
 };
-use base_common_chains::Upgrades;
+use base_common_chains::{BaseFeature, Upgrades};
 use base_common_consensus::{
     BasePrimitives, EIP1559ParamError, HoloceneExtraData, JovianExtraData, decode_2718_canonical,
 };
@@ -476,17 +476,20 @@ where
         chain_spec: &ChainSpec,
     ) -> Result<Self, PayloadBuilderError> {
         let timestamp = attributes.payload_attributes.timestamp;
-        let extra_data = if chain_spec.is_jovian_active_at_timestamp(timestamp) {
-            attributes
-                .get_jovian_extra_data(chain_spec.base_fee_params_at_timestamp(timestamp))
-                .map_err(PayloadBuilderError::other)?
-        } else if chain_spec.is_holocene_active_at_timestamp(timestamp) {
-            attributes
-                .get_holocene_extra_data(chain_spec.base_fee_params_at_timestamp(timestamp))
-                .map_err(PayloadBuilderError::other)?
-        } else {
-            Default::default()
-        };
+        let extra_data =
+            if chain_spec.is_feature_active_at_timestamp(BaseFeature::MinBaseFee, timestamp) {
+                attributes
+                    .get_jovian_extra_data(chain_spec.base_fee_params_at_timestamp(timestamp))
+                    .map_err(PayloadBuilderError::other)?
+            } else if chain_spec
+                .is_feature_active_at_timestamp(BaseFeature::DynamicBaseFeeParameters, timestamp)
+            {
+                attributes
+                    .get_holocene_extra_data(chain_spec.base_fee_params_at_timestamp(timestamp))
+                    .map_err(PayloadBuilderError::other)?
+            } else {
+                Default::default()
+            };
 
         Ok(Self {
             timestamp,

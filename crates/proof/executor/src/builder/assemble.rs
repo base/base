@@ -8,7 +8,7 @@ use alloy_evm::{EvmFactory, block::BlockExecutionResult};
 use alloy_primitives::{B256, Sealable, U256, logs_bloom};
 use alloy_trie::EMPTY_ROOT_HASH;
 use base_common_consensus::{BaseReceiptEnvelope, Predeploys};
-use base_common_genesis::RollupConfig;
+use base_common_genesis::{BaseFeature, RollupConfig};
 use base_common_rpc_types_engine::BasePayloadAttributes;
 use base_proof_mpt::{TrieHinter, ordered_trie_with_encoder};
 use base_protocol::OutputRoot;
@@ -49,25 +49,27 @@ where
         )
         .root();
         let receipts_root = compute_receipts_root(&ex_result.receipts, self.config, timestamp);
-        let withdrawals_root = if self.config.is_isthmus_active(timestamp) {
-            Some(self.message_passer_account(block_env.number.saturating_to::<u64>())?)
-        } else if self.config.is_canyon_active(timestamp) {
-            Some(EMPTY_ROOT_HASH)
-        } else {
-            None
-        };
+        let withdrawals_root =
+            if self.config.is_feature_active_cascading(BaseFeature::L2ToL1MessageRoot, timestamp) {
+                Some(self.message_passer_account(block_env.number.saturating_to::<u64>())?)
+            } else if self.config.is_feature_active_cascading(BaseFeature::Withdrawals, timestamp) {
+                Some(EMPTY_ROOT_HASH)
+            } else {
+                None
+            };
 
         // Compute the logs bloom from the receipts generated during block execution.
         let logs_bloom = logs_bloom(ex_result.receipts.iter().flat_map(|r| r.logs()));
 
         // Compute Cancun fields, if active.
-        let (blob_gas_used, excess_blob_gas) = if self.config.is_jovian_active(timestamp) {
-            (Some(ex_result.blob_gas_used), Some(0))
-        } else if self.config.is_ecotone_active(timestamp) {
-            (Some(0), Some(0))
-        } else {
-            Default::default()
-        };
+        let (blob_gas_used, excess_blob_gas) =
+            if self.config.is_feature_active_cascading(BaseFeature::DaFootprint, timestamp) {
+                (Some(ex_result.blob_gas_used), Some(0))
+            } else if self.config.is_feature_active_cascading(BaseFeature::BlobHeader, timestamp) {
+                (Some(0), Some(0))
+            } else {
+                Default::default()
+            };
 
         // At holocene activation, the base fee parameters from the payload are placed
         // into the Header's `extra_data` field.
@@ -75,18 +77,26 @@ where
         // If the payload's `eip_1559_params` are equal to `0`, then the header's `extraData`
         // field is set to the encoded canyon base fee parameters.
         let encoded_base_fee_params = match self.config {
-            config if config.is_jovian_active(timestamp) => {
+            config if config.is_feature_active_cascading(BaseFeature::MinBaseFee, timestamp) => {
                 let extra_data = encode_jovian_eip_1559_params(self.config, attrs)?;
                 Ok(extra_data)
             }
-            config if config.is_holocene_active(timestamp) => {
+            config
+                if config.is_feature_active_cascading(
+                    BaseFeature::DynamicBaseFeeParameters,
+                    timestamp,
+                ) =>
+            {
                 encode_holocene_eip_1559_params(self.config, attrs)
             }
             _ => Ok(Default::default()),
         }?;
 
         // The requests hash on Base, if Isthmus is active, is always the empty SHA256 hash.
-        let requests_hash = self.config.is_isthmus_active(timestamp).then_some(EMPTY_REQUESTS_HASH);
+        let requests_hash = self
+            .config
+            .is_feature_active_cascading(BaseFeature::EmptyRequestsHash, timestamp)
+            .then_some(EMPTY_REQUESTS_HASH);
 
         // Construct the new header.
         let header = Header {
@@ -179,7 +189,9 @@ pub fn compute_receipts_root(
     // the receipt root calculation does not include the deposit nonce in the
     // receipt encoding. In the Regolith upgrade, we must strip the deposit nonce
     // from the receipt encoding to match the receipt root calculation.
-    if config.is_regolith_active(timestamp) && !config.is_canyon_active(timestamp) {
+    if config.is_feature_active_cascading(BaseFeature::DepositNonce, timestamp)
+        && !config.is_feature_active_cascading(BaseFeature::DepositReceiptVersion, timestamp)
+    {
         let receipts = receipts
             .iter()
             .cloned()

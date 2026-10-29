@@ -7,7 +7,7 @@ use alloy_eips::{
     eip7840::BlobParams,
     eip7910::{EthConfig, EthForkConfig, SystemContract},
 };
-use base_common_chains::Upgrades;
+use base_common_chains::{BaseFeature, Upgrades};
 use jsonrpsee::{core::RpcResult, proc_macros::rpc};
 use reth_chainspec::{ChainSpecProvider, EthereumHardforks, Hardforks};
 use reth_evm::ConfigureEvm;
@@ -34,9 +34,11 @@ fn sanitize_system_contracts_for_fork(chain_spec: &impl Upgrades, fork_config: &
     let activation_time = fork_config.activation_time;
 
     fork_config.system_contracts.retain(|contract, _| match contract {
-        SystemContract::BeaconRoots => chain_spec.is_ecotone_active_at_timestamp(activation_time),
+        SystemContract::BeaconRoots => {
+            chain_spec.is_feature_active_at_timestamp(BaseFeature::BeaconRoots, activation_time)
+        }
         SystemContract::HistoryStorage => {
-            chain_spec.is_isthmus_active_at_timestamp(activation_time)
+            chain_spec.is_feature_active_at_timestamp(BaseFeature::HistoryStorage, activation_time)
         }
         // Base does not support L1-style deposit, consolidation, or withdrawal request contracts.
         SystemContract::ConsolidationRequestPredeploy

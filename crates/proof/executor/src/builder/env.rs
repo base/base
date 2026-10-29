@@ -4,7 +4,7 @@ use alloy_consensus::{BlockHeader, Header};
 use alloy_eips::{calc_next_block_base_fee, eip1559::BaseFeeParams};
 use alloy_evm::{EvmEnv, EvmFactory};
 use alloy_primitives::U256;
-use base_common_evm::{BaseSpecId, BaseUpgrade};
+use base_common_evm::{BaseFeature, BaseSpecId};
 use base_common_genesis::RollupConfig;
 use base_common_rpc_types_engine::BasePayloadAttributes;
 use base_proof_mpt::TrieHinter;
@@ -60,7 +60,8 @@ where
         parent: &Header,
         min_base_fee: u64,
     ) -> Option<u64> {
-        if !self.config.is_jovian_active(parent.timestamp()) {
+        if !self.config.is_feature_active_cascading(BaseFeature::DaAwareBaseFee, parent.timestamp())
+        {
             return parent.next_block_base_fee(params);
         }
 
@@ -105,7 +106,7 @@ where
         // from the parent header via the EIP-4844 formula would diverge from canonical
         // state whenever `parent.blob_gas_used` is non-zero, breaking proof generation.
         let blob_excess_gas_and_price = spec_id
-            .is_enabled_in(BaseUpgrade::Ecotone)
+            .is_feature_enabled(BaseFeature::ConstantBlobBaseFee)
             .then_some(BlobExcessGasAndPrice { excess_blob_gas: 0, blob_gasprice: 1 });
 
         let next_block_base_fee = self
@@ -138,16 +139,26 @@ where
             // After Holocene activation, the base fee parameters are stored in the
             // `extraData` field of the parent header. If Holocene wasn't active in the
             // parent block, the default base fee parameters are used.
-            _ if config.is_jovian_active(parent_header.timestamp) => {
+            _ if config
+                .is_feature_active_cascading(BaseFeature::MinBaseFee, parent_header.timestamp) =>
+            {
                 decode_jovian_eip_1559_params_block_header(parent_header)
             }
-            _ if config.is_holocene_active(parent_header.timestamp) => {
+            _ if config.is_feature_active_cascading(
+                BaseFeature::DynamicBaseFeeParameters,
+                parent_header.timestamp,
+            ) =>
+            {
                 decode_holocene_eip_1559_params_block_header(parent_header)
                     .map(|base_fee_params| (base_fee_params, 0))
             }
             // If the next payload attribute timestamp is past canyon activation,
             // use the canyon base fee params from the rollup config.
-            _ if config.is_canyon_active(payload_timestamp) => {
+            _ if config.is_feature_active_cascading(
+                BaseFeature::BaseFeeDenominator,
+                payload_timestamp,
+            ) =>
+            {
                 // If the payload attribute timestamp is past canyon activation,
                 // use the canyon base fee params from the rollup config.
                 Ok((config.chain_op_config.post_canyon_params(), 0))

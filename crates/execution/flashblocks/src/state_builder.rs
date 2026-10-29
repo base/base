@@ -12,7 +12,7 @@ use alloy_evm::{
 use alloy_primitives::B256;
 use alloy_rpc_types::TransactionTrait;
 use alloy_rpc_types_eth::state::StateOverride;
-use base_common_chains::Upgrades;
+use base_common_chains::{BaseFeature, Upgrades};
 use base_common_consensus::{BasePrimitives, BaseReceipt, BaseTxEnvelope, Predeploys};
 use base_common_evm::{
     BaseHaltReason, Eip8130CommittedPhases, L1BlockInfo, ensure_create2_deployer,
@@ -296,10 +296,10 @@ where
 
         let is_deposit = transaction.is_deposit();
 
-        let da_footprint_used = if self
-            .chain_spec
-            .is_jovian_active_at_timestamp(self.evm.block().timestamp().saturating_to())
-            && !is_deposit
+        let da_footprint_used = if self.chain_spec.is_feature_active_at_timestamp(
+            BaseFeature::DaFootprint,
+            self.evm.block().timestamp().saturating_to(),
+        ) && !is_deposit
         {
             self.jovian_da_footprint_estimation(&transaction)?
         } else {

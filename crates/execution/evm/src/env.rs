@@ -1,7 +1,7 @@
 use alloy_consensus::Header;
 use alloy_evm::EvmEnv;
 use alloy_primitives::U256;
-use base_common_chains::Upgrades;
+use base_common_chains::{BaseFeature, Upgrades};
 use base_common_evm::BaseSpecId;
 #[cfg(feature = "std")]
 use base_common_rpc_types_engine::ExecutionData;
@@ -31,7 +31,8 @@ impl BaseEvmEnvBuilder {
             .with_chain_id(chain_spec.chain().id())
             .with_spec_and_mainnet_gas_params(spec);
 
-        if chain_spec.is_azul_active_at_timestamp(timestamp) {
+        if chain_spec.is_feature_active_at_timestamp(BaseFeature::TransactionGasLimitCap, timestamp)
+        {
             cfg_env.tx_gas_limit_cap = Some(MAX_TX_GAS_LIMIT_OSAKA);
         }
 

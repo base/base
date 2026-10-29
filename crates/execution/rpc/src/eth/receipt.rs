@@ -6,7 +6,7 @@ use alloy_consensus::{BlockHeader, Receipt, ReceiptWithBloom, TxReceipt};
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::Address;
 use alloy_rpc_types_eth::{Log, TransactionReceipt};
-use base_common_chains::Upgrades;
+use base_common_chains::{BaseFeature, Upgrades};
 use base_common_consensus::{BaseReceipt, BaseTransaction};
 use base_common_flz::tx_estimated_size_fjord as estimate_tx_compressed_size;
 use base_common_rpc_types::{
@@ -218,8 +218,9 @@ impl ReceiptFieldsBuilder {
                 .saturating_to(),
         );
 
-        self.l1_fee_scalar = (!chain_spec.is_ecotone_active_at_timestamp(timestamp))
-            .then_some(f64::from(l1_block_info.l1_base_fee_scalar) / L1_FEE_SCALAR_DIVISOR);
+        self.l1_fee_scalar = (!chain_spec
+            .is_feature_active_at_timestamp(BaseFeature::BlobAwareL1Fees, timestamp))
+        .then_some(f64::from(l1_block_info.l1_base_fee_scalar) / L1_FEE_SCALAR_DIVISOR);
 
         self.l1_base_fee = Some(l1_block_info.l1_base_fee.saturating_to());
         self.l1_base_fee_scalar = Some(l1_block_info.l1_base_fee_scalar.saturating_to());
@@ -376,7 +377,7 @@ impl BaseReceiptBuilder {
         // footprint's value.
         // We're computing the jovian blob gas used before building the receipt since the inputs get
         // consumed by the `build_receipt` function.
-        chain_spec.is_jovian_active_at_timestamp(timestamp).then(|| {
+        chain_spec.is_feature_active_at_timestamp(BaseFeature::DaFootprint, timestamp).then(|| {
             // Estimate the size of the transaction in bytes and multiply by the DA
             // footprint gas scalar.
             // Jovian specs: `https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/jovian/exec-engine.md#da-footprint-block-limit`

@@ -2,7 +2,7 @@
 
 use alloy_consensus::{BlockHeader, Typed2718};
 use alloy_primitives::{Address, Bytes, Signature, TxHash};
-use base_common_chains::Upgrades;
+use base_common_chains::{BaseFeature, Upgrades};
 use base_common_consensus::EIP8130_TX_TYPE_ID;
 use base_common_genesis::RollupConfig;
 use base_execution_rpc::SequencerClient;
@@ -218,8 +218,14 @@ where
         // the window uses Denim's 200ms full-block cadence at that transition.
         let next_legacy_timestamp =
             latest_timestamp.saturating_add(LEGACY_BLOCK_INTERVAL_MILLIS.saturating_div(1_000));
-        if self.provider.chain_spec().is_denim_active_at_timestamp(latest_timestamp)
-            || self.provider.chain_spec().is_denim_active_at_timestamp(next_legacy_timestamp)
+        if self
+            .provider
+            .chain_spec()
+            .is_feature_active_at_timestamp(BaseFeature::SubsecondBlocks, latest_timestamp)
+            || self
+                .provider
+                .chain_spec()
+                .is_feature_active_at_timestamp(BaseFeature::SubsecondBlocks, next_legacy_timestamp)
         {
             RollupConfig::NATIVE_SUBSECOND_BLOCK_INTERVAL_MILLIS
         } else {
@@ -342,10 +348,12 @@ where
         // EIP-8130 (account abstraction) validity transactions are fork-gated on Everest. Other
         // transaction types (e.g. EIP-1559) carry validity predicates without a fork gate and are
         // accepted before Everest activates.
-        let everest_active = latest.is_some_and(|(_, timestamp)| {
-            self.provider.chain_spec().is_everest_active_at_timestamp(timestamp)
+        let eip8130_active = latest.is_some_and(|(_, timestamp)| {
+            self.provider
+                .chain_spec()
+                .is_feature_active_at_timestamp(BaseFeature::Eip8130, timestamp)
         });
-        if transaction.ty() == EIP8130_TX_TYPE_ID && !everest_active {
+        if transaction.ty() == EIP8130_TX_TYPE_ID && !eip8130_active {
             return Err(ErrorObjectOwned::owned(
                 ErrorCode::InvalidParams.code(),
                 VALIDITY_TX_PRE_EVEREST_RPC_ERROR,

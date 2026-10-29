@@ -11,7 +11,7 @@ use alloy_evm::Database;
 use alloy_primitives::B256;
 use alloy_primitives::{Address, BlockHash, Bytes, TxHash, U256};
 use alloy_rpc_types_eth::Withdrawals;
-use base_common_chains::Upgrades;
+use base_common_chains::{BaseFeature, Upgrades};
 use base_common_consensus::{BaseReceipt, BaseTransactionSigned, DepositReceipt, OpTxType};
 use base_common_evm::{BaseReceiptBuilder, BaseSpecId, Eip8130CommittedPhases, L1BlockInfo};
 use base_execution_chainspec::BaseChainSpec;
@@ -343,12 +343,12 @@ impl BasePayloadBuilderCtx {
     /// after Ecotone, this will always return Some(0) as blobs aren't supported
     /// pre Ecotone, these fields aren't used.
     pub fn blob_fields(&self, info: &ExecutionInfo) -> (Option<u64>, Option<u64>) {
-        if self.is_jovian_active() {
+        if self.is_feature_active(BaseFeature::DaFootprint) {
             let scalar =
                 info.da_footprint_scalar.expect("Scalar must be defined for Jovian blocks");
             let result = info.cumulative_da_bytes_used * scalar as u64;
             (Some(0), Some(result))
-        } else if self.is_ecotone_active() {
+        } else if self.is_feature_active(BaseFeature::BlobHeader) {
             (Some(0), Some(0))
         } else {
             (None, None)
@@ -359,7 +359,7 @@ impl BasePayloadBuilderCtx {
     ///
     /// After holocene this extracts the extradata from the payload
     pub fn extra_data(&self) -> Result<Bytes, PayloadBuilderError> {
-        if self.is_jovian_active() {
+        if self.is_feature_active(BaseFeature::MinBaseFee) {
             self.attributes()
                 .get_jovian_extra_data(
                     self.chain_spec.base_fee_params_at_timestamp(
@@ -367,7 +367,7 @@ impl BasePayloadBuilderCtx {
                     ),
                 )
                 .map_err(PayloadBuilderError::other)
-        } else if self.is_holocene_active() {
+        } else if self.is_feature_active(BaseFeature::DynamicBaseFeeParameters) {
             self.attributes()
                 .get_holocene_extra_data(
                     self.chain_spec.base_fee_params_at_timestamp(
@@ -390,34 +390,9 @@ impl BasePayloadBuilderCtx {
         self.attributes().payload_id(&self.parent_hash())
     }
 
-    /// Returns true if regolith is active for the payload.
-    pub fn is_regolith_active(&self) -> bool {
-        self.chain_spec.is_regolith_active_at_timestamp(self.attributes().timestamp())
-    }
-
-    /// Returns true if ecotone is active for the payload.
-    pub fn is_ecotone_active(&self) -> bool {
-        self.chain_spec.is_ecotone_active_at_timestamp(self.attributes().timestamp())
-    }
-
-    /// Returns true if canyon is active for the payload.
-    pub fn is_canyon_active(&self) -> bool {
-        self.chain_spec.is_canyon_active_at_timestamp(self.attributes().timestamp())
-    }
-
-    /// Returns true if holocene is active for the payload.
-    pub fn is_holocene_active(&self) -> bool {
-        self.chain_spec.is_holocene_active_at_timestamp(self.attributes().timestamp())
-    }
-
-    /// Returns true if isthmus is active for the payload.
-    pub fn is_isthmus_active(&self) -> bool {
-        self.chain_spec.is_isthmus_active_at_timestamp(self.attributes().timestamp())
-    }
-
-    /// Returns true if jovian is active for the payload.
-    pub fn is_jovian_active(&self) -> bool {
-        self.chain_spec.is_jovian_active_at_timestamp(self.attributes().timestamp())
+    /// Returns whether a protocol feature is active for the payload.
+    pub fn is_feature_active(&self, feature: BaseFeature) -> bool {
+        self.chain_spec.is_feature_active_at_timestamp(feature, self.attributes().timestamp())
     }
 
     /// Returns the chain id
@@ -509,7 +484,9 @@ impl BasePayloadBuilderCtx {
                     // when set. The state transition process ensures
                     // this is only set for post-Canyon deposit
                     // transactions.
-                    deposit_receipt_version: self.is_canyon_active().then_some(1),
+                    deposit_receipt_version: self
+                        .is_feature_active(BaseFeature::DepositReceiptVersion)
+                        .then_some(1),
                 })
             }
         }
@@ -556,18 +533,19 @@ impl BasePayloadBuilderCtx {
             // Note that this *only* needs to be done post-regolith upgrade, as deposit nonces
             // were not introduced in Bedrock. In addition, regular transactions don't have deposit
             // nonces, so we don't need to touch the DB for those.
-            let depositor_nonce = (self.is_regolith_active() && sequencer_tx.is_deposit())
-                .then(|| {
-                    evm.db_mut()
-                        .load_cache_account(sequencer_tx.signer())
-                        .map(|acc| acc.account_info().unwrap_or_default().nonce)
-                })
-                .transpose()
-                .map_err(|_| {
-                    PayloadBuilderError::other(BasePayloadBuilderError::AccountLoadFailed(
-                        sequencer_tx.signer(),
-                    ))
-                })?;
+            let depositor_nonce = (self.is_feature_active(BaseFeature::DepositNonce)
+                && sequencer_tx.is_deposit())
+            .then(|| {
+                evm.db_mut()
+                    .load_cache_account(sequencer_tx.signer())
+                    .map(|acc| acc.account_info().unwrap_or_default().nonce)
+            })
+            .transpose()
+            .map_err(|_| {
+                PayloadBuilderError::other(BasePayloadBuilderError::AccountLoadFailed(
+                    sequencer_tx.signer(),
+                ))
+            })?;
 
             let ResultAndState { result, state } = match evm.transact(&sequencer_tx) {
                 Ok(res) => res,
@@ -616,7 +594,7 @@ impl BasePayloadBuilderCtx {
 
         let da_footprint_gas_scalar = self
             .chain_spec
-            .is_jovian_active_at_timestamp(self.attributes().timestamp())
+            .is_feature_active_at_timestamp(BaseFeature::DaFootprint, self.attributes().timestamp())
             .then(|| {
                 L1BlockInfo::fetch_da_footprint_gas_scalar(evm.db_mut())
                     .expect("DA footprint should always be available from the database post jovian")
