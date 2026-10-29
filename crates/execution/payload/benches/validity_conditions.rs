@@ -31,9 +31,9 @@ use base_execution_txpool::{
     ValidityConditions, ValidityOperator, ValidityPredicate,
 };
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput};
+use evm2::evm::{AccountInfo, InMemoryDB};
 use reth_primitives_traits::Recovered;
 use reth_transaction_pool::{TransactionOrigin, ValidPoolTransaction, identifier::TransactionId};
-use revm::{database::InMemoryDB, state::AccountInfo};
 
 /// Counts allocations so the report can show real allocator traffic next to `heap_size`.
 struct CountingAllocator;
@@ -169,24 +169,16 @@ fn database(predicates: impl IntoIterator<Item = ValidityPredicate>) -> InMemory
             ValidityPredicate::Balance { address, .. }
             | ValidityPredicate::Nonce { address, .. } => {
                 db.insert_account_info(
-                    address,
-                    AccountInfo {
-                        balance: U256::from(BALANCE),
-                        nonce: NONCE,
-                        ..Default::default()
-                    },
+                    &address,
+                    AccountInfo::default().with_balance(U256::from(BALANCE)).with_nonce(NONCE),
                 );
             }
             ValidityPredicate::Storage { address, slot, .. } => {
                 db.insert_account_info(
-                    address,
-                    AccountInfo {
-                        balance: U256::from(BALANCE),
-                        nonce: NONCE,
-                        ..Default::default()
-                    },
+                    &address,
+                    AccountInfo::default().with_balance(U256::from(BALANCE)).with_nonce(NONCE),
                 );
-                db.insert_account_storage(address, slot, slot).expect("in-memory insert");
+                db.insert_account_storage(&address, &slot, &slot);
             }
             ValidityPredicate::BlockNumber { .. } | ValidityPredicate::FlashblockIndex { .. } => {}
         }
