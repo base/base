@@ -3245,6 +3245,7 @@ dependencies = [
  "base-builder-core",
  "base-builder-publish",
  "base-bundles",
+ "base-clock",
  "base-common-chains",
  "base-common-consensus",
  "base-common-evm",
