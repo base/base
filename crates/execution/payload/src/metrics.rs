@@ -72,12 +72,14 @@ base_metrics::define_metrics! {
     resting_predicate_shadow_mismatches_total: counter,
     #[describe("Of the parked resting validity transactions, those carried over from an earlier block")]
     resting_predicate_carried_parked_total: counter,
-    #[describe("Duration of carrying resting validity transactions into a block build, on the path before flashblock scheduling, in seconds")]
+    #[describe("Duration of carrying resting validity transactions into a block build, on the build path before the selection loop, in seconds")]
     resting_predicate_begin_block_duration: histogram,
     #[describe("Duration of the periodic sweep of resting validity transactions no build yielded, run off the build path, in seconds")]
     resting_predicate_sweep_duration: histogram,
     #[describe("Time a block build waited for the previous block's resting sweep to finish, in seconds")]
     resting_predicate_sweep_wait_duration: histogram,
+    #[describe("Block builds that stopped waiting for the previous block's resting sweep and started with an empty resting set")]
+    resting_predicate_sweep_wait_timeouts_total: counter,
 }
 
 base_metrics::define_metrics! {
@@ -172,6 +174,11 @@ impl ValidityMetrics {
     /// Records how long a block build waited for the previous block's resting sweep.
     pub fn record_resting_sweep_wait(waited: Duration) {
         Self::resting_predicate_sweep_wait_duration().record(waited.as_secs_f64());
+    }
+
+    /// Records a block build that gave up waiting for the previous block's resting sweep.
+    pub fn record_resting_sweep_wait_timeout() {
+        Self::resting_predicate_sweep_wait_timeouts_total().increment(1);
     }
 
     /// Records validity-predicate index bucket wakeups and depth distribution for one build.

@@ -24,6 +24,14 @@ use crate::{ParkedPredicateIndex, ValidityMetrics, ValidityPredicateKey};
 /// off the build path; see [`RestingPredicateStore::finish`].
 pub const RESTING_UNSEEN_RETAINED_BLOCKS: u64 = 10;
 
+/// Longest a block build waits for the previous block's resting sweep before it starts with an
+/// empty set instead.
+///
+/// A sweep normally finishes during the previous block's state root. Starting empty only means the
+/// build evaluates every validity transaction again, as after a reset, so a slow sweep can never
+/// hold up the build's own payload by more than this.
+pub const RESTING_SWEEP_WAIT_LIMIT: Duration = Duration::from_millis(25);
+
 /// Mode for holding back validity transactions that rest under an unchanged predicate.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
@@ -333,10 +341,11 @@ enum Finishing {
 }
 
 impl FinishingRestingPredicates {
-    /// Returns the set, waiting for an unfinished sweep.
+    /// Returns the set, waiting up to [`RESTING_SWEEP_WAIT_LIMIT`] for an unfinished sweep.
     ///
-    /// Returns `None` when the sweep task was dropped without returning the set. Time spent
-    /// waiting is recorded, because it delays the build that takes the set.
+    /// Returns `None` when the sweep does not finish in time or its task was dropped without
+    /// returning the set; the caller then starts with an empty set. Time spent waiting is recorded,
+    /// because it delays the build that takes the set.
     pub fn wait(self) -> Option<RestingPredicates> {
         match self.0 {
             Finishing::Ready(resting) => Some(resting),
@@ -347,9 +356,17 @@ impl FinishingRestingPredicates {
                 }
                 Err(mpsc::TryRecvError::Empty) => {
                     let start = Instant::now();
-                    let resting = receiver.recv().ok();
+                    let resting = receiver.recv_timeout(RESTING_SWEEP_WAIT_LIMIT);
                     ValidityMetrics::record_resting_sweep_wait(start.elapsed());
-                    resting
+                    match resting {
+                        Ok(resting) => Some(resting),
+                        // The sweep finishes on its worker and drops the set there.
+                        Err(mpsc::RecvTimeoutError::Timeout) => {
+                            ValidityMetrics::record_resting_sweep_wait_timeout();
+                            None
+                        }
+                        Err(mpsc::RecvTimeoutError::Disconnected) => None,
+                    }
                 }
                 Err(mpsc::TryRecvError::Disconnected) => None,
             },
@@ -715,6 +732,21 @@ mod tests {
             panic!("an empty set must not spawn a sweep");
         };
         assert!(resting.generations.is_empty());
+    }
+
+    #[test]
+    fn build_stops_waiting_for_a_slow_sweep_and_starts_empty() {
+        let store = RestingPredicateStore::new(Runtime::test());
+        let (sender, receiver) = mpsc::sync_channel(1);
+        store.put(FinishingRestingPredicates(Finishing::Sweeping(receiver)), PARENT);
+
+        let start = Instant::now();
+        let mut resting = store.take(32);
+        assert!(start.elapsed() >= RESTING_SWEEP_WAIT_LIMIT);
+        assert!(resting.is_empty());
+        let carry_over = resting.begin_block(PARENT, 2, Some(&TransitionState::default()));
+        assert_eq!(carry_over, RestingCarryOver::default());
+        drop(sender);
     }
 
     #[test]
