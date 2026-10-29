@@ -319,13 +319,20 @@ fn eip8130_block_gas_reservation_includes_payer_auth() {
     // The block admits the 100k gas limit alone, but not once the payer-auth reservation is added.
     let mut executor = executor_with_block_gas_limit(BaseSpecId::new(BaseUpgrade::Cobalt), 105_000);
     let err = executor
-        .execute_transaction(&Recovered::new_unchecked(BaseTxEnvelope::Eip8130(signed), SENDER))
+        .execute_transaction(&Recovered::new_unchecked(eip8130_envelope(signed), SENDER))
         .expect_err("payer-auth reservation pushes the 8130 tx over the block gas limit");
     assert!(format!("{err}").contains("more than the block's available gas"), "got: {err}");
 }
 
+/// The execution envelope of `signed`, carrying its EIP-2718 encoding.
+fn eip8130_envelope(signed: base_common_consensus::Eip8130Signed) -> BaseTxEnvelope {
+    use alloy_eips::Encodable2718;
+    let encoded = base_common_consensus::BaseTxEnvelope::Eip8130(signed.clone()).encoded_2718();
+    BaseTxEnvelope::eip8130(signed, encoded.into())
+}
+
 #[test]
-fn rejects_eip8130_transaction_before_execution() {
+fn rejects_eip8130_transaction_before_everest() {
     use base_common_consensus::{Eip8130Constants, Eip8130Signed, TxEip8130};
 
     let signed = Eip8130Signed::new(
@@ -336,12 +343,10 @@ fn rejects_eip8130_transaction_before_execution() {
     let mut executor =
         executor_with_block_gas_limit(BaseSpecId::new(BaseUpgrade::Cobalt), 30_000_000);
     let err = executor
-        .execute_transaction(&Recovered::new_unchecked(BaseTxEnvelope::Eip8130(signed), SENDER))
-        .expect_err("EIP-8130 execution is not supported by this engine");
-    assert!(
-        format!("{err}").contains("EIP-8130 transaction execution is not supported"),
-        "got: {err}"
-    );
+        .execute_transaction(&Recovered::new_unchecked(eip8130_envelope(signed), SENDER))
+        .expect_err("EIP-8130 transactions are not active before Everest");
+    assert!(format!("{err}").contains("not active before Everest"), "got: {err}");
+    assert!(executor.receipts().is_empty(), "a rejected transaction has no receipt");
 }
 
 #[test]

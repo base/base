@@ -3,7 +3,7 @@
 use alloy_consensus::{Eip658Value, Receipt, Transaction, transaction::Recovered};
 use alloy_eips::eip2718::Typed2718;
 use alloy_primitives::{Address, B256, Bytes};
-use base_common_consensus::{BaseReceipt, DepositReceipt};
+use base_common_consensus::{BaseReceipt, DepositReceipt, EIP8130_TX_TYPE_ID, Eip8130Receipt};
 use base_common_genesis::BaseUpgrade;
 use evm2::{
     BlockStateAccumulator, Evm, SpecId, TxResultWithState,
@@ -110,23 +110,6 @@ impl core::fmt::Display for DaFootprintAboveGasLimit {
 }
 
 impl core::error::Error for DaFootprintAboveGasLimit {}
-
-/// Error returned for an EIP-8130 transaction, whose enshrined execution path this engine does not
-/// implement yet.
-///
-/// The `0x79` receipt commits to the number of call phases that committed, which only the
-/// enshrined execution path can produce, so the transaction is rejected before execution rather
-/// than included with a receipt that disagrees with the reference executor.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Eip8130ExecutionUnsupported;
-
-impl core::fmt::Display for Eip8130ExecutionUnsupported {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.write_str("EIP-8130 transaction execution is not supported by this engine")
-    }
-}
-
-impl core::error::Error for Eip8130ExecutionUnsupported {}
 
 /// Block context that is not part of the EVM block environment: the inputs of the pre-execution
 /// system calls and the header fields block assembly copies through.
@@ -329,9 +312,9 @@ impl<'a, S: BaseBlockState> BaseBlockExecutor<'a, S> {
         // top of the sender-signed gas limit (the reference `reserved_block_gas`). Pre-Regolith
         // deposits are exempt (the reference's `is_regolith || !is_deposit` guard).
         let mut reserved_gas = tx.gas_limit();
-        if let Some(signed) = tx.as_eip8130() {
-            let payer_auth =
-                IntrinsicGas::max_payer_auth_cost(signed).map_err(HandlerError::external)?;
+        if let Some(eip8130) = tx.as_eip8130() {
+            let payer_auth = IntrinsicGas::max_payer_auth_cost(&eip8130.signed)
+                .map_err(HandlerError::external)?;
             reserved_gas = reserved_gas.saturating_add(payer_auth);
         }
         let block_gas_limit = self.evm.block().gas_limit.saturating_to::<u64>();
@@ -360,10 +343,6 @@ impl<'a, S: BaseBlockState> BaseBlockExecutor<'a, S> {
         } else {
             0
         };
-
-        if tx.as_eip8130().is_some() {
-            return Err(HandlerError::external(Eip8130ExecutionUnsupported));
-        }
 
         // The deposit receipt records the depositor's nonce before the deposit executes, read
         // untracked so it does not perturb execution. Only post-Regolith deposit receipts carry it.
@@ -409,6 +388,9 @@ impl<'a, S: BaseBlockState> BaseBlockExecutor<'a, S> {
                 deposit_nonce: executed.deposit_nonce,
                 deposit_receipt_version: canyon.then_some(1),
             })
+        } else if let Some(committed_phases) = result.ext.eip8130_committed_phases {
+            debug_assert_eq!(executed.ty, EIP8130_TX_TYPE_ID);
+            BaseReceipt::Eip8130(Eip8130Receipt::new(receipt, committed_phases))
         } else {
             match executed.ty {
                 1 => BaseReceipt::Eip2930(receipt),

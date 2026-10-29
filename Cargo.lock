@@ -3660,6 +3660,7 @@ version = "0.0.0"
 dependencies = [
  "alloy-consensus 2.5.0",
  "alloy-eips 2.5.0",
+ "alloy-evm",
  "alloy-hardforks 0.4.11",
  "alloy-primitives",
  "alloy-sol-types",
@@ -3673,6 +3674,7 @@ dependencies = [
  "base-execution-eip8130",
  "base-precompile-storage",
  "evm2",
+ "k256 0.13.4",
  "reth-evm",
  "revm",
 ]

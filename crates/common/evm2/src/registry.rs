@@ -1,7 +1,7 @@
 //! Base transaction registry.
 
 use alloy_primitives::U256;
-use base_common_consensus::{DEPOSIT_TX_TYPE_ID, TxDeposit};
+use base_common_consensus::{DEPOSIT_TX_TYPE_ID, EIP8130_TX_TYPE_ID, TxDeposit};
 use evm2::{
     Evm, TxResult,
     env::TxEnvExt,
@@ -15,16 +15,17 @@ use evm2::{
     registry::{HandlerError, HandlerResult, TxRegistry, TxRequest, handler},
 };
 
-use crate::{BaseEvmTypes, BaseTxEnvelope, BaseTxHandlerHooks};
+use crate::{BaseEvmTypes, BaseTxEnvelope, BaseTxHandlerHooks, Eip8130Handler};
 
 impl BaseEvmTypes {
     /// Builds the Base transaction registry.
     ///
-    /// Registers the deposit handler (type `0x7e`) and the standard Ethereum
+    /// Registers the deposit handler (type `0x7e`), the standard Ethereum
     /// transaction handlers (legacy/2930/1559/7702; EIP-4844 blob transactions
     /// are unsupported on Base and intentionally omitted), the latter wired with
     /// [`BaseTxHandlerHooks`] so non-deposit transactions run the L1 fee
-    /// settlement path.
+    /// settlement path, and the enshrined EIP-8130 handler (type `0x79`,
+    /// [`Eip8130Handler`]).
     pub fn tx_registry() -> TxRegistry<Self, TxResult<Self>> {
         let mut registry = TxRegistry::new().with_handler(
             DEPOSIT_TX_TYPE_ID,
@@ -64,6 +65,11 @@ impl BaseEvmTypes {
                 eip7702::prepare_with_hooks::<Self, BaseTxHandlerHooks>,
                 eip7702::execute_prepared::<Self, BaseTxHandlerHooks>,
             ),
+        );
+        registry.register(
+            EIP8130_TX_TYPE_ID,
+            BaseTxEnvelope::as_eip8130,
+            handler(Eip8130Handler::prepare, Eip8130Handler::execute),
         );
         registry
     }
@@ -269,6 +275,7 @@ mod tests {
             assert!(registry.contains(ty), "standard handler {ty} must be registered");
         }
         assert!(!registry.contains(3), "EIP-4844 blob handler must not be registered");
+        assert!(registry.contains(EIP8130_TX_TYPE_ID), "EIP-8130 handler must be registered");
     }
 
     #[test]

@@ -13,7 +13,7 @@ mod base_time;
 pub use base_time::{BaseTime, BaseTimeTransitionError};
 
 mod transaction;
-pub use transaction::BaseTxEnvelope;
+pub use transaction::{BaseTxEnvelope, Eip8130Simulation, Eip8130SimulationMode, Eip8130Tx};
 
 mod handler;
 pub use handler::BaseTxHandlerHooks;
@@ -26,9 +26,11 @@ pub use l1_block::L1Block;
 mod executor;
 pub use executor::{
     BaseBlockExecutionCtx, BaseBlockExecutor, BaseExecutedTx, BlockExecutionResult,
-    BlockGasLimitExceeded, CumulativeGasOverflow, DaFootprintAboveGasLimit,
-    Eip8130ExecutionUnsupported, PreExecutionError,
+    BlockGasLimitExceeded, CumulativeGasOverflow, DaFootprintAboveGasLimit, PreExecutionError,
 };
+
+mod eip8130;
+pub use eip8130::{Eip8130Handler, Eip8130Prepared, Eip8130Settlement};
 
 mod registry;
 

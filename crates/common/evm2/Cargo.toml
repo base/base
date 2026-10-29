@@ -42,11 +42,17 @@ base-common-evm = { workspace = true, features = ["blst", "c-kzg", "portable", "
 base-common-precompiles = { workspace = true, features = ["revm"] }
 # base — the revm transition hooks + fork schedule, for the transition-parity harness.
 base-common-chains.workspace = true
+# base — the revm gas-free journal provider, to seed EIP-8130 account configuration.
+base-precompile-storage = { workspace = true, features = ["revm"] }
 
 # alloy — ForkCondition, to build the revm-side fork schedule in the transition-parity harness,
 # and the sol ABI encoders the precompile-calling harnesses use.
+alloy-evm.workspace = true
 alloy-sol-types.workspace = true
 alloy-hardforks.workspace = true
+
+# crypto — signs the EIP-8130 transactions the parity harness executes.
+k256 = { workspace = true, features = ["ecdsa"] }
 
 # revm
 revm = { workspace = true, features = ["std"] }
