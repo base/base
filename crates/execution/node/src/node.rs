@@ -15,7 +15,7 @@ use base_common_consensus::{BasePrimitives, BaseTransaction, BaseTxEnvelope};
 use base_common_rpc_types_engine::{BasePayloadAttributes, ExecutionData};
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_consensus::BaseBeaconConsensus;
-use base_execution_evm::{BaseEvmConfig, BaseRethReceiptBuilder};
+use base_execution_evm::BaseEvmConfig;
 use base_execution_payload_builder::{
     Attributes, BaseBuiltPayload, BasePayloadBuilderAttributes,
     DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD, PayloadPrimitives, RejectionCache,
@@ -790,7 +790,7 @@ where
     >;
 
     async fn build_evm(self, ctx: &BuilderContext<Node>) -> eyre::Result<Self::EVM> {
-        let evm_config = BaseEvmConfig::new(ctx.chain_spec(), BaseRethReceiptBuilder::default());
+        let evm_config = BaseEvmConfig::new(ctx.chain_spec());
 
         Ok(evm_config)
     }
