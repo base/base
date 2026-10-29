@@ -4,8 +4,13 @@ _elf_stub := "BASE_SUCCINCT_ELF_STUB=1"
 default:
     @just --justfile {{source_file()}} --list --list-prefix '  check::'
 
-# Runs formatting, clippy, udeps, and deny checks
-all: format clippy udeps deny
+# Runs upgrade documentation, formatting, clippy, udeps, and deny checks
+all: upgrade-docs format clippy udeps deny
+
+# Checks registry coverage, generated upgrade tables, links, and named-fork gates
+upgrade-docs:
+    python3 {{justfile_directory()}}/etc/scripts/local/upgrade-docs.py check
+    python3 {{justfile_directory()}}/etc/scripts/local/test-upgrade-docs.py
 
 # Checks formatting
 format:
