@@ -19,6 +19,11 @@ operator-selectable flags**. Moving a feature to another upgrade changes consens
   fork conditions. `BaseSpecId::is_feature_enabled(feature)` checks a resolved EVM
   spec. Do not replace one adapter with another: sparse and non-monotonic schedules
   have historically different cascade semantics.
+- `BaseForkActivations::is_feature_active_at_timestamp(feature, timestamp)` in
+  [EVM2](../../crates/common/evm2/src/transition.rs) uses its schedule implementation's
+  activation rules. The `UpgradeConfig` implementation reads explicit timestamps
+  without cascading: a configured Delta does not imply Canyon. Bedrock features
+  return false because Bedrock has no timestamp slot.
 - `RollupConfig::is_feature_activation_block_cascading` and
   `Upgrades::is_feature_activation_block` detect transitions using their respective
   activation semantics and the **actual parent timestamp**, not an assumed interval.
@@ -353,6 +358,10 @@ Cobalt revises native token/policy implementations and storage accounting, tight
 activation-registry authorization/value handling, and adds transaction context and
 nonce-manager precompiles. Existing onchain state must keep its historical behavior
 when replayed under earlier specs.
+`DynamicStorageTailCleanup` and `CompactAbiDecodeErrors` remain distinct features,
+but the two-profile storage API requires them to activate together. A compile-time
+assertion in the [storage adapter](../../crates/common/precompiles/src/spec.rs)
+enforces that requirement; separating their activation requires extending the profiles.
 
 <!-- FEATURES:Cobalt:START -->
 | Feature | Behavior | Production code |
