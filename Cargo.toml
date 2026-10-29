@@ -331,6 +331,7 @@ alloy-rpc-types-beacon = "2.5.0"
 alloy-rlp = { version = "0.3.16", default-features = false }
 alloy-trie = { version = "0.9.8", default-features = false }
 alloy-eips = { version = "2.5.0", default-features = false }
+alloy-eip7928 = { version = "0.4.10", default-features = false }
 alloy-evm = { version = "0.39.0", default-features = false }
 alloy-serde = { version = "2.5.0", default-features = false }
 alloy-chains = { version = "0.2.33", default-features = false }

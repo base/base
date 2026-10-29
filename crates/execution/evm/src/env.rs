@@ -1,19 +1,20 @@
 use alloy_consensus::Header;
-use alloy_evm::EvmEnv;
 use alloy_primitives::U256;
-use base_common_chains::Upgrades;
-use base_common_evm::BaseSpecId;
+use base_common_chains::{BaseUpgrade, BaseUpgradeExt, Upgrades};
+use base_common_evm2::{BaseEvmTypes, BaseSpecId};
 #[cfg(feature = "std")]
 use base_common_rpc_types_engine::ExecutionData;
+use evm2::env::BlockEnv;
 use reth_chainspec::EthChainSpec;
-use reth_primitives_traits::constants::MAX_TX_GAS_LIMIT_OSAKA;
-use revm::{
-    context::{BlockEnv, CfgEnv},
-    context_interface::block::BlobExcessGasAndPrice,
-    primitives::hardfork::SpecId,
-};
+use reth_evm_ethereum::EthEvmEnv;
 
 use crate::BaseNextBlockEnvAttributes;
+
+/// The resolved Base EVM environment: the active [`BaseSpecId`], the EVM version (chain ID, gas
+/// schedule, feature toggles such as the nonce and balance checks, and the Azul EIP-7825
+/// transaction gas cap that the Osaka version carries), and the block environment, whose extension
+/// holds the block's L1 fee parameters.
+pub type BaseEvmEnv = EthEvmEnv<BaseEvmTypes>;
 
 /// Builds Base EVM environments from chain and payload metadata.
 #[derive(Debug, Clone, Copy, Default)]
@@ -21,111 +22,76 @@ use crate::BaseNextBlockEnvAttributes;
 pub struct BaseEvmEnvBuilder;
 
 impl BaseEvmEnvBuilder {
-    /// Builds a [`CfgEnv`] for a Base chain spec at `timestamp`.
-    pub fn cfg_env(
-        spec: BaseSpecId,
-        timestamp: u64,
-        chain_spec: &(impl Upgrades + EthChainSpec),
-    ) -> CfgEnv<BaseSpecId> {
-        let mut cfg_env = CfgEnv::new()
-            .with_chain_id(chain_spec.chain().id())
-            .with_spec_and_mainnet_gas_params(spec);
-
-        if chain_spec.is_azul_active_at_timestamp(timestamp) {
-            cfg_env.tx_gas_limit_cap = Some(MAX_TX_GAS_LIMIT_OSAKA);
-        }
-
-        cfg_env
+    /// Builds a [`BaseEvmEnv`] for a block header using Base spec resolution.
+    pub fn evm_env(header: &Header, chain_spec: &(impl Upgrades + EthChainSpec)) -> BaseEvmEnv {
+        Self::from_block(
+            chain_spec,
+            BlockEnv::<BaseEvmTypes> {
+                number: U256::from(header.number),
+                beneficiary: header.beneficiary,
+                timestamp: U256::from(header.timestamp),
+                gas_limit: U256::from(header.gas_limit),
+                basefee: U256::from(header.base_fee_per_gas.unwrap_or_default()),
+                prevrandao: header.mix_hash.into(),
+                ..Default::default()
+            },
+        )
     }
 
-    /// Builds an [`EvmEnv`] for a block header using Base spec resolution.
-    pub fn evm_env(
-        header: &Header,
-        chain_spec: &(impl Upgrades + EthChainSpec),
-    ) -> EvmEnv<BaseSpecId> {
-        let spec = BaseSpecId::from_header(chain_spec, header);
-        let cfg_env = Self::cfg_env(spec, header.timestamp, chain_spec);
-        let blob_excess_gas_and_price = Self::blob_excess_gas_and_price(spec);
-        let is_merge = spec.into_eth_spec() >= SpecId::MERGE;
-
-        let block_env = BlockEnv {
-            number: U256::from(header.number),
-            beneficiary: header.beneficiary,
-            timestamp: U256::from(header.timestamp),
-            difficulty: if is_merge { U256::ZERO } else { header.difficulty },
-            prevrandao: if is_merge { Some(header.mix_hash) } else { None },
-            gas_limit: header.gas_limit,
-            basefee: header.base_fee_per_gas.unwrap_or_default(),
-            blob_excess_gas_and_price,
-            slot_num: 0,
-        };
-
-        EvmEnv { cfg_env, block_env }
-    }
-
-    /// Builds an [`EvmEnv`] for the next block given a parent header.
+    /// Builds a [`BaseEvmEnv`] for the next block given a parent header.
     pub fn next_evm_env(
         parent: &Header,
         attributes: &BaseNextBlockEnvAttributes,
         base_fee_per_gas: u64,
         chain_spec: &(impl Upgrades + EthChainSpec),
-    ) -> EvmEnv<BaseSpecId> {
-        let spec = BaseSpecId::from_timestamp(chain_spec, attributes.timestamp);
-        let cfg_env = Self::cfg_env(spec, attributes.timestamp, chain_spec);
-        let blob_excess_gas_and_price = Self::blob_excess_gas_and_price(spec);
-        let is_merge = spec.into_eth_spec() >= SpecId::MERGE;
-
-        let block_env = BlockEnv {
-            number: U256::from(parent.number.saturating_add(1)),
-            beneficiary: attributes.suggested_fee_recipient,
-            timestamp: U256::from(attributes.timestamp),
-            difficulty: if is_merge { U256::ZERO } else { parent.difficulty },
-            prevrandao: if is_merge { Some(attributes.prev_randao) } else { None },
-            gas_limit: attributes.gas_limit,
-            basefee: base_fee_per_gas,
-            blob_excess_gas_and_price,
-            slot_num: 0,
-        };
-
-        EvmEnv { cfg_env, block_env }
+    ) -> BaseEvmEnv {
+        Self::from_block(
+            chain_spec,
+            BlockEnv::<BaseEvmTypes> {
+                number: U256::from(parent.number.saturating_add(1)),
+                beneficiary: attributes.suggested_fee_recipient,
+                timestamp: U256::from(attributes.timestamp),
+                gas_limit: U256::from(attributes.gas_limit),
+                basefee: U256::from(base_fee_per_gas),
+                prevrandao: attributes.prev_randao.into(),
+                ..Default::default()
+            },
+        )
     }
 
-    /// Builds an [`EvmEnv`] for engine payload execution.
+    /// Builds a [`BaseEvmEnv`] for engine payload execution.
     #[cfg(feature = "std")]
     pub fn payload_evm_env(
         payload: &ExecutionData,
         chain_spec: &(impl Upgrades + EthChainSpec),
-    ) -> EvmEnv<BaseSpecId> {
-        let timestamp = payload.payload.timestamp();
-        let block_number = payload.payload.block_number();
-        let spec = BaseSpecId::from_timestamp(chain_spec, timestamp);
-        let cfg_env = Self::cfg_env(spec, timestamp, chain_spec);
-        let blob_excess_gas_and_price = Self::blob_excess_gas_and_price(spec);
-        let is_merge = spec.into_eth_spec() >= SpecId::MERGE;
-
-        let block_env = BlockEnv {
-            number: U256::from(block_number),
-            beneficiary: payload.payload.as_v1().fee_recipient,
-            timestamp: U256::from(timestamp),
-            difficulty: if is_merge {
-                U256::ZERO
-            } else {
-                payload.payload.as_v1().prev_randao.into()
+    ) -> BaseEvmEnv {
+        let v1 = payload.payload.as_v1();
+        Self::from_block(
+            chain_spec,
+            BlockEnv::<BaseEvmTypes> {
+                number: U256::from(payload.payload.block_number()),
+                beneficiary: v1.fee_recipient,
+                timestamp: U256::from(payload.payload.timestamp()),
+                gas_limit: U256::from(v1.gas_limit),
+                basefee: v1.base_fee_per_gas,
+                prevrandao: v1.prev_randao.into(),
+                ..Default::default()
             },
-            prevrandao: is_merge.then(|| payload.payload.as_v1().prev_randao),
-            gas_limit: payload.payload.as_v1().gas_limit,
-            basefee: payload.payload.as_v1().base_fee_per_gas.to(),
-            blob_excess_gas_and_price,
-            slot_num: 0,
-        };
-
-        EvmEnv { cfg_env, block_env }
+        )
     }
 
-    /// Returns the EIP-4844 blob gas values expected for a Base spec.
-    pub fn blob_excess_gas_and_price(spec: BaseSpecId) -> Option<BlobExcessGasAndPrice> {
-        spec.into_eth_spec()
-            .is_enabled_in(SpecId::CANCUN)
-            .then_some(BlobExcessGasAndPrice { excess_blob_gas: 0, blob_gasprice: 1 })
+    /// Resolves the Base spec active at `block`'s timestamp.
+    ///
+    /// Every Base upgrade is post-merge, so `DIFFICULTY` reads `prevrandao` and the difficulty
+    /// field stays zero. Base has no blobs, so `BLOBBASEFEE` (Cancun onwards) reads the default
+    /// minimum blob base fee of 1, matching the revm reference. The L1 fee parameters extension
+    /// is loaded from the `L1Block` predeploy during execution.
+    pub fn from_block(
+        chain_spec: &(impl Upgrades + EthChainSpec),
+        block: BlockEnv<BaseEvmTypes>,
+    ) -> BaseEvmEnv {
+        let timestamp = block.timestamp.saturating_to();
+        let spec = BaseSpecId::new(BaseUpgrade::from_timestamp(chain_spec, timestamp));
+        BaseEvmEnv::new(spec, block, chain_spec.chain().id())
     }
 }

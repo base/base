@@ -5,17 +5,16 @@ use alloy_consensus::{
     proofs,
 };
 use alloy_eips::{eip7685::EMPTY_REQUESTS_HASH, merge::BEACON_NONCE};
-use alloy_evm::block::BlockExecutorFactory;
-use alloy_primitives::logs_bloom;
+use alloy_primitives::{B256, logs_bloom};
 use base_common_chains::Upgrades;
 use base_common_consensus::DepositReceiptExt;
-use base_common_evm::BaseBlockExecutionCtx;
+use base_common_evm2::BaseBlockExecutionCtx;
 use base_execution_consensus::{calculate_receipt_root_no_memo, isthmus};
-use reth_evm::execute::{BlockAssembler, BlockAssemblerInput};
-use reth_execution_errors::BlockExecutionError;
+#[cfg(feature = "std")]
+use reth_evm::BlockAssembler;
+use reth_evm::{BlockAssemblerInput, BlockExecutionError, BlockExecutorFactory, EvmEnv};
 use reth_execution_types::BlockExecutionResult;
 use reth_primitives_traits::{Receipt, SignedTransaction};
-use revm::context::Block as _;
 
 /// Block builder for Base.
 #[derive(Debug)]
@@ -34,10 +33,10 @@ impl<ChainSpec: Upgrades> BaseBlockAssembler<ChainSpec> {
     /// Builds a block for `input` without any bounds on header `H`.
     pub fn assemble_block<
         F: for<'a> BlockExecutorFactory<
-                ExecutionCtx<'a>: Into<BaseBlockExecutionCtx>,
+                ExecutionCtx<'a> = BaseBlockExecutionCtx,
                 Transaction: SignedTransaction,
                 Receipt: Receipt + DepositReceiptExt,
-            >,
+            > + 'static,
         H,
     >(
         &self,
@@ -48,14 +47,14 @@ impl<ChainSpec: Upgrades> BaseBlockAssembler<ChainSpec> {
             execution_ctx: ctx,
             transactions,
             output: BlockExecutionResult { receipts, gas_used, blob_gas_used, requests: _ },
-            bundle_state,
+            execution_state,
             state_root,
             state_provider,
             ..
         } = input;
-        let ctx = ctx.into();
+        let block = evm_env.block_env();
 
-        let timestamp = evm_env.block_env.timestamp().saturating_to();
+        let timestamp = block.timestamp.saturating_to();
 
         let transactions_root = proofs::calculate_transaction_root(&transactions);
         let receipts_root = calculate_receipt_root_no_memo(receipts, &self.chain_spec, timestamp);
@@ -71,7 +70,7 @@ impl<ChainSpec: Upgrades> BaseBlockAssembler<ChainSpec> {
                 // withdrawals root field in block header is used for storage root of L2 predeploy
                 // `l2tol1-message-passer`
                 Some(
-                    isthmus::withdrawals_root(bundle_state, state_provider)
+                    isthmus::withdrawals_root(execution_state, state_provider)
                         .map_err(BlockExecutionError::other)?,
                 )
             } else if Upgrades::is_canyon_active_at_timestamp(&*self.chain_spec, timestamp) {
@@ -94,19 +93,19 @@ impl<ChainSpec: Upgrades> BaseBlockAssembler<ChainSpec> {
         let header = Header {
             parent_hash: ctx.parent_hash,
             ommers_hash: EMPTY_OMMER_ROOT_HASH,
-            beneficiary: evm_env.block_env.beneficiary(),
+            beneficiary: block.beneficiary,
             state_root,
             transactions_root,
             receipts_root,
             withdrawals_root,
             logs_bloom,
             timestamp,
-            mix_hash: evm_env.block_env.prevrandao().unwrap_or_default(),
+            mix_hash: B256::from(block.prevrandao),
             nonce: BEACON_NONCE.into(),
-            base_fee_per_gas: Some(evm_env.block_env.basefee()),
-            number: evm_env.block_env.number().saturating_to(),
-            gas_limit: evm_env.block_env.gas_limit(),
-            difficulty: evm_env.block_env.difficulty(),
+            base_fee_per_gas: Some(block.basefee.saturating_to()),
+            number: block.number.saturating_to(),
+            gas_limit: block.gas_limit.saturating_to(),
+            difficulty: block.difficulty,
             gas_used: *gas_used,
             extra_data: ctx.extra_data,
             parent_beacon_block_root: ctx.parent_beacon_block_root,
@@ -135,6 +134,7 @@ impl<ChainSpec> Clone for BaseBlockAssembler<ChainSpec> {
     }
 }
 
+#[cfg(feature = "std")]
 impl<F, ChainSpec> BlockAssembler<F> for BaseBlockAssembler<ChainSpec>
 where
     ChainSpec: Upgrades,
@@ -142,7 +142,7 @@ where
             ExecutionCtx<'a> = BaseBlockExecutionCtx,
             Transaction: SignedTransaction,
             Receipt: Receipt + DepositReceiptExt,
-        >,
+        > + 'static,
 {
     type Block = Block<F::Transaction>;
 

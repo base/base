@@ -1,17 +1,15 @@
 use alloc::sync::Arc;
-use core::{fmt::Debug, marker::PhantomData};
+use core::marker::PhantomData;
 
 use alloy_consensus::{BlockHeader, Header};
 #[cfg(feature = "std")]
-use alloy_evm::{EvmFactory, FromRecoveredTx, FromTxWithEncoded};
-#[cfg(feature = "std")]
 use alloy_primitives::Bytes;
+use alloy_primitives::{Address, B256};
 use base_common_chains::Upgrades;
-use base_common_consensus::{BasePrimitives, DepositReceiptExt, EIP1559ParamError};
-use base_common_evm::{
-    BaseBlockExecutionCtx, BaseBlockExecutorFactory, BaseEvmFactory, BaseReceiptBuilder,
-    BaseSpecId, BaseTransaction, BaseTxEnv,
+use base_common_consensus::{
+    BasePrimitives, BaseReceipt, BaseTransactionSigned, EIP1559ParamError,
 };
+use base_common_evm2::BaseBlockExecutionCtx;
 #[cfg(not(feature = "std"))]
 use base_common_rpc_types_engine as _;
 #[cfg(feature = "std")]
@@ -19,21 +17,17 @@ use base_common_rpc_types_engine::ExecutionData;
 use base_execution_chainspec::BaseChainSpec;
 use reth_chainspec::EthChainSpec;
 #[cfg(feature = "std")]
-use reth_evm::{ConfigureEngineEvm, EvmEnvFor, ExecutableTxIterator, ExecutionCtxFor};
-use reth_evm::{ConfigureEvm, EvmEnv, TransactionEnvMut, precompiles::PrecompilesMap};
-use reth_primitives_traits::{NodePrimitives, SealedBlock, SealedHeader, SignedTransaction};
+use reth_evm::{ConfigureEngineEvm, ExecutableTxIterator, ExecutionCtxFor};
+use reth_evm::{ConfigureEvm, EvmEnvFor};
+use reth_primitives_traits::{NodePrimitives, SealedBlock, SealedHeader};
 #[cfg(feature = "std")]
-use reth_primitives_traits::{TxTy, WithEncoded};
+use reth_primitives_traits::{SignedTransaction, TxTy, WithEncoded};
 #[cfg(not(feature = "std"))]
 use reth_storage_errors as _;
 #[cfg(feature = "std")]
 use reth_storage_errors::any::AnyError;
-use revm::{
-    context::{BlockEnv, TxEnv},
-    primitives::{Address, B256, Bytes as RevmBytes},
-};
 
-use crate::{BaseBlockAssembler, BaseEvmEnvBuilder, BaseRethReceiptBuilder};
+use crate::{BaseBlockAssembler, BaseBlockExecutorFactory, BaseEvmEnvBuilder};
 
 /// Context relevant for execution of a next Base block.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -49,7 +43,7 @@ pub struct BaseNextBlockEnvAttributes {
     /// The parent beacon block root.
     pub parent_beacon_block_root: Option<B256>,
     /// Encoded EIP-1559 parameters to include into block's `extra_data` field.
-    pub extra_data: RevmBytes,
+    pub extra_data: alloy_primitives::Bytes,
 }
 
 #[cfg(feature = "rpc")]
@@ -75,14 +69,9 @@ impl<H: alloy_consensus::BlockHeader> reth_rpc_eth_api::helpers::pending_block::
 
 /// Base EVM configuration.
 #[derive(Debug)]
-pub struct BaseEvmConfig<
-    ChainSpec = BaseChainSpec,
-    N: NodePrimitives = BasePrimitives,
-    R = BaseRethReceiptBuilder,
-    EvmFactory = BaseEvmFactory,
-> {
+pub struct BaseEvmConfig<ChainSpec = BaseChainSpec, N: NodePrimitives = BasePrimitives> {
     /// Inner [`BaseBlockExecutorFactory`].
-    pub executor_factory: BaseBlockExecutorFactory<R, Arc<ChainSpec>, EvmFactory>,
+    pub executor_factory: BaseBlockExecutorFactory<ChainSpec>,
     /// Base block assembler.
     pub block_assembler: BaseBlockAssembler<ChainSpec>,
     #[doc(hidden)]
@@ -92,9 +81,7 @@ pub struct BaseEvmConfig<
 /// Helper type with backwards compatible methods to obtain executor providers.
 pub type BaseExecutorProvider = BaseEvmConfig;
 
-impl<ChainSpec, N: NodePrimitives, R: Clone, EvmFactory: Clone> Clone
-    for BaseEvmConfig<ChainSpec, N, R, EvmFactory>
-{
+impl<ChainSpec, N: NodePrimitives> Clone for BaseEvmConfig<ChainSpec, N> {
     fn clone(&self) -> Self {
         Self {
             executor_factory: self.executor_factory.clone(),
@@ -107,93 +94,82 @@ impl<ChainSpec, N: NodePrimitives, R: Clone, EvmFactory: Clone> Clone
 impl<ChainSpec: Upgrades> BaseEvmConfig<ChainSpec> {
     /// Creates a new [`BaseEvmConfig`] with the given chain spec for Base chains.
     pub fn base(chain_spec: Arc<ChainSpec>) -> Self {
-        Self::new(chain_spec, BaseRethReceiptBuilder)
+        Self::new(chain_spec)
     }
 }
 
-impl<ChainSpec: Upgrades, N: NodePrimitives, R> BaseEvmConfig<ChainSpec, N, R> {
+impl<ChainSpec: Upgrades, N: NodePrimitives> BaseEvmConfig<ChainSpec, N> {
     /// Creates a new [`BaseEvmConfig`] with the given chain spec.
-    pub fn new(chain_spec: Arc<ChainSpec>, receipt_builder: R) -> Self {
-        let activation_admin_address = chain_spec.as_ref().activation_admin_address();
+    pub fn new(chain_spec: Arc<ChainSpec>) -> Self {
         Self {
             block_assembler: BaseBlockAssembler::new(Arc::clone(&chain_spec)),
-            executor_factory: BaseBlockExecutorFactory::new(
-                receipt_builder,
-                chain_spec,
-                BaseEvmFactory::new(activation_admin_address),
-            ),
+            executor_factory: BaseBlockExecutorFactory::new(chain_spec),
             _pd: PhantomData,
         }
     }
-}
 
-impl<ChainSpec, N, R, EvmFactory> BaseEvmConfig<ChainSpec, N, R, EvmFactory>
-where
-    ChainSpec: Upgrades,
-    N: NodePrimitives,
-{
     /// Returns the chain spec associated with this configuration.
     pub const fn chain_spec(&self) -> &Arc<ChainSpec> {
-        self.executor_factory.spec()
+        self.executor_factory.chain_spec()
     }
 }
 
-impl<ChainSpec, N, R, EvmF> ConfigureEvm for BaseEvmConfig<ChainSpec, N, R, EvmF>
+impl<ChainSpec, N> ConfigureEvm for BaseEvmConfig<ChainSpec, N>
 where
     ChainSpec: EthChainSpec<Header = Header> + Upgrades,
     N: NodePrimitives<
-            Receipt = R::Receipt,
-            SignedTx = R::Transaction,
+            Receipt = BaseReceipt,
+            SignedTx = BaseTransactionSigned,
             BlockHeader = Header,
-            BlockBody = alloy_consensus::BlockBody<R::Transaction>,
-            Block = alloy_consensus::Block<R::Transaction>,
+            BlockBody = alloy_consensus::BlockBody<BaseTransactionSigned>,
+            Block = alloy_consensus::Block<BaseTransactionSigned>,
         >,
-    BaseTransaction<TxEnv>: FromRecoveredTx<N::SignedTx> + FromTxWithEncoded<N::SignedTx>,
-    R: BaseReceiptBuilder<Receipt: DepositReceiptExt, Transaction: SignedTransaction> + Clone,
-    EvmF: EvmFactory<
-            Tx: FromRecoveredTx<R::Transaction>
-                    + FromTxWithEncoded<R::Transaction>
-                    + TransactionEnvMut
-                    + BaseTxEnv,
-            Precompiles = PrecompilesMap,
-            Spec = BaseSpecId,
-            BlockEnv = BlockEnv,
-        > + Debug,
     Self: Send + Sync + Unpin + Clone + 'static,
 {
     type Primitives = N;
     type Error = EIP1559ParamError;
     type NextBlockEnvCtx = BaseNextBlockEnvAttributes;
-    type BlockExecutorFactory = BaseBlockExecutorFactory<R, Arc<ChainSpec>, EvmF>;
+    type BlockExecutorFactory = BaseBlockExecutorFactory<ChainSpec>;
+    #[cfg(feature = "std")]
     type BlockAssembler = BaseBlockAssembler<ChainSpec>;
 
+    #[cfg(feature = "std")]
     fn block_executor_factory(&self) -> &Self::BlockExecutorFactory {
         &self.executor_factory
     }
 
+    #[cfg(feature = "std")]
     fn block_assembler(&self) -> &Self::BlockAssembler {
         &self.block_assembler
     }
 
-    fn evm_env(&self, header: &Header) -> Result<EvmEnv<BaseSpecId>, Self::Error> {
-        Ok(BaseEvmEnvBuilder::evm_env(header, self.chain_spec()))
+    fn evm_env(&self, header: &Header) -> Result<EvmEnvFor<Self>, Self::Error> {
+        Ok(BaseEvmEnvBuilder::evm_env(header, self.chain_spec().as_ref()))
     }
 
     fn next_evm_env(
         &self,
         parent: &Header,
         attributes: &Self::NextBlockEnvCtx,
-    ) -> Result<EvmEnv<BaseSpecId>, Self::Error> {
+    ) -> Result<EvmEnvFor<Self>, Self::Error> {
         let base_fee =
             self.chain_spec().next_block_base_fee(parent, attributes.timestamp).unwrap_or_default();
 
-        Ok(BaseEvmEnvBuilder::next_evm_env(parent, attributes, base_fee, self.chain_spec()))
+        Ok(BaseEvmEnvBuilder::next_evm_env(
+            parent,
+            attributes,
+            base_fee,
+            self.chain_spec().as_ref(),
+        ))
     }
 
-    fn context_for_block(
+    fn context_for_block<'a>(
         &self,
-        block: &'_ SealedBlock<N::Block>,
-    ) -> Result<BaseBlockExecutionCtx, Self::Error> {
+        block: &'a SealedBlock<N::Block>,
+    ) -> Result<BaseBlockExecutionCtx, Self::Error>
+    where
+        Self: 'a,
+    {
         Ok(BaseBlockExecutionCtx {
             parent_hash: block.header().parent_hash(),
             parent_beacon_block_root: block.header().parent_beacon_block_root(),
@@ -215,22 +191,20 @@ where
 }
 
 #[cfg(feature = "std")]
-impl<ChainSpec, N, R> ConfigureEngineEvm<ExecutionData> for BaseEvmConfig<ChainSpec, N, R>
+impl<ChainSpec, N> ConfigureEngineEvm<ExecutionData> for BaseEvmConfig<ChainSpec, N>
 where
     ChainSpec: EthChainSpec<Header = Header> + Upgrades,
     N: NodePrimitives<
-            Receipt = R::Receipt,
-            SignedTx = R::Transaction,
+            Receipt = BaseReceipt,
+            SignedTx = BaseTransactionSigned,
             BlockHeader = Header,
-            BlockBody = alloy_consensus::BlockBody<R::Transaction>,
-            Block = alloy_consensus::Block<R::Transaction>,
+            BlockBody = alloy_consensus::BlockBody<BaseTransactionSigned>,
+            Block = alloy_consensus::Block<BaseTransactionSigned>,
         >,
-    BaseTransaction<TxEnv>: FromRecoveredTx<N::SignedTx> + FromTxWithEncoded<N::SignedTx>,
-    R: BaseReceiptBuilder<Receipt: DepositReceiptExt, Transaction: SignedTransaction> + Clone,
     Self: Send + Sync + Unpin + Clone + 'static,
 {
     fn evm_env_for_payload(&self, payload: &ExecutionData) -> Result<EvmEnvFor<Self>, Self::Error> {
-        Ok(BaseEvmEnvBuilder::payload_evm_env(payload, self.chain_spec()))
+        Ok(BaseEvmEnvBuilder::payload_evm_env(payload, self.chain_spec().as_ref()))
     }
 
     fn context_for_payload<'a>(
@@ -269,24 +243,16 @@ mod tests {
     use alloy_consensus::Header;
     use alloy_genesis::Genesis;
     use alloy_primitives::U256;
-    use base_common_evm::BaseSpecId;
+    use base_common_evm2::BaseSpecId;
     use base_common_genesis::BaseUpgrade;
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
+    use evm2::evm::InMemoryDB;
     use reth_chainspec::ChainSpec;
-    use reth_evm::{ConfigureEvm, EvmEnv, execute::ProviderError};
+    use reth_evm::{ConfigureEvm, EvmEnv};
     use reth_primitives_traits::constants::MAX_TX_GAS_LIMIT_OSAKA;
-    use revm::{
-        context::{BlockEnv, CfgEnv},
-        database::CacheDB,
-        database_interface::EmptyDBTyped,
-        inspector::NoOpInspector,
-    };
 
     use super::BaseEvmConfig;
-
-    fn test_evm_config() -> BaseEvmConfig {
-        BaseEvmConfig::base(Arc::new(BaseChainSpec::mainnet()))
-    }
+    use crate::BaseEvmEnv;
 
     #[cfg(feature = "rpc")]
     #[test]
@@ -335,35 +301,51 @@ mod tests {
             let attributes =
                 BaseNextBlockEnvAttributes::build_pending_env(&parent, Some(&overrides));
             let env = config.next_evm_env(&parent, &attributes).unwrap();
-            assert_eq!(env.block_env.timestamp, U256::from(timestamp), "override {time:?}");
-            assert_eq!(env.cfg_env.spec, BaseSpecId::new(upgrade), "override {time:?}");
-            assert_eq!(env.block_env.basefee, base_fee, "override {time:?}");
+            assert_eq!(env.block.timestamp, U256::from(timestamp), "override {time:?}");
+            assert_eq!(env.spec, BaseSpecId::new(upgrade), "override {time:?}");
+            assert_eq!(env.block.basefee, U256::from(base_fee), "override {time:?}");
         }
     }
 
     #[test]
-    fn test_evm_env_uses_azul_for_genesis_chain_spec() {
-        let chain_spec = Arc::new(
-            BaseChainSpecBuilder::default()
-                .chain(0.into())
-                .genesis(Genesis::default())
-                .azul_activated()
-                .build(),
-        );
-        let evm_config = BaseEvmConfig::base(chain_spec);
-        let header = Header { timestamp: 0, ..Default::default() };
-        let EvmEnv { cfg_env, .. } = evm_config.evm_env(&header).unwrap();
-        assert_eq!(cfg_env.spec, BaseSpecId::new(BaseUpgrade::Azul));
-        assert_eq!(cfg_env.tx_gas_limit_cap, Some(MAX_TX_GAS_LIMIT_OSAKA));
+    fn evm_env_caps_transaction_gas_from_azul() {
+        let chain_spec = |builder: BaseChainSpecBuilder| {
+            Arc::new(builder.chain(0.into()).genesis(Genesis::default()).build())
+        };
+        let header = Header::default();
+
+        let azul =
+            BaseEvmConfig::base(chain_spec(BaseChainSpecBuilder::default().azul_activated()))
+                .evm_env(&header)
+                .unwrap();
+        assert_eq!(azul.spec, BaseSpecId::new(BaseUpgrade::Azul));
+        assert_eq!(azul.version.tx_gas_limit_cap, MAX_TX_GAS_LIMIT_OSAKA);
+        assert_eq!(azul.transaction_validation_limits().tx_gas_limit_cap, MAX_TX_GAS_LIMIT_OSAKA);
+
+        let jovian =
+            BaseEvmConfig::base(chain_spec(BaseChainSpecBuilder::default().jovian_activated()))
+                .evm_env(&header)
+                .unwrap();
+        assert_eq!(jovian.spec, BaseSpecId::new(BaseUpgrade::Jovian));
+        assert_eq!(jovian.version.tx_gas_limit_cap, u64::MAX);
+        assert_eq!(jovian.transaction_validation_limits().tx_gas_limit_cap, 0);
     }
 
     #[test]
-    fn test_fill_cfg_and_block_env() {
-        // Create a default header
-        let header = Header::default();
+    fn evm_env_reads_minimum_blob_base_fee() {
+        let chain_spec = BaseChainSpecBuilder::default()
+            .chain(0.into())
+            .genesis(Genesis::default())
+            .ecotone_activated()
+            .build();
 
-        // Build the ChainSpec for Ethereum mainnet, activating London, Paris, and Shanghai
-        // upgrades
+        let env = BaseEvmConfig::base(Arc::new(chain_spec)).evm_env(&Header::default()).unwrap();
+
+        assert_eq!(env.block_blob_base_fee(), 1);
+    }
+
+    #[test]
+    fn evm_env_uses_the_chain_id() {
         let chain_spec = ChainSpec::builder()
             .chain(0.into())
             .genesis(Genesis::default())
@@ -372,157 +354,33 @@ mod tests {
             .shanghai_activated()
             .build();
 
-        // Use the `BaseEvmConfig` to create the `cfg_env` and `block_env` based on the ChainSpec,
-        // Header, and total difficulty
-        let EvmEnv { cfg_env, .. } =
-            BaseEvmConfig::base(Arc::new(BaseChainSpec::from(chain_spec.clone())))
-                .evm_env(&header)
-                .unwrap();
+        let env = BaseEvmConfig::base(Arc::new(BaseChainSpec::from(chain_spec.clone())))
+            .evm_env(&Header::default())
+            .unwrap();
 
-        // Assert that the chain ID in the `cfg_env` is correctly set to the chain ID of the
-        // ChainSpec
-        assert_eq!(cfg_env.chain_id, chain_spec.chain().id());
+        assert_eq!(env.chain_id(), chain_spec.chain().id());
     }
 
     #[test]
-    fn test_evm_with_env_default_spec() {
-        let evm_config = test_evm_config();
+    fn evm_with_env_runs_in_the_given_environment() {
+        let evm_config = BaseEvmConfig::base(Arc::new(BaseChainSpec::mainnet()));
+        let env = BaseEvmEnv::new(
+            BaseSpecId::new(BaseUpgrade::Ecotone),
+            evm2::env::BlockEnv::<base_common_evm2::BaseEvmTypes> {
+                basefee: U256::from(1000),
+                gas_limit: U256::from(10_000_000),
+                number: U256::from(42),
+                ..Default::default()
+            },
+            111,
+        )
+        .with_nonce_check_disabled();
 
-        let db = CacheDB::<EmptyDBTyped<ProviderError>>::default();
+        let evm = evm_config.evm_with_env(InMemoryDB::default(), env.clone());
 
-        let evm_env = EvmEnv::default();
-
-        let evm = evm_config.evm_with_env(db, evm_env.clone());
-
-        // Check that the EVM environment
-        assert_eq!(evm.cfg, evm_env.cfg_env);
-    }
-
-    #[test]
-    fn test_evm_with_env_custom_cfg() {
-        let evm_config = test_evm_config();
-
-        let db = CacheDB::<EmptyDBTyped<ProviderError>>::default();
-
-        // Create a custom configuration environment with a chain ID of 111
-        let cfg = CfgEnv::new()
-            .with_chain_id(111)
-            .with_spec_and_mainnet_gas_params(BaseSpecId::default());
-
-        let evm_env = EvmEnv { cfg_env: cfg.clone(), ..Default::default() };
-
-        let evm = evm_config.evm_with_env(db, evm_env);
-
-        // Check that the EVM environment is initialized with the custom environment
-        assert_eq!(evm.cfg, cfg);
-    }
-
-    #[test]
-    fn test_evm_with_env_custom_block_and_tx() {
-        let evm_config = test_evm_config();
-
-        let db = CacheDB::<EmptyDBTyped<ProviderError>>::default();
-
-        // Create customs block and tx env
-        let block = BlockEnv {
-            basefee: 1000,
-            gas_limit: 10_000_000,
-            number: U256::from(42),
-            ..Default::default()
-        };
-
-        let evm_env = EvmEnv { block_env: block, ..Default::default() };
-
-        let evm = evm_config.evm_with_env(db, evm_env.clone());
-
-        // Verify that the block and transaction environments are set correctly
-        assert_eq!(evm.block, evm_env.block_env);
-    }
-
-    #[test]
-    fn test_evm_with_spec_id() {
-        let evm_config = test_evm_config();
-
-        let db = CacheDB::<EmptyDBTyped<ProviderError>>::default();
-
-        let evm_env = EvmEnv {
-            cfg_env: CfgEnv::new()
-                .with_spec_and_mainnet_gas_params(BaseSpecId::new(BaseUpgrade::Ecotone)),
-            ..Default::default()
-        };
-
-        let evm = evm_config.evm_with_env(db, evm_env.clone());
-
-        assert_eq!(evm.cfg, evm_env.cfg_env);
-    }
-
-    #[test]
-    fn test_evm_with_env_and_default_inspector() {
-        let evm_config = test_evm_config();
-        let db = CacheDB::<EmptyDBTyped<ProviderError>>::default();
-
-        let evm_env = EvmEnv { cfg_env: Default::default(), ..Default::default() };
-
-        let evm = evm_config.evm_with_env_and_inspector(db, evm_env.clone(), NoOpInspector {});
-
-        // Check that the EVM environment is set to default values
-        assert_eq!(evm.block, evm_env.block_env);
-        assert_eq!(evm.cfg, evm_env.cfg_env);
-    }
-
-    #[test]
-    fn test_evm_with_env_inspector_and_custom_cfg() {
-        let evm_config = test_evm_config();
-        let db = CacheDB::<EmptyDBTyped<ProviderError>>::default();
-
-        let cfg = CfgEnv::new()
-            .with_chain_id(111)
-            .with_spec_and_mainnet_gas_params(BaseSpecId::default());
-        let block = BlockEnv::default();
-        let evm_env = EvmEnv { block_env: block, cfg_env: cfg.clone() };
-
-        let evm = evm_config.evm_with_env_and_inspector(db, evm_env.clone(), NoOpInspector {});
-
-        // Check that the EVM environment is set with custom configuration
-        assert_eq!(evm.cfg, cfg);
-        assert_eq!(evm.block, evm_env.block_env);
-    }
-
-    #[test]
-    fn test_evm_with_env_inspector_and_custom_block_tx() {
-        let evm_config = test_evm_config();
-        let db = CacheDB::<EmptyDBTyped<ProviderError>>::default();
-
-        // Create custom block and tx environment
-        let block = BlockEnv {
-            basefee: 1000,
-            gas_limit: 10_000_000,
-            number: U256::from(42),
-            ..Default::default()
-        };
-        let evm_env = EvmEnv { block_env: block, ..Default::default() };
-
-        let evm = evm_config.evm_with_env_and_inspector(db, evm_env.clone(), NoOpInspector {});
-
-        // Verify that the block and transaction environments are set correctly
-        assert_eq!(evm.block, evm_env.block_env);
-    }
-
-    #[test]
-    fn test_evm_with_env_inspector_and_spec_id() {
-        let evm_config = test_evm_config();
-        let db = CacheDB::<EmptyDBTyped<ProviderError>>::default();
-
-        let evm_env = EvmEnv {
-            cfg_env: CfgEnv::new()
-                .with_spec_and_mainnet_gas_params(BaseSpecId::new(BaseUpgrade::Ecotone)),
-            ..Default::default()
-        };
-
-        let evm = evm_config.evm_with_env_and_inspector(db, evm_env.clone(), NoOpInspector {});
-
-        // Check that the spec ID is set properly
-        assert_eq!(evm.cfg, evm_env.cfg_env);
-        assert_eq!(evm.block, evm_env.block_env);
+        assert_eq!(evm.config_spec_id(), env.spec);
+        assert_eq!(*evm.block(), env.block);
+        assert_eq!(evm.version().chain_id, 111);
+        assert!(!evm.feature(evm2::EvmFeatures::NONCE_CHECK));
     }
 }
