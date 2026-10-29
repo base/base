@@ -20,11 +20,14 @@ pub use handler::BaseTxHandlerHooks;
 
 mod precompiles;
 
+mod l1_block;
+pub use l1_block::L1Block;
+
 mod executor;
 pub use executor::{
-    BaseBlockExecutionCtx, BaseBlockExecutor, BlockExecutionResult, BlockGasLimitExceeded,
-    CumulativeGasOverflow, DaFootprintAboveGasLimit, Eip8130ExecutionUnsupported,
-    PreExecutionError,
+    BaseBlockExecutionCtx, BaseBlockExecutor, BaseExecutedTx, BlockExecutionResult,
+    BlockGasLimitExceeded, CumulativeGasOverflow, DaFootprintAboveGasLimit,
+    Eip8130ExecutionUnsupported, PreExecutionError,
 };
 
 mod registry;
@@ -37,7 +40,10 @@ mod nonce_manager;
 pub use nonce_manager::{NonceManager, NonceOverflow};
 
 mod transition;
-pub use transition::{BaseForkActivations, IrregularStateChange};
+pub use transition::{BaseBlockState, BaseForkActivations, IrregularStateChange};
 
 mod types;
 pub use types::{BaseEvmExt, BaseEvmTypes, BaseTxResultExt};
+
+#[cfg(feature = "reth")]
+mod reth;

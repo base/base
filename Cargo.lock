@@ -3671,6 +3671,7 @@ dependencies = [
  "base-common-l1-fees",
  "base-common-precompiles",
  "evm2",
+ "reth-evm",
  "revm",
 ]
 
@@ -4402,7 +4403,6 @@ dependencies = [
  "reth-storage-errors",
  "reth-trie",
  "reth-trie-common",
- "revm",
  "rstest",
  "thiserror 2.0.21",
  "tracing",

@@ -1,19 +1,19 @@
 //! Base block executor for EVM2.
 
-use alloy_consensus::{Eip658Value, Receipt, transaction::Recovered};
+use alloy_consensus::{Eip658Value, Receipt, Transaction, transaction::Recovered};
 use alloy_eips::eip2718::Typed2718;
-use alloy_primitives::{B256, Bytes};
-use base_common_consensus::{BaseReceiptEnvelope, DepositReceipt};
+use alloy_primitives::{Address, B256, Bytes};
+use base_common_consensus::{BaseReceipt, DepositReceipt};
 use base_common_genesis::BaseUpgrade;
 use evm2::{
-    BlockStateAccumulator, Evm, SpecId,
+    BlockStateAccumulator, Evm, SpecId, TxResultWithState,
     evm::{BEACON_ROOTS_ADDRESS, HISTORY_STORAGE_ADDRESS, SystemTx},
     registry::{HandlerError, HandlerResult},
 };
 
 use crate::{
-    BaseEvmTypes, BaseForkActivations, BaseTime, Canyon, Everest, IntrinsicGas,
-    transaction::BaseTxEnvelope,
+    BaseBlockState, BaseEvmTypes, BaseForkActivations, BaseTime, Canyon, Everest, IntrinsicGas,
+    L1Block, transaction::BaseTxEnvelope,
 };
 
 /// Error returned when a block's cumulative gas used would overflow `u64`.
@@ -144,7 +144,7 @@ pub struct BaseBlockExecutionCtx {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct BlockExecutionResult {
     /// The transaction receipts, in execution order.
-    pub receipts: Vec<BaseReceiptEnvelope>,
+    pub receipts: Vec<BaseReceipt>,
     /// The block's cumulative gas used (the last receipt's cumulative gas, or zero).
     pub gas_used: u64,
     /// The block's accumulated Jovian DA footprint (zero before Jovian). Surfaced in the block
@@ -152,36 +152,60 @@ pub struct BlockExecutionResult {
     pub blob_gas_used: u64,
 }
 
-/// Executes a Base block's transactions on an EVM2 [`Evm`], building receipts and accumulating
-/// the block's state delta.
+/// An executed transaction whose state changes are detached and not yet committed to the block.
+///
+/// Produced by [`BaseBlockExecutor::execute_transaction_without_commit`] and consumed by
+/// [`BaseBlockExecutor::commit_transaction`].
+#[derive(Clone, Debug)]
+pub struct BaseExecutedTx {
+    /// The execution result and its detached state changes.
+    pub result: TxResultWithState<BaseEvmTypes>,
+    /// The EIP-2718 type byte of the executed transaction.
+    pub ty: u8,
+    /// The depositor's nonce before a post-Regolith deposit executed; `None` for every other
+    /// transaction. Recorded in the deposit receipt.
+    pub deposit_nonce: Option<u64>,
+    /// The transaction's Jovian DA footprint (zero for deposits and before Jovian).
+    pub da_footprint: u64,
+    /// Whether the transaction is a deposit.
+    pub is_deposit: bool,
+}
+
+/// Executes a Base block's transactions on an EVM2 [`Evm`], building receipts and committing
+/// every state change through a [`BaseBlockState`].
 ///
 /// The flow is [`apply_pre_execution`](Self::apply_pre_execution) (block-boundary system calls),
 /// then [`apply_transition_hooks`](Self::apply_transition_hooks) (the Canyon/Denim/Everest
 /// irregular state transitions), then [`execute_transaction`](Self::execute_transaction) per
-/// transaction (running it through the registry, building its receipt with running cumulative gas,
-/// and committing its state into a [`BlockStateAccumulator`]), then [`finish`](Self::finish). The
-/// EIP-8130 path and the Jovian DA-footprint checks are layered on in follow-up work.
+/// transaction, then [`finish`](Self::finish). A transaction can also be executed and committed in
+/// two steps ([`execute_transaction_without_commit`](Self::execute_transaction_without_commit) and
+/// [`commit_transaction`](Self::commit_transaction)), which is how Reth drives block execution.
 #[derive(Debug)]
-pub struct BaseBlockExecutor<'a> {
+pub struct BaseBlockExecutor<'a, S = BlockStateAccumulator> {
     evm: Evm<'a, BaseEvmTypes>,
     ctx: BaseBlockExecutionCtx,
-    block_state: BlockStateAccumulator,
-    receipts: Vec<BaseReceiptEnvelope>,
+    block_state: S,
+    receipts: Vec<BaseReceipt>,
     gas_used: u64,
     da_footprint_used: u64,
 }
 
 impl<'a> BaseBlockExecutor<'a> {
-    /// Creates a block executor over `evm` with the given block-boundary context.
+    /// Creates a block executor over `evm` that accumulates the block's state delta in a
+    /// [`BlockStateAccumulator`].
     pub fn new(evm: Evm<'a, BaseEvmTypes>, ctx: BaseBlockExecutionCtx) -> Self {
-        Self {
-            evm,
-            ctx,
-            block_state: BlockStateAccumulator::new(),
-            receipts: Vec::new(),
-            gas_used: 0,
-            da_footprint_used: 0,
-        }
+        Self::with_block_state(evm, ctx, BlockStateAccumulator::new())
+    }
+}
+
+impl<'a, S: BaseBlockState> BaseBlockExecutor<'a, S> {
+    /// Creates a block executor over `evm` that commits state through `block_state`.
+    pub const fn with_block_state(
+        evm: Evm<'a, BaseEvmTypes>,
+        ctx: BaseBlockExecutionCtx,
+        block_state: S,
+    ) -> Self {
+        Self { evm, ctx, block_state, receipts: Vec::new(), gas_used: 0, da_footprint_used: 0 }
     }
 
     /// Applies the block-boundary pre-execution system calls, in the reference order: the
@@ -195,18 +219,13 @@ impl<'a> BaseBlockExecutor<'a> {
     /// block whose beacon root is non-zero, is rejected as invalid ([`PreExecutionError`]).
     pub fn apply_pre_execution(&mut self) -> HandlerResult<()> {
         let spec = self.evm.spec_id();
-        // The genesis block never runs the pre-execution system calls, matching the reference.
         let is_genesis = self.evm.block().number.is_zero();
 
-        // EIP-2935 block-hashes call (Prague onwards), skipped at genesis.
         if (spec as u8) >= (SpecId::PRAGUE as u8) && !is_genesis {
             let data = Bytes::copy_from_slice(self.ctx.parent_hash.as_slice());
-            let executed = self.evm.system_call(SystemTx::new(HISTORY_STORAGE_ADDRESS, data))?;
-            let _ = executed.commit_to(&mut self.block_state);
+            self.system_call(HISTORY_STORAGE_ADDRESS, data)?;
         }
 
-        // EIP-4788 beacon-roots call (Cancun onwards). A post-Cancun block must carry a parent
-        // beacon block root; at genesis that root must be zero and no system call runs.
         if (spec as u8) >= (SpecId::CANCUN as u8) {
             let root = self.ctx.parent_beacon_block_root.ok_or_else(|| {
                 HandlerError::external(PreExecutionError::MissingParentBeaconBlockRoot)
@@ -220,11 +239,15 @@ impl<'a> BaseBlockExecutor<'a> {
                     ));
                 }
             } else {
-                let data = Bytes::copy_from_slice(root.as_slice());
-                let executed = self.evm.system_call(SystemTx::new(BEACON_ROOTS_ADDRESS, data))?;
-                let _ = executed.commit_to(&mut self.block_state);
+                self.system_call(BEACON_ROOTS_ADDRESS, Bytes::copy_from_slice(root.as_slice()))?;
             }
         }
+        Ok(())
+    }
+
+    fn system_call(&mut self, address: Address, data: Bytes) -> HandlerResult<()> {
+        let state = self.evm.system_call(SystemTx::new(address, data))?.detach().pending_state;
+        self.block_state.commit(&mut self.evm, state);
         Ok(())
     }
 
@@ -264,18 +287,43 @@ impl<'a> BaseBlockExecutor<'a> {
         &mut self.evm
     }
 
+    /// Returns the block state that committed changes are recorded in.
+    pub const fn block_state_mut(&mut self) -> &mut S {
+        &mut self.block_state
+    }
+
+    /// Returns the receipts of the transactions committed so far.
+    pub fn receipts(&self) -> &[BaseReceipt] {
+        &self.receipts
+    }
+
+    /// Returns the block's cumulative gas used so far.
+    pub const fn gas_used(&self) -> u64 {
+        self.gas_used
+    }
+
     /// Executes `tx`, appending its receipt (with running cumulative gas) and committing its
-    /// state changes into the block-state accumulator.
-    pub fn execute_transaction(&mut self, tx: &Recovered<BaseTxEnvelope>) -> HandlerResult<()> {
+    /// state changes into the block state. Returns the gas the transaction used.
+    pub fn execute_transaction(&mut self, tx: &Recovered<BaseTxEnvelope>) -> HandlerResult<u64> {
+        let executed = self.execute_transaction_without_commit(tx)?;
+        self.commit_transaction(executed)
+    }
+
+    /// Checks `tx` against the block's remaining gas and DA footprint, then executes it without
+    /// committing its state changes.
+    pub fn execute_transaction_without_commit(
+        &mut self,
+        tx: &Recovered<BaseTxEnvelope>,
+    ) -> HandlerResult<BaseExecutedTx> {
         let ty = tx.ty();
         let is_deposit = tx.is_deposit();
-        let signer = tx.signer();
+        let upgrade = self.evm.config_spec_id().upgrade();
+        let at = |fork: BaseUpgrade| (upgrade as u8) >= (fork as u8);
 
-        // Reject a transaction whose reserved gas exceeds the block's remaining gas, before
-        // executing it. For an EIP-8130 transaction the reservation adds the payer's worst-case
-        // authentication gas (metered on top of the sender-signed gas limit), matching the
-        // reference `reserved_block_gas`. Pre-Regolith deposits are exempt (matching the reference's
-        // `is_regolith || !is_deposit` guard); every other transaction is checked.
+        // A transaction's reserved gas must fit in the block's remaining gas. For an EIP-8130
+        // transaction the reservation adds the payer's worst-case authentication gas, metered on
+        // top of the sender-signed gas limit (the reference `reserved_block_gas`). Pre-Regolith
+        // deposits are exempt (the reference's `is_regolith || !is_deposit` guard).
         let mut reserved_gas = tx.gas_limit();
         if let Some(signed) = tx.as_eip8130() {
             let payer_auth =
@@ -284,20 +332,17 @@ impl<'a> BaseBlockExecutor<'a> {
         }
         let block_gas_limit = self.evm.block().gas_limit.saturating_to::<u64>();
         let block_available_gas = block_gas_limit.saturating_sub(self.gas_used);
-        let is_regolith =
-            (self.evm.config_spec_id().upgrade() as u8) >= (BaseUpgrade::Regolith as u8);
-        if reserved_gas > block_available_gas && (is_regolith || !is_deposit) {
+        if reserved_gas > block_available_gas && (at(BaseUpgrade::Regolith) || !is_deposit) {
             return Err(HandlerError::external(BlockGasLimitExceeded {
                 transaction_gas_limit: reserved_gas,
                 block_available_gas,
             }));
         }
 
-        // From Jovian, meter each non-deposit transaction's DA footprint against the block's DA
-        // footprint budget (the block gas limit less what earlier transactions consumed). Deposits
-        // are exempt. Accumulated below into `da_footprint_used` (surfaced as `blob_gas_used`).
-        let is_jovian = (self.evm.config_spec_id().upgrade() as u8) >= (BaseUpgrade::Jovian as u8);
-        let tx_da_footprint = if is_jovian && !is_deposit {
+        // From Jovian, each non-deposit transaction's DA footprint is metered against the block's
+        // DA footprint budget: the block gas limit less what earlier transactions consumed.
+        let da_footprint = if at(BaseUpgrade::Jovian) && !is_deposit {
+            L1Block::ensure_fee_params(&mut self.evm)?;
             let enveloped = tx.enveloped().map(|bytes| bytes.as_ref()).unwrap_or_default();
             let footprint = self.evm.block().ext.jovian_da_footprint(enveloped);
             let available = block_gas_limit.saturating_sub(self.da_footprint_used);
@@ -316,13 +361,13 @@ impl<'a> BaseBlockExecutor<'a> {
             return Err(HandlerError::external(Eip8130ExecutionUnsupported));
         }
 
-        // The deposit receipt records the depositor's nonce *before* the deposit executes (and
-        // bumps it), read untracked so it does not perturb execution. Matches the reference.
-        let deposit_nonce = if is_deposit {
+        // The deposit receipt records the depositor's nonce before the deposit executes, read
+        // untracked so it does not perturb execution. Only post-Regolith deposit receipts carry it.
+        let deposit_nonce = if is_deposit && at(BaseUpgrade::Regolith) {
             let nonce = self
                 .evm
                 .state_mut()
-                .account_info_untracked(&signer)?
+                .account_info_untracked(&tx.signer())?
                 .map(|info| info.nonce)
                 .unwrap_or_default();
             Some(nonce)
@@ -330,53 +375,56 @@ impl<'a> BaseBlockExecutor<'a> {
             None
         };
 
-        let executed = self.evm.transact(tx)?;
-        let result = executed.result();
-        let success = result.status;
-        let logs = result.logs.clone();
+        let result = self.evm.transact(tx)?.detach();
+        Ok(BaseExecutedTx { result, ty, deposit_nonce, da_footprint, is_deposit })
+    }
+
+    /// Commits `executed`'s state changes into the block state and appends its receipt, with the
+    /// running cumulative gas. Returns the gas the transaction used.
+    pub fn commit_transaction(&mut self, executed: BaseExecutedTx) -> HandlerResult<u64> {
+        let TxResultWithState { result, pending_state, .. } = executed.result;
+        let tx_gas_used = result.tx_gas_used();
         // Fail on overflow rather than silently saturating, which would corrupt this and every
-        // later receipt's cumulative gas. Practically unreachable given the block-gas pre-check
-        // above, but kept as a hard guard against a corrupted cumulative total.
+        // later receipt's cumulative gas.
         self.gas_used = self
             .gas_used
-            .checked_add(result.tx_gas_used())
+            .checked_add(tx_gas_used)
             .ok_or_else(|| HandlerError::external(CumulativeGasOverflow))?;
-        let cumulative_gas_used = self.gas_used;
-        // Accumulate the DA footprint metered above (zero for deposits and before Jovian).
-        self.da_footprint_used = self.da_footprint_used.saturating_add(tx_da_footprint);
-        let _ = executed.commit_to(&mut self.block_state);
+        self.da_footprint_used = self.da_footprint_used.saturating_add(executed.da_footprint);
+        self.block_state.commit(&mut self.evm, pending_state);
 
-        let receipt = Receipt { status: Eip658Value::Eip658(success), cumulative_gas_used, logs };
-        let envelope = if is_deposit {
-            // The deposit receipt version is set once Canyon is active.
+        let receipt = Receipt {
+            status: Eip658Value::Eip658(result.status),
+            cumulative_gas_used: self.gas_used,
+            logs: result.logs,
+        };
+        let receipt = if executed.is_deposit {
             let canyon = (self.evm.config_spec_id().upgrade() as u8) >= (BaseUpgrade::Canyon as u8);
-            let deposit_receipt_version = canyon.then_some(1);
-            BaseReceiptEnvelope::Deposit(
-                DepositReceipt { inner: receipt, deposit_nonce, deposit_receipt_version }
-                    .with_bloom(),
-            )
+            BaseReceipt::Deposit(DepositReceipt {
+                inner: receipt,
+                deposit_nonce: executed.deposit_nonce,
+                deposit_receipt_version: canyon.then_some(1),
+            })
         } else {
-            let receipt = receipt.with_bloom();
-            match ty {
-                1 => BaseReceiptEnvelope::Eip2930(receipt),
-                2 => BaseReceiptEnvelope::Eip1559(receipt),
-                4 => BaseReceiptEnvelope::Eip7702(receipt),
-                // Legacy (type 0) uses the legacy receipt shape. These type bytes mirror the
-                // handlers registered in tx_registry(); the assert flags any registered type that
-                // gains a handler but not a receipt arm here (which would mis-type its receipt).
+            match executed.ty {
+                1 => BaseReceipt::Eip2930(receipt),
+                2 => BaseReceipt::Eip1559(receipt),
+                4 => BaseReceipt::Eip7702(receipt),
+                // These type bytes mirror the handlers registered in `tx_registry()`; the assert
+                // flags a registered type that gains a handler but not a receipt arm here.
                 other => {
                     debug_assert_eq!(other, 0, "unmapped standard tx type {other:#x} in receipts");
-                    BaseReceiptEnvelope::Legacy(receipt)
+                    BaseReceipt::Legacy(receipt)
                 }
             }
         };
-        self.receipts.push(envelope);
-        Ok(())
+        self.receipts.push(receipt);
+        Ok(tx_gas_used)
     }
 
     /// Finalizes the block, returning the EVM, the execution result (receipts + gas used), and
-    /// the accumulated block-state delta.
-    pub fn finish(self) -> (Evm<'a, BaseEvmTypes>, BlockExecutionResult, BlockStateAccumulator) {
+    /// the block state.
+    pub fn finish(self) -> (Evm<'a, BaseEvmTypes>, BlockExecutionResult, S) {
         let result = BlockExecutionResult {
             receipts: self.receipts,
             gas_used: self.gas_used,

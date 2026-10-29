@@ -13,7 +13,6 @@ use crate::{BaseSpecId, BaseTxEnvelope};
 /// extension), and L1-fee result data ([`BaseTxResultExt`]) into EVM2's
 /// [`EvmTypesHost`]. The spec schedule is driven by the Base fork schedule
 /// ([`BaseSpecId`]), which maps each Base upgrade to the governing EVM2 spec.
-/// Not wired into the node.
 #[derive(Clone, Copy, Debug)]
 pub struct BaseEvmTypes;
 
@@ -52,4 +51,10 @@ pub struct BaseEvmExt {
     /// Operator fee charged upfront (on the gas limit) for the transaction currently executing;
     /// its unused portion is refunded at settlement.
     pub operator_fee: U256,
+    /// The L2 block number whose L1 fee parameters the block environment extension holds, or
+    /// `None` until [`L1Block::ensure_fee_params`](crate::L1Block::ensure_fee_params) loads them.
+    ///
+    /// Mirrors the revm reference's `L1BlockInfo::l2_block` cache key: the parameters are read
+    /// from the `L1Block` predeploy once per block, at its first non-deposit transaction.
+    pub l1_fee_params_block: Option<U256>,
 }

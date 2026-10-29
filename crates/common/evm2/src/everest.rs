@@ -3,11 +3,9 @@
 use alloy_primitives::{Address, Bytes, KECCAK256_EMPTY};
 use base_common_eip8130::NonceManagerSlots;
 use base_common_genesis::BaseUpgrade;
-use evm2::{
-    AccountInfo, Evm, bytecode::Bytecode, evm::BlockStateAccumulator, registry::HandlerResult,
-};
+use evm2::{AccountInfo, Evm, bytecode::Bytecode, registry::HandlerResult};
 
-use crate::{BaseEvmTypes, BaseForkActivations, IrregularStateChange};
+use crate::{BaseBlockState, BaseEvmTypes, BaseForkActivations, IrregularStateChange};
 
 /// Single-byte code stub planted on otherwise code-less EIP-8130 system accounts.
 ///
@@ -43,7 +41,7 @@ impl Everest {
         chain_spec: &impl BaseForkActivations,
         timestamp: u64,
         evm: &mut Evm<'_, BaseEvmTypes>,
-        block_state: &mut BlockStateAccumulator,
+        block_state: &mut impl BaseBlockState,
     ) -> HandlerResult<()> {
         if !chain_spec.is_active_at_timestamp(BaseUpgrade::Everest, timestamp) {
             return Ok(());

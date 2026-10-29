@@ -8,9 +8,9 @@
 
 use alloy_consensus::{TxEip1559, transaction::Recovered};
 use alloy_primitives::{Address, Bytes, TxKind, U256};
-use base_common_consensus::{BaseReceiptEnvelope, Predeploys, TxDeposit};
+use base_common_consensus::{BaseReceipt, Predeploys, TxDeposit};
 use base_common_evm2::{
-    BaseBlockExecutionCtx, BaseBlockExecutor, BaseEvmTypes, BaseSpecId, BaseTxEnvelope,
+    BaseBlockExecutionCtx, BaseBlockExecutor, BaseEvmExt, BaseEvmTypes, BaseSpecId, BaseTxEnvelope,
 };
 use base_common_genesis::BaseUpgrade;
 use base_common_l1_fees::L1FeeParams;
@@ -20,14 +20,14 @@ const SENDER: Address = Address::repeat_byte(0x11);
 const TARGET: Address = Address::repeat_byte(0x22);
 const COINBASE: Address = Address::repeat_byte(0x33);
 
-const fn cumulative_gas(receipt: &BaseReceiptEnvelope) -> u64 {
+const fn cumulative_gas(receipt: &BaseReceipt) -> u64 {
     match receipt {
-        BaseReceiptEnvelope::Deposit(r) => r.receipt.inner.cumulative_gas_used,
-        BaseReceiptEnvelope::Legacy(r)
-        | BaseReceiptEnvelope::Eip2930(r)
-        | BaseReceiptEnvelope::Eip1559(r)
-        | BaseReceiptEnvelope::Eip7702(r) => r.receipt.cumulative_gas_used,
-        BaseReceiptEnvelope::Eip8130(r) => r.receipt.inner.cumulative_gas_used,
+        BaseReceipt::Deposit(r) => r.inner.cumulative_gas_used,
+        BaseReceipt::Legacy(r)
+        | BaseReceipt::Eip2930(r)
+        | BaseReceipt::Eip1559(r)
+        | BaseReceipt::Eip7702(r) => r.cumulative_gas_used,
+        BaseReceipt::Eip8130(r) => r.inner.cumulative_gas_used,
     }
 }
 
@@ -37,6 +37,13 @@ fn nonce(evm: &mut Evm<'static, BaseEvmTypes>, addr: Address) -> u64 {
 
 fn balance(evm: &mut Evm<'static, BaseEvmTypes>, addr: Address) -> U256 {
     evm.state_mut().account_info_untracked(&addr).unwrap().map(|i| i.balance).unwrap_or_default()
+}
+
+/// Marks the block environment's L1 fee parameters as already loaded for block 0, like the revm
+/// reference's preloaded `L1BlockInfo { l2_block: Some(0), .. }`, so execution prices fees from
+/// them instead of reading the (empty) `L1Block` predeploy.
+fn preloaded_l1_fee_params() -> BaseEvmExt {
+    BaseEvmExt { l1_fee_params_block: Some(U256::ZERO), ..Default::default() }
 }
 
 #[test]
@@ -58,7 +65,8 @@ fn executes_block_of_deposit_then_standard_tx() {
         ..Default::default()
     };
     let evm =
-        Evm::new(spec, block, BaseEvmTypes::tx_registry(), db, Precompiles::base(spec.into()));
+        Evm::new(spec, block, BaseEvmTypes::tx_registry(), db, Precompiles::base(spec.into()))
+            .with_ext(preloaded_l1_fee_params());
     let mut executor = BaseBlockExecutor::new(evm, BaseBlockExecutionCtx::default());
 
     // A deposit that mints to the sender, then a standard EIP-1559 transfer from the same sender.
@@ -97,18 +105,15 @@ fn executes_block_of_deposit_then_standard_tx() {
     // Two receipts, in order, of the expected variants.
     assert_eq!(result.receipts.len(), 2);
     match &result.receipts[0] {
-        BaseReceiptEnvelope::Deposit(r) => {
-            assert!(r.receipt.inner.status.coerce_status(), "deposit succeeded");
+        BaseReceipt::Deposit(r) => {
+            assert!(r.inner.status.coerce_status(), "deposit succeeded");
             // Pre-execution sender nonce (0), and Canyon-gated receipt version (Ecotone > Canyon).
-            assert_eq!(r.receipt.deposit_nonce, Some(0));
-            assert_eq!(r.receipt.deposit_receipt_version, Some(1));
+            assert_eq!(r.deposit_nonce, Some(0));
+            assert_eq!(r.deposit_receipt_version, Some(1));
         }
         other => panic!("expected deposit receipt, got {other:?}"),
     }
-    assert!(
-        matches!(result.receipts[1], BaseReceiptEnvelope::Eip1559(_)),
-        "second receipt is EIP-1559"
-    );
+    assert!(matches!(result.receipts[1], BaseReceipt::Eip1559(_)), "second receipt is EIP-1559");
 
     // Cumulative gas is monotonic and the block gas equals the last receipt's cumulative gas.
     assert!(cumulative_gas(&result.receipts[0]) < cumulative_gas(&result.receipts[1]));
@@ -198,7 +203,8 @@ fn jovian_executor(block_gas_limit: u64, da_scalar: u128) -> BaseBlockExecutor<'
     };
     let spec = BaseSpecId::new(BaseUpgrade::Jovian);
     let evm =
-        Evm::new(spec, block, BaseEvmTypes::tx_registry(), db, Precompiles::base(spec.into()));
+        Evm::new(spec, block, BaseEvmTypes::tx_registry(), db, Precompiles::base(spec.into()))
+            .with_ext(preloaded_l1_fee_params());
     BaseBlockExecutor::new(evm, BaseBlockExecutionCtx::default())
 }
 

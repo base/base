@@ -2,11 +2,9 @@
 
 use alloy_primitives::{Address, B256, Bytes, address, b256, hex};
 use base_common_genesis::BaseUpgrade;
-use evm2::{
-    AccountInfo, Evm, bytecode::Bytecode, evm::BlockStateAccumulator, registry::HandlerResult,
-};
+use evm2::{AccountInfo, Evm, bytecode::Bytecode, registry::HandlerResult};
 
-use crate::{BaseEvmTypes, BaseForkActivations, IrregularStateChange};
+use crate::{BaseBlockState, BaseEvmTypes, BaseForkActivations, IrregularStateChange};
 
 /// The address of the create2 deployer.
 const CREATE_2_DEPLOYER_ADDR: Address = address!("0x13b0D85CcB8bf860b6b79AF3029fCA081AE9beF2");
@@ -36,7 +34,7 @@ impl Canyon {
         chain_spec: &impl BaseForkActivations,
         timestamp: u64,
         evm: &mut Evm<'_, BaseEvmTypes>,
-        block_state: &mut BlockStateAccumulator,
+        block_state: &mut impl BaseBlockState,
     ) -> HandlerResult<()> {
         if !chain_spec.is_active_at_timestamp(BaseUpgrade::Canyon, timestamp)
             || chain_spec.is_active_at_timestamp(BaseUpgrade::Canyon, timestamp.saturating_sub(2))

@@ -6,11 +6,10 @@ use base_common_genesis::BaseUpgrade;
 use evm2::{
     AccountInfo, Evm,
     bytecode::Bytecode,
-    evm::BlockStateAccumulator,
     registry::{HandlerError, HandlerResult},
 };
 
-use crate::{BaseEvmTypes, BaseForkActivations, IrregularStateChange};
+use crate::{BaseBlockState, BaseEvmTypes, BaseForkActivations, IrregularStateChange};
 
 /// Errors produced while applying the `BaseTime` predeploy transition.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -86,7 +85,7 @@ impl BaseTime {
         chain_spec: &impl BaseForkActivations,
         timestamp: u64,
         evm: &mut Evm<'_, BaseEvmTypes>,
-        block_state: &mut BlockStateAccumulator,
+        block_state: &mut impl BaseBlockState,
     ) -> HandlerResult<()> {
         if !chain_spec.is_active_at_timestamp(BaseUpgrade::Denim, timestamp) {
             return Ok(());

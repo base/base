@@ -2,18 +2,16 @@
 //!
 //! The Canyon, Denim, and Everest block-boundary hooks apply *irregular* state changes — direct
 //! edits to account code and storage that are not the result of executing a transaction. This
-//! module provides the two pieces they share: [`BaseForkActivations`], the revm-free fork-schedule
-//! input used to detect activation blocks, and [`IrregularStateChange`], which persists an edit
-//! into the EVM's accepted overlay and records it in the block-state delta in one step (the evm2
-//! analogue of the reference's `DatabaseCommit::commit`).
+//! module provides the pieces they share: [`BaseForkActivations`], the revm-free fork-schedule
+//! input used to detect activation blocks; [`BaseBlockState`], the destination every block state
+//! change is committed through; and [`IrregularStateChange`], which commits an edit through it
+//! (the evm2 analogue of the reference's `DatabaseCommit::commit`).
 
 use alloy_primitives::{Address, U256};
 use base_common_genesis::{BaseUpgrade, UpgradeConfig};
 use evm2::{
     AccountInfo, Evm,
-    evm::{
-        AccountChangeRef, BlockStateAccumulator, StateChangeSink, StateChangeSource, StorageChange,
-    },
+    evm::{BlockStateAccumulator, PendingState, StateChangeSource},
 };
 
 use crate::BaseEvmTypes;
@@ -35,19 +33,39 @@ impl BaseForkActivations for UpgradeConfig {
     }
 }
 
+/// Accepts state into a block: commits it to the EVM's accepted overlay, so later transactions
+/// observe it, and records it in the block's state delta.
+///
+/// Every state change a Base block makes — pre-execution system calls, transition-block irregular
+/// changes, and transactions — reaches the block through this trait, so an integration can keep
+/// its own block-state representation (for example, one that also streams per-transaction state
+/// updates) without re-implementing the block's execution rules.
+pub trait BaseBlockState {
+    /// Commits `state` to `evm`'s accepted overlay and records it in this block state.
+    fn commit(&mut self, evm: &mut Evm<'_, BaseEvmTypes>, state: PendingState);
+}
+
+impl BaseBlockState for BlockStateAccumulator {
+    fn commit(&mut self, evm: &mut Evm<'_, BaseEvmTypes>, state: PendingState) {
+        // `BlockStateAccumulator`'s sink is infallible.
+        let Ok(()) = state.visit(self);
+        evm.state_mut().set_pending_state(state);
+        evm.state_mut().commit_transaction();
+    }
+}
+
 /// A single account's irregular state change: its pre-change account info, post-change account
 /// info (with optional bytecode), and any storage-slot writes.
 ///
-/// Applying it via [`apply`](Self::apply) both persists it to the EVM's accepted overlay (so later
-/// transactions in the block observe it) and records it in the [`BlockStateAccumulator`] (so it
-/// appears in the block's state delta) — mirroring the reference `DatabaseCommit::commit` of a
-/// touched account, which evm2 has no single-call equivalent for.
+/// Applying it via [`apply`](Self::apply) commits it like a transaction's state: later
+/// transactions in the block observe it, and it appears in the block's state delta — mirroring
+/// the reference `DatabaseCommit::commit` of a touched account.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct IrregularStateChange {
     address: Address,
     original: Option<AccountInfo>,
     current: Option<AccountInfo>,
-    storage: Vec<StorageChange>,
+    storage: Vec<(U256, U256, U256)>,
 }
 
 impl IrregularStateChange {
@@ -63,37 +81,17 @@ impl IrregularStateChange {
 
     /// Records a storage-slot write on this account, from `original` to `current`.
     pub fn with_storage(mut self, key: U256, original: U256, current: U256) -> Self {
-        self.storage.push(StorageChange { address: self.address, key, original, current });
+        self.storage.push((key, original, current));
         self
     }
 
-    /// Persists this change to `evm`'s accepted overlay and records it in `block_state`.
-    pub fn apply(&self, evm: &mut Evm<'_, BaseEvmTypes>, block_state: &mut BlockStateAccumulator) {
-        evm.commit_source(self);
-        // `BlockStateAccumulator`'s sink is infallible.
-        let Ok(()) = self.visit(block_state);
-    }
-}
-
-impl StateChangeSource for IrregularStateChange {
-    fn visit<S: StateChangeSink>(&self, sink: &mut S) -> Result<(), S::Error> {
-        // Register bytecode first so the code hash the account references resolves in the sink.
-        if let Some(current) = &self.current
-            && let Some(code) = &current.code
-            && !code.is_empty()
-        {
-            sink.bytecode(current.code_hash, code)?;
+    /// Commits this change through `block_state`.
+    pub fn apply(self, evm: &mut Evm<'_, BaseEvmTypes>, block_state: &mut impl BaseBlockState) {
+        let mut state = PendingState::default();
+        state.insert_account(self.address, self.original, self.current);
+        for (key, original, current) in self.storage {
+            state.insert_storage(self.address, key, original, current);
         }
-        sink.account(AccountChangeRef {
-            address: self.address,
-            original: self.original.as_ref(),
-            current: self.current.as_ref(),
-            created: false,
-            selfdestructed: false,
-        })?;
-        for change in &self.storage {
-            sink.storage(*change)?;
-        }
-        Ok(())
+        block_state.commit(evm, state);
     }
 }
