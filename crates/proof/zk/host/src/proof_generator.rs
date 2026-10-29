@@ -192,6 +192,7 @@ where
                     error,
                     ProofGeneratorError::Generate {
                         source: ZkProverError::BackendSessionFailed { .. }
+                            | ZkProverError::InvalidRequest { .. }
                             | ZkProverError::BackendSessionNotFound { .. },
                         ..
                     }
@@ -678,4 +679,110 @@ pub enum ProofGeneratorError {
         #[source]
         source: ProofSubmitterError,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{error::Error, num::NonZeroU64};
+
+    use base_prover_service_client::MockProverWorkerProvider;
+    use base_prover_service_protocol::{
+        AbandonProofResponse, GetProofSessionResponse, ProofJobStatus, ProofRequest,
+        ZkProofRequest, ZkVm,
+    };
+
+    use super::*;
+    use crate::prover::MockZkProver;
+
+    fn claimed_job() -> ProofJob {
+        ProofJob {
+            session_id: "session-invalid-range".into(),
+            status: ProofJobStatus::Claimed,
+            request: ProofRequest {
+                session_id: "session-invalid-range".into(),
+                request: ProofRequestKind::Compressed(ZkProofRequest {
+                    start_block_number: 100,
+                    number_of_blocks_to_prove: 10,
+                    sequence_window: None,
+                    l1_head: None,
+                    schedule_l2_block_number: None,
+                    intermediate_block_interval: NonZeroU64::new(10).unwrap(),
+                    zk_vm: ZkVm::Sp1,
+                    zk_backend: ZkBackend::Cluster,
+                }),
+            },
+            attempt: 1,
+            lock_id: Some("claim-lock".into()),
+            worker_id: Some("zk-worker".into()),
+            lock_expires_at: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+            completed_at: None,
+            error_message: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn invalid_request_abandons_claim_and_returns_generation_error() {
+        let job = claimed_job();
+        let mut client = MockProverWorkerProvider::new();
+        client
+            .expect_get_proof_session()
+            .returning(|_| Box::pin(async { Ok(GetProofSessionResponse { session: None }) }));
+        let abandoned_job = job.clone();
+        client
+            .expect_abandon_proof()
+            .withf(|request| {
+                request.session_id == "session-invalid-range"
+                    && request.lock_id == "claim-lock"
+                    && request.worker_id == "zk-worker"
+                    && request.error_message
+                        == "proof generation failed for job session-invalid-range: invalid proof request: range is invalid"
+            })
+            .times(1)
+            .return_once(move |_| Box::pin(async move { Ok(AbandonProofResponse { job: abandoned_job }) }));
+        let mut prover = MockZkProver::new();
+        prover.expect_submit().return_once(|_, _| {
+            Err(ZkProverError::InvalidRequest {
+                source: std::io::Error::other("range is invalid").into(),
+            })
+        });
+        let generator = ProofGenerator::new(
+            HashMap::from([(ZkBackend::Cluster, Arc::new(prover) as Arc<dyn ZkProver>)]),
+            ProofSubmitter::new(Arc::new(client)),
+            ProofGeneratorHeartbeatConfig::default(),
+        );
+
+        let error = generator.generate_and_submit(job).await.unwrap_err();
+        assert!(matches!(
+            &error,
+            ProofGeneratorError::Generate { session_id, source: ZkProverError::InvalidRequest { .. } }
+                if session_id == "session-invalid-range"
+        ));
+        assert_eq!(error.source().unwrap().source().unwrap().to_string(), "range is invalid");
+    }
+
+    #[tokio::test]
+    async fn backend_error_does_not_abandon_claim() {
+        let mut client = MockProverWorkerProvider::new();
+        client
+            .expect_get_proof_session()
+            .returning(|_| Box::pin(async { Ok(GetProofSessionResponse { session: None }) }));
+        client.expect_abandon_proof().never();
+        let mut prover = MockZkProver::new();
+        prover.expect_submit().return_once(|_, _| {
+            Err(ZkProverError::Backend(std::io::Error::other("backend unavailable").into()))
+        });
+        let generator = ProofGenerator::new(
+            HashMap::from([(ZkBackend::Cluster, Arc::new(prover) as Arc<dyn ZkProver>)]),
+            ProofSubmitter::new(Arc::new(client)),
+            ProofGeneratorHeartbeatConfig::default(),
+        );
+
+        let error = generator.generate_and_submit(claimed_job()).await.unwrap_err();
+        assert!(matches!(
+            error,
+            ProofGeneratorError::Generate { source: ZkProverError::Backend(_), .. }
+        ));
+    }
 }

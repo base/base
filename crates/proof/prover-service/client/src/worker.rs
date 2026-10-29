@@ -20,6 +20,8 @@ use crate::{ProverServiceClientBuildError, ProverServiceClientConfig, ProverServ
 /// worker services depend on a mockable interface without exposing requester
 /// helpers such as submit-and-wait flows.
 #[async_trait]
+#[auto_impl::auto_impl(Arc)]
+#[cfg_attr(any(test, feature = "test-utils"), mockall::automock)]
 pub trait ProverWorkerProvider: Send + Sync {
     /// Atomically claim the next available proof job for this worker.
     async fn get_next_proof(

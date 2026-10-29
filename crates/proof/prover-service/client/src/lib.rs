@@ -12,4 +12,6 @@ mod requester;
 pub use requester::{ProofRequesterClient, ProofRequesterProvider};
 
 mod worker;
+#[cfg(any(test, feature = "test-utils"))]
+pub use worker::MockProverWorkerProvider;
 pub use worker::{ProverWorkerClient, ProverWorkerProvider};

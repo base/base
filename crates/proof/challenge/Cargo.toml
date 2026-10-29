@@ -95,6 +95,7 @@ test-utils = [
 	"async-trait",
 	"base-proof-submission/test-utils",
 	"base-protocol/test-utils",
+	"base-prover-service-client/test-utils",
 	"base-runtime/test-utils",
 	"serde_json",
 ]

@@ -20,6 +20,7 @@ jsonrpsee = { workspace = true, features = ["http-client"] }
 
 # Async
 backon.workspace = true
+auto_impl.workspace = true
 async-trait.workspace = true
 
 # URL parsing
@@ -30,6 +31,9 @@ thiserror.workspace = true
 
 # Observability
 tracing.workspace = true
+
+# Testing
+mockall = { workspace = true, optional = true }
 
 [dev-dependencies]
 # Protocol
@@ -46,6 +50,10 @@ chrono.workspace = true
 
 # Testing
 rstest.workspace = true
+mockall.workspace = true
 
 [lints]
 workspace = true
+
+[features]
+test-utils = [ "dep:mockall" ]

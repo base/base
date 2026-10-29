@@ -60,6 +60,13 @@ pub enum ZkProverError {
     /// ZK proving is not yet implemented for this prover.
     #[error("zk proving is not yet implemented")]
     Unimplemented,
+    /// The proof request cannot be proved and must not be retried.
+    #[error("invalid proof request: {source}")]
+    InvalidRequest {
+        /// Underlying request validation failure.
+        #[source]
+        source: Box<dyn std::error::Error + Send + Sync>,
+    },
     /// The backend session failed before proof download.
     #[error("backend session {backend_session_id} failed: {reason}")]
     BackendSessionFailed {
@@ -89,6 +96,7 @@ pub enum ZkProverError {
 }
 
 /// Drives a single ZK proving job on a backend.
+#[cfg_attr(test, mockall::automock)]
 #[async_trait]
 pub trait ZkProver: Send + Sync + std::fmt::Debug {
     /// Submit the range (STARK) proof to the backend and return its backend session id.

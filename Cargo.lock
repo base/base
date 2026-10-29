@@ -5819,6 +5819,7 @@ dependencies = [
  "base-prover-service-client",
  "base-prover-service-protocol",
  "chrono",
+ "mockall",
  "thiserror 2.0.19",
  "tokio",
  "tokio-util",
@@ -6075,11 +6076,13 @@ name = "base-prover-service-client"
 version = "0.0.0"
 dependencies = [
  "async-trait",
+ "auto_impl",
  "backon",
  "base-prover-service-protocol",
  "base-retry",
  "chrono",
  "jsonrpsee",
+ "mockall",
  "rstest",
  "thiserror 2.0.19",
  "tokio",
