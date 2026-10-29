@@ -43,9 +43,6 @@ serde = { workspace = true, optional = true }
 base-metrics = { workspace = true, optional = true }
 metrics = { workspace = true, optional = true }
 
-# reth
-reth-evm = { workspace = true, optional = true }
-
 [dev-dependencies]
 rstest.workspace = true
 k256 = { workspace = true, features = ["ecdsa"] }
@@ -86,13 +83,11 @@ serde = [
 	"dep:serde",
 	"revm/serde",
 ]
-reth = [ "dep:reth-evm", "std" ]
 metrics = [
 	"base-common-precompiles/metrics",
 	"base-metrics/metrics",
 	"dep:base-metrics",
 	"dep:metrics",
-	"reth-evm?/metrics",
 	"std",
 ]
 bn = [ "base-common-precompiles/bn", "revm/bn" ]
