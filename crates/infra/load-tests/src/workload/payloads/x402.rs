@@ -115,7 +115,7 @@ impl X402Payload {
             )
             .await
             .rpc("read USDC domain separator")?;
-        if domain_bytes.as_ref() != Self::expected_domain(ctx.chain_id).as_slice() {
+        if domain_bytes.as_ref() != X402Context::domain(ctx.chain_id).hash_struct().as_slice() {
             return Err(BaselineError::Config(
                 "snapshot USDC domain separator does not match x402 domain".into(),
             ));
@@ -165,11 +165,6 @@ impl X402Payload {
             .set(X402Context::new(ctx.chain_id, timestamp, payers))
             .map_err(|_| BaselineError::Config("x402 prepared twice concurrently".into()))?;
         Ok(())
-    }
-
-    /// Returns the expected proxy domain separator for preparation checks.
-    pub fn expected_domain(chain_id: u64) -> B256 {
-        X402Context::domain(chain_id).hash_struct()
     }
 }
 
