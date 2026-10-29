@@ -3,7 +3,7 @@
 //! This benchmark seeds a `RocksDB` proofs-history store with deterministic
 //! account and storage data, then repeatedly performs the DB-bound reads that
 //! `debug_executionWitness` drives through `StateProviderDatabase` and
-//! `revm::State` while EVM execution records touched state.
+//! `CacheDB` while EVM execution records touched state.
 
 use std::{hint::black_box, sync::Arc};
 
@@ -15,12 +15,11 @@ use base_execution_trie::{
     provider::BaseProofsStateProviderRef,
 };
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
+use evm2::evm::{CacheDB, Db};
 use rand_08::{RngCore, SeedableRng, rngs::StdRng};
+use reth_evm::{Database, database::StateProviderDatabase, witness::ExecutionWitnessRecord};
 use reth_primitives_traits::Account;
 use reth_provider::{AccountReader, StateProvider, StateRootProvider, noop::NoopProvider};
-use reth_revm::{
-    Database, State, database::StateProviderDatabase, witness::ExecutionWitnessRecord,
-};
 use reth_trie_common::{ExecutionWitnessMode, HashedPostState, updates::TrieUpdates};
 use tempfile::TempDir;
 
@@ -198,41 +197,40 @@ fn read_accounts_and_storage_with_provider<Storage>(
 where
     Storage: BaseProofsStore + Clone,
 {
-    let mut state = State::builder()
-        .with_database(StateProviderDatabase::new(provider.into_evm_state_provider()))
-        .with_bundle_update()
-        .build();
+    let mut state =
+        CacheDB::new(Db::new(StateProviderDatabase::new(provider.into_evm_state_provider())));
     read_accounts_and_storage_with_state(&mut state, fixture)
 }
 
-fn read_accounts_and_storage_with_state<DB>(
-    state: &mut State<StateProviderDatabase<DB>>,
-    fixture: &WitnessReadFixture,
-) -> usize
+fn read_accounts_and_storage_with_state<D>(state: &mut D, fixture: &WitnessReadFixture) -> usize
 where
-    State<StateProviderDatabase<DB>>: reth_revm::Database,
+    D: Database<Error: std::fmt::Debug>,
 {
     let mut reads = 0;
 
     for target in &fixture.targets {
-        black_box(state.basic(target.address).expect("read account").expect("account exists"));
+        black_box(
+            state.get_account(&target.address).expect("read account").expect("account exists"),
+        );
         reads += 1;
 
         for (storage_key, _, _) in &target.slots {
-            black_box(state.storage(target.address, (*storage_key).into()).expect("read storage"));
+            black_box(
+                state.get_storage(&target.address, &(*storage_key).into()).expect("read storage"),
+            );
             reads += 1;
         }
 
         black_box(
             state
-                .storage(target.address, B256::repeat_byte(0xFE).into())
+                .get_storage(&target.address, &B256::repeat_byte(0xFE).into())
                 .expect("read missing storage"),
         );
         reads += 1;
     }
 
     for missing_address in &fixture.missing_addresses {
-        black_box(state.basic(*missing_address).expect("read missing account"));
+        black_box(state.get_account(missing_address).expect("read missing account"));
         reads += 1;
     }
 
@@ -249,10 +247,8 @@ fn read_accounts_storage_and_witness(fixture: &WitnessReadFixture) -> usize {
     let block_provider = NoopProvider::default();
     let provider =
         BaseProofsStateProviderRef::new(Box::new(block_provider.clone()), &fixture.storage, 0);
-    let mut state = State::builder()
-        .with_database(StateProviderDatabase::new((&provider).into_evm_state_provider()))
-        .with_bundle_update()
-        .build();
+    let mut state =
+        CacheDB::new(Db::new(StateProviderDatabase::new((&provider).into_evm_state_provider())));
     let reads = read_accounts_and_storage_with_state(&mut state, fixture);
     let ExecutionWitness { state, headers, codes, keys } = ExecutionWitnessRecord::new(&state)
         .into_execution_witness(&provider, &block_provider, 0, ExecutionWitnessMode::default())

@@ -4728,6 +4728,7 @@ dependencies = [
  "criterion",
  "dashmap",
  "derive_more 2.1.1",
+ "evm2",
  "eyre",
  "metrics",
  "mockall",

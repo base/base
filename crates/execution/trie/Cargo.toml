@@ -61,6 +61,7 @@ static_assertions.workspace = true
 [dev-dependencies]
 alloy-rpc-types-debug.workspace = true
 eyre.workspace = true
+evm2.workspace = true
 rstest.workspace = true
 mockall.workspace = true
 rand_08.workspace = true
