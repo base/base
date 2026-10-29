@@ -57,6 +57,22 @@ impl BaseTime {
     pub const IMPLEMENTATION_CODE_HASH: B256 =
         b256!("0x9c4c8a497a69d0b8f2ba67be0bee7a1373186055978c3be6ec3068e0ec27f32a");
 
+    /// The expected hash of the canonical predeploy proxy runtime bytecode.
+    pub const PROXY_CODE_HASH: B256 =
+        b256!("0xfa8c9db6c6cab7108dea276f4cd09d575674eb0852c0fa3187e59e98ef977998");
+
+    /// The selector of `setTimestampMillisPart(uint16)`.
+    pub const SET_TIMESTAMP_MILLIS_PART_SELECTOR: [u8; 4] = hex!("86bdf394");
+
+    /// The selector of `timestampMillisPart()`.
+    pub const TIMESTAMP_MILLIS_PART_SELECTOR: [u8; 4] = hex!("7b2fea99");
+
+    /// The selector of `timestampMs()`.
+    pub const TIMESTAMP_MS_SELECTOR: [u8; 4] = hex!("5745a677");
+
+    /// The slot that stores the `timestamp_millis_part` value in its low `uint16`.
+    pub const TIMESTAMP_MILLIS_PART_SLOT: U256 = uint!(0_U256);
+
     /// The EIP-1967 proxy implementation slot.
     pub const IMPLEMENTATION_SLOT: U256 =
         uint!(0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc_U256);
@@ -69,6 +85,13 @@ impl BaseTime {
     pub fn implementation_bytecode() -> Bytes {
         hex::decode(include_str!("bytecode/base-time.hex").trim())
             .expect("BaseTime runtime artifact must be valid hex")
+            .into()
+    }
+
+    /// Returns the canonical predeploy proxy runtime from `base/contracts` commit `4848ec70`.
+    pub fn proxy_bytecode() -> Bytes {
+        hex::decode(include_str!("bytecode/proxy.hex").trim())
+            .expect("proxy runtime artifact must be valid hex")
             .into()
     }
 
@@ -140,5 +163,33 @@ impl BaseTime {
         .apply(evm, block_state);
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy_primitives::keccak256;
+
+    use super::*;
+
+    #[test]
+    fn artifacts_match_canonical_contracts() {
+        assert_eq!(
+            keccak256(BaseTime::implementation_bytecode()),
+            BaseTime::IMPLEMENTATION_CODE_HASH
+        );
+        assert_eq!(keccak256(BaseTime::proxy_bytecode()), BaseTime::PROXY_CODE_HASH);
+    }
+
+    #[test]
+    fn selectors_match_solidity_signatures() {
+        let selector =
+            |signature: &str| -> [u8; 4] { keccak256(signature)[..4].try_into().unwrap() };
+        assert_eq!(
+            BaseTime::SET_TIMESTAMP_MILLIS_PART_SELECTOR,
+            selector("setTimestampMillisPart(uint16)")
+        );
+        assert_eq!(BaseTime::TIMESTAMP_MILLIS_PART_SELECTOR, selector("timestampMillisPart()"));
+        assert_eq!(BaseTime::TIMESTAMP_MS_SELECTOR, selector("timestampMs()"));
     }
 }
