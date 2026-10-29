@@ -5,7 +5,7 @@
 //! under `utils`.
 
 mod provider;
-pub use provider::{L1HeadSource, OpSuccinctWitnessProvider, WitnessError, WitnessParams};
+pub use provider::{OpSuccinctWitnessProvider, WitnessError};
 
 mod builder;
 pub use builder::{
