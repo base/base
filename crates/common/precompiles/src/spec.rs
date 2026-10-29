@@ -1,6 +1,14 @@
 use base_common_genesis::{BaseFeature, BaseUpgrade};
 use base_precompile_storage::StorageFeatures;
 
+// The two-profile storage API requires these distinct behaviors to activate together. If a
+// future upgrade separates them, extend StorageFeatures before changing either registry entry.
+const _: () = assert!(
+    BaseFeature::DynamicStorageTailCleanup.activation_upgrade() as u8
+        == BaseFeature::CompactAbiDecodeErrors.activation_upgrade() as u8,
+    "separate storage feature activations require separate storage profiles",
+);
+
 /// Resolves Base upgrades into fork-dependent persistent-storage features.
 #[derive(Debug, Clone, Copy)]
 pub struct UpgradeGatedStorageFeatures;
@@ -8,10 +16,11 @@ pub struct UpgradeGatedStorageFeatures;
 impl UpgradeGatedStorageFeatures {
     /// Returns the persistent-storage features active at `upgrade`.
     pub const fn from_upgrade(upgrade: BaseUpgrade) -> StorageFeatures {
-        StorageFeatures::from_flags(
-            upgrade.is_feature_enabled(BaseFeature::DynamicStorageTailCleanup),
-            upgrade.is_feature_enabled(BaseFeature::CompactAbiDecodeErrors),
-        )
+        if upgrade.is_feature_enabled(BaseFeature::DynamicStorageTailCleanup) {
+            StorageFeatures::Cobalt
+        } else {
+            StorageFeatures::Legacy
+        }
     }
 }
 

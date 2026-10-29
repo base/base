@@ -237,30 +237,6 @@ mod tests {
     }
 
     #[test]
-    fn compact_decode_errors_are_independent_of_storage_cleanup() {
-        let selector = [0xde, 0xad, 0xbe, 0xef];
-        for cleanup in [false, true] {
-            for compact in [false, true] {
-                let output =
-                    BasePrecompileError::AbiDecodeFailed { selector, error: "diagnostic".into() }
-                        .into_precompile_result_with_features(
-                            0,
-                            0,
-                            StorageFeatures::from_flags(cleanup, compact),
-                        )
-                        .unwrap();
-                let expected = if compact {
-                    selector.to_vec()
-                } else {
-                    [selector.as_slice(), b"diagnostic"].concat()
-                };
-                assert!(output.is_revert());
-                assert_eq!(output.bytes, Bytes::from(expected));
-            }
-        }
-    }
-
-    #[test]
     fn into_precompile_result_propagates_gas_refunded_on_success() {
         let ok: Result<Bytes> = Ok(Bytes::from("out"));
         let out = ok.into_precompile_result(500, 0, 200, StorageFeatures::Legacy, |b| b).unwrap();
