@@ -13,11 +13,8 @@ workspace = true
 [dependencies]
 # reth
 alloy-rlp.workspace = true
-reth-db.workspace = true
 reth-discv5.workspace = true
 reth-evm.workspace = true
-reth-tasks.workspace = true
-reth-db-api.workspace = true
 reth-network.workspace = true
 reth-tracing.workspace = true
 reth-rpc-api.workspace = true
@@ -45,7 +42,6 @@ base-execution-rpc.workspace = true
 base-execution-txpool.workspace = true
 base-execution-chainspec.workspace = true
 base-execution-payload-builder.workspace = true
-base-execution-exex = { workspace = true, features = ["metrics"] }
 base-execution-trie = { workspace = true, features = ["metrics"] }
 base-execution-consensus = { workspace = true, features = ["std"] }
 base-execution-evm = { workspace = true, features = ["std", "rpc"] }
@@ -79,8 +75,6 @@ tokio-stream.workspace = true
 clap.workspace = true
 eyre.workspace = true
 serde.workspace = true
-futures.workspace = true
-tracing.workspace = true
 humantime.workspace = true
 
 # test-utils dependencies
@@ -90,7 +84,10 @@ reth-e2e-test-utils = { workspace = true, optional = true }
 
 [dev-dependencies]
 rstest.workspace = true
+futures.workspace = true
 reth-rpc.workspace = true
+reth-tasks.workspace = true
+reth-db-api.workspace = true
 reth-db-common.workspace = true
 reth-codecs = { workspace = true, features = ["test-utils"] }
 reth-prune-types.workspace = true
@@ -137,7 +134,6 @@ test-utils = [
 	"alloy-genesis",
 	"base-common-chains/test-utils",
 	"base-common-consensus/arbitrary",
-	"base-execution-exex/test-utils",
 	"base-node-core/test-utils",
 	"base-protocol/test-utils",
 	"reth-chain-state/test-utils",
