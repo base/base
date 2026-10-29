@@ -13,7 +13,7 @@ pub trait Upgrades: EthereumHardforks {
     ///
     /// Only timestamp conditions can return `true`; block conditions and `Never` return
     /// `false`. This is not a universal feature-activation query. For [`RollupConfig`],
-    /// Bedrock features resolve to `Block(0)`, while Delta and PectraBlobSchedule features
+    /// Bedrock features resolve to `Block(0)`, while Delta and `PectraBlobSchedule` features
     /// resolve to `Never` because those upgrades are absent from the execution fork ladder.
     /// Check block-based behavior with [`ForkCondition::active_at_block`] on the resolved
     /// condition. For rollup-only behavior, use [`RollupConfig::is_feature_active_cascading`].
