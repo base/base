@@ -22,7 +22,6 @@ base-common-precompiles.workspace = true
 
 # reth
 reth-evm.workspace = true
-reth-revm.workspace = true
 reth-provider.workspace = true
 base-common-evm.workspace = true
 base-execution-evm.workspace = true

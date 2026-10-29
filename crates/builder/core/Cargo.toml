@@ -24,7 +24,6 @@ reth-db.workspace = true
 reth-cli.workspace = true
 reth-evm.workspace = true
 reth-trie.workspace = true
-reth-revm.workspace = true
 reth-tasks.workspace = true
 base-metrics.workspace = true
 reth-rpc-api.workspace = true
@@ -230,7 +229,6 @@ test-utils = [
 	"reth-payload-builder/test-utils",
 	"reth-primitives-traits/test-utils",
 	"reth-provider/test-utils",
-	"reth-revm/test-utils",
 	"reth-tasks/test-utils",
 	"reth-transaction-pool/test-utils",
 	"reth-trie/test-utils",

@@ -22,7 +22,6 @@ base-execution-chainspec.workspace = true
 # reth
 reth-rpc.workspace = true
 reth-evm.workspace = true
-reth-revm.workspace = true
 reth-provider.workspace = true
 reth-chainspec.workspace = true
 reth-tasks.workspace = true

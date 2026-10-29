@@ -60,7 +60,6 @@ alloy-signer.workspace = true
 # reth
 reth-db.workspace = true
 reth-evm.workspace = true
-reth-revm.workspace = true
 reth-tracing.workspace = true
 reth-db-common.workspace = true
 reth-rpc-eth-api.workspace = true
@@ -122,7 +121,6 @@ test-utils = [
 	"reth-evm/test-utils",
 	"reth-primitives-traits?/test-utils",
 	"reth-provider/test-utils",
-	"reth-revm/test-utils",
 	"reth-transaction-pool/test-utils",
 ]
 

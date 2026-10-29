@@ -49,7 +49,6 @@ base-protocol.workspace = true
 reth-storage-api.workspace = true
 base-common-genesis.workspace = true
 reth-evm = { workspace = true, features = ["test-utils"] }
-reth-revm = { workspace = true, features = ["test-utils"] }
 base-common-consensus = { workspace = true, features = ["arbitrary"] }
 
 [features]
@@ -73,12 +72,11 @@ std = [
 	"reth-execution-errors/std",
 	"reth-execution-types/std",
 	"reth-primitives-traits/std",
-	"reth-revm/std",
 	"reth-storage-errors/std",
 	"revm/std",
 	"thiserror/std",
 ]
-portable = [ "base-common-evm/portable", "reth-revm/portable", "revm/portable" ]
+portable = [ "base-common-evm/portable", "reth-evm/portable", "revm/portable" ]
 rpc = [
 	"alloy-evm/rpc",
 	"alloy-rpc-types-eth",

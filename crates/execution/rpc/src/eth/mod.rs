@@ -27,7 +27,7 @@ pub use receipt::{BaseReceiptBuilder, ReceiptFieldsBuilder};
 use reth_chainspec::{ChainSpecProvider, EthereumHardforks, Hardforks};
 use reth_evm::ConfigureEvm;
 use reth_node_api::{FullNodeComponents, FullNodeTypes, NodeTypes};
-use reth_node_builder::rpc::{EthApiBuilder, EthApiCtx};
+use reth_node_builder::rpc::{EthApiBuilder, EthApiCtx, RpcNodeCoreFor};
 use reth_rpc::eth::core::EthApiInner;
 use reth_rpc_eth_api::{
     EthApiTypes, FromEvmError, FullEthApiServer, RpcConvert, RpcConverter, RpcNodeCore,
@@ -380,10 +380,10 @@ where
     N::Provider: ChainSpecProvider<ChainSpec = BaseChainSpec>,
     NetworkT: RpcTypes,
     BaseRpcConvert<N, NetworkT>: RpcConvert<Network = NetworkT>,
-    BaseEthApi<N, BaseRpcConvert<N, NetworkT>>:
+    BaseEthApi<RpcNodeCoreFor<N>, BaseRpcConvert<N, NetworkT>>:
         FullEthApiServer<Provider = N::Provider, Pool = N::Pool>,
 {
-    type EthApi = BaseEthApi<N, BaseRpcConvert<N, NetworkT>>;
+    type EthApi = BaseEthApi<RpcNodeCoreFor<N>, BaseRpcConvert<N, NetworkT>>;
 
     async fn build_eth_api(self, ctx: EthApiCtx<'_, N>) -> eyre::Result<Self::EthApi> {
         let provider = ctx.components.provider().clone();
