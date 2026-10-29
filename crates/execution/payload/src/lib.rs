@@ -47,8 +47,9 @@ pub use deferrals::{BlockDeferrals, DeferralJournal};
 
 mod resting;
 pub use resting::{
-    FinishingRestingPredicates, RESTING_UNSEEN_RETAINED_BLOCKS, RestingCarryOver, RestingMember,
-    RestingPredicateMode, RestingPredicateStore, RestingPredicates,
+    FinishingRestingPredicates, RESTING_SWEEP_WAIT_LIMIT, RESTING_UNSEEN_RETAINED_BLOCKS,
+    RestingCarryOver, RestingMember, RestingPredicateMode, RestingPredicateStore,
+    RestingPredicates,
 };
 
 mod inclusion;
