@@ -5124,6 +5124,7 @@ dependencies = [
  "alloy-sol-types",
  "base-precompile-macros",
  "derive_more 2.1.1",
+ "evm2",
  "proptest",
  "revm",
  "rstest",

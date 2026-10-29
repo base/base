@@ -10,11 +10,10 @@ use alloc::vec::Vec;
 use core::{cell::RefCell, fmt};
 
 use alloy_primitives::{Address, B256, Bytes, LogData, U256};
-use revm::{context::journaled_state::JournalCheckpoint, state::Bytecode};
 
 use crate::{
-    error::{BasePrecompileError, Result},
-    neutral::{AccountInfo, PrecompileOutput, PrecompileResult},
+    error::{BasePrecompileError, DelegateCallNotAllowed, Result},
+    neutral::{AccountInfo, Bytecode, PrecompileOutput, PrecompileResult, StorageCheckpoint},
     provider::{PrecompileStorageProvider, StorageFeatures},
 };
 
@@ -44,6 +43,26 @@ impl StorageCtx<'_> {
         let storage: &mut ScopedProvider<'_> = storage;
         let cell = RefCell::new(storage);
         f(StorageCtx { storage: &cell })
+    }
+
+    /// Enters the storage context for one native precompile call.
+    ///
+    /// Native precompiles only run in their own account context: a delegated call
+    /// (`DELEGATECALL`/`CALLCODE`, `is_direct_call == false`) reverts with
+    /// [`DelegateCallNotAllowed`] and zero gas used, without running `f`.
+    pub fn enter_direct_call<S>(
+        storage: &mut S,
+        is_direct_call: bool,
+        f: impl for<'ctx> FnOnce(StorageCtx<'ctx>) -> PrecompileResult,
+    ) -> PrecompileResult
+    where
+        S: PrecompileStorageProvider,
+    {
+        if !is_direct_call {
+            return BasePrecompileError::revert(DelegateCallNotAllowed {})
+                .into_precompile_result(0, 0);
+        }
+        Self::enter(storage, f)
     }
 }
 
@@ -77,8 +96,7 @@ impl<'a> StorageCtx<'a> {
         let mut result: Option<Result<T>> = None;
         self.try_with_storage(|s| {
             s.with_account_info(address, &mut |info| {
-                let info = AccountInfo::from(info);
-                result = Some(f(&info));
+                result = Some(f(info));
             })
         })?;
         result.unwrap_or_else(|| {
@@ -129,7 +147,8 @@ impl<'a> StorageCtx<'a> {
     }
 
     /// Sets the bytecode at the given address.
-    pub fn set_code(&self, address: Address, code: Bytecode) -> Result<()> {
+    pub fn set_code(&self, address: Address, code: impl Into<Bytecode>) -> Result<()> {
+        let code = code.into();
         self.try_with_storage(|s| s.set_code(address, code))
     }
 
@@ -236,7 +255,7 @@ impl<'a> StorageCtx<'a> {
 
     /// Returns a success [`PrecompileOutput`] with the current gas used and accumulated refund.
     ///
-    /// The `gas_refunded` field is populated so revm's frame handler can propagate it to the
+    /// The `gas_refunded` field is populated so the engine's frame handler can propagate it to the
     /// transaction-level refund counter, where the EIP-3529 cap (`gas_used / 5`) is applied.
     pub fn success_output(&self, output: Bytes) -> PrecompileOutput {
         let mut out = PrecompileOutput::new(self.gas_used(), output, self.state_gas_used());
@@ -304,7 +323,7 @@ impl Drop for CallerGuard<'_> {
 #[derive(Debug)]
 pub struct CheckpointGuard<'a> {
     storage: StorageCtx<'a>,
-    checkpoint: Option<JournalCheckpoint>,
+    checkpoint: Option<StorageCheckpoint>,
 }
 
 impl CheckpointGuard<'_> {
@@ -363,10 +382,7 @@ impl StorageCtx<'_> {
         address: Address,
         f: impl FnOnce(Option<&AccountInfo>) -> T,
     ) -> T {
-        self.with_hashmap(|storage| {
-            let info = storage.get_account_info(address).map(AccountInfo::from);
-            f(info.as_ref())
-        })
+        self.with_hashmap(|storage| f(storage.get_account_info(address)))
     }
 
     /// Executes a closure with emitted events from the test storage provider.
@@ -427,6 +443,7 @@ impl StorageCtx<'_> {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::U256;
+    use alloy_sol_types::SolError;
 
     use super::*;
 
@@ -569,5 +586,24 @@ mod tests {
 
         assert!(output.is_success());
         assert_eq!(output.gas_refunded, 0);
+    }
+
+    #[test]
+    fn enter_direct_call_rejects_delegated_calls_before_running() {
+        let mut storage = crate::hashmap::HashMapStorageProvider::new(1);
+
+        let delegated = StorageCtx::enter_direct_call(&mut storage, false, |_| {
+            panic!("a delegated call must not run the precompile body")
+        })
+        .unwrap();
+        let direct = StorageCtx::enter_direct_call(&mut storage, true, |ctx| {
+            Ok(ctx.success_output(Bytes::from_static(b"ran")))
+        })
+        .unwrap();
+
+        assert!(delegated.is_revert());
+        assert_eq!(delegated.gas_used, 0);
+        assert_eq!(delegated.bytes, Bytes::from(DelegateCallNotAllowed {}.abi_encode()));
+        assert_eq!(direct.bytes, Bytes::from_static(b"ran"));
     }
 }
