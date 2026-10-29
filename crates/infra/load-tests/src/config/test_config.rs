@@ -299,7 +299,9 @@ pub enum TxTypeConfig {
         #[serde(default = "default_storage_slots_per_tx")]
         slots_per_tx: u32,
         /// Mean fraction of written slots that are fresh (0.0..=1.0); the rest overwrite
-        /// slots written earlier. Values below 1.0 call `writeStorage` instead of `fillStorage`.
+        /// slots written earlier. Values below 1.0 call `writeStorage` instead of `fillStorage`;
+        /// overwrites pick from the contract's earlier `writeStorage` fresh slots, so they spread
+        /// across the trie only once enough fresh slots exist (0.0 alone never adds any).
         #[serde(default = "default_storage_new_slot_ratio")]
         new_slot_ratio: f64,
     },
