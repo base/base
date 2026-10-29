@@ -33,6 +33,12 @@ impl DenimTimestampSchedule {
 
     /// Returns whether the absolute block number is in the Denim schedule.
     pub const fn is_denim_active_at_block(&self, block_number: u64) -> bool {
+        self.is_subsecond_active_at_block(block_number)
+    }
+
+    /// Whether this absolute block number uses the subsecond portion of the schedule.
+    /// The schedule's activation timestamp is resolved by the caller, not inferred from time.
+    pub const fn is_subsecond_active_at_block(&self, block_number: u64) -> bool {
         block_number.saturating_sub(self.genesis_block_number)
             >= self.denim_activation_block_number()
     }

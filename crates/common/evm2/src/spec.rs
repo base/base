@@ -1,6 +1,6 @@
 //! Base fork schedule for the EVM2 execution type family.
 
-use base_common_genesis::BaseUpgrade;
+use base_common_genesis::{BaseFeature, BaseUpgrade};
 use evm2::SpecId;
 
 /// A Base fork identifier for EVM2 execution.
@@ -22,6 +22,11 @@ impl BaseSpecId {
     /// Returns the wrapped Base network upgrade.
     pub const fn upgrade(self) -> BaseUpgrade {
         self.0
+    }
+
+    /// Whether this spec includes a behavior, using the execution upgrade ordering.
+    pub const fn is_feature_enabled(self, feature: BaseFeature) -> bool {
+        self.0.is_feature_enabled(feature)
     }
 }
 
