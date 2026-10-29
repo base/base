@@ -17,10 +17,16 @@ mod config;
 pub use config::{BaseEvmConfig, BaseExecutorProvider, BaseNextBlockEnvAttributes};
 
 mod env;
-pub use env::BaseEvmEnvBuilder;
+pub use env::{BaseEvmEnv, BaseEvmEnvBuilder};
 
 mod error;
-pub use error::{BaseBlockExecutionError, L1BlockInfoError};
+pub use error::{BaseBlockExecutionError, BaseInvalidTxError, L1BlockInfoError};
+
+mod executor;
+pub use executor::{BaseRethBlockExecutor, BaseRethBlockState, UpgradeActivations};
+
+mod factory;
+pub use factory::BaseBlockExecutorFactory;
 
 #[cfg(feature = "rpc")]
 mod forecast;
@@ -29,6 +35,3 @@ pub use forecast::BasePendingForecast;
 
 mod l1;
 pub use l1::*;
-
-mod receipts;
-pub use receipts::*;
