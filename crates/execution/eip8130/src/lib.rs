@@ -63,5 +63,13 @@ pub use transaction::{AppliedTransaction, TransactionAuthorizer};
 mod fee;
 pub use fee::{FeeCheck, FeeError};
 
+mod pipeline;
+pub use pipeline::{
+    Eip8130BlockContext, Eip8130Error, Eip8130FeeSplit, Eip8130Outcome, Eip8130Pipeline,
+};
+
+mod calls;
+pub use calls::{Eip8130CallFrame, Eip8130CallHost, Eip8130Calls, Eip8130CallsResult};
+
 #[cfg(test)]
 pub mod test_utils;
