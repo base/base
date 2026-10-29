@@ -31,7 +31,7 @@ use eyre::{Result, WrapErr};
 use futures::{StreamExt, stream};
 use serde::{Deserialize, Serialize};
 use tokio::process::Command;
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::{
     ANVIL_ACCOUNT_1, ANVIL_ACCOUNT_5, B20PrecompileClient, BlockExportWriter, CALIBRATION_FILE,
@@ -1245,14 +1245,19 @@ impl SnapshotBenchmarkArgs {
         if let (true, Some(start), Some(end)) =
             (targets_path.is_file(), summary.measurement_start_block, summary.measurement_end_block)
         {
-            let targets = fs::read_to_string(&targets_path)
-                .wrap_err_with(|| format!("failed to read {}", targets_path.display()))?;
-            let txs = TxProfile::measure(&builder_rpc, start, end).await?;
-            LocalBenchmarkArgs::write_json(
-                &self.output_dir.join(CALIBRATION_FILE),
-                &Calibration::compare(&targets, &txs)?,
-                "calibration",
-            )?;
+            // Calibration is a diagnostic; its failure must not discard the benchmark result.
+            let calibration = async {
+                let targets = fs::read_to_string(&targets_path)?;
+                let txs = TxProfile::measure(&builder_rpc, start, end).await?;
+                LocalBenchmarkArgs::write_json(
+                    &self.output_dir.join(CALIBRATION_FILE),
+                    &Calibration::compare(&targets, &txs)?,
+                    "calibration",
+                )
+            };
+            if let Err(error) = calibration.await {
+                warn!(%error, targets = %targets_path.display(), "skipping calibration report");
+            }
         }
 
         let result = SnapshotBenchmarkResult {
