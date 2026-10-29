@@ -18,6 +18,7 @@ use alloy_eips::{
 };
 use alloy_primitives::{Address, B256, Bytes, Signature, TxHash, TxKind, U256};
 use base_bundles::MeterBundleResponse;
+use base_clock::GlobalClock;
 use base_common_consensus::{
     BaseTransactionSigned, CoinbaseTip, EIP8130_TX_TYPE_ID, Eip8130Constants, Eip8130Signed,
     Predeploys,
@@ -33,8 +34,8 @@ use crate::estimated_da_size::DataAvailabilitySized;
 
 /// Returns current time as milliseconds since Unix epoch.
 pub fn unix_time_millis() -> u128 {
-    match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
-        Ok(dur) => dur.as_millis(),
+    match GlobalClock::get().now_unix_millis() {
+        Ok(millis) => millis,
         Err(err) => {
             tracing::warn!(error = %err, "system clock before Unix epoch, using 0 as timestamp");
             0
