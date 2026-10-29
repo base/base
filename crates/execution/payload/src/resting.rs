@@ -1,6 +1,7 @@
 //! Validity transactions resting under an unsatisfied predicate, carried across block builds.
 
 use std::{
+    collections::BTreeMap,
     sync::{Arc, mpsc},
     time::{Duration, Instant},
 };
@@ -17,10 +18,10 @@ use crate::{ParkedPredicateIndex, ValidityMetrics, ValidityPredicateKey};
 /// Blocks a member stays in the set after the last build that yielded it.
 ///
 /// Every state change wakes members whether or not the pool still yields them, so keeping a member
-/// longer only costs memory. Members are swept when a block whose number is a multiple of this
-/// finishes, so one that left the pool is dropped after between this many and twice this many
-/// blocks, two to four seconds at the 200ms block time Denim activates. The sweep walks every
-/// member, so it runs off the build path; see [`RestingPredicateStore::finish`].
+/// longer only costs memory. A member that left the pool is dropped when the block this many
+/// blocks after the last build that yielded it finishes, two seconds at the 200ms block time Denim
+/// activates. The sweep that drops it only visits the members filed that many blocks ago, and runs
+/// off the build path; see [`RestingPredicateStore::finish`].
 pub const RESTING_UNSEEN_RETAINED_BLOCKS: u64 = 10;
 
 /// Mode for holding back validity transactions that rest under an unchanged predicate.
@@ -58,6 +59,9 @@ pub struct RestingMember {
     pub rested_block: u64,
     /// Block whose build last yielded the transaction.
     pub seen_block: u64,
+    /// Block whose generation lists the member, so the sweep visits it once that block is
+    /// [`RESTING_UNSEEN_RETAINED_BLOCKS`] old.
+    filed_block: u64,
 }
 
 /// What [`RestingPredicates::begin_block`] did to the set.
@@ -91,6 +95,11 @@ pub struct RestingPredicates {
     /// Hash of the block whose final state the members were last checked against. `None` while a
     /// block is being built, so a build that does not finish cannot hand its members on.
     tip: Option<B256>,
+    /// Members by the block they are filed under. A member is filed under the block that rested
+    /// it, and re-filed under its latest seen block when the sweep finds it was seen since, so the
+    /// sweep only visits members old enough to drop. Entries for members that were removed or
+    /// re-filed since are stale and skipped.
+    generations: BTreeMap<u64, Vec<TxHash>>,
 }
 
 impl RestingPredicates {
@@ -101,6 +110,7 @@ impl RestingPredicates {
             ordered_threshold,
             block_number: 0,
             tip: None,
+            generations: BTreeMap::new(),
         }
     }
 
@@ -123,6 +133,7 @@ impl RestingPredicates {
             None => {
                 carry_over.reset = !self.index.is_empty();
                 self.index = ParkedPredicateIndex::new(self.ordered_threshold);
+                self.generations.clear();
             }
             Some(changes) => {
                 for hash in self.index.affected_by_transitions(changes).affected_transactions {
@@ -145,28 +156,61 @@ impl RestingPredicates {
         self.tip = Some(block_hash);
     }
 
-    /// Returns whether finishing the block being built is due an unseen sweep.
-    pub const fn sweep_due(&self) -> bool {
-        self.block_number.is_multiple_of(RESTING_UNSEEN_RETAINED_BLOCKS)
+    /// Returns whether finishing the block being built is due an unseen sweep, because some
+    /// members are filed under a block at least [`RESTING_UNSEEN_RETAINED_BLOCKS`] old.
+    pub fn sweep_due(&self) -> bool {
+        self.due_generation().is_some_and(|due| {
+            self.generations.first_key_value().is_some_and(|(filed, _)| *filed <= due)
+        })
+    }
+
+    /// Latest block whose generation is old enough to sweep.
+    const fn due_generation(&self) -> Option<u64> {
+        self.block_number.checked_sub(RESTING_UNSEEN_RETAINED_BLOCKS)
     }
 
     /// Drops members no build yielded in the last [`RESTING_UNSEEN_RETAINED_BLOCKS`] blocks and
     /// returns how many were dropped.
     ///
-    /// Walks every member, so builders run it through [`RestingPredicateStore::finish`] instead
-    /// of on the path between the forkchoice update and flashblock scheduling.
+    /// Only visits members filed under a block that is old enough: those not seen since are
+    /// dropped and the rest are re-filed under the block that last saw them. Run every block, it
+    /// costs about the members rested or re-filed in one block rather than the whole set.
+    /// Builders run it through [`RestingPredicateStore::finish`], off the path between the
+    /// forkchoice update and flashblock scheduling.
     pub fn sweep_unseen(&mut self) -> usize {
-        let oldest_seen = self.block_number.saturating_sub(RESTING_UNSEEN_RETAINED_BLOCKS);
+        let Some(due) = self.due_generation() else { return 0 };
         let span = debug_span!(
             target: "payload_builder",
             "resting_unseen_sweep",
             block_number = self.block_number,
+            visited = tracing::field::Empty,
             released = tracing::field::Empty,
         );
         let _entered = span.enter();
         let start = Instant::now();
-        let released = self.index.retain(|member| member.seen_block >= oldest_seen);
+        let (mut visited, mut released) = (0, 0);
+        while let Some(generation) = self.generations.first_entry() {
+            if *generation.key() > due {
+                break;
+            }
+            let (filed, hashes) = generation.remove_entry();
+            visited += hashes.len();
+            for hash in hashes {
+                let Some(member) = self.index.transaction_mut(hash) else { continue };
+                if member.filed_block != filed {
+                    continue;
+                }
+                if member.seen_block > due {
+                    member.filed_block = member.seen_block;
+                    self.generations.entry(member.seen_block).or_default().push(hash);
+                } else {
+                    self.index.remove(hash);
+                    released += 1;
+                }
+            }
+        }
         ValidityMetrics::record_resting_unseen_sweep(released, start.elapsed());
+        span.record("visited", visited);
         span.record("released", released);
         released
     }
@@ -180,9 +224,13 @@ impl RestingPredicates {
         if matches!(predicate, ValidityPredicate::FlashblockIndex { .. }) {
             return;
         }
-        let member =
-            RestingMember { rested_block: self.block_number, seen_block: self.block_number };
+        let member = RestingMember {
+            rested_block: self.block_number,
+            seen_block: self.block_number,
+            filed_block: self.block_number,
+        };
         self.index.park(transaction_hash, member, predicate);
+        self.generations.entry(self.block_number).or_default().push(transaction_hash);
     }
 
     /// Removes a member, returning whether it was present.
@@ -536,12 +584,14 @@ mod tests {
         assert!(resting.is_empty());
     }
 
-    /// Builds blocks `2..=last_block` on top of [`rested_in_parent`], holding `held` in each, and
-    /// finishes each one through `store`. Returns the set after `last_block`.
+    /// Builds blocks `2..=last_block` on top of [`rested_in_parent`], holding `held` in blocks up
+    /// to `held_through`, and finishes each one through `store`. Returns the set after
+    /// `last_block`.
     fn carry_through(
         store: &RestingPredicateStore,
         resting: RestingPredicates,
         held: &ValidityConditions,
+        held_through: u64,
         last_block: u64,
     ) -> RestingPredicates {
         store.put(store.finish(resting), PARENT);
@@ -550,7 +600,9 @@ mod tests {
             let mut resting = store.take(32);
             let carry_over = resting.begin_block(parent, block, Some(&TransitionState::default()));
             assert!(!carry_over.reset, "block {block} must follow the finished block");
-            assert_eq!(resting.hold(hash(0), held), Some(true));
+            if block <= held_through {
+                assert_eq!(resting.hold(hash(0), held), Some(true));
+            }
             parent = B256::with_last_byte(block as u8);
             store.put(store.finish(resting), parent);
         }
@@ -563,15 +615,29 @@ mod tests {
         let unseen = balance_at_least(UNRELATED, 1);
         let held = conditions(std::slice::from_ref(&seen));
         let store = RestingPredicateStore::default();
-        // A member last seen in block 1 survives the sweep that finishes block
-        // `RESTING_UNSEEN_RETAINED_BLOCKS` and is dropped by the one that finishes twice that.
+        let window = RESTING_UNSEEN_RETAINED_BLOCKS;
+        // A member last seen in block 1 is dropped when block 1 + window finishes.
         let rested = || rested_in_parent(&[seen.clone(), unseen.clone()]);
-        let resting =
-            carry_through(&store, rested(), &held, 2 * RESTING_UNSEEN_RETAINED_BLOCKS - 1);
-        assert_eq!(resting.len(), 2);
-        let resting = carry_through(&store, rested(), &held, 2 * RESTING_UNSEEN_RETAINED_BLOCKS);
+        assert_eq!(carry_through(&store, rested(), &held, u64::MAX, window).len(), 2);
+        let resting = carry_through(&store, rested(), &held, u64::MAX, 1 + window);
         assert_eq!(resting.len(), 1);
         assert!(resting.member(hash(0), &held).is_some());
+    }
+
+    #[test]
+    fn member_seen_after_it_was_filed_is_dropped_a_window_after_it_was_last_seen() {
+        let predicate = balance_at_least(WATCHED, 1);
+        let held = conditions(std::slice::from_ref(&predicate));
+        let store = RestingPredicateStore::default();
+        let window = RESTING_UNSEEN_RETAINED_BLOCKS;
+        let last_seen = 5;
+        let rested = || rested_in_parent(std::slice::from_ref(&predicate));
+        // The sweep at block 1 + window re-files the member under block 5 instead of dropping it.
+        assert_eq!(
+            carry_through(&store, rested(), &held, last_seen, last_seen + window - 1).len(),
+            1
+        );
+        assert!(carry_through(&store, rested(), &held, last_seen, last_seen + window).is_empty());
     }
 
     #[test]
