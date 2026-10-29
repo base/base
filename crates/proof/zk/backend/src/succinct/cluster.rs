@@ -599,7 +599,7 @@ impl ClusterZkProver {
 
         let stdin = self
             .provider
-            .generate_range_witness(request, "cluster")
+            .generate_range_witness(request)
             .await
             .map_err(|e| backend_error!("witness generation failed: {e}"))?;
 

@@ -131,7 +131,7 @@ impl DryRunZkProver {
         let witness_start = std::time::Instant::now();
         let stdin = self
             .provider
-            .generate_range_witness(request, "dry_run")
+            .generate_range_witness(request)
             .await
             .map_err(|e| backend_error!("witness generation failed: {e}"))?;
 

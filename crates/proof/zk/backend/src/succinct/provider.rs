@@ -161,10 +161,11 @@ impl OpSuccinctWitnessProvider {
     }
 
     /// Generate a range witness, using a pinned L1 head or calculating it from the sequence window.
+    ///
+    /// Log the backend selected by the request.
     pub async fn generate_range_witness(
         &self,
         request: &ZkProofRequest,
-        backend: &'static str,
     ) -> Result<SP1Stdin, WitnessError> {
         let params = Self::resolve(request, self.default_sequence_window);
         let resolved = params.as_ref().ok().copied();
@@ -176,7 +177,7 @@ impl OpSuccinctWitnessProvider {
         let l1_head_source = resolved.map(|params| params.l1_head.variant_name());
         let span = info_span!(
             "range_witness",
-            backend = %backend,
+            backend = %request.zk_backend,
             start_block = request.start_block_number,
             end_block,
             number_of_blocks = request.number_of_blocks_to_prove,
@@ -186,7 +187,7 @@ impl OpSuccinctWitnessProvider {
         );
         async {
             info!(
-                backend = %backend,
+                backend = %request.zk_backend,
                 start_block = request.start_block_number,
                 end_block,
                 number_of_blocks = request.number_of_blocks_to_prove,
@@ -212,7 +213,7 @@ impl OpSuccinctWitnessProvider {
             if let Err(error) = &result {
                 error!(
                     error = %error,
-                    backend = %backend,
+                    backend = %request.zk_backend,
                     start_block = request.start_block_number,
                     end_block,
                     number_of_blocks = request.number_of_blocks_to_prove,
@@ -410,7 +411,7 @@ mod tests {
         let _guard = tracing::subscriber::set_default(subscriber);
         let request = ZkProofRequest { start_block_number: u64::MAX - 9, ..request() };
 
-        let result = provider.generate_range_witness(&request, "cluster").await;
+        let result = provider.generate_range_witness(&request).await;
 
         assert!(matches!(result, Err(WitnessError::EndBlockOverflow)));
         let events = capture.events();
@@ -418,7 +419,7 @@ mod tests {
         assert_eq!(events[0]["level"], "ERROR");
         let fields = &events[0]["fields"];
         assert_eq!(fields["message"], "range witness generation failed");
-        assert_eq!(fields["backend"], "cluster");
+        assert_eq!(fields["backend"], request.zk_backend.as_str());
         assert_eq!(fields["start_block"], json!(18446744073709551606_u64));
         assert_eq!(fields["number_of_blocks"], 20);
         assert_eq!(fields["intermediate_block_interval"], "5");
@@ -438,7 +439,7 @@ mod tests {
         let _guard = tracing::subscriber::set_default(subscriber);
         let request = ZkProofRequest { start_block_number: u64::MAX - 9, ..request() };
 
-        let result = provider.generate_range_witness(&request, "cluster").await;
+        let result = provider.generate_range_witness(&request).await;
 
         assert!(matches!(result, Err(WitnessError::EndBlockOverflow)));
         let events = capture.events();
@@ -448,7 +449,7 @@ mod tests {
             events[0]["fields"],
             json!({
                 "message": "starting range witness generation",
-                "backend": "cluster",
+                "backend": request.zk_backend.as_str(),
                 "start_block": 18446744073709551606_u64,
                 "number_of_blocks": 20,
                 "intermediate_block_interval": "5",

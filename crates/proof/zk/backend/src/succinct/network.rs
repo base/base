@@ -304,7 +304,7 @@ impl NetworkZkProver {
     ) -> Result<String, ZkProverError> {
         let stdin = self
             .provider
-            .generate_range_witness(request, "network")
+            .generate_range_witness(request)
             .await
             .map_err(|e| backend_error!("witness generation failed: {e}"))?;
 
