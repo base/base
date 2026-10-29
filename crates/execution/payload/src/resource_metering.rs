@@ -18,7 +18,7 @@ use std::{collections::HashMap, fmt, fs, path::Path};
 
 use alloy_primitives::{Address, TxHash};
 use base_bundles::{MeterBundleResponse, OpcodeGas};
-use revm::state::EvmState;
+use evm2::evm::AccountChanges;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -197,8 +197,8 @@ impl ResourceSample {
 
     /// Accounts whose balance, nonce, or code changed from the original info.
     ///
-    /// revm 42 `Account::is_changed()` compares `AccountInfo` only. Storage-only
-    /// writes do not set it; those are [`Self::STATE_CHANGED_STORAGE_SLOT`],
+    /// Only the account info is compared. Storage-only
+    /// writes do not count; those are [`Self::STATE_CHANGED_STORAGE_SLOT`],
     /// [`Self::STATE_NEW_STORAGE_SLOT`], and
     /// [`Self::STATE_CLEARED_STORAGE_SLOT`]. Touch without an info change is
     /// [`Self::STATE_TOUCHED_ACCOUNT`].
@@ -230,9 +230,9 @@ impl ResourceSample {
     /// `STATE_*` rows. Other simulated opcode and precompile rows are kept.
     /// Production execution does not attach opcode bags. Only `STATE_*` counts
     /// that `schedule` prices are added, since the others cannot change its usage.
-    pub fn from_execution(
+    pub fn from_execution<'a>(
         gas_used: u64,
-        state: &EvmState,
+        changes: impl IntoIterator<Item = AccountChanges<'a>>,
         simulated: Option<&Self>,
         schedule: &ResourceMeteringSchedule,
     ) -> Self {
@@ -250,14 +250,14 @@ impl ResourceSample {
         let mut cleared_slots = 0;
         let mut touched_accounts = 0;
         let mut changed_accounts = 0;
-        for account in state.values() {
-            touched_accounts += u64::from(account.is_touched());
-            changed_accounts += u64::from(account.is_changed());
-            for slot in account.storage.values() {
-                let original_is_zero = slot.original_value().is_zero();
-                let present_is_zero = slot.present_value().is_zero();
+        for account in changes {
+            touched_accounts += u64::from(account.touched);
+            changed_accounts += u64::from(Self::is_info_changed(&account));
+            for (_, slot) in account.storage.changed_slots() {
+                let original_is_zero = slot.original.is_zero();
+                let present_is_zero = slot.current.is_zero();
                 new_slots += u64::from(original_is_zero && !present_is_zero);
-                changed_slots += u64::from(slot.is_changed());
+                changed_slots += 1;
                 cleared_slots += u64::from(!original_is_zero && present_is_zero);
             }
         }
@@ -272,6 +272,16 @@ impl ResourceSample {
             }
         }
         Self { gas_used, operations }
+    }
+
+    /// Returns whether the account's balance, nonce, or code changed, reading an absent account
+    /// as empty.
+    fn is_info_changed(account: &AccountChanges<'_>) -> bool {
+        match (account.original, account.current) {
+            (Some(original), Some(current)) => original != current,
+            (None, None) => false,
+            (Some(info), None) | (None, Some(info)) => !info.is_empty(),
+        }
     }
 
     fn push_count(operations: &mut Vec<OpcodeGas>, name: &'static str, count: u64) {
@@ -805,9 +815,10 @@ impl ResourceMeteringSchedule {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, U256};
-    use revm::state::{Account, EvmStorageSlot, TransactionId};
+    use evm2::evm::AccountInfo;
 
     use super::*;
+    use crate::validity::test_utils::ChangedAccount;
 
     fn operation(name: &str, gas_used_weight: u64, count_cost: u64) -> ResourceMeteringOperation {
         ResourceMeteringOperation { name: name.to_string(), gas_used_weight, count_cost }
@@ -1108,24 +1119,25 @@ mod tests {
         assert!(!decision.should_exclude());
     }
 
-    fn state_with_slots(slots: &[(U256, U256, U256)]) -> EvmState {
-        state_with_account(Address::ZERO, Account::default(), slots)
+    type TestState = Vec<(Address, ChangedAccount)>;
+
+    fn changes(state: &TestState) -> impl Iterator<Item = AccountChanges<'_>> {
+        state.iter().map(|(address, account)| account.changes(*address))
+    }
+
+    fn state_with_slots(slots: &[(U256, U256, U256)]) -> TestState {
+        state_with_account(Address::ZERO, ChangedAccount::default(), slots)
     }
 
     fn state_with_account(
         address: Address,
-        mut account: Account,
+        mut account: ChangedAccount,
         slots: &[(U256, U256, U256)],
-    ) -> EvmState {
+    ) -> TestState {
         for (key, original, present) in slots {
-            account.storage.insert(
-                *key,
-                EvmStorageSlot::new_changed(*original, *present, TransactionId::ZERO),
-            );
+            account = account.with_slot(*key, *original, *present);
         }
-        let mut state = EvmState::default();
-        state.insert(address, account);
-        state
+        vec![(address, account)]
     }
 
     fn operation_count(sample: &ResourceSample, name: &str) -> Option<u64> {
@@ -1143,8 +1155,9 @@ mod tests {
             .unwrap()
     }
 
-    fn state_effect_count(state: &EvmState, name: &str) -> u64 {
-        let sample = ResourceSample::from_execution(21_000, state, None, &state_effect_schedule());
+    fn state_effect_count(state: &TestState, name: &str) -> u64 {
+        let sample =
+            ResourceSample::from_execution(21_000, changes(state), None, &state_effect_schedule());
         operation_count(&sample, name).unwrap_or_default()
     }
 
@@ -1163,7 +1176,7 @@ mod tests {
             (U256::from(1), U256::ZERO, U256::from(1)),
             (U256::from(2), U256::ZERO, U256::from(1)),
         ]);
-        let sample = ResourceSample::from_execution(21_000, &state, None, &compiled);
+        let sample = ResourceSample::from_execution(21_000, changes(&state), None, &compiled);
         assert_eq!(
             compiled.evaluate(sample.gas_used, &sample.operations).unwrap(),
             ResourceMeteringUsage { values: vec![20] }
@@ -1191,44 +1204,35 @@ mod tests {
 
     #[test]
     fn ignores_loaded_but_unwritten_slots_and_accounts() {
-        let mut account = Account::default();
-        account
-            .storage
-            .insert(U256::from(1), EvmStorageSlot::new(U256::from(5), TransactionId::ZERO));
-        let mut state = EvmState::default();
-        state.insert(Address::ZERO, account);
+        let state = state_with_slots(&[(U256::from(1), U256::from(5), U256::from(5))]);
 
         assert_eq!(state_effect_count(&state, ResourceSample::STATE_NEW_STORAGE_SLOT), 0);
         assert_eq!(state_effect_count(&state, ResourceSample::STATE_CHANGED_STORAGE_SLOT), 0);
         assert_eq!(state_effect_count(&state, ResourceSample::STATE_CLEARED_STORAGE_SLOT), 0);
         assert_eq!(state_effect_count(&state, ResourceSample::STATE_TOUCHED_ACCOUNT), 0);
         assert_eq!(state_effect_count(&state, ResourceSample::STATE_CHANGED_ACCOUNT), 0);
-        let sample = ResourceSample::from_execution(21_000, &state, None, &state_effect_schedule());
+        let sample =
+            ResourceSample::from_execution(21_000, changes(&state), None, &state_effect_schedule());
         assert!(sample.operations.is_empty());
     }
 
     #[test]
     fn counts_touched_and_changed_accounts_without_journal_loads() {
-        let mut loaded = Account::default();
-        loaded
-            .storage
-            .insert(U256::from(1), EvmStorageSlot::new(U256::from(5), TransactionId::ZERO));
+        let loaded =
+            ChangedAccount::default().with_slot(U256::from(1), U256::from(5), U256::from(5));
+        let touched = ChangedAccount::default().touched();
+        let changed = ChangedAccount::balance(0, 1);
+        let both = ChangedAccount {
+            current: AccountInfo::default().with_nonce(1),
+            ..ChangedAccount::default().touched()
+        };
 
-        let mut touched = Account::default();
-        touched.mark_touch();
-
-        let mut changed = Account::default();
-        changed.info.balance = U256::from(1);
-
-        let mut both = Account::default();
-        both.mark_touch();
-        both.info.nonce = 1;
-
-        let mut state = EvmState::default();
-        state.insert(Address::repeat_byte(0x01), loaded);
-        state.insert(Address::repeat_byte(0x02), touched);
-        state.insert(Address::repeat_byte(0x03), changed);
-        state.insert(Address::repeat_byte(0x04), both);
+        let state = vec![
+            (Address::repeat_byte(0x01), loaded),
+            (Address::repeat_byte(0x02), touched),
+            (Address::repeat_byte(0x03), changed),
+            (Address::repeat_byte(0x04), both),
+        ];
 
         assert_eq!(state_effect_count(&state, ResourceSample::STATE_TOUCHED_ACCOUNT), 2);
         assert_eq!(state_effect_count(&state, ResourceSample::STATE_CHANGED_ACCOUNT), 2);
@@ -1246,8 +1250,7 @@ mod tests {
                 opcode_gas(ResourceSample::STATE_TOUCHED_ACCOUNT, 7, 0),
             ],
         };
-        let mut account = Account::default();
-        account.mark_touch();
+        let account = ChangedAccount::default().touched();
         let state = state_with_account(
             Address::ZERO,
             account,
@@ -1258,7 +1261,7 @@ mod tests {
         );
         let sample = ResourceSample::from_execution(
             21_000,
-            &state,
+            changes(&state),
             Some(&simulated),
             &state_effect_schedule(),
         );
@@ -1293,7 +1296,7 @@ mod tests {
             (U256::from(5), U256::ZERO, U256::from(1)),
             (U256::from(6), U256::ZERO, U256::from(1)),
         ]);
-        let sample = ResourceSample::from_execution(21_000, &state, None, &compiled);
+        let sample = ResourceSample::from_execution(21_000, changes(&state), None, &compiled);
         let decision = compiled.decide_sample(&sample, &[]);
         assert!(matches!(
             decision,
@@ -1538,8 +1541,7 @@ mod tests {
 
     #[test]
     fn mark_touch_and_storage_slot_changes_do_not_count_as_changed_account() {
-        let mut account = Account::default();
-        account.mark_touch();
+        let account = ChangedAccount::default().touched();
         let state = state_with_account(
             Address::ZERO,
             account,
@@ -1550,7 +1552,8 @@ mod tests {
         assert_eq!(state_effect_count(&state, ResourceSample::STATE_CHANGED_STORAGE_SLOT), 1);
         assert_eq!(state_effect_count(&state, ResourceSample::STATE_CHANGED_ACCOUNT), 0);
 
-        let sample = ResourceSample::from_execution(21_000, &state, None, &state_effect_schedule());
+        let sample =
+            ResourceSample::from_execution(21_000, changes(&state), None, &state_effect_schedule());
         assert_eq!(operation_count(&sample, ResourceSample::STATE_TOUCHED_ACCOUNT), Some(1));
         assert_eq!(operation_count(&sample, ResourceSample::STATE_CHANGED_STORAGE_SLOT), Some(1));
         assert!(operation_count(&sample, ResourceSample::STATE_CHANGED_ACCOUNT).is_none());
@@ -1565,8 +1568,7 @@ mod tests {
                 opcode_gas(ResourceSample::STATE_CHANGED_STORAGE_SLOT, 99, 0),
             ],
         };
-        let mut account = Account::default();
-        account.mark_touch();
+        let account = ChangedAccount::default().touched();
         let state = state_with_account(
             Address::ZERO,
             account,
@@ -1574,7 +1576,7 @@ mod tests {
         );
         let sample = ResourceSample::from_execution(
             21_000,
-            &state,
+            changes(&state),
             Some(&simulated),
             &state_effect_schedule(),
         );

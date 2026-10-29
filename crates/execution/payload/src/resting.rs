@@ -4,8 +4,9 @@ use std::sync::Arc;
 
 use alloy_primitives::{B256, TxHash};
 use base_execution_txpool::{PredicateContext, ValidityConditions, ValidityPredicate};
+use evm2::evm::AccountChanges;
 use parking_lot::Mutex;
-use revm::{database::TransitionState, state::EvmState};
+use reth_execution_types::StateUpdate;
 
 use crate::{ParkedPredicateIndex, ValidityPredicateKey};
 
@@ -114,7 +115,7 @@ impl RestingPredicates {
         &mut self,
         parent_hash: B256,
         block_number: u64,
-        pre_block_changes: Option<&TransitionState>,
+        pre_block_changes: Option<&[StateUpdate]>,
     ) -> RestingCarryOver {
         let mut carry_over = RestingCarryOver::default();
         let follows_parent = self.tip.take() == Some(parent_hash);
@@ -124,7 +125,7 @@ impl RestingPredicates {
                 self.index = ParkedPredicateIndex::new(self.ordered_threshold);
             }
             Some(changes) => {
-                for hash in self.index.affected_by_transitions(changes).affected_transactions {
+                for hash in self.index.affected_by_updates(changes).affected_transactions {
                     carry_over.released_by_state += usize::from(self.index.remove(hash).is_some());
                 }
                 for hash in self.index.transactions_blocked_by(ValidityPredicateKey::BlockNumber) {
@@ -224,13 +225,16 @@ impl RestingPredicates {
                 || !conditions.is_expired(&PredicateContext { block_number, flashblock_index: 0 }))
     }
 
-    /// Returns members whose predicate may have changed in `state`, one committed transaction's
-    /// changes. Callers remove them with [`Self::remove`] once the commit is applied.
-    pub fn woken_by_state(&self, state: &EvmState) -> Vec<TxHash> {
+    /// Returns members whose predicate may have changed in `changes`, one committed transaction's
+    /// account changes. Callers remove them with [`Self::remove`] once the commit is applied.
+    pub fn woken_by_state<'a>(
+        &self,
+        changes: impl IntoIterator<Item = AccountChanges<'a>>,
+    ) -> Vec<TxHash> {
         if self.index.is_empty() {
             return Vec::new();
         }
-        self.index.affected_by_state(state).affected_transactions
+        self.index.affected_by_state(changes).affected_transactions
     }
 
     /// Returns whether the set has no members.
@@ -270,12 +274,12 @@ impl RestingPredicateStore {
 mod tests {
     use alloy_primitives::{Address, U256};
     use base_execution_txpool::ValidityOperator;
-    use revm::{
-        database::{AccountStatus, TransitionAccount, TransitionState, states::StorageSlot},
-        state::{Account, AccountInfo},
-    };
+    use evm2::evm::AccountInfo;
+    use reth_execution_types::AccountUpdate;
+    use reth_trie_common::bundle_state::StorageSlot;
 
     use super::*;
+    use crate::validity::test_utils::ChangedAccount;
 
     const WATCHED: Address = Address::repeat_byte(0xaa);
     const UNRELATED: Address = Address::repeat_byte(0xbb);
@@ -308,44 +312,41 @@ mod tests {
         TxHash::repeat_byte(byte)
     }
 
-    fn balance_transition(address: Address, old: u64, new: u64) -> TransitionState {
-        let account =
-            |balance: u64| AccountInfo { balance: U256::from(balance), ..Default::default() };
-        TransitionState::single(
+    fn balance_update(address: Address, old: u64, new: u64) -> AccountUpdate {
+        let account = |balance: u64| AccountInfo::default().with_balance(U256::from(balance));
+        AccountUpdate {
             address,
-            TransitionAccount {
-                info: Some(account(new)),
-                status: AccountStatus::Changed,
-                previous_info: Some(account(old)),
-                previous_status: AccountStatus::Loaded,
-                storage: Default::default(),
-                storage_was_destroyed: false,
-            },
-        )
+            original: Some(account(old)),
+            current: Some(account(new)),
+            created: false,
+            wiped: false,
+            storage: Vec::new(),
+        }
     }
 
-    fn storage_transition(address: Address, slot: u64, old: u64, new: u64) -> TransitionState {
-        let mut storage = alloy_primitives::map::HashMap::default();
-        storage
-            .insert(U256::from(slot), StorageSlot::new_changed(U256::from(old), U256::from(new)));
-        TransitionState::single(
+    fn storage_update(address: Address, slot: u64, old: u64, new: u64) -> AccountUpdate {
+        AccountUpdate {
             address,
-            TransitionAccount {
-                info: Some(AccountInfo::default()),
-                status: AccountStatus::Changed,
-                previous_info: Some(AccountInfo::default()),
-                previous_status: AccountStatus::Loaded,
-                storage,
-                storage_was_destroyed: false,
-            },
-        )
+            original: Some(AccountInfo::default()),
+            current: Some(AccountInfo::default()),
+            created: false,
+            wiped: false,
+            storage: vec![(
+                U256::from(slot),
+                StorageSlot::new_changed(U256::from(old), U256::from(new)),
+            )],
+        }
+    }
+
+    fn commits(accounts: impl IntoIterator<Item = AccountUpdate>) -> Vec<StateUpdate> {
+        accounts.into_iter().map(|account| StateUpdate { accounts: vec![account] }).collect()
     }
 
     /// A set that rested `predicates` (one transaction each) in block 1 and finished it as
     /// [`PARENT`].
     fn rested_in_parent(predicates: &[ValidityPredicate]) -> RestingPredicates {
         let mut resting = RestingPredicates::new(32);
-        resting.begin_block(B256::ZERO, 1, Some(&TransitionState::default()));
+        resting.begin_block(B256::ZERO, 1, Some(&[]));
         for (index, predicate) in predicates.iter().enumerate() {
             resting.rest(hash(index as u8), predicate.clone());
         }
@@ -358,7 +359,7 @@ mod tests {
         let predicate = balance_at_least(WATCHED, 1);
         let mut resting = rested_in_parent(std::slice::from_ref(&predicate));
 
-        let carry_over = resting.begin_block(PARENT, 2, Some(&TransitionState::default()));
+        let carry_over = resting.begin_block(PARENT, 2, Some(&[]));
 
         assert_eq!(carry_over, RestingCarryOver { carried: 1, ..Default::default() });
         assert_eq!(resting.hold(hash(0), &conditions(&[predicate])), Some(true));
@@ -369,7 +370,7 @@ mod tests {
         let predicate = balance_at_least(WATCHED, 1);
         let mut resting = rested_in_parent(std::slice::from_ref(&predicate));
 
-        let carry_over = resting.begin_block(BUILT, 2, Some(&TransitionState::default()));
+        let carry_over = resting.begin_block(BUILT, 2, Some(&[]));
 
         assert!(carry_over.reset);
         assert_eq!(carry_over.carried, 0);
@@ -387,10 +388,10 @@ mod tests {
     #[test]
     fn unfinished_block_does_not_hand_on_its_members() {
         let mut resting = rested_in_parent(&[balance_at_least(WATCHED, 1)]);
-        resting.begin_block(PARENT, 2, Some(&TransitionState::default()));
+        resting.begin_block(PARENT, 2, Some(&[]));
 
         // Block 2 is never finished, so block 3 cannot trust the set even on a matching hash.
-        assert!(resting.begin_block(PARENT, 3, Some(&TransitionState::default())).reset);
+        assert!(resting.begin_block(PARENT, 3, Some(&[])).reset);
     }
 
     #[test]
@@ -398,8 +399,7 @@ mod tests {
         let watched = balance_at_least(WATCHED, 1);
         let unrelated = storage_equals(UNRELATED, 7, 1);
         let mut resting = rested_in_parent(&[watched.clone(), unrelated.clone()]);
-        let mut changes = balance_transition(WATCHED, 0, 5);
-        changes.transitions.extend(storage_transition(UNRELATED, 8, 0, 1).transitions);
+        let changes = commits([balance_update(WATCHED, 0, 5), storage_update(UNRELATED, 8, 0, 1)]);
 
         let carry_over = resting.begin_block(PARENT, 2, Some(&changes));
 
@@ -414,10 +414,28 @@ mod tests {
         let mut resting = rested_in_parent(std::slice::from_ref(&predicate));
 
         let carry_over =
-            resting.begin_block(PARENT, 2, Some(&storage_transition(WATCHED, 7, 0, 1)));
+            resting.begin_block(PARENT, 2, Some(&commits([storage_update(WATCHED, 7, 0, 1)])));
 
         assert_eq!(carry_over.released_by_state, 1);
         assert!(resting.is_empty());
+    }
+
+    #[test]
+    fn pre_block_writes_restored_before_the_selection_loop_release_nothing() {
+        let balance = balance_at_least(WATCHED, 1);
+        let storage = storage_equals(UNRELATED, 7, 1);
+        let mut resting = rested_in_parent(&[balance, storage]);
+        let changes = commits([
+            balance_update(WATCHED, 0, 5),
+            storage_update(UNRELATED, 7, 0, 1),
+            balance_update(WATCHED, 5, 0),
+            storage_update(UNRELATED, 7, 1, 0),
+        ]);
+
+        let carry_over = resting.begin_block(PARENT, 2, Some(&changes));
+
+        assert_eq!(carry_over.released_by_state, 0);
+        assert_eq!(resting.len(), 2);
     }
 
     #[test]
@@ -428,7 +446,7 @@ mod tests {
         };
         let mut resting = rested_in_parent(&[not_yet]);
 
-        let carry_over = resting.begin_block(PARENT, 2, Some(&TransitionState::default()));
+        let carry_over = resting.begin_block(PARENT, 2, Some(&[]));
 
         assert_eq!(carry_over.released_by_block_number, 1);
         assert!(resting.is_empty());
@@ -446,9 +464,7 @@ mod tests {
         let last_block = 1 + 2 * RESTING_UNSEEN_RETAINED_BLOCKS;
         let mut released_unseen = 0;
         for block in 2..=last_block {
-            released_unseen += resting
-                .begin_block(parent, block, Some(&TransitionState::default()))
-                .released_unseen;
+            released_unseen += resting.begin_block(parent, block, Some(&[])).released_unseen;
             assert_eq!(resting.hold(hash(0), &watched), Some(true));
             parent = B256::with_last_byte(block as u8);
             resting.end_block(parent);
@@ -461,7 +477,7 @@ mod tests {
     #[test]
     fn readded_hash_without_the_recorded_predicate_is_not_a_member() {
         let mut resting = rested_in_parent(&[balance_at_least(WATCHED, 1)]);
-        resting.begin_block(PARENT, 2, Some(&TransitionState::default()));
+        resting.begin_block(PARENT, 2, Some(&[]));
 
         assert!(resting.member(hash(0), &conditions(&[balance_at_least(UNRELATED, 1)])).is_none());
     }
@@ -474,7 +490,7 @@ mod tests {
             value: U256::ONE,
         };
         let mut resting = rested_in_parent(std::slice::from_ref(&blocker));
-        resting.begin_block(PARENT, 2, Some(&TransitionState::default()));
+        resting.begin_block(PARENT, 2, Some(&[]));
 
         assert!(resting.member(hash(0), &conditions(&[deadline, blocker])).is_none());
     }
@@ -483,10 +499,9 @@ mod tests {
     fn committed_state_wakes_members_reading_it() {
         let predicate = balance_at_least(WATCHED, 1);
         let resting = rested_in_parent(std::slice::from_ref(&predicate));
-        let mut account = Account::default();
-        account.info.balance = U256::from(3);
+        let account = ChangedAccount::balance(0, 3);
 
-        assert_eq!(resting.woken_by_state(&EvmState::from_iter([(WATCHED, account)])), [hash(0)]);
+        assert_eq!(resting.woken_by_state([account.changes(WATCHED)]), [hash(0)]);
     }
 
     #[test]
@@ -503,7 +518,7 @@ mod tests {
     fn store_hands_the_set_to_the_next_job() {
         let store = RestingPredicateStore::default();
         let mut resting = store.take(32);
-        resting.begin_block(B256::ZERO, 1, Some(&TransitionState::default()));
+        resting.begin_block(B256::ZERO, 1, Some(&[]));
         resting.rest(hash(0), balance_at_least(WATCHED, 1));
         resting.end_block(PARENT);
         store.put(resting);
