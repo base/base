@@ -73,15 +73,8 @@ where
         // Install the prometheus recorder to be sure to record all metrics
         install_prometheus_recorder();
 
-        let components = |spec: Arc<BaseChainSpec>| {
-            (
-                BaseExecutorProvider::base(Arc::clone(&spec)),
-                Arc::new(BaseBeaconConsensus::new(spec)),
-            )
-        };
-
-        match self.cli.command {
-            Commands::Node(command) => {
+        match self.cli.command.split_node() {
+            Ok(command) => {
                 // Validate RPC modules using the configured validator
                 if let Some(http_api) = &command.rpc.http_api {
                     Rpc::validate_selection(http_api, "http.api").map_err(|e| eyre!("{e}"))?;
@@ -92,43 +85,7 @@ where
 
                 runner.run_command_until_exit(|ctx| command.execute(ctx, launcher))
             }
-            Commands::Init(command) => {
-                let runtime = runner.runtime();
-                runner.run_blocking_until_ctrl_c(command.execute::<BaseNode>(runtime))
-            }
-            Commands::InitState(command) => {
-                let runtime = runner.runtime();
-                runner.run_blocking_until_ctrl_c(command.execute::<BaseNode>(runtime))
-            }
-            Commands::DumpGenesis(command) => runner.run_blocking_until_ctrl_c(command.execute()),
-            Commands::Db(command) => {
-                runner.run_blocking_command_until_exit(|ctx| command.execute::<BaseNode>(ctx))
-            }
-            Commands::Stage(command) => {
-                runner.run_command_until_exit(|ctx| command.execute::<BaseNode, _>(ctx, components))
-            }
-            Commands::P2P(command) => runner.run_until_ctrl_c(command.execute::<BaseNode>()),
-            Commands::Config(command) => runner.run_until_ctrl_c(command.execute()),
-            Commands::Prune(command) => {
-                runner.run_command_until_exit(|ctx| command.execute::<BaseNode>(ctx))
-            }
-            #[cfg(feature = "dev")]
-            Commands::TestVectors(command) => runner.run_until_ctrl_c(command.execute()),
-            Commands::ReExecute(command) => {
-                let runtime = runner.runtime();
-                runner.run_until_ctrl_c(command.execute::<BaseNode>(components, runtime))
-            }
-            Commands::BaseProofs(command) => {
-                let runtime = runner.runtime();
-                runner.run_blocking_until_ctrl_c(command.execute::<BaseNode>(runtime))
-            }
-            Commands::SnapshotManifest(command) => {
-                command.execute()?;
-                Ok(())
-            }
-            Commands::Download(command) => {
-                runner.run_blocking_until_ctrl_c(command.execute::<BaseNode>())
-            }
+            Err(command) => command.run(runner),
         }
     }
 
@@ -168,5 +125,60 @@ where
             }
         }
         Ok(())
+    }
+}
+
+impl Commands {
+    /// Runs every command except `node`, which needs the launcher passed to [`CliApp::run`].
+    ///
+    /// Not generic over the CLI extension or RPC validator, so it compiles once.
+    pub fn run(self: Box<Self>, runner: CliRunner) -> Result<()> {
+        let components = |spec: Arc<BaseChainSpec>| {
+            (
+                BaseExecutorProvider::base(Arc::clone(&spec)),
+                Arc::new(BaseBeaconConsensus::new(spec)),
+            )
+        };
+
+        match *self {
+            Self::Node(_) => Err(eyre!("the `node` command must be run through `CliApp::run`")),
+            Self::Init(command) => {
+                let runtime = runner.runtime();
+                runner.run_blocking_until_ctrl_c(command.execute::<BaseNode>(runtime))
+            }
+            Self::InitState(command) => {
+                let runtime = runner.runtime();
+                runner.run_blocking_until_ctrl_c(command.execute::<BaseNode>(runtime))
+            }
+            Self::DumpGenesis(command) => runner.run_blocking_until_ctrl_c(command.execute()),
+            Self::Db(command) => {
+                runner.run_blocking_command_until_exit(|ctx| command.execute::<BaseNode>(ctx))
+            }
+            Self::Stage(command) => {
+                runner.run_command_until_exit(|ctx| command.execute::<BaseNode, _>(ctx, components))
+            }
+            Self::P2P(command) => runner.run_until_ctrl_c(command.execute::<BaseNode>()),
+            Self::Config(command) => runner.run_until_ctrl_c(command.execute()),
+            Self::Prune(command) => {
+                runner.run_command_until_exit(|ctx| command.execute::<BaseNode>(ctx))
+            }
+            #[cfg(feature = "dev")]
+            Self::TestVectors(command) => runner.run_until_ctrl_c(command.execute()),
+            Self::ReExecute(command) => {
+                let runtime = runner.runtime();
+                runner.run_until_ctrl_c(command.execute::<BaseNode>(components, runtime))
+            }
+            Self::BaseProofs(command) => {
+                let runtime = runner.runtime();
+                runner.run_blocking_until_ctrl_c(command.execute::<BaseNode>(runtime))
+            }
+            Self::SnapshotManifest(command) => {
+                command.execute()?;
+                Ok(())
+            }
+            Self::Download(command) => {
+                runner.run_blocking_until_ctrl_c(command.execute::<BaseNode>())
+            }
+        }
     }
 }
