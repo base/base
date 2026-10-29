@@ -174,6 +174,9 @@ impl WorkloadGenerator {
                         weight_pct,
                     );
                 }
+                TxType::UniswapV3Liquidity(payload) => {
+                    generator = generator.with_payload(payload.clone(), weight_pct);
+                }
             }
         }
 

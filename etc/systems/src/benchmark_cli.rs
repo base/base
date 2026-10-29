@@ -647,6 +647,7 @@ impl LocalBenchmarkArgs {
                 | TxTypeConfig::DoubleCounter { .. }
                 | TxTypeConfig::Precompile { .. }
                 | TxTypeConfig::Osaka { .. }
+                | TxTypeConfig::UniswapV3Liquidity(_)
                 | TxTypeConfig::B20 => {}
             }
         }

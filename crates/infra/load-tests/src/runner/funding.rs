@@ -613,7 +613,8 @@ impl LoadRunner {
                 | TxType::DoubleCounter { .. }
                 | TxType::B20
                 | TxType::Precompile { .. }
-                | TxType::Osaka { .. } => {}
+                | TxType::Osaka { .. }
+                | TxType::UniswapV3Liquidity(_) => {}
             }
         }
         tokens.into_iter().collect()
@@ -626,6 +627,9 @@ impl LoadRunner {
             match &tx_config.tx_type {
                 TxType::UniswapV3 { router, .. } | TxType::AerodromeCl { router, .. } => {
                     routers.insert(*router);
+                }
+                TxType::UniswapV3Liquidity(payload) => {
+                    routers.insert(payload.position_manager);
                 }
                 TxType::Transfer
                 | TxType::Eip8430Transfer

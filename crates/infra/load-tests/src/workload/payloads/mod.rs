@@ -39,6 +39,11 @@ pub use looper::PrecompileLooper;
 mod uniswap;
 pub use uniswap::{UniswapV3Hop, UniswapV3Payload};
 
+mod uniswap_liquidity;
+pub use uniswap_liquidity::{
+    LiquidityOps, SenderPosition, UniswapPositions, UniswapV3LiquidityPayload,
+};
+
 mod aerodrome;
 pub use aerodrome::AerodromeClPayload;
 

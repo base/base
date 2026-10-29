@@ -187,6 +187,7 @@ fn validate_real_token_pair_matches_swaps(
                 })?;
                 (token_in, token_out)
             }
+            TxTypeConfig::UniswapV3Liquidity(payload) => (payload.token0, payload.token1),
             TxTypeConfig::Transfer
             | TxTypeConfig::Eip8430Transfer
             | TxTypeConfig::Calldata { .. }

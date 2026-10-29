@@ -422,6 +422,22 @@ On `uniswap_v3`, `reverse_amounts: auto` instead derives the reverse range befor
   #   fee: 100
 ```
 
+#### Uniswap V3 liquidity testing
+
+`type: uniswap_v3_liquidity` sends Uniswap V3 `NonfungiblePositionManager` transactions on a real pool and requires `real_token_setup` for the pool's two tokens. Setup reads the pool's current tick, fixes a range of 100 tick spacings on each side, and mints each sender one position holding 64 increases' worth of liquidity. The run then mixes, by `ops` weight: `mint` (a new position, new storage), `increase` and `decrease` (one increase's worth of liquidity on the sender's setup position), `collect` (owed tokens back to the sender), and `multicall` (all four in one transaction). `decrease` may not outweigh `increase`, so setup positions do not empty. `amount0` and `amount1` cap the tokens added per mint or increase; the pool takes them in its current ratio, and only mints keep tokens out of the sender's balance.
+
+```yaml
+  - weight: 100
+    type: uniswap_v3_liquidity
+    position_manager: "0x03a520b32C04BF3bEEf7BEb72E919cf822Ed34f1" # Base mainnet
+    token0: "0x4200000000000000000000000000000000000006" # WETH; token0 must sort below token1
+    token1: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" # USDC, public token address: gitleaks:allow
+    fee: 500
+    amount0: "10000000000000" # WETH wei
+    amount1: "23000" # USDC raw units
+    ops: {mint: 1, increase: 1, decrease: 1, collect: 1} # default; listed ops only, others 0
+```
+
 #### Running multiple load tests
 
 - Tune `target_gps`, `block_time`, and sender count appropriately. Omit `target_gps` to keep one
