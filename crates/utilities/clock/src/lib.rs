@@ -8,3 +8,6 @@ pub use system::SystemClock;
 
 mod offset;
 pub use offset::OffsetClock;
+
+mod global;
+pub use global::{GlobalClock, SetClockError};
