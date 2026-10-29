@@ -12,13 +12,13 @@ use std::{
 use alloy_consensus::{BlockHeader, Transaction, constants::KECCAK_EMPTY};
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, B256, LogData, U256, map::AddressSet};
-use base_common_chains::{BaseUpgrade, Upgrades};
+use base_common_chains::{BaseUpgrade, BaseUpgradeExt, Upgrades};
 use base_common_consensus::{
     BaseTimeUpdateTx, Eip8130Constants, Eip8130Contracts, Eip8130Signed, Eip8130StructuralError,
     Eip8130Structure, Eip8130TimestampError,
 };
-use base_common_evm::{BaseSpecId, L1BlockInfo};
 use base_common_genesis::DaFootprintGasScalarUpdate;
+use base_common_l1_fees::L1FeeParams;
 use base_common_precompiles::NonceManagerStorage;
 use base_execution_eip8130::{
     AccountConfigurationStorage, AccountState, ApplyError, AuthorizeError, FeeCheck, IntrinsicGas,
@@ -26,7 +26,8 @@ use base_execution_eip8130::{
     TransactionAuthorizer, TxAuthError,
 };
 use base_precompile_storage::{
-    BasePrecompileError, PrecompileStorageProvider, StorageCtx, validate_loaded_code_presence,
+    AccountInfo, BasePrecompileError, Bytecode, PrecompileStorageProvider, StorageCheckpoint,
+    StorageCtx, validate_loaded_code_presence,
 };
 use lru::LruCache;
 use parking_lot::RwLock;
@@ -44,10 +45,6 @@ use reth_transaction_pool::{
     TransactionValidator,
     error::{InvalidPoolTransactionError, PoolTransactionError},
     validate::ValidTransaction,
-};
-use revm::{
-    context::journaled_state::JournalCheckpoint,
-    state::{AccountInfo, Bytecode},
 };
 
 use crate::{
@@ -283,8 +280,11 @@ impl PrecompileStorageProvider for StateProviderPrecompileStorage<'_> {
     ) -> Result<(), BasePrecompileError> {
         let account =
             self.state.basic_account(&address).map_err(Self::provider_error)?.unwrap_or_default();
-        let account_info = AccountInfo::from(account);
-        f(&account_info);
+        f(&AccountInfo {
+            balance: account.balance,
+            nonce: account.nonce,
+            code_hash: account.get_bytecode_hash(),
+        });
         Ok(())
     }
 
@@ -302,15 +302,18 @@ impl PrecompileStorageProvider for StateProviderPrecompileStorage<'_> {
         let code = if expected_hash == B256::ZERO || expected_hash == KECCAK_EMPTY {
             Bytecode::default()
         } else {
-            self.state
-                .bytecode_by_hash(&expected_hash)
-                .map_err(Self::provider_error)?
-                .ok_or_else(|| {
-                    BasePrecompileError::Fatal(
-                        "account code unavailable for non-empty code hash".into(),
-                    )
-                })?
-                .0
+            Bytecode::from(
+                &self
+                    .state
+                    .bytecode_by_hash(&expected_hash)
+                    .map_err(Self::provider_error)?
+                    .ok_or_else(|| {
+                        BasePrecompileError::Fatal(
+                            "account code unavailable for non-empty code hash".into(),
+                        )
+                    })?
+                    .0,
+            )
         };
         validate_loaded_code_presence(expected_hash, &code)?;
         f(&code);
@@ -412,13 +415,13 @@ impl PrecompileStorageProvider for StateProviderPrecompileStorage<'_> {
         Address::ZERO
     }
 
-    fn checkpoint(&mut self) -> JournalCheckpoint {
-        JournalCheckpoint::default()
+    fn checkpoint(&mut self) -> StorageCheckpoint {
+        StorageCheckpoint::new(0)
     }
 
     fn commit_latest_checkpoint(&mut self) {}
 
-    fn checkpoint_revert(&mut self, _checkpoint: JournalCheckpoint) {}
+    fn checkpoint_revert(&mut self, _checkpoint: StorageCheckpoint) {}
 
     fn metered_keccak256(&mut self, data: &[u8]) -> Result<B256, BasePrecompileError> {
         Ok(alloy_primitives::keccak256(data))
@@ -641,8 +644,8 @@ impl PrecompileStorageProvider for OverlayPrecompileStorage<'_> {
     // partial writes would leak within the overlay — this storage would then
     // need real journalling (snapshot the `storage`/`transient` maps on
     // `checkpoint` and restore them on `checkpoint_revert`).
-    fn checkpoint(&mut self) -> JournalCheckpoint {
-        JournalCheckpoint::default()
+    fn checkpoint(&mut self) -> StorageCheckpoint {
+        StorageCheckpoint::new(0)
     }
 
     fn commit_latest_checkpoint(&mut self) {}
@@ -652,7 +655,7 @@ impl PrecompileStorageProvider for OverlayPrecompileStorage<'_> {
     // flow ever introduces an internal revert. In release this stays a no-op:
     // the overlay relies on being dropped wholesale on error, never on
     // fine-grained rollback.
-    fn checkpoint_revert(&mut self, _checkpoint: JournalCheckpoint) {
+    fn checkpoint_revert(&mut self, _checkpoint: StorageCheckpoint) {
         debug_assert!(
             false,
             "OverlayPrecompileStorage does not support checkpoint_revert; the admission \
@@ -680,8 +683,8 @@ impl PoolTransactionError for BaseTxPoolError {
 /// Tracks additional infos for the current block.
 #[derive(Debug, Default)]
 pub struct BaseL1BlockInfo {
-    /// The current L1 block info.
-    l1_block_info: RwLock<L1BlockInfo>,
+    /// The L1 fee parameters from the current block's L1 attributes deposit.
+    l1_fee_params: RwLock<L1FeeParams>,
     /// Current block timestamp.
     timestamp: AtomicU64,
     /// Current block timestamp in milliseconds.
@@ -692,6 +695,22 @@ impl BaseL1BlockInfo {
     /// Returns the most recent timestamp
     pub fn timestamp(&self) -> u64 {
         self.timestamp.load(Ordering::Relaxed)
+    }
+
+    /// Returns the fees execution charges `encoded_tx` on top of its gas cost and value at
+    /// `upgrade`: the L1 data fee and, from Isthmus, the operator fee over `gas_limit`.
+    pub fn l1_and_operator_fee(
+        &self,
+        encoded_tx: &[u8],
+        gas_limit: U256,
+        upgrade: BaseUpgrade,
+    ) -> U256 {
+        let params = *self.l1_fee_params.read();
+        let l1_fee = params.calculate_tx_l1_cost(encoded_tx, upgrade);
+        if upgrade < BaseUpgrade::Isthmus {
+            return l1_fee;
+        }
+        l1_fee.saturating_add(params.operator_fee_charge(encoded_tx, gas_limit, upgrade))
     }
 }
 
@@ -947,7 +966,7 @@ where
         if let Some(Ok(l1_block_info)) =
             transactions.first().map(base_execution_evm::extract_l1_info_from_tx)
         {
-            *self.block_info.l1_block_info.write() = l1_block_info;
+            *self.block_info.l1_fee_params.write() = l1_block_info;
         }
     }
 
@@ -1105,8 +1124,7 @@ where
         let now_ms = self.block_timestamp_ms();
         // Before Zenith there is no Keystore: authorization, lock state, and the
         // high-rate payer classification never read `AccountConfiguration`.
-        let keystore =
-            BaseSpecId::from_timestamp(self.chain_spec(), now).is_enabled_in(BaseUpgrade::Zenith);
+        let keystore = BaseUpgrade::from_timestamp(self.chain_spec(), now) >= BaseUpgrade::Zenith;
         let state = self.client().latest().map_err(|error| Self::provider_unavailable(error))?;
 
         // Authorize *and apply* the account changes against a writable overlay so
@@ -1354,15 +1372,13 @@ where
             signed.tx().max_fee_per_gas,
         );
         let additional_fee = if self.requires_l1_data_gas_fee() {
-            let mut info = self.block_info.l1_block_info.read().clone();
-            let spec_id = BaseSpecId::from_timestamp(self.chain_spec(), now);
-            info.tx_cost(
+            self.block_info.l1_and_operator_fee(
                 &encoded,
                 U256::from(FeeCheck::max_chargeable_gas(
                     signed.tx().gas_limit,
                     intrinsic.payer_auth,
                 )),
-                spec_id,
+                BaseUpgrade::from_timestamp(self.chain_spec(), now),
             )
         } else {
             U256::ZERO
@@ -1865,7 +1881,7 @@ where
         }
         // Without the Keystore an EIP-8130 transaction may use only delegation
         // and native secp256k1 keys; anything else is an unsupported type.
-        if !BaseSpecId::from_timestamp(self.chain_spec(), now).is_enabled_in(BaseUpgrade::Zenith)
+        if BaseUpgrade::from_timestamp(self.chain_spec(), now) < BaseUpgrade::Zenith
             && TransactionAuthorizer::check_without_keystore(signed).is_err()
         {
             return Err(InvalidTransactionError::TxTypeNotSupported.into());
@@ -2004,16 +2020,21 @@ where
             authorities,
         } = outcome
         {
-            let mut l1_block_info = self.block_info.l1_block_info.read().clone();
-
             // Check to ensure tx doesn't exceed the DA footprint limit
             if self.chain_spec().is_jovian_active_at_timestamp(self.block_timestamp()) {
-                let da_footprint = valid_tx.transaction().estimated_da_size().saturating_mul(
-                    l1_block_info
-                        .da_footprint_gas_scalar
-                        .unwrap_or(DaFootprintGasScalarUpdate::DEFAULT_DA_FOOTPRINT_GAS_SCALAR)
-                        as u64,
-                );
+                let da_footprint_gas_scalar: u64 = self
+                    .block_info
+                    .l1_fee_params
+                    .read()
+                    .da_footprint_gas_scalar
+                    .unwrap_or_else(|| {
+                        U256::from(DaFootprintGasScalarUpdate::DEFAULT_DA_FOOTPRINT_GAS_SCALAR)
+                    })
+                    .saturating_to();
+                let da_footprint = valid_tx
+                    .transaction()
+                    .estimated_da_size()
+                    .saturating_mul(da_footprint_gas_scalar);
                 let block_gas_limit = self.inner.block_gas_limit();
                 if da_footprint > block_gas_limit {
                     return TransactionValidationOutcome::Invalid(
@@ -2043,11 +2064,10 @@ where
 
             // Must mirror the execution-side cost in `BaseHandler` (L1 data fee + operator fee
             // post-Isthmus); otherwise operator-fee-underfunded txs get admitted but never execute.
-            let spec_id = BaseSpecId::from_timestamp(self.chain_spec(), self.block_timestamp());
-            let cost_addition = l1_block_info.tx_cost(
+            let cost_addition = self.block_info.l1_and_operator_fee(
                 &encoded,
                 U256::from(valid_tx.transaction().gas_limit()),
-                spec_id,
+                BaseUpgrade::from_timestamp(self.chain_spec(), self.block_timestamp()),
             );
             let cost = valid_tx.transaction().cost().saturating_add(cost_addition);
 
@@ -3551,11 +3571,11 @@ mod tests {
             false,
         )
         .unwrap();
-        let full_additional_cost = l1_block_info.tx_cost(
+        let full_additional_cost = l1_only_cost.saturating_add(l1_block_info.operator_fee_charge(
             &encoded,
             U256::from(gas_limit),
-            BaseSpecId::from_timestamp(Arc::clone(&chain_spec), chain_config.isthmus_timestamp),
-        );
+            BaseUpgrade::from_timestamp(Arc::clone(&chain_spec), chain_config.isthmus_timestamp),
+        ));
         let base_tx_cost = U256::from(envelope.value()).saturating_add(U256::from(
             envelope.max_fee_per_gas().saturating_mul(envelope.gas_limit() as u128),
         ));
@@ -3671,9 +3691,11 @@ mod tests {
         let max_gas = FeeCheck::max_chargeable_gas(signed.tx().gas_limit, 0);
         let gas_charge =
             FeeCheck::max_fee_charge(signed.tx().gas_limit, 0, signed.tx().max_fee_per_gas);
-        let spec_id = BaseSpecId::from_timestamp(&chain_spec, chain_config.isthmus_timestamp);
-        let mut l1_block_info = base_execution_evm::parse_l1_info(&isthmus_data).unwrap();
-        let additional_fees = l1_block_info.tx_cost(&encoded, U256::from(max_gas), spec_id);
+        let upgrade = BaseUpgrade::from_timestamp(&chain_spec, chain_config.isthmus_timestamp);
+        let l1_fee_params = base_execution_evm::parse_l1_info(&isthmus_data).unwrap();
+        let additional_fees = l1_fee_params.calculate_tx_l1_cost(&encoded, upgrade).saturating_add(
+            l1_fee_params.operator_fee_charge(&encoded, U256::from(max_gas), upgrade),
+        );
 
         assert!(!additional_fees.is_zero(), "fixture must charge L1/operator fees");
         assert_eq!(state.payer_max_cost, gas_charge.saturating_add(additional_fees));

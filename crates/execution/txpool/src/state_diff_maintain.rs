@@ -7,8 +7,8 @@
 use alloy_primitives::{B256, U256};
 use base_common_precompiles::NonceManagerStorage;
 use futures::StreamExt;
+use reth_evm::BundleState;
 use reth_provider::CanonStateNotification;
-use revm::database::BundleState;
 use tokio_stream::wrappers::{BroadcastStream, errors::BroadcastStreamRecvError};
 use tracing::{debug, warn};
 
@@ -162,16 +162,13 @@ impl AccountStateDiff {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::Address;
-    use revm::{
-        database::{BundleAccount, states::StorageSlot},
-        primitives::HashMap,
-        state::AccountInfo,
-    };
+    use evm2::evm::AccountInfo;
+    use reth_trie_common::bundle_state::{AccountStatus, BundleAccount, StorageSlot};
 
     use super::*;
 
     fn info(balance: u64, nonce: u64) -> AccountInfo {
-        AccountInfo { balance: U256::from(balance), nonce, ..Default::default() }
+        AccountInfo::default().with_balance(U256::from(balance)).with_nonce(nonce)
     }
 
     fn account(
@@ -183,7 +180,7 @@ mod tests {
             info: present,
             original_info: original,
             storage: Default::default(),
-            status: revm::database::AccountStatus::Changed,
+            status: AccountStatus::Changed,
         };
         for (key, slot) in slots {
             account.storage.insert(key, slot);
@@ -192,11 +189,7 @@ mod tests {
     }
 
     fn bundle(entries: Vec<(Address, BundleAccount)>) -> BundleState {
-        let mut state = HashMap::default();
-        for (address, account) in entries {
-            state.insert(address, account);
-        }
-        BundleState { state, ..Default::default() }
+        BundleState { state: entries.into_iter().collect(), ..Default::default() }
     }
 
     #[test]

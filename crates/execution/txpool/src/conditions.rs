@@ -305,7 +305,7 @@ mod tests {
     use std::borrow::Cow;
 
     use alloy_primitives::{Address, U256};
-    use revm::database::InMemoryDB;
+    use evm2::evm::InMemoryDB;
 
     use super::{ValidityBounds, ValidityConditions};
     use crate::{
