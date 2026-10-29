@@ -162,7 +162,7 @@ been yielded, so a predicate-delayed transaction does not keep its descendants o
 of the same block. The lanes that straddle stores are indexed incrementally
 (`TwoDNoncePool::lanes_ahead_of_state`, `shared_lanes_pending_end`), so building
 the iterator costs those lanes plus each store's own snapshot, not the pool sizes;
-`benches/best_transactions.rs` measures it at mainnet scale.
+`benches/best_transactions.rs` measures it on a large pool.
 
 Capacity defaults to reth's pending subpool limit (`--txpool.pending-max-count`,
 `--txpool.pending-max-size`, `--txpool.max-account-slots`) and is overridable with
