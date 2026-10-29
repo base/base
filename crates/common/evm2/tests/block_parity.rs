@@ -7,10 +7,12 @@
 //!
 //! Per-transaction fee distribution is separately covered by `standard_fee_parity`; this harness
 //! focuses on the executor's running cumulative-gas accounting and transaction ordering across a
-//! block of several transactions from the same sender.
+//! block that, like every L2 block, opens with a deposit, followed by several transactions from
+//! the same sender.
 
 use alloy_consensus::{TxEip1559, transaction::Recovered};
-use alloy_primitives::{Address, Bytes, TxKind, U256};
+use alloy_primitives::{Address, B256, Bytes, TxKind, U256};
+use base_common_consensus::{BaseReceiptEnvelope, TxDeposit};
 use base_common_evm::{
     BaseSpecId as RevmBaseSpecId, BaseTransaction, Builder, DefaultBase, L1BlockInfo,
 };
@@ -28,6 +30,10 @@ use revm::{
 };
 
 const SENDER: Address = Address::repeat_byte(0x11);
+const DEPOSITOR: Address = Address::repeat_byte(0x44);
+const DEPOSIT_MINT: u128 = 1_000_000;
+const DEPOSIT_VALUE: u64 = 1_000;
+const DEPOSIT_GAS_LIMIT: u64 = 50_000;
 const TARGET: Address = Address::repeat_byte(0x22);
 const COINBASE: Address = Address::repeat_byte(0x33);
 const CHAIN_ID: u64 = 1;
@@ -36,7 +42,8 @@ const MAX_FEE: u128 = 1_000;
 const PRIORITY_FEE: u128 = 100;
 const BASEFEE: u64 = 500;
 const BLOCK_GAS_LIMIT: u64 = 30_000_000;
-/// Number of standard transactions in the test block (from `SENDER`, ascending nonces).
+/// Number of standard transactions in the test block after the deposit (from `SENDER`, ascending
+/// nonces).
 const TX_COUNT: u64 = 3;
 
 /// The whole execution fork ladder.
@@ -62,7 +69,7 @@ struct BlockOutcome {
     cumulative_gas: u64,
 }
 
-/// Runs the block of `TX_COUNT` transfers through the evm2 block executor.
+/// Runs the deposit and the `TX_COUNT` transfers through the evm2 block executor.
 fn run_evm2(upgrade: BaseUpgrade) -> BlockOutcome {
     let mut db = InMemoryDB::default();
     db.insert_account_info(
@@ -80,6 +87,20 @@ fn run_evm2(upgrade: BaseUpgrade) -> BlockOutcome {
     let evm =
         Evm::new(spec, block, BaseEvmTypes::tx_registry(), db, Precompiles::base(spec.into()));
     let mut executor = BaseBlockExecutor::new(evm, BaseBlockExecutionCtx::default());
+
+    let deposit = BaseTxEnvelope::Deposit(TxDeposit {
+        source_hash: B256::repeat_byte(0xab),
+        from: DEPOSITOR,
+        to: TxKind::Call(TARGET),
+        mint: DEPOSIT_MINT,
+        value: U256::from(DEPOSIT_VALUE),
+        gas_limit: DEPOSIT_GAS_LIMIT,
+        is_system_transaction: false,
+        input: Bytes::new(),
+    });
+    executor
+        .execute_transaction(&Recovered::new_unchecked(deposit, DEPOSITOR))
+        .expect("deposit executes");
 
     for nonce in 0..TX_COUNT {
         let tx = TxEnvelope::Eip1559(TxEip1559 {
@@ -104,9 +125,8 @@ fn run_evm2(upgrade: BaseUpgrade) -> BlockOutcome {
         .receipts
         .iter()
         .map(|r| match r {
-            base_common_consensus::BaseReceiptEnvelope::Eip1559(r) => {
-                r.receipt.status.coerce_status()
-            }
+            BaseReceiptEnvelope::Deposit(r) => r.receipt.inner.status.coerce_status(),
+            BaseReceiptEnvelope::Eip1559(r) => r.receipt.status.coerce_status(),
             other => panic!("unexpected receipt variant: {other:?}"),
         })
         .collect();
@@ -140,8 +160,20 @@ fn run_revm(upgrade: BaseUpgrade) -> BlockOutcome {
         .with_cfg(CfgEnv::new_with_spec(RevmBaseSpecId::new(upgrade)));
     let mut evm = ctx.build_base();
 
-    let mut successes = Vec::new();
-    let mut cumulative_gas = 0u64;
+    let deposit = BaseTransaction::builder()
+        .base(
+            TxEnv::builder()
+                .caller(DEPOSITOR)
+                .kind(TxKind::Call(TARGET))
+                .gas_limit(DEPOSIT_GAS_LIMIT)
+                .value(U256::from(DEPOSIT_VALUE)),
+        )
+        .source_hash(B256::repeat_byte(0xab))
+        .mint(DEPOSIT_MINT)
+        .build_fill();
+    let result = evm.transact_commit(deposit).expect("deposit executes");
+    let mut successes = vec![result.is_success()];
+    let mut cumulative_gas = result.tx_gas_used();
     for nonce in 0..TX_COUNT {
         let tx = BaseTransaction::builder()
             .base(
@@ -170,7 +202,7 @@ fn block_cumulative_gas_and_success_match_revm() {
     for upgrade in FORKS {
         let evm2 = run_evm2(upgrade);
         let revm = run_revm(upgrade);
-        assert_eq!(evm2.successes.len(), TX_COUNT as usize);
+        assert_eq!(evm2.successes.len(), TX_COUNT as usize + 1);
         assert!(evm2.successes.iter().all(|&s| s), "all txs succeed at {upgrade:?}");
         assert_eq!(evm2, revm, "block cumulative gas / success diverged at {upgrade:?}");
     }
