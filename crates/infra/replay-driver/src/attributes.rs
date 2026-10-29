@@ -74,6 +74,7 @@ mod tests {
                 canyon_time: Some(20),
                 ecotone_time: Some(30),
                 holocene_time: Some(100),
+                isthmus_time: Some(150),
                 jovian_time: Some(200),
                 ..Default::default()
             },
@@ -145,6 +146,25 @@ mod tests {
                 attrs.payload_attributes.parent_beacon_block_root,
                 block.header.parent_beacon_block_root
             );
+        }
+    }
+
+    #[test]
+    fn keeps_withdrawals_empty_when_crossing_isthmus_with_nonempty_header_root() {
+        for timestamp in [149, 150] {
+            let block = Block::<BaseTxEnvelope> {
+                header: Header {
+                    timestamp,
+                    extra_data: Bytes::from_static(&[0, 0, 0, 0, 250, 0, 0, 0, 6]),
+                    withdrawals_root: Some(B256::repeat_byte(10)),
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+
+            let attrs = CanonicalAttributes::derive(&block, &chain()).unwrap();
+
+            assert_eq!(attrs.payload_attributes.withdrawals, Some(vec![]), "timestamp {timestamp}");
         }
     }
 
