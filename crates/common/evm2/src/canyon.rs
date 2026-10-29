@@ -3,10 +3,7 @@
 use alloy_primitives::{Address, B256, Bytes, address, b256, hex};
 use base_common_genesis::BaseUpgrade;
 use evm2::{
-    AccountInfo, Evm,
-    bytecode::Bytecode,
-    evm::BlockStateAccumulator,
-    registry::{HandlerError, HandlerResult},
+    AccountInfo, Evm, bytecode::Bytecode, evm::BlockStateAccumulator, registry::HandlerResult,
 };
 
 use crate::{BaseEvmTypes, BaseForkActivations, IrregularStateChange};
@@ -47,13 +44,11 @@ impl Canyon {
             return Ok(());
         }
 
-        let original = evm
-            .state_mut()
-            .account_info_untracked(&CREATE_2_DEPLOYER_ADDR)
-            .map_err(HandlerError::Fatal)?;
+        let original = evm.state_mut().account_info_untracked(&CREATE_2_DEPLOYER_ADDR)?;
         let base = original.clone().unwrap_or_default();
         let code = Bytecode::new_raw(Bytes::from_static(&CREATE_2_DEPLOYER_BYTECODE));
-        let current = AccountInfo::new(base.balance, base.nonce, CREATE_2_DEPLOYER_CODEHASH, code);
+        let current =
+            AccountInfo::new(base.balance, base.nonce, CREATE_2_DEPLOYER_CODEHASH, Some(code));
 
         IrregularStateChange::new(CREATE_2_DEPLOYER_ADDR, original, Some(current))
             .apply(evm, block_state);

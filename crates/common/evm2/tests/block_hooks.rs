@@ -55,7 +55,7 @@ fn evm_with_stubs(
 }
 
 fn slot0(evm: &mut Evm<'static, BaseEvmTypes>, addr: Address) -> U256 {
-    evm.state_mut().storage_slot(&addr, U256::ZERO, false).unwrap().current()
+    evm.state_mut().storage_slot(&addr, U256::ZERO).unwrap().current()
 }
 
 #[test]

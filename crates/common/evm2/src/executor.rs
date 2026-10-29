@@ -322,8 +322,7 @@ impl<'a> BaseBlockExecutor<'a> {
             let nonce = self
                 .evm
                 .state_mut()
-                .account_info_untracked(&signer)
-                .map_err(HandlerError::Fatal)?
+                .account_info_untracked(&signer)?
                 .map(|info| info.nonce)
                 .unwrap_or_default();
             Some(nonce)

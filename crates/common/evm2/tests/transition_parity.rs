@@ -71,7 +71,8 @@ fn evm2_db_with_valid_base_time_proxy() -> InMemoryDB {
     let mut db = InMemoryDB::default();
     let proxy_code = Bytes::from_static(&[0x60, 0x00]);
     let proxy_bytecode = evm2::bytecode::Bytecode::new_raw(proxy_code);
-    let proxy = evm2::AccountInfo::new(U256::ZERO, 0, proxy_bytecode.hash_slow(), proxy_bytecode);
+    let proxy =
+        evm2::AccountInfo::new(U256::ZERO, 0, proxy_bytecode.hash_slow(), Some(proxy_bytecode));
     db.insert_account_info(&Predeploys::BASE_TIME, proxy);
     db.insert_account_storage(
         &Predeploys::BASE_TIME,

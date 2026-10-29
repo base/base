@@ -7,12 +7,12 @@ use evm2::{
     env::TxEnvExt,
     ethereum::{
         TxEnvelope, eip1559, eip2930, eip7702, execute_initial_frame, finalize_gas,
-        initial_gas_and_reservoir, intrinsic_gas, legacy, prepare_initial_frame,
+        initial_gas_and_reservoir, intrinsic_and_floor_gas, legacy, prepare_initial_frame,
         warm_base_accounts,
     },
     handler::GasSettlement,
     interpreter::{GasTracker, InstrStop},
-    registry::{HandlerError, HandlerResult, TxRegistry, TxRequest},
+    registry::{HandlerError, HandlerResult, TxRegistry, TxRequest, handler},
 };
 
 use crate::{BaseEvmTypes, BaseTxEnvelope, BaseTxHandlerHooks};
@@ -29,29 +29,41 @@ impl BaseEvmTypes {
         let mut registry = TxRegistry::new().with_handler(
             DEPOSIT_TX_TYPE_ID,
             BaseTxEnvelope::as_deposit,
-            Self::handle_deposit,
+            handler(|_| Ok(()), |req, ()| Self::handle_deposit(req)),
         );
         registry.register(
             0,
             |tx: &BaseTxEnvelope| tx.as_standard().and_then(TxEnvelope::as_legacy),
-            legacy::handle_with_hooks::<Self, BaseTxHandlerHooks>,
+            handler(
+                legacy::prepare_with_hooks::<Self, BaseTxHandlerHooks>,
+                legacy::execute_prepared::<Self, BaseTxHandlerHooks>,
+            ),
         );
         registry.register(
             1,
             |tx: &BaseTxEnvelope| tx.as_standard().and_then(TxEnvelope::as_eip2930),
-            eip2930::handle_with_hooks::<Self, BaseTxHandlerHooks>,
+            handler(
+                eip2930::prepare_with_hooks::<Self, BaseTxHandlerHooks>,
+                eip2930::execute_prepared::<Self, BaseTxHandlerHooks>,
+            ),
         );
         registry.register(
             2,
             |tx: &BaseTxEnvelope| tx.as_standard().and_then(TxEnvelope::as_eip1559),
-            eip1559::handle_with_hooks::<Self, BaseTxHandlerHooks>,
+            handler(
+                eip1559::prepare_with_hooks::<Self, BaseTxHandlerHooks>,
+                eip1559::execute_prepared::<Self, BaseTxHandlerHooks>,
+            ),
         );
         // Type 3 (EIP-4844 blob transactions) is intentionally not registered:
         // Base rejects blob transactions, so no handler exists for them.
         registry.register(
             4,
             |tx: &BaseTxEnvelope| tx.as_standard().and_then(TxEnvelope::as_eip7702),
-            eip7702::handle_with_hooks::<Self, BaseTxHandlerHooks>,
+            handler(
+                eip7702::prepare_with_hooks::<Self, BaseTxHandlerHooks>,
+                eip7702::execute_prepared::<Self, BaseTxHandlerHooks>,
+            ),
         );
         registry
     }
@@ -80,14 +92,16 @@ impl BaseEvmTypes {
             return Ok(Self::failed_deposit(tx));
         }
 
-        // Pre-warm the sender, destination, coinbase, and precompiles, matching the standard
-        // transaction handlers so warm/cold (EIP-2929) access gas agrees with the reference.
-        warm_base_accounts(host, tx.from, tx.to);
+        // Pre-warm the destination, coinbase, and precompiles (the sender was warmed with the
+        // mint), matching the standard transaction handlers so warm/cold (EIP-2929) access gas
+        // agrees with the reference.
+        warm_base_accounts(host, tx.to);
 
         // Meter the deposit like a standard transaction: charge intrinsic gas up front, then
         // run the call/create frame with the remaining gas. A deposit that cannot afford its
         // intrinsic cost is settled as a failed deposit.
-        let intrinsic = intrinsic_gas(host.version(), tx.from, tx.to, &tx.input, 0, 0, tx.value);
+        let (intrinsic, _) =
+            intrinsic_and_floor_gas(host.version(), tx.from, tx.to, &tx.input, 0, 0, tx.value);
         if tx.gas_limit < intrinsic {
             return Ok(Self::failed_deposit(tx));
         }
@@ -97,9 +111,8 @@ impl BaseEvmTypes {
             GasTracker::new_with_execution_gas_and_reservoir(execution_gas_limit, reservoir);
         // Deposits cannot fail fatally per the OP-stack spec (the revm reference catches every
         // transaction-level error in `catch_error` and returns a failed deposit); only a database
-        // error is genuinely fatal. `prepare_initial_frame` only produces `Fatal` errors today,
-        // but matching on the variant future-proofs against evm2 introducing typed frame errors:
-        // a `Fatal` propagates, anything else settles as a failed deposit.
+        // or unrecoverable execution error is genuinely fatal and propagates; any other handler
+        // error settles as a failed deposit.
         let frame = match prepare_initial_frame(
             host,
             tx.from,
@@ -110,7 +123,7 @@ impl BaseEvmTypes {
             &mut tx_gas,
         ) {
             Ok(frame) => frame,
-            Err(err @ HandlerError::Fatal(_)) => return Err(err),
+            Err(err @ (HandlerError::Database(_) | HandlerError::Fatal(_))) => return Err(err),
             Err(_) => return Ok(Self::failed_deposit(tx)),
         };
         let tx_env = TxEnvExt {
@@ -126,7 +139,7 @@ impl BaseEvmTypes {
             &mut tx_gas,
             execution_gas_limit,
             reservoir,
-        );
+        )?;
 
         // A halt has no L2 fee payer to refund, so it is charged the full gas limit. evm2 has
         // already rolled back the execution state; the mint and nonce bump are retained.
@@ -135,10 +148,8 @@ impl BaseEvmTypes {
         }
 
         // Success or revert: finalize gas like a standard transaction, but skip the fee charge
-        // and beneficiary reward (deposits are funded on L1). As with prepare_initial_frame, a
-        // database error propagates as fatal while any other error settles as a failed deposit —
-        // deposits never fail fatally per the OP-stack spec. finalize_gas only surfaces `Fatal`
-        // errors today; the match makes the invariant explicit and future-proofs it.
+        // and beneficiary reward (deposits are funded on L1). As with prepare_initial_frame, only
+        // database and unrecoverable execution errors propagate.
         match finalize_gas(
             host,
             GasSettlement {
@@ -152,19 +163,21 @@ impl BaseEvmTypes {
             },
         ) {
             Ok(result) => Ok(result),
-            Err(err @ HandlerError::Fatal(_)) => Err(err),
+            Err(err @ (HandlerError::Database(_) | HandlerError::Fatal(_))) => Err(err),
             Err(_) => Ok(Self::failed_deposit(tx)),
         }
     }
 
-    /// Credits a deposit's minted value to the sender and bumps its nonce, returning the
-    /// sender's pre-bump nonce (used to derive a create deposit's contract address).
+    /// Warms the sender, credits the deposit's minted value to it, and bumps its nonce,
+    /// returning the sender's pre-bump nonce (used to derive a create deposit's contract
+    /// address).
     ///
     /// The mint is added before execution and retained regardless of the deposit's outcome.
     /// The nonce is bumped once here (mirroring the standard-transaction handlers; evm2 only
     /// bumps automatically for nested creates).
     pub fn prepare_deposit_sender(host: &mut Evm<'_, Self>, tx: &TxDeposit) -> HandlerResult<u64> {
-        let mut account = host.state_mut().account(&tx.from, false).map_err(HandlerError::Fatal)?;
+        let mut account = host.state_mut().account(&tx.from)?;
+        account.warm();
         account.add_balance(U256::from(tx.mint));
         let nonce = account.nonce();
         account.bump_nonce();

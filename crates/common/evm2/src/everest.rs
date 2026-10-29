@@ -4,10 +4,7 @@ use alloy_primitives::{Address, Bytes, KECCAK256_EMPTY};
 use base_common_eip8130::NonceManagerSlots;
 use base_common_genesis::BaseUpgrade;
 use evm2::{
-    AccountInfo, Evm,
-    bytecode::Bytecode,
-    evm::BlockStateAccumulator,
-    registry::{HandlerError, HandlerResult},
+    AccountInfo, Evm, bytecode::Bytecode, evm::BlockStateAccumulator, registry::HandlerResult,
 };
 
 use crate::{BaseEvmTypes, BaseForkActivations, IrregularStateChange};
@@ -56,8 +53,7 @@ impl Everest {
         let stub_hash = stub.hash_slow();
 
         for address in CODELESS_SYSTEM_ACCOUNTS {
-            let original =
-                evm.state_mut().account_info_untracked(&address).map_err(HandlerError::Fatal)?;
+            let original = evm.state_mut().account_info_untracked(&address)?;
 
             // Skip if the account already carries code (real deployment, or the stub planted on a
             // previous block); only an empty-code account needs it.
@@ -66,7 +62,7 @@ impl Everest {
             }
 
             let base = original.clone().unwrap_or_default();
-            let current = AccountInfo::new(base.balance, base.nonce, stub_hash, stub.clone());
+            let current = AccountInfo::new(base.balance, base.nonce, stub_hash, Some(stub.clone()));
             IrregularStateChange::new(address, original, Some(current)).apply(evm, block_state);
         }
 

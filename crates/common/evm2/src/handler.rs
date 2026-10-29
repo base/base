@@ -56,14 +56,13 @@ impl BaseTxHandlerHooks {
     /// Rejects the transaction when `caller` cannot cover the full upfront charge — the maximum
     /// gas cost, the transferred value, and the OP-stack L1 data and operator fees.
     ///
-    /// The framework's `validate_sender` already rejects a caller that cannot cover the gas cost
+    /// The framework's `validate_sender_and_bump_nonce` already rejects a caller that cannot cover the gas cost
     /// and value, but it is unaware of the L1 and operator fees charged here, and
-    /// [`charge_upfront`] deducts with wrapping arithmetic. Without this guard an underfunded
-    /// caller would silently wrap to a spurious balance instead of the transaction failing; this
-    /// mirrors the revm reference, which rejects such a caller with `LackOfFundForMaxFee`.
+    /// [`charge_upfront`] saturates at zero. Without this guard an underfunded caller would be
+    /// charged its whole balance instead of the transaction failing; this mirrors the revm reference, which rejects such a caller with `LackOfFundForMaxFee`.
     ///
     /// A no-op for deposits (funded on L1 and exempt) and when fee charging or balance checks are
-    /// disabled (e.g. `eth_call` simulation), matching the conditions under which `validate_sender`
+    /// disabled (e.g. `eth_call` simulation), matching the conditions under which the sender validation
     /// and `charge_upfront` themselves enforce balances.
     fn ensure_can_pay_fees(
         host: &mut Evm<'_, BaseEvmTypes>,
@@ -83,10 +82,9 @@ impl BaseTxHandlerHooks {
             .saturating_add(tx.value())
             .saturating_add(l1_fee)
             .saturating_add(operator_fee);
-        let balance =
-            host.state_mut().account(&caller, false).map_err(HandlerError::Fatal)?.balance();
+        let balance = host.state_mut().account(&caller)?.balance();
         if balance < required {
-            return Err(HandlerError::InsufficientFunds);
+            return Err(HandlerError::InsufficientFunds { fee: required, balance });
         }
         Ok(())
     }
@@ -97,10 +95,7 @@ impl BaseTxHandlerHooks {
         recipient: Address,
         amount: U256,
     ) -> HandlerResult<()> {
-        host.state_mut()
-            .account(&recipient, false)
-            .map_err(HandlerError::Fatal)?
-            .add_balance(amount);
+        host.state_mut().account(&recipient)?.add_balance(amount);
         Ok(())
     }
 }
@@ -120,9 +115,9 @@ impl TxHandlerHooks<BaseEvmTypes> for BaseTxHandlerHooks {
         let ext = host.ext_mut();
         ext.l1_fee = l1_fee;
         ext.operator_fee = operator_fee;
-        // `validate_sender` only checks the gas cost and value; the L1 and operator fees are
-        // charged on top here via `charge_upfront`'s wrapping subtraction, so reject an
-        // underfunded caller up front rather than let its balance wrap to a spurious value.
+        // `validate_sender_and_bump_nonce` only checks the gas cost and value; the L1 and operator
+        // fees are charged on top here via `charge_upfront`'s saturating subtraction, so reject an
+        // underfunded caller up front rather than silently drain its balance.
         Self::ensure_can_pay_fees(host, envelope, caller, l1_fee, operator_fee)?;
         charge_upfront(
             host,
