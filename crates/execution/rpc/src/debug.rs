@@ -14,11 +14,15 @@ use base_execution_payload_builder::{
 };
 use base_execution_trie::{BaseProofsStorage, BaseProofsStore};
 use base_execution_txpool::BasePooledTransaction;
+use evm2::evm::{CacheDB, Db};
 use jsonrpsee::proc_macros::rpc;
 use jsonrpsee_core::RpcResult;
 use jsonrpsee_types::error::ErrorObject;
 use reth_basic_payload_builder::PayloadConfig;
-use reth_evm::{ConfigureEvm, execute::Executor};
+use reth_evm::{
+    ConfigureEvm, database::StateProviderDatabase, execute::Executor,
+    witness::ExecutionWitnessRecord,
+};
 use reth_node_api::{BuildNextEnv, NodePrimitives, PayloadBuilderError};
 use reth_payload_util::NoopPayloadTransactions;
 use reth_primitives_traits::{SealedHeader, TxTy};
@@ -26,7 +30,6 @@ use reth_provider::{
     BlockReaderIdExt, ChainSpecProvider, HeaderProvider, NodePrimitivesProvider, ProviderError,
     ProviderResult, StateProvider, StateProviderFactory,
 };
-use reth_revm::{State, database::StateProviderDatabase, witness::ExecutionWitnessRecord};
 use reth_rpc_api::eth::helpers::FullEthApi;
 use reth_rpc_eth_types::EthApiError;
 use reth_rpc_server_types::{ToRpcResult, result::internal_rpc_err};
@@ -267,24 +270,26 @@ where
                 .state_provider(Some(BlockId::Number(block.parent_num_hash().number.into())))
                 .await
                 .map_err(EthApiError::from)?;
-            let db = StateProviderDatabase::new((&state_provider).into_evm_state_provider());
-            let block_executor = this.eth_api.evm_config().executor(db);
-
-            let mut witness = None;
-
-            let mode = ExecutionWitnessMode::default();
-            let _ = block_executor
-                .execute_with_state_closure(&block, |statedb: &State<_>| {
-                    witness = Some(ExecutionWitnessRecord::new(statedb).into_execution_witness(
-                        &state_provider,
-                        self.inner.eth_api.provider(),
-                        block_number,
-                        mode,
-                    ));
-                })
+            let mut db = CacheDB::new(Db::new(StateProviderDatabase::new(
+                (&state_provider).into_evm_state_provider(),
+            )));
+            let output = this
+                .eth_api
+                .evm_config()
+                .executor(&mut db)
+                .execute(&block)
                 .map_err(EthApiError::from)?;
+            let codes = ExecutionWitnessRecord::commit_execution(&mut db, &output.state);
 
-            let witness = witness.unwrap().map_err(EthApiError::from)?;
+            let witness = ExecutionWitnessRecord::new(&db)
+                .with_canonical_codes(codes)
+                .into_execution_witness(
+                    &state_provider,
+                    self.inner.eth_api.provider(),
+                    block_number,
+                    ExecutionWitnessMode::default(),
+                )
+                .map_err(EthApiError::from)?;
 
             Ok(witness)
         })

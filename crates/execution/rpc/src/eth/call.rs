@@ -1,11 +1,5 @@
-use std::collections::BTreeMap;
-
 use alloy_consensus::BlockHeader;
-use alloy_evm::{
-    env::BlockEnvironment,
-    overrides::{OverrideBlockHashes, apply_block_overrides, apply_state_overrides},
-};
-use alloy_primitives::{B256, U256};
+use alloy_primitives::U256;
 use alloy_rpc_types_eth::{
     BlockId, BlockOverrides,
     simulate::{SimBlock, SimulatePayload, SimulatedBlock},
@@ -14,11 +8,19 @@ use alloy_rpc_types_eth::{
 use base_common_chains::BaseUpgrade;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_evm::{BaseNextBlockEnvAttributes, BasePendingForecast};
+use evm2::{
+    EvmFeatures,
+    evm::{CacheDB, Db},
+};
+use evm2_inspectors::transfer::TransferInspector;
 use reth_chainspec::{ChainSpecProvider, EthChainSpec, EthereumHardforks, Hardforks};
 use reth_errors::RethError;
-use reth_evm::{ConfigureEvm, Evm, HaltReasonFor, execute::BlockBuilder};
+use reth_evm::{
+    BundleState, ConfigureEvm, Evm as _, EvmEnv, EvmTypesFor, TxResultWithStateFor,
+    database::StateProviderDatabase, execute::BlockBuilder,
+};
+use reth_execution_types::BundleSource;
 use reth_primitives_traits::SealedHeader;
-use reth_revm::{database::StateProviderDatabase, db::State};
 use reth_rpc_convert::RpcTxReq;
 use reth_rpc_eth_api::{
     EthApiTypes, FromEvmError, RpcBlock, RpcConvert,
@@ -29,16 +31,12 @@ use reth_rpc_eth_api::{
 };
 use reth_rpc_eth_types::{
     EthApiError,
+    cache::db::{apply_block_overrides, apply_state_overrides_with_state},
     error::{AsEthApiError, FromEthApiError},
-    simulate::{self, EthSimulateError},
+    simulate::{self, EthSimulateError, SimulatedState},
 };
 use reth_storage_api::StateProvider;
 use reth_tasks::CancelOnDrop;
-use revm::{
-    context::Block,
-    context_interface::{Cfg, result::ResultAndState},
-};
-use revm_inspectors::transfer::TransferInspector;
 
 use crate::{BaseEthApi, BaseEthApiError, eth::RpcNodeCore};
 
@@ -84,14 +82,13 @@ where
 
         self.spawn_with_state_at_block(block, move |this, db| {
             let _permit = permit;
-            let state_provider = db.database.0.0;
-            let mut db = State::builder()
-                .with_database(StateProviderDatabase::new(
-                    (&state_provider).into_evm_state_provider(),
-                ))
-                .with_bundle_update()
-                .build();
+            let state_provider = db.db.into_inner().into_inner().0;
+            let mut db = CacheDB::new(Db::new(StateProviderDatabase::new(
+                (&state_provider).into_evm_state_provider(),
+            )));
             let mut parent = parent;
+            let mut simulation_state =
+                this.compute_state_root_for_eth_simulate().then(SimulatedState::default);
 
             let chain_spec = this.provider().chain_spec();
             let genesis = chain_spec.genesis_header();
@@ -131,49 +128,61 @@ where
                     .map_err(Self::Error::from_eth_err)?;
 
                 // Always disable EIP-3607
-                evm_env.cfg_env.disable_eip3607 = true;
+                evm_env.version_mut().features.remove(EvmFeatures::EIP3607);
 
                 // EIP-7825's transaction gas cap is only active with Amsterdam's
                 // regular/state-gas accounting.
-                if !evm_env.cfg_env.is_amsterdam_eip8037_enabled() {
-                    evm_env.cfg_env.tx_gas_limit_cap = Some(u64::MAX);
+                if !evm_env.version().feature(EvmFeatures::EIP8037) {
+                    evm_env.version_mut().tx_gas_limit_cap = u64::MAX;
                 }
 
                 if !validation {
                     // If not explicitly required, we disable nonce check <https://github.com/paradigmxyz/reth/issues/16108>
-                    evm_env.cfg_env.disable_nonce_check = true;
-                    evm_env.cfg_env.disable_base_fee = true;
-                    evm_env.block_env.inner_mut().basefee = 0;
+                    evm_env.version_mut().features.remove(EvmFeatures::NONCE_CHECK);
+                    evm_env.version_mut().features.remove(EvmFeatures::BASE_FEE_CHECK);
+                    evm_env.block_env_mut().basefee = U256::ZERO;
                 }
 
                 // Set prevrandao to zero for simulated blocks by default,
                 // matching spec behavior where MixDigest is zero-initialized.
                 // If user provides an override, it will be applied by apply_block_overrides.
-                evm_env.block_env.inner_mut().prevrandao = Some(B256::ZERO);
+                evm_env.block_env_mut().prevrandao = U256::ZERO;
                 if !this
                     .provider()
                     .chain_spec()
-                    .is_paris_active_at_block(evm_env.block_env.number().saturating_to())
+                    .is_paris_active_at_block(evm_env.block_env().number.saturating_to())
                 {
-                    evm_env.block_env.inner_mut().difficulty = parent.difficulty();
+                    evm_env.block_env_mut().difficulty = parent.difficulty();
                 }
 
                 if let Some(block_overrides) = block_overrides {
                     // ensure we don't allow uncapped gas limit per block
                     if let Some(gas_limit_override) = block_overrides.gas_limit
-                        && gas_limit_override > evm_env.block_env.gas_limit()
+                        && gas_limit_override > evm_env.block_env().gas_limit.saturating_to::<u64>()
                         && gas_limit_override > this.call_gas_limit()
                     {
                         return Err(EthApiError::other(EthSimulateError::GasLimitReached).into());
                     }
-                    apply_block_overrides(block_overrides, &mut db, evm_env.block_env.inner_mut());
+                    apply_block_overrides(block_overrides, &mut db, &mut evm_env);
                 }
                 if let Some(ref state_overrides) = state_overrides {
-                    apply_state_overrides(state_overrides.clone(), &mut db)
-                        .map_err(Self::Error::from_eth_err)?;
+                    let mut changes = simulation_state.as_ref().map(|_| BundleState::default());
+                    apply_state_overrides_with_state(
+                        state_overrides.clone(),
+                        &mut db,
+                        changes.as_mut(),
+                    )
+                    .map_err(Self::Error::from_eth_err)?;
+                    if let Some(simulation_state) = simulation_state.as_mut()
+                        && let Some(changes) = changes
+                    {
+                        simulation_state
+                            .extend(&state_provider, &changes)
+                            .map_err(Self::Error::from_eth_err)?;
+                    }
                 }
 
-                let chain_id = evm_env.cfg_env.chain_id;
+                let chain_id = evm_env.chain_id();
 
                 let ctx = this
                     .evm_config()
@@ -187,69 +196,46 @@ where
                     )
                 };
 
-                let (result, results) = if trace_transfers {
+                let mut evm = this.evm_config().evm_with_env(&mut db, evm_env.clone());
+                if trace_transfers {
                     // prepare inspector to capture transfer inside the evm so they are recorded
                     // and included in logs
-                    let inspector = TransferInspector::new(false).with_logs(true);
-                    let evm =
-                        this.evm_config().evm_with_env_and_inspector(&mut db, evm_env, inspector);
-                    let mut builder = this.evm_config().create_block_builder(evm, &parent, ctx);
+                    evm.set_inspector(TransferInspector::new(false).with_logs(true));
+                }
+                let mut builder =
+                    this.evm_config().create_block_builder(evm, evm_env, &parent, ctx);
 
-                    if let Some(ref state_overrides) = state_overrides {
-                        simulate::apply_precompile_overrides(
-                            state_overrides,
-                            builder.evm_mut().precompiles_mut(),
-                        )
+                if let Some(ref state_overrides) = state_overrides {
+                    simulate::apply_precompile_overrides(state_overrides, builder.evm_mut())
                         .map_err(|e| Self::Error::from_eth_err(EthApiError::other(e)))?;
-                    }
+                }
 
-                    simulate::execute_transactions(
-                        builder,
-                        &state_provider,
-                        calls,
-                        &mut remaining_call_gas_limit,
-                        chain_id,
-                        this.compute_state_root_for_eth_simulate(),
-                        this.converter(),
-                    )
-                    .map_err(map_err)?
-                } else {
-                    let evm = this.evm_config().evm_with_env(&mut db, evm_env);
-                    let mut builder = this.evm_config().create_block_builder(evm, &parent, ctx);
+                let (result, results) = simulate::execute_transactions(
+                    builder,
+                    &*state_provider,
+                    calls,
+                    &mut remaining_call_gas_limit,
+                    chain_id,
+                    simulation_state.as_mut(),
+                    this.converter(),
+                )
+                .map_err(map_err)?;
 
-                    if let Some(ref state_overrides) = state_overrides {
-                        simulate::apply_precompile_overrides(
-                            state_overrides,
-                            builder.evm_mut().precompiles_mut(),
-                        )
-                        .map_err(|e| Self::Error::from_eth_err(EthApiError::other(e)))?;
-                    }
-
-                    simulate::execute_transactions(
-                        builder,
-                        &state_provider,
-                        calls,
-                        &mut remaining_call_gas_limit,
-                        chain_id,
-                        this.compute_state_root_for_eth_simulate(),
-                        this.converter(),
-                    )
-                    .map_err(map_err)?
-                };
-
+                db.commit_source(&BundleSource(&result.execution_state));
                 let simulated_header = result.block.clone_sealed_header();
-                db.override_block_hashes(BTreeMap::from([(
-                    simulated_header.number(),
-                    simulated_header.hash(),
-                )]));
+                db.insert_block_hash(
+                    &U256::from(simulated_header.number()),
+                    &simulated_header.hash(),
+                );
                 parent = simulated_header;
 
-                let block = simulate::build_simulated_block::<BaseEthApiError, Rpc>(
-                    result.block,
-                    results,
-                    return_full_transactions.into(),
-                    this.converter(),
-                )?;
+                let block =
+                    simulate::build_simulated_block::<BaseEthApiError, Rpc, EvmTypesFor<N::Evm>>(
+                        result.block,
+                        results,
+                        return_full_transactions.into(),
+                        this.converter(),
+                    )?;
 
                 blocks.push(block);
             }
@@ -316,7 +302,7 @@ where
         request: RpcTxReq<<Self::RpcConvert as RpcConvert>::Network>,
         at: BlockId,
         overrides: EvmOverrides,
-    ) -> Result<ResultAndState<HaltReasonFor<Self::Evm>>, Self::Error> {
+    ) -> Result<TxResultWithStateFor<Self::Evm>, Self::Error> {
         let permit =
             self.acquire_owned_blocking_io().await.map_err(|_| EthApiError::InternalEthError)?;
         let guard = CancelOnDrop::default();
