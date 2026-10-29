@@ -15,18 +15,21 @@ workspace = true
 [dependencies]
 # alloy
 alloy-sol-types.workspace = true
-alloy-primitives.workspace = true
 alloy-evm = { workspace = true, optional = true }
+alloy-primitives = { workspace = true, features = ["k256"] }
 
 # base
-base-common-chains.workspace = true
 base-common-genesis.workspace = true
 base-common-eip8130.workspace = true
 base-precompile-macros.workspace = true
 base-precompile-storage.workspace = true
+base-common-chains = { workspace = true, optional = true }
 
 # revm
 revm = { workspace = true, optional = true }
+
+# evm2
+evm2 = { workspace = true, optional = true }
 
 [dev-dependencies]
 rstest.workspace = true
@@ -79,19 +82,30 @@ required-features = ["test-utils"]
 name = "b20_factory_v1_golden"
 required-features = ["test-utils"]
 
+[[test]]
+name = "engine_parity"
+required-features = ["evm2", "revm", "test-utils"]
+
 [features]
 default = [ "blst", "c-kzg", "portable", "revm", "secp256k1", "std" ]
 std = [
 	"alloy-evm?/std",
 	"alloy-primitives/std",
 	"alloy-sol-types/std",
-	"base-common-chains/std",
+	"base-common-chains?/std",
 	"base-common-eip8130/std",
 	"base-common-genesis/std",
 	"base-precompile-storage/std",
+	"evm2?/std",
 	"revm?/std",
 ]
-revm = [ "base-precompile-storage/revm", "dep:alloy-evm", "dep:revm" ]
+revm = [
+	"base-precompile-storage/revm",
+	"dep:alloy-evm",
+	"dep:base-common-chains",
+	"dep:revm",
+]
+evm2 = [ "base-precompile-storage/evm2", "dep:evm2" ]
 bn = [ "revm?/bn" ]
 blst = [ "revm?/blst" ]
 c-kzg = [ "revm?/c-kzg" ]
@@ -106,7 +120,7 @@ optional_balance_check = [ "revm?/optional_balance_check" ]
 optional_block_gas_limit = [ "revm?/optional_block_gas_limit" ]
 test-utils = [
 	"std",
-	"base-common-chains/test-utils",
+	"base-common-chains?/test-utils",
 	"base-common-genesis/test-utils",
 	"base-precompile-storage/test-utils",
 ]
