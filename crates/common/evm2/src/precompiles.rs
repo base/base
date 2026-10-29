@@ -2,6 +2,7 @@
 
 use alloy_primitives::{Address, address};
 use base_common_genesis::BaseUpgrade;
+use base_common_precompiles::BaseEvm2Precompiles;
 use evm2::{
     Evm, Precompiles,
     interpreter::{GasTracker, Message},
@@ -120,8 +121,7 @@ impl BaseEvmTypes {
     /// - **Isthmus** caps the BLS12-381 G1/G2 MSM and pairing (`0x0c`/`0x0e`/`0x0f`) inputs;
     ///   **Jovian** tightens those caps.
     ///
-    /// The Beryl/Cobalt dynamic precompiles (B20 factory, registries, `TxContext`, `NonceManager`)
-    /// remain follow-up work.
+    /// The Beryl/Cobalt stateful precompiles are layered on by [`Self::native_precompiles`].
     pub fn precompiles(spec: BaseSpecId) -> Precompiles<Self> {
         let upgrade = spec.upgrade();
         let at = |fork: BaseUpgrade| (upgrade as u8) >= (fork as u8);
@@ -183,6 +183,20 @@ impl BaseEvmTypes {
         }
 
         precompiles
+    }
+
+    /// Returns the full Base precompile provider for `spec`: the static set of
+    /// [`Self::precompiles`] plus the stateful native precompiles, gated exactly like the revm
+    /// `BasePrecompiles` — the B-20 factory and tokens, the policy registry, and the activation
+    /// registry from **Beryl**, and the EIP-8130 `TxContext` and `NonceManager` from **Cobalt**.
+    ///
+    /// `activation_admin_address` is the chain's static activation registry admin.
+    pub fn native_precompiles(
+        spec: BaseSpecId,
+        activation_admin_address: Option<Address>,
+    ) -> BaseEvm2Precompiles<Self> {
+        BaseEvm2Precompiles::new(Self::precompiles(spec), spec.upgrade())
+            .with_activation_admin_address(activation_admin_address)
     }
 }
 

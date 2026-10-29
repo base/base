@@ -10,9 +10,9 @@ use crate::{BaseEvmEnv, BaseRethBlockExecutor};
 
 /// Creates Base EVMs and block executors.
 ///
-/// EVMs get Base's transaction registry and the precompile set from
-/// [`BaseEvmTypes::precompiles`], where the stateful Beryl and Cobalt precompiles will be
-/// installed.
+/// EVMs get Base's transaction registry and the precompile provider from
+/// [`BaseEvmTypes::native_precompiles`]: the static set plus the stateful Beryl and Cobalt
+/// precompiles, configured with the chain's activation registry admin.
 #[derive(Debug)]
 pub struct BaseBlockExecutorFactory<ChainSpec> {
     chain_spec: Arc<ChainSpec>,
@@ -79,7 +79,7 @@ impl<ChainSpec: Upgrades> BlockExecutorFactory for BaseBlockExecutorFactory<Chai
             evm_env.block,
             BaseEvmTypes::tx_registry(),
             db,
-            BaseEvmTypes::precompiles(spec),
+            BaseEvmTypes::native_precompiles(spec, self.chain_spec.activation_admin_address()),
         )
     }
 }
