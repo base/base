@@ -25,7 +25,8 @@ use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
 use base_execution_evm::BaseEvmConfig;
 use base_execution_payload_builder::{
     BasePayloadBuilderAttributes, DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD,
-    ParkableBestPayloadTransactions, RestingPredicateMode, RestingPredicates,
+    ParkableBestPayloadTransactions, REJECTION_CACHE_MAX_CAPACITY, REJECTION_CACHE_TTL,
+    RejectionCache, RestingPredicateMode, RestingPredicates,
     builder::{BasePayloadBuilderCtx, ExecutionInfo},
     config::BaseBuilderConfig,
     payload::EthPayloadBuilderAttributes,
@@ -63,6 +64,9 @@ const BLOCKS: u64 = 10;
 const FILLER_PER_BLOCK: usize = 120;
 /// Resting validity transaction counts to measure.
 const RESTING_COUNTS: [usize; 2] = [20_000, 40_000];
+/// Rejection-cache populations to measure: empty, and the order of magnitude a running builder
+/// holds from rejections in earlier blocks.
+const REJECTED_COUNTS: [usize; 2] = [0, 10_000];
 const TRANSFER_GAS: u64 = 21_000;
 /// Sender indexes start here so they do not collide with the watched predicate addresses.
 const SENDER_OFFSET: usize = 1_000_000;
@@ -145,8 +149,19 @@ fn parkable(pool: &Pool) -> ParkableBestPayloadTransactions<BasePooledTransactio
     )))
 }
 
+/// A rejection cache with the builder's default sizing, holding `rejected` hashes of transactions
+/// that are not in the pool, as a running builder accumulates from earlier blocks.
+fn populated_rejection_cache(rejected: usize) -> RejectionCache {
+    let cache = RejectionCache::new(REJECTION_CACHE_MAX_CAPACITY, REJECTION_CACHE_TTL);
+    for index in 0..rejected {
+        cache.insert(B256::from(U256::from(index) | (U256::from(1) << 255)));
+    }
+    cache.run_pending_tasks();
+    cache
+}
+
 /// A Denim payload context whose gas limit fits exactly one block of filler.
-fn payload_context(mode: RestingPredicateMode) -> Ctx {
+fn payload_context(mode: RestingPredicateMode, rejection_cache: RejectionCache) -> Ctx {
     let chain_spec = Arc::new(
         BaseChainSpecBuilder::base_mainnet()
             .with_fork(BaseUpgrade::Denim, ForkCondition::Timestamp(DENIM_TIMESTAMP))
@@ -168,7 +183,10 @@ fn payload_context(mode: RestingPredicateMode) -> Ctx {
     };
     BasePayloadBuilderCtx {
         evm_config: BaseEvmConfig::base(Arc::clone(&chain_spec)),
-        builder_config: BaseBuilderConfig::default().with_resting_predicate_mode(mode),
+        builder_config: BaseBuilderConfig {
+            rejection_cache,
+            ..BaseBuilderConfig::default().with_resting_predicate_mode(mode)
+        },
         chain_spec,
         config: PayloadConfig::new(parent, attributes, payload_id),
         cancel: Default::default(),
@@ -224,11 +242,17 @@ fn native_build_loop_benches(c: &mut Criterion) {
     group.sample_size(10).measurement_time(Duration::from_secs(20));
     for resting in RESTING_COUNTS {
         let (pool, db) = resting_pool(resting);
-        for mode in [RestingPredicateMode::Off, RestingPredicateMode::Enforce] {
-            let ctx = payload_context(mode);
-            group.bench_function(format!("resting={resting}/blocks={BLOCKS}/mode={mode:?}"), |b| {
-                b.iter(|| run_blocks(&ctx, &pool, &db, mode));
-            });
+        for rejected in REJECTED_COUNTS {
+            // The empty-cache case keeps its original name so earlier results stay comparable.
+            let rejected_suffix =
+                if rejected == 0 { String::new() } else { format!("/rejected={rejected}") };
+            for mode in [RestingPredicateMode::Off, RestingPredicateMode::Enforce] {
+                let ctx = payload_context(mode, populated_rejection_cache(rejected));
+                group.bench_function(
+                    format!("resting={resting}/blocks={BLOCKS}/mode={mode:?}{rejected_suffix}"),
+                    |b| b.iter(|| run_blocks(&ctx, &pool, &db, mode)),
+                );
+            }
         }
     }
     group.finish();
