@@ -1529,21 +1529,25 @@ where
         attributes: BestTransactionsAttributes,
     ) -> MergeBestTransactions<T, O> {
         let base_fee = attributes.basefee;
-        // Cross-store lane bookkeeping is read from the validity pool's
-        // incremental indexes, so this costs the lanes that straddle stores,
-        // not the pool sizes. Lock order: sidecar before validity, so the
-        // shared lanes are snapshotted and released before the sidecar lookups.
-        let (anchors, shared_lanes) = {
+        // The lane bookkeeping the merge relies on (anchors, shared lanes) and
+        // the lane stores' iterators are snapshotted under one pair of read
+        // guards, taken in lock order (sidecar before validity), so an admission
+        // cannot land between them and hand the merge a head whose lane it does
+        // not know is ahead of state. Only reth's snapshot is taken separately,
+        // and a stale one leaves a validity head waiting, never released early.
+        // The bookkeeping comes from the validity pool's incremental indexes,
+        // so this costs the lanes that straddle stores, not the pool sizes.
+        let (sidecar, validity, anchors, bridged) = {
+            let sidecar = self.sidecar.pool.read();
             let validity = self.validity.pool.read();
             (
+                sidecar.best_transactions(self.ordering.clone(), base_fee),
+                validity.best_transactions(self.ordering.clone(), base_fee),
                 validity.lanes_ahead_of_state().clone(),
-                validity.shared_lanes_pending_end().collect::<Vec<_>>(),
+                self.bridged_descendants(&sidecar, &validity),
             )
         };
-        let bridged = self.bridged_descendants(shared_lanes);
         let protocol = self.protocol_pool.best_transactions_with_attributes(attributes);
-        let sidecar = self.sidecar.pool.read().best_transactions(self.ordering.clone(), base_fee);
-        let validity = self.validity.pool.read().best_transactions(self.ordering.clone(), base_fee);
         MergeBestTransactions::new(
             protocol,
             Box::new(sidecar),
@@ -1562,12 +1566,14 @@ where
     /// that run.
     fn bridged_descendants(
         &self,
-        shared_lanes: impl IntoIterator<Item = (LaneId, u64)>,
+        sidecar: &TwoDNoncePool<T>,
+        validity: &TwoDNoncePool<T>,
     ) -> BridgedDescendants<T> {
         let mut bridged = BridgedDescendants::default();
-        for (lane_id, end) in shared_lanes {
-            let run: VecDeque<_> =
-                (end..).map_while(|nonce| self.standard_transaction(lane_id, nonce)).collect();
+        for (lane_id, end) in validity.shared_lanes_pending_end() {
+            let run: VecDeque<_> = (end..)
+                .map_while(|nonce| self.standard_transaction(sidecar, lane_id, nonce))
+                .collect();
             if !run.is_empty() {
                 bridged.insert(lane_id, run);
             }
@@ -1579,6 +1585,7 @@ where
     /// pending or queued.
     fn standard_transaction(
         &self,
+        sidecar: &TwoDNoncePool<T>,
         lane_id: LaneId,
         nonce: u64,
     ) -> Option<Arc<ValidPoolTransaction<T>>> {
@@ -1586,7 +1593,7 @@ where
         if nonce_key.is_zero() {
             self.protocol_pool.get_transaction_by_sender_and_nonce(sender, nonce)
         } else {
-            self.sidecar.pool.read().lane_transaction(&lane_id, nonce)
+            sidecar.lane_transaction(&lane_id, nonce)
         }
     }
 
