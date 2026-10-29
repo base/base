@@ -44,6 +44,7 @@ use reth_provider::{
 use reth_revm::{
     State, database::StateProviderDatabase, db::states::bundle_state::BundleRetention,
 };
+use reth_tasks::Runtime;
 use reth_transaction_pool::TransactionPool;
 use reth_trie::{HashedPostState, updates::TrieUpdates};
 use revm::Database as _;
@@ -51,7 +52,7 @@ use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info, metadata::Level, span, warn};
+use tracing::{debug, debug_span, error, info, metadata::Level, span, warn};
 
 use crate::{
     BlockDeferrals, BuilderConfig, BuilderMetrics, ExecutionInfo, PayloadBuilder, ResourceLimits,
@@ -134,6 +135,7 @@ impl<Pool, Client> BasePayloadBuilder<Pool, Client> {
         client: Client,
         config: BuilderConfig,
         outputs: BuilderOutputs,
+        executor: Runtime,
     ) -> Self {
         Self {
             evm_config,
@@ -142,7 +144,7 @@ impl<Pool, Client> BasePayloadBuilder<Pool, Client> {
             config,
             outputs,
             last_emitted_flashblock_id: Arc::default(),
-            resting_predicates: RestingPredicateStore::default(),
+            resting_predicates: RestingPredicateStore::new(executor),
         }
     }
 
@@ -303,12 +305,22 @@ where
         BuilderMetrics::sequencer_tx_duration().record(sequencer_tx_time);
         BuilderMetrics::sequencer_tx_gauge().set(sequencer_tx_time);
 
+        // Derive the flashblock schedule before carrying the resting set into the block, so the
+        // carry cannot delay the schedule; at worst it shortens the first flashblock. The timer
+        // below is anchored to this instant.
+        let (flashblocks_per_block, first_flashblock_offset) =
+            self.calculate_flashblocks(timestamp);
+        let schedule_start = tokio::time::Instant::now();
+        BuilderMetrics::flashblocks_schedule_delay().record(block_build_start_time.elapsed());
+
         // Resting transactions carry across flashblocks and across the blocks this builder finishes
         // in sequence. Checked against the parent before the fallback build merges the transitions,
         // which hold the system calls and deposits applied on top of the parent state.
         let resting = (!ctx.attributes().no_tx_pool
             && self.config.resting_predicate_mode.is_enabled())
         .then(|| {
+            let _span = debug_span!(target: "payload_builder", "resting_begin_block").entered();
+            let start = Instant::now();
             let mut resting =
                 self.resting_predicates.take(self.config.predicate_bucket_ordered_threshold);
             let carry_over = resting.begin_block(
@@ -316,13 +328,9 @@ where
                 ctx.block_number(),
                 state.transition_state.as_ref(),
             );
-            ValidityMetrics::record_resting_carry_over(&carry_over);
+            ValidityMetrics::record_resting_carry_over(&carry_over, start.elapsed());
             resting
         });
-
-        // We adjust our flashblocks timings based on time_drift if dynamic adjustment enable
-        let (flashblocks_per_block, first_flashblock_offset) =
-            self.calculate_flashblocks(timestamp);
 
         let skip_flashblocks_building = ctx.attributes().no_tx_pool || flashblocks_per_block == 0;
 
@@ -456,7 +464,7 @@ where
 
             async move {
                 let mut timer = tokio::time::interval_at(
-                    tokio::time::Instant::now()
+                    schedule_start
                         .checked_add(first_flashblock_offset)
                         .expect("can add flashblock offset to current time"),
                     interval,
@@ -990,11 +998,16 @@ where
         DB: Database<Error = ProviderError> + AsRef<P>,
         P: StateRootProvider + HashedPostStateProvider + StorageRootProvider,
     {
+        // Start the end-of-block sweep before the state root so the two overlap. The set is only
+        // stored once the block is sealed, so a block that fails to seal does not hand it on.
+        let resting = self
+            .config
+            .resting_predicate_mode
+            .is_enabled()
+            .then(|| self.resting_predicates.finish(best_txs.take_resting_predicates()));
         let payload = self.finalize_payload(state, ctx, info)?;
-        if self.config.resting_predicate_mode.is_enabled() {
-            let mut resting = best_txs.take_resting_predicates();
-            resting.end_block(payload.block().hash());
-            self.resting_predicates.put(resting);
+        if let Some(resting) = resting {
+            self.resting_predicates.put(resting, payload.block().hash());
         }
         Ok(payload)
     }
