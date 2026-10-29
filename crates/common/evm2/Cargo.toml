@@ -1,6 +1,6 @@
 [package]
 name = "base-common-evm2"
-description = "Base EVM2 execution type family (scaffold)"
+description = "Base execution engine on EVM2"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
