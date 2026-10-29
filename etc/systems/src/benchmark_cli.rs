@@ -34,12 +34,13 @@ use tokio::process::Command;
 use tracing::info;
 
 use crate::{
-    ANVIL_ACCOUNT_1, ANVIL_ACCOUNT_5, B20PrecompileClient, BlockExportWriter, DevnetBlockInterval,
-    DevnetConfig, DevnetL2State, DevnetPrefund, EXPORT_BLOCKS_FILE, ExportedBlock, PendingFixtures,
-    PrometheusBlockCollector, ReplayManifest, SnapshotBenchmarkReportConfig,
-    SnapshotBenchmarkResult, SnapshotBlockMetrics, SnapshotChainConfig, SnapshotL2Stack,
-    SystemTestStack, SystemTestStackBuilder, VisualizerMetadata, VisualizerRun,
-    VisualizerRunResult, VisualizerSequencerMetrics, VisualizerValidatorMetrics,
+    ANVIL_ACCOUNT_1, ANVIL_ACCOUNT_5, B20PrecompileClient, BlockExportWriter, CALIBRATION_FILE,
+    Calibration, DevnetBlockInterval, DevnetConfig, DevnetL2State, DevnetPrefund,
+    EXPORT_BLOCKS_FILE, ExportedBlock, PendingFixtures, PrometheusBlockCollector, ReplayManifest,
+    SnapshotBenchmarkReportConfig, SnapshotBenchmarkResult, SnapshotBlockMetrics,
+    SnapshotChainConfig, SnapshotL2Stack, SystemTestStack, SystemTestStackBuilder, TxProfile,
+    VisualizerMetadata, VisualizerRun, VisualizerRunResult, VisualizerSequencerMetrics,
+    VisualizerValidatorMetrics,
 };
 
 /// Base benchmark launcher.
@@ -1240,6 +1241,19 @@ impl SnapshotBenchmarkArgs {
                     })),
             "follow client does not match the builder over the measured block window"
         );
+        let targets_path = Calibration::targets_path(&self.load_test_config);
+        if let (true, Some(start), Some(end)) =
+            (targets_path.is_file(), summary.measurement_start_block, summary.measurement_end_block)
+        {
+            let targets = fs::read_to_string(&targets_path)
+                .wrap_err_with(|| format!("failed to read {}", targets_path.display()))?;
+            let txs = TxProfile::measure(&builder_rpc, start, end).await?;
+            LocalBenchmarkArgs::write_json(
+                &self.output_dir.join(CALIBRATION_FILE),
+                &Calibration::compare(&targets, &txs)?,
+                "calibration",
+            )?;
+        }
 
         let result = SnapshotBenchmarkResult {
             chain_id: stack.chain_id(),
