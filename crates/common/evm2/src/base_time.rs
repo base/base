@@ -95,6 +95,19 @@ impl BaseTime {
             .into()
     }
 
+    /// Returns the block's Unix-millisecond timestamp: `seconds * 1000` plus the millisecond part
+    /// the predeploy stores in the low `uint16` of
+    /// [`TIMESTAMP_MILLIS_PART_SLOT`](Self::TIMESTAMP_MILLIS_PART_SLOT), wrapping like the
+    /// predeploy's Solidity `uint64` arithmetic. The slot is read untracked so the transaction
+    /// does not warm it.
+    pub fn timestamp_ms(evm: &mut Evm<'_, BaseEvmTypes>, seconds: u64) -> HandlerResult<u64> {
+        let slot = evm
+            .state_mut()
+            .storage_slot_untracked(&Predeploys::BASE_TIME, &Self::TIMESTAMP_MILLIS_PART_SLOT)?;
+        let millis_part = slot.as_limbs()[0] & u64::from(u16::MAX);
+        Ok(seconds.wrapping_mul(1_000).wrapping_add(millis_part))
+    }
+
     /// Installs the `BaseTime` implementation and links its existing proxy before transactions.
     ///
     /// Existing chains must already contain the reserved proxy runtime with

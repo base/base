@@ -39,22 +39,39 @@ transaction registry and static handler hooks. This crate defines that family fo
   Everest EIP-8130 system-account stubs.
 - **Precompiles**: Fjord `P256VERIFY`, the Granite and Jovian bn254 pairing input caps, and the
   Isthmus and Jovian BLS12-381 input caps, all selected by `BaseEvmTypes::precompiles`. Azul's
-  EIP-7825 per-transaction gas cap comes from the Osaka spec.
+  EIP-7825 per-transaction gas cap comes from the Osaka spec. `BaseEvmTypes::native_precompiles`
+  layers the stateful native precompiles on top, gated like the revm `BasePrecompiles`: the B-20
+  factory and tokens, the policy registry, and the activation registry from Beryl, and the
+  EIP-8130 `TxContext` and `NonceManager` from Cobalt. They read `tx.origin` from
+  [`BaseEvmExt::tx_origin`], which every transaction handler sets.
+- **EIP-8130 transactions** (type `0x79`, Everest onward): [`Eip8130Handler`] executes them
+  through the engine-neutral pipeline in `base-execution-eip8130` (shared with the revm
+  reference): sender/payer and account-change authorization, account creation, configuration
+  changes and delegation, the 2D nonce manager and the nonce-free replay ring with the
+  millisecond validity window, the EIP-8130 intrinsic gas schedule, a worst-case payer pre-charge
+  (gas, L1 data fee, operator fee), phased calls that commit or revert in order, and settlement
+  (refund cap, EIP-7623 floor, vault credits). The receipt is an `Eip8130Receipt` carrying
+  `committedPhases`, reported through [`BaseTxResultExt::eip8130_committed_phases`]. The envelope
+  ([`Eip8130Tx`]) carries the EIP-2718 bytes that price intrinsic gas, the L1 fee, and the DA
+  footprint.
+- **EIP-8130 simulation** for RPC: an envelope built with `BaseTxEnvelope::eip8130_simulation`
+  runs the calls from the recovered signer without verifying signatures, touching the nonce, or
+  settling fees, and rolls all state back while keeping the logs.
+  [`Eip8130SimulationMode::Call`] reports one run's metered gas (`eth_call`);
+  [`Eip8130SimulationMode::Estimate`] reports the smallest gas limit at which the calls succeed
+  (`eth_estimateGas`). Execute it with `Evm::call_tx`.
 - **Reth traits** (feature `reth`): `FromRecoveredTx`/`FromTxWithEncoded` from
   `BaseTransactionSigned`, `TransactionEnvMut`, and `BlockTransactionResult` for
   [`BaseExecutedTx`]. Simulation overrides of the gas limit or access list keep the transaction's
   original EIP-2718 bytes, so the L1 data fee is priced over the transaction as signed.
-- **EIP-8130 primitives**: the envelope variant, the [`NonceManager`] storage layout (read and
-  increment), and the intrinsic-gas schedule re-exported from `base-common-eip8130`.
+- **EIP-8130 primitives**: the [`NonceManager`] storage layout (untracked reads and increment)
+  and the intrinsic-gas schedule re-exported from `base-common-eip8130`.
 
 ## Pending
 
-- **Stateful Beryl and Cobalt precompiles** (B20 factory, registries, `TxContext`,
-  `NonceManager`). These will share one engine-neutral implementation with `base-common-evm` and
-  be installed by `BaseEvmTypes::precompiles`, the single precompile-set seam both this crate
-  and the Reth bridge build EVMs through.
-- **EIP-8130 execution**: [`BaseBlockExecutor`] rejects EIP-8130 transactions with
-  [`Eip8130ExecutionUnsupported`].
+- **EIP-8130 tracing**: an inspector sees each EIP-8130 call as its own top-level frame, and
+  estimation probes are inspected too. The revm reference wraps the calls in one synthetic root
+  frame and hides the probes.
 
 ## Parity tests
 
@@ -68,3 +85,10 @@ results across the execution fork ladder (`BaseUpgrade::EXECUTION_VARIANTS`):
   by standard transactions.
 - `transition_parity`: the state each transition-block hook installs.
 - `l1_block_parity`: the L1 fee parameters read from the `L1Block` predeploy storage.
+- `native_precompile_parity`: calls to the stateful native precompiles, Azul onward.
+- `eip8130_parity`: signed EIP-8130 transactions (self-pay, phased reverts and halts, payer
+  sponsorship, create, delegation, configuration change, policy gate, 2D and nonce-free nonces,
+  the validity window, refunds, rejections, and simulation), comparing inclusion or rejection,
+  status, gas, output, logs, committed phases, and every touched account and slot; plus a block
+  mixing deposit, standard, and EIP-8130 transactions compared receipt by receipt, with the
+  DA footprint and post-block state.

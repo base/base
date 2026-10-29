@@ -30,7 +30,8 @@ impl TransactionEnvMut for BaseTxEnvelope {
         match self {
             Self::Deposit(tx) => tx.gas_limit = gas_limit,
             Self::Standard { tx, .. } => tx.set_gas_limit(gas_limit),
-            Self::Eip8130(signed) => {
+            Self::Eip8130(eip8130) => {
+                let signed = &mut eip8130.signed;
                 let mut tx = signed.tx().clone();
                 tx.gas_limit = gas_limit;
                 *signed = Eip8130Signed::new(

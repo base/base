@@ -21,17 +21,45 @@ pub enum BaseTxEnvelope {
         /// which `TxEnvelope` alone cannot reproduce.
         enveloped: Bytes,
     },
-    /// An enshrined EIP-8130 account-abstraction transaction (type `0x79`, Everest onwards). Its
-    /// enshrined execution path is layered on with the EIP-8130 track; this variant carries the
-    /// signed transaction so the envelope and receipts can already represent it.
-    ///
-    /// TODO(eip8130-execution): carry the EIP-2718 serialized bytes here (as [`Self::Standard`]
-    /// does) before the `0x79` execution handler is registered. Until then [`Self::enveloped`]
-    /// returns `None` for this variant, which the executor's Jovian DA-footprint metering treats
-    /// as an empty payload — hitting the minimum-tx-size floor and undercounting the true DA cost.
-    /// Inert today (no `0x79` handler is registered, so an EIP-8130 tx never reaches DA
-    /// accumulation), but it must be fixed together with the handler.
-    Eip8130(Eip8130Signed),
+    /// An enshrined EIP-8130 account-abstraction transaction (type `0x79`, Everest onwards).
+    Eip8130(Eip8130Tx),
+}
+
+/// An EIP-8130 transaction as executed: the signed transaction, its EIP-2718 encoding, and the
+/// read-only simulation request, if any.
+#[derive(Clone, Debug)]
+pub struct Eip8130Tx {
+    /// The signed EIP-8130 transaction.
+    pub signed: Eip8130Signed,
+    /// The EIP-2718 encoded bytes, as posted to L1. They price the intrinsic gas, the L1 data
+    /// fee, the operator fee, and the Jovian DA footprint.
+    pub enveloped: Bytes,
+    /// `Some` only on the read-only RPC path (`eth_call` / `eth_estimateGas`), which skips
+    /// signature verification and fee settlement and reverts all state. Block execution and pool
+    /// validation always carry `None`, so an unverified transaction can never be included.
+    pub simulation: Option<Eip8130Simulation>,
+}
+
+/// A read-only simulation request for an EIP-8130 transaction.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Eip8130Simulation {
+    /// Whether to run the calls once (`eth_call`) or search for the minimum gas limit at which
+    /// they succeed (`eth_estimateGas`).
+    pub mode: Eip8130SimulationMode,
+    /// The acting sender actor, when the request names one (e.g. a session key). Without it the
+    /// account's self-actor acts.
+    pub sender_actor_id: Option<B256>,
+}
+
+/// How an EIP-8130 simulation measures gas.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Eip8130SimulationMode {
+    /// `eth_call`: the calls run once at the transaction's gas limit, reporting that run's
+    /// metered gas.
+    #[default]
+    Call,
+    /// `eth_estimateGas`: reports the smallest gas limit at which the calls succeed.
+    Estimate,
 }
 
 impl BaseTxEnvelope {
@@ -48,15 +76,33 @@ impl BaseTxEnvelope {
 
     /// Builds the execution envelope of a signed Base transaction from its EIP-2718 encoding.
     pub fn from_signed(tx: BaseTransactionSigned, encoded: Bytes) -> Self {
-        let standard = |tx: EthereumTxEnvelope<_>| Self::standard(TxEnvelope::from(tx), encoded);
+        let standard =
+            |tx: EthereumTxEnvelope<_>| Self::standard(TxEnvelope::from(tx), encoded.clone());
         match tx {
             BaseTransactionSigned::Legacy(tx) => standard(EthereumTxEnvelope::Legacy(tx)),
             BaseTransactionSigned::Eip2930(tx) => standard(EthereumTxEnvelope::Eip2930(tx)),
             BaseTransactionSigned::Eip1559(tx) => standard(EthereumTxEnvelope::Eip1559(tx)),
             BaseTransactionSigned::Eip7702(tx) => standard(EthereumTxEnvelope::Eip7702(tx)),
             BaseTransactionSigned::Deposit(tx) => Self::Deposit(tx.into_inner()),
-            BaseTransactionSigned::Eip8130(tx) => Self::Eip8130(tx),
+            BaseTransactionSigned::Eip8130(tx) => Self::eip8130(tx, encoded),
         }
+    }
+
+    /// Builds the execution envelope of a signed EIP-8130 transaction from its EIP-2718
+    /// encoding, for block execution and pool validation.
+    pub const fn eip8130(signed: Eip8130Signed, enveloped: Bytes) -> Self {
+        Self::Eip8130(Eip8130Tx { signed, enveloped, simulation: None })
+    }
+
+    /// Builds the envelope of an EIP-8130 transaction for a read-only RPC simulation. The
+    /// simulated sender is the [`Recovered`](alloy_consensus::transaction::Recovered) signer the
+    /// envelope is executed with; signatures are never verified.
+    pub const fn eip8130_simulation(
+        signed: Eip8130Signed,
+        enveloped: Bytes,
+        simulation: Eip8130Simulation,
+    ) -> Self {
+        Self::Eip8130(Eip8130Tx { signed, enveloped, simulation: Some(simulation) })
     }
 
     /// Returns the deposit transaction, if this envelope is a deposit.
@@ -73,7 +119,7 @@ impl BaseTxEnvelope {
     }
 
     /// Returns the EIP-8130 transaction, if this envelope is one.
-    pub const fn as_eip8130(&self) -> Option<&Eip8130Signed> {
+    pub const fn as_eip8130(&self) -> Option<&Eip8130Tx> {
         match self {
             Self::Eip8130(tx) => Some(tx),
             Self::Deposit(_) | Self::Standard { .. } => None,
@@ -88,12 +134,14 @@ impl BaseTxEnvelope {
         }
     }
 
-    /// Returns the standard transaction's EIP-2718 encoded bytes, if this envelope is a standard
-    /// transaction.
+    /// Returns the EIP-2718 encoded bytes of a standard or EIP-8130 transaction; `None` for a
+    /// deposit, which pays no L1 data fee.
     pub const fn enveloped(&self) -> Option<&Bytes> {
         match self {
-            Self::Standard { enveloped, .. } => Some(enveloped),
-            Self::Deposit(_) | Self::Eip8130(_) => None,
+            Self::Standard { enveloped, .. } | Self::Eip8130(Eip8130Tx { enveloped, .. }) => {
+                Some(enveloped)
+            }
+            Self::Deposit(_) => None,
         }
     }
 }
@@ -103,7 +151,7 @@ impl Typed2718 for BaseTxEnvelope {
         match self {
             Self::Deposit(tx) => tx.ty(),
             Self::Standard { tx, .. } => tx.ty(),
-            Self::Eip8130(tx) => tx.ty(),
+            Self::Eip8130(tx) => tx.signed.ty(),
         }
     }
 }
@@ -114,7 +162,7 @@ macro_rules! delegate {
         match $self {
             Self::Deposit(tx) => tx.$method($($arg),*),
             Self::Standard { tx, .. } => tx.$method($($arg),*),
-            Self::Eip8130(tx) => tx.$method($($arg),*),
+            Self::Eip8130(tx) => tx.signed.$method($($arg),*),
         }
     };
 }
@@ -195,12 +243,6 @@ impl From<TxDeposit> for BaseTxEnvelope {
     }
 }
 
-impl From<Eip8130Signed> for BaseTxEnvelope {
-    fn from(tx: Eip8130Signed) -> Self {
-        Self::Eip8130(tx)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, TxKind};
@@ -232,13 +274,15 @@ mod tests {
             Bytes::new(),
             Bytes::new(),
         );
-        let envelope = BaseTxEnvelope::from(tx);
+        let enveloped = Bytes::from_static(&[EIP8130_TX_TYPE_ID, 0xc0]);
+        let envelope = BaseTxEnvelope::eip8130(tx, enveloped.clone());
         assert_eq!(envelope.ty(), EIP8130_TX_TYPE_ID);
-        assert!(envelope.as_eip8130().is_some());
+        assert!(envelope.as_eip8130().is_some_and(|tx| tx.simulation.is_none()));
         assert_eq!(envelope.gas_limit(), 250_000);
-        // An EIP-8130 tx is neither a deposit nor a standard transaction.
+        // An EIP-8130 tx is neither a deposit nor a standard transaction, and its encoding prices
+        // the L1 data fee and DA footprint.
         assert!(!envelope.is_deposit());
         assert!(envelope.as_standard().is_none());
-        assert!(envelope.enveloped().is_none());
+        assert_eq!(envelope.enveloped(), Some(&enveloped));
     }
 }

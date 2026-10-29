@@ -13,15 +13,17 @@ Orchestrates Base block execution for Reth on the EVM2 engine. The execution rul
   toggles, and the Azul EIP-7825 transaction gas cap carried by the Osaka version), and the block
   environment. The block's L1 fee parameters are read from the `L1Block` predeploy during
   execution, at the first non-deposit transaction.
-- `BaseBlockExecutorFactory` builds EVMs with Base's transaction registry and the precompile set
-  from `BaseEvmTypes::precompiles`, the one place the stateful Beryl and Cobalt precompiles will
-  be installed. It creates `BaseRethBlockExecutor`s.
+- `BaseBlockExecutorFactory` builds EVMs with Base's transaction registry and the precompile
+  provider from `BaseEvmTypes::native_precompiles` (the static set plus the stateful Beryl and
+  Cobalt precompiles, with the chain's activation registry admin). It creates
+  `BaseRethBlockExecutor`s.
 - `BaseRethBlockExecutor` runs the shared `BaseBlockExecutor` (pre-execution system calls,
   Canyon/Denim/Everest transition changes, block gas and Jovian DA-footprint checks, receipts) and
   keeps the block's state as Reth bundle state, streaming every commit, including the
   pre-execution and transition changes, to Reth's state hook. Execution errors map onto Reth's
   block-validation errors; invalid transactions are classified through `BaseInvalidTxError` so
-  payload building can skip them. EIP-8130 transactions are rejected as unsupported for now.
+  payload building can skip them. EIP-8130 transactions execute through the shared engine (see
+  `base-common-evm2`).
 - `BaseBlockAssembler` assembles the header: the receipts root (without Regolith deposit nonces
   before Canyon), the Isthmus withdrawals root (the `L2ToL1MessagePasser` storage root), the
   empty requests hash from Isthmus, and from Jovian the block's DA footprint in `blob_gas_used`.
