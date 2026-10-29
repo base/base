@@ -99,18 +99,21 @@ impl SendState {
     ///
     /// Conditions are checked in priority order:
     /// 1. If any transaction is mined, returns `None` (wait for confirmation).
-    /// 2. If no successful publish has occurred and a nonce-too-low error was
+    /// 2. If no transaction has been published and a nonce-too-low error was
     ///    seen, returns [`TxManagerError::NonceTooLow`] (immediate abort).
     /// 3. If nonce-too-low errors have reached the threshold, returns
     ///    [`TxManagerError::NonceTooLow`].
     /// 4. If the mempool deadline has expired *and* no transaction has been
-    ///    successfully published, returns
-    ///    [`TxManagerError::MempoolDeadlineExpired`]. Once a publish has
-    ///    succeeded the tx is in the mempool and the deadline's purpose is
-    ///    served. Further waiting is governed by `tx_send_timeout` and the
-    ///    bump cycle, not by aborting (which would leak a pre-reserved nonce
-    ///    and stall publication on lower nonces still live on L1).
+    ///    published, returns [`TxManagerError::MempoolDeadlineExpired`]. Once
+    ///    a transaction is published it may be in the mempool and the
+    ///    deadline's purpose is served. Further waiting is governed by
+    ///    `tx_send_timeout` and the bump cycle, not by aborting (which would
+    ///    leak a pre-reserved nonce and stall publication on lower nonces
+    ///    still live on L1).
     /// 5. Otherwise, returns `None`.
+    ///
+    /// A transaction counts as published once [`record_publish`](Self::record_publish)
+    /// was called for it.
     #[must_use]
     pub fn critical_error_at(&self, now: Duration) -> Option<TxManagerError> {
         let inner = self.inner.lock().expect("SendState mutex poisoned");
@@ -141,8 +144,9 @@ impl SendState {
         !inner.mined_txs.is_empty()
     }
 
-    /// Records that a transaction was successfully published.
-    pub fn record_successful_publish(&self) {
+    /// Records that a transaction may have reached the node: the node accepted
+    /// it, or its publish got no answer (a timeout or a transport failure).
+    pub fn record_publish(&self) {
         let mut inner = self.inner.lock().expect("SendState mutex poisoned");
         inner.has_published = true;
     }
@@ -165,7 +169,8 @@ impl SendState {
         inner.mempool_deadline = Some(absolute_deadline);
     }
 
-    /// Returns `true` if at least one transaction was successfully published.
+    /// Returns `true` if at least one transaction was published, see
+    /// [`record_publish`](Self::record_publish).
     #[must_use]
     pub fn has_published(&self) -> bool {
         let inner = self.inner.lock().expect("SendState mutex poisoned");
@@ -238,7 +243,7 @@ mod tests {
     #[test]
     fn nonce_too_low_below_threshold_no_abort() {
         let state = SendState::new(3).unwrap();
-        state.record_successful_publish();
+        state.record_publish();
         state.process_send_error(&TxManagerError::NonceTooLow);
         state.process_send_error(&TxManagerError::NonceTooLow);
         assert!(state.critical_error_at(Duration::ZERO).is_none());
@@ -247,7 +252,7 @@ mod tests {
     #[test]
     fn nonce_too_low_at_threshold_aborts() {
         let state = SendState::new(3).unwrap();
-        state.record_successful_publish();
+        state.record_publish();
         for _ in 0..3 {
             state.process_send_error(&TxManagerError::NonceTooLow);
         }
@@ -257,7 +262,7 @@ mod tests {
     #[test]
     fn nonce_too_low_above_threshold_aborts() {
         let state = SendState::new(3).unwrap();
-        state.record_successful_publish();
+        state.record_publish();
         for _ in 0..5 {
             state.process_send_error(&TxManagerError::NonceTooLow);
         }
@@ -269,7 +274,7 @@ mod tests {
     #[test]
     fn mined_tx_suppresses_nonce_too_low_abort() {
         let state = SendState::new(3).unwrap();
-        state.record_successful_publish();
+        state.record_publish();
         // Accumulate errors past threshold.
         for _ in 0..5 {
             state.process_send_error(&TxManagerError::NonceTooLow);
@@ -298,7 +303,7 @@ mod tests {
     #[test]
     fn tx_not_mined_resets_nonce_count_when_empty() {
         let state = SendState::new(3).unwrap();
-        state.record_successful_publish();
+        state.record_publish();
 
         let tx = B256::with_last_byte(1);
         state.tx_mined(tx);
@@ -326,7 +331,7 @@ mod tests {
     #[test]
     fn removing_one_of_multiple_mined_txs_does_not_reset() {
         let state = SendState::new(3).unwrap();
-        state.record_successful_publish();
+        state.record_publish();
 
         let tx1 = B256::with_last_byte(1);
         let tx2 = B256::with_last_byte(2);
@@ -346,7 +351,7 @@ mod tests {
     #[test]
     fn tx_not_mined_with_never_mined_hash_does_not_reset_counter() {
         let state = SendState::new(3).unwrap();
-        state.record_successful_publish();
+        state.record_publish();
 
         for _ in 0..5 {
             state.process_send_error(&TxManagerError::NonceTooLow);
@@ -362,7 +367,7 @@ mod tests {
     #[test]
     fn removing_last_mined_tx_resets_counter() {
         let state = SendState::new(3).unwrap();
-        state.record_successful_publish();
+        state.record_publish();
 
         let tx1 = B256::with_last_byte(1);
         let tx2 = B256::with_last_byte(2);
@@ -413,7 +418,7 @@ mod tests {
         // pre-reserved nonce stays live on L1, stalling subsequent sends.
         let state = SendState::new(3).unwrap();
         state.set_runtime_mempool_deadline(Duration::ZERO);
-        state.record_successful_publish();
+        state.record_publish();
         assert!(state.critical_error_at(Duration::ZERO).is_none());
     }
 
@@ -444,7 +449,7 @@ mod tests {
     #[test]
     fn post_publish_nonce_too_low_requires_threshold() {
         let state = SendState::new(3).unwrap();
-        state.record_successful_publish();
+        state.record_publish();
 
         // Single nonce-too-low should NOT abort after a successful publish.
         state.process_send_error(&TxManagerError::NonceTooLow);
@@ -512,11 +517,11 @@ mod tests {
         let state = SendState::new(3).unwrap();
         assert!(!state.has_published());
 
-        state.record_successful_publish();
+        state.record_publish();
         assert!(state.has_published());
 
         // Idempotent.
-        state.record_successful_publish();
+        state.record_publish();
         assert!(state.has_published());
     }
 

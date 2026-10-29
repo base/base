@@ -6638,6 +6638,7 @@ dependencies = [
  "alloy-node-bindings",
  "alloy-primitives",
  "alloy-provider",
+ "alloy-rpc-client",
  "alloy-rpc-types-eth 2.5.0",
  "alloy-signer 2.5.0",
  "alloy-signer-local 2.5.0",
@@ -6658,6 +6659,7 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.19",
  "tokio",
+ "tower 0.5.3",
  "tracing",
  "url",
 ]

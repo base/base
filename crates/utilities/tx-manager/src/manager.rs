@@ -53,7 +53,7 @@ use alloy_network::{
 use alloy_primitives::{Address, B256, Bytes, keccak256};
 use alloy_provider::Provider;
 use alloy_rpc_types_eth::{TransactionReceipt, TransactionRequest};
-use alloy_transport::TransportError;
+use alloy_transport::{RpcError, TransportError};
 use backon::{ConstantBuilder, Retryable};
 use base_runtime::{Runtime, RuntimeTimeout, TokioRuntime};
 use futures::StreamExt;
@@ -936,7 +936,9 @@ where
     ///
     /// Orchestrates the send lifecycle:
     /// 1. Prepare and sign the initial transaction via [`prepare`](Self::prepare).
-    /// 2. Publish the raw transaction via [`publish_tx`](Self::publish_tx).
+    /// 2. Publish the raw transaction via [`publish_tx`](Self::publish_tx). A
+    ///    publish that gets no answer counts as published, since the
+    ///    transaction may have reached the node.
     /// 3. Spawn a background [`wait_for_tx`](Self::wait_for_tx) task to poll
     ///    for the receipt.
     /// 4. Enter a `tokio::select!` loop that monitors the resubmission timer
@@ -1070,9 +1072,9 @@ where
     ///
     /// A nonce is eligible for return when BOTH of these hold:
     /// 1. The send failed (`result.is_err()`).
-    /// 2. No transaction was ever successfully published — if a tx was
-    ///    published, the nonce may be in the mempool and must not be
-    ///    reused.
+    /// 2. No transaction was ever published — if a tx was published, or its
+    ///    publish got no answer, the nonce may be in the mempool and must not
+    ///    be reused.
     fn should_return_reserved_nonce<T>(
         result: &TxManagerResult<T>,
         send_state: &SendState,
@@ -1249,7 +1251,7 @@ where
         let new_hash = self.publish_tx(send_state, &prepared.raw_tx, Some(old.tx_hash)).await?;
 
         // Record the bump and log only after the transaction has been
-        // successfully published to avoid inflating the count on failure.
+        // published to avoid inflating the count on failure.
         let bump_count = send_state.record_fee_bump();
         self.metrics.record_gas_bump();
         info!(
@@ -1314,15 +1316,19 @@ where
 
     /// Broadcasts a raw transaction to the network.
     ///
-    /// On success, records a successful publish on the [`SendState`] and
-    /// returns the locally computed transaction hash. On [`TxManagerError::AlreadyKnown`]
-    /// after a prior successful publish, treats it as success — records
-    /// another successful publish and returns `Ok(last_tx_hash)` so
-    /// callers do not need to special-case this variant. All other errors
-    /// are forwarded to [`SendState::process_send_error`] for state tracking.
+    /// On success, records a publish on the [`SendState`] and returns the locally computed
+    /// transaction hash. On [`TxManagerError::AlreadyKnown`] after a prior publish, treats it
+    /// as success — records another publish and returns `Ok(last_tx_hash)` so callers do not
+    /// need to special-case this variant. Other JSON-RPC error responses are forwarded to
+    /// [`SendState::process_send_error`] for state tracking.
+    ///
+    /// A publish that gets no JSON-RPC answer, because it timed out or failed in transport,
+    /// may still have reached the node. It is recorded as a publish and returns the local
+    /// hash, so the caller keeps following the transaction and its nonce is not reissued
+    /// while the transaction may still be mined.
     ///
     /// The `last_tx_hash` parameter is the hash from the most recent
-    /// successful publish. When the network returns `AlreadyKnown` on
+    /// publish. When the network returns `AlreadyKnown` on
     /// resubmission, this hash is returned as the successful result.
     ///
     /// The returned hash never comes from the RPC. It is the decoded envelope's
@@ -1331,8 +1337,8 @@ where
     /// EIP-2718 hash of any typed transaction whose network encoding equals its
     /// consensus encoding; a well-formed RPC hash is not preferred, because the RPC
     /// reply is advisory. A different or undecodable hash in a valid JSON-RPC success
-    /// response only logs a warning; only a transport failure, an invalid response
-    /// envelope, or a JSON-RPC error response is a publication error.
+    /// response only logs a warning; only an invalid response envelope or a JSON-RPC error
+    /// response is a publication error.
     ///
     /// # Errors
     ///
@@ -1361,7 +1367,7 @@ where
         )
         .await;
 
-        match result {
+        let error = match result {
             Ok(Ok(response)) => {
                 match serde_json::from_value::<B256>(response) {
                     Ok(rpc_tx_hash) if rpc_tx_hash != local_tx_hash => {
@@ -1379,10 +1385,11 @@ where
                     }
                     Ok(_) => {}
                 }
-                send_state.record_successful_publish();
+                send_state.record_publish();
                 info!(tx_hash = %local_tx_hash, "transaction published");
-                Ok(local_tx_hash)
+                return Ok(local_tx_hash);
             }
+            Ok(Err(e @ RpcError::Transport(_))) => self.classify_and_record_rpc(&e),
             Ok(Err(e)) => {
                 let classified = self.classify_and_record_rpc(&e);
                 // AlreadyKnown on resubmission is a success — the tx is in
@@ -1393,7 +1400,7 @@ where
                             "AlreadyKnown but no prior tx hash available — caller must track the hash from publish_tx".into(),
                         )
                     })?;
-                    send_state.record_successful_publish();
+                    send_state.record_publish();
                     info!(tx_hash = %hash, "transaction already known in mempool, treating as success");
                     return Ok(hash);
                 }
@@ -1415,16 +1422,21 @@ where
                     error!(error = %classified, "publish failed with non-retryable error");
                 }
 
-                Err(classified)
+                return Err(classified);
             }
-            Err(_) => {
-                let err = self.rpc_error("send_raw_transaction timed out");
-                send_state.process_send_error(&err);
-                self.metrics.record_publish_error();
-                warn!(error = %err, "publish timed out");
-                Err(err)
-            }
-        }
+            Err(_) => self.rpc_error("send_raw_transaction timed out"),
+        };
+
+        // Without an answer, the node may have received the transaction. Failing here would
+        // let the next send reuse a nonce that this transaction may still consume.
+        send_state.record_publish();
+        self.metrics.record_publish_error();
+        warn!(
+            error = %error,
+            tx_hash = %local_tx_hash,
+            "publish got no answer, following the transaction as published"
+        );
+        Ok(local_tx_hash)
     }
 
     /// Spawns a background task that polls for a transaction receipt and
@@ -1793,7 +1805,7 @@ mod tests {
     use rstest::rstest;
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
-        net::TcpListener,
+        net::{TcpListener, TcpStream},
         sync::mpsc,
     };
 
@@ -2034,6 +2046,31 @@ mod tests {
         assert!(send_state.has_published());
     }
 
+    /// JSON-RPC answer to the chain ID query made when a manager is built.
+    const CHAIN_ID_RESPONSE: &str = r#"{"jsonrpc":"2.0","id":0,"result":"0x1"}"#;
+
+    /// Reads one HTTP request with a JSON body from `stream`.
+    async fn read_http_request(stream: &mut TcpStream) {
+        let mut request = Vec::with_capacity(1024);
+        loop {
+            assert_ne!(stream.read_buf(&mut request).await.unwrap(), 0);
+            if let Some(end) = request.windows(4).position(|w| w == b"\r\n\r\n")
+                && serde_json::from_slice::<serde_json::Value>(&request[end + 4..]).is_ok()
+            {
+                return;
+            }
+        }
+    }
+
+    /// Writes an HTTP 200 response with `body` to `stream`.
+    async fn write_http_response(stream: &mut TcpStream, body: &str) {
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        stream.write_all(response.as_bytes()).await.unwrap();
+    }
+
     #[rstest]
     #[case::html("<html>rate limited</html>")]
     #[case::empty("")]
@@ -2044,23 +2081,10 @@ mod tests {
         let url = format!("http://{}", listener.local_addr().unwrap()).parse().unwrap();
         let server = tokio::spawn(async move {
             tokio::time::timeout(Duration::from_secs(5), async move {
-                for body in [r#"{"jsonrpc":"2.0","id":0,"result":"0x1"}"#, body] {
+                for body in [CHAIN_ID_RESPONSE, body] {
                     let (mut stream, _) = listener.accept().await.unwrap();
-                    let mut request = Vec::with_capacity(1024);
-                    loop {
-                        assert_ne!(stream.read_buf(&mut request).await.unwrap(), 0);
-                        if let Some(end) = request.windows(4).position(|w| w == b"\r\n\r\n")
-                            && serde_json::from_slice::<serde_json::Value>(&request[end + 4..])
-                                .is_ok()
-                        {
-                            break;
-                        }
-                    }
-                    let response = format!(
-                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                        body.len()
-                    );
-                    stream.write_all(response.as_bytes()).await.unwrap();
+                    read_http_request(&mut stream).await;
+                    write_http_response(&mut stream, body).await;
                 }
             })
             .await
@@ -2088,6 +2112,47 @@ mod tests {
             Some(TxManagerError::MempoolDeadlineExpired)
         );
         server.await.unwrap();
+    }
+
+    /// A publish that reaches the node but gets no answer, because the connection closes or
+    /// the network timeout expires, may still be mined: it is recorded as a publish, so the
+    /// send keeps following the local hash and keeps its nonce.
+    #[rstest]
+    #[case::connection_closed(false)]
+    #[case::timed_out(true)]
+    #[tokio::test]
+    async fn publish_tx_records_a_publish_that_got_no_answer(#[case] hold_connection: bool) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap()).parse().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            read_http_request(&mut stream).await;
+            write_http_response(&mut stream, CHAIN_ID_RESPONSE).await;
+            let (mut stream, _) = listener.accept().await.unwrap();
+            read_http_request(&mut stream).await;
+            if hold_connection {
+                std::future::pending::<()>().await;
+            }
+        });
+        let manager = SimpleTxManager::from_wallet(
+            RootProvider::new_http(url),
+            EthereumWallet::from(PrivateKeySigner::random()),
+            TxManagerConfig { network_timeout: Duration::from_millis(500), ..Default::default() },
+            1,
+            Arc::new(NoopTxMetrics),
+        )
+        .await
+        .unwrap();
+        let send_state = SendState::new(3).unwrap();
+        send_state.set_runtime_mempool_deadline(Duration::from_secs(1));
+        let envelope = signed_eip1559();
+
+        let result = manager.publish_tx(&send_state, &envelope.encoded_2718().into(), None).await;
+
+        assert_eq!(result, Ok(*envelope.tx_hash()));
+        assert!(send_state.has_published());
+        assert!(send_state.critical_error_at(Duration::from_secs(1)).is_none());
+        server.abort();
     }
 
     #[tokio::test]
@@ -2480,7 +2545,7 @@ mod tests {
         if has_publish {
             // Publishing is only reachable once a nonce has been signed.
             send_state.record_assigned_nonce(0);
-            send_state.record_successful_publish();
+            send_state.record_publish();
         }
         assert_eq!(
             SimpleTxManager::<RootProvider>::should_reset_nonce_on_send_error(
@@ -2527,7 +2592,7 @@ mod tests {
     ) {
         let send_state = crate::SendState::new(3).expect("should create send state");
         if has_publish {
-            send_state.record_successful_publish();
+            send_state.record_publish();
         }
         assert_eq!(
             SimpleTxManager::<RootProvider>::should_return_reserved_nonce(&result, &send_state,),
