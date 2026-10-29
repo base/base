@@ -232,11 +232,11 @@ impl<'a, Storage: BaseProofsStore + Clone> StateProofProvider
 
     fn multiproof_v2(
         &self,
-        input: TrieInput,
         targets: MultiProofTargetsV2,
+        _requires_masks: bool,
     ) -> ProviderResult<DecodedMultiProofV2> {
-        Proof::overlay_multiproof_v2(self.storage, self.block_number, input, targets)
-            .map_err(ProviderError::from)
+        // The stored trie at `block_number` matches its hashed state, so masks are exact.
+        Proof::multiproof_v2(self.storage, self.block_number, targets).map_err(ProviderError::from)
     }
 }
 

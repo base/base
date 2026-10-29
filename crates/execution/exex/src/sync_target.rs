@@ -253,7 +253,7 @@ mod tests {
     use alloy_consensus::private::alloy_primitives::B256;
     use alloy_eips::{NumHash, eip1898::BlockWithParent};
     use reth_trie::{
-        ComputedTrieData, HashedPostStateSorted, LazyTrieData, updates::TrieUpdatesSorted,
+        HashedPostStateSorted, LazyTrieData, SortedTrieData, updates::TrieUpdatesSorted,
     };
 
     use super::*;
@@ -269,7 +269,7 @@ mod tests {
     fn dummy_cached_data(num: u64) -> CachedBlockTrieData {
         CachedBlockTrieData {
             block_with_parent: block_with_parent(num),
-            trie_data: LazyTrieData::ready(ComputedTrieData::new(
+            trie_data: LazyTrieData::ready(SortedTrieData::new(
                 Arc::new(HashedPostStateSorted::default()),
                 Arc::new(TrieUpdatesSorted::default()),
             )),
