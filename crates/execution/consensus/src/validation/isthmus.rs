@@ -4,8 +4,7 @@ use alloy_consensus::BlockHeader;
 use alloy_primitives::B256;
 use base_common_consensus::Predeploys;
 use reth_storage_api::{StorageRootProvider, errors::ProviderResult};
-use reth_trie_common::HashedStorage;
-use revm::database::BundleState;
+use reth_trie_common::{HashedStorage, bundle_state::BundleState};
 
 use crate::BaseConsensusError;
 
