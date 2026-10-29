@@ -8,8 +8,8 @@ use base_common_chains::Upgrades;
 use base_common_consensus::{
     BaseReceipt, BaseTxEnvelope, DepositReceipt, Eip8130Receipt, OpTxType,
 };
-use reth_evm::Evm;
-use revm::{Database, context::result::ExecutionResult};
+use base_common_evm2::BaseEvmTypes;
+use evm2::{Evm, TxResult};
 
 /// Error type for receipt building operations.
 #[derive(Debug, thiserror::Error)]
@@ -36,7 +36,6 @@ pub enum ReceiptBuildError {
 ///     result,
 ///     cumulative_gas_used,
 ///     timestamp,
-///     eip8130_committed_phases,
 /// )?;
 /// ```
 #[derive(Debug, Clone)]
@@ -65,38 +64,32 @@ impl<C: Upgrades> UnifiedReceiptBuilder<C> {
     ///
     /// # Arguments
     ///
-    /// * `evm` - Mutable reference to the EVM, used for database access
+    /// * `evm` - The EVM the transaction executed on, before its state changes are committed;
+    ///   a deposit receipt records the depositor's nonce from its accepted state
     /// * `transaction` - The recovered transaction to build a receipt for
-    /// * `result` - The execution result
+    /// * `result` - The execution result, including an EIP-8130 transaction's committed phases
     /// * `cumulative_gas_used` - Cumulative gas used up to and including this transaction
     /// * `timestamp` - The block timestamp, used to determine active upgrades
-    /// * `eip8130_committed_phases` - The number of leading EIP-8130 call phases that committed
-    ///   when executing the transaction; only used for EIP-8130 receipts
     ///
     /// # Returns
     ///
     /// Returns the built receipt on success, or a [`ReceiptBuildError`] if the deposit
     /// account could not be loaded from the database.
-    pub fn build<E>(
+    pub fn build(
         &self,
-        evm: &mut E,
+        evm: &mut Evm<'_, BaseEvmTypes>,
         transaction: &Recovered<BaseTxEnvelope>,
-        result: &ExecutionResult<E::HaltReason>,
+        result: &TxResult<BaseEvmTypes>,
         cumulative_gas_used: u64,
         timestamp: u64,
-        eip8130_committed_phases: u64,
-    ) -> Result<BaseReceipt, ReceiptBuildError>
-    where
-        E: Evm,
-        E::DB: Database,
-    {
+    ) -> Result<BaseReceipt, ReceiptBuildError> {
         let tx_type = transaction.tx_type();
 
         // Build the inner receipt from the execution result
         let receipt = Receipt {
             status: Eip658Value::Eip658(result.is_success()),
             cumulative_gas_used,
-            logs: result.logs().to_vec(),
+            logs: result.logs.clone(),
         };
 
         if tx_type == OpTxType::Deposit {
@@ -107,8 +100,8 @@ impl<C: Upgrades> UnifiedReceiptBuilder<C> {
             // Fetch deposit nonce if Regolith is active
             let deposit_nonce = if is_regolith_active {
                 Some(
-                    evm.db_mut()
-                        .basic(transaction.signer())
+                    evm.state_mut()
+                        .account_info_untracked(&transaction.signer())
                         .map_err(|_| ReceiptBuildError::DepositAccountLoad)?
                         .map(|acc| acc.nonce)
                         .unwrap_or_default(),
@@ -130,9 +123,10 @@ impl<C: Upgrades> UnifiedReceiptBuilder<C> {
                 OpTxType::Eip1559 => BaseReceipt::Eip1559(receipt),
                 OpTxType::Eip7702 => BaseReceipt::Eip7702(receipt),
                 OpTxType::Deposit => unreachable!(),
-                OpTxType::Eip8130 => {
-                    BaseReceipt::Eip8130(Eip8130Receipt::new(receipt, eip8130_committed_phases))
-                }
+                OpTxType::Eip8130 => BaseReceipt::Eip8130(Eip8130Receipt::new(
+                    receipt,
+                    result.ext.eip8130_committed_phases.unwrap_or_default(),
+                )),
             })
         }
     }
@@ -145,11 +139,10 @@ mod tests {
     use alloy_consensus::Header;
     use alloy_primitives::{Address, Log, LogData, TxKind, address};
     use base_common_consensus::TxDeposit;
-    use base_common_evm::BaseHaltReason;
     use base_execution_chainspec::BaseChainSpecBuilder;
     use base_execution_evm::BaseEvmConfig;
+    use evm2::evm::InMemoryDB;
     use reth_evm::ConfigureEvm;
-    use revm::database::InMemoryDB;
 
     use super::*;
 
@@ -187,82 +180,15 @@ mod tests {
         Recovered::new_unchecked(envelope, address!("0x1234567890123456789012345678901234567890"))
     }
 
-    fn create_success_result() -> ExecutionResult<BaseHaltReason> {
-        ExecutionResult::Success {
-            reason: revm::context::result::SuccessReason::Stop,
-            gas: revm::context::result::ResultGas::default()
-                .with_total_gas_spent(21_000)
-                .with_refunded(0)
-                .with_floor_gas(0),
+    fn create_success_result() -> TxResult<BaseEvmTypes> {
+        TxResult::<BaseEvmTypes> {
+            status: true,
+            total_gas_spent: 21_000,
             logs: vec![Log {
                 address: Address::ZERO,
                 data: LogData::new_unchecked(vec![], alloy_primitives::Bytes::new()),
             }],
-            output: revm::context::result::Output::Call(alloy_primitives::Bytes::new()),
-        }
-    }
-
-    #[test]
-    fn test_unified_receipt_builder_creation() {
-        let chain_spec = Arc::new(BaseChainSpecBuilder::base_mainnet().build());
-        let builder = UnifiedReceiptBuilder::new(Arc::clone(&chain_spec));
-        assert!(Arc::ptr_eq(builder.chain_spec(), &chain_spec));
-    }
-
-    #[test]
-    fn test_receipt_from_success_result() {
-        let result: ExecutionResult<BaseHaltReason> = create_success_result();
-        let receipt = Receipt {
-            status: Eip658Value::Eip658(result.is_success()),
-            cumulative_gas_used: 21000,
-            logs: result.into_logs(),
-        };
-        assert!(receipt.status.coerce_status());
-        assert_eq!(receipt.cumulative_gas_used, 21000);
-        assert_eq!(receipt.logs.len(), 1);
-    }
-
-    #[test]
-    fn test_receipt_from_revert_result() {
-        let result: ExecutionResult<BaseHaltReason> = ExecutionResult::Revert {
-            gas: revm::context::result::ResultGas::default()
-                .with_total_gas_spent(10_000)
-                .with_refunded(0)
-                .with_floor_gas(0),
-            logs: vec![],
-            output: alloy_primitives::Bytes::new(),
-        };
-        let receipt = Receipt {
-            status: Eip658Value::Eip658(result.is_success()),
-            cumulative_gas_used: 10000,
-            logs: result.into_logs(),
-        };
-        assert!(!receipt.status.coerce_status());
-        assert_eq!(receipt.cumulative_gas_used, 10000);
-        assert!(receipt.logs.is_empty());
-    }
-
-    #[test]
-    fn test_base_receipt_legacy_variant() {
-        let receipt: Receipt<Log> =
-            Receipt { status: Eip658Value::Eip658(true), cumulative_gas_used: 21000, logs: vec![] };
-        let base_receipt = BaseReceipt::Legacy(receipt);
-        assert!(matches!(base_receipt, BaseReceipt::Legacy(_)));
-    }
-
-    #[test]
-    fn test_base_receipt_deposit_variant() {
-        let receipt: Receipt<Log> =
-            Receipt { status: Eip658Value::Eip658(true), cumulative_gas_used: 21000, logs: vec![] };
-        let base_receipt = BaseReceipt::Deposit(DepositReceipt {
-            inner: receipt,
-            deposit_nonce: Some(1),
-            deposit_receipt_version: Some(1),
-        });
-        assert!(matches!(base_receipt, BaseReceipt::Deposit(_)));
-        if let BaseReceipt::Deposit(deposit) = base_receipt {
-            assert_eq!(deposit.deposit_nonce, Some(1));
-            assert_eq!(deposit.deposit_receipt_version, Some(1));
+            ..Default::default()
         }
     }
 
@@ -270,7 +196,7 @@ mod tests {
     fn create_test_evm(
         chain_spec: Arc<base_execution_chainspec::BaseChainSpec>,
         db: &mut InMemoryDB,
-    ) -> impl Evm<HaltReason = BaseHaltReason, DB = &mut InMemoryDB> + '_ {
+    ) -> Evm<'_, BaseEvmTypes> {
         let evm_config = BaseEvmConfig::base(chain_spec);
         let header = Header::default();
         let evm_env = evm_config.evm_env(&header).expect("failed to create evm env");
@@ -288,13 +214,12 @@ mod tests {
         let result = create_success_result();
 
         let receipt =
-            builder.build(&mut evm, &tx, &result, 21000, 0, 0).expect("build should succeed");
+            builder.build(&mut evm, &tx, &result, 21000, 0).expect("build should succeed");
 
-        assert!(matches!(receipt, BaseReceipt::Legacy(_)));
-        if let BaseReceipt::Legacy(inner) = receipt {
-            assert!(inner.status.coerce_status());
-            assert_eq!(inner.cumulative_gas_used, 21000);
-        }
+        let BaseReceipt::Legacy(inner) = receipt else { panic!("Expected legacy receipt") };
+        assert!(inner.status.coerce_status());
+        assert_eq!(inner.cumulative_gas_used, 21000);
+        assert_eq!(inner.logs.len(), 1);
     }
 
     #[test]
@@ -308,13 +233,11 @@ mod tests {
         let result = create_success_result();
 
         let receipt =
-            builder.build(&mut evm, &tx, &result, 21000, 0, 0).expect("build should succeed");
+            builder.build(&mut evm, &tx, &result, 21000, 0).expect("build should succeed");
 
-        assert!(matches!(receipt, BaseReceipt::Deposit(_)));
-        if let BaseReceipt::Deposit(deposit) = receipt {
-            assert!(deposit.inner.status.coerce_status());
-            assert_eq!(deposit.inner.cumulative_gas_used, 21000);
-        }
+        let BaseReceipt::Deposit(deposit) = receipt else { panic!("Expected deposit receipt") };
+        assert!(deposit.inner.status.coerce_status());
+        assert_eq!(deposit.inner.cumulative_gas_used, 21000);
     }
 
     #[test]
@@ -331,14 +254,11 @@ mod tests {
         // Use a timestamp after Canyon activation (Base mainnet Canyon: 1704992401)
         let canyon_timestamp = 1704992401 + 1000;
         let receipt = builder
-            .build(&mut evm, &tx, &result, 21000, canyon_timestamp, 0)
+            .build(&mut evm, &tx, &result, 21000, canyon_timestamp)
             .expect("build should succeed");
 
-        if let BaseReceipt::Deposit(deposit) = receipt {
-            assert_eq!(deposit.deposit_receipt_version, Some(1));
-        } else {
-            panic!("Expected deposit receipt");
-        }
+        let BaseReceipt::Deposit(deposit) = receipt else { panic!("Expected deposit receipt") };
+        assert_eq!(deposit.deposit_receipt_version, Some(1));
     }
 
     #[test]
@@ -349,23 +269,13 @@ mod tests {
 
         let builder = UnifiedReceiptBuilder::new(chain_spec);
         let tx = create_legacy_tx();
-        let result: ExecutionResult<BaseHaltReason> = ExecutionResult::Revert {
-            gas: revm::context::result::ResultGas::default()
-                .with_total_gas_spent(10_000)
-                .with_refunded(0)
-                .with_floor_gas(0),
-            logs: vec![],
-            output: alloy_primitives::Bytes::new(),
-        };
+        let result = TxResult::<BaseEvmTypes> { total_gas_spent: 10_000, ..Default::default() };
 
         let receipt =
-            builder.build(&mut evm, &tx, &result, 10000, 0, 0).expect("build should succeed");
+            builder.build(&mut evm, &tx, &result, 10000, 0).expect("build should succeed");
 
-        if let BaseReceipt::Legacy(inner) = receipt {
-            assert!(!inner.status.coerce_status()); // Failed transaction
-            assert_eq!(inner.cumulative_gas_used, 10000);
-        } else {
-            panic!("Expected legacy receipt");
-        }
+        let BaseReceipt::Legacy(inner) = receipt else { panic!("Expected legacy receipt") };
+        assert!(!inner.status.coerce_status());
+        assert_eq!(inner.cumulative_gas_used, 10000);
     }
 }

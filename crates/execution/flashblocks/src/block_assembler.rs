@@ -11,8 +11,8 @@ use alloy_rpc_types_engine::{
     PraguePayloadFields,
 };
 use base_common_consensus::BaseBlock;
-use base_common_evm::L1BlockInfo;
 use base_common_flashblocks::{ExecutionPayloadBaseV1, Flashblock};
+use base_common_l1_fees::L1FeeParams;
 use base_common_rpc_types_engine::{
     BaseExecutionPayload, BaseExecutionPayloadSidecar, BaseExecutionPayloadV4,
 };
@@ -37,7 +37,7 @@ impl AssembledBlock {
     ///
     /// This extracts the L1 attributes deposited transaction data from the
     /// block body, which contains information about the L1 origin.
-    pub fn l1_block_info(&self) -> Result<L1BlockInfo> {
+    pub fn l1_block_info(&self) -> Result<L1FeeParams> {
         base_execution_evm::extract_l1_info(&self.block.body)
             .map_err(|e| ExecutionError::L1BlockInfo(e.to_string()).into())
     }

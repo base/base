@@ -4,33 +4,25 @@ use alloy_consensus::{
     Block, Header, TxReceipt,
     transaction::{Recovered, TransactionMeta},
 };
-use alloy_eips::Encodable2718;
-use alloy_evm::{
-    Database as AlloyDatabase,
-    block::{StateDB, SystemCaller},
-};
-use alloy_primitives::B256;
+use alloy_primitives::{B256, Bytes, U256};
 use alloy_rpc_types::TransactionTrait;
 use alloy_rpc_types_eth::state::StateOverride;
 use base_common_chains::Upgrades;
-use base_common_consensus::{BasePrimitives, BaseReceipt, BaseTxEnvelope, Predeploys};
-use base_common_evm::{
-    BaseHaltReason, Eip8130CommittedPhases, L1BlockInfo, ensure_create2_deployer,
-    ensure_eip8130_system_accounts,
+use base_common_consensus::{BasePrimitives, BaseReceipt, BaseTxEnvelope};
+use base_common_evm2::{
+    BaseBlockExecutionCtx, BaseBlockExecutor, BaseBlockState, BaseEvmTypes,
+    BaseTxEnvelope as BaseTxEnv, L1Block,
 };
-use base_common_flz::tx_estimated_size_fjord as estimate_tx_compressed_size;
+use base_common_l1_fees::L1FeeParams;
 use base_common_rpc_types::{BaseTransactionReceipt, Transaction};
+use base_execution_evm::{BaseRethBlockState, UpgradeActivations};
 use base_execution_rpc::BaseReceiptBuilder as BaseRpcReceiptBuilder;
-use reth_evm::{Evm, FromRecoveredTx};
-use reth_rpc_convert::transaction::ConvertReceiptInput;
-use revm::{
-    Database, DatabaseCommit,
-    context::{
-        Block as _,
-        result::{ExecutionResult, ResultAndState},
-    },
-    state::EvmState,
+use evm2::{
+    Evm, TxResult, TxResultWithState,
+    evm::{AccountChanges, Cache, PendingState},
 };
+use reth_evm::{BundleState, Evm as _, FromRecoveredTx};
+use reth_rpc_convert::transaction::ConvertReceiptInput;
 
 use crate::{ExecutionError, PendingBlocks, StateProcessorError, UnifiedReceiptBuilder};
 
@@ -41,10 +33,10 @@ pub struct ExecutedPendingTransaction {
     pub rpc_transaction: Transaction,
     /// The receipt of the transaction.
     pub receipt: BaseTransactionReceipt,
-    /// The updated EVM state.
-    pub state: EvmState,
+    /// The transaction's state changes.
+    pub state: PendingState,
     /// The execution result of the transaction.
-    pub result: ExecutionResult<BaseHaltReason>,
+    pub result: TxResult<BaseEvmTypes>,
     /// Per-transaction EVM execution time, if known.
     pub execution_time_us: Option<u128>,
 }
@@ -52,20 +44,33 @@ pub struct ExecutedPendingTransaction {
 #[derive(Debug)]
 struct CachedTransactionExecution {
     receipt: BaseTransactionReceipt,
-    state: EvmState,
-    result: ExecutionResult<BaseHaltReason>,
+    state: PendingState,
+    result: TxResult<BaseEvmTypes>,
     execution_time_us: Option<u128>,
+}
+
+/// What a [`PendingStateBuilder`] leaves behind: the state it read and wrote, the block's state
+/// changes, and the pending RPC state overrides.
+#[derive(Debug)]
+pub struct PendingStateOutcome {
+    /// Accounts, storage, and code the builder read or wrote, for the next build on this state.
+    pub cache: Cache,
+    /// The state changes of the transactions (and pre-execution changes) the builder applied.
+    pub bundle_state: BundleState,
+    /// The pending RPC state overrides, extended with the executed transactions' state.
+    pub state_overrides: StateOverride,
 }
 
 /// Executes or fetches cached values for transactions in a flashblock.
 #[derive(Debug)]
-pub struct PendingStateBuilder<E, ChainSpec> {
+pub struct PendingStateBuilder<'a, ChainSpec> {
     cumulative_gas_used: u64,
     next_log_index: usize,
 
-    evm: E,
+    evm: Evm<'a, BaseEvmTypes>,
+    block_state: BaseRethBlockState,
     pending_block: Block<BaseTxEnvelope, Header>,
-    l1_block_info: L1BlockInfo,
+    l1_fee_params: L1FeeParams,
     receipt_builder: UnifiedReceiptBuilder<ChainSpec>,
     chain_spec: ChainSpec,
 
@@ -73,43 +78,40 @@ pub struct PendingStateBuilder<E, ChainSpec> {
     state_overrides: StateOverride,
 }
 
-impl<E, ChainSpec, DB> PendingStateBuilder<E, ChainSpec>
+impl<'a, ChainSpec> PendingStateBuilder<'a, ChainSpec>
 where
-    E: Evm<DB = DB, HaltReason = BaseHaltReason>,
-    DB: Database + DatabaseCommit,
-    E::Tx: FromRecoveredTx<BaseTxEnvelope>,
     ChainSpec: Upgrades + Clone,
 {
     /// Creates a new pending state builder.
     pub fn new(
         chain_spec: ChainSpec,
-        evm: E,
+        evm: Evm<'a, BaseEvmTypes>,
         pending_block: Block<BaseTxEnvelope, Header>,
         prev_pending_blocks: Option<Arc<PendingBlocks>>,
-        l1_block_info: L1BlockInfo,
+        l1_fee_params: L1FeeParams,
         state_overrides: StateOverride,
     ) -> Self {
         Self {
             pending_block,
             evm,
+            block_state: BaseRethBlockState::default(),
             cumulative_gas_used: 0,
             next_log_index: 0,
             prev_pending_blocks,
-            l1_block_info,
+            l1_fee_params,
             state_overrides,
             chain_spec: chain_spec.clone(),
             receipt_builder: UnifiedReceiptBuilder::new(chain_spec),
         }
     }
 
-    /// Consumes the builder and returns the database and state overrides.
-    pub fn into_db_and_state_overrides(self) -> (DB, StateOverride) {
-        (self.evm.into_db(), self.state_overrides)
-    }
-
-    /// Returns a mutable reference to the underlying database.
-    pub fn db_mut(&mut self) -> &mut DB {
-        self.evm.db_mut()
+    /// Consumes the builder and returns what it read, wrote, and overrode.
+    pub fn finish(mut self) -> PendingStateOutcome {
+        PendingStateOutcome {
+            cache: core::mem::take(&mut self.evm.overlay_db_mut().cache),
+            bundle_state: self.block_state.state.into_bundle(),
+            state_overrides: self.state_overrides,
+        }
     }
 
     /// Seeds block-level offsets when appending transactions to an already-executed pending block.
@@ -169,40 +171,23 @@ where
         }
     }
 
-    /// Applies EIP-4788, EIP-2935, and Canyon create2 deployer pre-execution changes to the EVM.
+    /// Applies the block's pre-execution changes: the EIP-2935 and EIP-4788 system calls and the
+    /// Base upgrade transition changes.
     ///
-    /// Must be called once per block, before executing any transactions. This mirrors the
-    /// `apply_pre_execution_changes` behavior of [`base_common_evm::BaseBlockExecutor`] to ensure
-    /// that the cached execution results match what the validator computes.
+    /// Must be called once per block, before executing any transactions. It runs the same
+    /// pre-execution steps as [`BaseBlockExecutor`], so the cached execution results match what
+    /// the validator computes.
     pub fn apply_pre_execution_changes(
-        &mut self,
-        parent_hash: B256,
-        parent_beacon_block_root: Option<B256>,
-    ) -> Result<(), StateProcessorError>
-    where
-        DB: AlloyDatabase + StateDB,
-        ChainSpec: Clone,
-    {
-        let spec = self.receipt_builder.chain_spec();
-        let mut system_caller = SystemCaller::new(spec.clone());
-        system_caller
-            .apply_blockhashes_contract_call(parent_hash, &mut self.evm)
+        self,
+        ctx: BaseBlockExecutionCtx,
+    ) -> Result<Self, StateProcessorError> {
+        let mut executor = BaseBlockExecutor::with_block_state(self.evm, ctx, self.block_state);
+        executor
+            .apply_pre_execution()
+            .and_then(|()| executor.apply_transition_hooks(&UpgradeActivations(&self.chain_spec)))
             .map_err(|e| ExecutionError::EvmEnv(e.to_string()))?;
-        system_caller
-            .apply_beacon_root_contract_call(parent_beacon_block_root, &mut self.evm)
-            .map_err(|e| ExecutionError::EvmEnv(e.to_string()))?;
-
-        ensure_create2_deployer(spec, self.pending_block.timestamp, self.evm.db_mut())
-            .map_err(|e| ExecutionError::EvmEnv(e.to_string()))?;
-
-        // At the Everest (EIP-8130) transition, plant a code stub on the code-less
-        // enshrined system accounts (the 2D nonce manager) so the persistent state
-        // the enshrined path writes to them is not reaped by EIP-161 end-of-block
-        // state clearing.
-        ensure_eip8130_system_accounts(spec, self.pending_block.timestamp, self.evm.db_mut())
-            .map_err(|e| ExecutionError::EvmEnv(e.to_string()))?;
-
-        Ok(())
+        let (evm, _, block_state) = executor.finish();
+        Ok(Self { evm, block_state, ..self })
     }
 
     /// Builds transaction result from cached receipt and state data.
@@ -246,13 +231,7 @@ where
             .ok_or(ExecutionError::GasOverflow)?;
         self.next_log_index += receipt.inner.logs().len();
 
-        for address in state.keys() {
-            self.evm
-                .db_mut()
-                .basic(*address)
-                .map_err(|err| ExecutionError::EvmEnv(err.to_string()))?;
-        }
-        self.evm.db_mut().commit(state.clone());
+        self.block_state.commit(&mut self.evm, state.clone());
 
         Ok(ExecutedPendingTransaction {
             rpc_transaction,
@@ -263,26 +242,50 @@ where
         })
     }
 
+    /// Returns the Jovian DA footprint of `tx_env`, priced as block execution prices it.
     fn jovian_da_footprint_estimation(
         &mut self,
-        tx_env: &Recovered<BaseTxEnvelope>,
+        tx_env: &Recovered<BaseTxEnv>,
     ) -> Result<u64, StateProcessorError> {
-        // Try to use the enveloped tx if it exists, otherwise use the encoded 2718 bytes
-        let encoded = estimate_tx_compressed_size(tx_env.into_encoded().encoded_bytes())
-            .saturating_div(1_000_000);
-
-        // Load the L1 block contract into the cache. If the L1 block contract is not pre-loaded the
-        // database will panic when trying to fetch the DA footprint gas scalar.
-        self.evm
-            .db_mut()
-            .basic(Predeploys::L1_BLOCK_INFO)
+        L1Block::ensure_fee_params(&mut self.evm)
             .map_err(|err| ExecutionError::DaFootprintEstimation(err.to_string()))?;
+        let enveloped = tx_env.enveloped().map(|bytes| bytes.as_ref()).unwrap_or_default();
+        Ok(self.evm.block().ext.jovian_da_footprint(enveloped))
+    }
 
-        let da_footprint_gas_scalar = L1BlockInfo::fetch_da_footprint_gas_scalar(self.evm.db_mut())
-            .map_err(|err| ExecutionError::DaFootprintEstimation(err.to_string()))?
-            .into();
+    /// Adds an executed transaction's account changes to the pending RPC state overrides.
+    fn override_state(&mut self, account: AccountChanges<'_>) {
+        let info = account.current;
+        // The override holds the unpadded original bytecode so `EXTCODESIZE` stays 0 for
+        // code-less EOAs. Execution does not always load an account's code, so unloaded code is
+        // read from the state the transaction executed on.
+        let code = match info {
+            None => Some(Bytes::new()),
+            Some(info) if info.is_empty_code_hash() => Some(Bytes::new()),
+            Some(info) => match &info.code {
+                Some(code) => Some(code.original_bytes()),
+                None => self
+                    .evm
+                    .state_db_mut()
+                    .get_code_by_hash(&info.code_hash)
+                    .ok()
+                    .map(|code| code.original_bytes()),
+            },
+        };
 
-        Ok(encoded.saturating_mul(da_footprint_gas_scalar))
+        let existing_override = self.state_overrides.entry(account.address).or_default();
+        existing_override.balance = Some(info.map_or(U256::ZERO, |info| info.balance));
+        existing_override.nonce = Some(info.map_or(0, |info| info.nonce));
+        existing_override.code = code;
+
+        let existing = existing_override.state_diff.get_or_insert_with(Default::default);
+        existing.extend(
+            account
+                .storage
+                .slots
+                .iter()
+                .map(|(&key, slot)| (B256::from(key), B256::from(slot.value.current))),
+        );
     }
 
     /// Executes the transaction through the EVM and builds the result from scratch.
@@ -295,132 +298,112 @@ where
         let tx_hash = transaction.tx_hash();
 
         let is_deposit = transaction.is_deposit();
+        let tx_env = Recovered::new_unchecked(
+            BaseTxEnv::from_recovered_tx(transaction.clone()),
+            transaction.signer(),
+        );
 
         let da_footprint_used = if self
             .chain_spec
-            .is_jovian_active_at_timestamp(self.evm.block().timestamp().saturating_to())
+            .is_jovian_active_at_timestamp(self.evm.block().timestamp.saturating_to())
             && !is_deposit
         {
-            self.jovian_da_footprint_estimation(&transaction)?
+            self.jovian_da_footprint_estimation(&tx_env)?
         } else {
             0
         };
 
         let start = Instant::now();
-        let transact_result = self.evm.transact(&transaction);
+        let transact_result = self.evm.transact(&tx_env).map(|executed| executed.detach());
         let elapsed_us = start.elapsed().as_micros();
-        let eip8130_committed_phases = Eip8130CommittedPhases::take();
 
-        match transact_result {
-            Ok(ResultAndState { state, result }) => {
-                let gas_used = result.tx_gas_used();
-                for (addr, acc) in &state {
-                    let existing_override = self.state_overrides.entry(*addr).or_default();
-                    existing_override.balance = Some(acc.info.balance);
-                    existing_override.nonce = Some(acc.info.nonce);
-                    // `bytes()` is REVM's execution-padded form (empty code becomes a
-                    // trailing STOP / `0x00`). Pending RPC overrides must use the
-                    // unpadded original so `EXTCODESIZE` stays 0 for code-less EOAs.
-                    existing_override.code =
-                        acc.info.code.clone().map(|code| code.original_bytes());
-
-                    let existing =
-                        existing_override.state_diff.get_or_insert_with(Default::default);
-                    let changed_slots = acc
-                        .storage
-                        .iter()
-                        .map(|(&key, slot)| (B256::from(key), B256::from(slot.present_value)));
-
-                    existing.extend(changed_slots);
-                }
-
-                self.cumulative_gas_used = self
-                    .cumulative_gas_used
-                    .checked_add(gas_used)
-                    .ok_or(ExecutionError::GasOverflow)?;
-
-                // Build receipt using the unified receipt builder - handles both
-                // deposit and non-deposit transactions seamlessly
-                let receipt = self.receipt_builder.build(
-                    &mut self.evm,
-                    &transaction,
-                    &result,
-                    self.cumulative_gas_used,
-                    self.pending_block.timestamp,
-                    eip8130_committed_phases,
-                )?;
-
-                let meta = TransactionMeta {
-                    tx_hash,
-                    index: idx as u64,
-                    block_hash: B256::ZERO, // block hash is not available yet for flashblocks
-                    block_number: self.pending_block.number,
-                    base_fee: self.pending_block.base_fee_per_gas,
-                    excess_blob_gas: self.pending_block.excess_blob_gas,
-                    timestamp: self.pending_block.timestamp,
-                };
-
-                let sender = transaction.signer();
-                let input: ConvertReceiptInput<'_, BasePrimitives> = ConvertReceiptInput {
-                    receipt: receipt.clone(),
-                    tx: Recovered::new_unchecked(&transaction, sender),
-                    gas_used,
-                    next_log_index: self.next_log_index,
-                    meta,
-                };
-
-                let mut base_receipt = BaseRpcReceiptBuilder::new(
-                    self.receipt_builder.chain_spec(),
-                    input,
-                    &mut self.l1_block_info,
-                )
-                .map_err(|e| ExecutionError::RpcReceiptBuild(e.to_string()))?
-                .build();
-
-                base_receipt.inner.blob_gas_used = Some(da_footprint_used);
-                self.next_log_index += receipt.logs().len();
-
-                let (deposit_receipt_version, deposit_nonce) = if transaction.is_deposit() {
-                    let BaseReceipt::Deposit(deposit_receipt) = &base_receipt.inner.inner.receipt
-                    else {
-                        return Err(ExecutionError::DepositReceiptMismatch.into());
-                    };
-
-                    (deposit_receipt.deposit_receipt_version, deposit_receipt.deposit_nonce)
-                } else {
-                    (None, None)
-                };
-
-                let rpc_transaction = Transaction {
-                    inner: alloy_rpc_types_eth::Transaction {
-                        inner: transaction,
-                        block_hash: None,
-                        block_number: Some(self.pending_block.number),
-                        block_timestamp: Some(self.pending_block.timestamp),
-                        transaction_index: Some(idx as u64),
-                        effective_gas_price: Some(effective_gas_price),
-                    },
-                    deposit_nonce,
-                    deposit_receipt_version,
-                    block_timestamp_ms: None,
-                };
-                self.evm.db_mut().commit(state.clone());
-
-                Ok(ExecutedPendingTransaction {
-                    rpc_transaction,
-                    receipt: base_receipt,
-                    state,
-                    result,
-                    execution_time_us: Some(elapsed_us),
-                })
-            }
-            Err(e) => Err(ExecutionError::TransactionFailed {
+        let TxResultWithState { result, pending_state: state, .. } =
+            transact_result.map_err(|e| ExecutionError::TransactionFailed {
                 tx_hash,
                 sender: transaction.signer(),
                 reason: format!("{e:?}"),
-            }
-            .into()),
+            })?;
+
+        let gas_used = result.tx_gas_used();
+        for account in state.account_changes() {
+            self.override_state(account);
         }
+
+        self.cumulative_gas_used =
+            self.cumulative_gas_used.checked_add(gas_used).ok_or(ExecutionError::GasOverflow)?;
+
+        // Build receipt using the unified receipt builder - handles both
+        // deposit and non-deposit transactions seamlessly
+        let receipt = self.receipt_builder.build(
+            &mut self.evm,
+            &transaction,
+            &result,
+            self.cumulative_gas_used,
+            self.pending_block.timestamp,
+        )?;
+
+        let meta = TransactionMeta {
+            tx_hash,
+            index: idx as u64,
+            block_hash: B256::ZERO, // block hash is not available yet for flashblocks
+            block_number: self.pending_block.number,
+            base_fee: self.pending_block.base_fee_per_gas,
+            excess_blob_gas: self.pending_block.excess_blob_gas,
+            timestamp: self.pending_block.timestamp,
+        };
+
+        let sender = transaction.signer();
+        let input: ConvertReceiptInput<'_, BasePrimitives> = ConvertReceiptInput {
+            receipt: receipt.clone(),
+            tx: Recovered::new_unchecked(&transaction, sender),
+            gas_used,
+            next_log_index: self.next_log_index,
+            meta,
+        };
+
+        let mut base_receipt = BaseRpcReceiptBuilder::new(
+            self.receipt_builder.chain_spec(),
+            input,
+            &mut self.l1_fee_params,
+        )
+        .map_err(|e| ExecutionError::RpcReceiptBuild(e.to_string()))?
+        .build();
+
+        base_receipt.inner.blob_gas_used = Some(da_footprint_used);
+        self.next_log_index += receipt.logs().len();
+
+        let (deposit_receipt_version, deposit_nonce) = if transaction.is_deposit() {
+            let BaseReceipt::Deposit(deposit_receipt) = &base_receipt.inner.inner.receipt else {
+                return Err(ExecutionError::DepositReceiptMismatch.into());
+            };
+
+            (deposit_receipt.deposit_receipt_version, deposit_receipt.deposit_nonce)
+        } else {
+            (None, None)
+        };
+
+        let rpc_transaction = Transaction {
+            inner: alloy_rpc_types_eth::Transaction {
+                inner: transaction,
+                block_hash: None,
+                block_number: Some(self.pending_block.number),
+                block_timestamp: Some(self.pending_block.timestamp),
+                transaction_index: Some(idx as u64),
+                effective_gas_price: Some(effective_gas_price),
+            },
+            deposit_nonce,
+            deposit_receipt_version,
+            block_timestamp_ms: None,
+        };
+        self.block_state.commit(&mut self.evm, state.clone());
+
+        Ok(ExecutedPendingTransaction {
+            rpc_transaction,
+            receipt: base_receipt,
+            state,
+            result,
+            execution_time_us: Some(elapsed_us),
+        })
     }
 }
 
@@ -433,18 +416,16 @@ mod tests {
     use alloy_primitives::{Address, B256, Bytes, TxKind, U256, address, keccak256, uint};
     use alloy_rpc_types_engine::PayloadId;
     use base_common_consensus::BaseTxEnvelope;
-    use base_common_evm::L1BlockInfo;
     use base_common_flashblocks::{
         ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
     };
     use base_execution_chainspec::BaseChainSpecBuilder;
     use base_execution_evm::BaseEvmConfig;
-    use reth_evm::ConfigureEvm;
-    use reth_revm::State;
-    use revm::{
-        database::InMemoryDB,
-        state::{AccountInfo, Bytecode},
+    use evm2::{
+        bytecode::Bytecode,
+        evm::{AccountInfo, InMemoryDB},
     };
+    use reth_evm::ConfigureEvm;
 
     use super::*;
 
@@ -455,15 +436,27 @@ mod tests {
     // EIP-4788 ring buffer length (hardcoded in the contract bytecode).
     const BEACON_ROOTS_HISTORY_BUFFER_LENGTH: u64 = 8191;
 
-    fn make_db_with_beacon_roots_contract() -> State<InMemoryDB> {
-        let mut db = State::builder().with_database(InMemoryDB::default()).build();
-        let code = Bytecode::new_raw(BEACON_ROOTS_CODE.clone());
-        let code_hash = code.hash_slow();
-        db.insert_account(
-            BEACON_ROOTS_ADDRESS,
-            AccountInfo { code: Some(code), code_hash, nonce: 1, ..Default::default() },
+    fn make_db_with_beacon_roots_contract() -> InMemoryDB {
+        let mut db = InMemoryDB::default();
+        db.insert_account_info(
+            &BEACON_ROOTS_ADDRESS,
+            AccountInfo::default()
+                .with_nonce(1)
+                .with_code(Bytecode::new_raw(BEACON_ROOTS_CODE.clone())),
         );
         db
+    }
+
+    fn execution_ctx(parent_beacon_block_root: Option<B256>) -> BaseBlockExecutionCtx {
+        BaseBlockExecutionCtx {
+            parent_hash: B256::ZERO,
+            parent_beacon_block_root,
+            extra_data: Bytes::new(),
+        }
+    }
+
+    fn funded() -> AccountInfo {
+        AccountInfo::default().with_balance(U256::from(1_000_000_000_000_000_000u128))
     }
 
     #[test]
@@ -479,36 +472,31 @@ mod tests {
             header: Header { timestamp: POST_ECOTONE_TIMESTAMP, number: 1, ..Default::default() },
             body: BlockBody::<BaseTxEnvelope>::default(),
         };
-        let mut builder = PendingStateBuilder::new(
+        let builder = PendingStateBuilder::new(
             chain_spec,
             evm,
             pending_block,
             None,
-            L1BlockInfo::default(),
+            L1FeeParams::default(),
             Default::default(),
         );
 
         let parent_beacon_block_root = B256::from([0xab; 32]);
-        builder
-            .apply_pre_execution_changes(B256::ZERO, Some(parent_beacon_block_root))
-            .expect("apply_pre_execution_changes should succeed");
-
-        let (db, _) = builder.into_db_and_state_overrides();
+        let outcome = builder
+            .apply_pre_execution_changes(execution_ctx(Some(parent_beacon_block_root)))
+            .expect("apply_pre_execution_changes should succeed")
+            .finish();
 
         // EIP-4788 stores parent_beacon_block_root at:
         //   slot = timestamp % HISTORY_BUFFER_LENGTH + HISTORY_BUFFER_LENGTH
         let timestamp_idx = POST_ECOTONE_TIMESTAMP % BEACON_ROOTS_HISTORY_BUFFER_LENGTH;
         let root_slot = U256::from(timestamp_idx + BEACON_ROOTS_HISTORY_BUFFER_LENGTH);
-        let beacon_account = db
+        let storage = &outcome
             .cache
-            .accounts
+            .storage
             .get(&BEACON_ROOTS_ADDRESS)
-            .expect("beacon roots contract should be in cache after commit");
-        let storage = &beacon_account
-            .account
-            .as_ref()
-            .expect("beacon roots account should be populated")
-            .storage;
+            .expect("beacon roots contract storage should be in cache after commit")
+            .slots;
         let stored_root = *storage.get(&root_slot).expect("beacon root slot should be written");
 
         assert_eq!(
@@ -535,25 +523,26 @@ mod tests {
             header: Header { timestamp: pre_ecotone_timestamp, number: 1, ..Default::default() },
             body: BlockBody::<BaseTxEnvelope>::default(),
         };
-        let mut builder = PendingStateBuilder::new(
+        let builder = PendingStateBuilder::new(
             chain_spec,
             evm,
             pending_block,
             None,
-            L1BlockInfo::default(),
+            L1FeeParams::default(),
             Default::default(),
         );
 
-        builder
-            .apply_pre_execution_changes(B256::ZERO, None)
-            .expect("apply_pre_execution_changes should succeed pre-Ecotone with no beacon root");
-
-        let (db, _) = builder.into_db_and_state_overrides();
+        let outcome = builder
+            .apply_pre_execution_changes(execution_ctx(None))
+            .expect("apply_pre_execution_changes should succeed pre-Ecotone with no beacon root")
+            .finish();
 
         // EIP-4788 is inactive pre-Ecotone, so the contract should have no storage writes.
-        let beacon_account = db.cache.accounts.get(&BEACON_ROOTS_ADDRESS);
-        let has_storage_writes =
-            beacon_account.and_then(|a| a.account.as_ref()).is_some_and(|a| !a.storage.is_empty());
+        let has_storage_writes = outcome
+            .cache
+            .storage
+            .get(&BEACON_ROOTS_ADDRESS)
+            .is_some_and(|storage| !storage.slots.is_empty());
         assert!(
             !has_storage_writes,
             "EIP-4788 contract should not be called and have no storage writes pre-Ecotone"
@@ -599,13 +588,7 @@ mod tests {
         };
 
         let mut db = InMemoryDB::default();
-        db.insert_account_info(
-            Address::ZERO,
-            AccountInfo {
-                balance: U256::from(1_000_000_000_000_000_000u128),
-                ..Default::default()
-            },
-        );
+        db.insert_account_info(&Address::ZERO, funded());
 
         let evm_env = evm_config.evm_env(&header).expect("failed to create evm env");
         let evm = evm_config.evm_with_env(db, evm_env);
@@ -615,7 +598,7 @@ mod tests {
             evm,
             pending_block,
             None,
-            L1BlockInfo::default(),
+            L1FeeParams::default(),
             StateOverride::default(),
         );
 
@@ -670,7 +653,7 @@ mod tests {
             second_evm,
             second_pending_block,
             Some(prev_pending_blocks),
-            L1BlockInfo::default(),
+            L1FeeParams::default(),
             StateOverride::default(),
         );
 
@@ -686,23 +669,18 @@ mod tests {
         let chain_spec = Arc::new(BaseChainSpecBuilder::base_mainnet().jovian_activated().build());
         let mut db = InMemoryDB::default();
 
-        let sender_info = AccountInfo {
-            balance: U256::from(1_000_000_000_000_000_000u128),
-            ..Default::default()
-        };
-        db.insert_account_info(Address::ZERO, sender_info);
+        db.insert_account_info(&Address::ZERO, funded());
 
         // Seed L1 block contract slot 8 with DA footprint gas scalar at bytes [18..20] (big-endian u16).
         let da_scalar: u16 = 100;
         let mut slot_value = [0u8; 32];
         slot_value[18..20].copy_from_slice(&da_scalar.to_be_bytes());
-        db.insert_account_info(L1_BLOCK_ADDRESS, revm::state::AccountInfo::default());
+        db.insert_account_info(&L1_BLOCK_ADDRESS, AccountInfo::default());
         db.insert_account_storage(
-            L1_BLOCK_ADDRESS,
-            DA_FOOTPRINT_GAS_SCALAR_SLOT,
-            U256::from_be_bytes(slot_value),
-        )
-        .expect("failed to insert L1 block storage");
+            &L1_BLOCK_ADDRESS,
+            &DA_FOOTPRINT_GAS_SCALAR_SLOT,
+            &U256::from_be_bytes(slot_value),
+        );
 
         let header = Header {
             timestamp: 100,
@@ -721,7 +699,7 @@ mod tests {
             evm,
             pending_block,
             None,
-            L1BlockInfo::default(),
+            L1FeeParams::default(),
             StateOverride::default(),
         );
 
@@ -741,11 +719,7 @@ mod tests {
         let chain_spec = Arc::new(BaseChainSpecBuilder::base_mainnet().build());
         let mut db = InMemoryDB::default();
 
-        let sender_info = AccountInfo {
-            balance: U256::from(1_000_000_000_000_000_000u128),
-            ..Default::default()
-        };
-        db.insert_account_info(Address::ZERO, sender_info);
+        db.insert_account_info(&Address::ZERO, funded());
 
         let header = Header {
             timestamp: 100,
@@ -764,7 +738,7 @@ mod tests {
             evm,
             pending_block,
             None,
-            L1BlockInfo::default(),
+            L1FeeParams::default(),
             StateOverride::default(),
         );
 
@@ -785,23 +759,18 @@ mod tests {
         let mut db = InMemoryDB::default();
 
         let deposit_sender: Address = address!("0x1234567890123456789012345678901234567890");
-        let sender_info = AccountInfo {
-            balance: U256::from(1_000_000_000_000_000_000u128),
-            ..Default::default()
-        };
-        db.insert_account_info(deposit_sender, sender_info);
+        db.insert_account_info(&deposit_sender, funded());
 
         // Seed L1 block contract slot 8 with DA footprint gas scalar at bytes [18..20] (big-endian u16).
         let da_scalar: u16 = 100;
         let mut slot_value = [0u8; 32];
         slot_value[18..20].copy_from_slice(&da_scalar.to_be_bytes());
-        db.insert_account_info(L1_BLOCK_ADDRESS, AccountInfo::default());
+        db.insert_account_info(&L1_BLOCK_ADDRESS, AccountInfo::default());
         db.insert_account_storage(
-            L1_BLOCK_ADDRESS,
-            DA_FOOTPRINT_GAS_SCALAR_SLOT,
-            U256::from_be_bytes(slot_value),
-        )
-        .expect("failed to insert L1 block storage");
+            &L1_BLOCK_ADDRESS,
+            &DA_FOOTPRINT_GAS_SCALAR_SLOT,
+            &U256::from_be_bytes(slot_value),
+        );
 
         let header = Header {
             timestamp: 100,
@@ -820,7 +789,7 @@ mod tests {
             evm,
             pending_block,
             None,
-            L1BlockInfo::default(),
+            L1FeeParams::default(),
             StateOverride::default(),
         );
 
@@ -849,7 +818,7 @@ mod tests {
         );
     }
 
-    /// Regression test: `execute_with_cached_data` must commit the cached `EvmState` to the EVM
+    /// Regression test: `execute_with_cached_data` must commit the cached `PendingState` to the EVM
     /// database so that subsequent transactions see the correct post-tx state.
     ///
     /// Without the commit, a fresh tx executed after a cached one runs against stale state
@@ -858,7 +827,7 @@ mod tests {
     /// during block validation because the sequencer re-executes everything from scratch.
     #[test]
     fn cached_execute_commits_state_so_subsequent_fresh_txs_see_updated_nonce() {
-        // Phase 1: execute tx A freshly to obtain the real EvmState and receipt
+        // Phase 1: execute tx A freshly to obtain the real state changes and receipt
         // that would be stored in PendingBlocks after the first flashblock round.
         let chain_spec = Arc::new(BaseChainSpecBuilder::base_mainnet().build());
         let evm_config = BaseEvmConfig::base(Arc::clone(&chain_spec));
@@ -872,16 +841,8 @@ mod tests {
             ..Default::default()
         };
 
-        let mut inner_db = InMemoryDB::default();
-        inner_db.insert_account_info(
-            sender,
-            AccountInfo {
-                balance: U256::from(1_000_000_000_000_000_000u128),
-                nonce: 0,
-                ..Default::default()
-            },
-        );
-        let db = State::builder().with_database(inner_db).build();
+        let mut db = InMemoryDB::default();
+        db.insert_account_info(&sender, funded());
 
         let evm_env = evm_config.evm_env(&header).expect("failed to create evm env");
         let evm = evm_config.evm_with_env(db, evm_env);
@@ -891,7 +852,7 @@ mod tests {
             evm,
             pending_block,
             None,
-            L1BlockInfo::default(),
+            L1FeeParams::default(),
             StateOverride::default(),
         );
 
@@ -901,12 +862,12 @@ mod tests {
             first_builder.execute_transaction(0, tx_a).expect("first execution failed");
 
         // Sanity-check: fresh execution increments the sender nonce from 0 to 1.
-        let (first_db, _) = first_builder.into_db_and_state_overrides();
-        let sender_nonce_after_tx_a = first_db
+        let first_outcome = first_builder.finish();
+        let sender_nonce_after_tx_a = first_outcome
             .cache
             .accounts
             .get(&sender)
-            .and_then(|a| a.account_info())
+            .and_then(Option::as_ref)
             .map(|info| info.nonce)
             .expect("sender should be in cache after tx A");
 
@@ -957,16 +918,8 @@ mod tests {
         // path (execute_with_cached_data). After that call the EVM database must reflect
         // the committed state of tx A (nonce 1) so any subsequent fresh tx executes
         // against the correct state.
-        let mut inner_db2 = InMemoryDB::default();
-        inner_db2.insert_account_info(
-            sender,
-            AccountInfo {
-                balance: U256::from(1_000_000_000_000_000_000u128),
-                nonce: 0,
-                ..Default::default()
-            },
-        );
-        let db2 = State::builder().with_database(inner_db2).build();
+        let mut db2 = InMemoryDB::default();
+        db2.insert_account_info(&sender, funded());
         let second_evm_env = evm_config.evm_env(&header).expect("failed to create evm env");
         let second_evm = evm_config.evm_with_env(db2, second_evm_env);
         let second_pending_block = Block { header, body: Default::default() };
@@ -975,7 +928,7 @@ mod tests {
             second_evm,
             second_pending_block,
             Some(prev_pending_blocks),
-            L1BlockInfo::default(),
+            L1FeeParams::default(),
             StateOverride::default(),
         );
 
@@ -985,12 +938,12 @@ mod tests {
 
         // The EVM database must now show nonce 1 for the sender, proving that
         // execute_with_cached_data committed the state before returning.
-        let (second_db_after, _) = second_builder.into_db_and_state_overrides();
-        let sender_nonce_after_cached_tx_a = second_db_after
+        let second_outcome = second_builder.finish();
+        let sender_nonce_after_cached_tx_a = second_outcome
             .cache
             .accounts
             .get(&sender)
-            .and_then(|a| a.account_info())
+            .and_then(Option::as_ref)
             .map(|info| info.nonce)
             .expect("sender should be in cache after cached tx A");
 
@@ -1027,7 +980,7 @@ mod tests {
     }
 
     /// CHAIN-4786: a Flashblock tx that touches a code-less EOA must not serialize
-    /// REVM's padded empty bytecode (`0x00` / STOP) into the pending `StateOverride`.
+    /// padded empty bytecode (`0x00` / STOP) into the pending `StateOverride`.
     /// That made later `pending` `eth_call` / `eth_estimateGas` / `eth_simulateV1`
     /// see `EXTCODESIZE = 1` and take the ERC-1271 path for an EOA.
     #[test]
@@ -1035,35 +988,19 @@ mod tests {
         let sender = address!("0x1111111111111111111111111111111111111111");
         let recipient = address!("0x2222222222222222222222222222222222222222");
         let contract = address!("0x3333333333333333333333333333333333333333");
-        // PUSH1 0x00 — does not end in STOP, so REVM analysis appends padding.
+        // PUSH1 0x00 — does not end in STOP, so analysis may append padding.
         let original_contract_code = Bytes::from_static(&[0x60, 0x00]);
         let analyzed_contract = Bytecode::new_legacy(original_contract_code.clone());
-        assert_eq!(
-            analyzed_contract.bytes().as_ref(),
-            &[0x60, 0x00, 0x00],
-            "test fixture assumes REVM pads a missing trailing STOP"
-        );
         assert_eq!(analyzed_contract.original_bytes(), original_contract_code);
 
         let chain_spec = Arc::new(BaseChainSpecBuilder::base_mainnet().build());
         let evm_config = BaseEvmConfig::base(Arc::clone(&chain_spec));
         let mut db = InMemoryDB::default();
+        db.insert_account_info(&sender, funded());
+        db.insert_account_info(&recipient, AccountInfo::default());
         db.insert_account_info(
-            sender,
-            AccountInfo {
-                balance: U256::from(1_000_000_000_000_000_000u128),
-                ..Default::default()
-            },
-        );
-        db.insert_account_info(recipient, AccountInfo::default());
-        db.insert_account_info(
-            contract,
-            AccountInfo {
-                code: Some(analyzed_contract.clone()),
-                code_hash: analyzed_contract.hash_slow(),
-                nonce: 1,
-                ..Default::default()
-            },
+            &contract,
+            AccountInfo::default().with_nonce(1).with_code(analyzed_contract),
         );
 
         let header = Header {
@@ -1080,7 +1017,7 @@ mod tests {
             evm,
             pending_block,
             None,
-            L1BlockInfo::default(),
+            L1FeeParams::default(),
             StateOverride::default(),
         );
 
@@ -1091,7 +1028,7 @@ mod tests {
             .execute_transaction(1, create_legacy_call(sender, contract, U256::ZERO, 50_000, 1))
             .expect("call to contract that does not end in STOP should succeed");
 
-        let (_, state_overrides) = builder.into_db_and_state_overrides();
+        let state_overrides = builder.finish().state_overrides;
 
         let recipient_override = state_overrides
             .get(&recipient)
@@ -1104,7 +1041,7 @@ mod tests {
         assert_ne!(
             recipient_code.map(Bytes::as_ref),
             Some(&[0x00][..]),
-            "REVM padded empty bytecode must not be serialized as 0x00"
+            "padded empty bytecode must not be serialized as 0x00"
         );
         if let Some(code) = recipient_code {
             assert_eq!(
@@ -1120,7 +1057,7 @@ mod tests {
         assert_eq!(
             contract_override.code.as_ref(),
             Some(&original_contract_code),
-            "contract override must store original_bytes(), not REVM padding"
+            "contract override must store original_bytes(), not padding"
         );
     }
 }

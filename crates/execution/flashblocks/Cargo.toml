@@ -14,8 +14,8 @@ workspace = true
 [dependencies]
 # workspace
 base-common-flashblocks.workspace = true
-alloy-evm = { workspace = true, features = ["std"] }
-base-common-evm = { workspace = true, features = ["std"] }
+base-common-evm2.workspace = true
+base-common-l1-fees.workspace = true
 base-execution-eip8130-rpc.workspace = true
 base-execution-chainspec.workspace = true
 
@@ -32,9 +32,8 @@ base-execution-evm.workspace = true
 base-execution-rpc.workspace = true
 reth-rpc-eth-types.workspace = true
 
-# revm
-revm.workspace = true
-revm-database.workspace = true
+# evm2
+evm2 = { workspace = true, features = ["std"] }
 
 # alloy
 alloy-serde.workspace = true
@@ -51,7 +50,6 @@ alloy-rpc-types-engine = { workspace = true, features = ["std"] }
 base-common-rpc-types-engine.workspace = true
 
 # base-common
-base-common-flz.workspace = true
 base-common-chains.workspace = true
 base-common-network.workspace = true
 base-common-rpc-types = { workspace = true, features = ["reth"] }
@@ -85,6 +83,7 @@ derive_more = { workspace = true, features = ["from"] }
 
 [dev-dependencies]
 rstest.workspace = true
+reth-trie-common.workspace = true
 alloy-eips.workspace = true
 serde_json.workspace = true
 reth-provider = { workspace = true, features = ["test-utils"] }
@@ -92,7 +91,6 @@ reth-provider = { workspace = true, features = ["test-utils"] }
 [features]
 default = [ "metrics" ]
 metrics = [
-	"base-common-evm/metrics",
 	"base-metrics/metrics",
 	"dep:metrics",
 	"reth-evm/metrics",
