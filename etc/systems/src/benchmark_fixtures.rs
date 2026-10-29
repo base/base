@@ -12,7 +12,7 @@ use alloy_primitives::{Address, address};
 use alloy_signer_local::PrivateKeySigner;
 use base_load_tests::TestConfig;
 use eyre::{Result, WrapErr};
-use tokio::task::JoinHandle;
+use tokio_util::task::AbortOnDropHandle;
 use tracing::{info, warn};
 use url::Url;
 
@@ -31,6 +31,11 @@ const MUTATOR_FUNDING_WEI: u128 = 1_000_000_000_000_000_000;
 /// Upper bound on waiting for the funder's prefund block before deploying.
 #[cfg(feature = "upgrade-signal")]
 const FUNDER_READY_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Upper bound on waiting for a fixture deployment or funding receipt. A snapshot block arrives
+/// every 200 ms or 2 s, so an unmined transaction after this long is a failure, not a delay.
+#[cfg(feature = "upgrade-signal")]
+const FIXTURE_RECEIPT_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// A workload YAML whose fixture placeholders are still unresolved.
 #[derive(Debug, Clone)]
@@ -87,20 +92,22 @@ pub struct DeployedFixtures {
 }
 
 impl DeployedFixtures {
-    /// Starts a task that calls `DoubleCounter.increment()` every `interval` until aborted,
-    /// flipping slot 0 so parity-gated validity transactions swap between matching and resting.
+    /// Starts a task that calls `DoubleCounter.increment()` every `interval` until the returned
+    /// handle is dropped, flipping slot 0 so parity-gated validity transactions swap between
+    /// matching and resting. Each call waits at most one `interval` for its receipt, so a dropped
+    /// transaction is logged and retried instead of stalling the mutator for the rest of the run.
     /// Returns `None` when `interval` is zero.
-    pub fn start_mutator(&self, rpc: &Url, interval: Duration) -> Option<JoinHandle<()>> {
+    pub fn start_mutator(&self, rpc: &Url, interval: Duration) -> Option<AbortOnDropHandle<()>> {
         if interval.is_zero() {
             return None;
         }
         let rpc = rpc.clone();
         let contract = self.double_counter;
         let signer = self.mutator.clone();
-        Some(tokio::spawn(async move {
+        Some(AbortOnDropHandle::new(tokio::spawn(async move {
             let mut flips = 0_u64;
             loop {
-                match increment_double_counter(&rpc, &signer, contract).await {
+                match increment_double_counter(&rpc, &signer, contract, interval).await {
                     Ok(()) => {
                         flips += 1;
                         info!(target: "base_bench", %contract, flips, "double counter slot 0 flipped");
@@ -111,7 +118,7 @@ impl DeployedFixtures {
                 }
                 tokio::time::sleep(interval).await;
             }
-        }))
+        })))
     }
 }
 
@@ -128,10 +135,17 @@ async fn deploy_double_counter(rpc: &Url, funder: &PrivateKeySigner) -> Result<D
         .connect_http(rpc.clone());
     wait_for_funder(&provider, funder.address()).await?;
 
-    let contract = DoubleCounter::deploy(&provider)
+    let deployment = DoubleCounter::deploy_builder(&provider)
+        .send()
         .await
-        .wrap_err("failed to deploy DoubleCounter fixture from the benchmark funder")?;
-    let double_counter = *contract.address();
+        .wrap_err("failed to submit the DoubleCounter fixture deployment")?
+        .with_timeout(Some(FIXTURE_RECEIPT_TIMEOUT))
+        .get_receipt()
+        .await
+        .wrap_err("DoubleCounter fixture deployment was not included")?;
+    let double_counter = deployment
+        .contract_address
+        .ok_or_else(|| eyre::eyre!("DoubleCounter fixture deployment receipt has no address"))?;
 
     let mutator = PrivateKeySigner::random();
     let funding =
@@ -140,6 +154,7 @@ async fn deploy_double_counter(rpc: &Url, funder: &PrivateKeySigner) -> Result<D
         .send_transaction(funding)
         .await
         .wrap_err("failed to submit DoubleCounter mutator funding")?
+        .with_timeout(Some(FIXTURE_RECEIPT_TIMEOUT))
         .get_receipt()
         .await
         .wrap_err("DoubleCounter mutator funding was not included")?;
@@ -165,6 +180,7 @@ async fn increment_double_counter(
     rpc: &Url,
     signer: &PrivateKeySigner,
     contract: Address,
+    receipt_timeout: Duration,
 ) -> Result<()> {
     use alloy_network::EthereumWallet;
     use alloy_provider::ProviderBuilder;
@@ -178,6 +194,7 @@ async fn increment_double_counter(
         .send()
         .await
         .wrap_err("failed to submit DoubleCounter.increment()")?
+        .with_timeout(Some(receipt_timeout))
         .get_receipt()
         .await
         .wrap_err("DoubleCounter.increment() was not included")?;
@@ -189,6 +206,7 @@ async fn increment_double_counter(
     _rpc: &Url,
     _signer: &PrivateKeySigner,
     _contract: Address,
+    _receipt_timeout: Duration,
 ) -> Result<()> {
     eyre::bail!("DoubleCounter bindings require the `upgrade-signal` feature")
 }
