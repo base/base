@@ -13,7 +13,6 @@ workspace = true
 
 [dependencies]
 # reth
-reth-evm.workspace = true
 reth-tasks.workspace = true
 reth-chainspec.workspace = true
 reth-storage-api.workspace = true
@@ -30,7 +29,7 @@ reth-payload-validator.workspace = true
 reth-payload-primitives.workspace = true
 reth-basic-payload-builder.workspace = true
 reth-payload-builder-primitives.workspace = true
-reth-revm = { workspace = true, features = ["witness"] }
+reth-evm = { workspace = true, features = ["witness"] }
 
 # op-reth
 base-bundles.workspace = true
@@ -71,7 +70,7 @@ crossbeam-channel.workspace = true
 reth-ethereum-forks.workspace = true
 base-execution-chainspec.workspace = true
 metrics-exporter-prometheus.workspace = true
-reth-revm = { workspace = true, features = ["test-utils"] }
+reth-evm = { workspace = true, features = ["test-utils"] }
 base-observability-events = { workspace = true, features = ["test-utils"] }
 criterion.workspace = true
 tempfile.workspace = true

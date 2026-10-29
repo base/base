@@ -15,7 +15,6 @@ workspace = true
 # reth
 reth-evm.workspace = true
 reth-rpc.workspace = true
-reth-revm.workspace = true
 reth-errors.workspace = true
 reth-rpc-api.workspace = true
 reth-provider.workspace = true
