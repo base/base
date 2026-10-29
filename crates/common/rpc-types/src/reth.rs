@@ -153,9 +153,7 @@ mod tests {
         alloy_primitives::hex::encode_prefixed(v)
     }
 
-    fn standard_tx_env(
-        request: serde_json::Value,
-    ) -> Result<Recovered<BaseTxEnv>, BaseTxEnvError> {
+    fn standard_tx_env(request: serde_json::Value) -> Result<Recovered<BaseTxEnv>, BaseTxEnvError> {
         let request: BaseTransactionRequest = serde_json::from_value(request).unwrap();
         request.try_into_tx_env(&EthEvmEnv::<base_common_evm2::BaseEvmTypes>::default())
     }
