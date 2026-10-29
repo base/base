@@ -60,7 +60,8 @@ pub enum ZkProverError {
     /// ZK proving is not yet implemented for this prover.
     #[error("zk proving is not yet implemented")]
     Unimplemented,
-    /// The proof request cannot be proved and must not be retried.
+    /// The proof request can never be proved. The proof generator abandons the claim, and the
+    /// prover service requeues the job until its attempt budget runs out.
     #[error("invalid proof request: {source}")]
     InvalidRequest {
         /// Underlying request validation failure.
