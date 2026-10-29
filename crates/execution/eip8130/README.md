@@ -12,7 +12,9 @@ across several small crates:
   `ConfigChangeAuthorizer`),
 - 2D nonce validation (`NonceValidator`), and
 - intrinsic gas accounting and fee/balance validation (`IntrinsicGas`,
-  `Eip8130GasSchedule`, `FeeCheck`).
+  `Eip8130GasSchedule`, `FeeCheck`), and
+- the engine-neutral execution pipeline shared by the revm (`base-common-evm`) and EVM2
+  (`base-common-evm2`) engines (`Eip8130Pipeline`, `Eip8130Calls`).
 
 The split is now internal module structure instead of independent workspace crates.
 
@@ -156,3 +158,33 @@ by the caller via `IntrinsicGasInput`. It does
 not advance nonces, debit balances, or execute calls; cold/warm and set/reset
 refinements that depend on intra-transaction access order are finalized by the
 execution metering layer.
+
+## Engine-neutral execution pipeline
+
+Both execution engines run an EIP-8130 transaction through the same code; each engine only
+supplies its journal (as a gas-free `StorageCtx` provider), its call frames
+(`Eip8130CallHost`), and its fee routing.
+
+```mermaid
+flowchart TD
+    A[check chain id, Everest, validity window] --> B[Eip8130Pipeline::authorize_and_apply]
+    B -->|Eip8130Error| X[reject: discard all writes]
+    B --> C[engine: bump protocol nonce, pre-charge payer worst-case fee]
+    C --> D[engine: warm precompiles, coinbase, sender, payer]
+    D --> E[Eip8130Calls::execute: phases commit or revert in order]
+    E --> F[engine: settle billable gas, refund payer, credit vaults]
+```
+
+- `authorize_and_apply` authorizes the sender/payer and account changes, installs created code
+  and delegations, validates and advances the 2D nonce (or records the nonce-free replay hash),
+  charges the EIP-8130 intrinsic schedule, enforces the EIP-7825 cap, checks the fee caps and the
+  payer balance (`Eip8130Error::PayerCannotPay`), and publishes the `TxContext`.
+- `Eip8130Calls::execute` runs each phase under a checkpoint. A reverted or policy-blocked call
+  reverts its phase and skips every later phase; the gas already spent is still charged and the
+  transaction is included. `committed_phases` is the receipt's `committedPhases`.
+- `Eip8130Outcome::billable_gas` is the settled gas: sender-intrinsic plus call gas, less the
+  EIP-3529-capped signed refund, plus payer authentication, floored by EIP-7623.
+- Simulation (`eth_call` / `eth_estimateGas`) uses `Eip8130Pipeline::simulate_resolve` (no
+  signature verification, no nonce, no fee settlement) and, for estimation,
+  `Eip8130Calls::search_estimate_pool` to find the minimum call pool at which the calls succeed.
+  All simulated state is reverted.

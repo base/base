@@ -44,7 +44,9 @@ pub use evm::BaseEvm;
 #[cfg(feature = "std")]
 mod eip8130;
 #[cfg(feature = "std")]
-pub use eip8130::{Eip8130Executor, Eip8130Outcome};
+pub use base_execution_eip8130::Eip8130Outcome;
+#[cfg(feature = "std")]
+pub use eip8130::Eip8130Executor;
 
 mod eip8130_committed_phases;
 pub use eip8130_committed_phases::Eip8130CommittedPhases;
