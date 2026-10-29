@@ -342,6 +342,11 @@ impl HashMapStorageProvider {
         self.accounts.get(&address)
     }
 
+    /// Returns the code installed at the given address (test-utils only).
+    pub fn get_code(&self, address: Address) -> Option<&Bytecode> {
+        self.code.get(&address)
+    }
+
     /// Returns emitted events for the given address (test-utils only).
     pub fn get_events(&self, address: Address) -> &Vec<LogData> {
         static EMPTY: Vec<LogData> = Vec::new();

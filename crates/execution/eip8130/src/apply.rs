@@ -31,8 +31,7 @@ use base_common_consensus::{
     AccountChangeChannel, ChangeType, CreateEntry, Eip8130Constants, Eip8130Contracts,
     InitialActor, SignedChange,
 };
-use base_precompile_storage::{BasePrecompileError, StorageCtx};
-use revm::state::Bytecode;
+use base_precompile_storage::{BasePrecompileError, Bytecode, StorageCtx};
 
 use crate::{AccountConfigurationEvents, AccountConfigurationStorage, AccountState, ActorConfig};
 
@@ -1086,7 +1085,6 @@ mod tests {
     use alloy_primitives::{LogData, address, b256};
     use alloy_sol_types::SolEvent;
     use base_precompile_storage::{HashMapStorageProvider, PrecompileStorageProvider, StorageCtx};
-    use revm::state::Bytecode;
 
     use super::*;
     use crate::{
@@ -2325,7 +2323,7 @@ mod tests {
 
     #[test]
     fn delegation_effect_install_rejects_ordinary_code_without_mutating_it() {
-        let ordinary = Bytecode::new_raw(Bytes::from_static(&[0x60, 0x00]));
+        let ordinary = Bytecode::new_legacy(Bytes::from_static(&[0x60, 0x00]));
         let mut storage = HashMapStorageProvider::new(1);
         storage.set_code(ACCOUNT, ordinary.clone()).unwrap();
 
@@ -2333,10 +2331,7 @@ mod tests {
         let error = StorageCtx::enter(&mut storage, |sctx| effect.install(sctx)).unwrap_err();
 
         assert_eq!(error, ApplyError::NonDelegatableCode { account: ACCOUNT });
-        assert_eq!(
-            storage.get_account_info(ACCOUNT).and_then(|info| info.code.as_ref()),
-            Some(&ordinary)
-        );
+        assert_eq!(storage.get_code(ACCOUNT), Some(&ordinary));
     }
 
     #[test]
@@ -2355,13 +2350,7 @@ mod tests {
             })
             .unwrap();
 
-            assert_eq!(
-                storage
-                    .get_account_info(ACCOUNT)
-                    .and_then(|info| info.code.as_ref())
-                    .and_then(Bytecode::eip7702_address),
-                Some(target)
-            );
+            assert_eq!(storage.get_code(ACCOUNT).and_then(Bytecode::eip7702_address), Some(target));
         }
     }
 
@@ -2375,12 +2364,7 @@ mod tests {
         })
         .unwrap();
 
-        assert!(
-            storage
-                .get_account_info(ACCOUNT)
-                .and_then(|info| info.code.as_ref())
-                .is_some_and(Bytecode::is_empty)
-        );
+        assert!(storage.get_code(ACCOUNT).is_some_and(Bytecode::is_empty));
     }
 
     #[test]
@@ -2489,7 +2473,7 @@ mod tests {
         })
         .unwrap();
 
-        let code = storage.get_account_info(ACCOUNT).and_then(|info| info.code.as_ref());
+        let code = storage.get_code(ACCOUNT);
         assert_eq!(code.and_then(Bytecode::eip7702_address), Some(target));
         assert!(storage.get_events(AccountConfigurationStorage::ADDRESS).is_empty());
     }
