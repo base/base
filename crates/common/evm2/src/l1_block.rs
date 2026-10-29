@@ -60,9 +60,19 @@ impl L1Block {
     /// account or slot as accessed by the current transaction.
     pub fn fetch_fee_params(evm: &mut Evm<'_, BaseEvmTypes>) -> HandlerResult<L1FeeParams> {
         let upgrade = evm.config_spec_id().upgrade();
+        Ok(Self::read_fee_params(upgrade, |slot| {
+            evm.state_mut().storage_slot_untracked(&Predeploys::L1_BLOCK_INFO, &slot)
+        })?)
+    }
+
+    /// Decodes the L1 fee parameters active under `upgrade` from `L1Block` storage slots fetched
+    /// with `read`, so callers outside execution (for example a payload builder reading its
+    /// block's accepted state) price fees exactly as execution does.
+    pub fn read_fee_params<E>(
+        upgrade: BaseUpgrade,
+        mut read: impl FnMut(U256) -> Result<U256, E>,
+    ) -> Result<L1FeeParams, E> {
         let at = |fork: BaseUpgrade| (upgrade as u8) >= (fork as u8);
-        let mut read =
-            |slot: U256| evm.state_mut().storage_slot_untracked(&Predeploys::L1_BLOCK_INFO, &slot);
 
         let mut params =
             L1FeeParams { l1_base_fee: read(Self::L1_BASE_FEE_SLOT)?, ..Default::default() };
