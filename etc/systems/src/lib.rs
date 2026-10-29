@@ -40,7 +40,7 @@ pub use benchmark_report::{
 };
 
 mod calibration;
-pub use calibration::{CALIBRATION_FILE, Calibration, TxProfile};
+pub use calibration::{Calibration, TxProfile};
 
 mod da_cli;
 pub use da_cli::{DA_RESULT_FILE, DaBenchmarkArgs, DaResult};

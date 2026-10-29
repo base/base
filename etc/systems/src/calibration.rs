@@ -1,9 +1,6 @@
 //! Compares a benchmark run's transaction profile with mainnet targets.
 
-use std::{
-    collections::BTreeMap,
-    path::{Path, PathBuf},
-};
+use std::collections::BTreeMap;
 
 use alloy_consensus::{Transaction as _, TxReceipt as _};
 use alloy_provider::{Provider, RootProvider};
@@ -12,8 +9,6 @@ use base_common_network::Base;
 use eyre::{Result, WrapErr};
 use serde::{Deserialize, Serialize};
 
-/// Calibration artifact written beside the benchmark result.
-pub const CALIBRATION_FILE: &str = "calibration.json";
 const HEAVY_GAS: u64 = 400_000;
 /// Fjord receipts report a transaction's estimated compressed size times 16 as L1 gas used.
 const L1_GAS_PER_DA_BYTE: f64 = 16.0;
@@ -29,7 +24,7 @@ pub struct TxProfile {
 
 impl TxProfile {
     /// Computes the metrics `etc/scripts/local/mainnet-mix.py` emits as targets.
-    fn metrics(txs: &[Self]) -> BTreeMap<String, f64> {
+    fn metrics(txs: &[Self]) -> BTreeMap<&'static str, f64> {
         let count = txs.len() as f64;
         let gas = txs.iter().map(|tx| tx.gas_used as f64).sum::<f64>();
         if gas == 0.0 {
@@ -45,9 +40,7 @@ impl TxProfile {
             ("logs_per_tx", sum(|tx| tx.logs as f64) / count),
             ("da_bytes_per_gas", sum(|tx| tx.l1_gas_used as f64) / L1_GAS_PER_DA_BYTE / gas),
         ]
-        .into_iter()
-        .map(|(name, value)| (name.to_string(), value))
-        .collect()
+        .into()
     }
 
     /// Profiles every non-deposit transaction in blocks `start+1..=end`, the measured window.
@@ -118,11 +111,6 @@ pub struct Calibration {
 }
 
 impl Calibration {
-    /// Targets file `mainnet-mix.py` writes beside a load-test config.
-    pub fn targets_path(load_test_config: &Path) -> PathBuf {
-        load_test_config.with_extension("targets.json")
-    }
-
     /// Compares measured transactions with a targets JSON document.
     pub fn compare(targets_json: &str, txs: &[TxProfile]) -> Result<Self> {
         let targets: Targets =
@@ -132,7 +120,7 @@ impl Calibration {
             .metrics
             .into_iter()
             .map(|(name, Target { target, tolerance })| {
-                let measured = measured.get(&name).copied();
+                let measured = measured.get(name.as_str()).copied();
                 let error = target.zip(measured).map(|(target, measured)| measured / target - 1.0);
                 let within_tolerance = error.map(|error| error.abs() <= tolerance);
                 (name, MetricCalibration { target, measured, error, tolerance, within_tolerance })
@@ -197,13 +185,5 @@ mod tests {
             }
         );
         assert!(!calibration.within_tolerance);
-    }
-
-    #[test]
-    fn targets_sit_beside_the_load_test_config() {
-        assert_eq!(
-            Calibration::targets_path(Path::new("examples/mainnet-mix.yaml")),
-            Path::new("examples/mainnet-mix.targets.json")
-        );
     }
 }
