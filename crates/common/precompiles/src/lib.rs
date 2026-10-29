@@ -17,6 +17,11 @@ mod lookup;
 #[cfg(feature = "revm")]
 pub use lookup::{BerylLookup, BerylLookupWithObserver};
 
+#[cfg(feature = "evm2")]
+mod evm2_precompiles;
+#[cfg(feature = "evm2")]
+pub use evm2_precompiles::{BaseEvm2Precompiles, BaseNativePrecompile};
+
 mod spec;
 pub use spec::{BasePrecompileSpec, UpgradeGatedStorageFeatures};
 
