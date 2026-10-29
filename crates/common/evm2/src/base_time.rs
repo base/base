@@ -95,25 +95,21 @@ impl BaseTime {
         let expected_implementation = U256::from_be_slice(Self::IMPLEMENTATION_ADDRESS.as_slice());
         let current_implementation = evm
             .state_mut()
-            .storage_slot_untracked(&Predeploys::BASE_TIME, &Self::IMPLEMENTATION_SLOT)
-            .map_err(HandlerError::Fatal)?;
+            .storage_slot_untracked(&Predeploys::BASE_TIME, &Self::IMPLEMENTATION_SLOT)?;
         if current_implementation != U256::ZERO {
             return Ok(());
         }
 
         let proxy_info = evm
             .state_mut()
-            .account_info_untracked(&Predeploys::BASE_TIME)
-            .map_err(HandlerError::Fatal)?
+            .account_info_untracked(&Predeploys::BASE_TIME)?
             .ok_or_else(|| HandlerError::external(BaseTimeTransitionError::MissingProxy))?;
         if proxy_info.code_hash == alloy_primitives::KECCAK256_EMPTY {
             return Err(HandlerError::external(BaseTimeTransitionError::CodelessProxy));
         }
 
-        let current_admin = evm
-            .state_mut()
-            .storage_slot_untracked(&Predeploys::BASE_TIME, &Self::ADMIN_SLOT)
-            .map_err(HandlerError::Fatal)?;
+        let current_admin =
+            evm.state_mut().storage_slot_untracked(&Predeploys::BASE_TIME, &Self::ADMIN_SLOT)?;
         if current_admin != U256::from_be_slice(Predeploys::PROXY_ADMIN.as_slice()) {
             return Err(HandlerError::external(BaseTimeTransitionError::UnexpectedProxyAdmin {
                 actual: current_admin,
@@ -123,12 +119,11 @@ impl BaseTime {
         // Install the implementation runtime at its code-namespace address.
         let code = Bytecode::new_raw(Self::implementation_bytecode());
         let code_hash = code.hash_slow();
-        let implementation_original = evm
-            .state_mut()
-            .account_info_untracked(&Self::IMPLEMENTATION_ADDRESS)
-            .map_err(HandlerError::Fatal)?;
+        let implementation_original =
+            evm.state_mut().account_info_untracked(&Self::IMPLEMENTATION_ADDRESS)?;
         let base = implementation_original.clone().unwrap_or_default();
-        let implementation_current = AccountInfo::new(base.balance, base.nonce, code_hash, code);
+        let implementation_current =
+            AccountInfo::new(base.balance, base.nonce, code_hash, Some(code));
         IrregularStateChange::new(
             Self::IMPLEMENTATION_ADDRESS,
             implementation_original,

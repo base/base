@@ -125,7 +125,7 @@ fn run_evm2(fixture: &Fixture, upgrade: BaseUpgrade) -> Outcome {
         let info = evm.state_mut().account_info_untracked(address).unwrap().unwrap_or_default();
         let mut storage = BTreeMap::new();
         for slot in slots {
-            let value = evm.state_mut().storage_slot(address, *slot, false).unwrap().current();
+            let value = evm.state_mut().storage_slot(address, *slot).unwrap().current();
             storage.insert(*slot, value);
         }
         accounts.insert(

@@ -104,7 +104,10 @@ fn everest_does_not_overwrite_existing_code() {
     let real = Bytecode::new_raw(Bytes::from_static(&[0x60, 0x00]));
     let real_hash = real.hash_slow();
     let mut db = db_with_valid_proxy();
-    db.insert_account_info(&NONCE_MANAGER, evm2::AccountInfo::new(U256::ZERO, 0, real_hash, real));
+    db.insert_account_info(
+        &NONCE_MANAGER,
+        evm2::AccountInfo::new(U256::ZERO, 0, real_hash, Some(real)),
+    );
     let mut executor = executor(BaseUpgrade::Everest, 1000, db);
     executor.apply_transition_hooks(&schedule(BaseUpgrade::Everest, 1000)).expect("hooks apply");
     let (mut evm, _, _) = executor.finish();
@@ -129,7 +132,7 @@ fn db_with_valid_proxy() -> InMemoryDB {
     let proxy_code = Bytecode::new_raw(Bytes::from_static(&[0x60, 0x00]));
     db.insert_account_info(
         &Predeploys::BASE_TIME,
-        evm2::AccountInfo::new(U256::ZERO, 0, proxy_code.hash_slow(), proxy_code),
+        evm2::AccountInfo::new(U256::ZERO, 0, proxy_code.hash_slow(), Some(proxy_code)),
     );
     db.insert_account_storage(
         &Predeploys::BASE_TIME,
