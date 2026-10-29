@@ -10,6 +10,7 @@ use std::{
 use alloy_consensus::BlockHeader;
 use alloy_primitives::{Address, B64, B256, Bytes, map::AddressSet};
 use alloy_rlp::encode;
+use base_clock::GlobalClock;
 use base_common_chains::Upgrades;
 use base_common_consensus::{BasePrimitives, BaseTransaction, BaseTxEnvelope};
 use base_common_rpc_types_engine::{BasePayloadAttributes, ExecutionData};
@@ -141,7 +142,7 @@ impl PayloadAttributesBuilder<BasePayloadBuilderAttributes<BaseTxEnvelope>>
 
         let timestamp = std::cmp::max(
             parent.timestamp().saturating_add(1),
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs(),
+            GlobalClock::get().now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs(),
         );
 
         let default_eip_1559_params = BaseFeeParams::optimism();
