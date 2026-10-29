@@ -10,11 +10,19 @@ pub trait Upgrades: EthereumHardforks {
     fn fork_condition(&self, fork: BaseUpgrade) -> ForkCondition;
 
     /// Whether a behavior is active according to this chain's resolved fork condition.
+    ///
+    /// Only timestamp conditions can return `true`; block conditions and `Never` return
+    /// `false`. This is not a universal feature-activation query. For [`RollupConfig`],
+    /// Bedrock features resolve to `Block(0)`, while Delta and PectraBlobSchedule features
+    /// resolve to `Never` because those upgrades are absent from the execution fork ladder.
+    /// Check block-based behavior with [`ForkCondition::active_at_block`] on the resolved
+    /// condition. For rollup-only behavior, use [`RollupConfig::is_feature_active_cascading`].
     fn is_feature_active_at_timestamp(&self, feature: BaseFeature, timestamp: u64) -> bool {
         self.fork_condition(feature.activation_upgrade()).active_at_timestamp(timestamp)
     }
 
     /// Whether this block crosses a behavior's activation boundary relative to its parent.
+    /// Uses the same timestamp-only semantics as [`Self::is_feature_active_at_timestamp`].
     fn is_feature_activation_block(
         &self,
         feature: BaseFeature,
@@ -278,6 +286,36 @@ mod tests {
         let chain = ChainUpgrades::new([(BaseUpgrade::Isthmus, ForkCondition::Timestamp(10))]);
         assert!(chain.is_feature_activation_block(feature, 10, 9));
         assert!(!chain.is_feature_activation_block(feature, 11, 10));
+    }
+
+    #[test]
+    fn execution_timestamp_gates_exclude_block_and_rollup_only_features() {
+        let mut cfg = RollupConfig::default();
+        cfg.upgrades.delta_time = Some(10);
+        cfg.upgrades.pectra_blob_schedule_time = Some(20);
+
+        for (feature, configured) in [
+            (BaseFeature::MonotonicBlockTimestamps, None),
+            (BaseFeature::SpanBatches, Some(10)),
+            (BaseFeature::BlobScheduleCorrection, Some(20)),
+        ] {
+            assert_eq!(cfg.configured_feature_activation_timestamp(feature), configured);
+            assert_eq!(cfg.feature_activation_timestamp(feature), None);
+            for timestamp in [0, 9, 10, 19, 20, u64::MAX] {
+                assert!(!cfg.is_feature_active_at_timestamp(feature, timestamp), "{feature:?}");
+                assert!(!cfg.is_feature_activation_block(
+                    feature,
+                    timestamp,
+                    timestamp.saturating_sub(1)
+                ));
+                assert_eq!(
+                    cfg.is_feature_active_cascading(feature, timestamp),
+                    configured.is_none_or(|activation| timestamp >= activation),
+                    "{feature:?} at {timestamp}"
+                );
+            }
+        }
+        assert!(cfg.fork_condition(BaseUpgrade::Bedrock).active_at_block(0));
     }
 
     #[test]
