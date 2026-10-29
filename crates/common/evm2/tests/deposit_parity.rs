@@ -5,10 +5,9 @@
 //! success, gas used, the created contract address, and the post-state (balance, nonce,
 //! code hash, and storage) of every account the fixture cares about.
 //!
-//! Every fixture is swept across [`FORKS`] (Regolith/Ecotone/Isthmus → MERGE/CANCUN/PRAGUE) on
-//! both engines, exercising the Base fork schedule: evm2 selects the spec via
-//! [`BaseSpecId`] and revm via its own `BaseSpecId`, both from the same [`BaseUpgrade`]. Both
-//! take the same `base_common_consensus::TxDeposit` fields (shared thanks to the type dedup).
+//! Every fixture is swept across [`forks`] (Regolith through Everest) on both engines, exercising
+//! the Base fork schedule: evm2 selects the spec via [`BaseSpecId`] and revm via its own
+//! `BaseSpecId`, both from the same [`BaseUpgrade`]. Both take the same `base_common_consensus::TxDeposit` fields (shared thanks to the type dedup).
 
 use std::collections::BTreeMap;
 
@@ -37,9 +36,12 @@ use revm::{
 const SENDER: Address = Address::repeat_byte(0x11);
 const SOURCE_HASH: B256 = B256::repeat_byte(0xab);
 
-/// Base upgrades the parity fixtures are swept across, exercising the fork schedule end to end
-/// (MERGE, CANCUN, and PRAGUE gas schedules respectively).
-const FORKS: [BaseUpgrade; 3] = [BaseUpgrade::Regolith, BaseUpgrade::Ecotone, BaseUpgrade::Isthmus];
+/// Base upgrades the parity fixtures are swept across: the whole execution fork ladder except
+/// Bedrock, whose pre-Regolith deposit semantics the evm2 deposit handler does not implement (Base
+/// launched with Regolith active).
+fn forks() -> impl Iterator<Item = BaseUpgrade> {
+    BaseUpgrade::EXECUTION_VARIANTS.into_iter().filter(|upgrade| *upgrade != BaseUpgrade::Bedrock)
+}
 
 /// An account to seed into both engines before execution.
 #[derive(Clone)]
@@ -220,9 +222,9 @@ fn run_revm(fixture: &Fixture, upgrade: BaseUpgrade) -> Outcome {
     Outcome { success: result.is_success(), gas_used: result.tx_gas_used(), created, accounts }
 }
 
-/// Asserts the two engines produce identical outcomes for `fixture` at every fork in [`FORKS`].
+/// Asserts the two engines produce identical outcomes for `fixture` at every fork in [`forks`].
 fn assert_parity(fixture: Fixture) {
-    for upgrade in FORKS {
+    for upgrade in forks() {
         let evm2 = run_evm2(&fixture, upgrade);
         let revm = run_revm(&fixture, upgrade);
         assert_eq!(evm2, revm, "evm2 and revm deposit outcomes diverged at {upgrade:?}");

@@ -39,7 +39,8 @@ const BLOCK_GAS_LIMIT: u64 = 30_000_000;
 /// Number of standard transactions in the test block (from `SENDER`, ascending nonces).
 const TX_COUNT: u64 = 3;
 
-const FORKS: [BaseUpgrade; 3] = [BaseUpgrade::Ecotone, BaseUpgrade::Fjord, BaseUpgrade::Isthmus];
+/// The whole execution fork ladder.
+const FORKS: [BaseUpgrade; 14] = BaseUpgrade::EXECUTION_VARIANTS;
 
 fn enveloped() -> Bytes {
     Bytes::from(vec![0x02u8; 120])
