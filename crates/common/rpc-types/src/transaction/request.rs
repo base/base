@@ -11,7 +11,7 @@ use alloy_network_primitives::TransactionBuilder7702;
 use alloy_primitives::{Address, B256, Bytes, ChainId, Signature, TxKind, U256};
 use alloy_rpc_types_eth::{AccessList, TransactionInput, TransactionRequest};
 use base_common_consensus::{
-    AccountChange, BaseTxEnvelope, BaseTypedTransaction, Call, EIP8130_TX_TYPE_ID,
+    AccountChange, BaseTxEnvelope, BaseTypedTransaction, Call, Delegation, EIP8130_TX_TYPE_ID,
     Eip8130Constants, Eip8130Contracts, Eip8130PayerSerde, TxDeposit,
 };
 use serde::{
@@ -227,16 +227,41 @@ impl Eip8130RequestFields {
             || self.payer_auth.is_some()
     }
 
-    /// Deserializes `accountChanges`, rejecting more than
-    /// [`Eip8130Constants::MAX_ACCOUNT_CHANGES_PER_TX`] entries while decoding.
+    /// Deserializes `accountChanges`, accepting at most
+    /// [`Eip8130Constants::MAX_DELEGATIONS_PER_TX`] entry, which must be a
+    /// delegation, as [`base_common_consensus::TxEip8130::decode_account_changes`]
+    /// does for RLP. Each
+    /// entry decodes straight into its `type` and `target`, so the nested lists
+    /// of any other entry type are skipped rather than buffered.
     pub fn deserialize_account_changes<'de, D: Deserializer<'de>>(
         deserializer: D,
     ) -> Result<Option<Vec<AccountChange>>, D::Error> {
-        Self::deserialize_bounded(
+        #[derive(Deserialize)]
+        struct DelegationEntry {
+            #[serde(rename = "type")]
+            change_type: String,
+            target: Option<Address>,
+        }
+
+        let Some(entries) = Self::deserialize_bounded::<_, DelegationEntry>(
             deserializer,
-            Eip8130Constants::MAX_ACCOUNT_CHANGES_PER_TX,
+            Eip8130Constants::MAX_DELEGATIONS_PER_TX,
             "accountChanges",
-        )
+        )?
+        else {
+            return Ok(None);
+        };
+        entries
+            .into_iter()
+            .map(|entry| {
+                if !matches!(entry.change_type.as_str(), "0x1" | "0x01") {
+                    return Err(de::Error::custom("unsupported EIP-8130 account change type"));
+                }
+                let target = entry.target.ok_or_else(|| de::Error::missing_field("target"))?;
+                Ok(AccountChange::Delegation(Delegation { target }))
+            })
+            .collect::<Result<_, _>>()
+            .map(Some)
     }
 
     /// Deserializes `calls`, rejecting more than
@@ -776,7 +801,6 @@ mod tests {
         eip7594::{BlobTransactionSidecarEip7594, BlobTransactionSidecarVariant},
     };
     use alloy_primitives::address;
-    use base_common_consensus::Delegation;
     use serde_json::json;
 
     use super::*;
@@ -893,17 +917,52 @@ mod tests {
             )
         };
         let max_calls = Eip8130Constants::MAX_CALL_PHASES_PER_TX;
-        let max_changes = Eip8130Constants::MAX_ACCOUNT_CHANGES_PER_TX;
+        let max_changes = Eip8130Constants::MAX_DELEGATIONS_PER_TX;
 
         let request = decode(max_calls, max_changes).unwrap();
         let fields = request.as_eip8130().unwrap();
         assert_eq!(fields.calls.as_ref().unwrap().len(), max_calls);
-        assert_eq!(fields.account_changes.as_ref().unwrap().len(), max_changes);
+        assert_eq!(
+            fields.account_changes.as_deref(),
+            Some(
+                &[AccountChange::Delegation(Delegation { target: Address::repeat_byte(0x06) })][..]
+            )
+        );
 
         let error = decode(max_calls + 1, max_changes).unwrap_err().to_string();
         assert!(error.contains("`calls` with at most 1024 entries"), "{error}");
         let error = decode(max_calls, max_changes + 1).unwrap_err().to_string();
-        assert!(error.contains("`accountChanges` with at most 3 entries"), "{error}");
+        assert!(error.contains("`accountChanges` with at most 1 entries"), "{error}");
+    }
+
+    #[test]
+    fn eip8130_account_changes_accept_only_a_delegation() {
+        let decode = |change: Value| {
+            serde_json::from_value::<BaseTransactionRequest>(
+                json!({ "sender": SENDER, "accountChanges": [change] }),
+            )
+        };
+        let target = Address::repeat_byte(0x06);
+
+        let request = decode(json!({ "type": "0x01", "target": target })).unwrap();
+        assert_eq!(
+            request.as_eip8130().unwrap().account_changes.as_deref(),
+            Some(&[AccountChange::Delegation(Delegation { target })][..])
+        );
+
+        let create = json!({
+            "type": "0x2",
+            "userSalt": B256::ZERO,
+            "code": "0x00",
+            "initialActors": vec![json!({}); Eip8130Constants::MAX_ACTORS_PER_ENTRY + 1],
+        });
+        let config = json!({ "type": "0x3", "changes": [], "signature": "0x" });
+        for change in [create, config] {
+            let error = decode(change).unwrap_err().to_string();
+            assert!(error.contains("unsupported EIP-8130 account change type"), "{error}");
+        }
+        let error = decode(json!({ "type": "0x1" })).unwrap_err().to_string();
+        assert!(error.contains("missing field `target`"), "{error}");
     }
 
     #[test]
