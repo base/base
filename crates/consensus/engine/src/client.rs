@@ -220,13 +220,11 @@ impl EngineClientBuilder {
     pub async fn build(
         self,
     ) -> TransportResult<BaseEngineClient<RootProvider, RootProvider<Base>>> {
-        let in_process_engine_api = match &self.l2 {
-            EngineEndpoint::InMemory { engine_api, .. } => Some(engine_api.clone()),
-            EngineEndpoint::Url(_) => None,
+        let engine = self.l2.clone().connect::<Base>(self.l2_jwt).await?;
+        let engine_api = match self.l2 {
+            EngineEndpoint::InMemory { engine_api, .. } => engine_api,
+            EngineEndpoint::Url(_) => SharedEngineApi::new(engine.clone()),
         };
-        let engine = self.l2.connect::<Base>(self.l2_jwt).await?;
-        let engine_api =
-            in_process_engine_api.unwrap_or_else(|| SharedEngineApi::new(engine.clone()));
 
         let l1_provider = L1RpcProvider::new_http_with_timeout(self.l1_rpc, self.l1_rpc_timeout);
 

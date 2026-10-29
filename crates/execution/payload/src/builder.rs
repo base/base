@@ -1024,6 +1024,27 @@ where
 
             let tx_hash = *tx.hash();
             let replay_independent = tx.is_eip8130_nonce_free();
+            let has_validity_predicates = !tx.validity_conditions().is_empty();
+            // Resting members are most of the validity candidates in a build, and holding one back
+            // is a single map probe, so they skip the rejection-cache lookup and the coinbase-tip
+            // decode below. A member is released before it can execute, so it is never rejected
+            // while resting, and it only rests after passing the flashblock-index check. A stale
+            // member is parked, which blocks its nonce lane just as skipping it would.
+            if has_validity_predicates
+                && resting_mode.is_enforced()
+                && let Some(resting) = resting.as_deref_mut()
+                && resting.hold(tx_hash, tx.validity_conditions()).is_some()
+            {
+                // No commit since the recorded predicate was found unsatisfied changed the state it
+                // reads, so evaluating it again would park it again. The deferral was reported
+                // when it started resting, so this hot path emits nothing per member.
+                validity_consideration_index += 1;
+                best_txs.park_current();
+                parked_resting.insert(tx_hash);
+                carried_parked += 1;
+                continue;
+            }
+
             if self.builder_config.rejection_cache.is_rejected(&tx_hash) {
                 RejectionCacheMetrics::hits().increment(1);
                 RejectionCacheMetrics::size()
@@ -1037,7 +1058,6 @@ where
                 continue;
             }
 
-            let has_validity_predicates = !tx.validity_conditions().is_empty();
             let coinbase_tip = tx.coinbase_tip();
             let has_coinbase_tip = coinbase_tip.is_some();
             // Every validity candidate ends with a decision event, so there is no separate
@@ -1065,20 +1085,6 @@ where
                     "skipping transaction with unsupported flashblock-index predicate"
                 );
                 Self::skip_current(&mut best_txs, tx.sender(), tx.nonce(), replay_independent);
-                continue;
-            }
-
-            if has_validity_predicates
-                && resting_mode.is_enforced()
-                && let Some(resting) = resting.as_deref_mut()
-                && resting.hold(tx_hash, tx.validity_conditions()).is_some()
-            {
-                // No commit since the recorded predicate was found unsatisfied changed the state it
-                // reads, so evaluating it again would park it again. The deferral was reported
-                // when it started resting, so this hot path emits nothing per member.
-                best_txs.park_current();
-                parked_resting.insert(tx_hash);
-                carried_parked += 1;
                 continue;
             }
 
@@ -2397,6 +2403,15 @@ mod tests {
     ) -> (Vec<TxHash>, B256) {
         let mut ctx = pool_payload_context(timestamp);
         ctx.builder_config.resting_predicate_mode = mode;
+        build_carrying_resting_with(ctx, store, transactions)
+    }
+
+    /// Builds one block with `ctx`, returning the included hashes and the block hash.
+    fn build_carrying_resting_with(
+        ctx: BasePayloadBuilderCtx<BaseEvmConfig, BaseChainSpec>,
+        store: &RestingPredicateStore,
+        transactions: Vec<BasePooledTransaction>,
+    ) -> (Vec<TxHash>, B256) {
         let funded_senders =
             transactions.iter().map(|transaction| transaction.sender()).collect::<Vec<_>>();
         let provider = funded_provider(&funded_senders);
@@ -2453,6 +2468,29 @@ mod tests {
             let store = resting_store(pool_parent_hash(), &gated, holds.clone());
             let (included, _) = build_carrying_resting(mode, &store, vec![gated.clone()]);
             assert_eq!(included.contains(&gated_hash), evaluated, "mode {mode:?}");
+        }
+    }
+
+    /// A stale carried member that a concurrent build rejected stays excluded: held back while it
+    /// rests, and skipped by the rejection cache once released or when resting is off.
+    #[test]
+    fn native_builder_excludes_a_rejected_resting_transaction() {
+        let watched_address = Address::repeat_byte(0x4b);
+        let holds = ValidityPredicate::Balance {
+            address: watched_address,
+            op: ValidityOperator::Equal,
+            value: U256::ZERO,
+        };
+        let gated = pool_transaction_to(0, Address::repeat_byte(0x5c), U256::ZERO)
+            .with_validity_predicates(vec![holds.clone()]);
+
+        for mode in [RestingPredicateMode::Off, RestingPredicateMode::Enforce] {
+            let store = resting_store(pool_parent_hash(), &gated, holds.clone());
+            let mut ctx = pool_payload_context(DENIM_TIMESTAMP);
+            ctx.builder_config.resting_predicate_mode = mode;
+            ctx.builder_config.rejection_cache.insert(*gated.hash());
+            let (included, _) = build_carrying_resting_with(ctx, &store, vec![gated.clone()]);
+            assert!(included.is_empty(), "mode {mode:?}");
         }
     }
 

@@ -5779,6 +5779,7 @@ version = "0.0.0"
 dependencies = [
  "alloy-consensus 2.5.0",
  "alloy-primitives",
+ "alloy-provider",
  "anyhow",
  "async-trait",
  "backoff",
@@ -5805,6 +5806,7 @@ dependencies = [
  "tokio-util",
  "tonic 0.14.6",
  "tracing",
+ "tracing-subscriber",
  "url",
 ]
 
@@ -6116,6 +6118,7 @@ dependencies = [
  "jsonrpsee",
  "serde",
  "serde_json",
+ "thiserror 2.0.19",
  "uuid",
 ]
 

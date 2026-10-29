@@ -460,8 +460,26 @@ type BenchBestTxs = BestFlashblocksTxs<
 >;
 
 fn resting_best_txs(pool: &Pool, mode: RestingPredicateMode) -> BenchBestTxs {
-    BestFlashblocksTxs::new(parkable(pool), RejectionCache::new(1_000, Duration::from_secs(60)))
-        .with_resting_predicate_mode(mode)
+    resting_best_txs_with_cache(pool, mode, RejectionCache::new(1_000, Duration::from_secs(60)))
+}
+
+fn resting_best_txs_with_cache(
+    pool: &Pool,
+    mode: RestingPredicateMode,
+    rejection_cache: RejectionCache,
+) -> BenchBestTxs {
+    BestFlashblocksTxs::new(parkable(pool), rejection_cache).with_resting_predicate_mode(mode)
+}
+
+/// A rejection cache sized like the builder default, holding `rejected` hashes of transactions
+/// that are not in the pool, as a running builder accumulates from earlier blocks.
+fn populated_rejection_cache(rejected: usize) -> RejectionCache {
+    let cache = RejectionCache::new(100_000, Duration::from_secs(1_800));
+    for index in 0..rejected {
+        cache.insert(B256::from(U256::from(index) | (U256::from(1) << 255)));
+    }
+    cache.run_pending_tasks();
+    cache
 }
 
 /// Runs every flashblock of one block through the build loop and returns the number of
@@ -557,6 +575,10 @@ const RESTING_BLOCKS: u64 = 5;
 /// Resting validity transaction counts to measure.
 const RESTING_COUNTS: [usize; 2] = [20_000, 40_000];
 
+/// Rejection-cache populations to measure: empty, and the order of magnitude a running builder
+/// holds from rejections in earlier blocks.
+const REJECTED_COUNTS: [usize; 2] = [0, 10_000];
+
 /// Builds [`RESTING_BLOCKS`] consecutive blocks under resting `mode`, which carries the resting
 /// set across flashblocks and blocks. Every block builds on the same parent state, so carried
 /// members stay valid.
@@ -565,12 +587,14 @@ fn run_resting_blocks(
     pool: &Pool,
     db: &InMemoryDB,
     mode: RestingPredicateMode,
+    rejection_cache: &RejectionCache,
 ) {
     let mut resting = RestingPredicates::new(DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD);
     let mut parent = B256::ZERO;
     for block in 1..=RESTING_BLOCKS {
         resting.begin_block(parent, block, Some(&TransitionState::default()));
-        let mut best = resting_best_txs(pool, mode).with_resting_predicates(resting);
+        let mut best = resting_best_txs_with_cache(pool, mode, rejection_cache.clone())
+            .with_resting_predicates(resting);
         let mut state = State::builder().with_database(db.clone()).with_bundle_update().build();
         let executed = run_resting_block(ctx, pool, &mut state, &mut best);
         assert_eq!(executed, RESTING_FLASHBLOCKS * RESTING_FILLER_PER_FLASHBLOCK);
@@ -582,7 +606,8 @@ fn run_resting_blocks(
 
 /// Measures consecutive blocks with a large set of validity transactions that stay
 /// unsatisfied. Off evaluates them in every flashblock; enforced, only the first flashblock of
-/// the first block does.
+/// the first block does. The rejection cache is shared across the blocks, as in the builder, and
+/// optionally starts with unrelated rejected hashes.
 fn multi_block_resting_predicate_benches(c: &mut Criterion) {
     enable_transaction_events();
     let ctx = resting_builder_context();
@@ -590,13 +615,19 @@ fn multi_block_resting_predicate_benches(c: &mut Criterion) {
     group.sample_size(10);
     for resting in RESTING_COUNTS {
         let (pool, db) = resting_block(resting);
-        for mode in [RestingPredicateMode::Off, RestingPredicateMode::Enforce] {
-            group.bench_function(
-                format!(
-                    "resting={resting}/blocks={RESTING_BLOCKS}/flashblocks={RESTING_FLASHBLOCKS}/mode={mode:?}"
-                ),
-                |b| b.iter(|| run_resting_blocks(&ctx, &pool, &db, mode)),
-            );
+        for rejected in REJECTED_COUNTS {
+            let rejection_cache = populated_rejection_cache(rejected);
+            // The empty-cache case keeps its original name so earlier results stay comparable.
+            let rejected_suffix =
+                if rejected == 0 { String::new() } else { format!("/rejected={rejected}") };
+            for mode in [RestingPredicateMode::Off, RestingPredicateMode::Enforce] {
+                group.bench_function(
+                    format!(
+                        "resting={resting}/blocks={RESTING_BLOCKS}/flashblocks={RESTING_FLASHBLOCKS}/mode={mode:?}{rejected_suffix}"
+                    ),
+                    |b| b.iter(|| run_resting_blocks(&ctx, &pool, &db, mode, &rejection_cache)),
+                );
+            }
         }
     }
     group.finish();
