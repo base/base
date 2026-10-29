@@ -179,6 +179,8 @@ pub enum TxType {
         contract: Address,
         /// Number of storage slots to write per transaction.
         slots_per_tx: u32,
+        /// Mean fraction of written slots that are fresh.
+        new_slot_ratio: f64,
     },
     /// Deterministic `DoubleCounter` `increment()` call.
     DoubleCounter {

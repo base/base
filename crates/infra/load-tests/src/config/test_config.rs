@@ -298,6 +298,10 @@ pub enum TxTypeConfig {
         /// Number of storage slots to write per transaction.
         #[serde(default = "default_storage_slots_per_tx")]
         slots_per_tx: u32,
+        /// Mean fraction of written slots that are fresh (0.0..=1.0); the rest overwrite
+        /// slots written earlier. Values below 1.0 call `writeStorage` instead of `fillStorage`.
+        #[serde(default = "default_storage_new_slot_ratio")]
+        new_slot_ratio: f64,
     },
 
     /// Deterministic `DoubleCounter` `increment()` call.
@@ -413,6 +417,10 @@ const fn default_iterations() -> u32 {
 
 const fn default_storage_slots_per_tx() -> u32 {
     10
+}
+
+const fn default_storage_new_slot_ratio() -> f64 {
+    1.0
 }
 
 /// Upper bound on `slots_per_tx` so the payload's gas limit
@@ -782,13 +790,22 @@ impl TestConfig {
                 TxType::Calldata { max_size: *max_size, repeat_count: *repeat_count }
             }
             TxTypeConfig::Erc20 { contract } => TxType::Erc20 { contract: *contract },
-            TxTypeConfig::Storage { contract, slots_per_tx } => {
+            TxTypeConfig::Storage { contract, slots_per_tx, new_slot_ratio } => {
                 if !(1..=MAX_STORAGE_SLOTS_PER_TX).contains(slots_per_tx) {
                     return Err(BaselineError::Config(format!(
                         "storage slots_per_tx must be 1..={MAX_STORAGE_SLOTS_PER_TX}"
                     )));
                 }
-                TxType::Storage { contract: *contract, slots_per_tx: *slots_per_tx }
+                if !(0.0..=1.0).contains(new_slot_ratio) {
+                    return Err(BaselineError::Config(
+                        "storage new_slot_ratio must be between 0.0 and 1.0".into(),
+                    ));
+                }
+                TxType::Storage {
+                    contract: *contract,
+                    slots_per_tx: *slots_per_tx,
+                    new_slot_ratio: *new_slot_ratio,
+                }
             }
             TxTypeConfig::DoubleCounter { contract } => {
                 TxType::DoubleCounter { contract: *contract }
@@ -1217,12 +1234,13 @@ transactions:
     type: storage
     contract: "0x1234567890123456789012345678901234567890"
     slots_per_tx: 25
+    new_slot_ratio: 0.25
 "#,
         );
         let config = TestConfig::from_yaml(&yaml).unwrap();
         assert_eq!(config.transactions.len(), 1);
         match &config.transactions[0].tx_type {
-            TxTypeConfig::Storage { contract, slots_per_tx } => {
+            TxTypeConfig::Storage { contract, slots_per_tx, .. } => {
                 assert_eq!(
                     *contract,
                     "0x1234567890123456789012345678901234567890".parse::<Address>().unwrap()
@@ -1235,13 +1253,14 @@ transactions:
         let load_config = config.to_load_config(Some(1337)).unwrap();
         assert_eq!(load_config.transactions.len(), 1);
         match &load_config.transactions[0].tx_type {
-            TxType::Storage { contract, slots_per_tx } => {
+            TxType::Storage { contract, slots_per_tx, new_slot_ratio } => {
                 assert_eq!(
                     *contract,
                     "0x1234567890123456789012345678901234567890".parse::<Address>().unwrap(),
                     "storage contract address must round-trip through conversion"
                 );
                 assert_eq!(*slots_per_tx, 25, "slots_per_tx must be preserved");
+                assert_eq!(*new_slot_ratio, 0.25, "new_slot_ratio must be preserved");
             }
             _ => panic!("expected TxType::Storage after conversion"),
         }
@@ -1259,11 +1278,27 @@ transactions:
         );
         let config = TestConfig::from_yaml(&yaml).unwrap();
         match &config.transactions[0].tx_type {
-            TxTypeConfig::Storage { slots_per_tx, .. } => {
+            TxTypeConfig::Storage { slots_per_tx, new_slot_ratio, .. } => {
                 assert_eq!(*slots_per_tx, 10, "slots_per_tx must default to 10");
+                assert_eq!(*new_slot_ratio, 1.0, "new_slot_ratio must default to 1.0");
             }
             _ => panic!("expected Storage"),
         }
+    }
+
+    #[test]
+    fn storage_config_rejects_new_slot_ratio_above_one() {
+        let yaml = config_yaml(
+            r#"
+transactions:
+  - weight: 100
+    type: storage
+    contract: "0x1234567890123456789012345678901234567890"
+    new_slot_ratio: 1.5
+"#,
+        );
+        let err = TestConfig::from_yaml(&yaml).unwrap().to_load_config(Some(1337)).unwrap_err();
+        assert!(err.to_string().contains("new_slot_ratio must be between 0.0 and 1.0"), "{err}");
     }
 
     #[test]
