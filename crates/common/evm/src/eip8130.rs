@@ -149,8 +149,9 @@ pub struct Eip8130Outcome {
     pub effective: u128,
     /// Block base fee per gas.
     pub base_fee: u128,
-    /// Whether the sender's protocol (basic) account nonce must be bumped
-    /// (`nonce_key == 0`).
+    /// Whether the sender's protocol (basic) account nonce must be bumped:
+    /// `nonce_key == 0`, or a delegation change on a sender still at protocol
+    /// nonce zero.
     pub bump_protocol_nonce: bool,
 }
 
@@ -1197,6 +1198,14 @@ impl Eip8130Executor {
                         .map_err(BaseTransactionError::eip8130)?;
                     (current_nonce == 0, false)
                 };
+            // A delegation change never leaves the sender at protocol nonce zero.
+            // Nonce-channel transactions skip the protocol nonce, so without this a
+            // codeless sender that held storage while delegated is EIP-161 empty
+            // once drained, and end-of-block state clearing wipes that storage.
+            // This mirrors EIP-7702, which bumps the authority nonce, and EIP-161,
+            // which starts new contracts at nonce one.
+            let bump_protocol_nonce = bump_protocol_nonce
+                || (applied_tx.applied.delegation.is_some() && protocol_nonce == 0);
 
             // 4. Intrinsic gas under the EIP-8130 schedule.
             let (intrinsic, execution_gas_available) = Self::resolve_execution_gas(
@@ -2605,6 +2614,56 @@ mod tests {
             panic!("expected successful clear, got {:?}", outcome.result);
         };
         assert!(logs.is_empty(), "delegation updates emit no protocol logs");
+    }
+
+    /// Executes a delegation to `target` from a sender starting at protocol nonce
+    /// `initial_nonce`, on nonce channel `nonce_key`, and returns the sender's
+    /// protocol nonce afterwards.
+    fn sender_nonce_after_delegation(nonce_key: U256, initial_nonce: u64, target: Address) -> u64 {
+        let key = signing_key(0x27);
+        let sender = eoa_address(&key);
+        let mut tx = base_tx();
+        tx.nonce_key = nonce_key;
+        tx.nonce_sequence = if nonce_key.is_zero() { initial_nonce } else { 0 };
+        tx.account_changes = vec![AccountChange::Delegation(Delegation { target })];
+        let signed = eoa_signed(tx, &key);
+        let mut evm = evm_with(U256::from(10u64).pow(U256::from(18u64)), sender);
+        let db = evm.ctx_mut().journal_mut().db_mut();
+        let mut info = db.basic(sender).expect("account").unwrap_or_default();
+        info.nonce = initial_nonce;
+        db.insert_account_info(sender, info);
+
+        let outcome = evm.transact_raw(into_base_tx(&signed)).expect("delegation should execute");
+        assert!(outcome.result.is_success(), "got {:?}", outcome.result);
+        outcome.state.get(&sender).expect("sender in state").info.nonce
+    }
+
+    /// A delegation change sent on a nonce channel lifts a nonce-zero sender to
+    /// protocol nonce one, so the account can never be EIP-161 empty while holding
+    /// storage written through the delegation. Clearing the delegation is a
+    /// delegation change too.
+    #[test]
+    fn delegation_on_nonce_channel_lifts_nonce_zero_sender() {
+        let target = address!("0x00000000000000000000000000000000000000dd");
+        for target in [target, Address::ZERO] {
+            assert_eq!(sender_nonce_after_delegation(U256::from(7), 0, target), 1);
+        }
+    }
+
+    /// The rule is a floor, not a bump: a sender already past nonce zero keeps its
+    /// nonce, so nonce channels stay independent of the protocol nonce.
+    #[test]
+    fn delegation_on_nonce_channel_keeps_nonzero_nonce() {
+        let target = address!("0x00000000000000000000000000000000000000dd");
+        assert_eq!(sender_nonce_after_delegation(U256::from(7), 5, target), 5);
+    }
+
+    /// A `nonce_key == 0` delegation already consumes the protocol nonce; the floor
+    /// must not bump it a second time.
+    #[test]
+    fn delegation_on_protocol_nonce_bumps_once() {
+        let target = address!("0x00000000000000000000000000000000000000dd");
+        assert_eq!(sender_nonce_after_delegation(U256::ZERO, 0, target), 1);
     }
 
     #[test]
