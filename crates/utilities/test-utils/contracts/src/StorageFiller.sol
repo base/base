@@ -16,6 +16,12 @@ contract StorageFiller {
     /// @notice Number of slots written by `writeStorage`; keys `0..written` hold non-zero values.
     uint256 public written;
 
+    /// @dev Seeds one slot so `writeStorage` always has an existing slot to overwrite.
+    constructor() {
+        slots[0] = 1;
+        written = 1;
+    }
+
     /// @notice Writes `slotCount` fresh storage slots.
     /// @param slotCount Number of distinct storage slots to write this call.
     /// @param seed Caller-supplied entropy mixed into each slot key.
@@ -28,8 +34,8 @@ contract StorageFiller {
     }
 
     /// @notice Writes `newCount` fresh slots, then overwrites `existingCount` slots picked at
-    ///         random from those written by earlier `writeStorage` calls.
-    /// @dev The first call on a fresh contract has no earlier slots, so it skips the overwrites.
+    ///         random from those written before this call.
+    /// @dev Block entropy keeps overwrite values changing when a seed repeats, as in `fillStorage`.
     function writeStorage(uint256 newCount, uint256 existingCount, uint256 seed) external {
         uint256 start = written;
         uint256 end = start + newCount;
@@ -37,9 +43,10 @@ contract StorageFiller {
             slots[i] = i + 1;
         }
         written = end;
-        if (start == 0) return;
+        uint256 base =
+            uint256(keccak256(abi.encodePacked(seed, msg.sender, block.number, block.prevrandao)));
         for (uint256 i = 0; i < existingCount; i++) {
-            uint256 h = uint256(keccak256(abi.encode(seed, msg.sender, i)));
+            uint256 h = uint256(keccak256(abi.encode(base, i)));
             slots[h % start] = h;
         }
     }

@@ -25,9 +25,8 @@ const STORAGE_GAS_PER_EXISTING_SLOT: u64 = 6_000;
 /// the single keccak256 over the slot-key preimage.
 const STORAGE_GAS_BASE: u64 = 30_000;
 
-/// Fixed per-tx gas overhead of `writeStorage`, which also updates its slot counter
-/// (zero -> non-zero on a fresh contract).
-const WRITE_STORAGE_GAS_BASE: u64 = 50_000;
+/// Fixed per-tx gas overhead of `writeStorage`, which also updates its slot counter.
+const WRITE_STORAGE_GAS_BASE: u64 = 35_000;
 
 /// Generates storage-heavy transactions that write to contract slots.
 #[derive(Debug, Clone)]
@@ -122,7 +121,7 @@ mod tests {
 
         let call = decode_write(&request);
         assert_eq!((call.newCount, call.existingCount), (U256::ZERO, U256::from(10)));
-        assert_eq!(request.gas, Some(110_000));
+        assert_eq!(request.gas, Some(95_000));
     }
 
     #[test]
