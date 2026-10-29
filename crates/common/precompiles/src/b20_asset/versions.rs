@@ -17,7 +17,7 @@
 use alloc::string::ToString;
 
 use alloy_sol_types::SolInterface;
-use base_common_genesis::BaseUpgrade;
+use base_common_genesis::{BaseFeature, BaseUpgrade};
 use base_precompile_storage::{BasePrecompileError, Result};
 
 use crate::{
@@ -192,15 +192,15 @@ impl AssetVersions {
     /// fork (Beryl), where the asset precompile is not installed at all.
     ///
     /// V1 is active from Beryl; V2 supersedes it from Cobalt; V3 supersedes V2 from Denim.
-    pub fn from_base_upgrade(upgrade: BaseUpgrade) -> Option<AssetVersion> {
+    pub const fn from_base_upgrade(upgrade: BaseUpgrade) -> Option<AssetVersion> {
         // Ordered thresholds rather than per-variant arms: a fork newer than Denim must inherit the
         // latest version (V3) until one supersedes it, and `BaseUpgrade` is `#[non_exhaustive]`, so
         // an explicit-variant match would need a wildcard that would wrongly send future forks to
         // `None`.
         match upgrade {
-            u if u >= BaseUpgrade::Denim => Some(AssetVersion::V3),
-            u if u >= BaseUpgrade::Cobalt => Some(AssetVersion::V2),
-            u if u >= BaseUpgrade::Beryl => Some(AssetVersion::V1),
+            u if u.is_feature_enabled(BaseFeature::AssetPrecompileV3) => Some(AssetVersion::V3),
+            u if u.is_feature_enabled(BaseFeature::AssetPrecompileV2) => Some(AssetVersion::V2),
+            u if u.is_feature_enabled(BaseFeature::AssetPrecompile) => Some(AssetVersion::V1),
             _ => None,
         }
     }

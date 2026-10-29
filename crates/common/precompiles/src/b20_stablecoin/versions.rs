@@ -7,7 +7,7 @@
 //! execution path, and lets the dispatcher route calls without ever matching on
 //! the version itself.
 
-use base_common_genesis::BaseUpgrade;
+use base_common_genesis::{BaseFeature, BaseUpgrade};
 
 use crate::{
     B20Abi, PolicyAccounting, Stablecoin, StablecoinAccounting, StablecoinV1, StablecoinV2,
@@ -70,11 +70,17 @@ impl StablecoinVersions {
     /// fork (Beryl), where the stablecoin precompile is not installed at all.
     ///
     /// V1 is active from Beryl; V2 supersedes it from Cobalt; V3 supersedes V2 from Denim.
-    pub fn from_base_upgrade(upgrade: BaseUpgrade) -> Option<StablecoinVersion> {
+    pub const fn from_base_upgrade(upgrade: BaseUpgrade) -> Option<StablecoinVersion> {
         match upgrade {
-            u if u >= BaseUpgrade::Denim => Some(StablecoinVersion::V3),
-            u if u >= BaseUpgrade::Cobalt => Some(StablecoinVersion::V2),
-            u if u >= BaseUpgrade::Beryl => Some(StablecoinVersion::V1),
+            u if u.is_feature_enabled(BaseFeature::StablecoinPrecompileV3) => {
+                Some(StablecoinVersion::V3)
+            }
+            u if u.is_feature_enabled(BaseFeature::StablecoinPrecompileV2) => {
+                Some(StablecoinVersion::V2)
+            }
+            u if u.is_feature_enabled(BaseFeature::StablecoinPrecompile) => {
+                Some(StablecoinVersion::V1)
+            }
             _ => None,
         }
     }

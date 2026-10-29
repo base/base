@@ -2,7 +2,7 @@
 use alloc::{boxed::Box, vec::Vec};
 
 use base_common_consensus::Predeploys;
-use base_common_genesis::BaseUpgrade;
+use base_common_genesis::BaseFeature;
 use revm::{
     context::{
         LocalContextTr,
@@ -86,7 +86,7 @@ where
         if tx_type == DEPOSIT_TRANSACTION_TYPE {
             // Do not allow for a system transaction to be processed if Regolith is enabled.
             if tx.is_system_transaction()
-                && evm.ctx().cfg().spec().is_enabled_in(BaseUpgrade::Regolith)
+                && evm.ctx().cfg().spec().is_feature_enabled(BaseFeature::DepositGasAccounting)
             {
                 return Err(BaseTransactionError::DepositSystemTxPostRegolith.into());
             }
@@ -285,7 +285,7 @@ where
         };
 
         let l1_cost = l1_block_info.calculate_tx_l1_cost(enveloped_tx, spec);
-        let operator_fee_cost = if spec.is_enabled_in(BaseUpgrade::Isthmus) {
+        let operator_fee_cost = if spec.is_feature_enabled(BaseFeature::OperatorFee) {
             l1_block_info.operator_fee_charge(
                 enveloped_tx,
                 U256::from(frame_result.gas().used()),
@@ -414,7 +414,9 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
-    use crate::{BaseContext, BaseSpecId, BaseTransaction, Builder, DefaultBase, L1BlockInfo};
+    use crate::{
+        BaseContext, BaseSpecId, BaseTransaction, BaseUpgrade, Builder, DefaultBase, L1BlockInfo,
+    };
 
     /// Creates frame result.
     fn call_last_frame_return(

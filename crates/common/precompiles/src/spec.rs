@@ -1,4 +1,4 @@
-use base_common_genesis::BaseUpgrade;
+use base_common_genesis::{BaseFeature, BaseUpgrade};
 use base_precompile_storage::StorageFeatures;
 
 /// Resolves Base upgrades into fork-dependent persistent-storage features.
@@ -7,12 +7,11 @@ pub struct UpgradeGatedStorageFeatures;
 
 impl UpgradeGatedStorageFeatures {
     /// Returns the persistent-storage features active at `upgrade`.
-    pub fn from_upgrade(upgrade: BaseUpgrade) -> StorageFeatures {
-        if upgrade >= BaseUpgrade::Cobalt {
-            StorageFeatures::Cobalt
-        } else {
-            StorageFeatures::Legacy
-        }
+    pub const fn from_upgrade(upgrade: BaseUpgrade) -> StorageFeatures {
+        StorageFeatures::from_flags(
+            upgrade.is_feature_enabled(BaseFeature::DynamicStorageTailCleanup),
+            upgrade.is_feature_enabled(BaseFeature::CompactAbiDecodeErrors),
+        )
     }
 }
 

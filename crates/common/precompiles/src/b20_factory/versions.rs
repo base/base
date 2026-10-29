@@ -10,7 +10,7 @@
 use alloc::string::ToString;
 
 use alloy_sol_types::SolInterface;
-use base_common_genesis::BaseUpgrade;
+use base_common_genesis::{BaseFeature, BaseUpgrade};
 use base_precompile_storage::{BasePrecompileError, Result};
 
 use crate::{Factory, FactoryV1, IB20Factory, IB20FactoryV1};
@@ -110,7 +110,9 @@ impl FactoryVersions {
     /// Returns the version active at `upgrade`, or `None` before the introduction
     /// fork (Beryl), where the factory precompile is not installed at all.
     pub fn from_base_upgrade(upgrade: BaseUpgrade) -> Option<FactoryVersion> {
-        if upgrade >= BaseUpgrade::Beryl { Some(FactoryVersion::V1) } else { None }
+        upgrade
+            .is_feature_enabled(BaseFeature::TokenFactoryPrecompile)
+            .then_some(FactoryVersion::V1)
     }
 }
 

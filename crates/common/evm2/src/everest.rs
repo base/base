@@ -2,7 +2,7 @@
 
 use alloy_primitives::{Address, Bytes, KECCAK256_EMPTY};
 use base_common_eip8130::NonceManagerSlots;
-use base_common_genesis::BaseUpgrade;
+use base_common_genesis::BaseFeature;
 use evm2::{
     AccountInfo, Evm,
     bytecode::Bytecode,
@@ -48,7 +48,7 @@ impl Everest {
         evm: &mut Evm<'_, BaseEvmTypes>,
         block_state: &mut BlockStateAccumulator,
     ) -> HandlerResult<()> {
-        if !chain_spec.is_active_at_timestamp(BaseUpgrade::Everest, timestamp) {
+        if !chain_spec.is_feature_active_at_timestamp(BaseFeature::NativeNonceManager, timestamp) {
             return Ok(());
         }
 

@@ -1,7 +1,7 @@
 //! Canyon create2-deployer force-deploy transition.
 
 use alloy_primitives::{Address, B256, Bytes, address, b256, hex};
-use base_common_genesis::BaseUpgrade;
+use base_common_genesis::BaseFeature;
 use evm2::{
     AccountInfo, Evm,
     bytecode::Bytecode,
@@ -41,8 +41,11 @@ impl Canyon {
         evm: &mut Evm<'_, BaseEvmTypes>,
         block_state: &mut BlockStateAccumulator,
     ) -> HandlerResult<()> {
-        if !chain_spec.is_active_at_timestamp(BaseUpgrade::Canyon, timestamp)
-            || chain_spec.is_active_at_timestamp(BaseUpgrade::Canyon, timestamp.saturating_sub(2))
+        if !chain_spec.is_feature_active_at_timestamp(BaseFeature::Create2Deployer, timestamp)
+            || chain_spec.is_feature_active_at_timestamp(
+                BaseFeature::Create2Deployer,
+                timestamp.saturating_sub(2),
+            )
         {
             return Ok(());
         }

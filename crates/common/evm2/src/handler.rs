@@ -3,7 +3,7 @@
 use alloy_consensus::Transaction;
 use alloy_primitives::{Address, U256};
 use base_common_consensus::Predeploys;
-use base_common_genesis::BaseUpgrade;
+use base_common_genesis::BaseFeature;
 use evm2::{
     Evm, EvmFeatures, TxResult,
     ethereum::{charge_upfront, default_settle_gas},
@@ -47,7 +47,7 @@ impl BaseTxHandlerHooks {
             return U256::ZERO;
         };
         let upgrade = host.config_spec_id().upgrade();
-        if (upgrade as u8) < (BaseUpgrade::Isthmus as u8) {
+        if !upgrade.is_feature_enabled(BaseFeature::OperatorFee) {
             return U256::ZERO;
         }
         host.block_env().ext.operator_fee_charge(enveloped, U256::from(gas), upgrade)

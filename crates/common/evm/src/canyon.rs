@@ -1,6 +1,6 @@
 use alloy_evm::Database;
 use alloy_primitives::{Address, B256, Bytes, address, b256, hex};
-use base_common_chains::Upgrades;
+use base_common_chains::{BaseFeature, Upgrades};
 use revm::{DatabaseCommit, primitives::HashMap, state::Bytecode};
 
 /// The address of the create2 deployer
@@ -29,9 +29,11 @@ where
     // If the canyon upgrade is active at the current timestamp, and it was not active at the
     // previous block timestamp (heuristically, block time is not perfectly constant at 2s), and the
     // chain is a Base chain, then we need to force-deploy the create2 deployer contract.
-    if chain_spec.is_canyon_active_at_timestamp(timestamp)
-        && !chain_spec.is_canyon_active_at_timestamp(timestamp.saturating_sub(2))
-    {
+    if chain_spec.is_feature_activation_block(
+        BaseFeature::Create2Deployer,
+        timestamp,
+        timestamp.saturating_sub(2),
+    ) {
         // Load the create2 deployer account from the cache.
         let mut acc_info = db.basic(CREATE_2_DEPLOYER_ADDR)?.unwrap_or_default();
 

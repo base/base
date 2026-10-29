@@ -86,8 +86,8 @@ use revm::{
 };
 
 use crate::{
-    BaseContext, BaseContextTr, BaseEvm, BaseHaltReason, BaseSpecId, BaseTime, BaseTransaction,
-    BaseTransactionError, BaseTxTr, BaseUpgrade, Eip8130CommittedPhases, Eip8130ExecutionMode,
+    BaseContext, BaseContextTr, BaseEvm, BaseFeature, BaseHaltReason, BaseSpecId, BaseTime,
+    BaseTransaction, BaseTransactionError, BaseTxTr, Eip8130CommittedPhases, Eip8130ExecutionMode,
     L1BlockInfo, handler::BaseHandler,
 };
 
@@ -283,7 +283,7 @@ impl Eip8130Executor {
         // Consensus-critical: the EIP-8130 transaction type exists only from
         // Everest. Every ingress path gates it, but a block delivered by the
         // Engine API or P2P reaches execution directly.
-        if !spec.is_enabled_in(BaseUpgrade::Everest) {
+        if !spec.is_feature_enabled(BaseFeature::Eip8130) {
             return Err(Self::not_active_error().into());
         }
         // Consensus-critical: a clamped timestamp would silently shift the expiry
@@ -499,7 +499,7 @@ impl Eip8130Executor {
             })?;
 
         let ctx = evm.ctx_mut();
-        if !ctx.cfg().spec().is_enabled_in(BaseUpgrade::Everest) {
+        if !ctx.cfg().spec().is_feature_enabled(BaseFeature::Eip8130) {
             return Err(Self::not_active_error().into());
         }
         let from = ctx.tx().base.caller;
@@ -909,7 +909,7 @@ impl Eip8130Executor {
         // to; before a payer has signed (a stub that does not recover) the payer
         // is unknown and published as `UNSIGNED_OPEN_PAYER`, never the sender.
         let payer = signed.resolved_payer(sender).unwrap_or(Self::UNSIGNED_OPEN_PAYER);
-        let keystore = ctx.cfg().spec().is_enabled_in(BaseUpgrade::Zenith);
+        let keystore = ctx.cfg().spec().is_feature_enabled(BaseFeature::Keystore);
         if !keystore {
             TransactionAuthorizer::check_without_keystore(signed)
                 .map_err(BaseTransactionError::eip8130)?;
@@ -1093,7 +1093,7 @@ impl Eip8130Executor {
         // the respective bound). The nonce-free replay ring separately enforces
         // its own admission window (`valid_before > now_ms`) when it records the
         // nonce, so a nonce-free transaction at the boundary still fails there.
-        let keystore = ctx.cfg().spec().is_enabled_in(BaseUpgrade::Zenith);
+        let keystore = ctx.cfg().spec().is_feature_enabled(BaseFeature::Keystore);
         if valid_after != 0 && now_ms < valid_after {
             return Err(BaseTransactionError::eip8130("transaction is not yet valid").into());
         }

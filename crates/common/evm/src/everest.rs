@@ -1,6 +1,6 @@
 use alloy_evm::Database;
 use alloy_primitives::{Address, Bytes};
-use base_common_chains::Upgrades;
+use base_common_chains::{BaseFeature, Upgrades};
 use base_common_precompiles::NonceManagerStorage;
 use revm::{DatabaseCommit, primitives::HashMap, state::Bytecode};
 
@@ -48,7 +48,7 @@ pub fn ensure_eip8130_system_accounts<DB>(
 where
     DB: Database + DatabaseCommit,
 {
-    if !chain_spec.is_everest_active_at_timestamp(timestamp) {
+    if !chain_spec.is_feature_active_at_timestamp(BaseFeature::NativeNonceManager, timestamp) {
         return Ok(());
     }
 

@@ -165,25 +165,41 @@ pub trait StorageOps {
     }
 }
 
-/// Fork-dependent features for native precompile behavior.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+/// Resolved native precompile storage behaviors, independent of the chain's schedule.
+///
+/// `Legacy` and `Cobalt` retain the historical profile names for callers and fixtures.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum StorageFeatures {
     /// Preserve precompile behavior from before Cobalt activation.
     #[default]
     Legacy,
     /// Apply Cobalt behavior, including dynamic tail cleanup and compact ABI decode errors.
     Cobalt,
+    /// Clear retired dynamic storage slots while retaining full ABI decode diagnostics.
+    TailCleanupOnly,
+    /// Omit ABI decode diagnostics while preserving retired dynamic storage slots.
+    CompactDecodeErrorsOnly,
 }
 
 impl StorageFeatures {
+    /// Builds a storage profile from independently resolved semantic feature gates.
+    pub const fn from_flags(tail_cleanup: bool, compact_decode_errors: bool) -> Self {
+        match (tail_cleanup, compact_decode_errors) {
+            (false, false) => Self::Legacy,
+            (true, true) => Self::Cobalt,
+            (true, false) => Self::TailCleanupOnly,
+            (false, true) => Self::CompactDecodeErrorsOnly,
+        }
+    }
+
     /// Returns whether dynamic storage tail cleanup is enabled.
-    pub fn dynamic_storage_tail_cleanup_enabled(self) -> bool {
-        self >= Self::Cobalt
+    pub const fn dynamic_storage_tail_cleanup_enabled(self) -> bool {
+        matches!(self, Self::Cobalt | Self::TailCleanupOnly)
     }
 
     /// Returns whether ABI decode failures should omit the decoder message.
-    pub fn selector_only_abi_decode_errors_enabled(self) -> bool {
-        self >= Self::Cobalt
+    pub const fn selector_only_abi_decode_errors_enabled(self) -> bool {
+        matches!(self, Self::Cobalt | Self::CompactDecodeErrorsOnly)
     }
 }
 
