@@ -1,4 +1,4 @@
-//! Merged best-transaction iteration across the protocol pool and 2D nonce sidecar.
+//! Merged best-transaction iteration across two transaction stores.
 
 use std::sync::Arc;
 
@@ -6,59 +6,90 @@ use reth_transaction_pool::{
     BestTransactions, TransactionOrdering, ValidPoolTransaction, error::InvalidPoolTransactionError,
 };
 
-use crate::{BasePooledTx, BestTransactionPriority};
+use crate::{BasePooledTx, BestTransactionLane, BestTransactionPriority};
 
-/// Merges best-transaction iterators from the protocol pool and the 2D nonce sidecar.
+/// Merges best-transaction iterators from two stores by complete priority.
+///
+/// Each yielded transaction belongs to exactly one source, decided by `secondary_owns`.
+/// Invalidations are routed only to the owning source, so a source-local sender id is never
+/// invalidated in the other store.
 pub(crate) struct MergeBestTransactions<T: BasePooledTx, O>
 where
     O: TransactionOrdering<Transaction = T>,
 {
-    protocol: Box<dyn BestTransactions<Item = Arc<ValidPoolTransaction<T>>>>,
-    sidecar: Box<dyn BestTransactions<Item = Arc<ValidPoolTransaction<T>>>>,
+    primary: Box<dyn BestTransactions<Item = Arc<ValidPoolTransaction<T>>>>,
+    secondary: Box<dyn BestTransactions<Item = Arc<ValidPoolTransaction<T>>>>,
+    secondary_owns: fn(&T) -> bool,
     ordering: O,
     base_fee: u64,
-    next_protocol: Option<Arc<ValidPoolTransaction<T>>>,
-    next_sidecar: Option<Arc<ValidPoolTransaction<T>>>,
+    next_primary: Option<Arc<ValidPoolTransaction<T>>>,
+    next_secondary: Option<Arc<ValidPoolTransaction<T>>>,
 }
 
 impl<T: BasePooledTx, O> MergeBestTransactions<T, O>
 where
     O: TransactionOrdering<Transaction = T>,
 {
-    /// Creates a merged iterator from the protocol pool and 2D nonce sidecar.
+    /// Creates a merged iterator. `secondary_owns` returns whether a transaction was yielded by
+    /// `secondary`; every other transaction belongs to `primary`. The primary source wins ties.
     pub(crate) fn new(
-        protocol: Box<dyn BestTransactions<Item = Arc<ValidPoolTransaction<T>>>>,
-        sidecar: Box<dyn BestTransactions<Item = Arc<ValidPoolTransaction<T>>>>,
+        primary: Box<dyn BestTransactions<Item = Arc<ValidPoolTransaction<T>>>>,
+        secondary: Box<dyn BestTransactions<Item = Arc<ValidPoolTransaction<T>>>>,
+        secondary_owns: fn(&T) -> bool,
         ordering: O,
         base_fee: u64,
     ) -> Self {
-        Self { protocol, sidecar, ordering, base_fee, next_protocol: None, next_sidecar: None }
+        Self {
+            primary,
+            secondary,
+            secondary_owns,
+            ordering,
+            base_fee,
+            next_primary: None,
+            next_secondary: None,
+        }
     }
 
-    fn protocol_is_better(
+    fn primary_is_better(
         &self,
-        protocol: &Arc<ValidPoolTransaction<T>>,
-        sidecar: &Arc<ValidPoolTransaction<T>>,
+        primary: &Arc<ValidPoolTransaction<T>>,
+        secondary: &Arc<ValidPoolTransaction<T>>,
     ) -> bool {
-        let protocol_priority =
-            BestTransactionPriority::new(&self.ordering, protocol, self.base_fee);
-        let sidecar_priority = BestTransactionPriority::new(&self.ordering, sidecar, self.base_fee);
-        protocol_priority >= sidecar_priority
+        let primary_priority = BestTransactionPriority::new(&self.ordering, primary, self.base_fee);
+        let secondary_priority =
+            BestTransactionPriority::new(&self.ordering, secondary, self.base_fee);
+        primary_priority >= secondary_priority
     }
 
     fn pop_best(&mut self) -> Option<Arc<ValidPoolTransaction<T>>> {
-        match (&self.next_protocol, &self.next_sidecar) {
-            (Some(protocol), Some(sidecar)) => {
-                if self.protocol_is_better(protocol, sidecar) {
-                    self.next_protocol.take()
+        match (&self.next_primary, &self.next_secondary) {
+            (Some(primary), Some(secondary)) => {
+                if self.primary_is_better(primary, secondary) {
+                    self.next_primary.take()
                 } else {
-                    self.next_sidecar.take()
+                    self.next_secondary.take()
                 }
             }
-            (Some(_), None) => self.next_protocol.take(),
-            (None, Some(_)) => self.next_sidecar.take(),
+            (Some(_), None) => self.next_primary.take(),
+            (None, Some(_)) => self.next_secondary.take(),
             (None, None) => None,
         }
+    }
+
+    /// Whether invalidating `invalid` also invalidates the buffered `candidate`: a source skips
+    /// the rest of an invalidated sequential lane, and nothing else for a nonce-free
+    /// transaction.
+    fn invalidates(
+        invalid: &Arc<ValidPoolTransaction<T>>,
+        candidate: &Arc<ValidPoolTransaction<T>>,
+    ) -> bool {
+        BestTransactionLane::for_transaction(invalid).map_or_else(
+            || invalid.hash() == candidate.hash(),
+            |lane| {
+                BestTransactionLane::for_transaction(candidate)
+                    .is_some_and(|candidate| candidate.id() == lane.id())
+            },
+        )
     }
 }
 
@@ -79,11 +110,11 @@ where
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
-            if self.next_protocol.is_none() {
-                self.next_protocol = self.protocol.next();
+            if self.next_primary.is_none() {
+                self.next_primary = self.primary.next();
             }
-            if self.next_sidecar.is_none() {
-                self.next_sidecar = self.sidecar.next();
+            if self.next_secondary.is_none() {
+                self.next_secondary = self.secondary.next();
             }
 
             let transaction = self.pop_best()?;
@@ -101,23 +132,27 @@ where
     O: TransactionOrdering<Transaction = T>,
 {
     fn mark_invalid(&mut self, transaction: &Self::Item, kind: InvalidPoolTransactionError) {
-        if transaction.transaction.is_eip8130_sidecar_transaction() {
-            self.next_sidecar = None;
-            self.sidecar.mark_invalid(transaction, kind);
+        let (next, source) = if (self.secondary_owns)(&transaction.transaction) {
+            (&mut self.next_secondary, &mut self.secondary)
         } else {
-            self.next_protocol = None;
-            self.protocol.mark_invalid(transaction, kind);
+            (&mut self.next_primary, &mut self.primary)
+        };
+        // The source has already advanced past a buffered candidate, so dropping an unrelated
+        // one would lose it for this iteration and could offer its lane's successor without it.
+        if next.as_ref().is_some_and(|candidate| Self::invalidates(transaction, candidate)) {
+            *next = None;
         }
+        source.mark_invalid(transaction, kind);
     }
 
     fn no_updates(&mut self) {
-        self.protocol.no_updates();
-        self.sidecar.no_updates();
+        self.primary.no_updates();
+        self.secondary.no_updates();
     }
 
     fn set_skip_blobs(&mut self, skip_blobs: bool) {
-        self.protocol.set_skip_blobs(skip_blobs);
-        self.sidecar.set_skip_blobs(skip_blobs);
+        self.primary.set_skip_blobs(skip_blobs);
+        self.secondary.set_skip_blobs(skip_blobs);
     }
 }
 
@@ -265,6 +300,7 @@ mod tests {
         let mut merged = MergeBestTransactions::new(
             Box::new(StaticBestTransactions::new(vec![protocol])),
             Box::new(StaticBestTransactions::new(vec![sidecar])),
+            BasePooledTransaction::is_eip8130_sidecar_transaction,
             BaseOrdering::coinbase_tip(),
             10,
         );
@@ -279,6 +315,7 @@ mod tests {
         let mut merged = MergeBestTransactions::new(
             Box::new(StaticBestTransactions::new(Vec::new())),
             Box::new(StaticBestTransactions::new(vec![sidecar])),
+            BasePooledTransaction::is_eip8130_sidecar_transaction,
             BaseOrdering::coinbase_tip(),
             10,
         );
@@ -302,6 +339,7 @@ mod tests {
         let mut merged = MergeBestTransactions::new(
             Box::new(StaticBestTransactions::new(vec![Arc::clone(&older_protocol)])),
             Box::new(StaticBestTransactions::new(vec![newer_sidecar])),
+            BasePooledTransaction::is_eip8130_sidecar_transaction,
             BaseOrdering::timestamp(),
             10,
         );
@@ -324,6 +362,7 @@ mod tests {
         let mut merged = MergeBestTransactions::new(
             Box::new(StaticBestTransactions::new(vec![older_protocol])),
             Box::new(StaticBestTransactions::new(vec![newer_sidecar])),
+            BasePooledTransaction::is_eip8130_sidecar_transaction,
             BaseOrdering::coinbase_tip(),
             10,
         );
@@ -344,6 +383,7 @@ mod tests {
         let mut merged = MergeBestTransactions::new(
             Box::new(StaticBestTransactions::new(protocol)),
             Box::new(StaticBestTransactions::new(sidecar)),
+            BasePooledTransaction::is_eip8130_sidecar_transaction,
             BaseOrdering::coinbase_tip(),
             0,
         );
@@ -358,5 +398,59 @@ mod tests {
         merged.mark_invalid(&first, InvalidPoolTransactionError::Underpriced);
 
         assert!(merged.next().is_none());
+    }
+
+    /// Discards `parked` after `normal` was yielded while an unrelated lane head is buffered,
+    /// then returns the hashes the iterator still offers.
+    fn offered_after_delayed_invalidation(
+        merged: &mut MergeBestTransactions<
+            BasePooledTransaction,
+            BaseOrdering<BasePooledTransaction>,
+        >,
+        parked: &Arc<ValidPoolTransaction<BasePooledTransaction>>,
+    ) -> Vec<alloy_primitives::TxHash> {
+        assert_eq!(merged.next().map(|tx| *tx.hash()), Some(*parked.hash()));
+        assert!(
+            merged.next().is_some_and(|tx| tx.transaction.eip8130_nonce_channel_key().is_none())
+        );
+        merged.mark_invalid(parked, InvalidPoolTransactionError::Underpriced);
+        std::iter::from_fn(|| merged.next()).map(|tx| *tx.hash()).collect()
+    }
+
+    #[test]
+    fn delayed_invalidation_keeps_an_unrelated_buffered_lane_head() {
+        let lane = signer();
+        let parked = valid_pool_transaction(signed_tx(&signer(), U256::from(1), 0, 2_000, 2_000));
+        let normal = valid_pool_transaction(signed_tx(&signer(), U256::ZERO, 0, 1_500, 1_500));
+        let head = valid_pool_transaction(signed_tx(&lane, U256::from(2), 0, 1_000, 1_000));
+        let successor = valid_pool_transaction(signed_tx(&lane, U256::from(2), 1, 900, 900));
+        let expected = vec![*head.hash(), *successor.hash()];
+        let sidecar = || {
+            Box::new(StaticBestTransactions::new(vec![
+                Arc::clone(&parked),
+                Arc::clone(&head),
+                Arc::clone(&successor),
+            ]))
+        };
+        let merge = |primary, secondary| {
+            MergeBestTransactions::new(
+                primary,
+                secondary,
+                BasePooledTransaction::is_eip8130_sidecar_transaction,
+                BaseOrdering::coinbase_tip(),
+                0,
+            )
+        };
+
+        // The buffered head sits in the merge that receives the invalidation.
+        let mut merged =
+            merge(Box::new(StaticBestTransactions::new(vec![Arc::clone(&normal)])), sidecar());
+        assert_eq!(offered_after_delayed_invalidation(&mut merged, &parked), expected);
+
+        // The buffered head sits in a nested merge the invalidation is routed to.
+        let inner =
+            merge(Box::new(StaticBestTransactions::new(vec![Arc::clone(&normal)])), sidecar());
+        let mut merged = merge(Box::new(inner), Box::new(StaticBestTransactions::new(Vec::new())));
+        assert_eq!(offered_after_delayed_invalidation(&mut merged, &parked), expected);
     }
 }
