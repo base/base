@@ -168,30 +168,30 @@ impl OpSuccinctWitnessProvider {
     ) -> Result<SP1Stdin, WitnessError> {
         let params = Self::resolve(request, self.default_sequence_window);
         let resolved = params.as_ref().ok().copied();
+        let end_block = resolved.map(|params| params.end_block);
+        let sequence_window = resolved.and_then(|params| match params.l1_head {
+            L1HeadSource::Pinned(_) => None,
+            L1HeadSource::SequenceWindow { sequence_window } => Some(sequence_window),
+        });
+        let l1_head_source = resolved.map(|params| params.l1_head.variant_name());
         let span = info_span!(
             "range_witness",
             backend = %backend,
             start_block = request.start_block_number,
-            end_block = resolved.map(|params| params.end_block),
+            end_block,
             number_of_blocks = request.number_of_blocks_to_prove,
-            sequence_window = resolved.and_then(|params| match params.l1_head {
-                L1HeadSource::Pinned(_) => None,
-                L1HeadSource::SequenceWindow { sequence_window } => Some(sequence_window),
-            }),
-            l1_head_source = resolved.map(|params| params.l1_head.variant_name()),
+            sequence_window,
+            l1_head_source,
             intermediate_block_interval = %request.intermediate_block_interval,
         );
         async {
             info!(
                 backend = %backend,
                 start_block = request.start_block_number,
-                end_block = resolved.map(|params| params.end_block),
+                end_block,
                 number_of_blocks = request.number_of_blocks_to_prove,
-                sequence_window = resolved.and_then(|params| match params.l1_head {
-                    L1HeadSource::Pinned(_) => None,
-                    L1HeadSource::SequenceWindow { sequence_window } => Some(sequence_window),
-                }),
-                l1_head_source = resolved.map(|params| params.l1_head.variant_name()),
+                sequence_window,
+                l1_head_source,
                 intermediate_block_interval = %request.intermediate_block_interval,
                 "starting range witness generation"
             );
@@ -214,13 +214,10 @@ impl OpSuccinctWitnessProvider {
                     error = %error,
                     backend = %backend,
                     start_block = request.start_block_number,
-                    end_block = resolved.map(|params| params.end_block),
+                    end_block,
                     number_of_blocks = request.number_of_blocks_to_prove,
-                    sequence_window = resolved.and_then(|params| match params.l1_head {
-                        L1HeadSource::Pinned(_) => None,
-                        L1HeadSource::SequenceWindow { sequence_window } => Some(sequence_window),
-                    }),
-                    l1_head_source = resolved.map(|params| params.l1_head.variant_name()),
+                    sequence_window,
+                    l1_head_source,
                     intermediate_block_interval = %request.intermediate_block_interval,
                     "range witness generation failed"
                 );
