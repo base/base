@@ -87,6 +87,10 @@ harness = false
 name = "native_build_loop"
 harness = false
 
+[[bench]]
+name = "native_candidate_scan"
+harness = false
+
 [features]
 default = [ "metrics" ]
 clap = [ "dep:clap" ]
