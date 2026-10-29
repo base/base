@@ -330,7 +330,7 @@ where
                 self.emit_validated_insert_event(
                     TransactionEventType::TxpoolValidatedInsertAccepted,
                     tx_hash,
-                    Map::from_iter([("encoded_len".to_string(), json!(encoded_len))]),
+                    || Map::from_iter([("encoded_len".to_string(), json!(encoded_len))]),
                 );
                 debug!(tx_hash = %tx_hash, "inserted validated transaction");
                 BuilderApiMetrics::txs_inserted().increment(1);
@@ -340,11 +340,13 @@ where
                 self.emit_validated_insert_event(
                     TransactionEventType::TxpoolValidatedInsertRejected,
                     tx_hash,
-                    Map::from_iter([
-                        ("rejection_stage".to_string(), json!("pool_insert")),
-                        ("encoded_len".to_string(), json!(encoded_len)),
-                        ("error".to_string(), json!(e.to_string())),
-                    ]),
+                    || {
+                        Map::from_iter([
+                            ("rejection_stage".to_string(), json!("pool_insert")),
+                            ("encoded_len".to_string(), json!(encoded_len)),
+                            ("error".to_string(), json!(e.to_string())),
+                        ])
+                    },
                 );
                 debug!(tx_hash = %tx_hash, error = %e, "pool rejected transaction");
                 BuilderApiMetrics::txs_rejected(PoolRejectionLabel::from_error(&e)).increment(1);
@@ -359,15 +361,15 @@ where
 }
 
 impl<P, E> BuilderApiImpl<P, E> {
+    /// Emits a validated-insert event, calling `data` for its fields only when an event writer is
+    /// configured. Every forwarded transaction reaches here, most of them as rejected duplicates,
+    /// and builders with transaction events disabled have no writer.
     fn emit_validated_insert_event(
         &self,
         event_type: TransactionEventType,
         tx_hash: TxHash,
-        mut data: Map<String, serde_json::Value>,
+        data: impl FnOnce() -> Map<String, serde_json::Value>,
     ) {
-        data.entry("rpc_method".to_string())
-            .or_insert_with(|| json!("base_insertValidatedTransaction"));
-
         let _ = transaction_event!(
             producer: TransactionEventProducer::BaseBuilder,
             event_type: event_type,
@@ -376,7 +378,12 @@ impl<P, E> BuilderApiImpl<P, E> {
                 "builder_host" => BUILDER_HOST.as_str(),
                 "tx_hash" => format!("{tx_hash:#x}"),
             },
-            data: data,
+            data: {
+                let mut data = data();
+                data.entry("rpc_method".to_string())
+                    .or_insert_with(|| json!("base_insertValidatedTransaction"));
+                data
+            },
         );
     }
 }
