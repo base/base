@@ -128,8 +128,9 @@ impl core::fmt::Display for Eip8130ExecutionUnsupported {
 
 impl core::error::Error for Eip8130ExecutionUnsupported {}
 
-/// Block-boundary context for pre-execution system calls.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+/// Block context that is not part of the EVM block environment: the inputs of the pre-execution
+/// system calls and the header fields block assembly copies through.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct BaseBlockExecutionCtx {
     /// The parent block hash, stored by the EIP-2935 block-hashes contract (Prague onwards).
     pub parent_hash: B256,
@@ -137,6 +138,9 @@ pub struct BaseBlockExecutionCtx {
     /// onwards). Required for every post-Cancun non-genesis block; `None` is only valid before
     /// Cancun. A post-Cancun `None` is rejected by [`BaseBlockExecutor::apply_pre_execution`].
     pub parent_beacon_block_root: Option<B256>,
+    /// The block's extra data, which encodes the Holocene EIP-1559 parameters (and the Jovian
+    /// minimum base fee). Execution ignores it; block assembly writes it into the header.
+    pub extra_data: Bytes,
 }
 
 /// The outcome of executing a block's transactions: one receipt per transaction (in order) and
