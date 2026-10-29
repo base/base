@@ -42,10 +42,10 @@ const L1_BASE_FEE: u64 = 1_000_000_000;
 const L1_BASE_FEE_SCALAR: u64 = 1_000;
 const OPERATOR_FEE_SCALAR: u64 = 2_000;
 const OPERATOR_FEE_CONSTANT: u64 = 7;
-// Ecotone (linear L1 cost), Fjord (FastLZ-estimated L1 cost), Isthmus (operator fee), and
-// Jovian (operator fee × multiplier) — exercising each distinct fee branch.
-const FORKS: [BaseUpgrade; 4] =
-    [BaseUpgrade::Ecotone, BaseUpgrade::Fjord, BaseUpgrade::Isthmus, BaseUpgrade::Jovian];
+/// The whole execution fork ladder, covering each distinct fee branch: pre-Ecotone (overhead L1
+/// cost), Ecotone (linear L1 cost), Fjord (FastLZ-estimated L1 cost), Isthmus (operator fee), and
+/// Jovian (operator fee × multiplier), plus the Base-specific upgrades after it.
+const FORKS: [BaseUpgrade; 14] = BaseUpgrade::EXECUTION_VARIANTS;
 
 /// Arbitrary EIP-2718-shaped bytes priced for the L1 data fee (same on both engines).
 fn enveloped() -> Bytes {
@@ -194,8 +194,8 @@ fn standard_transaction_fee_distribution_matches_revm() {
 
 /// A caller funded for the gas cost but not the additional L1 and operator fees must have its
 /// transaction rejected, matching the revm reference's `LackOfFundForMaxFee`. Without the
-/// affordability check the underfunded caller would wrap through `charge_upfront`'s saturating
-/// subtraction into a spurious balance instead of failing.
+/// affordability check `charge_upfront`'s saturating subtraction would silently drain the
+/// caller's balance instead of failing the transaction.
 #[test]
 fn underfunded_caller_is_rejected_not_wrapped() {
     // Exactly the max gas cost (gas_limit * max_fee), with zero value: enough to clear the
