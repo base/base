@@ -4,11 +4,8 @@ use std::{
     time::Instant,
 };
 
-use alloy_consensus::transaction::Recovered;
-use alloy_eips::Decodable2718;
 use alloy_primitives::TxHash;
 use base_bundles::MeterBundleResponse;
-use base_common_consensus::BaseTransactionSigned;
 use base_observability_events::{
     TransactionEventProducer, TransactionEventType, transaction_event,
 };
@@ -238,9 +235,10 @@ where
             ErrorObjectOwned::owned(ErrorCode::InvalidParams.code(), e.to_string(), None::<()>)
         })?;
 
-        // Decode the EIP-2718 transaction bytes
-        let consensus_tx =
-            BaseTransactionSigned::decode_2718(&mut tx.raw.as_ref()).map_err(|e| {
+        // Decode the EIP-2718 bytes, keeping them as the pool transaction's cached encoding so
+        // validation and block building do not re-encode the transaction.
+        let mut pool_tx =
+            BasePooledTransaction::decode_2718_with_sender(tx.raw, sender).map_err(|e| {
                 BuilderApiMetrics::decode_errors().increment(1);
                 ErrorObjectOwned::owned(
                     ErrorCode::InvalidParams.code(),
@@ -248,10 +246,6 @@ where
                     None::<()>,
                 )
             })?;
-        let encoded_len = tx.raw.len();
-
-        let recovered = Recovered::new_unchecked(consensus_tx, sender);
-        let mut pool_tx = BasePooledTransaction::new(recovered, encoded_len);
         let metering = tx.metering;
         if let Some(ref metering) = metering {
             pool_tx = pool_tx.with_metering(metering.clone());

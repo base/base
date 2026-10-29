@@ -11,6 +11,9 @@
 //! - `builder_reencode`: the EIP-2718 encoding builder validation computes for the L1 data fee.
 //! - `sender_recovery`: the signature recovery the builder skips by trusting the forwarded
 //!   sender, for scale.
+//! - `builder_admit`: the builder admitting a forwarded transaction end to end: decoding it with
+//!   `BasePooledTransaction::decode_2718_with_sender`, then reading the EIP-2718 bytes and DA size
+//!   its validation and block building use.
 //!
 //! ```sh
 //! cargo bench -p base-execution-txpool --bench ingest_codec
@@ -34,6 +37,10 @@ use reth_transaction_pool::PoolTransaction;
 
 /// A transfer (no calldata) and a contract call with swap-sized calldata.
 const CALLDATA_SIZES: [usize; 2] = [0, 1_024];
+
+/// Calldata sizes for `builder_admit`: a transfer, a typical mainnet transaction (~570 B
+/// encoded), a swap, and a calldata-heavy call.
+const ADMIT_CALLDATA_SIZES: [usize; 4] = [0, 450, 1_024, 16_384];
 
 fn signed(calldata: usize) -> (BaseTransactionSigned, Address) {
     let signer = PrivateKeySigner::random();
@@ -150,6 +157,25 @@ fn bench(c: &mut Criterion) {
             let decoded =
                 BaseTransactionSigned::decode_2718(&mut tx.raw.as_ref()).expect("decodes");
             b.iter(|| black_box(&decoded).recover_signer().expect("recovers"))
+        });
+    }
+    group.finish();
+
+    let mut group = c.benchmark_group("builder_admit");
+    for size in ADMIT_CALLDATA_SIZES {
+        let tx = wire(size, NoExtensions {});
+        group.bench_with_input(BenchmarkId::from_parameter(size), &tx, |b, tx| {
+            b.iter(|| {
+                let pooled =
+                    BasePooledTransaction::<BaseTransactionSigned>::decode_2718_with_sender(
+                        black_box(&tx.raw).clone(),
+                        tx.sender,
+                    )
+                    .expect("decodes");
+                black_box(pooled.estimated_compressed_size());
+                black_box(BasePooledTx::encoded_2718(&pooled).len());
+                pooled
+            })
         });
     }
     group.finish();
