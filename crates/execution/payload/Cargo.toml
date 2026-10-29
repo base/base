@@ -91,6 +91,10 @@ harness = false
 name = "native_candidate_scan"
 harness = false
 
+[[bench]]
+name = "rejection_cache"
+harness = false
+
 [features]
 default = [ "metrics" ]
 clap = [ "dep:clap" ]
