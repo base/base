@@ -12,6 +12,7 @@ use reth_trie::{
     hashed_cursor::HashedPostStateCursorFactory,
     metrics::TrieRootMetrics,
     proof::{self, Proof},
+    proof_v2::MultiProofCalculator,
     trie_cursor::InMemoryTrieCursorFactory,
     witness::TrieWitness,
 };
@@ -63,10 +64,9 @@ pub trait DatabaseProof<'tx, S: BaseProofsStore + 'tx> {
     ) -> Result<MultiProof, StateProofError>;
 
     /// Generates a decoded V2 multiproof for hashed account and storage targets.
-    fn overlay_multiproof_v2(
+    fn multiproof_v2(
         storage: &'tx BaseProofsStorage<S>,
         block_number: u64,
-        input: TrieInput,
         targets: MultiProofTargetsV2,
     ) -> Result<DecodedMultiProofV2, StateProofError>;
 }
@@ -90,14 +90,12 @@ where
         let state_sorted = input.state.into_sorted();
         let tx = storage.ro_tx().map_err(Into::<DatabaseError>::into)?;
         let (trie_factory, hashed_factory) = from_tx(storage, &tx, block_number);
-        Proof::new(trie_factory.clone(), hashed_factory.clone())
-            .with_trie_cursor_factory(InMemoryTrieCursorFactory::new(trie_factory, &nodes_sorted))
-            .with_hashed_cursor_factory(HashedPostStateCursorFactory::new(
-                hashed_factory,
-                &state_sorted,
-            ))
-            .with_prefix_sets_mut(input.prefix_sets)
-            .account_proof(address, slots)
+        Proof::new(
+            InMemoryTrieCursorFactory::new(trie_factory, &nodes_sorted),
+            HashedPostStateCursorFactory::new(hashed_factory, &state_sorted),
+        )
+        .with_prefix_sets_mut(input.prefix_sets)
+        .account_proof(address, slots)
     }
 
     fn overlay_multiproof(
@@ -110,34 +108,28 @@ where
         let state_sorted = input.state.into_sorted();
         let tx = storage.ro_tx().map_err(Into::<DatabaseError>::into)?;
         let (trie_factory, hashed_factory) = from_tx(storage, &tx, block_number);
-        Proof::new(trie_factory.clone(), hashed_factory.clone())
-            .with_trie_cursor_factory(InMemoryTrieCursorFactory::new(trie_factory, &nodes_sorted))
-            .with_hashed_cursor_factory(HashedPostStateCursorFactory::new(
-                hashed_factory,
-                &state_sorted,
-            ))
-            .with_prefix_sets_mut(input.prefix_sets)
-            .multiproof(targets)
+        Proof::new(
+            InMemoryTrieCursorFactory::new(trie_factory, &nodes_sorted),
+            HashedPostStateCursorFactory::new(hashed_factory, &state_sorted),
+        )
+        .with_prefix_sets_mut(input.prefix_sets)
+        .multiproof(targets)
     }
 
-    fn overlay_multiproof_v2(
+    fn multiproof_v2(
         storage: &'tx BaseProofsStorage<S>,
         block_number: u64,
-        input: TrieInput,
         targets: MultiProofTargetsV2,
     ) -> Result<DecodedMultiProofV2, StateProofError> {
-        let nodes_sorted = input.nodes.into_sorted();
-        let state_sorted = input.state.into_sorted();
         let tx = storage.ro_tx().map_err(Into::<DatabaseError>::into)?;
         let (trie_factory, hashed_factory) = from_tx(storage, &tx, block_number);
-        Proof::new(trie_factory.clone(), hashed_factory.clone())
-            .with_trie_cursor_factory(InMemoryTrieCursorFactory::new(trie_factory, &nodes_sorted))
-            .with_hashed_cursor_factory(HashedPostStateCursorFactory::new(
-                hashed_factory,
-                &state_sorted,
-            ))
-            .with_prefix_sets_mut(input.prefix_sets)
-            .multiproof_v2(targets)
+        MultiProofCalculator::new(
+            trie_factory,
+            hashed_factory,
+            Default::default(),
+            Default::default(),
+        )
+        .multiproof(targets)
     }
 }
 
@@ -164,7 +156,6 @@ pub trait DatabaseStorageProof<'tx, S: BaseProofsStore + 'tx> {
 
 impl<'tx, S> DatabaseStorageProof<'tx, S>
     for proof::StorageProof<
-        'static,
         BaseProofsTrieCursorFactory<'tx, 'tx, S>,
         BaseProofsHashedAccountCursorFactory<'tx, 'tx, S>,
     >
@@ -186,13 +177,13 @@ where
         );
         let tx = storage.ro_tx().map_err(Into::<DatabaseError>::into)?;
         let (trie_factory, hashed_factory) = from_tx(storage, &tx, block_number);
-        proof::StorageProof::new(trie_factory, hashed_factory.clone(), address)
-            .with_hashed_cursor_factory(HashedPostStateCursorFactory::new(
-                hashed_factory,
-                &state_sorted,
-            ))
-            .with_prefix_set_mut(prefix_set)
-            .storage_proof(slot)
+        proof::StorageProof::new(
+            trie_factory,
+            HashedPostStateCursorFactory::new(hashed_factory, &state_sorted),
+            address,
+        )
+        .with_prefix_set_mut(prefix_set)
+        .storage_proof(slot)
     }
 
     fn overlay_storage_multiproof(
@@ -211,13 +202,13 @@ where
         );
         let tx = storage.ro_tx().map_err(Into::<DatabaseError>::into)?;
         let (trie_factory, hashed_factory) = from_tx(storage, &tx, block_number);
-        proof::StorageProof::new(trie_factory, hashed_factory.clone(), address)
-            .with_hashed_cursor_factory(HashedPostStateCursorFactory::new(
-                hashed_factory,
-                &state_sorted,
-            ))
-            .with_prefix_set_mut(prefix_set)
-            .storage_multiproof(targets)
+        proof::StorageProof::new(
+            trie_factory,
+            HashedPostStateCursorFactory::new(hashed_factory, &state_sorted),
+            address,
+        )
+        .with_prefix_set_mut(prefix_set)
+        .storage_multiproof(targets)
     }
 }
 
@@ -463,17 +454,18 @@ where
                             .storage_targets
                             .insert(hashed_address, slots.into_iter().map(Into::into).collect());
                     }
-                    let _ =
-                        Proof::new(overlay_trie_factory.clone(), overlay_hashed_factory.clone())
-                            .with_prefix_sets_mut(input.prefix_sets.clone())
-                            .multiproof_v2(targets);
+                    let _ = MultiProofCalculator::new(
+                        overlay_trie_factory.clone(),
+                        overlay_hashed_factory.clone(),
+                        input.prefix_sets.clone().freeze(),
+                        Default::default(),
+                    )
+                    .multiproof(targets);
                 },
             );
         });
         let (prewarm_hits, prewarm_misses) = (cache.hits(), cache.misses());
-        let witness = TrieWitness::new(trie_factory, hashed_factory)
-            .with_trie_cursor_factory(overlay_trie_factory)
-            .with_hashed_cursor_factory(overlay_hashed_factory)
+        let witness = TrieWitness::new(overlay_trie_factory, overlay_hashed_factory)
             .with_prefix_sets_mut(input.prefix_sets)
             .always_include_root_node()
             .with_execution_witness_mode(mode)

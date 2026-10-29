@@ -67,6 +67,7 @@ clap = { workspace = true, optional = true, features = ["derive"] }
 
 [dev-dependencies]
 reth-provider.workspace = true
+crossbeam-channel.workspace = true
 reth-ethereum-forks.workspace = true
 base-execution-chainspec.workspace = true
 metrics-exporter-prometheus.workspace = true
