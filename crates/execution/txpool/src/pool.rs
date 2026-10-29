@@ -2815,6 +2815,39 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn rpc_insert_reports_pooled_duplicates_as_already_imported() {
+        let (pool, client) = build_integration_pool();
+        let sender = signer();
+        fund(&client, sender.address());
+        let tx = signed_1559(&sender, 0);
+        let recovered = tx.clone_into_consensus();
+        let wire = ValidatedTransaction {
+            sender: recovered.signer(),
+            raw: recovered.inner().encoded_2718().into(),
+            metering: None,
+            extensions: NoExtensions::default(),
+        };
+        let handler = BuilderApiImpl::new(pool.clone());
+        assert_eq!(handler.insert_validated_transaction(wire.clone()).await, Ok(()));
+
+        // Validating the duplicate now would fail for lack of funds.
+        client.add_account(sender.address(), ExtendedAccount::new(0, U256::ZERO));
+        let expected = format!(
+            "pool rejected transaction: {}",
+            reth_transaction_pool::error::PoolError::new(
+                *tx.hash(),
+                PoolErrorKind::AlreadyImported
+            )
+        );
+        let single = handler.insert_validated_transaction(wire.clone()).await.unwrap_err();
+        let batched = handler.insert_validated_transactions(vec![wire]).await.unwrap();
+
+        assert_eq!(single.message(), expected);
+        assert_eq!(batched, vec![Some(single)]);
+        assert_eq!(pool.pool_size().pending, 1);
+    }
+
+    #[tokio::test]
     async fn standard_transactions_are_not_eip8130_gated() {
         let (pool, client) = build_integration_pool();
         let signer = signer();
