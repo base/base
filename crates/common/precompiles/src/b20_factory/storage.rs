@@ -41,8 +41,7 @@ impl<'a> B20FactoryStorage<'a> {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, B256, Bytes, address, keccak256};
-    use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
-    use revm::state::Bytecode;
+    use base_precompile_storage::{Bytecode, HashMapStorageProvider, StorageCtx};
 
     use super::FACTORY_MARKER_CODE_HASH;
     use crate::{B20FactoryStorage, B20Variant};

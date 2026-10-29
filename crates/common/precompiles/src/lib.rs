@@ -7,10 +7,14 @@ extern crate alloc;
 
 mod macros;
 
+#[cfg(feature = "revm")]
 mod provider;
+#[cfg(feature = "revm")]
 pub use provider::BasePrecompiles;
 
+#[cfg(feature = "revm")]
 mod lookup;
+#[cfg(feature = "revm")]
 pub use lookup::{BerylLookup, BerylLookupWithObserver};
 
 mod spec;
@@ -23,18 +27,20 @@ pub use activation::{
 };
 
 mod bn254_pair;
-pub use bn254_pair::{
-    GRANITE, GRANITE_MAX_INPUT_SIZE, JOVIAN, JOVIAN_MAX_INPUT_SIZE, run_pair_granite,
-    run_pair_jovian,
-};
+#[cfg(feature = "revm")]
+pub use bn254_pair::{GRANITE, JOVIAN, run_pair_granite, run_pair_jovian};
+pub use bn254_pair::{GRANITE_MAX_INPUT_SIZE, JOVIAN_MAX_INPUT_SIZE};
 
 mod bls12_381;
+#[cfg(feature = "revm")]
 pub use bls12_381::{
-    ISTHMUS_G1_MSM, ISTHMUS_G1_MSM_MAX_INPUT_SIZE, ISTHMUS_G2_MSM, ISTHMUS_G2_MSM_MAX_INPUT_SIZE,
-    ISTHMUS_PAIRING, ISTHMUS_PAIRING_MAX_INPUT_SIZE, JOVIAN_G1_MSM, JOVIAN_G1_MSM_MAX_INPUT_SIZE,
-    JOVIAN_G2_MSM, JOVIAN_G2_MSM_MAX_INPUT_SIZE, JOVIAN_PAIRING, JOVIAN_PAIRING_MAX_INPUT_SIZE,
+    ISTHMUS_G1_MSM, ISTHMUS_G2_MSM, ISTHMUS_PAIRING, JOVIAN_G1_MSM, JOVIAN_G2_MSM, JOVIAN_PAIRING,
     run_isthmus_g1_msm, run_isthmus_g2_msm, run_isthmus_pairing, run_jovian_g1_msm,
     run_jovian_g2_msm, run_jovian_pairing,
+};
+pub use bls12_381::{
+    ISTHMUS_G1_MSM_MAX_INPUT_SIZE, ISTHMUS_G2_MSM_MAX_INPUT_SIZE, ISTHMUS_PAIRING_MAX_INPUT_SIZE,
+    JOVIAN_G1_MSM_MAX_INPUT_SIZE, JOVIAN_G2_MSM_MAX_INPUT_SIZE, JOVIAN_PAIRING_MAX_INPUT_SIZE,
 };
 
 mod common;

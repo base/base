@@ -1,24 +1,22 @@
 //! Runtime helpers for wrapping native precompile dispatch.
 
-/// Wraps a stateful native precompile body in the Base storage-provider setup.
+/// Wraps a stateful native precompile body as a revm [`DynPrecompile`].
 ///
 /// `storage_features:` is required — every caller must state the fork feature set
 /// the wrapper runs under, so a future feature-sensitive field cannot silently
 /// inherit `StorageFeatures::Legacy`. See [`crate::UpgradeGatedStorageFeatures::from_upgrade`].
+///
+/// Native precompiles price storage with revm's default (Osaka) gas schedule; the evm2
+/// dispatch in [`crate::BaseEvm2Precompiles`] uses the same schedule.
+///
+/// [`DynPrecompile`]: alloy_evm::precompiles::DynPrecompile
+#[cfg(feature = "revm")]
 macro_rules! base_precompile {
     ($id:expr, storage_features: $storage_features:expr, |$ctx:ident, $calldata:ident| $impl:expr $(,)?) => {{
         ::alloy_evm::precompiles::DynPrecompile::new_stateful(
             ::revm::precompile::PrecompileId::Custom($id.into()),
             move |input| {
-                if !input.is_direct_call() {
-                    return ::base_precompile_storage::IntoEnginePrecompileResult::into_revm(
-                        ::base_precompile_storage::BasePrecompileError::revert(
-                            ::base_precompile_storage::DelegateCallNotAllowed {},
-                        )
-                        .into_precompile_result(0, 0),
-                    );
-                }
-
+                let is_direct_call = input.is_direct_call();
                 let $calldata: &[u8] = input.data;
                 let mut provider = ::base_precompile_storage::EvmPrecompileStorageProvider::new_with_storage_features(
                     input,
@@ -26,14 +24,19 @@ macro_rules! base_precompile {
                     $storage_features,
                 );
 
-                ::base_precompile_storage::IntoEnginePrecompileResult::into_revm(
-                    ::base_precompile_storage::StorageCtx::enter(&mut provider, |$ctx| $impl),
+                ::base_precompile_storage::IntoRevmPrecompileResult::into_revm(
+                    ::base_precompile_storage::StorageCtx::enter_direct_call(
+                        &mut provider,
+                        is_direct_call,
+                        |$ctx| $impl,
+                    ),
                 )
             },
         )
     }};
 }
 
+#[cfg(feature = "revm")]
 pub(crate) use base_precompile;
 
 /// Decodes calldata into the requested ABI interface call or returns an unknown selector error.

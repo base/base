@@ -1,3 +1,4 @@
+#[cfg(feature = "revm")]
 use revm::precompile::{
     Precompile, PrecompileHalt, PrecompileId, PrecompileOutput, PrecompileResult, bn254,
     call_eth_precompile,
@@ -5,10 +6,12 @@ use revm::precompile::{
 
 /// Max input size for the bn254 pair precompile after the Granite upgrade.
 pub const GRANITE_MAX_INPUT_SIZE: usize = 112687;
+#[cfg(feature = "revm")]
 /// Bn254 pair precompile with Granite input limits.
 pub const GRANITE: Precompile =
     Precompile::new(PrecompileId::Bn254Pairing, bn254::pair::ADDRESS, run_pair_granite);
 
+#[cfg(feature = "revm")]
 /// Run the bn254 pair precompile with Granite input limit.
 pub fn run_pair_granite(input: &[u8], gas_limit: u64, reservoir: u64) -> PrecompileResult {
     if input.len() > GRANITE_MAX_INPUT_SIZE {
@@ -31,10 +34,12 @@ pub fn run_pair_granite(input: &[u8], gas_limit: u64, reservoir: u64) -> Precomp
 
 /// Max input size for the bn254 pair precompile after the Jovian upgrade.
 pub const JOVIAN_MAX_INPUT_SIZE: usize = 81_984;
+#[cfg(feature = "revm")]
 /// Bn254 pair precompile with Jovian input limits.
 pub const JOVIAN: Precompile =
     Precompile::new(PrecompileId::Bn254Pairing, bn254::pair::ADDRESS, run_pair_jovian);
 
+#[cfg(feature = "revm")]
 /// Run the bn254 pair precompile with Jovian input limit.
 pub fn run_pair_jovian(input: &[u8], gas_limit: u64, reservoir: u64) -> PrecompileResult {
     if input.len() > JOVIAN_MAX_INPUT_SIZE {
@@ -55,7 +60,7 @@ pub fn run_pair_jovian(input: &[u8], gas_limit: u64, reservoir: u64) -> Precompi
     ))
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "revm"))]
 mod tests {
     use revm::{precompile::bn254, primitives::hex};
 

@@ -24,10 +24,10 @@ base-common-flz.workspace = true
 base-common-l1-fees.workspace = true
 base-common-chains.workspace = true
 base-common-genesis.workspace = true
-base-common-precompiles.workspace = true
+base-common-precompiles = { workspace = true, features = ["revm"] }
 # Only used by the enshrined EIP-8130 executor, which is `std`-only; kept
 # optional so `no_std` (proof/zkVM) builds do not pull in a `std` crate.
-base-precompile-storage = { workspace = true, optional = true }
+base-precompile-storage = { workspace = true, optional = true, features = ["revm"] }
 base-execution-eip8130 = { workspace = true, optional = true }
 base-common-consensus = { workspace = true, features = ["evm"] }
 

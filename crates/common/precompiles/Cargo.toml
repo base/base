@@ -14,9 +14,9 @@ workspace = true
 
 [dependencies]
 # alloy
-alloy-evm.workspace = true
 alloy-sol-types.workspace = true
 alloy-primitives.workspace = true
+alloy-evm = { workspace = true, optional = true }
 
 # base
 base-common-chains.workspace = true
@@ -26,7 +26,7 @@ base-precompile-macros.workspace = true
 base-precompile-storage.workspace = true
 
 # revm
-revm.workspace = true
+revm = { workspace = true, optional = true }
 
 [dev-dependencies]
 rstest.workspace = true
@@ -68,6 +68,10 @@ name = "b20_policy_v1_golden"
 required-features = ["test-utils"]
 
 [[test]]
+name = "b20_policy_v2_golden"
+required-features = ["test-utils"]
+
+[[test]]
 name = "b20_policy_v3_golden"
 required-features = ["test-utils"]
 
@@ -76,29 +80,30 @@ name = "b20_factory_v1_golden"
 required-features = ["test-utils"]
 
 [features]
-default = [ "blst", "c-kzg", "portable", "secp256k1", "std" ]
+default = [ "blst", "c-kzg", "portable", "revm", "secp256k1", "std" ]
 std = [
-	"alloy-evm/std",
+	"alloy-evm?/std",
 	"alloy-primitives/std",
 	"alloy-sol-types/std",
 	"base-common-chains/std",
 	"base-common-eip8130/std",
 	"base-common-genesis/std",
 	"base-precompile-storage/std",
-	"revm/std",
+	"revm?/std",
 ]
-bn = [ "revm/bn" ]
-blst = [ "revm/blst" ]
-c-kzg = [ "revm/c-kzg" ]
-portable = [ "revm/portable" ]
-secp256k1 = [ "revm/secp256k1" ]
-memory_limit = [ "revm/memory_limit" ]
-optional_no_base_fee = [ "revm/optional_no_base_fee" ]
-optional_eip3541 = [ "revm/optional_eip3541" ]
-optional_eip3607 = [ "revm/optional_eip3607" ]
-optional_fee_charge = [ "revm/optional_fee_charge" ]
-optional_balance_check = [ "revm/optional_balance_check" ]
-optional_block_gas_limit = [ "revm/optional_block_gas_limit" ]
+revm = [ "base-precompile-storage/revm", "dep:alloy-evm", "dep:revm" ]
+bn = [ "revm?/bn" ]
+blst = [ "revm?/blst" ]
+c-kzg = [ "revm?/c-kzg" ]
+portable = [ "revm?/portable" ]
+secp256k1 = [ "revm?/secp256k1" ]
+memory_limit = [ "revm?/memory_limit" ]
+optional_no_base_fee = [ "revm?/optional_no_base_fee" ]
+optional_eip3541 = [ "revm?/optional_eip3541" ]
+optional_eip3607 = [ "revm?/optional_eip3607" ]
+optional_fee_charge = [ "revm?/optional_fee_charge" ]
+optional_balance_check = [ "revm?/optional_balance_check" ]
+optional_block_gas_limit = [ "revm?/optional_block_gas_limit" ]
 test-utils = [
 	"base-common-chains/test-utils",
 	"base-common-genesis/test-utils",

@@ -1,9 +1,14 @@
 //! Precompile entry point for the EIP-8130 2D nonce manager.
 
+#[cfg(feature = "revm")]
 use alloy_evm::precompiles::PrecompilesMap;
+#[cfg(feature = "revm")]
 use base_common_genesis::BaseUpgrade;
+use base_precompile_storage::{PrecompileResult, StorageCtx};
 
-use crate::{NonceManagerStorage, UpgradeGatedStorageFeatures, macros::base_precompile};
+use crate::NonceManagerStorage;
+#[cfg(feature = "revm")]
+use crate::{UpgradeGatedStorageFeatures, macros::base_precompile};
 
 /// Entry point for the EIP-8130 2D nonce manager precompile.
 ///
@@ -16,21 +21,32 @@ use crate::{NonceManagerStorage, UpgradeGatedStorageFeatures, macros::base_preco
 pub struct NonceManager;
 
 impl NonceManager {
+    /// Precompile identifier reported to the execution engine.
+    pub const ID: &'static str = "NonceManager";
+
+    /// Dispatches one `NonceManager` call.
+    pub fn run(ctx: StorageCtx<'_>, calldata: &[u8]) -> PrecompileResult {
+        NonceManagerStorage::new(ctx).dispatch(ctx, calldata)
+    }
+}
+
+#[cfg(feature = "revm")]
+impl NonceManager {
     /// Installs the `NonceManager` precompile, gated to the storage features
     /// active at `upgrade`.
     pub fn install(precompiles: &mut PrecompilesMap, upgrade: BaseUpgrade) {
         let storage_features = UpgradeGatedStorageFeatures::from_upgrade(upgrade);
         let precompile = base_precompile!(
-            "NonceManager",
+            Self::ID,
             storage_features: storage_features,
-            |ctx, calldata| NonceManagerStorage::new(ctx).dispatch(ctx, calldata),
+            |ctx, calldata| Self::run(ctx, calldata),
         );
         precompiles
             .extend_precompiles(core::iter::once((NonceManagerStorage::ADDRESS, precompile)));
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "revm"))]
 mod tests {
     use alloy_evm::precompiles::PrecompilesMap;
     use base_common_genesis::BaseUpgrade;

@@ -10,8 +10,8 @@ pub use error::{BasePrecompileError, DelegateCallNotAllowed, IntoPrecompileResul
 
 mod neutral;
 pub use neutral::{
-    AccountInfo, IntoEnginePrecompileResult, PrecompileError, PrecompileHalt, PrecompileOutput,
-    PrecompileResult, PrecompileStatus,
+    AccountInfo, Bytecode, CheckpointStack, PrecompileError, PrecompileHalt, PrecompileOutput,
+    PrecompileResult, PrecompileStatus, StorageCheckpoint,
 };
 
 mod packing;
@@ -22,9 +22,9 @@ pub use packing::{
 
 mod provider;
 pub use provider::{
-    ContractStorage, FromWord, Handler, Layout, LayoutCtx, Packable, PrecompileStorageProvider,
-    Storable, StorableType, StorageFeatures, StorageKey, StorageOps, sealed,
-    validate_loaded_code_presence,
+    ContractStorage, FromWord, Handler, KECCAK256_GAS, KECCAK256_WORD_GAS, Layout, LayoutCtx,
+    Packable, PrecompileStorageProvider, Storable, StorableType, StorageFeatures, StorageKey,
+    StorageOps, sealed, validate_loaded_code_presence,
 };
 
 mod registration;
@@ -38,11 +38,30 @@ pub use types::{
     ArrayHandler, BytesLikeHandler, HandlerCache, Mapping, MappingHandler, Slot, VecHandler,
 };
 
+#[cfg(feature = "revm")]
+mod revm_compat;
+#[cfg(feature = "revm")]
+pub use revm_compat::IntoRevmPrecompileResult;
+
+#[cfg(feature = "revm")]
 mod evm;
+#[cfg(feature = "revm")]
 pub use evm::EvmPrecompileStorageProvider;
 
+#[cfg(feature = "revm")]
 mod journal;
+#[cfg(feature = "revm")]
 pub use journal::JournalStorageProvider;
+
+#[cfg(feature = "evm2")]
+mod evm2_compat;
+#[cfg(feature = "evm2")]
+pub use evm2_compat::{Evm2TxOrigin, IntoEvm2PrecompileResult};
+
+#[cfg(feature = "evm2")]
+mod evm2_provider;
+#[cfg(feature = "evm2")]
+pub use evm2_provider::Evm2PrecompileStorageProvider;
 
 #[cfg(any(test, feature = "test-utils"))]
 mod hashmap;

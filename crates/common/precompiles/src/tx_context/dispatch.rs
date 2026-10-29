@@ -122,6 +122,7 @@ mod tests {
     /// revm reprices `gas::COPY`, this fails so the output-word charge is
     /// re-decided deliberately rather than tracked silently (mirrors the
     /// `Eip8130GasSchedule` primitive tripwire).
+    #[cfg(feature = "revm")]
     #[test]
     fn gas_matches_evm_reference() {
         assert_eq!(super::OUTPUT_WORD_GAS, revm::interpreter::gas::COPY);
