@@ -13,7 +13,7 @@ rust-version.workspace = true
 workspace = true
 
 [package.metadata.cargo-udeps.ignore]
-development = ["arbtest"]
+development = ["proptest"]
 
 [dependencies]
 # consensus
@@ -46,7 +46,7 @@ arbitrary = { workspace = true, features = ["derive"], optional = true }
 
 [dev-dependencies]
 rstest.workspace = true
-arbtest.workspace = true
+proptest.workspace = true
 multihash.workspace = true
 
 arbitrary = { workspace = true, features = ["derive"] }
