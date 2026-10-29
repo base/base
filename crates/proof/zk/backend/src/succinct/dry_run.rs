@@ -124,10 +124,6 @@ impl DryRunZkProver {
         request: &ZkProofRequest,
         request_session_id: &str,
     ) -> Result<ProofResult, ZkProverError> {
-        if request.number_of_blocks_to_prove == 0 {
-            return Err(backend_error!("number_of_blocks_to_prove must be greater than zero"));
-        }
-
         let witness_start = std::time::Instant::now();
         let stdin = self
             .provider

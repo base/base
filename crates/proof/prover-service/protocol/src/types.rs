@@ -196,9 +196,12 @@ pub enum ProofRequestKind {
 /// ZK proof request parameters.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ZkProofRequest {
-    /// First L2 block number to prove.
+    /// L2 block immediately before the range to prove.
     pub start_block_number: u64,
-    /// Number of consecutive L2 blocks to prove.
+    /// Nonzero number of consecutive L2 blocks to prove.
+    ///
+    /// Must be a multiple of `intermediate_block_interval`, and its sum with
+    /// `start_block_number` must fit in `u64`.
     pub number_of_blocks_to_prove: u64,
     /// Optional sequencing window.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -211,7 +214,7 @@ pub struct ZkProofRequest {
     pub schedule_l2_block_number: Option<u64>,
     /// Number of L2 blocks between two intermediate output roots of the game being proven.
     ///
-    /// `number_of_blocks_to_prove` must be a multiple of it.
+    /// `number_of_blocks_to_prove` must be a nonzero multiple of it.
     pub intermediate_block_interval: NonZeroU64,
     /// ZK virtual machine implementation to use.
     pub zk_vm: ZkVm,
@@ -220,6 +223,55 @@ pub struct ZkProofRequest {
     /// Defaults to [`ZkBackend::Cluster`] when omitted so older clients keep working.
     #[serde(default)]
     pub zk_backend: ZkBackend,
+}
+
+/// Invalid block range in a ZK proof request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum ZkRangeError {
+    /// The range contains no blocks.
+    #[error("number_of_blocks_to_prove must be greater than zero")]
+    EmptyRange,
+    /// The inclusive end block exceeds the block number limit.
+    #[error(
+        "start block {start_block_number} plus block count {number_of_blocks_to_prove} overflows u64"
+    )]
+    EndBlockOverflow {
+        /// Starting block number.
+        start_block_number: u64,
+        /// Requested block count.
+        number_of_blocks_to_prove: u64,
+    },
+    /// The block count is not a multiple of the intermediate block interval.
+    #[error(
+        "block count {number_of_blocks_to_prove} must be a multiple of intermediate block interval {intermediate_block_interval}"
+    )]
+    MisalignedRange {
+        /// Requested block count.
+        number_of_blocks_to_prove: u64,
+        /// Required block interval.
+        intermediate_block_interval: NonZeroU64,
+    },
+}
+
+impl ZkProofRequest {
+    /// Validates the proof range and returns its inclusive end block.
+    pub fn validate_range(&self) -> Result<u64, ZkRangeError> {
+        if self.number_of_blocks_to_prove == 0 {
+            return Err(ZkRangeError::EmptyRange);
+        }
+        if !self.number_of_blocks_to_prove.is_multiple_of(self.intermediate_block_interval.get()) {
+            return Err(ZkRangeError::MisalignedRange {
+                number_of_blocks_to_prove: self.number_of_blocks_to_prove,
+                intermediate_block_interval: self.intermediate_block_interval,
+            });
+        }
+        self.start_block_number.checked_add(self.number_of_blocks_to_prove).ok_or(
+            ZkRangeError::EndBlockOverflow {
+                start_block_number: self.start_block_number,
+                number_of_blocks_to_prove: self.number_of_blocks_to_prove,
+            },
+        )
+    }
 }
 
 /// PLONK SNARK proof request parameters.

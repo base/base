@@ -7,7 +7,7 @@ use base_l1_head::{L1HeadCalculator, L1HeadError};
 use base_proof_host::Metrics;
 use base_proof_zk_utils::boot::BootInfoStruct;
 use base_proof_zk_witness::{fetcher::OPSuccinctDataFetcher, host::SuccinctHost};
-use base_prover_service_protocol::ZkProofRequest;
+use base_prover_service_protocol::{ZkProofRequest, ZkRangeError};
 use sp1_sdk::{SP1ProofWithPublicValues, SP1Stdin, SP1VerifyingKey};
 use thiserror::Error;
 use tracing::{Instrument, debug, error, info, info_span};
@@ -50,9 +50,9 @@ impl L1HeadSource {
 /// Errors raised while generating Succinct witness stdin.
 #[derive(Debug, Error)]
 pub enum WitnessError {
-    /// The range end exceeds the L2 block number limit.
-    #[error("proof range end block overflowed u64")]
-    EndBlockOverflow,
+    /// The requested block range violates the protocol constraints.
+    #[error("invalid ZK proof range: {0}")]
+    InvalidRange(#[source] ZkRangeError),
     /// Fetching host arguments with a caller-pinned L1 head failed.
     #[error("failed to fetch Succinct host args with caller-provided l1_head")]
     PinnedHostFetch {
@@ -133,10 +133,7 @@ impl OpSuccinctWitnessProvider {
     ) -> Result<WitnessParams, WitnessError> {
         Ok(WitnessParams {
             start_block: request.start_block_number,
-            end_block: request
-                .start_block_number
-                .checked_add(request.number_of_blocks_to_prove)
-                .ok_or(WitnessError::EndBlockOverflow)?,
+            end_block: request.validate_range().map_err(WitnessError::InvalidRange)?,
             l1_head: request.l1_head.map_or_else(
                 || L1HeadSource::SequenceWindow {
                     sequence_window: request.sequence_window.unwrap_or(default_sequence_window),
@@ -413,7 +410,10 @@ mod tests {
 
         let result = provider.generate_range_witness(&request).await;
 
-        assert!(matches!(result, Err(WitnessError::EndBlockOverflow)));
+        assert!(matches!(
+            result,
+            Err(WitnessError::InvalidRange(ZkRangeError::EndBlockOverflow { .. }))
+        ));
         let events = capture.events();
         assert_eq!(events.len(), 1, "the provider must emit exactly one failure event");
         assert_eq!(events[0]["level"], "ERROR");
@@ -423,7 +423,10 @@ mod tests {
         assert_eq!(fields["start_block"], json!(18446744073709551606_u64));
         assert_eq!(fields["number_of_blocks"], 20);
         assert_eq!(fields["intermediate_block_interval"], "5");
-        assert_eq!(fields["error"], "proof range end block overflowed u64");
+        assert_eq!(
+            fields["error"],
+            "invalid ZK proof range: start block 18446744073709551606 plus block count 20 overflows u64"
+        );
     }
 
     #[tokio::test]
@@ -441,7 +444,10 @@ mod tests {
 
         let result = provider.generate_range_witness(&request).await;
 
-        assert!(matches!(result, Err(WitnessError::EndBlockOverflow)));
+        assert!(matches!(
+            result,
+            Err(WitnessError::InvalidRange(ZkRangeError::EndBlockOverflow { .. }))
+        ));
         let events = capture.events();
         assert_eq!(events.len(), 2, "the provider must emit one start and one failure event");
         assert_eq!(events[0]["level"], "INFO");
@@ -496,13 +502,46 @@ mod tests {
     }
 
     #[test]
+    fn resolve_rejects_empty_range() {
+        let request = ZkProofRequest { number_of_blocks_to_prove: 0, ..request() };
+        let error = OpSuccinctWitnessProvider::resolve(&request, 50).unwrap_err();
+        assert!(matches!(error, WitnessError::InvalidRange(_)));
+        assert_eq!(
+            error.source().unwrap().to_string(),
+            "number_of_blocks_to_prove must be greater than zero"
+        );
+    }
+
+    #[test]
+    fn resolve_rejects_misaligned_range() {
+        let request = ZkProofRequest { number_of_blocks_to_prove: 9, ..request() };
+        let error = OpSuccinctWitnessProvider::resolve(&request, 50).unwrap_err();
+        assert!(matches!(error, WitnessError::InvalidRange(_)));
+        assert_eq!(
+            error.source().unwrap().to_string(),
+            "block count 9 must be a multiple of intermediate block interval 5"
+        );
+    }
+
+    #[test]
+    fn resolve_overflow_keeps_range_error_source() {
+        let request = ZkProofRequest { start_block_number: u64::MAX - 19, ..request() };
+        let error = OpSuccinctWitnessProvider::resolve(&request, 50).unwrap_err();
+        assert!(matches!(error, WitnessError::InvalidRange(_)));
+        assert_eq!(
+            error.source().unwrap().to_string(),
+            "start block 18446744073709551596 plus block count 20 overflows u64"
+        );
+    }
+
+    #[test]
     fn resolve_rejects_end_block_overflow() {
         let request = ZkProofRequest { start_block_number: u64::MAX - 9, ..request() };
         assert!(matches!(
             OpSuccinctWitnessProvider::resolve(&request, 50),
-            Err(WitnessError::EndBlockOverflow)
+            Err(WitnessError::InvalidRange(ZkRangeError::EndBlockOverflow { .. }))
         ));
-        let request = ZkProofRequest { number_of_blocks_to_prove: 9, ..request };
+        let request = ZkProofRequest { start_block_number: u64::MAX - 20, ..request };
         assert_eq!(OpSuccinctWitnessProvider::resolve(&request, 50).unwrap().end_block, u64::MAX);
     }
 }
