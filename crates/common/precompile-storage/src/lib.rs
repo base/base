@@ -63,6 +63,11 @@ mod evm2_provider;
 #[cfg(feature = "evm2")]
 pub use evm2_provider::Evm2PrecompileStorageProvider;
 
+#[cfg(feature = "evm2")]
+mod evm2_journal;
+#[cfg(feature = "evm2")]
+pub use evm2_journal::Evm2JournalStorageProvider;
+
 #[cfg(any(test, feature = "test-utils"))]
 mod hashmap;
 #[cfg(any(test, feature = "test-utils"))]

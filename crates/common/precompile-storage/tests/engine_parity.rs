@@ -4,8 +4,9 @@
 use alloy_evm::{EvmInternals, eth::EthEvmContext, precompiles::PrecompileInput};
 use alloy_primitives::{Address, B256, Bytes, Log, LogData, U256, address, b256};
 use base_precompile_storage::{
-    Bytecode, BytesLikeHandler, Evm2PrecompileStorageProvider, Evm2TxOrigin,
-    EvmPrecompileStorageProvider, Handler, PrecompileResult, StorageCtx, StorageFeatures,
+    Bytecode, BytesLikeHandler, Evm2JournalStorageProvider, Evm2PrecompileStorageProvider,
+    Evm2TxOrigin, EvmPrecompileStorageProvider, Handler, JournalStorageProvider, PrecompileResult,
+    StorageCtx, StorageFeatures,
 };
 use evm2::{
     BaseEvmConfigSelector, Evm, EvmTypesHost, SpecId as Evm2SpecId, Version,
@@ -97,7 +98,19 @@ struct Outcome {
 
 type Body = fn(StorageCtx<'_>) -> PrecompileResult;
 
+/// Which storage provider a body runs on: the metered precompile provider or the gas-free
+/// journal provider of the enshrined EIP-8130 pipeline.
+#[derive(Clone, Copy)]
+enum Provider {
+    Metered,
+    GasFree,
+}
+
 fn run_revm(call: &Call, body: Body) -> Outcome {
+    run_revm_with(call, body, Provider::Metered)
+}
+
+fn run_revm_with(call: &Call, body: Body, provider: Provider) -> Outcome {
     let mut db = RevmInMemoryDB::default();
     for account in &call.accounts {
         let mut info = RevmAccountInfo { balance: account.balance, ..Default::default() };
@@ -117,7 +130,11 @@ fn run_revm(call: &Call, body: Body) -> Outcome {
     ctx.block.beneficiary = BENEFICIARY;
     ctx.tx.caller = ORIGIN;
 
-    let result = {
+    let result = if let Provider::GasFree = provider {
+        let mut provider =
+            JournalStorageProvider::new(EvmInternals::from_context(&mut ctx), CALLER);
+        StorageCtx::enter(&mut provider, body)
+    } else {
         let input = PrecompileInput {
             data: &[],
             gas: call.gas_limit,
@@ -153,6 +170,10 @@ fn run_revm(call: &Call, body: Body) -> Outcome {
 }
 
 fn run_evm2(call: &Call, body: Body) -> Outcome {
+    run_evm2_with(call, body, Provider::Metered)
+}
+
+fn run_evm2_with(call: &Call, body: Body, provider: Provider) -> Outcome {
     let mut db = Evm2InMemoryDB::default();
     for account in &call.accounts {
         let mut info = Evm2AccountInfo::default().with_balance(account.balance);
@@ -188,7 +209,10 @@ fn run_evm2(call: &Call, body: Body) -> Outcome {
         ..MessageExt::default()
     };
 
-    let result = {
+    let result = if let Provider::GasFree = provider {
+        let mut provider = Evm2JournalStorageProvider::new(&mut evm, CALLER);
+        StorageCtx::enter(&mut provider, body)
+    } else {
         let mut provider = Evm2PrecompileStorageProvider::new(
             &mut evm,
             &message,
@@ -481,4 +505,60 @@ fn out_of_gas_storage_access_is_reverted_on_both_engines() {
         assert!(first.is_err() && second.is_err());
         ctx.result_output(Ok(gas_after_failure), |gas| gas.to_be_bytes().to_vec().into())
     });
+}
+
+#[test]
+fn gas_free_journal_providers_match() {
+    let call = Call {
+        accounts: vec![
+            Account { address: OTHER, balance: U256::from(9u64), ..Default::default() },
+            Account {
+                address: PRECOMPILE,
+                storage: vec![(slot(1), U256::from(5u64))],
+                ..Default::default()
+            },
+        ],
+        observed_slots: vec![(PRECOMPILE, slot(1)), (PRECOMPILE, slot(2)), (OTHER, slot(3))],
+        ..Default::default()
+    };
+    let body: Body = |ctx| {
+        let result = (|| {
+            let value = ctx.sload(PRECOMPILE, slot(1))?;
+            ctx.sstore(PRECOMPILE, slot(2), value + U256::from(1u64))?;
+            ctx.emit_event(PRECOMPILE, LogData::new_unchecked(vec![TOPIC], Bytes::new()))?;
+            let reverted = ctx.checkpoint();
+            ctx.sstore(OTHER, slot(3), U256::from(77u64))?;
+            drop(reverted);
+            ctx.set_code(
+                Address::repeat_byte(0x55),
+                Bytecode::new_legacy(Bytes::from_static(&[0])),
+            )?;
+            let code_hash =
+                ctx.with_account_info(Address::repeat_byte(0x55), |info| Ok(info.code_hash))?;
+            let balance = ctx.with_account_info(OTHER, |info| Ok(info.balance))?;
+            Ok::<_, base_precompile_storage::BasePrecompileError>((
+                value,
+                balance,
+                code_hash,
+                ctx.origin(),
+            ))
+        })();
+        ctx.result_output(result, |(value, balance, code_hash, origin)| {
+            [
+                value.to_be_bytes::<32>().as_slice(),
+                &balance.to_be_bytes::<32>(),
+                code_hash.as_slice(),
+                origin.as_slice(),
+            ]
+            .concat()
+            .into()
+        })
+    };
+    let revm = run_revm_with(&call, body, Provider::GasFree);
+    let evm2 = run_evm2_with(&call, body, Provider::GasFree);
+    assert_eq!(revm, evm2, "revm and evm2 gas-free providers diverged");
+    let output = output(&revm);
+    assert_eq!(output.gas_used, 0, "the journal providers meter no gas");
+    assert_eq!(revm.storage, vec![U256::from(5u64), U256::from(6u64), U256::ZERO]);
+    assert_eq!(revm.logs.len(), 1);
 }
