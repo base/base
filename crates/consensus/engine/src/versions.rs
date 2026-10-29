@@ -13,7 +13,7 @@
 //!
 //! Adapted from the [reference node version providers](https://github.com/ethereum-optimism/optimism/blob/develop/op-node/rollup/types.go#L546).
 
-use base_common_genesis::RollupConfig;
+use base_common_genesis::{BaseFeature, RollupConfig};
 
 /// Engine API version for `engine_forkchoiceUpdated` method calls.
 ///
@@ -32,7 +32,7 @@ impl EngineForkchoiceVersion {
     ///
     /// Uses the [`RollupConfig`] to check which upgrade is active at the given timestamp.
     pub fn from_cfg(cfg: &RollupConfig, timestamp: u64) -> Self {
-        if cfg.is_ecotone_active(timestamp) {
+        if cfg.is_feature_active_cascading(BaseFeature::EngineApiV3, timestamp) {
             // Cancun+
             Self::V3
         } else {
@@ -63,9 +63,9 @@ impl EngineNewPayloadVersion {
     ///
     /// Uses the [`RollupConfig`] to check which upgrade is active at the given timestamp.
     pub fn from_cfg(cfg: &RollupConfig, timestamp: u64) -> Self {
-        if cfg.is_isthmus_active(timestamp) {
+        if cfg.is_feature_active_cascading(BaseFeature::EngineApiV4, timestamp) {
             Self::V4
-        } else if cfg.is_ecotone_active(timestamp) {
+        } else if cfg.is_feature_active_cascading(BaseFeature::EngineApiV3, timestamp) {
             // Cancun
             Self::V3
         } else {
@@ -95,11 +95,11 @@ impl EngineGetPayloadVersion {
     ///
     /// Uses the [`RollupConfig`] to check which upgrade is active at the given timestamp.
     pub fn from_cfg(cfg: &RollupConfig, timestamp: u64) -> Self {
-        if cfg.is_base_azul_active(timestamp) {
+        if cfg.is_feature_active_cascading(BaseFeature::EngineApiV5, timestamp) {
             Self::V5
-        } else if cfg.is_isthmus_active(timestamp) {
+        } else if cfg.is_feature_active_cascading(BaseFeature::EngineApiV4, timestamp) {
             Self::V4
-        } else if cfg.is_ecotone_active(timestamp) {
+        } else if cfg.is_feature_active_cascading(BaseFeature::EngineApiV3, timestamp) {
             // Cancun
             Self::V3
         } else {

@@ -5,7 +5,7 @@ use alloy_eips::eip7685::EMPTY_REQUESTS_HASH;
 use alloy_primitives::{Address, B256};
 use alloy_rpc_types_engine::{ExecutionPayloadV3, PayloadError};
 use base_common_consensus::BaseTxEnvelope;
-use base_common_genesis::RollupConfig;
+use base_common_genesis::{BaseFeature, RollupConfig};
 use base_common_rpc_types_engine::{
     BaseExecutionPayload, BaseExecutionPayloadV4, BasePayloadError, NetworkPayloadEnvelope,
 };
@@ -205,7 +205,10 @@ impl BlockHandler {
         let mut block: Block<BaseTxEnvelope> = envelope.payload.clone().try_into_block()?;
         block.header.parent_beacon_block_root = envelope.parent_beacon_block_root;
         // If isthmus is active, set the requests hash to the empty hash.
-        if self.rollup_config.is_isthmus_active(envelope.payload.timestamp()) {
+        if self.rollup_config.is_feature_active_cascading(
+            BaseFeature::EmptyRequestsHash,
+            envelope.payload.timestamp(),
+        ) {
             block.header.requests_hash = Some(EMPTY_REQUESTS_HASH);
         }
         let received = block.header.hash_slow();
@@ -285,7 +288,10 @@ impl BlockHandler {
             parent_beacon_block_root: Option<B256>,
         ) -> Result<(), BlockInvalidError> {
             // If Jovian is not active, the blob gas used should be zero.
-            if !rollup_config.is_jovian_active(block.timestamp()) && block.blob_gas_used != 0 {
+            if !rollup_config
+                .is_feature_active_cascading(BaseFeature::DaFootprint, block.timestamp())
+                && block.blob_gas_used != 0
+            {
                 return Err(BlockInvalidError::BlobGasUsed);
             }
 

@@ -10,7 +10,7 @@ use alloy_rlp::Encodable;
 use alloy_rpc_types_engine::PayloadAttributes;
 use async_trait::async_trait;
 use base_common_consensus::Predeploys;
-use base_common_genesis::{BaseUpgrade, RollupConfig, SystemConfig};
+use base_common_genesis::{BaseFeature, BaseUpgrade, RollupConfig, SystemConfig};
 use base_common_rpc_types_engine::BasePayloadAttributes;
 use base_consensus_upgrades::{Upgrade, Upgrades};
 use base_protocol::{BaseTimeUpdateTx, Deposits, L1BlockInfoTx, L2BlockInfo};
@@ -133,7 +133,8 @@ where
             let (updates, errors) = sys_config.update_with_receipts(
                 &receipts,
                 self.rollup_cfg.l1_system_config_address,
-                self.rollup_cfg.is_ecotone_active(header.timestamp),
+                self.rollup_cfg
+                    .is_feature_active_cascading(BaseFeature::BlobAwareL1Fees, header.timestamp),
             );
             for kind in &updates {
                 info!(target: "attributes", epoch = epoch.number, %kind, "Applied system config update");
@@ -170,7 +171,11 @@ where
             ));
         }
 
-        if self.rollup_cfg.is_first_denim_block(target_l2_time, l2_parent.block_info.timestamp) {
+        if self.rollup_cfg.is_feature_activation_block_cascading(
+            BaseFeature::SubsecondBlocks,
+            target_l2_time,
+            l2_parent.block_info.timestamp,
+        ) {
             // Preserve gas throughput and base-fee responsiveness per unit of wall-clock time
             // when Denim increases the number of blocks in each legacy block interval tenfold.
             sys_config.gas_limit /= u64::from(RollupConfig::DENIM_GAS_PARAMETER_SCALING_FACTOR);
@@ -180,24 +185,32 @@ where
         }
 
         let mut upgrade_transactions: Vec<Bytes> = vec![];
-        if self.rollup_cfg.is_ecotone_active(target_l2_time)
-            && !self.rollup_cfg.is_ecotone_active(l2_parent.block_info.timestamp)
-        {
+        if self.rollup_cfg.is_feature_activation_block_cascading(
+            BaseFeature::EcotoneUpgradeTransactions,
+            target_l2_time,
+            l2_parent.block_info.timestamp,
+        ) {
             upgrade_transactions.extend(Upgrades::ECOTONE.txs());
         }
-        if self.rollup_cfg.is_fjord_active(target_l2_time)
-            && !self.rollup_cfg.is_fjord_active(l2_parent.block_info.timestamp)
-        {
+        if self.rollup_cfg.is_feature_activation_block_cascading(
+            BaseFeature::FjordUpgradeTransactions,
+            target_l2_time,
+            l2_parent.block_info.timestamp,
+        ) {
             upgrade_transactions.extend(Upgrades::FJORD.txs());
         }
-        if self.rollup_cfg.is_isthmus_active(target_l2_time)
-            && !self.rollup_cfg.is_isthmus_active(l2_parent.block_info.timestamp)
-        {
+        if self.rollup_cfg.is_feature_activation_block_cascading(
+            BaseFeature::IsthmusUpgradeTransactions,
+            target_l2_time,
+            l2_parent.block_info.timestamp,
+        ) {
             upgrade_transactions.extend(Upgrades::ISTHMUS.txs());
         }
-        if self.rollup_cfg.is_jovian_active(target_l2_time)
-            && !self.rollup_cfg.is_jovian_active(l2_parent.block_info.timestamp)
-        {
+        if self.rollup_cfg.is_feature_activation_block_cascading(
+            BaseFeature::JovianUpgradeTransactions,
+            target_l2_time,
+            l2_parent.block_info.timestamp,
+        ) {
             upgrade_transactions.extend(Upgrades::JOVIAN.txs());
         }
 
@@ -217,7 +230,9 @@ where
         let mut encoded_l1_info_tx = Vec::with_capacity(l1_info_tx_envelope.length());
         l1_info_tx_envelope.encode_2718(&mut encoded_l1_info_tx);
 
-        let base_time_active = self.rollup_cfg.is_denim_active(target_l2_time);
+        let base_time_active = self
+            .rollup_cfg
+            .is_feature_active_cascading(BaseFeature::SubsecondBlocks, target_l2_time);
         let mut txs = Vec::with_capacity(
             1 + usize::from(base_time_active)
                 + deposit_transactions.len()
@@ -241,12 +256,12 @@ where
         txs.extend(upgrade_transactions);
 
         let mut withdrawals = None;
-        if self.rollup_cfg.is_canyon_active(target_l2_time) {
+        if self.rollup_cfg.is_feature_active_cascading(BaseFeature::Withdrawals, target_l2_time) {
             withdrawals = Some(Vec::default());
         }
 
         let mut parent_beacon_root = None;
-        if self.rollup_cfg.is_ecotone_active(target_l2_time) {
+        if self.rollup_cfg.is_feature_active_cascading(BaseFeature::BeaconRoots, target_l2_time) {
             // if the parent beacon root is not available, default to zero hash
             parent_beacon_root = Some(l1_header.parent_beacon_block_root.unwrap_or_default());
         }
@@ -273,7 +288,7 @@ where
             ),
             min_base_fee: self
                 .rollup_cfg
-                .is_jovian_active(target_l2_time)
+                .is_feature_active_cascading(BaseFeature::MinBaseFee, target_l2_time)
                 .then(|| sys_config.min_base_fee.unwrap_or_default()), /* Default to zero if not
                                                                         * set at Jovian */
         })

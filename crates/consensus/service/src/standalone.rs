@@ -7,7 +7,7 @@ use alloy_primitives::{Address, B256, Bytes, TxKind, U256, keccak256};
 use alloy_rpc_types_engine::PayloadAttributes;
 use async_trait::async_trait;
 use base_common_consensus::{Predeploys, TxDeposit};
-use base_common_genesis::{BaseUpgrade, RollupConfig, SystemConfig};
+use base_common_genesis::{BaseFeature, BaseUpgrade, RollupConfig, SystemConfig};
 use base_common_rpc_types_engine::BasePayloadAttributes;
 use base_consensus_derive::{
     AttributesBuilder, BuilderError, PipelineError, PipelineErrorKind, PipelineResult, Signal,
@@ -102,7 +102,10 @@ impl AttributesBuilder for StandaloneAttributesBuilder {
         // transactions list (the payload attributes no longer carry a millis field). Denim is the
         // upgrade that activates the native sub-second block cadence, matching the production
         // stateful attributes builder.
-        if self.rollup_config.is_denim_active(next_l2_time) {
+        if self
+            .rollup_config
+            .is_feature_active_cascading(BaseFeature::SubsecondBlocks, next_l2_time)
+        {
             let base_time =
                 BaseTimeUpdateTx::new(next_l2_timestamp_millis_part).map_err(|error| {
                     PipelineError::AttributesBuilder(BuilderError::BaseTimeUpdate(error)).crit()
@@ -141,10 +144,13 @@ impl AttributesBuilder for StandaloneAttributesBuilder {
                 timestamp: next_l2_time,
                 prev_randao: B256::ZERO,
                 suggested_fee_recipient: Predeploys::SEQUENCER_FEE_VAULT,
-                withdrawals: self.rollup_config.is_canyon_active(next_l2_time).then(Vec::new),
+                withdrawals: self
+                    .rollup_config
+                    .is_feature_active_cascading(BaseFeature::Withdrawals, next_l2_time)
+                    .then(Vec::new),
                 parent_beacon_block_root: self
                     .rollup_config
-                    .is_ecotone_active(next_l2_time)
+                    .is_feature_active_cascading(BaseFeature::BeaconRoots, next_l2_time)
                     .then_some(B256::ZERO),
                 slot_number: None,
                 target_gas_limit: None,
@@ -159,7 +165,7 @@ impl AttributesBuilder for StandaloneAttributesBuilder {
             ),
             min_base_fee: self
                 .rollup_config
-                .is_jovian_active(next_l2_time)
+                .is_feature_active_cascading(BaseFeature::MinBaseFee, next_l2_time)
                 .then(|| self.system_config.min_base_fee.unwrap_or_default()),
         })
     }
@@ -195,7 +201,9 @@ impl StandaloneDenimSchedule {
             });
         }
         let mut system_config = head.system_config;
-        if rollup_config.is_denim_active(head_info.timestamp) {
+        if rollup_config
+            .is_feature_active_cascading(BaseFeature::SubsecondBlocks, head_info.timestamp)
+        {
             return Ok(Self { rollup_config, system_config });
         }
         if let Some(upgrade) = BaseUpgrade::CONTRACT_VARIANTS

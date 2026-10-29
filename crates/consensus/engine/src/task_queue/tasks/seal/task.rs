@@ -3,7 +3,7 @@ use std::{sync::Arc, time::Instant};
 
 use alloy_rpc_types_engine::PayloadId;
 use async_trait::async_trait;
-use base_common_genesis::RollupConfig;
+use base_common_genesis::{BaseFeature, RollupConfig};
 use base_common_rpc_types_engine::BaseExecutionPayloadEnvelope;
 use base_protocol::{AttributesWithParent, L2BlockInfo};
 use derive_more::Constructor;
@@ -78,7 +78,8 @@ impl<EngineClient_: EngineClient> SealTask<EngineClient_> {
                 return Err(SealTaskError::DepositOnlyPayloadFailed);
             }
             Err(InsertTaskError::UnexpectedPayloadStatus(e))
-                if self.cfg.is_holocene_active(
+                if self.cfg.is_feature_active_cascading(
+                    BaseFeature::DepositsOnlyOnInvalidPayload,
                     self.attributes.attributes().payload_attributes.timestamp,
                 ) =>
             {
