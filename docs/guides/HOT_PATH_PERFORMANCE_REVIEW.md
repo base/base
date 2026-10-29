@@ -24,10 +24,9 @@ even while mainnet still runs flashblocks.
 | Native builder selection and execution (production after Denim) | `crates/execution/payload/src/builder.rs` `execute_best_transactions` loop body, plus everything it calls, including resource metering and validity predicates | candidate transaction, per 200 ms block | ~10^9 candidates/day vs ~10^7 included |
 | Native block assembly | `crates/execution/payload/src/builder.rs` `build_payload`/`try_build`, sealing, state root, `crates/builder/multiplex` block stream | block | ~4×10^5/day after Denim |
 | Flashblock transaction selection and execution (until Denim) | `crates/builder/core/src/flashblocks/context.rs` `execute_best_transactions` loop body, plus everything it calls | candidate transaction, per flashblock | ~10^9 candidates/day vs ~10^7 included |
-| Best-transaction iteration and parking (both builders) | `crates/execution/txpool/src/best.rs` (`MergeBestTransactions::next`, `pop_best`, `mark_invalid`), `crates/execution/txpool/src/two_d_nonce_pool.rs` (`BestTwoDTransactions::next`, `mark_invalid`), `crates/execution/payload/src/parkable.rs`, `crates/builder/core` parkable iterators, `crates/execution/txpool` ordering and validity predicates | candidate transaction (pop or rejection) | ~10^9 candidates/day |
-| Best-transaction snapshot construction (both builders) | `crates/execution/txpool/src/pool.rs` (`best_transactions`, `best_transactions_with_attributes`), `crates/execution/txpool/src/best.rs` (`MergeBestTransactions::new`), reth's pending snapshot, `crates/execution/txpool/src/two_d_nonce_pool.rs` (`TwoDNoncePool::best_transactions`, `BestTwoDTransactions::new`) | flashblock (~10/block), or 200 ms block after Denim | ~4×10^5/day |
-| Transaction pool admission and lane/canonical maintenance | `crates/execution/txpool/src/pool.rs` (`add_transaction*`, `remove_transactions*`, `prune_transactions`, `on_canonical_state_change`), `crates/execution/txpool/src/two_d_nonce_pool.rs` (`insert_validated*`, `set_lane_*`, `advance_lane_nonce`, `refresh_lane_*`, `evict_over_capacity`), validation, RPC `eth_sendRawTransaction` | submitted, mined, or re-anchored transaction | ~10^8/day |
-| Pool occupancy, p2p, and bounded queries | `crates/execution/txpool/src/pool.rs` (`pool_size`, `pending_transactions_max`, `pooled_transaction_hashes_max`, `pooled_transactions_max`, `retain_unknown`, `get_pooled_transaction_elements`) | metrics scrape, p2p announcement, or RPC query | continuous under load (`10^4–10^5` pooled txs) |
+| Best-transaction iteration and parking (both builders) | `crates/execution/payload/src/parkable.rs`, `crates/builder/core` parkable iterators, `crates/execution/txpool` ordering and validity predicates | candidate transaction | same order as above |
+| Best-transaction snapshot (both builders) | building the best-transactions iterator in `crates/execution/txpool`, including each store's snapshot | flashblock, or block after Denim | ~4×10^5/day |
+| Transaction pool admission | `crates/execution/txpool` validation and insertion into each store, RPC `eth_sendRawTransaction` | submitted transaction | ~10^8/day |
 | Flashblock publish (until Denim) | `crates/builder/publish` | flashblock (10 per block) | ~4×10^5/day |
 | Block execution and state root | `crates/execution/*` executor, trie | block and touched account/slot | ~4×10^4 blocks/day, ~4×10^5 after Denim |
 
@@ -44,25 +43,42 @@ the latency-critical build loop and directly steals transactions from blocks.
 
 ## Review procedure
 
-1. **Trace call frequency and population scale from the registry above.** Read the full body of every changed function and of any *unchanged* callee or data structure whose call rate or input population size the PR increases (for example, routing a `10^4–10^5` transaction pool into a structure originally written for a small subpool, or calling an existing helper inside a hotter loop).
-2. **Multiply inner-loop work by outer-loop frequency.** Do not accept comments or PR descriptions claiming a set is "small in steady state" or "only ready items"; determine what bounds the collection in the worst case (such as full blocks, price gaps, nonce gaps, or bursty single-sender lanes).
-3. **Audit PR benchmarks before trusting their numbers.** Verify that benchmark fixtures populate worst-case states: released or deferred candidates that *do not* immediately outbid the block cutoff (so waiting/ready sets accumulate across pops), multi-transaction lanes (`m > 1`), and all cross-store directions. Flag benchmarks whose priority or nonce distributions accidentally collapse `O(N · L)` or `O(m²)` behavior into `O(1)`.
+1. Find how often each changed function runs, using the registry. Then read the
+   full body of every function and data structure it calls, changed or not.
+   Existing code becomes hot when a PR calls it from a hotter loop or feeds it a
+   much larger collection.
+2. Multiply the work inside a loop by how often the loop runs. Bound each
+   collection by its worst case, not by a comment or PR description that says
+   it stays small.
+3. Before trusting a PR's benchmark, check that its inputs reach the worst case.
+   Prices, nonces, and lane lengths that let each candidate win at once can hide
+   super-linear cost.
 
 ## What to flag
 
-On a hot path, flag any per-unit work—whether newly written or inherited from existing code now called at a higher rate or larger population—that block building or pool admission does not need, with the per-unit cost and the multiplier:
+On a hot path, flag any added per-unit work that block building does not need,
+with the per-unit cost and the multiplier:
 
-- **Linear scans inside per-candidate iteration (`O(N · L)` per build):** `BestTransactions::next`, `pop_best`, and `mark_invalid` run `N` times per flashblock/block. Scanning ready, held, or waiting lanes linearly on each pop costs `O(N · L)` when low-tip ready lanes remain unpicked across pops. Require a `BinaryHeap` or priority index (`O(log L)` per pop) and verify `mark_invalid` clears or demotes cross-store successors across *every* store's buffered head and waiting set.
-- **Per-flashblock / per-block deep copies and index rebuilds (`O(P)` per build):** `best_transactions` / `BestTwoDTransactions::new` runs every 200 ms. Flag walking all lanes or pooled transactions to clone `Arc<ValidPoolTransaction>`s into fresh `Vec`s or rebuild `HashMap`/`BinaryHeap` indexes per snapshot when the store can hold `10^4–10^5` transactions. Maintain head/priority indexes incrementally on admission and removal.
-- **Quadratic single-lane admission or maintenance (`O(m²)`):** Flag calling `O(m)` lane-traversal helpers (such as `consecutive_pending_len()` or `queued_transactions()`) multiple times per insert/remove on a lane of length `m`, or allocating temporary `HashSet<TxHash>`s in `set_lane_nonce` (or lane cursor updates) when contiguous nonce-range math suffices.
-- **Clone-to-count and clone-to-truncate in pool queries (`O(P)` allocations):** Flag calling `pending_transactions()`, `queued_transactions()`, or `all_transactions()` (which allocate a `Vec` and clone every `Arc` in the store) just to sum byte sizes (`pool_size`), count entries, or `.take(max)` (`*_max` methods). Use tracked counters (`pool.size()`) or bounded iterators.
-- **Serialization or formatting:** `serde_json`, `to_value`, `format!`, `to_string`, `{:#x}` hex encoding, building `Map<String, Value>`.
-- **Heap allocation and cloning:** `Vec`/`String`/`Map`/`HashSet` construction per candidate or admission, `clone()` of non-`Copy` data, `Arc` churn, boxing closures.
-- **Observability done eagerly:** events, logs, and metrics whose fields are built before the level or enabled check, and metrics labels allocated per call. Deferring to a background thread still pays the allocation and moves the data; prefer not emitting per-candidate records.
-- **Metric handle lookups per unit:** a labeled `counter!`/`histogram!` call, or a generated accessor such as `BuilderMetrics::foo_total(label)`, builds a key and looks it up in the recorder on every call. Resolve handles once per loop.
-- **Locks, channel sends, syscalls, file or network I/O.**
-- **Repeated work:** recomputing per candidate what is fixed per flashblock or block, re-emitting identical records for the same transaction.
-- **Super-linear behavior** in the number of candidates, lanes, parked transactions, or predicates.
+- Serialization or formatting: `serde_json`, `to_value`, `format!`, `to_string`,
+  `{:#x}` hex encoding, building `Map<String, Value>`.
+- Heap allocation and cloning: `Vec`/`String`/`Map` construction, `clone()` of
+  non-`Copy` data, `Arc` churn, boxing closures, and collecting a whole store
+  only to count, sum, or truncate it.
+- Observability done eagerly: events, logs, and metrics whose fields are built
+  before the level or enabled check, and metrics labels allocated per call.
+  Deferring to a background thread still pays the allocation and moves the data;
+  prefer not emitting per-candidate records.
+- Metric handle lookups per unit: a labeled `counter!`/`histogram!` call, or a
+  generated accessor such as `BuilderMetrics::foo_total(label)`, builds a key and
+  looks it up in the recorder on every call. Resolve handles once per loop.
+- Locks, channel sends, syscalls, file or network I/O.
+- Repeated work: recomputing per candidate what is fixed per flashblock or block,
+  re-emitting identical records for the same transaction, and copying or
+  re-indexing a pool-sized collection on every build instead of keeping it up
+  to date on insert and remove.
+- Super-linear behavior in the number of candidates, parked transactions,
+  predicates, or transactions per sender, including a scan on every candidate
+  of a collection that persists across candidates.
 
 **Evaluate default-off features as enabled.** Production enables features that
 default off in tests, benchmarks, and devnet (for example
