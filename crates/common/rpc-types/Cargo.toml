@@ -34,10 +34,12 @@ serde = { workspace = true, features = ["derive", "alloc"] }
 
 # reth
 revm = { workspace = true, optional = true }
+reth-evm = { workspace = true, optional = true }
 alloy-evm = { workspace = true, optional = true }
 base-common-evm = { workspace = true, optional = true }
-reth-primitives-traits = { workspace = true, optional = true }
+base-common-evm2 = { workspace = true, optional = true }
 reth-rpc-convert = { workspace = true, optional = true }
+reth-primitives-traits = { workspace = true, optional = true }
 
 # signing
 alloy-signer = { workspace = true, optional = true }
@@ -53,6 +55,7 @@ derive_more = { workspace = true, features = ["as_ref", "deref_mut", "try_from"]
 [dev-dependencies]
 rand.workspace = true
 similar-asserts.workspace = true
+reth-evm-ethereum.workspace = true
 k256 = { workspace = true, features = ["ecdsa"] }
 arbitrary = { workspace = true, features = ["derive"] }
 alloy-consensus = { workspace = true, features = ["arbitrary"] }
@@ -112,6 +115,8 @@ eip8130 = [
 ]
 reth = [
 	"dep:alloy-signer",
+	"dep:base-common-evm2",
+	"dep:reth-evm",
 	"dep:reth-primitives-traits",
 	"dep:reth-rpc-convert",
 	"eip8130",
