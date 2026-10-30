@@ -4,7 +4,9 @@ use alloy_signer::utils::public_key_to_address;
 use base_health::{HealthzApiServer, HealthzRpc};
 use base_proof_host::ProverConfig;
 use base_proof_primitives::{EnclaveApiServer, ProofRequest, ProofResult, ProverApiServer};
-use base_proof_tee_nitro_enclave::{EnclaveClient, EnclaveFailure, EnclaveLinkError};
+use base_proof_tee_nitro_enclave::{
+    EnclaveClient, EnclaveFailure, EnclaveLinkError, EnclaveRequest,
+};
 use jsonrpsee::{
     RpcModule,
     core::{RpcResult, async_trait},
@@ -224,6 +226,15 @@ impl EnclaveApiServer for NitroSignerRpc {
             ));
         }
 
+        EnclaveRequest::SignerAttestation { user_data: user_data.clone(), nonce: None }
+            .validate()
+            .map_err(|error| NitroProverServer::link_err(error.into()))?;
+        for nonce in nonces.iter().flatten() {
+            EnclaveRequest::SignerAttestation { user_data: None, nonce: Some(nonce.clone()) }
+                .validate()
+                .map_err(|error| NitroProverServer::link_err(error.into()))?;
+        }
+
         let mut attestations = Vec::with_capacity(self.enclave_clients.len());
         for (index, enclave_client) in self.enclave_clients.iter().enumerate() {
             let nonce = nonces.as_ref().map(|items| items[index].clone());
@@ -243,7 +254,7 @@ mod tests {
     use std::sync::atomic::Ordering;
 
     use base_proof_primitives::EnclaveApiServer;
-    use base_proof_tee_nitro_enclave::{EnclaveRequest, Server as EnclaveServer};
+    use base_proof_tee_nitro_enclave::Server as EnclaveServer;
     use jsonrpsee::core::client::ClientT as _;
 
     use super::*;
@@ -395,6 +406,19 @@ mod tests {
         // Assert the error is propagated (not swallowed) through the RPC layer.
         let result = EnclaveApiServer::signer_attestation(&rpc, None, None).await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn signer_attestation_validates_second_nonce_before_contacting_enclaves() {
+        let client =
+            Arc::new(EnclaveClient::in_process(Arc::new(EnclaveServer::new_local().unwrap())));
+        let rpc = NitroSignerRpc { enclave_clients: vec![Arc::clone(&client), client] };
+        let nonces = vec![Vec::new(), vec![0; EnclaveRequest::MAX_NONCE_BYTES + 1]];
+
+        let err = EnclaveApiServer::signer_attestation(&rpc, None, Some(nonces)).await.unwrap_err();
+
+        assert_eq!(err.code(), -32602);
+        assert!(err.message().contains("nonce"));
     }
 
     #[tokio::test]

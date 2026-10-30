@@ -106,12 +106,22 @@ impl EnclaveClient {
     }
 
     /// Send witness preimages to the enclave and return the signed proof.
+    ///
+    /// Dropping the future stops the in-process handler at its next await point.
     pub async fn prove(
         &self,
         preimages: Vec<(PreimageKey, Vec<u8>)>,
     ) -> Result<ProofResult, EnclaveLinkError> {
+        let (cid, port) = match &self.connector {
+            #[cfg(target_os = "linux")]
+            EnclaveConnector::Vsock { cid, port } => (Some(*cid), Some(*port)),
+            EnclaveConnector::InProcess(_) => (None::<u32>, None::<u32>),
+        };
         info!(
             preimage_count = preimages.len(),
+            cid,
+            port,
+            in_process = matches!(self.connector, EnclaveConnector::InProcess(_)),
             total_value_bytes = preimages.iter().map(|(_, v)| v.len()).sum::<usize>(),
             "sending prove request to enclave"
         );
@@ -189,6 +199,7 @@ impl EnclaveClient {
         request: EnclaveRequest,
         response_timeout: Option<Duration>,
     ) -> Result<EnclaveResponse, EnclaveLinkError> {
+        request.validate()?;
         match &self.connector {
             #[cfg(target_os = "linux")]
             EnclaveConnector::Vsock { cid, port } => {
@@ -204,12 +215,17 @@ impl EnclaveClient {
             EnclaveConnector::InProcess(server) => {
                 let (stream, enclave_end) = duplex(Self::IN_PROCESS_BUFFER_BYTES);
                 let handler = EnclaveHandler::new(Arc::clone(server));
-                tokio::spawn(async move {
-                    if let Err(error) = handler.serve(enclave_end).await {
-                        warn!(error = %error, "in-process enclave connection failed");
+                let exchange = Self::exchange(stream, &request, response_timeout);
+                tokio::pin!(exchange);
+                tokio::select! {
+                    result = &mut exchange => result,
+                    result = handler.serve(enclave_end) => {
+                        if let Err(error) = result {
+                            warn!(error = %error, "in-process enclave connection failed");
+                        }
+                        exchange.await
                     }
-                });
-                Self::exchange(stream, &request, response_timeout).await
+                }
             }
         }
     }
@@ -217,9 +233,64 @@ impl EnclaveClient {
 
 #[cfg(test)]
 mod tests {
-    use tokio::io::duplex;
+    use std::{
+        future::{Future, poll_fn},
+        io::{self, Write},
+        sync::Mutex,
+        task::Poll,
+    };
+
+    use base_proof_preimage::PreimageKeyType;
+    use tokio::io::{AsyncReadExt, duplex};
 
     use super::*;
+
+    #[derive(Debug, Clone)]
+    struct LogWriter(Arc<Mutex<Vec<u8>>>);
+
+    impl Write for LogWriter {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            self.0.lock().unwrap().write(bytes)
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn prove_log_identifies_enclave() {
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let writer = LogWriter(Arc::clone(&output));
+        let subscriber = tracing_subscriber::fmt()
+            .without_time()
+            .with_ansi(false)
+            .with_writer(move || writer.clone())
+            .finish();
+        #[cfg(target_os = "linux")]
+        let client = EnclaveClient::vsock(16, 9000);
+        #[cfg(not(target_os = "linux"))]
+        let client = client();
+
+        tracing::subscriber::with_default(subscriber, || {
+            let mut prove = Box::pin(client.prove(Vec::new()));
+            let mut context = std::task::Context::from_waker(std::task::Waker::noop());
+            let _ = prove.as_mut().poll(&mut context);
+        });
+
+        let log = String::from_utf8(output.lock().unwrap().clone()).unwrap();
+        let log =
+            log.lines().find(|line| line.contains("sending prove request to enclave")).unwrap();
+        #[cfg(target_os = "linux")]
+        {
+            assert!(log.contains("cid=16"), "{log}");
+            assert!(log.contains("port=9000"), "{log}");
+        }
+        #[cfg(not(target_os = "linux"))]
+        assert!(log.contains("in_process=true"), "{log}");
+        assert!(log.contains("preimage_count=0"), "{log}");
+        assert!(log.contains("total_value_bytes=0"), "{log}");
+    }
 
     fn client() -> EnclaveClient {
         EnclaveClient::in_process(Arc::new(Server::new_local().unwrap()))
@@ -240,11 +311,57 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn dropping_prove_stops_in_process_handler() {
+        let server = Arc::new(Server::new_local().unwrap());
+        let client = EnclaveClient::in_process(Arc::clone(&server));
+        let key = PreimageKey::new([1; 32], PreimageKeyType::Local);
+        let mut prove = Box::pin(
+            client.prove(vec![(key, vec![0; 2 * EnclaveClient::IN_PROCESS_BUFFER_BYTES])]),
+        );
+
+        let state = poll_fn(|cx| Poll::Ready(prove.as_mut().poll(cx))).await;
+        assert!(state.is_pending(), "request must still be in flight");
+        assert_eq!(Arc::strong_count(&server), 3);
+        drop(prove);
+        assert_eq!(Arc::strong_count(&server), 2, "cancelled calls must drop their handler");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn invalid_attestation_is_rejected_before_connecting_to_unreachable_enclave() {
+        let client = EnclaveClient::vsock(u32::MAX, u32::MAX);
+        for (user_data, nonce) in [
+            (Some(vec![0; EnclaveRequest::MAX_USER_DATA_BYTES + 1]), None),
+            (None, Some(vec![0; EnclaveRequest::MAX_NONCE_BYTES + 1])),
+        ] {
+            let err = client.signer_attestation(user_data, nonce).await.unwrap_err();
+            assert!(
+                matches!(err, EnclaveLinkError::Enclave(EnclaveFailure::InvalidRequest(_))),
+                "{err:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn oversized_nonce_is_rejected_before_sending() {
-        let nonce = vec![0; EnclaveRequest::MAX_NONCE_BYTES + 1];
-        let err = client().signer_attestation(None, Some(nonce)).await.unwrap_err();
-        assert!(matches!(err, EnclaveLinkError::Enclave(EnclaveFailure::InvalidRequest(_))));
+        let (host, mut peer) = duplex(64 * 1024);
+        let request = EnclaveRequest::SignerAttestation {
+            user_data: None,
+            nonce: Some(vec![0; EnclaveRequest::MAX_NONCE_BYTES + 1]),
+        };
+        let err = EnclaveClient::exchange(host, &request, Some(Duration::from_millis(10)))
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, EnclaveLinkError::Enclave(EnclaveFailure::InvalidRequest(_))),
+            "{err:?}"
+        );
         assert!(!err.is_retryable());
+        assert_eq!(
+            peer.read(&mut [0; 1]).await.unwrap(),
+            0,
+            "invalid requests must not write a frame"
+        );
     }
 
     #[tokio::test]
