@@ -184,6 +184,7 @@ mod tests {
         let result = BuilderEngineSharingConfig {
             share_sparse_trie_with_payload_builder: true,
             share_execution_cache_with_payload_builder: true,
+            ..Default::default()
         }
         .apply(&mut node);
         if supported {

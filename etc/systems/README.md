@@ -222,11 +222,12 @@ receive the builder's suppression option.
 For a base-metal mainnet mixed-workload A/B, use the same optimized binary and
 load-test YAML for both arms. Set `MAINNET_MIX_CONFIG` to the base-metal workload
 file and restore separate writable snapshot datadirs for **each** run. Keep the
-gas limit and all workload settings identical. For example, at 200ms:
+gas limit and all workload settings identical. Cadence is selected by the YAML's
+`block_time`; use `200ms` in that file for the subsecond A/B:
 
 ```bash
 # Control: suppression remains off.
-base-bench snapshot --chain mainnet --block-interval 200ms \
+base-bench snapshot --chain mainnet \
   --builder-datadir "$CONTROL_BUILDER_DATADIR" \
   --client-datadir "$CONTROL_CLIENT_DATADIR" \
   --load-test-config "$MAINNET_MIX_CONFIG" \
@@ -235,7 +236,7 @@ base-bench snapshot --chain mainnet --block-interval 200ms \
   --output-dir "$CONTROL_OUTPUT_DIR"
 
 # Treatment: only suppression changes.
-base-bench snapshot --chain mainnet --block-interval 200ms \
+base-bench snapshot --chain mainnet \
   --builder-datadir "$TREATMENT_BUILDER_DATADIR" \
   --client-datadir "$TREATMENT_CLIENT_DATADIR" \
   --load-test-config "$MAINNET_MIX_CONFIG" \

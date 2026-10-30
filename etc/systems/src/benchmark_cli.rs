@@ -1521,6 +1521,7 @@ mod tests {
             (vec![], false, false),
             (vec!["--engine.suppress-persistence-during-build"], true, false),
             (vec!["--use-reth-persistence-defaults"], false, true),
+            (vec!["--use-reth-persistence-defaults", "--engine.suppress-persistence-during-build"], true, true),
         ] {
             let mut argv = vec!["base-bench", "snapshot", "--builder-datadir", "/snapshot/builder",
                 "--load-test-config", "load.yaml", "--output-dir", "results", "--scenario", "persistence"];
