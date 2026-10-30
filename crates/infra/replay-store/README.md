@@ -18,6 +18,6 @@ Publication failures are terminal; cancellation can leave an object already comm
 
 `read(network, start_ms..=end_ms)` lazily enumerates minute keys, skips missing objects,
 and streams records in timestamp order, preserving arrival order for ties.
-Reads and writes cap both compressed and uncompressed objects at 64 MiB, rejecting
+Reads and writes cap both compressed and uncompressed objects at 64 `MiB`, rejecting
 oversized minutes instead of splitting them. Decoding and sorting use one object's
 memory, not the full range. Missing minutes are not evidence of a complete capture.
