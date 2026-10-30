@@ -1,10 +1,13 @@
 //! Validity transactions resting under an unsatisfied predicate, carried across block builds.
 
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
-use alloy_primitives::{B256, TxHash};
-use base_execution_txpool::{PredicateContext, ValidityConditions, ValidityPredicate};
+use alloy_primitives::{B256, TxHash, map::B256Set};
+use base_execution_txpool::{
+    BasePooledTx, BestTransactionsHold, PredicateContext, ValidityConditions, ValidityPredicate,
+};
 use parking_lot::Mutex;
+use reth_transaction_pool::ValidPoolTransaction;
 use revm::{database::TransitionState, state::EvmState};
 
 use crate::{ParkedPredicateIndex, ValidityPredicateKey};
@@ -241,6 +244,146 @@ impl RestingPredicates {
     /// Returns the number of members.
     pub fn len(&self) -> usize {
         self.index.len()
+    }
+}
+
+/// Work spent holding back resting transactions since the stats were last taken.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RestingStats {
+    /// Resting transactions parked without being yielded to the build loop.
+    pub parked: u64,
+    /// Of [`Self::parked`], transactions whose predicate was found unsatisfied in an earlier block.
+    pub carried_parked: u64,
+    /// Time the pool iterators spent advancing past held transactions, from the first hold of
+    /// each `next` call until it found a candidate.
+    pub duration: Duration,
+}
+
+/// A resting set shared between one build and the pool iterators it drives.
+///
+/// The build loop populates the set through [`Self::rest`] and reports commits through
+/// [`Self::wake_by_state`]. Each pool iterator the build creates carries a [`Self::iterator_hold`]
+/// that parks members at the source, so the build loop never sees a transaction whose recorded
+/// predicate is still unsatisfied. The iterator and the build loop run on the build thread, so
+/// the lock is uncontended; it exists because the iterator is a boxed trait object the build loop
+/// does not own.
+#[derive(Debug, Clone)]
+pub struct SharedRestingPredicates {
+    inner: Arc<Mutex<SharedRestingState>>,
+}
+
+#[derive(Debug)]
+struct SharedRestingState {
+    predicates: RestingPredicates,
+    /// Members parked by the current iterator's hold. The build loop promotes these when a commit
+    /// wakes them; members the build loop parked itself are woken by its own predicate index.
+    held: B256Set,
+    stats: RestingStats,
+}
+
+impl SharedRestingPredicates {
+    /// Shares `predicates` with the pool iterators of one build.
+    pub fn new(predicates: RestingPredicates) -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(SharedRestingState {
+                predicates,
+                held: B256Set::default(),
+                stats: RestingStats::default(),
+            })),
+        }
+    }
+
+    /// Returns a hold for a new pool iterator. Members the previous iterator held are forgotten,
+    /// because they were parked in that iterator.
+    pub fn iterator_hold<T: BasePooledTx>(&self) -> Box<dyn BestTransactionsHold<T>> {
+        self.inner.lock().held.clear();
+        Box::new(RestingHold { shared: self.clone() })
+    }
+
+    /// Records that `predicate` was unsatisfied for `transaction_hash` at the current build
+    /// position.
+    pub fn rest(&self, transaction_hash: TxHash, predicate: ValidityPredicate) {
+        self.inner.lock().predicates.rest(transaction_hash, predicate);
+    }
+
+    /// Removes a member, returning whether it was present.
+    pub fn remove(&self, transaction_hash: TxHash) -> bool {
+        self.inner.lock().predicates.remove(transaction_hash)
+    }
+
+    /// Returns the member for a transaction with `conditions`.
+    pub fn member(
+        &self,
+        transaction_hash: TxHash,
+        conditions: &ValidityConditions,
+    ) -> Option<RestingMember> {
+        self.inner.lock().predicates.member(transaction_hash, conditions)
+    }
+
+    /// Removes the members whose predicate may have changed in `state`, one committed
+    /// transaction's changes, and returns those the current iterator held so the caller can
+    /// promote them.
+    pub fn wake_by_state(&self, state: &EvmState) -> Vec<TxHash> {
+        let mut inner = self.inner.lock();
+        if inner.predicates.is_empty() {
+            return Vec::new();
+        }
+        let mut held = Vec::new();
+        for transaction_hash in inner.predicates.woken_by_state(state) {
+            inner.predicates.remove(transaction_hash);
+            if inner.held.remove(&transaction_hash) {
+                held.push(transaction_hash);
+            }
+        }
+        held
+    }
+
+    /// Returns and resets the work spent holding back resting transactions.
+    pub fn take_stats(&self) -> RestingStats {
+        std::mem::take(&mut self.inner.lock().stats)
+    }
+
+    /// Takes the resting set, leaving an empty one, so it can be carried into the next block.
+    pub fn take_predicates(&self) -> RestingPredicates {
+        let mut inner = self.inner.lock();
+        let empty = RestingPredicates::new(inner.predicates.ordered_threshold);
+        std::mem::replace(&mut inner.predicates, empty)
+    }
+
+    /// Returns the number of members.
+    pub fn len(&self) -> usize {
+        self.inner.lock().predicates.len()
+    }
+
+    /// Returns whether the set has no members.
+    pub fn is_empty(&self) -> bool {
+        self.inner.lock().predicates.is_empty()
+    }
+}
+
+/// Parks members of a [`SharedRestingPredicates`] inside a pool iterator.
+#[derive(Debug)]
+struct RestingHold {
+    shared: SharedRestingPredicates,
+}
+
+impl<T: BasePooledTx> BestTransactionsHold<T> for RestingHold {
+    fn hold(&mut self, transaction: &ValidPoolTransaction<T>) -> bool {
+        let mut inner = self.shared.inner.lock();
+        let Some(carried) = inner
+            .predicates
+            .hold(*transaction.hash(), transaction.transaction.validity_conditions())
+        else {
+            return false;
+        };
+        inner.held.insert(*transaction.hash());
+        inner.stats.parked += 1;
+        inner.stats.carried_parked += u64::from(carried);
+        true
+    }
+
+    fn record_duration(&mut self, duration: Duration) {
+        self.shared.inner.lock().stats.duration += duration;
     }
 }
 

@@ -327,7 +327,7 @@ impl Fixture {
     /// cache so every iteration considers the same candidates.
     fn best_transactions(&self) -> Candidates {
         BestFlashblocksTxs::new(
-            parkable(&self.pool),
+            parkable(&self.pool, None),
             RejectionCache::new(CANDIDATE_COUNT as u64, REJECTION_CACHE_TTL),
         )
     }
