@@ -12,18 +12,23 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+tokio.workspace = true
+thiserror.workspace = true
 alloy-eips.workspace = true
+alloy-transport.workspace = true
 alloy-consensus.workspace = true
 alloy-primitives.workspace = true
 alloy-rpc-types-engine.workspace = true
 
+base-clock.workspace = true
 base-common-chains.workspace = true
+base-common-network.workspace = true
 base-common-consensus.workspace = true
 base-common-rpc-types-engine.workspace = true
 
 [dev-dependencies]
 eyre.workspace = true
-tokio.workspace = true
+alloy-provider = { workspace = true, features = ["ipc"] }
 base-common-genesis.workspace = true
 base-execution-payload-builder.workspace = true
 base-builder-core = { workspace = true, features = ["test-utils"] }
