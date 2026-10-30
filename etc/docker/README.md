@@ -27,11 +27,15 @@ matching the Base mainnet infrastructure source pin. The `devnet` and `tx-observ
 Bake groups build it as `op-batcher:local`; it runs as the canonical batcher.
 The Rust `base batcher` (the `base batcher` subcommand of `base:local`) runs
 alongside it in shadow mode; no separate Rust batcher image is needed.
+OP Labs publishes an image built from the same commit (its SLSA provenance records
+`abe047af`); `DEVNET_IMAGES=pull` uses it by digest, pinned as
+`_op_batcher_published` in the `Justfile`. Update both pins together.
 
 The setup image uses the interface-versioned tag `devnet-setup:local-v2`. System
 tests automatically build it when absent, so a cached legacy `devnet-setup:local`
 image cannot bypass the integrated offline generator. Bump the tag in the setup
-container, smoke test, Justfile, and Compose files when changing this interface.
+container, smoke test, Justfile, Bake file, and Compose files when changing this interface.
+The Docker workflow publishes it for each `main` commit as `ghcr.io/base/devnet-setup`.
 
 Compose devnets and the system-test stack use `op-deployer`, built from
 [`base/optimism` at `896142b3`](https://github.com/base/optimism/tree/896142b334ea20220aa552e9478e5ec406716911).
@@ -140,6 +144,32 @@ just devnet status # Check block numbers and sync status
 ```
 
 To choose between this devnet and the snapshot devnet, see [docs/guides/DEVNET.md](../../docs/guides/DEVNET.md).
+
+### Prebuilt devnet images
+
+`up` and `up-single` build three images by default: `base:local` (Rust, `dev`
+profile), `devnet-setup:local-v2`, and `op-batcher:local`. Set
+`DEVNET_IMAGES=pull` to use published images instead:
+
+```bash
+DEVNET_IMAGES=pull just devnet up-single
+```
+
+When no tracked file has uncommitted changes, this uses
+`ghcr.io/base/node:sha-$(git rev-parse HEAD)`,
+`ghcr.io/base/devnet-setup:sha-$(git rev-parse HEAD)`, and the pinned OP Labs
+op-batcher. The Docker workflow publishes the first two on each push to `main`,
+but cancels runs that newer commits supersede, so some `main` commits and all
+unmerged commits have no images. Any image that is not published is built
+locally, with a message naming it; uncommitted changes build all three. The
+published `base` image uses the `release` profile.
+
+To choose an image yourself, set `DEVNET_BASE_IMAGE`, `DEVNET_SETUP_IMAGE`, or
+`DEVNET_OP_BATCHER_IMAGE`; `up` and `up-single` skip building that image and pull
+it only when it is not present locally, so run `docker pull` yourself to refresh a
+moving tag such as `ghcr.io/base/node:main`. Every devnet Compose file reads these
+variables, but the other recipes, such as `profiling` and `tx-observability`,
+still build the local tags, so leave the variables unset for them.
 
 ### Single-Anvil L1 local Nitro proving
 
