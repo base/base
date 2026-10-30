@@ -823,25 +823,28 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::{sync::Arc, time::Duration};
 
-    use alloy_primitives::B256;
+    use alloy_eips::eip2718::Encodable2718;
+    use alloy_primitives::{B256, Bytes};
     use alloy_rpc_types_engine::ExecutionPayloadV1;
+    use base_common_consensus::{BaseTxEnvelope, TxDeposit};
     use base_common_genesis::RollupConfig;
     use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
     use base_consensus_engine::{
         Engine, EngineState,
         test_utils::{MockEngineClient, TestEngineStateBuilder, test_engine_client_builder},
     };
-    use base_protocol::{BlockInfo, L2BlockInfo};
+    use base_protocol::{BlockInfo, L1BlockInfoBedrock, L2BlockInfo};
     use jsonrpsee::core::ClientError;
     use rstest::rstest;
-    use tokio::sync::watch;
+    use tokio::sync::{mpsc, watch};
 
     use super::{BootstrapRole, SequencerEngineRequestCoordinator, SequencerEngineState};
     use crate::{
-        CanonicalUnsafeCatchup, Conductor, ConductorError, EngineProcessor, MockConductor,
-        MockEngineDerivationClient, NodeOperatingMode, ShadowReconciliationGate,
+        CanonicalUnsafeCatchup, Conductor, ConductorError, EngineActorRequest, EngineProcessor,
+        EngineRequestReceiver, MockConductor, MockEngineDerivationClient, NodeOperatingMode,
+        ShadowReconciliationGate,
     };
 
     fn coordinator(
@@ -865,6 +868,72 @@ mod tests {
         );
         let (unsafe_head_tx, _) = watch::channel(L2BlockInfo::default());
         SequencerEngineRequestCoordinator::new(processor, mode, conductor, stopped, unsafe_head_tx)
+    }
+
+    fn gossip_payload(number: u64) -> BaseExecutionPayloadEnvelope {
+        let deposit: Bytes = BaseTxEnvelope::from(TxDeposit {
+            input: L1BlockInfoBedrock::default().encode_calldata(),
+            ..Default::default()
+        })
+        .encoded_2718()
+        .into();
+        BaseExecutionPayloadEnvelope {
+            execution_payload: BaseExecutionPayload::V1(ExecutionPayloadV1 {
+                block_number: number,
+                block_hash: B256::with_last_byte(1),
+                parent_hash: B256::ZERO,
+                fee_recipient: Default::default(),
+                state_root: B256::ZERO,
+                receipts_root: B256::ZERO,
+                logs_bloom: Default::default(),
+                prev_randao: B256::ZERO,
+                gas_limit: 30_000_000,
+                gas_used: 0,
+                timestamp: number,
+                extra_data: Default::default(),
+                base_fee_per_gas: Default::default(),
+                transactions: vec![deposit],
+            }),
+            parent_beacon_block_root: None,
+        }
+    }
+
+    #[rstest]
+    #[case::beyond_legacy_gap(301, true)]
+    #[case::within_catchup_window(2_999, true)]
+    #[case::beyond_catchup_window(3_001, false)]
+    #[tokio::test]
+    async fn regular_gossip_gap_spans_the_catchup_window(#[case] gap: u64, #[case] admitted: bool) {
+        let coordinator = coordinator(false, false, None);
+        let client = Arc::clone(coordinator.processor.client());
+        let (request_tx, request_rx) = mpsc::channel(8);
+        let handle = coordinator.start(request_rx);
+
+        request_tx
+            .send(EngineActorRequest::ProcessUnsafeL2BlockRequest(Box::new(gossip_payload(gap))))
+            .await
+            .expect("gossip request");
+        // Requests are handled in order, so a following barrier means the gossip was handled.
+        let (result_tx, mut result_rx) = mpsc::channel(1);
+        request_tx
+            .send(EngineActorRequest::PrepareSequencerStart {
+                expected_hash: B256::with_last_byte(1),
+                result_tx,
+            })
+            .await
+            .expect("request barrier");
+        // The reply may be deferred while an admitted insert is in flight; only ordering matters.
+        let _ = tokio::time::timeout(Duration::from_millis(500), result_rx.recv()).await;
+        // An admitted insert reaches the engine asynchronously.
+        for _ in 0..300 {
+            if client.last_new_payload_v2().await.is_some() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        handle.abort();
+
+        assert_eq!(client.last_new_payload_v2().await.is_some(), admitted);
     }
 
     #[tokio::test]
