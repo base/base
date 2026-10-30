@@ -7,7 +7,7 @@ use std::{
 
 use alloy_consensus::{BlockHeader, Transaction, Typed2718, transaction::TxHashRef};
 use alloy_evm::{
-    Evm as AlloyEvm,
+    Evm as AlloyEvm, ToTxEnv,
     block::{CommitChanges, TxResult},
 };
 use alloy_primitives::{Address, B256, TxHash, U256, map::B256Set};
@@ -15,7 +15,7 @@ use alloy_rpc_types_debug::ExecutionWitness;
 use alloy_rpc_types_engine::PayloadId;
 use base_common_chains::Upgrades;
 use base_common_consensus::{BaseTransaction, DepositReceiptExt, Predeploys};
-use base_common_evm::{BaseSpecId, L1BlockInfo};
+use base_common_evm::{BaseSpecId, BaseTxEnv, L1BlockInfo};
 use base_execution_eip8130::IntrinsicGas;
 use base_execution_txpool::{
     BasePooledTx, GuardMetrics, ParkableTransactionPool, PredicateContext,
@@ -30,7 +30,7 @@ use reth_basic_payload_builder::{
 };
 use reth_chainspec::{ChainSpecProvider, EthChainSpec};
 use reth_evm::{
-    BlockExecutorForEvm, ConfigureEvm, Database,
+    BlockExecutorForEvm, ConfigureEvm, Database, TxEnvFor,
     execute::{
         BlockBuilder, BlockBuilderOutcome, BlockExecutionError, BlockExecutor, BlockValidationError,
     },
@@ -194,6 +194,7 @@ where
         Txs: ParkablePayloadTransactions<
             Pooled: PoolTransaction<Consensus = N::SignedTx> + BasePooledTx,
         >,
+        TxEnvFor<Evm>: BaseTxEnv,
     {
         let BuildArguments {
             mut cached_reads,
@@ -288,6 +289,7 @@ where
             Primitives = N,
             NextBlockEnvCtx: BuildNextEnv<Attrs, N::BlockHeader, Client::ChainSpec>,
         >,
+    TxEnvFor<Evm>: BaseTxEnv,
     Attrs: Attributes<Transaction = N::SignedTx>,
 {
     type Attributes = Attrs;
@@ -407,6 +409,7 @@ impl<Txs> Builder<'_, Txs> {
             Pooled: PoolTransaction<Consensus = N::SignedTx> + BasePooledTx,
         >,
         Attrs: Attributes<Transaction = N::SignedTx>,
+        TxEnvFor<Evm>: BaseTxEnv,
     {
         let Self { best, evict_permanently_rejected, resting_predicates } = self;
         let build_start = Instant::now();
@@ -957,6 +960,7 @@ where
     where
         Builder: BlockBuilder<Primitives = Evm::Primitives>,
         <<Builder::Executor as BlockExecutor>::Evm as AlloyEvm>::DB: Database,
+        <<Builder::Executor as BlockExecutor>::Evm as AlloyEvm>::Tx: BaseTxEnv,
     {
         let gas_limit = builder.evm_mut().block().gas_limit();
         // If a gas limit is configured, use that limit as target if it's smaller, otherwise use
@@ -1378,6 +1382,9 @@ where
             }
 
             let tx_encoded = tx.encoded_2718().into_owned();
+            // Cached by `estimated_da_size` above, so execution reuses it for the DA footprint
+            // and the L1 data fee instead of compressing the transaction again.
+            let fastlz_size = tx.fastlz_size();
             let tx = tx.clone_into_consensus();
 
             // A sequencer's block should never contain blob or deposit transactions from the pool.
@@ -1403,8 +1410,11 @@ where
             let mut resting_woken = Vec::new();
             let mut pending_resource_usage = None;
             let mut executed_decision = None;
+            let mut tx_env: <<Builder::Executor as BlockExecutor>::Evm as AlloyEvm>::Tx =
+                WithEncoded::new(tx_encoded, &tx).to_tx_env();
+            tx_env.set_encoded_bytes_fastlz_size(fastlz_size);
             let gas_output = match builder.execute_transaction_with_commit_condition(
-                WithEncoded::new(tx_encoded, tx.clone()),
+                (tx_env, tx.clone()),
                 |result| {
                     let result_and_state = result.result();
                     let decision = resource_metering.check_executed_usage(

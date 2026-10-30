@@ -6,14 +6,16 @@ use std::{
 
 use alloy_consensus::{Eip658Value, Transaction};
 use alloy_eips::{Encodable2718, Typed2718, eip2718::WithEncoded};
-use alloy_evm::Database;
+use alloy_evm::{Database, ToTxEnv};
 #[cfg(any(test, feature = "test-utils"))]
 use alloy_primitives::B256;
 use alloy_primitives::{Address, BlockHash, Bytes, TxHash, U256};
 use alloy_rpc_types_eth::Withdrawals;
 use base_common_chains::Upgrades;
 use base_common_consensus::{BaseReceipt, BaseTransactionSigned, DepositReceipt, OpTxType};
-use base_common_evm::{BaseReceiptBuilder, BaseSpecId, Eip8130CommittedPhases, L1BlockInfo};
+use base_common_evm::{
+    BaseReceiptBuilder, BaseSpecId, BaseTransaction, BaseTxEnv, Eip8130CommittedPhases, L1BlockInfo,
+};
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_eip8130::IntrinsicGas;
 use base_execution_evm::{BaseEvmConfig, BaseNextBlockEnvAttributes};
@@ -38,7 +40,11 @@ use reth_payload_primitives::PayloadAttributes;
 use reth_primitives_traits::{InMemorySize, SealedHeader, SignedTransaction};
 use reth_revm::{State, context::Block};
 use reth_transaction_pool::{BestTransactionsAttributes, PoolTransaction};
-use revm::{DatabaseCommit, context::result::ResultAndState, interpreter::as_u64_saturated};
+use revm::{
+    DatabaseCommit,
+    context::{TxEnv, result::ResultAndState},
+    interpreter::as_u64_saturated,
+};
 use serde::Serialize;
 use tokio_util::sync::CancellationToken;
 use tracing::{Level, debug, span, trace, warn};
@@ -1048,6 +1054,9 @@ impl BasePayloadBuilderCtx {
             }
 
             let tx_encoded = tx.encoded_2718().into_owned();
+            // Cached by `estimated_da_size` above, so execution reuses it for the L1 data fee
+            // instead of compressing the transaction again.
+            let fastlz_size = tx.fastlz_size();
             let tx = tx.consensus_ref();
             let tx_hash = tx.tx_hash();
             let tx_uncompressed_size = tx_encoded.len() as u64;
@@ -1242,9 +1251,9 @@ impl BasePayloadBuilderCtx {
             let _tx_span_guard = tx_span.enter();
 
             let execution_start_time = Instant::now();
-            let ResultAndState { result, state } = match evm
-                .transact(WithEncoded::new(tx_encoded, tx))
-            {
+            let mut tx_env: BaseTransaction<TxEnv> = WithEncoded::new(tx_encoded, tx).to_tx_env();
+            tx_env.set_encoded_bytes_fastlz_size(fastlz_size);
+            let ResultAndState { result, state } = match evm.transact(tx_env) {
                 Ok(res) => res,
                 Err(err) => {
                     if let Some(err) = err.as_invalid_tx_err() {

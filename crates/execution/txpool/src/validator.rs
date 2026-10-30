@@ -2043,9 +2043,14 @@ where
 
             // Must mirror the execution-side cost in `BaseHandler` (L1 data fee + operator fee
             // post-Isthmus); otherwise operator-fee-underfunded txs get admitted but never execute.
+            // Post-Fjord, the L1 data fee reuses the transaction's cached FastLZ size, which the
+            // DA-footprint check above has already computed.
             let spec_id = BaseSpecId::from_timestamp(self.chain_spec(), self.block_timestamp());
-            let cost_addition = l1_block_info.tx_cost(
+            let cost_addition = l1_block_info.tx_cost_with_fastlz_size(
                 &encoded,
+                spec_id
+                    .is_enabled_in(BaseUpgrade::Fjord)
+                    .then(|| valid_tx.transaction().fastlz_size()),
                 U256::from(valid_tx.transaction().gas_limit()),
                 spec_id,
             );
