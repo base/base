@@ -35,7 +35,7 @@ pub use derivation::MockL1CanonicalChain;
 pub use derivation::{
     ChainProviderCanonicalChain, DerivationActor, DerivationActorRequest, DerivationClientError,
     DerivationClientResult, DerivationEngineClient, DerivationError, DerivationState,
-    DerivationStateMachine, DerivationStateTransitionError, DerivationStateUpdate,
+    DerivationStateMachine, DerivationStateTransitionError, DerivationStateUpdate, InclusionBatch,
     L1CanonicalChain, L1CanonicalChainError, L2Finalizer, PendingFinalization,
     QueuedDerivationEngineClient,
 };

@@ -1338,9 +1338,9 @@ mod tests {
     #[tokio::test]
     async fn reset_rolling_back_the_safe_head_never_finalizes_above_it() {
         let mut engine_client = MockDerivationEngineClient::new();
-        // L2 600 is rolled back, L2 500 is confirmed and never re-derived, so 500 is the highest
-        // block the reset still allows to be finalized.
-        engine_client.expect_send_finalized_l2_block().times(1).with(eq(500)).returning(|_| Ok(()));
+        // L2 600 is rolled back. The entry that held it says nothing about when L2 500 was
+        // included, so the highest block the reset still allows to be finalized is 480.
+        engine_client.expect_send_finalized_l2_block().times(1).with(eq(480)).returning(|_| Ok(()));
         let (mut actor, _request_tx) = test_actor(engine_client);
 
         actor.finalizer.confirm_safe_head(&safe_head_at(600, 100), Some(l1_at(108)));
