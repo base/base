@@ -13,6 +13,7 @@ workspace = true
 
 [dependencies]
 # workspace
+base-execution-txpool.workspace = true
 base-flashblocks.workspace = true
 base-node-runner.workspace = true
 base-observability-events.workspace = true
@@ -53,6 +54,9 @@ reth-transaction-pool = { workspace = true, features = ["test-utils"] }
 # revm
 revm-database.workspace = true
 
+# metrics
+metrics-exporter-prometheus.workspace = true
+
 # alloy
 alloy-eips = { workspace = true, features = ["std"] }
 alloy-consensus = { workspace = true, features = ["std"] }
@@ -63,6 +67,7 @@ base-common-consensus = { workspace = true, features = ["reth"] }
 
 # misc
 eyre.workspace = true
+rstest.workspace = true
 
 [features]
 default = [ "metrics" ]
