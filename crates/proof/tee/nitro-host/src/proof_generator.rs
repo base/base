@@ -414,7 +414,7 @@ mod tests {
     use async_trait::async_trait;
     use base_common_genesis::RollupConfig;
     use base_proof_host::ProverConfig;
-    use base_proof_tee_nitro_enclave::Server as EnclaveServer;
+    use base_proof_tee_nitro_enclave::{EnclaveClient, Server as EnclaveServer};
     use base_proof_worker::ProofSubmitter;
     use base_prover_service_client::ProverServiceClientError;
     use base_prover_service_protocol::{
@@ -427,7 +427,7 @@ mod tests {
     use tokio::time::sleep;
 
     use super::*;
-    use crate::{NitroTransport, RegistrationChecker, test_utils::MockRegistry};
+    use crate::{RegistrationChecker, test_utils::MockRegistry};
 
     const TEST_SESSION_ID: &str = "session-1";
     const TEST_LOCK_ID: &str = "lock-1";
@@ -615,17 +615,18 @@ mod tests {
 
     fn test_pool() -> NitroEnclavePool {
         let server = Arc::new(EnclaveServer::new_local().unwrap());
-        let transport = Arc::new(NitroTransport::local(server));
-        NitroEnclavePool::new(test_prover_config(), transport)
+        let enclave_client = Arc::new(EnclaveClient::in_process(server));
+        NitroEnclavePool::new(test_prover_config(), enclave_client)
     }
 
     fn test_pool_with_registry(registry: MockRegistry) -> NitroEnclavePool {
         let server = Arc::new(EnclaveServer::new_local().unwrap());
-        let transport = Arc::new(NitroTransport::local(server));
-        let checker =
-            Arc::new(RegistrationChecker::new(vec![Arc::clone(&transport)], registry).unwrap());
+        let enclave_client = Arc::new(EnclaveClient::in_process(server));
+        let checker = Arc::new(
+            RegistrationChecker::new(vec![Arc::clone(&enclave_client)], registry).unwrap(),
+        );
 
-        NitroEnclavePool::new(test_prover_config(), Arc::clone(&transport))
+        NitroEnclavePool::new(test_prover_config(), Arc::clone(&enclave_client))
             .with_registration_checker(checker)
             .unwrap()
     }

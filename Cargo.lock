@@ -5645,6 +5645,7 @@ dependencies = [
  "tokio",
  "tokio-vsock",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -5673,7 +5674,6 @@ dependencies = [
  "thiserror 2.0.19",
  "tokio",
  "tokio-util",
- "tokio-vsock",
  "tower 0.5.3",
  "tracing",
  "url",
