@@ -13,9 +13,9 @@ The byte-level encoding of one Enclave link message: a big-endian `u64` length f
 _Avoid_: packet, envelope
 
 **Link failure**:
-An Enclave link request that did not get a valid answer from the enclave: connect or timeout failure, a bad Frame, a reply of the wrong type, or a malformed signer key. Retryable.
+An Enclave link request that did not get a valid answer from the enclave: connect or timeout failure, a bad Frame, a reply of the wrong type, or a malformed signer key.
 _Avoid_: transport error
 
 **Enclave rejection**:
-An answer in which the enclave refused or failed the request: invalid request, proof failure, or attestation failure. Not retryable.
+An answer in which the enclave refused or failed the request: invalid request, proof failure, or attestation failure.
 _Avoid_: remote error, enclave error

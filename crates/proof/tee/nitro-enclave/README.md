@@ -12,8 +12,8 @@ the host and an enclave: the wire messages (`EnclaveRequest`, `EnclaveResponse`)
 length-prefixed framing (`Frame`), the host-side `EnclaveClient`, and the
 enclave-side `EnclaveHandler`. `EnclaveClient` reaches an enclave over vsock or
 an in-process `Server` over an in-memory stream, so both modes share framing,
-request limits, timeouts, and error mapping. `EnclaveLinkError::is_retryable`
-separates link failures from Enclave rejections (`EnclaveFailure`). See
+request limits, timeouts, and error mapping. `EnclaveLinkError` distinguishes
+link failures from Enclave rejections (`EnclaveFailure`). See
 [`../GLOSSARY.md`](../GLOSSARY.md).
 
 ## License

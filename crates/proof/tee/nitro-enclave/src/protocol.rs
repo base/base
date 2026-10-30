@@ -74,7 +74,7 @@ pub enum EnclaveResponse {
     Failure(EnclaveFailure),
 }
 
-/// An Enclave rejection: the enclave refused or failed a request. Not retryable.
+/// An Enclave rejection: the enclave refused or failed a request.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Error)]
 pub enum EnclaveFailure {
     /// The request breaks a limit the enclave enforces.

@@ -52,13 +52,6 @@ pub enum EnclaveLinkError {
     Enclave(#[from] EnclaveFailure),
 }
 
-impl EnclaveLinkError {
-    /// Returns `true` for link failures and `false` for Enclave rejections.
-    pub const fn is_retryable(&self) -> bool {
-        !matches!(self, Self::Enclave(_))
-    }
-}
-
 /// Where an [`EnclaveClient`] reaches its enclave.
 #[derive(Debug, Clone)]
 pub enum EnclaveConnector {
@@ -165,29 +158,32 @@ impl EnclaveClient {
     ///
     /// Rejects requests that break enclave limits before sending, and maps both
     /// typed and legacy untyped enclave failures to [`EnclaveLinkError::Enclave`].
+    /// Drops the request after writing, before waiting for the response.
     pub async fn exchange(
         mut stream: impl AsyncRead + AsyncWrite + Unpin,
-        request: &EnclaveRequest,
+        request: EnclaveRequest,
         response_timeout: Option<Duration>,
     ) -> Result<EnclaveResponse, EnclaveLinkError> {
         request.validate()?;
-        Frame::write(&mut stream, request).await?;
+        let operation = request.operation();
+        let is_prove = matches!(request, EnclaveRequest::Prove(_));
+        Frame::write(&mut stream, &request).await?;
+        drop(request);
 
         let read = Frame::read(&mut stream);
         let response = match response_timeout {
             Some(limit) => timeout(limit, read)
                 .await
-                .map_err(|_| EnclaveLinkError::Timeout { operation: request.operation() })??,
+                .map_err(|_| EnclaveLinkError::Timeout { operation })??,
             None => read.await?,
         };
 
         match response {
             EnclaveResponse::Failure(failure) => Err(failure.into()),
-            EnclaveResponse::Error(message) => Err(match request {
-                EnclaveRequest::Prove(_) => EnclaveFailure::Proof(message),
-                EnclaveRequest::SignerPublicKey | EnclaveRequest::SignerAttestation { .. } => {
-                    EnclaveFailure::Attestation(message)
-                }
+            EnclaveResponse::Error(message) => Err(if is_prove {
+                EnclaveFailure::Proof(message)
+            } else {
+                EnclaveFailure::Attestation(message)
             }
             .into()),
             response => Ok(response),
@@ -210,12 +206,12 @@ impl EnclaveClient {
                 .await
                 .map_err(|_| EnclaveLinkError::ConnectTimeout)?
                 .map_err(EnclaveLinkError::ConnectFailed)?;
-                Self::exchange(stream, &request, response_timeout).await
+                Self::exchange(stream, request, response_timeout).await
             }
             EnclaveConnector::InProcess(server) => {
                 let (stream, enclave_end) = duplex(Self::IN_PROCESS_BUFFER_BYTES);
                 let handler = EnclaveHandler::new(Arc::clone(server));
-                let exchange = Self::exchange(stream, &request, response_timeout);
+                let exchange = Self::exchange(stream, request, response_timeout);
                 tokio::pin!(exchange);
                 tokio::select! {
                     result = &mut exchange => result,
@@ -304,26 +300,27 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn empty_witness_is_a_terminal_rejection() {
+    async fn empty_witness_is_a_proof_rejection() {
         let err = client().prove(Vec::new()).await.unwrap_err();
         assert!(matches!(err, EnclaveLinkError::Enclave(EnclaveFailure::Proof(_))), "{err:?}");
-        assert!(!err.is_retryable());
     }
 
     #[tokio::test]
     async fn dropping_prove_stops_in_process_handler() {
         let server = Arc::new(Server::new_local().unwrap());
+        let weak_server = Arc::downgrade(&server);
         let client = EnclaveClient::in_process(Arc::clone(&server));
         let key = PreimageKey::new([1; 32], PreimageKeyType::Local);
-        let mut prove = Box::pin(
-            client.prove(vec![(key, vec![0; 2 * EnclaveClient::IN_PROCESS_BUFFER_BYTES])]),
-        );
+        drop(server);
+        let mut prove = Box::pin(async move {
+            client.prove(vec![(key, vec![0; 2 * EnclaveClient::IN_PROCESS_BUFFER_BYTES])]).await
+        });
 
         let state = poll_fn(|cx| Poll::Ready(prove.as_mut().poll(cx))).await;
         assert!(state.is_pending(), "request must still be in flight");
-        assert_eq!(Arc::strong_count(&server), 3);
+        assert!(weak_server.upgrade().is_some(), "in-flight calls must keep the server alive");
         drop(prove);
-        assert_eq!(Arc::strong_count(&server), 2, "cancelled calls must drop their handler");
+        assert!(weak_server.upgrade().is_none(), "cancelled calls must release the server");
     }
 
     #[cfg(target_os = "linux")]
@@ -349,14 +346,13 @@ mod tests {
             user_data: None,
             nonce: Some(vec![0; EnclaveRequest::MAX_NONCE_BYTES + 1]),
         };
-        let err = EnclaveClient::exchange(host, &request, Some(Duration::from_millis(10)))
+        let err = EnclaveClient::exchange(host, request, Some(Duration::from_millis(10)))
             .await
             .unwrap_err();
         assert!(
             matches!(err, EnclaveLinkError::Enclave(EnclaveFailure::InvalidRequest(_))),
             "{err:?}"
         );
-        assert!(!err.is_retryable());
         assert_eq!(
             peer.read(&mut [0; 1]).await.unwrap(),
             0,
@@ -365,27 +361,25 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn peer_closing_mid_exchange_is_retryable() {
+    async fn peer_closing_mid_exchange_is_a_frame_error() {
         let (host, mut enclave) = duplex(64 * 1024);
         let peer = tokio::spawn(async move {
             let _: EnclaveRequest = Frame::read(&mut enclave).await.unwrap();
         });
-        let err = EnclaveClient::exchange(host, &EnclaveRequest::SignerPublicKey, None)
-            .await
-            .unwrap_err();
+        let err =
+            EnclaveClient::exchange(host, EnclaveRequest::SignerPublicKey, None).await.unwrap_err();
         peer.await.unwrap();
         assert!(matches!(err, EnclaveLinkError::Frame(_)), "{err:?}");
-        assert!(err.is_retryable());
     }
 
     #[tokio::test]
-    async fn legacy_error_reply_is_a_terminal_rejection() {
+    async fn legacy_error_reply_is_a_proof_rejection() {
         let (host, mut enclave) = duplex(64 * 1024);
         let peer = tokio::spawn(async move {
             let _: EnclaveRequest = Frame::read(&mut enclave).await.unwrap();
             Frame::write(&mut enclave, &EnclaveResponse::Error("boom".into())).await.unwrap();
         });
-        let err = EnclaveClient::exchange(host, &EnclaveRequest::Prove(Vec::new()), None)
+        let err = EnclaveClient::exchange(host, EnclaveRequest::Prove(Vec::new()), None)
             .await
             .unwrap_err();
         peer.await.unwrap();
