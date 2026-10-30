@@ -25,7 +25,15 @@ x-healthcheck-defaults: &healthcheck-defaults
   start_period: 250ms
   start_interval: 250ms
 
+# Same chain-progress check as docker-compose.yml: healthy once the node has an L2 block.
 x-node-healthcheck: &node-healthcheck
+  test: ["CMD-SHELL", "curl -sf -H 'Content-Type: application/json' --data '{\"jsonrpc\":\"2.0\",\"method\":\"eth_blockNumber\",\"params\":[],\"id\":1}' \"http://localhost:$${NODE_HEALTHCHECK_HTTP_PORT}/\" | grep -q '\"result\":\"0x[1-9a-f]' && curl -sf \"http://localhost:$${NODE_HEALTHCHECK_CL_RPC_PORT}/healthz\" >/dev/null"]
+  <<: *healthcheck-defaults
+
+# Liveness only: both RPCs answer. The HA builder commits every block to op-conductor-0
+# before inserting it, and op-conductor-0 waits for the builder to be healthy, so the builder
+# cannot require a block. The followers' chain-progress checks gate the rest of the cluster.
+x-node-liveness-healthcheck: &node-liveness-healthcheck
   test: ["CMD-SHELL", "curl -sf -H 'Content-Type: application/json' --data '{\"jsonrpc\":\"2.0\",\"method\":\"eth_chainId\",\"params\":[],\"id\":1}' \"http://localhost:$${NODE_HEALTHCHECK_HTTP_PORT}/\" >/dev/null && curl -sf \"http://localhost:$${NODE_HEALTHCHECK_CL_RPC_PORT}/healthz\" >/dev/null"]
   <<: *healthcheck-defaults
 
@@ -49,6 +57,8 @@ services:
       - NODE_HEALTHCHECK_HTTP_PORT=${L2_BUILDER_HTTP_PORT}
       - NODE_HEALTHCHECK_CL_RPC_PORT=${L2_BUILDER_CL_RPC_PORT}
       - OTEL_SERVICE_NAME=base-builder
+    healthcheck:
+      <<: *node-liveness-healthcheck
 
   # The op-batcher reads its rollup node through the proxy of op-conductor-0. The base batcher
   # takes the three conductors and reads the blocks from the leader among them.
