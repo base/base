@@ -33,7 +33,7 @@ async fn replays_verbatim_calls_when_builder_clock_reaches_recorded_offsets() ->
         .await?;
     let provider = builder.provider().await?;
     let observed = Arc::new(Mutex::new(Vec::new()));
-    let mut rpc = RpcModule::new((provider.clone(), observed.clone()));
+    let mut rpc = RpcModule::new((provider.clone(), Arc::clone(&observed)));
     for method in ["base_insertValidatedTransaction", "base_insertValidatedTransactions"] {
         rpc.register_async_method(method, move |params, ctx, _| async move {
             let raw: Box<RawValue> = params.parse()?;

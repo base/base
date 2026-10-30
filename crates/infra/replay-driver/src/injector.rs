@@ -43,7 +43,7 @@ impl InjectionSchedule {
         self.deliver(injector, Some(cutoff_ms)).await
     }
 
-    /// Replays remaining calls against GlobalClock, not elapsed time since this method started.
+    /// Replays remaining calls against `GlobalClock`, not elapsed time since this method started.
     /// Stops on stream, clock, RPC, timeout, or cancellation failure.
     /// # Cancel safety
     /// Dropping this future stops scheduling. An unacknowledged call may already have reached the
