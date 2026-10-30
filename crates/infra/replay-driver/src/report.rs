@@ -125,7 +125,12 @@ impl DiffReport {
 
 #[cfg(test)]
 mod tests {
+    use std::{collections::HashSet, time::Duration};
+
+    use alloy_primitives::B256;
+
     use super::*;
+    use crate::{Candidate, CanonicalBlock};
 
     fn block(block_number: u64, totals: DiffTotals) -> BlockDiff {
         BlockDiff { block_number, warmup: false, first_divergence_index: None, totals }
@@ -230,5 +235,42 @@ mod tests {
 
             assert!(matches!(result, Err(DiffError::Window)));
         }
+    }
+
+    #[test]
+    fn preserves_json_contract_when_measurements_are_known_or_unknown() {
+        let mut blocks = Vec::new();
+        for number in 11..=12 {
+            let candidate = Candidate {
+                block_number: number,
+                transaction_hashes: vec![B256::ZERO, B256::repeat_byte(3)],
+                gas_used: 21,
+                priority_fee_total: U256::from(42),
+                build_latency: Duration::from_micros(9),
+                flashblock_count: (number == 12).then_some(4),
+            };
+            let canonical = CanonicalBlock {
+                block_number: number,
+                transaction_hashes: vec![B256::ZERO, B256::repeat_byte(1), B256::repeat_byte(2)],
+                gas_used: 63,
+                priority_fee_total: (number == 12).then_some(U256::from(255)),
+            };
+            let recorded = HashSet::from([B256::repeat_byte(1)]);
+            blocks.push(
+                BlockDiff::compare(&candidate, &canonical, (number == 12).then_some(&recorded))
+                    .unwrap(),
+            );
+        }
+
+        let report = DiffReport::new(10, blocks).unwrap();
+
+        let expected: serde_json::Value =
+            serde_json::from_str(include_str!("../testdata/diff-report-v1.json")).unwrap();
+        assert_eq!(serde_json::to_value(&report).unwrap(), expected);
+        let markdown = report.markdown();
+        assert!(markdown.contains("| Missing (incl. recording gaps) |"));
+        assert!(markdown.contains("| Builder-attributable missing |"));
+        assert!(markdown.contains("| 11 (warmup) | 2 | unknown | 1 | 1 | unknown | 1 |"));
+        assert!(markdown.contains("| Aggregate | 2 | 1 | 1 | 1 | 1 | — |"));
     }
 }

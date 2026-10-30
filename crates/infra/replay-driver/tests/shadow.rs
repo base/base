@@ -96,12 +96,10 @@ async fn advances_canonical_head_when_discarding_three_shadow_candidates() -> ey
         (0, 1, 4)
     );
     assert_eq!(report.aggregate.recording_gap, Some(0));
+    assert_eq!(report.aggregate.builder_missing, Some(0));
     assert_eq!(report.aggregate.canonical_priority_fee_wei, Some(U256::ZERO));
     assert_eq!(report.aggregate.candidate_priority_fee_wei, U256::from(21_000));
     assert_eq!(report.aggregate.flashblock_count, None);
-    let json = serde_json::to_value(&report)?;
-    assert_eq!(json["schema"], "replay-diff/v1");
-    assert_eq!(json["blocks"][2]["totals"]["extra"], 1);
     println!("{}\n{}", report.markdown(), serde_json::to_string_pretty(&report)?);
 
     let mut invalid = blocks[2].clone();
