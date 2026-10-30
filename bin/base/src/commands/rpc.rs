@@ -4,13 +4,14 @@ use std::sync::Arc;
 
 use base_consensus_cli::{
     CliMetrics, ConsensusNodeArgs, ConsensusNodeConfigArgs, ConsensusNodeOverrides,
-    ConsensusNodeStartOptions, EmbeddedConsensusNodeConfigArgs,
+    ConsensusNodeStartOptions, EmbeddedConsensusNodeConfigArgs, L1Args,
 };
 use base_consensus_engine::{EngineEndpoint, InMemoryTransport};
+use base_consensus_l1::L1Node;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_cli::{ExecutionNodeArgs, chainspec::chain_value_parser};
 use base_upgrade_signal::UpgradeSignalStartupMode;
-use clap::Args;
+use clap::{Args, builder::ArgPredicate};
 use reth_cli_runner::CliRunner;
 use tokio_util::sync::CancellationToken;
 
@@ -27,7 +28,17 @@ use crate::config::ResolvedChainConfig;
     mut_arg("sequencer_headers", |arg| arg
         .hide(true)
         .long("__rollup-sequencer-headers-disabled")
-        .alias(None::<&'static str>))
+        .alias(None::<&'static str>)),
+    mut_arg("l1_eth_rpc", |arg| arg
+        .required(false)
+        .required_unless_present("l1_embedded")
+        .conflicts_with("l1_embedded")
+        .default_value_if("l1_embedded", ArgPredicate::Equals("true".into()), Some(EMBEDDED_L1_PLACEHOLDER))),
+    mut_arg("l1_beacon", |arg| arg
+        .required(false)
+        .required_unless_present("l1_embedded")
+        .conflicts_with("l1_embedded")
+        .default_value_if("l1_embedded", ArgPredicate::Equals("true".into()), Some(EMBEDDED_L1_PLACEHOLDER)))
 )]
 pub(crate) struct RpcCommand {
     /// Execution chain spec to use instead of the root chain selection.
@@ -41,12 +52,20 @@ pub(crate) struct RpcCommand {
     /// Consensus node arguments.
     #[command(flatten)]
     pub(crate) consensus: EmbeddedConsensusNodeConfigArgs,
+
+    /// Stateless L1 node arguments.
+    #[command(flatten)]
+    pub(crate) l1: L1Args,
 }
+
+/// Parsed in place of `--l1-eth-rpc`, and of an omitted `--l1-beacon`, with `--l1.embedded`;
+/// replaced by the embedded server URLs before consensus starts.
+pub(crate) const EMBEDDED_L1_PLACEHOLDER: &str = "http://embedded-l1.invalid";
 
 impl RpcCommand {
     /// Runs the `rpc` flavor.
     pub(crate) fn run(self, resolved_chain: ResolvedChainConfig) -> eyre::Result<()> {
-        let Self { execution_chain, execution, consensus } = self;
+        let Self { execution_chain, execution, consensus, l1 } = self;
         let mut execution_chain = match execution_chain {
             Some(chain) => chain,
             None => resolved_chain.execution_chain_spec()?,
@@ -54,18 +73,22 @@ impl RpcCommand {
         let consensus_chain = resolved_chain.consensus_chain_args();
         let mut execution = execution;
         let mut consensus_config: ConsensusNodeConfigArgs = consensus.into();
-        execution
-            .standard
-            .rollup_args
-            .upgrade_signal
-            .apply_chain_default(execution_chain.chain().id());
-        execution
-            .standard
-            .rollup_args
-            .upgrade_signal_l1_rpc
-            .apply_default_from(&consensus_config.l1_rpc_args.l1_eth_rpc);
+        let rollup_args = &mut execution.standard.rollup_args;
+        if !l1.l1_embedded {
+            rollup_args.upgrade_signal.apply_chain_default(execution_chain.chain().id());
+            rollup_args
+                .upgrade_signal_l1_rpc
+                .apply_default_from(&consensus_config.l1_rpc_args.l1_eth_rpc);
+        } else if rollup_args.upgrade_signal.contract_address.is_some()
+            && rollup_args.upgrade_signal_l1_rpc.upgrade_signal_l1_rpc.is_none()
+        {
+            eyre::bail!(
+                "--upgrade-signal.contract requires --upgrade-signal.l1-rpc with --l1.embedded: \
+                 the embedded L1 cannot serve contract calls"
+            );
+        }
         consensus_config.upgrade_signal = execution.standard.rollup_args.upgrade_signal.clone();
-        let consensus_args = ConsensusNodeArgs::new(consensus_chain, consensus_config);
+        let mut consensus_args = ConsensusNodeArgs::new(consensus_chain, consensus_config);
         let mut rollup_config = consensus_args.load_rollup_config()?;
         Arc::make_mut(&mut execution_chain).block_time = Some(rollup_config.block_time);
 
@@ -82,6 +105,25 @@ impl RpcCommand {
                     &mut rollup_config,
                 )
                 .await?;
+
+            let l1_endpoints = if l1.l1_embedded {
+                let datadir =
+                    execution.node.datadir.clone().resolve_datadir(execution_chain.chain());
+                let endpoints = L1Node::start(
+                    rollup_config.l1_chain_id,
+                    rollup_config.batch_inbox_address,
+                    l1.l1_embedded_checkpoint,
+                    l1.l1_embedded_port,
+                    datadir.data_dir().join("embedded-l1"),
+                    ctx.task_executor.clone(),
+                )
+                .await?;
+                let l1_rpc_args = &mut consensus_args.config.l1_rpc_args;
+                l1_rpc_args.l1_eth_rpc = endpoints.eth_rpc.clone();
+                Some(endpoints)
+            } else {
+                None
+            };
 
             let upgrade_signal_l1_rpc =
                 execution.standard.rollup_args.upgrade_signal_l1_rpc.upgrade_signal_l1_rpc.clone();
@@ -106,13 +148,15 @@ impl RpcCommand {
             let execution_node = handle.node;
             let execution_exit = handle.node_exit_future;
 
+            let mut overrides =
+                ConsensusNodeOverrides::embedded_execution(l2_engine, upgrade_signal_l1_rpc);
+            overrides.l1_rpc_stateless = l1_endpoints.is_some();
+            overrides.l1_provider =
+                l1_endpoints.as_ref().map(|endpoints| endpoints.provider.clone());
             let consensus_cancellation = CancellationToken::new();
             let consensus_exit = consensus_args.start_with_options(
                 ConsensusNodeStartOptions::new(rollup_config)
-                    .with_overrides(ConsensusNodeOverrides::embedded_execution(
-                        l2_engine,
-                        upgrade_signal_l1_rpc,
-                    ))
+                    .with_overrides(overrides)
                     .with_cancellation(consensus_cancellation.clone())
                     .with_upgrade_signal_startup_mode(UpgradeSignalStartupMode::AlreadyApplied),
             );
@@ -152,7 +196,9 @@ mod tests {
     use base_consensus_cli::ConsensusNodeConfigArgs;
     use base_execution_chainspec::BaseChainSpec;
     use clap::Parser;
+    use url::Url;
 
+    use super::EMBEDDED_L1_PLACEHOLDER;
     use crate::{cli::BaseCli, commands::BaseCommand, config::ChainArg};
 
     const RPC_FORWARDING_ENDPOINT_ENV: &str = "OP_RETH_SEQUENCER_HTTP";
@@ -354,6 +400,39 @@ mod tests {
         assert!(rpc.execution_chain.is_some());
         assert_eq!(rpc.consensus.rpc_flags.listen_port, 8549);
         assert_eq!(rpc.consensus.p2p_flags.network.listen_tcp_port, 8003);
+    }
+
+    #[test]
+    fn embedded_l1_replaces_l1_rpcs() {
+        let cli = BaseCli::parse_from(["base", "rpc", "--l1.embedded"]);
+        let BaseCommand::Rpc(rpc) = cli.command else {
+            panic!("expected rpc command");
+        };
+        assert!(rpc.l1.l1_embedded);
+        assert_eq!(
+            rpc.consensus.l1_rpc_args.l1_eth_rpc,
+            Url::parse(EMBEDDED_L1_PLACEHOLDER).unwrap()
+        );
+        assert_eq!(
+            rpc.consensus.l1_rpc_args.l1_beacon,
+            Url::parse(EMBEDDED_L1_PLACEHOLDER).unwrap()
+        );
+
+        assert!(
+            BaseCli::try_parse_from(["base", "rpc", "--l1-beacon", "http://localhost:5052"])
+                .is_err()
+        );
+        assert!(
+            BaseCli::try_parse_from([
+                "base",
+                "rpc",
+                "--l1.embedded",
+                "--l1-beacon",
+                "http://localhost:5052"
+            ])
+            .is_err()
+        );
+        assert!(BaseCli::try_parse_from(rpc_args(&["base", "rpc", "--l1.embedded"])).is_err());
     }
 
     #[test]

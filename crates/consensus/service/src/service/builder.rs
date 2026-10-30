@@ -8,6 +8,7 @@ use alloy_transport::{TransportErrorKind, TransportResult};
 use base_common_genesis::RollupConfig;
 use base_common_network::Base;
 use base_consensus_engine::EngineEndpoint;
+use base_consensus_l1::L1Provider;
 use base_consensus_providers::{L1RpcProvider, OnlineBeaconClient};
 use base_consensus_rpc::RpcBuilder;
 use base_upgrade_signal::UpgradeSignalConfig;
@@ -82,6 +83,8 @@ pub struct RollupNodeBuilder {
     pub safedb_path: Option<PathBuf>,
     /// Upgrade signal configuration.
     pub upgrade_signal_config: UpgradeSignalBuilderConfig,
+    /// In-process L1 provider read by derivation and the sequencer.
+    pub l1_provider: Option<L1Provider>,
 }
 
 impl RollupNodeBuilder {
@@ -123,6 +126,7 @@ impl RollupNodeBuilder {
                 metrics_config: None,
                 l1_rpc: None,
             },
+            l1_provider: None,
         }
     }
 
@@ -163,6 +167,12 @@ impl RollupNodeBuilder {
     /// Sets the upgrade signal configuration.
     pub fn with_upgrade_signal_config(self, config: UpgradeSignalBuilderConfig) -> Self {
         Self { upgrade_signal_config: config, ..self }
+    }
+
+    /// Reads L1 chain data and blobs for derivation and sequencing from `l1_provider` in
+    /// process, instead of the L1 RPC and beacon API.
+    pub fn with_l1_provider(self, l1_provider: Option<L1Provider>) -> Self {
+        Self { l1_provider, ..self }
     }
 
     /// Assembles the [`RollupNode`] service.
@@ -245,6 +255,7 @@ impl RollupNodeBuilder {
             checkpoint_path,
             safedb_path: self.safedb_path,
             upgrade_signal_config,
+            l1_provider: self.l1_provider,
         })
     }
 

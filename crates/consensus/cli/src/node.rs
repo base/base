@@ -8,6 +8,7 @@ use base_cli_utils::{LogConfig, RuntimeManager};
 use base_common_chains::ChainConfig;
 use base_common_genesis::RollupConfig;
 use base_consensus_engine::EngineEndpoint;
+use base_consensus_l1::L1Provider;
 use base_consensus_node::{
     EngineConfig, L1ConfigBuilder, NodeMode, NodeOperatingMode, RollupNode, RollupNodeBuilder,
     UpgradeSignalBuilderConfig,
@@ -39,6 +40,11 @@ pub struct ConsensusNodeOverrides {
     pub l2_engine_jwt_secret: Option<JwtSecret>,
     /// Override for the L1 RPC endpoint used by consensus upgrade-signal reads.
     pub upgrade_signal_l1_rpc: Option<Url>,
+    /// The L1 RPC serves no state, so the unsafe block signer is not read from the L1
+    /// `SystemConfig` and falls back to the genesis or configured signer.
+    pub l1_rpc_stateless: bool,
+    /// In-process L1 provider for derivation and sequencing.
+    pub l1_provider: Option<L1Provider>,
 }
 
 impl ConsensusNodeOverrides {
@@ -49,7 +55,13 @@ impl ConsensusNodeOverrides {
         l2_engine: EngineEndpoint,
         upgrade_signal_l1_rpc: Option<Url>,
     ) -> Self {
-        Self { l2_engine: Some(l2_engine), l2_engine_jwt_secret: None, upgrade_signal_l1_rpc }
+        Self {
+            l2_engine: Some(l2_engine),
+            l2_engine_jwt_secret: None,
+            upgrade_signal_l1_rpc,
+            l1_rpc_stateless: false,
+            l1_provider: None,
+        }
     }
 }
 
@@ -529,7 +541,7 @@ impl ConsensusNodeArgs {
             .config(
                 &cfg,
                 self.chain.l2_chain_id.into(),
-                Some(self.config.l1_rpc_args.l1_eth_rpc.clone()),
+                (!overrides.l1_rpc_stateless).then(|| self.config.l1_rpc_args.l1_eth_rpc.clone()),
                 self.config.l1_rpc_args.l1_rpc_timeout,
                 genesis_signer,
             )
@@ -569,7 +581,11 @@ impl ConsensusNodeArgs {
             builder = builder.with_safedb_path(path);
         }
 
-        builder.build().await.wrap_err("Failed to build rollup node")
+        builder
+            .with_l1_provider(overrides.l1_provider)
+            .build()
+            .await
+            .wrap_err("Failed to build rollup node")
     }
 
     /// Applies the configured L1 upgrade signal to the rollup config before startup.

@@ -24,6 +24,7 @@ base-batcher-cli.workspace = true
 base-builder-cli.workspace = true
 base-node-runner.workspace = true
 base-builder-core.workspace = true
+base-consensus-l1.workspace = true
 base-common-chains.workspace = true
 base-consensus-cli.workspace = true
 base-execution-cli.workspace = true

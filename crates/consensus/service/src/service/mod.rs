@@ -8,6 +8,9 @@ pub use builder::{L1ConfigBuilder, RollupNodeBuilder, UpgradeSignalBuilderConfig
 
 pub use crate::follow::{FollowNode, FollowNodeConfig};
 
+mod l1;
+pub use l1::{L1BlobProvider, L1ChainProvider, L1NodeOriginProvider, L1OriginProvider};
+
 mod mode;
 pub use mode::{NodeMode, NodeOperatingMode};
 

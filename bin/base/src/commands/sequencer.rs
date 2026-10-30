@@ -8,9 +8,10 @@ use base_builder_metering::MeteringStoreExtension;
 use base_builder_multiplex::MultiplexingServiceBuilder;
 use base_consensus_cli::{
     CliMetrics, ConsensusNodeArgs, ConsensusNodeConfigArgs, ConsensusNodeOverrides,
-    ConsensusNodeStartOptions, EmbeddedSequencerConsensusNodeConfigArgs,
+    ConsensusNodeStartOptions, EmbeddedSequencerConsensusNodeConfigArgs, L1Args,
 };
 use base_consensus_engine::{EngineEndpoint, InMemoryTransport};
+use base_consensus_l1::L1Node;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_cli::{
     ExecutionNodeConfigArgs, StandardBaseRethNode, chainspec::chain_value_parser,
@@ -22,14 +23,27 @@ use base_txpool_rpc::{
     TxPoolRpcExtension,
 };
 use base_upgrade_signal::UpgradeSignalStartupMode;
-use clap::Args;
+use clap::{Args, builder::ArgPredicate};
 use reth_cli_runner::CliRunner;
 use tokio_util::sync::CancellationToken;
 
+use super::rpc::EMBEDDED_L1_PLACEHOLDER;
 use crate::config::ResolvedChainConfig;
 
 /// Arguments for `base sequencer`.
 #[derive(Args, Clone, Debug)]
+#[command(
+    mut_arg("l1_eth_rpc", |arg| arg
+        .required(false)
+        .required_unless_present("l1_embedded")
+        .conflicts_with("l1_embedded")
+        .default_value_if("l1_embedded", ArgPredicate::Equals("true".into()), Some(EMBEDDED_L1_PLACEHOLDER))),
+    mut_arg("l1_beacon", |arg| arg
+        .required(false)
+        .required_unless_present("l1_embedded")
+        .conflicts_with("l1_embedded")
+        .default_value_if("l1_embedded", ArgPredicate::Equals("true".into()), Some(EMBEDDED_L1_PLACEHOLDER)))
+)]
 pub(crate) struct SequencerCommand {
     /// Execution chain spec to use instead of the root chain selection.
     #[arg(long = "execution-chain", value_parser = chain_value_parser)]
@@ -46,12 +60,16 @@ pub(crate) struct SequencerCommand {
     /// Embedded consensus sequencer arguments.
     #[command(flatten)]
     pub(crate) consensus: EmbeddedSequencerConsensusNodeConfigArgs,
+
+    /// Stateless L1 node arguments.
+    #[command(flatten)]
+    pub(crate) l1: L1Args,
 }
 
 impl SequencerCommand {
     /// Runs the `sequencer` flavor with execution, builder, and consensus in one process.
     pub(crate) fn run(self, resolved_chain: ResolvedChainConfig) -> eyre::Result<()> {
-        let Self { execution_chain, execution, mut builder, consensus } = self;
+        let Self { execution_chain, execution, mut builder, consensus, l1 } = self;
         let mut execution_chain = match execution_chain {
             Some(chain) => chain,
             None => resolved_chain.execution_chain_spec()?,
@@ -59,12 +77,23 @@ impl SequencerCommand {
         let consensus_chain = resolved_chain.consensus_chain_args();
         let mut consensus_config: ConsensusNodeConfigArgs = consensus.into();
         builder.rollup_args.upgrade_signal.apply_chain_default(execution_chain.chain().id());
-        builder
-            .rollup_args
-            .upgrade_signal_l1_rpc
-            .apply_default_from(&consensus_config.l1_rpc_args.l1_eth_rpc);
+        if !l1.l1_embedded {
+            builder
+                .rollup_args
+                .upgrade_signal_l1_rpc
+                .apply_default_from(&consensus_config.l1_rpc_args.l1_eth_rpc);
+        } else if builder.rollup_args.upgrade_signal.contract_address.is_some()
+            && builder.rollup_args.upgrade_signal_l1_rpc.upgrade_signal_l1_rpc.is_none()
+        {
+            // A sequencer that misses an upgrade signal forks the chain, so it keeps the chain's
+            // default contract instead of dropping it like `base rpc` does.
+            eyre::bail!(
+                "the upgrade signal contract requires --upgrade-signal.l1-rpc with --l1.embedded: \
+                 the embedded L1 cannot serve contract calls"
+            );
+        }
         consensus_config.upgrade_signal = builder.rollup_args.upgrade_signal.clone();
-        let consensus_args = ConsensusNodeArgs::new(consensus_chain, consensus_config);
+        let mut consensus_args = ConsensusNodeArgs::new(consensus_chain, consensus_config);
         let mut rollup_config = consensus_args.load_rollup_config()?;
         Arc::make_mut(&mut execution_chain).block_time = Some(rollup_config.block_time);
 
@@ -95,6 +124,23 @@ impl SequencerCommand {
                     &mut rollup_config,
                 )
                 .await?;
+
+            let l1_endpoints = if l1.l1_embedded {
+                let datadir = execution.datadir.clone().resolve_datadir(execution_chain.chain());
+                let endpoints = L1Node::start(
+                    rollup_config.l1_chain_id,
+                    rollup_config.batch_inbox_address,
+                    l1.l1_embedded_checkpoint,
+                    l1.l1_embedded_port,
+                    datadir.data_dir().join("embedded-l1"),
+                    ctx.task_executor.clone(),
+                )
+                .await?;
+                consensus_args.config.l1_rpc_args.l1_eth_rpc = endpoints.eth_rpc.clone();
+                Some(endpoints)
+            } else {
+                None
+            };
 
             let upgrade_signal_l1_rpc =
                 rollup_args.upgrade_signal_l1_rpc.upgrade_signal_l1_rpc.clone();
@@ -146,13 +192,15 @@ impl SequencerCommand {
             let execution_node = handle.node;
             let execution_exit = handle.node_exit_future;
 
+            let mut overrides =
+                ConsensusNodeOverrides::embedded_execution(l2_engine, upgrade_signal_l1_rpc);
+            overrides.l1_rpc_stateless = l1_endpoints.is_some();
+            overrides.l1_provider =
+                l1_endpoints.as_ref().map(|endpoints| endpoints.provider.clone());
             let consensus_cancellation = CancellationToken::new();
             let consensus_exit = consensus_args.start_with_options(
                 ConsensusNodeStartOptions::new(rollup_config)
-                    .with_overrides(ConsensusNodeOverrides::embedded_execution(
-                        l2_engine,
-                        upgrade_signal_l1_rpc,
-                    ))
+                    .with_overrides(overrides)
                     .with_cancellation(consensus_cancellation.clone())
                     .with_upgrade_signal_startup_mode(UpgradeSignalStartupMode::AlreadyApplied),
             );
@@ -193,7 +241,7 @@ mod tests {
     use base_consensus_cli::ConsensusNodeConfigArgs;
     use clap::{CommandFactory, Parser};
 
-    use crate::{cli::BaseCli, commands::BaseCommand};
+    use crate::{cli::BaseCli, commands::BaseCommand, config::ResolvedChainConfig};
 
     const REQUIRED_CONSENSUS_ARGS: &[&str] =
         &["--l1-eth-rpc", "http://localhost:8545", "--l1-beacon", "http://localhost:5052"];
@@ -541,5 +589,56 @@ mod tests {
 
         let rendered = err.to_string();
         assert!(rendered.contains("--mode"));
+    }
+
+    #[test]
+    fn embedded_l1_replaces_l1_rpcs() {
+        let cli = BaseCli::parse_from([
+            "base",
+            "sequencer",
+            "--p2p.sequencer.key",
+            SEQUENCER_KEY,
+            "--l1.embedded",
+        ]);
+        let BaseCommand::Sequencer(sequencer) = cli.command else {
+            panic!("expected sequencer command");
+        };
+        assert!(sequencer.l1.l1_embedded);
+        let consensus_config: ConsensusNodeConfigArgs = sequencer.consensus.into();
+        assert_eq!(
+            consensus_config.l1_rpc_args.l1_eth_rpc,
+            url::Url::parse(super::EMBEDDED_L1_PLACEHOLDER).unwrap()
+        );
+
+        assert!(
+            BaseCli::try_parse_from(sequencer_args(&[
+                "base",
+                "sequencer",
+                "--p2p.sequencer.key",
+                SEQUENCER_KEY,
+                "--l1.embedded",
+            ]))
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn embedded_l1_keeps_upgrade_signal_on_mainnet() {
+        let cli = BaseCli::parse_from([
+            "base",
+            "sequencer",
+            "--p2p.sequencer.key",
+            SEQUENCER_KEY,
+            "--l1.embedded",
+        ]);
+        let BaseCommand::Sequencer(sequencer) = cli.command else {
+            panic!("expected sequencer command");
+        };
+        let mainnet =
+            ResolvedChainConfig { name: "mainnet".to_string(), l2_chain_id: 8453, l1_chain_id: 1 };
+
+        let err = sequencer.run(mainnet).unwrap_err();
+
+        assert!(err.to_string().contains("--upgrade-signal.l1-rpc"));
     }
 }

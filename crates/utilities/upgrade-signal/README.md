@@ -39,7 +39,9 @@ config. The mode remains `metrics-only`; select `startup-apply` or `runtime-admi
 Execution-side readers also need `--upgrade-signal.l1-rpc` or
 `BASE_NODE_UPGRADE_SIGNAL_L1_RPC`. Integrated `base rpc` and `base sequencer` commands derive this
 from their consensus `--l1-eth-rpc` by default so execution and consensus read the same L1 source
-unless an explicit override is supplied.
+unless an explicit override is supplied. With `--l1.embedded` there is no L1 RPC to derive from:
+`base rpc` then drops the default contract, and `base sequencer` refuses to start without an
+explicit `--upgrade-signal.l1-rpc`.
 
 ## Mode Metric
 

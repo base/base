@@ -2885,6 +2885,7 @@ dependencies = [
  "base-common-genesis",
  "base-consensus-cli",
  "base-consensus-engine",
+ "base-consensus-l1",
  "base-consensus-node",
  "base-execution-chainspec",
  "base-execution-cli",
@@ -3880,6 +3881,7 @@ dependencies = [
  "base-consensus-disc",
  "base-consensus-engine",
  "base-consensus-gossip",
+ "base-consensus-l1",
  "base-consensus-node",
  "base-consensus-peers",
  "base-consensus-providers",
@@ -4052,6 +4054,51 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-consensus-l1"
+version = "0.0.0"
+dependencies = [
+ "alloy-consensus 2.5.0",
+ "alloy-eips 2.5.0",
+ "alloy-primitives",
+ "alloy-rpc-types-eth 2.5.0",
+ "async-trait",
+ "base-consensus-derive",
+ "base-consensus-peers",
+ "base-protocol",
+ "blst",
+ "derive_more 2.1.1",
+ "discv5 0.10.4 (registry+https://github.com/rust-lang/crates.io-index)",
+ "ethereum_ssz",
+ "ethereum_ssz_derive",
+ "eyre",
+ "futures",
+ "jsonrpsee",
+ "libp2p",
+ "libp2p-stream",
+ "lru 0.16.4",
+ "parking_lot",
+ "reth-chainspec",
+ "reth-cli-util",
+ "reth-eth-wire-types",
+ "reth-ethereum-forks",
+ "reth-ethereum-primitives",
+ "reth-network",
+ "reth-network-api",
+ "reth-network-p2p",
+ "reth-storage-api",
+ "reth-tasks",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "snap",
+ "thiserror 2.0.19",
+ "tokio",
+ "tracing",
+ "unsigned-varint 0.8.0",
+ "url",
+]
+
+[[package]]
 name = "base-consensus-node"
 version = "0.0.0"
 dependencies = [
@@ -4085,6 +4132,7 @@ dependencies = [
  "base-consensus-disc",
  "base-consensus-engine",
  "base-consensus-gossip",
+ "base-consensus-l1",
  "base-consensus-peers",
  "base-consensus-providers",
  "base-consensus-rpc",
@@ -12578,6 +12626,20 @@ dependencies = [
  "socket2 0.5.10",
  "thiserror 2.0.19",
  "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "libp2p-stream"
+version = "0.4.0-alpha"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1d6bd8025c80205ec2810cfb28b02f362ab48a01bee32c50ab5f12761e033464"
+dependencies = [
+ "futures",
+ "libp2p-core",
+ "libp2p-identity",
+ "libp2p-swarm",
+ "rand 0.8.7",
  "tracing",
 ]
 
