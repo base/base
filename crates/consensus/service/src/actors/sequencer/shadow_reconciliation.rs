@@ -1,9 +1,12 @@
 //! Request routing and buffered canonical inputs for shadow reconciliation.
 
-use std::collections::{BTreeMap, VecDeque};
+use std::{
+    collections::{BTreeMap, VecDeque},
+    time::Duration,
+};
 
 use alloy_primitives::B256;
-use base_common_genesis::ChainGenesis;
+use base_common_genesis::{ChainGenesis, DenimTimestampSchedule, RollupConfig};
 use base_common_rpc_types_engine::BaseExecutionPayloadEnvelope;
 use base_protocol::{AttributesWithParent, FromBlockError, L2BlockInfo};
 use tracing::debug;
@@ -62,8 +65,9 @@ pub enum SequencerEngineState {
 }
 
 /// Canonical gossip observations, optionally retaining payloads for ordered catch-up.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct CanonicalUnsafeCatchup {
+    max_payloads: usize,
     payloads: BTreeMap<u64, BaseExecutionPayloadEnvelope>,
     observations: BTreeMap<u64, B256>,
     highest_observed: Option<(u64, B256)>,
@@ -72,9 +76,56 @@ pub struct CanonicalUnsafeCatchup {
     faulted: bool,
 }
 
+impl Default for CanonicalUnsafeCatchup {
+    fn default() -> Self {
+        Self::new(Self::MAX_PAYLOADS)
+    }
+}
+
 impl CanonicalUnsafeCatchup {
-    /// Maximum recent canonical unsafe payloads retained during catch-up.
-    pub const MAX_PAYLOADS: usize = SequencerConfig::MAX_SHADOW_BLOCKS_PER_CYCLE as usize;
+    /// Wall-clock span of recent canonical gossip retained during catch-up.
+    ///
+    /// A restarted follower only connects to the buffer once derived safe blocks reach the oldest
+    /// retained payload, so the window must exceed the unsafe-to-safe derivation latency (batch
+    /// submission, L1 inclusion, and derivation) with ample margin, independent of block time.
+    pub const CATCHUP_WINDOW: Duration = Duration::from_secs(600);
+
+    /// Payloads retained during catch-up at the fastest supported block cadence.
+    pub const MAX_PAYLOADS: usize = (Self::CATCHUP_WINDOW.as_millis()
+        / DenimTimestampSchedule::DENIM_BLOCK_INTERVAL_MILLIS as u128)
+        as usize;
+
+    /// Creates a catch-up buffer retaining at most `max_payloads` recent payloads.
+    pub const fn new(max_payloads: usize) -> Self {
+        Self {
+            max_payloads,
+            payloads: BTreeMap::new(),
+            observations: BTreeMap::new(),
+            highest_observed: None,
+            latest_observed_head: None,
+            faulted: false,
+        }
+    }
+
+    /// Returns the number of payloads that span [`Self::CATCHUP_WINDOW`] at `rollup`'s block time.
+    ///
+    /// A chain with Denim scheduled is sized for the Denim cadence so the window also holds
+    /// through the transition from whole-second blocks.
+    pub fn max_payloads_for(rollup: &RollupConfig) -> usize {
+        let legacy_interval_millis = rollup.block_time.saturating_mul(1_000);
+        let interval_millis =
+            if legacy_interval_millis == 0 || rollup.denim_timestamp_schedule().is_some() {
+                DenimTimestampSchedule::DENIM_BLOCK_INTERVAL_MILLIS
+            } else {
+                legacy_interval_millis
+            };
+        (Self::CATCHUP_WINDOW.as_millis() / u128::from(interval_millis)) as usize
+    }
+
+    /// Returns the maximum number of payloads retained.
+    pub const fn max_payloads(&self) -> usize {
+        self.max_payloads
+    }
 
     /// Retains an authenticated canonical payload in the rolling recent window.
     pub fn buffer_payload(&mut self, envelope: BaseExecutionPayloadEnvelope) {
@@ -85,7 +136,7 @@ impl CanonicalUnsafeCatchup {
             return;
         }
         self.payloads.insert(number, envelope);
-        while self.payloads.len() > Self::MAX_PAYLOADS {
+        while self.payloads.len() > self.max_payloads {
             self.payloads.pop_first();
         }
     }
@@ -108,7 +159,7 @@ impl CanonicalUnsafeCatchup {
         if self.highest_observed.is_none_or(|(highest, _)| number > highest) {
             self.highest_observed = Some((number, hash));
         }
-        while self.observations.len() > Self::MAX_PAYLOADS {
+        while self.observations.len() > self.max_payloads {
             self.observations.pop_first();
         }
     }
@@ -410,14 +461,14 @@ mod tests {
     use alloy_primitives::{Address, B256, Bloom, U256};
     use alloy_rpc_types_engine::ExecutionPayloadV1;
     use base_common_consensus::BaseTxEnvelope;
-    use base_common_genesis::RollupConfig;
+    use base_common_genesis::{BaseUpgradeConfig, RollupConfig, UpgradeConfig};
     use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
     use base_consensus_engine::test_utils::{TestAttributesBuilder, encoded_l1_info_deposit_tx};
     use base_protocol::{BlockInfo, L1BlockInfoBedrock, L2BlockInfo};
     use rstest::rstest;
 
     use super::{CanonicalUnsafeCatchup, ShadowReconciliationGate};
-    use crate::EngineClientError;
+    use crate::{EngineClientError, SequencerConfig};
 
     fn head(number: u64, hash: B256) -> L2BlockInfo {
         L2BlockInfo {
@@ -556,6 +607,68 @@ mod tests {
         assert_eq!(catchup.observations.first_key_value().map(|(number, _)| *number), Some(3));
         let anchor = head(2, B256::from(U256::from(2)));
         assert_eq!(catchup.contiguous_payloads(anchor).len(), CanonicalUnsafeCatchup::MAX_PAYLOADS);
+    }
+
+    #[test]
+    fn catchup_connects_when_derivation_lags_beyond_the_shadow_cycle_limit() {
+        // Derivation leaves the safe head more than the shadow cycle limit behind the latest
+        // gossip, which is what happens to a restarted follower when blocks are fast.
+        let lag = SequencerConfig::MAX_SHADOW_BLOCKS_PER_CYCLE + 14;
+        let anchor_number = 50;
+        let tip = anchor_number + lag;
+        let mut catchup = CanonicalUnsafeCatchup::default();
+        let mut parent = B256::from(U256::from(anchor_number));
+        for number in anchor_number + 1..=tip {
+            let hash = B256::from(U256::from(number));
+            catchup.buffer_payload(payload(number, parent, hash));
+            parent = hash;
+        }
+        let anchor = head(anchor_number, B256::from(U256::from(anchor_number)));
+        assert!(!catchup.is_complete(anchor, anchor));
+
+        let suffix = catchup.contiguous_payloads(anchor);
+
+        assert_eq!(suffix.len() as u64, lag);
+        let applied = head(tip, B256::from(U256::from(tip)));
+        catchup.commit(applied);
+        assert!(catchup.is_complete(applied, applied));
+    }
+
+    #[rstest]
+    #[case::denim_default(RollupConfig::default(), 3_000)]
+    #[case::legacy_block_time(rollup_config(2, None), 300)]
+    #[case::denim_scheduled(rollup_config(2, Some(1_000)), 3_000)]
+    fn catchup_window_spans_the_same_time_at_any_block_time(
+        #[case] rollup: RollupConfig,
+        #[case] expected: usize,
+    ) {
+        assert_eq!(CanonicalUnsafeCatchup::max_payloads_for(&rollup), expected);
+    }
+
+    #[test]
+    fn catchup_retains_only_its_configured_capacity() {
+        let mut catchup = CanonicalUnsafeCatchup::new(4);
+        let mut parent = B256::ZERO;
+        for number in 1..=6 {
+            let hash = B256::from(U256::from(number));
+            catchup.buffer_payload(payload(number, parent, hash));
+            parent = hash;
+        }
+
+        assert_eq!(catchup.max_payloads(), 4);
+        assert_eq!(catchup.payloads.keys().copied().collect::<Vec<_>>(), vec![3, 4, 5, 6]);
+        assert_eq!(catchup.observations.len(), 4);
+    }
+
+    fn rollup_config(block_time: u64, denim: Option<u64>) -> RollupConfig {
+        RollupConfig {
+            block_time,
+            upgrades: UpgradeConfig {
+                base: BaseUpgradeConfig { denim, ..Default::default() },
+                ..Default::default()
+            },
+            ..Default::default()
+        }
     }
 
     #[test]
