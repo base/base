@@ -4,7 +4,7 @@ use alloc::vec::Vec;
 
 use alloy_consensus::ReceiptWithBloom;
 use alloy_eips::eip2718::Encodable2718;
-use alloy_primitives::B256;
+use alloy_primitives::{B256, Bloom};
 use alloy_trie::root::ordered_trie_root_with_encoder;
 use base_common_chains::Upgrades;
 use base_common_consensus::DepositReceiptExt;
@@ -40,20 +40,31 @@ pub fn calculate_receipt_root<R: DepositReceiptExt>(
     ordered_trie_root_with_encoder(receipts, |r, buf| r.encode_2718(buf))
 }
 
-/// Calculates the receipt root for a header for the reference type of a Base receipt.
+/// Calculates the receipt root and the logs bloom for a header from receipts without memoized
+/// blooms.
+///
+/// Each receipt's bloom is computed once: it is encoded into the receipt's trie leaf and
+/// accrued into the header logs bloom, which is the union of the receipt blooms.
 ///
 /// NOTE: Prefer [`calculate_receipt_root`] if you have log blooms memoized.
-pub fn calculate_receipt_root_no_memo<R: DepositReceiptExt>(
+pub fn calculate_receipt_root_and_logs_bloom<R: DepositReceiptExt>(
     receipts: &[R],
     chain_spec: impl Upgrades,
     timestamp: u64,
-) -> B256 {
+) -> (B256, Bloom) {
+    let mut logs_bloom = Bloom::ZERO;
+    let encode = |receipt: &R, buf: &mut Vec<u8>| {
+        let receipt = receipt.with_bloom_ref();
+        logs_bloom.accrue_bloom(&receipt.logs_bloom);
+        receipt.encode_2718(buf);
+    };
+
     // There is a minor bug in op-geth and op-erigon where in the Regolith upgrade,
     // the receipt root calculation does not include the deposit nonce in the receipt
     // encoding. In the Regolith Upgrade, we must strip the deposit nonce from the
     // receipts before calculating the receipt root. This was corrected in the Canyon
     // upgrade.
-    if chain_spec.is_regolith_active_at_timestamp(timestamp)
+    let receipts_root = if chain_spec.is_regolith_active_at_timestamp(timestamp)
         && !chain_spec.is_canyon_active_at_timestamp(timestamp)
     {
         let receipts = receipts
@@ -67,14 +78,12 @@ pub fn calculate_receipt_root_no_memo<R: DepositReceiptExt>(
             })
             .collect::<Vec<_>>();
 
-        return ordered_trie_root_with_encoder(&receipts, |r, buf| {
-            r.with_bloom_ref().encode_2718(buf);
-        });
-    }
+        ordered_trie_root_with_encoder(&receipts, encode)
+    } else {
+        ordered_trie_root_with_encoder(receipts, encode)
+    };
 
-    ordered_trie_root_with_encoder(receipts, |r, buf| {
-        r.with_bloom_ref().encode_2718(buf);
-    })
+    (receipts_root, logs_bloom)
 }
 
 #[cfg(test)]
@@ -477,6 +486,14 @@ mod tests {
                 case.1,
             );
             assert_eq!(root, case.2);
+
+            let (root, logs_bloom) =
+                calculate_receipt_root_and_logs_bloom(&receipts, &chain_spec, case.1);
+            assert_eq!(root, case.2);
+            assert_eq!(
+                logs_bloom,
+                alloy_primitives::logs_bloom(receipts.iter().flat_map(TxReceipt::logs))
+            );
         }
     }
 

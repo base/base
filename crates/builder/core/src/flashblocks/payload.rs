@@ -9,12 +9,11 @@ use std::{
 };
 
 use alloy_consensus::{
-    BlockBody, EMPTY_OMMER_ROOT_HASH, Header, Transaction, TxReceipt, constants::EMPTY_WITHDRAWALS,
-    proofs,
+    BlockBody, EMPTY_OMMER_ROOT_HASH, Header, Transaction, constants::EMPTY_WITHDRAWALS, proofs,
 };
 use alloy_eips::{Encodable2718, eip7685::EMPTY_REQUESTS_HASH, merge::BEACON_NONCE};
 use alloy_evm::Database;
-use alloy_primitives::{Address, B256, Bloom, U256, logs_bloom, map::foldhash::HashMap};
+use alloy_primitives::{Address, B256, U256, map::foldhash::HashMap};
 use base_builder_publish::WebSocketPublisher;
 use base_common_chains::Upgrades;
 use base_common_consensus::{BaseReceipt, BaseTransactionSigned};
@@ -22,7 +21,7 @@ use base_common_flashblocks::{
     ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, FlashblockId, FlashblocksPayloadV1,
     Metadata,
 };
-use base_execution_consensus::{calculate_receipt_root_no_memo, isthmus};
+use base_execution_consensus::{calculate_receipt_root_and_logs_bloom, isthmus};
 use base_execution_evm::{BaseEvmConfig, BaseNextBlockEnvAttributes};
 use base_execution_payload_builder::{
     BaseBuiltPayload, BasePayloadBuilderAttributes, BuilderMetrics as SharedBuilderMetrics,
@@ -1236,12 +1235,11 @@ where
         ));
     }
 
-    let receipts_root = calculate_receipt_root_no_memo(
+    let (receipts_root, logs_bloom) = calculate_receipt_root_and_logs_bloom(
         &info.receipts,
         &ctx.chain_spec,
         ctx.attributes().timestamp(),
     );
-    let logs_bloom: Bloom = logs_bloom(info.receipts.iter().flat_map(|r| r.logs()));
 
     // TODO: maybe recreate state with bundle in here
     // calculate the state root
