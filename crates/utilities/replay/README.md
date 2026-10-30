@@ -6,12 +6,12 @@ recorders and replayers. This crate contains no recorder or storage implementati
 ## Wire contract
 
 Each record represents one JSON-RPC call, not an entire JSON-RPC batch. Writers
-serialize records as JSONL: one JSON object followed by a newline per call, in
+use `ReplayRecord::to_jsonl_line` for JSONL: one JSON object followed by a newline per call, in
 arrival order. `params` retains the original JSON value's bytes, including internal
 whitespace and number formatting; whitespace outside that value is not retained.
-Multiline params must not be compacted to force them onto one physical line:
-verbatim preservation takes precedence, so such input needs a different framing
-contract before it can be written as JSONL.
+The method rejects literal LF or CR in raw params with `ReplayRecordError::MultilineParams`;
+it never re-minifies them. Escaped `\n` and `\r` inside JSON strings are accepted
+and preserved verbatim. Generic Serde serialization does not enforce JSONL framing.
 
 Readers must select this schema using the external format identifier
 `REPLAY_RECORD_FORMAT` (`replay-record/v1`), supplied by the enclosing transport or

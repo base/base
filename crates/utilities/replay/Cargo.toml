@@ -12,6 +12,8 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+thiserror.workspace = true
+
 alloy-primitives = { workspace = true, features = ["serde"] }
 
 serde = { workspace = true, features = ["derive"] }

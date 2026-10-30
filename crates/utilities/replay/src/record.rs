@@ -17,7 +17,7 @@ pub enum ReplayStream {
 
 /// One JSON-RPC call in a [`REPLAY_RECORD_FORMAT`] dataset.
 ///
-/// Serialize as one JSONL object per call. Batch calls retain their order and share a batch ID.
+/// Use [`Self::to_jsonl_line`] for checked JSONL framing. Batch calls retain order and share a batch ID.
 /// The enclosing transport or dataset metadata must identify v1 before deserialization.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReplayRecord {
@@ -39,13 +39,40 @@ pub struct ReplayRecord {
     pub tx_hash: Option<B256>,
 }
 
+/// Failure to serialize a replay record as one JSONL line.
+#[derive(Debug, thiserror::Error)]
+pub enum ReplayRecordError {
+    /// Raw parameters contain a literal LF or CR, which would break JSONL framing.
+    #[error("raw params contain a literal LF or CR")]
+    MultilineParams,
+    /// JSON serialization failed.
+    #[error(transparent)]
+    Serialization(#[from] serde_json::Error),
+}
+
+impl ReplayRecord {
+    /// Serialize one physical JSONL line, preserving raw params and appending a newline.
+    ///
+    /// # Errors
+    /// Returns [`ReplayRecordError::MultilineParams`] for literal LF or CR in raw params,
+    /// or [`ReplayRecordError::Serialization`] if JSON serialization fails.
+    pub fn to_jsonl_line(&self) -> Result<String, ReplayRecordError> {
+        let mut line = serde_json::to_string(self)?;
+        if line.contains(['\n', '\r']) {
+            return Err(ReplayRecordError::MultilineParams);
+        }
+        line.push('\n');
+        Ok(line)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use alloy_primitives::B256;
     use serde::Deserialize;
     use serde_json::{Value, value::RawValue};
 
-    use super::{ReplayRecord, ReplayStream};
+    use super::{ReplayRecord, ReplayRecordError, ReplayStream};
 
     #[derive(Debug, Deserialize)]
     struct CapturedCall {
@@ -70,7 +97,7 @@ mod tests {
             tx_hash: None,
         };
 
-        let line = format!("{}\n", serde_json::to_string(&record).unwrap());
+        let line = record.to_jsonl_line().unwrap();
         let decoded: ReplayRecord = serde_json::from_str(line.trim_end()).unwrap();
 
         assert_eq!(line.lines().count(), 1);
@@ -94,7 +121,7 @@ mod tests {
             tx_hash: Some(B256::repeat_byte(0xab)),
         };
 
-        let encoded = serde_json::to_string(&record).unwrap();
+        let encoded = record.to_jsonl_line().unwrap();
         let decoded: ReplayRecord = serde_json::from_str(&encoded).unwrap();
 
         assert_eq!(decoded.params.get().as_bytes(), params.as_bytes());
@@ -105,6 +132,36 @@ mod tests {
         assert_eq!(decoded.batch_id, record.batch_id);
         assert_eq!(decoded.source, record.source);
         assert_eq!(decoded.tx_hash, record.tx_hash);
+    }
+
+    #[test]
+    fn jsonl_rejects_params_when_line_breaks_are_literal() {
+        for separator in ["\n", "\r", "\r\n"] {
+            let input = format!(
+                r#"{{"stream":"builder_ingress","received_at_ms":0,"method":"call","params":[{separator}1{separator}],"source":"[::1]:1234"}}"#
+            );
+            let record: ReplayRecord = serde_json::from_str(&input).unwrap();
+
+            let result = record.to_jsonl_line();
+
+            assert!(matches!(result, Err(ReplayRecordError::MultilineParams)));
+        }
+    }
+
+    #[test]
+    fn jsonl_preserves_params_when_line_breaks_are_escaped() {
+        let params = r#"[ "line\nbreak", "carriage\rreturn" ]"#;
+        let input = format!(
+            r#"{{"stream":"builder_ingress","received_at_ms":0,"method":"call","params":{params},"source":"[::1]:1234"}}"#
+        );
+        let record: ReplayRecord = serde_json::from_str(&input).unwrap();
+
+        let line = record.to_jsonl_line().unwrap();
+
+        assert!(line.ends_with('\n'));
+        assert!(!line[..line.len() - 1].contains(['\n', '\r']));
+        let decoded: ReplayRecord = serde_json::from_str(&line).unwrap();
+        assert_eq!(decoded.params.get().as_bytes(), params.as_bytes());
     }
 
     #[test]
