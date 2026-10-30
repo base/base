@@ -220,6 +220,10 @@ BASE_NODE_VERIFIER_L1_CONFS=15
 
 # Chain Configuration
 L1_CHAIN_ID=1337
+# Vibenet (rpc.vibes.base.org) runs this compose stack with this env file, so it shares this
+# L2 chain ID by design, and base-anvil enables Base mode for it. Do not change it here alone.
+# Transactions signed for a local devnet, including with the public keys above, are replayable
+# on Vibenet and the reverse. See docs/guides/DEVNET.md.
 L2_CHAIN_ID=84538453
 # Optional: set to a non-negative block number to schedule Base Azul in devnet.
 # Leave unset to avoid setting base.azul/osakaTime during genesis generation.

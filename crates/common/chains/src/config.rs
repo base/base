@@ -195,6 +195,9 @@ impl ChainConfig {
     /// Base Sepolia chain configuration.
     pub const SEPOLIA: &'static Self = Self::sepolia();
     /// Local dev chain configuration (all forks active at genesis).
+    ///
+    /// Its chain ID, 84538453, is shared with the public Vibenet preview network, which is
+    /// deployed from the Docker devnet. Transactions signed for one are replayable on the other.
     pub const DEVNET: &'static Self = Self::devnet();
     /// Base Zeronet chain configuration.
     pub const ZERONET: &'static Self = Self::zeronet();

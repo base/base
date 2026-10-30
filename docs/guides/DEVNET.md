@@ -32,6 +32,15 @@ just devnet down
 `etc/docker/devnet-env`. Pass `everest` or `zenith` to `up`/`up-single` to schedule those forks. Run
 `just devnet` for every command. Topology, batchers, and images: [etc/docker/README.md](../../etc/docker/README.md).
 
+The Docker devnet and the built-in `dev` chain use L2 chain ID `84538453`, the same ID as
+[Vibenet](https://docs.base.org/build-on-base/test-on-vibenet), Base's public preview network. This is
+deliberate: Vibenet is deployed from this compose stack and `devnet-env`, and tools such as base-anvil
+recognize the ID as a Base chain. Because EIP-155 signatures only bind the chain ID, a transaction signed
+for a local devnet is valid on Vibenet, and the reverse, when the sender's nonce and balance match. The
+prefunded `devnet-env` keys are public anvil keys, and some of those accounts are funded on Vibenet. Do not
+paste local devnet transactions into Vibenet tooling, and do not sign local devnet transactions with a key
+that holds value on Vibenet.
+
 ## Anvil + Local Nitro Proving
 
 ```sh
