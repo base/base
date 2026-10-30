@@ -312,7 +312,7 @@ pub enum TxTypeConfig {
         contract: Address,
     },
 
-    /// Batched `real_token_setup` pair-token transfers through Multicall3.
+    /// Batched `real_token_setup` pair-token transfers through Disperse.
     TokenMove {
         /// Number of token transfers per transaction.
         #[serde(default = "default_token_move_transfers_per_tx")]
@@ -443,9 +443,9 @@ const fn default_storage_new_slot_ratio() -> f64 {
 /// Target RPCs may enforce a lower per-tx ceiling; tune `slots_per_tx` to fit.
 const MAX_STORAGE_SLOTS_PER_TX: u32 = 1_300;
 
-/// About 323k gas per tx with real USDC on a Base mainnet fork.
+/// About 332k gas per tx with real USDC on a Base mainnet fork.
 const fn default_token_move_transfers_per_tx() -> u32 {
-    20
+    25
 }
 
 /// Keeps the token-move gas limit (`50_000 + 35_000` per transfer) under the ~30M per-tx cap.

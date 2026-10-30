@@ -632,10 +632,10 @@ impl LoadRunner {
                 TxType::UniswapV3Liquidity(payload) => {
                     routers.insert(payload.position_manager);
                 }
-                // Multicall3 spends the pair token with `transferFrom`, so it needs the same
+                // Disperse spends the pair token with `transferFrom`, so it needs the same
                 // real-token setup approval as a router.
                 TxType::TokenMove { .. } => {
-                    routers.insert(alloy_provider::MULTICALL3_ADDRESS);
+                    routers.insert(crate::workload::DISPERSE);
                 }
                 TxType::Transfer
                 | TxType::Eip8430Transfer

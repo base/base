@@ -188,7 +188,7 @@ pub enum TxType {
         /// `DoubleCounter` contract address.
         contract: Address,
     },
-    /// Batched real-token transfers through Multicall3.
+    /// Batched real-token transfers through Disperse.
     TokenMove {
         /// Number of token transfers per transaction.
         transfers_per_tx: u32,
