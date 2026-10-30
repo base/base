@@ -22,8 +22,10 @@ use base_execution_txpool::{
     estimated_da_size::DataAvailabilitySized,
 };
 use base_observability_events::{
-    GlobalTransactionEventWriter, TransactionEventProducer, TransactionEventType, transaction_event,
+    GlobalTransactionEventWriter, TransactionEventBuilder, TransactionEventProducer,
+    TransactionEventType,
 };
+use chrono::Utc;
 use reth_basic_payload_builder::{
     BuildArguments, BuildOutcome, BuildOutcomeKind, MissingPayloadBehaviour, PayloadBuilder,
     PayloadConfig, is_better_payload,
@@ -51,6 +53,7 @@ use reth_transaction_pool::{
 use reth_trie_common::ExecutionWitnessMode;
 use reth_trie_parallel::state_root_task::PayloadStateRootHandle;
 use revm::context::{Block, BlockEnv};
+use serde_json::Value;
 use tracing::{debug, debug_span, info, instrument, trace, warn};
 
 use crate::{
@@ -63,32 +66,43 @@ use crate::{
     payload::BaseBuiltPayload,
 };
 
+/// Journals a native builder validity event.
+///
+/// This runs per candidate on the build thread, so only the event's raw fields are copied here;
+/// the writer builds the event, hashing its ID and formatting its fields, on its own thread.
+/// The data values are therefore evaluated where the event is built and must be `Copy` values
+/// the closure can own, such as literals and `&'static str` or integer locals.
 macro_rules! emit_native_validity_event {
     ($ctx:expr, $event_type:expr, $tx_hash:expr, $attempt:expr, {
         $( $data_name:expr => $data_value:expr ),* $(,)?
     }) => {
-        if GlobalTransactionEventWriter::get().is_some() {
-            if let Err(error) = transaction_event!(
-                producer: TransactionEventProducer::BaseBuilder,
-                event_type: $event_type,
-                tx_hash: $tx_hash,
-                block_number: $ctx.parent().number().saturating_add(1),
-                payload_id: $ctx.payload_id().to_string(),
-                id: {
-                    "validity_consideration_index" => $attempt,
-                },
-                data: {
-                    "builder_mode" => "native",
-                    "source_queue" => "txpool_best",
-                    "parent_hash" => format!("{:#x}", $ctx.parent().hash()),
-                    $( $data_name => $data_value ),*
-                },
-            ) {
+        if let Some(writer) = GlobalTransactionEventWriter::get() {
+            let event_type = $event_type;
+            let tx_hash = $tx_hash;
+            let attempt = $attempt;
+            let block_number = $ctx.parent().number().saturating_add(1);
+            let payload_id = $ctx.payload_id();
+            let parent_hash = $ctx.parent().hash();
+            let event_time = Utc::now();
+            let result = writer.try_write_with(move |network| {
+                TransactionEventBuilder::new(TransactionEventProducer::BaseBuilder, event_type)
+                    .tx_hash(tx_hash)
+                    .block_number(block_number)
+                    .payload_id(payload_id.to_string())
+                    .id_part("validity_consideration_index", attempt)
+                    .event_time(event_time)
+                    .data_field("builder_mode", Value::from("native"))
+                    .data_field("source_queue", Value::from("txpool_best"))
+                    .data_field("parent_hash", Value::from(format!("{parent_hash:#x}")))
+                    $( .data_field($data_name, Value::from($data_value)) )*
+                    .build_with_network(network)
+            });
+            if let Err(error) = result {
                 warn!(
                     target: "payload_builder",
                     error = %error,
-                    event_type = %$event_type,
-                    tx_hash = ?$tx_hash,
+                    event_type = %event_type,
+                    tx_hash = ?tx_hash,
                     "failed to enqueue native builder validity transaction event"
                 );
             }
@@ -1622,7 +1636,7 @@ where
                     tx_hash,
                     validity_consideration_index,
                     {
-                        "gas_used" => gas_output.tx_gas_used(),
+                        "gas_used" => gas_used,
                     }
                 );
             }
@@ -1689,7 +1703,9 @@ mod tests {
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
     use base_execution_evm::BaseEvmConfig;
     use base_execution_txpool::{BasePooledTransaction, ValidityOperator, ValidityPredicate};
-    use base_observability_events::{TransactionEventCapture, TransactionEventType};
+    use base_observability_events::{
+        TransactionEvent, TransactionEventCapture, TransactionEventType,
+    };
     use reth_basic_payload_builder::{BuildOutcomeKind, PayloadConfig};
     use reth_chainspec::ChainSpec;
     use reth_ethereum_forks::ForkCondition;
@@ -1712,6 +1728,7 @@ mod tests {
         },
     };
     use revm::{Database, database::TransitionState, state::EvmState};
+    use serde_json::json;
 
     use super::{BasePayloadBuilderCtx, Builder, ExecutionInfo};
     use crate::{
@@ -2198,7 +2215,27 @@ mod tests {
         let event_types =
             transaction_events.iter().map(|event| event.event_type).collect::<Vec<_>>();
         assert_eq!(event_types, [TransactionEventType::BuilderAccepted]);
-        assert_eq!(transaction_events[0].data["builder_mode"], "native");
+        assert_eq!(
+            journal_record(&transaction_events[0]),
+            json!({
+                "schema_version": "transaction-event/v1",
+                "event_id": "0x2c070d405959ecc33eb117f61e4d9ebd7034f1486608228c9b6ab80d7ef25735",
+                "producer": "base-builder",
+                "event_type": "BUILDER_ACCEPTED",
+                "network": "test",
+                "tx_hash": "0xccf4c7c689141671ddacf0a40d187d9d95ce4d29e9048506eb5d4a4a4020ff65",
+                "block_hash": null,
+                "block_number": 1,
+                "payload_id": "0x0000000000000000",
+                "request_id": null,
+                "data": {
+                    "builder_mode": "native",
+                    "source_queue": "txpool_best",
+                    "parent_hash": "0x1b3eb629f88b402a923282cd63134580adb282f3fac70ecbda522cc719c766c3",
+                    "gas_used": 21000,
+                },
+            })
+        );
     }
 
     #[test]
@@ -2272,9 +2309,38 @@ mod tests {
             .events()
             .into_iter()
             .filter(|event| event.tx_hash == Some(gated_hash))
-            .map(|event| event.event_type)
             .collect::<Vec<_>>();
-        assert_eq!(gated_events, [TransactionEventType::BuilderDeferred]);
+        assert_eq!(gated_events.len(), 1);
+        assert_eq!(
+            journal_record(&gated_events[0]),
+            json!({
+                "schema_version": "transaction-event/v1",
+                "event_id": "0x05249073e1da4c26ebd4511664c24dc789cf738f5337f464713eb48bd06707c4",
+                "producer": "base-builder",
+                "event_type": "BUILDER_DEFERRED",
+                "network": "test",
+                "tx_hash": "0x6e186274a277ff61381d252ca571dfeb3bb897b85792d8de9abc4e42e82c2b57",
+                "block_hash": null,
+                "block_number": 1,
+                "payload_id": "0x0000000000000000",
+                "request_id": null,
+                "data": {
+                    "builder_mode": "native",
+                    "source_queue": "txpool_best",
+                    "parent_hash": "0x1b3eb629f88b402a923282cd63134580adb282f3fac70ecbda522cc719c766c3",
+                    "defer_reason": "validity_predicate_not_satisfied",
+                    "defer_detail": "a validity predicate is not satisfied by the current build state",
+                },
+            })
+        );
+    }
+
+    /// Returns the event as the journal serializes it, without the wall-clock event time.
+    /// Downstream consumers dedupe on the event ID, so the record must stay byte-identical.
+    fn journal_record(event: &TransactionEvent) -> serde_json::Value {
+        let mut record = serde_json::to_value(event).expect("event serializes");
+        record.as_object_mut().expect("event is an object").remove("event_time");
+        record
     }
 
     #[test]
