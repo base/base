@@ -8,6 +8,7 @@ use base_execution_txpool::MAX_VALIDATED_INSERT_BATCH;
 use base_observability_events::{
     TransactionEventProducer, TransactionEventType, transaction_event,
 };
+use futures::future::select_all;
 use jsonrpsee::{
     core::{
         ClientError,
@@ -17,11 +18,16 @@ use jsonrpsee::{
     http_client::HttpClient,
     types::{ErrorObject, ErrorObjectOwned},
 };
+use serde::de::DeserializeOwned;
 use serde_json::{Map, json, value::RawValue};
 use tokio::{sync::mpsc, time};
 use tracing::{debug, error, info, trace};
 
-use super::{config::ForwarderConfig, metrics::ForwarderMetrics, request::ForwardRequest};
+use super::{
+    config::ForwarderConfig,
+    metrics::ForwarderMetrics,
+    request::{ForwardRequest, RawParams},
+};
 
 /// Builder method that inserts a whole batch of validated transactions in one call.
 const INSERT_BATCH_METHOD: &str = "base_insertValidatedTransactions";
@@ -248,14 +254,38 @@ impl<R: ForwardRequest> DestinationForwarder<R> {
         self.send_with_retries(batch).await;
     }
 
-    async fn send_with_retries(&self, batch: Vec<R>) {
+    async fn send_with_retries(&self, mut batch: Vec<R>) {
+        loop {
+            batch
+                .retain(|request| request.cancellation().is_none_or(|token| !token.is_cancelled()));
+            if batch.is_empty() {
+                return;
+            }
+            let cancellations: Vec<_> = batch
+                .iter()
+                .filter_map(ForwardRequest::cancellation)
+                .map(|token| Box::pin(token.cancelled()))
+                .collect();
+            if cancellations.is_empty() {
+                self.send_active_with_retries(&batch).await;
+                return;
+            }
+            tokio::select! {
+                biased;
+                _ = select_all(cancellations) => {},
+                _ = self.send_active_with_retries(&batch) => return,
+            }
+        }
+    }
+
+    async fn send_active_with_retries(&self, batch: &[R]) {
         // Shutdown waits for this in-flight retry loop to finish. With the default backoff and
         // retry count, a down endpoint can add up to 700ms before the forwarder observes channel
         // closure; the service-level shutdown timeout is much larger than that.
         // Parallel to `batch` by index, so a batch response entry maps back to the request that
         // produced it. Collected once up front because both are read on every retry attempt.
         let tx_hashes: Vec<Option<TxHash>> = batch.iter().map(ForwardRequest::tx_hash).collect();
-        let methods: Vec<&'static str> = batch.iter().map(ForwardRequest::method).collect();
+        let methods: Vec<&str> = batch.iter().map(ForwardRequest::method).collect();
         let tx_count = batch.len() as u64;
         let overall_start = Instant::now();
         for attempt in 0..=self.config.max_retries {
@@ -275,7 +305,7 @@ impl<R: ForwardRequest> DestinationForwarder<R> {
                     );
                 }
             }
-            let result = self.send(&batch).await;
+            let result = self.send(batch).await;
 
             match result {
                 Ok(response) => {
@@ -285,15 +315,19 @@ impl<R: ForwardRequest> DestinationForwarder<R> {
 
                     let mut ok_count = 0u64;
                     let mut err_count = 0u64;
-                    for (idx, res) in response.into_iter().enumerate() {
+                    for (idx, (request, res)) in batch.iter().zip(response).enumerate() {
                         let tx_hash = tx_hashes.get(idx).copied().flatten();
                         let method = methods.get(idx).copied().unwrap_or_default();
                         match res {
                             // Delivery is journaled by the destination as
                             // `TXPOOL_VALIDATED_INSERT_ACCEPTED`; a node-side success event per
                             // destination would duplicate it.
-                            Ok(()) => ok_count += 1,
+                            Ok(()) => {
+                                request.on_result(Ok(()));
+                                ok_count += 1;
+                            }
                             Err(e) => {
+                                request.on_result(Err(Arc::new(ClientError::Call(e.clone()))));
                                 debug!(
                                     builder_url = %self.builder_url,
                                     error = %e,
@@ -336,6 +370,10 @@ impl<R: ForwardRequest> DestinationForwarder<R> {
                     time::sleep(backoff).await;
                 }
                 Err(err) => {
+                    let err = Arc::new(err);
+                    for request in batch {
+                        request.on_result(Err(Arc::clone(&err)));
+                    }
                     ForwarderMetrics::rpc_latency(Arc::clone(&self.url_label))
                         .record(overall_start.elapsed().as_secs_f64());
                     for (tx_hash, method) in tx_hashes.iter().zip(&methods) {
@@ -385,8 +423,28 @@ impl<R: ForwardRequest> DestinationForwarder<R> {
         {
             return self.send_insert_batch(transactions, batch.len()).await;
         }
-        let response = self.send_batch(batch).await?;
-        Ok(response.into_iter().map(|result| result.map_err(ErrorObject::into_owned)).collect())
+        if batch.iter().all(|request| request.raw_params().is_none()) {
+            return Ok(self
+                .send_batch::<()>(batch)
+                .await?
+                .into_iter()
+                .map(|result| result.map_err(ErrorObject::into_owned))
+                .collect());
+        }
+        self.send_batch::<Box<RawValue>>(batch)
+            .await?
+            .into_iter()
+            .zip(batch)
+            .map(|(result, request)| match result {
+                Ok(raw) => {
+                    if request.raw_params().is_none() {
+                        serde_json::from_str::<()>(raw.get()).map_err(ClientError::ParseError)?;
+                    }
+                    Ok(Ok(()))
+                }
+                Err(error) => Ok(Err(error.into_owned())),
+            })
+            .collect()
     }
 
     async fn send_insert_batch(
@@ -421,14 +479,22 @@ impl<R: ForwardRequest> DestinationForwarder<R> {
             .collect()
     }
 
-    async fn send_batch(&self, batch: &[R]) -> Result<BatchResponse<'_, ()>, ClientError> {
+    async fn send_batch<'a, T: DeserializeOwned + std::fmt::Debug + 'a>(
+        &'a self,
+        batch: &'a [R],
+    ) -> Result<BatchResponse<'a, T>, ClientError> {
         let mut request = BatchRequestBuilder::new();
         for item in batch {
             // A payload that will not serialize fails the whole batch rather than panicking the
             // task. `ParseError` is classified non-retryable below, which is correct: re-encoding
             // the same value fails identically, so retrying would only delay the drop.
-            let params = item.params().map_err(ClientError::ParseError)?;
-            request.insert(item.method(), params).expect("valid method name");
+            match item.raw_params() {
+                Some(params) => request.insert(item.method(), RawParams(params.to_owned())),
+                None => {
+                    request.insert(item.method(), item.params().map_err(ClientError::ParseError)?)
+                }
+            }
+            .map_err(ClientError::ParseError)?;
         }
         self.client.batch_request(request).await
     }
@@ -444,7 +510,7 @@ impl<R: ForwardRequest> DestinationForwarder<R> {
         &self,
         event_type: TransactionEventType,
         tx_hash: Option<TxHash>,
-        rpc_method: &'static str,
+        rpc_method: &str,
         attempt: Option<u32>,
         mut data: Map<String, serde_json::Value>,
     ) {
@@ -653,6 +719,25 @@ mod tests {
     ) -> DestinationForwarder<R> {
         let client = HttpClientBuilder::default().build(url.as_str()).unwrap();
         DestinationForwarder::new(url, client, receiver, config)
+    }
+
+    #[tokio::test]
+    async fn legacy_insert_rejects_a_non_null_success_result() {
+        let mut module = RpcModule::new(());
+        module.register_method(INSERT_METHOD, |_, _, _| "accepted").unwrap();
+        let server = Server::builder().build("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", server.local_addr().unwrap()).parse().unwrap();
+        let server = server.start(module);
+        let (_sender, receiver) = mpsc::channel(1);
+        let forwarder = forwarder(url, receiver, config(0, 1));
+
+        let error = forwarder.send(&[transaction::<NoExtensions>(0)]).await.unwrap_err();
+
+        assert!(matches!(error, ClientError::ParseError(_)), "{error:?}");
+        assert!(!DestinationForwarder::<InsertValidatedTransaction>::is_retryable(&error));
+        println!("legacy result validation: non_null=ParseError, retryable=false");
+        server.stop().unwrap();
+        server.stopped().await;
     }
 
     #[test]
