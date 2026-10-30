@@ -78,7 +78,7 @@ impl Clone for CoinbaseTipBacking {
 ///
 /// This type wraps the actual transaction and caches values that are frequently used by the pool.
 /// For payload building this lazily tracks values that are required during payload building:
-///  - Estimated compressed size of this transaction
+///  - `FastLZ` compressed size of this transaction, which the DA size and the L1 fee derive from
 #[derive(Debug, Clone, derive_more::Deref)]
 pub struct BasePooledTransaction<
     Cons = BaseTransactionSigned,
@@ -86,8 +86,8 @@ pub struct BasePooledTransaction<
 > {
     #[deref]
     inner: EthPooledTransaction<Cons>,
-    /// The estimated size of this transaction, lazily computed.
-    estimated_tx_compressed_size: OnceLock<u64>,
+    /// The `FastLZ` compressed size of the EIP-2718 encoding, lazily computed.
+    fastlz_size: OnceLock<u32>,
     /// The pooled transaction type.
     _pd: core::marker::PhantomData<Pooled>,
     /// Cached EIP-2718 encoded bytes of the transaction, lazily computed.
@@ -153,7 +153,7 @@ impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
     ) -> Self {
         Self {
             inner: EthPooledTransaction::new(transaction, encoded_length),
-            estimated_tx_compressed_size: Default::default(),
+            fastlz_size: Default::default(),
             _pd: core::marker::PhantomData,
             encoded_2718: Default::default(),
             received_at,
@@ -225,11 +225,15 @@ impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
     /// Returns the estimated compressed size of a transaction in bytes.
     /// This value is computed based on the following formula:
     /// `max(minTransactionSize, intercept + fastlzCoef*fastlzSize) / 1e6`
-    /// Uses cached EIP-2718 encoded bytes to avoid recomputing the encoding for each estimation.
+    /// Uses the cached [`Self::fastlz_size`].
     pub fn estimated_compressed_size(&self) -> u64 {
-        *self
-            .estimated_tx_compressed_size
-            .get_or_init(|| base_common_flz::tx_estimated_size_fjord_bytes(self.encoded_2718()))
+        base_common_flz::tx_estimated_size_fjord_from_fastlz_size(self.fastlz_size()) / 1_000_000
+    }
+
+    /// Returns the `FastLZ` compressed size of [`Self::encoded_2718`], computed once and cached so
+    /// the DA size, the L1 fee, and the builder's transaction environment share one compression.
+    pub fn fastlz_size(&self) -> u32 {
+        *self.fastlz_size.get_or_init(|| base_common_flz::flz_compress_len(self.encoded_2718()))
     }
 
     /// Returns lazily computed EIP-2718 encoded bytes of the transaction.
@@ -533,6 +537,10 @@ pub trait BasePooledTx: PoolTransaction + DataAvailabilitySized {
     /// Returns the EIP-2718 encoded bytes of the transaction.
     fn encoded_2718(&self) -> Cow<'_, Bytes>;
 
+    /// Returns the `FastLZ` compressed size of [`Self::encoded_2718`], from which
+    /// [`DataAvailabilitySized::estimated_da_size`] and the post-Fjord L1 data fee derive.
+    fn fastlz_size(&self) -> u32;
+
     /// Returns the compiled conditions used for pool and builder enforcement.
     ///
     /// Implementations must supply their ingested metadata, or explicitly return
@@ -657,6 +665,10 @@ where
 {
     fn encoded_2718(&self) -> Cow<'_, Bytes> {
         Cow::Borrowed(self.encoded_2718())
+    }
+
+    fn fastlz_size(&self) -> u32 {
+        self.fastlz_size()
     }
 
     fn validity_conditions(&self) -> &crate::ValidityConditions {

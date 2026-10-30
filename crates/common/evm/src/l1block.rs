@@ -268,26 +268,39 @@ impl L1BlockInfo {
 
     /// Calculate additional transaction cost with `BaseTxTr`.
     ///
-    /// Internally calls [`L1BlockInfo::tx_cost`].
+    /// Internally calls [`L1BlockInfo::tx_cost_with_fastlz_size`] with the transaction's cached
+    /// `FastLZ` size, if any.
     pub fn tx_cost_with_tx(&mut self, tx: impl BaseTxTr, spec: BaseSpecId) -> Option<U256> {
         // account for additional cost of l1 fee and operator fee
         let enveloped_tx = tx.enveloped_tx()?;
-        let gas_limit = U256::from(tx.gas_limit());
-        // Fill the per-transaction L1 cost cache first so a FastLZ size the transaction already
-        // carries is used instead of being recomputed by `tx_cost`.
-        self.calculate_tx_l1_cost_with_fastlz_size(
+        Some(self.tx_cost_with_fastlz_size(
             enveloped_tx,
             tx.enveloped_tx_fastlz_size(),
+            U256::from(tx.gas_limit()),
             spec,
-        );
-        Some(self.tx_cost(enveloped_tx, gas_limit, spec))
+        ))
     }
 
     /// Calculate additional transaction cost.
     #[inline]
     pub fn tx_cost(&mut self, enveloped_tx: &[u8], gas_limit: U256, spec: BaseSpecId) -> U256 {
+        self.tx_cost_with_fastlz_size(enveloped_tx, None, gas_limit, spec)
+    }
+
+    /// [`Self::tx_cost`], using `fastlz_size` as the `FastLZ` compressed size of `enveloped_tx`
+    /// post-Fjord instead of recomputing it. `fastlz_size` must equal
+    /// `flz_compress_len(enveloped_tx)`.
+    #[inline]
+    pub fn tx_cost_with_fastlz_size(
+        &mut self,
+        enveloped_tx: &[u8],
+        fastlz_size: Option<u32>,
+        gas_limit: U256,
+        spec: BaseSpecId,
+    ) -> U256 {
         // compute L1 cost
-        let mut additional_cost = self.calculate_tx_l1_cost(enveloped_tx, spec);
+        let mut additional_cost =
+            self.calculate_tx_l1_cost_with_fastlz_size(enveloped_tx, fastlz_size, spec);
 
         // compute operator fee
         if spec.is_enabled_in(BaseUpgrade::Isthmus) {
