@@ -26,8 +26,8 @@ use base_common_genesis::RollupConfig;
 use base_common_network::{Base, BaseEngineApi};
 use base_common_rpc_types_engine::{
     BaseExecutionPayload, BaseExecutionPayloadEnvelope, BaseExecutionPayloadEnvelopeV3,
-    BaseExecutionPayloadEnvelopeV4, BaseExecutionPayloadEnvelopeV5, BaseExecutionPayloadV4,
-    BasePayloadAttributes,
+    BaseExecutionPayloadEnvelopeV4, BaseExecutionPayloadEnvelopeV5, BaseExecutionPayloadEnvelopeV6,
+    BaseExecutionPayloadV4, BaseExecutionPayloadV5, BasePayloadAttributes,
 };
 use base_consensus_engine::{EngineClient, EngineClientError};
 use base_consensus_node::{
@@ -866,6 +866,21 @@ impl BaseEngineApi for ActionEngineClient {
         Ok(Self::make_valid(block_hash))
     }
 
+    async fn new_payload_v5(
+        &self,
+        payload: BaseExecutionPayloadV5,
+        _parent_beacon_block_root: B256,
+    ) -> TransportResult<PayloadStatus> {
+        let mut guard = self.inner.lock().expect("action engine inner lock poisoned");
+        let block_hash = Self::execute_v1_inner(
+            &mut guard,
+            &self.block_registry,
+            &self.rollup_config,
+            &payload.payload_inner.payload_inner.payload_inner.payload_inner,
+        )?;
+        Ok(Self::make_valid(block_hash))
+    }
+
     async fn fork_choice_updated_v2(
         &self,
         fork_choice_state: ForkchoiceState,
@@ -894,6 +909,14 @@ impl BaseEngineApi for ActionEngineClient {
     }
 
     async fn fork_choice_updated_v3(
+        &self,
+        fork_choice_state: ForkchoiceState,
+        payload_attributes: Option<BasePayloadAttributes>,
+    ) -> TransportResult<ForkchoiceUpdated> {
+        self.fork_choice_updated_v2(fork_choice_state, payload_attributes).await
+    }
+
+    async fn fork_choice_updated_v4(
         &self,
         fork_choice_state: ForkchoiceState,
         payload_attributes: Option<BasePayloadAttributes>,
@@ -935,6 +958,19 @@ impl BaseEngineApi for ActionEngineClient {
         let mut guard = self.inner.lock().expect("action engine inner lock poisoned");
         let p = Self::take_pending(&mut guard, payload_id)?;
         Ok(BaseExecutionPayloadEnvelopeV5::from(p.built))
+    }
+
+    async fn get_payload_v6(
+        &self,
+        payload_id: PayloadId,
+    ) -> TransportResult<BaseExecutionPayloadEnvelopeV6> {
+        let mut guard = self.inner.lock().expect("action engine inner lock poisoned");
+        let p = Self::take_pending(&mut guard, payload_id)?;
+        BaseExecutionPayloadEnvelopeV6::try_from(p.built).map_err(|_| {
+            TransportError::from(TransportErrorKind::custom_str(
+                "ActionEngineClient: built payload has no block access list or slot number",
+            ))
+        })
     }
 
     async fn get_payload_bodies_by_hash_v1(

@@ -12,9 +12,12 @@ use alloy_consensus::{
     BlockBody, EMPTY_OMMER_ROOT_HASH, Header, Transaction, TxReceipt, constants::EMPTY_WITHDRAWALS,
     proofs,
 };
-use alloy_eips::{Encodable2718, eip7685::EMPTY_REQUESTS_HASH, merge::BEACON_NONCE};
+use alloy_eips::{
+    Encodable2718, eip7685::EMPTY_REQUESTS_HASH, eip7928::compute_block_access_list_hash_with_buf,
+    merge::BEACON_NONCE,
+};
 use alloy_evm::Database;
-use alloy_primitives::{Address, B256, Bloom, U256, logs_bloom, map::foldhash::HashMap};
+use alloy_primitives::{Address, B256, Bloom, Bytes, U256, logs_bloom, map::foldhash::HashMap};
 use base_builder_publish::WebSocketPublisher;
 use base_common_chains::Upgrades;
 use base_common_consensus::{BaseReceipt, BaseTransactionSigned};
@@ -22,7 +25,7 @@ use base_common_flashblocks::{
     ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, FlashblockId, FlashblocksPayloadV1,
     Metadata,
 };
-use base_execution_consensus::{calculate_receipt_root_no_memo, isthmus};
+use base_execution_consensus::{calculate_receipt_root_no_memo, expected_slot_number, isthmus};
 use base_execution_evm::{BaseEvmConfig, BaseNextBlockEnvAttributes};
 use base_execution_payload_builder::{
     BaseBuiltPayload, BasePayloadBuilderAttributes, BuilderMetrics as SharedBuilderMetrics,
@@ -32,6 +35,7 @@ use base_execution_txpool::AccountStateDiff;
 use base_observability_events::{GlobalTransactionEventWriter, TransactionEventType};
 use eyre::WrapErr as _;
 use reth_basic_payload_builder::BuildOutcome;
+use reth_chainspec::EthereumHardforks;
 use reth_evm::{ConfigureEvm, execute::BlockBuilder};
 use reth_execution_types::ChangedAccount;
 use reth_node_api::{Block, BuiltPayloadExecutedBlock, PayloadBuilderError};
@@ -226,6 +230,7 @@ where
             gas_limit: config.attributes.gas_limit.unwrap_or(config.parent_header.gas_limit),
             parent_beacon_block_root: config.attributes.payload_attributes.parent_beacon_block_root,
             extra_data,
+            slot_number: config.attributes.payload_attributes.slot_number,
         };
 
         let evm_config = self.evm_config.clone();
@@ -301,8 +306,15 @@ where
 
         // 1. execute the pre steps and seal an early block with that
         let sequencer_tx_start_time = Instant::now();
-        let mut state =
-            State::builder().with_database(cached_reads.as_db_mut(db)).with_bundle_update().build();
+        // Track the block access list only once Amsterdam is active so pre-fork blocks keep
+        // their exact header and payload shape.
+        let is_amsterdam =
+            ctx.chain_spec.is_amsterdam_active_at_timestamp(ctx.attributes().timestamp());
+        let mut state = State::builder()
+            .with_database(cached_reads.as_db_mut(db))
+            .with_bundle_update()
+            .with_bal_builder_if(is_amsterdam)
+            .build();
 
         let mut info = execute_pre_steps(&mut state, &ctx)?;
         let sequencer_tx_time = sequencer_tx_start_time.elapsed();
@@ -1197,6 +1209,9 @@ where
         .map_err(PayloadBuilderError::other)?
         .apply_pre_execution_changes()?;
 
+    // Reth's block builder advances the block access index after the pre-execution changes, so
+    // the first sequencer transaction's writes are attributed to index 1.
+
     // 2. execute sequencer transactions
     let info = ctx.execute_sequencer_transactions(state)?;
 
@@ -1291,6 +1306,29 @@ where
             None
         };
 
+    // EIP-7928: the header commits to the block access list accumulated by the state during
+    // execution. `bal_builder()` is only `Some` once Amsterdam is active, so pre-fork blocks
+    // keep an empty commitment.
+    let block_access_list = state.bal_state.bal_builder().map(|bal| bal.into_alloy_bal());
+    let (block_access_list_hash, block_access_list_bytes) = block_access_list.as_ref().map_or_else(
+        || (None, None),
+        |bal| {
+            let mut raw = Vec::new();
+            let hash = compute_block_access_list_hash_with_buf(bal, &mut raw);
+            (Some(hash), Some(Bytes::from(raw)))
+        },
+    );
+
+    // EIP-7843: from Amsterdam on, the header carries a slot number, which Base sets to the L2
+    // block number being built. The consensus-supplied attribute value is deliberately not used:
+    // header validation rejects a header whose slot is not the block number, so an attribute could
+    // otherwise make this path assemble a block the execution layer refuses.
+    let slot_number = expected_slot_number(
+        &*ctx.chain_spec,
+        ctx.attributes().timestamp(),
+        ctx.parent().number + 1,
+    );
+
     // create the block header
     let transactions_root = proofs::calculate_transaction_root(&info.executed_transactions);
 
@@ -1319,8 +1357,8 @@ where
         blob_gas_used,
         excess_blob_gas,
         requests_hash,
-        block_access_list_hash: None,
-        slot_number: ctx.attributes().payload_attributes.slot_number,
+        block_access_list_hash,
+        slot_number,
     };
 
     // seal the block
@@ -1446,7 +1484,7 @@ where
             sealed_block,
             info.total_fees,
             Some(executed),
-            None,
+            block_access_list_bytes,
         ),
         fb_payload,
         state_diff,
@@ -1457,18 +1495,19 @@ where
 mod tests {
     use std::sync::Arc;
 
-    use alloy_consensus::{Header, Receipt};
+    use alloy_consensus::{BlockHeader as _, Header, Receipt};
     use alloy_primitives::{Address, B256, Log, U256, map::foldhash::HashMap};
     use base_common_consensus::BaseReceipt;
     use base_common_flashblocks::{FlashblockId, Metadata};
     use base_execution_chainspec::BaseChainSpec;
     use reth_chainspec::ChainSpec;
     use reth_execution_cache::{CachedStateProvider, CachedStatus, ExecutionCache, SavedCache};
+    use reth_payload_primitives::BuiltPayload as _;
     use reth_primitives_traits::SealedHeader;
     use reth_provider::{EvmStateProviderBox, StateProvider, noop::NoopProvider};
     use reth_revm::{State, database::StateProviderDatabase};
 
-    use super::{FlashblocksMetadata, build_block};
+    use super::{FlashblocksMetadata, build_block, execute_pre_steps};
     use crate::{ExecutionInfo, flashblocks::context::BasePayloadBuilderCtx};
 
     /// Creates a minimal [`BaseChainSpec`] with all L1 upgrades through Cancun
@@ -1487,6 +1526,28 @@ mod tests {
 
         let inner =
             ChainSpec::builder().chain(901.into()).genesis(genesis).cancun_activated().build();
+
+        Arc::new(BaseChainSpec::from(inner))
+    }
+
+    /// Same as [`minimal_chain_spec`], with Amsterdam active at genesis so the block access list
+    /// builder is installed.
+    fn amsterdam_chain_spec() -> Arc<BaseChainSpec> {
+        let genesis: serde_json::Value = serde_json::json!({
+            "config": { "chainId": 901 },
+            "gasLimit": "0x1C9C380",
+            "timestamp": "0x0"
+        });
+        let genesis = serde_json::from_value(genesis).expect("valid genesis");
+
+        let inner = ChainSpec::builder()
+            .chain(901.into())
+            .genesis(genesis)
+            .cancun_activated()
+            .prague_activated()
+            .osaka_activated()
+            .amsterdam_activated()
+            .build();
 
         Arc::new(BaseChainSpec::from(inner))
     }
@@ -1567,6 +1628,107 @@ mod tests {
         // The flashblocks payload must reference the same block.
         assert_eq!(fb_payload.diff.block_hash, payload.block().hash(), "hash mismatch");
         assert!(state_diff.is_empty(), "empty block must produce no invalidation diff");
+    }
+
+    /// Verify that the pre-execution changes advance the block access index exactly once.
+    ///
+    /// [`execute_pre_steps`] delegates them to reth's block builder, which already advances the
+    /// index. A second bump would shift every sequencer transaction's writes by one, so the block
+    /// access list the header commits to would disagree with the list a validator recomputes and
+    /// the block would be rejected.
+    #[test]
+    fn pre_execution_changes_advance_the_block_access_index_once() {
+        let chain_spec = amsterdam_chain_spec();
+        let parent = genesis_header();
+        let ctx = BasePayloadBuilderCtx::for_test(chain_spec, Arc::clone(&parent));
+
+        let db = StateProviderDatabase::new(NoopProvider::default().into_evm_state_provider());
+        // The caller installs the block access list builder for Amsterdam, exactly as
+        // `try_build` does.
+        let mut state = State::builder()
+            .with_database(db)
+            .with_bundle_update()
+            .with_bal_builder_if(true)
+            .build();
+        execute_pre_steps(&mut state, &ctx).expect("pre-execution should succeed");
+
+        assert_eq!(
+            state.bal_state.bal_index,
+            alloy_eips::eip7928::BlockAccessIndex(1),
+            "exactly the pre-execution changes must advance the block access index"
+        );
+    }
+
+    /// Verify that an Amsterdam block commits to the block access list it carried.
+    ///
+    /// The header commitment is what every validator recomputes and compares, so a flashblocks
+    /// block that carries a list but no longer commits to it in the header would be rejected by
+    /// the node's own `newPayload` and by every follower.
+    #[test]
+    fn build_block_commits_to_the_block_access_list() {
+        let chain_spec = amsterdam_chain_spec();
+        let parent = genesis_header();
+        let ctx = BasePayloadBuilderCtx::for_test(chain_spec, Arc::clone(&parent));
+
+        let db = StateProviderDatabase::new(NoopProvider::default().into_evm_state_provider());
+        let mut state = State::builder()
+            .with_database(db)
+            .with_bundle_update()
+            .with_bal_builder_if(true)
+            .build();
+        let mut info = ExecutionInfo::default();
+
+        let (payload, _, _) = build_block::<_, NoopProvider>(
+            &mut state,
+            &NoopProvider::default(),
+            &ctx,
+            &mut info,
+            FlashblockId::default(),
+            false,
+        )
+        .expect("build_block should succeed for an empty Amsterdam block");
+
+        let block_access_list = payload
+            .block_access_list()
+            .cloned()
+            .expect("an Amsterdam block must carry the block access list it commits to");
+        assert_eq!(
+            payload.block().block_access_list_hash(),
+            Some(alloy_primitives::keccak256(&block_access_list)),
+            "the header must commit to the block access list the block carries"
+        );
+    }
+
+    /// Verify that a pre-Amsterdam block keeps its commitment-free header and carries no list.
+    #[test]
+    fn build_block_omits_the_block_access_list_before_amsterdam() {
+        let chain_spec = minimal_chain_spec();
+        let parent = genesis_header();
+        let ctx = BasePayloadBuilderCtx::for_test(chain_spec, Arc::clone(&parent));
+
+        let db = StateProviderDatabase::new(NoopProvider::default().into_evm_state_provider());
+        let mut state = State::builder().with_database(db).with_bundle_update().build();
+        let mut info = ExecutionInfo::default();
+
+        let (payload, _, _) = build_block::<_, NoopProvider>(
+            &mut state,
+            &NoopProvider::default(),
+            &ctx,
+            &mut info,
+            FlashblockId::default(),
+            false,
+        )
+        .expect("build_block should succeed for an empty pre-Amsterdam block");
+
+        assert_eq!(
+            payload.block().block_access_list_hash(),
+            None,
+            "a pre-Amsterdam header must not commit to a block access list"
+        );
+        assert!(
+            payload.block_access_list().is_none(),
+            "a pre-Amsterdam block must not carry a block access list"
+        );
     }
 
     /// Verify that [`build_block`] exercises the state root calculation path

@@ -25,8 +25,9 @@ pub use sidecar::BaseExecutionPayloadSidecar;
 mod payload;
 pub use payload::{
     BaseExecutionPayload, BaseExecutionPayloadEnvelopeV3, BaseExecutionPayloadEnvelopeV4,
-    BaseExecutionPayloadEnvelopeV5, BaseExecutionPayloadV4, BasePayloadError,
-    MAX_TRANSACTIONS_PER_PAYLOAD, MAX_WITHDRAWALS_PER_PAYLOAD,
+    BaseExecutionPayloadEnvelopeV5, BaseExecutionPayloadEnvelopeV6, BaseExecutionPayloadV4,
+    BaseExecutionPayloadV5, BasePayloadError, MAX_TRANSACTIONS_PER_PAYLOAD,
+    MAX_WITHDRAWALS_PER_PAYLOAD,
 };
 #[cfg(feature = "std")]
 pub use payload::{

@@ -5,6 +5,7 @@
 
 use std::fmt;
 
+use base_node_core::BaseLaunchPolicy;
 use eyre::Result;
 use futures::future::BoxFuture;
 use reth_exex::ExExContext;
@@ -89,10 +90,17 @@ impl NodeHooks {
     ///
     /// This is generic over `CB` so that it works with any payload service whose component
     /// builder produces the same concrete `Components` type as the default payload builder.
+    ///
+    /// This is Base's last step before `.launch()`, so it also applies
+    /// [`BaseLaunchPolicy::force_serial_import`] to the builder's config. Base-owned in-process
+    /// node builders (system tests, test harnesses) assemble their config without going through
+    /// the CLI, and every one of them finalises its builder here.
     pub fn apply_to<CB>(self, mut builder: RethNodeBuilder<CB>) -> RethNodeBuilder<CB>
     where
         CB: NodeComponentsBuilder<BaseNodeTypes, Components = BaseComponents>,
     {
+        BaseLaunchPolicy::force_serial_import(&mut builder.config_mut().engine);
+
         let Self { rpc_hooks, node_started_hooks, exex_hooks, add_ons_hooks } = self;
 
         // Install ExEx hooks
@@ -182,5 +190,51 @@ impl Default for NodeHooks {
 impl fmt::Debug for NodeHooks {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("NodeHooks").finish_non_exhaustive()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use base_execution_chainspec::BaseChainSpec;
+    use base_node_core::args::RollupArgs;
+    use reth_db::{init_db, mdbx::DatabaseArguments, test_utils::tempdir_path};
+    use reth_node_builder::{Node, NodeBuilder, NodeConfig};
+    use reth_provider::providers::BlockchainProvider;
+    use reth_tasks::Runtime;
+
+    use crate::{BaseNode, NodeHooks};
+
+    /// Applies Base's hooks to a real Base node builder and reports whether the tree config the
+    /// node would launch with imports blocks serially.
+    fn applying_hooks_forces_serial_import() -> bool {
+        let db_path = tempdir_path();
+        let db = init_db(&db_path, DatabaseArguments::default()).expect("test database");
+        let base_node = BaseNode::new(RollupArgs::default());
+
+        let builder = NodeBuilder::new(NodeConfig::new(Arc::new(BaseChainSpec::devnet())))
+            .with_database(db)
+            .with_launch_context(Runtime::test())
+            .with_types_and_provider::<BaseNode, BlockchainProvider<_>>()
+            .with_components(base_node.components())
+            .with_add_ons(base_node.add_ons());
+
+        let builder = NodeHooks::new().apply_to(builder);
+        let serial_import = builder.config().tree_config().disable_bal_parallel_execution();
+
+        drop(builder);
+        let _ = std::fs::remove_dir_all(&db_path);
+        serial_import
+    }
+
+    #[test]
+    fn applying_hooks_to_a_base_builder_forces_serial_import() {
+        assert!(
+            applying_hooks_forces_serial_import(),
+            "every Base node builder finalises through apply_to, so it must import serially: \
+             reth's BAL-parallel ordered commit does not apply Base's cumulative gas, Jovian DA \
+             or payer-auth admission rules"
+        );
     }
 }

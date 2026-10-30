@@ -758,6 +758,7 @@ where
             gas_limit: base.gas_limit,
             parent_beacon_block_root: Some(base.parent_beacon_block_root),
             extra_data: base.extra_data.clone(),
+            slot_number: assembled_header.slot_number,
         };
         let evm_env = evm_config
             .next_evm_env(&previous_header, &block_env_attributes)
@@ -901,6 +902,7 @@ where
                 gas_limit: assembled.base.gas_limit,
                 parent_beacon_block_root: Some(assembled.base.parent_beacon_block_root),
                 extra_data: assembled.base.extra_data.clone(),
+                slot_number: assembled.header.slot_number,
             };
 
             db.block_hashes
