@@ -16,7 +16,7 @@ use crate::{
     rpc::MAX_BATCH_RPC_SIZE,
     runner::{TxConfig, TxType},
     utils::{BaselineError, Result},
-    workload::{RealTokenSetup, UniswapV3Hop},
+    workload::{MAX_TOKEN_MOVE_TRANSFERS_PER_TX, RealTokenSetup, UniswapV3Hop},
 };
 
 /// Configuration for a load test, loadable from YAML.
@@ -447,9 +447,6 @@ const MAX_STORAGE_SLOTS_PER_TX: u32 = 1_300;
 const fn default_token_move_transfers_per_tx() -> u32 {
     25
 }
-
-/// Keeps the token-move gas limit (`50_000 + 35_000` per transfer) under the ~30M per-tx cap.
-const MAX_TOKEN_MOVE_TRANSFERS_PER_TX: u32 = 800;
 
 fn default_swap_min_amount() -> U256 {
     U256::from(1_000_000_000_000_000u64)

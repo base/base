@@ -25,7 +25,7 @@ pub use payloads::{
     UniswapV3Hop, UniswapV3LiquidityPayload, UniswapV3Payload, X402Context, X402Payload,
     encode_erc20_approve, recover_real_tokens,
 };
-pub(crate) use payloads::{DISPERSE, b20_salt_for, b20_token_for};
+pub(crate) use payloads::{DISPERSE, MAX_TOKEN_MOVE_TRANSFERS_PER_TX, b20_salt_for, b20_token_for};
 
 mod generator;
 pub use generator::WorkloadGenerator;

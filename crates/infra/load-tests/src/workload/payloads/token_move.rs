@@ -2,6 +2,7 @@
 
 use std::sync::{Arc, OnceLock};
 
+use alloy_eips::eip7825::MAX_TX_GAS_LIMIT_OSAKA;
 use alloy_network::TransactionBuilder;
 use alloy_primitives::{Address, U256, address};
 use alloy_provider::Provider;
@@ -29,6 +30,10 @@ const TOKEN_MOVE_GAS_BASE: u64 = 50_000;
 
 /// Covers one real-USDC `transferFrom` to a fresh recipient (~29.5k on a Base mainnet fork).
 const TOKEN_MOVE_GAS_PER_TRANSFER: u64 = 35_000;
+
+/// Keeps the gas limit under the EIP-7825 per-tx cap that Azul enables.
+pub(crate) const MAX_TOKEN_MOVE_TRANSFERS_PER_TX: u32 =
+    ((MAX_TX_GAS_LIMIT_OSAKA - TOKEN_MOVE_GAS_BASE) / TOKEN_MOVE_GAS_PER_TRANSFER) as u32;
 
 /// Token and recipient pool shared by measured and calibration generators.
 #[derive(Debug, Clone)]
@@ -118,7 +123,11 @@ mod tests {
             "../../../examples/mainnet-mix-mainnet-snapshot.yaml"
         ))
         .expect("mainnet mix must parse");
-        for (transfers_per_tx, accepted) in [(0, false), (800, true), (801, false)] {
+        for (transfers_per_tx, accepted) in [
+            (0, false),
+            (MAX_TOKEN_MOVE_TRANSFERS_PER_TX, true),
+            (MAX_TOKEN_MOVE_TRANSFERS_PER_TX + 1, false),
+        ] {
             let mut config = config.clone();
             config.transactions.push(WeightedTxType {
                 weight: 1,
@@ -133,6 +142,19 @@ mod tests {
         }];
         let error = config.to_load_config(None).expect_err("token_move must require token setup");
         assert!(error.to_string().contains("token_move requires enabled real_token_setup"));
+    }
+
+    #[test]
+    fn max_batch_fits_per_tx_gas_cap() {
+        let gas_limit = |transfers_per_tx| {
+            let context =
+                TokenMoveContext { token: Address::ZERO, recipients: vec![Address::ZERO] };
+            let payload =
+                TokenMovePayload { transfers_per_tx, context: Arc::new(OnceLock::from(context)) };
+            payload.generate(&mut SeededRng::new(1), Address::ZERO, Address::ZERO).gas.unwrap()
+        };
+        assert!(gas_limit(MAX_TOKEN_MOVE_TRANSFERS_PER_TX) <= MAX_TX_GAS_LIMIT_OSAKA);
+        assert!(gas_limit(MAX_TOKEN_MOVE_TRANSFERS_PER_TX + 1) > MAX_TX_GAS_LIMIT_OSAKA);
     }
 
     #[test]
