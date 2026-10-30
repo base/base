@@ -32,7 +32,7 @@ use reth_primitives_traits::{
 };
 
 mod proof;
-pub use proof::{calculate_receipt_root, calculate_receipt_root_no_memo};
+pub use proof::{calculate_receipt_root, calculate_receipt_root_and_logs_bloom};
 
 pub mod validation;
 pub use validation::{
