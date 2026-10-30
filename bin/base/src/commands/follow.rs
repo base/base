@@ -138,8 +138,6 @@ impl FollowCommand {
 
 #[cfg(test)]
 mod tests {
-    use clap::Parser;
-
     use crate::{cli::BaseCli, commands::BaseCommand};
 
     const REQUIRED_FOLLOW_ARGS: &[&str] = &[
@@ -159,7 +157,7 @@ mod tests {
 
     #[test]
     fn parses_follow_source_and_proofs() {
-        let cli = BaseCli::parse_from(follow_args(&[
+        let cli = BaseCli::parse_curated(follow_args(&[
             "base",
             "follow",
             "--follow.proofs",
@@ -178,7 +176,7 @@ mod tests {
 
     #[test]
     fn proofs_default_to_disabled() {
-        let cli = BaseCli::parse_from(follow_args(&["base", "follow"]));
+        let cli = BaseCli::parse_curated(follow_args(&["base", "follow"]));
 
         let BaseCommand::Follow(follow) = cli.command else {
             panic!("expected follow command");
@@ -190,7 +188,7 @@ mod tests {
     #[test]
     fn rejects_engine_rpc_arg() {
         // The engine endpoint is supplied by the embedded execution node, not a flag.
-        let err = BaseCli::try_parse_from(follow_args(&[
+        let err = BaseCli::try_parse_curated(follow_args(&[
             "base",
             "follow",
             "--l2-engine-rpc",

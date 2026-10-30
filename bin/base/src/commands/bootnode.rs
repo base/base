@@ -124,13 +124,11 @@ impl BootnodeCommand {
 
 #[cfg(test)]
 mod tests {
-    use clap::Parser;
-
     use crate::{cli::BaseCli, commands::BaseCommand};
 
     #[test]
     fn parses_bootnode_command() {
-        let cli = BaseCli::parse_from(["base", "bootnode"]);
+        let cli = BaseCli::parse_curated(["base", "bootnode"]);
 
         assert_eq!(cli.chain, None);
         let BaseCommand::Bootnode(bootnode) = cli.command else {

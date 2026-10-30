@@ -51,7 +51,7 @@ reth-cli-commands.workspace = true
 reth-cli-util.workspace = true
 
 # cli
-clap = { workspace = true, features = ["env"] }
+clap = { workspace = true, features = ["env", "string"] }
 
 # misc
 eyre.workspace = true

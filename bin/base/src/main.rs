@@ -6,6 +6,7 @@
 mod cli;
 mod commands;
 mod config;
+mod surface;
 
 #[global_allocator]
 static ALLOC: reth_cli_util::allocator::Allocator = reth_cli_util::allocator::new_allocator();
@@ -19,5 +20,11 @@ fn main() {
     base_reth_cli::init_reth!();
     base_reth_cli::init_snapshots!();
 
-    base_cli_utils::run_cli_main!(cli::BaseCli);
+    base_cli_utils::init_common!();
+
+    let cli = cli::BaseCli::try_parse_curated(std::env::args_os()).unwrap_or_else(|e| e.exit());
+    if let Err(err) = cli.run() {
+        eprintln!("Error: {err:?}");
+        std::process::exit(1);
+    }
 }

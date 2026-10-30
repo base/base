@@ -2,6 +2,35 @@
 
 Unified Base node binary.
 
+## Flags
+
+`base rpc` and `base sequencer` embed execution, consensus, and (for `sequencer`) the builder in
+one process, but accept only a Base-chosen set of their flags. `-h`/`--help` lists the curated
+flags needed to run a node; `--help-all` adds the advanced flags, such as transaction pool limits,
+transaction forwarding, metering, and upgrade-signal settings. Any other execution, consensus, or
+builder flag is ignored, whether it comes from the command line or its environment variable, and
+the node logs a warning naming it at startup. The full lists live in `src/surface.rs`. Supported consensus flags keep their `BASE_NODE_*` environment
+variables (for example `BASE_NODE_L1_ETH_RPC` for `--l1.rpc`), and `--chain` uses `BASE_CHAIN`.
+
+Some flags were renamed to Base conventions. The old spellings are still accepted (the renames
+also apply to `base follow`, `base bootnode`, `base dev`, `base execution`, and `base consensus`):
+
+| Old                                       | New                                         |
+| ----------------------------------------- | ------------------------------------------- |
+| `--l1-eth-rpc`, `--l1-beacon`             | `--l1.rpc`, `--l1.beacon`                   |
+| `--l1-trust-rpc`, `--l1-config-file`      | `--l1.trust-rpc`, `--l1.config-file`        |
+| `--l1-slot-duration-override`             | `--l1.slot-duration-override`               |
+| `--l2-config-file`                        | `--l2.config-file`                          |
+| `--rpc.addr`, `--rpc.port`, `--rpc.*`     | `--consensus.rpc.addr`, `--consensus.rpc.port`, `--consensus.rpc.*` |
+| `--builder.max_gas_per_txn`               | `--builder.max-gas-per-txn`                 |
+
+Consensus calls the embedded execution node's Engine API in memory, so Engine API transport
+flags such as `--authrpc.port`, `--authrpc.jwtsecret`, `--l2-engine-jwt-secret`, and
+`--l2-engine-timeout` are among the ignored flags, with a warning that explains why.
+
+When migrating from the standalone binaries, note that `base-consensus --port` (consensus RPC) is
+now `--consensus.rpc.port`; in `base`, `--port` is the execution P2P port.
+
 ## OTLP Tracing
 
 Unified commands, including `rpc`, `follow`, and `sequencer`, support the same
@@ -52,16 +81,13 @@ sequencer, builder, conductor, and transaction-forwarding options.
 Supported forms:
 
 ```text
-base rpc
-base --chain sepolia rpc
-base -c sepolia rpc
-base --chain zeronet rpc
-base --chain dev rpc
-base --chain ./chain.toml rpc
-base -c ./chain.toml rpc
+base rpc --l1.rpc <url> --l1.beacon <url>
+base rpc --chain sepolia --l1.rpc <url> --l1.beacon <url>
+base rpc -c 84532 --l1.rpc <url> --l1.beacon <url>
+base rpc --chain ./chain.toml --l1.rpc <url> --l1.beacon <url>
 ```
 
-The command also accepts an execution chain override when the root `--chain` selection is used only
+The command also accepts an execution chain override when the `--chain` selection is used only
 for consensus chain resolution:
 
 ```text
@@ -85,10 +111,9 @@ by one of `--p2p.sequencer.key`, `--p2p.sequencer.key.path`, or `--p2p.signer.en
 Supported forms:
 
 ```text
-base sequencer --l1-eth-rpc <url> --l1-beacon <url> --p2p.sequencer.key.path <path>
-base --chain sepolia sequencer --l1-eth-rpc <url> --l1-beacon <url> --p2p.signer.endpoint <url>
-base --chain dev sequencer --l1-eth-rpc <url> --l1-beacon <url> --p2p.sequencer.key.path <path>
-base --chain ./chain.toml sequencer --l1-eth-rpc <url> --l1-beacon <url> --p2p.sequencer.key.path <path>
+base sequencer --l1.rpc <url> --l1.beacon <url> --p2p.sequencer.key.path <path>
+base sequencer --chain sepolia --l1.rpc <url> --l1.beacon <url> --p2p.signer.endpoint <url>
+base sequencer --chain ./chain.toml --l1.rpc <url> --l1.beacon <url> --p2p.sequencer.key.path <path>
 ```
 
 Useful sequencer-specific flags include:
@@ -97,7 +122,6 @@ Useful sequencer-specific flags include:
 - `--sequencer.recover` enables recovery mode and forces empty block production.
 - `--conductor.rpc` enables conductor-backed leader checks.
 - `--conductor.binary-commit` uses the conductor binary commit endpoint.
-- `--flashblocks.port` selects the Flashblocks websocket port.
 
 ## `base dev`
 
@@ -302,9 +326,15 @@ base update --update-installer
 
 ## Chain Selection
 
+`--chain`/`-c` (or `BASE_CHAIN`) goes after `rpc`, `sequencer`, or `bootnode`. The older
+`base --chain <chain> <command>` form is still accepted and takes precedence over `BASE_CHAIN`;
+passing `--chain` both before and after the subcommand is an error.
+
 Chain selection supports:
 
 - built-in names: `mainnet`, `sepolia`, `zeronet`, `dev`
+- canonical chain names: `base`, `base-sepolia`, `base-zeronet`
+- built-in L2 chain IDs: `8453`, `84532`, `763360`, `84538453`
 - TOML files for custom chains:
 
 ```toml
