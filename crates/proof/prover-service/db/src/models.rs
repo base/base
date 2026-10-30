@@ -902,37 +902,34 @@ impl DerivedProofRequestFields {
         match &request.request {
             ProtocolProofRequestKind::Compressed(proof) => {
                 proof.validate_range()?;
+                Ok(Self {
+                    api_proof_type: ApiProofType::Compressed,
+                    zk_vm: Some(protocol_zk_vm(proof.zk_vm)),
+                    tee_kind: None,
+                    zk_backend: Some(proof.zk_backend),
+                    proof_type: Some(ProofType::OpSuccinctSp1ClusterCompressed),
+                    start_block_number: proof.start_block_number,
+                    number_of_blocks_to_prove: proof.number_of_blocks_to_prove,
+                    sequence_window: proof.sequence_window,
+                    prover_address: None,
+                    l1_head: proof.l1_head.map(|hash| format!("{hash:#x}")),
+                })
             }
             ProtocolProofRequestKind::SnarkPlonk(request) => {
                 request.proof.validate_range()?;
+                Ok(Self {
+                    api_proof_type: ApiProofType::SnarkPlonk,
+                    zk_vm: Some(protocol_zk_vm(request.proof.zk_vm)),
+                    tee_kind: None,
+                    zk_backend: Some(request.proof.zk_backend),
+                    proof_type: Some(ProofType::OpSuccinctSp1ClusterSnarkPlonk),
+                    start_block_number: request.proof.start_block_number,
+                    number_of_blocks_to_prove: request.proof.number_of_blocks_to_prove,
+                    sequence_window: request.proof.sequence_window,
+                    prover_address: Some(format!("{:#x}", request.prover_address)),
+                    l1_head: request.proof.l1_head.map(|hash| format!("{hash:#x}")),
+                })
             }
-            ProtocolProofRequestKind::Tee(_) => {}
-        }
-        match &request.request {
-            ProtocolProofRequestKind::Compressed(proof) => Ok(Self {
-                api_proof_type: ApiProofType::Compressed,
-                zk_vm: Some(protocol_zk_vm(proof.zk_vm)),
-                tee_kind: None,
-                zk_backend: Some(proof.zk_backend),
-                proof_type: Some(ProofType::OpSuccinctSp1ClusterCompressed),
-                start_block_number: proof.start_block_number,
-                number_of_blocks_to_prove: proof.number_of_blocks_to_prove,
-                sequence_window: proof.sequence_window,
-                prover_address: None,
-                l1_head: proof.l1_head.map(|hash| format!("{hash:#x}")),
-            }),
-            ProtocolProofRequestKind::SnarkPlonk(request) => Ok(Self {
-                api_proof_type: ApiProofType::SnarkPlonk,
-                zk_vm: Some(protocol_zk_vm(request.proof.zk_vm)),
-                tee_kind: None,
-                zk_backend: Some(request.proof.zk_backend),
-                proof_type: Some(ProofType::OpSuccinctSp1ClusterSnarkPlonk),
-                start_block_number: request.proof.start_block_number,
-                number_of_blocks_to_prove: request.proof.number_of_blocks_to_prove,
-                sequence_window: request.proof.sequence_window,
-                prover_address: Some(format!("{:#x}", request.prover_address)),
-                l1_head: request.proof.l1_head.map(|hash| format!("{hash:#x}")),
-            }),
             ProtocolProofRequestKind::Tee(request) => Ok(Self {
                 api_proof_type: ApiProofType::Tee,
                 zk_vm: None,
