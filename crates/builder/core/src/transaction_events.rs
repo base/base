@@ -84,6 +84,7 @@ pub(crate) struct BuilderBudgetFields {
     block_da_footprint_limit: Option<u64>,
     tx_execution_time_limit_us: Option<u128>,
     block_uncompressed_size_limit: Option<u64>,
+    max_reserved_gas_per_tx: Option<u64>,
     #[serde(flatten)]
     transaction_resources: Option<BuilderTransactionResources>,
 }
@@ -113,6 +114,7 @@ impl BuilderBudgetFields {
             block_da_footprint_limit: limits.block_da_footprint_limit,
             tx_execution_time_limit_us: limits.tx_execution_time_limit_us,
             block_uncompressed_size_limit: limits.block_uncompressed_size_limit,
+            max_reserved_gas_per_tx: limits.max_reserved_gas_per_tx,
             transaction_resources: resources.map(BuilderTransactionResources::from),
         }
     }
