@@ -188,6 +188,15 @@ pub struct TxForwardingHandle {
 }
 
 impl TxForwardingHandle {
+    /// Abort handles for callers that must cancel tasks if their own future is dropped.
+    pub fn abort_handles(&self) -> Vec<tokio::task::AbortHandle> {
+        self.reader_tasks
+            .iter()
+            .chain(&self.forwarder_tasks)
+            .map(JoinHandle::abort_handle)
+            .collect()
+    }
+
     /// Default maximum time allowed for destination queues and in-flight requests to drain.
     pub const DEFAULT_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(30);
 

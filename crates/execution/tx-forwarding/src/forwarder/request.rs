@@ -1,10 +1,13 @@
 //! What a forwarder sends: one JSON-RPC call to one destination.
 
+use std::sync::Arc;
+
 use alloy_primitives::TxHash;
 use base_execution_txpool::{NoExtensions, ValidatedTransaction};
-use jsonrpsee::core::params::ArrayParams;
+use jsonrpsee::core::{ClientError, params::ArrayParams, traits::ToRpcParams};
 use serde::Serialize;
 use serde_json::value::RawValue;
+use tokio_util::sync::CancellationToken;
 
 /// One JSON-RPC call relayed to one forwarding destination.
 ///
@@ -23,13 +26,29 @@ pub trait ForwardRequest: Send + Sync + 'static {
     /// Read per request rather than per batch, so one batch may mix methods. Batch entries are
     /// executed in order by the server, which is what lets a producer rely on submission order
     /// between different kinds of call to the same destination.
-    fn method(&self) -> &'static str;
+    fn method(&self) -> &str;
 
     /// Positional parameters for the call.
     ///
     /// Fallible because serialization is: a producer that hands over an unserializable payload must
     /// cost its batch, not panic the forwarder task.
-    fn params(&self) -> Result<ArrayParams, serde_json::Error>;
+    fn params(&self) -> Result<ArrayParams, serde_json::Error> {
+        Ok(ArrayParams::new())
+    }
+
+    /// Original parameters, used instead of [`Self::params`] when supplied.
+    fn raw_params(&self) -> Option<&RawValue> {
+        None
+    }
+
+    /// Final delivery outcome, after transport retries; RPC rejections are terminal.
+    fn on_result(&self, _result: Result<(), Arc<ClientError>>) {}
+
+    /// Delivery lifetime, when scoped cancellation is required. Cancelling a shared batch may
+    /// resend its other live requests; requests without a token retain normal forwarding behavior.
+    fn cancellation(&self) -> Option<&CancellationToken> {
+        None
+    }
 
     /// Transaction this call concerns, for metrics and transaction events.
     ///
@@ -43,6 +62,16 @@ pub trait ForwardRequest: Send + Sync + 'static {
     /// keeps the call in a JSON-RPC batch of individual calls.
     fn batched_insert(&self) -> Option<Result<Box<RawValue>, serde_json::Error>> {
         None
+    }
+}
+
+/// JSON-RPC parameters that retain their original JSON representation.
+#[derive(Debug)]
+pub struct RawParams(pub Box<RawValue>);
+
+impl ToRpcParams for RawParams {
+    fn to_rpc_params(self) -> Result<Option<Box<RawValue>>, serde_json::Error> {
+        Ok(Some(self.0))
     }
 }
 
@@ -89,6 +118,13 @@ mod tests {
     use serde_json::{Value, json};
 
     use super::*;
+
+    #[test]
+    fn raw_params_preserve_noncanonical_json() {
+        let json = r#"[ { "amount": 1.2300e+02, "escaped": "\u0061" } ]"#;
+        let raw = RawParams(RawValue::from_string(json.into()).unwrap());
+        assert_eq!(raw.to_rpc_params().unwrap().unwrap().get(), json);
+    }
 
     fn insert(tx_hash: TxHash) -> InsertValidatedTransaction {
         InsertValidatedTransaction {

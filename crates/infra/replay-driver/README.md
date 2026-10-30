@@ -21,7 +21,14 @@ Cancellation may leave an engine build/import in flight; resume from a known hea
 
 Metrics: ordered transaction hashes, gas, builder-reported priority-fee revenue
 (`block_value`, wei), and monotonic build-to-getPayload latency (including wait).
-Flashblock count stays `None`; subscriptions, injection and CLI remain separate.
+Flashblock count stays `None`; subscriptions and CLI remain separate.
+
+`InjectionSchedule::warmup(injector, cutoff_ms)` awaits immediate delivery before first
+FCU. `run(injector, cancellation)` orders remaining calls against `GlobalClock`, bounded
+by `timeout`. `BuilderIngressInjector` preserves method/raw params through tx-forwarding:
+transport failures retry, RPC rejections terminate. Ordered acknowledgements can make
+sends late, never early. Drop aborts transport work; cancelled calls may have arrived.
+Mempool ingress is reserved. Infra permits the execution dependency utilities forbid.
 
 `BlockDiff::compare` compares inclusion, ordering (including deposits), gas and fees.
 `CanonicalBlock::from_block` computes tips from complete RPC receipts, otherwise unknown.

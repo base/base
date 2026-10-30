@@ -15,7 +15,7 @@ mod extension;
 pub use extension::TxForwardingExtension;
 
 mod forwarder;
-pub use forwarder::{ForwardRequest, InsertValidatedTransaction};
+pub use forwarder::{ForwardRequest, InsertValidatedTransaction, RawParams};
 
 mod reader;
 pub use reader::ReaderPool;
