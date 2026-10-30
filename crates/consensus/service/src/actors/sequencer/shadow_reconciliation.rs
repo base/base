@@ -119,7 +119,7 @@ impl CanonicalUnsafeCatchup {
             } else {
                 legacy_interval_millis
             };
-        (Self::CATCHUP_WINDOW.as_millis() / u128::from(interval_millis)) as usize
+        ((Self::CATCHUP_WINDOW.as_millis() / u128::from(interval_millis)) as usize).max(1)
     }
 
     /// Returns the maximum number of payloads retained.
@@ -638,6 +638,7 @@ mod tests {
     #[case::denim_default(RollupConfig::default(), 3_000)]
     #[case::legacy_block_time(rollup_config(2, None), 300)]
     #[case::denim_scheduled(rollup_config(2, Some(1_000)), 3_000)]
+    #[case::block_time_longer_than_window(rollup_config(601, None), 1)]
     fn catchup_window_spans_the_same_time_at_any_block_time(
         #[case] rollup: RollupConfig,
         #[case] expected: usize,

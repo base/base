@@ -1013,7 +1013,7 @@ mod tests {
     #[case::beyond_catchup_window(3_001, false)]
     #[tokio::test(start_paused = true)]
     async fn regular_gossip_gap_spans_the_catchup_window(#[case] gap: u64, #[case] admitted: bool) {
-        let mut coordinator = coordinator(false, false, None);
+        let coordinator = coordinator(false, false, None);
         let client = Arc::clone(coordinator.processor.client());
         let (request_tx, request_rx) = mpsc::channel(8);
         let gossip = payload(gap, 1);
