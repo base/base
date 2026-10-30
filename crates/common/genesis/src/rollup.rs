@@ -700,7 +700,7 @@ mod tests {
                 BaseFeature::Eip8130 | BaseFeature::Eip8430 | BaseFeature::NativeNonceManager => {
                     BaseUpgrade::Everest
                 }
-                BaseFeature::Keystore => BaseUpgrade::Zenith,
+                BaseFeature::Keystore | BaseFeature::GasLimitBilling => BaseUpgrade::Zenith,
             };
             assert_eq!(feature.activation_upgrade(), upgrade, "{feature:?}");
             let mut cfg = RollupConfig::default();
