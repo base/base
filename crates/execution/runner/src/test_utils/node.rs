@@ -61,6 +61,10 @@ impl fmt::Debug for LocalNode {
 impl LocalNode {
     /// Launch a new local node with the provided extensions and chain spec, and
     /// `rpc_gas_cap` as its `--rpc.gascap` when set.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "generate unique test IPC paths independent of the replay clock"
+    )]
     pub async fn new(
         extensions: Vec<Box<dyn BaseNodeExtension>>,
         chain_spec: Arc<BaseChainSpec>,

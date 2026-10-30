@@ -7,6 +7,7 @@ use crate::Clock;
 pub struct SystemClock;
 
 impl Clock for SystemClock {
+    #[expect(clippy::disallowed_methods, reason = "SystemClock is the wall-clock source")]
     fn now(&self) -> SystemTime {
         SystemTime::now()
     }
@@ -19,6 +20,10 @@ mod tests {
     use crate::{Clock, SystemClock};
 
     #[test]
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "compare SystemClock with the operating system clock"
+    )]
     fn system_time_when_using_default_clock() {
         let clock: SystemClock = Default::default();
         let before = SystemTime::now();
@@ -29,6 +34,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "compare SystemClock with the operating system clock"
+    )]
     fn unix_millis_when_using_system_clock() {
         let before = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_millis();
 
