@@ -1,15 +1,11 @@
-use std::{
-    io::{Read, Write},
-    ops::RangeInclusive,
-    path::PathBuf,
-};
+use std::{io::Read, ops::RangeInclusive, path::PathBuf};
 
 use base_replay::{ReplayRecord, ReplayRecordError};
 use chrono::{DateTime, Datelike, Utc};
 use futures::{Stream, StreamExt, TryStreamExt, stream};
 use tokio::io::AsyncReadExt;
 
-use crate::LocalPath;
+use crate::LocalObject;
 
 /// Failures at the storage boundary.
 #[derive(Debug, thiserror::Error)]
@@ -106,16 +102,19 @@ impl ReplayStore {
 
     async fn get(&self, key: &str) -> Result<Option<Vec<u8>>, StoreError> {
         let reader = match self {
-            Self::Local(root) => match async {
-                let path = LocalPath::resolve(root, key, false).await?;
-                tokio::fs::File::open(path).await
+            Self::Local(root) => {
+                let root = root.clone();
+                let key = key.to_owned();
+                let opened = tokio::task::spawn_blocking(move || {
+                    LocalObject::open(&root, &key, false)?.read()
+                })
+                .await?;
+                match opened {
+                    Ok(file) => tokio::fs::File::from_std(file),
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+                    Err(e) => return Err(e.into()),
+                }
             }
-            .await
-            {
-                Ok(file) => file,
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-                Err(e) => return Err(e.into()),
-            },
         };
         let mut bytes = Vec::new();
         reader
@@ -137,13 +136,9 @@ impl ReplayStore {
         }
         match self {
             Self::Local(root) => {
-                let path = LocalPath::resolve(root, &key, true).await?;
+                let root = root.clone();
                 tokio::task::spawn_blocking(move || {
-                    let parent = path.parent().ok_or(StoreError::Invalid("object path"))?;
-                    let mut file = tempfile::NamedTempFile::new_in(parent)?;
-                    file.write_all(&bytes)?;
-                    file.persist_noclobber(path).map_err(|e| e.error)?;
-                    Ok::<_, StoreError>(())
+                    LocalObject::open(&root, &key, true)?.publish(&bytes)
                 })
                 .await??;
             }
