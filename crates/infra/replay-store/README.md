@@ -2,6 +2,9 @@
 
 Minute-keyed zstd JSONL storage for `replay-record/v1` datasets on local disk.
 This infrastructure crate keeps storage dependencies out of the shared record schema.
+This crate targets Unix, including Linux and macOS. The recorder owns the local root;
+directory-relative no-follow handles contain local reads and create-only publication,
+including when an opened directory's name or final object is replaced with a symlink.
 
 Keys are `<network>/<yyyy>/<mm>/<dd>/<hh>/<mm>.jsonl.zst`, in UTC from
 `received_at_ms`. Networks contain only ASCII letters, digits, `_`, or `-`.
