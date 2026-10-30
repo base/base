@@ -160,3 +160,28 @@ impl RegistrationTaskSet {
         RegistrarMetrics::proof_tasks_pending().set(0.0);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use alloy_primitives::Address;
+    use tokio_util::sync::CancellationToken;
+
+    use super::RegistrationTaskSet;
+
+    #[tokio::test]
+    async fn cancelled_task_stays_pending_until_drained() {
+        let mut tasks = RegistrationTaskSet::default();
+        let signer = Address::repeat_byte(1);
+        let cancel = CancellationToken::new();
+        tasks.spawn(signer, "instance".into(), cancel.clone(), async move {
+            cancel.cancelled().await;
+            Ok(())
+        });
+
+        tasks.cancel(&signer);
+        assert_eq!(tasks.pending().collect::<Vec<_>>(), vec![(&signer, "instance")]);
+
+        tasks.drain().await;
+        assert_eq!(tasks.pending().len(), 0);
+    }
+}
