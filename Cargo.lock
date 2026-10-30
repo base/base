@@ -6179,11 +6179,20 @@ dependencies = [
  "base-common-rpc-types",
  "base-common-rpc-types-engine",
  "base-execution-payload-builder",
+ "base-execution-txpool",
+ "base-replay",
+ "base-tx-forwarding",
  "eyre",
+ "jsonrpsee",
+ "mockall",
+ "reth-tasks",
  "serde",
  "serde_json",
  "thiserror 2.0.19",
  "tokio",
+ "tokio-util",
+ "tracing",
+ "url",
 ]
 
 [[package]]

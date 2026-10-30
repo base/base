@@ -6,6 +6,9 @@ pub use attributes::CanonicalAttributes;
 mod candidate;
 pub use candidate::Candidate;
 
+mod injector;
+pub use injector::{InjectionError, InjectionSchedule, Injector};
+
 mod diff;
 pub use diff::{BlockDiff, CanonicalBlock, DiffError};
 

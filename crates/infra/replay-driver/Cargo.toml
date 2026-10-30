@@ -12,7 +12,11 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+url.workspace = true
 tokio.workspace = true
+tracing.workspace = true
+tokio-util.workspace = true
+reth-tasks.workspace = true
 thiserror.workspace = true
 alloy-eips.workspace = true
 alloy-transport.workspace = true
@@ -20,17 +24,23 @@ alloy-consensus.workspace = true
 alloy-primitives.workspace = true
 alloy-rpc-types-engine.workspace = true
 serde = { workspace = true, features = ["derive"] }
+jsonrpsee = { workspace = true, features = ["http-client"] }
 
 base-clock.workspace = true
+base-replay = { path = "../../utilities/replay" }
 base-common-chains.workspace = true
 base-common-network.workspace = true
 base-common-consensus.workspace = true
 base-common-rpc-types.workspace = true
 base-common-rpc-types-engine.workspace = true
+base-tx-forwarding.workspace = true
 
 [dev-dependencies]
 eyre.workspace = true
+mockall.workspace = true
 serde_json.workspace = true
+jsonrpsee = { workspace = true, features = ["server"] }
+base-execution-txpool.workspace = true
 alloy-provider = { workspace = true, features = ["ipc"] }
 base-common-genesis.workspace = true
 base-execution-payload-builder.workspace = true
