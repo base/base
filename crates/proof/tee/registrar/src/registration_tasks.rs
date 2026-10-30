@@ -44,6 +44,8 @@ impl RegistrationTaskSet {
     }
 
     /// Spawns a registration task and tracks it until its join outcome is consumed.
+    ///
+    /// Does nothing if the signer already has a pending task, including a cancelled one.
     pub fn spawn<F>(
         &mut self,
         signer: Address,
@@ -53,6 +55,10 @@ impl RegistrationTaskSet {
     ) where
         F: Future<Output = Result<()>> + Send + 'static,
     {
+        if self.pending.contains_key(&signer) {
+            return;
+        }
+
         let handle = self.tasks.spawn(async move { (signer, future.await) });
         self.pending
             .insert(signer, PendingRegistration { instance_id, task_id: handle.id(), cancel });
@@ -167,6 +173,23 @@ mod tests {
     use tokio_util::sync::CancellationToken;
 
     use super::RegistrationTaskSet;
+
+    #[tokio::test]
+    async fn duplicate_spawn_keeps_original_task_pending() {
+        let mut tasks = RegistrationTaskSet::default();
+        let signer = Address::repeat_byte(1);
+        let cancel = CancellationToken::new();
+        tasks.spawn(signer, "a".into(), cancel.clone(), async move {
+            cancel.cancelled().await;
+            Ok(())
+        });
+        tasks.spawn(signer, "b".into(), CancellationToken::new(), async { Ok(()) });
+
+        assert_eq!(tasks.pending().collect::<Vec<_>>(), vec![(&signer, "a")]);
+
+        tasks.drain().await;
+        assert_eq!(tasks.pending().len(), 0);
+    }
 
     #[tokio::test]
     async fn cancelled_task_stays_pending_until_drained() {
