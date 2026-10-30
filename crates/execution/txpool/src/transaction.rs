@@ -8,7 +8,7 @@ use std::{
 };
 
 use alloy_consensus::{
-    BlobTransactionValidationError, Transaction, Typed2718, transaction::Recovered,
+    BlobTransactionValidationError, Signed, Transaction, Typed2718, transaction::Recovered,
 };
 use alloy_eips::{
     eip2718::{Eip2718Result, Encodable2718, WithEncoded},
@@ -16,7 +16,7 @@ use alloy_eips::{
     eip7594::BlobTransactionSidecarVariant,
     eip7702::SignedAuthorization,
 };
-use alloy_primitives::{Address, B256, Bytes, Signature, TxHash, TxKind, U256};
+use alloy_primitives::{Address, B256, Bytes, Signature, TxHash, TxKind, U256, keccak256};
 use base_bundles::MeterBundleResponse;
 use base_common_consensus::{
     BaseTransactionSigned, CoinbaseTip, EIP8130_TX_TYPE_ID, Eip8130Constants, Eip8130Signed,
@@ -263,6 +263,48 @@ impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
                 "exactly decoded bytes must be the canonical EIP-2718 encoding"
             );
             pooled.encoded_2718 = OnceLock::from(encoded);
+        }
+        Ok(pooled)
+    }
+}
+
+impl<Pooled> BasePooledTransaction<BaseTransactionSigned, Pooled> {
+    /// [`Self::decode_2718_with_sender`] for a caller that has already hashed `encoded`, such as
+    /// to look the transaction up in the pool before decoding it.
+    ///
+    /// `hash` must be the keccak-256 hash of `encoded`. When `encoded` is kept as the canonical
+    /// encoding, `hash` is the transaction hash, and it is cached so [`PoolTransaction::hash`]
+    /// does not re-encode the transaction to hash it again. Deposit and EIP-8130 transactions
+    /// hash themselves while decoding and are left as decoded.
+    pub fn decode_2718_with_sender_and_hash(
+        encoded: Bytes,
+        sender: Address,
+        hash: TxHash,
+    ) -> Eip2718Result<Self> {
+        debug_assert_eq!(hash, keccak256(&encoded), "hash must be the hash of the encoding");
+        let mut pooled = Self::decode_2718_with_sender(encoded, sender)?;
+        if pooled.encoded_2718.get().is_some() {
+            pooled.inner.transaction =
+                pooled.inner.transaction.map(|transaction| match transaction {
+                    BaseTransactionSigned::Legacy(tx) => {
+                        let signature = *tx.signature();
+                        Signed::new_unchecked(tx.strip_signature(), signature, hash).into()
+                    }
+                    BaseTransactionSigned::Eip2930(tx) => {
+                        let signature = *tx.signature();
+                        Signed::new_unchecked(tx.strip_signature(), signature, hash).into()
+                    }
+                    BaseTransactionSigned::Eip1559(tx) => {
+                        let signature = *tx.signature();
+                        Signed::new_unchecked(tx.strip_signature(), signature, hash).into()
+                    }
+                    BaseTransactionSigned::Eip7702(tx) => {
+                        let signature = *tx.signature();
+                        Signed::new_unchecked(tx.strip_signature(), signature, hash).into()
+                    }
+                    transaction @ (BaseTransactionSigned::Deposit(_)
+                    | BaseTransactionSigned::Eip8130(_)) => transaction,
+                });
         }
         Ok(pooled)
     }
@@ -758,8 +800,8 @@ mod tests {
     use std::sync::Arc;
 
     use alloy_consensus::{SignableTransaction, TxEip1559, TxLegacy, transaction::Recovered};
-    use alloy_eips::eip2718::Encodable2718;
-    use alloy_primitives::{Address, Bytes, Signature, TxKind, U256};
+    use alloy_eips::eip2718::{Decodable2718, Encodable2718};
+    use alloy_primitives::{Address, Bytes, Signature, TxKind, U256, keccak256};
     use alloy_signer::SignerSync;
     use alloy_signer_local::PrivateKeySigner;
     use base_bundles::{MeterBundleResponse, OpcodeGas, TransactionResult};
@@ -1101,6 +1143,21 @@ mod tests {
             <BasePooledTransaction>::decode_2718_with_sender(with_trailing.into(), sender).unwrap();
 
         assert_eq!(pooled.encoded_2718(), &encoded, "L1 fee and DA size use the canonical bytes");
+    }
+
+    #[test]
+    fn decode_2718_with_sender_and_hash_keeps_the_transaction_hash() {
+        let (encoded, sender) = eip1559_encoded();
+        let tx_hash = *BaseTransactionSigned::decode_2718(&mut encoded.as_ref()).unwrap().hash();
+        let with_trailing = Bytes::from([encoded.as_ref(), &[0xFF]].concat());
+
+        for input in [encoded, with_trailing] {
+            let hash = keccak256(&input);
+            let pooled =
+                <BasePooledTransaction>::decode_2718_with_sender_and_hash(input, sender, hash)
+                    .unwrap();
+            assert_eq!(*pooled.hash(), tx_hash, "the hash of trailing bytes is not cached");
+        }
     }
 
     /// Caching a non-canonical envelope would charge the L1 fee on bytes that sealed blocks do
