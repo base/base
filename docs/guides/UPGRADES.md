@@ -114,7 +114,9 @@ Benchmark-only changes that do not alter protocol behavior do not require it.
    activation-block exceptions or silently change pre-fork behavior.
 4. Exercise before/at/after activation, genesis activation, absent activation,
    sparse schedules, explicit runtime disabling/rescheduling, and actual-parent
-   transitions. Existing historical fixtures should continue to pass.
+   transitions. Existing historical fixtures should continue to pass. The rollup
+   boundary test pins every feature's introducing upgrade independently of the
+   registry; add an explicit expectation for each new feature.
 5. Run `python3 etc/scripts/local/upgrade-docs.py sync`. Review the affected prose,
    registry contracts, and linked production code. Update prose whenever activation
    semantics or feature behavior changes, even if feature names and generated
@@ -124,6 +126,9 @@ The check rejects missing or duplicate upgrade sections, unknown or unused featu
 stale generated tables, broken local links, and common named-fork behavior checks
 outside schedule adapters. Tables are compared directly with the registry's feature
 names, activation upgrades, descriptions, and detected production consumer links.
+Gate and consumer scans ignore comments and literals, including raw strings and
+nested block comments. They are structural scans, not Rust name resolution or
+macro expansion.
 `sync` updates only those tables; it does not mark prose reviewed.
 
 No source hashes or review stamps are stored. Logging, formatting, and refactoring

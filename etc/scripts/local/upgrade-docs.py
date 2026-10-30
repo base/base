@@ -30,8 +30,49 @@ FORK_GATE_ADAPTERS = {
 }
 
 
+def mask_rust(text: str) -> str:
+    """Blank comments and literals, retaining character offsets and line breaks.
+
+    This is a lexical scan, not a Rust parser: it does not expand macros or
+    evaluate cfg expressions. A quote starts a character literal only when one
+    character (or escape) is followed by its closing quote, leaving lifetimes
+    and labels intact.
+    """
+    tokens = re.compile(
+        r'//|/\*|\b(?:br|cr|r)(?P<hashes>\#*)"'
+        r"|(?:b)?'(?:\\(?:u\{[0-9a-fA-F_]+\}|x[0-9a-fA-F]{2}|[^\r\n])|[^'\\\r\n])'"
+        r'|(?:b|c)?"(?:\\[\s\S]|[^"\\])*"'
+    )
+    delimiters = re.compile(r"/\*|\*/")
+    parts = []
+    offset = 0
+    while match := tokens.search(text, offset):
+        end = match.end()
+        if match[0] == "//":
+            end = text.find("\n", end)
+            if end == -1:
+                end = len(text)
+        elif match[0] == "/*":
+            depth = 1
+            while depth and (delimiter := delimiters.search(text, end)):
+                depth += 1 if delimiter[0] == "/*" else -1
+                end = delimiter.end()
+            if depth:
+                end = len(text)
+        elif match["hashes"] is not None:
+            closing = '"' + match["hashes"]
+            closing_start = text.find(closing, end)
+            end = len(text) if closing_start == -1 else closing_start + len(closing)
+        parts.append(text[offset:match.start()])
+        parts.append(re.sub(r"[^\r\n]", " ", text[match.start():end]))
+        offset = end
+    parts.append(text[offset:])
+    return "".join(parts)
+
+
 def production(text: str) -> str:
-    """Omit the colocated test module (required to be last by AGENTS.md)."""
+    """Mask non-code and omit the colocated test module (required to be last)."""
+    text = mask_rust(text)
     test_start = None
     offset = 0
     # Scan complete attribute lines rather than backtracking over an arbitrary
@@ -116,7 +157,6 @@ def fork_gate_errors(code: dict[str, str]) -> list[str]:
     for path, text in code.items():
         if path in FORK_GATE_ADAPTERS:
             continue
-        text = re.sub(r"//[^\n]*", "", text)
         for match in pattern.finditer(text):
             line = text.count("\n", 0, match.start()) + 1
             errors.append(f"{path}:{line}: Base behavior must use a feature gate: {match[0]}")
@@ -125,7 +165,8 @@ def fork_gate_errors(code: dict[str, str]) -> list[str]:
 
 def inventory(root: Path) -> dict[str, str]:
     code = sources(root)
-    entries = registry(code[REGISTRY])
+    # Registry descriptions come from doc comments, unlike production uses.
+    entries = registry((root / REGISTRY).read_text())
     upgrades = upgrade_names(code[UPGRADES])
     if not upgrades:
         raise ValueError("no BaseUpgrade variants found")
