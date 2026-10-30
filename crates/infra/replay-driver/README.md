@@ -27,3 +27,8 @@ Flashblock count stays `None`; subscriptions, injection and CLI remain separate.
 `CanonicalBlock::from_block` computes tips from complete RPC receipts, otherwise unknown.
 `DiffReport::new(N, diffs)` requires N+1..M, excluding warmup N+1 from all totals.
 Serialize with serde (`replay-diff/v1`) or render `markdown()`; no fidelity threshold.
+`missing` includes `recording_gap`; `builder_missing` subtracts those gaps and is
+unknown (`null` in JSON) when recording coverage is unknown. Optional aggregate
+measurements are unknown if any scored block is unknown; empty scored windows
+have known zero totals. `builder_missing` is an additive v1 field; existing fields
+retain their meanings.
