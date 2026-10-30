@@ -4,11 +4,11 @@ use std::marker::PhantomData;
 
 use alloy_primitives::{Address, TxHash, map::B256Set};
 use base_execution_payload_builder::{
-    DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD, ParkablePayloadTransactions, RestingPredicates,
-    SharedRestingPredicates,
+    DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD, IngestionRestStale, ParkablePayloadTransactions,
+    RestingPredicates, SharedRestingPredicates,
 };
 use base_execution_txpool::{
-    BasePooledTx, BestTransactionsHold, ValidityConditions, ValidityPredicate,
+    BasePooledTx, BestTransactionsHold, IngestionRest, ValidityConditions, ValidityPredicate,
 };
 use reth_payload_util::PayloadTransactions;
 use revm::state::EvmState;
@@ -244,6 +244,18 @@ where
     fn is_resting(&self, transaction_hash: TxHash, predicates: &ValidityConditions) -> bool {
         self.resting_predicate_mode.is_enabled()
             && self.resting.member(transaction_hash, predicates).is_some()
+    }
+
+    fn ingestion_rest_applies(
+        &self,
+        rest: &IngestionRest,
+        conditions: &ValidityConditions,
+    ) -> Result<(), IngestionRestStale> {
+        self.resting.ingestion_rest_applies(rest, conditions)
+    }
+
+    fn take_adopted(&mut self) -> Vec<TxHash> {
+        self.resting.take_adopted()
     }
 
     fn take_resting_stats(&mut self) -> RestingStats {

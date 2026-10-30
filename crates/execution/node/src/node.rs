@@ -256,6 +256,7 @@ impl BaseNode {
             mempool_sender_limit,
             mempool_payer_limit,
             mempool_allowlisted_payer_limit,
+            mempool_validity_ingestion_rest,
             ..
         } = self.args;
         let ordering = match txpool_ordering {
@@ -277,7 +278,8 @@ impl BaseNode {
                     .with_additional_trusted_delegation_targets(
                         self.args.mempool_trusted_delegation_targets.iter().copied(),
                     )
-                    .with_allowlisted_payers(self.args.mempool_allowlisted_payers.iter().copied()),
+                    .with_allowlisted_payers(self.args.mempool_allowlisted_payers.iter().copied())
+                    .with_validity_ingestion_rest(mempool_validity_ingestion_rest),
             )
             .payload(BasePayloadServiceBuilder::new(
                 BasePayloadBuilder::new()
@@ -812,6 +814,9 @@ pub struct BasePoolBuilder<T = BasePooledTransaction> {
     pub additional_trusted_delegation_targets: AddressSet,
     /// Operator-allowlisted EIP-8130 payers.
     pub allowlisted_payers: AddressSet,
+    /// Whether the validator records each admitted validity transaction's first unsatisfied
+    /// state predicate for builders; see `base_execution_txpool::IngestionRest`.
+    pub validity_ingestion_rest: bool,
     /// Marker for the pooled transaction type.
     _pd: core::marker::PhantomData<T>,
 }
@@ -824,6 +829,7 @@ impl<T> Default for BasePoolBuilder<T> {
             guard_limits: GuardLimits::default(),
             additional_trusted_delegation_targets: AddressSet::default(),
             allowlisted_payers: AddressSet::default(),
+            validity_ingestion_rest: false,
             _pd: Default::default(),
         }
     }
@@ -839,6 +845,7 @@ impl<T> Clone for BasePoolBuilder<T> {
                 .additional_trusted_delegation_targets
                 .clone(),
             allowlisted_payers: self.allowlisted_payers.clone(),
+            validity_ingestion_rest: self.validity_ingestion_rest,
             _pd: core::marker::PhantomData,
         }
     }
@@ -879,6 +886,13 @@ impl<T> BasePoolBuilder<T> {
         self.allowlisted_payers = payers.into_iter().collect();
         self
     }
+
+    /// Sets whether the validator evaluates each admitted validity transaction's state predicates
+    /// against the canonical head and records the first unsatisfied one for builders.
+    pub const fn with_validity_ingestion_rest(mut self, enabled: bool) -> Self {
+        self.validity_ingestion_rest = enabled;
+        self
+    }
 }
 
 impl<Node, T, Evm> PoolBuilder<Node, Evm> for BasePoolBuilder<T>
@@ -900,6 +914,7 @@ where
             guard_limits,
             additional_trusted_delegation_targets,
             allowlisted_payers,
+            validity_ingestion_rest,
             ..
         } = self;
 
@@ -924,6 +939,7 @@ where
                         )
                         .with_allowlisted_payers(allowlisted_payers.iter().copied())
                         .with_max_tx_gas_limit(ctx.config().txpool.max_tx_gas_limit)
+                        .with_validity_ingestion_rest(validity_ingestion_rest)
                 });
 
         let mut final_pool_config = ctx.pool_config();
@@ -1094,6 +1110,7 @@ where
                     rejection_cache: self.rejection_cache,
                     state_provider_metrics: ctx.config().engine.state_provider_metrics,
                     resting_predicate_mode: Default::default(),
+                    ingestion_rest_mode: Default::default(),
                 },
             )
             .with_task_executor(ctx.task_executor().clone());

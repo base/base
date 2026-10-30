@@ -19,8 +19,8 @@ use base_execution_eip8130::IntrinsicGas;
 use base_execution_evm::{BaseEvmConfig, BaseNextBlockEnvAttributes};
 use base_execution_payload_builder::{
     BasePayloadBuilderAttributes, BuilderMetrics as SharedBuilderMetrics, CoinbaseTipAffordability,
-    ValidityEvaluationCounters, ValidityEvaluationOutcome, ValidityMetrics,
-    error::BasePayloadBuilderError,
+    IngestionRestStats, RestingPredicateMode, ValidityEvaluationCounters,
+    ValidityEvaluationOutcome, ValidityMetrics, error::BasePayloadBuilderError,
 };
 use base_execution_txpool::{
     BasePooledTx, GuardMetrics, PredicateContext, TimestampedTransaction,
@@ -791,6 +791,12 @@ impl BasePayloadBuilderCtx {
         let mut predicate_eval_cutoff_hit = false;
         // Time spent on validity candidates from yield to the predicate gate decision.
         let mut validity_handling = Duration::ZERO;
+        // Enforced, the pool iterator's hold adopts candidates whose admission-time evaluation
+        // still applies, so they never reach this loop. In shadow, this loop checks the result
+        // against its own evaluation.
+        let shadow_ingestion =
+            self.builder_config.effective_ingestion_rest_mode() == RestingPredicateMode::Shadow;
+        let mut ingestion_stats = IngestionRestStats::default();
 
         while let Some(pooled) = best_txs.next(()) {
             let tx = &pooled.transaction;
@@ -885,6 +891,17 @@ impl BasePayloadBuilderCtx {
                     ValidityEvaluationOutcome::Matched
                 };
                 evaluation_counters.increment(outcome, 1);
+                if shadow_ingestion && let Some(rest) = tx.ingestion_rest() {
+                    match best_txs.ingestion_rest_applies(rest, tx.validity_conditions()) {
+                        Ok(()) => {
+                            ingestion_stats.applied += 1;
+                            if outcome == ValidityEvaluationOutcome::Matched {
+                                ingestion_stats.shadow_mismatches += 1;
+                            }
+                        }
+                        Err(reason) => ingestion_stats.record_stale(reason),
+                    }
+                }
                 // Only matched candidates pay for the resting lookup.
                 if outcome == ValidityEvaluationOutcome::Matched
                     && best_txs.is_resting(tx_hash, tx.validity_conditions())
@@ -1560,6 +1577,33 @@ impl BasePayloadBuilderCtx {
         if let Some(predicate_eval_total) = predicate_eval_total {
             ValidityMetrics::record_predicate_eval_duration(predicate_eval_total);
         }
+        // The hold adopted these without this loop seeing them; report each deferral once, as
+        // the loop does for candidates it parks.
+        let adopted = best_txs.take_adopted();
+        if !adopted.is_empty() {
+            let cx = DecisionContext {
+                payload_id: &payload_id,
+                info,
+                limits,
+                reason: "validity_predicate_not_satisfied",
+                detail: "a validity predicate is not satisfied by the current build state",
+            };
+            for tx_hash in adopted {
+                if deferrals.record(tx_hash, cx.reason) {
+                    self.emit_builder_decision_event(
+                        cx.payload_id,
+                        TransactionEventType::BuilderDeferred,
+                        tx_hash,
+                        None,
+                        || {
+                            BuilderDeferredEventData::new(
+                                cx.reason, cx.detail, cx.info, cx.limits, None,
+                            )
+                        },
+                    );
+                }
+            }
+        }
         let resting_stats = best_txs.take_resting_stats();
         if resting_stats.parked > 0 {
             ValidityMetrics::resting_predicate_parked_total().increment(resting_stats.parked);
@@ -1568,6 +1612,14 @@ impl BasePayloadBuilderCtx {
             ValidityMetrics::resting_predicate_carried_parked_total()
                 .increment(resting_stats.carried_parked);
         }
+        if resting_stats.ingestion.applied > 0 {
+            evaluation_counters.increment(
+                ValidityEvaluationOutcome::RestedAtIngestion,
+                resting_stats.ingestion.applied,
+            );
+        }
+        ingestion_stats.merge(&resting_stats.ingestion);
+        ValidityMetrics::record_ingestion_rest(&ingestion_stats);
         let validity_handling = validity_handling + resting_stats.duration;
         if !validity_handling.is_zero() {
             BuilderMetrics::validity_candidate_handling_duration().record(validity_handling);
@@ -1696,19 +1748,28 @@ mod tests {
     use alloy_signer_local::PrivateKeySigner;
     use base_common_consensus::{BaseTransactionSigned, BaseTypedTransaction, TxDeposit};
     use base_execution_chainspec::BaseChainSpec;
-    use base_execution_txpool::BasePooledTransaction;
+    use base_execution_payload_builder::{
+        ParkableBestPayloadTransactions, RejectionCache, RestingPredicates, SharedRestingPredicates,
+    };
+    use base_execution_txpool::{
+        BaseOrdering, BasePooledTransaction, IngestionRest, ParkedBestTransactions,
+        ValidityOperator, ValidityPredicate,
+    };
     use reth_chainspec::ChainSpec;
     use reth_payload_util::PayloadTransactions;
     use reth_primitives_traits::{Recovered, SealedHeader, WithEncoded};
     use reth_provider::{StateProvider, noop::NoopProvider};
     use reth_revm::{State, database::StateProviderDatabase};
     use reth_transaction_pool::{
-        TransactionOrigin, ValidPoolTransaction, identifier::TransactionId,
+        BestTransactions, TransactionOrigin, ValidPoolTransaction, identifier::TransactionId,
+        pool::PendingPool,
     };
+    use revm::{database::InMemoryDB, state::AccountInfo};
 
     use super::*;
     use crate::{
-        ParkablePayloadTransactions, RestingPayloadTransactions, test_utils::sign_base_tx,
+        BestFlashblocksTxs, ParkablePayloadTransactions, RestingPayloadTransactions,
+        test_utils::sign_base_tx,
     };
 
     fn test_builder_context() -> BasePayloadBuilderCtx {
@@ -1772,6 +1833,99 @@ mod tests {
             origin: TransactionOrigin::External,
             authority_ids: None,
         })
+    }
+
+    /// Runs one flashblock over `transaction` the way `payload.rs` sets it up, with resting and
+    /// ingestion rest both in `mode`, on a state that funds the sender.
+    fn execute_admitted_candidate(
+        mode: RestingPredicateMode,
+        transaction: BasePooledTransaction,
+    ) -> FlashblockDiagnostics {
+        let mut ctx = test_builder_context();
+        ctx.builder_config.resting_predicate_mode = mode;
+        ctx.builder_config.ingestion_rest_mode = mode;
+        let ingestion_mode = ctx.builder_config.effective_ingestion_rest_mode();
+        let mut db = InMemoryDB::default();
+        db.insert_account_info(
+            transaction.sender(),
+            AccountInfo::from_balance(U256::from(10u128.pow(21))),
+        );
+        let mut state = State::builder().with_database(db).with_bundle_update().build();
+
+        let mut resting = RestingPredicates::new(32);
+        resting.track_written_keys(ingestion_mode.is_enabled());
+        resting.begin_block(ctx.parent().hash(), ctx.block_number(), Some(&Default::default()));
+        let resting = SharedRestingPredicates::new(resting)
+            .with_ingestion_rest_adoption(ingestion_mode.is_enforced());
+        let mut pool = PendingPool::new(BaseOrdering::<BasePooledTransaction>::coinbase_tip());
+        pool.add_transaction(pooled_candidate(transaction), 0);
+        let mut best = pool.best();
+        best.no_updates();
+        let parked = ParkedBestTransactions::new(best, BaseOrdering::coinbase_tip(), 0)
+            .with_hold(mode.is_enforced().then(|| resting.iterator_hold()));
+        let mut best_txs = BestFlashblocksTxs::new(
+            ParkableBestPayloadTransactions::new(Box::new(parked)),
+            RejectionCache::default(),
+        )
+        .with_resting_predicate_mode(mode)
+        .with_resting_predicates(resting);
+
+        ctx.execute_best_transactions(
+            &mut ExecutionInfo::default(),
+            &mut BlockDeferrals::default(),
+            &mut state,
+            &mut best_txs,
+            &ResourceLimits { block_gas_limit: 30_000_000, ..Default::default() },
+        )
+        .expect("selection succeeds")
+    }
+
+    /// The pool recorded the candidate as unsatisfied under a predicate that in fact holds, so
+    /// whether the flashblock includes it shows whether the build evaluated it or the iterator
+    /// adopted the admission result. Adopted, it never reaches the build loop at all.
+    #[test]
+    fn flashblock_adopts_an_applicable_admission_result_in_the_pool_iterator_only_when_enforced() {
+        let holds = ValidityPredicate::Balance {
+            address: Address::repeat_byte(0xaa),
+            op: ValidityOperator::Equal,
+            value: U256::ZERO,
+        };
+        let transaction = pooled_test_transaction().with_validity_predicates(vec![holds.clone()]);
+        transaction.set_ingestion_rest(IngestionRest {
+            state_block_hash: test_builder_context().parent().hash(),
+            predicate: holds,
+        });
+
+        for (mode, considered, included) in [
+            (RestingPredicateMode::Off, 1, 1),
+            (RestingPredicateMode::Shadow, 1, 1),
+            (RestingPredicateMode::Enforce, 0, 0),
+        ] {
+            let diag = execute_admitted_candidate(mode, transaction.clone());
+            assert_eq!(
+                (diag.txs_considered, diag.txs_included),
+                (considered, included),
+                "{mode:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn flashblock_evaluates_when_the_admission_result_is_from_another_block() {
+        let holds = ValidityPredicate::Balance {
+            address: Address::repeat_byte(0xaa),
+            op: ValidityOperator::Equal,
+            value: U256::ZERO,
+        };
+        let transaction = pooled_test_transaction().with_validity_predicates(vec![holds.clone()]);
+        transaction.set_ingestion_rest(IngestionRest {
+            state_block_hash: B256::repeat_byte(0xee),
+            predicate: holds,
+        });
+
+        let diag = execute_admitted_candidate(RestingPredicateMode::Enforce, transaction);
+
+        assert_eq!((diag.txs_considered, diag.txs_included), (1, 1));
     }
 
     #[derive(Debug)]

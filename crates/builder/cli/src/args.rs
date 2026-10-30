@@ -259,6 +259,14 @@ pub struct Args {
     #[arg(long = "builder.resting-predicates", value_enum, default_value = "off")]
     pub resting_predicate_mode: RestingPredicateMode,
 
+    /// Rest validity transactions first seen by the build loop on the pool's admission-time
+    /// evaluation of their state predicates instead of evaluating them: off, shadow (check the
+    /// result, still evaluate, and count candidates that matched anyway), or enforce. Requires
+    /// `--builder.resting-predicates` at the same or a stronger level and the node's
+    /// `--rollup.mempool-validity-ingestion-rest`.
+    #[arg(long = "builder.ingestion-rest", value_enum, default_value = "off")]
+    pub ingestion_rest_mode: RestingPredicateMode,
+
     /// Buffer size for tx data store (LRU eviction when full)
     #[arg(long = "builder.tx-data-store-buffer-size", default_value = "10000")]
     pub tx_data_store_buffer_size: usize,
@@ -358,6 +366,7 @@ impl Default for Args {
             predicate_eval_hard_cutoff_ms: 10,
             predicate_bucket_ordered_threshold: 32,
             resting_predicate_mode: RestingPredicateMode::Off,
+            ingestion_rest_mode: RestingPredicateMode::Off,
             tx_data_store_buffer_size: 10000,
             metering_store_ttl_secs: 30,
             rejection_cache_max_capacity: 100_000,
@@ -453,6 +462,7 @@ impl Args {
             predicate_eval_hard_cutoff: Duration::from_millis(self.predicate_eval_hard_cutoff_ms),
             predicate_bucket_ordered_threshold: self.predicate_bucket_ordered_threshold,
             resting_predicate_mode: self.resting_predicate_mode,
+            ingestion_rest_mode: self.ingestion_rest_mode,
             metering_provider,
             resource_metering,
             rejection_cache: RejectionCache::new(
@@ -763,6 +773,19 @@ mod tests {
         let args =
             CommandParser::parse_from(std::iter::once("builder").chain(flags.iter().copied())).args;
         assert_eq!(convert(args).resting_predicate_mode, expected);
+    }
+
+    #[rstest]
+    #[case::default(&[], RestingPredicateMode::Off)]
+    #[case::shadow(&["--builder.ingestion-rest", "shadow"], RestingPredicateMode::Shadow)]
+    #[case::enforce(&["--builder.ingestion-rest", "enforce"], RestingPredicateMode::Enforce)]
+    fn ingestion_rest_mode_is_propagated(
+        #[case] flags: &[&str],
+        #[case] expected: RestingPredicateMode,
+    ) {
+        let args =
+            CommandParser::parse_from(std::iter::once("builder").chain(flags.iter().copied())).args;
+        assert_eq!(convert(args).ingestion_rest_mode, expected);
     }
 
     #[test]

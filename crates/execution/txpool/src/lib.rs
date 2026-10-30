@@ -52,6 +52,9 @@ pub use validity::{
 mod block_expiry;
 pub use block_expiry::{BlockExpiryIndex, ExpiryPosition, FlashblockExpiry};
 
+mod ingestion_rest;
+pub use ingestion_rest::IngestionRest;
+
 mod transaction;
 pub use transaction::{
     BasePooledTransaction, BasePooledTx, CoinbaseTipBacking, TimestampedTransaction,
