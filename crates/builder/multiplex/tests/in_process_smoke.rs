@@ -58,6 +58,10 @@ impl RunningNode {
         Self::launch(service_builder).await
     }
 
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "generate unique test directories independent of the replay clock"
+    )]
     async fn launch<SB>(service_builder: SB) -> eyre::Result<Self>
     where
         SB: base_node_runner::PayloadServiceBuilder,
@@ -222,6 +226,10 @@ async fn build_new_block(
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "build live-node test payloads with current wall time"
+)]
 async fn payload_builder_modes_match_flashblocks_baseline() -> eyre::Result<()> {
     let baseline = RunningNode::launch_flashblocks().await?;
     let baseline_provider = baseline.provider().await?;
