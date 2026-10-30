@@ -64,6 +64,7 @@ mockall.workspace = true
 serde = { workspace = true, features = ["derive"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 jsonrpsee = { workspace = true, features = ["server"] }
+axum = { workspace = true, features = ["http1", "json", "tokio"] }
 
 [features]
 default = [ "metrics" ]
