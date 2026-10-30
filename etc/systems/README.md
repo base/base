@@ -209,6 +209,41 @@ the Flashblocks builder. Sparse sharing requires at least five available CPUs;
 an unsupported host fails rather than silently ignoring the option. Host-derived
 worker-pool sizing is unchanged. The options are CLI-only, not load-test YAML keys.
 
+Snapshot persistence experiments use `--engine.suppress-persistence-during-build`
+(default false, builder only) and `--use-reth-persistence-defaults` (default false).
+The latter leaves persistence settings unset on both builder and follower, so Reth
+selects threshold 50, memory buffer target 5, backpressure 100, and state masking 30
+at the current pin. These numbers are not copied into benchmark configuration.
+Without the option, the existing threshold 0 and cadence-dependent backpressure
+(16 at 2s, 160 at 200ms) remain unchanged to preserve existing benchmark baselines.
+Followers use the same persistence policy for comparable validation, but never
+receive the builder's suppression option.
+
+For a base-metal mainnet mixed-workload A/B, use the same optimized binary and
+load-test YAML for both arms. Set `MAINNET_MIX_CONFIG` to the base-metal workload
+file and restore separate writable snapshot datadirs for **each** run. Keep the
+gas limit and all workload settings identical. For example, at 200ms:
+
+```bash
+# Control: suppression remains off.
+base-bench snapshot --chain mainnet --block-interval 200ms \
+  --builder-datadir "$CONTROL_BUILDER_DATADIR" \
+  --client-datadir "$CONTROL_CLIENT_DATADIR" \
+  --load-test-config "$MAINNET_MIX_CONFIG" \
+  --use-reth-persistence-defaults \
+  --scenario mainnet-mix-persistence-control \
+  --output-dir "$CONTROL_OUTPUT_DIR"
+
+# Treatment: only suppression changes.
+base-bench snapshot --chain mainnet --block-interval 200ms \
+  --builder-datadir "$TREATMENT_BUILDER_DATADIR" \
+  --client-datadir "$TREATMENT_CLIENT_DATADIR" \
+  --load-test-config "$MAINNET_MIX_CONFIG" \
+  --use-reth-persistence-defaults --engine.suppress-persistence-during-build \
+  --scenario mainnet-mix-persistence-treatment \
+  --output-dir "$TREATMENT_OUTPUT_DIR"
+```
+
 For the end-to-end workflow, including disposable snapshot restores, report artifact conventions, and
 how `--benchmark-run`, `--scenario`, and `--run-id` select runs in `base/benchmark`, see
 [Snapshot Benchmarking](../../docs/guides/SNAPSHOT_BENCHMARKS.md).

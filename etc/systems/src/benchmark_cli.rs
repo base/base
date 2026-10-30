@@ -217,6 +217,9 @@ pub struct SnapshotBenchmarkArgs {
     /// Opt-in state sharing for the snapshot's native payload builder.
     #[command(flatten)]
     pub builder_engine: crate::BuilderEngineSharingConfig,
+    /// Persistence policy applied to both snapshot execution nodes.
+    #[command(flatten)]
+    pub persistence: crate::SnapshotPersistenceConfig,
     /// How the snapshot's native payload builder tracks validity transactions whose predicates
     /// did not match: `off` evaluates every candidate on every flashblock, `shadow` tracks
     /// resting transactions while still evaluating them, `enforce` parks them until a state
@@ -1013,6 +1016,7 @@ impl SnapshotBenchmarkArgs {
         snapshot.block_gas_limit = self.block_gas_limit.map(NonZeroU64::get);
         snapshot.eip1559_elasticity_override = Some(SNAPSHOT_BENCHMARK_EIP1559_ELASTICITY);
         snapshot.builder_engine = self.builder_engine;
+        snapshot.persistence = self.persistence;
         snapshot.resting_predicate_mode = self.resting_predicate_mode;
         snapshot.prefund =
             Some(DevnetPrefund { address: funder_key.address(), amount: PREFUND_AMOUNT_WEI });
@@ -1508,6 +1512,26 @@ mod tests {
             crate::BuilderEngineSharingConfig::default(),
             "sharing defaults stay disabled"
         );
+    }
+
+    /// Persistence flags parse independently and keep legacy defaults when omitted.
+    #[test]
+    fn parses_snapshot_persistence_options() {
+        for (flags, suppress, defaults) in [
+            (vec![], false, false),
+            (vec!["--engine.suppress-persistence-during-build"], true, false),
+            (vec!["--use-reth-persistence-defaults"], false, true),
+        ] {
+            let mut argv = vec!["base-bench", "snapshot", "--builder-datadir", "/snapshot/builder",
+                "--load-test-config", "load.yaml", "--output-dir", "results", "--scenario", "persistence"];
+            argv.extend(flags);
+            let cli = BenchmarkCli::try_parse_from(argv).expect("persistence options must parse");
+            let Some(BenchmarkCommand::Snapshot(args)) = cli.command else {
+                panic!("expected snapshot benchmark command");
+            };
+            assert_eq!(args.builder_engine.suppress_persistence_during_build, suppress, "suppression must match its flag exactly");
+            assert_eq!(args.persistence.use_reth_persistence_defaults, defaults, "reth defaults must be explicit opt-in");
+        }
     }
 
     /// Both sharing CLI flags reach the configuration passed to the snapshot launcher.

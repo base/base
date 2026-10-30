@@ -45,6 +45,10 @@ pub struct BuilderEngineSharingConfig {
     /// Share the engine's execution cache with the native builder.
     #[arg(long = "engine.share-execution-cache-with-payload-builder")]
     pub share_execution_cache_with_payload_builder: bool,
+    /// Suppress threshold-triggered persistence while the native builder holds a payload job.
+    #[arg(long = "engine.suppress-persistence-during-build")]
+    #[serde(default)]
+    pub suppress_persistence_during_build: bool,
 }
 
 impl BuilderEngineSharingConfig {
@@ -55,11 +59,38 @@ impl BuilderEngineSharingConfig {
                 || node_config.engine.tree_config().has_enough_parallelism(),
             "sparse-trie sharing requires at least five available CPUs"
         );
+        node_config.engine.suppress_persistence_during_build =
+            self.suppress_persistence_during_build;
         node_config.engine.share_sparse_trie_with_payload_builder =
             self.share_sparse_trie_with_payload_builder;
         node_config.engine.share_execution_cache_with_payload_builder =
             self.share_execution_cache_with_payload_builder;
         Ok(())
+    }
+}
+
+/// Persistence policy shared by snapshot builders and followers.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Args)]
+pub struct SnapshotPersistenceConfig {
+    /// Leave persistence settings to Reth rather than persisting every block.
+    /// Applies equally to builder and follower; disabled to preserve benchmark baselines.
+    #[arg(long)]
+    pub use_reth_persistence_defaults: bool,
+}
+
+impl SnapshotPersistenceConfig {
+    /// Returns the legacy threshold override, or leaves Reth's default untouched.
+    pub const fn threshold(self) -> Option<u64> {
+        if self.use_reth_persistence_defaults { None } else { Some(0) }
+    }
+
+    /// Returns the legacy cadence-dependent backpressure override, or Reth's default.
+    pub fn backpressure(self, interval: crate::DevnetBlockInterval) -> Option<u64> {
+        if self.use_reth_persistence_defaults {
+            None
+        } else {
+            Some(interval.snapshot_persistence_backpressure_threshold())
+        }
     }
 }
 
@@ -100,6 +131,27 @@ impl TestNodeRuntime {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Production persistence keeps upstream values and suppression is builder-only.
+    #[test]
+    fn persistence_defaults_and_builder_suppression() {
+        let mut builder = NodeConfig::default();
+        let follower = NodeConfig::default();
+        BuilderEngineSharingConfig { suppress_persistence_during_build: true, ..Default::default() }
+            .apply(&mut builder).unwrap();
+        assert_eq!(builder.engine.suppress_persistence_during_build, true, "builder receives suppression");
+        assert_eq!(follower.engine.suppress_persistence_during_build, false, "follower retains suppression default");
+        assert_eq!(builder.engine.persistence_threshold, 50, "reth persistence threshold is retained");
+        assert_eq!(builder.engine.memory_block_buffer_target(), 5, "reth memory buffer is retained");
+        assert_eq!(builder.engine.persistence_backpressure_threshold(), 100, "reth backpressure is retained");
+        assert_eq!(builder.engine.num_state_masking_blocks(), 30, "reth masking is retained");
+        let legacy = SnapshotPersistenceConfig::default();
+        assert_eq!(legacy.threshold(), Some(0), "legacy persists every block");
+        assert_eq!(legacy.backpressure(crate::DevnetBlockInterval::TwoHundredMilliseconds), Some(160), "legacy cadence backpressure is retained");
+        let production = SnapshotPersistenceConfig { use_reth_persistence_defaults: true };
+        assert_eq!(production.threshold(), None, "production threshold must be left to reth");
+        assert_eq!(production.backpressure(crate::DevnetBlockInterval::TwoHundredMilliseconds), None, "production backpressure must be left to reth");
+    }
 
     /// Defaults preserve the disabled engine settings; cache-only sharing is independently opt-in.
     #[test]

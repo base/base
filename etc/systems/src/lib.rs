@@ -100,6 +100,7 @@ pub use l2::{
     InProcessStandaloneSequencerConfig, L2ClientConsensus, L2ClientConsensusMode,
     L2ContainerConfig, L2Stack, L2StackConfig, ShadowSequencer, ShadowSequencerConfig,
     ShadowSequencersConfig, SnapshotBoundary, SnapshotL2Stack, SnapshotL2StackConfig,
+    SnapshotPersistenceConfig,
     TestNodeRuntime,
 };
 
