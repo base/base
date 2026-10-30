@@ -67,9 +67,9 @@ runs:
     - name: Free Disk Space
       if: steps.disk-space.outputs.cleanup == 'true'
       continue-on-error: true
-      uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
+      uses: jlumbroso/free-disk-space@ceedf095f4ec1a097402bc6bd80831f2e1a6fde6 # v2.0.0
       with:
-        tool-cache: false
+        preinstalled-runtimes: false
         android: false
         dotnet: false
         haskell: true
@@ -107,7 +107,7 @@ runs:
 
     - name: Install Rust (nightly)
       if: inputs.toolchain == 'nightly'
-      uses: dtolnay/rust-toolchain@0c3131df9e5407c0c36352032d04af846dbe0fb7 # nightly
+      uses: dtolnay/rust-toolchain@2c76c034f9e32a5d6e2c104dc4df23a22476db04 # nightly
       with:
         components: ${{ inputs.components }}
 
@@ -125,13 +125,13 @@ runs:
         fi
 
     - name: Setup sccache
-      uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
+      uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
       env:
         SCCACHE_GHA_RW_MODE: ${{ inputs.sccache-write == 'true' && 'READ_WRITE' || 'READ_ONLY' }}
 
     - name: Rust cache
       if: inputs.rust-cache-shared-key != ''
-      uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
+      uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       with:
         cache-on-failure: true
         shared-key: ${{ inputs.rust-cache-shared-key }}
@@ -146,13 +146,13 @@ runs:
 
     - name: Install cargo tools
       if: inputs.tools != ''
-      uses: taiki-e/install-action@3575e532701a5fc614b0c842e4119af4cc5fd16d # v2.62.60
+      uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
       with:
         tool: ${{ inputs.tools }}
 
     - name: Install Foundry
       if: inputs.foundry == 'true'
-      uses: foundry-rs/foundry-toolchain@50d5a8956f2e319df19e6b57539d7e2acb9f8c1e # v1.5.0
+      uses: foundry-rs/foundry-toolchain@dba66c27052e63476d886f22216e119ba7e615bf # v1.9.2
       with:
         version: stable
 
