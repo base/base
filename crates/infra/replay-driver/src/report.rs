@@ -1,0 +1,119 @@
+use alloy_primitives::U256;
+use serde::Serialize;
+
+use crate::{BlockDiff, DiffError};
+
+/// Additive measurements; optional totals are unknown if any scored block is unknown.
+#[derive(Debug, Default, Clone, Serialize)]
+pub struct DiffTotals {
+    /// Canonical hashes absent from candidate (includes recording gaps).
+    pub missing: usize,
+    /// Candidate hashes absent from canonical.
+    pub extra: usize,
+    /// Hashes present in both.
+    pub common: usize,
+    /// Missing hashes absent from recording; recording gap, not builder failure. None is unknown.
+    pub recording_gap: Option<usize>,
+    /// Canonical execution gas.
+    pub canonical_gas_used: u128,
+    /// Candidate execution gas.
+    pub candidate_gas_used: u128,
+    /// Canonical execution tips in wei, not total coinbase balance changes.
+    pub canonical_priority_fee_wei: Option<U256>,
+    /// Builder `block_value` in wei.
+    pub candidate_priority_fee_wei: U256,
+    /// Build-to-getPayload elapsed microseconds, including wait (sum for aggregate).
+    pub build_latency_us: u128,
+    /// Observed flashblocks (sum for aggregate); None until subscription is available.
+    pub flashblock_count: Option<u64>,
+}
+
+impl<'a> std::iter::Sum<&'a Self> for DiffTotals {
+    fn sum<I: Iterator<Item = &'a Self>>(iter: I) -> Self {
+        iter.fold(
+            Self {
+                recording_gap: Some(0),
+                canonical_priority_fee_wei: Some(U256::ZERO),
+                flashblock_count: Some(0),
+                ..Self::default()
+            },
+            |a, b| Self {
+                missing: a.missing + b.missing,
+                extra: a.extra + b.extra,
+                common: a.common + b.common,
+                recording_gap: a.recording_gap.zip(b.recording_gap).map(|(a, b)| a + b),
+                canonical_gas_used: a.canonical_gas_used + b.canonical_gas_used,
+                candidate_gas_used: a.candidate_gas_used + b.candidate_gas_used,
+                canonical_priority_fee_wei: a
+                    .canonical_priority_fee_wei
+                    .zip(b.canonical_priority_fee_wei)
+                    .map(|(a, b)| a + b),
+                candidate_priority_fee_wei: a.candidate_priority_fee_wei
+                    + b.candidate_priority_fee_wei,
+                build_latency_us: a.build_latency_us + b.build_latency_us,
+                flashblock_count: a.flashblock_count.zip(b.flashblock_count).map(|(a, b)| a + b),
+            },
+        )
+    }
+}
+
+/// Versioned serde JSON report for N+1..M; no fidelity threshold is imposed.
+#[derive(Debug, Serialize)]
+pub struct DiffReport {
+    /// Stable wire schema identifier.
+    pub schema: &'static str,
+    /// N: canonical parent of the first replayed block.
+    pub parent_block_number: u64,
+    /// Ordered per-block results, including warmup.
+    pub blocks: Vec<BlockDiff>,
+    /// Totals excluding N+1; empty scored windows have zero totals.
+    pub aggregate: DiffTotals,
+}
+
+impl DiffReport {
+    /// Marks N+1 warmup and sums only subsequent blocks.
+    ///
+    /// # Errors
+    /// Returns [`DiffError::Window`] for gaps, duplicates, reversed or overflowing heights.
+    pub fn new(parent_block_number: u64, mut blocks: Vec<BlockDiff>) -> Result<Self, DiffError> {
+        let mut previous = parent_block_number;
+        for (index, block) in blocks.iter_mut().enumerate() {
+            if previous.checked_add(1) != Some(block.block_number) {
+                return Err(DiffError::Window);
+            }
+            block.warmup = index == 0;
+            previous = block.block_number;
+        }
+        let aggregate = blocks.iter().filter(|b| !b.warmup).map(|b| &b.totals).sum();
+        Ok(Self { schema: "replay-diff/v1", parent_block_number, blocks, aggregate })
+    }
+
+    /// Renders inclusion and ordering summaries; unknown recording gaps are explicit.
+    pub fn markdown(&self) -> String {
+        let mut out = String::from(
+            "# Replay diff\n\nN+1 is warmup; aggregate excludes it. Gaps are missing transactions absent from recording, not builder failures. Resource measurements are in JSON; fees are execution tips (wei), latency is summed microseconds.\n\n| Block | Missing | Extra | Common | Recording gap | First divergence |\n| --- | --- | --- | --- | --- | --- |\n",
+        );
+        let rows = self
+            .blocks
+            .iter()
+            .map(|b| {
+                (
+                    format!("{}{}", b.block_number, if b.warmup { " (warmup)" } else { "" }),
+                    &b.totals,
+                    b.first_divergence_index,
+                )
+            })
+            .chain(std::iter::once(("Aggregate".into(), &self.aggregate, None)));
+        for (label, t, divergence) in rows {
+            out.push_str(&format!(
+                "| {label} | {} | {} | {} | {} | {} |\n",
+                t.missing,
+                t.extra,
+                t.common,
+                t.recording_gap.map_or_else(|| "unknown".into(), |v| v.to_string()),
+                divergence.map_or_else(|| "—".into(), |v| v.to_string())
+            ));
+        }
+        out
+    }
+}

@@ -35,6 +35,10 @@ base-execution-cli = { workspace = true, features = ["otlp"] }
 # cli
 clap.workspace = true
 
+# misc
+eyre.workspace = true
+tracing.workspace = true
+
 [features]
 default = [ "asm-keccak", "jemalloc", "keccak-cache-global" ]
 asm-keccak = [ "base-execution-cli/asm-keccak" ]

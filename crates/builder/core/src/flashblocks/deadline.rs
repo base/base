@@ -1,8 +1,9 @@
 //! Payload job deadline calculation and timer construction.
 
 use core::{pin::Pin, time::Duration};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::UNIX_EPOCH;
 
+use base_clock::GlobalClock;
 use tokio::time::Sleep;
 use tracing::warn;
 
@@ -35,7 +36,7 @@ impl PayloadJobDeadline {
     /// Timestamps at or before the current time receive a minimum one-second base duration. If the
     /// system clock predates the Unix epoch, only the configured leeway is returned.
     pub fn calculate(&self, attributes_timestamp: u64) -> Duration {
-        let unix_now = match SystemTime::now().duration_since(UNIX_EPOCH) {
+        let unix_now = match GlobalClock::get().now().duration_since(UNIX_EPOCH) {
             Ok(duration) => duration.as_secs(),
             Err(error) => {
                 warn!(error = %error, "System clock went backward, using configured deadline leeway");
@@ -83,6 +84,10 @@ mod tests {
     #[case(Duration::ZERO)]
     #[case(Duration::from_secs(5))]
     fn calculate_uses_attributes_timestamp(#[case] extra_block_deadline: Duration) {
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "test deadline calculation against real wall time"
+        )]
         let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
         let deadline = PayloadJobDeadline::new(extra_block_deadline);
 
