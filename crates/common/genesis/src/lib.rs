@@ -9,6 +9,9 @@
 
 extern crate alloc;
 
+mod feature;
+pub use feature::BaseFeature;
+
 mod params;
 pub use params::FeeConfig;
 

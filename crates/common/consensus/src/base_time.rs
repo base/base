@@ -153,7 +153,7 @@ impl BaseTimeUpdateTx {
         block_number: u64,
         timestamp: u64,
     ) -> Result<(), BaseTimeScheduleError> {
-        if !schedule.is_denim_active_at_block(block_number) {
+        if !schedule.is_subsecond_active_at_block(block_number) {
             return Ok(());
         }
 

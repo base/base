@@ -2,7 +2,7 @@
 
 use alloy_consensus::BlockHeader;
 use base_common_chains::{BaseUpgradeExt, Upgrades};
-use base_common_genesis::BaseUpgrade;
+use base_common_genesis::{BaseFeature, BaseUpgrade};
 use revm::primitives::hardfork::SpecId;
 
 /// EVM-facing Base spec id.
@@ -32,6 +32,11 @@ impl BaseSpecId {
     /// Checks if the given Base upgrade is enabled in this spec.
     pub const fn is_enabled_in(self, other: BaseUpgrade) -> bool {
         other as u8 <= self.0 as u8
+    }
+
+    /// Whether this spec includes a behavior, preserving the execution upgrade ordering.
+    pub const fn is_feature_enabled(self, feature: BaseFeature) -> bool {
+        self.0.is_feature_enabled(feature)
     }
 
     /// Parses the [`BaseSpecId`] from the chain spec and block header.
@@ -91,6 +96,9 @@ impl core::str::FromStr for BaseSpecId {
 #[cfg(test)]
 mod tests {
     use alloc::vec;
+
+    use base_common_chains::ChainUpgrades;
+    use base_common_genesis::RollupConfig;
 
     use super::*;
 
@@ -274,5 +282,64 @@ mod tests {
     #[test]
     fn default_base_spec_id() {
         assert_eq!(BaseSpecId::default().upgrade(), BaseUpgrade::LATEST);
+    }
+
+    #[test]
+    fn semantic_features_preserve_execution_order_including_contract_only_specs() {
+        let cases = [
+            (BaseFeature::DepositNonce, BaseUpgrade::Regolith),
+            (BaseFeature::DepositReceiptVersion, BaseUpgrade::Canyon),
+            (BaseFeature::BlobAwareL1Fees, BaseUpgrade::Ecotone),
+            (BaseFeature::FastLzL1Fees, BaseUpgrade::Fjord),
+            (BaseFeature::OperatorFee, BaseUpgrade::Isthmus),
+            (BaseFeature::DaFootprint, BaseUpgrade::Jovian),
+            (BaseFeature::DynamicStorageTailCleanup, BaseUpgrade::Cobalt),
+            (BaseFeature::SubsecondBlocks, BaseUpgrade::Denim),
+            (BaseFeature::Eip8130, BaseUpgrade::Everest),
+            (BaseFeature::Keystore, BaseUpgrade::Zenith),
+        ];
+        for upgrade in BaseUpgrade::EXECUTION_VARIANTS.into_iter().chain([
+            BaseUpgrade::Delta,
+            BaseUpgrade::PectraBlobSchedule,
+            BaseUpgrade::Zenith,
+        ]) {
+            let spec = BaseSpecId::new(upgrade);
+            for (feature, activation) in cases {
+                assert_eq!(
+                    spec.is_feature_enabled(feature),
+                    spec.is_enabled_in(activation),
+                    "{feature:?} at {upgrade:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn gas_limit_billing_requires_genesis_configured_zenith() {
+        // Every scheduled execution upgrade predates gas-limit billing; only Zenith enables it.
+        for upgrade in BaseUpgrade::EXECUTION_VARIANTS {
+            let spec = BaseSpecId::new(upgrade);
+            assert!(!spec.is_feature_enabled(BaseFeature::GasLimitBilling), "{upgrade:?}");
+        }
+        assert!(
+            BaseSpecId::new(BaseUpgrade::Zenith).is_feature_enabled(BaseFeature::GasLimitBilling)
+        );
+
+        for chain in [ChainUpgrades::mainnet(), ChainUpgrades::sepolia()] {
+            let spec = BaseSpecId::from_timestamp(&chain, u64::MAX);
+            assert!(!spec.is_feature_enabled(BaseFeature::GasLimitBilling), "{spec:?}");
+        }
+
+        const ZENITH_TIME: u64 = 42;
+        let mut cfg = RollupConfig::default();
+        cfg.upgrades.base.everest = Some(0);
+        let spec = BaseSpecId::from_timestamp(&cfg, u64::MAX);
+        assert!(!spec.is_feature_enabled(BaseFeature::GasLimitBilling));
+
+        cfg.upgrades.base.zenith = Some(ZENITH_TIME);
+        let before = BaseSpecId::from_timestamp(&cfg, ZENITH_TIME - 1);
+        let at = BaseSpecId::from_timestamp(&cfg, ZENITH_TIME);
+        assert!(!before.is_feature_enabled(BaseFeature::GasLimitBilling));
+        assert!(at.is_feature_enabled(BaseFeature::GasLimitBilling));
     }
 }
