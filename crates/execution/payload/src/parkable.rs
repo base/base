@@ -43,6 +43,10 @@ pub trait ParkablePayloadTransactions:
     /// Parks and clears the current transaction, if any.
     fn park_current(&mut self);
 
+    /// Reserves room for at least `additional` more transactions to be parked. A sizing hint
+    /// only; the default ignores it.
+    fn reserve_parked(&mut self, _additional: usize) {}
+
     /// Commits and clears the current transaction, if any.
     fn mark_current_committed(&mut self);
 
@@ -146,6 +150,10 @@ where
         if let Some(transaction) = self.current.take() {
             self.inner.park(&transaction);
         }
+    }
+
+    fn reserve_parked(&mut self, additional: usize) {
+        self.inner.reserve_parked(additional);
     }
 
     fn mark_current_committed(&mut self) {

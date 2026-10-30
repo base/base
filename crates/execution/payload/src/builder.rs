@@ -988,8 +988,16 @@ where
         let mut predicate_eval_cutoff_hit = false;
         let resting_mode = self.builder_config.resting_predicate_mode;
         // Carried resting transactions held back unevaluated in this build. A commit that wakes one
-        // promotes it so the scan evaluates it at its priority position.
-        let mut parked_resting = B256Set::default();
+        // promotes it so the scan evaluates it at its priority position. Each member carried into
+        // this block is held back and parked when yielded, and they are most of the held
+        // candidates, so sizing for them up front avoids rehashing as the scan parks them.
+        let held_capacity = match resting.as_deref() {
+            Some(resting) if resting_mode.is_enforced() => resting.len(),
+            _ => 0,
+        };
+        let mut parked_resting =
+            B256Set::with_capacity_and_hasher(held_capacity, Default::default());
+        best_txs.reserve_parked(held_capacity);
         // Counted locally and recorded once per build, so the loop does no metric lookups.
         let mut carried_parked = 0_u64;
         let mut carried_shadow_mismatches = 0_u64;
