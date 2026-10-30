@@ -226,6 +226,8 @@ features! {
     Zenith {
         /// Enable experimental EIP-8130 keystore support on genesis-configured chains only.
         Keystore,
+        /// Bill transactions for their full gas limit rather than only the gas they use.
+        GasLimitBilling,
     },
 }
 

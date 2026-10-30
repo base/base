@@ -64,6 +64,18 @@ mod tests {
     use super::*;
 
     #[test]
+    fn gas_limit_billing_is_enabled_only_at_zenith() {
+        // Every scheduled execution upgrade predates gas-limit billing; only Zenith enables it.
+        for upgrade in BaseUpgrade::EXECUTION_VARIANTS {
+            let spec = BaseSpecId::new(upgrade);
+            assert!(!spec.is_feature_enabled(BaseFeature::GasLimitBilling), "{upgrade:?}");
+        }
+        assert!(
+            BaseSpecId::new(BaseUpgrade::Zenith).is_feature_enabled(BaseFeature::GasLimitBilling)
+        );
+    }
+
+    #[test]
     fn round_trips_the_wrapped_upgrade() {
         let spec = BaseSpecId::new(BaseUpgrade::Fjord);
         assert_eq!(spec.upgrade(), BaseUpgrade::Fjord);

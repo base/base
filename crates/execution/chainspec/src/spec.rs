@@ -744,6 +744,7 @@ impl From<ChainSpec> for BaseChainSpec {
 #[cfg(test)]
 mod tests {
     use alloc::{
+        format,
         string::{String, ToString},
         vec,
         vec::Vec,
@@ -756,7 +757,7 @@ mod tests {
     use alloy_hardforks::Hardfork;
     use alloy_primitives::{Address, B256, U256, address, b256};
     use base_common_chains::{ChainConfig, Upgrades};
-    use base_common_genesis::{BaseUpgrade, RuntimeUpgradeRegistry};
+    use base_common_genesis::{BaseFeature, BaseUpgrade, RuntimeUpgradeRegistry};
     use base_common_rpc_types::FeeInfo;
     use reth_chainspec::{
         BaseFeeParams, BaseFeeParamsKind, ChainSpec, EthChainSpec, EthereumHardforks, test_fork_ids,
@@ -1118,6 +1119,39 @@ mod tests {
             assert!(!spec.is_fork_active_at_timestamp(BaseUpgrade::Zenith, 0));
             assert!(!spec.is_fork_active_at_timestamp(BaseUpgrade::Zenith, u64::MAX));
         }
+    }
+
+    #[test]
+    fn gas_limit_billing_activates_only_with_genesis_configured_zenith() {
+        for spec in [BaseChainSpec::mainnet(), BaseChainSpec::sepolia()] {
+            assert!(!spec.is_feature_active_at_timestamp(BaseFeature::GasLimitBilling, u64::MAX));
+        }
+
+        let genesis_with_zenith = |zenith: Option<u64>| -> BaseChainSpec {
+            let zenith = zenith.map_or_else(String::new, |time| format!(r#", "zenith": {time}"#));
+            let genesis = format!(
+                r#"{{
+                  "config": {{
+                    "bedrockBlock": 0, "regolithTime": 0, "canyonTime": 0, "ecotoneTime": 0,
+                    "fjordTime": 0, "graniteTime": 0, "holoceneTime": 0, "isthmusTime": 0,
+                    "jovianTime": 0,
+                    "base": {{ "v1": 0, "v2": 0, "v3": 0, "denim": 0, "everest": 0{zenith} }},
+                    "activationAdminAddress": "0xcb00000000000000000000000000000000000000"
+                  }}
+                }}"#
+            );
+            serde_json::from_str::<Genesis>(&genesis).unwrap().into()
+        };
+
+        let without_zenith = genesis_with_zenith(None);
+        assert!(
+            !without_zenith.is_feature_active_at_timestamp(BaseFeature::GasLimitBilling, u64::MAX)
+        );
+
+        let with_zenith = genesis_with_zenith(Some(100));
+        assert!(!with_zenith.is_feature_active_at_timestamp(BaseFeature::GasLimitBilling, 99));
+        assert!(with_zenith.is_feature_active_at_timestamp(BaseFeature::GasLimitBilling, 100));
+        assert!(with_zenith.is_feature_activation_block(BaseFeature::GasLimitBilling, 100, 99));
     }
 
     #[test]
