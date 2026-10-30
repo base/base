@@ -1,11 +1,17 @@
 //! L1-free development chain command.
 
-use std::sync::mpsc;
+use std::{
+    fs,
+    sync::{Arc, mpsc},
+    thread,
+    time::{Duration, Instant},
+};
 
 use alloy_rpc_types_engine::JwtSecret;
 use base_common_chains::ChainConfig;
 use base_consensus_engine::{EngineEndpoint, InMemoryTransport};
 use base_consensus_node::{StandaloneDevChain, StandaloneImpersonationQueue};
+use base_execution_chainspec::BaseChainSpec;
 use base_execution_cli::ExecutionNodeConfigArgs;
 use base_node_core::args::RollupArgs;
 use base_node_runner::{BaseNodeExtension, BaseNodeRunner, FromExtensionConfig, NodeHooks};
@@ -16,14 +22,15 @@ use reth_provider::HeaderProvider;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 
-use crate::config::ResolvedChainConfig;
+use crate::config::ChainResolver;
 
 /// Arguments for `base dev`.
 #[derive(Args, Clone, Debug)]
 #[command(
     mut_arg("datadir", |arg| arg
-        .required(true)
-        .default_value(None::<&'static str>)
+        .required_unless_present("fresh")
+        // Keep the "default" placeholder, which parses as unset, so `--fresh` can omit it.
+        .hide_default_value(true)
         .visible_alias("dir")),
     mut_arg("addr", |arg| arg.default_value("127.0.0.1")),
     mut_arg("port", |arg| arg.default_value("0")),
@@ -32,20 +39,55 @@ use crate::config::ResolvedChainConfig;
     mut_arg("ws_api", |arg| arg.default_value("all"))
 )]
 pub(crate) struct DevCommand {
+    /// Start a new chain from a fresh genesis instead of continuing a snapshot datadir.
+    ///
+    /// Uses a temporary datadir that is deleted on exit unless `--dir` is given; rerun with the
+    /// same `--dir` to resume.
+    #[arg(long)]
+    pub(crate) fresh: bool,
     /// Execution node arguments.
     #[command(flatten)]
     pub(crate) execution: ExecutionNodeConfigArgs,
 }
 
 impl DevCommand {
-    /// Runs the execution node and a standalone sequencer over an existing snapshot datadir.
-    pub(crate) fn run(self, resolved_chain: ResolvedChainConfig) -> eyre::Result<()> {
-        let rollup_config = ChainConfig::rollup_config_by_chain_id(resolved_chain.l2_chain_id)
-            .ok_or_eyre("no built-in rollup config for this chain")?;
-        let mut execution = self
-            .execution
-            .into_runtime_config(resolved_chain.execution_chain_spec()?)
-            .with_unified_auth_endpoint();
+    /// Runs the execution node and a standalone sequencer over an existing snapshot datadir, or
+    /// over a fresh genesis with `--fresh`.
+    pub(crate) fn run(mut self, chain_resolver: ChainResolver) -> eyre::Result<()> {
+        // Without `--dir`, a fresh chain lives in a temporary datadir deleted on exit.
+        let mut temporary_datadir = None;
+        let (chain_spec, dev_chain) = if self.fresh {
+            chain_resolver.reject_for_reth_command("base dev --fresh")?;
+            let datadir = match self.execution.datadir.datadir.as_ref() {
+                Some(datadir) => datadir.to_path_buf(),
+                None => {
+                    let temporary = tempfile::Builder::new().prefix("base-dev-").tempdir()?;
+                    let datadir = temporary.path().to_path_buf();
+                    self.execution.datadir.datadir = datadir.clone().into();
+                    temporary_datadir = Some(temporary);
+                    datadir
+                }
+            };
+            let (dev_chain, genesis) = StandaloneDevChain::open_fresh(&datadir)?;
+            (Arc::new(BaseChainSpec::try_from_genesis(genesis)?), dev_chain)
+        } else {
+            let datadir =
+                self.execution.datadir.datadir.as_ref().ok_or_eyre("--dir is required")?;
+            eyre::ensure!(
+                !datadir.join(StandaloneDevChain::GENESIS_FILE).exists(),
+                "{} was created by `base dev --fresh`; add --fresh to resume it",
+                datadir.display()
+            );
+            let resolved_chain = chain_resolver.resolve()?;
+            let rollup_config = ChainConfig::rollup_config_by_chain_id(resolved_chain.l2_chain_id)
+                .ok_or_eyre("no built-in rollup config for this chain")?;
+            (
+                resolved_chain.execution_chain_spec()?,
+                StandaloneDevChain::open(datadir, rollup_config)?,
+            )
+        };
+        let mut execution =
+            self.execution.into_runtime_config(chain_spec).with_unified_auth_endpoint();
         let node_config = &mut execution.node_config;
         node_config.rpc.http = true;
         node_config.rpc.ws = true;
@@ -63,18 +105,30 @@ impl DevCommand {
                     || reth_config::Config::from_path(config_path)?.peers.trusted_nodes.is_empty()),
             "`base dev` cannot run with trusted peers; remove --trusted-peers and the config's trusted_nodes"
         );
-        eyre::ensure!(
-            datadir.db().join("mdbx.dat").is_file(),
-            "{} has no execution database; `base dev` continues an existing snapshot datadir",
-            datadir.data_dir().display()
-        );
-        let dev_chain = StandaloneDevChain::open(datadir.data_dir(), rollup_config)?;
+        if self.fresh {
+            info!(
+                target: "base::dev",
+                datadir = %datadir.data_dir().display(),
+                temporary = temporary_datadir.is_some(),
+                "starting fresh development chain"
+            );
+            println!("Prefunded accounts (mnemonic: {})", StandaloneDevChain::FRESH_MNEMONIC);
+            for (index, account) in StandaloneDevChain::fresh_accounts()?.iter().enumerate() {
+                println!("({index}) {} {}", account.address(), account.to_bytes());
+            }
+        } else {
+            eyre::ensure!(
+                datadir.db().join("mdbx.dat").is_file(),
+                "{} has no execution database; `base dev` continues an existing snapshot datadir",
+                datadir.data_dir().display()
+            );
+        }
         // Graceful shutdown completes the runner before the command future returns, so a
         // consensus failure that triggers it is reported here.
         let (consensus_failure_tx, consensus_failure) = mpsc::channel();
         let impersonation = StandaloneImpersonationQueue::default();
 
-        CliRunner::try_default_runtime()?.run_command_until_exit(|ctx| async move {
+        let result = CliRunner::try_default_runtime()?.run_command_until_exit(|ctx| async move {
             let task_executor = ctx.task_executor.clone();
             info!(target: "base::dev", "starting execution node; database checks can take a while");
             let builder = execution.into_default_node_builder(ctx)?;
@@ -132,7 +186,24 @@ impl DevCommand {
 
             drop(execution_node);
             result
-        })?;
+        });
+        if let Some(datadir) = temporary_datadir {
+            // Reth's engine and persistence threads close the database shortly after the runtime
+            // stops; deleting the directory first would fail their final flush. Only Linux exposes
+            // the open files to check, so elsewhere the directory is deleted immediately.
+            let deadline = Instant::now() + Duration::from_secs(5);
+            let path = datadir.path().canonicalize()?;
+            while Instant::now() < deadline
+                && fs::read_dir("/proc/self/fd").is_ok_and(|fds| {
+                    fds.flatten()
+                        .any(|fd| fs::read_link(fd.path()).is_ok_and(|f| f.starts_with(&path)))
+                })
+            {
+                thread::sleep(Duration::from_millis(10));
+            }
+            datadir.close()?;
+        }
+        result?;
         consensus_failure.try_recv().map_or(Ok(()), |error| Err(error.into()))
     }
 }
@@ -184,10 +255,23 @@ mod tests {
             let BaseCommand::Dev(dev) = BaseCli::try_parse_from(args).unwrap().command else {
                 panic!("expected dev command");
             };
-            let error = dev.run(ChainResolver::new(None).resolve().unwrap()).unwrap_err();
+            let error = dev.run(ChainResolver::new(None)).unwrap_err();
             assert!(error.to_string().contains("cannot run with trusted peers"), "{error}");
             assert!(!datadir.path().join("db").exists());
         }
+    }
+
+    #[test]
+    fn fresh_needs_no_datadir_and_rejects_a_chain_selector() {
+        let cli =
+            BaseCli::try_parse_from(["base", "--chain", "sepolia", "dev", "--fresh"]).unwrap();
+        let BaseCommand::Dev(dev) = cli.command else {
+            panic!("expected dev command");
+        };
+        assert!(dev.fresh);
+        assert!(dev.execution.datadir.datadir.as_ref().is_none());
+        let error = dev.run(ChainResolver::new(cli.chain)).unwrap_err();
+        assert!(error.to_string().contains("manages its own chain configuration"), "{error}");
     }
 
     #[test]
