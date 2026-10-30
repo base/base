@@ -1906,8 +1906,8 @@ mod tests {
         let converted = BaseChainSpec::from(parsed.inner.clone());
         for spec in [parsed, built, converted] {
             let schedule = spec.denim_timestamp_schedule().unwrap().unwrap();
-            assert!(!schedule.is_denim_active_at_block(9));
-            assert!(schedule.is_denim_active_at_block(10));
+            assert!(!schedule.is_subsecond_active_at_block(9));
+            assert!(schedule.is_subsecond_active_at_block(10));
             assert_eq!(schedule.block_timestamp_parts(9), (106, 0));
             assert_eq!(schedule.block_timestamp_parts(10), (109, 0));
             assert_eq!(schedule.block_timestamp_parts(11), (109, 200));
