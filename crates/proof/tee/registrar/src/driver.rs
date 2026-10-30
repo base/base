@@ -210,19 +210,18 @@ where
         info!("registration driver stopped");
         Ok(())
     }
-    /// Resolves signer keys and attestations without applying cache grace.
-    async fn resolve_instance(&self, instance: &ProverInstance) -> Result<InstanceObservation> {
+    /// Resolves signer keys and attestations without cache grace, omitting cancelled instances.
+    async fn resolve_instance(
+        &self,
+        instance: &ProverInstance,
+    ) -> Result<Option<InstanceObservation>> {
         if self.config.cancel.is_cancelled() {
-            return Ok(if instance.health_status == InstanceHealthStatus::Unhealthy {
-                InstanceObservation::Unreachable
-            } else {
-                InstanceObservation::Resolved { signers: Vec::new(), registerable: Vec::new() }
-            });
+            return Ok(None);
         }
 
         if instance.health_status == InstanceHealthStatus::Unhealthy {
             debug!(instance = %instance.instance_id, "unhealthy instance, skipping resolution");
-            return Ok(InstanceObservation::Unreachable);
+            return Ok(Some(InstanceObservation::Unreachable));
         }
 
         let public_keys = self.signer_client.signer_public_key(&instance.endpoint).await?;
@@ -232,10 +231,10 @@ where
             .collect::<Result<Vec<_>>>()?;
 
         if addresses.is_empty() {
-            return Ok(InstanceObservation::Resolved {
+            return Ok(Some(InstanceObservation::Resolved {
                 signers: addresses,
                 registerable: Vec::new(),
-            });
+            }));
         }
 
         if instance.health_status != InstanceHealthStatus::Healthy {
@@ -244,17 +243,14 @@ where
                 instance = %instance.instance_id,
                 "instance not registerable, skipping registration"
             );
-            return Ok(InstanceObservation::Resolved {
+            return Ok(Some(InstanceObservation::Resolved {
                 signers: addresses,
                 registerable: Vec::new(),
-            });
+            }));
         }
 
         if self.config.cancel.is_cancelled() {
-            return Ok(InstanceObservation::Resolved {
-                signers: addresses,
-                registerable: Vec::new(),
-            });
+            return Ok(None);
         }
 
         let nonces = addresses
@@ -276,7 +272,9 @@ where
                         "failed to fetch signer attestations after resolving signer addresses"
                     );
                     RegistrarMetrics::processing_errors_total().increment(1);
-                    return Ok(InstanceObservation::AttestationsUnavailable { signers: addresses });
+                    return Ok(Some(InstanceObservation::AttestationsUnavailable {
+                        signers: addresses,
+                    }));
                 }
             };
 
@@ -288,7 +286,7 @@ where
                 "signer attestation count did not match signer public key count"
             );
             RegistrarMetrics::processing_errors_total().increment(1);
-            return Ok(InstanceObservation::AttestationsUnavailable { signers: addresses });
+            return Ok(Some(InstanceObservation::AttestationsUnavailable { signers: addresses }));
         }
 
         let registerable = addresses
@@ -301,10 +299,10 @@ where
                 attestation,
             })
             .collect();
-        Ok(InstanceObservation::Resolved { signers: addresses, registerable })
+        Ok(Some(InstanceObservation::Resolved { signers: addresses, registerable }))
     }
 
-    /// Probes and resolves instances concurrently, omitting cancelled readiness probes.
+    /// Probes and resolves instances concurrently, omitting cancelled instances.
     pub async fn observe_instances(
         &self,
         instances: Vec<ProverInstance>,
@@ -351,7 +349,8 @@ where
                 continue;
             };
             let observation = match result {
-                Ok(observation) => observation,
+                Ok(Some(observation)) => observation,
+                Ok(None) => continue,
                 Err(e) => {
                     warn!(
                         error = %e,
@@ -661,6 +660,22 @@ mod tests {
             .discover_and_resolve(&mut last_known_active, &mut unhealthy_instance_ids_with_grace)
             .await
             .unwrap()
+    }
+
+    #[tokio::test]
+    async fn observations_omit_cancelled_draining_instance() {
+        let cancel = CancellationToken::new();
+        cancel.cancel();
+        let driver = cycle_driver(vec![], MockEnclaveEndpointClient::default(), cancel);
+
+        let observations = driver
+            .observe_instances(vec![prover_instance(EP1, InstanceHealthStatus::Draining)])
+            .await;
+
+        assert!(
+            observations.is_empty(),
+            "cancelled instance produced observations: {observations:?}"
+        );
     }
 
     #[tokio::test]
