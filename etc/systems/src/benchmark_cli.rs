@@ -641,6 +641,7 @@ impl LocalBenchmarkArgs {
                 TxTypeConfig::Transfer
                 | TxTypeConfig::Eip8430Transfer
                 | TxTypeConfig::X402
+                | TxTypeConfig::TokenMove { .. }
                 | TxTypeConfig::Calldata { .. }
                 | TxTypeConfig::Erc20 { .. }
                 | TxTypeConfig::Storage { .. }

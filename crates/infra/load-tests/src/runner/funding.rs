@@ -607,6 +607,7 @@ impl LoadRunner {
                 TxType::Transfer
                 | TxType::Eip8430Transfer
                 | TxType::X402 { .. }
+                | TxType::TokenMove { .. }
                 | TxType::Calldata { .. }
                 | TxType::Erc20 { .. }
                 | TxType::Storage { .. }
@@ -630,6 +631,11 @@ impl LoadRunner {
                 }
                 TxType::UniswapV3Liquidity(payload) => {
                     routers.insert(payload.position_manager);
+                }
+                // Multicall3 spends the pair token with `transferFrom`, so it needs the same
+                // real-token setup approval as a router.
+                TxType::TokenMove { .. } => {
+                    routers.insert(alloy_provider::MULTICALL3_ADDRESS);
                 }
                 TxType::Transfer
                 | TxType::Eip8430Transfer

@@ -103,6 +103,15 @@ impl WorkloadGenerator {
                     generator =
                         generator.with_payload(DoubleCounterPayload::new(*contract), weight_pct);
                 }
+                TxType::TokenMove { transfers_per_tx, context } => {
+                    generator = generator.with_payload(
+                        super::TokenMovePayload {
+                            transfers_per_tx: *transfers_per_tx,
+                            context: Arc::clone(context),
+                        },
+                        weight_pct,
+                    );
+                }
                 TxType::Precompile { target, blake2f_rounds, iterations, looper_contract } => {
                     let payload = PrecompilePayload::with_options(
                         target.clone(),

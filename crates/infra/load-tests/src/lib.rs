@@ -42,9 +42,9 @@ pub use workload::{
     Eip8430TransferPayload, Erc20Payload, FundedAccount, KeyStream, LiquidityOps, OsakaPayload,
     Payload, PrecompileLooper, PrecompilePayload, RealTokenAcquisition, RealTokenPairTokenSetup,
     RealTokenRecoverySummary, RealTokenSetup, SeededRng, SenderPosition, StoragePayload,
-    TransferPayload, USDC, UniswapPositions, UniswapV3Hop, UniswapV3LiquidityPayload,
-    UniswapV3Payload, WorkloadGenerator, X402Context, X402Payload, encode_erc20_approve,
-    recover_real_tokens,
+    TokenMoveContext, TokenMovePayload, TransferPayload, USDC, UniswapPositions, UniswapV3Hop,
+    UniswapV3LiquidityPayload, UniswapV3Payload, WorkloadGenerator, X402Context, X402Payload,
+    encode_erc20_approve, recover_real_tokens,
 };
 
 mod runner;
