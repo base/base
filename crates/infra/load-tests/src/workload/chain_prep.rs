@@ -2,8 +2,8 @@
 
 use std::time::{Duration, Instant};
 
-use alloy_network::TransactionBuilder;
-use alloy_primitives::{Address, Bytes, U256};
+use alloy_network::{EthereumWallet, TransactionBuilder};
+use alloy_primitives::{Address, B256, Bytes, U256, address};
 use alloy_provider::Provider;
 use alloy_rpc_types::TransactionRequest;
 use alloy_sol_types::{SolCall, sol};
@@ -13,9 +13,12 @@ use url::Url;
 
 use crate::{
     BaselineError, Result,
-    rpc::{QueryProvider, RpcResultExt},
+    rpc::{BaseFeeExt, QueryProvider, RpcResultExt, create_wallet_provider},
     workload::AccountPool,
 };
+
+/// Deterministic deployment proxy, preinstalled on OP Stack chains and anvil.
+const CREATE2_FACTORY: Address = address!("0x4e59b44847b379578588920cA78FbF26c0B4956C");
 
 /// Concurrent RPC requests during chain-prep operations (matches funding concurrency).
 pub(crate) const PREP_CONCURRENCY: usize = 32;
@@ -173,6 +176,56 @@ pub(crate) fn prep_submission_max_fee(
         .saturating_mul(PREP_MAX_FEE_BASE_FEE_MULTIPLIER)
         .max(base_fee.saturating_add(priority_fee));
     target.min(max_gas_price).max(priority_fee)
+}
+
+/// Address [`deploy_create2`] deploys `init_code` to.
+pub(crate) fn create2_address(init_code: &[u8]) -> Address {
+    CREATE2_FACTORY.create2_from_code(B256::ZERO, init_code)
+}
+
+/// Deploys `init_code` through the CREATE2 deployment proxy unless its address already has code.
+pub(crate) async fn deploy_create2(ctx: &mut ChainPrepContext<'_>, init_code: &[u8]) -> Result<()> {
+    let account = &ctx.accounts.accounts()[0];
+    // The query node may lag the submission node, which confirms the deployment.
+    let provider = create_wallet_provider(
+        ctx.primary_submission_rpc.clone(),
+        EthereumWallet::from(account.signer.clone()),
+    );
+    let contract = create2_address(init_code);
+    if !provider.get_code_at(contract).await.rpc("get contract code")?.is_empty() {
+        return Ok(());
+    }
+    let nonce = provider
+        .get_transaction_count(account.address)
+        .pending()
+        .await
+        .rpc("get deployer nonce")?;
+    let base_fee = ctx.client.get_base_fee().await?;
+    let priority_fee = (base_fee / 10).max(1);
+    let max_fee = prep_submission_max_fee(base_fee, priority_fee, ctx.max_gas_price);
+    let tx = TransactionRequest::default()
+        .with_to(CREATE2_FACTORY)
+        .with_input([B256::ZERO.as_slice(), init_code].concat())
+        .with_nonce(nonce)
+        .with_gas_limit(500_000)
+        .with_max_fee_per_gas(max_fee)
+        .with_max_priority_fee_per_gas(priority_fee);
+    provider
+        .send_transaction(tx)
+        .await
+        .rpc("send contract deployment")?
+        .with_timeout(Some(Duration::from_secs(120)))
+        .get_receipt()
+        .await
+        .rpc("contract deployment receipt")?;
+    ctx.outputs.needs_sender_refresh = true;
+    // A concurrent run may have deployed it first, reverting this deployment.
+    if provider.get_code_at(contract).await.rpc("get contract code")?.is_empty() {
+        return Err(BaselineError::Transaction(format!(
+            "contract missing at {contract} after deployment"
+        )));
+    }
+    Ok(())
 }
 
 /// Encodes an ERC-20 `balanceOf(address)` call.

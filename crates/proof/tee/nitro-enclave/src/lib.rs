@@ -16,7 +16,13 @@ mod nsm;
 pub use nsm::{NsmRng, NsmSession};
 
 mod protocol;
-pub use protocol::{EnclaveRequest, EnclaveResponse};
+pub use protocol::{EnclaveFailure, EnclaveRequest, EnclaveResponse};
+
+mod handler;
+pub use handler::EnclaveHandler;
+
+mod client;
+pub use client::{EnclaveClient, EnclaveConnector, EnclaveLinkError};
 
 mod server;
 pub use server::Server;

@@ -79,8 +79,11 @@ drives `execute_best_transactions` over a mainnet-shaped block, and
 `crates/builder/core/benches/tx_selection.rs` covers iteration, parking, and the
 predicate index. Both drive the flashblocks builder only. For the native builder,
 `crates/execution/payload/benches/resource_metering.rs` covers the per-transaction
-resource-metering checks; the native `execute_best_transactions` loop has no
-end-to-end benchmark yet.
+resource-metering checks and `crates/execution/payload/benches/native_build_loop.rs`
+drives its `execute_best_transactions` loop across consecutive blocks. Wall-clock
+numbers from these benches drift with machine load, so compare two commits with
+`etc/scripts/local/bench_abba.py`, which builds both and runs them interleaved
+(A B B A) and reports the per-arm medians of criterion's per-run estimates.
 
 ## What not to flag
 

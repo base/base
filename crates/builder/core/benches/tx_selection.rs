@@ -22,11 +22,11 @@ use base_builder_core::{
 use base_common_consensus::{BaseTransactionSigned, BaseTxEnvelope};
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_payload_builder::{
-    DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD, RestingPredicates,
+    DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD, RestingPredicates, SharedRestingPredicates,
 };
 use base_execution_txpool::{
-    BaseOrdering, BasePooledTransaction, ParkedBestTransactions, PredicateContext,
-    ValidityOperator, ValidityPredicate,
+    BaseOrdering, BasePooledTransaction, BestTransactionsHold, ParkedBestTransactions,
+    PredicateContext, ValidityOperator, ValidityPredicate,
 };
 use base_observability_events::{
     GlobalTransactionEventWriter, TransactionEventProducer, TransactionEventWriterConfig,
@@ -145,6 +145,19 @@ fn parkable(pool: &Pool) -> ParkableBestPayloadTransactions<BasePooledTransactio
         Ordering::coinbase_tip(),
         0,
     )))
+}
+
+/// A parkable iterator whose `hold` parks resting members at the source, as the production pool
+/// iterator of an enforcing flashblocks build does.
+fn resting_parkable(
+    pool: &Pool,
+    hold: Option<Box<dyn BestTransactionsHold<BasePooledTransaction>>>,
+) -> ParkableBestPayloadTransactions<BasePooledTransaction> {
+    let mut inner = pool.best();
+    inner.no_updates();
+    ParkableBestPayloadTransactions::new(Box::new(
+        ParkedBestTransactions::new(inner, Ordering::coinbase_tip(), 0).with_hold(hold),
+    ))
 }
 
 fn selection_benches(c: &mut Criterion) {
@@ -459,16 +472,30 @@ type BenchBestTxs = BestFlashblocksTxs<
     ParkableBestPayloadTransactions<BasePooledTransaction>,
 >;
 
-fn resting_best_txs(pool: &Pool, mode: RestingPredicateMode) -> BenchBestTxs {
-    resting_best_txs_with_cache(pool, mode, RejectionCache::new(1_000, Duration::from_secs(60)))
+fn resting_best_txs(
+    pool: &Pool,
+    mode: RestingPredicateMode,
+    resting: RestingPredicates,
+) -> BenchBestTxs {
+    resting_best_txs_with_cache(
+        pool,
+        mode,
+        resting,
+        RejectionCache::new(1_000, Duration::from_secs(60)),
+    )
 }
 
 fn resting_best_txs_with_cache(
     pool: &Pool,
     mode: RestingPredicateMode,
+    resting: RestingPredicates,
     rejection_cache: RejectionCache,
 ) -> BenchBestTxs {
-    BestFlashblocksTxs::new(parkable(pool), rejection_cache).with_resting_predicate_mode(mode)
+    let resting = SharedRestingPredicates::new(resting);
+    let hold = mode.is_enforced().then(|| resting.iterator_hold());
+    BestFlashblocksTxs::new(resting_parkable(pool, hold), rejection_cache)
+        .with_resting_predicate_mode(mode)
+        .with_resting_predicates(resting)
 }
 
 /// A rejection cache sized like the builder default, holding `rejected` hashes of transactions
@@ -496,7 +523,7 @@ fn run_resting_block(
 
     for flashblock in 0..RESTING_FLASHBLOCKS {
         if flashblock > 0 {
-            best.refresh_iterator(parkable(pool));
+            best.refresh_iterator(resting_parkable(pool, best.iterator_hold()));
         }
         let limits = ResourceLimits {
             block_gas_limit: ((flashblock + 1) * RESTING_FILLER_PER_FLASHBLOCK) as u64
@@ -553,7 +580,11 @@ fn resting_predicate_benches(c: &mut Criterion) {
                     b.iter_batched(
                         || State::builder().with_database(db.clone()).with_bundle_update().build(),
                         |mut state| {
-                            let mut best = resting_best_txs(&pool, mode);
+                            let mut best = resting_best_txs(
+                                &pool,
+                                mode,
+                                RestingPredicates::new(DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD),
+                            );
                             let executed = run_resting_block(&ctx, &pool, &mut state, &mut best);
                             assert_eq!(
                                 executed,
@@ -593,8 +624,7 @@ fn run_resting_blocks(
     let mut parent = B256::ZERO;
     for block in 1..=RESTING_BLOCKS {
         resting.begin_block(parent, block, Some(&TransitionState::default()));
-        let mut best = resting_best_txs_with_cache(pool, mode, rejection_cache.clone())
-            .with_resting_predicates(resting);
+        let mut best = resting_best_txs_with_cache(pool, mode, resting, rejection_cache.clone());
         let mut state = State::builder().with_database(db.clone()).with_bundle_update().build();
         let executed = run_resting_block(ctx, pool, &mut state, &mut best);
         assert_eq!(executed, RESTING_FLASHBLOCKS * RESTING_FILLER_PER_FLASHBLOCK);

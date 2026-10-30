@@ -4,8 +4,8 @@ mod best_txs;
 pub use base_execution_payload_builder::{
     BlockDeferrals, FLOW_STANDARD, FLOW_VALIDITY, InclusionFlow, InclusionTracker,
     ParkableBestPayloadTransactions, ParkablePayloadTransactions, ParkedPredicateIndex,
-    PayloadTransactionInvalidated, PredicateLoadTracker, PredicateReadRecorder, StateChangeEffects,
-    ValidityPredicateEvaluation, ValidityPredicateKey,
+    PayloadTransactionInvalidated, PredicateLoadTracker, PredicateReadRecorder, RestingStats,
+    StateChangeEffects, ValidityPredicateEvaluation, ValidityPredicateKey,
 };
 pub use best_txs::BestFlashblocksTxs;
 
@@ -29,7 +29,7 @@ pub use context::{
 mod payload;
 
 mod resting;
-pub use resting::{RestingPayloadTransactions, RestingStats};
+pub use resting::RestingPayloadTransactions;
 
 mod service;
 pub use service::FlashblocksServiceBuilder;

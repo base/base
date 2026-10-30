@@ -311,6 +311,37 @@ Runtime pacing still calibrates actual receipt gas.
 Benchmark mainnet-mix runs selecting `mainnet-mix-mainnet-snapshot.yaml` after this
 change are not comparable with runs using the earlier mix.
 
+#### Batched token transfers
+
+`type: token_move` sends `transfers_per_tx` (default 25) one-unit transfers of the
+`real_token_setup` pair token in one
+[Disperse](https://disperse.app) `disperseTokenSimple` call, which pulls from
+`msg.sender`. It requires the existing `real_token_setup` alongside a swap workload,
+and Disperse deployed at `0xD152f549545093347A162Dce210e7293f1452150` (Base mainnet
+snapshots); setup approves Disperse like a swap router. The first recipient is the
+runner recipient, so `fresh_recipient_ratio` applies to it; the rest are random
+senders. With real USDC on a Base mainnet fork, 25 transfers to funded recipients
+use about 332k gas. `transfers_per_tx` is capped at 477 so the gas limit fits the
+2^24 per-tx cap (EIP-7825, enabled with Azul).
+
+#### ERC-4337 bundle stand-in
+
+`type: aa_bundle` sends one `handleOps` transaction carrying `ops_per_bundle` (default 12)
+ops. Per op, the contract recovers an ECDSA signature over the op, increments the signer's
+nonce slot, credits a fresh recipient slot, and emits one event; `padding_bytes` (default 0)
+appends random calldata. Setup deploys the contract through the CREATE2 deployment proxy
+(`0x4e59…956C`) unless it already exists. On a Base mainnet fork each op costs ~36k gas over a
+~29k base: the default sends ~457k gas, 2,436 calldata bytes and 12 logs per transaction,
+within mainnet's ERC-4337 bundles (390–530k gas, ~2.6 KB, ~12 logs). Each bundle's gas limit
+(`40_000 + 60_000 * ops_per_bundle + 40 * padding_bytes`) must fit the EIP-7825 per-tx cap of
+16,777,216 gas: at most 278 ops without padding, or 416,930 padding bytes with one op.
+
+
+#### Storage writes
+
+`type: storage` writes `slots_per_tx` slots per transaction through `StorageFiller`, a
+`new_slot_ratio` fraction of them fresh. Without `contract`, setup deploys `StorageFiller`
+through the CREATE2 deployment proxy (`0x4e59…956C`) unless it already exists.
 
 #### Precompile Testing
 
@@ -398,6 +429,44 @@ On `uniswap_v3`, `reverse_amounts: auto` instead derives the reverse range befor
     min_amount: "10000000000000" # WETH wei
     max_amount: "100000000000000"
     reverse_amounts: auto # USDC raw units at the pool price
+```
+
+`via` on `uniswap_v3` routes each swap through intermediate tokens with `SwapRouter02` `exactInput`; each entry names a token and the fee of the pool that swaps into it, and `fee` stays the last pool's fee. Reverse swaps take the same pools backwards. Only the router pulls intermediate tokens, so senders need no extra balances or approvals. `reverse_amounts: auto` prices the range through every pool in turn. `via` cannot be combined with `native`, and the gas limit is 250,000 per pool. These Base mainnet routes end at USDC, so they work with the `real_token_setup` above:
+
+```yaml
+  - weight: 100
+    type: uniswap_v3
+    router: "0x2626664c2603336E57B271c5C0b26F421741e481"
+    token_in: "0x4200000000000000000000000000000000000006" # WETH
+    token_out: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" # USDC, gitleaks:allow
+    via:
+      - token: "0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf" # cbBTC, gitleaks:allow
+        fee: 500
+    fee: 500
+    min_amount: "10000000000000"
+    max_amount: "100000000000000"
+    reverse_amounts: auto
+  # Three pools: WETH -> DAI -> USDbC -> USDC.
+  #   via:
+  #     - { token: "0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb", fee: 500 } # DAI, gitleaks:allow
+  #     - { token: "0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA", fee: 100 } # USDbC, gitleaks:allow
+  #   fee: 100
+```
+
+#### Uniswap V3 liquidity testing
+
+`type: uniswap_v3_liquidity` sends Uniswap V3 `NonfungiblePositionManager` transactions on a real pool and requires `real_token_setup` for the pool's two tokens. Setup reads the pool's current tick, fixes a range of 100 tick spacings on each side, and mints each sender one position holding 64 increases' worth of liquidity. The run then mixes, by `ops` weight: `mint` (a new position, new storage), `increase` (adds `amount0`/`amount1` to the sender's setup position), `decrease` (removes a quarter of an increase's worth), `collect` (owed tokens back to the sender), and `multicall` (all four in one transaction). `decrease` may not outweigh `increase`, so setup positions do not empty even if the price drifts to a range edge of a standard fee tier. `amount0` and `amount1` cap the tokens added per mint or increase, and the pool takes them in its current ratio. Mints and the undecreased three quarters of each increase stay in positions, so size `real_token_setup` balances for the run's mint and increase count.
+
+```yaml
+  - weight: 100
+    type: uniswap_v3_liquidity
+    position_manager: "0x03a520b32C04BF3bEEf7BEb72E919cf822Ed34f1" # Base mainnet
+    token0: "0x4200000000000000000000000000000000000006" # WETH; token0 must sort below token1
+    token1: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" # USDC, public token address: gitleaks:allow
+    fee: 500
+    amount0: "10000000000000" # WETH wei
+    amount1: "23000" # USDC raw units
+    ops: {mint: 1, increase: 1, decrease: 1, collect: 1} # default; listed ops only, others 0
 ```
 
 #### Running multiple load tests

@@ -2,7 +2,7 @@
 //!
 //! This module provides [`InProcessBuilder`], which spawns a real builder node in the
 //! current process instead of using Docker containers. This enables faster test execution
-//! and easier debugging while maintaining the same external interface as [`BuilderContainer`].
+//! and easier debugging.
 
 use core::net::{Ipv4Addr, SocketAddr};
 use std::{any::Any, path::PathBuf, sync::Arc, time::Duration};
@@ -49,7 +49,7 @@ pub struct InProcessBuilderConfig {
     pub chain_spec: Arc<BaseChainSpec>,
     /// Existing caller-owned datadir. A temporary datadir is created when omitted.
     pub datadir: Option<PathBuf>,
-    /// JWT secret hex for Engine API authentication.
+    /// JWT secret for Engine API authentication.
     pub jwt_secret: JwtSecret,
     /// Optional fixed HTTP RPC port (uses random if None).
     pub http_port: Option<u16>,
@@ -100,7 +100,7 @@ impl InProcessBuilderConfig {
     }
 }
 
-/// An in-process builder node that replaces Docker-based `BuilderContainer`.
+/// An in-process builder node.
 ///
 /// This spawns a real builder node within the current process, binding to dynamic ports.
 /// Docker containers (like consensus nodes) can connect via `host.docker.internal`.
