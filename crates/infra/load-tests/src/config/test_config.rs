@@ -319,6 +319,16 @@ pub enum TxTypeConfig {
         transfers_per_tx: u32,
     },
 
+    /// ERC-4337 `handleOps` stand-in; setup deploys the bundle contract.
+    AaBundle {
+        /// Signed ops per bundle transaction.
+        #[serde(default = "default_aa_ops_per_bundle")]
+        ops_per_bundle: u32,
+        /// Random calldata bytes appended to each bundle.
+        #[serde(default)]
+        padding_bytes: u32,
+    },
+
     /// Precompile call.
     Precompile {
         /// Target precompile configuration.
@@ -436,6 +446,10 @@ const fn default_storage_slots_per_tx() -> u32 {
 
 const fn default_storage_new_slot_ratio() -> f64 {
     1.0
+}
+
+const fn default_aa_ops_per_bundle() -> u32 {
+    12
 }
 
 /// Upper bound on `slots_per_tx` so the payload's gas limit
@@ -845,6 +859,14 @@ impl TestConfig {
                     transfers_per_tx: *transfers_per_tx,
                     context: Default::default(),
                 }
+            }
+            TxTypeConfig::AaBundle { ops_per_bundle, padding_bytes } => {
+                if *ops_per_bundle == 0 {
+                    return Err(BaselineError::Config(
+                        "aa_bundle ops_per_bundle must be > 0".into(),
+                    ));
+                }
+                TxType::AaBundle { ops_per_bundle: *ops_per_bundle, padding_bytes: *padding_bytes }
             }
             TxTypeConfig::Precompile { target, iterations } => {
                 let looper_contract = if *iterations > 1 {
@@ -1353,6 +1375,23 @@ transactions:
         );
         let err = TestConfig::from_yaml(&yaml).unwrap().to_load_config(Some(1337)).unwrap_err();
         assert!(err.to_string().contains("new_slot_ratio must be between 0.0 and 1.0"), "{err}");
+    }
+
+    #[test]
+    fn aa_bundle_config_defaults_and_rejects_empty_bundles() {
+        let parse = |fields: &str| {
+            TestConfig::from_yaml(&config_yaml(&format!(
+                "transactions:\n  - weight: 100\n    type: aa_bundle\n{fields}"
+            )))
+            .unwrap()
+            .to_load_config(Some(1337))
+        };
+        let load_config = parse("").unwrap();
+        assert!(matches!(
+            load_config.transactions[0].tx_type,
+            TxType::AaBundle { ops_per_bundle: 12, padding_bytes: 0 }
+        ));
+        assert!(parse("    ops_per_bundle: 0\n").is_err());
     }
 
     #[test]

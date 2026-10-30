@@ -735,6 +735,54 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn aa_bundle_deploys_and_executes_signed_ops() {
+        let anvil = Anvil::new().spawn();
+        let provider: RootProvider = RootProvider::new_http(anvil.endpoint_url());
+        let config = LoadConfig {
+            transaction_submission_rpcs: vec![anvil.endpoint_url()],
+            query_rpc: anvil.endpoint_url(),
+            chain_id: anvil.chain_id(),
+            account_count: 1,
+            transactions: vec![TxConfig {
+                weight: 100,
+                tx_type: TxType::AaBundle { ops_per_bundle: 3, padding_bytes: 100 },
+            }],
+            ..LoadConfig::devnet()
+        };
+        let mut runner = LoadRunner::new(config).expect("valid config");
+        let deployer = runner.accounts.accounts()[0].address;
+        let _: () = provider
+            .raw_request("anvil_setBalance".into(), (deployer, U256::from(10u128.pow(18))))
+            .await
+            .unwrap();
+
+        runner.prepare_payloads(U256::ZERO, None).await.expect("bundle contract deploys");
+
+        for _ in 0..2 {
+            let tx = runner
+                .generator
+                .generate_payload(Address::ZERO, Address::ZERO)
+                .unwrap()
+                .from(anvil.addresses()[0]);
+            let receipt = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
+            assert!(receipt.status(), "signed ops pass verification");
+            assert_eq!(receipt.inner.logs().len(), 3, "one event per op");
+        }
+
+        let mut tx = runner
+            .generator
+            .generate_payload(Address::ZERO, Address::ZERO)
+            .unwrap()
+            .from(anvil.addresses()[0]);
+        let mut input = tx.input.input().unwrap().to_vec();
+        // Last byte of the first op's `to`, which the signature covers.
+        input[163] ^= 1;
+        tx.input = Bytes::from(input).into();
+        let receipt = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
+        assert!(!receipt.status(), "a tampered op fails verification");
+    }
+
+    #[tokio::test]
     async fn reverse_amounts_auto_prices_reverse_swaps_at_the_pool() {
         let anvil = Anvil::new().spawn();
         let provider: RootProvider = RootProvider::new_http(anvil.endpoint_url());

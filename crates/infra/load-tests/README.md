@@ -324,6 +324,16 @@ senders. With real USDC on a Base mainnet fork, 25 transfers to funded recipient
 use about 332k gas. `transfers_per_tx` is capped at 477 so the gas limit fits the
 2^24 per-tx cap (EIP-7825, enabled with Azul).
 
+#### ERC-4337 bundle stand-in
+
+`type: aa_bundle` sends one `handleOps` transaction carrying `ops_per_bundle` (default 12)
+ops. Per op, the contract recovers an ECDSA signature over the op, increments the signer's
+nonce slot, credits a fresh recipient slot, and emits one event; `padding_bytes` (default 0)
+appends random calldata. Setup deploys the contract through the CREATE2 deployment proxy
+(`0x4e59…956C`) unless it already exists. On a Base mainnet fork each op costs ~36k gas over a
+~29k base: the default sends ~457k gas, 2,436 calldata bytes and 12 logs per transaction,
+within mainnet's ERC-4337 bundles (390–530k gas, ~2.6 KB, ~12 logs).
+
 
 #### Precompile Testing
 

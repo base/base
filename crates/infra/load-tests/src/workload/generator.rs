@@ -112,6 +112,12 @@ impl WorkloadGenerator {
                         weight_pct,
                     );
                 }
+                TxType::AaBundle { ops_per_bundle, padding_bytes } => {
+                    generator = generator.with_payload(
+                        super::payloads::AaBundlePayload::new(*ops_per_bundle, *padding_bytes),
+                        weight_pct,
+                    );
+                }
                 TxType::Precompile { target, blake2f_rounds, iterations, looper_contract } => {
                     let payload = PrecompilePayload::with_options(
                         target.clone(),
