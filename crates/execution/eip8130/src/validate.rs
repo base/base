@@ -3,7 +3,7 @@
 
 use core::cmp::Ordering;
 
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{Address, U256};
 use base_common_consensus::{Eip8130Constants, TxEip8130};
 use base_common_precompiles::NonceManagerStorage;
 
@@ -72,7 +72,7 @@ impl NonceValidator {
             if tx.nonce_sequence != 0 {
                 return Err(NonceError::NonceFreeSequence { got: tx.nonce_sequence });
             }
-            let replay = Self::replay_hash(tx, account);
+            let replay = tx.replay_id(account);
             if storage.is_expiring_nonce_seen(replay, now)? {
                 return Err(NonceError::Replay);
             }
@@ -111,16 +111,6 @@ impl NonceValidator {
                 NonceMode::Pool => Ok(NonceStatus::Buffered { gap: tx.nonce_sequence - channel }),
             },
         }
-    }
-
-    /// The transaction's signature- and fee-invariant replay identifier.
-    ///
-    /// Public so the execution layer can recompute the identical key when it
-    /// records the nonce via `check_and_mark_expiring_nonce` at block inclusion,
-    /// rather than duplicating the derivation and risking divergence.
-    #[must_use]
-    pub fn replay_hash(tx: &TxEip8130, account: Address) -> B256 {
-        tx.replay_id(account)
     }
 }
 
@@ -262,7 +252,7 @@ mod tests {
     fn nonce_free_replay_is_rejected() {
         let now_secs = 1_000u64;
         let tx = tx_with(Eip8130Constants::NONCE_KEY_MAX, 0);
-        let replay = NonceValidator::replay_hash(&tx, ACCOUNT);
+        let replay = tx.replay_id(ACCOUNT);
         // `valid_before` is milliseconds and must fall in
         // `(now_secs * 1000, now_secs * 1000 + NONCE_FREE_EXPIRY_WINDOW]`.
         let valid_before = now_secs * 1_000 + 20_000;
