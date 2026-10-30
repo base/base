@@ -1,16 +1,14 @@
 use alloc::sync::Arc;
 
 use alloy_consensus::{
-    Block, BlockBody, EMPTY_OMMER_ROOT_HASH, Header, TxReceipt, constants::EMPTY_WITHDRAWALS,
-    proofs,
+    Block, BlockBody, EMPTY_OMMER_ROOT_HASH, Header, constants::EMPTY_WITHDRAWALS, proofs,
 };
 use alloy_eips::{eip7685::EMPTY_REQUESTS_HASH, merge::BEACON_NONCE};
 use alloy_evm::block::BlockExecutorFactory;
-use alloy_primitives::logs_bloom;
 use base_common_chains::Upgrades;
 use base_common_consensus::DepositReceiptExt;
 use base_common_evm::BaseBlockExecutionCtx;
-use base_execution_consensus::{calculate_receipt_root_no_memo, isthmus};
+use base_execution_consensus::{calculate_receipt_root_and_logs_bloom, isthmus};
 use reth_evm::execute::{BlockAssembler, BlockAssemblerInput};
 use reth_execution_errors::BlockExecutionError;
 use reth_execution_types::BlockExecutionResult;
@@ -58,8 +56,8 @@ impl<ChainSpec: Upgrades> BaseBlockAssembler<ChainSpec> {
         let timestamp = evm_env.block_env.timestamp().saturating_to();
 
         let transactions_root = proofs::calculate_transaction_root(&transactions);
-        let receipts_root = calculate_receipt_root_no_memo(receipts, &self.chain_spec, timestamp);
-        let logs_bloom = logs_bloom(receipts.iter().flat_map(|r| r.logs()));
+        let (receipts_root, logs_bloom) =
+            calculate_receipt_root_and_logs_bloom(receipts, &self.chain_spec, timestamp);
 
         let mut requests_hash = None;
 
