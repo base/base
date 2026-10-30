@@ -75,9 +75,15 @@ impl BaseTxEnvelope {
     }
 
     /// Builds the execution envelope of a signed Base transaction from its EIP-2718 encoding.
+    ///
+    /// Empty `encoded` bytes price a standard transaction's L1 data and operator fees as zero:
+    /// Reth's `eth_simulateV1` executes its calls with an empty encoding for exactly that effect,
+    /// as the revm reference does.
     pub fn from_signed(tx: BaseTransactionSigned, encoded: Bytes) -> Self {
-        let standard =
-            |tx: EthereumTxEnvelope<_>| Self::standard(TxEnvelope::from(tx), encoded.clone());
+        let standard = |tx: EthereumTxEnvelope<_>| Self::Standard {
+            tx: TxEnvelope::from(tx),
+            enveloped: encoded.clone(),
+        };
         match tx {
             BaseTransactionSigned::Legacy(tx) => standard(EthereumTxEnvelope::Legacy(tx)),
             BaseTransactionSigned::Eip2930(tx) => standard(EthereumTxEnvelope::Eip2930(tx)),
