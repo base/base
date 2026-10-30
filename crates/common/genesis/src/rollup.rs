@@ -235,7 +235,9 @@ impl RollupConfig {
     }
 
     /// The runtime-aware configured timestamp, without the historical active-state cascade.
-    /// `None` means unscheduled (including an explicit runtime `Never` override).
+    /// `None` means no configured timestamp: the upgrade is unscheduled (including an explicit
+    /// runtime `Never` override) or block-activated (Bedrock). Use
+    /// [`Self::is_feature_active_cascading`] to determine whether the feature is active.
     pub fn configured_feature_activation_timestamp(&self, feature: BaseFeature) -> Option<u64> {
         self.upgrade_activation_timestamp(feature.activation_upgrade())
     }
@@ -615,8 +617,94 @@ mod tests {
     #[test]
     fn feature_activation_boundaries_include_genesis_and_never() {
         for &feature in BaseFeature::ALL {
+            // Historical ownership is an independent expectation, not derived from the registry
+            // being tested. Keep this exhaustive so new features need an explicit expectation.
+            let upgrade = match feature {
+                BaseFeature::MonotonicBlockTimestamps => BaseUpgrade::Bedrock,
+                BaseFeature::DepositGasAccounting
+                | BaseFeature::DepositNonce
+                | BaseFeature::ActualL1SignatureBytes => BaseUpgrade::Regolith,
+                BaseFeature::DepositReceiptVersion
+                | BaseFeature::Create2Deployer
+                | BaseFeature::Withdrawals
+                | BaseFeature::BaseFeeDenominator
+                | BaseFeature::ReadyChannelSelection
+                | BaseFeature::GossipPayloadV2 => BaseUpgrade::Canyon,
+                BaseFeature::SpanBatches => BaseUpgrade::Delta,
+                BaseFeature::BlobAwareL1Fees
+                | BaseFeature::BlobHeader
+                | BaseFeature::BeaconRoots
+                | BaseFeature::ConstantBlobBaseFee
+                | BaseFeature::BlobDataSource
+                | BaseFeature::EngineApiV3
+                | BaseFeature::EcotoneUpgradeTransactions
+                | BaseFeature::GossipPayloadV3 => BaseUpgrade::Ecotone,
+                BaseFeature::FastLzL1Fees
+                | BaseFeature::Rip7212Precompile
+                | BaseFeature::FixedSequencerDrift
+                | BaseFeature::LargeChannels
+                | BaseFeature::BrotliCompression
+                | BaseFeature::ChannelBankSizeExpansion
+                | BaseFeature::FjordUpgradeTransactions => BaseUpgrade::Fjord,
+                BaseFeature::Bn254PairingInputLimit
+                | BaseFeature::ShortChannelTimeout
+                | BaseFeature::GraniteTransitionNoTxPool => BaseUpgrade::Granite,
+                BaseFeature::DynamicBaseFeeParameters
+                | BaseFeature::StrictDerivationOrdering
+                | BaseFeature::DepositsOnlyOnInvalidPayload
+                | BaseFeature::HoloceneTransitionNoTxPool => BaseUpgrade::Holocene,
+                BaseFeature::BlobScheduleCorrection => BaseUpgrade::PectraBlobSchedule,
+                BaseFeature::OperatorFee
+                | BaseFeature::BlsInputLimits
+                | BaseFeature::Eip7702
+                | BaseFeature::HistoryStorage
+                | BaseFeature::L2ToL1MessageRoot
+                | BaseFeature::EmptyRequestsHash
+                | BaseFeature::EngineApiV4
+                | BaseFeature::IsthmusUpgradeTransactions
+                | BaseFeature::GossipPayloadV4
+                | BaseFeature::StrictProofSourceExhaustion => BaseUpgrade::Isthmus,
+                BaseFeature::ScaledOperatorFees
+                | BaseFeature::DaFootprint
+                | BaseFeature::DaAwareBaseFee
+                | BaseFeature::TightBn254PairingInputLimit
+                | BaseFeature::TightBlsInputLimits
+                | BaseFeature::MinBaseFee
+                | BaseFeature::JovianUpgradeTransactions => BaseUpgrade::Jovian,
+                BaseFeature::RepricedP256Precompile
+                | BaseFeature::TransactionGasLimitCap
+                | BaseFeature::CompactFlashblockMetadata
+                | BaseFeature::EngineApiV5 => BaseUpgrade::Azul,
+                BaseFeature::TokenPrecompiles
+                | BaseFeature::ActivationRegistry
+                | BaseFeature::AssetPrecompile
+                | BaseFeature::StablecoinPrecompile
+                | BaseFeature::PolicyPrecompile
+                | BaseFeature::TokenFactoryPrecompile => BaseUpgrade::Beryl,
+                BaseFeature::AssetPrecompileV2
+                | BaseFeature::StablecoinPrecompileV2
+                | BaseFeature::PolicyPrecompileV2
+                | BaseFeature::DynamicStorageTailCleanup
+                | BaseFeature::CompactAbiDecodeErrors
+                | BaseFeature::ActivationRegistryRejectsValue
+                | BaseFeature::StatefulActivationAdmin
+                | BaseFeature::TransactionContextPrecompile
+                | BaseFeature::NonceManagerPrecompile => BaseUpgrade::Cobalt,
+                BaseFeature::AssetPrecompileV3
+                | BaseFeature::StablecoinPrecompileV3
+                | BaseFeature::PolicyPrecompileV3
+                | BaseFeature::SubsecondBlocks
+                | BaseFeature::ExtendedSequencerDrift
+                | BaseFeature::OneShotPayloadBuilding
+                | BaseFeature::SingularBatchesOnly => BaseUpgrade::Denim,
+                BaseFeature::Eip8130 | BaseFeature::Eip8430 | BaseFeature::NativeNonceManager => {
+                    BaseUpgrade::Everest
+                }
+                BaseFeature::Keystore => BaseUpgrade::Zenith,
+            };
+            assert_eq!(feature.activation_upgrade(), upgrade, "{feature:?}");
             let mut cfg = RollupConfig::default();
-            if feature.activation_upgrade() == BaseUpgrade::Bedrock {
+            if upgrade == BaseUpgrade::Bedrock {
                 assert!(cfg.is_feature_active_cascading(feature, 0));
                 assert_eq!(cfg.configured_feature_activation_timestamp(feature), None);
                 assert!(!cfg.is_feature_activation_block_cascading(feature, 1, 0));
@@ -625,7 +713,7 @@ mod tests {
             assert!(!cfg.is_feature_active_cascading(feature, u64::MAX), "{feature:?}");
             assert_eq!(cfg.configured_feature_activation_timestamp(feature), None);
 
-            cfg.set_upgrade_activation_timestamp(feature.activation_upgrade(), 10);
+            cfg.set_upgrade_activation_timestamp(upgrade, 10);
             assert!(!cfg.is_feature_active_cascading(feature, 9), "{feature:?}");
             assert!(cfg.is_feature_active_cascading(feature, 10), "{feature:?}");
             assert!(cfg.is_feature_active_cascading(feature, 11), "{feature:?}");
@@ -633,7 +721,7 @@ mod tests {
             assert!(!cfg.is_feature_activation_block_cascading(feature, 10, 10), "{feature:?}");
             assert_eq!(cfg.configured_feature_activation_timestamp(feature), Some(10));
 
-            cfg.set_upgrade_activation_timestamp(feature.activation_upgrade(), 0);
+            cfg.set_upgrade_activation_timestamp(upgrade, 0);
             assert!(cfg.is_feature_active_cascading(feature, 0), "{feature:?}");
             assert!(!cfg.is_feature_activation_block_cascading(feature, 0, 0), "{feature:?}");
         }
