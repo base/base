@@ -87,6 +87,10 @@ harness = false
 name = "best_transactions"
 harness = false
 
+[[bench]]
+name = "admission"
+harness = false
+
 [features]
 default = [ "metrics" ]
 metrics = [

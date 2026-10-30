@@ -1064,6 +1064,30 @@ where
         Ok(true)
     }
 
+    /// Validates protocol-bound transactions together and admits them in order.
+    ///
+    /// Protocol validation reads canonical state, never pool contents. Every
+    /// transaction is validated against one snapshot taken when the batch job
+    /// starts and admitted in order only after the whole batch is validated, so
+    /// outcomes match per-transaction adds unless the canonical head or the pool
+    /// changes concurrently in that window.
+    pub async fn add_protocol_batch(
+        &self,
+        transactions: Vec<(TransactionOrigin, T)>,
+    ) -> Vec<PoolResult<AddedTransactionOutcome>> {
+        let keys: Vec<_> = transactions
+            .iter()
+            .map(|(origin, tx)| (*origin, *tx.hash(), tx.sender(), tx.nonce()))
+            .collect();
+        let validated = self.validator().validate_transactions(transactions).await;
+        keys.into_iter()
+            .zip(validated)
+            .map(|((origin, hash, sender, nonce), validated)| {
+                self.add_validated_protocol_transaction(origin, hash, sender, nonce, validated)
+            })
+            .collect()
+    }
+
     fn add_validated_protocol_transaction(
         &self,
         origin: TransactionOrigin,
@@ -1773,29 +1797,43 @@ where
         &self,
         transactions: Vec<(TransactionOrigin, Self::Transaction)>,
     ) -> Vec<PoolResult<AddedTransactionOutcome>> {
-        if transactions.iter().any(|(_, transaction)| PoolStore::of(transaction).is_lane_store()) {
-            let mut results = Vec::with_capacity(transactions.len());
-            for (origin, transaction) in transactions {
-                results.push(self.add_transaction(origin, transaction).await);
-            }
-            return results;
-        }
-        // Protocol validation reads canonical state, never pool contents. Every
-        // transaction is validated against one snapshot taken when the batch
-        // job starts and admitted in order only after the whole batch is
-        // validated, so outcomes match per-transaction adds unless the
-        // canonical head or the pool changes concurrently in that window.
-        let keys: Vec<_> = transactions
+        // Senders with a transaction bound for a lane store keep their whole
+        // batch on the per-transaction path, in submission order, because their
+        // lane and cross-store replacement outcomes depend on that order. Every
+        // other transaction is protocol-bound and validated as one batch.
+        let lane_senders: AddressSet = transactions
             .iter()
-            .map(|(origin, tx)| (*origin, *tx.hash(), tx.sender(), tx.nonce()))
+            .filter(|(_, transaction)| PoolStore::of(transaction).is_lane_store())
+            .map(|(_, transaction)| transaction.sender())
             .collect();
-        let validated = self.validator().validate_transactions(transactions).await;
-        keys.into_iter()
-            .zip(validated)
-            .map(|((origin, hash, sender, nonce), validated)| {
-                self.add_validated_protocol_transaction(origin, hash, sender, nonce, validated)
-            })
-            .collect()
+        if lane_senders.is_empty() {
+            return self.add_protocol_batch(transactions).await;
+        }
+
+        let mut results: Vec<Option<PoolResult<AddedTransactionOutcome>>> =
+            (0..transactions.len()).map(|_| None).collect();
+        let mut batched = Vec::new();
+        let mut batched_indexes = Vec::new();
+        let mut one_by_one = Vec::new();
+        for (index, (origin, transaction)) in transactions.into_iter().enumerate() {
+            if lane_senders.contains(&transaction.sender()) {
+                one_by_one.push((index, origin, transaction));
+            } else {
+                batched_indexes.push(index);
+                batched.push((origin, transaction));
+            }
+        }
+        if !batched.is_empty() {
+            for (index, result) in
+                batched_indexes.into_iter().zip(self.add_protocol_batch(batched).await)
+            {
+                results[index] = Some(result);
+            }
+        }
+        for (index, origin, transaction) in one_by_one {
+            results[index] = Some(self.add_transaction(origin, transaction).await);
+        }
+        results.into_iter().map(|result| result.expect("every transaction is admitted")).collect()
     }
 
     fn transaction_event_listener(&self, tx_hash: TxHash) -> Option<TransactionEvents> {
@@ -6314,6 +6352,36 @@ mod tests {
             standard.iter().filter(|hash| in_protocol_pool(&pool, **hash)).count();
         assert!(surviving_standard <= 2, "reth enforces its own pending limit");
         assert_eq!(pool.validity_pool_occupancy().0, 2);
+    }
+
+    #[tokio::test]
+    async fn a_mixed_batch_keeps_each_senders_submission_order() {
+        let (pool, client) = build_integration_pool();
+        let standalone = funded_signer(&client);
+        let bridged = funded_signer(&client);
+        let replaced = funded_signer(&client);
+        let batch = vec![
+            signed_1559(&standalone, 0),
+            validity_1559(&bridged, 0, 1_000),
+            signed_1559(&bridged, 1),
+            validity_1559(&replaced, 0, 1_000),
+            // Replaces the validity transaction before it only if admitted after it.
+            signed_1559_with_fees(&replaced, 0, 2_000, 0),
+        ];
+        let hashes: Vec<_> = batch.iter().map(|transaction| *transaction.hash()).collect();
+
+        let results = pool.add_transactions(TransactionOrigin::External, batch).await;
+        let admitted: Vec<_> =
+            results.into_iter().map(|result| result.expect("admitted").hash).collect();
+        assert_eq!(admitted, hashes, "results follow the submission order");
+
+        assert_store(&pool, hashes[0], PoolStore::Protocol);
+        assert!(is_pending(&pool, hashes[0]));
+        assert_store(&pool, hashes[1], PoolStore::Validity);
+        assert_store(&pool, hashes[2], PoolStore::Protocol);
+        assert!(is_queued(&pool, hashes[2]));
+        assert_gone(&pool, hashes[3]);
+        assert_store(&pool, hashes[4], PoolStore::Protocol);
     }
 
     #[tokio::test]
