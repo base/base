@@ -238,15 +238,7 @@ impl InProcessClient {
         {
             node_config = node_config.with_unused_ports();
         }
-        config.runtime.bound_engine_memory(&mut node_config);
-        if let Some(persistence_threshold) = config.persistence_threshold {
-            node_config.engine.persistence_threshold = persistence_threshold;
-        }
-        if let Some(persistence_backpressure_threshold) = config.persistence_backpressure_threshold
-        {
-            node_config.engine.persistence_backpressure_threshold =
-                Some(persistence_backpressure_threshold);
-        }
+        config.configure_engine(&mut node_config);
 
         let datadir_path = MaybePlatformPath::<DataDirPath>::from(data_dir.clone());
         node_config = node_config
@@ -456,11 +448,55 @@ impl InProcessClient {
     }
 }
 
+impl InProcessClientConfig {
+    /// Applies follower runtime and persistence settings without builder-only options.
+    pub fn configure_engine<C>(&self, node_config: &mut NodeConfig<C>) {
+        self.runtime.bound_engine_memory(node_config);
+        if let Some(threshold) = self.persistence_threshold {
+            node_config.engine.persistence_threshold = threshold;
+        }
+        if let Some(backpressure) = self.persistence_backpressure_threshold {
+            node_config.engine.persistence_backpressure_threshold = Some(backpressure);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use tempfile::TempDir;
 
     use super::InProcessClient;
+
+    /// Production follower configuration applies persistence without builder suppression.
+    #[test]
+    fn follower_persistence_keeps_suppression_disabled() {
+        let policy = crate::SnapshotPersistenceConfig { use_reth_persistence_defaults: true };
+        let mut config = super::InProcessClientConfig {
+            runtime: super::InProcessNodeRuntime::Host,
+            chain_spec: super::ChainSpecSource::Parsed(std::sync::Arc::new(super::BaseChainSpec::mainnet())),
+            datadir: None, jwt_secret: super::JwtSecret::random(),
+            builder_rpc_url: "http://127.0.0.1:8545".to_owned(),
+            builder_flashblocks_url: None, builder_p2p_enode: String::new(),
+            http_port: None, ws_port: None, auth_port: None, p2p_port: None, metrics_port: None,
+            persistence_threshold: policy.threshold(),
+            persistence_backpressure_threshold: policy.backpressure(crate::DevnetBlockInterval::TwoHundredMilliseconds),
+            tx_forwarding_config: None, validity_signature_mode: super::ValiditySignatureMode::Off,
+            upgrade_signal: None, extra_extensions: Vec::new(),
+        };
+        let mut node = super::NodeConfig::default();
+        config.configure_engine(&mut node);
+        assert_eq!(node.engine.persistence_threshold, 50, "follower keeps upstream threshold");
+        assert_eq!(node.engine.memory_block_buffer_target(), 5, "follower keeps upstream buffer");
+        assert_eq!(node.engine.persistence_backpressure_threshold(), 100, "follower keeps upstream backpressure");
+        assert_eq!(node.engine.num_state_masking_blocks(), 30, "follower keeps upstream masking");
+        assert_eq!(node.engine.tree_config().suppress_persistence_during_build(), false, "follower must not suppress persistence");
+        config.persistence_threshold = Some(0);
+        config.persistence_backpressure_threshold = Some(160);
+        config.configure_engine(&mut node);
+        assert_eq!(node.engine.persistence_threshold, 0, "follower applies legacy threshold");
+        assert_eq!(node.engine.persistence_backpressure_threshold(), 160, "follower applies legacy backpressure");
+        assert_eq!(node.engine.tree_config().suppress_persistence_during_build(), false, "legacy follower must not suppress persistence");
+    }
 
     #[test]
     fn rejects_empty_caller_owned_datadir() {

@@ -227,6 +227,7 @@ gas limit and all workload settings identical. Cadence is selected by the YAML's
 
 ```bash
 # Control: suppression remains off.
+export BASE_BENCH_CLIENT_VERSION="base/$(git rev-parse --short HEAD)"
 base-bench snapshot --chain mainnet \
   --builder-datadir "$CONTROL_BUILDER_DATADIR" \
   --client-datadir "$CONTROL_CLIENT_DATADIR" \

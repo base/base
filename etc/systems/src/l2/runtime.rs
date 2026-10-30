@@ -136,11 +136,9 @@ mod tests {
     #[test]
     fn persistence_defaults_and_builder_suppression() {
         let mut builder = NodeConfig::default();
-        let follower = NodeConfig::default();
         BuilderEngineSharingConfig { suppress_persistence_during_build: true, ..Default::default() }
             .apply(&mut builder).unwrap();
         assert_eq!(builder.engine.suppress_persistence_during_build, true, "builder receives suppression");
-        assert_eq!(follower.engine.suppress_persistence_during_build, false, "follower retains suppression default");
         assert_eq!(builder.engine.persistence_threshold, 50, "reth persistence threshold is retained");
         assert_eq!(builder.engine.memory_block_buffer_target(), 5, "reth memory buffer is retained");
         assert_eq!(builder.engine.persistence_backpressure_threshold(), 100, "reth backpressure is retained");
