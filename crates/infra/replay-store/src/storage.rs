@@ -1,10 +1,4 @@
-use std::{
-    io::{Read, Write},
-    ops::RangeInclusive,
-    path::PathBuf,
-    pin::Pin,
-    time::Duration,
-};
+use std::{io::Read, ops::RangeInclusive, path::PathBuf, pin::Pin, time::Duration};
 
 use aws_sdk_s3::primitives::ByteStream;
 use base_replay::{ReplayRecord, ReplayRecordError};
@@ -12,7 +6,7 @@ use chrono::{DateTime, Datelike, Utc};
 use futures::{Stream, StreamExt, TryStreamExt, stream};
 use tokio::io::{AsyncRead, AsyncReadExt};
 
-use crate::{LocalPath, ReplayS3};
+use crate::{LocalObject, ReplayS3};
 
 /// Failures at the storage boundary.
 #[derive(Debug, thiserror::Error)]
@@ -114,16 +108,19 @@ impl ReplayStore {
 
     async fn get(&self, key: &str) -> Result<Option<Vec<u8>>, StoreError> {
         let reader: Pin<Box<dyn AsyncRead + Send>> = match self {
-            Self::Local(root) => match async {
-                let path = LocalPath::resolve(root, key, false).await?;
-                tokio::fs::File::open(path).await
+            Self::Local(root) => {
+                let root = root.clone();
+                let key = key.to_owned();
+                let opened = tokio::task::spawn_blocking(move || {
+                    LocalObject::open(&root, &key, false)?.read()
+                })
+                .await?;
+                match opened {
+                    Ok(file) => Box::pin(tokio::fs::File::from_std(file)),
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+                    Err(e) => return Err(e.into()),
+                }
             }
-            .await
-            {
-                Ok(file) => Box::pin(file),
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-                Err(e) => return Err(e.into()),
-            },
             Self::S3(backend) => match backend
                 .client
                 .get_object()
@@ -163,13 +160,9 @@ impl ReplayStore {
         }
         match self {
             Self::Local(root) => {
-                let path = LocalPath::resolve(root, &key, true).await?;
+                let root = root.clone();
                 tokio::task::spawn_blocking(move || {
-                    let parent = path.parent().ok_or(StoreError::Invalid("object path"))?;
-                    let mut file = tempfile::NamedTempFile::new_in(parent)?;
-                    file.write_all(&bytes)?;
-                    file.persist_noclobber(path).map_err(|e| e.error)?;
-                    Ok::<_, StoreError>(())
+                    LocalObject::open(&root, &key, true)?.publish(&bytes)
                 })
                 .await??;
             }

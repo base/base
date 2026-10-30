@@ -16,15 +16,16 @@ url.workspace = true
 zstd.workspace = true
 chrono.workspace = true
 futures.workspace = true
-tempfile.workspace = true
 thiserror.workspace = true
 serde_json.workspace = true
 base-replay = { path = "../../utilities/replay" }
+rustix = { workspace = true, features = ["fs", "std"] }
 tokio = { workspace = true, features = ["fs", "io-util", "rt", "time"] }
 aws-config = { workspace = true, features = ["default-https-client", "rt-tokio"] }
 aws-sdk-s3 = { workspace = true, features = ["rustls", "default-https-client", "rt-tokio"] }
 
 [dev-dependencies]
+tempfile.workspace = true
 uuid = { workspace = true, features = ["v4"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 testcontainers = { workspace = true, features = ["ring"] }

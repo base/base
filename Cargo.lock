@@ -6195,6 +6195,7 @@ dependencies = [
  "base-replay",
  "chrono",
  "futures",
+ "rustix",
  "serde_json",
  "tempfile",
  "testcontainers",
