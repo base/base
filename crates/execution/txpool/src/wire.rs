@@ -34,7 +34,9 @@ pub trait ValidatedTransactionExtensions<T: PoolTransaction>:
     /// Returns whether the payload carries no extension data.
     ///
     /// Builders use this to preserve legacy transaction handling while rejecting
-    /// or privately inserting non-empty extension payloads.
+    /// or privately inserting non-empty extension payloads. They answer an
+    /// already-pooled transaction with an empty payload before applying it, so
+    /// [`Self::apply`] must accept an empty payload without changing the transaction.
     fn is_empty(&self) -> bool {
         false
     }

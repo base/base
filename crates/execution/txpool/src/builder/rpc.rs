@@ -1,10 +1,11 @@
 use std::{
+    fmt::Write,
     marker::PhantomData,
     sync::{Arc, LazyLock},
     time::Instant,
 };
 
-use alloy_primitives::TxHash;
+use alloy_primitives::{TxHash, keccak256};
 use base_bundles::MeterBundleResponse;
 use base_observability_events::{
     TransactionEventProducer, TransactionEventType, transaction_event,
@@ -41,6 +42,10 @@ static BUILDER_HOST: LazyLock<String> = LazyLock::new(|| {
 /// Equal to the forwarder's cap on an unlimited batch size; forwarders send larger batches as
 /// individual calls.
 pub const MAX_VALIDATED_INSERT_BATCH: usize = 1024;
+
+/// Bytes reserved for a pool rejection's RPC error message: enough for the already-imported
+/// message, `pool rejected transaction: [<0x-prefixed hash>]: already imported`, 113 bytes.
+const POOL_REJECTION_MESSAGE_CAPACITY: usize = 128;
 
 /// Writes inbound `insertValidatedTransaction` metering into the builder cache.
 pub trait InsertMetering: core::fmt::Debug + Send + Sync + 'static {
@@ -157,9 +162,6 @@ where
         debug!(sender = %tx.sender, "rpc::insert_validated_transaction");
         let (origin, pool_tx, metering) = self.prepare_insert(tx)?;
         let (tx_hash, encoded_len) = (*pool_tx.hash(), pool_tx.encoded_length());
-        if let Some(result) = self.already_pooled(tx_hash) {
-            return self.finish_insert(tx_hash, encoded_len, metering, result);
-        }
         let start = Instant::now();
         let result = self.pool.add_transaction(origin, pool_tx).await;
         BuilderApiMetrics::insert_duration().record(start.elapsed().as_secs_f64());
@@ -179,11 +181,6 @@ where
             match self.prepare_insert(tx) {
                 Ok((origin, pool_tx, metering)) => {
                     let (tx_hash, encoded_len) = (*pool_tx.hash(), pool_tx.encoded_length());
-                    if let Some(result) = self.already_pooled(tx_hash) {
-                        results[index] =
-                            self.finish_insert(tx_hash, encoded_len, metering, result).err();
-                        continue;
-                    }
                     admitted.push((index, tx_hash, encoded_len, metering));
                     batch.push((origin, pool_tx));
                 }
@@ -206,25 +203,23 @@ where
 impl<P, E> BuilderApiImpl<P, E>
 where
     P: TransactionPool<Transaction = BasePooledTransaction>,
+    E: ValidatedTransactionExtensions<BasePooledTransaction>,
 {
-    /// Returns the pool's already-imported verdict for a transaction it already holds.
+    /// Answers a transaction the pool already holds with the pool's already-imported verdict.
     ///
     /// Every mempool node forwards each transaction to every builder, so most inserts a builder
     /// receives are duplicates. The pool validates a transaction against state before it checks
     /// whether it holds the hash, so answering duplicates here skips that validation and the pool
     /// write lock. A pooled duplicate is reported as already imported even when validation would
     /// now reject it.
-    fn already_pooled(&self, tx_hash: TxHash) -> Option<PoolResult<AddedTransactionOutcome>> {
-        self.pool
-            .contains(&tx_hash)
-            .then(|| Err(PoolError::new(tx_hash, PoolErrorKind::AlreadyImported)))
+    fn reject_if_pooled(&self, tx_hash: TxHash, encoded_len: usize) -> RpcResult<()> {
+        if !self.pool.contains(&tx_hash) {
+            return Ok(());
+        }
+        let result = Err(PoolError::new(tx_hash, PoolErrorKind::AlreadyImported));
+        self.finish_insert(tx_hash, encoded_len, None, result)
     }
-}
 
-impl<P, E> BuilderApiImpl<P, E>
-where
-    E: ValidatedTransactionExtensions<BasePooledTransaction>,
-{
     /// Rejects a `base_insertValidatedTransactions` call carrying more than
     /// [`MAX_VALIDATED_INSERT_BATCH`] transactions, before any of them is processed.
     pub fn check_batch_size(len: usize) -> RpcResult<()> {
@@ -263,17 +258,28 @@ where
             ErrorObjectOwned::owned(ErrorCode::InvalidParams.code(), e.to_string(), None::<()>)
         })?;
 
+        // Answer a duplicate from its bytes before decoding it. Bytes hash to a pooled
+        // transaction's hash only if they are its canonical encoding, which decodes back to that
+        // transaction, so the answer is the one the decoded transaction would get. An extension
+        // payload is checked against the decoded transaction first, so its duplicates are
+        // answered after decoding, as are bytes that are not the canonical encoding.
+        let raw_hash = keccak256(&tx.raw);
+        if !has_extensions {
+            self.reject_if_pooled(raw_hash, tx.raw.len())?;
+        }
+
         // Decode the EIP-2718 bytes, keeping them as the pool transaction's cached encoding so
         // validation and block building do not re-encode the transaction.
         let mut pool_tx =
-            BasePooledTransaction::decode_2718_with_sender(tx.raw, sender).map_err(|e| {
-                BuilderApiMetrics::decode_errors().increment(1);
-                ErrorObjectOwned::owned(
-                    ErrorCode::InvalidParams.code(),
-                    format!("failed to decode transaction: {e}"),
-                    None::<()>,
-                )
-            })?;
+            BasePooledTransaction::decode_2718_with_sender_and_hash(tx.raw, sender, raw_hash)
+                .map_err(|e| {
+                    BuilderApiMetrics::decode_errors().increment(1);
+                    ErrorObjectOwned::owned(
+                        ErrorCode::InvalidParams.code(),
+                        format!("failed to decode transaction: {e}"),
+                        None::<()>,
+                    )
+                })?;
         let metering = tx.metering;
         if let Some(ref metering) = metering {
             pool_tx = pool_tx.with_metering(metering.clone());
@@ -303,6 +309,9 @@ where
                 if pool_tx.validity_signature().is_some() { "signed" } else { "unsigned" },
             )
             .increment(1);
+        }
+        if has_extensions || *pool_tx.hash() != raw_hash {
+            self.reject_if_pooled(*pool_tx.hash(), pool_tx.encoded_length())?;
         }
 
         // Extension-bearing transactions remain private so normal P2P gossip
@@ -350,11 +359,11 @@ where
                 );
                 debug!(tx_hash = %tx_hash, error = %e, "pool rejected transaction");
                 BuilderApiMetrics::txs_rejected(PoolRejectionLabel::from_error(&e)).increment(1);
-                Err(ErrorObjectOwned::owned(
-                    ErrorCode::InternalError.code(),
-                    format!("pool rejected transaction: {e}"),
-                    None::<()>,
-                ))
+                // Sized so the already-imported message most rejections carry is written without
+                // growing the string.
+                let mut message = String::with_capacity(POOL_REJECTION_MESSAGE_CAPACITY);
+                let _ = write!(message, "pool rejected transaction: {e}");
+                Err(ErrorObjectOwned::owned(ErrorCode::InternalError.code(), message, None::<()>))
             }
         }
     }
