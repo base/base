@@ -251,5 +251,9 @@ name = "state_root"
 harness = false
 
 [[bench]]
+name = "flashblocks_resting_sweep"
+harness = false
+
+[[bench]]
 name = "tx_selection"
 harness = false

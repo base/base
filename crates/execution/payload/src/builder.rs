@@ -44,7 +44,7 @@ use reth_primitives_traits::{
 };
 use reth_revm::{database::StateProviderDatabase, db::State, witness::ExecutionWitnessRecord};
 use reth_storage_api::{BlockReader, StateProvider, StateProviderFactory, errors::ProviderError};
-use reth_tasks::CancelOnDrop;
+use reth_tasks::{CancelOnDrop, Runtime};
 use reth_transaction_pool::{
     BestTransactionsAttributes, PoolTransaction, TransactionPool, ValidPoolTransaction,
 };
@@ -136,6 +136,14 @@ where
     }
 }
 
+/// Longest a native build waits for the previous block's resting sweep before starting with an
+/// empty set.
+///
+/// The native builder has no leeway: the sweep overlaps only the previous block's state root, and
+/// any wait comes out of a short block's selection time, where re-evaluating every validity
+/// transaction is cheaper than a long wait.
+const RESTING_SWEEP_WAIT_LIMIT: Duration = Duration::from_millis(25);
+
 impl<Pool, Client, Evm, Attrs> BasePayloadBuilder<Pool, Client, Evm, Attrs> {
     /// `BasePayloadBuilder` constructor.
     ///
@@ -159,6 +167,13 @@ impl<Pool, Client, Evm, Attrs> BasePayloadBuilder<Pool, Client, Evm, Attrs> {
             resting_predicates: RestingPredicateStore::default(),
             _pd: PhantomData,
         }
+    }
+
+    /// Runs end-of-block maintenance of the resting validity set, such as the unseen sweep, on
+    /// `executor` instead of inline.
+    pub fn with_task_executor(mut self, executor: Runtime) -> Self {
+        self.resting_predicates = RestingPredicateStore::new(executor);
+        self
     }
 }
 
@@ -460,8 +475,11 @@ impl<Txs> Builder<'_, Txs> {
                     ctx.builder_config.resting_predicate_mode.is_enabled() && ctx.is_denim_active()
                 })
                 .map(|store| {
-                    let mut resting =
-                        store.take(ctx.builder_config.predicate_bucket_ordered_threshold);
+                    let start = Instant::now();
+                    let mut resting = store.take(
+                        ctx.builder_config.predicate_bucket_ordered_threshold,
+                        RESTING_SWEEP_WAIT_LIMIT,
+                    );
                     // The transitions hold the system calls and deposits applied on top of the
                     // parent state.
                     let carry_over = resting.begin_block(
@@ -469,7 +487,7 @@ impl<Txs> Builder<'_, Txs> {
                         ctx.parent().number().saturating_add(1),
                         builder.evm_mut().db_mut().transition_state.as_ref(),
                     );
-                    ValidityMetrics::record_resting_carry_over(&carry_over);
+                    ValidityMetrics::record_resting_carry_over(&carry_over, start.elapsed());
                     SharedRestingPredicates::new(resting)
                 });
             // Only an enforcing build hands the pool iterator a hold; a shadow build evaluates
@@ -509,6 +527,10 @@ impl<Txs> Builder<'_, Txs> {
             }
         }
         let execution_duration = build_start.elapsed();
+        // Start the end-of-block sweep now so it overlaps the state root.
+        let resting = resting
+            .zip(resting_predicates.as_ref())
+            .map(|(resting, store)| store.finish(resting.take_predicates()));
 
         let block_num = ctx.parent().number().saturating_add(1);
         let state_root = state_root_handle.and_then(|mut task| {
@@ -548,9 +570,7 @@ impl<Txs> Builder<'_, Txs> {
         let sealed_block = Arc::new(block.sealed_block().clone());
         debug!(target: "payload_builder", id=%ctx.payload_id(), sealed_block_header = ?sealed_block.header(), "sealed built block");
         if let (Some(resting), Some(store)) = (resting, resting_predicates) {
-            let mut resting = resting.take_predicates();
-            resting.end_block(sealed_block.hash());
-            store.put(resting);
+            store.put(resting, sealed_block.hash());
         }
 
         let execution_outcome =
@@ -1714,7 +1734,7 @@ mod tests {
     };
     use revm::{Database, database::TransitionState, state::EvmState};
 
-    use super::{BasePayloadBuilderCtx, Builder, ExecutionInfo};
+    use super::{BasePayloadBuilderCtx, Builder, ExecutionInfo, RESTING_SWEEP_WAIT_LIMIT};
     use crate::{
         BasePayloadBuilderAttributes, DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD, MeteringProvider,
         NoopMeteringProvider, ParkablePayloadTransactions, ResourceMeteringConfig,
@@ -2407,11 +2427,11 @@ mod tests {
         predicate: ValidityPredicate,
     ) -> RestingPredicateStore {
         let store = RestingPredicateStore::default();
-        let mut resting = store.take(DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD);
+        let mut resting =
+            store.take(DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD, RESTING_SWEEP_WAIT_LIMIT);
         resting.begin_block(B256::ZERO, 0, Some(&TransitionState::default()));
         resting.rest(*transaction.hash(), predicate);
-        resting.end_block(tip);
-        store.put(resting);
+        store.put(store.finish(resting), tip);
         store
     }
 
@@ -2577,7 +2597,8 @@ mod tests {
             build_carrying_resting(RestingPredicateMode::Enforce, &store, vec![gated.clone()]);
 
         assert!(included.is_empty());
-        let mut resting = store.take(DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD);
+        let mut resting =
+            store.take(DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD, RESTING_SWEEP_WAIT_LIMIT);
         let carry_over = resting.begin_block(block_hash, 2, Some(&TransitionState::default()));
         assert_eq!(carry_over.carried, 1);
         assert!(resting.member(*gated.hash(), gated.validity_conditions()).is_some());
@@ -2602,7 +2623,9 @@ mod tests {
             let store = RestingPredicateStore::default();
             build_carrying_resting_at(timestamp, mode, &store, vec![gated.clone()]);
             assert!(
-                store.take(DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD).is_empty(),
+                store
+                    .take(DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD, RESTING_SWEEP_WAIT_LIMIT)
+                    .is_empty(),
                 "timestamp {timestamp}, mode {mode:?}"
             );
         }

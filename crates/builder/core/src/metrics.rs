@@ -94,6 +94,8 @@ base_metrics::define_metrics! {
     flashblocks_time_drift: histogram,
     #[describe("Time offset we used for first flashblock")]
     first_flashblock_time_offset: histogram,
+    #[describe("Time from the start of the payload job to flashblock scheduling, in seconds")]
+    flashblocks_schedule_delay: histogram,
     #[describe("Count of the number of times transactions had metering information")]
     metering_known_transaction: counter,
     #[describe("Count of the number of times transactions did not have any metering information")]
