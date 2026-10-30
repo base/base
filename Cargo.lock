@@ -3196,7 +3196,9 @@ dependencies = [
  "base-shadow-indexer",
  "base-txpool-rpc",
  "clap",
+ "eyre",
  "reth-cli-util",
+ "tracing",
 ]
 
 [[package]]
