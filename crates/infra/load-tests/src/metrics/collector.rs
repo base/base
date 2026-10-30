@@ -76,7 +76,7 @@ impl MetricsCollector {
         let at = metrics.confirmed_at.unwrap_or_else(Instant::now);
         // Canonical gas is backfilled later by the receipt pass, so a freshly landed
         // tx reports gas_used == 0. Use the estimate for the live rolling window
-        // (GPS, rate-limiter feedback); the final summary still uses real gas.
+        // (GPS); the final summary still uses real gas.
         let live_gas = if metrics.gas_used == 0 { self.estimated_gas } else { metrics.gas_used };
         if let Some(latency) = metrics.block_latency {
             self.rolling.push(live_gas, latency, at);
@@ -426,20 +426,6 @@ impl MetricsCollector {
     pub fn rolling_flashblocks_p50_p99(&mut self) -> (std::time::Duration, std::time::Duration) {
         self.flashblocks_rolling.p50_p99()
     }
-
-    /// Returns the average gas used per confirmed transaction.
-    ///
-    /// Before the end-of-run receipt pass backfills canonical gas, landed txs report
-    /// `gas_used == 0`; in that window this falls back to the configured estimate so
-    /// the rate limiter keeps a non-zero feedback signal.
-    pub fn avg_gas_used(&self) -> Option<u64> {
-        if self.transactions.is_empty() {
-            return None;
-        }
-        let total: u64 = self.transactions.iter().map(|t| t.gas_used).sum();
-        let avg = total / self.transactions.len() as u64;
-        if avg == 0 { (self.estimated_gas > 0).then_some(self.estimated_gas) } else { Some(avg) }
-    }
 }
 
 impl Default for MetricsCollector {
@@ -546,11 +532,6 @@ mod tests {
         }
 
         assert!(collector.rolling_gps() > 0.0, "live GPS must use the estimate, not 0");
-        assert_eq!(
-            collector.avg_gas_used(),
-            Some(21_000),
-            "avg gas falls back to the estimate before receipts backfill real gas"
-        );
     }
 
     #[test]
@@ -559,7 +540,6 @@ mod tests {
         collector.record_confirmed(landed(TxHash::repeat_byte(1), 100));
 
         assert_eq!(collector.rolling_gps(), 0.0, "no estimate set → GPS stays 0");
-        assert_eq!(collector.avg_gas_used(), None, "no estimate and no real gas → None");
     }
 
     #[test]
