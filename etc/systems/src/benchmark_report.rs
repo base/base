@@ -380,6 +380,37 @@ mod tests {
 
     use super::{SnapshotBenchmarkReportConfig, SnapshotBenchmarkResult, SnapshotBlockMetrics};
 
+    /// Pool unequal scrape intervals once and retain existing per-block averages.
+    #[test]
+    fn window_metrics_pool_buckets_and_weight_scrapes_once() {
+        let sample = |number, counts: [f64; 3], gauge| {
+            let mut metrics = BTreeMap::from([
+                (crate::WINDOW_GAUGE.to_owned(), gauge),
+                ("benchmark/prometheus_blocks_per_scrape".to_owned(), if number == 1 { 1.0 } else { 2.0 }),
+                ("build_avg".to_owned(), 0.25),
+            ]);
+            for (bound, count) in ["1", "2", "inf"].into_iter().zip(counts) {
+                metrics.insert(format!("benchmark/histogram/build/{bound}"), count);
+            }
+            SnapshotBlockMetrics {
+                number, hash: B256::ZERO, timestamp: 0, timestamp_ms: 0,
+                gas_used: 0, gas_limit: 1, transaction_count: 0, prometheus_metrics: metrics,
+            }
+        };
+        let mut blocks = vec![sample(1, [1.0, 1.0, 1.0], 2.0),
+            sample(2, [0.0, 1.0, 1.0], 8.0), sample(3, [0.0, 1.0, 1.0], 8.0)];
+        SnapshotBenchmarkReportConfig::add_window_metrics(&mut blocks);
+        for block in &blocks {
+            let metrics = &block.prometheus_metrics;
+            assert_eq!(metrics["build_window_p50"], 1.25, "pooled median must not average scrape percentiles");
+            assert_eq!(metrics["build_avg"], 0.25, "existing per-block averages remain untouched");
+            assert_eq!(metrics[&format!("{}_sampled_avg", crate::WINDOW_GAUGE)], 5.0, "two-block scrape is counted once");
+            assert_eq!(metrics[&format!("{}_sampled_min", crate::WINDOW_GAUGE)], 2.0, "sampled minimum is exact");
+            assert_eq!(metrics[&format!("{}_sampled_max", crate::WINDOW_GAUGE)], 8.0, "sampled maximum is exact");
+            assert!(!metrics.keys().any(|key| key.starts_with("benchmark/histogram/")), "internal bucket keys are removed from reports");
+        }
+    }
+
     #[test]
     fn writes_visualizer_data_contract() {
         let output = tempfile::tempdir().unwrap();

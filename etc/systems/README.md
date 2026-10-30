@@ -236,8 +236,9 @@ Covered duration metrics, all in seconds:
 
 `reth_consensus_engine_beacon_executed_blocks` also adds `_sampled_min`,
 `_sampled_avg`, and `_sampled_max`. This gauge counts executed blocks retained in
-the engine tree, including forks. It is not canonical persisted-head lag. Each
-scrape is weighted once, not once per covered block; these are sampled statistics,
+the engine tree, including forks. It is not canonical persisted-head lag. Fully
+included scrape intervals are weighted once, not once per covered block; partial
+edge intervals receive proportional weight. These are sampled statistics,
 not continuous extrema. No direct persisted-head lag gauge was found at the
 pinned Reth revision. Missing metrics are omitted, never represented as zero.
 
