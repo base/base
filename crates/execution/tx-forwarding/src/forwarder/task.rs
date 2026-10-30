@@ -394,7 +394,10 @@ impl<R: ForwardRequest> DestinationForwarder<R> {
             return self.send_insert_batch(transactions, batch.len()).await;
         }
         let response = self.send_batch(batch).await?;
-        Ok(response.into_iter().map(|result| result.map_err(ErrorObject::into_owned)).collect())
+        Ok(response
+            .into_iter()
+            .map(|result| result.map(|_| ()).map_err(ErrorObject::into_owned))
+            .collect())
     }
 
     async fn send_insert_batch(
@@ -432,7 +435,7 @@ impl<R: ForwardRequest> DestinationForwarder<R> {
     async fn send_batch<'a>(
         &'a self,
         batch: &'a [R],
-    ) -> Result<BatchResponse<'a, ()>, ClientError> {
+    ) -> Result<BatchResponse<'a, serde::de::IgnoredAny>, ClientError> {
         let mut request = BatchRequestBuilder::new();
         for item in batch {
             // A payload that will not serialize fails the whole batch rather than panicking the

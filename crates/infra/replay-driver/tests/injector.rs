@@ -34,17 +34,19 @@ async fn replays_verbatim_calls_when_builder_clock_reaches_recorded_offsets() ->
     let provider = builder.provider().await?;
     let observed = Arc::new(Mutex::new(Vec::new()));
     let mut rpc = RpcModule::new((provider.clone(), observed.clone()));
-    rpc.register_async_method("base_insertValidatedTransaction", |params, ctx, _| async move {
-        let raw: Box<RawValue> = params.parse()?;
-        ctx.1
-            .lock()
-            .unwrap()
-            .push((GlobalClock::get().now_unix_millis().unwrap(), raw.get().to_owned()));
-        ctx.0
-            .raw_request::<_, ()>("base_insertValidatedTransaction".into(), raw)
-            .await
-            .map_err(|err| ErrorObjectOwned::owned(-32000, err.to_string(), None::<()>))
-    })?;
+    for method in ["base_insertValidatedTransaction", "base_insertValidatedTransactions"] {
+        rpc.register_async_method(method, move |params, ctx, _| async move {
+            let raw: Box<RawValue> = params.parse()?;
+            ctx.1
+                .lock()
+                .unwrap()
+                .push((GlobalClock::get().now_unix_millis().unwrap(), raw.get().to_owned()));
+            ctx.0
+                .raw_request::<_, Box<RawValue>>(method.into(), raw)
+                .await
+                .map_err(|err| ErrorObjectOwned::owned(-32000, err.to_string(), None::<()>))
+        })?;
+    }
     let server = Server::builder().build("127.0.0.1:0").await?;
     let url = format!("http://{}", server.local_addr()?).parse()?;
     let server = server.start(rpc);
@@ -78,11 +80,17 @@ async fn replays_verbatim_calls_when_builder_clock_reaches_recorded_offsets() ->
         };
         let hash = keccak256(&transaction.raw);
         hashes.push(hash);
+        let encoded = serde_json::to_string(&transaction)?;
+        let (method, params) = if nonce == 2 {
+            ("base_insertValidatedTransactions", format!("[[ {encoded} ]]"))
+        } else {
+            ("base_insertValidatedTransaction", format!("[ {encoded} ]"))
+        };
         records.push(ReplayRecord {
             stream: ReplayStream::BuilderIngress,
             received_at_ms: start + offset,
-            method: "base_insertValidatedTransaction".into(),
-            params: RawValue::from_string(format!("[ {} ]", serde_json::to_string(&transaction)?))?,
+            method: method.into(),
+            params: RawValue::from_string(params)?,
             batch_id: Some(0),
             source: "127.0.0.1:1234".into(),
             tx_hash: Some(hash),
@@ -113,14 +121,8 @@ async fn replays_verbatim_calls_when_builder_clock_reaches_recorded_offsets() ->
     println!("builder pool: {} recorded transactions present", hashes.len());
     let mut rejected = records[0].clone();
     rejected.method = "replay_unknown_method".into();
-    assert!(
-        injector
-            .inject(rejected)
-            .await
-            .unwrap_err()
-            .downcast_ref::<Arc<jsonrpsee::core::ClientError>>()
-            .is_some()
-    );
+    let error = injector.inject(rejected).await.unwrap_err();
+    assert!(error.downcast_ref::<Arc<jsonrpsee::core::ClientError>>().is_some());
     let cancel = CancellationToken::new();
     cancel.cancel();
     assert!(schedule.run(&injector, &cancel).await.is_err());
