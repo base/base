@@ -16,7 +16,7 @@ use crate::{
     rpc::MAX_BATCH_RPC_SIZE,
     runner::{TxConfig, TxType},
     utils::{BaselineError, Result},
-    workload::{RealTokenSetup, UniswapV3Hop},
+    workload::{MAX_TOKEN_MOVE_TRANSFERS_PER_TX, RealTokenSetup, UniswapV3Hop},
 };
 
 /// Configuration for a load test, loadable from YAML.
@@ -312,6 +312,13 @@ pub enum TxTypeConfig {
         contract: Address,
     },
 
+    /// Batched `real_token_setup` pair-token transfers through Disperse.
+    TokenMove {
+        /// Number of token transfers per transaction.
+        #[serde(default = "default_token_move_transfers_per_tx")]
+        transfers_per_tx: u32,
+    },
+
     /// Precompile call.
     Precompile {
         /// Target precompile configuration.
@@ -435,6 +442,11 @@ const fn default_storage_new_slot_ratio() -> f64 {
 /// (`slots_per_tx * 23_000 + 30_000`) stays under the ~30M per-tx block cap.
 /// Target RPCs may enforce a lower per-tx ceiling; tune `slots_per_tx` to fit.
 const MAX_STORAGE_SLOTS_PER_TX: u32 = 1_300;
+
+/// About 332k gas per tx with real USDC on a Base mainnet fork.
+const fn default_token_move_transfers_per_tx() -> u32 {
+    25
+}
 
 fn default_swap_min_amount() -> U256 {
     U256::from(1_000_000_000_000_000u64)
@@ -817,6 +829,22 @@ impl TestConfig {
             }
             TxTypeConfig::DoubleCounter { contract } => {
                 TxType::DoubleCounter { contract: *contract }
+            }
+            TxTypeConfig::TokenMove { transfers_per_tx } => {
+                if !self.real_token_setup.as_ref().is_some_and(|setup| setup.enabled) {
+                    return Err(BaselineError::Config(
+                        "token_move requires enabled real_token_setup".into(),
+                    ));
+                }
+                if !(1..=MAX_TOKEN_MOVE_TRANSFERS_PER_TX).contains(transfers_per_tx) {
+                    return Err(BaselineError::Config(format!(
+                        "token_move transfers_per_tx must be 1..={MAX_TOKEN_MOVE_TRANSFERS_PER_TX}"
+                    )));
+                }
+                TxType::TokenMove {
+                    transfers_per_tx: *transfers_per_tx,
+                    context: Default::default(),
+                }
             }
             TxTypeConfig::Precompile { target, iterations } => {
                 let looper_contract = if *iterations > 1 {

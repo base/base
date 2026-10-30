@@ -311,6 +311,19 @@ Runtime pacing still calibrates actual receipt gas.
 Benchmark mainnet-mix runs selecting `mainnet-mix-mainnet-snapshot.yaml` after this
 change are not comparable with runs using the earlier mix.
 
+#### Batched token transfers
+
+`type: token_move` sends `transfers_per_tx` (default 25) one-unit transfers of the
+`real_token_setup` pair token in one
+[Disperse](https://disperse.app) `disperseTokenSimple` call, which pulls from
+`msg.sender`. It requires the existing `real_token_setup` alongside a swap workload,
+and Disperse deployed at `0xD152f549545093347A162Dce210e7293f1452150` (Base mainnet
+snapshots); setup approves Disperse like a swap router. The first recipient is the
+runner recipient, so `fresh_recipient_ratio` applies to it; the rest are random
+senders. With real USDC on a Base mainnet fork, 25 transfers to funded recipients
+use about 332k gas. `transfers_per_tx` is capped at 477 so the gas limit fits the
+2^24 per-tx cap (EIP-7825, enabled with Azul).
+
 
 #### Precompile Testing
 

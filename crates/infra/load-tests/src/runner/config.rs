@@ -188,6 +188,13 @@ pub enum TxType {
         /// `DoubleCounter` contract address.
         contract: Address,
     },
+    /// Batched real-token transfers through Disperse.
+    TokenMove {
+        /// Number of token transfers per transaction.
+        transfers_per_tx: u32,
+        /// Token and recipients shared across calibration and measured generators.
+        context: std::sync::Arc<std::sync::OnceLock<crate::workload::TokenMoveContext>>,
+    },
     /// Precompile call.
     Precompile {
         /// Target precompile.

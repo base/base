@@ -59,6 +59,10 @@ pub use real_token_lifecycle::{encode_erc20_approve, recover_real_tokens};
 mod osaka;
 pub use osaka::OsakaPayload;
 
+mod token_move;
+pub(crate) use token_move::{DISPERSE, MAX_TOKEN_MOVE_TRANSFERS_PER_TX};
+pub use token_move::{TokenMoveContext, TokenMovePayload};
+
 /// A transaction payload generator with optional chain preparation.
 #[async_trait]
 pub trait Payload: Send + Sync + std::fmt::Debug {
