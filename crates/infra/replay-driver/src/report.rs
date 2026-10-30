@@ -117,3 +117,109 @@ impl DiffReport {
         out
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn block(block_number: u64, totals: DiffTotals) -> BlockDiff {
+        BlockDiff { block_number, warmup: false, first_divergence_index: None, totals }
+    }
+
+    #[test]
+    fn sums_each_optional_measurement_when_known_and_unknown_values_mix() {
+        let known = DiffTotals {
+            missing: 5,
+            extra: 2,
+            common: 3,
+            recording_gap: Some(2),
+            canonical_gas_used: 11,
+            candidate_gas_used: 7,
+            canonical_priority_fee_wei: Some(U256::from(17)),
+            candidate_priority_fee_wei: U256::from(13),
+            build_latency_us: 19,
+            flashblock_count: Some(23),
+        };
+        for unknown in [
+            known.clone(),
+            DiffTotals { recording_gap: None, ..known.clone() },
+            DiffTotals { canonical_priority_fee_wei: None, ..known.clone() },
+            DiffTotals { flashblock_count: None, ..known.clone() },
+        ] {
+            for inputs in [[&known, &unknown], [&unknown, &known]] {
+                let sum: DiffTotals = inputs.into_iter().sum();
+
+                assert_eq!((sum.missing, sum.extra, sum.common), (10, 4, 6));
+                assert_eq!((sum.canonical_gas_used, sum.candidate_gas_used), (22, 14));
+                assert_eq!(sum.candidate_priority_fee_wei, U256::from(26));
+                assert_eq!(sum.build_latency_us, 38);
+                assert_eq!(sum.recording_gap, unknown.recording_gap.map(|_| 4));
+                assert_eq!(
+                    sum.canonical_priority_fee_wei,
+                    unknown.canonical_priority_fee_wei.map(|_| U256::from(34))
+                );
+                assert_eq!(sum.flashblock_count, unknown.flashblock_count.map(|_| 46));
+            }
+        }
+    }
+
+    #[test]
+    fn excludes_unknown_measurements_when_block_is_warmup() {
+        let scored = DiffTotals {
+            missing: 3,
+            recording_gap: Some(1),
+            canonical_priority_fee_wei: Some(U256::from(7)),
+            flashblock_count: Some(2),
+            ..DiffTotals::default()
+        };
+        let blocks = vec![
+            block(11, DiffTotals { missing: 99, ..DiffTotals::default() }),
+            block(12, scored.clone()),
+        ];
+
+        let report = DiffReport::new(10, blocks).unwrap();
+
+        assert!(report.blocks[0].warmup);
+        assert!(!report.blocks[1].warmup);
+        assert_eq!(
+            serde_json::to_value(&report.aggregate).unwrap(),
+            serde_json::to_value(scored).unwrap()
+        );
+    }
+
+    #[test]
+    fn yields_known_zero_totals_when_report_is_empty_or_warmup_only() {
+        for blocks in [vec![], vec![block(11, DiffTotals { missing: 99, ..DiffTotals::default() })]]
+        {
+            let report = DiffReport::new(10, blocks).unwrap();
+
+            let totals = &report.aggregate;
+            assert_eq!((totals.missing, totals.extra, totals.common), (0, 0, 0));
+            assert_eq!(
+                (totals.canonical_gas_used, totals.candidate_gas_used, totals.build_latency_us),
+                (0, 0, 0)
+            );
+            assert_eq!(totals.candidate_priority_fee_wei, U256::ZERO);
+            assert_eq!(totals.recording_gap, Some(0));
+            assert_eq!(totals.canonical_priority_fee_wei, Some(U256::ZERO));
+            assert_eq!(totals.flashblock_count, Some(0));
+        }
+    }
+
+    #[test]
+    fn rejects_window_when_heights_are_not_contiguous_after_parent() {
+        for (parent, heights) in [
+            (10, vec![12]),
+            (10, vec![11, 13]),
+            (10, vec![11, 11]),
+            (10, vec![11, 10]),
+            (u64::MAX, vec![0]),
+        ] {
+            let blocks = heights.into_iter().map(|n| block(n, DiffTotals::default())).collect();
+
+            let result = DiffReport::new(parent, blocks);
+
+            assert!(matches!(result, Err(DiffError::Window)));
+        }
+    }
+}
