@@ -34,12 +34,12 @@ at >= 400k gas, calldata and logs per tx, and compressed DA bytes per gas (recei
 Fjord's FastLZ size estimate), each with a relative tolerance. New accounts and storage slots per gas
 need state diffs and stay null. `base-bench snapshot` compares a run against this file.
 
---out preserves the prior sample's relative workload weights (BASELINE_WEIGHTS), scales them
-to make room for the current sample's x402 transaction share, and sets target_gps from the
-current window's gas per second. Stand-ins use less gas per tx than most classes they replace,
-so matching gas per block takes more txs per block
-(the config header gives the ratio from LOAD_GAS_PER_TX). Reverts run as successful b20 calls:
-the generator has no failing-call type.
+--out maps each class to gas-matched stand-ins (CLASS_MIX), weights them by the class's share of
+transactions (1000 in total) and sets target_gps from the window's gas per second. A class no single
+stand-in can match is split across several, so its share of txs and its mean gas both hold. It also
+predicts the mix's gas, heavy-tx shares, calldata and logs per tx from per-stand-in receipts on a
+Base mainnet fork (STAND_INS), and writes the prediction beside the targets in the config header.
+Reverts run as successful swaps of similar gas: the generator has no failing-call type.
 """
 
 import argparse
@@ -84,18 +84,54 @@ CLASSES = ("x402", "transfer", "swap", "liquidity", "aa_bundle", "oracle", "toke
            "reverted", "no_logs", "other")
 
 
-GENERATOR = dict(
-    x402=("x402",),
-    transfer=("transfer",), swap=("swap",), liquidity=("swap",), aa_bundle=("swap", "erc20"), oracle=("b20",),
-    token_transfer=("erc20",), approval=("erc20",), token_move=("b20",), reverted=("b20",), no_logs=("b20",),
-    other=("b20",),
+WETH, USDC_CHECKSUM = "0x4200000000000000000000000000000000000006", "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+UNISWAP = (f'type: uniswap_v3, router: "0x2626664c2603336E57B271c5C0b26F421741e481", token_in: "{WETH}",\n'
+           f'      token_out: "{USDC_CHECKSUM}", min_amount: "10000000000000", max_amount: "100000000000000",'
+           ' reverse_amounts: auto,\n      ')
+VIA_CBBTC = 'via: [{token: "0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf", fee: 500}], fee: 500'  # cbBTC, gitleaks:allow
+VIA_DAI_USDBC = ('via: [{token: "0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb", fee: 500},'  # DAI, gitleaks:allow
+                 ' {token: "0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA", fee: 100}], fee: 100')  # USDbC, gitleaks:allow
+LIQUIDITY = (f'type: uniswap_v3_liquidity, position_manager: "0x03a520b32C04BF3bEEf7BEb72E919cf822Ed34f1",\n'
+             f'      token0: "{WETH}", token1: "{USDC_CHECKSUM}", fee: 500, amount0: "10000000000000", amount1: "23000",\n      ')
+
+
+def storage(slots, new_slot_ratio):
+    return f"type: storage, slots_per_tx: {slots}, new_slot_ratio: {new_slot_ratio}"
+
+
+# Stand-in: YAML fields, then mean receipt gas, calldata bytes and logs per tx from a 30-sender run on a Base
+# mainnet anvil fork (block 53294591), and fresh storage slots per tx.
+# Liquidity ops share one uniswap_v3_liquidity entry.
+STAND_INS = dict(
+    transfer=("type: transfer", 21_000, 0, 0, 0),
+    erc20=(f'type: erc20, contract: "{USDC_CHECKSUM}"', 45_044, 68, 1, 0),
+    x402=("type: x402", 85_756, 292, 2, 0),
+    token_move_1=("type: token_move, transfers_per_tx: 1", 57_430, 228, 1, 0),
+    token_move_10=("type: token_move, transfers_per_tx: 10", 161_054, 804, 10, 0),
+    token_move_60=("type: token_move, transfers_per_tx: 60", 625_416, 4_004, 60, 0),
+    swap_1_pool=(UNISWAP + "fee: 500", 119_486, 228, 3, 0),
+    swap_2_pools=(UNISWAP + VIA_CBBTC, 204_166, 292, 6, 0),
+    swap_3_pools=(UNISWAP + VIA_DAI_USDBC, 278_416, 292, 9, 0),
+    liquidity_mint=(LIQUIDITY + "ops: {mint: 1}", 378_076, 356, 5, 0),
+    liquidity_multicall=(LIQUIDITY + "ops: {multicall: 1}", 534_608, 1_284, 16, 0),
+    aa_bundle_6=("type: aa_bundle, ops_per_bundle: 6", 242_173, 1_284, 6, 6),
+    aa_bundle_16=("type: aa_bundle, ops_per_bundle: 16", 599_855, 3_204, 16, 16),
+    storage_no_logs=(storage(5, 0.05), 57_262, 100, 0, 0.25),
+    storage_oracle=(storage(8, 0.05), 75_616, 100, 0, 0.4),
+    storage_other=(storage(16, 0.05), 125_769, 100, 0, 0.8),
+    storage_heavy=(storage(215, 0.05), 1_177_272, 100, 0, 10.75),
 )
-# Receipt gas per tx of each load-test type on a Base anvil fork of mainnet (swap: mean of the Uniswap V3
-# and Aerodrome CL WETH/USDC swaps; b20: transfers of a fresh B-20 token).
-LOAD_GAS_PER_TX = dict(transfer=21_000, erc20=45_044, swap=143_987, b20=37_743)
+# Stand-ins per class with their share of the class's txs. Splits keep each class's mean gas and add the
+# >= 400k-gas tail; swaps and liquidity outweigh any one DEX stand-in.
+CLASS_MIX = dict(
+    transfer=dict(transfer=1), x402=dict(x402=1),
+    swap=dict(swap_2_pools=0.38, swap_3_pools=0.48, storage_heavy=0.08, token_move_60=0.06),
+    liquidity=dict(liquidity_mint=0.25, liquidity_multicall=0.3, storage_heavy=0.45),
+    aa_bundle=dict(aa_bundle_6=0.58, aa_bundle_16=0.42), oracle=dict(storage_oracle=1),
+    token_transfer=dict(token_move_1=1), approval=dict(erc20=1), token_move=dict(token_move_10=0.66, token_move_60=0.34),
+    reverted=dict(swap_1_pool=0.6, swap_2_pools=0.4), no_logs=dict(storage_no_logs=1), other=dict(storage_other=1),
+)
 WEIGHT_SCALE = 1000
-# Prior sample: blocks 52523904..52826303, 2026-10-12 to 2026-10-19; preserve these relative shares.
-BASELINE_WEIGHTS = dict(transfer=41, erc20=75, b20=585, uniswap=150, aerodrome=149)
 CLASSIFIER_VERSION = 3  # Caches before USDC authorization classification or per-tx targets cannot be reused.
 HEAVY_GAS = 400_000
 # Relative tolerances; the tail shares share gas per tx's.
@@ -104,22 +140,18 @@ TOLERANCES = dict(gas_per_tx=0.10, heavy_tx_share=0.10, heavy_gas_share=0.10, ca
 
 CONFIG_TEMPLATE = """\
 # Base mainnet transaction mix, generated by etc/scripts/local/mainnet-mix.py (mapping and limits).
-# Prior weights: blocks 52523904..52826303, 10080 samples; 2026-10-12 20:32 to 2026-10-19 20:32 UTC
-# (2026-10-12 15:32 to 2026-10-19 15:32 EST).
-# Existing relative shares are preserved; only x402 share is derived from the following measurement.
 # Measurement window: blocks {start}..{end} ({start_time} to {end_time} UTC / {start_est} to {end_est} EST), {blocks} samples.
 # Non-deposit mean per block: {gas} gas, {txs} txs, {transfer_events} ERC-20 Transfer events.
-# Class: share by count / gas, gas/tx -> load-test type:
+# Class: share by count / gas, gas/tx -> stand-ins (share of class txs), predicted gas/tx:
 {class_lines}
-# Existing relative shares plus measured x402 proxy share are normalized to 1000. Stand-ins run other code paths
-# (no liquidity mint/burn, multi-hop routes,
-# EntryPoint validation or failing calls; reverts run as successful b20 calls) and use less gas per tx: about
-# {load_gas_per_tx} vs mainnet's {gas_per_tx}, so matching gas per block takes {tx_ratio}x mainnet's txs per block.
+# Weights: class tx share x stand-in share, normalized to 1000. Predicted from stand-in fork receipts, vs this window:
+{prediction_lines}
+# State growth has no target (blocks carry no state diffs): stand-ins write {fresh_slots_per_mgas} fresh slots per Mgas
+# (storage and aa_bundle recipients; liquidity mints uncounted); production monitoring shows ~0.00077 bytes/gas.
+# Reverts run as successful swaps of similar gas; ERC-4337 bundles run the aa_bundle stand-in.
 # For `base-bench snapshot`: the launcher replaces the RPC URLs and prefunds an ephemeral funder.
 # Includes USDC EIP-3009 as an x402 proxy (not all authorizations are x402).
 # Changed mix: benchmark runs using this YAML are not comparable with earlier mixes.
-# x402 header gas uses observed mainnet proxy gas; runtime pacing calibrates local receipts.
-# Preliminary x402 share; refine with a larger sample and facilitator attribution.
 
 transaction_submission_rpcs: ["http://127.0.0.1:7545"]
 query_rpc: "http://127.0.0.1:7545"
@@ -143,18 +175,9 @@ real_token_setup:
     amount_per_sender: "10000000" # 10 USDC
     acquisition: {{type: uniswap_v3_exact_input, router: "0x2626664c2603336E57B271c5C0b26F421741e481",
       fee: 500, amount_in: "10000000000000000", min_amount_out: "0"}}
-# Swap amounts: WETH wei forward, USDC units in reverse.
+# Swap amounts: WETH wei forward; reverse_amounts: auto prices USDC reverse swaps at the pools.
 transactions:
-  - {{weight: {transfer}, type: transfer}}
-  - {{weight: {x402}, type: x402}}
-  - {{weight: {erc20}, type: erc20, contract: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"}}
-  - {{weight: {b20}, type: b20}}
-  - {{weight: {uniswap}, type: uniswap_v3, router: "0x2626664c2603336E57B271c5C0b26F421741e481", fee: 500,
-      token_in: "0x4200000000000000000000000000000000000006", token_out: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", # gitleaks:allow
-      min_amount: "10000000000000", max_amount: "100000000000000", reverse_min_amount: "10000", reverse_max_amount: "100000"}}
-  - {{weight: {aerodrome}, type: aerodrome_cl, router: "0xBE6D8f0d05cC4be24d5167a3eF062215bE6D18a5", tick_spacing: 100,
-      token_in: "0x4200000000000000000000000000000000000006", token_out: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", # gitleaks:allow
-      min_amount: "10000000000000", max_amount: "100000000000000", reverse_min_amount: "10000", reverse_max_amount: "100000"}}
+{transactions}
 """
 
 
@@ -301,34 +324,66 @@ def report(blocks, rows):
     return stats
 
 
-def render(stats):
+def weights(classes):
+    """Weight each stand-in by its classes' tx shares, normalized to exactly WEIGHT_SCALE."""
+    total = sum(c["tx_share"] for c in classes.values())
+    scaled = Counter()
+    for kind, mix in CLASS_MIX.items():
+        for name, share in mix.items():
+            scaled[name] += classes[kind]["tx_share"] / total * share * WEIGHT_SCALE
+    weight = {name: int(value) for name, value in scaled.items()}
+    for name in sorted(weight, key=lambda n: scaled[n] % 1, reverse=True)[:WEIGHT_SCALE - sum(weight.values())]:
+        weight[name] += 1
+    return weight
+
+
+def predict(weight):
+    """Per-tx metrics of a mix from its stand-ins' fork receipts, keyed like targets()."""
+    txs = sum(weight.values())
+    mean = lambda f: sum(w * f(*STAND_INS[n][1:]) for n, w in weight.items()) / txs  # noqa: E731
+    gas = mean(lambda g, *_: g)
+    return dict(gas_per_tx=gas, heavy_tx_share=mean(lambda g, *_: g >= HEAVY_GAS),
+                heavy_gas_share=mean(lambda g, *_: g * (g >= HEAVY_GAS)) / gas,
+                calldata_bytes_per_tx=mean(lambda g, c, *_: c), logs_per_tx=mean(lambda g, c, logs, _: logs),
+                fresh_slots_per_mgas=mean(lambda *s: s[3]) / gas * 1e6)
+
+
+def render(stats, targets):
     classes = stats["classes"]
-    x402_weight = round(classes["x402"]["tx_share"] * WEIGHT_SCALE)
-    # Largest-remainder normalization preserves exactly WEIGHT_SCALE total weight.
-    remaining_weight = WEIGHT_SCALE - x402_weight
-    scaled = {target: value * remaining_weight for target, value in BASELINE_WEIGHTS.items()}
-    weight = {target: value // WEIGHT_SCALE for target, value in scaled.items()}
-    for target in sorted(weight, key=lambda t: scaled[t] % WEIGHT_SCALE, reverse=True)[:remaining_weight - sum(weight.values())]:
-        weight[target] += 1
-    weight["x402"] = x402_weight
-    # x402 has no local replay measurement yet; its header estimate uses observed mainnet gas.
-    gas_estimates = LOAD_GAS_PER_TX | {"x402": classes["x402"]["gas_per_tx"],
-                                      "uniswap": LOAD_GAS_PER_TX["swap"], "aerodrome": LOAD_GAS_PER_TX["swap"]}
-    load_gas_per_tx = round(sum(weight[t] * gas_estimates[t] for t in weight) / WEIGHT_SCALE)
-    gas_per_tx = round(stats["per_block"]["gas"] / stats["per_block"]["txs"])
+    weight = weights(classes)
+    predicted = predict(weight)
     class_lines = "\n".join(
-        f"#   {kind:<15}{c['tx_share']:7.2%} / {c['gas_share']:7.2%}, {c['gas_per_tx']:>7} -> {'+'.join(GENERATOR[kind])}"
+        f"#   {kind:<15}{c['tx_share']:7.2%} / {c['gas_share']:7.2%}, {c['gas_per_tx']:>7} -> "
+        + " + ".join(f"{name} {share:.0%}" for name, share in CLASS_MIX[kind].items())
+        + f", {round(sum(share * STAND_INS[name][1] for name, share in CLASS_MIX[kind].items()))}"
         for kind, c in classes.items()
+    )
+    prediction_lines = "\n".join(
+        f"#   {name:<22}{predicted[name]:>10.4g} vs {metric['target']:.4g} ({predicted[name] / metric['target'] - 1:+.1%},"
+        f" tolerance {metric['tolerance']:.0%})"
+        for name, metric in targets["metrics"].items() if name in predicted and metric["target"]
+    )
+    transactions = []
+    liquidity = {name.removeprefix("liquidity_"): weight.pop(name) for name in list(weight) if name.startswith("liquidity_")}
+    for name, w in weight.items():
+        transactions.append(f"  - {{weight: {w}, {STAND_INS[name][0]}}}")
+    if sum(liquidity.values()):
+        ops = ", ".join(f"{op}: {w}" for op, w in liquidity.items())
+        fields = STAND_INS["liquidity_mint"][0].replace("ops: {mint: 1}", f"ops: {{{ops}}}")
+        transactions.append(f"  - {{weight: {sum(liquidity.values())}, {fields}}}")
+    # Public token and contract addresses, not secrets.
+    transactions = "\n".join(
+        "\n".join(f"{line} # gitleaks:allow" if '"0x' in line else line for line in entry.split("\n"))
+        for entry in transactions
     )
     return CONFIG_TEMPLATE.format(
         **stats,
         **stats["per_block"],
-        **weight,
         class_lines=class_lines,
+        prediction_lines=prediction_lines,
+        fresh_slots_per_mgas=f"{predicted['fresh_slots_per_mgas']:.2f}",
+        transactions=transactions,
         target_gps=round(stats["per_block"]["gas"] / BLOCK_TIME),
-        load_gas_per_tx=load_gas_per_tx,
-        gas_per_tx=gas_per_tx,
-        tx_ratio=round(gas_per_tx / load_gas_per_tx, 2),
     )
 
 
@@ -361,12 +416,14 @@ def main():
         blocks = [start + round(i * (end - start) / (count - 1)) for i in range(count)]
         rows = sample(args.rpc, blocks, args.cache, args.workers)
         stats = report(blocks, rows)
+    stats["predicted"] = predict(weights(stats["classes"]))
     print(json.dumps(stats, indent=2))
     if args.out:
+        mix_targets = targets(stats, rows)
         with open(args.out, "w") as out:
-            out.write(render(stats))
+            out.write(render(stats, mix_targets))
         with open(os.path.splitext(args.out)[0] + ".targets.json", "w") as out:
-            out.write(json.dumps(targets(stats, rows), indent=2) + "\n")
+            out.write(json.dumps(mix_targets, indent=2) + "\n")
 
 
 if __name__ == "__main__":
