@@ -9,6 +9,10 @@ use clap::Parser;
 
 // One lifecycle per process: GlobalClock deliberately has no reset API.
 #[test]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "test brackets the default SystemClock against real wall time"
+)]
 fn replay_clock_is_installed_only_when_requested() {
     let Commands::Node(default) = Cli::<Args>::try_parse_from(["builder", "node"]).unwrap().command
     else {
