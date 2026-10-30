@@ -271,14 +271,13 @@ where
         }
 
         self.mainnet.reward_beneficiary(evm, frame_result)?;
-        let basefee = evm.ctx().block().basefee() as u128;
 
-        let ctx = evm.ctx();
-        let enveloped = ctx.tx().enveloped_tx().cloned();
-        let spec = ctx.cfg().spec();
-        let l1_block_info = ctx.chain_mut();
+        // Split the context borrows so the enveloped transaction is read in place, not cloned.
+        let (block, tx, cfg, journal, l1_block_info, _) = evm.ctx().all_mut();
+        let basefee = block.basefee() as u128;
+        let spec = cfg.spec();
 
-        let Some(enveloped_tx) = &enveloped else {
+        let Some(enveloped_tx) = tx.enveloped_tx() else {
             return Err(ERROR::from_string(
                 "[OPTIMISM] Failed to load enveloped transaction.".into(),
             ));
@@ -302,7 +301,7 @@ where
             (Predeploys::BASE_FEE_VAULT, base_fee_amount),
             (Predeploys::OPERATOR_FEE_VAULT, operator_fee_cost),
         ] {
-            ctx.journal_mut().balance_incr(recipient, amount)?;
+            journal.balance_incr(recipient, amount)?;
         }
 
         Ok(())
