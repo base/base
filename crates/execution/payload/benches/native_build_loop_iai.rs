@@ -103,6 +103,10 @@ impl ParkablePayloadTransactions for Counted {
         self.inner.park_current();
     }
 
+    fn reserve_parked(&mut self, additional: usize) {
+        self.inner.reserve_parked(additional);
+    }
+
     fn mark_current_committed(&mut self) {
         self.inner.mark_current_committed();
     }
