@@ -305,9 +305,8 @@ Each payment transfers one micro-USDC; other mixed token workloads can still exh
 The mainnet mix generator classifies each transaction emitting canonical USDC
 `AuthorizationUsed` once, before other classes. This is an upper-bound x402 proxy:
 EIP-3009 has other users, and transactions may settle more than one authorization.
-It does not attribute facilitators. The prior sample's relative workload weights are preserved,
-scaled to 978 of 1,000, with x402 inserted at its measured upper-bound share of 22 (2.2%).
-Runtime pacing still calibrates actual receipt gas.
+It does not attribute facilitators. Like every class, x402 is weighted by its measured share of
+transactions (23 of 1,000 in the committed window). Runtime pacing still calibrates actual receipt gas.
 Benchmark mainnet-mix runs selecting `mainnet-mix-mainnet-snapshot.yaml` after this
 change are not comparable with runs using the earlier mix.
 

@@ -370,11 +370,6 @@ mod tests {
             1000,
             "mainnet mix must normalize to exactly 1000"
         );
-        assert_eq!(
-            config.transactions.iter().map(|tx| tx.weight).collect::<Vec<_>>(),
-            vec![40, 22, 73, 572, 147, 146],
-            "existing workload shares must be preserved with exactly 22 x402 weight units"
-        );
         let x402 = config
             .transactions
             .iter()
@@ -382,8 +377,8 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(x402.len(), 1, "exactly one x402 workload must appear in mainnet mix");
         assert_eq!(
-            x402[0].weight, 22,
-            "preliminary measured share must receive exactly 22 of 1000 weight units"
+            x402[0].weight, 23,
+            "preliminary measured share must receive exactly 23 of 1000 weight units"
         );
         assert_eq!(setup.pair_token.token, Some(USDC), "existing token setup must fund real USDC");
         assert_eq!(
