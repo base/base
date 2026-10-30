@@ -18,7 +18,7 @@ pub use call::Call;
 
 mod account_changes;
 pub use account_changes::{
-    AccountChange, AccountChangeChannel, ChangeType, CreateEntry, Delegation, InitialActor, Scope,
+    AccountChange, AccountChangeChannel, ChangeType, CreateEntry, Delegation, InitialActor,
     SignedAccountChanges, SignedChange,
 };
 

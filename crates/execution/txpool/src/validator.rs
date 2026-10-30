@@ -2688,7 +2688,10 @@ mod tests {
         let validator = build_test_validator();
         let tx = TxEip8130 { gas_limit: 0, ..minimal_valid_eoa_tx() };
         let signed = sign_eoa_eip8130(tx);
-        assert_unsupported(validator.validate_eip8130_structural(&signed));
+        assert!(matches!(
+            validator.validate_eip8130_structural(&signed),
+            Err(InvalidPoolTransactionError::Consensus(InvalidTransactionError::GasTooLow))
+        ));
     }
 
     #[test]
@@ -2696,7 +2699,10 @@ mod tests {
         let validator = build_test_validator();
         let tx = TxEip8130 { max_fee_per_gas: 0, ..minimal_valid_eoa_tx() };
         let signed = sign_eoa_eip8130(tx);
-        assert_unsupported(validator.validate_eip8130_structural(&signed));
+        assert!(matches!(
+            validator.validate_eip8130_structural(&signed),
+            Err(InvalidPoolTransactionError::Consensus(InvalidTransactionError::FeeCapTooLow))
+        ));
     }
 
     #[test]

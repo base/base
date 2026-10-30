@@ -1,6 +1,7 @@
 //! EIP-8130 2D nonce-manager storage-slot derivation.
 
 use alloy_primitives::{Address, B256, U256, address, keccak256, uint};
+use base_common_consensus::Eip8130Constants;
 
 /// ERC-7201 storage-slot derivation for the EIP-8130 2D nonce manager.
 ///
@@ -37,6 +38,10 @@ impl NonceManagerSlots {
     /// Nonce key reserved for the protocol nonce, which is held in account state
     /// rather than by the nonce manager.
     pub const PROTOCOL_NONCE_KEY: U256 = U256::ZERO;
+
+    /// Nonce key that selects nonce-free mode, which has no sequence and is
+    /// replay-protected by `replay_id` instead.
+    pub const NONCE_FREE_KEY: U256 = Eip8130Constants::NONCE_KEY_MAX;
 
     /// Returns the storage slot holding the 2D channel nonce for
     /// `nonces[account][nonce_key]`, or `None` for the reserved protocol nonce key
