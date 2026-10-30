@@ -65,6 +65,7 @@ jsonrpsee = { workspace = true, features = ["http-client", "server", "macros"] }
 [dev-dependencies]
 rstest.workspace = true
 criterion.workspace = true
+iai-callgrind.workspace = true
 alloy-signer.workspace = true
 alloy-signer-local.workspace = true
 reth-tasks.workspace = true
@@ -81,6 +82,14 @@ harness = false
 
 [[bench]]
 name = "builder_insert"
+harness = false
+
+[[bench]]
+name = "builder_insert_iai"
+harness = false
+
+[[bench]]
+name = "pool_validation_iai"
 harness = false
 
 [features]

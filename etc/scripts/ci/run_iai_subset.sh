@@ -28,6 +28,16 @@ run cargo bench -p base-protocol --bench frame_parse_iai
 run cargo bench -p base-protocol --bench batch_transaction_iai
 run cargo bench -p base-consensus-derive --bench batch_queue_iai --features test-utils
 run cargo bench -p base-common-flashblocks --bench flashblock_decode_iai
+run cargo bench -p base-execution-payload-builder --bench native_candidate_scan_iai
+run cargo bench -p base-execution-payload-builder --bench validity_conditions_iai
+run cargo bench -p base-execution-payload-builder --bench native_build_loop_iai
+run cargo bench -p base-execution-evm --bench block_execution_iai
+run cargo bench -p base-execution-evm --bench block_assembly_iai
+run cargo bench -p base-execution-evm --bench contract_block_execution_iai
+run cargo bench -p base-execution-txpool --bench builder_insert_iai
+run cargo bench -p base-execution-txpool --bench pool_validation_iai
+run cargo bench -p base-node-core --bench state_reads_iai
+run cargo bench -p base-node-core --bench state_root_iai
 
 gated_status=0
 if [ "${RUN_GATE:-true}" != true ]; then

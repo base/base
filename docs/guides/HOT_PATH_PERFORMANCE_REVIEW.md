@@ -78,8 +78,17 @@ drives `execute_best_transactions` over a mainnet-shaped block, and
 `crates/builder/core/benches/tx_selection.rs` covers iteration, parking, and the
 predicate index. Both drive the flashblocks builder only. For the native builder,
 `crates/execution/payload/benches/resource_metering.rs` covers the per-transaction
-resource-metering checks; the native `execute_best_transactions` loop has no
-end-to-end benchmark yet.
+resource-metering checks, and `native_candidate_scan.rs` and `native_build_loop.rs`
+drive the native `execute_best_transactions` loop.
+
+Deterministic instruction-count (`*_iai.rs`) benchmarks cover the native builder
+(`crates/execution/payload`: candidate scan, validity predicates, multi-block build
+loop), block execution and assembly (`crates/execution/evm`), pool admission and
+builder inserts (`crates/execution/txpool`), and node state reads and the per-block
+state root (`crates/execution/node`). The `bench-iai.yml` workflow reports their
+base-vs-head counts on every PR; run one locally with
+`cargo bench -p <crate> --bench <name>_iai` (needs Valgrind and
+`iai-callgrind-runner` 0.16.1).
 
 ## What not to flag
 
