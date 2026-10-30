@@ -1,3 +1,6 @@
+#[cfg(feature = "std")]
+use std::cell::RefCell;
+
 /// Cost per zero byte.
 pub const ZERO_BYTE_COST: u64 = 4;
 
@@ -13,6 +16,21 @@ pub const L1_COST_INTERCEPT: u64 = 42_585_600;
 
 /// <https://github.com/ethereum-optimism/op-geth/blob/647c346e2bef36219cc7b47d76b1cb87e7ca29e4/core/types/rollup_cost.go#L82>
 pub const MIN_TX_SIZE_SCALED: u64 = 100 * 1_000_000;
+
+/// Number of `FastLZ` hash-table slots, one per 13-bit hash of a 3-byte sequence.
+const HTAB_SLOTS: usize = 8192;
+
+#[cfg(feature = "std")]
+std::thread_local! {
+    /// Per-thread `FastLZ` hash table, reused across calls so that a call costs time
+    /// proportional to its input rather than zeroing a 32 KiB table first.
+    ///
+    /// The `u32` counts calls (the epoch). Each slot packs the epoch that wrote it in its
+    /// high 32 bits and the input position in its low 32 bits, so a slot written by an
+    /// earlier call reads as position 0, exactly like the zeroed table op-geth starts with.
+    static HTAB: RefCell<(u32, [u64; HTAB_SLOTS])> =
+        const { RefCell::new((0, [0; HTAB_SLOTS])) };
+}
 
 /// Calculate the data gas for posting the transaction on L1.
 ///
@@ -52,6 +70,34 @@ pub fn tx_estimated_size_fjord_bytes(input: &[u8]) -> u64 {
 /// <https://github.com/Vectorized/solady/blob/5315d937d79b335c668896d7533ac603adac5315/js/solady.js>
 /// <https://github.com/ethereum-optimism/op-geth/blob/647c346e2bef36219cc7b47d76b1cb87e7ca29e4/core/types/rollup_cost.go#L411>
 pub fn flz_compress_len(input: &[u8]) -> u32 {
+    #[cfg(feature = "std")]
+    {
+        HTAB.with_borrow_mut(|(epoch, slots)| {
+            *epoch = epoch.wrapping_add(1);
+            if *epoch == 0 {
+                // Slots written 2^32 calls ago carry the reused epoch values, so clear them.
+                *slots = [0; HTAB_SLOTS];
+                *epoch = 1;
+            }
+            let epoch = *epoch;
+            compress_len(input, |hash, idx| {
+                let slot = u64::from(epoch) << 32 | u64::from(idx);
+                let prev = core::mem::replace(&mut slots[hash as usize], slot);
+                if (prev >> 32) as u32 == epoch { prev as u32 } else { 0 }
+            })
+        })
+    }
+    #[cfg(not(feature = "std"))]
+    {
+        let mut slots = [0; HTAB_SLOTS];
+        compress_len(input, |hash, idx| core::mem::replace(&mut slots[hash as usize], idx))
+    }
+}
+
+/// Runs `FastLZ` over a hash table accessed only through `replace`, which stores `idx` in
+/// the slot for `hash` and returns the position the slot held before (0 if unwritten).
+#[inline(always)]
+fn compress_len(input: &[u8], mut replace: impl FnMut(u16, u32) -> u32) -> u32 {
     let mut idx: u32 = 2;
 
     let idx_limit: u32 = if input.len() < 13 { 0 } else { input.len() as u32 - 13 };
@@ -60,17 +106,13 @@ pub fn flz_compress_len(input: &[u8]) -> u32 {
 
     let mut size = 0;
 
-    let mut htab = [0; 8192];
-
     while idx < idx_limit {
         let mut r: u32;
         let mut distance: u32;
 
         loop {
             let seq = u24(input, idx);
-            let hash = hash(seq);
-            r = htab[hash as usize];
-            htab[hash as usize] = idx;
+            r = replace(hash(seq), idx);
             distance = idx - r;
             if idx >= idx_limit {
                 break;
@@ -94,8 +136,8 @@ pub fn flz_compress_len(input: &[u8]) -> u32 {
         let len = cmp(input, r + 3, idx + 3, idx_limit + 9);
         size = flz_match(len, size);
 
-        idx = set_next_hash(&mut htab, input, idx + len);
-        idx = set_next_hash(&mut htab, input, idx);
+        idx = set_next_hash(&mut replace, input, idx + len);
+        idx = set_next_hash(&mut replace, input, idx);
         anchor = idx;
     }
 
@@ -108,16 +150,11 @@ const fn literals(r: u32, size: u32) -> u32 {
     if r != 0 { size + r + 1 } else { size }
 }
 
-const fn cmp(input: &[u8], p: u32, q: u32, r: u32) -> u32 {
-    let mut l = 0;
-    let mut r = r - q;
-    while l < r {
-        if input[(p + l) as usize] != input[(q + l) as usize] {
-            r = 0;
-        }
-        l += 1;
-    }
-    l
+/// Returns one past the offset of the first mismatch between `input[p..]` and `input[q..r]`,
+/// or `r - q` if they match throughout.
+fn cmp(input: &[u8], p: u32, q: u32, r: u32) -> u32 {
+    let (p, q, r) = (p as usize, q as usize, r as usize);
+    input[q..r].iter().zip(&input[p..]).position(|(a, b)| a != b).map_or(r - q, |l| l + 1) as u32
 }
 
 const fn flz_match(l: u32, size: u32) -> u32 {
@@ -126,8 +163,8 @@ const fn flz_match(l: u32, size: u32) -> u32 {
     if l % 262 >= 6 { size + 3 } else { size + 2 }
 }
 
-fn set_next_hash(htab: &mut [u32; 8192], input: &[u8], idx: u32) -> u32 {
-    htab[hash(u24(input, idx)) as usize] = idx;
+fn set_next_hash(replace: &mut impl FnMut(u16, u32) -> u32, input: &[u8], idx: u32) -> u32 {
+    replace(hash(u24(input, idx)), idx);
     idx + 1
 }
 
@@ -137,9 +174,9 @@ const fn hash(v: u32) -> u16 {
 }
 
 fn u24(input: &[u8], idx: u32) -> u32 {
-    u32::from(input[idx as usize])
-        + (u32::from(input[(idx + 1) as usize]) << 8)
-        + (u32::from(input[(idx + 2) as usize]) << 16)
+    // One range check instead of three per-byte bounds checks.
+    let [b0, b1, b2]: [u8; 3] = input[idx as usize..idx as usize + 3].try_into().unwrap();
+    u32::from(b0) + (u32::from(b1) << 8) + (u32::from(b2) << 16)
 }
 
 #[cfg(test)]
@@ -170,6 +207,119 @@ mod tests {
             let prev_len = len;
             len = flz_compress_len(&input);
             assert!(len > prev_len);
+        }
+    }
+
+    /// The original port of op-geth's `FlzCompressLen`, which zeroes a fresh table on every
+    /// call and bounds-checks each byte, kept verbatim as the reference for equivalence.
+    fn reference_flz_compress_len(input: &[u8]) -> u32 {
+        const fn cmp(input: &[u8], p: u32, q: u32, r: u32) -> u32 {
+            let mut l = 0;
+            let mut r = r - q;
+            while l < r {
+                if input[(p + l) as usize] != input[(q + l) as usize] {
+                    r = 0;
+                }
+                l += 1;
+            }
+            l
+        }
+
+        fn set_next_hash(htab: &mut [u32; 8192], input: &[u8], idx: u32) -> u32 {
+            htab[hash(u24(input, idx)) as usize] = idx;
+            idx + 1
+        }
+
+        fn u24(input: &[u8], idx: u32) -> u32 {
+            u32::from(input[idx as usize])
+                + (u32::from(input[(idx + 1) as usize]) << 8)
+                + (u32::from(input[(idx + 2) as usize]) << 16)
+        }
+
+        let mut idx: u32 = 2;
+
+        let idx_limit: u32 = if input.len() < 13 { 0 } else { input.len() as u32 - 13 };
+
+        let mut anchor = 0;
+
+        let mut size = 0;
+
+        let mut htab = [0; 8192];
+
+        while idx < idx_limit {
+            let mut r: u32;
+            let mut distance: u32;
+
+            loop {
+                let seq = u24(input, idx);
+                let hash = hash(seq);
+                r = htab[hash as usize];
+                htab[hash as usize] = idx;
+                distance = idx - r;
+                if idx >= idx_limit {
+                    break;
+                }
+                idx += 1;
+                if distance < 8192 && seq == u24(input, r) {
+                    break;
+                }
+            }
+
+            if idx >= idx_limit {
+                break;
+            }
+
+            idx -= 1;
+
+            if idx > anchor {
+                size = literals(idx - anchor, size);
+            }
+
+            let len = cmp(input, r + 3, idx + 3, idx_limit + 9);
+            size = flz_match(len, size);
+
+            idx = set_next_hash(&mut htab, input, idx + len);
+            idx = set_next_hash(&mut htab, input, idx);
+            anchor = idx;
+        }
+
+        literals(input.len() as u32 - anchor, size)
+    }
+
+    /// Consensus requires bit-identical output to op-geth, so compare against the reference
+    /// over many inputs on one thread, which also exercises reuse of the per-thread table
+    /// across calls of different lengths and contents.
+    #[test]
+    fn test_flz_compress_len_matches_reference() {
+        let mut state = 0x9e37_79b9_7f4a_7c15_u64;
+        let mut next = || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+        let mut check = |len: usize| {
+            // Small alphabets and zero runs produce matches; 256 symbols mostly literals.
+            let alphabet = [1, 2, 4, 16, 256][(next() % 5) as usize];
+            let zero_bias = next() % 4;
+            let input: Vec<u8> = (0..len)
+                .map(|_| {
+                    let x = next();
+                    if x % 4 < zero_bias { 0 } else { ((x >> 8) % alphabet) as u8 }
+                })
+                .collect();
+            assert_eq!(flz_compress_len(&input), reference_flz_compress_len(&input), "len {len}");
+        };
+        for len in 0..=600 {
+            for _ in 0..16 {
+                check(len);
+            }
+        }
+        // Lengths around the 8192-byte match window, and beyond a 16-bit position.
+        for len in [8191, 8192, 8193, 8205, 8206, 8207, 20_000, 70_000] {
+            for _ in 0..4 {
+                check(len);
+            }
         }
     }
 
