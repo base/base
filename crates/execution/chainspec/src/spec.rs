@@ -360,8 +360,18 @@ impl BaseChainSpec {
 
     /// Returns a runtime upgrade override for an execution fork condition.
     pub fn runtime_fork_condition<H: Hardfork + ?Sized>(&self, fork: &H) -> Option<ForkCondition> {
-        let upgrade_id = BaseUpgrade::from_contract_fork_name(fork.name())?;
-        RuntimeUpgradeRegistry::activation(self.chain().id(), upgrade_id).map(|activation| {
+        self.runtime_upgrade_condition(BaseUpgrade::from_contract_fork_name(fork.name())?)
+    }
+
+    /// Returns a runtime upgrade override for a Base upgrade's fork condition.
+    ///
+    /// Typed equivalent of [`Self::runtime_fork_condition`] that skips fork-name normalization, for
+    /// the [`Upgrades`] and [`EthereumHardforks`] activation checks on the execution path.
+    pub fn runtime_upgrade_condition(&self, upgrade: BaseUpgrade) -> Option<ForkCondition> {
+        if !upgrade.is_contract_backed() {
+            return None;
+        }
+        RuntimeUpgradeRegistry::activation(self.chain().id(), upgrade).map(|activation| {
             match activation {
                 UpgradeActivation::Never => ForkCondition::Never,
                 UpgradeActivation::Timestamp(timestamp) => ForkCondition::Timestamp(timestamp),
@@ -714,13 +724,15 @@ impl Hardforks for BaseChainSpec {
 
 impl EthereumHardforks for BaseChainSpec {
     fn ethereum_fork_activation(&self, fork: EthereumHardfork) -> ForkCondition {
-        self.fork(fork)
+        BaseUpgrade::from_ethereum_hardfork(fork)
+            .and_then(|upgrade| self.runtime_upgrade_condition(upgrade))
+            .unwrap_or_else(|| self.inner.fork(fork))
     }
 }
 
 impl Upgrades for BaseChainSpec {
     fn fork_condition(&self, fork: BaseUpgrade) -> ForkCondition {
-        self.fork(fork)
+        self.runtime_upgrade_condition(fork).unwrap_or_else(|| self.inner.fork(fork))
     }
 
     fn activation_admin_address(&self) -> Option<Address> {
@@ -1049,6 +1061,53 @@ mod tests {
         assert!(spec.is_regolith_active_at_timestamp(42));
 
         RuntimeUpgradeRegistry::clear_chain(chain_id);
+    }
+
+    /// The typed [`Upgrades`] and [`EthereumHardforks`] lookups skip fork-name normalization, so
+    /// they must agree with the name-keyed [`BaseChainSpec::fork`] for every upgrade on every
+    /// built-in schedule, with and without runtime overrides.
+    #[test]
+    fn typed_fork_lookups_match_named_lookups() {
+        let specs = [
+            BaseChainSpec::mainnet(),
+            BaseChainSpec::sepolia(),
+            BaseChainSpec::zeronet(),
+            BaseChainSpec::devnet(),
+        ];
+        for (chain_id, mut spec) in (9_100_010..).zip(specs) {
+            // A distinct chain ID keeps runtime overrides away from the built-in chains' registry
+            // entries, which other tests read concurrently.
+            spec.inner.chain = Chain::from_id(chain_id);
+            RuntimeUpgradeRegistry::clear_chain(chain_id);
+
+            let assert_lookups_agree = |spec: &BaseChainSpec| {
+                for &upgrade in BaseUpgrade::VARIANTS {
+                    assert_eq!(
+                        Upgrades::fork_condition(spec, upgrade),
+                        spec.fork(upgrade),
+                        "{upgrade} on chain {chain_id}"
+                    );
+                }
+                for &fork in EthereumHardfork::VARIANTS {
+                    assert_eq!(
+                        spec.ethereum_fork_activation(fork),
+                        spec.fork(fork),
+                        "{fork} on chain {chain_id}"
+                    );
+                }
+            };
+            assert_lookups_agree(&spec);
+
+            // Override every upgrade, including the non-contract-backed ones a runtime override
+            // must not reach.
+            for (timestamp, &upgrade) in (1_000..).zip(BaseUpgrade::VARIANTS) {
+                RuntimeUpgradeRegistry::set_activation_timestamp(chain_id, upgrade, timestamp);
+            }
+            assert_eq!(spec.fork(BaseUpgrade::Azul), ForkCondition::Timestamp(1_011));
+            assert_lookups_agree(&spec);
+
+            RuntimeUpgradeRegistry::clear_chain(chain_id);
+        }
     }
 
     #[test]
