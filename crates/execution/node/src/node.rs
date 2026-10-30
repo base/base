@@ -12,6 +12,7 @@ use alloy_primitives::{Address, B64, B256, Bytes, map::AddressSet};
 use alloy_rlp::encode;
 use base_common_chains::Upgrades;
 use base_common_consensus::{BasePrimitives, BaseTransaction, BaseTxEnvelope};
+use base_common_evm::BaseTxEnv;
 use base_common_rpc_types_engine::{BasePayloadAttributes, ExecutionData};
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_consensus::BaseBeaconConsensus;
@@ -35,7 +36,7 @@ use base_execution_txpool::{
 use reth_chain_state::CanonStateSubscriptions;
 use reth_chainspec::{BaseFeeParams, ChainSpecProvider, EthChainSpec, Hardforks};
 use reth_discv5::discv5::enr::{IP_ENR_KEY, IP6_ENR_KEY};
-use reth_evm::ConfigureEvm;
+use reth_evm::{ConfigureEvm, TxEnvFor};
 use reth_network::{
     NetworkConfig, NetworkConfigBuilder, NetworkHandle, NetworkManager, NetworkPrimitives,
     PeersInfo, types::BasicNetworkPrimitives,
@@ -1065,6 +1066,7 @@ where
                 <Node::Types as NodeTypes>::ChainSpec,
             >,
         > + 'static,
+    TxEnvFor<Evm>: BaseTxEnv,
     Pool: ParkableTransactionPool<Transaction: BasePooledTx<Consensus = TxTy<Node::Types>>>
         + Unpin
         + 'static,
