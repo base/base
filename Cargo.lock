@@ -4599,6 +4599,7 @@ dependencies = [
  "base-execution-txpool",
  "base-metrics",
  "base-observability-events",
+ "chrono",
  "clap",
  "criterion",
  "derive_more 2.1.1",
