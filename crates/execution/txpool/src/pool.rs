@@ -2839,11 +2839,15 @@ mod tests {
                 PoolErrorKind::AlreadyImported
             )
         );
+        // Trailing bytes do not hash to the transaction hash, so this copy is found only once
+        // decoded.
+        let mut trailing = wire.clone();
+        trailing.raw = [wire.raw.as_ref(), &[0xFF]].concat().into();
         let single = handler.insert_validated_transaction(wire.clone()).await.unwrap_err();
-        let batched = handler.insert_validated_transactions(vec![wire]).await.unwrap();
+        let batched = handler.insert_validated_transactions(vec![wire, trailing]).await.unwrap();
 
         assert_eq!(single.message(), expected);
-        assert_eq!(batched, vec![Some(single)]);
+        assert_eq!(batched, vec![Some(single.clone()), Some(single)]);
         assert_eq!(pool.pool_size().pending, 1);
     }
 
