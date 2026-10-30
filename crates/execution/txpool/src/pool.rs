@@ -32,10 +32,10 @@ use tokio::{
 use tracing::debug;
 
 use crate::{
-    Admission, BasePooledTx, BaseTransactionValidator, FlashblockExpiry, GuardLimits, GuardMetrics,
-    InvalidationCause, InvalidationKey, LimitRejection, MempoolGuard, ParkableBestTransactions,
-    ParkableTransactionPool, ParkedBestTransactions, PredicateContext, StateDiffInvalidation,
-    ValidityPoolMetrics,
+    Admission, BasePooledTx, BaseTransactionValidator, BaseTxPoolError, FlashblockExpiry,
+    GuardLimits, GuardMetrics, InvalidationCause, InvalidationKey, LimitRejection, MempoolGuard,
+    ParkableBestTransactions, ParkableTransactionPool, ParkedBestTransactions, PredicateContext,
+    StateDiffInvalidation, ValidityPoolMetrics,
     best::MergeBestTransactions,
     two_d_nonce_pool::{InsertOutcome, LaneId, LaneUpdate, SidecarLimits, TwoDNoncePool},
 };
@@ -490,7 +490,8 @@ where
     /// Rechecks an EIP-8130 transaction against the pool's block gas limit, which can
     /// move after validation, as reth's protocol pool does for every transaction at
     /// insert. Execution reserves `gas_limit + payer_auth` against the block, and an
-    /// unpriceable payer authentication never fits.
+    /// unpriceable payer authentication never fits. Only a `gas_limit` over the limit
+    /// on its own is a bad transaction: the hash does not cover `payer_auth`.
     fn ensure_eip8130_fits_block_gas_limit(
         &self,
         hash: TxHash,
@@ -503,20 +504,24 @@ where
         let Some(signed) = transaction.as_eip8130() else {
             return Ok(());
         };
+        let gas_limit = transaction.gas_limit();
         let reserved_gas = IntrinsicGas::max_payer_auth_cost(signed)
-            .map_or(u64::MAX, |payer_auth| {
-                FeeCheck::max_chargeable_gas(transaction.gas_limit(), payer_auth)
-            });
+            .map_or(u64::MAX, |payer_auth| FeeCheck::max_chargeable_gas(gas_limit, payer_auth));
         let block_gas_limit = self.protocol_pool.block_info().block_gas_limit;
-        if reserved_gas > block_gas_limit {
-            return Err(reth_transaction_pool::error::PoolError::new(
-                hash,
-                reth_transaction_pool::error::PoolErrorKind::InvalidTransaction(
-                    InvalidPoolTransactionError::ExceedsGasLimit(reserved_gas, block_gas_limit),
-                ),
-            ));
+        if reserved_gas <= block_gas_limit {
+            return Ok(());
         }
-        Ok(())
+        let error = if gas_limit > block_gas_limit {
+            InvalidPoolTransactionError::ExceedsGasLimit(reserved_gas, block_gas_limit)
+        } else {
+            InvalidPoolTransactionError::other(BaseTxPoolError::Eip8130Authentication {
+                reason: BaseTxPoolError::PAYER_AUTH_EXCEEDS_BLOCK_GAS_LIMIT,
+            })
+        };
+        Err(reth_transaction_pool::error::PoolError::new(
+            hash,
+            reth_transaction_pool::error::PoolErrorKind::InvalidTransaction(error),
+        ))
     }
 
     /// Records a transaction's last valid block in the block-expiry index,
@@ -3293,6 +3298,25 @@ mod tests {
         }
     }
 
+    /// Asserts the rejection for a sponsored transaction whose `gas_limit` fits the block
+    /// gas limit but whose payer authentication gas pushes it over: an authentication
+    /// error that does not mark the hash bad, since the hash does not cover `payer_auth`.
+    fn assert_payer_auth_exceeds_block_gas_limit(
+        error: &reth_transaction_pool::error::PoolError,
+        nonce_key: U256,
+    ) {
+        let InvalidPoolTransactionError::Other(other) = invalid_kind(error) else {
+            panic!("nonce key {nonce_key}: expected a Base pool error, got {error:?}");
+        };
+        assert!(!other.is_bad_transaction(), "nonce key {nonce_key}: {error:?}");
+        match other.as_any().downcast_ref::<BaseTxPoolError>() {
+            Some(BaseTxPoolError::Eip8130Authentication { reason }) => {
+                assert_eq!(*reason, BaseTxPoolError::PAYER_AUTH_EXCEEDS_BLOCK_GAS_LIMIT);
+            }
+            other => panic!("nonce key {nonce_key}: expected Eip8130Authentication, got {other:?}"),
+        }
+    }
+
     #[tokio::test]
     async fn eip8130_routes_enforce_the_minimum_priority_fee() {
         let (pool, client) = build_integration_pool_with_policies(PoolPolicies {
@@ -3419,15 +3443,7 @@ mod tests {
                 .add_transaction(TransactionOrigin::External, transaction)
                 .await
                 .expect_err("gas_limit plus payer authentication exceeds the block gas limit");
-            assert!(
-                matches!(
-                    invalid_kind(&error),
-                    InvalidPoolTransactionError::ExceedsGasLimit(gas, limit)
-                        if *gas == SPONSORED_GAS_LIMIT + payer_auth
-                            && *limit == SPONSORED_GAS_LIMIT
-                ),
-                "nonce key {nonce_key}: {error:?}"
-            );
+            assert_payer_auth_exceeds_block_gas_limit(&error, nonce_key);
         }
     }
 
@@ -3603,14 +3619,7 @@ mod tests {
                 pool.add_transaction(TransactionOrigin::External, transaction).await.expect_err(
                     "gas_limit plus payer authentication exceeds the pool's block gas limit",
                 );
-            assert!(
-                matches!(
-                    invalid_kind(&error),
-                    InvalidPoolTransactionError::ExceedsGasLimit(gas, limit)
-                        if *gas == POLICY_GAS_LIMIT + 1 && *limit == POLICY_GAS_LIMIT
-                ),
-                "nonce key {nonce_key}: {error:?}"
-            );
+            assert_payer_auth_exceeds_block_gas_limit(&error, nonce_key);
             let transaction = sponsored_policy_tx(&signer, &payer, nonce_key, POLICY_GAS_LIMIT);
             pool.add_transaction(TransactionOrigin::External, transaction)
                 .await

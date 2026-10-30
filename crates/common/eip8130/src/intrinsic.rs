@@ -238,7 +238,7 @@ impl IntrinsicGas {
     ///
     /// `encoded` is the EIP-2718-serialized signed transaction
     /// (`type_byte || rlp([..fields.., sender_auth, payer_auth])`) — the same
-    /// bytes used for networking and the transaction hash. It is taken as a
+    /// bytes used for networking and the transactions root. It is taken as a
     /// parameter, rather than re-serialized here, because `compute` runs for
     /// every transaction on both the mempool-admission and block-building paths,
     /// where the caller already holds the serialized form; it feeds only the

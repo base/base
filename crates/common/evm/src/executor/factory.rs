@@ -1,6 +1,6 @@
 //! Contains the factory.
 
-use alloy_consensus::{Transaction, TransactionEnvelope, TxReceipt};
+use alloy_consensus::{Transaction, TransactionEnvelope, TxReceipt, transaction::TxHashRef};
 use alloy_eips::Encodable2718;
 use alloy_evm::{
     EvmFactory, FromRecoveredTx, FromTxWithEncoded,
@@ -55,7 +55,10 @@ impl<R, Spec, EvmFactory> BaseBlockExecutorFactory<R, Spec, EvmFactory> {
 impl<R, Spec, EvmF> BlockExecutorFactory for BaseBlockExecutorFactory<R, Spec, EvmF>
 where
     R: BaseReceiptBuilder<
-            Transaction: Transaction + Encodable2718 + TransactionEnvelope<TxType: Send + 'static>,
+            Transaction: Transaction
+                             + Encodable2718
+                             + TxHashRef
+                             + TransactionEnvelope<TxType: Send + 'static>,
             Receipt: TxReceipt,
         > + Clone,
     Spec: Upgrades + Clone,
