@@ -415,8 +415,8 @@ summary = "Txpool RPC admin/status APIs and validity submissions; shared staged 
 digest = "adef27d8c3"
 
 ["crates/execution/txpool-tracing/README.md"]
-summary = "Txpool tracing extension: tracks mempool lifecycle events, txpool_transactionStatus RPC, enabling CLI flags, and reth_transaction_tracing_tx_event histogram. Use to debug tx latency or drops."
-digest = "e58f6b44fb"
+summary = "Txpool tracing extension: tracks mempool lifecycle events, txpool_transactionStatus RPC, enabling CLI flags, tx_event histogram and flow-labeled inclusion metrics. Use to debug tx latency or drops."
+digest = "469e9f8628"
 
 ["crates/execution/txpool/PROPAGATION_PIPELINE.md"]
 summary = "Plan to forward mempool txs to builders via base_insertValidatedTransaction in 4 PRs (consumer, forwarder, builder endpoint, node integration). Only PR 1 is marked done. Names a crates/txpool/ path."
