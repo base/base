@@ -1,5 +1,6 @@
 use std::{fmt, path::Path, time::Duration};
 
+use alloy_eips::eip7825::MAX_TX_GAS_LIMIT_OSAKA;
 use alloy_primitives::{Address, U256};
 use alloy_signer_local::PrivateKeySigner;
 use serde::{Deserialize, Deserializer, Serialize, de::Error as SerdeError};
@@ -16,7 +17,7 @@ use crate::{
     rpc::MAX_BATCH_RPC_SIZE,
     runner::{TxConfig, TxType},
     utils::{BaselineError, Result},
-    workload::{MAX_TOKEN_MOVE_TRANSFERS_PER_TX, RealTokenSetup, UniswapV3Hop},
+    workload::{AaBundlePayload, MAX_TOKEN_MOVE_TRANSFERS_PER_TX, RealTokenSetup, UniswapV3Hop},
 };
 
 /// Configuration for a load test, loadable from YAML.
@@ -319,7 +320,9 @@ pub enum TxTypeConfig {
         transfers_per_tx: u32,
     },
 
-    /// ERC-4337 `handleOps` stand-in; setup deploys the bundle contract.
+    /// ERC-4337 `handleOps` stand-in; setup deploys the bundle contract. The resulting gas limit
+    /// (`40_000 + 60_000 * ops_per_bundle + 40 * padding_bytes`) must fit the EIP-7825 per-tx
+    /// cap of 2^24 gas.
     AaBundle {
         /// Signed ops per bundle transaction.
         #[serde(default = "default_aa_ops_per_bundle")]
@@ -866,6 +869,12 @@ impl TestConfig {
                         "aa_bundle ops_per_bundle must be > 0".into(),
                     ));
                 }
+                let gas_limit = AaBundlePayload::gas_limit(*ops_per_bundle, *padding_bytes);
+                if gas_limit > MAX_TX_GAS_LIMIT_OSAKA {
+                    return Err(BaselineError::Config(format!(
+                        "aa_bundle ops_per_bundle {ops_per_bundle} with padding_bytes {padding_bytes} needs a {gas_limit} gas limit, above the {MAX_TX_GAS_LIMIT_OSAKA} per-tx cap"
+                    )));
+                }
                 TxType::AaBundle { ops_per_bundle: *ops_per_bundle, padding_bytes: *padding_bytes }
             }
             TxTypeConfig::Precompile { target, iterations } => {
@@ -1378,7 +1387,7 @@ transactions:
     }
 
     #[test]
-    fn aa_bundle_config_defaults_and_rejects_empty_bundles() {
+    fn aa_bundle_config_defaults_and_bounds() {
         let parse = |fields: &str| {
             TestConfig::from_yaml(&config_yaml(&format!(
                 "transactions:\n  - weight: 100\n    type: aa_bundle\n{fields}"
@@ -1392,6 +1401,15 @@ transactions:
             TxType::AaBundle { ops_per_bundle: 12, padding_bytes: 0 }
         ));
         assert!(parse("    ops_per_bundle: 0\n").is_err());
+        // 40k + 60k * 278 = 16,720,000 and 40k + 60k + 40 * 416,930 = 16,777,200 fit 2^24.
+        assert!(parse("    ops_per_bundle: 278\n").is_ok());
+        assert!(parse("    ops_per_bundle: 1\n    padding_bytes: 416930\n").is_ok());
+        for fields in
+            ["    ops_per_bundle: 279\n", "    ops_per_bundle: 1\n    padding_bytes: 416931\n"]
+        {
+            let err = parse(fields).unwrap_err().to_string();
+            assert!(err.contains("padding_bytes") && err.contains("per-tx cap"), "{err}");
+        }
     }
 
     #[test]

@@ -78,6 +78,13 @@ impl AaBundlePayload {
         Self { ops_per_bundle, padding_bytes, signers }
     }
 
+    /// Gas limit of a bundle with `ops_per_bundle` ops and `padding_bytes` padding.
+    pub fn gas_limit(ops_per_bundle: u32, padding_bytes: u32) -> u64 {
+        GAS_BASE
+            + GAS_PER_OP * u64::from(ops_per_bundle)
+            + GAS_PER_PADDING_BYTE * u64::from(padding_bytes)
+    }
+
     /// Address of the bundle contract.
     pub fn contract() -> Address {
         CREATE2_FACTORY.create2_from_code(B256::ZERO, &AaBundle::BYTECODE)
@@ -115,11 +122,10 @@ impl Payload for AaBundlePayload {
             .collect();
         let padding: Vec<u8> = (0..self.padding_bytes).map(|_| rng.random()).collect();
         let input = AaBundle::handleOpsCall { ops, padding: padding.into() }.abi_encode();
-        TransactionRequest::default().with_to(Self::contract()).with_input(input).with_gas_limit(
-            GAS_BASE
-                + GAS_PER_OP * u64::from(self.ops_per_bundle)
-                + GAS_PER_PADDING_BYTE * u64::from(self.padding_bytes),
-        )
+        TransactionRequest::default()
+            .with_to(Self::contract())
+            .with_input(input)
+            .with_gas_limit(Self::gas_limit(self.ops_per_bundle, self.padding_bytes))
     }
 
     async fn prepare(&self, ctx: &mut ChainPrepContext<'_>) -> Result<()> {

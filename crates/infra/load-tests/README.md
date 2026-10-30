@@ -332,7 +332,9 @@ nonce slot, credits a fresh recipient slot, and emits one event; `padding_bytes`
 appends random calldata. Setup deploys the contract through the CREATE2 deployment proxy
 (`0x4e59…956C`) unless it already exists. On a Base mainnet fork each op costs ~36k gas over a
 ~29k base: the default sends ~457k gas, 2,436 calldata bytes and 12 logs per transaction,
-within mainnet's ERC-4337 bundles (390–530k gas, ~2.6 KB, ~12 logs).
+within mainnet's ERC-4337 bundles (390–530k gas, ~2.6 KB, ~12 logs). Each bundle's gas limit
+(`40_000 + 60_000 * ops_per_bundle + 40 * padding_bytes`) must fit the EIP-7825 per-tx cap of
+16,777,216 gas: at most 278 ops without padding, or 416,930 padding bytes with one op.
 
 
 #### Precompile Testing
