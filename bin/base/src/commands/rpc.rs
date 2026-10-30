@@ -60,7 +60,7 @@ pub(crate) struct RpcCommand {
 
 /// Parsed in place of `--l1-eth-rpc`, and of an omitted `--l1-beacon`, with `--l1.embedded`;
 /// replaced by the embedded server URLs before consensus starts.
-const EMBEDDED_L1_PLACEHOLDER: &str = "http://embedded-l1.invalid";
+pub(crate) const EMBEDDED_L1_PLACEHOLDER: &str = "http://embedded-l1.invalid";
 
 impl RpcCommand {
     /// Runs the `rpc` flavor.

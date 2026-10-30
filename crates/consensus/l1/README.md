@@ -73,7 +73,16 @@ ID Sepolia peers expect.
 ```sh
 base --chain base rpc --l1.embedded --l1.embedded.port 30304 ...
 base --chain sepolia rpc --l1.embedded ...
+base --chain base sequencer --l1.embedded --upgrade-signal.l1-rpc <l1 rpc> ...
 ```
+
+On `base sequencer`, the L1 origin selector and payload attributes read the embedded node in
+process, and the L1 watcher polls its JSON-RPC server on loopback, so no L1 request leaves the
+host. The verified head trails the L1 tip by about one
+slot, so lower `--sequencer.l1-confs` by one to keep today's origin timing. Run the embedded node on
+standby sequencers too, so a failover doesn't wait the minute or more a cold start takes to find
+peers. The upgrade signal still reads its contract over `--upgrade-signal.l1-rpc`, which the
+sequencer requires whenever the chain has an upgrade signal contract.
 
 The light client starts from a checkpoint built into the release. Pass
 `--l1.embedded.checkpoint 0x<trusted beacon block root>` to use your own; it must be younger than
