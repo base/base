@@ -603,12 +603,15 @@ where
     /// - At genesis: calls `engine.reset()` to FCU with all heads set to genesis.
     /// - Beyond genesis: probes the EL with reth's own safe/finalized labels so that
     ///   `el_sync_finished` can be set immediately, unblocking the initial derivation reset.
+    ///
+    /// Processors that skip resets always probe, because the L1-free standalone sequencer has no
+    /// L1 to search for a starting forkchoice, even at genesis.
     pub async fn bootstrap_active_sequencer(
         &mut self,
         head: Option<L2BlockInfo>,
         at_genesis: bool,
     ) {
-        if at_genesis {
+        if at_genesis && !self.skip_reset {
             match self.engine.reset(Arc::clone(&self.client), Arc::clone(&self.rollup)).await {
                 Ok(_) => {}
                 Err(err) => {
