@@ -168,6 +168,97 @@ fn receipt() {
         )
         self.sync()
 
+    def test_url_literal_does_not_hide_gate_and_preserves_line_numbers(self):
+        self.sync()
+        path = "crates/execution/receipt/src/lib.rs"
+        consumer = self.root / path
+        consumer.write_text(
+            '/* first\nsecond */\nfn bypass() { let url = "https://base.org"; '
+            'cfg.is_regolith_active(10); }\n' + consumer.read_text()
+        )
+        output = self.run_cli("check", success=False)
+        self.assertIn(f"{path}:3: Base behavior must use a feature gate", output)
+
+    def test_literals_and_comments_are_not_gates_or_feature_uses(self):
+        self.sync()
+        path = "crates/execution/receipt/src/examples.rs"
+        text = "cfg.is_regolith_active(10); BaseFeature::Unknown; BaseFeature::DepositNonce"
+        for source in (
+            f"// {text}\n",
+            f"/* {text} */\n",
+            f"/* outer /* nested */ {text} */\n",
+            f'const S: &str = "{text}";\n',
+            f'const S: &str = r"{text}";\n',
+            f'const S: &str = r###"a "# quote\n{text}"###;\n',
+            f'const S: &[u8] = b"{text}";\n',
+            f'const S: &[u8] = br##"{text}"##;\n',
+            f'const S: &CStr = c"{text}";\n',
+            f'const S: &CStr = cr#"{text}"#;\n',
+        ):
+            for contents in text.split("; "):
+                with self.subTest(source=source, contents=contents):
+                    self.write(path, source.replace(text, contents))
+                    # Neither an unknown use nor an extra consumer should appear.
+                    self.run_cli("check")
+            with self.subTest(source=source, subsequent_gate=True):
+                self.write(path, source + "cfg.is_regolith_active(10);\n")
+                output = self.run_cli("check", success=False)
+                line = source.count("\n") + 1
+                self.assertIn(f"{path}:{line}: Base behavior must use a feature gate", output)
+
+    def test_removed_consumer_cannot_be_replaced_by_comments_or_literals(self):
+        self.sync()
+        path = "crates/execution/receipt/src/lib.rs"
+        for source in (
+            "// BaseFeature::DepositNonce\n",
+            "/* BaseFeature::DepositNonce */\n",
+            'const S: &str = "BaseFeature::DepositNonce";\n',
+            'const S: &str = r#"BaseFeature::DepositNonce"#;\n',
+        ):
+            with self.subTest(source=source):
+                self.write(path, source)
+                self.assertIn("DepositNonce has no production consumers",
+                              self.run_cli("check", success=False))
+
+    def test_literal_and_comment_test_modules_do_not_truncate_production(self):
+        self.sync()
+        path = "crates/execution/receipt/src/lib.rs"
+        consumer = self.root / path
+        original = consumer.read_text()
+        fake_module = "\n#[cfg(test)]\nmod tests {}\n"
+        for prefix in (
+            f'const S: &str = "{fake_module}";\n',
+            f'const S: &str = r##"{fake_module}"##;\n',
+            f"/* {fake_module} */\n",
+            f"/* outer /* inner */ {fake_module} */\n",
+            '#[cfg(feature = "test")]\nmod tests {}\n',
+        ):
+            with self.subTest(prefix=prefix):
+                consumer.write_text(prefix + original)
+                self.run_cli("check")
+                consumer.write_text(prefix + "cfg.is_regolith_active(10);\n" + original)
+                output = self.run_cli("check", success=False)
+                line = prefix.count("\n") + 1
+                self.assertIn(f"{path}:{line}: Base behavior must use a feature gate", output)
+
+    def test_lifetimes_and_escaped_chars_do_not_hide_subsequent_gates(self):
+        self.sync()
+        path = "crates/execution/receipt/src/lib.rs"
+        consumer = self.root / path
+        original = consumer.read_text()
+        for prefix in (
+            "fn lifetime<'a>(x: &'a str) { let _ = x; }",
+            "fn lifetime(x: &'static str, y: &'_ str) {}",
+            "'label: loop { break 'label; }",
+            r"let chars = ('\'', '\\', '\n', '\u{1f600}', '🦀');",
+            r"let bytes = (b'\'', b'\\', b'\x22', b'\n');",
+            r'''let quotes = ('"', b'"'); let s = "escaped \" quote";''',
+        ):
+            with self.subTest(prefix=prefix):
+                consumer.write_text(prefix + " cfg.is_regolith_active(10);\n" + original)
+                output = self.run_cli("check", success=False)
+                self.assertIn(f"{path}:1: Base behavior must use a feature gate", output)
+
     def test_inventory_tracks_new_and_deleted_consumers(self):
         self.sync()
         self.write("crates/proof/receipt/src/lib.rs", """
