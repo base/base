@@ -154,7 +154,9 @@ runs:
       if: inputs.foundry == 'true'
       uses: foundry-rs/foundry-toolchain@dba66c27052e63476d886f22216e119ba7e615bf # v1.9.2
       with:
-        version: stable
+        # Pinned so a Foundry release cannot change CI behavior without a reviewed bump
+        # (anvil 1.8.7 changed evm_revert mempool semantics and broke a test overnight).
+        version: v1.8.7
 
     - name: Install SP1 toolchain
       if: inputs.sp1 == 'true'

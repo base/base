@@ -382,8 +382,11 @@ jobs:
               sources+=("${image}@sha256:${digest##*/}")
             done
 
-            docker buildx imagetools create "${tag_args[@]}" "${sources[@]}"
-            docker buildx imagetools inspect "${image}:${TAG}"
+            # Callers run this function as an `if` condition, which suspends `set -e` inside it,
+            # so each step's failure must be returned explicitly. Without this, a failed create
+            # followed by a successful inspect of an older tag reports the image as published.
+            docker buildx imagetools create "${tag_args[@]}" "${sources[@]}" || return 1
+            docker buildx imagetools inspect "${image}:${TAG}" || return 1
           }
 
           packages=(
