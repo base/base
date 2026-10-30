@@ -9,6 +9,8 @@ use chrono::{DateTime, Datelike, Utc};
 use futures::{Stream, StreamExt, TryStreamExt, stream};
 use tokio::io::AsyncReadExt;
 
+use crate::LocalPath;
+
 /// Failures at the storage boundary.
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
@@ -30,6 +32,7 @@ pub enum StoreError {
 }
 
 /// Local directory containing a `replay-record/v1` dataset.
+/// The local directory is recorder-owned; symlinks below its root are rejected.
 #[derive(Debug, Clone)]
 pub enum ReplayStore {
     /// Root directory; objects are atomically published without replacement.
@@ -103,7 +106,12 @@ impl ReplayStore {
 
     async fn get(&self, key: &str) -> Result<Option<Vec<u8>>, StoreError> {
         let reader = match self {
-            Self::Local(root) => match tokio::fs::File::open(root.join(key)).await {
+            Self::Local(root) => match async {
+                let path = LocalPath::resolve(root, key, false).await?;
+                tokio::fs::File::open(path).await
+            }
+            .await
+            {
                 Ok(file) => file,
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
                 Err(e) => return Err(e.into()),
@@ -129,10 +137,9 @@ impl ReplayStore {
         }
         match self {
             Self::Local(root) => {
-                let path = root.join(key);
+                let path = LocalPath::resolve(root, &key, true).await?;
                 tokio::task::spawn_blocking(move || {
                     let parent = path.parent().ok_or(StoreError::Invalid("object path"))?;
-                    std::fs::create_dir_all(parent)?;
                     let mut file = tempfile::NamedTempFile::new_in(parent)?;
                     file.write_all(&bytes)?;
                     file.persist_noclobber(path).map_err(|e| e.error)?;
