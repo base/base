@@ -8,6 +8,7 @@ use url::Url;
 use crate::{
     config::{OsakaTarget, ValiditySigningMode},
     utils::{BaselineError, Result},
+    workload::UniswapV3Hop,
 };
 
 /// Source for a validity predicate's address, resolved per transaction at
@@ -179,6 +180,8 @@ pub enum TxType {
         contract: Address,
         /// Number of storage slots to write per transaction.
         slots_per_tx: u32,
+        /// Mean fraction of written slots that are fresh.
+        new_slot_ratio: f64,
     },
     /// Deterministic `DoubleCounter` `increment()` call.
     DoubleCounter {
@@ -226,6 +229,8 @@ pub enum TxType {
         reverse_max_amount: U256,
         /// Replaces the reverse range with the forward range priced at the pool before the run.
         derive_reverse_amounts: bool,
+        /// Intermediate tokens for a multi-hop route; empty for a single pool.
+        via: Vec<UniswapV3Hop>,
     },
     /// Aerodrome Slipstream (concentrated liquidity) swap.
     AerodromeCl {

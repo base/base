@@ -400,6 +400,28 @@ On `uniswap_v3`, `reverse_amounts: auto` instead derives the reverse range befor
     reverse_amounts: auto # USDC raw units at the pool price
 ```
 
+`via` on `uniswap_v3` routes each swap through intermediate tokens with `SwapRouter02` `exactInput`; each entry names a token and the fee of the pool that swaps into it, and `fee` stays the last pool's fee. Reverse swaps take the same pools backwards. Only the router pulls intermediate tokens, so senders need no extra balances or approvals. `reverse_amounts: auto` prices the range through every pool in turn. `via` cannot be combined with `native`, and the gas limit is 250,000 per pool. These Base mainnet routes end at USDC, so they work with the `real_token_setup` above:
+
+```yaml
+  - weight: 100
+    type: uniswap_v3
+    router: "0x2626664c2603336E57B271c5C0b26F421741e481"
+    token_in: "0x4200000000000000000000000000000000000006" # WETH
+    token_out: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" # USDC, gitleaks:allow
+    via:
+      - token: "0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf" # cbBTC, gitleaks:allow
+        fee: 500
+    fee: 500
+    min_amount: "10000000000000"
+    max_amount: "100000000000000"
+    reverse_amounts: auto
+  # Three pools: WETH -> DAI -> USDbC -> USDC.
+  #   via:
+  #     - { token: "0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb", fee: 500 } # DAI, gitleaks:allow
+  #     - { token: "0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA", fee: 100 } # USDbC, gitleaks:allow
+  #   fee: 100
+```
+
 #### Running multiple load tests
 
 - Tune `target_gps`, `block_time`, and sender count appropriately. Omit `target_gps` to keep one

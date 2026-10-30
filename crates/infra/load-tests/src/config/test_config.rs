@@ -16,7 +16,7 @@ use crate::{
     rpc::MAX_BATCH_RPC_SIZE,
     runner::{TxConfig, TxType},
     utils::{BaselineError, Result},
-    workload::RealTokenSetup,
+    workload::{RealTokenSetup, UniswapV3Hop},
 };
 
 /// Configuration for a load test, loadable from YAML.
@@ -298,6 +298,12 @@ pub enum TxTypeConfig {
         /// Number of storage slots to write per transaction.
         #[serde(default = "default_storage_slots_per_tx")]
         slots_per_tx: u32,
+        /// Mean fraction of written slots that are fresh (0.0..=1.0); the rest overwrite
+        /// slots written earlier. Values below 1.0 call `writeStorage` instead of `fillStorage`;
+        /// overwrites pick from the contract's earlier `writeStorage` fresh slots, so they spread
+        /// across the trie only once enough fresh slots exist (0.0 alone never adds any).
+        #[serde(default = "default_storage_new_slot_ratio")]
+        new_slot_ratio: f64,
     },
 
     /// Deterministic `DoubleCounter` `increment()` call.
@@ -359,6 +365,9 @@ pub enum TxTypeConfig {
         /// Derives the reverse range from the pool price; excludes the explicit reverse amounts.
         #[serde(default)]
         reverse_amounts: Option<ReverseAmounts>,
+        /// Intermediate tokens for a multi-hop `exactInput` route; `fee` is the last pool's fee.
+        #[serde(default)]
+        via: Vec<UniswapV3Hop>,
     },
     /// B-20 precompile token transfer. Each sender creates and transfers its own token, created
     /// per run during setup.
@@ -413,6 +422,10 @@ const fn default_iterations() -> u32 {
 
 const fn default_storage_slots_per_tx() -> u32 {
     10
+}
+
+const fn default_storage_new_slot_ratio() -> f64 {
+    1.0
 }
 
 /// Upper bound on `slots_per_tx` so the payload's gas limit
@@ -782,13 +795,22 @@ impl TestConfig {
                 TxType::Calldata { max_size: *max_size, repeat_count: *repeat_count }
             }
             TxTypeConfig::Erc20 { contract } => TxType::Erc20 { contract: *contract },
-            TxTypeConfig::Storage { contract, slots_per_tx } => {
+            TxTypeConfig::Storage { contract, slots_per_tx, new_slot_ratio } => {
                 if !(1..=MAX_STORAGE_SLOTS_PER_TX).contains(slots_per_tx) {
                     return Err(BaselineError::Config(format!(
                         "storage slots_per_tx must be 1..={MAX_STORAGE_SLOTS_PER_TX}"
                     )));
                 }
-                TxType::Storage { contract: *contract, slots_per_tx: *slots_per_tx }
+                if !(0.0..=1.0).contains(new_slot_ratio) {
+                    return Err(BaselineError::Config(
+                        "storage new_slot_ratio must be between 0.0 and 1.0".into(),
+                    ));
+                }
+                TxType::Storage {
+                    contract: *contract,
+                    slots_per_tx: *slots_per_tx,
+                    new_slot_ratio: *new_slot_ratio,
+                }
             }
             TxTypeConfig::DoubleCounter { contract } => {
                 TxType::DoubleCounter { contract: *contract }
@@ -823,12 +845,20 @@ impl TestConfig {
                 reverse_min_amount,
                 reverse_max_amount,
                 reverse_amounts,
+                via,
             } => {
                 let max_u24: u32 = (1 << 24) - 1;
-                if *fee > max_u24 {
-                    return Err(BaselineError::Config(format!(
-                        "uniswap_v3 fee {fee} exceeds u24 max ({max_u24})"
-                    )));
+                for fee in via.iter().map(|hop| &hop.fee).chain([fee]) {
+                    if *fee > max_u24 {
+                        return Err(BaselineError::Config(format!(
+                            "uniswap_v3 fee {fee} exceeds u24 max ({max_u24})"
+                        )));
+                    }
+                }
+                if *native && !via.is_empty() {
+                    return Err(BaselineError::Config(
+                        "uniswap_v3 via cannot be combined with native".into(),
+                    ));
                 }
                 validate_swap_amounts(*min_amount, *max_amount, "uniswap_v3")?;
                 let derive_reverse_amounts = reverse_amounts.is_some();
@@ -860,6 +890,7 @@ impl TestConfig {
                     reverse_min_amount,
                     reverse_max_amount,
                     derive_reverse_amounts,
+                    via: via.clone(),
                 }
             }
             TxTypeConfig::AerodromeCl {
@@ -1217,12 +1248,13 @@ transactions:
     type: storage
     contract: "0x1234567890123456789012345678901234567890"
     slots_per_tx: 25
+    new_slot_ratio: 0.25
 "#,
         );
         let config = TestConfig::from_yaml(&yaml).unwrap();
         assert_eq!(config.transactions.len(), 1);
         match &config.transactions[0].tx_type {
-            TxTypeConfig::Storage { contract, slots_per_tx } => {
+            TxTypeConfig::Storage { contract, slots_per_tx, .. } => {
                 assert_eq!(
                     *contract,
                     "0x1234567890123456789012345678901234567890".parse::<Address>().unwrap()
@@ -1235,13 +1267,14 @@ transactions:
         let load_config = config.to_load_config(Some(1337)).unwrap();
         assert_eq!(load_config.transactions.len(), 1);
         match &load_config.transactions[0].tx_type {
-            TxType::Storage { contract, slots_per_tx } => {
+            TxType::Storage { contract, slots_per_tx, new_slot_ratio } => {
                 assert_eq!(
                     *contract,
                     "0x1234567890123456789012345678901234567890".parse::<Address>().unwrap(),
                     "storage contract address must round-trip through conversion"
                 );
                 assert_eq!(*slots_per_tx, 25, "slots_per_tx must be preserved");
+                assert_eq!(*new_slot_ratio, 0.25, "new_slot_ratio must be preserved");
             }
             _ => panic!("expected TxType::Storage after conversion"),
         }
@@ -1259,11 +1292,27 @@ transactions:
         );
         let config = TestConfig::from_yaml(&yaml).unwrap();
         match &config.transactions[0].tx_type {
-            TxTypeConfig::Storage { slots_per_tx, .. } => {
+            TxTypeConfig::Storage { slots_per_tx, new_slot_ratio, .. } => {
                 assert_eq!(*slots_per_tx, 10, "slots_per_tx must default to 10");
+                assert_eq!(*new_slot_ratio, 1.0, "new_slot_ratio must default to 1.0");
             }
             _ => panic!("expected Storage"),
         }
+    }
+
+    #[test]
+    fn storage_config_rejects_new_slot_ratio_above_one() {
+        let yaml = config_yaml(
+            r#"
+transactions:
+  - weight: 100
+    type: storage
+    contract: "0x1234567890123456789012345678901234567890"
+    new_slot_ratio: 1.5
+"#,
+        );
+        let err = TestConfig::from_yaml(&yaml).unwrap().to_load_config(Some(1337)).unwrap_err();
+        assert!(err.to_string().contains("new_slot_ratio must be between 0.0 and 1.0"), "{err}");
     }
 
     #[test]
@@ -1532,6 +1581,20 @@ transactions:
         assert_eq!(reverse_min_amount, U256::from(10_000));
         assert_eq!(reverse_max_amount, U256::from(100_000));
         assert!(!derive_reverse_amounts);
+    }
+
+    #[test]
+    fn uniswap_v3_via_parses_and_validates_hops() {
+        let hop = "    via:\n      - token: \"0x3333333333333333333333333333333333333333\"\n        fee: 500\n";
+        let TxType::UniswapV3 { via, .. } = uniswap_v3_reverse(hop).unwrap() else {
+            panic!("expected UniswapV3");
+        };
+        assert_eq!(via, vec![UniswapV3Hop { token: Address::repeat_byte(0x33), fee: 500 }]);
+
+        let err = uniswap_v3_reverse(&hop.replace("fee: 500", "fee: 16777216")).unwrap_err();
+        assert!(err.to_string().contains("exceeds u24 max"), "{err}");
+        let err = uniswap_v3_reverse(&format!("{hop}    native: true\n")).unwrap_err();
+        assert!(err.to_string().contains("via cannot be combined with native"), "{err}");
     }
 
     #[test]

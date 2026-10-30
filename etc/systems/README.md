@@ -264,7 +264,10 @@ run. Put the directory outside the restored datadirs so restoring the snapshot d
 
 `--output-dir` is one self-contained `base/benchmark` run directory. It receives
 `benchmark-result.json`, `metadata.json`, `metrics-sequencer.json`, `load-test-result.json`, and,
-with a client datadir, `metrics-validator.json`. Set `BASE_BENCH_CLIENT_VERSION` to a stable
+with a client datadir, `metrics-validator.json`. When `<config>.targets.json` from
+`etc/scripts/local/mainnet-mix.py` sits beside the load-test config, it also receives
+`calibration.json`: per metric, the mainnet target, the run's value, the relative error, and whether
+it is within tolerance. Set `BASE_BENCH_CLIENT_VERSION` to a stable
 build label when the report should compare commits or releases. The role metrics contain
 `gas/per_block`, `gas/per_second`, `transactions/per_block`, `transactions/per_second`, and selected
 Reth Prometheus diagnostics. `BlockNumber` uses two-second-equivalent measurement units: each 2s
