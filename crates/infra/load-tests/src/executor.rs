@@ -249,7 +249,7 @@ impl LoadTestExecutor {
 
         if setup.real_token_setup.is_some()
             || runner.needs_b20_setup()
-            || runner.needs_aa_bundle_setup()
+            || runner.needs_contract_setup()
         {
             info!(stage = LoadTestStage::Setup.as_str(), "preparing payload chain state");
             runner.prepare_payloads(setup.b20_mint, setup.real_token_setup.as_ref()).await?;

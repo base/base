@@ -337,6 +337,12 @@ within mainnet's ERC-4337 bundles (390–530k gas, ~2.6 KB, ~12 logs). Each bund
 16,777,216 gas: at most 278 ops without padding, or 416,930 padding bytes with one op.
 
 
+#### Storage writes
+
+`type: storage` writes `slots_per_tx` slots per transaction through `StorageFiller`, a
+`new_slot_ratio` fraction of them fresh. Without `contract`, setup deploys `StorageFiller`
+through the CREATE2 deployment proxy (`0x4e59…956C`) unless it already exists.
+
 #### Precompile Testing
 
 All EVM precompiles are supported for load testing:

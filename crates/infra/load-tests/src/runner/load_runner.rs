@@ -35,7 +35,8 @@ use crate::{
     },
     workload::{
         AccountPool, ChainPrepContext, KeyStream, PREP_CONCURRENCY, RealTokenRecoverySummary,
-        RealTokenSetup, SeededRng, UniswapV3Payload, WorkloadGenerator, recover_real_tokens,
+        RealTokenSetup, SeededRng, StoragePayload, UniswapV3Payload, WorkloadGenerator,
+        recover_real_tokens,
     },
 };
 
@@ -531,9 +532,14 @@ impl LoadRunner {
         self.config.transactions.iter().any(|t| matches!(t.tx_type, TxType::B20))
     }
 
-    /// Returns true when an `aa_bundle` workload needs its contract deployed.
-    pub fn needs_aa_bundle_setup(&self) -> bool {
-        self.config.transactions.iter().any(|t| matches!(t.tx_type, TxType::AaBundle { .. }))
+    /// Returns true when an `aa_bundle` workload, or a `storage` workload on the default
+    /// `StorageFiller`, needs its contract deployed.
+    pub fn needs_contract_setup(&self) -> bool {
+        self.config.transactions.iter().any(|t| match t.tx_type {
+            TxType::AaBundle { .. } => true,
+            TxType::Storage { contract, .. } => contract == StoragePayload::default_contract(),
+            _ => false,
+        })
     }
 
     /// Ensures B-20 workloads have even sender count so every alice has a funded bob.
@@ -644,7 +650,7 @@ mod tests {
 
     use super::{LoadConfig, LoadRunner};
     use crate::{
-        LoadTestExecutor, LoadTestSetupAmounts,
+        LoadTestExecutor, LoadTestSetupAmounts, StoragePayload,
         runner::{TxConfig, TxType},
         workload::{
             LiquidityOps, SenderPosition, UniswapPositions, UniswapV3Hop, UniswapV3LiquidityPayload,
@@ -682,6 +688,51 @@ mod tests {
 
         let gas = runner.calibrate_avg_gas().await.expect("calibration succeeds");
         assert!(gas < 41_000, "calibrated {gas} gas includes the first-write cost");
+    }
+
+    #[tokio::test]
+    async fn storage_setup_deploys_the_default_contract() {
+        let anvil = Anvil::new().spawn();
+        let provider: RootProvider = RootProvider::new_http(anvil.endpoint_url());
+        let contract = StoragePayload::default_contract();
+        let config = LoadConfig {
+            transaction_submission_rpcs: vec![anvil.endpoint_url()],
+            query_rpc: anvil.endpoint_url(),
+            chain_id: anvil.chain_id(),
+            account_count: 1,
+            transactions: vec![TxConfig {
+                weight: 100,
+                tx_type: TxType::Storage { contract, slots_per_tx: 4, new_slot_ratio: 0.5 },
+            }],
+            ..LoadConfig::devnet()
+        };
+        let mut runner = LoadRunner::new(config).expect("valid config");
+        let deployer = runner.accounts.accounts()[0].address;
+        let _: () = provider
+            .raw_request("anvil_setBalance".into(), (deployer, U256::from(10u128.pow(18))))
+            .await
+            .unwrap();
+
+        let setup = LoadTestSetupAmounts {
+            funding: U256::ZERO,
+            swap_token: U256::ZERO,
+            b20_mint: U256::ZERO,
+            real_token_setup: None,
+        };
+        LoadTestExecutor::setup_tokens(&mut runner, &PrivateKeySigner::random(), &setup)
+            .await
+            .expect("storage contract deploys");
+
+        let tx = runner
+            .generator
+            .generate_payload(Address::ZERO, Address::ZERO)
+            .unwrap()
+            .from(anvil.addresses()[0]);
+        let receipt = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
+        assert!(receipt.status());
+        // `written` starts at the constructor's one seeded slot.
+        let written = provider.get_storage_at(contract, U256::from(1)).await.unwrap();
+        assert!(written > U256::from(1), "writeStorage added fresh slots");
     }
 
     /// Calibration weights each payload variant: a 3:1 mint/collect mix lands at 3:1 of their gas.

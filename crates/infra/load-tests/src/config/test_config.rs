@@ -17,7 +17,10 @@ use crate::{
     rpc::MAX_BATCH_RPC_SIZE,
     runner::{TxConfig, TxType},
     utils::{BaselineError, Result},
-    workload::{AaBundlePayload, MAX_TOKEN_MOVE_TRANSFERS_PER_TX, RealTokenSetup, UniswapV3Hop},
+    workload::{
+        AaBundlePayload, MAX_TOKEN_MOVE_TRANSFERS_PER_TX, RealTokenSetup, StoragePayload,
+        UniswapV3Hop,
+    },
 };
 
 /// Configuration for a load test, loadable from YAML.
@@ -292,10 +295,12 @@ pub enum TxTypeConfig {
         contract: Address,
     },
 
-    /// Storage-heavy contract write (requires deployed contract).
+    /// Storage-heavy contract write.
     Storage {
-        /// Storage-writer contract address.
-        contract: Address,
+        /// Storage-writer contract address. Default: `StorageFiller`, deployed during setup
+        /// through the CREATE2 deployment proxy when missing.
+        #[serde(default)]
+        contract: Option<Address>,
         /// Number of storage slots to write per transaction.
         #[serde(default = "default_storage_slots_per_tx")]
         slots_per_tx: u32,
@@ -839,7 +844,7 @@ impl TestConfig {
                     ));
                 }
                 TxType::Storage {
-                    contract: *contract,
+                    contract: contract.unwrap_or_else(StoragePayload::default_contract),
                     slots_per_tx: *slots_per_tx,
                     new_slot_ratio: *new_slot_ratio,
                 }
@@ -1328,7 +1333,7 @@ transactions:
             TxTypeConfig::Storage { contract, slots_per_tx, .. } => {
                 assert_eq!(
                     *contract,
-                    "0x1234567890123456789012345678901234567890".parse::<Address>().unwrap()
+                    Some("0x1234567890123456789012345678901234567890".parse::<Address>().unwrap())
                 );
                 assert_eq!(*slots_per_tx, 25);
             }
@@ -1358,7 +1363,6 @@ transactions:
 transactions:
   - weight: 100
     type: storage
-    contract: "0x1234567890123456789012345678901234567890"
 "#,
         );
         let config = TestConfig::from_yaml(&yaml).unwrap();
@@ -1368,6 +1372,12 @@ transactions:
                 assert_eq!(*new_slot_ratio, 1.0, "new_slot_ratio must default to 1.0");
             }
             _ => panic!("expected Storage"),
+        }
+        match &config.to_load_config(Some(1337)).unwrap().transactions[0].tx_type {
+            TxType::Storage { contract, .. } => {
+                assert_eq!(*contract, StoragePayload::default_contract());
+            }
+            _ => panic!("expected TxType::Storage"),
         }
     }
 

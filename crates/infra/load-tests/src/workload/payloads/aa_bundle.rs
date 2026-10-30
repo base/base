@@ -1,6 +1,5 @@
-use alloy_network::{EthereumWallet, TransactionBuilder};
-use alloy_primitives::{Address, B256, U256, address, keccak256};
-use alloy_provider::Provider;
+use alloy_network::TransactionBuilder;
+use alloy_primitives::{Address, B256, U256, keccak256};
 use alloy_rpc_types::TransactionRequest;
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
@@ -9,11 +8,10 @@ use async_trait::async_trait;
 
 use super::Payload;
 use crate::{
-    BaselineError, Result,
-    rpc::{BaseFeeExt, RpcResultExt, create_wallet_provider},
+    Result,
     workload::{
         SeededRng,
-        chain_prep::{ChainPrepContext, prep_submission_max_fee},
+        chain_prep::{ChainPrepContext, create2_address, deploy_create2},
     },
 };
 
@@ -52,8 +50,6 @@ sol! {
     }
 }
 
-/// Deterministic deployment proxy, preinstalled on OP Stack chains and anvil.
-const CREATE2_FACTORY: Address = address!("0x4e59b44847b379578588920cA78FbF26c0B4956C");
 /// Op signers; each one's nonce slot exists after its first op, like a returning account.
 const OP_SIGNERS: u64 = 32;
 const GAS_PER_OP: u64 = 60_000;
@@ -87,7 +83,7 @@ impl AaBundlePayload {
 
     /// Address of the bundle contract.
     pub fn contract() -> Address {
-        CREATE2_FACTORY.create2_from_code(B256::ZERO, &AaBundle::BYTECODE)
+        create2_address(&AaBundle::BYTECODE)
     }
 }
 
@@ -129,46 +125,6 @@ impl Payload for AaBundlePayload {
     }
 
     async fn prepare(&self, ctx: &mut ChainPrepContext<'_>) -> Result<()> {
-        let account = &ctx.accounts.accounts()[0];
-        // The query node may lag the submission node, which confirms the deployment.
-        let provider = create_wallet_provider(
-            ctx.primary_submission_rpc.clone(),
-            EthereumWallet::from(account.signer.clone()),
-        );
-        let contract = Self::contract();
-        if !provider.get_code_at(contract).await.rpc("get aa_bundle code")?.is_empty() {
-            return Ok(());
-        }
-        let nonce = provider
-            .get_transaction_count(account.address)
-            .pending()
-            .await
-            .rpc("get aa_bundle deployer nonce")?;
-        let base_fee = ctx.client.get_base_fee().await?;
-        let priority_fee = (base_fee / 10).max(1);
-        let max_fee = prep_submission_max_fee(base_fee, priority_fee, ctx.max_gas_price);
-        let tx = TransactionRequest::default()
-            .with_to(CREATE2_FACTORY)
-            .with_input([B256::ZERO.as_slice(), &AaBundle::BYTECODE].concat())
-            .with_nonce(nonce)
-            .with_gas_limit(500_000)
-            .with_max_fee_per_gas(max_fee)
-            .with_max_priority_fee_per_gas(priority_fee);
-        provider
-            .send_transaction(tx)
-            .await
-            .rpc("send aa_bundle deployment")?
-            .with_timeout(Some(std::time::Duration::from_secs(120)))
-            .get_receipt()
-            .await
-            .rpc("aa_bundle deployment receipt")?;
-        ctx.outputs.needs_sender_refresh = true;
-        // A concurrent run may have deployed it first, reverting this deployment.
-        if provider.get_code_at(contract).await.rpc("get aa_bundle code")?.is_empty() {
-            return Err(BaselineError::Transaction(format!(
-                "aa_bundle contract missing at {contract} after deployment"
-            )));
-        }
-        Ok(())
+        deploy_create2(ctx, &AaBundle::BYTECODE).await
     }
 }
