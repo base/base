@@ -532,8 +532,12 @@ impl Eip8130Executor {
         };
 
         // Dispatch `calls` from the resolved sender so `tx.origin` reads correctly
-        // (mirrors `prepay`'s caller overwrite on the execution path).
+        // and bump its protocol nonce (mirrors `prepay` on the execution path).
         evm.ctx_mut().tx.base.caller = outcome.sender;
+        if let Err(err) = Self::advance_protocol_nonce(evm.ctx_mut(), &outcome) {
+            Self::discard_transaction_state(evm);
+            return Err(err);
+        }
 
         // Warm precompiles/coinbase and set the journal spec id exactly as
         // [`Self::execute`] does, so the simulated `calls` are charged the same
@@ -852,8 +856,9 @@ impl Eip8130Executor {
     /// gas and checks it against the gas limit, then applies account changes,
     /// then resolves the acting actor (an optional RPC hint, else the
     /// account's self-actor) and its policy from the post-apply journal — no
-    /// signature recovery — without validating or advancing the nonce or
-    /// checking the payer balance. The
+    /// signature recovery — and advances the nonce without validating it, so
+    /// calls that read the Nonce Manager see the sequence they would on
+    /// inclusion. The payer balance is not checked. The
     /// authentication gas for the sender's (and any payer's) declared
     /// authenticator is priced from the synthesized auth-blob shape via
     /// [`IntrinsicGas`]. Storage writes land on the journal; the caller's
@@ -911,10 +916,10 @@ impl Eip8130Executor {
         let mut provider = JournalStorageProvider::new(internals, Address::ZERO);
 
         let outcome = StorageCtx::enter(&mut provider, |sctx| {
-            let nonce_mgr = NonceManagerStorage::new(sctx);
+            let mut nonce_mgr = NonceManagerStorage::new(sctx);
 
             // 1. Nonce-channel first-use flag (drives intrinsic gas). Estimation
-            //    neither validates nor advances the nonce.
+            //    does not validate the nonce.
             let protocol_nonce = sctx
                 .with_account_info(sender, |info| Ok(info.nonce))
                 .map_err(BaseTransactionError::eip8130)?;
@@ -955,7 +960,17 @@ impl Eip8130Executor {
             //    authorized in this same estimate request is visible.
             Self::apply_account_changes(signed, sctx, sender, now)?;
 
-            // 4. Resolve the acting actor's real policy gate. No signature
+            // 4. Advance a 2D nonce channel after the account changes, as
+            //    inclusion does. The protocol nonce is bumped with the caller
+            //    overwrite in `simulate`; nonce-free replay ids are not readable
+            //    from the EVM, so they are not recorded.
+            if nonce_key != U256::ZERO && nonce_key != Eip8130Constants::NONCE_KEY_MAX {
+                nonce_mgr
+                    .increment_nonce(sender, nonce_key)
+                    .map_err(BaseTransactionError::eip8130)?;
+            }
+
+            // 5. Resolve the acting actor's real policy gate. No signature
             //    recovery: the optional RPC hint names the intended actor (e.g. a
             //    session key); absent that, fall back to the account's self-actor.
             //    Policy is read from the post-apply journal so same-tx
@@ -980,7 +995,7 @@ impl Eip8130Executor {
                 (false, Address::ZERO)
             };
 
-            // 5. Publish the transaction context for the `TxContext` precompile.
+            // 6. Publish the transaction context for the `TxContext` precompile.
             TxContextStorage::new(sctx)
                 .set_context(sender, payer, sender_actor_id)
                 .map_err(BaseTransactionError::eip8130)?;
@@ -999,7 +1014,7 @@ impl Eip8130Executor {
                 execution_gas_available,
                 effective: FeeCheck::effective_gas_price(max_fee, max_priority, base_fee),
                 base_fee,
-                bump_protocol_nonce: false,
+                bump_protocol_nonce: nonce_key == U256::ZERO,
             })
         });
         Self::finish_pre_call(&mut provider, outcome)
@@ -1264,6 +1279,25 @@ impl Eip8130Executor {
         outcome.map_err(EVMError::Transaction)
     }
 
+    /// Bumps the sender's protocol nonce when the transaction uses nonce key `0`.
+    fn advance_protocol_nonce<DB>(
+        ctx: &mut BaseContext<DB>,
+        outcome: &Eip8130Outcome,
+    ) -> Result<(), EVMError<DB::Error, BaseTransactionError>>
+    where
+        DB: AlloyDatabase,
+        BaseContext<DB>:
+            BaseContextTr + ContextTr<Db = DB, Tx = BaseTransaction<TxEnv>, Block = BlockEnv>,
+    {
+        if outcome.bump_protocol_nonce {
+            ctx.journal_mut()
+                .load_account_mut(outcome.sender)
+                .map_err(EVMError::Database)?
+                .bump_nonce();
+        }
+        Ok(())
+    }
+
     /// Pre-charges the payer the worst-case fee and bumps the sender's protocol
     /// nonce, returning the amount debited. The full `gas_limit` (plus payer
     /// authentication) is reserved at the effective price — alongside the L1 and
@@ -1283,12 +1317,7 @@ impl Eip8130Executor {
             BaseContextTr + ContextTr<Db = DB, Tx = BaseTransaction<TxEnv>, Block = BlockEnv>,
     {
         ctx.tx.base.caller = outcome.sender;
-
-        if outcome.bump_protocol_nonce {
-            let mut sender_acc =
-                ctx.journal_mut().load_account_mut(outcome.sender).map_err(EVMError::Database)?;
-            sender_acc.bump_nonce();
-        }
+        Self::advance_protocol_nonce(ctx, outcome)?;
 
         // Worst-case chargeable gas: the full sender budget plus payer
         // authentication, both billed at the effective price.
@@ -2546,6 +2575,51 @@ mod tests {
             outcome.result.logs().iter().all(|log| log.address != NonceManagerStorage::ADDRESS),
             "the protocol nonce increment must not add a receipt log"
         );
+    }
+
+    /// A call that reads its own 2D nonce during simulation sees the
+    /// post-increment sequence, as it would on inclusion.
+    #[test]
+    fn simulate_calls_see_the_advanced_two_dimensional_nonce() {
+        let key = signing_key(0x2b);
+        let sender = eoa_address(&key);
+        let reader = address!("0x00000000000000000000000000000000000000ab");
+        let nonce_key = 7u8;
+        let current_nonce = 3u8;
+
+        // STATICCALL getNonce(sender, nonce_key) and revert unless it returns
+        // current_nonce + 1.
+        let mut code = vec![0x63];
+        code.extend_from_slice(&keccak256("getNonce(address,uint256)")[..4]);
+        code.extend_from_slice(&[0x60, 0xe0, 0x1b, 0x60, 0x00, 0x52, 0x73]);
+        code.extend_from_slice(sender.as_slice());
+        code.extend_from_slice(&[0x60, 0x04, 0x52, 0x60, nonce_key, 0x60, 0x24, 0x52]);
+        code.extend_from_slice(&[0x60, 0x20, 0x60, 0x00, 0x60, 0x44, 0x60, 0x00, 0x73]);
+        code.extend_from_slice(NonceManagerStorage::ADDRESS.as_slice());
+        code.extend_from_slice(&[0x5a, 0xfa, 0x50, 0x60, 0x00, 0x51, 0x60, current_nonce + 1]);
+        let ok = u8::try_from(code.len() + 8).unwrap();
+        code.extend_from_slice(&[0x14, 0x60, ok, 0x57, 0x60, 0x00, 0x80, 0xfd, 0x5b, 0x00]);
+
+        let mut tx = base_tx();
+        tx.nonce_key = U256::from(nonce_key);
+        tx.nonce_sequence = current_nonce.into();
+        tx.calls = vec![vec![Call { to: reader, value: U256::ZERO, data: Bytes::new() }]];
+        let signed = eoa_signed(tx, &key);
+        let nonce_slot = NonceManagerStorage::nonce_slot(sender, U256::from(nonce_key)).unwrap();
+        let mut evm = evm_with_accounts_and_storage(
+            U256::from(10u64).pow(U256::from(18u64)),
+            sender,
+            &[(reader, code.into())],
+            &[(NonceManagerStorage::ADDRESS, nonce_slot, U256::from(current_nonce))],
+        );
+        let mut call = into_base_tx(&signed);
+        call.base.caller = sender;
+        if let Some(parts) = call.eip8130.as_mut() {
+            parts.mode = Eip8130ExecutionMode::Call;
+        }
+
+        let outcome = evm.transact_raw(call).expect("call simulation runs");
+        assert!(outcome.result.is_success(), "expected success, got {:?}", outcome.result);
     }
 
     #[test]
