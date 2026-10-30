@@ -518,7 +518,7 @@ impl BasePayloadBuilderCtx {
     /// Executes all sequencer transactions that are included in the payload attributes.
     ///
     /// When `no_tx_pool` is set the attribute-supplied transaction list is the consensus input
-    /// for the payload (derived from L1 batches by `base-consensus`), not a list of optional
+    /// for the payload (derived from L1 batches by the consensus layer), not a list of optional
     /// pre-include candidates. In that mode any invalid-tx error must be propagated as fatal so
     /// the EL rejects the payload, matching the strictness of the proof executor and allowing
     /// Holocene's deposit-only fallback to apply consistently across both consumers.
@@ -2068,7 +2068,7 @@ mod tests {
     /// rather than silently skipped.
     ///
     /// In `no_tx_pool=true` mode the attribute-supplied transaction list is the consensus
-    /// input for the payload (produced by `base-consensus` from L1 batches). The proof
+    /// input for the payload (produced by the consensus layer from L1 batches). The proof
     /// executor strictly executes the full list and fails the block on any invalid tx; the
     /// EL must do the same so Holocene's deposit-only fallback applies consistently across
     /// both consumers of the same L1 input. Skip-and-continue here would let the EL freeze a

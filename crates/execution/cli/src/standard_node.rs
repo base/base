@@ -53,12 +53,12 @@ use crate::upgrade_signal::{
 pub struct MeteringArgs {
     /// Enable metering RPC for transaction bundle simulation.
     ///
-    /// Turns on `base_meterBundle` on standalone execution and RPC nodes
-    /// (`base-reth-node`, `base execution`, `base rpc`). Their native payload
-    /// builder throttles transactions against resource-unit budgets only when
-    /// this is set and `--payload.resource-metering-schedule` is a non-empty
-    /// file. `base-builder` and `base sequencer` gate both Flashblocks metering
-    /// and the native schedule on `--builder.enable-resource-metering` instead.
+    /// Turns on `base_meterBundle` on execution and RPC nodes (`base execution`,
+    /// `base rpc`). Their native payload builder throttles transactions against
+    /// resource-unit budgets only when this is set and
+    /// `--payload.resource-metering-schedule` is a non-empty file.
+    /// `base sequencer` gates both Flashblocks metering and the native schedule
+    /// on `--builder.enable-resource-metering` instead.
     #[arg(long = "enable-metering", env = "ENABLE_METERING", value_name = "ENABLE_METERING")]
     pub enable_metering: bool,
 
@@ -101,13 +101,12 @@ pub struct MeteringArgs {
 #[derive(Debug, Clone, PartialEq, Eq, clap::Args)]
 pub struct ResourceMeteringArgs {
     /// JSON file containing the startup resource-metering schedule for
-    /// standalone execution and RPC nodes (`base-reth-node`, `base execution`,
-    /// `base rpc`).
+    /// execution and RPC nodes (`base execution`, `base rpc`).
     ///
     /// On those nodes, the native payload builder throttles transactions
     /// against this schedule when `--enable-metering` is set and the file is
-    /// non-empty (`base-builder` and `base sequencer` gate builder metering as a
-    /// whole on `--builder.enable-resource-metering`). Each dimension must
+    /// non-empty (`base sequencer` gates builder metering as a whole on
+    /// `--builder.enable-resource-metering`). Each dimension must
     /// explicitly set `dryRun` (`true` to observe a budget without excluding
     /// transactions, `false` to enforce).
     #[arg(long = "payload.resource-metering-schedule", env = "PAYLOAD_RESOURCE_METERING_SCHEDULE")]

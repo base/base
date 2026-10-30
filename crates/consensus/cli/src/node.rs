@@ -4,7 +4,6 @@ use std::{path::PathBuf, sync::Arc};
 
 use alloy_primitives::Address;
 use alloy_rpc_types_engine::JwtSecret;
-use base_cli_utils::{LogConfig, RuntimeManager};
 use base_common_chains::ChainConfig;
 use base_common_genesis::RollupConfig;
 use base_consensus_engine::EngineEndpoint;
@@ -18,7 +17,6 @@ use base_upgrade_signal::{
 };
 use clap::Args;
 use eyre::Context;
-use reth_node_core::args::TraceArgs;
 use strum::IntoEnumIterator;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
@@ -26,8 +24,7 @@ use url::Url;
 
 use crate::{
     ConsensusChainArgs, EmbeddedL2ClientArgs, EmbeddedP2PArgs, EmbeddedRpcArgs, L1ClientArgs,
-    L1ConfigFile, L2ClientArgs, L2ConfigFile, LogArgs, MetricsArgs, P2PArgs, RpcArgs,
-    SequencerArgs, metrics::CliMetrics,
+    L1ConfigFile, L2ClientArgs, L2ConfigFile, P2PArgs, RpcArgs, SequencerArgs,
 };
 
 /// Overrides supplied by callers that embed consensus alongside another service.
@@ -50,65 +47,6 @@ impl ConsensusNodeOverrides {
         upgrade_signal_l1_rpc: Option<Url>,
     ) -> Self {
         Self { l2_engine: Some(l2_engine), l2_engine_jwt_secret: None, upgrade_signal_l1_rpc }
-    }
-}
-
-/// Standalone consensus node command.
-#[derive(Args, Clone, Debug)]
-pub struct ConsensusNodeCommand {
-    /// Logging configuration.
-    #[command(flatten)]
-    pub logging: LogArgs,
-
-    /// Metrics configuration.
-    #[command(flatten)]
-    pub metrics: MetricsArgs,
-
-    /// `OpenTelemetry` tracing export configuration.
-    #[command(flatten)]
-    pub traces: TraceArgs,
-
-    /// Consensus node arguments.
-    #[command(flatten)]
-    pub args: ConsensusNodeConfigArgs,
-}
-
-impl ConsensusNodeCommand {
-    /// Runs the standalone consensus node command.
-    pub fn run(self, chain: ConsensusChainArgs) -> eyre::Result<()> {
-        base_cli_utils::MetricsConfig::from(self.metrics.clone()).init_with(|| {
-            base_cli_utils::register_version_metrics!();
-        })?;
-
-        let args = ConsensusNodeArgs::new(chain, self.args);
-        let cfg = args.load_rollup_config()?;
-        if self.metrics.enabled {
-            CliMetrics::init_rollup_config(&cfg);
-            CliMetrics::init_p2p(&args.config.p2p_flags);
-        }
-
-        let metrics_enabled = self.metrics.enabled;
-        let rt = RuntimeManager::new().tokio_runtime()?;
-        // Build the subscriber — including the gRPC OTLP layer — inside the main runtime
-        // so tonic's transport channel lives for the full program lifetime (reth pattern).
-        rt.block_on(async {
-            LogConfig::from(self.logging.clone())
-                .init_with_trace_args(&self.traces, &["libp2p_gossipsub=error"])
-        })?;
-        rt.block_on(async move {
-            tokio::select! {
-                biased;
-                _ = tokio::signal::ctrl_c() => {
-                    tracing::info!(target: "cli", "Received Ctrl-C, shutting down...");
-                    Ok(())
-                }
-                res = async move {
-                    let _upgrade_countdown_metrics = metrics_enabled
-                        .then(|| CliMetrics::spawn_upgrade_countdown_recorder(cfg.clone()));
-                    args.start_with_overrides(cfg, Default::default()).await
-                } => res,
-            }
-        })
     }
 }
 

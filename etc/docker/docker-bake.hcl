@@ -32,9 +32,6 @@ group "rust-services" {
   targets = [
     "base",
     "unified",
-    "execution",
-    "consensus",
-    "builder",
     "basectl",
     "snapshotter",
     "proposer",
@@ -78,8 +75,8 @@ target "base" {
   inherits = ["_rust-service-common"]
   target = "base"
   args = {
-    CARGO_CHEF_ARGS = "--package base --package base-reth-node --package base-consensus --package base-snapshotter-bin"
-    CARGO_FEATURES = PROFILE == "profiling" ? "--features=base/jemalloc-prof,base-reth-node/jemalloc-prof" : ""
+    CARGO_CHEF_ARGS = "--package base --package base-snapshotter-bin"
+    CARGO_FEATURES = PROFILE == "profiling" ? "--features=base/jemalloc-prof" : ""
     SCCACHE_CACHE_ID = "rust-services-base-sccache"
   }
   tags = ["base:local"]
@@ -94,38 +91,6 @@ target "unified" {
     SCCACHE_CACHE_ID = "rust-services-unified-sccache"
   }
   tags = ["base-unified:local"]
-}
-
-target "execution" {
-  inherits = ["_rust-service-common"]
-  target = "execution"
-  args = {
-    CARGO_CHEF_ARGS = "--package base-reth-node"
-    CARGO_FEATURES = PROFILE == "profiling" ? "--features=jemalloc-prof" : ""
-    SCCACHE_CACHE_ID = "rust-services-execution-sccache"
-  }
-  tags = ["base-execution:local"]
-}
-
-target "consensus" {
-  inherits = ["_rust-service-common"]
-  target = "consensus"
-  args = {
-    CARGO_CHEF_ARGS = "--package base-consensus"
-    SCCACHE_CACHE_ID = "rust-services-consensus-sccache"
-  }
-  tags = ["base-consensus:local"]
-}
-
-target "builder" {
-  inherits = ["_rust-service-common"]
-  target = "builder"
-  args = {
-    CARGO_CHEF_ARGS = "--package base-builder-bin"
-    CARGO_FEATURES = PROFILE == "profiling" ? "--features=jemalloc-prof" : ""
-    SCCACHE_CACHE_ID = "rust-services-builder-sccache"
-  }
-  tags = ["base-builder:local"]
 }
 
 target "basectl" {

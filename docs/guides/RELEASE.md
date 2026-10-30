@@ -43,7 +43,7 @@ Once you are satisfied with an RC, run the **Publish Release** workflow (`Action
 - Enter the version number (e.g., `0.6.0` — no `v` prefix, no `releases/` prefix)
 - The workflow validates that the release branch exists and `Cargo.toml` is not `0.0.0`
 - Creates the final tag `vX.Y.Z` on the release branch
-- Builds the compatibility `node` image and the `base`, `base-reth-node`, `base-consensus`, `base-builder`, `basectl`, and `base-snapshotter` images for amd64 and arm64 (`PROFILE=maxperf`)
+- Builds the `node` operator image and the `base`, `basectl`, and `base-snapshotter` images for amd64 and arm64 (`PROFILE=maxperf`)
 - Tags every image as `vX.Y.Z`, `X.Y`, `X`, and `latest`
 - Creates a draft GitHub release with an empty body and uploads binaries
 - Write the release notes in the draft from [`.github/RELEASE_TEMPLATE.md`](../../.github/RELEASE_TEMPLATE.md) (see [Release notes](#release-notes)), then publish it on GitHub. The body starts blank: paste the template, and fill "What's changed" with GitHub's **Generate release notes** button or `gh release edit vX.Y.Z --notes-file <file>`

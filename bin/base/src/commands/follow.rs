@@ -2,8 +2,7 @@
 //!
 //! Runs an execution node (reth) and a consensus follow node in a single process. The follow node
 //! reads canonical payloads from `--source-l2-rpc` and inserts them into the embedded execution
-//! node's Engine API in memory, gating on Proofs `ExEx` progress when `--proofs` is set. This
-//! is the unified-binary equivalent of the standalone `base-consensus follow` command.
+//! node's Engine API in memory, gating on Proofs `ExEx` progress when `--follow.proofs` is set.
 
 use std::sync::Arc;
 

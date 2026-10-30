@@ -4,8 +4,7 @@ Unified Base node binary.
 
 ## OTLP Tracing
 
-Unified commands, including `rpc`, `follow`, and `sequencer`, support the same
-OTLP span-export options as the standalone nodes. Set
+Unified commands, including `rpc`, `follow`, and `sequencer`, support OTLP span export. Set
 `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`, `OTEL_EXPORTER_OTLP_PROTOCOL` (`http` or
 `grpc`), and `OTEL_SERVICE_NAME`, or use their CLI equivalents:
 
@@ -45,8 +44,7 @@ consensus node in the same process. The consensus node calls the execution node'
 handlers in memory, with no socket, IPC, or JWT in between. Engine API calls also skip JSON-RPC
 encoding; L2 reads, such as block queries, are still dispatched as JSON-RPC into the auth module.
 
-The execution CLI surface is shared with the standalone execution binaries through
-`base-execution-cli`. `base rpc` intentionally filters out flags for roles it does not run, including
+The execution CLI surface is defined in `base-execution-cli`. `base rpc` intentionally filters out flags for roles it does not run, including
 sequencer, builder, conductor, and transaction-forwarding options.
 
 Supported forms:
@@ -269,7 +267,7 @@ to use a shared secret; without it, a secret is generated at `<datadir>/jwt.hex`
 `--upgrade-signal.contract` requires `--upgrade-signal.l1-rpc`. For chains without a built-in
 chainspec, pass a genesis file with `--execution-chain <genesis.json>`.
 
-`base consensus` accepts the standalone consensus flags, including `--mode` (default `validator`). It
+`base consensus` accepts the consensus node flags, including `--mode` (default `validator`). It
 requires `--l1-eth-rpc`, `--l1-beacon`, and `--l2-engine-rpc`. Pass the execution client's secret
 with `--l2-engine-jwt-secret <path>` or `--l2-engine-jwt-encoded <hex>`.
 
