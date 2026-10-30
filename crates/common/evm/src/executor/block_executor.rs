@@ -50,8 +50,19 @@ pub struct BaseBlockExecutor<Evm, R: BaseReceiptBuilder, Spec> {
     /// This is only set for blocks post-Jovian activation.
     /// See [DA footprint block limit spec](https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/jovian/exec-engine.md#da-footprint-block-limit)
     pub da_footprint_used: u64,
+    /// DA footprint gas scalar last read from the L1 block predeploy, reused by later
+    /// transactions instead of reading state for each one.
+    ///
+    /// Cleared when a committed transaction touches the predeploy, so a transaction that changes
+    /// the scalar mid-block is seen by the transactions after it. State written to the EVM's
+    /// database outside [`BlockExecutor::commit_transaction`] does not clear it.
+    pub da_footprint_gas_scalar: Option<u64>,
     /// Whether Regolith upgrade is active.
     pub is_regolith: bool,
+    /// Whether Canyon upgrade is active.
+    pub is_canyon: bool,
+    /// Whether Jovian upgrade is active.
+    pub is_jovian: bool,
     /// Utility to call system smart contracts.
     pub system_caller: SystemCaller<Spec>,
 }
@@ -63,10 +74,15 @@ where
     Spec: Upgrades + Clone,
 {
     /// Creates a new [`BaseBlockExecutor`].
+    ///
+    /// Upgrade activation is resolved here, once per block, because the block timestamp is fixed
+    /// for the executor's lifetime and the checks are otherwise repeated for every transaction.
     pub fn new(evm: E, ctx: BaseBlockExecutionCtx, spec: Spec, receipt_builder: R) -> Self {
+        let timestamp = evm.block().timestamp().saturating_to();
         Self {
-            is_regolith: spec
-                .is_regolith_active_at_timestamp(evm.block().timestamp().saturating_to()),
+            is_regolith: spec.is_regolith_active_at_timestamp(timestamp),
+            is_canyon: spec.is_canyon_active_at_timestamp(timestamp),
+            is_jovian: spec.is_jovian_active_at_timestamp(timestamp),
             evm,
             system_caller: SystemCaller::new(spec.clone()),
             spec,
@@ -74,6 +90,7 @@ where
             receipts: Vec::new(),
             gas_used: 0,
             da_footprint_used: 0,
+            da_footprint_gas_scalar: None,
             ctx,
         }
     }
@@ -141,13 +158,22 @@ where
         let encoded =
             tx_estimated_size_fjord_from_fastlz_size(fastlz_size).saturating_div(1_000_000);
 
-        // Load the L1 block contract into the cache. If the L1 block contract is not pre-loaded the
-        // database will panic when trying to fetch the DA footprint gas scalar.
-        self.evm.db_mut().basic(Predeploys::L1_BLOCK_INFO).map_err(BlockExecutionError::other)?;
-
-        let da_footprint_gas_scalar = L1BlockInfo::fetch_da_footprint_gas_scalar(self.evm.db_mut())
-            .map_err(BlockExecutionError::other)?
-            .into();
+        let da_footprint_gas_scalar = match self.da_footprint_gas_scalar {
+            Some(scalar) => scalar,
+            None => {
+                // Load the L1 block contract into the cache. If the L1 block contract is not
+                // pre-loaded the database will panic when trying to fetch the DA footprint gas
+                // scalar.
+                self.evm
+                    .db_mut()
+                    .basic(Predeploys::L1_BLOCK_INFO)
+                    .map_err(BlockExecutionError::other)?;
+                let scalar = L1BlockInfo::fetch_da_footprint_gas_scalar(self.evm.db_mut())
+                    .map_err(BlockExecutionError::other)?
+                    .into();
+                *self.da_footprint_gas_scalar.insert(scalar)
+            }
+        };
 
         Ok(encoded.saturating_mul(da_footprint_gas_scalar))
     }
@@ -230,11 +256,7 @@ where
             .into());
         }
 
-        let da_footprint_used = if self
-            .spec
-            .is_jovian_active_at_timestamp(self.evm.block().timestamp().saturating_to())
-            && !is_deposit
-        {
+        let da_footprint_used = if self.is_jovian && !is_deposit {
             let da_footprint_available =
                 self.evm.block().gas_limit().saturating_sub(self.da_footprint_used);
 
@@ -299,9 +321,7 @@ where
 
         self.gas_used += tx_gas_used;
 
-        if self.spec.is_jovian_active_at_timestamp(self.evm.block().timestamp().saturating_to())
-            && !is_deposit
-        {
+        if self.is_jovian && !is_deposit {
             self.da_footprint_used = self.da_footprint_used.saturating_add(blob_gas_used);
         }
 
@@ -327,16 +347,15 @@ where
                     self.receipt_builder.build_deposit_receipt(DepositReceipt {
                         inner: receipt,
                         deposit_nonce: depositor.map(|account| account.nonce),
-                        deposit_receipt_version: (is_deposit
-                            && self.spec.is_canyon_active_at_timestamp(
-                                self.evm.block().timestamp().saturating_to(),
-                            ))
-                        .then_some(1),
+                        deposit_receipt_version: (is_deposit && self.is_canyon).then_some(1),
                     })
                 }
             },
         );
 
+        if state.contains_key(&Predeploys::L1_BLOCK_INFO) {
+            self.da_footprint_gas_scalar = None;
+        }
         self.evm.db_mut().commit(state);
 
         GasOutput::with_state_gas(tx_gas_used, state_gas_used)
@@ -678,6 +697,107 @@ mod tests {
         assert_eq!(result.blob_gas_used, expected_da_footprint);
         assert_eq!(result.gas_used, gas_used_tx.tx_gas_used());
         assert!(result.blob_gas_used > result.gas_used);
+    }
+
+    /// The DA footprint is accounted from the Jovian activation block on, and never in the block
+    /// just before it.
+    #[test]
+    fn da_footprint_is_accounted_from_jovian_activation() {
+        const DA_FOOTPRINT_GAS_SCALAR: u16 = 2000;
+        const JOVIAN_TIMESTAMP: u64 = 1746806402;
+        const GAS_LIMIT: u64 = 200_000;
+
+        let base_chain_upgrades = ChainUpgrades::new(
+            BaseUpgrade::mainnet()
+                .into_iter()
+                .chain(vec![(BaseUpgrade::Jovian, ForkCondition::Timestamp(JOVIAN_TIMESTAMP))]),
+        );
+        let receipt_builder = AlloyReceiptBuilder::default();
+        let tx = Recovered::new_unchecked(
+            BaseTxEnvelope::Legacy(
+                TxLegacy { gas_limit: GAS_LIMIT, ..Default::default() }.into_signed(
+                    Signature::new(Default::default(), Default::default(), Default::default()),
+                ),
+            ),
+            Address::ZERO,
+        );
+
+        for (timestamp, jovian_active) in [(JOVIAN_TIMESTAMP - 1, false), (JOVIAN_TIMESTAMP, true)]
+        {
+            let mut db = prepare_jovian_db(DA_FOOTPRINT_GAS_SCALAR);
+            let mut executor = build_executor(
+                &mut db,
+                &receipt_builder,
+                &base_chain_upgrades,
+                GAS_LIMIT,
+                timestamp,
+            );
+            let expected_da_footprint = if jovian_active {
+                executor.jovian_da_footprint_estimation(&mut tx.to_tx_env(), &tx).unwrap()
+            } else {
+                0
+            };
+
+            executor.execute_transaction(&tx).expect("failed to execute transaction");
+
+            let (_, result) = executor.finish().expect("failed to finish executor");
+            assert_eq!(result.blob_gas_used, expected_da_footprint, "timestamp {timestamp}");
+            assert_eq!(result.blob_gas_used > 0, jovian_active, "timestamp {timestamp}");
+        }
+    }
+
+    /// A transaction that changes the DA footprint gas scalar mid-block is priced at the old
+    /// scalar, and every transaction after it at the new one.
+    #[test]
+    fn da_footprint_follows_mid_block_scalar_change() {
+        const JOVIAN_TIMESTAMP: u64 = 1746806402;
+        // Every transaction here is below the estimator's 100-byte minimum size.
+        const MIN_DA_SIZE: u64 = 100;
+
+        let mut db = prepare_jovian_db(7);
+        // Calling the L1 block predeploy overwrites its operator fee slot with a DA footprint gas
+        // scalar of 14: PUSH13 (14 << 96), PUSH1 8, SSTORE, STOP.
+        let code = Bytecode::new_raw(bytes!("6c0e00000000000000000000000060085500"));
+        let l1_block = db.cache.accounts.get_mut(&Predeploys::L1_BLOCK_INFO).unwrap();
+        let info = &mut l1_block.account.as_mut().unwrap().info;
+        info.code_hash = code.hash_slow();
+        info.code = Some(code);
+
+        let base_chain_upgrades = ChainUpgrades::new(
+            BaseUpgrade::mainnet()
+                .into_iter()
+                .chain(vec![(BaseUpgrade::Jovian, ForkCondition::Timestamp(JOVIAN_TIMESTAMP))]),
+        );
+        let receipt_builder = AlloyReceiptBuilder::default();
+        let mut executor = build_executor(
+            &mut db,
+            &receipt_builder,
+            &base_chain_upgrades,
+            1_000_000,
+            JOVIAN_TIMESTAMP,
+        );
+
+        let mut footprints = vec![];
+        for (nonce, to) in [(0, Address::ZERO), (1, Predeploys::L1_BLOCK_INFO), (2, Address::ZERO)]
+        {
+            let tx = Recovered::new_unchecked(
+                BaseTxEnvelope::Legacy(
+                    TxLegacy { nonce, gas_limit: 100_000, to: to.into(), ..Default::default() }
+                        .into_signed(Signature::new(
+                            Default::default(),
+                            Default::default(),
+                            Default::default(),
+                        )),
+                ),
+                Address::ZERO,
+            );
+            let before = executor.da_footprint_used;
+            let result = executor.execute_transaction(&tx).expect("failed to execute transaction");
+            assert!(result.tx_gas_used() > 0);
+            footprints.push(executor.da_footprint_used - before);
+        }
+
+        assert_eq!(footprints, [MIN_DA_SIZE * 7, MIN_DA_SIZE * 7, MIN_DA_SIZE * 14]);
     }
 
     /// Builds a signed EIP-8130 transaction with the given `gas_limit`. When
