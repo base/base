@@ -6167,9 +6167,12 @@ dependencies = [
  "base-common-consensus",
  "base-common-genesis",
  "base-common-network",
+ "base-common-rpc-types",
  "base-common-rpc-types-engine",
  "base-execution-payload-builder",
  "eyre",
+ "serde",
+ "serde_json",
  "thiserror 2.0.19",
  "tokio",
 ]

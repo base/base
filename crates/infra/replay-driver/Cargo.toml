@@ -19,15 +19,18 @@ alloy-transport.workspace = true
 alloy-consensus.workspace = true
 alloy-primitives.workspace = true
 alloy-rpc-types-engine.workspace = true
+serde = { workspace = true, features = ["derive"] }
 
 base-clock.workspace = true
 base-common-chains.workspace = true
 base-common-network.workspace = true
 base-common-consensus.workspace = true
+base-common-rpc-types.workspace = true
 base-common-rpc-types-engine.workspace = true
 
 [dev-dependencies]
 eyre.workspace = true
+serde_json.workspace = true
 alloy-provider = { workspace = true, features = ["ipc"] }
 base-common-genesis.workspace = true
 base-execution-payload-builder.workspace = true

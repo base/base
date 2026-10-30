@@ -21,4 +21,9 @@ Cancellation may leave an engine build/import in flight; resume from a known hea
 
 Metrics: ordered transaction hashes, gas, builder-reported priority-fee revenue
 (`block_value`, wei), and monotonic build-to-getPayload latency (including wait).
-Flashblock count stays `None`; subscriptions, injection, reports, CLI remain separate.
+Flashblock count stays `None`; subscriptions, injection and CLI remain separate.
+
+`BlockDiff::compare` compares inclusion, ordering (including deposits), gas and fees.
+`CanonicalBlock::from_block` computes tips from complete RPC receipts, otherwise unknown.
+`DiffReport::new(N, diffs)` requires N+1..M, excluding warmup N+1 from all totals.
+Serialize with serde (`replay-diff/v1`) or render `markdown()`; no fidelity threshold.
