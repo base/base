@@ -557,8 +557,8 @@ impl LoadRunner {
         let max_in_flight_per_sender = self.config.max_in_flight_per_sender;
 
         let initial_avg_gas = self.calibrate_avg_gas().await?;
-        // Seed the collector so live throughput (rolling GPS) and rate-limiter
-        // feedback have a non-zero gas figure before canonical receipt gas lands.
+        // Seed the collector so live throughput (rolling GPS) has a non-zero
+        // gas figure before canonical receipt gas lands.
         self.collector.set_estimated_gas(initial_avg_gas);
         let mut start = Instant::now();
         let account_count = self.accounts.len();

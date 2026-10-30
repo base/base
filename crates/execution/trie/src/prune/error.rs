@@ -5,12 +5,11 @@ use std::{
 };
 
 use reth_provider::ProviderError;
-use strum::Display;
 use thiserror::Error;
 
 use crate::{BaseProofsStorageError, api::WriteCounts};
 
-/// Result of [`BaseProofStoragePruner::run`](crate::BaseProofStoragePruner::run) execution.
+/// Result of a single [`BaseProofStoragePruner`](crate::BaseProofStoragePruner) run.
 pub type BaseProofStoragePrunerResult = Result<PrunerOutput, PrunerError>;
 
 /// Successful prune summary.
@@ -56,26 +55,26 @@ impl PrunerOutput {
 }
 
 /// Error returned by the pruner.
-#[derive(Debug, Error, Display)]
+#[derive(Debug, Error)]
 pub enum PrunerError {
     /// Wrapped error from the underlying `BaseProofStorage` layer.
+    #[error(transparent)]
     Storage(#[from] BaseProofsStorageError),
 
     /// Wrapped error from the reth db provider.
+    #[error(transparent)]
     Provider(#[from] ProviderError),
 
     /// Block not found in the underlying reth storage provider.
+    #[error("block {0} not found in reth storage")]
     BlockNotFound(u64),
-
-    /// The pruner timed out before finishing the prune
-    TimedOut(Duration),
 }
 
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
 
-    use super::PrunerOutput;
+    use super::{PrunerError, PrunerOutput};
     use crate::api::WriteCounts;
 
     #[test]
@@ -89,5 +88,13 @@ mod tests {
         let formatted_pruner_output = format!("{pruner_output}");
 
         assert_eq!(formatted_pruner_output, "Pruned 1→2 (1 blocks), entries=10, elapsed=10.000s");
+    }
+
+    #[test]
+    fn test_pruner_error_display_keeps_cause() {
+        assert_eq!(
+            PrunerError::BlockNotFound(42).to_string(),
+            "block 42 not found in reth storage"
+        );
     }
 }

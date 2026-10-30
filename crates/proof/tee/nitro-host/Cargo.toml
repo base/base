@@ -42,9 +42,6 @@ tracing.workspace = true
 thiserror.workspace = true
 jsonrpsee = { workspace = true, features = ["server", "macros"] }
 
-[target.'cfg(target_os = "linux")'.dependencies]
-tokio-vsock.workspace = true
-
 [dev-dependencies]
 reqwest.workspace = true
 alloy-genesis.workspace = true

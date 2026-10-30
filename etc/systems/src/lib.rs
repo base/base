@@ -22,10 +22,14 @@ pub use block_export::{
 };
 
 mod benchmark_cli;
+mod benchmark_fixtures;
 pub use benchmark_cli::{
     AggregateBenchmarkArgs, BenchmarkCli, BenchmarkCommand, LocalBenchmarkArgs,
     LocalBenchmarkResult, LocalBenchmarkWorkload, LocalBenchmarkWorkloadConfig,
     LocalBenchmarkWorkloadResult, LocalBenchmarkWorkloadResults, SnapshotBenchmarkArgs,
+};
+pub use benchmark_fixtures::{
+    DOUBLE_COUNTER_PLACEHOLDER, DOUBLE_COUNTER_SENTINEL, DeployedFixtures, PendingFixtures,
 };
 
 mod benchmark_report;
@@ -34,6 +38,9 @@ pub use benchmark_report::{
     VisualizerBlockMetrics, VisualizerMetadata, VisualizerRun, VisualizerRunResult,
     VisualizerSequencerMetrics, VisualizerValidatorMetrics,
 };
+
+mod calibration;
+pub use calibration::{Calibration, TxProfile};
 
 mod da_cli;
 pub use da_cli::{DA_RESULT_FILE, DaBenchmarkArgs, DaResult};

@@ -453,16 +453,6 @@ impl SnapshotL2Stack {
         .await
     }
 
-    /// Verifies both ELs currently report the same block number.
-    pub async fn ensure_heads_match(&self) -> Result<()> {
-        let builder = RootProvider::<Base>::new_http(self.builder.rpc_url()?);
-        let client = RootProvider::<Base>::new_http(self.client()?.rpc_url()?);
-        let (builder_head, client_head) =
-            tokio::try_join!(builder.get_block_number(), client.get_block_number())?;
-        ensure!(builder_head == client_head, "builder head {builder_head} != client {client_head}");
-        Ok(())
-    }
-
     fn client(&self) -> Result<&InProcessClient> {
         self.client.as_ref().ok_or_else(|| eyre::eyre!("snapshot stack has no follow client"))
     }

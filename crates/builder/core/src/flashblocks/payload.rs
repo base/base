@@ -26,7 +26,8 @@ use base_execution_consensus::{calculate_receipt_root_no_memo, isthmus};
 use base_execution_evm::{BaseEvmConfig, BaseNextBlockEnvAttributes};
 use base_execution_payload_builder::{
     BaseBuiltPayload, BasePayloadBuilderAttributes, BuilderMetrics as SharedBuilderMetrics,
-    DeferralJournal, RestingPredicateStore, RestingPredicates, ValidityMetrics,
+    DeferralJournal, RestingPredicateStore, RestingPredicates, SharedRestingPredicates,
+    ValidityMetrics,
 };
 use base_execution_txpool::AccountStateDiff;
 use base_observability_events::{GlobalTransactionEventWriter, TransactionEventType};
@@ -456,18 +457,22 @@ where
         let mut fb_cancel = block_cancel.child_token();
         ctx = ctx.with_cancel(fb_cancel.clone()).with_extra_ctx(extra);
 
-        // Create best_transaction iterator
+        // Create best_transaction iterator. The resting set is shared with every pool iterator of
+        // this block, whose hold parks resting members before the build loop sees them.
+        let resting = SharedRestingPredicates::new(resting.unwrap_or_else(|| {
+            RestingPredicates::new(self.config.predicate_bucket_ordered_threshold)
+        }));
+        let hold =
+            self.config.resting_predicate_mode.is_enforced().then(|| resting.iterator_hold());
         let best_txs_attributes = ctx.best_transaction_attributes();
         let mut best_txs = BestFlashblocksTxs::new(
             ParkableBestPayloadTransactions::new(
-                self.pool.best_transactions_with_attributes_and_parking(best_txs_attributes),
+                self.pool.best_transactions_with_attributes_and_parking(best_txs_attributes, hold),
             ),
             self.config.rejection_cache.clone(),
         )
         .with_resting_predicate_mode(self.config.resting_predicate_mode)
-        .with_resting_predicates(resting.unwrap_or_else(|| {
-            RestingPredicates::new(self.config.predicate_bucket_ordered_threshold)
-        }));
+        .with_resting_predicates(resting);
         let interval = self.config.flashblocks_interval;
         let (tx, mut rx) = mpsc::channel((self.config.flashblocks_per_block() + 1) as usize);
 
@@ -681,7 +686,10 @@ where
         let best_txs_start_time = Instant::now();
         let best_txs_attributes = ctx.best_transaction_attributes();
         best_txs.refresh_iterator(ParkableBestPayloadTransactions::new(
-            self.pool.best_transactions_with_attributes_and_parking(best_txs_attributes),
+            self.pool.best_transactions_with_attributes_and_parking(
+                best_txs_attributes,
+                best_txs.iterator_hold(),
+            ),
         ));
         let transaction_pool_fetch_time = best_txs_start_time.elapsed();
         BuilderMetrics::transaction_pool_fetch_duration().record(transaction_pool_fetch_time);

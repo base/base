@@ -38,10 +38,11 @@ use base_common_consensus::{BaseTransactionSigned, BaseTxEnvelope};
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_payload_builder::{
     DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD, RESTING_UNSEEN_RETAINED_BLOCKS,
+    SharedRestingPredicates,
 };
 use base_execution_txpool::{
-    BaseOrdering, BasePooledTransaction, ParkedBestTransactions, ValidityOperator,
-    ValidityPredicate,
+    BaseOrdering, BasePooledTransaction, BestTransactionsHold, ParkedBestTransactions,
+    ValidityOperator, ValidityPredicate,
 };
 use reth_chainspec::ChainSpec;
 use reth_primitives_traits::{Recovered, SealedHeader};
@@ -145,14 +146,15 @@ fn resting_pool() -> (Pool, InMemoryDB) {
     (pool, db)
 }
 
-fn parkable(pool: &Pool) -> ParkableBestPayloadTransactions<BasePooledTransaction> {
+fn parkable(
+    pool: &Pool,
+    hold: Option<Box<dyn BestTransactionsHold<BasePooledTransaction>>>,
+) -> ParkableBestPayloadTransactions<BasePooledTransaction> {
     let mut best = pool.best();
     best.no_updates();
-    ParkableBestPayloadTransactions::new(Box::new(ParkedBestTransactions::new(
-        best,
-        Ordering::coinbase_tip(),
-        0,
-    )))
+    ParkableBestPayloadTransactions::new(Box::new(
+        ParkedBestTransactions::new(best, Ordering::coinbase_tip(), 0).with_hold(hold),
+    ))
 }
 
 fn payload_context() -> BasePayloadBuilderCtx {
@@ -183,7 +185,7 @@ fn run_flashblocks(
     let mut committed_until = 0;
     for flashblock in 0..FLASHBLOCKS {
         if flashblock > 0 {
-            best.refresh_iterator(parkable(pool));
+            best.refresh_iterator(parkable(pool, best.iterator_hold()));
         }
         let limits = ResourceLimits {
             block_gas_limit: ((flashblock + 1) * FILLER_PER_FLASHBLOCK) as u64 * TRANSFER_GAS,
@@ -266,9 +268,13 @@ fn main() {
         let carry = start.elapsed();
         let carried = resting.len();
 
-        let mut best = BestFlashblocksTxs::new(parkable(&pool), rejection_cache.clone())
-            .with_resting_predicate_mode(RestingPredicateMode::Enforce)
-            .with_resting_predicates(resting);
+        let resting = SharedRestingPredicates::new(resting);
+        let mut best = BestFlashblocksTxs::new(
+            parkable(&pool, Some(resting.iterator_hold())),
+            rejection_cache.clone(),
+        )
+        .with_resting_predicate_mode(RestingPredicateMode::Enforce)
+        .with_resting_predicates(resting);
         let mut state = State::builder().with_database(db.clone()).with_bundle_update().build();
         let executed = run_flashblocks(&ctx, &pool, &mut state, &mut best);
         assert_eq!(executed, FLASHBLOCKS * FILLER_PER_FLASHBLOCK);

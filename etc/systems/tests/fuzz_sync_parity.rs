@@ -34,9 +34,9 @@ use base_common_rpc_types::BaseTransactionRequest;
 use base_load_tests::{CalldataPayload, TransferPayload, WorkloadConfig, WorkloadGenerator};
 use base_system_tests::{
     ANVIL_ACCOUNT_1, ANVIL_ACCOUNT_2, ANVIL_ACCOUNT_3, ANVIL_ACCOUNT_4, Account,
-    SystemTestStackBuilder,
+    SystemTestProviderExt, SystemTestStackBuilder,
 };
-use eyre::{Result, WrapErr, eyre};
+use eyre::{Result, eyre};
 use tokio::time::{sleep, timeout};
 use tracing::info;
 
@@ -174,7 +174,7 @@ async fn submit_fuzzed_txs(
     let mut signers = Vec::new();
     for account in sender_accounts {
         let signer = signer_for(&account)?;
-        wait_for_balance(validator, signer.address()).await?;
+        validator.wait_for_balance(signer.address(), BALANCE_SYNC_TIMEOUT).await?;
         let nonce = sequencer.get_transaction_count(signer.address()).await?;
         signers.push((signer, nonce));
     }
@@ -347,20 +347,6 @@ async fn block_hash(provider: &RootProvider<Base>, number: u64) -> Result<B256> 
         .await?
         .ok_or_else(|| eyre!("block {number} missing"))?;
     Ok(block.header.hash)
-}
-
-/// Wait until the funded sender's balance has propagated to a node.
-async fn wait_for_balance(provider: &RootProvider<Base>, address: Address) -> Result<()> {
-    timeout(BALANCE_SYNC_TIMEOUT, async {
-        loop {
-            if provider.get_balance(address).await? > U256::ZERO {
-                return Ok::<_, eyre::Error>(());
-            }
-            sleep(PARITY_POLL_INTERVAL).await;
-        }
-    })
-    .await
-    .wrap_err("timed out waiting for sender balance to sync")?
 }
 
 #[cfg(test)]

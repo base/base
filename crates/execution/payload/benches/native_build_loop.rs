@@ -26,7 +26,7 @@ use base_execution_evm::BaseEvmConfig;
 use base_execution_payload_builder::{
     BasePayloadBuilderAttributes, DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD,
     ParkableBestPayloadTransactions, REJECTION_CACHE_MAX_CAPACITY, REJECTION_CACHE_TTL,
-    RejectionCache, RestingPredicateMode, RestingPredicates,
+    RejectionCache, RestingPredicateMode, RestingPredicates, SharedRestingPredicates,
     builder::{BasePayloadBuilderCtx, ExecutionInfo},
     config::BaseBuilderConfig,
     payload::EthPayloadBuilderAttributes,
@@ -141,12 +141,16 @@ fn resting_pool(resting: usize) -> (Pool, InMemoryDB) {
     (pool, db)
 }
 
-fn parkable(pool: &Pool) -> ParkableBestPayloadTransactions<BasePooledTransaction> {
-    ParkableBestPayloadTransactions::new(Box::new(ParkedBestTransactions::new(
-        pool.best(),
-        Ordering::coinbase_tip(),
-        0,
-    )))
+/// A parkable iterator over `pool` whose hold, when given, parks resting members at the source as
+/// the production pool iterator does.
+fn parkable(
+    pool: &Pool,
+    resting: Option<&SharedRestingPredicates>,
+) -> ParkableBestPayloadTransactions<BasePooledTransaction> {
+    ParkableBestPayloadTransactions::new(Box::new(
+        ParkedBestTransactions::new(pool.best(), Ordering::coinbase_tip(), 0)
+            .with_hold(resting.map(SharedRestingPredicates::iterator_hold)),
+    ))
 }
 
 /// A rejection cache with the builder's default sizing, holding `rejected` hashes of transactions
@@ -199,14 +203,14 @@ fn run_block(
     ctx: &Ctx,
     pool: &Pool,
     db: &InMemoryDB,
-    resting: Option<&mut RestingPredicates>,
+    resting: Option<&SharedRestingPredicates>,
 ) -> usize {
     let mut state = State::builder().with_database(db.clone()).with_bundle_update().build();
     state.load_cache_account(Predeploys::L1_BLOCK_INFO).expect("in-memory load cannot fail");
     let mut builder = ctx.block_builder(&mut state).expect("block builder");
     let mut info = ExecutionInfo::default();
     black_box(
-        ctx.execute_best_transactions(&mut info, &mut builder, parkable(pool), resting)
+        ctx.execute_best_transactions(&mut info, &mut builder, parkable(pool, resting), resting)
             .expect("in-memory execution cannot fail"),
     );
     builder.executor().receipts().len()
@@ -219,8 +223,10 @@ fn run_blocks(ctx: &Ctx, pool: &Pool, db: &InMemoryDB, mode: RestingPredicateMod
     for block in 1..=BLOCKS {
         // The production builder passes the pre-block writes; this loop makes none.
         resting.begin_block(parent, block, Some(&TransitionState::default()));
-        let included = run_block(ctx, pool, db, mode.is_enabled().then_some(&mut resting));
+        let shared = SharedRestingPredicates::new(resting);
+        let included = run_block(ctx, pool, db, mode.is_enabled().then_some(&shared));
         assert_eq!(included, FILLER_PER_BLOCK);
+        resting = shared.take_predicates();
         parent = B256::from(U256::from(block));
         resting.end_block(parent);
     }
