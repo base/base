@@ -514,41 +514,48 @@ impl OPSuccinctDataFetcher {
     /// Get the earliest L1 header in a batch of boot infos.
     pub async fn get_earliest_l1_head_in_batch(
         &self,
-        boot_infos: &Vec<BootInfoStruct>,
+        boot_infos: &[BootInfoStruct],
     ) -> Result<Header> {
-        let mut earliest_block_num: u64 = u64::MAX;
-        let mut earliest_l1_header: Option<Header> = None;
-
-        for boot_info in boot_infos {
-            let l1_block_header = self.get_l1_header(boot_info.l1Head.into()).await?;
-            if l1_block_header.number < earliest_block_num {
-                earliest_block_num = l1_block_header.number;
-                earliest_l1_header = Some(l1_block_header);
-            }
-        }
-        Ok(earliest_l1_header.unwrap())
+        self.select_l1_head_in_batch(boot_infos, Ordering::Less, "earliest").await
     }
 
     /// Get the latest L1 header in a batch of boot infos.
     pub async fn get_latest_l1_head_in_batch(
         &self,
-        boot_infos: &Vec<BootInfoStruct>,
+        boot_infos: &[BootInfoStruct],
     ) -> Result<Header> {
-        let mut latest_block_num: u64 = u64::MIN;
-        let mut latest_l1_header: Option<Header> = None;
+        self.select_l1_head_in_batch(boot_infos, Ordering::Greater, "latest").await
+    }
 
+    /// Fetch each boot info's L1 head and keep only the one whose block number compares as
+    /// `preferred` against the current best, so memory stays constant in the batch size.
+    async fn select_l1_head_in_batch(
+        &self,
+        boot_infos: &[BootInfoStruct],
+        preferred: Ordering,
+        label: &str,
+    ) -> Result<Header> {
+        let mut selected: Option<Header> = None;
         for boot_info in boot_infos {
-            let l1_block_header = self.get_l1_header(boot_info.l1Head.into()).await?;
-            if l1_block_header.number > latest_block_num {
-                latest_block_num = l1_block_header.number;
-                latest_l1_header = Some(l1_block_header);
+            let header = self.get_l1_header(boot_info.l1Head.into()).await?;
+            if selected.as_ref().is_none_or(|best| header.number.cmp(&best.number) == preferred) {
+                selected = Some(header);
             }
         }
-        if let Some(header) = latest_l1_header {
-            Ok(header)
-        } else {
-            bail!("Failed to get latest L1 header");
-        }
+        selected.ok_or_else(|| anyhow!("Failed to get {label} L1 header: empty batch"))
+    }
+
+    /// Fetch the L2 safe head block number at the given L1 block.
+    pub async fn get_safe_head_at_l1_block(&self, l1_block: u64) -> Result<u64> {
+        let result: SafeHeadResponse = self
+            .fetch_rpc_data_with_mode(
+                RPCMode::L2Node,
+                "optimism_safeHeadAtL1Block",
+                vec![format!("0x{l1_block:x}").into()],
+            )
+            .await
+            .with_context(|| format!("Failed to fetch safe head at L1 block {l1_block}"))?;
+        Ok(result.safe_head.number)
     }
 
     /// Fetch headers for a range of blocks inclusive.
@@ -574,7 +581,7 @@ impl OPSuccinctDataFetcher {
     /// headers corresponding to the boot infos and the latest L1 head.
     pub async fn get_header_preimages(
         &self,
-        boot_infos: &Vec<BootInfoStruct>,
+        boot_infos: &[BootInfoStruct],
         checkpoint_block_hash: B256,
     ) -> Result<Vec<Header>> {
         // Get the earliest L1 Head from the boot_infos.
@@ -873,7 +880,103 @@ impl OPSuccinctDataFetcher {
 
 #[cfg(test)]
 mod tests {
+    use alloy_provider::mock::Asserter;
+    use alloy_rpc_types_eth::Block;
+
     use super::*;
+
+    fn fetcher_with_l1_blocks(l1_blocks: &[Header]) -> OPSuccinctDataFetcher {
+        let asserter = Asserter::new();
+        for header in l1_blocks {
+            let block: Block = Block {
+                header: alloy_rpc_types_eth::Header::new(header.clone()),
+                ..Default::default()
+            };
+            asserter.push_success(&block);
+        }
+        let l2_provider = Arc::new(RootProvider::new_http("http://127.0.0.1:1".parse().unwrap()));
+        OPSuccinctDataFetcher {
+            rpc_config: rpc_config(None, None),
+            l1_provider: Arc::new(ProviderBuilder::default().connect_mocked_client(asserter)),
+            l2_provider,
+            rollup_config: None,
+            rollup_config_path: None,
+            l1_config_path: None,
+        }
+    }
+
+    fn boot_infos(count: usize) -> Vec<BootInfoStruct> {
+        (0..count)
+            .map(|_| BootInfoStruct {
+                l1Head: B256::ZERO,
+                l2PreRoot: B256::ZERO,
+                l2PostRoot: B256::ZERO,
+                l2PreBlockNumber: 0,
+                l2BlockNumber: 0,
+                rollupConfigHash: B256::ZERO,
+                scheduleId: B256::ZERO,
+                intermediateRoots: Default::default(),
+                intermediateBlockInterval: 1,
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn earliest_l1_head_errors_on_empty_batch() {
+        let fetcher = fetcher_with_l1_blocks(&[]);
+
+        assert!(fetcher.get_earliest_l1_head_in_batch(&boot_infos(0)).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn latest_l1_head_selects_genesis_block() {
+        let genesis = Header::default();
+        let fetcher = fetcher_with_l1_blocks(std::slice::from_ref(&genesis));
+
+        let latest = fetcher.get_latest_l1_head_in_batch(&boot_infos(1)).await.unwrap();
+
+        assert_eq!(latest, genesis);
+    }
+
+    #[tokio::test]
+    async fn l1_heads_in_batch_select_lowest_and_highest_block_numbers() {
+        let headers = [5, 2, 9].map(|number| Header { number, ..Default::default() });
+
+        let earliest = fetcher_with_l1_blocks(&headers)
+            .get_earliest_l1_head_in_batch(&boot_infos(3))
+            .await
+            .unwrap();
+        let latest = fetcher_with_l1_blocks(&headers)
+            .get_latest_l1_head_in_batch(&boot_infos(3))
+            .await
+            .unwrap();
+
+        assert_eq!(earliest.number, 2);
+        assert_eq!(latest.number, 9);
+    }
+
+    #[tokio::test]
+    async fn safe_head_fetch_error_includes_l1_block_and_rpc_cause() {
+        let server = httpmock::MockServer::start_async().await;
+        server
+            .mock_async(|when, then| {
+                when.method(httpmock::Method::POST);
+                then.status(200).json_body(json!({
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "error": { "code": -32000, "message": "safe head unavailable" }
+                }));
+            })
+            .await;
+        let mut fetcher = fetcher_with_l1_blocks(&[]);
+        fetcher.rpc_config.l2_node_rpc = server.url("/").parse().unwrap();
+
+        let error = fetcher.get_safe_head_at_l1_block(255).await.unwrap_err();
+
+        let message = format!("{error:#}");
+        assert!(message.contains("L1 block 255"), "{message}");
+        assert!(message.contains("safe head unavailable"), "{message}");
+    }
 
     fn rpc_config(l1: Option<PathBuf>, l2: Option<PathBuf>) -> RPCConfig {
         RPCConfig {
