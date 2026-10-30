@@ -149,6 +149,10 @@ impl PrometheusSnapshot {
     }
 
     /// Configures only experiment duration metrics as histograms, preserving other instruments.
+    /// Uses 51 finite edges: at most 5ms spacing from zero through the 200ms slot,
+    /// with finer sub-5ms edges and a sparse tail through 10s. The same edges apply to
+    /// every covered duration metric, resolving build/import shifts such as 60ms versus
+    /// 90ms without an excessive bucket count (52 including the automatic +Inf bucket).
     pub fn window_histogram_builder() -> Result<metrics_exporter_prometheus::PrometheusBuilder> {
         let mut builder = metrics_exporter_prometheus::PrometheusBuilder::new();
         for name in WINDOW_HISTOGRAMS {
@@ -158,7 +162,13 @@ impl PrometheusSnapshot {
             });
             builder = builder.set_buckets_for_metric(
                 metrics_exporter_prometheus::Matcher::Suffix(suffix.to_owned()),
-                &[0.001, 0.002, 0.005, 0.01, 0.02, 0.05, 0.1, 0.15, 0.2, 0.3, 0.5, 1.0, 2.0, 5.0, 10.0],
+                &[
+                    0.001, 0.0025, 0.005, 0.010, 0.015, 0.020, 0.025, 0.030, 0.035,
+                    0.040, 0.045, 0.050, 0.055, 0.060, 0.065, 0.070, 0.075, 0.080, 0.085,
+                    0.090, 0.095, 0.100, 0.105, 0.110, 0.115, 0.120, 0.125, 0.130, 0.135,
+                    0.140, 0.145, 0.150, 0.155, 0.160, 0.165, 0.170, 0.175, 0.180, 0.185,
+                    0.190, 0.195, 0.200, 0.250, 0.300, 0.400, 0.500, 0.750, 1.0, 2.5, 5.0, 10.0,
+                ],
             )?;
         }
         Ok(builder)
@@ -486,6 +496,52 @@ mod tests {
             assert!(text.contains(&format!("# TYPE {name} histogram")), "{name} must have cumulative buckets");
             assert!(text.contains(&format!("{name}_bucket")), "{name} must expose bucket counts");
             assert!(!text.contains(&format!("{name}{{quantile=")), "{name} must not use rolling summaries");
+        }
+    }
+
+    /// Every configured metric resolves 200ms slots and distinguishes 60ms from 90ms windows.
+    #[test]
+    fn duration_buckets_resolve_slot_latency_windows() {
+        let recorder = PrometheusSnapshot::window_histogram_builder().unwrap().build_recorder();
+        metrics::with_local_recorder(&recorder, || {
+            for name in super::WINDOW_HISTOGRAMS {
+                metrics::histogram!(*name).record(0.060);
+            }
+        });
+        let first = PrometheusSnapshot::parse(&recorder.handle().render());
+        metrics::with_local_recorder(&recorder, || {
+            for name in super::WINDOW_HISTOGRAMS {
+                metrics::histogram!(*name).record(0.090);
+            }
+        });
+        let second = PrometheusSnapshot::parse(&recorder.handle().render());
+        for name in super::WINDOW_HISTOGRAMS {
+            let mut lower = std::time::Duration::ZERO;
+            let mut max_width = std::time::Duration::ZERO;
+            for (bound, _) in &first.distributions[*name].buckets {
+                if !bound.is_finite() || *bound > 0.2 { continue; }
+                let upper = std::time::Duration::from_secs_f64(*bound);
+                max_width = max_width.max(upper - lower);
+                lower = upper;
+            }
+            assert_eq!(lower, std::time::Duration::from_millis(200), "{name} covers the full slot");
+            assert_eq!(max_width, std::time::Duration::from_millis(5), "{name} has at most 5ms bucket widths throughout the slot");
+            let window_p99 = |current: &PrometheusSnapshot, baseline: &PrometheusSnapshot| {
+                let delta = current.delta(baseline);
+                let prefix = format!("benchmark/histogram/{name}/");
+                let mut buckets = delta.iter().filter_map(|(key, count)| {
+                    key.strip_prefix(&prefix).map(|bound| (bound.parse::<f64>().unwrap(), *count))
+                }).collect::<Vec<_>>();
+                buckets.sort_by(|left, right| left.0.total_cmp(&right.0));
+                std::time::Duration::from_secs_f64(
+                    PrometheusSnapshot::histogram_quantile(&buckets, 0.99).unwrap(),
+                )
+            };
+            let low = window_p99(&first, &PrometheusSnapshot::default());
+            let high = window_p99(&second, &first);
+            assert_eq!(low, std::time::Duration::from_micros(59_950), "{name}: mass at 60ms gives p99 59.95ms");
+            assert_eq!(high, std::time::Duration::from_micros(89_950), "{name}: mass at 90ms gives p99 89.95ms");
+            assert_ne!(low, high, "{name}: separate windows must resolve the 30ms shift");
         }
     }
 
