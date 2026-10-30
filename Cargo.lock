@@ -3207,6 +3207,7 @@ dependencies = [
  "base-builder-core",
  "base-builder-metering",
  "base-bundles",
+ "base-clock",
  "base-execution-cli",
  "base-node-core",
  "base-observability-events",

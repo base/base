@@ -5,3 +5,6 @@
 
 mod args;
 pub use args::{Args, FlashblocksArgs, TransactionEventsArgs};
+
+mod replay;
+pub use replay::ReplayArgs;
