@@ -63,7 +63,7 @@ const GAS_PER_PADDING_BYTE: u64 = 40;
 
 /// Sends one `handleOps` bundle of signed ops to an [`AaBundle`] deployed during prepare.
 #[derive(Debug, Clone)]
-pub(crate) struct AaBundlePayload {
+pub struct AaBundlePayload {
     ops_per_bundle: u32,
     padding_bytes: u32,
     signers: Vec<PrivateKeySigner>,
@@ -71,7 +71,7 @@ pub(crate) struct AaBundlePayload {
 
 impl AaBundlePayload {
     /// Creates a payload sending `ops_per_bundle` ops and `padding_bytes` random bytes per tx.
-    pub(crate) fn new(ops_per_bundle: u32, padding_bytes: u32) -> Self {
+    pub fn new(ops_per_bundle: u32, padding_bytes: u32) -> Self {
         let signers = (1..=OP_SIGNERS)
             .map(|i| PrivateKeySigner::from_bytes(&B256::from(U256::from(i))).expect("valid key"))
             .collect();
@@ -79,7 +79,7 @@ impl AaBundlePayload {
     }
 
     /// Address of the bundle contract.
-    pub(crate) fn contract() -> Address {
+    pub fn contract() -> Address {
         CREATE2_FACTORY.create2_from_code(B256::ZERO, &AaBundle::BYTECODE)
     }
 }
@@ -98,7 +98,8 @@ impl Payload for AaBundlePayload {
         let ops = (0..self.ops_per_bundle)
             .map(|_| {
                 let signer = &self.signers[rng.gen_range(0..self.signers.len())];
-                let to = Address::from(rng.gen_bytes::<20>());
+                // Not seeded: calibration and reruns replay the seed, which would reuse these slots.
+                let to = Address::random();
                 let salt = U256::from_be_bytes(rng.gen_bytes::<32>());
                 let hash = keccak256((signer.address(), to, salt).abi_encode());
                 let sig = signer.sign_hash_sync(&hash).expect("local signing succeeds");
@@ -122,17 +123,17 @@ impl Payload for AaBundlePayload {
     }
 
     async fn prepare(&self, ctx: &mut ChainPrepContext<'_>) -> Result<()> {
-        let contract = Self::contract();
-        if !ctx.client.get_code_at(contract).await.rpc("get aa_bundle code")?.is_empty() {
-            return Ok(());
-        }
         let account = &ctx.accounts.accounts()[0];
+        // The query node may lag the submission node, which confirms the deployment.
         let provider = create_wallet_provider(
             ctx.primary_submission_rpc.clone(),
             EthereumWallet::from(account.signer.clone()),
         );
-        let nonce = ctx
-            .client
+        let contract = Self::contract();
+        if !provider.get_code_at(contract).await.rpc("get aa_bundle code")?.is_empty() {
+            return Ok(());
+        }
+        let nonce = provider
             .get_transaction_count(account.address)
             .pending()
             .await
@@ -157,7 +158,7 @@ impl Payload for AaBundlePayload {
             .rpc("aa_bundle deployment receipt")?;
         ctx.outputs.needs_sender_refresh = true;
         // A concurrent run may have deployed it first, reverting this deployment.
-        if ctx.client.get_code_at(contract).await.rpc("get aa_bundle code")?.is_empty() {
+        if provider.get_code_at(contract).await.rpc("get aa_bundle code")?.is_empty() {
             return Err(BaselineError::Transaction(format!(
                 "aa_bundle contract missing at {contract} after deployment"
             )));

@@ -531,6 +531,11 @@ impl LoadRunner {
         self.config.transactions.iter().any(|t| matches!(t.tx_type, TxType::B20))
     }
 
+    /// Returns true when an `aa_bundle` workload needs its contract deployed.
+    pub fn needs_aa_bundle_setup(&self) -> bool {
+        self.config.transactions.iter().any(|t| matches!(t.tx_type, TxType::AaBundle { .. }))
+    }
+
     /// Ensures B-20 workloads have even sender count so every alice has a funded bob.
     fn with_b20_pair_accounts(mut config: LoadConfig) -> LoadConfig {
         if config.transactions.iter().any(|t| matches!(t.tx_type, TxType::B20))
@@ -635,9 +640,11 @@ mod tests {
     use alloy_node_bindings::Anvil;
     use alloy_primitives::{Address, Bytes, U256};
     use alloy_provider::{Provider, RootProvider};
+    use alloy_signer_local::PrivateKeySigner;
 
     use super::{LoadConfig, LoadRunner};
     use crate::{
+        LoadTestExecutor, LoadTestSetupAmounts,
         runner::{TxConfig, TxType},
         workload::{
             LiquidityOps, SenderPosition, UniswapPositions, UniswapV3Hop, UniswapV3LiquidityPayload,
@@ -756,7 +763,15 @@ mod tests {
             .await
             .unwrap();
 
-        runner.prepare_payloads(U256::ZERO, None).await.expect("bundle contract deploys");
+        let setup = LoadTestSetupAmounts {
+            funding: U256::ZERO,
+            swap_token: U256::ZERO,
+            b20_mint: U256::ZERO,
+            real_token_setup: None,
+        };
+        LoadTestExecutor::setup_tokens(&mut runner, &PrivateKeySigner::random(), &setup)
+            .await
+            .expect("bundle contract deploys");
 
         for _ in 0..2 {
             let tx = runner
@@ -768,6 +783,9 @@ mod tests {
             assert!(receipt.status(), "signed ops pass verification");
             assert_eq!(receipt.inner.logs().len(), 3, "one event per op");
         }
+
+        let gas = runner.calibrate_avg_gas().await.expect("calibration succeeds");
+        assert!(gas > 120_000, "calibrated {gas} gas skips fresh recipient writes");
 
         let mut tx = runner
             .generator

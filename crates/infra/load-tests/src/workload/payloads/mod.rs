@@ -31,7 +31,7 @@ mod double_counter;
 pub use double_counter::{DOUBLE_COUNTER_GAS_LIMIT, DoubleCounterPayload};
 
 mod aa_bundle;
-pub(crate) use aa_bundle::AaBundlePayload;
+pub use aa_bundle::AaBundlePayload;
 
 mod precompile;
 pub use precompile::PrecompilePayload;
