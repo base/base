@@ -85,7 +85,7 @@ impl SnapshotPersistenceConfig {
     }
 
     /// Returns the legacy cadence-dependent backpressure override, or Reth's default.
-    pub fn backpressure(self, interval: crate::DevnetBlockInterval) -> Option<u64> {
+    pub const fn backpressure(self, interval: crate::DevnetBlockInterval) -> Option<u64> {
         if self.use_reth_persistence_defaults {
             None
         } else {

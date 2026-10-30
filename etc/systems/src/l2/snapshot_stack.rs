@@ -38,6 +38,74 @@ pub struct SnapshotL2StackConfig {
     pub container_config: Option<L2ContainerConfig>,
 }
 
+impl SnapshotL2StackConfig {
+    /// Builds the builder configuration used by snapshot startup, including engine experiments.
+    pub fn builder_config(
+        &self,
+        chain_spec: Arc<BaseChainSpec>,
+        jwt_secret: JwtSecret,
+    ) -> InProcessBuilderConfig {
+        let container = self.container_config.as_ref();
+        let block_interval = self.snapshot.block_interval;
+        InProcessBuilderConfig {
+            runtime: InProcessNodeRuntime::Host,
+            engine_sharing: self.snapshot.builder_engine,
+            chain_spec,
+            datadir: Some(self.snapshot.builder_datadir.clone()),
+            jwt_secret,
+            http_port: container.and_then(|value| value.builder_http_port),
+            ws_port: container.and_then(|value| value.builder_ws_port),
+            auth_port: container.and_then(|value| value.builder_auth_port),
+            p2p_port: container.and_then(|value| value.builder_p2p_port),
+            flashblocks_port: container.and_then(|value| value.builder_flashblocks_port),
+            metrics_port: None,
+            block_time: block_interval.duration(),
+            payload_builder_cutover: block_interval == DevnetBlockInterval::TwoHundredMilliseconds,
+            extra_extensions: Vec::new(),
+            validity_signature_mode: ValiditySignatureMode::Off,
+            persistence_threshold: self.snapshot.persistence.threshold(),
+            resting_predicate_mode: self.snapshot.resting_predicate_mode,
+            persistence_backpressure_threshold: self.snapshot.persistence.backpressure(block_interval),
+            txpool_max_transactions: Some(150_000),
+            txpool_max_size_mb: Some(1_024),
+            txpool_max_account_slots: Some(1_024),
+        }
+    }
+
+    /// Builds the optional follower configuration with the same persistence policy, never suppression.
+    pub fn client_config(
+        &self,
+        chain_spec: Arc<BaseChainSpec>,
+        jwt_secret: JwtSecret,
+        builder_rpc_url: String,
+        builder_p2p_enode: String,
+    ) -> Option<InProcessClientConfig> {
+        let container = self.container_config.as_ref();
+        let block_interval = self.snapshot.block_interval;
+        self.snapshot.client_datadir.clone().map(|datadir| InProcessClientConfig {
+            runtime: InProcessNodeRuntime::Host,
+            chain_spec: ChainSpecSource::Parsed(chain_spec),
+            datadir: Some(datadir),
+            jwt_secret,
+            builder_rpc_url,
+            // Snapshot validation replays canonical payloads only after sequencing finishes.
+            builder_flashblocks_url: None,
+            builder_p2p_enode,
+            http_port: container.and_then(|value| value.client_http_port),
+            ws_port: container.and_then(|value| value.client_ws_port),
+            auth_port: container.and_then(|value| value.client_auth_port),
+            p2p_port: container.and_then(|value| value.client_p2p_port),
+            metrics_port: None,
+            persistence_threshold: self.snapshot.persistence.threshold(),
+            persistence_backpressure_threshold: self.snapshot.persistence.backpressure(block_interval),
+            tx_forwarding_config: None,
+            upgrade_signal: None,
+            extra_extensions: Vec::new(),
+            validity_signature_mode: ValiditySignatureMode::Off,
+        })
+    }
+}
+
 /// A running builder/standalone-sequencer/follow-client snapshot stack.
 #[derive(Debug)]
 pub struct SnapshotL2Stack {
@@ -80,29 +148,7 @@ impl SnapshotL2Stack {
         ));
         let jwt_secret = JwtSecret::random();
 
-        let builder = InProcessBuilder::start(InProcessBuilderConfig {
-            runtime: InProcessNodeRuntime::Host,
-            engine_sharing: config.snapshot.builder_engine,
-            chain_spec: Arc::clone(&chain_spec),
-            datadir: Some(config.snapshot.builder_datadir),
-            jwt_secret,
-            http_port: container.and_then(|value| value.builder_http_port),
-            ws_port: container.and_then(|value| value.builder_ws_port),
-            auth_port: container.and_then(|value| value.builder_auth_port),
-            p2p_port: container.and_then(|value| value.builder_p2p_port),
-            flashblocks_port: container.and_then(|value| value.builder_flashblocks_port),
-            metrics_port: None,
-            block_time: block_interval.duration(),
-            payload_builder_cutover: block_interval == DevnetBlockInterval::TwoHundredMilliseconds,
-            extra_extensions: Vec::new(),
-            validity_signature_mode: ValiditySignatureMode::Off,
-            persistence_threshold: config.snapshot.persistence.threshold(),
-            resting_predicate_mode: config.snapshot.resting_predicate_mode,
-            persistence_backpressure_threshold: config.snapshot.persistence.backpressure(block_interval),
-            txpool_max_transactions: Some(150_000),
-            txpool_max_size_mb: Some(1_024),
-            txpool_max_account_slots: Some(1_024),
-        })
+        let builder = InProcessBuilder::start(config.builder_config(Arc::clone(&chain_spec), jwt_secret))
         .await
         .wrap_err("failed to start snapshot builder")?;
         let boundary = SnapshotBoundary::read(
@@ -132,27 +178,7 @@ impl SnapshotL2Stack {
         )?);
 
         let builder_rpc_url = builder.rpc_url()?.to_string();
-        let client_config = config.snapshot.client_datadir.map(|datadir| InProcessClientConfig {
-            runtime: InProcessNodeRuntime::Host,
-            chain_spec: ChainSpecSource::Parsed(chain_spec),
-            datadir: Some(datadir),
-            jwt_secret,
-            builder_rpc_url,
-            // Snapshot validation replays canonical payloads only after sequencing finishes.
-            builder_flashblocks_url: None,
-            builder_p2p_enode: builder.p2p_enode(),
-            http_port: container.and_then(|value| value.client_http_port),
-            ws_port: container.and_then(|value| value.client_ws_port),
-            auth_port: container.and_then(|value| value.client_auth_port),
-            p2p_port: container.and_then(|value| value.client_p2p_port),
-            metrics_port: None,
-            persistence_threshold: config.snapshot.persistence.threshold(),
-            persistence_backpressure_threshold: config.snapshot.persistence.backpressure(block_interval),
-            tx_forwarding_config: None,
-            upgrade_signal: None,
-            extra_extensions: Vec::new(),
-            validity_signature_mode: ValiditySignatureMode::Off,
-        });
+        let client_config = config.client_config(chain_spec, jwt_secret, builder_rpc_url, builder.p2p_enode());
         let client = match client_config {
             Some(client_config) => Some(
                 InProcessClient::start(client_config)

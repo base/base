@@ -265,7 +265,7 @@ impl SnapshotBenchmarkReportConfig {
     pub fn add_window_metrics(blocks: &mut [SnapshotBlockMetrics]) {
         let mut histograms: BTreeMap<String, Vec<(f64, f64)>> = BTreeMap::new();
         let mut gauges = Vec::new();
-        for block in blocks.iter() {
+        for block in &*blocks {
             let metrics = &block.prometheus_metrics;
             for (key, count) in metrics {
                 let Some(bucket) = key.strip_prefix("benchmark/histogram/") else { continue; };
