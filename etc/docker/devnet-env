@@ -124,7 +124,8 @@ SHADOW_BATCHER_METRICS_PORT=6061
 # posting to SHADOW_BATCH_INBOX_ADDRESS from a distinct L1 sender
 # (SHADOW_BATCHER_ADDR, an otherwise-unused funded dev account) so it never
 # collides with the op-batcher's L1 nonces. base-shadow-validator derives L2 from
-# this shadow DA via the matching inbox/sender overrides.
+# this shadow DA via the matching inbox/sender overrides. Both mirror internal
+# zeronet batcher infrastructure; keep them in the default devnet.
 SHADOW_BATCH_INBOX_ADDRESS=0x0000000000000000000000000000000000ba7c4e
 SHADOW_BATCHER_ADDR=0xa0Ee7A142d267C1f36714E4a8F75612F20a79720
 SHADOW_BATCHER_KEY=0x2a871d0798f97d79848a013d4936a73bf4cc922c825d33c1cf7073dff6d409c6
@@ -212,15 +213,20 @@ TRANSACTION_EVENTS_POSTGRES_ADVERTISE_IP=172.30.0.30
 AUDIT_ARCHIVER_ADVERTISE_IP=172.30.0.31
 TRANSACTION_EVENTS_VECTOR_ADVERTISE_IP=172.30.0.32
 
-# Verifier L1 confirmation depth for the client (validator) consensus node.
-# When non-zero, the client's derivation pipeline stays this many L1 blocks
-# behind the L1 head before deriving L2 safe blocks.
-# Set to 0 to disable (default). Try 4 to test delayed safe head.
+# Verifier L1 confirmation depth for the base-client, base-rpc, and
+# base-shadow-validator consensus nodes. Their derivation pipelines stay this
+# many L1 blocks behind the L1 head before deriving L2 safe blocks (about three
+# minutes at 12-second L1 slots). The node's own default is 0. The devnet is
+# meant to mirror production, so do not set this to 0 for speed; see
+# "Production parity" in etc/docker/README.md.
 BASE_NODE_VERIFIER_L1_CONFS=15
 
 # Chain Configuration
 L1_CHAIN_ID=1337
 L2_CHAIN_ID=84538453
+# Forks activate after genesis so every fresh devnet produces pre-fork blocks and
+# then crosses each activation boundary. Do not move them to block 0 for speed.
+# See "Production parity" in etc/docker/README.md.
 # Optional: set to a non-negative block number to schedule Base Azul in devnet.
 # Leave unset to avoid setting base.azul/osakaTime during genesis generation.
 L2_BASE_AZUL_BLOCK=20
