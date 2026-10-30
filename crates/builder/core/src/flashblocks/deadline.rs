@@ -84,6 +84,10 @@ mod tests {
     #[case(Duration::ZERO)]
     #[case(Duration::from_secs(5))]
     fn calculate_uses_attributes_timestamp(#[case] extra_block_deadline: Duration) {
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "test deadline calculation against real wall time"
+        )]
         let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
         let deadline = PayloadJobDeadline::new(extra_block_deadline);
 

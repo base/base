@@ -14,6 +14,10 @@ use reth_e2e_test_utils::testsuite::{
 };
 
 #[tokio::test]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "build live-node test payloads with current wall time"
+)]
 async fn test_testsuite_op_assert_mine_block() -> Result<()> {
     reth_tracing::init_test_tracing();
 
@@ -65,6 +69,10 @@ async fn test_testsuite_op_assert_mine_block() -> Result<()> {
 }
 
 #[tokio::test]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "build live-node test payloads with current wall time"
+)]
 async fn test_testsuite_op_assert_mine_block_isthmus_activated() -> Result<()> {
     reth_tracing::init_test_tracing();
 

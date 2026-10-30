@@ -791,6 +791,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "generate a unique storage-marker test directory"
+    )]
     fn test_proofs_history_db_rejects_ambiguous_storage_markers() {
         let dir = std::env::temp_dir().join(format!(
             "proofs-history-markers-{}-{}",

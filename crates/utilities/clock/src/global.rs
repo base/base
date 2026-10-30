@@ -58,6 +58,10 @@ mod tests {
 
     // Keep this lifecycle in one test: the process-wide clock cannot be reset.
     #[test]
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "verify the default clock against real wall time"
+    )]
     fn defaults_to_system_time_then_preserves_first_installed_clock() {
         let before = SystemTime::now();
         let default_now = GlobalClock::get().now();
