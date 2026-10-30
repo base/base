@@ -50,8 +50,9 @@ pub struct TxEip8130 {
     pub chain_id: ChainId,
     /// Explicit sender account address, or `None` for the EOA path.
     pub sender: Option<Address>,
-    /// High 192 bits of the compound nonce; with `nonce_sequence` forms the
-    /// per-account replay protection key.
+    /// Nonce channel: `0` is the account nonce, `1` through `NONCE_KEY_MAX - 1`
+    /// are Nonce Manager sequences, and `NONCE_KEY_MAX` selects nonce-free mode.
+    /// With `nonce_sequence` it forms the per-account replay protection key.
     pub nonce_key: U256,
     /// Sequence number within the nonce key. Named `nonce` in JSON, like every
     /// other transaction type; `nonceSequence` is also accepted.
@@ -100,9 +101,10 @@ pub struct TxEip8130 {
     /// wire body between `calls` and `payer` and committed to by both the
     /// sender and payer signatures, but otherwise uninterpreted by the protocol.
     pub metadata: Bytes,
-    /// Optional payer; `None` means the resolved sender pays gas, and
+    /// Optional payer; `None` means the resolved sender pays gas,
     /// [`Eip8130Constants::OPEN_PAYER`] means the payer is recovered from
-    /// `payer_auth`.
+    /// `payer_auth`, and any other address is the named payer that `payer_auth`
+    /// must authenticate.
     #[cfg_attr(
         feature = "serde",
         serde(default, deserialize_with = "super::Eip8130PayerSerde::deserialize")

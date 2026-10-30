@@ -16,41 +16,6 @@ use alloy_rlp::{
 
 use crate::transaction::eip8130::constants::Eip8130Constants;
 
-/// Bitmask describing the contexts in which an actor is valid.
-///
-/// On the wire, `Scope` is encoded as a minimal RLP-encoded integer (matching
-/// the EIP-8130 `uint16` spec), not as a one-element list. The derived RLP impls
-/// from `alloy_rlp` would wrap the inner value in a list header, so the
-/// `Encodable`/`Decodable` impls are written by hand. RLP integers are
-/// minimal-big-endian, so values `<= 0xff` encode identically to the earlier
-/// `uint8` form.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(transparent))]
-pub struct Scope(pub u16);
-
-impl Encodable for Scope {
-    fn encode(&self, out: &mut dyn BufMut) {
-        self.0.encode(out);
-    }
-
-    fn length(&self) -> usize {
-        self.0.length()
-    }
-}
-
-impl Decodable for Scope {
-    fn decode(buf: &mut &[u8]) -> alloy_rlp::Result<Self> {
-        u16::decode(buf).map(Self)
-    }
-}
-
-impl Scope {
-    /// Unrestricted scope (actor valid in all contexts).
-    pub const UNRESTRICTED: Self = Self(Eip8130Constants::SCOPE_UNRESTRICTED);
-}
-
 /// Initial actor installed on a newly-created account.
 ///
 /// Per [EIP-8130], a create entry's initial actors are
@@ -756,25 +721,5 @@ mod tests {
         let header = Header::decode(&mut slice).unwrap();
         assert!(header.list, "an account-change entry must be a single RLP list");
         u8::decode(&mut slice).unwrap()
-    }
-
-    #[test]
-    fn scope_encodes_as_bare_uint8() {
-        let mut buf = Vec::new();
-        Scope(0x05).encode(&mut buf);
-        assert_eq!(buf, vec![0x05], "Scope must serialize as a single RLP byte, not a list");
-
-        let mut zero = Vec::new();
-        Scope(0x00).encode(&mut zero);
-        assert_eq!(zero, vec![0x80], "Zero byte RLP encodes as 0x80");
-
-        let mut high = Vec::new();
-        Scope(0x80).encode(&mut high);
-        assert_eq!(high, vec![0x81, 0x80], "High-bit byte RLP encodes as 0x81 0x80");
-
-        let mut slice = buf.as_slice();
-        let decoded = Scope::decode(&mut slice).unwrap();
-        assert_eq!(decoded, Scope(0x05));
-        assert!(slice.is_empty());
     }
 }
