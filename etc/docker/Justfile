@@ -214,6 +214,10 @@ follow-leader:
 transfer-leader to='':
     @./etc/scripts/devnet/transfer-leader.sh {{ to }}
 
+# Injects a fault into the running devnet, e.g. `chaos batcher-outage 60` (docs/guides/DEVNET_CHAOS.md)
+chaos scenario='' *args:
+    @./etc/scripts/devnet/chaos.sh {{ quote(scenario) }} {{ args }}
+
 # TUI dashboard: HA conductor cluster monitor (requires devnet running)
 conductor:
     cargo run --quiet -p basectl -- -c devnet monitor conductor
