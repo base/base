@@ -489,13 +489,13 @@ mod tests {
         assert_eq!(node.engine.memory_block_buffer_target(), 5, "follower keeps upstream buffer");
         assert_eq!(node.engine.persistence_backpressure_threshold(), 100, "follower keeps upstream backpressure");
         assert_eq!(node.engine.num_state_masking_blocks(), 30, "follower keeps upstream masking");
-        assert_eq!(node.engine.tree_config().suppress_persistence_during_build(), false, "follower must not suppress persistence");
+        assert!(!node.engine.tree_config().suppress_persistence_during_build(), "follower must not suppress persistence");
         config.persistence_threshold = Some(0);
         config.persistence_backpressure_threshold = Some(160);
         config.configure_engine(&mut node);
         assert_eq!(node.engine.persistence_threshold, 0, "follower applies legacy threshold");
         assert_eq!(node.engine.persistence_backpressure_threshold(), 160, "follower applies legacy backpressure");
-        assert_eq!(node.engine.tree_config().suppress_persistence_during_build(), false, "legacy follower must not suppress persistence");
+        assert!(!node.engine.tree_config().suppress_persistence_during_build(), "legacy follower must not suppress persistence");
     }
 
     #[test]

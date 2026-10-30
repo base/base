@@ -209,6 +209,38 @@ the Flashblocks builder. Sparse sharing requires at least five available CPUs;
 an unsupported host fails rather than silently ignoring the option. Host-derived
 worker-pool sizing is unchanged. The options are CLI-only, not load-test YAML keys.
 
+Snapshot reports add `_window_p50`, `_window_p95`, and `_window_p99` to duration
+metric names in `metrics-sequencer.json`, `metrics-validator.json`, and each block's
+Prometheus metrics in `benchmark-result.json`. They are whole-window estimates
+repeated on each block for compatibility with the existing report format, not
+per-block percentiles. Existing `_avg` fields are unchanged.
+
+The benchmark configures cumulative duration buckets before starting Reth, whose
+default exporter otherwise uses rolling summaries. It subtracts cumulative bucket
+counts between scrapes and sums those deltas over the selected block window,
+then uses Prometheus `histogram_quantile` linear interpolation. Precision is bounded
+by bucket edges (1ms to 10s; ranks in +Inf return the highest finite edge). A scrape
+spanning multiple blocks is attributed evenly across those blocks, as existing
+counters are; partial edge intervals therefore have scrape-resolution uncertainty.
+Empty or missing histograms emit no percentiles. Summary quantiles and native-only
+histograms are not converted into window percentiles: their windows/buckets cannot
+be reconstructed by this classic-bucket path. Their existing `_avg` outputs remain.
+
+Covered duration metrics, all in seconds:
+
+- `reth_base_builder_native_payload_build_duration` (native payload building).
+- `reth_engine_rpc_get_payload_v1` through `reth_engine_rpc_get_payload_v6`
+  (only versions actually called appear).
+- `reth_consensus_engine_beacon_new_payload_latency` and
+  `reth_consensus_engine_beacon_block_insert_total_duration` (follower import).
+
+`reth_consensus_engine_beacon_executed_blocks` also adds `_sampled_min`,
+`_sampled_avg`, and `_sampled_max`. This gauge counts executed blocks retained in
+the engine tree, including forks. It is not canonical persisted-head lag. Each
+scrape is weighted once, not once per covered block; these are sampled statistics,
+not continuous extrema. No direct persisted-head lag gauge was found at the
+pinned Reth revision. Missing metrics are omitted, never represented as zero.
+
 Snapshot persistence experiments use `--engine.suppress-persistence-during-build`
 (default false, builder only) and `--use-reth-persistence-defaults` (default false).
 The latter leaves persistence settings unset on both builder and follower, so Reth

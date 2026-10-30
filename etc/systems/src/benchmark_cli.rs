@@ -1035,6 +1035,7 @@ impl SnapshotBenchmarkArgs {
             client_version,
         );
 
+        crate::PrometheusSnapshot::install_window_recorder()?;
         let mut stack = SystemTestStackBuilder::new()
             .with_devnet_config(devnet)
             .build_snapshot_sequencer()
@@ -1418,6 +1419,7 @@ impl SnapshotBenchmarkArgs {
             blocks.len(),
             summary.measurement_block_count
         );
+        SnapshotBenchmarkReportConfig::add_window_metrics(&mut blocks);
         Ok(blocks)
     }
 

@@ -258,6 +258,52 @@ impl SnapshotBenchmarkReportConfig {
         Ok(())
     }
 
+    /// Adds window quantiles from summed bucket deltas, never from per-scrape percentiles.
+    /// Raw buckets are divided across blocks by the collector, so skipped heads are counted
+    /// once. Partial edge scrape intervals are proportionally attributed, like existing counters.
+    /// Gauge averages weight each scrape once, rather than once per covered block.
+    pub fn add_window_metrics(blocks: &mut [SnapshotBlockMetrics]) {
+        let mut histograms: BTreeMap<String, Vec<(f64, f64)>> = BTreeMap::new();
+        let mut gauges = Vec::new();
+        for block in blocks.iter() {
+            let metrics = &block.prometheus_metrics;
+            for (key, count) in metrics {
+                let Some(bucket) = key.strip_prefix("benchmark/histogram/") else { continue; };
+                let Some((name, bound)) = bucket.rsplit_once('/') else { continue; };
+                let Ok(bound) = bound.parse::<f64>() else { continue; };
+                let buckets = histograms.entry(name.to_owned()).or_default();
+                if let Some((_, value)) = buckets.iter_mut().find(|(edge, _)| *edge == bound) {
+                    *value += count;
+                } else {
+                    buckets.push((bound, *count));
+                }
+            }
+            if let Some(value) = metrics.get(crate::prometheus_metrics::WINDOW_GAUGE) {
+                let weight = 1.0 / metrics.get("benchmark/prometheus_blocks_per_scrape").copied().unwrap_or(1.0).max(1.0);
+                gauges.push((*value, weight));
+            }
+        }
+        let mut window = BTreeMap::new();
+        for (name, mut buckets) in histograms {
+            buckets.sort_by(|left, right| left.0.total_cmp(&right.0));
+            for (suffix, quantile) in [("p50", 0.5), ("p95", 0.95), ("p99", 0.99)] {
+                if let Some(value) = crate::PrometheusSnapshot::histogram_quantile(&buckets, quantile) {
+                    window.insert(format!("{name}_window_{suffix}"), value);
+                }
+            }
+        }
+        if !gauges.is_empty() {
+            let name = crate::prometheus_metrics::WINDOW_GAUGE;
+            window.insert(format!("{name}_sampled_min"), gauges.iter().map(|(v, _)| *v).fold(f64::INFINITY, f64::min));
+            window.insert(format!("{name}_sampled_max"), gauges.iter().map(|(v, _)| *v).fold(f64::NEG_INFINITY, f64::max));
+            window.insert(format!("{name}_sampled_avg"), gauges.iter().map(|(v, w)| v * w).sum::<f64>() / gauges.iter().map(|(_, w)| w).sum::<f64>());
+        }
+        for block in blocks {
+            block.prometheus_metrics.retain(|name, _| !name.starts_with("benchmark/histogram/"));
+            block.prometheus_metrics.extend(window.clone());
+        }
+    }
+
     /// Converts a zero-based sample index to the equivalent position on a two-second block axis.
     pub fn normalized_block_number(index: usize, block_interval_ms: u64) -> f64 {
         const REFERENCE_BLOCK_INTERVAL_MS: f64 = 2_000.0;
@@ -397,6 +443,16 @@ transactions:
             }],
         };
 
+        let mut result = result;
+        for (bound, count) in [("1", 2.0), ("2", 4.0), ("inf", 4.0)] {
+            result.blocks[0].prometheus_metrics.insert(
+                format!("benchmark/histogram/reth_base_builder_native_payload_build_duration/{bound}"), count,
+            );
+        }
+        result.blocks[0].prometheus_metrics.insert(
+            crate::prometheus_metrics::WINDOW_GAUGE.to_owned(), 12.0,
+        );
+        SnapshotBenchmarkReportConfig::add_window_metrics(&mut result.blocks);
         report.write_visualizer_bundle(&result).unwrap();
 
         let metrics: serde_json::Value = serde_json::from_slice(
@@ -404,6 +460,12 @@ transactions:
         )
         .unwrap();
         assert_eq!(metrics[0]["BlockNumber"], 0.1);
+        assert_eq!(metrics[0]["ExecutionMetrics"]["reth_base_builder_native_payload_build_duration_window_p99"], 1.98, "JSON report must include the bucket-derived window p99");
+        assert_eq!(metrics[0]["ExecutionMetrics"]["reth_base_builder_native_payload_build_duration_window_p50"], 1.0, "JSON contains window median");
+        assert_eq!(metrics[0]["ExecutionMetrics"]["reth_base_builder_native_payload_build_duration_window_p95"], 1.9, "JSON contains window p95");
+        for suffix in ["min", "avg", "max"] {
+            assert_eq!(metrics[0]["ExecutionMetrics"][format!("{}_sampled_{suffix}", crate::prometheus_metrics::WINDOW_GAUGE)], 12.0, "single sampled gauge window has exact min/avg/max");
+        }
         assert_eq!(metrics[0]["Timestamp"], 1_000);
         assert_eq!(metrics[0]["ExecutionMetrics"]["gas/per_block"], 400_000_000.0);
         assert_eq!(metrics[0]["ExecutionMetrics"]["gas/per_second"], 2_000_000_000.0);

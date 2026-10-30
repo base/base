@@ -138,7 +138,7 @@ mod tests {
         let mut builder = NodeConfig::default();
         BuilderEngineSharingConfig { suppress_persistence_during_build: true, ..Default::default() }
             .apply(&mut builder).unwrap();
-        assert_eq!(builder.engine.suppress_persistence_during_build, true, "builder receives suppression");
+        assert!(builder.engine.suppress_persistence_during_build, "builder receives suppression");
         assert_eq!(builder.engine.persistence_threshold, 50, "reth persistence threshold is retained");
         assert_eq!(builder.engine.memory_block_buffer_target(), 5, "reth memory buffer is retained");
         assert_eq!(builder.engine.persistence_backpressure_threshold(), 100, "reth backpressure is retained");

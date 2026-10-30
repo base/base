@@ -14,6 +14,19 @@ use prometheus_scraper::{
 use tokio::{sync::watch, task::JoinHandle};
 use url::Url;
 
+/// Duration histograms configured as cumulative buckets for benchmark-window quantiles.
+pub const WINDOW_HISTOGRAMS: &[&str] = &[
+    "reth_base_builder_native_payload_build_duration",
+    "reth_consensus_engine_beacon_new_payload_latency",
+    "reth_consensus_engine_beacon_block_insert_total_duration",
+    "reth_engine_rpc_get_payload_v1", "reth_engine_rpc_get_payload_v2",
+    "reth_engine_rpc_get_payload_v3", "reth_engine_rpc_get_payload_v4",
+    "reth_engine_rpc_get_payload_v5", "reth_engine_rpc_get_payload_v6",
+];
+
+/// Samples of executed blocks retained by the engine, not a persisted-head height.
+pub const WINDOW_GAUGE: &str = "reth_consensus_engine_beacon_executed_blocks";
+
 /// Prometheus metrics rendered by the snapshot benchmark visualizer.
 const VISUALIZER_METRICS: &[&str] = &[
     "reth_base_builder_flashblock_build_duration_avg",
@@ -115,6 +128,8 @@ enum ScalarSample {
 struct DistributionSample {
     sum: Option<f64>,
     count: Option<f64>,
+    /// Cumulative classic histogram counts sorted by upper bound, including +Inf.
+    buckets: Vec<(f64, f64)>,
 }
 
 /// Parsed values from one Prometheus endpoint scrape.
@@ -125,6 +140,30 @@ pub struct PrometheusSnapshot {
 }
 
 impl PrometheusSnapshot {
+    /// Installs cumulative duration buckets before nodes install Reth's default rolling summaries.
+    /// Bucket edges are seconds; interpolation cannot recover precision within each bucket.
+    pub fn install_window_recorder() -> Result<()> {
+        let builder = Self::window_histogram_builder()?;
+        reth_node_metrics::recorder::try_install_prometheus_recorder_with_builder(builder)?;
+        Ok(())
+    }
+
+    /// Configures only experiment duration metrics as histograms, preserving other instruments.
+    pub fn window_histogram_builder() -> Result<metrics_exporter_prometheus::PrometheusBuilder> {
+        let mut builder = metrics_exporter_prometheus::PrometheusBuilder::new();
+        for name in WINDOW_HISTOGRAMS {
+            let suffix = name.strip_prefix("reth_engine_rpc_").unwrap_or_else(|| {
+                name.strip_prefix("reth_base_builder_").unwrap_or_else(||
+                    name.strip_prefix("reth_consensus_engine_beacon_").unwrap_or(name))
+            });
+            builder = builder.set_buckets_for_metric(
+                metrics_exporter_prometheus::Matcher::Suffix(suffix.to_owned()),
+                &[0.001, 0.002, 0.005, 0.01, 0.02, 0.05, 0.1, 0.15, 0.2, 0.3, 0.5, 1.0, 2.0, 5.0, 10.0],
+            )?;
+        }
+        Ok(builder)
+    }
+
     /// Parses Prometheus text exposition into numeric samples.
     pub fn parse(input: &str) -> Self {
         let mut scalars = BTreeMap::new();
@@ -148,6 +187,7 @@ impl PrometheusSnapshot {
                         Self::insert_scalar(&mut scalars, key, ScalarSample::Gauge(value.as_f64()));
                     }
                     MetricValue::Histogram(histogram) | MetricValue::GaugeHistogram(histogram) => {
+                        Self::insert_buckets(&mut distributions, &key, &histogram.counts);
                         Self::insert_distribution(
                             &mut distributions,
                             key,
@@ -167,12 +207,13 @@ impl PrometheusSnapshot {
                         histogram.sample_sum,
                         Self::native_count(&histogram.counts),
                     ),
-                    MetricValue::HybridHistogram { classic, .. } => Self::insert_distribution(
-                        &mut distributions,
-                        key,
-                        classic.sample_sum,
-                        Self::bucket_count(&classic.counts),
-                    ),
+                    MetricValue::HybridHistogram { classic, .. } => {
+                        Self::insert_buckets(&mut distributions, &key, &classic.counts);
+                        Self::insert_distribution(
+                            &mut distributions, key, classic.sample_sum,
+                            Self::bucket_count(&classic.counts),
+                        );
+                    }
                     MetricValue::StateSet(_) | MetricValue::Info(_) => {}
                 }
             }
@@ -204,6 +245,17 @@ impl PrometheusSnapshot {
         }
 
         for (key, sample) in &self.distributions {
+            let baseline = previous.distributions.get(key);
+            let valid_buckets = baseline.is_none_or(|before| before.buckets.is_empty() ||
+                (before.buckets.len() == sample.buckets.len() &&
+                    before.buckets.iter().zip(&sample.buckets).all(|(old, new)|
+                        old.0 == new.0 && old.1 <= new.1)));
+            for (bound, count) in sample.buckets.iter().filter(|_| valid_buckets) {
+                let prior = previous.distributions.get(key).and_then(|sample| sample.buckets.iter()
+                    .find(|(edge, _)| edge == bound).map(|(_, count)| count));
+                metrics.insert(format!("benchmark/histogram/{key}/{bound}"),
+                    Self::counter_delta(*count, prior) / divisor);
+            }
             let (Some(sum), Some(count)) = (sample.sum, sample.count) else {
                 continue;
             };
@@ -217,6 +269,48 @@ impl PrometheusSnapshot {
             }
         }
         metrics
+    }
+
+    /// Interpolates classic histograms using Prometheus `histogram_quantile` semantics.
+    /// Precision is bounded by bucket edges; +Inf ranks use the highest finite edge.
+    /// Missing +Inf, empty windows and invalid counts yield no value.
+    pub fn histogram_quantile(buckets: &[(f64, f64)], quantile: f64) -> Option<f64> {
+        let &(last, total) = buckets.last()?;
+        if !quantile.is_finite() || !(0.0..=1.0).contains(&quantile) { return None; }
+        if buckets.len() < 2 || last != f64::INFINITY || total <= 0.0 || !total.is_finite() {
+            return None;
+        }
+        let rank = total * quantile;
+        let mut lower = 0.0;
+        let mut previous = 0.0;
+        for &(upper, count) in buckets {
+            if upper.is_nan() || !count.is_finite() || count < previous { return None; }
+            if count >= rank {
+                if upper == f64::INFINITY { return Some(lower); }
+                if count == previous || upper <= 0.0 { return Some(upper); }
+                return Some(lower + (upper - lower) * (rank - previous) / (count - previous));
+            }
+            lower = upper;
+            previous = count;
+        }
+        None
+    }
+
+    /// Keeps classic buckets. Summary quantiles are not subtracted: their rolling windows
+    /// cannot be reconstructed from two scrapes, so only their existing average is retained.
+    fn insert_buckets(
+        distributions: &mut BTreeMap<String, DistributionSample>,
+        key: &str,
+        counts: &BucketCount<'_>,
+    ) {
+        let mut buckets: Vec<_> = match counts {
+            BucketCount::Int { buckets, .. } => buckets.iter()
+                .map(|bucket| (bucket.upper_bound, bucket.cumulative_count as f64)).collect(),
+            BucketCount::Float { buckets, .. } => buckets.iter()
+                .map(|bucket| (bucket.upper_bound, bucket.cumulative_count)).collect(),
+        };
+        buckets.sort_by(|left, right| left.0.total_cmp(&right.0));
+        distributions.entry(key.to_owned()).or_default().buckets = buckets;
     }
 
     fn insert_scalar(
@@ -369,13 +463,62 @@ impl PrometheusBlockCollector {
     /// though the report UI cannot display them. Keep this list in sync with the metrics rendered
     /// by `base/benchmark`'s `ChartGrid`, including its compatibility aliases.
     pub fn is_visualizer_metric(name: &str) -> bool {
-        VISUALIZER_METRICS.contains(&name)
+        VISUALIZER_METRICS.contains(&name) || name == WINDOW_GAUGE
+            || WINDOW_HISTOGRAMS.iter().any(|metric|
+                name.starts_with(&format!("benchmark/histogram/{metric}/")))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{PrometheusBlockCollector, PrometheusSnapshot};
+
+    /// Exporter configuration produces real classic buckets, not rolling summary quantiles.
+    #[test]
+    fn duration_exporter_uses_classic_histograms() {
+        let recorder = PrometheusSnapshot::window_histogram_builder().unwrap().build_recorder();
+        metrics::with_local_recorder(&recorder, || {
+            metrics::histogram!("reth.base_builder.native_payload_build_duration").record(0.1);
+            metrics::histogram!("reth.engine.rpc.get_payload_v4").record(0.2);
+        });
+        let text = recorder.handle().render();
+        for name in ["reth_base_builder_native_payload_build_duration", "reth_engine_rpc_get_payload_v4"] {
+            assert!(text.contains(&format!("# TYPE {name} histogram")), "{name} must have cumulative buckets");
+            assert!(text.contains(&format!("{name}_bucket")), "{name} must expose bucket counts");
+            assert!(!text.contains(&format!("{name}{{quantile=")), "{name} must not use rolling summaries");
+        }
+    }
+
+    /// Cumulative bucket deltas preserve the old average and interpolate window tails.
+    #[test]
+    fn histogram_window_deltas_preserve_average_and_tails() {
+        let before = PrometheusSnapshot::parse("# TYPE build histogram\nbuild_bucket{le=\"1\"} 2\nbuild_bucket{le=\"2\"} 4\nbuild_bucket{le=\"+Inf\"} 4\nbuild_sum 4\nbuild_count 4\n");
+        let after = PrometheusSnapshot::parse("# TYPE build histogram\nbuild_bucket{le=\"1\"} 4\nbuild_bucket{le=\"2\"} 8\nbuild_bucket{le=\"+Inf\"} 8\nbuild_sum 10\nbuild_count 8\n");
+        let delta = after.delta(&before);
+        assert_eq!(delta["build_avg"], 1.5, "legacy sum/count average stays unchanged");
+        assert_eq!(delta["benchmark/histogram/build/1"], 2.0, "finite bucket counts are subtracted");
+        assert_eq!(delta["benchmark/histogram/build/inf"], 4.0, "infinite bucket counts are subtracted");
+        assert_eq!(PrometheusSnapshot::histogram_quantile(&[(1.0, 2.0), (2.0, 4.0), (f64::INFINITY, 4.0)], 0.99), Some(1.98), "p99 interpolates bucket delta rather than averages");
+    }
+
+    /// Rolling summary quantiles cannot become window quantiles by subtraction.
+    #[test]
+    fn summary_quantiles_remain_average_only() {
+        let summary = PrometheusSnapshot::parse("# TYPE duration summary\nduration{quantile=\"0.99\"} 10\nduration_sum 6\nduration_count 2\n");
+        let delta = summary.delta(&PrometheusSnapshot::default());
+        assert_eq!(delta["duration_avg"], 3.0, "summary sum/count average is preserved");
+        assert_eq!(delta.len(), 1, "summary quantiles must not become fake window percentiles");
+    }
+
+    /// Prometheus returns the highest finite bound for ranks in +Inf and omits empty windows.
+    #[test]
+    fn histogram_quantile_infinite_and_empty_windows() {
+        let buckets = [(1.0, 2.0), (2.0, 4.0), (f64::INFINITY, 8.0)];
+        assert_eq!(PrometheusSnapshot::histogram_quantile(&buckets, 0.5), Some(2.0), "p50 is the finite edge");
+        assert_eq!(PrometheusSnapshot::histogram_quantile(&buckets, 0.95), Some(2.0), "p95 in infinity uses highest finite edge");
+        assert_eq!(PrometheusSnapshot::histogram_quantile(&[], 0.99), None, "missing buckets yield no percentile");
+        assert_eq!(PrometheusSnapshot::histogram_quantile(&[(1.0, 0.0), (f64::INFINITY, 0.0)], 0.99), None, "empty window yields no percentile");
+    }
 
     #[test]
     fn computes_counter_and_histogram_deltas() {

@@ -559,10 +559,10 @@ mod tests {
             std::sync::Arc::clone(&config.chain_spec), datadir.path(),
             &datadir.path().join("jwt"), &config,
         ).unwrap();
-        assert_eq!(node.engine.suppress_persistence_during_build, true, "builder configuration must apply suppression");
+        assert!(node.engine.suppress_persistence_during_build, "builder configuration must apply suppression");
         assert_eq!(node.engine.persistence_threshold, 37, "builder configuration must apply threshold");
         assert_eq!(node.engine.persistence_backpressure_threshold(), 74, "reth derives backpressure from threshold");
-        assert_eq!(node.engine.tree_config().suppress_persistence_during_build(), true,
+        assert!(node.engine.tree_config().suppress_persistence_during_build(),
             "suppression must reach the engine tree");
         config.persistence_threshold = crate::SnapshotPersistenceConfig {
             use_reth_persistence_defaults: true,
