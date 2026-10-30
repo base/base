@@ -406,6 +406,9 @@ pub enum TxTypeConfig {
         #[serde(default)]
         reverse_max_amount: Option<U256>,
     },
+
+    /// Uniswap V3 position-manager operations on a real pool (requires `real_token_setup`).
+    UniswapV3Liquidity(crate::workload::UniswapV3LiquidityPayload),
 }
 
 const fn default_calldata_size() -> usize {
@@ -929,6 +932,15 @@ impl TestConfig {
                     reverse_min_amount,
                     reverse_max_amount,
                 }
+            }
+            TxTypeConfig::UniswapV3Liquidity(payload) => {
+                if !self.real_token_setup.as_ref().is_some_and(|setup| setup.enabled) {
+                    return Err(BaselineError::Config(
+                        "uniswap_v3_liquidity requires enabled real_token_setup".into(),
+                    ));
+                }
+                payload.validate()?;
+                TxType::UniswapV3Liquidity(payload.clone())
             }
         };
         Ok(TxConfig { weight: weighted.weight, tx_type })

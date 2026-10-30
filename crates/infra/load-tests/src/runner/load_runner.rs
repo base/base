@@ -287,88 +287,93 @@ impl LoadRunner {
             let account = &accounts[sender_index];
             let from = account.address;
             let to = accounts[recipient_index].address;
-            let nonce = submission
-                .get_transaction_count(from)
-                .pending()
-                .await
-                .rpc("get calibration transaction nonce")?;
-            let base_fee = self.client.get_base_fee().await?;
-            let priority_fee = (base_fee / 10).max(1);
-            let max_fee = SubmissionPipeline::submission_max_fee(
-                base_fee,
-                priority_fee,
-                self.config.max_gas_price,
-            );
-            let request = generator
-                .generate_payload(from, to)?
-                .with_from(from)
-                .with_nonce(nonce)
-                .with_chain_id(self.config.chain_id)
-                .with_max_fee_per_gas(max_fee)
-                .with_max_priority_fee_per_gas(priority_fee);
-            let (success, average) =
-                if request.transaction_type == Some(Eip8130Constants::EIP8130_TX_TYPE) {
-                    let prepared = PreparedTransaction {
-                        native: true,
-                        from,
-                        to: request.to.and_then(|kind| kind.to().copied()),
-                        value: request.value.unwrap_or(U256::ZERO),
-                        data: request.input.input().cloned().unwrap_or_default(),
-                        gas_limit: request.gas.unwrap_or(EIP8430_TRANSFER_GAS_LIMIT),
-                        estimated_gas: 0,
-                        validity: Vec::new(),
-                        cohort: SubmitCohort::Plain,
+            // Both rounds send every variant, so each variant gets its own warm-up.
+            let (mut variant_gas, mut variant_weight) = (0u128, 0u128);
+            for (request, weight) in generator.calibration_requests(from, to)? {
+                let nonce = submission
+                    .get_transaction_count(from)
+                    .pending()
+                    .await
+                    .rpc("get calibration transaction nonce")?;
+                let base_fee = self.client.get_base_fee().await?;
+                let priority_fee = (base_fee / 10).max(1);
+                let max_fee = SubmissionPipeline::submission_max_fee(
+                    base_fee,
+                    priority_fee,
+                    self.config.max_gas_price,
+                );
+                let request = request
+                    .with_from(from)
+                    .with_nonce(nonce)
+                    .with_chain_id(self.config.chain_id)
+                    .with_max_fee_per_gas(max_fee)
+                    .with_max_priority_fee_per_gas(priority_fee);
+                let (success, average) =
+                    if request.transaction_type == Some(Eip8130Constants::EIP8130_TX_TYPE) {
+                        let prepared = PreparedTransaction {
+                            native: true,
+                            from,
+                            to: request.to.and_then(|kind| kind.to().copied()),
+                            value: request.value.unwrap_or(U256::ZERO),
+                            data: request.input.input().cloned().unwrap_or_default(),
+                            gas_limit: request.gas.unwrap_or(EIP8430_TRANSFER_GAS_LIMIT),
+                            estimated_gas: 0,
+                            validity: Vec::new(),
+                            cohort: SubmitCohort::Plain,
+                        };
+                        let signed = SubmissionPipeline::sign_at_nonce(
+                            &account.signer,
+                            &prepared,
+                            self.config.chain_id,
+                            nonce,
+                            Fees { max_fee, priority_fee },
+                        )?;
+                        let receipt = submission
+                            .send_raw_transaction(&signed.raw)
+                            .await
+                            .rpc("submit native calibration transaction")?
+                            .with_timeout(Some(Duration::from_secs(60)))
+                            .get_receipt()
+                            .await
+                            .rpc("confirm native calibration transaction (requires Everest)")?;
+                        (
+                            receipt.status() && receipt.phase_statuses.as_deref() == Some(&[1]),
+                            receipt.gas_used(),
+                        )
+                    } else {
+                        let provider = create_wallet_provider(
+                            self.config.primary_submission_rpc().clone(),
+                            EthereumWallet::from(account.signer.clone()),
+                        );
+                        let receipt = provider
+                            .send_transaction(request)
+                            .await
+                            .rpc("submit calibration transaction")?
+                            .get_receipt()
+                            .await
+                            .rpc("confirm calibration transaction")?;
+                        (receipt.status(), receipt.gas_used)
                     };
-                    let signed = SubmissionPipeline::sign_at_nonce(
-                        &account.signer,
-                        &prepared,
-                        self.config.chain_id,
-                        nonce,
-                        Fees { max_fee, priority_fee },
-                    )?;
-                    let receipt = submission
-                        .send_raw_transaction(&signed.raw)
-                        .await
-                        .rpc("submit native calibration transaction")?
-                        .with_timeout(Some(Duration::from_secs(60)))
-                        .get_receipt()
-                        .await
-                        .rpc("confirm native calibration transaction (requires Everest)")?;
-                    (
-                        receipt.status() && receipt.phase_statuses.as_deref() == Some(&[1]),
-                        receipt.gas_used(),
-                    )
-                } else {
-                    let provider = create_wallet_provider(
-                        self.config.primary_submission_rpc().clone(),
-                        EthereumWallet::from(account.signer.clone()),
-                    );
-                    let receipt = provider
-                        .send_transaction(request)
-                        .await
-                        .rpc("submit calibration transaction")?
-                        .get_receipt()
-                        .await
-                        .rpc("confirm calibration transaction")?;
-                    (receipt.status(), receipt.gas_used)
-                };
-            if !success {
-                return Err(BaselineError::Transaction(format!(
-                    "calibration transaction type {type_index} ({:?}) reverted",
-                    tx_config.tx_type
-                )));
+                if !success {
+                    return Err(BaselineError::Transaction(format!(
+                        "calibration transaction type {type_index} ({:?}) reverted",
+                        tx_config.tx_type
+                    )));
+                }
+                variant_gas += u128::from(average) * u128::from(weight);
+                variant_weight += u128::from(weight);
             }
             if !measured {
                 continue;
             }
+            let average = variant_gas / variant_weight;
             info!(
                 transaction_type_index = type_index,
                 weight = tx_config.weight,
                 average_gas = average,
                 "calibrated transaction gas"
             );
-            weighted_gas =
-                weighted_gas.saturating_add(u128::from(average) * u128::from(tx_config.weight));
+            weighted_gas = weighted_gas.saturating_add(average * u128::from(tx_config.weight));
         }
 
         u64::try_from(weighted_gas / u128::from(total_weight))
@@ -634,7 +639,9 @@ mod tests {
     use super::{LoadConfig, LoadRunner};
     use crate::{
         runner::{TxConfig, TxType},
-        workload::UniswapV3Hop,
+        workload::{
+            LiquidityOps, SenderPosition, UniswapPositions, UniswapV3Hop, UniswapV3LiquidityPayload,
+        },
     };
 
     #[tokio::test]
@@ -668,6 +675,63 @@ mod tests {
 
         let gas = runner.calibrate_avg_gas().await.expect("calibration succeeds");
         assert!(gas < 41_000, "calibrated {gas} gas includes the first-write cost");
+    }
+
+    /// Calibration weights each payload variant: a 3:1 mint/collect mix lands at 3:1 of their gas.
+    #[tokio::test]
+    async fn calibration_averages_payload_variants_by_weight() {
+        let anvil = Anvil::new().spawn();
+        let provider: RootProvider = RootProvider::new_http(anvil.endpoint_url());
+        // STOP: each op costs only its calldata, which differs by op.
+        let manager = Address::repeat_byte(0x10);
+        let _: () = provider
+            .raw_request("anvil_setCode".into(), (manager, Bytes::from_static(&[0x00])))
+            .await
+            .unwrap();
+        let calibrate = async |ops: LiquidityOps| {
+            let payload = UniswapV3LiquidityPayload {
+                position_manager: manager,
+                token0: Address::repeat_byte(0x11),
+                token1: Address::repeat_byte(0x22),
+                fee: 500,
+                amount0: U256::from(17),
+                amount1: U256::from(29),
+                ops,
+                positions: Default::default(),
+            };
+            let config = LoadConfig {
+                transaction_submission_rpcs: vec![anvil.endpoint_url()],
+                query_rpc: anvil.endpoint_url(),
+                chain_id: anvil.chain_id(),
+                account_count: 1,
+                transactions: vec![TxConfig {
+                    weight: 100,
+                    tx_type: TxType::UniswapV3Liquidity(payload.clone()),
+                }],
+                ..LoadConfig::devnet()
+            };
+            let runner = LoadRunner::new(config).expect("valid config");
+            let sender = runner.accounts.accounts()[0].address;
+            let position = SenderPosition { token_id: U256::from(7), decrease_liquidity: 1 };
+            payload
+                .positions
+                .set(UniswapPositions {
+                    tick_lower: Default::default(),
+                    tick_upper: Default::default(),
+                    positions: [(sender, position)].into(),
+                })
+                .unwrap();
+            let _: () = provider
+                .raw_request("anvil_setBalance".into(), (sender, U256::from(10u128.pow(18))))
+                .await
+                .unwrap();
+            runner.calibrate_avg_gas().await.expect("calibration succeeds")
+        };
+        let mint = calibrate(LiquidityOps { mint: 1, ..Default::default() }).await;
+        let collect = calibrate(LiquidityOps { collect: 1, ..Default::default() }).await;
+        let mixed = calibrate(LiquidityOps { mint: 3, collect: 1, ..Default::default() }).await;
+        assert!(mint > collect, "mint calldata costs more: {mint} vs {collect}");
+        assert_eq!(mixed, (3 * mint + collect) / 4, "variants are averaged by op weight");
     }
 
     #[tokio::test]

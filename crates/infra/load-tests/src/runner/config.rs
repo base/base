@@ -251,6 +251,8 @@ pub enum TxType {
         /// Maximum amount when swapping `token_out` to `token_in`.
         reverse_max_amount: U256,
     },
+    /// Uniswap V3 position-manager operations.
+    UniswapV3Liquidity(crate::workload::UniswapV3LiquidityPayload),
 }
 
 /// Default maximum gas price cap (1000 gwei).
