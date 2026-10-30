@@ -5,17 +5,16 @@ use std::{
     time::{Duration, Instant},
 };
 
-use alloy_consensus::{BlockHeader, Transaction, Typed2718, transaction::TxHashRef};
-use alloy_evm::{
-    Evm as AlloyEvm,
-    block::{CommitChanges, TxResult},
+use alloy_consensus::{
+    BlockHeader, Transaction, Typed2718,
+    transaction::{Recovered, TxHashRef},
 };
-use alloy_primitives::{Address, B256, TxHash, U256, map::B256Set};
+use alloy_primitives::{Address, TxHash, U256, map::B256Set};
 use alloy_rpc_types_debug::ExecutionWitness;
 use alloy_rpc_types_engine::PayloadId;
-use base_common_chains::Upgrades;
+use base_common_chains::{BaseUpgrade, BaseUpgradeExt, Upgrades};
 use base_common_consensus::{BaseTransaction, DepositReceiptExt, Predeploys};
-use base_common_evm::{BaseSpecId, L1BlockInfo};
+use base_common_evm2::L1Block;
 use base_execution_eip8130::IntrinsicGas;
 use base_execution_txpool::{
     BasePooledTx, GuardMetrics, ParkableTransactionPool, PredicateContext,
@@ -24,33 +23,37 @@ use base_execution_txpool::{
 use base_observability_events::{
     GlobalTransactionEventWriter, TransactionEventProducer, TransactionEventType, transaction_event,
 };
+use evm2::evm::{CacheDB, Db, DynDatabase};
+use parking_lot::Mutex;
 use reth_basic_payload_builder::{
     BuildArguments, BuildOutcome, BuildOutcomeKind, MissingPayloadBehaviour, PayloadBuilder,
     PayloadConfig, is_better_payload,
 };
 use reth_chainspec::{ChainSpecProvider, EthChainSpec};
 use reth_evm::{
-    BlockExecutorForEvm, ConfigureEvm, Database,
+    BlockExecutorFactory, BlockExecutorFor, BlockTransactionResult, CommitChanges, ConfigureEvm,
+    Database, Evm as _, EvmEnv, GasOutput, OnStateHook, RecoveredTx,
+    database::StateProviderDatabase,
     execute::{
-        BlockBuilder, BlockBuilderOutcome, BlockExecutionError, BlockExecutor, BlockValidationError,
+        BasicBlockBuilder, BlockBuilder, BlockBuilderOutcome, BlockExecutionError, BlockExecutor,
+        BlockValidationError, ExecutorTx,
     },
+    witness::ExecutionWitnessRecord,
 };
-use reth_execution_types::BlockExecutionOutput;
+use reth_execution_types::{BlockExecutionOutput, StateUpdate};
 use reth_payload_builder_primitives::PayloadBuilderError;
 use reth_payload_primitives::{BuildNextEnv, BuiltPayloadExecutedBlock};
 use reth_payload_util::{NoopPayloadTransactions, PayloadTransactions};
 use reth_primitives_traits::{
     HeaderTy, NodePrimitives, SealedHeader, SealedHeaderFor, SignedTransaction, TxTy, WithEncoded,
 };
-use reth_revm::{database::StateProviderDatabase, db::State, witness::ExecutionWitnessRecord};
-use reth_storage_api::{BlockReader, StateProvider, StateProviderFactory, errors::ProviderError};
+use reth_storage_api::{BlockReader, StateProvider, StateProviderFactory};
 use reth_tasks::CancelOnDrop;
 use reth_transaction_pool::{
     BestTransactionsAttributes, PoolTransaction, TransactionPool, ValidPoolTransaction,
 };
 use reth_trie_common::ExecutionWitnessMode;
 use reth_trie_parallel::state_root_task::PayloadStateRootHandle;
-use revm::context::{Block, BlockEnv};
 use tracing::{debug, debug_span, info, instrument, trace, warn};
 
 use crate::{
@@ -58,9 +61,9 @@ use crate::{
     CoinbaseTipAffordability, InclusionTracker, MeteringProvider, ParkableBestPayloadTransactions,
     ParkablePayloadTransactions, ParkedPredicateIndex, PayloadPrimitives, PredicateLoadTracker,
     PredicateReadRecorder, RejectionCacheMetrics, RestingPredicateStore, RestingPredicates,
-    StateChangeEffects, ValidityEvaluationCounters, ValidityEvaluationOutcome, ValidityMetrics,
-    ValidityPredicateEvaluation, config::BaseBuilderConfig, error::BasePayloadBuilderError,
-    payload::BaseBuiltPayload,
+    StateChangeEffects, StateView, ValidityEvaluationCounters, ValidityEvaluationOutcome,
+    ValidityMetrics, ValidityPredicateEvaluation, config::BaseBuilderConfig,
+    error::BasePayloadBuilderError, payload::BaseBuiltPayload,
 };
 
 macro_rules! emit_native_validity_event {
@@ -391,7 +394,7 @@ impl<Txs> Builder<'_, Txs> {
     /// Builds the payload on top of the state.
     pub fn build<Evm, ChainSpec, N, Attrs>(
         self,
-        db: impl Database<Error = ProviderError>,
+        db: impl Database,
         state_provider: &dyn StateProvider,
         mut state_root_handle: Option<PayloadStateRootHandle>,
         ctx: BasePayloadBuilderCtx<Evm, ChainSpec, Attrs>,
@@ -412,17 +415,26 @@ impl<Txs> Builder<'_, Txs> {
         let build_start = Instant::now();
         debug!(target: "payload_builder", id=%ctx.payload_id(), parent_header = ?ctx.parent().hash(), parent_number = ctx.parent().number(), "building new payload");
 
-        let mut db = State::builder().with_database(db).with_bundle_update().build();
+        let mut builder = ctx.block_builder(db)?;
 
-        // Load the L1 block contract into the database cache. If the L1 block contract is not
-        // pre-loaded the database will panic when trying to fetch the DA footprint gas
-        // scalar.
-        db.load_cache_account(Predeploys::L1_BLOCK_INFO).map_err(BlockExecutionError::other)?;
-
-        let mut builder = ctx.block_builder(&mut db)?;
-
-        if let Some(task) = state_root_handle.as_mut() {
-            builder.evm_mut().db_mut().set_state_hook(Some(Box::new(task.take_state_hook())));
+        // Without flashblocks, resting transactions only carry across blocks, from Denim on.
+        let resting_store = resting_predicates.as_ref().filter(|_| {
+            !ctx.attributes().no_tx_pool()
+                && ctx.builder_config.resting_predicate_mode.is_enabled()
+                && ctx.is_denim_active()
+        });
+        let pre_block_changes = resting_store.map(|_| PreBlockChanges::default());
+        let mut state_root_hook = state_root_handle.as_mut().map(|task| task.take_state_hook());
+        if state_root_hook.is_some() || pre_block_changes.is_some() {
+            let pre_block_changes = pre_block_changes.clone();
+            builder.set_state_hook(move |update| {
+                if let Some(pre_block_changes) = &pre_block_changes {
+                    pre_block_changes.record(&update);
+                }
+                if let Some(hook) = state_root_hook.as_mut() {
+                    hook.on_state(update);
+                }
+            });
         }
 
         // 1. apply pre-execution changes
@@ -437,26 +449,19 @@ impl<Txs> Builder<'_, Txs> {
         // 3. if mem pool transactions are requested we execute them
         let mut resting = None;
         if !ctx.attributes().no_tx_pool() {
-            // Without flashblocks, resting transactions only carry across blocks, from Denim on.
-            resting = resting_predicates
-                .as_ref()
-                .filter(|_| {
-                    ctx.builder_config.resting_predicate_mode.is_enabled() && ctx.is_denim_active()
-                })
-                .map(|store| {
-                    let mut resting =
-                        store.take(ctx.builder_config.predicate_bucket_ordered_threshold);
-                    // The transitions hold the system calls and deposits applied on top of the
-                    // parent state.
-                    let carry_over = resting.begin_block(
-                        ctx.parent().hash(),
-                        ctx.parent().number().saturating_add(1),
-                        builder.evm_mut().db_mut().transition_state.as_ref(),
-                    );
-                    ValidityMetrics::record_resting_carry_over(&carry_over);
-                    resting
-                });
-            let best_txs = best(ctx.best_transaction_attributes(builder.evm_mut().block()));
+            resting = resting_store.zip(pre_block_changes).map(|(store, pre_block_changes)| {
+                let mut resting = store.take(ctx.builder_config.predicate_bucket_ordered_threshold);
+                // The pre-block changes hold the system calls and deposits applied on top of the
+                // parent state.
+                let carry_over = resting.begin_block(
+                    ctx.parent().hash(),
+                    ctx.parent().number().saturating_add(1),
+                    Some(&pre_block_changes.finish()),
+                );
+                ValidityMetrics::record_resting_carry_over(&carry_over);
+                resting
+            });
+            let best_txs = best(ctx.best_transaction_attributes(builder.evm_env()));
             let cancelled =
                 ctx.execute_best_transactions(&mut info, &mut builder, best_txs, resting.as_mut())?;
             if !info.permanently_rejected_txs.is_empty() {
@@ -490,39 +495,42 @@ impl<Txs> Builder<'_, Txs> {
         let execution_duration = build_start.elapsed();
 
         let block_num = ctx.parent().number().saturating_add(1);
-        let state_root = state_root_handle.and_then(|mut task| {
-            // Dropping the hook closes the update stream so the parallel task can finish.
-            builder.evm_mut().db_mut().set_state_hook(None);
-            match task.state_root() {
-                Ok(outcome) => {
-                    debug!(
-                        target: "payload_builder",
-                        id = %ctx.payload_id(),
-                        state_root = ?outcome.state_root,
-                        job = task.name(),
-                        "received state root from state-root job"
-                    );
-                    Some((outcome.state_root, Arc::unwrap_or_clone(outcome.trie_updates)))
+        // Finishing drops the executor and its state hook, which closes the update stream so the
+        // parallel state-root task can finish before its root is requested.
+        let state_root = |_: &BlockExecutionOutput<N::Receipt>| {
+            Ok::<_, BlockExecutionError>(state_root_handle.and_then(|mut task| {
+                match task.state_root() {
+                    Ok(outcome) => {
+                        debug!(
+                            target: "payload_builder",
+                            id = %ctx.payload_id(),
+                            state_root = ?outcome.state_root,
+                            job = task.name(),
+                            "received state root from state-root job"
+                        );
+                        Some((outcome.state_root, Arc::unwrap_or_clone(outcome.trie_updates)))
+                    }
+                    Err(error) => {
+                        warn!(
+                            target: "payload_builder",
+                            id = %ctx.payload_id(),
+                            error = %error,
+                            "state-root job failed, falling back to synchronous state root"
+                        );
+                        None
+                    }
                 }
-                Err(error) => {
-                    warn!(
-                        target: "payload_builder",
-                        id = %ctx.payload_id(),
-                        error = %error,
-                        "state-root job failed, falling back to synchronous state root"
-                    );
-                    None
-                }
-            }
-        });
+            }))
+        };
         let BlockBuilderOutcome {
             execution_result,
+            execution_state,
             hashed_state,
             trie_updates,
             block,
             block_access_list,
         } = debug_span!("finish_payload", block_num)
-            .in_scope(|| builder.finish(state_provider, state_root))?;
+            .in_scope(|| builder.finish_with_state_root(state_provider, state_root))?;
 
         let sealed_block = Arc::new(block.sealed_block().clone());
         debug!(target: "payload_builder", id=%ctx.payload_id(), sealed_block_header = ?sealed_block.header(), "sealed built block");
@@ -532,7 +540,7 @@ impl<Txs> Builder<'_, Txs> {
         }
 
         let execution_outcome =
-            BlockExecutionOutput { state: db.take_bundle(), result: execution_result };
+            BlockExecutionOutput { state: execution_state, result: execution_result };
 
         // create the executed block data
         let executed: BuiltPayloadExecutedBlock<N> = BuiltPayloadExecutedBlock {
@@ -591,50 +599,109 @@ impl<Txs> Builder<'_, Txs> {
             return Err(PayloadBuilderError::other(BasePayloadBuilderError::Cancelled));
         }
 
-        let mut db = State::builder()
-            .with_database(StateProviderDatabase::new((&state_provider).into_evm_state_provider()))
-            .with_bundle_update()
-            .build();
-        let mut builder = ctx.block_builder(&mut db)?;
-        let block_number =
-            builder.evm().block().number().try_into().expect("block_number must be < u64::MAX");
-
-        builder.apply_pre_execution_changes()?;
-        ctx.execute_sequencer_transactions(&mut builder)?;
-        builder.into_executor().apply_post_execution_changes()?;
+        let mut db = CacheDB::new(Db::new(StateProviderDatabase::new(
+            (&state_provider).into_evm_state_provider(),
+        )));
+        let block_number = ctx.parent().number().saturating_add(1);
+        let output = {
+            let mut builder = ctx.block_builder(&mut db)?;
+            builder.apply_pre_execution_changes()?;
+            ctx.execute_sequencer_transactions(&mut builder)?;
+            builder.into_executor().finish()?
+        };
 
         if ctx.cancel.is_cancelled() {
             return Err(PayloadBuilderError::other(BasePayloadBuilderError::Cancelled));
         }
 
+        let codes = ExecutionWitnessRecord::commit_execution(&mut db, &output.state);
         if ctx.chain_spec.is_isthmus_active_at_timestamp(ctx.attributes().timestamp()) {
             // force load `L2ToL1MessagePasser.sol` so l2 withdrawals root can be computed even if
             // no l2 withdrawals in block
-            _ = db.load_cache_account(Predeploys::L2_TO_L1_MESSAGE_PASSER)?;
+            DynDatabase::get_account(&mut db, &Predeploys::L2_TO_L1_MESSAGE_PASSER)
+                .map_err(PayloadBuilderError::other)?;
         }
 
-        let mode = ExecutionWitnessMode::default();
-        let witness = ExecutionWitnessRecord::new(&db).into_execution_witness(
-            &state_provider,
-            &header_provider,
-            block_number,
-            mode,
-        )?;
+        let witness =
+            ExecutionWitnessRecord::new(&db).with_canonical_codes(codes).into_execution_witness(
+                &state_provider,
+                &header_provider,
+                block_number,
+                ExecutionWitnessMode::default(),
+            )?;
         Ok(witness)
     }
 }
 
-/// Holds the state after execution
-#[derive(Debug)]
-pub struct ExecutedPayload<N: NodePrimitives> {
-    /// Tracked execution info
-    pub info: ExecutionInfo,
-    /// Withdrawal hash.
-    pub withdrawals_root: Option<B256>,
-    /// The transaction receipts.
-    pub receipts: Vec<N::Receipt>,
-    /// The block env used during execution.
-    pub block_env: BlockEnv,
+/// The block builder a payload job executes and assembles its block with.
+pub type PayloadBlockBuilder<'a, Evm> = BasicBlockBuilder<
+    'a,
+    <Evm as ConfigureEvm>::BlockExecutorFactory,
+    BlockExecutorFor<'a, Evm>,
+    <Evm as ConfigureEvm>::BlockAssembler,
+    <Evm as ConfigureEvm>::Primitives,
+>;
+
+/// A [`BlockBuilder`] that decides whether to commit a transaction after seeing its state changes.
+pub trait StateCommitCondition: BlockBuilder {
+    /// Executes `tx`, passes its result and detached state changes to `f`, and saves it for
+    /// block assembly only if `f` returns [`CommitChanges::Yes`].
+    fn execute_transaction_with_state_condition(
+        &mut self,
+        tx: impl ExecutorTx<Self::Executor>,
+        f: impl FnOnce(&<Self::Executor as BlockExecutor>::TransactionResultWithState) -> CommitChanges,
+    ) -> Result<Option<GasOutput>, BlockExecutionError>;
+}
+
+impl<'a, F, Executor, Assembler, N> StateCommitCondition
+    for BasicBlockBuilder<'a, F, Executor, Assembler, N>
+where
+    Self: BlockBuilder<Executor = Executor>,
+    F: BlockExecutorFactory + 'a,
+    Executor: BlockExecutor<Transaction = TxTy<N>>,
+    N: NodePrimitives,
+{
+    fn execute_transaction_with_state_condition(
+        &mut self,
+        tx: impl ExecutorTx<Executor>,
+        f: impl FnOnce(&Executor::TransactionResultWithState) -> CommitChanges,
+    ) -> Result<Option<GasOutput>, BlockExecutionError> {
+        let (tx_env, tx) = tx.into_parts();
+        let output = self.executor.execute_transaction_without_commit((tx_env, &tx))?;
+        if !f(&output).should_commit() {
+            return Ok(None);
+        }
+        let gas_output = self.executor.commit_transaction(output)?;
+        self.transactions.push(Recovered::new_unchecked(tx.tx().clone(), *tx.signer()));
+        Ok(Some(gas_output))
+    }
+}
+
+/// State updates a build commits before its selection loop starts: the pre-execution system calls
+/// and the sequencer transactions.
+///
+/// Clones share one recording. Updates are recorded until [`Self::finish`] takes them.
+#[derive(Debug, Clone)]
+pub struct PreBlockChanges(Arc<Mutex<Option<Vec<StateUpdate>>>>);
+
+impl Default for PreBlockChanges {
+    fn default() -> Self {
+        Self(Arc::new(Mutex::new(Some(Vec::new()))))
+    }
+}
+
+impl PreBlockChanges {
+    /// Records `update` unless recording has finished.
+    pub fn record(&self, update: &StateUpdate) {
+        if let Some(updates) = self.0.lock().as_mut() {
+            updates.push(update.clone());
+        }
+    }
+
+    /// Stops recording and returns the recorded updates.
+    pub fn finish(&self) -> Vec<StateUpdate> {
+        self.0.lock().take().unwrap_or_default()
+    }
 }
 
 /// This acts as the container for executed transactions and its byproducts (receipts, gas used)
@@ -755,10 +822,10 @@ where
     }
 
     /// Returns the current fee settings for transactions from the mempool
-    pub fn best_transaction_attributes(&self, block_env: impl Block) -> BestTransactionsAttributes {
+    pub fn best_transaction_attributes(&self, evm_env: &impl EvmEnv) -> BestTransactionsAttributes {
         BestTransactionsAttributes::new(
-            block_env.basefee(),
-            block_env.blob_gasprice().map(|p| p as u64),
+            evm_env.block_base_fee(),
+            Some(evm_env.block_blob_base_fee()),
         )
     }
 
@@ -772,27 +839,34 @@ where
         is_better_payload(self.best_payload.as_ref(), total_fees)
     }
 
-    /// Prepares a [`BlockBuilder`] for the next block.
-    pub fn block_builder<'a, DB: Database>(
+    /// Prepares a [`BlockBuilder`] for the next block, reading parent state from `db`.
+    pub fn block_builder<'a, DB: Database + 'a>(
         &'a self,
-        db: &'a mut State<DB>,
-    ) -> Result<
-        impl BlockBuilder<Primitives = Evm::Primitives, Executor = BlockExecutorForEvm<'a, Evm, DB>>
-        + 'a,
-        PayloadBuilderError,
-    > {
-        self.evm_config
-            .builder_for_next_block(
-                db,
-                self.parent(),
-                Evm::NextBlockEnvCtx::build_next_env(
-                    self.attributes(),
-                    self.parent(),
-                    self.chain_spec.as_ref(),
-                )
-                .map_err(PayloadBuilderError::other)?,
-            )
-            .map_err(PayloadBuilderError::other)
+        db: DB,
+    ) -> Result<PayloadBlockBuilder<'a, Evm>, PayloadBuilderError> {
+        let attributes = Evm::NextBlockEnvCtx::build_next_env(
+            self.attributes(),
+            self.parent(),
+            self.chain_spec.as_ref(),
+        )
+        .map_err(PayloadBuilderError::other)?;
+        let evm_env = self
+            .evm_config
+            .next_evm_env(self.parent(), &attributes)
+            .map_err(PayloadBuilderError::other)?;
+        let evm = self.evm_config.evm_with_env(db, evm_env.clone());
+        let execution_ctx = self
+            .evm_config
+            .context_for_next_block(self.parent(), attributes)
+            .map_err(PayloadBuilderError::other)?;
+        Ok(BasicBlockBuilder::new(
+            self.evm_config.block_executor_factory(),
+            self.evm_config.block_assembler(),
+            evm,
+            evm_env,
+            self.parent(),
+            execution_ctx,
+        ))
     }
 
     /// Closes the iterator's current candidate.
@@ -854,7 +928,7 @@ where
     )]
     pub fn execute_sequencer_transactions(
         &self,
-        builder: &mut impl BlockBuilder<Primitives = Evm::Primitives>,
+        builder: &mut impl StateCommitCondition<Primitives = Evm::Primitives>,
     ) -> Result<ExecutionInfo, PayloadBuilderError> {
         tracing::Span::current().record("block_number", self.parent().number().saturating_add(1));
         let mut info = ExecutionInfo::new();
@@ -879,14 +953,14 @@ where
 
             let mut pending_resource_usage = None;
             let tx_hash = *sequencer_tx.tx_hash();
-            let gas_output = match builder.execute_transaction_with_commit_condition(
+            let gas_output = match builder.execute_transaction_with_state_condition(
                 sequencer_tx.clone(),
-                |result| {
-                    let result_and_state = result.result();
+                |output| {
+                    let output = output.result();
                     pending_resource_usage = resource_metering.unthrottled_usage(
                         &tx_hash,
-                        result_and_state.result.tx_gas_used(),
-                        &result_and_state.state,
+                        output.result.tx_gas_used(),
+                        output.pending_state.account_changes(),
                     );
                     CommitChanges::Yes
                 },
@@ -945,20 +1019,17 @@ where
     ///
     /// Returns `Ok(Some(()))` if the job was cancelled.
     #[instrument(skip_all, fields(phase = "mempool_txs"))]
-    pub fn execute_best_transactions<Builder>(
+    pub fn execute_best_transactions(
         &self,
         info: &mut ExecutionInfo,
-        builder: &mut Builder,
+        builder: &mut impl StateCommitCondition<Primitives = Evm::Primitives>,
         mut best_txs: impl ParkablePayloadTransactions<
             Pooled: PoolTransaction<Consensus = TxTy<Evm::Primitives>> + BasePooledTx,
         >,
         mut resting: Option<&mut RestingPredicates>,
-    ) -> Result<Option<()>, PayloadBuilderError>
-    where
-        Builder: BlockBuilder<Primitives = Evm::Primitives>,
-        <<Builder::Executor as BlockExecutor>::Evm as AlloyEvm>::DB: Database,
-    {
-        let gas_limit = builder.evm_mut().block().gas_limit();
+    ) -> Result<Option<()>, PayloadBuilderError> {
+        let block_env = builder.evm_env().block_env();
+        let gas_limit = block_env.gas_limit.saturating_to::<u64>();
         // If a gas limit is configured, use that limit as target if it's smaller, otherwise use
         // the block's actual gas limit.
         let block_gas_limit = self
@@ -968,9 +1039,8 @@ where
             .map_or(gas_limit, |cfg| cfg.min(gas_limit));
         let block_da_limit = self.builder_config.da_config.max_da_block_size();
         let tx_da_limit = self.builder_config.da_config.max_da_tx_size();
-        let base_fee = builder.evm_mut().block().basefee();
-        let block_number =
-            builder.evm_mut().block().number().try_into().expect("block number must fit in u64");
+        let base_fee = builder.evm_env().block_base_fee();
+        let block_number = block_env.number.try_into().expect("block number must fit in u64");
         let predicate_context = PredicateContext { block_number, flashblock_index: 0 };
         let mut predicate_index =
             ParkedPredicateIndex::new(self.builder_config.predicate_bucket_ordered_threshold);
@@ -995,12 +1065,24 @@ where
         let mut carried_shadow_mismatches = 0_u64;
 
         let block_timestamp = self.attributes().timestamp();
-        let mut coinbase_tip_affordability = CoinbaseTipAffordability::load(
-            builder.evm_mut().db_mut(),
-            block_number,
-            BaseSpecId::from_timestamp(&*self.chain_spec, block_timestamp),
+        let upgrade = BaseUpgrade::from_timestamp(&*self.chain_spec, block_timestamp);
+        let coinbase_tip_affordability = CoinbaseTipAffordability::load(
+            builder.evm_mut().state_db_mut(),
+            upgrade,
             u128::from(base_fee),
         );
+        // Only deposits write the `L1Block` predeploy, so the scalar holds for the whole scan.
+        let da_footprint_gas_scalar =
+            self.chain_spec.is_jovian_active_at_timestamp(block_timestamp).then(|| {
+                let state = builder.evm_mut().state_db_mut();
+                L1Block::read_fee_params(upgrade, |slot| {
+                    state.get_storage(&Predeploys::L1_BLOCK_INFO, &slot)
+                })
+                .ok()
+                .and_then(|params| params.da_footprint_gas_scalar)
+                .expect("DA footprint should always be available from the database post jovian")
+                .saturating_to::<u16>()
+            });
         let can_finalize_early = self.is_denim_active();
         let resource_metering = &self.builder_config.resource_metering;
         let mut resource_throttled = 0u64;
@@ -1107,7 +1189,7 @@ where
                 let evaluation_start = Instant::now();
                 let evaluation = {
                     let mut recorder = PredicateReadRecorder::new(
-                        builder.evm_mut().db_mut(),
+                        builder.evm_mut().state_db_mut(),
                         &mut predicate_loads,
                     );
                     ValidityPredicateEvaluation::evaluate(
@@ -1226,7 +1308,8 @@ where
 
             if self.builder_config.manifest_precheck_enabled
                 && let Some(manifest) = tx.watch_manifest()
-                && let Err(stale) = manifest.revalidate(builder.evm_mut().db_mut(), block_timestamp)
+                && let Err(stale) = manifest
+                    .revalidate(&mut StateView(builder.evm_mut().state_db_mut()), block_timestamp)
             {
                 trace!(
                     target: "payload_builder",
@@ -1289,7 +1372,7 @@ where
             if coinbase_tip_affordability.unaffordable(
                 tx,
                 tx_payer_auth,
-                builder.evm_mut().db_mut(),
+                builder.evm_mut().state_db_mut(),
             ) {
                 trace!(
                     target: "payload_builder",
@@ -1340,15 +1423,6 @@ where
             let tx_encoded = tx.encoded_2718().into_owned();
             let tx = tx.clone_into_consensus();
 
-            let da_footprint_gas_scalar = self
-                .chain_spec
-                .is_jovian_active_at_timestamp(self.attributes().timestamp())
-                .then_some(
-                    L1BlockInfo::fetch_da_footprint_gas_scalar(builder.evm_mut().db_mut()).expect(
-                        "DA footprint should always be available from the database post jovian",
-                    ),
-                );
-
             if info.is_tx_over_limits(
                 tx_da_size,
                 block_gas_limit,
@@ -1396,14 +1470,15 @@ where
             let mut resting_woken = Vec::new();
             let mut pending_resource_usage = None;
             let mut executed_decision = None;
-            let gas_output = match builder.execute_transaction_with_commit_condition(
+            let gas_output = match builder.execute_transaction_with_state_condition(
                 WithEncoded::new(tx_encoded, tx.clone()),
-                |result| {
-                    let result_and_state = result.result();
+                |output| {
+                    let output = output.result();
+                    let state = &output.pending_state;
                     let decision = resource_metering.check_executed_usage(
                         &tx_hash,
-                        result_and_state.result.tx_gas_used(),
-                        &result_and_state.state,
+                        output.result.tx_gas_used(),
+                        state.account_changes(),
                         simulated.as_ref(),
                         &info.resource_metering_usage,
                     );
@@ -1414,11 +1489,11 @@ where
                         pending_resource_usage = decision.committed_usage();
                         if !predicate_index.is_empty() {
                             state_change_effects =
-                                predicate_index.affected_by_state(&result_and_state.state);
+                                predicate_index.affected_by_state(state.account_changes());
                             predicate_bucket_wakeups += state_change_effects.woken_buckets as u64;
                         }
                         if let Some(resting) = resting.as_deref() {
-                            resting_woken = resting.woken_by_state(&result_and_state.state);
+                            resting_woken = resting.woken_by_state(state.account_changes());
                         }
                         CommitChanges::Yes
                     }
@@ -1531,7 +1606,7 @@ where
                 let evaluation_start = Instant::now();
                 let evaluation = {
                     let mut recorder = PredicateReadRecorder::new(
-                        builder.evm_mut().db_mut(),
+                        builder.evm_mut().state_db_mut(),
                         &mut predicate_loads,
                     );
                     ValidityPredicateEvaluation::evaluate(
@@ -1673,12 +1748,11 @@ mod tests {
 
     use alloy_consensus::{Header, SignableTransaction, Transaction, TxEip1559};
     use alloy_eips::eip2718::Encodable2718;
-    use alloy_evm::Evm;
     use alloy_primitives::{Address, B256, Signature, StorageKey, TxHash, TxKind, U256};
     use base_bundles::{MeterBundleResponse, OpcodeGas, TransactionResult};
     use base_common_chains::BaseUpgrade;
     use base_common_consensus::{BasePrimitives, BaseTxEnvelope, Predeploys};
-    use base_common_evm::BaseTime;
+    use base_common_evm2::BaseTime;
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
     use base_execution_evm::BaseEvmConfig;
     use base_execution_txpool::{BasePooledTransaction, ValidityOperator, ValidityPredicate};
@@ -1686,12 +1760,14 @@ mod tests {
     use reth_basic_payload_builder::{BuildOutcomeKind, PayloadConfig};
     use reth_chainspec::ChainSpec;
     use reth_ethereum_forks::ForkCondition;
-    use reth_evm::execute::BlockBuilder;
+    use reth_evm::{Evm as _, database::StateProviderDatabase, execute::BlockBuilder};
     use reth_payload_builder::PayloadId;
     use reth_payload_util::{NoopPayloadTransactions, PayloadTransactions};
-    use reth_primitives_traits::{Account, SealedHeader, SignedTransaction, WithEncoded};
-    use reth_provider::noop::NoopProvider;
-    use reth_revm::{database::StateProviderDatabase, db::State, test_utils::StateProviderTest};
+    use reth_primitives_traits::{SealedHeader, SignedTransaction, WithEncoded};
+    use reth_provider::{
+        noop::NoopProvider,
+        test_utils::{ExtendedAccount, MockEthProvider},
+    };
     use reth_storage_api::StateProvider;
     use reth_tasks::CancelOnDrop;
     use reth_transaction_pool::{
@@ -1701,7 +1777,6 @@ mod tests {
     use reth_trie_parallel::state_root_task::{
         PayloadStateRootHandle, StateRootComputeOutcome, StateRootHandle, StateRootTaskCancelGuard,
     };
-    use revm::{Database, database::TransitionState};
 
     use super::{BasePayloadBuilderCtx, Builder, ExecutionInfo};
     use crate::{
@@ -1888,26 +1963,19 @@ mod tests {
 
     /// A parent state with the `BaseTime` predeploy and `funded_senders` holding the maximum
     /// balance.
-    fn funded_provider(funded_senders: &[Address]) -> StateProviderTest {
-        let mut storage = HashMap::default();
-        storage.insert(
-            StorageKey::from(BaseTime::ADMIN_SLOT.to_be_bytes::<32>()),
-            U256::from_be_slice(Predeploys::PROXY_ADMIN.as_slice()),
-        );
-        let mut provider = StateProviderTest::default();
-        provider.insert_account(
+    fn funded_provider(funded_senders: &[Address]) -> MockEthProvider {
+        let provider = MockEthProvider::default();
+        provider.add_account(
             Predeploys::BASE_TIME,
-            Account::default(),
-            Some(BaseTime::proxy_bytecode()),
-            storage,
+            ExtendedAccount::new(0, U256::ZERO)
+                .with_bytecode(BaseTime::proxy_bytecode())
+                .extend_storage([(
+                    StorageKey::from(BaseTime::ADMIN_SLOT.to_be_bytes::<32>()),
+                    U256::from_be_slice(Predeploys::PROXY_ADMIN.as_slice()),
+                )]),
         );
         for sender in funded_senders {
-            provider.insert_account(
-                *sender,
-                Account { balance: U256::MAX, ..Default::default() },
-                None,
-                HashMap::default(),
-            );
+            provider.add_account(*sender, ExtendedAccount::new(0, U256::MAX));
         }
         provider
     }
@@ -2366,7 +2434,7 @@ mod tests {
     ) -> RestingPredicateStore {
         let store = RestingPredicateStore::default();
         let mut resting = store.take(DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD);
-        resting.begin_block(B256::ZERO, 0, Some(&TransitionState::default()));
+        resting.begin_block(B256::ZERO, 0, Some(&[]));
         resting.rest(*transaction.hash(), predicate);
         resting.end_block(tip);
         store.put(resting);
@@ -2501,7 +2569,7 @@ mod tests {
 
         assert!(included.is_empty());
         let mut resting = store.take(DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD);
-        let carry_over = resting.begin_block(block_hash, 2, Some(&TransitionState::default()));
+        let carry_over = resting.begin_block(block_hash, 2, Some(&[]));
         assert_eq!(carry_over.carried, 1);
         assert!(resting.member(*gated.hash(), gated.validity_conditions()).is_some());
     }
@@ -2615,7 +2683,11 @@ mod tests {
         drop(ctx.cancel.clone());
 
         let err = Builder::new(|_| NoopPayloadTransactions::<BasePooledTransaction>::default())
-            .witness(test_state_provider(), NoopProvider::default(), &ctx)
+            .witness(
+                funded_provider(&[pool_transaction(0).sender()]),
+                NoopProvider::default(),
+                &ctx,
+            )
             .unwrap_err();
         assert!(err.to_string().contains("cancelled"), "{err}");
     }
@@ -3052,28 +3124,6 @@ mod tests {
         }])
     }
 
-    fn test_state_provider() -> StateProviderTest {
-        let mut storage = HashMap::default();
-        storage.insert(
-            StorageKey::from(BaseTime::ADMIN_SLOT.to_be_bytes::<32>()),
-            U256::from_be_slice(Predeploys::PROXY_ADMIN.as_slice()),
-        );
-        let mut provider = StateProviderTest::default();
-        provider.insert_account(
-            Predeploys::BASE_TIME,
-            Account::default(),
-            Some(BaseTime::proxy_bytecode()),
-            storage,
-        );
-        provider.insert_account(
-            pool_transaction(0).sender(),
-            Account { balance: U256::MAX, ..Default::default() },
-            None,
-            HashMap::default(),
-        );
-        provider
-    }
-
     #[test]
     fn sequencer_over_budget_is_included_and_counted_against_mempool() {
         let sequencer = pool_transaction(0);
@@ -3121,20 +3171,17 @@ mod tests {
             cpu_schedule(1_000_000, Some(100), false),
             Arc::new(NoopMeteringProvider),
         );
-        let provider = test_state_provider();
-        let mut db = State::builder()
-            .with_database(StateProviderDatabase::new((&provider).into_evm_state_provider()))
-            .with_bundle_update()
-            .build();
-        db.load_cache_account(Predeploys::L1_BLOCK_INFO).expect("L1 block info must load");
-        let mut builder = ctx.block_builder(&mut db).expect("block builder");
+        let provider = funded_provider(&[sender]);
+        let mut builder = ctx
+            .block_builder(StateProviderDatabase::new((&provider).into_evm_state_provider()))
+            .expect("block builder");
         builder.apply_pre_execution_changes().expect("pre-execution changes");
         let mut info = ctx.execute_sequencer_transactions(&mut builder).expect("sequencer");
         let usage_before = info.resource_metering_usage.clone();
         let nonce_before = builder
             .evm_mut()
-            .db_mut()
-            .basic(sender)
+            .state_db_mut()
+            .get_account(&sender)
             .ok()
             .flatten()
             .map(|account| account.nonce)
@@ -3146,8 +3193,8 @@ mod tests {
             .expect("mempool scan");
         let nonce_after = builder
             .evm_mut()
-            .db_mut()
-            .basic(sender)
+            .state_db_mut()
+            .get_account(&sender)
             .ok()
             .flatten()
             .map(|account| account.nonce)
@@ -3197,17 +3244,9 @@ mod tests {
         let cached_address = Address::with_last_byte(0x11);
         let uncached_address = Address::with_last_byte(0x22);
 
-        let mut provider = reth_revm::test_utils::StateProviderTest::default();
+        let provider = MockEthProvider::default();
         for address in [cached_address, uncached_address] {
-            provider.insert_account(
-                address,
-                reth_primitives_traits::Account {
-                    balance: U256::from(FROM_PROVIDER),
-                    ..Default::default()
-                },
-                None,
-                HashMap::default(),
-            );
+            provider.add_account(address, ExtendedAccount::new(0, U256::from(FROM_PROVIDER)));
         }
 
         let cache = reth_execution_cache::ExecutionCache::new(1_000_000);

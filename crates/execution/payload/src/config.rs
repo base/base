@@ -8,12 +8,12 @@ use std::{
 };
 
 use alloy_primitives::TxHash;
+use evm2::evm::AccountChanges;
 use reth_engine_tree::tree::instrumented_state::{InstrumentedStateProvider, StateProviderStats};
 use reth_execution_cache::{
     CachedStateMetrics, CachedStateMetricsSource, CachedStateProvider, ExecutionCache,
 };
 use reth_storage_api::{EvmStateProvider, EvmStateProviderBox, StateProvider};
-use revm::state::EvmState;
 use tracing::{debug, warn};
 
 use crate::{
@@ -252,18 +252,18 @@ impl ResourceMeteringConfig {
     /// Records every outcome. Does not add usage to the block totals; callers
     /// that include the transaction pass [`ResourceThrottlingDecision::committed_usage`]
     /// to [`Self::apply_accounted_usage`].
-    pub fn check_executed_usage(
+    pub fn check_executed_usage<'a>(
         &self,
         tx_hash: &TxHash,
         gas_used: u64,
-        state: &EvmState,
+        changes: impl IntoIterator<Item = AccountChanges<'a>>,
         simulated: Option<&ResourceSample>,
         cumulative: &[u128],
     ) -> ResourceThrottlingDecision {
         if !self.is_active() {
             return ResourceThrottlingDecision::Allow(ResourceMeteringUsage::zero(0));
         }
-        let sample = ResourceSample::from_execution(gas_used, state, simulated, &self.schedule);
+        let sample = ResourceSample::from_execution(gas_used, changes, simulated, &self.schedule);
         let decision = self.schedule.decide_sample(&sample, cumulative);
         self.record_decision(tx_hash, &decision);
         decision
@@ -273,18 +273,18 @@ impl ResourceMeteringConfig {
     ///
     /// Evaluate failures fail open: the method records
     /// [`ResourceThrottlingDecision::CalculationFailed`] and returns `None`.
-    pub fn unthrottled_usage(
+    pub fn unthrottled_usage<'a>(
         &self,
         tx_hash: &TxHash,
         gas_used: u64,
-        state: &EvmState,
+        changes: impl IntoIterator<Item = AccountChanges<'a>>,
     ) -> Option<ResourceMeteringUsage> {
         if !self.is_active() {
             return None;
         }
         let simulated = self.simulated_sample(tx_hash);
         let sample =
-            ResourceSample::from_execution(gas_used, state, simulated.as_ref(), &self.schedule);
+            ResourceSample::from_execution(gas_used, changes, simulated.as_ref(), &self.schedule);
         self.schedule.evaluate(sample.gas_used, &sample.operations).map_or_else(
             |_| {
                 self.record_decision(tx_hash, &ResourceThrottlingDecision::CalculationFailed);
@@ -299,14 +299,14 @@ impl ResourceMeteringConfig {
     /// Sequencer transactions always commit when execution succeeds.
     /// Calculation and apply failures fail open so a misconfigured schedule
     /// cannot halt payload construction.
-    pub fn account_unthrottled(
+    pub fn account_unthrottled<'a>(
         &self,
         tx_hash: &TxHash,
         gas_used: u64,
-        state: &EvmState,
+        changes: impl IntoIterator<Item = AccountChanges<'a>>,
         cumulative: &mut Vec<u128>,
     ) {
-        if let Some(usage) = self.unthrottled_usage(tx_hash, gas_used, state) {
+        if let Some(usage) = self.unthrottled_usage(tx_hash, gas_used, changes) {
             self.apply_accounted_usage(tx_hash, &usage, cumulative);
         }
     }
@@ -521,7 +521,6 @@ mod tests {
 
     use alloy_primitives::TxHash;
     use base_bundles::{MeterBundleResponse, OpcodeGas, TransactionResult};
-    use revm::state::EvmState;
 
     use super::*;
     use crate::{ResourceMeteringDimension, ResourceMeteringOperation};
@@ -670,7 +669,7 @@ mod tests {
             )])))),
         };
         let usage = config
-            .unthrottled_usage(&tx_hash, 21_000, &EvmState::default())
+            .unthrottled_usage(&tx_hash, 21_000, [])
             .expect("active config should produce usage");
         assert_eq!(usage.values, vec![21_000 + 30]);
     }
@@ -772,7 +771,7 @@ mod tests {
                 tx_hash, meter,
             )])))),
         };
-        assert!(config.unthrottled_usage(&tx_hash, u64::MAX, &EvmState::default()).is_none());
+        assert!(config.unthrottled_usage(&tx_hash, u64::MAX, []).is_none());
     }
 
     #[test]
@@ -783,7 +782,7 @@ mod tests {
             provider: Arc::new(NoopMeteringProvider),
         };
         let mut cumulative = vec![u128::MAX];
-        config.account_unthrottled(&TxHash::ZERO, 21_000, &EvmState::default(), &mut cumulative);
+        config.account_unthrottled(&TxHash::ZERO, 21_000, [], &mut cumulative);
         assert_eq!(cumulative, vec![u128::MAX]);
     }
 

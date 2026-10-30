@@ -31,13 +31,11 @@ base-common-precompiles.workspace = true
 base-common-eip8130 = { workspace = true, default-features = false }
 base-common-consensus = { workspace = true, default-features = false, features = ["k256"] }
 
-# revm
-revm.workspace = true
-
 # misc
 thiserror.workspace = true
 
 [dev-dependencies]
+revm.workspace = true
 rstest.workspace = true
 base-precompile-storage = { workspace = true, features = ["test-utils"] }
 

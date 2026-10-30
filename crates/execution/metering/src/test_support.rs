@@ -7,7 +7,7 @@ use alloy_eips::Encodable2718;
 use alloy_primitives::{Address, B256, Bytes};
 use base_bundles::{Bundle, ParsedBundle};
 use base_common_consensus::{BaseBlock, BaseBlockBody, BaseTransactionSigned};
-use base_common_evm::L1BlockInfo;
+use base_common_l1_fees::L1FeeParams;
 use base_node_runner::test_utils::TestHarness;
 use eyre::Context;
 use reth_provider::StateProviderFactory;
@@ -49,7 +49,7 @@ impl TestSupport {
             chain_spec: harness.chain_spec(),
             bundle: ParsedBundle::try_from(bundle).map_err(|e| eyre::eyre!(e))?,
             header: latest.sealed_header().clone(),
-            l1_block_info: L1BlockInfo::default(),
+            l1_block_info: L1FeeParams::default(),
             metered_opcodes: Arc::new(metered),
         })
     }

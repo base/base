@@ -14,12 +14,15 @@ workspace = true
 
 [dependencies]
 # alloy
-alloy-evm.workspace = true
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
+alloy-evm = { workspace = true, optional = true }
 
 # revm
-revm.workspace = true
+revm = { workspace = true, optional = true }
+
+# evm2
+evm2 = { workspace = true, optional = true }
 
 # base
 base-precompile-macros.workspace = true
@@ -38,15 +41,22 @@ alloy-primitives = { workspace = true, features = ["rand"] }
 name = "contract"
 required-features = ["test-utils"]
 
+[[test]]
+name = "engine_parity"
+required-features = ["revm", "evm2"]
+
 [features]
-default = [ "std" ]
+default = [ "revm", "std" ]
 std = [
-	"alloy-evm/std",
+	"alloy-evm?/std",
 	"alloy-primitives/std",
 	"alloy-sol-types/std",
 	"derive_more/std",
-	"revm/std",
+	"evm2?/std",
+	"revm?/std",
 	"thiserror/std",
 	"tracing/std",
 ]
+revm = [ "dep:alloy-evm", "dep:revm" ]
+evm2 = [ "dep:evm2" ]
 test-utils = [ "std" ]

@@ -9,6 +9,7 @@ use alloy_rpc_types_eth::{Log, TransactionReceipt};
 use base_common_chains::Upgrades;
 use base_common_consensus::{BaseReceipt, BaseTransaction};
 use base_common_flz::tx_estimated_size_fjord as estimate_tx_compressed_size;
+use base_common_l1_fees::L1FeeParams;
 use base_common_rpc_types::{
     BaseLogResponse, BaseTransactionReceipt, L1BlockInfo, TransactionReceiptFields,
 };
@@ -120,11 +121,6 @@ where
         let mut receipts = Vec::with_capacity(inputs.len());
 
         for input in inputs {
-            // We must clear this cache as different L2 transactions can have different
-            // L1 costs. A potential improvement here is to only clear the cache if the
-            // new transaction input has changed, since otherwise the L1 cost wouldn't.
-            l1_block_info.clear_tx_l1_cost();
-
             let mut receipt =
                 BaseReceiptBuilder::new(&self.provider.chain_spec(), input, &mut l1_block_info)?
                     .build();
@@ -193,12 +189,12 @@ impl ReceiptFieldsBuilder {
         }
     }
 
-    /// Applies [`L1BlockInfo`](base_common_evm::L1BlockInfo).
+    /// Applies the block's [`L1FeeParams`].
     pub fn l1_block_info<T: Encodable2718 + BaseTransaction>(
         mut self,
         chain_spec: &impl Upgrades,
         tx: &T,
-        l1_block_info: &mut base_common_evm::L1BlockInfo,
+        l1_block_info: &mut L1FeeParams,
     ) -> Result<Self, BaseEthApiError> {
         let raw_tx = tx.encoded_2718();
         let timestamp = self.block_timestamp;
@@ -241,7 +237,8 @@ impl ReceiptFieldsBuilder {
                 l1_block_info.operator_fee_constant.map(|constant| constant.saturating_to());
         }
 
-        self.da_footprint_gas_scalar = l1_block_info.da_footprint_gas_scalar;
+        self.da_footprint_gas_scalar =
+            l1_block_info.da_footprint_gas_scalar.map(|scalar| scalar.saturating_to());
 
         Ok(self)
     }
@@ -303,7 +300,7 @@ impl BaseReceiptBuilder {
     pub fn new<N>(
         chain_spec: &impl Upgrades,
         input: ConvertReceiptInput<'_, N>,
-        l1_block_info: &mut base_common_evm::L1BlockInfo,
+        l1_block_info: &mut L1FeeParams,
     ) -> Result<Self, BaseEthApiError>
     where
         N: NodePrimitives<SignedTx: BaseTransaction, Receipt = BaseReceipt>,
@@ -382,7 +379,9 @@ impl BaseReceiptBuilder {
             // Jovian specs: `https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/jovian/exec-engine.md#da-footprint-block-limit`
             let da_size = estimate_tx_compressed_size(tx_signed.encoded_2718().as_slice())
                 .saturating_div(FJORD_TX_SIZE_SCALE)
-                .saturating_mul(l1_block_info.da_footprint_gas_scalar.unwrap_or_default().into());
+                .saturating_mul(
+                    l1_block_info.da_footprint_gas_scalar.unwrap_or_default().saturating_to(),
+                );
 
             core_receipt.blob_gas_used = Some(da_size);
         });
@@ -490,7 +489,7 @@ mod tests {
 
         let receipt_meta = ReceiptFieldsBuilder::new(BLOCK_124665056_TIMESTAMP)
             .l1_block_info(&base_mainnet, &tx_1, &mut l1_block_info)
-            .expect("should parse revm l1 info")
+            .expect("should parse l1 info")
             .build();
 
         assert_eq!(
@@ -505,7 +504,7 @@ mod tests {
             BaseTransactionSigned::decode_2718(&mut TX_1_OP_MAINNET_BLOCK_124665056.as_slice())
                 .unwrap();
 
-        let mut l1_block_info = base_common_evm::L1BlockInfo {
+        let mut l1_block_info = L1FeeParams {
             operator_fee_scalar: Some(U256::ZERO),
             operator_fee_constant: Some(U256::from(2)),
             ..Default::default()
@@ -513,7 +512,7 @@ mod tests {
 
         let receipt_meta = ReceiptFieldsBuilder::new(BLOCK_124665056_TIMESTAMP)
             .l1_block_info(&BaseChainSpec::mainnet(), &tx_1, &mut l1_block_info)
-            .expect("should parse revm l1 info")
+            .expect("should parse l1 info")
             .build();
 
         let L1BlockInfo { operator_fee_scalar, operator_fee_constant, .. } =
@@ -529,7 +528,7 @@ mod tests {
             BaseTransactionSigned::decode_2718(&mut TX_1_OP_MAINNET_BLOCK_124665056.as_slice())
                 .unwrap();
 
-        let mut l1_block_info = base_common_evm::L1BlockInfo {
+        let mut l1_block_info = L1FeeParams {
             operator_fee_scalar: Some(U256::ZERO),
             operator_fee_constant: Some(U256::ZERO),
             ..Default::default()
@@ -537,7 +536,7 @@ mod tests {
 
         let receipt_meta = ReceiptFieldsBuilder::new(BLOCK_124665056_TIMESTAMP)
             .l1_block_info(&BaseChainSpec::mainnet(), &tx_1, &mut l1_block_info)
-            .expect("should parse revm l1 info")
+            .expect("should parse l1 info")
             .build();
 
         let L1BlockInfo { operator_fee_scalar, operator_fee_constant, .. } =
@@ -571,7 +570,7 @@ mod tests {
 
         let receipt_meta = ReceiptFieldsBuilder::new(1730216981)
             .l1_block_info(&BaseChainSpec::mainnet(), &tx_1, &mut l1_block_info)
-            .expect("should parse revm l1 info")
+            .expect("should parse l1 info")
             .build();
 
         assert_eq!(
@@ -609,8 +608,8 @@ mod tests {
 
         let tx = BaseTransactionSigned::new_unhashed(BaseTypedTransaction::Eip7702(tx), signature);
 
-        let mut l1_block_info = base_common_evm::L1BlockInfo {
-            da_footprint_gas_scalar: Some(DA_FOOTPRINT_GAS_SCALAR),
+        let mut l1_block_info = L1FeeParams {
+            da_footprint_gas_scalar: Some(U256::from(DA_FOOTPRINT_GAS_SCALAR)),
             ..Default::default()
         };
 
@@ -618,7 +617,7 @@ mod tests {
 
         let receipt = ReceiptFieldsBuilder::new(ChainConfig::mainnet().jovian_timestamp)
             .l1_block_info(&upgrades, &tx, &mut l1_block_info)
-            .expect("should parse revm l1 info")
+            .expect("should parse l1 info")
             .build();
 
         assert_eq!(receipt.l1_block_info.da_footprint_gas_scalar, Some(DA_FOOTPRINT_GAS_SCALAR));
@@ -660,8 +659,8 @@ mod tests {
 
         let tx = BaseTransactionSigned::new_unhashed(BaseTypedTransaction::Eip7702(tx), signature);
 
-        let mut l1_block_info = base_common_evm::L1BlockInfo {
-            da_footprint_gas_scalar: Some(DA_FOOTPRINT_GAS_SCALAR),
+        let mut l1_block_info = L1FeeParams {
+            da_footprint_gas_scalar: Some(U256::from(DA_FOOTPRINT_GAS_SCALAR)),
             ..Default::default()
         };
 
@@ -716,7 +715,7 @@ mod tests {
                 next_log_index: 0,
                 meta: TransactionMeta::default(),
             },
-            &mut base_common_evm::L1BlockInfo::default(),
+            &mut L1FeeParams::default(),
         )
     }
 

@@ -859,7 +859,13 @@ mod tests {
         request.eip8130.calls =
             Some(vec![Vec::new(); Eip8130Constants::MAX_CALL_PHASES_PER_TX + 1]);
         assert_eq!(
-            request.to_eip8130_simulation_tx(8453, 30_000_000).err(),
+            request
+                .to_eip8130_simulation_tx(
+                    8453,
+                    30_000_000,
+                    base_common_evm2::Eip8130SimulationMode::Estimate,
+                )
+                .err(),
             Some(crate::Eip8130SimulationRequestError::Structural(
                 base_common_consensus::Eip8130StructuralError::TooManyCallPhases
             ))

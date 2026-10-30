@@ -4,7 +4,10 @@ use std::str::FromStr;
 
 use DoubleCounter::DoubleCounterInstance;
 use ParentBlockhashGuard::ParentBlockhashGuardInstance;
-use alloy_consensus::{Transaction, constants::EMPTY_WITHDRAWALS};
+use alloy_consensus::{
+    Transaction,
+    constants::{EIP1559_TX_TYPE_ID, EMPTY_WITHDRAWALS},
+};
 use alloy_eips::{
     BlockHashOrNumber, BlockNumberOrTag, Decodable2718, eip7685::EMPTY_REQUESTS_HASH,
 };
@@ -31,7 +34,6 @@ use eyre::Result;
 use futures::{SinkExt, StreamExt};
 use reth_primitives_traits::Block;
 use reth_provider::BlockReader;
-use reth_revm::context::TransactionType;
 use reth_rpc_eth_api::RpcReceipt;
 use reth_transaction_pool::test_utils::TransactionBuilder;
 use serde_json::json;
@@ -207,7 +209,7 @@ impl TestSetup {
             .sign_txn_request(
                 BaseTransactionRequest::default()
                     .from(alice.address())
-                    .transaction_type(TransactionType::Eip1559.into())
+                    .transaction_type(EIP1559_TX_TYPE_ID)
                     .gas_limit(100_000)
                     .nonce(0)
                     .to(bob.address())
@@ -236,7 +238,7 @@ impl TestSetup {
             .sign_txn_request(
                 BaseTransactionRequest::default()
                     .from(deployer.address())
-                    .transaction_type(TransactionType::Eip1559.into())
+                    .transaction_type(EIP1559_TX_TYPE_ID)
                     .gas_limit(100_000)
                     .nonce(5)
                     .to(log_emitter_a_address),
@@ -248,7 +250,7 @@ impl TestSetup {
             .sign_txn_request(
                 BaseTransactionRequest::default()
                     .from(alice.address())
-                    .transaction_type(TransactionType::Eip1559.into())
+                    .transaction_type(EIP1559_TX_TYPE_ID)
                     .gas_limit(21_000)
                     .nonce(1)
                     .to(TEST_ADDRESS)

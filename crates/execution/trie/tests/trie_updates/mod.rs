@@ -2,11 +2,9 @@
 
 use alloy_primitives::{Address, keccak256};
 use base_execution_trie::{BaseProofsStorage, provider::BaseProofsStateProviderRef};
+use evm2::evm::AccountInfo;
 use reth_provider::{HashedPostStateProvider, noop::NoopProvider};
-use reth_revm::{
-    db::{AccountStatus, BundleAccount, BundleState, states::StorageSlot},
-    state::AccountInfo,
-};
+use reth_trie_common::bundle_state::{AccountStatus, BundleAccount, BundleState, StorageSlot};
 use rstest::rstest;
 use serial_test::serial;
 

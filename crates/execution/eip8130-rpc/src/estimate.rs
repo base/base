@@ -1,39 +1,31 @@
 //! `eth_estimateGas` gas estimation for EIP-8130 simulation requests.
 
 use alloy_eips::BlockId;
-use alloy_evm::{
-    EvmFactory,
-    overrides::{apply_block_overrides, apply_state_overrides},
-};
 use alloy_primitives::{Bytes, U256};
 use alloy_rpc_types::state::EvmOverrides;
-use base_common_evm::{BaseTransaction as BaseRevm, Eip8130ExecutionMode};
+use base_common_evm2::{BaseEvmTypes, BaseTxEnvelope as BaseTxEnv, Eip8130SimulationMode};
 use base_common_rpc_types::{BaseRpcTypes, BaseTransactionRequest};
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_evm::{BaseNextBlockEnvAttributes, BasePendingForecast};
+use evm2::TxResult;
 use jsonrpsee_types::{ErrorObjectOwned, error::INVALID_PARAMS_CODE};
 use reth_chainspec::ChainSpecProvider;
 use reth_errors::RethError;
-use reth_evm::{ConfigureEvm, EvmFactoryFor, HaltReasonFor, TxEnvFor};
-use reth_rpc_eth_api::{FromEthApiError, helpers::FullEthApi};
+use reth_evm::{BlockExecutorFactory, ConfigureEvm, EvmEnv};
+use reth_rpc_eth_api::{FromEthApiError, FromEvmError, helpers::FullEthApi};
 use reth_rpc_eth_types::{
     EthApiError,
-    error::api::{FromEvmHalt, FromRevert},
-};
-use revm::context::{
-    Block, BlockEnv, Cfg, TxEnv,
-    result::{ExecutionResult, Output},
+    cache::db::{apply_block_overrides, apply_state_overrides},
 };
 
 /// Estimates gas for an EIP-8130 `eth_estimateGas` request by running a single
-/// read-only [`base_common_evm::Eip8130Executor::simulate`] at the block state.
+/// read-only EIP-8130 simulation ([`base_common_evm2::Eip8130Simulation`]) at the block state.
 ///
 /// The EIP-8130 pipeline prices a deterministic, signature-independent amount
-/// (intrinsic + phased-call gas + payer authentication), so a single
-/// [`base_common_evm::Eip8130Executor::simulate`] resolves the sender and prices
-/// intrinsic/auth gas once. To return a gas *limit* that is guaranteed to
-/// succeed — covering both the unrefunded gross call spend and EIP-150's 63/64
-/// retention across nested calls — `simulate` internally binary-searches the
+/// (intrinsic + phased-call gas + payer authentication), so a single simulation
+/// resolves the sender and prices intrinsic/auth gas once. To return a gas *limit* that is
+/// guaranteed to succeed — covering both the unrefunded gross call spend and EIP-150's 63/64
+/// retention across nested calls — the simulation internally binary-searches the
 /// minimum call pool at which the phased calls still succeed, re-dispatching them
 /// at candidate pools over reverted journal checkpoints. The determinism keeps
 /// that search to a handful of iterations (vs. the standard estimator searching
@@ -82,16 +74,15 @@ impl Eip8130GasEstimator {
     ) -> Result<U256, ErrorObjectOwned>
     where
         Eth: FullEthApi<NetworkTypes = BaseRpcTypes>,
-        Eth::Evm: ConfigureEvm<NextBlockEnvCtx = BaseNextBlockEnvAttributes>,
+        Eth::Evm: ConfigureEvm<
+                NextBlockEnvCtx = BaseNextBlockEnvAttributes,
+                BlockExecutorFactory: BlockExecutorFactory<EvmTypes = BaseEvmTypes>,
+            >,
         Eth::Provider: ChainSpecProvider<ChainSpec = BaseChainSpec>,
-        TxEnvFor<Eth::Evm>: From<BaseRevm<TxEnv>>,
-        // Pin the block env to revm's concrete type so block overrides can be
-        // applied directly (Base's `EvmFactory::BlockEnv` is `revm::BlockEnv`).
-        EvmFactoryFor<Eth::Evm>: EvmFactory<BlockEnv = BlockEnv>,
         ErrorObjectOwned: From<Eth::Error>,
     {
         let result =
-            Self::simulate(eth_api, request, block_id, overrides, Eip8130ExecutionMode::Simulate)
+            Self::simulate(eth_api, request, block_id, overrides, Eip8130SimulationMode::Estimate)
                 .await?;
         // Mirror `eth_estimateGas`: a phase revert (or halt) is a failure. The
         // EIP-8130 transaction would still be included on-chain, but reporting
@@ -99,7 +90,9 @@ impl Eip8130GasEstimator {
         // that would not succeed — keeps estimation consistent with the standard
         // estimator and surfaces the reason to callers.
         let gas_used = result.tx_gas_used();
-        Self::success::<Eth>(result).map(|_| U256::from(gas_used))
+        Eth::Error::ensure_success::<BaseEvmTypes>(result)
+            .map_err(Into::into)
+            .map(|_| U256::from(gas_used))
     }
 
     /// Runs an EIP-8130 `eth_call`: the same read-only simulation as
@@ -118,37 +111,17 @@ impl Eip8130GasEstimator {
     ) -> Result<Bytes, ErrorObjectOwned>
     where
         Eth: FullEthApi<NetworkTypes = BaseRpcTypes>,
-        Eth::Evm: ConfigureEvm<NextBlockEnvCtx = BaseNextBlockEnvAttributes>,
+        Eth::Evm: ConfigureEvm<
+                NextBlockEnvCtx = BaseNextBlockEnvAttributes,
+                BlockExecutorFactory: BlockExecutorFactory<EvmTypes = BaseEvmTypes>,
+            >,
         Eth::Provider: ChainSpecProvider<ChainSpec = BaseChainSpec>,
-        TxEnvFor<Eth::Evm>: From<BaseRevm<TxEnv>>,
-        // Pin the block env to revm's concrete type so block overrides can be
-        // applied directly (Base's `EvmFactory::BlockEnv` is `revm::BlockEnv`).
-        EvmFactoryFor<Eth::Evm>: EvmFactory<BlockEnv = BlockEnv>,
         ErrorObjectOwned: From<Eth::Error>,
     {
         let result =
-            Self::simulate(eth_api, request, block_id, overrides, Eip8130ExecutionMode::Call)
+            Self::simulate(eth_api, request, block_id, overrides, Eip8130SimulationMode::Call)
                 .await?;
-        Self::success::<Eth>(result).map(Output::into_data)
-    }
-
-    /// The success output of a simulation, or the standard revert or halt error.
-    fn success<Eth>(
-        result: ExecutionResult<HaltReasonFor<Eth::Evm>>,
-    ) -> Result<Output, ErrorObjectOwned>
-    where
-        Eth: FullEthApi,
-        ErrorObjectOwned: From<Eth::Error>,
-    {
-        match result {
-            ExecutionResult::Success { output, .. } => Ok(output),
-            ExecutionResult::Revert { output, .. } => {
-                Err(<Eth::Error as FromRevert>::from_revert(output).into())
-            }
-            ExecutionResult::Halt { reason, gas, .. } => {
-                Err(<Eth::Error as FromEvmHalt<_>>::from_evm_halt(reason, gas.tx_gas_used()).into())
-            }
-        }
+        Eth::Error::ensure_success::<BaseEvmTypes>(result).map_err(Into::into)
     }
 
     /// Builds the simulation transaction for `request`, checks it against the
@@ -164,16 +137,15 @@ impl Eip8130GasEstimator {
         request: BaseTransactionRequest,
         block_id: BlockId,
         mut overrides: EvmOverrides,
-        mode: Eip8130ExecutionMode,
-    ) -> Result<ExecutionResult<HaltReasonFor<Eth::Evm>>, ErrorObjectOwned>
+        mode: Eip8130SimulationMode,
+    ) -> Result<TxResult<BaseEvmTypes>, ErrorObjectOwned>
     where
         Eth: FullEthApi<NetworkTypes = BaseRpcTypes>,
-        Eth::Evm: ConfigureEvm<NextBlockEnvCtx = BaseNextBlockEnvAttributes>,
+        Eth::Evm: ConfigureEvm<
+                NextBlockEnvCtx = BaseNextBlockEnvAttributes,
+                BlockExecutorFactory: BlockExecutorFactory<EvmTypes = BaseEvmTypes>,
+            >,
         Eth::Provider: ChainSpecProvider<ChainSpec = BaseChainSpec>,
-        TxEnvFor<Eth::Evm>: From<BaseRevm<TxEnv>>,
-        // Pin the block env to revm's concrete type so block overrides can be
-        // applied directly (Base's `EvmFactory::BlockEnv` is `revm::BlockEnv`).
-        EvmFactoryFor<Eth::Evm>: EvmFactory<BlockEnv = BlockEnv>,
         ErrorObjectOwned: From<Eth::Error>,
     {
         let permit = eth_api
@@ -181,26 +153,30 @@ impl Eip8130GasEstimator {
             .await
             .map_err(|_| Eth::Error::from_eth_err(EthApiError::InternalEthError))?;
         let (evm_env, at, forecast) = BasePendingForecast::evm_env_at(eth_api, block_id).await?;
-        let chain_id = evm_env.cfg_env.chain_id;
+        let chain_id = evm_env.chain_id();
         // Bound execution like standard `eth_estimateGas`: the request's `gas`,
         // or the default when omitted, never exceeds the block gas limit, the
         // EIP-7825 per-transaction cap, or the operator's `--rpc.gascap` (zero
         // means uncapped). An unbounded `gas` would let one request run its
         // calls (twice, if they fail) at any gas the caller picks.
-        let mut gas_cap =
-            Block::gas_limit(&evm_env.block_env).min(evm_env.cfg_env.tx_gas_limit_cap());
+        let mut gas_cap = evm_env
+            .block_env()
+            .gas_limit
+            .saturating_to::<u64>()
+            .min(evm_env.version().tx_gas_limit_cap);
         let rpc_gas_cap = eth_api.call_gas_limit();
         if rpc_gas_cap != 0 {
             gas_cap = gas_cap.min(rpc_gas_cap);
         }
 
-        let mut sim_tx = request.to_eip8130_simulation_tx(chain_id, gas_cap).map_err(|error| {
-            ErrorObjectOwned::owned(
-                INVALID_PARAMS_CODE,
-                format!("invalid EIP-8130 estimate request: {error}"),
-                None::<()>,
-            )
-        })?;
+        let sim_tx =
+            request.to_eip8130_simulation_tx(chain_id, gas_cap, mode).map_err(|error| {
+                ErrorObjectOwned::owned(
+                    INVALID_PARAMS_CODE,
+                    format!("invalid EIP-8130 estimate request: {error}"),
+                    None::<()>,
+                )
+            })?;
         // The validity window and nonce-free rules, as pool admission applies
         // them at the simulated block's timestamp. A `time` block override is
         // only applied to the env inside the state closure below, so it must be
@@ -209,19 +185,16 @@ impl Eip8130GasEstimator {
             .block
             .as_ref()
             .and_then(|block| block.time)
-            .unwrap_or_else(|| evm_env.block_env.timestamp.saturating_to());
+            .unwrap_or_else(|| evm_env.block_env().timestamp.saturating_to());
         let now_ms = timestamp.saturating_mul(1_000);
-        if let Some(parts) = &sim_tx.eip8130 {
-            parts.signed.validate_timestamp(now_ms).map_err(|error| {
+        if let BaseTxEnv::Eip8130(tx) = sim_tx.inner() {
+            tx.signed.validate_timestamp(now_ms).map_err(|error| {
                 ErrorObjectOwned::owned(
                     INVALID_PARAMS_CODE,
                     format!("invalid EIP-8130 estimate request: {error}"),
                     None::<()>,
                 )
             })?;
-        }
-        if let Some(parts) = sim_tx.eip8130.as_mut() {
-            parts.mode = mode;
         }
 
         let result = eth_api
@@ -231,7 +204,7 @@ impl Eip8130GasEstimator {
                 // Block overrides first (mutating the block env), then state, so
                 // the simulation matches the standard call path's ordering.
                 if let Some(block) = overrides.block.take() {
-                    apply_block_overrides(*block, &mut db, &mut evm_env.block_env);
+                    apply_block_overrides(*block, &mut db, &mut evm_env);
                 }
                 if let Some(forecast) = forecast {
                     overrides = forecast
@@ -240,9 +213,11 @@ impl Eip8130GasEstimator {
                         .map_err(Eth::Error::from_eth_err)?;
                 }
                 if let Some(state) = overrides.state {
-                    apply_state_overrides(state, &mut db).map_err(Eth::Error::from_eth_err)?;
+                    apply_state_overrides(state, &mut db)
+                        .map_err(EthApiError::from)
+                        .map_err(Eth::Error::from_eth_err)?;
                 }
-                this.transact(db, evm_env, sim_tx.into())
+                this.transact(db, evm_env, sim_tx)
             })
             .await?;
 

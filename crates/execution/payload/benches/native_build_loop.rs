@@ -20,7 +20,7 @@ use alloy_consensus::{Header, SignableTransaction, TxEip1559};
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, B256, Bytes, Signature, TxKind, U256};
 use base_common_chains::BaseUpgrade;
-use base_common_consensus::{BaseTransactionSigned, BaseTxEnvelope, Predeploys};
+use base_common_consensus::{BaseTransactionSigned, BaseTxEnvelope};
 use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
 use base_execution_evm::BaseEvmConfig;
 use base_execution_payload_builder::{
@@ -38,18 +38,14 @@ use base_observability_events::{
     GlobalTransactionEventWriter, TransactionEventProducer, TransactionEventWriterConfig,
 };
 use criterion::{Criterion, criterion_group, criterion_main};
+use evm2::evm::{AccountInfo, InMemoryDB};
 use reth_basic_payload_builder::PayloadConfig;
 use reth_ethereum_forks::ForkCondition;
 use reth_evm::execute::{BlockBuilder, BlockExecutor};
 use reth_payload_builder::PayloadId;
 use reth_primitives_traits::{Recovered, SealedHeader};
-use reth_revm::db::State;
 use reth_transaction_pool::{
     TransactionOrigin, ValidPoolTransaction, identifier::TransactionId, pool::PendingPool,
-};
-use revm::{
-    database::{InMemoryDB, TransitionState},
-    state::AccountInfo,
 };
 
 type Ordering = BaseOrdering<BasePooledTransaction>;
@@ -130,8 +126,8 @@ fn resting_pool(resting: usize) -> (Pool, InMemoryDB) {
         };
         pool.add_transaction(transaction(sender_index, priority_fee, predicates), 0);
         db.insert_account_info(
-            address(SENDER_OFFSET + sender_index),
-            AccountInfo { balance: U256::from(u128::MAX), ..Default::default() },
+            &address(SENDER_OFFSET + sender_index),
+            AccountInfo::default().with_balance(U256::from(u128::MAX)),
         );
     }
     (pool, db)
@@ -183,9 +179,7 @@ fn run_block(
     db: &InMemoryDB,
     resting: Option<&mut RestingPredicates>,
 ) -> usize {
-    let mut state = State::builder().with_database(db.clone()).with_bundle_update().build();
-    state.load_cache_account(Predeploys::L1_BLOCK_INFO).expect("in-memory load cannot fail");
-    let mut builder = ctx.block_builder(&mut state).expect("block builder");
+    let mut builder = ctx.block_builder(db.clone()).expect("block builder");
     let mut info = ExecutionInfo::default();
     black_box(
         ctx.execute_best_transactions(&mut info, &mut builder, parkable(pool), resting)
@@ -200,7 +194,7 @@ fn run_blocks(ctx: &Ctx, pool: &Pool, db: &InMemoryDB, mode: RestingPredicateMod
     let mut parent = B256::ZERO;
     for block in 1..=BLOCKS {
         // The production builder passes the pre-block writes; this loop makes none.
-        resting.begin_block(parent, block, Some(&TransitionState::default()));
+        resting.begin_block(parent, block, Some(&[]));
         let included = run_block(ctx, pool, db, mode.is_enabled().then_some(&mut resting));
         assert_eq!(included, FILLER_PER_BLOCK);
         parent = B256::from(U256::from(block));

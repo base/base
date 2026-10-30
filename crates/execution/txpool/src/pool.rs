@@ -2158,13 +2158,12 @@ mod tests {
     use alloy_primitives::{Bytes, TxKind, U256};
     use alloy_signer::SignerSync;
     use alloy_signer_local::PrivateKeySigner;
-    use base_common_chains::ChainConfig;
+    use base_common_chains::{BaseUpgrade, BaseUpgradeExt, ChainConfig};
     use base_common_consensus::{
         BaseBlock, BasePooledTransaction as ConsensusPooledTransaction, BasePrimitives,
         BaseTransactionSigned, BaseTxEnvelope, Call, Eip8130Constants, Eip8130Signed, Predeploys,
         TxDeposit, TxEip8130,
     };
-    use base_common_evm::BaseSpecId;
     use base_execution_chainspec::BaseChainSpec;
     use base_execution_evm::BaseEvmConfig;
     use base_test_utils::build_test_genesis_everest;
@@ -4214,13 +4213,20 @@ mod tests {
     /// The L1 data and operator fees a self-paid transaction prepays under
     /// [`ISTHMUS_L1_INFO_CALLDATA`].
     fn l1_and_operator_fees(pool: &IntegrationPool, transaction: &BasePooledTransaction) -> U256 {
-        let mut l1_block_info = base_execution_evm::parse_l1_info(&ISTHMUS_L1_INFO_CALLDATA)
+        let l1_fee_params = base_execution_evm::parse_l1_info(&ISTHMUS_L1_INFO_CALLDATA)
             .expect("valid L1 info fixture");
-        let spec = BaseSpecId::from_timestamp(
+        let upgrade = BaseUpgrade::from_timestamp(
             pool.validator().validator().chain_spec(),
             INTEGRATION_POOL_NOW_SECS,
         );
-        l1_block_info.tx_cost(transaction.encoded_2718(), U256::from(transaction.gas_limit()), spec)
+        let encoded = transaction.encoded_2718();
+        l1_fee_params.calculate_tx_l1_cost(encoded, upgrade).saturating_add(
+            l1_fee_params.operator_fee_charge(
+                encoded,
+                U256::from(transaction.gas_limit()),
+                upgrade,
+            ),
+        )
     }
 
     /// A self-paid tip is prepaid after the L1 data and operator fees, so a

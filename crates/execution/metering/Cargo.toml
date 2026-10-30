@@ -17,24 +17,23 @@ base-bundles.workspace = true
 base-protocol.workspace = true
 base-flashblocks.workspace = true
 base-node-runner.workspace = true
+base-common-chains.workspace = true
 base-common-genesis.workspace = true
+base-common-l1-fees.workspace = true
+base-common-evm2.workspace = true
 base-common-precompiles.workspace = true
 
 # reth
 reth-evm.workspace = true
-reth-revm.workspace = true
 reth-provider.workspace = true
-base-common-evm.workspace = true
 base-execution-evm.workspace = true
 reth-primitives-traits.workspace = true
 base-execution-chainspec.workspace = true
 
-# revm
-revm.workspace = true
-revm-bytecode.workspace = true
+# evm2
+evm2 = { workspace = true, features = ["std"] }
 
 # alloy
-alloy-evm.workspace = true
 alloy-primitives.workspace = true
 alloy-eips = { workspace = true, features = ["std"] }
 alloy-consensus = { workspace = true, features = ["std"] }
@@ -54,7 +53,6 @@ tracing = { workspace = true, features = ["std"] }
 [dev-dependencies]
 # workspace
 base-test-utils = { workspace = true, features = ["contracts"] }
-base-common-chains.workspace = true
 base-common-flashblocks.workspace = true
 base-node-runner = { workspace = true, features = ["test-utils"] }
 
@@ -66,9 +64,6 @@ reth-db = { workspace = true, features = ["test-utils"] }
 base-common-consensus = { workspace = true, features = ["reth"] }
 reth-transaction-pool = { workspace = true, features = ["test-utils"] }
 
-# revm
-revm.workspace = true
-revm-bytecode.workspace = true
 
 # alloy
 alloy-network.workspace = true

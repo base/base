@@ -60,7 +60,7 @@ use alloy_rpc_types::{
     state::{EvmOverrides, StateOverride, StateOverridesBuilder},
 };
 use alloy_rpc_types_eth::Filter;
-use base_common_evm::BaseTransaction as BaseRevm;
+use base_common_evm2::BaseEvmTypes;
 use base_common_network::Base;
 use base_common_rpc_types::{BaseLogResponse, BaseRpcTypes, BaseTransactionRequest};
 use base_execution_chainspec::BaseChainSpec;
@@ -72,7 +72,7 @@ use jsonrpsee::{
 };
 use jsonrpsee_types::{ErrorObjectOwned, error::INVALID_PARAMS_CODE};
 use reth_chainspec::ChainSpecProvider;
-use reth_evm::{ConfigureEvm, TxEnvFor};
+use reth_evm::{BlockExecutorFactory, ConfigureEvm};
 use reth_provider::CanonStateSubscriptions;
 use reth_rpc::eth::EthFilter;
 use reth_rpc_eth_api::{
@@ -80,7 +80,6 @@ use reth_rpc_eth_api::{
     helpers::{EthBlocks, EthCall, EthState, EthTransactions, FullEthApi},
 };
 use reth_rpc_eth_types::EthApiError;
-use revm::context::TxEnv;
 use tokio::{sync::broadcast::error::RecvError, time};
 use tokio_stream::{StreamExt, wrappers::BroadcastStream};
 use tracing::{debug, trace, warn};
@@ -193,10 +192,11 @@ impl<Eth: EthApiTypes, FB> EthApiExt<Eth, FB> {
 impl<Eth, FB> EthApiOverrideServer for EthApiExt<Eth, FB>
 where
     Eth: FullEthApi<NetworkTypes = BaseRpcTypes>,
-    Eth::Evm: ConfigureEvm<NextBlockEnvCtx = BaseNextBlockEnvAttributes>,
+    Eth::Evm: ConfigureEvm<
+            NextBlockEnvCtx = BaseNextBlockEnvAttributes,
+            BlockExecutorFactory: BlockExecutorFactory<EvmTypes = BaseEvmTypes>,
+        >,
     Eth::Provider: ChainSpecProvider<ChainSpec = BaseChainSpec>,
-    TxEnvFor<Eth::Evm>: From<BaseRevm<TxEnv>>,
-    reth_evm::EvmFactoryFor<Eth::Evm>: alloy_evm::EvmFactory<BlockEnv = revm::context::BlockEnv>,
     FB: FlashblocksAPI + Send + Sync + 'static,
     jsonrpsee_types::error::ErrorObject<'static>: From<Eth::Error>,
 {

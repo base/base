@@ -2,14 +2,9 @@
 
 use alloy_primitives::{Address, B256, Bytes, address, b256, hex};
 use base_common_genesis::BaseUpgrade;
-use evm2::{
-    AccountInfo, Evm,
-    bytecode::Bytecode,
-    evm::BlockStateAccumulator,
-    registry::{HandlerError, HandlerResult},
-};
+use evm2::{AccountInfo, Evm, bytecode::Bytecode, registry::HandlerResult};
 
-use crate::{BaseEvmTypes, BaseForkActivations, IrregularStateChange};
+use crate::{BaseBlockState, BaseEvmTypes, BaseForkActivations, IrregularStateChange};
 
 /// The address of the create2 deployer.
 const CREATE_2_DEPLOYER_ADDR: Address = address!("0x13b0D85CcB8bf860b6b79AF3029fCA081AE9beF2");
@@ -39,7 +34,7 @@ impl Canyon {
         chain_spec: &impl BaseForkActivations,
         timestamp: u64,
         evm: &mut Evm<'_, BaseEvmTypes>,
-        block_state: &mut BlockStateAccumulator,
+        block_state: &mut impl BaseBlockState,
     ) -> HandlerResult<()> {
         if !chain_spec.is_active_at_timestamp(BaseUpgrade::Canyon, timestamp)
             || chain_spec.is_active_at_timestamp(BaseUpgrade::Canyon, timestamp.saturating_sub(2))
@@ -47,13 +42,11 @@ impl Canyon {
             return Ok(());
         }
 
-        let original = evm
-            .state_mut()
-            .account_info_untracked(&CREATE_2_DEPLOYER_ADDR)
-            .map_err(HandlerError::Fatal)?;
+        let original = evm.state_mut().account_info_untracked(&CREATE_2_DEPLOYER_ADDR)?;
         let base = original.clone().unwrap_or_default();
         let code = Bytecode::new_raw(Bytes::from_static(&CREATE_2_DEPLOYER_BYTECODE));
-        let current = AccountInfo::new(base.balance, base.nonce, CREATE_2_DEPLOYER_CODEHASH, code);
+        let current =
+            AccountInfo::new(base.balance, base.nonce, CREATE_2_DEPLOYER_CODEHASH, Some(code));
 
         IrregularStateChange::new(CREATE_2_DEPLOYER_ADDR, original, Some(current))
             .apply(evm, block_state);

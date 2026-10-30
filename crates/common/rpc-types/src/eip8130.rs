@@ -2,15 +2,15 @@
 
 use alloc::{vec, vec::Vec};
 
-use alloy_evm::FromRecoveredTx;
+use alloy_consensus::transaction::Recovered;
+use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256};
 use alloy_rpc_types_eth::state::StateOverride;
 use base_common_consensus::{
     BaseTxEnvelope, Call, Eip8130Constants, Eip8130Contracts, Eip8130Signed,
     Eip8130StructuralError, Eip8130Structure, TxEip8130,
 };
-use base_common_evm::{BaseTransaction as BaseRevm, Eip8130ExecutionMode};
-use revm::context::TxEnv;
+use base_common_evm2::{BaseTxEnvelope as BaseTxEnv, Eip8130Simulation, Eip8130SimulationMode};
 
 use crate::{BaseTransactionRequest, Eip8130AuthScheme};
 
@@ -104,13 +104,14 @@ impl BaseTransactionRequest {
     /// `gas_limit_cap` when `gas` is omitted.
     ///
     /// Returns an [`Eip8130SimulationRequestError`] naming why the request cannot be simulated.
-    /// The returned transaction uses [`Eip8130ExecutionMode::Simulate`] so callers can run
-    /// `eth_call` and `eth_estimateGas` without signature verification or committed state.
+    /// The returned transaction is a read-only [`Eip8130Simulation`] in `mode`, executed without
+    /// signature verification or committed state, from the request's account.
     pub fn to_eip8130_simulation_tx(
         &self,
         chain_id: u64,
         gas_limit_cap: u64,
-    ) -> Result<BaseRevm<TxEnv>, Eip8130SimulationRequestError> {
+        mode: Eip8130SimulationMode,
+    ) -> Result<Recovered<BaseTxEnv>, Eip8130SimulationRequestError> {
         let aa = self.as_eip8130().ok_or(Eip8130SimulationRequestError::NotEip8130)?;
         let req = self.as_ref();
         if aa.sender_actor_id.is_some_and(|actor_id| actor_id.is_zero()) {
@@ -187,13 +188,12 @@ impl BaseTransactionRequest {
         // Reject what pool admission rejects as malformed, so an estimate is
         // never returned for a transaction that could not be submitted.
         Eip8130Structure::validate(&signed)?;
-        let envelope = BaseTxEnvelope::Eip8130(signed);
-        let mut simulation = BaseRevm::from_recovered_tx(&envelope, account);
-        if let Some(parts) = simulation.eip8130.as_mut() {
-            parts.mode = Eip8130ExecutionMode::Simulate;
-            parts.simulation_sender_actor_id = aa.sender_actor_id;
-        }
-        Ok(simulation)
+        let enveloped = BaseTxEnvelope::Eip8130(signed.clone()).encoded_2718().into();
+        let simulation = Eip8130Simulation { mode, sender_actor_id: aa.sender_actor_id };
+        Ok(Recovered::new_unchecked(
+            BaseTxEnv::eip8130_simulation(signed, enveloped, simulation),
+            account,
+        ))
     }
 
     /// The request's calls: `calls`, or a single call from the top-level `to` /
@@ -290,17 +290,13 @@ impl BaseTransactionRequest {
 
 #[cfg(test)]
 mod tests {
-    use alloy_evm::Evm;
     use alloy_primitives::{address, b256, hex};
     use alloy_rpc_types_eth::state::AccountOverride;
+    use base_common_chains::BaseUpgrade;
     use base_common_consensus::{Eip8130Constants, Eip8130Signed};
-    use base_common_evm::{BaseSpecId, BaseUpgrade, Builder, DefaultBase};
+    use base_common_evm2::{BaseEvmTypes, BaseSpecId};
+    use evm2::{Evm, ExecutionConfig, Version, env::BlockEnv, evm::InMemoryDB};
     use k256::ecdsa::SigningKey;
-    use revm::{
-        context::{BlockEnv, CfgEnv, Context},
-        database::InMemoryDB,
-        inspector::NoOpInspector,
-    };
     use serde_json::json;
 
     use super::*;
@@ -310,28 +306,33 @@ mod tests {
     const SENDER: Address = address!("00000000000000000000000000000000000000a1");
     const FROM: Address = address!("00000000000000000000000000000000000000c3");
 
-    fn simulation(request: serde_json::Value) -> BaseRevm<TxEnv> {
+    fn simulation(request: serde_json::Value) -> Recovered<BaseTxEnv> {
         let request = serde_json::from_value::<BaseTransactionRequest>(request).unwrap();
-        request.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP).unwrap()
+        request
+            .to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP, Eip8130SimulationMode::Estimate)
+            .unwrap()
     }
 
-    fn signed(tx: &BaseRevm<TxEnv>) -> &Eip8130Signed {
-        &tx.eip8130.as_ref().unwrap().signed
+    fn signed(tx: &Recovered<BaseTxEnv>) -> &Eip8130Signed {
+        &tx.inner().as_eip8130().unwrap().signed
     }
 
     /// Gas the simulation of `request` uses, which `eth_estimateGas` searches for.
     fn estimated_gas(request: serde_json::Value) -> u64 {
-        let mut evm = Context::base()
-            .with_db(InMemoryDB::default())
-            .with_cfg(
-                CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Everest))
-                    .with_chain_id(CHAIN_ID),
-            )
-            .with_block(BlockEnv::default())
-            .build_with_inspector(NoOpInspector);
-        let outcome = evm.transact_raw(simulation(request)).expect("simulation runs");
-        assert!(outcome.result.is_success(), "expected success, got {:?}", outcome.result);
-        outcome.result.tx_gas_used()
+        let spec = BaseSpecId::new(BaseUpgrade::Everest);
+        let mut version = Version::new(spec.into());
+        version.chain_id = CHAIN_ID;
+        let mut evm = Evm::new_with_execution_config(
+            ExecutionConfig::for_spec_and_version(spec, version),
+            spec,
+            BlockEnv::<BaseEvmTypes>::default(),
+            BaseEvmTypes::tx_registry(),
+            InMemoryDB::default(),
+            BaseEvmTypes::native_precompiles(spec, None),
+        );
+        let result = evm.transact(&simulation(request)).expect("simulation runs").discard();
+        assert!(result.is_success(), "expected success, got {result:?}");
+        result.tx_gas_used()
     }
 
     /// A real 65-byte `r || s || v` secp256k1 signature.
@@ -415,7 +416,9 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(
-            request.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP).err(),
+            request
+                .to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP, Eip8130SimulationMode::Estimate)
+                .err(),
             Some(Eip8130SimulationRequestError::SenderFromMismatch)
         );
     }
@@ -434,9 +437,7 @@ mod tests {
             signed(&tx).tx().calls,
             vec![vec![Call { to, value: U256::from(5), data: Bytes::from_static(&[0xab, 0xcd]) }]]
         );
-        assert!(
-            simulation(json!({ "sender": SENDER })).eip8130.unwrap().signed.tx().calls.is_empty()
-        );
+        assert!(signed(&simulation(json!({ "sender": SENDER }))).tx().calls.is_empty());
     }
 
     /// `calls` and a top-level call are ambiguous together, and a top-level
@@ -447,7 +448,7 @@ mod tests {
         let reject = |request: serde_json::Value| {
             serde_json::from_value::<BaseTransactionRequest>(request)
                 .unwrap()
-                .to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP)
+                .to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP, Eip8130SimulationMode::Estimate)
                 .err()
         };
         assert_eq!(
@@ -477,7 +478,9 @@ mod tests {
             serde_json::from_value::<BaseTransactionRequest>(json!({ "sender": SENDER })).unwrap();
         create.as_mut().to = Some(TxKind::Create);
         assert_eq!(
-            create.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP).err(),
+            create
+                .to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP, Eip8130SimulationMode::Estimate)
+                .err(),
             Some(Eip8130SimulationRequestError::ContractCreation)
         );
     }
@@ -501,7 +504,9 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(
-            request.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP).err(),
+            request
+                .to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP, Eip8130SimulationMode::Estimate)
+                .err(),
             Some(Eip8130SimulationRequestError::ZeroSenderActorId)
         );
     }
@@ -524,7 +529,9 @@ mod tests {
         let request =
             serde_json::from_value::<BaseTransactionRequest>(json!({ "calls": [] })).unwrap();
         assert_eq!(
-            request.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP).err(),
+            request
+                .to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP, Eip8130SimulationMode::Estimate)
+                .err(),
             Some(Eip8130SimulationRequestError::MissingSender)
         );
     }
@@ -548,7 +555,9 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(
-            request.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP).err(),
+            request
+                .to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP, Eip8130SimulationMode::Estimate)
+                .err(),
             Some(Eip8130SimulationRequestError::SenderAuthTooLarge)
         );
     }
@@ -556,10 +565,20 @@ mod tests {
     #[test]
     fn actor_hint_and_simulation_mode_are_retained() {
         let actor = b256!("30df39d5edcf9ed82b6d77d27bff1192ac265918000000000000000000000000");
-        let tx = simulation(json!({ "sender": SENDER, "calls": [], "senderActorId": actor }));
-        let parts = tx.eip8130.unwrap();
-        assert_eq!(parts.mode, Eip8130ExecutionMode::Simulate);
-        assert_eq!(parts.simulation_sender_actor_id, Some(actor));
+        let request = serde_json::from_value::<BaseTransactionRequest>(
+            json!({ "sender": SENDER, "calls": [], "senderActorId": actor }),
+        )
+        .unwrap();
+        let tx = request
+            .to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP, Eip8130SimulationMode::Call)
+            .unwrap();
+        assert_eq!(
+            tx.inner().as_eip8130().unwrap().simulation,
+            Some(Eip8130Simulation {
+                mode: Eip8130SimulationMode::Call,
+                sender_actor_id: Some(actor)
+            })
+        );
     }
 
     #[test]

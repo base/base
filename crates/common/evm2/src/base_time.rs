@@ -6,11 +6,10 @@ use base_common_genesis::BaseUpgrade;
 use evm2::{
     AccountInfo, Evm,
     bytecode::Bytecode,
-    evm::BlockStateAccumulator,
     registry::{HandlerError, HandlerResult},
 };
 
-use crate::{BaseEvmTypes, BaseForkActivations, IrregularStateChange};
+use crate::{BaseBlockState, BaseEvmTypes, BaseForkActivations, IrregularStateChange};
 
 /// Errors produced while applying the `BaseTime` predeploy transition.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -58,6 +57,22 @@ impl BaseTime {
     pub const IMPLEMENTATION_CODE_HASH: B256 =
         b256!("0x9c4c8a497a69d0b8f2ba67be0bee7a1373186055978c3be6ec3068e0ec27f32a");
 
+    /// The expected hash of the canonical predeploy proxy runtime bytecode.
+    pub const PROXY_CODE_HASH: B256 =
+        b256!("0xfa8c9db6c6cab7108dea276f4cd09d575674eb0852c0fa3187e59e98ef977998");
+
+    /// The selector of `setTimestampMillisPart(uint16)`.
+    pub const SET_TIMESTAMP_MILLIS_PART_SELECTOR: [u8; 4] = hex!("86bdf394");
+
+    /// The selector of `timestampMillisPart()`.
+    pub const TIMESTAMP_MILLIS_PART_SELECTOR: [u8; 4] = hex!("7b2fea99");
+
+    /// The selector of `timestampMs()`.
+    pub const TIMESTAMP_MS_SELECTOR: [u8; 4] = hex!("5745a677");
+
+    /// The slot that stores the `timestamp_millis_part` value in its low `uint16`.
+    pub const TIMESTAMP_MILLIS_PART_SLOT: U256 = uint!(0_U256);
+
     /// The EIP-1967 proxy implementation slot.
     pub const IMPLEMENTATION_SLOT: U256 =
         uint!(0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc_U256);
@@ -73,6 +88,32 @@ impl BaseTime {
             .into()
     }
 
+    /// Returns the canonical predeploy proxy runtime from `base/contracts` commit `4848ec70`.
+    pub fn proxy_bytecode() -> Bytes {
+        hex::decode(include_str!("bytecode/proxy.hex").trim())
+            .expect("proxy runtime artifact must be valid hex")
+            .into()
+    }
+
+    /// Returns the block's Unix-millisecond timestamp: `seconds * 1000` plus the millisecond part
+    /// the predeploy stores in the low `uint16` of
+    /// [`TIMESTAMP_MILLIS_PART_SLOT`](Self::TIMESTAMP_MILLIS_PART_SLOT), wrapping like the
+    /// predeploy's Solidity `uint64` arithmetic. The slot is read untracked so the transaction
+    /// does not warm it.
+    pub fn timestamp_ms(evm: &mut Evm<'_, BaseEvmTypes>, seconds: u64) -> HandlerResult<u64> {
+        let slot = evm
+            .state_mut()
+            .storage_slot_untracked(&Predeploys::BASE_TIME, &Self::TIMESTAMP_MILLIS_PART_SLOT)?;
+        let millis_part = u64::from(Self::decode_timestamp_millis_part(slot));
+        Ok(seconds.wrapping_mul(1_000).wrapping_add(millis_part))
+    }
+
+    /// Decodes the millisecond part from the low `uint16` of a
+    /// [`TIMESTAMP_MILLIS_PART_SLOT`](Self::TIMESTAMP_MILLIS_PART_SLOT) value.
+    pub const fn decode_timestamp_millis_part(slot: U256) -> u16 {
+        (slot.as_limbs()[0] & u16::MAX as u64) as u16
+    }
+
     /// Installs the `BaseTime` implementation and links its existing proxy before transactions.
     ///
     /// Existing chains must already contain the reserved proxy runtime with
@@ -86,7 +127,7 @@ impl BaseTime {
         chain_spec: &impl BaseForkActivations,
         timestamp: u64,
         evm: &mut Evm<'_, BaseEvmTypes>,
-        block_state: &mut BlockStateAccumulator,
+        block_state: &mut impl BaseBlockState,
     ) -> HandlerResult<()> {
         if !chain_spec.is_active_at_timestamp(BaseUpgrade::Denim, timestamp) {
             return Ok(());
@@ -95,25 +136,21 @@ impl BaseTime {
         let expected_implementation = U256::from_be_slice(Self::IMPLEMENTATION_ADDRESS.as_slice());
         let current_implementation = evm
             .state_mut()
-            .storage_slot_untracked(&Predeploys::BASE_TIME, &Self::IMPLEMENTATION_SLOT)
-            .map_err(HandlerError::Fatal)?;
+            .storage_slot_untracked(&Predeploys::BASE_TIME, &Self::IMPLEMENTATION_SLOT)?;
         if current_implementation != U256::ZERO {
             return Ok(());
         }
 
         let proxy_info = evm
             .state_mut()
-            .account_info_untracked(&Predeploys::BASE_TIME)
-            .map_err(HandlerError::Fatal)?
+            .account_info_untracked(&Predeploys::BASE_TIME)?
             .ok_or_else(|| HandlerError::external(BaseTimeTransitionError::MissingProxy))?;
         if proxy_info.code_hash == alloy_primitives::KECCAK256_EMPTY {
             return Err(HandlerError::external(BaseTimeTransitionError::CodelessProxy));
         }
 
-        let current_admin = evm
-            .state_mut()
-            .storage_slot_untracked(&Predeploys::BASE_TIME, &Self::ADMIN_SLOT)
-            .map_err(HandlerError::Fatal)?;
+        let current_admin =
+            evm.state_mut().storage_slot_untracked(&Predeploys::BASE_TIME, &Self::ADMIN_SLOT)?;
         if current_admin != U256::from_be_slice(Predeploys::PROXY_ADMIN.as_slice()) {
             return Err(HandlerError::external(BaseTimeTransitionError::UnexpectedProxyAdmin {
                 actual: current_admin,
@@ -123,12 +160,11 @@ impl BaseTime {
         // Install the implementation runtime at its code-namespace address.
         let code = Bytecode::new_raw(Self::implementation_bytecode());
         let code_hash = code.hash_slow();
-        let implementation_original = evm
-            .state_mut()
-            .account_info_untracked(&Self::IMPLEMENTATION_ADDRESS)
-            .map_err(HandlerError::Fatal)?;
+        let implementation_original =
+            evm.state_mut().account_info_untracked(&Self::IMPLEMENTATION_ADDRESS)?;
         let base = implementation_original.clone().unwrap_or_default();
-        let implementation_current = AccountInfo::new(base.balance, base.nonce, code_hash, code);
+        let implementation_current =
+            AccountInfo::new(base.balance, base.nonce, code_hash, Some(code));
         IrregularStateChange::new(
             Self::IMPLEMENTATION_ADDRESS,
             implementation_original,
@@ -146,5 +182,33 @@ impl BaseTime {
         .apply(evm, block_state);
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy_primitives::keccak256;
+
+    use super::*;
+
+    #[test]
+    fn artifacts_match_canonical_contracts() {
+        assert_eq!(
+            keccak256(BaseTime::implementation_bytecode()),
+            BaseTime::IMPLEMENTATION_CODE_HASH
+        );
+        assert_eq!(keccak256(BaseTime::proxy_bytecode()), BaseTime::PROXY_CODE_HASH);
+    }
+
+    #[test]
+    fn selectors_match_solidity_signatures() {
+        let selector =
+            |signature: &str| -> [u8; 4] { keccak256(signature)[..4].try_into().unwrap() };
+        assert_eq!(
+            BaseTime::SET_TIMESTAMP_MILLIS_PART_SELECTOR,
+            selector("setTimestampMillisPart(uint16)")
+        );
+        assert_eq!(BaseTime::TIMESTAMP_MILLIS_PART_SELECTOR, selector("timestampMillisPart()"));
+        assert_eq!(BaseTime::TIMESTAMP_MS_SELECTOR, selector("timestampMs()"));
     }
 }

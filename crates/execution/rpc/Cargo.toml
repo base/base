@@ -13,9 +13,8 @@ workspace = true
 
 [dependencies]
 # reth
-reth-evm.workspace = true
 reth-rpc.workspace = true
-reth-revm.workspace = true
+reth-evm = { workspace = true, features = ["witness"] }
 reth-errors.workspace = true
 reth-rpc-api.workspace = true
 reth-provider.workspace = true
@@ -24,6 +23,7 @@ reth-chainspec.workspace = true
 reth-storage-api.workspace = true
 reth-trie-common.workspace = true
 reth-chain-state.workspace = true
+reth-execution-types.workspace = true
 reth-rpc-convert.workspace = true
 reth-rpc-eth-api.workspace = true
 reth-payload-util.workspace = true
@@ -38,17 +38,19 @@ reth-tasks = { workspace = true, features = ["rayon"] }
 
 # op-reth
 base-protocol.workspace = true
-base-common-evm.workspace = true
 base-execution-chainspec.workspace = true
+base-execution-eip8130.workspace = true
 base-execution-evm = { workspace = true, features = ["rpc"] }
 base-execution-trie.workspace = true
 base-execution-txpool.workspace = true
 base-observability-events.workspace = true
 base-execution-payload-builder.workspace = true
 
+# evm2
+evm2 = { workspace = true, features = ["std"] }
+evm2-inspectors.workspace = true
+
 # ethereum
-revm.workspace = true
-alloy-evm.workspace = true
 alloy-eips.workspace = true
 alloy-serde.workspace = true
 alloy-json-rpc.workspace = true
@@ -58,12 +60,12 @@ alloy-consensus.workspace = true
 alloy-primitives.workspace = true
 alloy-rpc-client.workspace = true
 base-common-chains.workspace = true
+base-common-l1-fees.workspace = true
 alloy-rpc-types-eth.workspace = true
 base-common-network.workspace = true
 alloy-transport-http.workspace = true
 alloy-rpc-types-debug.workspace = true
 alloy-rpc-types-engine.workspace = true
-revm-inspectors.workspace = true
 base-common-consensus = { workspace = true, features = ["reth"] }
 base-common-rpc-types = { workspace = true, features = ["reth"] }
 base-common-rpc-types-engine = { workspace = true, features = ["reth"] }
@@ -113,7 +115,6 @@ client = [
 	"reth-rpc-eth-api/client",
 ]
 metrics = [
-	"base-common-evm/metrics",
 	"base-execution-payload-builder/metrics",
 	"base-execution-trie/metrics",
 	"base-metrics/metrics",

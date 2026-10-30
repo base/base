@@ -12,29 +12,29 @@ use alloy_consensus::{
 };
 use alloy_eips::BlockNumberOrTag;
 use alloy_network::TransactionResponse;
-use alloy_primitives::{Address, BlockNumber};
+use alloy_primitives::{Address, BlockNumber, U256};
 use alloy_rpc_types_eth::state::StateOverride;
 use arc_swap::ArcSwapOption;
 use base_common_chains::Upgrades;
 use base_common_consensus::{BaseBlock, BaseTxEnvelope};
+use base_common_evm2::BaseBlockExecutionCtx;
 use base_common_flashblocks::Flashblock;
 use base_execution_evm::{BaseEvmConfig, BaseNextBlockEnvAttributes};
+use evm2::evm::{CacheDB, Db};
 use rayon::prelude::*;
 use reth_chainspec::{ChainSpecProvider, EthChainSpec};
-use reth_evm::ConfigureEvm;
+use reth_evm::{BundleState, ConfigureEvm, database::StateProviderDatabase};
 use reth_primitives_traits::RecoveredBlock;
 use reth_provider::{
     BlockReaderIdExt, EvmStateProviderAdapter, StateProvider, StateProviderBox,
     StateProviderFactory,
 };
-use reth_revm::{State, database::StateProviderDatabase};
-use revm_database::states::bundle_state::BundleRetention;
 use tokio::sync::{Mutex, broadcast::Sender, mpsc::UnboundedReceiver};
 
 use crate::{
     AssembledBlock, BlockAssembler, ExecutionError, FlashblockCache, PendingBlocks,
-    PendingBlocksBuilder, PendingStateBuilder, ProtocolError, ProviderError, Result,
-    StateProcessorError,
+    PendingBlocksBuilder, PendingStateBuilder, PendingStateOutcome, ProtocolError, ProviderError,
+    Result, StateProcessorError,
     metrics::Metrics,
     validation::{
         CanonicalBlockReconciler, FlashblockSequenceValidator, ReconciliationStrategy,
@@ -42,12 +42,27 @@ use crate::{
     },
 };
 
-type PendingExecutionDb = State<StateProviderDatabase<EvmStateProviderAdapter<StateProviderBox>>>;
+type PendingExecutionDb =
+    CacheDB<Db<StateProviderDatabase<EvmStateProviderAdapter<StateProviderBox>>>>;
 
+/// Pending state kept between flashblocks so the next one extends it without replaying.
 #[derive(Debug)]
 struct LivePendingState {
+    /// Parent state with every pending transaction's reads and writes cached on top.
     db: PendingExecutionDb,
+    /// The pending blocks' accumulated state changes.
+    bundle_state: BundleState,
+    /// The pending RPC state overrides.
     state_overrides: StateOverride,
+}
+
+impl LivePendingState {
+    /// Folds a finished pending-state build into this state.
+    fn apply(&mut self, outcome: PendingStateOutcome) {
+        self.db.cache.merge(outcome.cache);
+        self.bundle_state.extend(outcome.bundle_state);
+        self.state_overrides = outcome.state_overrides;
+    }
 }
 
 /// Messages consumed by the state processor.
@@ -88,8 +103,8 @@ where
         *self.lock_live_state() = None;
     }
 
-    fn set_live_state(&self, db: PendingExecutionDb, state_overrides: StateOverride) {
-        *self.lock_live_state() = Some(LivePendingState { db, state_overrides });
+    fn set_live_state(&self, live_state: LivePendingState) {
+        *self.lock_live_state() = Some(live_state);
     }
 
     /// Returns the node's canonical tip, or `None` when the provider cannot report it.
@@ -208,12 +223,10 @@ where
     fn publish_pending_blocks(
         &self,
         mut pending_blocks_builder: PendingBlocksBuilder,
-        mut db: PendingExecutionDb,
-        state_overrides: StateOverride,
+        live_state: LivePendingState,
     ) -> Result<Option<Arc<PendingBlocks>>> {
-        db.merge_transitions(BundleRetention::Reverts);
-        pending_blocks_builder.with_bundle_state(db.bundle_state.clone());
-        pending_blocks_builder.with_state_overrides(state_overrides.clone());
+        pending_blocks_builder.with_bundle_state(live_state.bundle_state.clone());
+        pending_blocks_builder.with_state_overrides(live_state.state_overrides.clone());
 
         let pending_blocks = Arc::new(pending_blocks_builder.build()?);
 
@@ -223,7 +236,7 @@ where
             return Ok(None);
         }
 
-        self.set_live_state(db, state_overrides);
+        self.set_live_state(live_state);
 
         Ok(Some(pending_blocks))
     }
@@ -575,11 +588,11 @@ where
         flashblock: &Flashblock,
     ) -> Result<Option<Arc<PendingBlocks>>> {
         let latest_block_base = prev_pending_blocks.latest_block_base().clone();
-        let latest_block_l1_block_info = prev_pending_blocks.latest_block_l1_block_info().clone();
+        let latest_block_l1_block_info = *prev_pending_blocks.latest_block_l1_block_info();
         let latest_flashblock_tx_start = prev_pending_blocks.pending_transaction_count();
 
         let live_state = self.lock_live_state().take();
-        let Some(LivePendingState { mut db, state_overrides }) = live_state else {
+        let Some(mut live_state) = live_state else {
             warn!(
                 message = "live pending state unavailable, falling back to full rebuild",
                 block_number = flashblock.metadata.block_number,
@@ -597,13 +610,17 @@ where
         let latest_block_header =
             BlockAssembler::refresh_same_block_header(&latest_header, &latest_block_flashblocks)?;
 
-        db.block_hashes.insert(latest_block_base.block_number - 1, latest_block_base.parent_hash);
+        live_state.db.insert_block_hash(
+            &U256::from(latest_block_base.block_number - 1),
+            &latest_block_base.parent_hash,
+        );
 
         let evm_config = BaseEvmConfig::base(self.client.chain_spec());
         let evm_env = evm_config
             .evm_env(&latest_header)
             .map_err(|e| ExecutionError::EvmEnv(e.to_string()))?;
-        let evm = evm_config.evm_with_env(db, evm_env);
+        let state_overrides = core::mem::take(&mut live_state.state_overrides);
+        let evm = evm_config.evm_with_env(&mut live_state.db, evm_env);
 
         let previous_block_transaction_count = prev_pending_blocks.latest_block_transaction_count();
         let pending_block = Block {
@@ -653,7 +670,7 @@ where
             evm,
             pending_block,
             None,
-            latest_block_l1_block_info.clone(),
+            latest_block_l1_block_info,
             state_overrides,
         );
         pending_state_builder.set_execution_offsets(
@@ -676,9 +693,12 @@ where
                 pending_blocks_builder.with_execution_time(tx_hash, time_us);
             }
 
-            for (address, account) in &executed_transaction.state {
-                if account.is_touched() {
-                    pending_blocks_builder.with_account_balance(*address, account.info.balance);
+            for account in executed_transaction.state.account_changes() {
+                if account.touched {
+                    pending_blocks_builder.with_account_balance(
+                        account.address,
+                        account.current.map_or(U256::ZERO, |info| info.balance),
+                    );
                 }
             }
 
@@ -690,7 +710,8 @@ where
 
         let latest_block_cumulative_gas_used = pending_state_builder.cumulative_gas_used();
         let latest_block_next_log_index = pending_state_builder.next_log_index();
-        let (db, state_overrides) = pending_state_builder.into_db_and_state_overrides();
+        let outcome = pending_state_builder.finish();
+        live_state.apply(outcome);
         pending_blocks_builder.with_latest_block_context(
             latest_flashblock_tx_start,
             latest_block_base,
@@ -699,7 +720,7 @@ where
             latest_block_cumulative_gas_used,
             latest_block_next_log_index,
         );
-        self.publish_pending_blocks(pending_blocks_builder, db, state_overrides)
+        self.publish_pending_blocks(pending_blocks_builder, live_state)
     }
 
     #[instrument(
@@ -720,7 +741,7 @@ where
         };
 
         let live_state = self.lock_live_state().take();
-        let Some(LivePendingState { mut db, state_overrides }) = live_state else {
+        let Some(mut live_state) = live_state else {
             warn!(
                 message = "live pending state unavailable, falling back to full rebuild",
                 block_number = flashblock.metadata.block_number,
@@ -748,7 +769,7 @@ where
             body: assembled_block.body,
         };
 
-        db.block_hashes.insert(base.block_number - 1, base.parent_hash);
+        live_state.db.insert_block_hash(&U256::from(base.block_number - 1), &base.parent_hash);
 
         let evm_config = BaseEvmConfig::base(self.client.chain_spec());
         let block_env_attributes = BaseNextBlockEnvAttributes {
@@ -762,7 +783,8 @@ where
         let evm_env = evm_config
             .next_evm_env(&previous_header, &block_env_attributes)
             .map_err(|e| ExecutionError::EvmEnv(e.to_string()))?;
-        let evm = evm_config.evm_with_env(db, evm_env);
+        let state_overrides = core::mem::take(&mut live_state.state_overrides);
+        let evm = evm_config.evm_with_env(&mut live_state.db, evm_env);
 
         let recovery_start = Instant::now();
         let txs_with_senders: Vec<(BaseTxEnvelope, Address)> = pending_block
@@ -781,16 +803,20 @@ where
         pending_blocks_builder.with_flashblocks([flashblock.clone()]);
         pending_blocks_builder.with_header(assembled_header);
 
-        let mut pending_state_builder = PendingStateBuilder::new(
+        let pending_state_builder = PendingStateBuilder::new(
             self.client.chain_spec(),
             evm,
             pending_block,
             None,
-            l1_block_info.clone(),
+            l1_block_info,
             state_overrides,
         );
-        pending_state_builder
-            .apply_pre_execution_changes(base.parent_hash, Some(base.parent_beacon_block_root))?;
+        let mut pending_state_builder =
+            pending_state_builder.apply_pre_execution_changes(BaseBlockExecutionCtx {
+                parent_hash: base.parent_hash,
+                parent_beacon_block_root: Some(base.parent_beacon_block_root),
+                extra_data: base.extra_data.clone(),
+            })?;
 
         for (idx, (transaction, sender)) in txs_with_senders.into_iter().enumerate() {
             let tx_hash = transaction.tx_hash();
@@ -806,9 +832,12 @@ where
                 pending_blocks_builder.with_execution_time(tx_hash, time_us);
             }
 
-            for (address, account) in &executed_transaction.state {
-                if account.is_touched() {
-                    pending_blocks_builder.with_account_balance(*address, account.info.balance);
+            for account in executed_transaction.state.account_changes() {
+                if account.touched {
+                    pending_blocks_builder.with_account_balance(
+                        account.address,
+                        account.current.map_or(U256::ZERO, |info| info.balance),
+                    );
                 }
             }
 
@@ -820,7 +849,8 @@ where
 
         let latest_block_cumulative_gas_used = pending_state_builder.cumulative_gas_used();
         let latest_block_next_log_index = pending_state_builder.next_log_index();
-        let (db, state_overrides) = pending_state_builder.into_db_and_state_overrides();
+        let outcome = pending_state_builder.finish();
+        live_state.apply(outcome);
         pending_blocks_builder.with_latest_block_context(
             prev_pending_blocks.pending_transaction_count(),
             base,
@@ -830,7 +860,7 @@ where
             latest_block_next_log_index,
         );
 
-        self.publish_pending_blocks(pending_blocks_builder, db, state_overrides)
+        self.publish_pending_blocks(pending_blocks_builder, live_state)
     }
 
     #[instrument(level = "debug", skip_all, fields(num_flashblocks = flashblocks.len()))]
@@ -865,18 +895,21 @@ where
             .client
             .state_by_block_number_or_tag(BlockNumberOrTag::Number(canonical_block))
             .map_err(|e| ProviderError::StateProvider(e.to_string()))?;
-        let state_provider_db =
-            StateProviderDatabase::new(state_provider.into_evm_state_provider());
         let mut pending_blocks_builder = PendingBlocksBuilder::new();
 
         // Track state changes across flashblocks, accumulating bundle state
         // from previous pending blocks if available.
-        let mut db = State::builder().with_database(state_provider_db).with_bundle_update().build();
-
-        let mut state_overrides =
-            prev_pending_blocks.as_ref().map_or_else(StateOverride::default, |pending_blocks| {
-                pending_blocks.get_state_overrides().unwrap_or_default()
-            });
+        let mut live_state = LivePendingState {
+            db: CacheDB::new(Db::new(StateProviderDatabase::new(
+                state_provider.into_evm_state_provider(),
+            ))),
+            bundle_state: BundleState::default(),
+            state_overrides: prev_pending_blocks
+                .as_ref()
+                .map_or_else(StateOverride::default, |pending_blocks| {
+                    pending_blocks.get_state_overrides().unwrap_or_default()
+                }),
+        };
 
         let mut total_transaction_count = 0usize;
         for (_block_number, flashblocks) in flashblocks_per_block {
@@ -891,7 +924,7 @@ where
 
             // Extract L1 block info using the AssembledBlock method
             let l1_block_info = assembled.l1_block_info()?;
-            let latest_block_l1_block_info = l1_block_info.clone();
+            let latest_block_l1_block_info = l1_block_info;
             let latest_block_transaction_count = assembled.block.body.transactions.len();
 
             let block_env_attributes = BaseNextBlockEnvAttributes {
@@ -903,13 +936,16 @@ where
                 extra_data: assembled.base.extra_data.clone(),
             };
 
-            db.block_hashes
-                .insert(latest_block_base.block_number - 1, latest_block_base.parent_hash);
+            live_state.db.insert_block_hash(
+                &U256::from(latest_block_base.block_number - 1),
+                &latest_block_base.parent_hash,
+            );
 
             let evm_env = evm_config
                 .next_evm_env(&last_block_header, &block_env_attributes)
                 .map_err(|e| ExecutionError::EvmEnv(e.to_string()))?;
-            let evm = evm_config.evm_with_env(db, evm_env);
+            let state_overrides = core::mem::take(&mut live_state.state_overrides);
+            let evm = evm_config.evm_with_env(&mut live_state.db, evm_env);
 
             // Parallel sender recovery - batch all ECDSA operations upfront
             let recovery_start = Instant::now();
@@ -936,10 +972,13 @@ where
             // Clone header before moving block to avoid cloning the entire block
             let block_header = assembled.block.header.clone();
 
-            let parent_block_hash = assembled.base.parent_hash;
-            let parent_beacon_block_root = Some(assembled.base.parent_beacon_block_root);
+            let execution_ctx = BaseBlockExecutionCtx {
+                parent_hash: assembled.base.parent_hash,
+                parent_beacon_block_root: Some(assembled.base.parent_beacon_block_root),
+                extra_data: assembled.base.extra_data.clone(),
+            };
 
-            let mut pending_state_builder = PendingStateBuilder::new(
+            let pending_state_builder = PendingStateBuilder::new(
                 self.client.chain_spec(),
                 evm,
                 assembled.block,
@@ -948,8 +987,8 @@ where
                 state_overrides,
             );
 
-            pending_state_builder
-                .apply_pre_execution_changes(parent_block_hash, parent_beacon_block_root)?;
+            let mut pending_state_builder =
+                pending_state_builder.apply_pre_execution_changes(execution_ctx)?;
 
             for (idx, (transaction, sender)) in txs_with_senders.into_iter().enumerate() {
                 let tx_hash = transaction.tx_hash();
@@ -966,9 +1005,12 @@ where
                     pending_blocks_builder.with_execution_time(tx_hash, time_us);
                 }
 
-                for (address, account) in &executed_transaction.state {
-                    if account.is_touched() {
-                        pending_blocks_builder.with_account_balance(*address, account.info.balance);
+                for account in executed_transaction.state.account_changes() {
+                    if account.touched {
+                        pending_blocks_builder.with_account_balance(
+                            account.address,
+                            account.current.map_or(U256::ZERO, |info| info.balance),
+                        );
                     }
                 }
 
@@ -992,11 +1034,13 @@ where
             );
             total_transaction_count += latest_block_transaction_count;
 
-            (db, state_overrides) = pending_state_builder.into_db_and_state_overrides();
+            let outcome = pending_state_builder.finish();
+
+            live_state.apply(outcome);
             last_block_header = block_header;
         }
 
-        self.publish_pending_blocks(pending_blocks_builder, db, state_overrides)
+        self.publish_pending_blocks(pending_blocks_builder, live_state)
     }
 }
 

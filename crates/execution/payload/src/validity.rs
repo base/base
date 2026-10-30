@@ -5,12 +5,13 @@ use std::collections::BTreeMap;
 
 use alloy_primitives::{
     Address, TxHash, U256,
-    map::{B256Map, B256Set, HashMap, U256Map},
+    map::{AddressMap, B256Map, B256Set, HashMap, U256Map},
 };
 use base_execution_txpool::{
     PredicateContext, ValidityConditions, ValidityOperator, ValidityPredicate,
 };
-use revm::{Database, database::TransitionState, state::EvmState};
+use evm2::evm::{AccountChanges, AccountInfo, Database};
+use reth_execution_types::StateUpdate;
 
 /// The number of parked predicates at which a flat bucket becomes ordered by default.
 pub const DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD: usize = 32;
@@ -228,59 +229,80 @@ impl<T> ParkedPredicateIndex<T> {
         Some(entry.transaction)
     }
 
-    /// Returns parked transactions and index-bucket wakeups triggered by `state`.
-    pub fn affected_by_state(&self, state: &EvmState) -> StateChangeEffects {
+    /// Returns parked transactions and index-bucket wakeups triggered by `changes`, one
+    /// transaction's account changes.
+    pub fn affected_by_state<'a>(
+        &self,
+        changes: impl IntoIterator<Item = AccountChanges<'a>>,
+    ) -> StateChangeEffects {
         let mut effects = StateChangeEffects::default();
-        for (address, account) in state {
-            let destroyed = account.is_selfdestructed();
+        for account in changes {
+            let destroyed = account.selfdestructed;
             // Deleted accounts read as nonce zero, regardless of the retained account info.
-            let new_nonce = if destroyed { 0 } else { account.info.nonce };
+            let new_nonce =
+                if destroyed { 0 } else { account.current.map_or(0, |info| info.nonce) };
             self.wake_account(
                 &mut effects,
-                *address,
+                account.address,
                 AccountChange {
-                    old_nonce: account.original_info().nonce,
+                    old_nonce: account.original.map_or(0, |info| info.nonce),
                     new_nonce,
-                    old_balance: account.original_info().balance,
-                    new_balance: account.info.balance,
+                    old_balance: account.original.map_or(U256::ZERO, |info| info.balance),
+                    new_balance: account.current.map_or(U256::ZERO, |info| info.balance),
                     storage_destroyed: destroyed,
                 },
                 account
                     .storage
-                    .iter()
-                    .filter(|(_, value)| value.is_changed())
-                    .map(|(slot, value)| (*slot, value.original_value(), value.present_value())),
+                    .changed_slots()
+                    .map(|(slot, value)| (*slot, value.original, value.current)),
             );
         }
         effects
     }
 
-    /// Returns parked transactions and index-bucket wakeups triggered by the net changes a
-    /// [`TransitionState`] holds relative to the state it started from.
+    /// Returns parked transactions and index-bucket wakeups triggered by the net changes of
+    /// `updates`, consecutive commits applied on top of one state.
     ///
     /// Builders use it for writes made outside the selection loop, such as pre-execution system
-    /// calls and deposits, which never pass through [`Self::affected_by_state`].
-    pub fn affected_by_transitions(&self, transitions: &TransitionState) -> StateChangeEffects {
+    /// calls and deposits, which never pass through [`Self::affected_by_state`]. A location
+    /// changed and later restored by these commits wakes nothing.
+    pub fn affected_by_updates(&self, updates: &[StateUpdate]) -> StateChangeEffects {
+        let mut net = AddressMap::<NetAccountChange<'_>>::default();
+        for account in updates.iter().flat_map(|update| &update.accounts) {
+            let change = net.entry(account.address).or_insert_with(|| NetAccountChange {
+                original: account.original.as_ref(),
+                current: None,
+                storage_destroyed: false,
+                storage: U256Map::default(),
+            });
+            change.current = account.current.as_ref();
+            change.storage_destroyed |= account.wiped || account.current.is_none();
+            for (key, slot) in &account.storage {
+                change
+                    .storage
+                    .entry(*key)
+                    .or_insert((slot.previous_or_original_value, slot.present_value))
+                    .1 = slot.present_value;
+            }
+        }
+
         let mut effects = StateChangeEffects::default();
-        for (address, transition) in &transitions.transitions {
-            let old = transition.previous_info.as_ref();
-            let new = transition.info.as_ref();
+        for (address, change) in net {
             self.wake_account(
                 &mut effects,
-                *address,
+                address,
                 AccountChange {
-                    old_nonce: old.map_or(0, |info| info.nonce),
-                    new_nonce: new.map_or(0, |info| info.nonce),
-                    old_balance: old.map_or(U256::ZERO, |info| info.balance),
-                    new_balance: new.map_or(U256::ZERO, |info| info.balance),
-                    storage_destroyed: transition.storage_was_destroyed
-                        || transition.status.was_destroyed(),
+                    old_nonce: change.original.map_or(0, |info| info.nonce),
+                    new_nonce: change.current.map_or(0, |info| info.nonce),
+                    old_balance: change.original.map_or(U256::ZERO, |info| info.balance),
+                    new_balance: change.current.map_or(U256::ZERO, |info| info.balance),
+                    storage_destroyed: change.storage_destroyed,
                 },
-                transition
+                change
                     .storage
-                    .iter()
-                    .filter(|(_, slot)| slot.is_changed())
-                    .map(|(key, slot)| (*key, slot.previous_or_original_value, slot.present_value)),
+                    .into_iter()
+                    .filter(|(_, (original, present))| original != present)
+                    .map(|(key, (original, present))| (key, original, present)),
             );
         }
         effects
@@ -402,6 +424,16 @@ impl<T> ParkedPredicateIndex<T> {
         bucket.extend_affected(old, new, &mut effects.affected_transactions);
         effects.woken_buckets += 1;
     }
+}
+
+/// One account's net change across consecutive [`StateUpdate`]s: the account and slot values
+/// before the first update and after the last.
+#[derive(Debug)]
+struct NetAccountChange<'a> {
+    original: Option<&'a AccountInfo>,
+    current: Option<&'a AccountInfo>,
+    storage_destroyed: bool,
+    storage: U256Map<(U256, U256)>,
 }
 
 /// Account fields that validity predicates read, before and after a state change.
@@ -643,22 +675,22 @@ pub struct StateChangeEffects {
 pub mod test_utils {
     //! Hand-rolled evaluation database for a single ordered log spanning account and
     //! storage reads, including reads that fail. Separate method mocks cannot express
-    //! this cross-method log.
+    //! this cross-method log. Also builds transaction account changes, whose evm2 overlay
+    //! types are produced only by execution.
 
     use alloy_primitives::{Address, B256, U256};
-    use revm::{
-        Database,
-        database::InMemoryDB,
-        database_interface::DBErrorMarker,
-        state::{AccountInfo, Bytecode},
+    use evm2::{
+        bytecode::Bytecode,
+        evm::{
+            AccountChanges, AccountInfo, Database, InMemoryDB, StorageOverlay, StorageSlot, Tracked,
+        },
+        interpreter::Word,
     };
 
     /// A scripted account or storage read failure.
     #[derive(Debug, PartialEq, Eq, thiserror::Error)]
     #[error("scripted state read failure")]
     pub struct ReadError;
-
-    impl DBErrorMarker for ReadError {}
 
     /// In-memory state with ordered account/slot reads and optional error injection.
     #[derive(Debug, Default)]
@@ -674,28 +706,103 @@ pub mod test_utils {
     impl Database for RecordingDatabase {
         type Error = ReadError;
 
-        fn basic(&mut self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
-            self.reads.push((address, None));
+        fn get_account(&mut self, address: &Address) -> Result<Option<AccountInfo>, Self::Error> {
+            self.reads.push((*address, None));
             if self.fail_on == Some(self.reads.len()) {
                 return Err(ReadError);
             }
-            Ok(self.inner.basic(address).unwrap())
+            Ok(self.inner.get_account(address).unwrap())
         }
 
-        fn storage(&mut self, address: Address, slot: U256) -> Result<U256, Self::Error> {
-            self.reads.push((address, Some(slot)));
+        fn get_storage(&mut self, address: &Address, slot: &Word) -> Result<Word, Self::Error> {
+            self.reads.push((*address, Some(*slot)));
             if self.fail_on == Some(self.reads.len()) {
                 return Err(ReadError);
             }
-            Ok(self.inner.storage(address, slot).unwrap())
+            Ok(self.inner.get_storage(address, slot).unwrap())
         }
 
-        fn code_by_hash(&mut self, _: B256) -> Result<Bytecode, Self::Error> {
+        fn get_code_by_hash(&mut self, _: &B256) -> Result<Bytecode, Self::Error> {
             panic!("validity predicates must not load bytecode");
         }
 
-        fn block_hash(&mut self, _: u64) -> Result<B256, Self::Error> {
+        fn get_block_hash(&mut self, _: &Word) -> Result<B256, Self::Error> {
             panic!("validity predicates must not load block hashes");
+        }
+    }
+
+    /// One account's changes in a transaction, owned so tests can lend them as
+    /// [`AccountChanges`].
+    #[derive(Debug, Clone, Default)]
+    pub struct ChangedAccount {
+        /// Account at the start of the transaction.
+        pub original: AccountInfo,
+        /// Account after the transaction.
+        pub current: AccountInfo,
+        /// Whether the transaction touched the account.
+        pub touched: bool,
+        /// Whether the transaction selfdestructed the account.
+        pub selfdestructed: bool,
+        /// Storage slots the transaction loaded or wrote.
+        pub storage: StorageOverlay,
+    }
+
+    impl ChangedAccount {
+        /// An account whose balance changed from `old` to `new`.
+        pub fn balance(old: u64, new: u64) -> Self {
+            Self {
+                original: AccountInfo::default().with_balance(U256::from(old)),
+                current: AccountInfo::default().with_balance(U256::from(new)),
+                ..Default::default()
+            }
+        }
+
+        /// An account whose nonce changed from `old` to `new`.
+        pub fn nonce(old: u64, new: u64) -> Self {
+            Self {
+                original: AccountInfo::default().with_nonce(old),
+                current: AccountInfo::default().with_nonce(new),
+                ..Default::default()
+            }
+        }
+
+        /// Adds `slot`, holding `original` at the start of the transaction and `present` after.
+        pub fn with_slot(mut self, slot: U256, original: U256, present: U256) -> Self {
+            self.storage.slots.insert(
+                slot,
+                StorageSlot {
+                    value: Tracked::from_parts(original, present),
+                    is_warm: false,
+                    _non_exhaustive: (),
+                },
+            );
+            self
+        }
+
+        /// Marks the account touched.
+        pub const fn touched(mut self) -> Self {
+            self.touched = true;
+            self
+        }
+
+        /// Marks the account selfdestructed.
+        pub const fn selfdestructed(mut self) -> Self {
+            self.selfdestructed = true;
+            self
+        }
+
+        /// Lends these changes as the account at `address`.
+        pub fn changes(&self, address: Address) -> AccountChanges<'_> {
+            AccountChanges {
+                address,
+                original: Some(&self.original),
+                current: (!self.selfdestructed).then_some(&self.current),
+                created: false,
+                selfdestructed: self.selfdestructed,
+                touched: self.touched,
+                code: None,
+                storage: &self.storage,
+            }
         }
     }
 }
@@ -706,15 +813,12 @@ mod tests {
     use base_execution_txpool::{
         PredicateContext, ValidityConditions, ValidityOperator, ValidityPredicate,
     };
-    use revm::{
-        database::InMemoryDB,
-        state::{Account, AccountInfo, EvmState, EvmStorageSlot},
-    };
+    use evm2::evm::{AccountInfo, InMemoryDB};
 
     use super::{
         ParkedPredicateIndex, StateChangeEffects, ValidityPredicateEvaluation,
         ValidityPredicateKey,
-        test_utils::{ReadError, RecordingDatabase},
+        test_utils::{ChangedAccount, ReadError, RecordingDatabase},
     };
 
     fn balance(address: Address, op: ValidityOperator, value: u64) -> ValidityPredicate {
@@ -734,22 +838,6 @@ mod tests {
             op,
             value: U256::from(value),
         }
-    }
-
-    fn changed_balance(address: Address, old: u64, new: u64) -> EvmState {
-        let mut account = Account::default();
-        account.info.balance = U256::from(new);
-        account.original_info_mut().balance = U256::from(old);
-        EvmState::from_iter([(address, account)])
-    }
-
-    fn changed_storage(address: Address, old: u64, new: u64) -> EvmState {
-        let mut account = Account::default();
-        account.storage.insert(
-            U256::from(7),
-            EvmStorageSlot::new_changed(U256::from(old), U256::from(new), Default::default()),
-        );
-        EvmState::from_iter([(address, account)])
     }
 
     #[test]
@@ -801,22 +889,21 @@ mod tests {
             assert!(conditions.contains(predicate));
             assert_eq!(db.reads, expected_reads[..=index]);
             match index {
-                0 => db.inner.insert_account_info(
-                    first,
-                    AccountInfo { balance: U256::ONE, ..Default::default() },
-                ),
-                1 => db.inner.insert_account_info(
-                    second,
-                    AccountInfo { balance: U256::from(2), ..Default::default() },
-                ),
-                2 => db.inner.insert_account_info(
-                    nonce_address,
-                    AccountInfo { nonce: 3, ..Default::default() },
-                ),
-                _ => db
+                0 => db
                     .inner
-                    .insert_account_storage(storage_address, U256::from(7), U256::from(0x104))
-                    .unwrap(),
+                    .insert_account_info(&first, AccountInfo::default().with_balance(U256::ONE)),
+                1 => db.inner.insert_account_info(
+                    &second,
+                    AccountInfo::default().with_balance(U256::from(2)),
+                ),
+                2 => db
+                    .inner
+                    .insert_account_info(&nonce_address, AccountInfo::default().with_nonce(3)),
+                _ => db.inner.insert_account_storage(
+                    &storage_address,
+                    &U256::from(7),
+                    &U256::from(0x104),
+                ),
             }
         }
         db.reads.clear();
@@ -992,15 +1079,12 @@ mod tests {
             ];
             let predicates = ValidityConditions::new(predicates.to_vec());
             let mut db = InMemoryDB::default();
-            db.insert_account_info(
-                address,
-                AccountInfo { nonce: initial_nonce, ..Default::default() },
-            );
+            db.insert_account_info(&address, AccountInfo::default().with_nonce(initial_nonce));
             assert_eq!(
                 ValidityPredicateEvaluation::evaluate(&predicates, &mut db, &context).unwrap(),
                 ValidityPredicateEvaluation::Matched,
             );
-            db.insert_account_info(address, AccountInfo { nonce: 4, ..Default::default() });
+            db.insert_account_info(&address, AccountInfo::default().with_nonce(4));
             assert_eq!(
                 ValidityPredicateEvaluation::evaluate(&predicates, &mut db, &context).unwrap(),
                 ValidityPredicateEvaluation::Unsatisfied {
@@ -1040,11 +1124,9 @@ mod tests {
                     value: U256::ONE,
                 },
             );
-            let mut account = Account::default();
-            account.info.nonce = 1;
-            account.mark_selfdestruct();
+            let account = ChangedAccount::nonce(0, 1).selfdestructed();
             assert_eq!(
-                index.affected_by_state(&EvmState::from_iter([(address, account)])),
+                index.affected_by_state([account.changes(address)]),
                 StateChangeEffects::default(),
             );
         }
@@ -1066,14 +1148,11 @@ mod tests {
                 },
             );
             assert_eq!(
-                index.affected_by_state(&changed_balance(address, 9, 10)),
+                index.affected_by_state([ChangedAccount::balance(9, 10).changes(address)]),
                 StateChangeEffects::default(),
             );
-            let mut account = Account::default();
-            account.original_info_mut().nonce = 9;
-            account.info.nonce = 10;
             assert_eq!(
-                index.affected_by_state(&EvmState::from_iter([(address, account)])),
+                index.affected_by_state([ChangedAccount::nonce(9, 10).changes(address)]),
                 StateChangeEffects { affected_transactions: vec![hash], woken_buckets: 1 },
             );
             assert_eq!(index.remove(hash), Some(()));
@@ -1095,12 +1174,9 @@ mod tests {
         ] {
             let mut index = ParkedPredicateIndex::new(1);
             index.park(hash, (), ValidityPredicate::Nonce { address, op, value: U256::from(10) });
-            let mut account = Account::default();
-            account.original_info_mut().nonce = old;
-            account.info.nonce = new;
             assert_eq!(
                 index
-                    .affected_by_state(&EvmState::from_iter([(address, account)]))
+                    .affected_by_state([ChangedAccount::nonce(old, new).changes(address)])
                     .affected_transactions,
                 vec![hash],
             );
@@ -1122,20 +1198,13 @@ mod tests {
             (),
             ValidityPredicate::Nonce { address, op: ValidityOperator::Equal, value: U256::from(5) },
         );
-        let mut account = Account::default();
-        account.original_info_mut().nonce = 9;
-        account.info.nonce = 10;
+        let account = ChangedAccount::nonce(9, 10);
         assert!(
-            index
-                .affected_by_state(&EvmState::from_iter([(address, account.clone())]))
-                .affected_transactions
-                .is_empty()
+            index.affected_by_state([account.changes(address)]).affected_transactions.is_empty()
         );
-        account.mark_selfdestruct();
+        let account = account.selfdestructed();
         assert_eq!(
-            index
-                .affected_by_state(&EvmState::from_iter([(address, account)]))
-                .affected_transactions,
+            index.affected_by_state([account.changes(address)]).affected_transactions,
             vec![hash],
         );
     }
@@ -1148,7 +1217,7 @@ mod tests {
         for hash in hashes {
             index.park(hash, (), balance(address, ValidityOperator::GreaterThan, 10));
         }
-        let effects = index.affected_by_state(&changed_balance(address, 1, 2));
+        let effects = index.affected_by_state([ChangedAccount::balance(1, 2).changes(address)]);
         assert_eq!(effects.woken_buckets, 1);
         assert_eq!(
             effects.affected_transactions.into_iter().collect::<B256Set>(),
@@ -1166,16 +1235,20 @@ mod tests {
         index.park(second, (), balance(address, ValidityOperator::GreaterThanOrEqual, 20));
         assert!(
             index
-                .affected_by_state(&changed_balance(address, 1, 9))
+                .affected_by_state([ChangedAccount::balance(1, 9).changes(address)])
                 .affected_transactions
                 .is_empty()
         );
         assert_eq!(
-            index.affected_by_state(&changed_balance(address, 9, 12)).affected_transactions,
+            index
+                .affected_by_state([ChangedAccount::balance(9, 12).changes(address)])
+                .affected_transactions,
             vec![first]
         );
         assert_eq!(
-            index.affected_by_state(&changed_balance(address, 12, 25)).affected_transactions,
+            index
+                .affected_by_state([ChangedAccount::balance(12, 25).changes(address)])
+                .affected_transactions,
             vec![second]
         );
     }
@@ -1191,7 +1264,9 @@ mod tests {
             let mut index = ParkedPredicateIndex::new(1);
             index.park(hash, (), balance(address, op, 10));
             assert_eq!(
-                index.affected_by_state(&changed_balance(address, old, new)).affected_transactions,
+                index
+                    .affected_by_state([ChangedAccount::balance(old, new).changes(address)])
+                    .affected_transactions,
                 vec![hash]
             );
         }
@@ -1207,14 +1282,22 @@ mod tests {
         let mut index = ParkedPredicateIndex::new(1);
         index.park(equal, (), storage(address, mask, ValidityOperator::Equal, 10));
         assert_eq!(
-            index.affected_by_state(&changed_storage(address, 0x109, 0x20a)).affected_transactions,
+            index
+                .affected_by_state([ChangedAccount::default()
+                    .with_slot(U256::from(7), U256::from(0x109), U256::from(0x20a))
+                    .changes(address)])
+                .affected_transactions,
             vec![equal]
         );
 
         let mut index = ParkedPredicateIndex::new(1);
         index.park(not_equal, (), storage(address, mask, ValidityOperator::NotEqual, 10));
         assert_eq!(
-            index.affected_by_state(&changed_storage(address, 0x10a, 0x20b)).affected_transactions,
+            index
+                .affected_by_state([ChangedAccount::default()
+                    .with_slot(U256::from(7), U256::from(0x10a), U256::from(0x20b))
+                    .changes(address)])
+                .affected_transactions,
             vec![not_equal]
         );
     }
@@ -1228,13 +1311,13 @@ mod tests {
         assert!(index.reindex(hash, balance(address, ValidityOperator::GreaterThan, 20)));
         assert!(
             index
-                .affected_by_state(&changed_balance(address, 9, 11))
+                .affected_by_state([ChangedAccount::balance(9, 11).changes(address)])
                 .affected_transactions
                 .is_empty()
         );
         assert_eq!(index.remove(hash), Some(7));
         assert_eq!(
-            index.affected_by_state(&changed_balance(address, 19, 21)),
+            index.affected_by_state([ChangedAccount::balance(19, 21).changes(address)]),
             StateChangeEffects::default()
         );
     }
@@ -1256,7 +1339,7 @@ mod tests {
         assert_eq!(index.bucket_depths().collect::<Vec<_>>(), vec![1]);
         assert!(
             index
-                .affected_by_state(&changed_balance(address, 0, 1))
+                .affected_by_state([ChangedAccount::balance(0, 1).changes(address)])
                 .affected_transactions
                 .is_empty()
         );
@@ -1322,9 +1405,8 @@ mod tests {
         let hash = B256::with_last_byte(1);
         let mut index = ParkedPredicateIndex::new(1);
         index.park(hash, (), storage(address, U256::MAX, ValidityOperator::GreaterThan, 10));
-        let mut account = Account::default();
-        account.mark_selfdestruct();
-        let effects = index.affected_by_state(&EvmState::from_iter([(address, account)]));
+        let account = ChangedAccount::default().selfdestructed();
+        let effects = index.affected_by_state([account.changes(address)]);
         assert_eq!(
             effects,
             StateChangeEffects { affected_transactions: vec![hash], woken_buckets: 1 }
