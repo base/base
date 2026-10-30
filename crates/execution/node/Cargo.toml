@@ -107,11 +107,23 @@ base-node-core = { workspace = true, features = ["test-utils"] }
 reth-node-builder = { workspace = true, features = ["test-utils"] }
 
 alloy-eips.workspace = true
+iai-callgrind.workspace = true
 criterion = { workspace = true, features = ["html_reports"] }
 base-common-evm.workspace = true
 
+[target.'cfg(unix)'.dev-dependencies]
+tikv-jemallocator = { workspace = true, features = ["override_allocator_on_supported_platforms"] }
+
 [[bench]]
 name = "provider"
+harness = false
+
+[[bench]]
+name = "state_reads_iai"
+harness = false
+
+[[bench]]
+name = "state_root_iai"
 harness = false
 
 [features]

@@ -46,11 +46,30 @@ thiserror.workspace = true
 [dev-dependencies]
 alloy-genesis.workspace = true
 base-protocol.workspace = true
+iai-callgrind.workspace = true
 reth-storage-api.workspace = true
+reth-trie-common.workspace = true
 base-common-genesis.workspace = true
+base-consensus-upgrades.workspace = true
+serde_json = { workspace = true, features = ["std"] }
 reth-evm = { workspace = true, features = ["test-utils"] }
 reth-revm = { workspace = true, features = ["test-utils"] }
 base-common-consensus = { workspace = true, features = ["arbitrary"] }
+
+[target.'cfg(unix)'.dev-dependencies]
+tikv-jemallocator.workspace = true
+
+[[bench]]
+name = "block_assembly_iai"
+harness = false
+
+[[bench]]
+name = "block_execution_iai"
+harness = false
+
+[[bench]]
+name = "contract_block_execution_iai"
+harness = false
 
 [features]
 default = [ "metrics", "std" ]
