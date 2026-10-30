@@ -535,6 +535,9 @@ toml = { version = "1.0", default-features = false }
 serde = { version = "1.0.228", default-features = false }
 serde_json = { version = "1.0.151", default-features = false }
 
+# filesystem
+rustix = { version = "1.1.4", default-features = false }
+
 # testing
 arbtest = "0.3"
 mockall = "0.14"

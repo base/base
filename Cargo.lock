@@ -6198,6 +6198,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-replay-store"
+version = "0.0.0"
+dependencies = [
+ "base-replay",
+ "chrono",
+ "futures",
+ "rustix",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.19",
+ "tokio",
+ "zstd",
+]
+
+[[package]]
 name = "base-reth-cli"
 version = "0.0.0"
 dependencies = [
