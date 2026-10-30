@@ -210,11 +210,6 @@ and each request increments that account's nonce. Use signed transactions to tes
 fees. The dev chain keeps the snapshot's chain ID, so a transaction signed here is also valid on that
 network: act as real accounts through impersonation and sign only with throwaway keys.
 
-**The receipt's `contractAddress` is wrong for impersonated contract creations.** The code is
-deployed at `create(from, nonce)`, using the sender's nonce before the request, but the receipt
-reports the address for nonce zero. Read the nonce first (`cast nonce <from>`), then compute the
-address with `cast compute-address <from> --nonce <nonce>`.
-
 A returned hash means the request is queued, not mined. Requests are added in order after the
 system deposits of the next block with enough gas, alongside ordinary pool transactions. Poll
 `eth_getTransactionReceipt` for the hash to confirm inclusion. A call

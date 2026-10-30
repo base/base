@@ -371,6 +371,16 @@ impl BaseReceiptBuilder {
         if tx_signed.as_eip8130().is_some() {
             core_receipt.to = None;
         }
+        // `build_receipt` derives a creation address from `tx.nonce()`, which is always zero
+        // for a deposit. A creating deposit deploys at the sender's nonce before execution,
+        // which the receipt stores as its deposit nonce from Regolith on.
+        // Spec: `https://specs.optimism.io/protocol/deposits.html#deposit-receipt`
+        if core_receipt.contract_address.is_some()
+            && let BaseReceipt::Deposit(receipt) = &core_receipt.inner.receipt
+            && let Some(deposit_nonce) = receipt.deposit_nonce
+        {
+            core_receipt.contract_address = Some(core_receipt.from.create(deposit_nonce));
+        }
 
         // In jovian, we're using the blob gas used field to store the current da
         // footprint's value.
@@ -409,13 +419,16 @@ impl BaseReceiptBuilder {
 
 #[cfg(test)]
 mod tests {
-    use alloy_consensus::{Block, BlockBody, Eip658Value, TxEip7702, transaction::TransactionMeta};
+    use alloy_consensus::{
+        Block, BlockBody, Eip658Value, Sealed, TxEip7702, transaction::TransactionMeta,
+    };
     use alloy_eips::eip2718::Decodable2718;
-    use alloy_primitives::{Address, Bytes, Signature, U256, hex};
+    use alloy_primitives::{Address, Bytes, Signature, TxKind, U256, hex};
     use base_common_chains::ChainConfig;
     use base_common_consensus::{
         BasePrimitives, BaseTransactionSigned, BaseTxEnvelope, BaseTypedTransaction, Call,
-        Eip8130CommittedPhasesError, Eip8130Receipt, Eip8130Signed, TxEip8130,
+        DepositReceipt, Eip8130CommittedPhasesError, Eip8130Receipt, Eip8130Signed, TxDeposit,
+        TxEip8130,
     };
     use base_execution_chainspec::BaseChainSpec;
     use reth_primitives_traits::Recovered;
@@ -685,6 +698,42 @@ mod tests {
         .unwrap();
 
         (receipt, tx)
+    }
+
+    #[test]
+    fn deposit_creation_receipt_uses_deposit_nonce_for_contract_address() {
+        let from = Address::with_last_byte(0xde);
+        let deposit_nonce = 7;
+        let tx = BaseTxEnvelope::Deposit(Sealed::new(TxDeposit {
+            from,
+            to: TxKind::Create,
+            gas_limit: 100_000,
+            ..Default::default()
+        }));
+
+        let receipt = BaseReceiptBuilder::new(
+            &BaseChainSpec::mainnet(),
+            ConvertReceiptInput::<BasePrimitives> {
+                tx: Recovered::new_unchecked(&tx, from),
+                receipt: BaseReceipt::Deposit(DepositReceipt {
+                    inner: Receipt {
+                        status: Eip658Value::Eip658(true),
+                        cumulative_gas_used: 100,
+                        logs: vec![],
+                    },
+                    deposit_nonce: Some(deposit_nonce),
+                    deposit_receipt_version: Some(1),
+                }),
+                gas_used: 100,
+                next_log_index: 0,
+                meta: TransactionMeta::default(),
+            },
+            &mut base_common_evm::L1BlockInfo::default(),
+        )
+        .unwrap()
+        .build();
+
+        assert_eq!(receipt.inner.contract_address, Some(from.create(deposit_nonce)));
     }
 
     /// Builds the RPC receipt for a two-phase EIP-8130 transaction whose stored
