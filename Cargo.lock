@@ -6151,6 +6151,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-replay"
+version = "0.0.0"
+dependencies = [
+ "alloy-primitives",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.19",
+]
+
+[[package]]
 name = "base-replay-driver"
 version = "0.0.0"
 dependencies = [
@@ -6638,6 +6648,7 @@ dependencies = [
  "alloy-provider",
  "alloy-signer 2.5.0",
  "alloy-signer-local 2.5.0",
+ "axum 0.8.9",
  "base-common-consensus",
  "base-common-rpc-types",
  "base-execution-chainspec",
