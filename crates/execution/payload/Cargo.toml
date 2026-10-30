@@ -95,6 +95,14 @@ harness = false
 name = "rejection_cache"
 harness = false
 
+[[bench]]
+name = "resting_carry"
+harness = false
+
+[[bench]]
+name = "native_resting_sweep"
+harness = false
+
 [features]
 default = [ "metrics" ]
 clap = [ "dep:clap" ]

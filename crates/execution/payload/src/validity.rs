@@ -198,6 +198,11 @@ impl<T> ParkedPredicateIndex<T> {
         self.transactions.get(&transaction_hash).map(|entry| (&entry.transaction, &entry.predicate))
     }
 
+    /// Returns a mutable indexed parked transaction.
+    pub fn transaction_mut(&mut self, transaction_hash: TxHash) -> Option<&mut T> {
+        self.transactions.get_mut(&transaction_hash).map(|entry| &mut entry.transaction)
+    }
+
     /// Returns a mutable indexed transaction and the predicate it is parked under, with one lookup.
     pub fn entry_mut(&mut self, transaction_hash: TxHash) -> Option<(&mut T, &ValidityPredicate)> {
         self.transactions

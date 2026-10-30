@@ -113,7 +113,8 @@ where
                 ctx.provider().clone(),
                 evm_config.clone(),
                 self.native_payload_config(builder_config.state_provider_metrics),
-            );
+            )
+            .with_task_executor(ctx.task_executor().clone());
 
         let payload_config = ctx.config().builder.clone();
         let payload_job_config = BasicPayloadJobGeneratorConfig::default()
