@@ -37,7 +37,7 @@ mod looper;
 pub use looper::PrecompileLooper;
 
 mod uniswap;
-pub use uniswap::UniswapV3Payload;
+pub use uniswap::{UniswapV3Hop, UniswapV3Payload};
 
 mod aerodrome;
 pub use aerodrome::AerodromeClPayload;

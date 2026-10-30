@@ -16,7 +16,7 @@ use crate::{
     rpc::MAX_BATCH_RPC_SIZE,
     runner::{TxConfig, TxType},
     utils::{BaselineError, Result},
-    workload::RealTokenSetup,
+    workload::{RealTokenSetup, UniswapV3Hop},
 };
 
 /// Configuration for a load test, loadable from YAML.
@@ -359,6 +359,9 @@ pub enum TxTypeConfig {
         /// Derives the reverse range from the pool price; excludes the explicit reverse amounts.
         #[serde(default)]
         reverse_amounts: Option<ReverseAmounts>,
+        /// Intermediate tokens for a multi-hop `exactInput` route; `fee` is the last pool's fee.
+        #[serde(default)]
+        via: Vec<UniswapV3Hop>,
     },
     /// B-20 precompile token transfer. Each sender creates and transfers its own token, created
     /// per run during setup.
@@ -823,12 +826,20 @@ impl TestConfig {
                 reverse_min_amount,
                 reverse_max_amount,
                 reverse_amounts,
+                via,
             } => {
                 let max_u24: u32 = (1 << 24) - 1;
-                if *fee > max_u24 {
-                    return Err(BaselineError::Config(format!(
-                        "uniswap_v3 fee {fee} exceeds u24 max ({max_u24})"
-                    )));
+                for fee in via.iter().map(|hop| &hop.fee).chain([fee]) {
+                    if *fee > max_u24 {
+                        return Err(BaselineError::Config(format!(
+                            "uniswap_v3 fee {fee} exceeds u24 max ({max_u24})"
+                        )));
+                    }
+                }
+                if *native && !via.is_empty() {
+                    return Err(BaselineError::Config(
+                        "uniswap_v3 via cannot be combined with native".into(),
+                    ));
                 }
                 validate_swap_amounts(*min_amount, *max_amount, "uniswap_v3")?;
                 let derive_reverse_amounts = reverse_amounts.is_some();
@@ -860,6 +871,7 @@ impl TestConfig {
                     reverse_min_amount,
                     reverse_max_amount,
                     derive_reverse_amounts,
+                    via: via.clone(),
                 }
             }
             TxTypeConfig::AerodromeCl {
@@ -1532,6 +1544,20 @@ transactions:
         assert_eq!(reverse_min_amount, U256::from(10_000));
         assert_eq!(reverse_max_amount, U256::from(100_000));
         assert!(!derive_reverse_amounts);
+    }
+
+    #[test]
+    fn uniswap_v3_via_parses_and_validates_hops() {
+        let hop = "    via:\n      - token: \"0x3333333333333333333333333333333333333333\"\n        fee: 500\n";
+        let TxType::UniswapV3 { via, .. } = uniswap_v3_reverse(hop).unwrap() else {
+            panic!("expected UniswapV3");
+        };
+        assert_eq!(via, vec![UniswapV3Hop { token: Address::repeat_byte(0x33), fee: 500 }]);
+
+        let err = uniswap_v3_reverse(&hop.replace("fee: 500", "fee: 16777216")).unwrap_err();
+        assert!(err.to_string().contains("exceeds u24 max"), "{err}");
+        let err = uniswap_v3_reverse(&format!("{hop}    native: true\n")).unwrap_err();
+        assert!(err.to_string().contains("via cannot be combined with native"), "{err}");
     }
 
     #[test]

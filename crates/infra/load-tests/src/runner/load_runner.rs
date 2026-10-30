@@ -455,38 +455,37 @@ impl LoadRunner {
                 reverse_min_amount,
                 reverse_max_amount,
                 derive_reverse_amounts: derive @ true,
+                via,
                 ..
             } = &mut tx.tx_type
             else {
                 continue;
             };
-            let sqrt_price_x96 = UniswapV3Payload::read_sqrt_price_x96(
-                &self.client,
-                *router,
-                *token_in,
-                *token_out,
-                *fee,
-            )
-            .await?;
-            *reverse_min_amount = UniswapV3Payload::amount_at_price(
-                *min_amount,
-                sqrt_price_x96,
-                *token_in,
-                *token_out,
-            )?;
-            *reverse_max_amount = UniswapV3Payload::amount_at_price(
-                *max_amount,
-                sqrt_price_x96,
-                *token_in,
-                *token_out,
-            )?;
+            // Multi-hop routes chain each pool's price, so the reverse leg moves equal value.
+            let (mut min, mut max) = (*min_amount, *max_amount);
+            for (input, output, pool_fee) in
+                UniswapV3Payload::pools(*token_in, via, *fee, *token_out)
+            {
+                let sqrt_price_x96 = UniswapV3Payload::read_sqrt_price_x96(
+                    &self.client,
+                    *router,
+                    input,
+                    output,
+                    pool_fee,
+                )
+                .await?;
+                min = UniswapV3Payload::amount_at_price(min, sqrt_price_x96, input, output)?;
+                max = UniswapV3Payload::amount_at_price(max, sqrt_price_x96, input, output)?;
+            }
+            *reverse_min_amount = min;
+            *reverse_max_amount = max;
             *derive = false;
             derived = true;
             info!(
                 token_in = %token_in,
                 token_out = %token_out,
                 fee = *fee,
-                sqrt_price_x96 = %sqrt_price_x96,
+                pools = via.len() + 1,
                 reverse_min_amount = %reverse_min_amount,
                 reverse_max_amount = %reverse_max_amount,
                 "derived uniswap_v3 reverse swap amounts from pool price"
@@ -633,7 +632,10 @@ mod tests {
     use alloy_provider::{Provider, RootProvider};
 
     use super::{LoadConfig, LoadRunner};
-    use crate::runner::{TxConfig, TxType};
+    use crate::{
+        runner::{TxConfig, TxType},
+        workload::UniswapV3Hop,
+    };
 
     #[tokio::test]
     async fn calibration_excludes_first_storage_write() {
@@ -708,6 +710,7 @@ mod tests {
                     reverse_min_amount: U256::from(10_000_000_000_000u64),
                     reverse_max_amount: U256::from(10_000_000_000_000u64),
                     derive_reverse_amounts: true,
+                    via: vec![],
                 },
             }],
             ..LoadConfig::devnet()
@@ -735,6 +738,23 @@ mod tests {
             [U256::from(23_200), U256::from(10_000_000_000_000u64)].into(),
             "the run generator swaps derived reverse amounts"
         );
+
+        // Every stub pool has the same price, so 0x11 -> 0x22 -> 0x12 converts at the price and
+        // back: the reverse leg is priced through both pools.
+        let TxType::UniswapV3 { token_out, derive_reverse_amounts, via, .. } =
+            &mut runner.config.transactions[0].tx_type
+        else {
+            panic!("expected UniswapV3");
+        };
+        *token_out = Address::repeat_byte(0x12);
+        *derive_reverse_amounts = true;
+        *via = vec![UniswapV3Hop { token: Address::repeat_byte(0x22), fee: 500 }];
+        runner.derive_reverse_swap_amounts().await.expect("route prices are readable");
+        let TxType::UniswapV3 { reverse_min_amount, .. } = runner.config.transactions[0].tx_type
+        else {
+            panic!("expected UniswapV3");
+        };
+        assert_eq!(reverse_min_amount, U256::from(10_000_000_000_000u64), "chained pool prices");
     }
 
     #[test]

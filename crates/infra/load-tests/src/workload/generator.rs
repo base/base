@@ -131,6 +131,7 @@ impl WorkloadGenerator {
                     max_amount,
                     reverse_min_amount,
                     reverse_max_amount,
+                    via,
                     ..
                 } => {
                     generator = generator.with_payload(
@@ -143,7 +144,8 @@ impl WorkloadGenerator {
                             *max_amount,
                             Some((*reverse_min_amount, *reverse_max_amount)),
                         )
-                        .with_native(*native),
+                        .with_native(*native)
+                        .with_via(via),
                         weight_pct,
                     );
                 }
@@ -282,6 +284,7 @@ mod tests {
                     reverse_min_amount: U256::from(1),
                     reverse_max_amount: U256::from(1),
                     derive_reverse_amounts: false,
+                    via: vec![],
                 },
             },
             TxConfig {
