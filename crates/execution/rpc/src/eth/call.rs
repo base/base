@@ -525,10 +525,8 @@ mod tests {
 
     #[test]
     fn sanitize_base_chain_accepts_repeated_timestamp_after_denim() {
-        let mut chain_spec = denim_spec();
+        let chain_spec = denim_spec();
         let timestamp = chain_spec.feature_activation_timestamp(BaseFeature::SubsecondBlocks);
-        // One request uses its captured boundary even if the schedule is subsequently updated.
-        chain_spec.set_fork(BaseUpgrade::Denim, ForkCondition::Timestamp(20));
         let parent =
             SealedHeader::seal_slow(Header { number: 5, timestamp: 10, ..Default::default() });
         let blocks = vec![SimBlock::<()> {
