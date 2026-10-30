@@ -625,6 +625,7 @@ libc = "0.2"
 rlimit = "0.11"
 hostname = "0.4.0"
 tokio-vsock = "0.7"
+rustfs-mimalloc = "0.7.0"
 tikv-jemallocator = "0.6"
 
 # tooling

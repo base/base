@@ -185,7 +185,7 @@ hyper-util.workspace = true
 http-body-util.workspace = true
 
 [features]
-default = [ "jemalloc", "metrics" ]
+default = [ "metrics" ]
 metrics = [
 	"base-common-evm/metrics",
 	"base-execution-payload-builder/metrics",
