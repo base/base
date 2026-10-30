@@ -43,11 +43,11 @@ async fn verify_cutover(zenith_activation_block: Option<u64>) -> Result<()> {
     let mut setup = SystemTestStackBuilder::new()
         .with_l1_chain_id(L1_CHAIN_ID)
         .with_l2_chain_id(L2_CHAIN_ID)
-        .with_base_cobalt_activation_block(0)
-        .with_base_denim_activation_block(DENIM_ACTIVATION_BLOCK)
+        .with_base_activation_block(BaseUpgrade::Cobalt, 0)
+        .with_base_activation_block(BaseUpgrade::Denim, DENIM_ACTIVATION_BLOCK)
         .with_payload_builder_cutover();
     if let Some(block) = zenith_activation_block {
-        setup = setup.with_base_zenith_activation_block(block);
+        setup = setup.with_base_activation_block(BaseUpgrade::Zenith, block);
     }
     let system = setup.build().await?;
     let builder = system.l2_builder_provider()?;

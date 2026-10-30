@@ -10,7 +10,12 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::ForkBoundary;
 
-const FORKS: [&str; 5] = ["azul", "beryl", "cobalt", "denim", "zenith"];
+/// Base-specific L2 forks in activation order, as scheduled through `L2_BASE_<NAME>_BLOCK`.
+///
+/// Must list every `BaseUpgrade` from Azul onward, by contract ID; a unit
+/// test enforces this. It is not derived because the devnet's op-deployer must also accept the
+/// fork's activation variable before a scenario can schedule it.
+const FORKS: [&str; 6] = ["azul", "beryl", "cobalt", "denim", "everest", "zenith"];
 const MAX_ROLLUP_JSON_BYTES: u64 = 1024 * 1024;
 const MAX_DESCRIPTION_BYTES: usize = 1024;
 const MAX_CHECKS: usize = 100;
@@ -162,13 +167,11 @@ impl ScenarioConfig {
                 {
                     bail!("fork {name} activates before its prerequisite");
                 }
-                if name == "zenith" {
-                    let denim = self.devnet.l2.forks["denim"]
-                        .block()
-                        .ok_or_else(|| eyre::eyre!("Zenith requires Denim"))?;
-                    if (at_block - denim) % 5 != 0 {
-                        bail!("post-Denim fork offsets must be divisible by five");
-                    }
+                if let Some(denim) = self.devnet.l2.forks["denim"].block()
+                    && *at_block > denim
+                    && (at_block - denim) % 5 != 0
+                {
+                    bail!("post-Denim fork offsets must be divisible by five");
                 }
                 previous = Some(*at_block);
             } else {
@@ -389,7 +392,10 @@ impl L2Config {
         [("azul", 20), ("beryl", 21), ("cobalt", 22), ("denim", 25)]
             .into_iter()
             .map(|(name, at_block)| (name.into(), ForkActivation::AtBlock { at_block }))
-            .chain([(String::from("zenith"), ForkActivation::Disabled { disabled: true })])
+            .chain(
+                ["everest", "zenith"]
+                    .map(|name| (name.into(), ForkActivation::Disabled { disabled: true })),
+            )
             .collect()
     }
 }
@@ -760,6 +766,8 @@ impl AcceptanceCheck {
 
 #[cfg(test)]
 mod tests {
+    use base_common_genesis::BaseUpgrade;
+
     use super::*;
 
     const MINIMAL_SCENARIO: &str = r#"
@@ -816,28 +824,58 @@ timeout = "5s"
     }
 
     #[test]
-    fn zenith_requires_enabled_ordered_denim() {
+    fn forks_cover_every_base_specific_upgrade() {
+        let expected: Vec<_> = BaseUpgrade::VARIANTS
+            .iter()
+            .filter(|upgrade| **upgrade >= BaseUpgrade::Azul)
+            .map(|upgrade| upgrade.contract_id())
+            .collect();
+        assert_eq!(FORKS.to_vec(), expected);
+    }
+
+    #[test]
+    fn post_denim_forks_require_enabled_ordered_aligned_prerequisites() {
         let mut config = ScenarioConfig::load("scenarios/smoke.toml").unwrap();
-        config.devnet.l2.forks.insert("zenith".into(), ForkActivation::AtBlock { at_block: 24 });
+        config.devnet.l2.forks.insert("everest".into(), ForkActivation::AtBlock { at_block: 24 });
         assert_eq!(
             config.validate().unwrap_err().to_string(),
-            "fork zenith activates before its prerequisite"
+            "fork everest activates before its prerequisite"
         );
 
         for at_block in [25, 30] {
-            config.devnet.l2.forks.insert("zenith".into(), ForkActivation::AtBlock { at_block });
+            config.devnet.l2.forks.insert("everest".into(), ForkActivation::AtBlock { at_block });
             config.validate().unwrap();
         }
-        config.devnet.l2.forks.insert("zenith".into(), ForkActivation::AtBlock { at_block: 26 });
+        config.devnet.l2.forks.insert("everest".into(), ForkActivation::AtBlock { at_block: 26 });
         assert_eq!(
             config.validate().unwrap_err().to_string(),
             "post-Denim fork offsets must be divisible by five"
         );
 
-        config.devnet.l2.forks.insert("denim".into(), ForkActivation::Disabled { disabled: true });
+        config.devnet.l2.forks.insert("everest".into(), ForkActivation::AtBlock { at_block: 30 });
+        config.devnet.l2.forks.insert("zenith".into(), ForkActivation::AtBlock { at_block: 31 });
+        assert_eq!(
+            config.validate().unwrap_err().to_string(),
+            "post-Denim fork offsets must be divisible by five"
+        );
+        config.devnet.l2.forks.insert("zenith".into(), ForkActivation::AtBlock { at_block: 35 });
+        config.validate().unwrap();
+
+        config
+            .devnet
+            .l2
+            .forks
+            .insert("everest".into(), ForkActivation::Disabled { disabled: true });
         assert_eq!(
             config.validate().unwrap_err().to_string(),
             "enabled fork zenith has a disabled prerequisite"
+        );
+
+        config.devnet.l2.forks.insert("everest".into(), ForkActivation::AtBlock { at_block: 30 });
+        config.devnet.l2.forks.insert("denim".into(), ForkActivation::Disabled { disabled: true });
+        assert_eq!(
+            config.validate().unwrap_err().to_string(),
+            "enabled fork everest has a disabled prerequisite"
         );
     }
 
@@ -864,7 +902,7 @@ timeout = "5s"
     #[test]
     fn verifies_post_denim_slot_offset() {
         let mut config: ScenarioConfig = toml::from_str(MINIMAL_SCENARIO).unwrap();
-        config.devnet.l2.forks.insert("zenith".into(), ForkActivation::AtBlock { at_block: 30 });
+        config.devnet.l2.forks.insert("everest".into(), ForkActivation::AtBlock { at_block: 30 });
         let temp = tempfile::NamedTempFile::new().unwrap();
         fs::write(
             temp.path(),
@@ -877,7 +915,7 @@ timeout = "5s"
                     "beryl": 142,
                     "cobalt": 144,
                     "denim": 150,
-                    "zenith": 151
+                    "everest": 151
                 }
             }"#,
         )

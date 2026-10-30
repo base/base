@@ -2920,6 +2920,7 @@ dependencies = [
 name = "base-acceptance"
 version = "0.0.0"
 dependencies = [
+ "base-common-genesis",
  "chrono",
  "clap",
  "eyre",

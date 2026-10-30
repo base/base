@@ -306,14 +306,13 @@ load_fork_names() {
   IFS=, read -r -a FORK_NAMES <<<"$names"
 }
 
+# Prints the rollup activation timestamp for a contract upgrade ID. Base-specific upgrades live
+# under `.base.<name>` and inherited ones under `.<name>_time`, so no per-fork list is needed.
+# FORK_NAMES holds only contract-backed IDs, so genesis-only Zenith is deliberately never looked up.
 rollup_timestamp() {
-  local name="$1" path
-  case "$name" in
-    azul | beryl | cobalt | denim | everest) path=".base.${name}" ;;
-    *) path=".${name}_time" ;;
-  esac
-  jq -r --arg path "$path" '
-    (getpath($path | ltrimstr(".") | split("."))) as $ts
+  local name="$1"
+  jq -r --arg name "$name" '
+    (.base[$name] // .[$name + "_time"]) as $ts
     | if $ts == null then 0
       elif $ts == 0 then .genesis.l2_time
       else $ts end' "$ROLLUP_CONFIG"

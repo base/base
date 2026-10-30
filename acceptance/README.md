@@ -90,8 +90,10 @@ start = { after_fork = "denim", chain = "l2" }
 
 Unknown fields are rejected. Defaults are the single-sequencer topology, chain
 IDs shown above, a 12-second L1 slot, 15 confirmations, and L2 forks Azul/Beryl/
-Cobalt/Denim at blocks 20/21/22/25 with Zenith disabled. Supported endpoint roles
-are `l1`, `builder`, `validator`, `rpc`, and `shadow`. Supported check kinds are:
+Cobalt/Denim at blocks 20/21/22/25 with Everest and Zenith disabled. Forks must be
+enabled in order, and a fork after Denim must activate a multiple of five blocks
+after it. Supported endpoint roles are `l1`, `builder`, `validator`, `rpc`, and
+`shadow`. Supported check kinds are:
 
 - `chain_id`: `endpoint`, `expected`, and `timeout`.
 - `head_progress` and `safe_head_progress`: `endpoint`, `minimum_blocks`, and `timeout`.
