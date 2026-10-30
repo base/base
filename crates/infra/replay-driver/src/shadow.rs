@@ -112,25 +112,31 @@ impl ShadowDriver {
         tokio::time::timeout(self.timeout, tokio::time::sleep(wait))
             .await
             .map_err(|_| ShadowError::Timeout("build wait"))?;
-        let payload = tokio::time::timeout(self.timeout, async {
+        let (payload, block_value) = tokio::time::timeout(self.timeout, async {
             Ok::<_, TransportError>(if chain.is_azul_active_at_timestamp(timestamp) {
-                BaseExecutionPayload::V4(engine.get_payload_v5(id).await?.execution_payload)
+                let envelope = engine.get_payload_v5(id).await?;
+                (BaseExecutionPayload::V4(envelope.execution_payload), envelope.block_value)
             } else if chain.is_isthmus_active_at_timestamp(timestamp) {
-                BaseExecutionPayload::V4(engine.get_payload_v4(id).await?.execution_payload)
+                let envelope = engine.get_payload_v4(id).await?;
+                (BaseExecutionPayload::V4(envelope.execution_payload), envelope.block_value)
             } else if chain.is_ecotone_active_at_timestamp(timestamp) {
-                BaseExecutionPayload::V3(engine.get_payload_v3(id).await?.execution_payload)
+                let envelope = engine.get_payload_v3(id).await?;
+                (BaseExecutionPayload::V3(envelope.execution_payload), envelope.block_value)
             } else {
-                match engine.get_payload_v2(id).await?.execution_payload {
+                let envelope = engine.get_payload_v2(id).await?;
+                let payload = match envelope.execution_payload {
                     ExecutionPayloadFieldV2::V1(payload) => BaseExecutionPayload::V1(payload),
                     ExecutionPayloadFieldV2::V2(payload) => BaseExecutionPayload::V2(payload),
-                }
+                };
+                (payload, envelope.block_value)
             })
         })
         .await
         .map_err(|_| ShadowError::Timeout("getPayload"))??;
-        let candidate = Candidate::from_payload(payload.as_v1(), start.elapsed());
+        let candidate = Candidate::from_payload(payload.as_v1(), block_value, start.elapsed());
         drop(payload);
         let (canonical, _) = BaseExecutionPayload::from_block_slow(block);
+        let beacon_root = block.header.parent_beacon_block_root.unwrap_or_default();
         self.valid(block.header.number, || async {
             let status = match canonical.clone() {
                 BaseExecutionPayload::V1(payload) => {
@@ -145,20 +151,10 @@ impl ShadowDriver {
                     engine.new_payload_v2(payload.into_payload_input_v2(true)).await?
                 }
                 BaseExecutionPayload::V3(payload) => {
-                    engine
-                        .new_payload_v3(
-                            payload,
-                            block.header.parent_beacon_block_root.unwrap_or_default(),
-                        )
-                        .await?
+                    engine.new_payload_v3(payload, beacon_root).await?
                 }
                 BaseExecutionPayload::V4(payload) => {
-                    engine
-                        .new_payload_v4(
-                            payload,
-                            block.header.parent_beacon_block_root.unwrap_or_default(),
-                        )
-                        .await?
+                    engine.new_payload_v4(payload, beacon_root).await?
                 }
             };
             Ok(ForkchoiceUpdated { payload_status: status, payload_id: None })

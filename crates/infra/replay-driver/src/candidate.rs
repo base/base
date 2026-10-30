@@ -12,8 +12,8 @@ pub struct Candidate {
     pub transaction_hashes: Vec<B256>,
     /// Total execution gas consumed.
     pub gas_used: u64,
-    /// Exact coinbase fees require per-transaction gas usage (receipts), absent from a payload.
-    pub coinbase_fee_total: Option<U256>,
+    /// Builder-reported priority-fee revenue in wei, from the getPayload envelope's `block_value`.
+    pub priority_fee_total: U256,
     /// Monotonic elapsed time from build request through getPayload, including build wait.
     pub build_latency: Duration,
     /// Unavailable until flashblock subscription is wired into replay.
@@ -22,12 +22,16 @@ pub struct Candidate {
 
 impl Candidate {
     /// Extracts payload-only metrics without executing transactions again.
-    pub fn from_payload(payload: &ExecutionPayloadV1, build_latency: Duration) -> Self {
+    pub fn from_payload(
+        payload: &ExecutionPayloadV1,
+        priority_fee_total: U256,
+        build_latency: Duration,
+    ) -> Self {
         Self {
             block_number: payload.block_number,
             transaction_hashes: payload.transactions.iter().map(keccak256).collect(),
             gas_used: payload.gas_used,
-            coinbase_fee_total: None,
+            priority_fee_total,
             build_latency,
             flashblock_count: None,
         }
