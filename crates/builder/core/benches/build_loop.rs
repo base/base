@@ -528,7 +528,7 @@ fn print_summary(
         .map_or_else(|| "none".to_string(), |b| format!("{} ms", b.as_millis()));
     let mut table = format!(
         "\n### mainnet_block, profile {}, read delay {} µs, predicate budget {budget}\n\n\
-         | workload | block (median) | flashblock 0 (median) | flashblocks to index |\n\
+         | workload | block (median) | flashblock 0 (median) | flashblocks to index (median) |\n\
          |---|--:|--:|--:|\n",
         profile.label(),
         knobs.read_delay.as_micros(),
@@ -544,9 +544,16 @@ fn print_summary(
         let block_time =
             median(profiles.iter().map(|profile| profile.flashblock_times.iter().sum()).collect());
         let first = median(profiles.iter().map(|profile| profile.flashblock_times[0]).collect());
-        let indexed = profiles[0]
-            .flashblocks_to_index
-            .map_or_else(|| "never".to_string(), |count| count.to_string());
+        // Budgets make it vary with machine speed, so report the median like the timings.
+        let mut indexed: Vec<usize> = profiles
+            .iter()
+            .map(|profile| profile.flashblocks_to_index.unwrap_or(usize::MAX))
+            .collect();
+        indexed.sort_unstable();
+        let indexed = match indexed[indexed.len() / 2] {
+            usize::MAX => "never".to_string(),
+            count => count.to_string(),
+        };
         table.push_str(&format!(
             "| {} | {:.1} ms | {:.1} ms | {indexed} |\n",
             workload.label(),
