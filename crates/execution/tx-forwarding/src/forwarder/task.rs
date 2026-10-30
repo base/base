@@ -8,6 +8,7 @@ use base_execution_txpool::MAX_VALIDATED_INSERT_BATCH;
 use base_observability_events::{
     TransactionEventProducer, TransactionEventType, transaction_event,
 };
+use futures::future::select_all;
 use jsonrpsee::{
     core::{
         ClientError,
@@ -253,7 +254,31 @@ impl<R: ForwardRequest> DestinationForwarder<R> {
         self.send_with_retries(batch).await;
     }
 
-    async fn send_with_retries(&self, batch: Vec<R>) {
+    async fn send_with_retries(&self, mut batch: Vec<R>) {
+        loop {
+            batch
+                .retain(|request| request.cancellation().is_none_or(|token| !token.is_cancelled()));
+            if batch.is_empty() {
+                return;
+            }
+            let cancellations: Vec<_> = batch
+                .iter()
+                .filter_map(ForwardRequest::cancellation)
+                .map(|token| Box::pin(token.cancelled()))
+                .collect();
+            if cancellations.is_empty() {
+                self.send_active_with_retries(&batch).await;
+                return;
+            }
+            tokio::select! {
+                biased;
+                _ = select_all(cancellations) => {},
+                _ = self.send_active_with_retries(&batch) => return,
+            }
+        }
+    }
+
+    async fn send_active_with_retries(&self, batch: &[R]) {
         // Shutdown waits for this in-flight retry loop to finish. With the default backoff and
         // retry count, a down endpoint can add up to 700ms before the forwarder observes channel
         // closure; the service-level shutdown timeout is much larger than that.
@@ -280,7 +305,7 @@ impl<R: ForwardRequest> DestinationForwarder<R> {
                     );
                 }
             }
-            let result = self.send(&batch).await;
+            let result = self.send(batch).await;
 
             match result {
                 Ok(response) => {
@@ -346,7 +371,7 @@ impl<R: ForwardRequest> DestinationForwarder<R> {
                 }
                 Err(err) => {
                     let err = Arc::new(err);
-                    for request in &batch {
+                    for request in batch {
                         request.on_result(Err(Arc::clone(&err)));
                     }
                     ForwarderMetrics::rpc_latency(Arc::clone(&self.url_label))

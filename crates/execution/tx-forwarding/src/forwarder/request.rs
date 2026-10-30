@@ -7,6 +7,7 @@ use base_execution_txpool::{NoExtensions, ValidatedTransaction};
 use jsonrpsee::core::{ClientError, params::ArrayParams, traits::ToRpcParams};
 use serde::Serialize;
 use serde_json::value::RawValue;
+use tokio_util::sync::CancellationToken;
 
 /// One JSON-RPC call relayed to one forwarding destination.
 ///
@@ -42,6 +43,12 @@ pub trait ForwardRequest: Send + Sync + 'static {
 
     /// Final delivery outcome, after transport retries; RPC rejections are terminal.
     fn on_result(&self, _result: Result<(), Arc<ClientError>>) {}
+
+    /// Delivery lifetime, when scoped cancellation is required. Cancelling a shared batch may
+    /// resend its other live requests; requests without a token retain normal forwarding behavior.
+    fn cancellation(&self) -> Option<&CancellationToken> {
+        None
+    }
 
     /// Transaction this call concerns, for metrics and transaction events.
     ///

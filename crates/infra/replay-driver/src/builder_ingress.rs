@@ -8,6 +8,7 @@ use eyre::{Result, ensure};
 use jsonrpsee::core::ClientError;
 use reth_tasks::TaskExecutor;
 use tokio::{sync::mpsc, task::AbortHandle};
+use tokio_util::sync::CancellationToken;
 use url::Url;
 
 use crate::Injector;
@@ -19,6 +20,8 @@ pub struct ReplayRequest {
     pub record: ReplayRecord,
     /// Final transport or RPC outcome.
     pub result: mpsc::Sender<Result<(), Arc<ClientError>>>,
+    /// Cancelled when the delivering future completes, times out, or is dropped.
+    pub cancellation: CancellationToken,
 }
 
 impl ForwardRequest for ReplayRequest {
@@ -33,6 +36,9 @@ impl ForwardRequest for ReplayRequest {
     }
     fn on_result(&self, result: Result<(), Arc<ClientError>>) {
         let _ = self.result.try_send(result);
+    }
+    fn cancellation(&self) -> Option<&CancellationToken> {
+        Some(&self.cancellation)
     }
 }
 
@@ -65,8 +71,10 @@ impl Injector for BuilderIngressInjector {
         ensure!(record.stream == self.stream(), "record stream does not match injector");
         tracing::debug!(method = %record.method, received_at_ms = record.received_at_ms, "injecting replay call");
         let (result, mut received) = mpsc::channel(1);
+        let cancellation = CancellationToken::new();
+        let _cancel_on_drop = cancellation.clone().drop_guard();
         tokio::time::timeout(Duration::from_secs(15), async {
-            self.sender.send(ReplayRequest { record, result }).await?;
+            self.sender.send(ReplayRequest { record, result, cancellation }).await?;
             received
                 .recv()
                 .await

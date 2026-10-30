@@ -6170,6 +6170,7 @@ dependencies = [
  "alloy-provider",
  "alloy-rpc-types-engine",
  "alloy-transport",
+ "axum 0.8.9",
  "base-builder-core",
  "base-clock",
  "base-common-chains",
@@ -6192,6 +6193,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
+ "tracing-subscriber",
  "url",
 ]
 
