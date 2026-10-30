@@ -68,7 +68,7 @@ pub struct L2StackConfig {
     pub p2p_key: B256,
     /// Sequencer private key for block signing.
     pub sequencer_key: B256,
-    /// Batcher private key (hex-encoded string, e.g., "0x...").
+    /// Batcher private key for signing L1 transactions.
     pub batcher_key: B256,
     /// L1 RPC endpoint URL (host-accessible).
     pub l1_rpc_url: String,
