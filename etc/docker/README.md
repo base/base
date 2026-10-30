@@ -196,7 +196,10 @@ of the forwarding path:
 
 The default devnet compose files include these flags and schedule Cobalt at
 block 22 and Denim at block 25. Builder selection and block cadence change at
-Denim. Native payload building supports balance,
+Denim. After Denim the router builds pool transactions with the native payload
+builder and sends the Flashblocks builder only `no_tx_pool` attributes, so the
+builder's flashblocks websocket (`just devnet flashblocks`) stops publishing.
+Native payload building supports balance,
 storage, and block-number predicates; `flashblock_index` predicates remain specific
 to the Flashblocks builder and are rejected after the Denim cutover.
 

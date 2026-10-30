@@ -16,7 +16,7 @@
 
 ## TODOs
 
-- [ ] **Base Transactions (EIP-8430):** Define transaction pricing.
+- [ ] **AA transactions (EIP-8430):** Define transaction pricing.
 - [ ] **State creation (EIP-8037):** Choose Base's gas price per byte of new state.
 - [ ] **State access (EIP-8038):** Choose Base's account/storage access and write prices.
 - [ ] **BAL Bandwidth Analysis:** Compare payload sizes with and without BALs, before and after compression.
@@ -28,7 +28,7 @@
 | EIP | Summary | Change Summary |
 |---|---|---|
 | [7928](https://eips.ethereum.org/EIPS/eip-7928) · [Design](#block-level-access-lists-eip-7928) | **Block-Level Access Lists:** Records block state accesses and changes to support parallel execution and faster state processing. | Gossip BALs with Base blocks; omit them from L1 batches and regenerate them during CL sync. |
-| [2780](https://eips.ethereum.org/EIPS/eip-2780) | **Resource-based intrinsic transaction gas:** Replaces flat transaction overhead with charges for the resources actually consumed. | Extend the gas model to Base Transactions (EIP-8430), including batching, sponsorship, and nonce modes. |
+| [2780](https://eips.ethereum.org/EIPS/eip-2780) | **Resource-based intrinsic transaction gas:** Replaces flat transaction overhead with charges for the resources actually consumed. | Extend the gas model to AA transactions (EIP-8430), including batching, sponsorship, and nonce modes. |
 | [7843](https://eips.ethereum.org/EIPS/eip-7843) · [Design](#slot-number-eip-7843) | **SLOTNUM opcode:** Exposes the current consensus slot through a new opcode and block-header field. | Use the L2 block number as the slot, rather than Ethereum's beacon slot. |
 | [7976](https://eips.ethereum.org/EIPS/eip-7976) · [Design](#calldata-floor-eip-7976) | **Increase Calldata Floor Cost:** Raises the transaction calldata floor to 64 gas per byte. | Recommend 128 gas/byte instead of L1's 64 to reduce block sizes and calldata growth. |
 | [8037](https://eips.ethereum.org/EIPS/eip-8037) | **State Creation Gas Cost Increase:** Reprices new state and meters state creation separately from execution. | Tune the state-byte price for Base; value TBD. |
@@ -219,7 +219,7 @@ Access-list data pricing must match the [EIP-7976 calldata floor](#calldata-floo
 - [Calldata floor specification (EIP-7976)](https://eips.ethereum.org/EIPS/eip-7976)
 - [Access-list data pricing (EIP-7981)](https://eips.ethereum.org/EIPS/eip-7981)
 - [Base gas limits, block time, and fee parameters](https://docs.base.org/specifications/transactions/throughput-and-limits)
-- [Base Transactions (EIP-8430)](https://github.com/chunter-cb/EIPs/blob/aa-transaction-type/EIPS/eip-8430.md)
+- [AA Transaction Type (EIP-8430)](https://github.com/chunter-cb/EIPs/blob/aa-transaction-type/EIPS/eip-8430.md), split out of [EIP-8130](https://eips.ethereum.org/EIPS/eip-8130); Base's `eip8130` crates implement it under the pre-split name
 - [State creation and gas reservoirs (EIP-8037)](https://eips.ethereum.org/EIPS/eip-8037)
 - [Account and storage access pricing (EIP-8038)](https://eips.ethereum.org/EIPS/eip-8038)
 - [SLOTNUM specification (EIP-7843)](https://eips.ethereum.org/EIPS/eip-7843)
