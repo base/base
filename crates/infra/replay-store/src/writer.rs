@@ -9,19 +9,23 @@ pub struct ReplayWriter {
     network: String,
     minute: Option<u64>,
     buffer: Vec<u8>,
+    closed: bool,
 }
 
 impl ReplayWriter {
     /// Create a writer with a validated network key component.
     pub fn new(store: ReplayStore, network: String) -> Result<Self, StoreError> {
         ReplayStore::key(&network, 0)?;
-        Ok(Self { store, network, minute: None, buffer: Vec::new() })
+        Ok(Self { store, network, minute: None, buffer: Vec::new(), closed: false })
     }
 
     /// Buffer a record, publishing the previous minute on forward rollover.
     /// Reject older minutes and oversized objects without accepting the record.
     /// Cancellation during publication can leave an object committed; conflicts are terminal.
     pub async fn push(&mut self, record: &ReplayRecord) -> Result<(), StoreError> {
+        if self.closed {
+            return Err(StoreError::Invalid("closed writer"));
+        }
         let minute = record.received_at_ms / ReplayStore::MINUTE_MS;
         ReplayStore::key(&self.network, record.received_at_ms)?;
         let line = record.to_jsonl_line()?;
@@ -42,9 +46,11 @@ impl ReplayWriter {
         Ok(())
     }
 
-    /// Publish the final minute. No object is overwritten, including after restart.
-    pub async fn close(mut self) -> Result<(), StoreError> {
-        self.flush().await
+    /// Publish the final minute, retaining records on failure so callers can repair and retry.
+    pub async fn close(&mut self) -> Result<(), StoreError> {
+        self.flush().await?;
+        self.closed = true;
+        Ok(())
     }
 
     async fn flush(&mut self) -> Result<(), StoreError> {
@@ -102,5 +108,28 @@ mod tests {
         writer.close().await.unwrap();
         let records: Vec<_> = store.read("base", 0..=60_000).try_collect().await.unwrap();
         assert_eq!(records.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn close_retains_records_when_publication_fails() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("blocked");
+        std::fs::write(&root, b"not a directory").unwrap();
+        let store = ReplayStore::Local(root.clone());
+        let mut writer = ReplayWriter::new(store.clone(), "base".into()).unwrap();
+        let mut record: ReplayRecord = serde_json::from_str(r#"{"stream":"builder_ingress","received_at_ms":0,"method":"call","params":[1.2300],"source":"x"}"#).unwrap();
+        writer.push(&record).await.unwrap();
+        record.received_at_ms = 1;
+        writer.push(&record).await.unwrap();
+
+        assert!(writer.close().await.is_err());
+        std::fs::remove_file(root).unwrap();
+        writer.close().await.unwrap();
+        writer.close().await.unwrap();
+
+        let records: Vec<_> = store.read("base", 0..=1).try_collect().await.unwrap();
+        assert_eq!(records.iter().map(|r| r.received_at_ms).collect::<Vec<_>>(), [0, 1]);
+        assert!(records.iter().all(|r| r.params.get() == "[1.2300]"));
+        assert!(writer.push(&record).await.is_err());
     }
 }
