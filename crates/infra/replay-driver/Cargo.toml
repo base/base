@@ -16,6 +16,7 @@ url.workspace = true
 eyre.workspace = true
 tokio.workspace = true
 tracing.workspace = true
+serde_json.workspace = true
 tokio-util.workspace = true
 reth-tasks.workspace = true
 thiserror.workspace = true
@@ -38,7 +39,6 @@ base-tx-forwarding.workspace = true
 
 [dev-dependencies]
 mockall.workspace = true
-serde_json.workspace = true
 jsonrpsee = { workspace = true, features = ["server"] }
 base-execution-txpool.workspace = true
 alloy-provider = { workspace = true, features = ["ipc"] }

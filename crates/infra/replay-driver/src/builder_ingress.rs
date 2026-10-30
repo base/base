@@ -2,7 +2,7 @@ use std::{sync::Arc, time::Duration};
 
 use base_replay::{ReplayRecord, ReplayStream};
 use base_tx_forwarding::{
-    ForwardRequest, ForwardingSetupError, RawParams, TxForwardingConfig, TxForwardingService,
+    ForwardRequest, ForwardingSetupError, TxForwardingConfig, TxForwardingService,
 };
 use eyre::{Result, ensure};
 use jsonrpsee::core::ClientError;
@@ -25,8 +25,8 @@ impl ForwardRequest for ReplayRequest {
     fn method(&self) -> &str {
         &self.record.method
     }
-    fn raw_params(&self) -> Option<RawParams> {
-        Some(RawParams(self.record.params.clone()))
+    fn raw_params(&self) -> Option<&serde_json::value::RawValue> {
+        Some(&self.record.params)
     }
     fn tx_hash(&self) -> Option<alloy_primitives::TxHash> {
         self.record.tx_hash

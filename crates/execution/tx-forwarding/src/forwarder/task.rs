@@ -17,11 +17,16 @@ use jsonrpsee::{
     http_client::HttpClient,
     types::{ErrorObject, ErrorObjectOwned},
 };
+use serde::de::DeserializeOwned;
 use serde_json::{Map, json, value::RawValue};
 use tokio::{sync::mpsc, time};
 use tracing::{debug, error, info, trace};
 
-use super::{config::ForwarderConfig, metrics::ForwarderMetrics, request::ForwardRequest};
+use super::{
+    config::ForwarderConfig,
+    metrics::ForwarderMetrics,
+    request::{ForwardRequest, RawParams},
+};
 
 /// Builder method that inserts a whole batch of validated transactions in one call.
 const INSERT_BATCH_METHOD: &str = "base_insertValidatedTransactions";
@@ -393,11 +398,28 @@ impl<R: ForwardRequest> DestinationForwarder<R> {
         {
             return self.send_insert_batch(transactions, batch.len()).await;
         }
-        let response = self.send_batch(batch).await?;
-        Ok(response
+        if batch.iter().all(|request| request.raw_params().is_none()) {
+            return Ok(self
+                .send_batch::<()>(batch)
+                .await?
+                .into_iter()
+                .map(|result| result.map_err(ErrorObject::into_owned))
+                .collect());
+        }
+        self.send_batch::<Box<RawValue>>(batch)
+            .await?
             .into_iter()
-            .map(|result| result.map(|_| ()).map_err(ErrorObject::into_owned))
-            .collect())
+            .zip(batch)
+            .map(|(result, request)| match result {
+                Ok(raw) => {
+                    if request.raw_params().is_none() {
+                        serde_json::from_str::<()>(raw.get()).map_err(ClientError::ParseError)?;
+                    }
+                    Ok(Ok(()))
+                }
+                Err(error) => Ok(Err(error.into_owned())),
+            })
+            .collect()
     }
 
     async fn send_insert_batch(
@@ -432,17 +454,17 @@ impl<R: ForwardRequest> DestinationForwarder<R> {
             .collect()
     }
 
-    async fn send_batch<'a>(
+    async fn send_batch<'a, T: DeserializeOwned + std::fmt::Debug + 'a>(
         &'a self,
         batch: &'a [R],
-    ) -> Result<BatchResponse<'a, serde::de::IgnoredAny>, ClientError> {
+    ) -> Result<BatchResponse<'a, T>, ClientError> {
         let mut request = BatchRequestBuilder::new();
         for item in batch {
             // A payload that will not serialize fails the whole batch rather than panicking the
             // task. `ParseError` is classified non-retryable below, which is correct: re-encoding
             // the same value fails identically, so retrying would only delay the drop.
             match item.raw_params() {
-                Some(params) => request.insert(item.method(), params),
+                Some(params) => request.insert(item.method(), RawParams(params.to_owned())),
                 None => {
                     request.insert(item.method(), item.params().map_err(ClientError::ParseError)?)
                 }
@@ -672,6 +694,25 @@ mod tests {
     ) -> DestinationForwarder<R> {
         let client = HttpClientBuilder::default().build(url.as_str()).unwrap();
         DestinationForwarder::new(url, client, receiver, config)
+    }
+
+    #[tokio::test]
+    async fn legacy_insert_rejects_a_non_null_success_result() {
+        let mut module = RpcModule::new(());
+        module.register_method(INSERT_METHOD, |_, _, _| "accepted").unwrap();
+        let server = Server::builder().build("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", server.local_addr().unwrap()).parse().unwrap();
+        let server = server.start(module);
+        let (_sender, receiver) = mpsc::channel(1);
+        let forwarder = forwarder(url, receiver, config(0, 1));
+
+        let error = forwarder.send(&[transaction::<NoExtensions>(0)]).await.unwrap_err();
+
+        assert!(matches!(error, ClientError::ParseError(_)), "{error:?}");
+        assert!(!DestinationForwarder::<InsertValidatedTransaction>::is_retryable(&error));
+        println!("legacy result validation: non_null=ParseError, retryable=false");
+        server.stop().unwrap();
+        server.stopped().await;
     }
 
     #[test]

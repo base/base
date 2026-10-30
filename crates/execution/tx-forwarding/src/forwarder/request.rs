@@ -36,7 +36,7 @@ pub trait ForwardRequest: Send + Sync + 'static {
     }
 
     /// Original parameters, used instead of [`Self::params`] when supplied.
-    fn raw_params(&self) -> Option<RawParams> {
+    fn raw_params(&self) -> Option<&RawValue> {
         None
     }
 
