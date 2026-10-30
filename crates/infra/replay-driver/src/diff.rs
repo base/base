@@ -94,6 +94,7 @@ impl BlockDiff {
         let actual: HashSet<_> = candidate.transaction_hashes.iter().copied().collect();
         let expected: HashSet<_> = canonical.transaction_hashes.iter().copied().collect();
         let missing: HashSet<_> = expected.difference(&actual).copied().collect();
+        let recording_gap = recorded.map(|hashes| missing.difference(hashes).count());
         let first_divergence_index = candidate
             .transaction_hashes
             .iter()
@@ -111,9 +112,10 @@ impl BlockDiff {
             first_divergence_index,
             totals: DiffTotals {
                 missing: missing.len(),
+                builder_missing: recording_gap.map(|gap| missing.len() - gap),
                 extra: actual.difference(&expected).count(),
                 common: actual.intersection(&expected).count(),
-                recording_gap: recorded.map(|hashes| missing.difference(hashes).count()),
+                recording_gap,
                 canonical_gas_used: u128::from(canonical.gas_used),
                 candidate_gas_used: u128::from(candidate.gas_used),
                 canonical_priority_fee_wei: canonical.priority_fee_total,
@@ -158,6 +160,7 @@ mod tests {
 
         assert_eq!((diff.totals.missing, diff.totals.extra, diff.totals.common), (1, 1, 1));
         assert_eq!(diff.totals.recording_gap, Some(1));
+        assert_eq!(diff.totals.builder_missing, Some(0));
         assert_eq!(diff.first_divergence_index, Some(1));
         assert_eq!((diff.totals.canonical_gas_used, diff.totals.candidate_gas_used), (42, 21));
         assert_eq!(diff.totals.canonical_priority_fee_wei, Some(U256::from(7)));
@@ -193,9 +196,11 @@ mod tests {
 
             assert_eq!(diff.first_divergence_index, divergence);
             assert_eq!(diff.totals.recording_gap, None);
+            assert_eq!(diff.totals.builder_missing, None);
             let recorded = canonical.transaction_hashes.iter().copied().collect();
             let known = BlockDiff::compare(&candidate, &canonical, Some(&recorded)).unwrap();
             assert_eq!(known.totals.recording_gap, Some(0));
+            assert_eq!(known.totals.builder_missing, Some(known.totals.missing));
         }
     }
 

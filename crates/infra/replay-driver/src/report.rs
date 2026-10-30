@@ -8,6 +8,8 @@ use crate::{BlockDiff, DiffError};
 pub struct DiffTotals {
     /// Canonical hashes absent from candidate (includes recording gaps).
     pub missing: usize,
+    /// Missing minus recording gaps; None when recording coverage is unknown.
+    pub builder_missing: Option<usize>,
     /// Candidate hashes absent from canonical.
     pub extra: usize,
     /// Hashes present in both.
@@ -33,12 +35,14 @@ impl<'a> std::iter::Sum<&'a Self> for DiffTotals {
         iter.fold(
             Self {
                 recording_gap: Some(0),
+                builder_missing: Some(0),
                 canonical_priority_fee_wei: Some(U256::ZERO),
                 flashblock_count: Some(0),
                 ..Self::default()
             },
             |a, b| Self {
                 missing: a.missing + b.missing,
+                builder_missing: a.builder_missing.zip(b.builder_missing).map(|(a, b)| a + b),
                 extra: a.extra + b.extra,
                 common: a.common + b.common,
                 recording_gap: a.recording_gap.zip(b.recording_gap).map(|(a, b)| a + b),
@@ -91,7 +95,7 @@ impl DiffReport {
     /// Renders inclusion and ordering summaries; unknown recording gaps are explicit.
     pub fn markdown(&self) -> String {
         let mut out = String::from(
-            "# Replay diff\n\nN+1 is warmup; aggregate excludes it. Gaps are missing transactions absent from recording, not builder failures. Resource measurements are in JSON; fees are execution tips (wei), latency is summed microseconds.\n\n| Block | Missing | Extra | Common | Recording gap | First divergence |\n| --- | --- | --- | --- | --- | --- |\n",
+            "# Replay diff\n\nN+1 is warmup; aggregate excludes it. Gaps are missing transactions absent from recording, not builder failures. Builder-attributable missing excludes recording gaps and is unknown when recording coverage is unknown. Resource measurements are in JSON; fees are execution tips (wei), latency is summed microseconds.\n\n| Block | Missing (incl. recording gaps) | Builder-attributable missing | Extra | Common | Recording gap | First divergence |\n| --- | --- | --- | --- | --- | --- | --- |\n",
         );
         let rows = self
             .blocks
@@ -106,8 +110,9 @@ impl DiffReport {
             .chain(std::iter::once(("Aggregate".into(), &self.aggregate, None)));
         for (label, t, divergence) in rows {
             out.push_str(&format!(
-                "| {label} | {} | {} | {} | {} | {} |\n",
+                "| {label} | {} | {} | {} | {} | {} | {} |\n",
                 t.missing,
+                t.builder_missing.map_or_else(|| "unknown".into(), |v| v.to_string()),
                 t.extra,
                 t.common,
                 t.recording_gap.map_or_else(|| "unknown".into(), |v| v.to_string()),
@@ -130,6 +135,7 @@ mod tests {
     fn sums_each_optional_measurement_when_known_and_unknown_values_mix() {
         let known = DiffTotals {
             missing: 5,
+            builder_missing: Some(3),
             extra: 2,
             common: 3,
             recording_gap: Some(2),
@@ -142,7 +148,7 @@ mod tests {
         };
         for unknown in [
             known.clone(),
-            DiffTotals { recording_gap: None, ..known.clone() },
+            DiffTotals { recording_gap: None, builder_missing: None, ..known.clone() },
             DiffTotals { canonical_priority_fee_wei: None, ..known.clone() },
             DiffTotals { flashblock_count: None, ..known.clone() },
         ] {
@@ -154,6 +160,7 @@ mod tests {
                 assert_eq!(sum.candidate_priority_fee_wei, U256::from(26));
                 assert_eq!(sum.build_latency_us, 38);
                 assert_eq!(sum.recording_gap, unknown.recording_gap.map(|_| 4));
+                assert_eq!(sum.builder_missing, unknown.builder_missing.map(|_| 6));
                 assert_eq!(
                     sum.canonical_priority_fee_wei,
                     unknown.canonical_priority_fee_wei.map(|_| U256::from(34))
@@ -167,6 +174,7 @@ mod tests {
     fn excludes_unknown_measurements_when_block_is_warmup() {
         let scored = DiffTotals {
             missing: 3,
+            builder_missing: Some(2),
             recording_gap: Some(1),
             canonical_priority_fee_wei: Some(U256::from(7)),
             flashblock_count: Some(2),
@@ -201,6 +209,7 @@ mod tests {
             );
             assert_eq!(totals.candidate_priority_fee_wei, U256::ZERO);
             assert_eq!(totals.recording_gap, Some(0));
+            assert_eq!(totals.builder_missing, Some(0));
             assert_eq!(totals.canonical_priority_fee_wei, Some(U256::ZERO));
             assert_eq!(totals.flashblock_count, Some(0));
         }
