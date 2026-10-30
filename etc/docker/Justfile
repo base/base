@@ -193,7 +193,7 @@ checks: status smoke
 tx-observability-smoke:
     @./etc/scripts/devnet/transaction-events-smoke.sh
 
-# Stream FB's from the builder via websocket
+# Stream flashblocks from the builder via websocket; goes silent once Denim activates (block 25 by default)
 flashblocks:
     @command -v flashblocks-websocket-client >/dev/null 2>&1 || go install github.com/danyalprout/flashblocks-websocket-client@latest
     flashblocks-websocket-client ws://localhost:${L2_BUILDER_FLASHBLOCKS_PORT}
@@ -210,7 +210,7 @@ sequencer-logs:
 follow-leader:
     @./etc/scripts/devnet/follow-leader.sh
 
-# Stop the active sequencer and transfer raft leadership (optionally to node 0, 1, or 2)
+# Transfer raft leadership (optionally to node 0, 1, or 2) and wait for the new leader
 transfer-leader to='':
     @./etc/scripts/devnet/transfer-leader.sh {{ to }}
 

@@ -212,10 +212,11 @@ TRANSACTION_EVENTS_POSTGRES_ADVERTISE_IP=172.30.0.30
 AUDIT_ARCHIVER_ADVERTISE_IP=172.30.0.31
 TRANSACTION_EVENTS_VECTOR_ADVERTISE_IP=172.30.0.32
 
-# Verifier L1 confirmation depth for the client (validator) consensus node.
-# When non-zero, the client's derivation pipeline stays this many L1 blocks
-# behind the L1 head before deriving L2 safe blocks.
-# Set to 0 to disable (default). Try 4 to test delayed safe head.
+# Verifier L1 confirmation depth for the base-client, base-rpc, and
+# base-shadow-validator consensus nodes. When non-zero, their derivation
+# pipelines stay this many L1 blocks behind the L1 head before deriving L2 safe
+# blocks. The devnet uses 15 to keep safe-head lag realistic; the node's own
+# default (--l1.verifier-confs) is 0, which disables the delay.
 BASE_NODE_VERIFIER_L1_CONFS=15
 
 # Chain Configuration
