@@ -292,13 +292,14 @@ transactions, in blocks from whichever builder was selected. Like every histogra
 the scrape interval; `transactions/per_block` and `gas/per_block` are exact per block.
 
 For a saturated Blake2f comparison with equal 60-second measured windows, provide separate 2s and
-200ms YAMLs with 30 and 300 measured blocks, respectively. Both should issue one fixed
-50,000-round Blake2f call per transaction with identical sender, in-flight, batching, funding, and
-seed settings. The report labels these runs with `TransactionPayload=blake2f`; use scenarios such
-as `blake2f-2s-run-1` and `blake2f-200ms-run-1` to distinguish repetitions. A
-5,000-transaction global in-flight cap is 400M gas of queue headroom at the
-configured 80,000 gas limit per transaction, which keeps the builder saturated without leaving an
-oversized submission backlog at cutoff.
+200ms YAMLs with 30 and 300 measured blocks, respectively. Both should issue one fixed 50,000-round
+Blake2f call per transaction with identical sender, in-flight, batching, funding, and seed settings.
+The report labels these runs with `TransactionPayload=blake2f`; use scenarios such as
+`blake2f-2s-run-1` and `blake2f-200ms-run-1` to distinguish repetitions. Size the global in-flight
+cap in gas: at the configured 80,000 gas limit per transaction, a 125,000-transaction cap queues 10
+Ggas, one default 2s block. Because both cadence defaults provide 5 Ggas/s, that is 2s of capacity
+at either cadence. A 5,000-transaction cap queues only 400M gas, 4% of a default 2s block and 40% of
+a default 200ms block.
 
 ## Replay exported blocks into a validator
 
