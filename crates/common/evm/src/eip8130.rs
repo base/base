@@ -347,7 +347,8 @@ impl Eip8130Executor {
         // precompiles and (EIP-3651) the coinbase before dispatching calls, so a
         // call is charged identically to one in a normal transaction on the same
         // chain.
-        if let Err(err) = Self::warm_pre_call_accounts(evm, &outcome) {
+        let (ctx, precompiles) = evm.ctx_precompiles();
+        if let Err(err) = Self::warm_pre_call_accounts(ctx, precompiles, &outcome) {
             Self::discard_transaction_state(evm);
             return Err(err);
         }
@@ -546,7 +547,8 @@ impl Eip8130Executor {
         // Warm precompiles/coinbase and set the journal spec id exactly as
         // [`Self::execute`] does, so the simulated `calls` are charged the same
         // warm-access gas a real execution would — keeping the estimate aligned.
-        if let Err(err) = Self::warm_pre_call_accounts(evm, &outcome) {
+        let (ctx, precompiles) = evm.ctx_precompiles();
+        if let Err(err) = Self::warm_pre_call_accounts(ctx, precompiles, &outcome) {
             Self::discard_transaction_state(evm);
             return Err(err);
         }
@@ -890,7 +892,6 @@ impl Eip8130Executor {
             >,
     {
         let tx = signed.tx();
-        let nonce_key = tx.nonce_key;
         // EIP-7825: execution bounds `gas_limit` plus payer authentication by
         // the per-transaction cap, so simulate at most the gas a real
         // transaction could carry. The payer authentication ceiling is the
@@ -899,8 +900,6 @@ impl Eip8130Executor {
             IntrinsicGas::max_payer_auth_cost(signed).map_err(BaseTransactionError::eip8130)?;
         let gas_limit =
             tx.gas_limit.min(ctx.cfg().tx_gas_limit_cap().saturating_sub(payer_auth_ceiling));
-        let max_fee = tx.max_fee_per_gas;
-        let max_priority = tx.max_priority_fee_per_gas;
         // Use the declared payer (sponsor) so the payer published to the
         // `TxContext` precompile matches a real execution: a call that reads it
         // must see the same address it would on-chain, or it could take a
@@ -919,98 +918,133 @@ impl Eip8130Executor {
         let mut provider = JournalStorageProvider::new(internals, Address::ZERO);
 
         let outcome = StorageCtx::enter(&mut provider, |sctx| {
-            let nonce_mgr = NonceManagerStorage::new(sctx);
-
-            // 1. Nonce-channel first-use flag (drives intrinsic gas). Estimation
-            //    neither validates nor advances the nonce.
-            let protocol_nonce = sctx
-                .with_account_info(sender, |info| Ok(info.nonce))
-                .map_err(BaseTransactionError::eip8130)?;
-            let nonce_key_first_use = if nonce_key == Eip8130Constants::NONCE_KEY_MAX {
-                false
-            } else if nonce_key == U256::ZERO {
-                protocol_nonce == 0
-            } else {
-                nonce_mgr.get_nonce(sender, nonce_key).map_err(BaseTransactionError::eip8130)? == 0
-            };
-
-            // 2. Intrinsic gas (auth gas is priced from the auth-blob shape, so a
-            //    stub signature of the right authenticator type estimates exactly).
-            //    The estimate is a safe ceiling that execution can only meet or
-            //    undercharge. The non-monotonic, state-dependent costs are
-            //    therefore pinned to their worst case rather than resolved:
-            //      - from Zenith, the sender's policy gate charged (its
-            //        `policy_manager` SLOAD), so a `gas_limit == estimate`
-            //        submission never OOGs if the gate flips on before inclusion.
-            //      - zero revoke discount, so revokes are priced at the full
-            //        three-reset worst case regardless of which slots are empty.
-            //    The monotonic, body-derivable nonce first-use cost stays resolved.
-            //    Execution reprices all of these precisely against the
-            //    authenticated actors and real state.
-            //    None of this depends on the applied account changes, so a
-            //    `gas_limit` that cannot cover it is rejected before any change
-            //    is applied.
-            let (intrinsic, execution_gas_available) = Self::resolve_execution_gas(
+            Self::simulate_resolve_storage(
+                sctx,
                 signed,
                 encoded,
-                &IntrinsicGasInput::worst_case(sender, nonce_key_first_use, keystore),
-                gas_limit,
-            )?;
-
-            // 3. Apply account changes and install deferred code effects so the
-            //    calls run against post-change code and create/delegation gas is
-            //    priced. Must precede actor/policy resolution so an actor
-            //    authorized in this same estimate request is visible.
-            Self::apply_account_changes(signed, sctx, sender, now)?;
-
-            // 4. Resolve the acting actor's real policy gate. No signature
-            //    recovery: the optional RPC hint names the intended actor (e.g. a
-            //    session key); absent that, fall back to the account's self-actor.
-            //    Policy is read from the post-apply journal so same-tx
-            //    authorizations are visible. Expiry is not enforced (estimation
-            //    prices the happy path); `get_policy` still treats a revoked
-            //    default-EOA self as ungated.
-            //
-            //    This real gate drives only the outcome's call-gating (whether
-            //    `call.to` must equal `policy_target`); it does NOT feed the
-            //    intrinsic-gas estimate, which pins the gate worst-case (step 2)
-            //    so the returned ceiling stays valid even if the gate flips
-            //    between estimation and inclusion (the gate is a non-monotonic
-            //    state-dependent cost).
-            //    Before Zenith there is no Keystore: the sender is always its own
-            //    ungated self-actor and no configuration is read.
-            let sender_actor_id = acting_actor_hint
-                .filter(|_| keystore)
-                .unwrap_or_else(|| AccountConfigurationStorage::self_actor_id(sender));
-            let (policy_gated, policy_target) = if keystore {
-                Self::simulate_policy_gate(sctx, sender, sender_actor_id)?
-            } else {
-                (false, Address::ZERO)
-            };
-
-            // 5. Publish the transaction context for the `TxContext` precompile.
-            TxContextStorage::new(sctx)
-                .set_context(sender, payer, sender_actor_id)
-                .map_err(BaseTransactionError::eip8130)?;
-
-            Ok(Eip8130Outcome {
                 sender,
                 payer,
-                sender_actor_id,
-                policy_gated,
-                policy_target,
-                gas_limit,
-                sender_intrinsic: intrinsic.sender_intrinsic(),
-                sender_floor: intrinsic.sender_floor(),
-                payer_auth: intrinsic.payer_auth,
-                payer_auth_standard: intrinsic.payer_auth_standard,
-                execution_gas_available,
-                effective: FeeCheck::effective_gas_price(max_fee, max_priority, base_fee),
                 base_fee,
-                bump_protocol_nonce: false,
-            })
+                acting_actor_hint,
+                now,
+                gas_limit,
+                keystore,
+            )
         });
         Self::finish_pre_call(&mut provider, outcome)
+    }
+
+    /// The storage-backed body of [`Self::simulate_resolve`]: price intrinsic
+    /// gas, apply account changes, resolve the acting actor's policy gate, and
+    /// publish the transaction context. Not generic over the database, so it
+    /// compiles once.
+    #[allow(clippy::too_many_arguments)]
+    fn simulate_resolve_storage(
+        sctx: StorageCtx<'_>,
+        signed: &base_common_consensus::Eip8130Signed,
+        encoded: &[u8],
+        sender: Address,
+        payer: Address,
+        base_fee: u128,
+        acting_actor_hint: Option<B256>,
+        now: u64,
+        gas_limit: u64,
+        keystore: bool,
+    ) -> Result<Eip8130Outcome, BaseTransactionError> {
+        let tx = signed.tx();
+        let nonce_key = tx.nonce_key;
+        let max_fee = tx.max_fee_per_gas;
+        let max_priority = tx.max_priority_fee_per_gas;
+        let nonce_mgr = NonceManagerStorage::new(sctx);
+
+        // 1. Nonce-channel first-use flag (drives intrinsic gas). Estimation
+        //    neither validates nor advances the nonce.
+        let protocol_nonce = sctx
+            .with_account_info(sender, |info| Ok(info.nonce))
+            .map_err(BaseTransactionError::eip8130)?;
+        let nonce_key_first_use = if nonce_key == Eip8130Constants::NONCE_KEY_MAX {
+            false
+        } else if nonce_key == U256::ZERO {
+            protocol_nonce == 0
+        } else {
+            nonce_mgr.get_nonce(sender, nonce_key).map_err(BaseTransactionError::eip8130)? == 0
+        };
+
+        // 2. Intrinsic gas (auth gas is priced from the auth-blob shape, so a
+        //    stub signature of the right authenticator type estimates exactly).
+        //    The estimate is a safe ceiling that execution can only meet or
+        //    undercharge. The non-monotonic, state-dependent costs are
+        //    therefore pinned to their worst case rather than resolved:
+        //      - from Zenith, the sender's policy gate charged (its
+        //        `policy_manager` SLOAD), so a `gas_limit == estimate`
+        //        submission never OOGs if the gate flips on before inclusion.
+        //      - zero revoke discount, so revokes are priced at the full
+        //        three-reset worst case regardless of which slots are empty.
+        //    The monotonic, body-derivable nonce first-use cost stays resolved.
+        //    Execution reprices all of these precisely against the
+        //    authenticated actors and real state.
+        //    None of this depends on the applied account changes, so a
+        //    `gas_limit` that cannot cover it is rejected before any change
+        //    is applied.
+        let (intrinsic, execution_gas_available) = Self::resolve_execution_gas(
+            signed,
+            encoded,
+            &IntrinsicGasInput::worst_case(sender, nonce_key_first_use, keystore),
+            gas_limit,
+        )?;
+
+        // 3. Apply account changes and install deferred code effects so the
+        //    calls run against post-change code and create/delegation gas is
+        //    priced. Must precede actor/policy resolution so an actor
+        //    authorized in this same estimate request is visible.
+        Self::apply_account_changes(signed, sctx, sender, now)?;
+
+        // 4. Resolve the acting actor's real policy gate. No signature
+        //    recovery: the optional RPC hint names the intended actor (e.g. a
+        //    session key); absent that, fall back to the account's self-actor.
+        //    Policy is read from the post-apply journal so same-tx
+        //    authorizations are visible. Expiry is not enforced (estimation
+        //    prices the happy path); `get_policy` still treats a revoked
+        //    default-EOA self as ungated.
+        //
+        //    This real gate drives only the outcome's call-gating (whether
+        //    `call.to` must equal `policy_target`); it does NOT feed the
+        //    intrinsic-gas estimate, which pins the gate worst-case (step 2)
+        //    so the returned ceiling stays valid even if the gate flips
+        //    between estimation and inclusion (the gate is a non-monotonic
+        //    state-dependent cost).
+        //    Before Zenith there is no Keystore: the sender is always its own
+        //    ungated self-actor and no configuration is read.
+        let sender_actor_id = acting_actor_hint
+            .filter(|_| keystore)
+            .unwrap_or_else(|| AccountConfigurationStorage::self_actor_id(sender));
+        let (policy_gated, policy_target) = if keystore {
+            Self::simulate_policy_gate(sctx, sender, sender_actor_id)?
+        } else {
+            (false, Address::ZERO)
+        };
+
+        // 5. Publish the transaction context for the `TxContext` precompile.
+        TxContextStorage::new(sctx)
+            .set_context(sender, payer, sender_actor_id)
+            .map_err(BaseTransactionError::eip8130)?;
+
+        Ok(Eip8130Outcome {
+            sender,
+            payer,
+            sender_actor_id,
+            policy_gated,
+            policy_target,
+            gas_limit,
+            sender_intrinsic: intrinsic.sender_intrinsic(),
+            sender_floor: intrinsic.sender_floor(),
+            payer_auth: intrinsic.payer_auth,
+            payer_auth_standard: intrinsic.payer_auth_standard,
+            execution_gas_available,
+            effective: FeeCheck::effective_gas_price(max_fee, max_priority, base_fee),
+            base_fee,
+            bump_protocol_nonce: false,
+        })
     }
 
     /// Resolves the simulated acting actor's policy gate from the Keystore:
@@ -1066,10 +1100,6 @@ impl Eip8130Executor {
             >,
     {
         let tx = signed.tx();
-        let nonce_key = tx.nonce_key;
-        let gas_limit = tx.gas_limit;
-        let max_fee = tx.max_fee_per_gas;
-        let max_priority = tx.max_priority_fee_per_gas;
         let tx_gas_limit_cap = ctx.cfg().tx_gas_limit_cap();
         // Validity bounds are normalized to Unix milliseconds (seconds bounds are
         // scaled by 1000 per EIP-8130 Timestamp Normalization); `0` stays `0`
@@ -1107,153 +1137,188 @@ impl Eip8130Executor {
         let mut provider = JournalStorageProvider::new(internals, Address::ZERO);
 
         let outcome = StorageCtx::enter(&mut provider, |sctx| {
-            // Ordering note: the apply step (1) and code effects (2) write journal
-            // storage *before* the nonce is validated (3). Any `Err` returned from
-            // this closure propagates out of `authorize_and_apply` and the caller
-            // discards the transaction, so these earlier writes never persist for a
-            // rejected transaction. This mirrors the caller-MUST-discard contract
-            // documented on `TransactionAuthorizer::authorize_and_apply`.
-            let mut acc = AccountConfigurationStorage::new(sctx);
-
-            // 1. Authorize and apply the account changes interleaved against the
-            //    evolving state, then authenticate sender/payer against the
-            //    resulting post-apply state. `AccountConfiguration` storage
-            //    transitions are written here; the deferred account-code effects
-            //    are installed in step 2.
-            //    Before Zenith there is no Keystore: authorization is pure
-            //    secp256k1 recovery and never reads `AccountConfiguration`.
-            let applied_tx = if keystore {
-                TransactionAuthorizer::authorize_and_apply(signed, &mut acc, chain_id, now)
-            } else {
-                TransactionAuthorizer::authorize_without_keystore(signed)
-            }
-            .map_err(BaseTransactionError::eip8130)?;
-            let sender_actor = applied_tx.actors.sender.resolved;
-            let sender = applied_tx.actors.sender.account;
-            let payer = applied_tx.actors.payer.as_ref().map_or(sender, |p| p.account);
-            // Defense-in-depth: `authorize_and_apply` -> `verify_sender` already
-            // gates `can_use_nonce_key(nonce_key)` on both the configured and
-            // EOA sender paths, so this is redundant on the current call graph. It
-            // is kept as a local guard so this execution entry point stays sound if
-            // the sender-resolution path is ever refactored to skip that check.
-            if !sender_actor.can_use_nonce_key(nonce_key) {
-                return Err(BaseTransactionError::eip8130(
-                    "sender actor scope does not authorize sequenced nonces",
-                ));
-            }
-
-            // 2. Install the deferred account-*code* effects (created-account
-            //    bytecode, delegation indicator) the apply step surfaced.
-            if let Some(created) = &applied_tx.applied.created {
-                Self::install_created_code(sctx, created.address, &created.code)?;
-            }
-            if let Some(delegation) = &applied_tx.applied.delegation {
-                delegation.install(sctx).map_err(BaseTransactionError::eip8130)?;
-            }
-
-            // 3. Validate and advance the nonce.
-            let mut nonce_mgr = NonceManagerStorage::new(sctx);
-            let protocol_nonce = sctx
-                .with_account_info(sender, |info| Ok(info.nonce))
-                .map_err(BaseTransactionError::eip8130)?;
-            // The nonce-free replay lookup works in milliseconds (`now_ms`),
-            // matching the validity window and the ring buffer; the
-            // sequence-channel branches ignore this argument.
-            let (nonce_key_first_use, bump_protocol_nonce) =
-                if nonce_key == Eip8130Constants::NONCE_KEY_MAX {
-                    NonceValidator::validate(
-                        tx,
-                        sender,
-                        protocol_nonce,
-                        &nonce_mgr,
-                        NonceMode::Inclusion,
-                        now_ms,
-                    )
-                    .map_err(BaseTransactionError::eip8130)?;
-                    let replay = NonceValidator::replay_hash(tx, sender);
-                    nonce_mgr
-                        .check_and_mark_expiring_nonce(replay, valid_before, now_ms)
-                        .map_err(BaseTransactionError::eip8130)?;
-                    (false, false)
-                } else if nonce_key == U256::ZERO {
-                    NonceValidator::validate(
-                        tx,
-                        sender,
-                        protocol_nonce,
-                        &nonce_mgr,
-                        NonceMode::Inclusion,
-                        now_ms,
-                    )
-                    .map_err(BaseTransactionError::eip8130)?;
-                    (protocol_nonce == 0, true)
-                } else {
-                    let current_nonce = nonce_mgr
-                        .get_nonce(sender, nonce_key)
-                        .map_err(BaseTransactionError::eip8130)?;
-                    NonceValidator::validate_sequence(tx, current_nonce, NonceMode::Inclusion)
-                        .map_err(BaseTransactionError::eip8130)?;
-                    nonce_mgr
-                        .increment_nonce(sender, nonce_key)
-                        .map_err(BaseTransactionError::eip8130)?;
-                    (current_nonce == 0, false)
-                };
-
-            // 4. Intrinsic gas under the EIP-8130 schedule.
-            let (intrinsic, execution_gas_available) = Self::resolve_execution_gas(
+            Self::authorize_and_apply_storage(
+                sctx,
                 signed,
                 encoded,
-                &IntrinsicGasInput::new(sender, nonce_key_first_use)
-                    .with_sender_policy_gate(sender_actor.is_policy_gated())
-                    .with_revoke_discount_slots(applied_tx.revoke_discount_slots),
-                gas_limit,
-            )?;
-            // EIP-7825: the transaction may consume `gas_limit` plus the payer
-            // authentication metered on top of it, and that total is bounded by
-            // the per-transaction gas cap (from Azul).
-            if FeeCheck::max_chargeable_gas(gas_limit, intrinsic.payer_auth) > tx_gas_limit_cap {
-                return Err(BaseTransactionError::eip8130(
-                    "transaction gas exceeds the EIP-7825 per-transaction cap",
-                ));
-            }
-
-            // 5. Fee caps and payer balance.
-            FeeCheck::validate_fees(max_fee, max_priority, base_fee)
-                .map_err(BaseTransactionError::eip8130)?;
-            let payer_balance = sctx
-                .with_account_info(payer, |info| Ok(info.balance))
-                .map_err(BaseTransactionError::eip8130)?;
-            FeeCheck::validate_balance(payer_balance, gas_limit, intrinsic.payer_auth, max_fee)
-                .map_err(|error| match error {
-                    FeeError::InsufficientBalance { balance, required } => {
-                        Self::payer_cannot_pay(balance, required)
-                    }
-                    error => BaseTransactionError::eip8130(error),
-                })?;
-
-            // 6. Publish the transaction context (sender / payer / actor id) so it
-            //    is readable by the `TxContext` precompile during `calls`.
-            TxContextStorage::new(sctx)
-                .set_context(sender, payer, sender_actor.actor_id)
-                .map_err(BaseTransactionError::eip8130)?;
-
-            Ok(Eip8130Outcome {
-                sender,
-                payer,
-                sender_actor_id: sender_actor.actor_id,
-                policy_gated: sender_actor.is_policy_gated(),
-                policy_target: sender_actor.policy_target,
-                gas_limit,
-                sender_intrinsic: intrinsic.sender_intrinsic(),
-                sender_floor: intrinsic.sender_floor(),
-                payer_auth: intrinsic.payer_auth,
-                payer_auth_standard: intrinsic.payer_auth_standard,
-                execution_gas_available,
-                effective: FeeCheck::effective_gas_price(max_fee, max_priority, base_fee),
+                chain_id,
+                now,
+                now_ms,
                 base_fee,
-                bump_protocol_nonce,
-            })
+                tx_gas_limit_cap,
+                keystore,
+            )
         });
         Self::finish_pre_call(&mut provider, outcome)
+    }
+
+    /// The storage-backed body of [`Self::authorize_and_apply`]: authorize and
+    /// apply the account changes, install code effects, validate and advance the
+    /// nonce, price intrinsic gas, check fee caps and payer balance, and publish
+    /// the transaction context. Not generic over the database, so it compiles
+    /// once.
+    #[allow(clippy::too_many_arguments)]
+    fn authorize_and_apply_storage(
+        sctx: StorageCtx<'_>,
+        signed: &base_common_consensus::Eip8130Signed,
+        encoded: &[u8],
+        chain_id: u64,
+        now: u64,
+        now_ms: u64,
+        base_fee: u128,
+        tx_gas_limit_cap: u64,
+        keystore: bool,
+    ) -> Result<Eip8130Outcome, BaseTransactionError> {
+        let tx = signed.tx();
+        let nonce_key = tx.nonce_key;
+        let gas_limit = tx.gas_limit;
+        let max_fee = tx.max_fee_per_gas;
+        let max_priority = tx.max_priority_fee_per_gas;
+        let valid_before = tx.valid_before_ms();
+
+        // Ordering note: the apply step (1) and code effects (2) write journal
+        // storage *before* the nonce is validated (3). Any `Err` returned from
+        // this function propagates out of `authorize_and_apply` and the caller
+        // discards the transaction, so these earlier writes never persist for a
+        // rejected transaction. This mirrors the caller-MUST-discard contract
+        // documented on `TransactionAuthorizer::authorize_and_apply`.
+        let mut acc = AccountConfigurationStorage::new(sctx);
+
+        // 1. Authorize and apply the account changes interleaved against the
+        //    evolving state, then authenticate sender/payer against the
+        //    resulting post-apply state. `AccountConfiguration` storage
+        //    transitions are written here; the deferred account-code effects
+        //    are installed in step 2.
+        //    Before Zenith there is no Keystore: authorization is pure
+        //    secp256k1 recovery and never reads `AccountConfiguration`.
+        let applied_tx = if keystore {
+            TransactionAuthorizer::authorize_and_apply(signed, &mut acc, chain_id, now)
+        } else {
+            TransactionAuthorizer::authorize_without_keystore(signed)
+        }
+        .map_err(BaseTransactionError::eip8130)?;
+        let sender_actor = applied_tx.actors.sender.resolved;
+        let sender = applied_tx.actors.sender.account;
+        let payer = applied_tx.actors.payer.as_ref().map_or(sender, |p| p.account);
+        // Defense-in-depth: `authorize_and_apply` -> `verify_sender` already
+        // gates `can_use_nonce_key(nonce_key)` on both the configured and
+        // EOA sender paths, so this is redundant on the current call graph. It
+        // is kept as a local guard so this execution entry point stays sound if
+        // the sender-resolution path is ever refactored to skip that check.
+        if !sender_actor.can_use_nonce_key(nonce_key) {
+            return Err(BaseTransactionError::eip8130(
+                "sender actor scope does not authorize sequenced nonces",
+            ));
+        }
+
+        // 2. Install the deferred account-*code* effects (created-account
+        //    bytecode, delegation indicator) the apply step surfaced.
+        if let Some(created) = &applied_tx.applied.created {
+            Self::install_created_code(sctx, created.address, &created.code)?;
+        }
+        if let Some(delegation) = &applied_tx.applied.delegation {
+            delegation.install(sctx).map_err(BaseTransactionError::eip8130)?;
+        }
+
+        // 3. Validate and advance the nonce.
+        let mut nonce_mgr = NonceManagerStorage::new(sctx);
+        let protocol_nonce = sctx
+            .with_account_info(sender, |info| Ok(info.nonce))
+            .map_err(BaseTransactionError::eip8130)?;
+        // The nonce-free replay lookup works in milliseconds (`now_ms`),
+        // matching the validity window and the ring buffer; the
+        // sequence-channel branches ignore this argument.
+        let (nonce_key_first_use, bump_protocol_nonce) = if nonce_key
+            == Eip8130Constants::NONCE_KEY_MAX
+        {
+            NonceValidator::validate(
+                tx,
+                sender,
+                protocol_nonce,
+                &nonce_mgr,
+                NonceMode::Inclusion,
+                now_ms,
+            )
+            .map_err(BaseTransactionError::eip8130)?;
+            let replay = NonceValidator::replay_hash(tx, sender);
+            nonce_mgr
+                .check_and_mark_expiring_nonce(replay, valid_before, now_ms)
+                .map_err(BaseTransactionError::eip8130)?;
+            (false, false)
+        } else if nonce_key == U256::ZERO {
+            NonceValidator::validate(
+                tx,
+                sender,
+                protocol_nonce,
+                &nonce_mgr,
+                NonceMode::Inclusion,
+                now_ms,
+            )
+            .map_err(BaseTransactionError::eip8130)?;
+            (protocol_nonce == 0, true)
+        } else {
+            let current_nonce =
+                nonce_mgr.get_nonce(sender, nonce_key).map_err(BaseTransactionError::eip8130)?;
+            NonceValidator::validate_sequence(tx, current_nonce, NonceMode::Inclusion)
+                .map_err(BaseTransactionError::eip8130)?;
+            nonce_mgr.increment_nonce(sender, nonce_key).map_err(BaseTransactionError::eip8130)?;
+            (current_nonce == 0, false)
+        };
+
+        // 4. Intrinsic gas under the EIP-8130 schedule.
+        let (intrinsic, execution_gas_available) = Self::resolve_execution_gas(
+            signed,
+            encoded,
+            &IntrinsicGasInput::new(sender, nonce_key_first_use)
+                .with_sender_policy_gate(sender_actor.is_policy_gated())
+                .with_revoke_discount_slots(applied_tx.revoke_discount_slots),
+            gas_limit,
+        )?;
+        // EIP-7825: the transaction may consume `gas_limit` plus the payer
+        // authentication metered on top of it, and that total is bounded by
+        // the per-transaction gas cap (from Azul).
+        if FeeCheck::max_chargeable_gas(gas_limit, intrinsic.payer_auth) > tx_gas_limit_cap {
+            return Err(BaseTransactionError::eip8130(
+                "transaction gas exceeds the EIP-7825 per-transaction cap",
+            ));
+        }
+
+        // 5. Fee caps and payer balance.
+        FeeCheck::validate_fees(max_fee, max_priority, base_fee)
+            .map_err(BaseTransactionError::eip8130)?;
+        let payer_balance = sctx
+            .with_account_info(payer, |info| Ok(info.balance))
+            .map_err(BaseTransactionError::eip8130)?;
+        FeeCheck::validate_balance(payer_balance, gas_limit, intrinsic.payer_auth, max_fee)
+            .map_err(|error| match error {
+                FeeError::InsufficientBalance { balance, required } => {
+                    Self::payer_cannot_pay(balance, required)
+                }
+                error => BaseTransactionError::eip8130(error),
+            })?;
+
+        // 6. Publish the transaction context (sender / payer / actor id) so it
+        //    is readable by the `TxContext` precompile during `calls`.
+        TxContextStorage::new(sctx)
+            .set_context(sender, payer, sender_actor.actor_id)
+            .map_err(BaseTransactionError::eip8130)?;
+
+        Ok(Eip8130Outcome {
+            sender,
+            payer,
+            sender_actor_id: sender_actor.actor_id,
+            policy_gated: sender_actor.is_policy_gated(),
+            policy_target: sender_actor.policy_target,
+            gas_limit,
+            sender_intrinsic: intrinsic.sender_intrinsic(),
+            sender_floor: intrinsic.sender_floor(),
+            payer_auth: intrinsic.payer_auth,
+            payer_auth_standard: intrinsic.payer_auth_standard,
+            execution_gas_available,
+            effective: FeeCheck::effective_gas_price(max_fee, max_priority, base_fee),
+            base_fee,
+            bump_protocol_nonce,
+        })
     }
 
     /// Resolves the outcome of a storage-backed pre-call pipeline. A journal
@@ -1298,21 +1363,14 @@ impl Eip8130Executor {
             sender_acc.bump_nonce();
         }
 
-        // Worst-case chargeable gas: the full sender budget plus payer
-        // authentication, both billed at the effective price.
-        let max_gas = FeeCheck::max_chargeable_gas(outcome.gas_limit, outcome.payer_auth);
-        let gas_charge = U256::from(max_gas)
-            .checked_mul(U256::from(outcome.effective))
-            .ok_or_else(|| BaseTransactionError::eip8130("EIP-8130 gas pre-charge overflow"))?;
         // `encoded` is the transaction's enveloped bytes, so any cached FastLZ size applies.
-        let fastlz_size = ctx.tx.enveloped_tx_fastlz_size;
-        let l1_cost =
-            ctx.chain_mut().calculate_tx_l1_cost_with_fastlz_size(encoded, fastlz_size, spec);
-        let operator_cost = ctx.chain().operator_fee_charge(encoded, U256::from(max_gas), spec);
-        let prepay = gas_charge
-            .checked_add(l1_cost)
-            .and_then(|v| v.checked_add(operator_cost))
-            .ok_or_else(|| BaseTransactionError::eip8130("EIP-8130 pre-charge overflow"))?;
+        let prepay = Self::prepay_amount(
+            &mut ctx.chain,
+            ctx.tx.enveloped_tx_fastlz_size,
+            outcome,
+            encoded,
+            spec,
+        )?;
 
         let mut payer_acc =
             ctx.journal_mut().load_account_mut(outcome.payer).map_err(EVMError::Database)?;
@@ -1323,6 +1381,32 @@ impl Eip8130Executor {
         payer_acc.set_balance(debited);
 
         Ok(prepay)
+    }
+
+    /// The worst-case fee [`Self::prepay`] debits from the payer: the full
+    /// `gas_limit` plus payer authentication at the effective price, plus the L1
+    /// and worst-case operator fee. Not generic over the database, so it
+    /// compiles once.
+    fn prepay_amount(
+        l1_block_info: &mut L1BlockInfo,
+        fastlz_size: Option<u32>,
+        outcome: &Eip8130Outcome,
+        encoded: &[u8],
+        spec: BaseSpecId,
+    ) -> Result<U256, BaseTransactionError> {
+        // Worst-case chargeable gas: the full sender budget plus payer
+        // authentication, both billed at the effective price.
+        let max_gas = FeeCheck::max_chargeable_gas(outcome.gas_limit, outcome.payer_auth);
+        let gas_charge = U256::from(max_gas)
+            .checked_mul(U256::from(outcome.effective))
+            .ok_or_else(|| BaseTransactionError::eip8130("EIP-8130 gas pre-charge overflow"))?;
+        let l1_cost =
+            l1_block_info.calculate_tx_l1_cost_with_fastlz_size(encoded, fastlz_size, spec);
+        let operator_cost = l1_block_info.operator_fee_charge(encoded, U256::from(max_gas), spec);
+        gas_charge
+            .checked_add(l1_cost)
+            .and_then(|v| v.checked_add(operator_cost))
+            .ok_or_else(|| BaseTransactionError::eip8130("EIP-8130 pre-charge overflow"))
     }
 
     /// Dispatches the transaction's `calls` as EVM call frames, phase by phase,
@@ -1379,13 +1463,13 @@ impl Eip8130Executor {
                     break;
                 }
 
-                let access_gas = Self::root_call_access_gas(evm, call.to)?;
+                let access_gas = Self::root_call_access_gas(evm.ctx_mut(), call.to)?;
                 let Some(left) = remaining.checked_sub(access_gas) else {
                     phase_reverted = true;
                     break;
                 };
                 remaining = left;
-                if Self::creates_account(evm, outcome.sender, call.to, call.value)? {
+                if Self::creates_account(evm.ctx_mut(), outcome.sender, call.to, call.value)? {
                     let Some(left) = remaining.checked_sub(Eip8130GasSchedule::NEW_ACCOUNT_COST)
                     else {
                         // The charge does not fit. Leave `remaining` at the
@@ -1551,8 +1635,8 @@ impl Eip8130Executor {
     /// for the delegation target if `to` carries an EIP-7702 delegation.
     /// Loading warms both accounts, so a repeated target and later accesses
     /// inside the call pay the warm rate.
-    fn root_call_access_gas<DB, I, P>(
-        evm: &mut BaseEvm<DB, I, P>,
+    fn root_call_access_gas<DB>(
+        ctx: &mut BaseContext<DB>,
         to: Address,
     ) -> Result<u64, EVMError<DB::Error, BaseTransactionError>>
     where
@@ -1561,7 +1645,7 @@ impl Eip8130Executor {
     {
         let access_cost =
             |is_cold: bool| if is_cold { COLD_ACCOUNT_ACCESS_COST } else { WARM_STORAGE_READ_COST };
-        let journal = evm.ctx_mut().journal_mut();
+        let journal = ctx.journal_mut();
         let target = journal.load_account_with_code(to).map_err(EVMError::Database)?;
         let mut gas = access_cost(target.is_cold);
         let delegate = target.data.info.code.as_ref().and_then(Bytecode::eip7702_address);
@@ -1576,8 +1660,8 @@ impl Eip8130Executor {
     /// owes [`Eip8130GasSchedule::NEW_ACCOUNT_COST`]: `value` is non-zero,
     /// `to` is empty (EIP-161), and `sender` can cover `value` (an unaffordable
     /// call fails its balance check before the charge applies).
-    fn creates_account<DB, I, P>(
-        evm: &mut BaseEvm<DB, I, P>,
+    fn creates_account<DB>(
+        ctx: &mut BaseContext<DB>,
         sender: Address,
         to: Address,
         value: U256,
@@ -1589,7 +1673,7 @@ impl Eip8130Executor {
         if value.is_zero() || to == sender {
             return Ok(false);
         }
-        let journal = evm.ctx_mut().journal_mut();
+        let journal = ctx.journal_mut();
         // `to` was already loaded (and its access charged) by
         // `root_call_access_gas`, and `sender` is warm from the pre-call
         // pipeline, so these loads warm nothing new.
@@ -1737,8 +1821,9 @@ impl Eip8130Executor {
     /// The sender and payer are warm like a normal transaction's caller. The
     /// execution pipeline has already loaded both; loading them here gives the
     /// estimate, which never pre-charges the payer, the same warm set.
-    fn warm_pre_call_accounts<DB, I, P>(
-        evm: &mut BaseEvm<DB, I, P>,
+    fn warm_pre_call_accounts<DB, P>(
+        ctx: &mut BaseContext<DB>,
+        precompiles: &mut P,
         outcome: &Eip8130Outcome,
     ) -> Result<(), EVMError<DB::Error, BaseTransactionError>>
     where
@@ -1747,8 +1832,6 @@ impl Eip8130Executor {
         BaseContext<DB>:
             BaseContextTr + ContextTr<Db = DB, Tx = BaseTransaction<TxEnv>, Block = BlockEnv>,
     {
-        let (ctx, precompiles) = evm.ctx_precompiles();
-
         let gen_spec = ctx.cfg().spec();
         let eth_spec: SpecId = gen_spec.into();
         ctx.journal_mut().set_spec_id(eth_spec);
@@ -1814,35 +1897,19 @@ impl Eip8130Executor {
         BaseContext<DB>:
             BaseContextTr + ContextTr<Db = DB, Tx = BaseTransaction<TxEnv>, Block = BlockEnv>,
     {
-        // Sender-intrinsic + call gas, less the EIP-3529-capped refund, plus payer
-        // authentication. Shared with the estimate path so they cannot diverge.
-        let billable_gas = Self::billable_gas(outcome, calls);
-
-        let fee = U256::from(billable_gas)
-            .checked_mul(U256::from(outcome.effective))
-            .ok_or_else(|| BaseTransactionError::eip8130("EIP-8130 fee overflow"))?;
-        let base_fee_amount = U256::from(billable_gas)
-            .checked_mul(U256::from(outcome.base_fee))
-            .ok_or_else(|| BaseTransactionError::eip8130("EIP-8130 base-fee amount overflow"))?;
-        let priority_amount = fee
-            .checked_sub(base_fee_amount)
-            .ok_or_else(|| BaseTransactionError::eip8130("EIP-8130 priority amount underflow"))?;
-        let fastlz_size = ctx.tx.enveloped_tx_fastlz_size;
-        let l1_cost =
-            ctx.chain_mut().calculate_tx_l1_cost_with_fastlz_size(encoded, fastlz_size, spec);
-        let operator_cost =
-            ctx.chain().operator_fee_charge(encoded, U256::from(billable_gas), spec);
-
-        // Refund the surplus of the worst-case pre-charge. The pre-charge bounds
-        // every component above (full `gas_limit`/operator at the effective
-        // price), so the subtraction never underflows.
-        let total_cost = fee
-            .checked_add(l1_cost)
-            .and_then(|v| v.checked_add(operator_cost))
-            .ok_or_else(|| BaseTransactionError::eip8130("EIP-8130 settled cost overflow"))?;
-        let refund_amount = prepay.checked_sub(total_cost).ok_or_else(|| {
-            BaseTransactionError::eip8130("settled fee exceeds the worst-case pre-charge")
-        })?;
+        let (
+            billable_gas,
+            refund_amount,
+            [base_fee_amount, priority_amount, l1_cost, operator_cost],
+        ) = Self::settlement(
+            &mut ctx.chain,
+            ctx.tx.enveloped_tx_fastlz_size,
+            outcome,
+            calls,
+            prepay,
+            encoded,
+            spec,
+        )?;
 
         {
             let mut payer_acc =
@@ -1867,6 +1934,55 @@ impl Eip8130Executor {
         }
 
         Ok(billable_gas)
+    }
+
+    /// The fee arithmetic of [`Self::settle_fees`]: returns the billable gas,
+    /// the surplus of `prepay` to refund to the payer, and the base-fee,
+    /// priority-tip, L1, and operator amounts owed to their recipients. Not
+    /// generic over the database, so it compiles once.
+    fn settlement(
+        l1_block_info: &mut L1BlockInfo,
+        fastlz_size: Option<u32>,
+        outcome: &Eip8130Outcome,
+        calls: &CallsResult,
+        prepay: U256,
+        encoded: &[u8],
+        spec: BaseSpecId,
+    ) -> Result<(u64, U256, [U256; 4]), BaseTransactionError> {
+        // Sender-intrinsic + call gas, less the EIP-3529-capped refund, plus payer
+        // authentication. Shared with the estimate path so they cannot diverge.
+        let billable_gas = Self::billable_gas(outcome, calls);
+
+        let fee = U256::from(billable_gas)
+            .checked_mul(U256::from(outcome.effective))
+            .ok_or_else(|| BaseTransactionError::eip8130("EIP-8130 fee overflow"))?;
+        let base_fee_amount = U256::from(billable_gas)
+            .checked_mul(U256::from(outcome.base_fee))
+            .ok_or_else(|| BaseTransactionError::eip8130("EIP-8130 base-fee amount overflow"))?;
+        let priority_amount = fee
+            .checked_sub(base_fee_amount)
+            .ok_or_else(|| BaseTransactionError::eip8130("EIP-8130 priority amount underflow"))?;
+        let l1_cost =
+            l1_block_info.calculate_tx_l1_cost_with_fastlz_size(encoded, fastlz_size, spec);
+        let operator_cost =
+            l1_block_info.operator_fee_charge(encoded, U256::from(billable_gas), spec);
+
+        // Refund the surplus of the worst-case pre-charge. The pre-charge bounds
+        // every component above (full `gas_limit`/operator at the effective
+        // price), so the subtraction never underflows.
+        let total_cost = fee
+            .checked_add(l1_cost)
+            .and_then(|v| v.checked_add(operator_cost))
+            .ok_or_else(|| BaseTransactionError::eip8130("EIP-8130 settled cost overflow"))?;
+        let refund_amount = prepay.checked_sub(total_cost).ok_or_else(|| {
+            BaseTransactionError::eip8130("settled fee exceeds the worst-case pre-charge")
+        })?;
+
+        Ok((
+            billable_gas,
+            refund_amount,
+            [base_fee_amount, priority_amount, l1_cost, operator_cost],
+        ))
     }
 
     /// Folds the signed transaction-level refund counter into the final applied
