@@ -578,6 +578,7 @@ rayon = "1.11"
 dashmap = "6.1"
 arc-swap = "1.7.1"
 parking_lot = "0.12.3"
+crossbeam-channel = "0.5.16"
 either = { version = "1.15.0", default-features = false }
 
 # configuration
