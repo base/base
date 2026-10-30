@@ -6,7 +6,7 @@ use alloy_eips::Encodable2718;
 use alloy_primitives::{B256, Bytes, U256, hex};
 use alloy_rpc_client::RpcClient;
 use base_common_consensus::Predeploys;
-use base_common_evm::BaseTime;
+use base_common_evm2::BaseTime;
 use base_execution_chainspec::BaseChainSpec;
 use base_node_runner::test_utils::{L1_BLOCK_INFO_DEPOSIT_TX, TestHarness};
 use base_protocol::BaseTimeUpdateTx;
