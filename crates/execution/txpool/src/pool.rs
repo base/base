@@ -410,7 +410,7 @@ where
             InvalidationKey::ProtocolNonce(account) => Some(((*account, U256::ZERO), Some(*nonce))),
             _ => None,
         }));
-        removed.extend(self.sync_validity_lanes(validity_lanes));
+        removed.extend(self.sync_validity_lanes(validity_lanes, false));
         let dropped = {
             let mut guard = self.guard.write();
             let mut dropped = guard.invalidate_exact(exact);
@@ -520,9 +520,16 @@ where
 
     /// Re-anchors validity lanes after a standard store or canonical state
     /// moved. Each entry names a lane and, when known, the canonical nonce it
-    /// now sits at (anchors only move forward this way); the executable cursor
-    /// then follows the standard store's pending run from that anchor. Returns
-    /// the transactions discarded for falling below a cursor.
+    /// now sits at; the executable cursor then follows the standard store's
+    /// pending run from that anchor. Returns the transactions discarded for
+    /// falling below a cursor.
+    ///
+    /// Anchors only move forward unless `authoritative_account_nonces` is set:
+    /// then the reported account nonces come from canonical state that may
+    /// have moved back (a reorg, or reth's resync of drifted accounts), and a
+    /// protocol-nonce lane anchors at the highest nonce reported for it, as
+    /// reth does for the sender's standard transactions. Channel lanes and
+    /// pre-canonical (flashblock) nonces always move forward only.
     ///
     /// Runs under `protocol_admission_lock`: the target is derived from the
     /// standard stores' state without holding the validity lock, so a
@@ -531,6 +538,7 @@ where
     fn sync_validity_lanes(
         &self,
         lanes: impl IntoIterator<Item = (LaneId, Option<u64>)>,
+        authoritative_account_nonces: bool,
     ) -> Vec<Arc<ValidPoolTransaction<T>>> {
         debug_assert!(
             self.protocol_admission_lock.is_locked(),
@@ -554,8 +562,11 @@ where
             if shared && !self.standard_store_holds_lane(lane_id) {
                 self.validity.pool.write().unmark_shared_lane(&lane_id);
             }
-            let state_nonce =
-                nonce.map_or(cursor.state_nonce, |nonce| nonce.max(cursor.state_nonce));
+            let state_nonce = match nonce {
+                Some(nonce) if authoritative_account_nonces && lane_id.1.is_zero() => nonce,
+                Some(nonce) => nonce.max(cursor.state_nonce),
+                None => cursor.state_nonce,
+            };
             let target = LaneCursor {
                 state_nonce,
                 next_nonce: self.standard_pending_end(lane_id, state_nonce),
@@ -677,7 +688,7 @@ where
         }
         removed.extend(validity_removed);
         self.release_from_guard(&removed);
-        removed.extend(self.sync_validity_lanes(touched_lanes));
+        removed.extend(self.sync_validity_lanes(touched_lanes, false));
         removed
     }
 
@@ -1154,7 +1165,7 @@ where
         }
         self.register_block_expiry(hash, block_expiry_bound, flashblock_expiry_bound, replaced);
         self.share_validity_lane((sender, U256::ZERO));
-        self.sync_validity_lanes([((sender, U256::ZERO), None)]);
+        self.sync_validity_lanes([((sender, U256::ZERO), None)], false);
         Ok(result)
     }
 
@@ -1503,6 +1514,7 @@ where
                                     .filter_map(|evicted| Self::lane_id_of(&evicted.transaction)),
                             )
                             .map(|lane_id| (lane_id, None)),
+                        false,
                     );
                 }
                 Ok(outcome.outcome)
@@ -1800,7 +1812,8 @@ where
         // Senders with a transaction bound for a lane store keep their whole
         // batch on the per-transaction path, in submission order, because their
         // lane and cross-store replacement outcomes depend on that order. Every
-        // other transaction is protocol-bound and validated as one batch.
+        // other transaction is protocol-bound and validated as one batch, which
+        // is admitted first: a batch promises no order across senders.
         let lane_senders: AddressSet = transactions
             .iter()
             .filter(|(_, transaction)| PoolStore::of(transaction).is_lane_store())
@@ -2460,6 +2473,7 @@ where
         let now = update.timestamp();
         let block_number = update.number();
         let mined_transactions = update.mined_transactions.clone();
+        let reorg = update.update_kind == PoolUpdateKind::Reorg;
         let changed_nonces: Vec<(Address, u64)> = update
             .changed_accounts
             .iter()
@@ -2470,7 +2484,7 @@ where
         // consumes an admission slot even until its pool entry is pruned below.
         {
             let _admission_guard = self.protocol_admission_lock.lock();
-            if update.update_kind == PoolUpdateKind::Reorg {
+            if reorg {
                 // The new branch can rebuild an earlier block or restart its flashblock indices.
                 *self.published_flashblock.write() = None;
             }
@@ -2516,17 +2530,23 @@ where
         {
             // Re-anchor protocol-nonce validity lanes to the new account nonces,
             // and re-check every lane that relied on a standard pending run the
-            // protocol pool may have reshuffled on its own.
+            // protocol pool may have reshuffled on its own. On a reorg only the
+            // reported account nonces may move an anchor back; the mined
+            // transactions' nonces are lower bounds and stay forward-only.
             let _admission_guard = self.protocol_admission_lock.lock();
-            touched_lanes.extend(
-                changed_nonces
-                    .into_iter()
-                    .map(|(address, nonce)| ((address, U256::ZERO), Some(nonce))),
-            );
+            let account_lanes = changed_nonces
+                .into_iter()
+                .map(|(address, nonce)| ((address, U256::ZERO), Some(nonce)));
             touched_lanes.extend(
                 self.validity.pool.read().lanes_ahead_of_state().keys().map(|lane| (*lane, None)),
             );
-            self.sync_validity_lanes(touched_lanes);
+            if reorg {
+                self.sync_validity_lanes(touched_lanes, false);
+                self.sync_validity_lanes(account_lanes, true);
+            } else {
+                touched_lanes.extend(account_lanes);
+                self.sync_validity_lanes(touched_lanes, false);
+            }
         }
         self.expire_due_buckets(now);
         self.expire_by_block(block_number);
@@ -2581,8 +2601,9 @@ where
             guard.release(&hash);
         }
         drop(guard);
-        // The protocol pool re-sorted these senders' runs; validity lanes behind them follow.
-        self.sync_validity_lanes(validity_lanes);
+        // The protocol pool re-sorted these senders' runs and took their
+        // reported nonces as-is; validity lanes behind them follow.
+        self.sync_validity_lanes(validity_lanes, true);
     }
 
     fn delete_blob(&self, tx: B256) {
@@ -6884,5 +6905,63 @@ mod tests {
         assert_gone(&pool, validity0);
         assert!(is_pending(&pool, validity1));
         assert!(pool.published_flashblock.read().is_none());
+    }
+
+    #[tokio::test]
+    async fn a_reorg_lowering_the_account_nonce_moves_the_validity_lane_back() {
+        let (pool, client) = build_integration_pool();
+        let signer = funded_signer(&client);
+        let lane = (signer.address(), U256::ZERO);
+        let validity2 = add(&pool, validity_1559(&signer, 2, 1_000)).await;
+        canonical_update(
+            &pool,
+            1,
+            vec![account_at(signer.address(), 2)],
+            vec![],
+            PoolUpdateKind::Commit,
+        );
+        assert!(is_pending(&pool, validity2));
+
+        // A commit never moves the anchor back.
+        canonical_update(
+            &pool,
+            2,
+            vec![account_at(signer.address(), 1)],
+            vec![],
+            PoolUpdateKind::Commit,
+        );
+        assert_eq!(pool.validity.pool.read().lane_cursor(&lane), Some(LaneCursor::at(2)));
+
+        // The new branch never mined nonces 0 and 1: the lane waits behind the gap.
+        canonical_update(
+            &pool,
+            1,
+            vec![account_at(signer.address(), 0)],
+            vec![],
+            PoolUpdateKind::Reorg,
+        );
+        assert_eq!(pool.validity.pool.read().lane_cursor(&lane), Some(LaneCursor::at(0)));
+        assert!(is_queued(&pool, validity2));
+        assert!(best_hashes(&pool).is_empty());
+
+        // Re-injected standard transactions close the gap.
+        let standard0 = add(&pool, signed_1559(&signer, 0)).await;
+        let standard1 = add(&pool, signed_1559(&signer, 1)).await;
+        assert!(is_pending(&pool, validity2));
+        assert_eq!(best_hashes(&pool), vec![standard0, standard1, validity2]);
+    }
+
+    #[tokio::test]
+    async fn an_account_resync_lowering_the_nonce_moves_the_validity_lane_back() {
+        let (pool, client) = build_integration_pool();
+        let signer = funded_signer(&client);
+        let lane = (signer.address(), U256::ZERO);
+        let validity1 = add(&pool, validity_1559(&signer, 1, 1_000)).await;
+        pool.update_accounts(vec![account_at(signer.address(), 1)]);
+        assert!(is_pending(&pool, validity1));
+
+        pool.update_accounts(vec![account_at(signer.address(), 0)]);
+        assert_eq!(pool.validity.pool.read().lane_cursor(&lane), Some(LaneCursor::at(0)));
+        assert!(is_queued(&pool, validity1));
     }
 }

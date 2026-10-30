@@ -929,7 +929,9 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
     ///
     /// Canonical maintenance runs independently of validation, so a late update
     /// for an older block can report a nonce an insert has already anchored
-    /// past. Only validation anchoring may move a cursor backward (on a reorg).
+    /// past. Only validation anchoring and authoritative account nonces (a
+    /// reorg or reth's account resync) move a cursor backward, through
+    /// [`Self::set_lane_cursor`].
     pub(crate) fn advance_lane_nonce(&mut self, lane_id: LaneId, nonce: u64) -> LaneUpdate<T> {
         match self.lanes.get(&lane_id) {
             Some(lane) if lane.state_nonce < nonce => self.set_lane_cursor(
