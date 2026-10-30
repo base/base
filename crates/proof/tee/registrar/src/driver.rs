@@ -67,6 +67,27 @@ pub struct RegisterableSigner {
     pub attestation: Vec<u8>,
 }
 
+/// Endpoint I/O outcome for one discovered instance, before applying cache grace.
+#[derive(Debug)]
+pub enum InstanceObservation {
+    /// The readiness probe failed.
+    Unreachable,
+    /// Signer addresses resolved; draining instances have no registerable signers.
+    Resolved {
+        /// Addresses derived from the enclave public keys.
+        signers: Vec<Address>,
+        /// Signers with attestations eligible for registration.
+        registerable: Vec<RegisterableSigner>,
+    },
+    /// Signer addresses resolved, but attestations failed or had the wrong count.
+    AttestationsUnavailable {
+        /// Addresses derived from the enclave public keys.
+        signers: Vec<Address>,
+    },
+    /// Public key fetching or address derivation failed.
+    Failed,
+}
+
 /// Per-cycle discovery snapshot consumed by signer reconciliation.
 #[derive(Debug, Default)]
 pub struct DiscoveryResolution {
@@ -189,15 +210,19 @@ where
         info!("registration driver stopped");
         Ok(())
     }
-    /// Resolves one instance into active and registerable signers.
-    async fn resolve_instance(&self, instance: &ProverInstance) -> Result<DiscoveryResolution> {
+    /// Resolves signer keys and attestations without applying cache grace.
+    async fn resolve_instance(&self, instance: &ProverInstance) -> Result<InstanceObservation> {
         if self.config.cancel.is_cancelled() {
-            return Ok(DiscoveryResolution::default());
+            return Ok(if instance.health_status == InstanceHealthStatus::Unhealthy {
+                InstanceObservation::Unreachable
+            } else {
+                InstanceObservation::Resolved { signers: Vec::new(), registerable: Vec::new() }
+            });
         }
 
         if instance.health_status == InstanceHealthStatus::Unhealthy {
             debug!(instance = %instance.instance_id, "unhealthy instance, skipping resolution");
-            return Ok(DiscoveryResolution::default());
+            return Ok(InstanceObservation::Unreachable);
         }
 
         let public_keys = self.signer_client.signer_public_key(&instance.endpoint).await?;
@@ -205,13 +230,12 @@ where
             .iter()
             .map(|key| ProverClient::derive_address(key))
             .collect::<Result<Vec<_>>>()?;
-        let mut outcome = DiscoveryResolution {
-            active_signers: addresses.iter().copied().collect(),
-            ..Default::default()
-        };
 
         if addresses.is_empty() {
-            return Ok(outcome);
+            return Ok(InstanceObservation::Resolved {
+                signers: addresses,
+                registerable: Vec::new(),
+            });
         }
 
         if instance.health_status != InstanceHealthStatus::Healthy {
@@ -220,11 +244,17 @@ where
                 instance = %instance.instance_id,
                 "instance not registerable, skipping registration"
             );
-            return Ok(outcome);
+            return Ok(InstanceObservation::Resolved {
+                signers: addresses,
+                registerable: Vec::new(),
+            });
         }
 
         if self.config.cancel.is_cancelled() {
-            return Ok(outcome);
+            return Ok(InstanceObservation::Resolved {
+                signers: addresses,
+                registerable: Vec::new(),
+            });
         }
 
         let nonces = addresses
@@ -246,8 +276,7 @@ where
                         "failed to fetch signer attestations after resolving signer addresses"
                     );
                     RegistrarMetrics::processing_errors_total().increment(1);
-                    outcome.unresolved_instance_ids.insert(instance.instance_id.clone());
-                    return Ok(outcome);
+                    return Ok(InstanceObservation::AttestationsUnavailable { signers: addresses });
                 }
             };
 
@@ -259,34 +288,27 @@ where
                 "signer attestation count did not match signer public key count"
             );
             RegistrarMetrics::processing_errors_total().increment(1);
-            outcome.unresolved_instance_ids.insert(instance.instance_id.clone());
-            return Ok(outcome);
+            return Ok(InstanceObservation::AttestationsUnavailable { signers: addresses });
         }
 
-        outcome.registerable.extend(addresses.into_iter().zip(all_attestations).map(
-            |(signer, attestation)| RegisterableSigner {
+        let registerable = addresses
+            .iter()
+            .copied()
+            .zip(all_attestations)
+            .map(|(signer, attestation)| RegisterableSigner {
                 instance: instance.clone(),
                 signer,
                 attestation,
-            },
-        ));
-        Ok(outcome)
+            })
+            .collect();
+        Ok(InstanceObservation::Resolved { signers: addresses, registerable })
     }
 
-    /// Runs one discovery cycle and resolves every instance into a [`DiscoveryResolution`].
-    async fn discover_and_resolve(
+    /// Probes and resolves instances concurrently, omitting cancelled readiness probes.
+    pub async fn observe_instances(
         &self,
-        last_known_active: &mut HashMap<String, (Vec<Address>, u32)>,
-        unhealthy_instance_ids_with_grace: &mut HashSet<String>,
-    ) -> Result<DiscoveryResolution> {
-        let instances = self.discovery.discover_instances().await?;
-        RegistrarMetrics::discovery_success_total().increment(1);
-
-        let discovered_instance_ids: HashSet<String> =
-            instances.iter().map(|instance| instance.instance_id.clone()).collect();
-        let mut resolution = DiscoveryResolution::default();
-        let mut unhealthy_instance_ids = HashSet::new();
-
+        instances: Vec<ProverInstance>,
+    ) -> Vec<(ProverInstance, InstanceObservation)> {
         // Probe each non-draining target immediately before resolving it. ALB
         // `/healthz` is registration-gated on nitro-host, so trusting it alone
         // deadlocks bootstrap. Pairing the probe with resolution lets healthy
@@ -323,27 +345,13 @@ where
             }))
             .buffer_unordered(self.config.max_concurrency.max(1));
 
+        let mut observations = Vec::new();
         while let Some((instance, result)) = futs.next().await {
             let Some(result) = result else {
                 continue;
             };
-            if instance.health_status == InstanceHealthStatus::Unhealthy {
-                unhealthy_instance_ids.insert(instance.instance_id.clone());
-            }
-            match result {
-                Ok(outcome) => {
-                    let active_signers = outcome.active_signers.iter().copied().collect::<Vec<_>>();
-                    if active_signers.is_empty() {
-                        if instance.health_status != InstanceHealthStatus::Unhealthy {
-                            last_known_active.remove(&instance.instance_id);
-                        }
-                    } else {
-                        last_known_active.insert(instance.instance_id, (active_signers, 0));
-                    }
-                    resolution.registerable.extend(outcome.registerable);
-                    resolution.active_signers.extend(outcome.active_signers);
-                    resolution.unresolved_instance_ids.extend(outcome.unresolved_instance_ids);
-                }
+            let observation = match result {
+                Ok(observation) => observation,
                 Err(e) => {
                     warn!(
                         error = %e,
@@ -352,13 +360,49 @@ where
                         "failed to resolve instance"
                     );
                     RegistrarMetrics::processing_errors_total().increment(1);
-                    resolution.unresolved_instance_ids.insert(instance.instance_id);
+                    InstanceObservation::Failed
                 }
-            }
+            };
+            observations.push((instance, observation));
         }
+        observations
+    }
 
-        if self.config.cancel.is_cancelled() {
-            return Ok(DiscoveryResolution::default());
+    /// Applies observations and the unavailable-instance grace cache without endpoint I/O.
+    pub fn fold_observations(
+        &self,
+        observations: Vec<(ProverInstance, InstanceObservation)>,
+        discovered_instance_ids: &HashSet<String>,
+        last_known_active: &mut HashMap<String, (Vec<Address>, u32)>,
+        unhealthy_instance_ids_with_grace: &mut HashSet<String>,
+    ) -> DiscoveryResolution {
+        let mut resolution = DiscoveryResolution::default();
+        let mut unhealthy_instance_ids = HashSet::new();
+        for (instance, observation) in observations {
+            let (signers, registerable) = match observation {
+                InstanceObservation::Unreachable => {
+                    unhealthy_instance_ids.insert(instance.instance_id);
+                    continue;
+                }
+                InstanceObservation::Failed => {
+                    // Failed key resolution neither refreshes nor ages cached signers.
+                    resolution.unresolved_instance_ids.insert(instance.instance_id);
+                    continue;
+                }
+                InstanceObservation::AttestationsUnavailable { signers } => {
+                    resolution.unresolved_instance_ids.insert(instance.instance_id.clone());
+                    (signers, Vec::new())
+                }
+                InstanceObservation::Resolved { signers, registerable } => (signers, registerable),
+            };
+            let signers = signers.into_iter().collect::<HashSet<_>>();
+            resolution.active_signers.extend(signers.iter().copied());
+            if signers.is_empty() {
+                last_known_active.remove(&instance.instance_id);
+            } else {
+                last_known_active.insert(instance.instance_id, (signers.into_iter().collect(), 0));
+            }
+            resolution.registerable.extend(registerable);
         }
 
         unhealthy_instance_ids_with_grace
@@ -418,6 +462,29 @@ where
         RegistrarMetrics::unresolved_instances_count()
             .set(resolution.unresolved_instance_ids.len() as f64);
 
+        resolution
+    }
+
+    /// Runs discovery I/O, then folds observations into the grace-period cache.
+    async fn discover_and_resolve(
+        &self,
+        last_known_active: &mut HashMap<String, (Vec<Address>, u32)>,
+        unhealthy_instance_ids_with_grace: &mut HashSet<String>,
+    ) -> Result<DiscoveryResolution> {
+        let instances = self.discovery.discover_instances().await?;
+        RegistrarMetrics::discovery_success_total().increment(1);
+        let discovered_instance_ids =
+            instances.iter().map(|instance| instance.instance_id.clone()).collect();
+        let observations = self.observe_instances(instances).await;
+        if self.config.cancel.is_cancelled() {
+            return Ok(DiscoveryResolution::default());
+        }
+        let resolution = self.fold_observations(
+            observations,
+            &discovered_instance_ids,
+            last_known_active,
+            unhealthy_instance_ids_with_grace,
+        );
         Ok(resolution)
     }
 }
@@ -594,6 +661,106 @@ mod tests {
             .discover_and_resolve(&mut last_known_active, &mut unhealthy_instance_ids_with_grace)
             .await
             .unwrap()
+    }
+
+    #[tokio::test]
+    async fn observations_report_readyz_failure() {
+        let mut client = MockEnclaveEndpointClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]);
+        client.fail_readyz.insert(endpoint_url(EP1));
+        let driver = cycle_driver(vec![], client, CancellationToken::new());
+
+        let observations = driver.observe_instances(vec![healthy_prover_instance(EP1)]).await;
+
+        assert!(matches!(&observations[..], [(_, InstanceObservation::Unreachable)]));
+        assert!(driver.signer_client.requested_public_keys.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn observations_report_attestation_failure_with_signers() {
+        let mut client = MockEnclaveEndpointClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]);
+        client.fail_attestation.insert(endpoint_url(EP1));
+        let driver = cycle_driver(vec![], client, CancellationToken::new());
+
+        let observations = driver.observe_instances(vec![healthy_prover_instance(EP1)]).await;
+
+        assert!(
+            matches!(&observations[..], [(_, InstanceObservation::AttestationsUnavailable { signers })]
+            if *signers == vec![signer_from_private_key(&HARDHAT_KEY_0)])
+        );
+    }
+
+    #[tokio::test]
+    async fn observations_report_too_few_attestations_with_signers() {
+        let mut client = MockEnclaveEndpointClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]);
+        client.attestations.insert(endpoint_url(EP1), vec![]);
+        let driver = cycle_driver(vec![], client, CancellationToken::new());
+
+        let observations = driver.observe_instances(vec![healthy_prover_instance(EP1)]).await;
+
+        assert!(
+            matches!(&observations[..], [(_, InstanceObservation::AttestationsUnavailable { signers })]
+            if *signers == vec![signer_from_private_key(&HARDHAT_KEY_0)])
+        );
+    }
+
+    #[tokio::test]
+    async fn observations_report_too_many_attestations_with_signers() {
+        let mut client = MockEnclaveEndpointClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]);
+        client.attestations.insert(endpoint_url(EP1), vec![vec![1], vec![2]]);
+        let driver = cycle_driver(vec![], client, CancellationToken::new());
+
+        let observations = driver.observe_instances(vec![healthy_prover_instance(EP1)]).await;
+
+        assert!(
+            matches!(&observations[..], [(_, InstanceObservation::AttestationsUnavailable { signers })]
+            if *signers == vec![signer_from_private_key(&HARDHAT_KEY_0)])
+        );
+    }
+
+    #[tokio::test]
+    async fn observations_report_key_fetch_failure() {
+        let driver =
+            cycle_driver(vec![], MockEnclaveEndpointClient::default(), CancellationToken::new());
+
+        let observations = driver.observe_instances(vec![healthy_prover_instance(EP1)]).await;
+
+        assert!(matches!(&observations[..], [(_, InstanceObservation::Failed)]));
+    }
+
+    #[tokio::test]
+    async fn observations_report_address_derivation_failure() {
+        let client = MockEnclaveEndpointClient {
+            keys: HashMap::from([(endpoint_url(EP1), vec![vec![0]])]),
+            ..Default::default()
+        };
+        let driver = cycle_driver(vec![], client, CancellationToken::new());
+
+        let observations = driver.observe_instances(vec![healthy_prover_instance(EP1)]).await;
+
+        assert!(matches!(&observations[..], [(_, InstanceObservation::Failed)]));
+    }
+
+    #[tokio::test]
+    async fn discover_and_resolve_failed_keys_leave_cache_unaged_without_protecting_signers() {
+        let instance = healthy_prover_instance(EP1);
+        let signer = signer_from_private_key(&HARDHAT_KEY_0);
+        let mut last_known_active =
+            HashMap::from([(instance.instance_id.clone(), (vec![signer], 2))]);
+        let driver = cycle_driver(
+            vec![instance.clone()],
+            MockEnclaveEndpointClient::default(),
+            CancellationToken::new(),
+        );
+
+        let resolution =
+            driver.discover_and_resolve(&mut last_known_active, &mut HashSet::new()).await.unwrap();
+
+        assert!(resolution.active_signers.is_empty());
+        assert_eq!(
+            resolution.unresolved_instance_ids,
+            HashSet::from([instance.instance_id.clone()])
+        );
+        assert_eq!(last_known_active[&instance.instance_id], (vec![signer], 2));
     }
 
     #[tokio::test]
