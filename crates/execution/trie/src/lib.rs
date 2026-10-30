@@ -17,6 +17,9 @@ pub use api::{
     BlockStateDiff, StorageBranchEntries,
 };
 
+mod backend;
+pub use backend::{BaseProofsBackend, ProofsBackend};
+
 pub mod initialize;
 pub use initialize::{InitializationJob, RethTrieStorageLayout};
 

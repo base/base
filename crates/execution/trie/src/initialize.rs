@@ -218,73 +218,18 @@ impl<Tx: DbTx + Sync, S: BaseProofsStore + BaseProofsInitialStateStore + Send>
     >(
         &self,
         name: &str,
-        source: I,
+        mut source: I,
         storage_threshold: usize,
         log_threshold: usize,
     ) -> Result<u64, BaseProofsStorageError> {
-        info!(name = %name, "Starting initialization");
-        let start_time = Instant::now();
-
-        let mut source = source.peekable();
-        let Some(first_entry) = source.peek() else {
-            debug!(target: "reth::cli", "No entries to store for table");
-            return Ok(0);
-        };
-        let initial_progress = match first_entry {
-            Ok(i) => i.0.estimate_progress(),
-            Err(e) => Err(e.clone())?,
-        };
-
         let storage = &self.storage;
-        let source_size_hint = source.size_hint().0;
-        let mut batch = Vec::with_capacity(source_size_hint.min(storage_threshold));
-        let mut total_entries: usize = 0;
-
-        for entry in source {
-            batch.push(entry?);
-            total_entries += 1;
-
-            if total_entries.is_multiple_of(log_threshold) {
-                let progress = batch.last().expect("non-empty batch").0.estimate_progress();
-                let elapsed = start_time.elapsed();
-                let elapsed_secs = elapsed.as_secs_f64();
-
-                let progress_per_second = if elapsed_secs.is_normal() {
-                    (progress - initial_progress) / elapsed_secs
-                } else {
-                    0.0
-                };
-                let estimated_total_time = if progress_per_second.is_normal() {
-                    (1.0 - progress) / progress_per_second
-                } else {
-                    0.0
-                };
-                let progress_pct = progress * 100.0;
-                info!(
-                    name = %name,
-                    total_entries,
-                    progress_pct = format_args!("{:.2}", progress_pct),
-                    estimated_total_time = format_args!("{:.1}", estimated_total_time),
-                    "Processed entries"
-                );
-            }
-
-            if batch.len() >= storage_threshold {
-                info!(name = %name, total_entries = total_entries, "Storing entries");
-                I::store_entries(storage, batch)?;
-                batch = Vec::with_capacity(
-                    (source_size_hint.saturating_sub(total_entries)).min(storage_threshold),
-                );
-            }
-        }
-
-        if !batch.is_empty() {
-            info!(name = %name, "Storing final entries");
-            I::store_entries(storage, batch)?;
-        }
-
-        info!(name = %name, total_entries = total_entries, "initialization complete");
-        Ok(total_entries as u64)
+        InitBatcher::run(
+            name,
+            &mut source,
+            &mut |batch| I::store_entries(storage, batch),
+            storage_threshold,
+            log_threshold,
+        )
     }
 
     /// Initialize hashed accounts data
@@ -460,6 +405,88 @@ impl<Tx: DbTx + Sync, S: BaseProofsStore + BaseProofsInitialStateStore + Send>
         self.storage.commit_initial_state()?;
 
         Ok(())
+    }
+}
+
+/// Batching and progress-logging loop shared by every initialization table.
+///
+/// Takes the source and sink as trait objects so the loop compiles once per key/value type,
+/// rather than once per cursor, trie layout, transaction, and proofs-store backend.
+#[derive(Debug)]
+struct InitBatcher;
+
+impl InitBatcher {
+    /// Drains `source` into `store` in batches of `storage_threshold`, logging progress every
+    /// `log_threshold` entries. Returns the number of entries stored.
+    fn run<Key: CompletionEstimatable, Value>(
+        name: &str,
+        source: &mut dyn Iterator<Item = Result<(Key, Value), DatabaseError>>,
+        store: &mut dyn FnMut(Vec<(Key, Value)>) -> Result<(), BaseProofsStorageError>,
+        storage_threshold: usize,
+        log_threshold: usize,
+    ) -> Result<u64, BaseProofsStorageError> {
+        info!(name = %name, "Starting initialization");
+        let start_time = Instant::now();
+
+        let mut source = source.peekable();
+        let Some(first_entry) = source.peek() else {
+            debug!(target: "reth::cli", "No entries to store for table");
+            return Ok(0);
+        };
+        let initial_progress = match first_entry {
+            Ok(i) => i.0.estimate_progress(),
+            Err(e) => Err(e.clone())?,
+        };
+
+        let source_size_hint = source.size_hint().0;
+        let mut batch = Vec::with_capacity(source_size_hint.min(storage_threshold));
+        let mut total_entries: usize = 0;
+
+        for entry in source {
+            batch.push(entry?);
+            total_entries += 1;
+
+            if total_entries.is_multiple_of(log_threshold) {
+                let progress = batch.last().expect("non-empty batch").0.estimate_progress();
+                let elapsed = start_time.elapsed();
+                let elapsed_secs = elapsed.as_secs_f64();
+
+                let progress_per_second = if elapsed_secs.is_normal() {
+                    (progress - initial_progress) / elapsed_secs
+                } else {
+                    0.0
+                };
+                let estimated_total_time = if progress_per_second.is_normal() {
+                    (1.0 - progress) / progress_per_second
+                } else {
+                    0.0
+                };
+                let progress_pct = progress * 100.0;
+                info!(
+                    name = %name,
+                    total_entries,
+                    progress_pct = format_args!("{:.2}", progress_pct),
+                    estimated_total_time = format_args!("{:.1}", estimated_total_time),
+                    "Processed entries"
+                );
+            }
+
+            if batch.len() >= storage_threshold {
+                info!(name = %name, total_entries = total_entries, "Storing entries");
+                store(batch)?;
+                batch = Vec::with_capacity(
+                    (source_size_hint.saturating_sub(total_entries)).min(storage_threshold),
+                );
+            }
+        }
+
+        if !batch.is_empty() {
+            info!(name = %name, "Storing final entries");
+            store(batch)?;
+        }
+
+        info!(name = %name, total_entries = total_entries, "initialization complete");
+        Ok(total_entries as u64)
     }
 }
 

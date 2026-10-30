@@ -5,8 +5,9 @@ use std::{path::PathBuf, sync::Arc};
 use base_common_consensus::BasePrimitives;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_trie::{
-    BaseProofsInitialStateStore, BaseProofsStorage, BaseProofsStore, InitializationJob,
-    MdbxProofsStorage, RethTrieStorageLayout, RocksdbProofsStorage,
+    BaseProofsBackend, BaseProofsInitialStateStore, BaseProofsStorage, BaseProofsStore,
+    InitializationJob, MdbxProofsStorage, ProofsBackend, RethTrieStorageLayout,
+    RocksdbProofsStorage,
 };
 use base_node_core::args::{ProofsHistoryDbBackend, ProofsHistoryRocksdbArgs};
 use clap::Parser;
@@ -72,27 +73,22 @@ impl<C: ChainSpecParser<ChainSpec = BaseChainSpec>> InitCommand<C> {
         // Initialize the environment with read-only access
         let Environment { provider_factory, .. } = env.init::<N>(AccessRights::RO, runtime)?;
 
-        match proofs_history_db {
-            ProofsHistoryDbBackend::Rocksdb => {
-                let storage: BaseProofsStorage<Arc<RocksdbProofsStorage>> = Arc::new(
-                    RocksdbProofsStorage::new_with_options(
-                        &storage_path,
-                        proofs_history_rocksdb.storage_options()?,
-                    )
-                    .map_err(|e| eyre::eyre!("Failed to create RocksdbProofsStorage: {e}"))?,
+        // One backend-erased store type, so the initialization job is instantiated once.
+        let backend = match proofs_history_db {
+            ProofsHistoryDbBackend::Rocksdb => ProofsBackend::Rocksdb(
+                RocksdbProofsStorage::new_with_options(
+                    &storage_path,
+                    proofs_history_rocksdb.storage_options()?,
                 )
-                .into();
-                Self::initialize_storage(storage, &provider_factory)?;
-            }
-            ProofsHistoryDbBackend::Mdbx => {
-                let storage: BaseProofsStorage<Arc<MdbxProofsStorage>> = Arc::new(
-                    MdbxProofsStorage::new(&storage_path)
-                        .map_err(|e| eyre::eyre!("Failed to create MdbxProofsStorage: {e}"))?,
-                )
-                .into();
-                Self::initialize_storage(storage, &provider_factory)?;
-            }
-        }
+                .map_err(|e| eyre::eyre!("Failed to create RocksdbProofsStorage: {e}"))?,
+            ),
+            ProofsHistoryDbBackend::Mdbx => ProofsBackend::Mdbx(
+                MdbxProofsStorage::new(&storage_path)
+                    .map_err(|e| eyre::eyre!("Failed to create MdbxProofsStorage: {e}"))?,
+            ),
+        };
+        let storage: BaseProofsStorage<Arc<BaseProofsBackend>> = Arc::new(backend).into();
+        Self::initialize_storage(storage, &provider_factory)?;
 
         Ok(())
     }

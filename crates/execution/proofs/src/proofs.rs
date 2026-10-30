@@ -6,7 +6,7 @@ use base_execution_rpc::{
     eth::proofs::{EthApiExt, EthApiOverrideServer},
 };
 use base_execution_trie::{
-    BaseProofsBatchStore, BaseProofsStorage, MdbxProofsStorage, RocksdbProofsStorage,
+    BaseProofsBackend, BaseProofsStorage, MdbxProofsStorage, ProofsBackend, RocksdbProofsStorage,
 };
 use base_node_core::args::{ProofsHistoryDbBackend, RollupArgs};
 use base_node_runner::{BaseNodeExtension, FromExtensionConfig, NodeHooks};
@@ -63,7 +63,7 @@ impl BaseNodeExtension for ProofsHistoryExtension {
                 return hooks.add_node_started_hook(move |_| Err(e));
             }
 
-            match proofs_history_db {
+            let backend = match proofs_history_db {
                 ProofsHistoryDbBackend::Rocksdb => {
                     let storage_options = match proofs_history_rocksdb.storage_options() {
                         Ok(options) => options,
@@ -86,13 +86,7 @@ impl BaseNodeExtension for ProofsHistoryExtension {
                                 return hooks.add_node_started_hook(move |_| Err(e));
                             }
                         };
-                    hooks = install_proofs_history(
-                        hooks,
-                        Arc::new(rocksdb),
-                        proofs_history_window,
-                        proofs_history_prune_interval,
-                        proofs_history_verification_interval,
-                    );
+                    ProofsBackend::Rocksdb(rocksdb)
                 }
                 ProofsHistoryDbBackend::Mdbx => {
                     let storage_options = proofs_history_mdbx.storage_options();
@@ -109,15 +103,16 @@ impl BaseNodeExtension for ProofsHistoryExtension {
                             return hooks.add_node_started_hook(move |_| Err(e));
                         }
                     };
-                    hooks = install_proofs_history(
-                        hooks,
-                        Arc::new(mdbx),
-                        proofs_history_window,
-                        proofs_history_prune_interval,
-                        proofs_history_verification_interval,
-                    );
+                    ProofsBackend::Mdbx(mdbx)
                 }
-            }
+            };
+            hooks = install_proofs_history(
+                hooks,
+                Arc::new(backend),
+                proofs_history_window,
+                proofs_history_prune_interval,
+                proofs_history_verification_interval,
+            );
         }
         hooks
     }
@@ -131,17 +126,16 @@ impl FromExtensionConfig for ProofsHistoryExtension {
     }
 }
 
-fn install_proofs_history<S>(
+/// Installs the proofs `ExEx`, RPC overrides, and storage metrics. Takes the backend-erased
+/// [`BaseProofsBackend`] so this code is instantiated once, not once per storage backend.
+fn install_proofs_history(
     mut hooks: NodeHooks,
-    storage_backend: Arc<S>,
+    storage_backend: Arc<BaseProofsBackend>,
     proofs_history_window: u64,
     proofs_history_prune_interval: Duration,
     proofs_history_verification_interval: u64,
-) -> NodeHooks
-where
-    S: BaseProofsBatchStore + DatabaseMetrics + Send + Sync + 'static,
-{
-    let storage: BaseProofsStorage<Arc<S>> = Arc::clone(&storage_backend).into();
+) -> NodeHooks {
+    let storage: BaseProofsStorage<Arc<BaseProofsBackend>> = Arc::clone(&storage_backend).into();
     let storage_exec = storage.clone();
 
     hooks = hooks.add_node_started_hook(move |node| {
