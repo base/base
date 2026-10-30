@@ -9,7 +9,7 @@ use alloy_primitives::{Address, U256};
 use alloy_provider::{Provider, RootProvider};
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
-use base_common_genesis::RollupConfig;
+use base_common_genesis::{BaseUpgrade, RollupConfig};
 use base_common_network::Base;
 use base_common_rpc_types::BaseTransactionRequest;
 use base_system_tests::{ANVIL_ACCOUNT_1, SetupImage, SystemTestStackBuilder};
@@ -34,9 +34,9 @@ async fn denim_and_zenith_activation_matches_el_and_cl_configs() -> Result<()> {
     let system = SystemTestStackBuilder::new()
         .with_l1_chain_id(L1_CHAIN_ID)
         .with_l2_chain_id(L2_CHAIN_ID)
-        .with_base_azul_activation_block(AZUL_ACTIVATION_BLOCK)
-        .with_base_denim_activation_block(DENIM_ACTIVATION_BLOCK)
-        .with_base_zenith_activation_block(ZENITH_ACTIVATION_BLOCK)
+        .with_base_activation_block(BaseUpgrade::Azul, AZUL_ACTIVATION_BLOCK)
+        .with_base_activation_block(BaseUpgrade::Denim, DENIM_ACTIVATION_BLOCK)
+        .with_base_activation_block(BaseUpgrade::Zenith, ZENITH_ACTIVATION_BLOCK)
         .build()
         .await?;
 

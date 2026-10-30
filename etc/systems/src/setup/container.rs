@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeMap,
     fs,
     io::ErrorKind,
     path::{Path, PathBuf},
@@ -7,6 +8,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use base_common_genesis::BaseUpgrade;
 use eyre::{Result, WrapErr, ensure};
 use testcontainers::{
     GenericImage, ImageExt,
@@ -240,12 +242,7 @@ pub struct SetupContainer {
     l2_chain_id: u64,
     slot_duration: u64,
     isthmus_activation_block: Option<u64>,
-    base_azul_activation_block: Option<u64>,
-    base_beryl_activation_block: Option<u64>,
-    base_cobalt_activation_block: Option<u64>,
-    base_denim_activation_block: Option<u64>,
-    base_everest_activation_block: Option<u64>,
-    base_zenith_activation_block: Option<u64>,
+    base_activation_blocks: BTreeMap<BaseUpgrade, u64>,
 }
 
 impl SetupContainer {
@@ -257,12 +254,7 @@ impl SetupContainer {
             l2_chain_id: 84538453,
             slot_duration: 1,
             isthmus_activation_block: None,
-            base_azul_activation_block: None,
-            base_beryl_activation_block: None,
-            base_cobalt_activation_block: None,
-            base_denim_activation_block: None,
-            base_everest_activation_block: None,
-            base_zenith_activation_block: None,
+            base_activation_blocks: BTreeMap::new(),
         }
     }
 
@@ -290,39 +282,12 @@ impl SetupContainer {
         self
     }
 
-    /// Sets the L2 block number at which Base Azul activates.
-    pub const fn with_base_azul_activation_block(mut self, block: u64) -> Self {
-        self.base_azul_activation_block = Some(block);
-        self
-    }
-
-    /// Sets the L2 block number at which Base Beryl activates.
-    pub const fn with_base_beryl_activation_block(mut self, block: u64) -> Self {
-        self.base_beryl_activation_block = Some(block);
-        self
-    }
-
-    /// Sets the L2 block number at which Base Cobalt activates.
-    pub const fn with_base_cobalt_activation_block(mut self, block: u64) -> Self {
-        self.base_cobalt_activation_block = Some(block);
-        self
-    }
-
-    /// Sets the L2 block number at which Base Denim activates.
-    pub const fn with_base_denim_activation_block(mut self, block: u64) -> Self {
-        self.base_denim_activation_block = Some(block);
-        self
-    }
-
-    /// Sets the L2 block number at which Base Everest activates.
-    pub const fn with_base_everest_activation_block(mut self, block: u64) -> Self {
-        self.base_everest_activation_block = Some(block);
-        self
-    }
-
-    /// Sets the L2 block number at which the genesis-only Base Zenith testing gate activates.
-    pub const fn with_base_zenith_activation_block(mut self, block: u64) -> Self {
-        self.base_zenith_activation_block = Some(block);
+    /// Sets the L2 block number at which a Base-specific upgrade (Azul or later) activates.
+    ///
+    /// op-deployer receives it as `L2_BASE_<NAME>_BLOCK`, named by the upgrade's contract ID.
+    pub fn with_base_activation_block(mut self, upgrade: BaseUpgrade, block: u64) -> Self {
+        assert!(upgrade >= BaseUpgrade::Azul, "{upgrade} is not a Base-specific upgrade");
+        self.base_activation_blocks.insert(upgrade, block);
         self
     }
 
@@ -362,28 +327,11 @@ impl SetupContainer {
             container = container.with_env_var("L2_ISTHMUS_BLOCK", block.to_string());
         }
 
-        if let Some(block) = self.base_azul_activation_block {
-            container = container.with_env_var("L2_BASE_AZUL_BLOCK", block.to_string());
-        }
-
-        if let Some(block) = self.base_beryl_activation_block {
-            container = container.with_env_var("L2_BASE_BERYL_BLOCK", block.to_string());
-        }
-
-        if let Some(block) = self.base_cobalt_activation_block {
-            container = container.with_env_var("L2_BASE_COBALT_BLOCK", block.to_string());
-        }
-
-        if let Some(block) = self.base_denim_activation_block {
-            container = container.with_env_var("L2_BASE_DENIM_BLOCK", block.to_string());
-        }
-
-        if let Some(block) = self.base_everest_activation_block {
-            container = container.with_env_var("L2_BASE_EVEREST_BLOCK", block.to_string());
-        }
-
-        if let Some(block) = self.base_zenith_activation_block {
-            container = container.with_env_var("L2_BASE_ZENITH_BLOCK", block.to_string());
+        for (upgrade, block) in &self.base_activation_blocks {
+            container = container.with_env_var(
+                format!("L2_BASE_{}_BLOCK", upgrade.contract_id().to_ascii_uppercase()),
+                block.to_string(),
+            );
         }
 
         let _container = container

@@ -41,7 +41,7 @@ pub use batcher::{
 };
 
 mod matrix;
-pub use matrix::{ForkMatrix, ForkSetter};
+pub use matrix::ForkMatrix;
 
 mod test_rollup_config;
 pub use test_rollup_config::TestRollupConfigBuilder;

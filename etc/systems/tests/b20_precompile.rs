@@ -10,6 +10,7 @@ use alloy_primitives::{Address, B256, Bytes, LogData, U256, keccak256};
 use alloy_provider::{Provider, RootProvider};
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::{SolCall, SolEvent, SolValue};
+use base_common_genesis::BaseUpgrade;
 use base_common_network::Base;
 use base_common_precompiles::{
     ActivationFeature, B20FactoryStorage, B20TokenRole, B20Variant, IB20, IB20Asset, IB20Factory,
@@ -41,8 +42,8 @@ async fn start_beryl_system_before_activation() -> Result<(SystemTestStack, Root
     let system = SystemTestStackBuilder::new()
         .with_l1_chain_id(common::L1_CHAIN_ID)
         .with_l2_chain_id(common::L2_CHAIN_ID)
-        .with_base_azul_activation_block(common::BASE_AZUL_ACTIVATION_BLOCK)
-        .with_base_beryl_activation_block(PRE_BERYL_TEST_ACTIVATION_BLOCK)
+        .with_base_activation_block(BaseUpgrade::Azul, common::BASE_AZUL_ACTIVATION_BLOCK)
+        .with_base_activation_block(BaseUpgrade::Beryl, PRE_BERYL_TEST_ACTIVATION_BLOCK)
         .build()
         .await?;
     let provider = system.l2_builder_provider()?;

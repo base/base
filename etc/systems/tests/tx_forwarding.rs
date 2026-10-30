@@ -16,6 +16,7 @@ use alloy_rpc_client::RpcClient;
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use base_common_consensus::{Call, Eip8130Signed, TxEip8130};
+use base_common_genesis::BaseUpgrade;
 use base_common_network::Base;
 use base_common_rpc_types::BaseTransactionRequest;
 use base_execution_txpool::{
@@ -72,9 +73,9 @@ async fn start_validity_system() -> Result<SystemTestStack> {
     let system = SystemTestStackBuilder::new()
         .with_l1_chain_id(L1_CHAIN_ID)
         .with_l2_chain_id(L2_CHAIN_ID)
-        .with_base_cobalt_activation_block(0)
-        .with_base_denim_activation_block(DENIM_ACTIVATION_BLOCK)
-        .with_base_everest_activation_block(EVEREST_ACTIVATION_BLOCK)
+        .with_base_activation_block(BaseUpgrade::Cobalt, 0)
+        .with_base_activation_block(BaseUpgrade::Denim, DENIM_ACTIVATION_BLOCK)
+        .with_base_activation_block(BaseUpgrade::Everest, EVEREST_ACTIVATION_BLOCK)
         .with_tx_forwarding(
             TxForwardingConfig::new(vec![]).with_resend_after_ms(2000).with_max_batch_size(100),
         )
@@ -156,9 +157,9 @@ async fn signed_validity_forwarding_is_included_by_an_enforcing_builder() -> Res
     let system = SystemTestStackBuilder::new()
         .with_l1_chain_id(L1_CHAIN_ID)
         .with_l2_chain_id(L2_CHAIN_ID)
-        .with_base_cobalt_activation_block(0)
-        .with_base_denim_activation_block(DENIM_ACTIVATION_BLOCK)
-        .with_base_everest_activation_block(EVEREST_ACTIVATION_BLOCK)
+        .with_base_activation_block(BaseUpgrade::Cobalt, 0)
+        .with_base_activation_block(BaseUpgrade::Denim, DENIM_ACTIVATION_BLOCK)
+        .with_base_activation_block(BaseUpgrade::Everest, EVEREST_ACTIVATION_BLOCK)
         .with_tx_forwarding(TxForwardingConfig::new(vec![]).with_resend_after_ms(2000))
         .with_validity_signature_mode(ValiditySignatureMode::Required)
         .with_payload_builder_cutover()

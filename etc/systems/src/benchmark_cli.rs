@@ -19,6 +19,7 @@ use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types_eth::BlockNumberOrTag;
 use alloy_signer_local::PrivateKeySigner;
 use base_builder_core::RestingPredicateMode;
+use base_common_genesis::BaseUpgrade;
 use base_common_network::Base;
 use base_common_precompiles::ActivationFeature;
 use base_load_tests::{
@@ -318,8 +319,11 @@ impl LocalBenchmarkArgs {
         let mut stack_builder = SystemTestStackBuilder::new().with_devnet_config(devnet);
         if requires_b20_activation {
             stack_builder = stack_builder
-                .with_base_azul_activation_block(FRESH_DEVNET_AZUL_ACTIVATION_BLOCK)
-                .with_base_beryl_activation_block(FRESH_DEVNET_BERYL_ACTIVATION_BLOCK);
+                .with_base_activation_block(BaseUpgrade::Azul, FRESH_DEVNET_AZUL_ACTIVATION_BLOCK)
+                .with_base_activation_block(
+                    BaseUpgrade::Beryl,
+                    FRESH_DEVNET_BERYL_ACTIVATION_BLOCK,
+                );
         }
         let stack = stack_builder.build().await?;
 
