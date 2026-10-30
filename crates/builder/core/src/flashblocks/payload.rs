@@ -16,7 +16,7 @@ use alloy_eips::{Encodable2718, eip7685::EMPTY_REQUESTS_HASH, merge::BEACON_NONC
 use alloy_evm::Database;
 use alloy_primitives::{Address, B256, Bloom, U256, logs_bloom, map::foldhash::HashMap};
 use base_builder_publish::WebSocketPublisher;
-use base_common_chains::Upgrades;
+use base_common_chains::{BaseFeature, Upgrades};
 use base_common_consensus::{BaseReceipt, BaseTransactionSigned};
 use base_common_flashblocks::{
     ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, FlashblockId, FlashblocksPayloadV1,
@@ -704,6 +704,11 @@ where
             block_da_footprint_limit: target_da_footprint_for_batch,
             tx_execution_time_limit_us: ctx.builder_config.max_execution_time_per_tx_us,
             block_uncompressed_size_limit: ctx.builder_config.max_uncompressed_block_size,
+            // Gas-limit billing bills and reports reserved gas, so the per-transaction cap is
+            // decided on it before execution.
+            max_reserved_gas_per_tx: ctx.builder_config.max_gas_per_txn.filter(|_| {
+                ctx.evm_env.cfg_env.spec.is_feature_enabled(BaseFeature::GasLimitBilling)
+            }),
         };
         let diag = ctx
             .execute_best_transactions(info, deferrals, state, best_txs, &limits)

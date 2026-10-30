@@ -34,6 +34,11 @@ pub struct ResourceLimits {
     pub tx_execution_time_limit_us: Option<u128>,
     /// Maximum cumulative uncompressed (EIP-2718 encoded) block size in bytes (optional).
     pub block_uncompressed_size_limit: Option<u64>,
+    /// Maximum reserved gas per transaction (optional): the declared `gas_limit` plus EIP-8130
+    /// payer authentication. Set only while gas-limit billing is active, when reserved gas is the
+    /// gas a transaction is billed and reported as using, so the per-transaction cap can be
+    /// decided before execution. Otherwise the cap applies to metered gas after execution.
+    pub max_reserved_gas_per_tx: Option<u64>,
 }
 
 /// Resource usage for a single transaction.
@@ -258,11 +263,22 @@ impl ExecutionInfo {
     ///   maximum allowed DA limit per block.
     /// - execution time limit: if configured with metering data, ensures the transaction's
     ///   predicted execution time does not exceed the per-transaction limit.
+    /// - reserved gas cap: if configured (gas-limit billing), ensures the declared gas limit plus
+    ///   payer authentication does not exceed the per-transaction gas cap.
     pub fn is_tx_over_limits(
         &self,
         tx: &TxResources,
         limits: &ResourceLimits,
     ) -> Result<(), TxnExecutionError> {
+        // The reserved gas cap is intrinsic to the transaction, so check it before any transient
+        // block-capacity limit: an over-cap transaction is permanently rejected rather than
+        // retried in a later flashblock.
+        if let Some(cap) = limits.max_reserved_gas_per_tx
+            && tx.gas_limit.saturating_add(tx.payer_auth) > cap
+        {
+            return Err(TxnExecutionError::MaxGasUsageExceeded);
+        }
+
         // Check per-transaction DA size limit (always enforced, operator-configured)
         if let Some(da_limit) = limits.tx_data_limit
             && tx.da_size > da_limit
@@ -335,6 +351,8 @@ impl ExecutionInfo {
 
 #[cfg(test)]
 mod tests {
+    use rstest::rstest;
+
     use super::*;
 
     /// Helper to create default limits with block gas limit set
@@ -599,5 +617,56 @@ mod tests {
             TxResources { gas_limit: 21_000, uncompressed_size: 1_000_000, ..Default::default() };
 
         assert!(info.is_tx_over_limits(&tx, &limits).is_ok());
+    }
+
+    // ==================== Reserved Gas Cap Tests ====================
+
+    const RESERVED_GAS_CAP: u64 = 25_000;
+
+    #[rstest]
+    #[case::above_cap(25_001, 0, false)]
+    #[case::payer_auth_counts(25_000, 1, false)]
+    #[case::within_cap_with_payer_auth(20_000, 5_000, true)]
+    #[case::at_cap(25_000, 0, true)]
+    fn reserved_gas_cap_applies_to_gas_limit_plus_payer_auth(
+        #[case] gas_limit: u64,
+        #[case] payer_auth: u64,
+        #[case] admitted: bool,
+    ) {
+        let info = ExecutionInfo::with_capacity(10);
+        let limits =
+            ResourceLimits { max_reserved_gas_per_tx: Some(RESERVED_GAS_CAP), ..default_limits() };
+        let tx = TxResources { gas_limit, payer_auth, ..Default::default() };
+
+        match info.is_tx_over_limits(&tx, &limits) {
+            Ok(()) => assert!(admitted, "over-cap transaction was admitted"),
+            Err(err) => {
+                assert!(!admitted, "within-cap transaction was rejected: {err}");
+                assert!(matches!(err, TxnExecutionError::MaxGasUsageExceeded));
+                assert!(err.is_permanent());
+            }
+        }
+    }
+
+    #[test]
+    fn unset_reserved_gas_cap_admits_any_declared_gas_limit() {
+        let info = ExecutionInfo::with_capacity(10);
+        let tx = TxResources { gas_limit: 1_000_000, payer_auth: 50_000, ..Default::default() };
+
+        assert!(info.is_tx_over_limits(&tx, &default_limits()).is_ok());
+    }
+
+    #[test]
+    fn reserved_gas_cap_rejection_is_permanent_even_when_block_gas_is_full() {
+        // Block gas exhaustion alone is transient; an over-cap transaction must still be
+        // classified as permanently rejected so it is evicted instead of retried.
+        let info = ExecutionInfo { cumulative_gas_used: 30_000_000, ..Default::default() };
+        let limits =
+            ResourceLimits { max_reserved_gas_per_tx: Some(RESERVED_GAS_CAP), ..default_limits() };
+        let tx = TxResources { gas_limit: 100_000, ..Default::default() };
+
+        let err = info.is_tx_over_limits(&tx, &limits).unwrap_err();
+        assert!(matches!(err, TxnExecutionError::MaxGasUsageExceeded));
+        assert!(err.is_permanent());
     }
 }

@@ -1,6 +1,6 @@
 //! Base fork schedule for the EVM2 execution type family.
 
-use base_common_genesis::BaseUpgrade;
+use base_common_genesis::{BaseFeature, BaseUpgrade};
 use evm2::SpecId;
 
 /// A Base fork identifier for EVM2 execution.
@@ -22,6 +22,11 @@ impl BaseSpecId {
     /// Returns the wrapped Base network upgrade.
     pub const fn upgrade(self) -> BaseUpgrade {
         self.0
+    }
+
+    /// Whether this spec includes a behavior, using the execution upgrade ordering.
+    pub const fn is_feature_enabled(self, feature: BaseFeature) -> bool {
+        self.0.is_feature_enabled(feature)
     }
 }
 
@@ -57,6 +62,18 @@ impl From<BaseSpecId> for SpecId {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gas_limit_billing_is_enabled_only_at_zenith() {
+        // Every scheduled execution upgrade predates gas-limit billing; only Zenith enables it.
+        for upgrade in BaseUpgrade::EXECUTION_VARIANTS {
+            let spec = BaseSpecId::new(upgrade);
+            assert!(!spec.is_feature_enabled(BaseFeature::GasLimitBilling), "{upgrade:?}");
+        }
+        assert!(
+            BaseSpecId::new(BaseUpgrade::Zenith).is_feature_enabled(BaseFeature::GasLimitBilling)
+        );
+    }
 
     #[test]
     fn round_trips_the_wrapped_upgrade() {
