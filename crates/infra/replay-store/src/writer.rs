@@ -25,6 +25,9 @@ impl ReplayWriter {
         let minute = record.received_at_ms / ReplayStore::MINUTE_MS;
         ReplayStore::key(&self.network, record.received_at_ms)?;
         let line = record.to_jsonl_line()?;
+        if line.len() > ReplayStore::MAX_OBJECT_BYTES {
+            return Err(StoreError::Invalid("object size"));
+        }
         if self.minute.is_some_and(|m| minute < m) {
             return Err(StoreError::Invalid("closed minute"));
         }
@@ -77,6 +80,23 @@ mod tests {
             writer.push(&invalid).await,
             Err(StoreError::Record(ReplayRecordError::MultilineParams))
         ));
+        let unpublished: Vec<_> = store.read("base", 0..=60_000).try_collect().await.unwrap();
+        assert!(unpublished.is_empty());
+        writer.close().await.unwrap();
+        let records: Vec<_> = store.read("base", 0..=60_000).try_collect().await.unwrap();
+        assert_eq!(records.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn oversized_record_does_not_close_active_minute() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = ReplayStore::Local(dir.path().to_owned());
+        let mut writer = ReplayWriter::new(store.clone(), "base".into()).unwrap();
+        let mut record: ReplayRecord = serde_json::from_str(r#"{"stream":"builder_ingress","received_at_ms":0,"method":"call","params":[],"source":"x"}"#).unwrap();
+        writer.push(&record).await.unwrap();
+        record.received_at_ms = 60_000;
+        record.method = "x".repeat(ReplayStore::MAX_OBJECT_BYTES);
+        assert!(matches!(writer.push(&record).await, Err(StoreError::Invalid("object size"))));
         let unpublished: Vec<_> = store.read("base", 0..=60_000).try_collect().await.unwrap();
         assert!(unpublished.is_empty());
         writer.close().await.unwrap();
