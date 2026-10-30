@@ -271,8 +271,7 @@ impl PendingBlocksBuilder {
                 self.flashblocks.iter().rev().find_map(|flashblock| flashblock.base.clone())
             })
             .ok_or(BuildError::MissingHeaders)?;
-        let latest_block_l1_block_info =
-            self.latest_block_l1_block_info.unwrap_or_default();
+        let latest_block_l1_block_info = self.latest_block_l1_block_info.unwrap_or_default();
         let latest_block_transaction_count =
             self.latest_block_transaction_count.unwrap_or_else(|| {
                 self.transactions

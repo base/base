@@ -50,9 +50,6 @@ base-flashblocks-node = { workspace = true, features = ["test-utils"] }
 # reth
 reth-transaction-pool = { workspace = true, features = ["test-utils"] }
 
-# revm
-revm-database.workspace = true
-
 # alloy
 alloy-eips = { workspace = true, features = ["std"] }
 alloy-consensus = { workspace = true, features = ["std"] }

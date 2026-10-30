@@ -18,7 +18,7 @@ use alloy_genesis::{Genesis, GenesisAccount};
 use alloy_primitives::{Address, B256, U256, address, bytes, hex};
 use alloy_rpc_client::RpcClient;
 use base_common_consensus::{Eip8130Constants, Eip8130Contracts, Predeploys};
-use base_common_evm::BaseTime;
+use base_common_evm2::BaseTime;
 use base_common_precompiles::NonceManagerStorage;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_eip8130_rpc_node::{Eip8130RpcExtension, Eip8130RpcMode};
