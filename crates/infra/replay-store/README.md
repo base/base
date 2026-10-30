@@ -14,7 +14,9 @@ The next minute's first record publishes the previous minute; callers must expli
 Older-minute records are rejected. Same-minute records may arrive out of order.
 Only one writer may own a network/minute. Atomic create-only publication rejects
 collisions, including restarts; it never appends to or overwrites completed objects.
-Publication failures are terminal; cancellation can leave an object already committed.
+Failed publication retains buffered records for retry after repairing the backend.
+Successful close is idempotent and rejects further pushes; cancellation can leave an
+object already committed, so a retry can report a create-only conflict.
 
 `read(network, start_ms..=end_ms)` lazily enumerates minute keys, skips missing objects,
 and streams records in timestamp order, preserving arrival order for ties.
