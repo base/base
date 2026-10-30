@@ -8,7 +8,7 @@ use alloy_provider::{Provider, ProviderBuilder};
 use base_builder_core::test_utils::LocalInstance;
 use base_clock::{GlobalClock, OffsetClock};
 use base_common_network::Base;
-use base_replay_driver::{BuildWait, ShadowDriver};
+use base_replay_driver::{BlockDiff, BuildWait, CanonicalBlock, DiffReport, ShadowDriver};
 
 #[tokio::test(flavor = "multi_thread")]
 async fn advances_canonical_head_when_discarding_three_shadow_candidates() -> eyre::Result<()> {
@@ -36,6 +36,14 @@ async fn advances_canonical_head_when_discarding_three_shadow_candidates() -> ey
         .connect_ipc(shadow.auth_ipc().to_owned().into())
         .await?;
     let driver = ShadowDriver::default();
+    let recorded = blocks
+        .iter()
+        .flat_map(|b| &b.body.transactions)
+        .filter(|tx| !tx.is_deposit())
+        .map(|tx| tx.tx_hash())
+        .chain(std::iter::once(extra.tx_hash()))
+        .collect();
+    let mut diffs = Vec::new();
 
     for block in &blocks {
         let diverges = block.header.number == 3;
@@ -61,6 +69,13 @@ async fn advances_canonical_head_when_discarding_three_shadow_candidates() -> ey
         assert!(candidate.gas_used > 0);
         assert!(candidate.build_latency > Duration::ZERO);
         assert_eq!(candidate.flashblock_count, None);
+        let receipts =
+            canonical.provider().await?.get_block_receipts(block.header.number.into()).await?;
+        let baseline = CanonicalBlock::from_block(block, receipts.as_deref());
+        let diff = BlockDiff::compare(&candidate, &baseline, Some(&recorded))?;
+        assert_eq!(diff.totals.extra, usize::from(diverges));
+        assert_eq!(diff.first_divergence_index, diverges.then_some(canonical_hashes.len()));
+        diffs.push(diff);
         println!(
             "shadow replay: canonical_head={}, number={}, transactions={}, gas_used={}, priority_fee_total={}, divergent={}, latency={:?}",
             head.header.hash,
@@ -72,6 +87,22 @@ async fn advances_canonical_head_when_discarding_three_shadow_candidates() -> ey
             candidate.build_latency
         );
     }
+
+    let report = DiffReport::new(0, diffs)?;
+    assert!(report.blocks[0].warmup);
+    assert!(report.blocks[1..].iter().all(|b| !b.warmup));
+    assert_eq!(
+        (report.aggregate.missing, report.aggregate.extra, report.aggregate.common),
+        (0, 1, 4)
+    );
+    assert_eq!(report.aggregate.recording_gap, Some(0));
+    assert_eq!(report.aggregate.canonical_priority_fee_wei, Some(U256::ZERO));
+    assert_eq!(report.aggregate.candidate_priority_fee_wei, U256::from(21_000));
+    assert_eq!(report.aggregate.flashblock_count, None);
+    let json = serde_json::to_value(&report)?;
+    assert_eq!(json["schema"], "replay-diff/v1");
+    assert_eq!(json["blocks"][2]["totals"]["extra"], 1);
+    println!("{}\n{}", report.markdown(), serde_json::to_string_pretty(&report)?);
 
     let mut invalid = blocks[2].clone();
     invalid.header.parent_hash = invalid.hash_slow();
