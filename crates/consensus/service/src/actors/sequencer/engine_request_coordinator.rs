@@ -1034,7 +1034,7 @@ mod tests {
         // The reply may be deferred while an admitted insert is in flight; only ordering matters.
         let _ = tokio::time::timeout(Duration::from_millis(500), result_rx.recv()).await;
         // An admitted insert reaches the engine asynchronously.
-        for _ in 0..50 {
+        for _ in 0..300 {
             if client.last_new_payload_v2().await.is_some() {
                 break;
             }

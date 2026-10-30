@@ -635,7 +635,7 @@ mod tests {
     }
 
     #[rstest]
-    #[case::denim_default(RollupConfig::default(), 3_000)]
+    #[case::zero_block_time(RollupConfig::default(), 3_000)]
     #[case::legacy_block_time(rollup_config(2, None), 300)]
     #[case::denim_scheduled(rollup_config(2, Some(1_000)), 3_000)]
     #[case::block_time_longer_than_window(rollup_config(601, None), 1)]
