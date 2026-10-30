@@ -382,3 +382,37 @@ fn parity_warm_account_access() {
         compare: vec![(SENDER, vec![])],
     });
 }
+
+/// Calldata of 1,000 non-zero bytes: 37,000 intrinsic gas but a 61,000 EIP-7623 calldata floor
+/// from Isthmus (Prague) onwards.
+fn calldata_heavy_input() -> Vec<u8> {
+    vec![0x01; 1_000]
+}
+
+#[test]
+fn parity_calldata_heavy_deposit_pays_the_calldata_floor() {
+    assert_parity(Fixture {
+        seed: vec![],
+        to: TxKind::Call(Address::repeat_byte(0x22)),
+        mint: 1_000,
+        value: U256::ZERO,
+        gas_limit: 100_000,
+        input: calldata_heavy_input(),
+        is_system: false,
+        compare: vec![(SENDER, vec![]), (Address::repeat_byte(0x22), vec![])],
+    });
+}
+
+#[test]
+fn parity_deposit_below_the_calldata_floor_fails() {
+    assert_parity(Fixture {
+        seed: vec![],
+        to: TxKind::Call(Address::repeat_byte(0x22)),
+        mint: 1_000,
+        value: U256::ZERO,
+        gas_limit: 50_000,
+        input: calldata_heavy_input(),
+        is_system: false,
+        compare: vec![(SENDER, vec![]), (Address::repeat_byte(0x22), vec![])],
+    });
+}

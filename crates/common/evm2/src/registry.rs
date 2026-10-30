@@ -104,12 +104,13 @@ impl BaseEvmTypes {
         // agrees with the reference.
         warm_base_accounts(host, tx.to);
 
-        // Meter the deposit like a standard transaction: charge intrinsic gas up front, then
-        // run the call/create frame with the remaining gas. A deposit that cannot afford its
-        // intrinsic cost is settled as a failed deposit.
-        let (intrinsic, _) =
+        // Meter the deposit like a standard transaction: charge intrinsic gas up front, run the
+        // call/create frame with the remaining gas, and bill at least the EIP-7623 calldata
+        // floor. A deposit that cannot afford its intrinsic cost or floor is settled as a failed
+        // deposit.
+        let (intrinsic, floor_gas) =
             intrinsic_and_floor_gas(host.version(), tx.from, tx.to, &tx.input, 0, 0, tx.value);
-        if tx.gas_limit < intrinsic {
+        if tx.gas_limit < intrinsic.max(floor_gas) {
             return Ok(Self::failed_deposit(tx));
         }
         let (execution_gas_limit, reservoir) =
@@ -163,7 +164,7 @@ impl BaseEvmTypes {
                 caller: tx.from,
                 gas_price: U256::ZERO,
                 gas_limit: tx.gas_limit,
-                floor_gas: 0,
+                floor_gas,
                 initial_state_gas: 0,
                 state_refund: 0,
                 result,
