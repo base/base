@@ -5,11 +5,22 @@ use alloy_sol_types::{SolCall, sol};
 use async_trait::async_trait;
 
 use super::Payload;
-use crate::workload::SeededRng;
+use crate::{
+    Result,
+    workload::{
+        SeededRng,
+        chain_prep::{ChainPrepContext, create2_address, deploy_create2},
+    },
+};
 
 sol! {
     function fillStorage(uint256 slotCount, uint256 seed) external;
     function writeStorage(uint256 newCount, uint256 existingCount, uint256 seed) external;
+
+    /// `test-utils/contracts/src/StorageFiller.sol`, solc 0.8.28, optimizer 200 runs, no CBOR
+    /// metadata.
+    #[sol(bytecode = "6080604052348015600e575f5ffd5b505f80805260205260017fad3228b676f7d3cd4284a5443f17f1962b36e491b30a40b2405849e597ba5fb581905580556102928061004b5f395ff3fe608060405234801561000f575f5ffd5b506004361061003f575f3560e01c80631be4016214610043578063a47b328914610058578063c49c1f8c14610073575b5f5ffd5b610056610051366004610205565b610086565b005b61006160015481565b60405190815260200160405180910390f35b610056610081366004610225565b610119565b6040805160208082018490523360601b6bffffffffffffffffffffffff1916828401524360548301524460748084019190915283518084039091018152609490920190925280519101205f5b83811015610113576100e4818361024e565b6100ef90600161024e565b5f806100fb848661024e565b815260208101919091526040015f20556001016100d2565b50505050565b6001545f610127858361024e565b9050815b818110156101545761013e81600161024e565b5f8281526020819052604090205560010161012b565b5060018190556040805160208082018690523360601b6bffffffffffffffffffffffff1916828401524360548301524460748084019190915283518084039091018152609490920190925280519101205f5b858110156101fc5760408051602080820185905281830184905282518083038401815260609092019092528051910120805f806101e38884610273565b815260208101919091526040015f2055506001016101a6565b50505050505050565b5f5f60408385031215610216575f5ffd5b50508035926020909101359150565b5f5f5f60608486031215610237575f5ffd5b505081359360208301359350604090920135919050565b8082018082111561026d57634e487b7160e01b5f52601160045260245ffd5b92915050565b5f8261028d57634e487b7160e01b5f52601260045260245ffd5b50069056")]
+    contract StorageFiller {}
 }
 
 /// Gas budgeted per fresh storage slot. A cold zero -> non-zero SSTORE is 22,100
@@ -43,6 +54,11 @@ impl StoragePayload {
     /// Creates a new storage payload.
     pub const fn new(contract: Address, slots_per_tx: u32, new_slot_ratio: f64) -> Self {
         Self { contract, slots_per_tx, new_slot_ratio }
+    }
+
+    /// Address `prepare` deploys `StorageFiller` to when it is missing.
+    pub fn default_contract() -> Address {
+        create2_address(&StorageFiller::BYTECODE)
     }
 }
 
@@ -87,6 +103,13 @@ impl Payload for StoragePayload {
             .with_to(self.contract)
             .with_input(Bytes::from(data))
             .with_gas_limit(gas_limit)
+    }
+
+    async fn prepare(&self, ctx: &mut ChainPrepContext<'_>) -> Result<()> {
+        if self.contract != Self::default_contract() {
+            return Ok(());
+        }
+        deploy_create2(ctx, &StorageFiller::BYTECODE).await
     }
 }
 

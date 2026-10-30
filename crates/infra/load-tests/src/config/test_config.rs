@@ -1,5 +1,6 @@
 use std::{fmt, path::Path, time::Duration};
 
+use alloy_eips::eip7825::MAX_TX_GAS_LIMIT_OSAKA;
 use alloy_primitives::{Address, U256};
 use alloy_signer_local::PrivateKeySigner;
 use serde::{Deserialize, Deserializer, Serialize, de::Error as SerdeError};
@@ -16,7 +17,10 @@ use crate::{
     rpc::MAX_BATCH_RPC_SIZE,
     runner::{TxConfig, TxType},
     utils::{BaselineError, Result},
-    workload::{MAX_TOKEN_MOVE_TRANSFERS_PER_TX, RealTokenSetup, UniswapV3Hop},
+    workload::{
+        AaBundlePayload, MAX_TOKEN_MOVE_TRANSFERS_PER_TX, RealTokenSetup, StoragePayload,
+        UniswapV3Hop,
+    },
 };
 
 /// Configuration for a load test, loadable from YAML.
@@ -291,10 +295,12 @@ pub enum TxTypeConfig {
         contract: Address,
     },
 
-    /// Storage-heavy contract write (requires deployed contract).
+    /// Storage-heavy contract write.
     Storage {
-        /// Storage-writer contract address.
-        contract: Address,
+        /// Storage-writer contract address. Default: `StorageFiller`, deployed during setup
+        /// through the CREATE2 deployment proxy when missing.
+        #[serde(default)]
+        contract: Option<Address>,
         /// Number of storage slots to write per transaction.
         #[serde(default = "default_storage_slots_per_tx")]
         slots_per_tx: u32,
@@ -317,6 +323,18 @@ pub enum TxTypeConfig {
         /// Number of token transfers per transaction.
         #[serde(default = "default_token_move_transfers_per_tx")]
         transfers_per_tx: u32,
+    },
+
+    /// ERC-4337 `handleOps` stand-in; setup deploys the bundle contract. The resulting gas limit
+    /// (`40_000 + 60_000 * ops_per_bundle + 40 * padding_bytes`) must fit the EIP-7825 per-tx
+    /// cap of 2^24 gas.
+    AaBundle {
+        /// Signed ops per bundle transaction.
+        #[serde(default = "default_aa_ops_per_bundle")]
+        ops_per_bundle: u32,
+        /// Random calldata bytes appended to each bundle.
+        #[serde(default)]
+        padding_bytes: u32,
     },
 
     /// Precompile call.
@@ -436,6 +454,10 @@ const fn default_storage_slots_per_tx() -> u32 {
 
 const fn default_storage_new_slot_ratio() -> f64 {
     1.0
+}
+
+const fn default_aa_ops_per_bundle() -> u32 {
+    12
 }
 
 /// Upper bound on `slots_per_tx` so the payload's gas limit
@@ -822,7 +844,7 @@ impl TestConfig {
                     ));
                 }
                 TxType::Storage {
-                    contract: *contract,
+                    contract: contract.unwrap_or_else(StoragePayload::default_contract),
                     slots_per_tx: *slots_per_tx,
                     new_slot_ratio: *new_slot_ratio,
                 }
@@ -845,6 +867,20 @@ impl TestConfig {
                     transfers_per_tx: *transfers_per_tx,
                     context: Default::default(),
                 }
+            }
+            TxTypeConfig::AaBundle { ops_per_bundle, padding_bytes } => {
+                if *ops_per_bundle == 0 {
+                    return Err(BaselineError::Config(
+                        "aa_bundle ops_per_bundle must be > 0".into(),
+                    ));
+                }
+                let gas_limit = AaBundlePayload::gas_limit(*ops_per_bundle, *padding_bytes);
+                if gas_limit > MAX_TX_GAS_LIMIT_OSAKA {
+                    return Err(BaselineError::Config(format!(
+                        "aa_bundle ops_per_bundle {ops_per_bundle} with padding_bytes {padding_bytes} needs a {gas_limit} gas limit, above the {MAX_TX_GAS_LIMIT_OSAKA} per-tx cap"
+                    )));
+                }
+                TxType::AaBundle { ops_per_bundle: *ops_per_bundle, padding_bytes: *padding_bytes }
             }
             TxTypeConfig::Precompile { target, iterations } => {
                 let looper_contract = if *iterations > 1 {
@@ -1297,7 +1333,7 @@ transactions:
             TxTypeConfig::Storage { contract, slots_per_tx, .. } => {
                 assert_eq!(
                     *contract,
-                    "0x1234567890123456789012345678901234567890".parse::<Address>().unwrap()
+                    Some("0x1234567890123456789012345678901234567890".parse::<Address>().unwrap())
                 );
                 assert_eq!(*slots_per_tx, 25);
             }
@@ -1327,7 +1363,6 @@ transactions:
 transactions:
   - weight: 100
     type: storage
-    contract: "0x1234567890123456789012345678901234567890"
 "#,
         );
         let config = TestConfig::from_yaml(&yaml).unwrap();
@@ -1337,6 +1372,12 @@ transactions:
                 assert_eq!(*new_slot_ratio, 1.0, "new_slot_ratio must default to 1.0");
             }
             _ => panic!("expected Storage"),
+        }
+        match &config.to_load_config(Some(1337)).unwrap().transactions[0].tx_type {
+            TxType::Storage { contract, .. } => {
+                assert_eq!(*contract, StoragePayload::default_contract());
+            }
+            _ => panic!("expected TxType::Storage"),
         }
     }
 
@@ -1353,6 +1394,32 @@ transactions:
         );
         let err = TestConfig::from_yaml(&yaml).unwrap().to_load_config(Some(1337)).unwrap_err();
         assert!(err.to_string().contains("new_slot_ratio must be between 0.0 and 1.0"), "{err}");
+    }
+
+    #[test]
+    fn aa_bundle_config_defaults_and_bounds() {
+        let parse = |fields: &str| {
+            TestConfig::from_yaml(&config_yaml(&format!(
+                "transactions:\n  - weight: 100\n    type: aa_bundle\n{fields}"
+            )))
+            .unwrap()
+            .to_load_config(Some(1337))
+        };
+        let load_config = parse("").unwrap();
+        assert!(matches!(
+            load_config.transactions[0].tx_type,
+            TxType::AaBundle { ops_per_bundle: 12, padding_bytes: 0 }
+        ));
+        assert!(parse("    ops_per_bundle: 0\n").is_err());
+        // 40k + 60k * 278 = 16,720,000 and 40k + 60k + 40 * 416,930 = 16,777,200 fit 2^24.
+        assert!(parse("    ops_per_bundle: 278\n").is_ok());
+        assert!(parse("    ops_per_bundle: 1\n    padding_bytes: 416930\n").is_ok());
+        for fields in
+            ["    ops_per_bundle: 279\n", "    ops_per_bundle: 1\n    padding_bytes: 416931\n"]
+        {
+            let err = parse(fields).unwrap_err().to_string();
+            assert!(err.contains("padding_bytes") && err.contains("per-tx cap"), "{err}");
+        }
     }
 
     #[test]

@@ -195,6 +195,13 @@ pub enum TxType {
         /// Token and recipients shared across calibration and measured generators.
         context: std::sync::Arc<std::sync::OnceLock<crate::workload::TokenMoveContext>>,
     },
+    /// ERC-4337 `handleOps` stand-in bundling signed ops.
+    AaBundle {
+        /// Signed ops per bundle transaction.
+        ops_per_bundle: u32,
+        /// Random calldata bytes appended to each bundle.
+        padding_bytes: u32,
+    },
     /// Precompile call.
     Precompile {
         /// Target precompile.

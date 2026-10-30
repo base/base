@@ -30,6 +30,9 @@ pub use storage::StoragePayload;
 mod double_counter;
 pub use double_counter::{DOUBLE_COUNTER_GAS_LIMIT, DoubleCounterPayload};
 
+mod aa_bundle;
+pub use aa_bundle::AaBundlePayload;
+
 mod precompile;
 pub use precompile::PrecompilePayload;
 

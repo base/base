@@ -7,9 +7,9 @@ use alloy_rpc_types::TransactionRequest;
 use tracing::instrument;
 
 use super::{
-    AerodromeClPayload, B20TransferPayload, CalldataPayload, DoubleCounterPayload, Erc20Payload,
-    OsakaPayload, Payload, PrecompilePayload, SeededRng, StoragePayload, TransferPayload,
-    UniswapV3Payload, chain_prep::ChainPrepContext,
+    AaBundlePayload, AerodromeClPayload, B20TransferPayload, CalldataPayload, DoubleCounterPayload,
+    Erc20Payload, OsakaPayload, Payload, PrecompilePayload, SeededRng, StoragePayload,
+    TransferPayload, UniswapV3Payload, chain_prep::ChainPrepContext,
 };
 use crate::{
     BaselineError,
@@ -109,6 +109,12 @@ impl WorkloadGenerator {
                             transfers_per_tx: *transfers_per_tx,
                             context: Arc::clone(context),
                         },
+                        weight_pct,
+                    );
+                }
+                TxType::AaBundle { ops_per_bundle, padding_bytes } => {
+                    generator = generator.with_payload(
+                        AaBundlePayload::new(*ops_per_bundle, *padding_bytes),
                         weight_pct,
                     );
                 }

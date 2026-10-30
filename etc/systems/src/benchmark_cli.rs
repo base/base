@@ -646,6 +646,7 @@ impl LocalBenchmarkArgs {
                 | TxTypeConfig::Erc20 { .. }
                 | TxTypeConfig::Storage { .. }
                 | TxTypeConfig::DoubleCounter { .. }
+                | TxTypeConfig::AaBundle { .. }
                 | TxTypeConfig::Precompile { .. }
                 | TxTypeConfig::Osaka { .. }
                 | TxTypeConfig::UniswapV3Liquidity(_)
