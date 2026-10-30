@@ -6148,6 +6148,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-replay-driver"
+version = "0.0.0"
+dependencies = [
+ "alloy-consensus 2.5.0",
+ "alloy-eips 2.5.0",
+ "alloy-primitives",
+ "alloy-rpc-types-engine",
+ "base-builder-core",
+ "base-common-chains",
+ "base-common-consensus",
+ "base-common-genesis",
+ "base-common-rpc-types-engine",
+ "base-execution-payload-builder",
+ "eyre",
+ "tokio",
+]
+
+[[package]]
 name = "base-reth-cli"
 version = "0.0.0"
 dependencies = [
