@@ -33,31 +33,31 @@ use revm::{
 ///
 /// Totals count every read: a slot re-read (e.g. after it is written, or when a
 /// parked transaction is re-evaluated after a state change) counts again, so the
-/// total captures raw read volume. The unique sets count distinct locations touched
+/// total captures raw read volume. The unique counts are distinct locations touched
 /// across the block, i.e. the predicate state footprint.
+///
+/// Reads are appended as they happen and deduplicated only when a unique count is
+/// requested, once per block, so the per-read cost is a push rather than a hash-set
+/// insert that grows the set as the block's footprint does. Memory therefore grows with
+/// total reads rather than distinct locations; the builders' predicate-evaluation time
+/// budget bounds both.
 #[derive(Debug, Default)]
 pub struct PredicateLoadTracker {
-    /// Total account (balance or nonce) reads.
-    account_reads: u64,
-    /// Total storage-slot reads.
-    slot_reads: u64,
-    /// Distinct accounts read this block.
-    unique_accounts: AddressSet,
-    /// Distinct storage slots read this block.
-    unique_slots: HashSet<(Address, U256)>,
+    /// Every account (balance or nonce) read this block.
+    accounts: Vec<Address>,
+    /// Every storage-slot read this block.
+    slots: Vec<(Address, U256)>,
 }
 
 impl PredicateLoadTracker {
     /// Records a single account (balance or nonce) read.
     pub fn record_account(&mut self, address: Address) {
-        self.account_reads += 1;
-        self.unique_accounts.insert(address);
+        self.accounts.push(address);
     }
 
     /// Records a single storage-slot read.
     pub fn record_slot(&mut self, address: Address, slot: U256) {
-        self.slot_reads += 1;
-        self.unique_slots.insert((address, slot));
+        self.slots.push((address, slot));
     }
 
     /// Returns whether any predicate read was recorded this block.
@@ -65,27 +65,27 @@ impl PredicateLoadTracker {
     /// Used to gate metric emission so blocks that carried no validity
     /// transactions do not flood the per-block histograms with zero observations.
     pub const fn has_activity(&self) -> bool {
-        self.account_reads > 0 || self.slot_reads > 0
+        !self.accounts.is_empty() || !self.slots.is_empty()
     }
 
     /// Total account reads this block.
     pub const fn account_reads(&self) -> u64 {
-        self.account_reads
+        self.accounts.len() as u64
     }
 
     /// Total storage-slot reads this block.
     pub const fn slot_reads(&self) -> u64 {
-        self.slot_reads
+        self.slots.len() as u64
     }
 
     /// Distinct accounts read this block.
     pub fn unique_accounts(&self) -> u64 {
-        self.unique_accounts.len() as u64
+        self.accounts.iter().copied().collect::<AddressSet>().len() as u64
     }
 
     /// Distinct storage slots read this block.
     pub fn unique_slots(&self) -> u64 {
-        self.unique_slots.len() as u64
+        self.slots.iter().collect::<HashSet<_>>().len() as u64
     }
 }
 

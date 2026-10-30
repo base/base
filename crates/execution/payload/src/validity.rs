@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 
 use alloy_primitives::{
     Address, TxHash, U256,
-    map::{B256Map, B256Set, HashMap, U256Map},
+    map::{B256Map, B256Set, Entry, HashMap, U256Map},
 };
 use base_execution_txpool::{
     PredicateContext, ValidityConditions, ValidityOperator, ValidityPredicate,
@@ -111,9 +111,10 @@ impl ValidityPredicateEvaluation {
 
 /// Predicate-parked transactions indexed by one currently unsatisfied state location.
 ///
-/// Buckets start as compact hash sets. Once a state bucket reaches `ordered_threshold`, it is
-/// converted for the rest of the build into an ordered representation. The latter wakes only
-/// false predicates whose comparison can become true for the observed old/new state transition.
+/// Buckets start as one inline hash, then compact hash sets. Once a state bucket reaches
+/// `ordered_threshold`, it is converted for the rest of the build into an ordered representation.
+/// The latter wakes only false predicates whose comparison can become true for the observed
+/// old/new state transition.
 #[derive(Debug)]
 pub struct ParkedPredicateIndex<T> {
     blockers: HashMap<ValidityPredicateKey, PredicateBucket>,
@@ -124,14 +125,18 @@ pub struct ParkedPredicateIndex<T> {
 #[derive(Debug)]
 struct ParkedTransaction<T> {
     transaction: T,
-    blocker: ValidityPredicateKey,
+    /// Unsatisfied predicate, whose [`ValidityPredicateKey`] is the transaction's bucket.
     predicate: ValidityPredicate,
 }
 
 #[derive(Debug)]
 enum PredicateBucket {
+    /// The only transaction of an unordered bucket, held inline because most blockers, such as
+    /// a sender's own balance or nonce, park a single transaction.
+    Single(TxHash),
     Flat(B256Set),
-    Ordered(OrderedPredicateBucket),
+    /// Boxed so the far more common unordered buckets stay small in the blocker map.
+    Ordered(Box<OrderedPredicateBucket>),
 }
 
 #[derive(Debug, Default)]
@@ -174,13 +179,30 @@ impl<T> ParkedPredicateIndex<T> {
         self.transactions.is_empty()
     }
 
-    /// Adds a parked transaction under its currently unsatisfied predicate.
+    /// Adds a parked transaction under its currently unsatisfied predicate, replacing any entry
+    /// it already has.
     pub fn park(&mut self, transaction_hash: TxHash, transaction: T, predicate: ValidityPredicate) {
-        self.remove(transaction_hash);
         let blocker = ValidityPredicateKey::for_predicate(&predicate);
-        self.transactions
-            .insert(transaction_hash, ParkedTransaction { transaction, blocker, predicate });
-        self.insert_into_bucket(transaction_hash);
+        let parked = ParkedTransaction { transaction, predicate };
+        let entry = match self.transactions.entry(transaction_hash) {
+            Entry::Occupied(mut occupied) => {
+                let previous = occupied.insert(parked);
+                PredicateBucket::remove_from(
+                    &mut self.blockers,
+                    transaction_hash,
+                    &previous.predicate,
+                );
+                occupied.into_mut()
+            }
+            Entry::Vacant(vacant) => vacant.insert(parked),
+        };
+        let bucket = PredicateBucket::insert_into(
+            &mut self.blockers,
+            transaction_hash,
+            blocker,
+            &entry.predicate,
+        );
+        bucket.order_if_full(blocker, self.ordered_threshold, &self.transactions);
     }
 
     /// Returns an indexed parked transaction.
@@ -207,24 +229,26 @@ impl<T> ParkedPredicateIndex<T> {
 
     /// Replaces a parked transaction's currently unsatisfied predicate.
     pub fn reindex(&mut self, transaction_hash: TxHash, predicate: ValidityPredicate) -> bool {
-        let Some(previous) = self.transactions.get(&transaction_hash) else {
+        let Some(entry) = self.transactions.get_mut(&transaction_hash) else {
             return false;
         };
-        let old_blocker = previous.blocker;
-        let old_predicate = previous.predicate.clone();
-        self.remove_from_bucket(transaction_hash, old_blocker, &old_predicate);
         let blocker = ValidityPredicateKey::for_predicate(&predicate);
-        let entry = self.transactions.get_mut(&transaction_hash).expect("entry was checked above");
-        entry.blocker = blocker;
-        entry.predicate = predicate;
-        self.insert_into_bucket(transaction_hash);
+        let old_predicate = core::mem::replace(&mut entry.predicate, predicate);
+        PredicateBucket::remove_from(&mut self.blockers, transaction_hash, &old_predicate);
+        let bucket = PredicateBucket::insert_into(
+            &mut self.blockers,
+            transaction_hash,
+            blocker,
+            &entry.predicate,
+        );
+        bucket.order_if_full(blocker, self.ordered_threshold, &self.transactions);
         true
     }
 
     /// Removes and returns an indexed parked transaction.
     pub fn remove(&mut self, transaction_hash: TxHash) -> Option<T> {
         let entry = self.transactions.remove(&transaction_hash)?;
-        self.remove_from_bucket(transaction_hash, entry.blocker, &entry.predicate);
+        PredicateBucket::remove_from(&mut self.blockers, transaction_hash, &entry.predicate);
         Some(entry.transaction)
     }
 
@@ -319,40 +343,6 @@ impl<T> ParkedPredicateIndex<T> {
         self.blockers.values().map(PredicateBucket::len)
     }
 
-    fn insert_into_bucket(&mut self, hash: TxHash) {
-        let entry = self.transactions.get(&hash).expect("inserted transaction must exist");
-        let blocker = entry.blocker;
-        let predicate = &entry.predicate;
-        let bucket = self
-            .blockers
-            .entry(blocker)
-            .or_insert_with(|| PredicateBucket::Flat(B256Set::default()));
-        bucket.insert(hash, predicate);
-        if bucket.is_flat() && blocker.is_state() && bucket.len() >= self.ordered_threshold {
-            let hashes = bucket.take_flat().expect("bucket was checked as flat");
-            let mut ordered = OrderedPredicateBucket::default();
-            for hash in hashes {
-                let predicate =
-                    &self.transactions.get(&hash).expect("bucket entry must exist").predicate;
-                ordered.insert(hash, predicate);
-            }
-            *bucket = PredicateBucket::Ordered(ordered);
-        }
-    }
-
-    fn remove_from_bucket(
-        &mut self,
-        hash: TxHash,
-        blocker: ValidityPredicateKey,
-        predicate: &ValidityPredicate,
-    ) {
-        let Some(bucket) = self.blockers.get_mut(&blocker) else { return };
-        bucket.remove(hash, predicate);
-        if bucket.is_empty() {
-            self.blockers.remove(&blocker);
-        }
-    }
-
     fn wake_account(
         &self,
         effects: &mut StateChangeEffects,
@@ -422,8 +412,48 @@ impl ValidityPredicateKey {
 }
 
 impl PredicateBucket {
+    /// Adds `hash`, parked under `predicate`, to the bucket of `blocker` and returns that bucket.
+    fn insert_into<'a>(
+        blockers: &'a mut HashMap<ValidityPredicateKey, Self>,
+        hash: TxHash,
+        blocker: ValidityPredicateKey,
+        predicate: &ValidityPredicate,
+    ) -> &'a mut Self {
+        match blockers.entry(blocker) {
+            Entry::Vacant(vacant) => vacant.insert(Self::Single(hash)),
+            Entry::Occupied(occupied) => {
+                let bucket = occupied.into_mut();
+                bucket.insert(hash, predicate);
+                bucket
+            }
+        }
+    }
+
+    /// Removes `hash`, parked under `predicate`, from its bucket, and drops the bucket once it is
+    /// empty.
+    fn remove_from(
+        blockers: &mut HashMap<ValidityPredicateKey, Self>,
+        hash: TxHash,
+        predicate: &ValidityPredicate,
+    ) {
+        if let Entry::Occupied(mut occupied) =
+            blockers.entry(ValidityPredicateKey::for_predicate(predicate))
+            && occupied.get_mut().remove(hash, predicate)
+        {
+            occupied.remove();
+        }
+    }
+
     fn insert(&mut self, hash: TxHash, predicate: &ValidityPredicate) {
         match self {
+            Self::Single(only) => {
+                if *only != hash {
+                    let mut hashes = B256Set::default();
+                    hashes.insert(*only);
+                    hashes.insert(hash);
+                    *self = Self::Flat(hashes);
+                }
+            }
             Self::Flat(hashes) => {
                 hashes.insert(hash);
             }
@@ -431,38 +461,57 @@ impl PredicateBucket {
         }
     }
 
-    fn remove(&mut self, hash: TxHash, predicate: &ValidityPredicate) {
+    /// Removes `hash` and returns whether the bucket is now empty.
+    fn remove(&mut self, hash: TxHash, predicate: &ValidityPredicate) -> bool {
         match self {
+            Self::Single(only) => *only == hash,
             Self::Flat(hashes) => {
                 hashes.remove(&hash);
+                hashes.is_empty()
             }
-            Self::Ordered(bucket) => bucket.remove(hash, predicate),
+            Self::Ordered(bucket) => {
+                bucket.remove(hash, predicate);
+                bucket.len == 0
+            }
         }
+    }
+
+    /// Converts an unordered state bucket into the ordered form once it holds
+    /// `ordered_threshold` transactions.
+    fn order_if_full<T>(
+        &mut self,
+        blocker: ValidityPredicateKey,
+        ordered_threshold: usize,
+        transactions: &B256Map<ParkedTransaction<T>>,
+    ) {
+        if matches!(self, Self::Ordered(_)) || !blocker.is_state() || self.len() < ordered_threshold
+        {
+            return;
+        }
+        let mut ordered = Box::<OrderedPredicateBucket>::default();
+        let mut insert = |hash: TxHash| {
+            let predicate = &transactions.get(&hash).expect("bucket entry must exist").predicate;
+            ordered.insert(hash, predicate);
+        };
+        match self {
+            Self::Single(hash) => insert(*hash),
+            Self::Flat(hashes) => hashes.iter().copied().for_each(insert),
+            Self::Ordered(_) => unreachable!("ordered buckets returned above"),
+        }
+        *self = Self::Ordered(ordered);
     }
 
     fn len(&self) -> usize {
         match self {
+            Self::Single(_) => 1,
             Self::Flat(hashes) => hashes.len(),
             Self::Ordered(bucket) => bucket.len,
         }
     }
 
-    fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-
-    const fn is_flat(&self) -> bool {
-        matches!(self, Self::Flat(_))
-    }
-    fn take_flat(&mut self) -> Option<B256Set> {
-        match self {
-            Self::Flat(hashes) => Some(core::mem::take(hashes)),
-            Self::Ordered(_) => None,
-        }
-    }
-
     fn extend_all(&self, target: &mut Vec<TxHash>) {
         match self {
+            Self::Single(hash) => target.push(*hash),
             Self::Flat(hashes) => target.extend(hashes.iter().copied()),
             Self::Ordered(bucket) => bucket.extend_all(target),
         }
@@ -470,6 +519,7 @@ impl PredicateBucket {
 
     fn extend_affected(&self, old: U256, new: U256, target: &mut Vec<TxHash>) {
         match self {
+            Self::Single(hash) => target.push(*hash),
             Self::Flat(hashes) => target.extend(hashes.iter().copied()),
             Self::Ordered(bucket) => bucket.extend_affected(old, new, target),
         }
@@ -1265,55 +1315,58 @@ mod tests {
     }
 
     #[test]
-    fn ordered_bucket_depth_tracks_park_reindex_and_remove() {
+    fn bucket_depth_tracks_park_reindex_and_remove() {
         let address = Address::with_last_byte(1);
         let other_address = Address::with_last_byte(2);
         let hashes: Vec<B256> = (1..=6).map(B256::with_last_byte).collect();
-        let mut index = ParkedPredicateIndex::new(1);
         let depths = |index: &ParkedPredicateIndex<()>| {
             let mut depths = index.bucket_depths().collect::<Vec<_>>();
             depths.sort_unstable();
             depths
         };
 
-        for (hash, op, value) in [
-            (hashes[0], ValidityOperator::GreaterThanOrEqual, 10),
-            (hashes[1], ValidityOperator::GreaterThanOrEqual, 10),
-            (hashes[2], ValidityOperator::LessThan, 20),
-            (hashes[3], ValidityOperator::Equal, 30),
-            (hashes[4], ValidityOperator::NotEqual, 40),
-            (hashes[5], ValidityOperator::GreaterThan, u64::MAX),
-        ] {
-            index.park(hash, (), balance(address, op, value));
+        // Ordered buckets, and single-transaction and flat buckets below the threshold.
+        for threshold in [1, 32] {
+            let mut index = ParkedPredicateIndex::new(threshold);
+            for (hash, op, value) in [
+                (hashes[0], ValidityOperator::GreaterThanOrEqual, 10),
+                (hashes[1], ValidityOperator::GreaterThanOrEqual, 10),
+                (hashes[2], ValidityOperator::LessThan, 20),
+                (hashes[3], ValidityOperator::Equal, 30),
+                (hashes[4], ValidityOperator::NotEqual, 40),
+                (hashes[5], ValidityOperator::GreaterThan, u64::MAX),
+            ] {
+                index.park(hash, (), balance(address, op, value));
+            }
+            index.park(
+                hashes[5],
+                (),
+                ValidityPredicate::Balance {
+                    address,
+                    op: ValidityOperator::GreaterThan,
+                    value: U256::MAX,
+                },
+            );
+            assert_eq!(depths(&index), vec![6]);
+
+            assert!(index.reindex(hashes[0], balance(address, ValidityOperator::Equal, 50)));
+            assert!(index.reindex(hashes[3], balance(address, ValidityOperator::Equal, 30)));
+            assert_eq!(depths(&index), vec![6]);
+
+            assert!(index.reindex(hashes[1], balance(other_address, ValidityOperator::Equal, 1)));
+            assert_eq!(depths(&index), vec![1, 5]);
+
+            for hash in &hashes[2..] {
+                assert_eq!(index.remove(*hash), Some(()));
+            }
+            assert_eq!(index.remove(hashes[2]), None);
+            assert_eq!(depths(&index), vec![1, 1]);
+
+            assert_eq!(index.remove(hashes[0]), Some(()));
+            assert_eq!(index.remove(hashes[1]), Some(()));
+            assert!(index.is_empty());
+            assert_eq!(depths(&index), Vec::<usize>::new());
         }
-        index.park(
-            hashes[5],
-            (),
-            ValidityPredicate::Balance {
-                address,
-                op: ValidityOperator::GreaterThan,
-                value: U256::MAX,
-            },
-        );
-        assert_eq!(depths(&index), vec![6]);
-
-        assert!(index.reindex(hashes[0], balance(address, ValidityOperator::Equal, 50)));
-        assert!(index.reindex(hashes[3], balance(address, ValidityOperator::Equal, 30)));
-        assert_eq!(depths(&index), vec![6]);
-
-        assert!(index.reindex(hashes[1], balance(other_address, ValidityOperator::Equal, 1)));
-        assert_eq!(depths(&index), vec![1, 5]);
-
-        for hash in &hashes[2..] {
-            assert_eq!(index.remove(*hash), Some(()));
-        }
-        assert_eq!(index.remove(hashes[2]), None);
-        assert_eq!(depths(&index), vec![1, 1]);
-
-        assert_eq!(index.remove(hashes[0]), Some(()));
-        assert_eq!(index.remove(hashes[1]), Some(()));
-        assert!(index.is_empty());
-        assert_eq!(depths(&index), Vec::<usize>::new());
     }
 
     #[test]
