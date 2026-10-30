@@ -13,6 +13,7 @@ workspace = true
 
 [dependencies]
 url.workspace = true
+eyre.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 tokio-util.workspace = true
@@ -36,7 +37,6 @@ base-common-rpc-types-engine.workspace = true
 base-tx-forwarding.workspace = true
 
 [dev-dependencies]
-eyre.workspace = true
 mockall.workspace = true
 serde_json.workspace = true
 jsonrpsee = { workspace = true, features = ["server"] }

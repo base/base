@@ -10,7 +10,7 @@ mod builder_ingress;
 pub use builder_ingress::{BuilderIngressInjector, ReplayRequest};
 
 mod injector;
-pub use injector::{InjectionError, InjectionSchedule, Injector};
+pub use injector::{InjectionSchedule, Injector};
 
 mod diff;
 pub use diff::{BlockDiff, CanonicalBlock, DiffError};

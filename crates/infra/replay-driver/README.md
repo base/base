@@ -23,16 +23,12 @@ Metrics: ordered transaction hashes, gas, builder-reported priority-fee revenue
 (`block_value`, wei), and monotonic build-to-getPayload latency (including wait).
 Flashblock count stays `None`; subscriptions and CLI remain separate.
 
-`InjectionSchedule` stably orders records by ingress timestamp. Call `warmup(injector,
-cutoff_ms)` before the first FCU, then `run(injector, cancellation)` concurrently with
-the shadow driver. Warmup awaits delivery without waiting for timestamps; run checks
-`GlobalClock` before each send. Each deadline/delivery wait is bounded by `timeout`.
-`BuilderIngressInjector` passes method and raw params unchanged through tx-forwarding;
-transport/timeouts retry there, RPC rejections terminate. Calls are acknowledged in
-order, so a slow destination can make subsequent sends late, never early. Drop the
-injector to abort pending transport work immediately.
-Cancelled unacknowledged calls may already be delivered. Mempool ingress is reserved.
-The adapter lives in infra because utilities cannot depend on execution transport.
+`InjectionSchedule::warmup(injector, cutoff_ms)` awaits immediate delivery before first
+FCU. `run(injector, cancellation)` orders remaining calls against `GlobalClock`, bounded
+by `timeout`. `BuilderIngressInjector` preserves method/raw params through tx-forwarding:
+transport failures retry, RPC rejections terminate. Ordered acknowledgements can make
+sends late, never early. Drop aborts transport work; cancelled calls may have arrived.
+Mempool ingress is reserved. Infra permits the execution dependency utilities forbid.
 
 `BlockDiff::compare` compares inclusion, ordering (including deposits), gas and fees.
 `CanonicalBlock::from_block` computes tips from complete RPC receipts, otherwise unknown.

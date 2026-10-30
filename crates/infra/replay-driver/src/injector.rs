@@ -6,6 +6,7 @@ use std::{
 
 use base_clock::GlobalClock;
 use base_replay::{ReplayRecord, ReplayStream};
+use eyre::{Result, ensure};
 use tokio_util::sync::CancellationToken;
 
 /// An ingress adapter; implementations select their own replay stream.
@@ -14,33 +15,7 @@ pub trait Injector: Sync {
     /// Stream accepted by this adapter.
     fn stream(&self) -> ReplayStream;
     /// Delivers one call, reporting terminal failure after bounded transport retries.
-    fn inject(
-        &self,
-        record: ReplayRecord,
-    ) -> impl Future<Output = Result<(), InjectionError>> + Send;
-}
-
-/// Terminal injection failure. Transport retries belong to the forwarding service.
-#[derive(Debug, thiserror::Error)]
-pub enum InjectionError {
-    /// A record belongs to another ingress boundary.
-    #[error("record stream does not match injector")]
-    Stream,
-    /// A bounded scheduling or delivery wait expired.
-    #[error("injection wait timed out")]
-    Timeout,
-    /// Caller requested cancellation.
-    #[error("injection cancelled")]
-    Cancelled,
-    /// Forwarder stopped before acknowledging delivery.
-    #[error("injection destination closed")]
-    Closed,
-    /// RPC rejected the call or exhausted transport retries.
-    #[error(transparent)]
-    Rpc(#[from] std::sync::Arc<jsonrpsee::core::ClientError>),
-    /// Replay clock predates the Unix epoch.
-    #[error(transparent)]
-    Clock(#[from] std::time::SystemTimeError),
+    fn inject(&self, record: ReplayRecord) -> impl Future<Output = Result<()>> + Send;
 }
 
 /// Stable timestamp-ordered records, retaining capture order at equal timestamps.
@@ -52,14 +27,8 @@ pub struct InjectionSchedule {
 }
 
 impl InjectionSchedule {
-    /// Remaining replay delay; late calls are immediately eligible.
-    ///
-    /// # Errors
-    /// Returns a clock error before the Unix epoch.
-    pub fn delay(
-        received_at_ms: u64,
-        now: std::time::SystemTime,
-    ) -> Result<Duration, InjectionError> {
+    /// Remaining delay, saturating when late; errors before the Unix epoch.
+    pub fn delay(received_at_ms: u64, now: std::time::SystemTime) -> Result<Duration> {
         Ok(Duration::from_millis(received_at_ms).saturating_sub(now.duration_since(UNIX_EPOCH)?))
     }
 
@@ -69,21 +38,12 @@ impl InjectionSchedule {
         Self { records: records.into(), timeout: Duration::from_secs(15) }
     }
 
-    /// Delivers every record at or before cutoff immediately, awaiting acceptance before first FCU.
-    ///
-    /// # Errors
-    /// Returns stream, delivery, timeout, or cancellation failures.
-    pub async fn warmup(
-        &mut self,
-        injector: &impl Injector,
-        cutoff_ms: u64,
-    ) -> Result<(), InjectionError> {
+    /// Immediately delivers through cutoff before first FCU; propagates delivery/timeout errors.
+    pub async fn warmup(&mut self, injector: &impl Injector, cutoff_ms: u64) -> Result<()> {
         self.deliver(injector, Some(cutoff_ms)).await
     }
 
     /// Replays remaining calls against GlobalClock, not elapsed time since this method started.
-    ///
-    /// # Errors
     /// Stops on stream, clock, RPC, timeout, or cancellation failure.
     /// # Cancel safety
     /// Dropping this future stops scheduling. An unacknowledged call may already have reached the
@@ -92,26 +52,21 @@ impl InjectionSchedule {
         &mut self,
         injector: &impl Injector,
         cancel: &CancellationToken,
-    ) -> Result<(), InjectionError> {
+    ) -> Result<()> {
         tokio::select! {
             biased;
-            _ = cancel.cancelled() => Err(InjectionError::Cancelled),
+            _ = cancel.cancelled() => eyre::bail!("injection cancelled"),
             result = self.deliver(injector, None) => result,
         }
     }
 
     /// Delivers through an optional immediate cutoff, or waits on the global clock without one.
-    ///
-    /// # Errors
-    /// Returns stream, clock, delivery, or timeout failures.
-    pub async fn deliver(
-        &mut self,
-        injector: &impl Injector,
-        cutoff: Option<u64>,
-    ) -> Result<(), InjectionError> {
-        if self.records.iter().any(|record| record.stream != injector.stream()) {
-            return Err(InjectionError::Stream);
-        }
+    /// Propagates stream, clock, delivery, and timeout errors.
+    pub async fn deliver(&mut self, injector: &impl Injector, cutoff: Option<u64>) -> Result<()> {
+        ensure!(
+            self.records.iter().all(|record| record.stream == injector.stream()),
+            "record stream does not match injector"
+        );
         while let Some(record) = self.records.front() {
             if let Some(cutoff) = cutoff {
                 if record.received_at_ms > cutoff {
@@ -122,17 +77,14 @@ impl InjectionSchedule {
                     loop {
                         let wait = Self::delay(record.received_at_ms, GlobalClock::get().now())?;
                         if wait.is_zero() {
-                            return Ok::<_, InjectionError>(());
+                            return Ok::<_, eyre::Report>(());
                         }
                         tokio::time::sleep(wait).await;
                     }
                 })
-                .await
-                .map_err(|_| InjectionError::Timeout)??;
+                .await??;
             }
-            tokio::time::timeout(self.timeout, injector.inject(record.clone()))
-                .await
-                .map_err(|_| InjectionError::Timeout)??;
+            tokio::time::timeout(self.timeout, injector.inject(record.clone())).await??;
             self.records.pop_front();
         }
         Ok(())
@@ -152,14 +104,10 @@ mod tests {
 
     #[tokio::test]
     async fn preserves_capture_order_when_offsets_are_equal() {
-        let record = |offset, method: &str| ReplayRecord {
-            stream: ReplayStream::BuilderIngress,
-            received_at_ms: offset,
-            method: method.into(),
-            params: serde_json::value::RawValue::from_string("[]".into()).unwrap(),
-            batch_id: None,
-            source: String::new(),
-            tx_hash: None,
+        let record = |offset, method: &str| {
+            serde_json::from_str(&format!(
+            r#"{{"stream":"builder_ingress","received_at_ms":{offset},"method":"{method}","params":[],"source":""}}"#
+        )).unwrap()
         };
         let mut schedule =
             InjectionSchedule::new(vec![record(20, "b"), record(10, "a"), record(20, "c")]);

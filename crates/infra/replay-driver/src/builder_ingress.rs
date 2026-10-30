@@ -4,15 +4,13 @@ use base_replay::{ReplayRecord, ReplayStream};
 use base_tx_forwarding::{
     ForwardRequest, ForwardingSetupError, RawParams, TxForwardingConfig, TxForwardingService,
 };
+use eyre::{Result, ensure};
 use jsonrpsee::core::ClientError;
 use reth_tasks::TaskExecutor;
-use tokio::{
-    sync::{mpsc, watch},
-    task::AbortHandle,
-};
+use tokio::{sync::mpsc, task::AbortHandle};
 use url::Url;
 
-use crate::{InjectionError, Injector};
+use crate::Injector;
 
 /// A captured call with final delivery feedback from the shared forwarder.
 #[derive(Debug)]
@@ -20,7 +18,7 @@ pub struct ReplayRequest {
     /// Original method and raw parameters.
     pub record: ReplayRecord,
     /// Final transport or RPC outcome.
-    pub result: watch::Sender<Option<Result<(), Arc<ClientError>>>>,
+    pub result: mpsc::Sender<Result<(), Arc<ClientError>>>,
 }
 
 impl ForwardRequest for ReplayRequest {
@@ -34,7 +32,7 @@ impl ForwardRequest for ReplayRequest {
         self.record.tx_hash
     }
     fn on_result(&self, result: Result<(), Arc<ClientError>>) {
-        self.result.send_replace(Some(result));
+        let _ = self.result.try_send(result);
     }
 }
 
@@ -46,10 +44,7 @@ pub struct BuilderIngressInjector {
 }
 
 impl BuilderIngressInjector {
-    /// Starts a bounded, unthrottled single-call forwarding queue.
-    ///
-    /// # Errors
-    /// Returns the endpoint setup error without silently skipping destinations.
+    /// Starts a bounded, unthrottled single-call queue; returns endpoint setup errors.
     pub fn new(url: Url, executor: &TaskExecutor) -> Result<Self, ForwardingSetupError> {
         let (sender, receiver) = mpsc::channel(1);
         let forwarding = TxForwardingService::new(
@@ -66,26 +61,19 @@ impl Injector for BuilderIngressInjector {
         ReplayStream::BuilderIngress
     }
 
-    async fn inject(&self, record: ReplayRecord) -> Result<(), InjectionError> {
-        if record.stream != self.stream() {
-            return Err(InjectionError::Stream);
-        }
+    async fn inject(&self, record: ReplayRecord) -> Result<()> {
+        ensure!(record.stream == self.stream(), "record stream does not match injector");
         tracing::debug!(method = %record.method, received_at_ms = record.received_at_ms, "injecting replay call");
-        let (result, mut received) = watch::channel(None);
+        let (result, mut received) = mpsc::channel(1);
         tokio::time::timeout(Duration::from_secs(15), async {
-            self.sender
-                .send(ReplayRequest { record, result })
-                .await
-                .map_err(|_| InjectionError::Closed)?;
-            received.changed().await.map_err(|_| InjectionError::Closed)?;
+            self.sender.send(ReplayRequest { record, result }).await?;
             received
-                .borrow_and_update()
-                .clone()
-                .ok_or(InjectionError::Closed)?
-                .map_err(InjectionError::Rpc)
+                .recv()
+                .await
+                .ok_or_else(|| eyre::eyre!("forwarder closed without delivery feedback"))??;
+            Ok(())
         })
-        .await
-        .map_err(|_| InjectionError::Timeout)?
+        .await?
     }
 }
 

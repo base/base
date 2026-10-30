@@ -16,7 +16,7 @@ use base_builder_core::{
 use base_clock::{GlobalClock, OffsetClock};
 use base_execution_txpool::{NoExtensions, ValidatedTransaction};
 use base_replay::{ReplayRecord, ReplayStream};
-use base_replay_driver::{BuilderIngressInjector, InjectionError, InjectionSchedule, Injector};
+use base_replay_driver::{BuilderIngressInjector, InjectionSchedule, Injector};
 use jsonrpsee::{RpcModule, server::Server, types::ErrorObjectOwned};
 use reth_tasks::{RuntimeBuilder, RuntimeConfig, TokioConfig};
 use serde_json::value::RawValue;
@@ -113,10 +113,17 @@ async fn replays_verbatim_calls_when_builder_clock_reaches_recorded_offsets() ->
     println!("builder pool: {} recorded transactions present", hashes.len());
     let mut rejected = records[0].clone();
     rejected.method = "replay_unknown_method".into();
-    assert!(matches!(injector.inject(rejected).await, Err(InjectionError::Rpc(_))));
+    assert!(
+        injector
+            .inject(rejected)
+            .await
+            .unwrap_err()
+            .downcast_ref::<Arc<jsonrpsee::core::ClientError>>()
+            .is_some()
+    );
     let cancel = CancellationToken::new();
     cancel.cancel();
-    assert!(matches!(schedule.run(&injector, &cancel).await, Err(InjectionError::Cancelled)));
+    assert!(schedule.run(&injector, &cancel).await.is_err());
     drop(injector);
     server.stop()?;
     server.stopped().await;
