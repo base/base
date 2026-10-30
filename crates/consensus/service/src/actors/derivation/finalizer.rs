@@ -70,14 +70,20 @@ pub struct L2Finalizer {
     /// This survives derivation resets so that re-derived L2 blocks can be finalized without
     /// waiting for the L1 watcher to emit the same finalized block again.
     finalized_l1_block: Option<BlockInfo>,
-    /// The safe head the engine last confirmed, paired with the L1 inclusion block derivation
-    /// produced it from.
+    /// The safe head the engine last confirmed from derived attributes.
     ///
-    /// Survives derivation resets so that a reset which keeps this safe head can also keep the
-    /// candidates derived from the L1 blocks the safe head itself was built from. `None` before
-    /// the first confirmation, and after a reset moved the safe head to a block this finalizer did
-    /// not confirm.
-    confirmed_safe_head: Option<(L2BlockInfo, BlockInfo)>,
+    /// Survives derivation resets so that a reset which keeps this safe head can keep the
+    /// candidates at or below it. `None` before the first confirmation, and after a reset moved
+    /// the safe head to a block this finalizer did not confirm.
+    confirmed_safe_head: Option<L2BlockInfo>,
+    /// The lowest L2 block of each entry a reset dropped for its inclusion block, keyed by that
+    /// inclusion block's number.
+    ///
+    /// The dropped entry can no longer be promoted, but its blocks were not re-derived, so a block
+    /// derived later can still finalize them. Until the dropped inclusion block is final, these
+    /// records cap finalization below the first lost block, the same way a queued entry would.
+    /// [`Self::try_finalize_next`] discards a record once its inclusion block is final.
+    lost_inclusions: BTreeMap<L1BlockNumber, L2BlockNumber>,
     /// Inclusion blocks already verified canonical, keyed by L1 block number.
     ///
     /// A finalized L1 height is immutable, so one verification covers every L2 block a batch in
@@ -166,12 +172,14 @@ impl L2Finalizer {
         &self,
         finalized_l1_number: L1BlockNumber,
     ) -> Option<PendingFinalization> {
+        let not_final = finalized_l1_number.saturating_add(1)..;
         let cap = self
             .awaiting_finalization
-            .range(finalized_l1_number.saturating_add(1)..)
-            .map(|(_, batch)| batch.first_l2_block.saturating_sub(1))
+            .range(not_final.clone())
+            .map(|(_, batch)| batch.first_l2_block)
+            .chain(self.lost_inclusions.range(not_final).map(|(_, first)| *first))
             .min()
-            .unwrap_or(L2BlockNumber::MAX);
+            .map_or(L2BlockNumber::MAX, |first| first.saturating_sub(1));
         let eligible = || {
             self.awaiting_finalization
                 .range(..=finalized_l1_number)
@@ -228,14 +236,14 @@ impl L2Finalizer {
         self.verified_inclusions.insert(inclusion.number, inclusion.hash);
     }
 
-    /// Records the safe head the engine confirmed, and the L1 inclusion block derivation produced
-    /// it from, so that a later reset can tell which candidates are still trustworthy.
+    /// Records the safe head the engine confirmed, so that a later reset can tell which
+    /// candidates are still trustworthy.
     ///
-    /// `inclusion` is [`None`] for safe heads derivation did not produce, such as a safe head
-    /// adopted during EL sync; the reset path then keeps no candidate, because none has a
-    /// confirmed block behind it.
+    /// `inclusion` is the L1 inclusion block derivation produced the safe head from. It is
+    /// [`None`] for safe heads derivation did not produce, such as a safe head adopted during EL
+    /// sync; the reset path then keeps no candidate, because none has a confirmed block behind it.
     pub fn confirm_safe_head(&mut self, safe_head: &L2BlockInfo, inclusion: Option<BlockInfo>) {
-        self.confirmed_safe_head = inclusion.map(|inclusion| (*safe_head, inclusion));
+        self.confirmed_safe_head = inclusion.map(|_| *safe_head);
     }
 
     /// Drops the entries that a derivation reset invalidated, keeping every entry that the reset
@@ -257,18 +265,21 @@ impl L2Finalizer {
     ///   can move the safe head above the last confirmed block, and the block the engine holds at
     ///   that height need not be the one derivation produced. Above the reset safe head a block was
     ///   rolled back and is re-derived.
-    /// - Its L1 inclusion block is at or below the L1 block the reset can still vouch for: the
-    ///   inclusion block recorded for the confirmed safe head when the reset keeps that safe head,
-    ///   otherwise the reset safe head's epoch origin. The bound binds when the reset moved the
-    ///   safe head and the L1 range behind the engine's safe chain is no longer known.
+    /// - When the reset moved the safe head, its L1 inclusion block is at or below the reset safe
+    ///   head's epoch origin: the L1 range behind the engine's safe chain is no longer known, so
+    ///   nothing above the origin is trusted. A reset that keeps the confirmed safe head applies no
+    ///   such bound, because the engine keeps the chain it confirmed.
     ///
-    /// Retention only ever shrinks an entry's range; it never records a block under an inclusion
-    /// block that did not carry it. Inclusion order does not always follow L2 order across resets:
+    /// Retention only ever shrinks an entry's range; it never moves a block to an inclusion
+    /// block other than the one that carried it. Inclusion order does not always follow L2 order across resets:
     /// a replay can derive L2 501 from L1 119 while the retained L2 500 came from L1 120. If a
     /// reset to 500 rewrote the replayed entry `(119, 501)` to `(119, 500)`, 500 would finalize
     /// once L1 119 is final, before the L1 block that really carries it. An entry with no
-    /// confirmed block left is dropped instead, and so is every entry above an entry dropped for
-    /// its inclusion block: finalizing a higher block would finalize the dropped one with it.
+    /// confirmed block left is dropped instead.
+    ///
+    /// An entry dropped for its inclusion block takes every higher queued L2 block with it, and
+    /// its inclusion block keeps capping finalization until it is final, so a block derived later
+    /// cannot finalize the lost blocks early.
     ///
     /// This bound decides which candidates to keep, not which are safe to finalize: a retained
     /// candidate still has to prove its inclusion block is canonical before it is promoted.
@@ -288,7 +299,7 @@ impl L2Finalizer {
     /// verifies that block against the canonical L1 chain before promoting the candidate. A
     /// candidate whose inclusion block was replaced, or whose lookup failed, is never finalized.
     pub fn retain_valid_after_reset(&mut self, l2_safe_head: &L2BlockInfo) {
-        let Some((confirmed_safe_head, confirmed_inclusion)) = self.confirmed_safe_head else {
+        let Some(confirmed_safe_head) = self.confirmed_safe_head else {
             self.awaiting_finalization.clear();
             return;
         };
@@ -302,7 +313,9 @@ impl L2Finalizer {
             == l2_safe_head.block_info.number
             && confirmed_safe_head.block_info.hash == l2_safe_head.block_info.hash
         {
-            confirmed_inclusion.number
+            // The engine keeps the chain it confirmed, so every confirmed entry stays. Inclusion
+            // order does not always follow L2 order, so no inclusion block can bound them.
+            L1BlockNumber::MAX
         } else {
             // The reset moved the safe head to a block this finalizer did not confirm, so its own
             // inputs are being rebuilt and only its epoch origin is trusted.
@@ -323,7 +336,9 @@ impl L2Finalizer {
         // its real inclusion block, L1 120, is.
         //
         // For the same reason, an entry dropped for its inclusion block takes every higher L2
-        // block with it: the higher blocks can only be finalized together with the dropped ones.
+        // block with it, and its inclusion block keeps capping finalization until it is final:
+        // the higher blocks can only be finalized together with the dropped ones.
+        self.lost_inclusions.retain(|_, first_l2_block| *first_l2_block <= safe_l2_number);
         let mut lost_from = L2BlockNumber::MAX;
         let mut retained = BTreeMap::new();
         for (inclusion, batch) in std::mem::take(&mut self.awaiting_finalization) {
@@ -332,6 +347,10 @@ impl L2Finalizer {
             }
             if inclusion > trusted_inclusion {
                 lost_from = lost_from.min(batch.first_l2_block);
+                self.lost_inclusions
+                    .entry(inclusion)
+                    .and_modify(|first| *first = (*first).min(batch.first_l2_block))
+                    .or_insert(batch.first_l2_block);
                 continue;
             }
             retained.insert(
@@ -364,6 +383,7 @@ impl L2Finalizer {
             batch.first_l2_block = batch.first_l2_block.max(candidate.l2_block + 1);
             true
         });
+        self.lost_inclusions.retain(|&number, _| number > new_finalized_l1_block.number);
         // Verifications below the promoted inclusion block are no longer needed: the blocks they
         // covered were drained with it. A replay that inverts inclusion order can still ask about
         // one of them, which only costs another L1 lookup. The promoted block stays: further L2
@@ -832,10 +852,10 @@ mod tests {
     }
 
     #[test]
-    fn reset_that_drops_a_lower_block_s_entry_drops_the_blocks_above_it() {
+    fn reset_that_keeps_the_safe_head_keeps_a_lower_block_included_later() {
         let mut f = L2Finalizer::default();
         // L2 500 was confirmed from L1 120. The replay derives 501 from L1 119 and the engine
-        // confirms it, so the next reset trusts only L1 119 and loses the entry for 500.
+        // confirms it. Inclusion order is inverted, which must not cost the entry for 500.
         f.enqueue_for_finalization(&attrs_included_at(499, inclusion_at(120, 0xa)));
         f.confirm_safe_head(&safe_head(500, 118), Some(inclusion_at(120, 0xa)));
         f.retain_valid_after_reset(&safe_head(500, 118));
@@ -844,8 +864,26 @@ mod tests {
 
         f.retain_valid_after_reset(&safe_head(501, 118));
 
-        // Finalizing 501 would finalize 500, whose inclusion block is no longer tracked.
-        assert_eq!(f.pending_candidate(1_000), None);
+        // The entry for 500 survived, so 501 waits for L1 120 and so does a block derived later.
+        f.enqueue_for_finalization(&attrs_included_at(501, inclusion_at(119, 0xa)));
+        assert_eq!(f.pending_candidate(119), None);
+        assert_eq!(record_and_finalize(&mut f, l1_at(120)), Some(502));
+    }
+
+    #[test]
+    fn lost_entry_keeps_capping_blocks_derived_after_the_reset() {
+        let mut f = L2Finalizer::default();
+        f.confirm_safe_head(&safe_head_at(600, 100), Some(l1_at(101)));
+        f.enqueue_for_finalization(&attrs(479, 100)); // l2=480, included at the origin
+        f.enqueue_for_finalization(&attrs(489, 101)); // l2=490, above the origin: lost
+
+        f.retain_valid_after_reset(&safe_head_at(500, 100));
+        // The replay derives 501 from L1 100, below the lost inclusion block of 490.
+        f.enqueue_for_finalization(&attrs(500, 100));
+
+        // 501 would finalize 490 before L1 101 is final.
+        assert_eq!(f.pending_candidate(100).map(|candidate| candidate.l2_block), Some(489));
+        assert_eq!(record_and_finalize(&mut f, l1_at(101)), Some(501));
     }
 
     #[test]
