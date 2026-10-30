@@ -26,7 +26,7 @@ even while mainnet still runs flashblocks.
 | Flashblock transaction selection and execution (until Denim) | `crates/builder/core/src/flashblocks/context.rs` `execute_best_transactions` loop body, plus everything it calls | candidate transaction, per flashblock | ~10^9 candidates/day vs ~10^7 included |
 | Best-transaction iteration and parking (both builders) | `crates/execution/payload/src/parkable.rs`, `crates/builder/core` parkable iterators, `crates/execution/txpool` ordering and validity predicates | candidate transaction | same order as above |
 | Best-transaction snapshot (both builders) | `crates/execution/txpool/src/pool.rs` `merged_best_transactions`, reth's pending snapshot, `TwoDNoncePool::best_transactions` for the sidecar and the validity pool | flashblock, block after Denim | ~4×10^5/day; `cargo bench -p base-execution-txpool --bench best_transactions` |
-| Transaction pool admission | `crates/execution/txpool` validation, RPC `eth_sendRawTransaction` | submitted transaction | ~10^8/day |
+| Transaction pool admission | `crates/execution/txpool` validation, RPC `eth_sendRawTransaction` | submitted transaction | ~10^8/day; `cargo bench -p base-execution-txpool --bench admission` |
 | Flashblock publish (until Denim) | `crates/builder/publish` | flashblock (10 per block) | ~4×10^5/day |
 | Block execution and state root | `crates/execution/*` executor, trie | block and touched account/slot | ~4×10^4 blocks/day, ~4×10^5 after Denim |
 
