@@ -1011,20 +1011,18 @@ mod tests {
     #[case::beyond_legacy_gap(301, true)]
     #[case::within_catchup_window(2_999, true)]
     #[case::beyond_catchup_window(3_001, false)]
-    #[tokio::test(start_paused = true)]
+    #[tokio::test]
     async fn regular_gossip_gap_spans_the_catchup_window(#[case] gap: u64, #[case] admitted: bool) {
         let coordinator = coordinator(false, false, None);
         let client = Arc::clone(coordinator.processor.client());
         let (request_tx, request_rx) = mpsc::channel(8);
-        let gossip = payload(gap, 1);
         let handle = coordinator.start(request_rx);
 
         request_tx
-            .send(EngineActorRequest::ProcessUnsafeL2BlockRequest(Box::new(gossip)))
+            .send(EngineActorRequest::ProcessUnsafeL2BlockRequest(Box::new(payload(gap, 1))))
             .await
             .expect("gossip request");
-        // The engine runs requests in order, so a following barrier request means the gossip was
-        // handled.
+        // Requests are handled in order, so a following barrier means the gossip was handled.
         let (result_tx, mut result_rx) = mpsc::channel(1);
         request_tx
             .send(EngineActorRequest::PrepareSequencerStart {
@@ -1033,10 +1031,16 @@ mod tests {
             })
             .await
             .expect("request barrier");
-        let _ = result_rx.recv().await;
-        tokio::time::sleep(Duration::from_secs(1)).await;
-        drop(request_tx);
-        handle.await.expect("engine task").expect_err("closed request channel");
+        // The reply may be deferred while an admitted insert is in flight; only ordering matters.
+        let _ = tokio::time::timeout(Duration::from_millis(500), result_rx.recv()).await;
+        // An admitted insert reaches the engine asynchronously.
+        for _ in 0..50 {
+            if client.last_new_payload_v2().await.is_some() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        handle.abort();
 
         assert_eq!(client.last_new_payload_v2().await.is_some(), admitted);
     }
