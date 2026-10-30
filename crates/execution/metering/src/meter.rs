@@ -1,35 +1,38 @@
 //! Bundle metering logic.
 
-use std::{sync::Arc, time::Instant};
+use std::{cell::RefCell, rc::Rc, sync::Arc, time::Instant};
 
 use alloy_consensus::{BlockHeader, Transaction as _, transaction::Recovered};
 use alloy_eips::eip1898::BlockNumHash;
-use alloy_evm::block::TxResult as _;
 use alloy_primitives::{
-    Address, B256, U256,
+    Address, B256, KECCAK256_EMPTY, U256,
     map::{HashMap, HashSet},
 };
 use base_bundles::{BundleExtensions, BundleTxs, OpcodeGas, ParsedBundle, TransactionResult};
+use base_common_chains::{BaseUpgrade, BaseUpgradeExt};
 use base_common_consensus::{BaseTxEnvelope, SystemAddresses};
-use base_common_evm::{BaseSpecId, BaseUpgrade, L1BlockInfo};
 use base_common_genesis::{ChainGenesis, RollupConfig};
+use base_common_l1_fees::L1FeeParams;
 use base_common_precompiles::{
     ActivationRegistryStorage, B20FactoryStorage, B20Variant, PolicyRegistryStorage,
 };
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_evm::{BaseEvmConfig, BaseNextBlockEnvAttributes};
 use base_protocol::BaseTimeUpdateTx;
-use eyre::{Result as EyreResult, eyre};
-use reth_evm::{ConfigureEvm, Evm as _, execute::BlockBuilder};
-use reth_primitives_traits::{Account, SealedHeader};
-use reth_revm::{
-    database::StateProviderDatabase, db::State, primitives::KECCAK_EMPTY,
-    revm::context_interface::cfg::GasParams,
+use evm2::{
+    EvmFeatures, Version,
+    evm::{AccountChanges, CacheDB, Database as _, Db},
+    interpreter::opcode::OpCode,
+    version::GasId,
 };
-use revm::{primitives::hardfork::SpecId, state::EvmState};
-use revm_bytecode::opcode::OpCode;
+use eyre::{Result as EyreResult, eyre};
+use reth_evm::{ConfigureEvm, EvmEnv, database::StateProviderDatabase, execute::BlockBuilder};
+use reth_primitives_traits::{Account, SealedHeader};
 
-use crate::{inspector::MeteringInspector, transaction::validate_tx};
+use crate::{
+    inspector::{MeteringInspector, SharedMeteringInspector},
+    transaction::validate_tx,
+};
 
 // Static floor from the current minimum base fee for metering simulation.
 // The protocol has a dynamic min_base_fee via system config, but for metering
@@ -331,9 +334,9 @@ impl MeteredOpcodes {
         self
     }
 
-    /// Filters the precompile set to those active in `spec`, consuming `self`.
-    pub fn for_spec(mut self, spec: BaseSpecId) -> Self {
-        if spec.is_enabled_in(BaseUpgrade::Beryl) {
+    /// Filters the precompile set to those active at `upgrade`, consuming `self`.
+    pub fn for_upgrade(mut self, upgrade: BaseUpgrade) -> Self {
+        if upgrade as u8 >= BaseUpgrade::Beryl as u8 {
             return self;
         }
 
@@ -417,7 +420,7 @@ impl MeteredOpcodes {
 fn is_dead_provider_account(account: &Account) -> bool {
     account.nonce == 0
         && account.balance.is_zero()
-        && account.bytecode_hash.is_none_or(|hash| hash == KECCAK_EMPTY)
+        && account.bytecode_hash.is_none_or(|hash| hash == KECCAK256_EMPTY)
 }
 
 fn lookup_value_recipient_is_dead<SP>(state_provider: &SP, address: &Address) -> EyreResult<bool>
@@ -432,7 +435,7 @@ fn intrinsic_gas_entries<T: alloy_consensus::Transaction>(
     recipient_is_dead: bool,
     tx_succeeded: bool,
     metered: &MeteredOpcodes,
-    spec: BaseSpecId,
+    version: &Version,
 ) -> Vec<OpcodeGas> {
     if metered.pseudo_opcodes.is_empty() {
         return Vec::new();
@@ -440,16 +443,16 @@ fn intrinsic_gas_entries<T: alloy_consensus::Transaction>(
 
     let requested = |opcode: PseudoOpcode| metered.pseudo_opcodes.contains(&opcode);
     let mut entries = Vec::new();
-    let gas_params = GasParams::new_spec(spec.into());
+    let gas_params = &version.gas_params;
 
-    // EIP-2028/EIP-7623: revm's active token schedule is the source of truth for
+    // EIP-2028/EIP-7623: the active token schedule is the source of truth for
     // calldata pricing. In particular, do not hardcode the Istanbul non-zero
     // byte price because future schedules may change the multiplier.
     let zero_bytes = tx.input().iter().filter(|&&byte| byte == 0).count() as u64;
     let non_zero_bytes = tx.input().len() as u64 - zero_bytes;
-    let zero_byte_cost = gas_params.tx_token_cost();
+    let zero_byte_cost = gas_params.get(GasId::TxTokenCost);
     let non_zero_byte_cost =
-        zero_byte_cost.saturating_mul(gas_params.tx_token_non_zero_byte_multiplier());
+        zero_byte_cost.saturating_mul(gas_params.get(GasId::TxTokenNonZeroByteMultiplier));
     let calldata_zero_gas = zero_bytes.saturating_mul(zero_byte_cost);
     let calldata_non_zero_gas = non_zero_bytes.saturating_mul(non_zero_byte_cost);
 
@@ -457,10 +460,10 @@ fn intrinsic_gas_entries<T: alloy_consensus::Transaction>(
     // Pre-Amsterdam Base execution uses this legacy aggregate. The exact
     // EIP-2780 primitive names are registered above but are deliberately not
     // emitted until a Base execution schedule implements that decomposition.
-    let legacy_tx_base_gas = gas_params.tx_base_stipend();
-    let legacy_create_gas = if is_create { gas_params.tx_create_cost() } else { 0 };
+    let legacy_tx_base_gas = gas_params.get(GasId::TxBaseStipend);
+    let legacy_create_gas = if is_create { gas_params.get(GasId::TxCreateCost) } else { 0 };
     let initcode_words = if is_create { tx.input().len().div_ceil(32) as u64 } else { 0 };
-    let initcode_gas = if is_create { gas_params.tx_initcode_cost(tx.input().len()) } else { 0 };
+    let initcode_gas = initcode_words.saturating_mul(gas_params.get(GasId::TxInitcodeCost));
 
     // EIP-2930: these are prepaid access-list entries, not EIP-7928 BAL
     // observations. The active schedule can update their per-entry prices.
@@ -469,34 +472,31 @@ fn intrinsic_gas_entries<T: alloy_consensus::Transaction>(
         access_list.iter().map(|item| item.storage_keys.len() as u64).sum()
     });
     let access_list_address_gas =
-        access_list_addresses.saturating_mul(gas_params.tx_access_list_address_cost());
+        access_list_addresses.saturating_mul(gas_params.get(GasId::TxAccessListAddressCost));
     let access_list_storage_key_gas =
-        access_list_storage_keys.saturating_mul(gas_params.tx_access_list_storage_key_cost());
+        access_list_storage_keys.saturating_mul(gas_params.get(GasId::TxAccessListStorageKeyCost));
 
-    // EIP-7702: `tx_eip7702_per_empty_account_cost` includes the active
+    // EIP-7702: `TxEip7702PerEmptyAccountCost` includes the active
     // regular/state portions, so it remains correct if the schedule changes.
     let authorization_count = tx.authorization_count().unwrap_or_default();
-    let per_empty_account_cost = gas_params.tx_eip7702_per_empty_account_cost();
+    let per_empty_account_cost = gas_params.get(GasId::TxEip7702PerEmptyAccountCost);
     let authorization_gas = authorization_count.saturating_mul(per_empty_account_cost);
 
-    let eip2780 = spec.into_eth_spec().is_enabled_in(SpecId::AMSTERDAM).then(|| {
-        revm::context_interface::cfg::gas_params::Eip2780TxInfo {
-            value: tx.value(),
-            // Self-transfer: a `Call` whose recipient is the sender itself.
-            is_self_transfer: tx.kind().to() == Some(tx.signer_ref()),
-        }
-    });
-
-    let initial_gas = gas_params.initial_tx_gas(
+    // Intrinsic gas as execution charges it, including EIP-2780's decomposed base once active.
+    let (base_intrinsic_gas, floor_gas) = evm2::ethereum::intrinsic_and_floor_gas(
+        version,
+        tx.signer(),
+        tx.kind(),
         tx.input(),
-        is_create,
         access_list_addresses,
         access_list_storage_keys,
-        authorization_count,
-        eip2780,
+        tx.value(),
     );
-    let intrinsic_gas = initial_gas.initial_total_gas();
-    let floor_gas = initial_gas.floor_gas();
+    let intrinsic_gas = if version.feature(EvmFeatures::EIP7702) {
+        base_intrinsic_gas.saturating_add(authorization_gas)
+    } else {
+        base_intrinsic_gas
+    };
 
     if requested(PseudoOpcode::IntrinsicTotal) {
         entries.push(OpcodeGas {
@@ -603,7 +603,10 @@ fn intrinsic_gas_entries<T: alloy_consensus::Transaction>(
     entries
 }
 
-fn state_effect_entries(state: &EvmState, metered: &MeteredOpcodes) -> Vec<OpcodeGas> {
+fn state_effect_entries<'a>(
+    changes: impl IntoIterator<Item = AccountChanges<'a>>,
+    metered: &MeteredOpcodes,
+) -> Vec<OpcodeGas> {
     if !metered.pseudo_opcodes.iter().any(|opcode| opcode.is_state_effect()) {
         return Vec::new();
     }
@@ -613,21 +616,23 @@ fn state_effect_entries(state: &EvmState, metered: &MeteredOpcodes) -> Vec<Opcod
     let mut cleared_slots = 0u64;
     let mut touched_accounts = 0u64;
     let mut changed_accounts = 0u64;
-    for account in state.values() {
-        if account.is_touched() {
+    for account in changes {
+        if account.touched {
             touched_accounts = touched_accounts.saturating_add(1);
         }
-        if account.is_changed() {
+        let info_changed = match (account.original, account.current) {
+            (Some(original), Some(current)) => original != current,
+            (None, None) => false,
+            (Some(info), None) | (None, Some(info)) => !info.is_empty(),
+        };
+        if info_changed {
             changed_accounts = changed_accounts.saturating_add(1);
         }
-        for slot in account.storage.values() {
-            if !slot.is_changed() {
-                continue;
-            }
+        for (_, slot) in account.storage.changed_slots() {
             changed_slots = changed_slots.saturating_add(1);
-            if slot.original_value().is_zero() {
+            if slot.original.is_zero() {
                 new_slots = new_slots.saturating_add(1);
-            } else if slot.present_value().is_zero() {
+            } else if slot.current.is_zero() {
                 cleared_slots = cleared_slots.saturating_add(1);
             }
         }
@@ -664,8 +669,8 @@ pub struct MeterBundleInput<SP> {
     pub bundle: ParsedBundle,
     /// Header used as the parent block for simulation; the EVM env is derived from it.
     pub header: SealedHeader,
-    /// L1 block info used to compute L1 data fees during simulation.
-    pub l1_block_info: L1BlockInfo,
+    /// L1 fee parameters used to compute L1 data fees during simulation.
+    pub l1_block_info: L1FeeParams,
     /// Opcodes and precompiles to track gas usage for.
     pub metered_opcodes: Arc<MeteredOpcodes>,
 }
@@ -687,7 +692,7 @@ where
         chain_spec,
         bundle,
         header,
-        mut l1_block_info,
+        l1_block_info,
         metered_opcodes,
     } = input;
     let header = &header;
@@ -711,8 +716,8 @@ where
     }
 
     // Create state database
-    let state_db = StateProviderDatabase::new(state_provider.into_evm_state_provider());
-    let mut db = State::builder().with_database(state_db).with_bundle_update().build();
+    let mut db =
+        CacheDB::new(Db::new(StateProviderDatabase::new(state_provider.into_evm_state_provider())));
 
     // Override sender nonces to match their first transaction's nonce and collect
     // account info for pre-flight validation.
@@ -723,16 +728,14 @@ where
 
     let mut account_infos: HashMap<Address, Account> = HashMap::default();
     for (&addr, &nonce) in &first_nonces {
-        let cache_account = db.load_cache_account(addr)?;
+        let info = db.get_account(&addr)?;
         // Missing senders match reth's pool validator: `basic_account()?.unwrap_or_default()`.
-        let mut account = cache_account
-            .account
+        let mut account = info
             .as_ref()
-            .map(|account| Account {
-                nonce: account.info.nonce,
-                balance: account.info.balance,
-                bytecode_hash: (account.info.code_hash != KECCAK_EMPTY)
-                    .then_some(account.info.code_hash),
+            .map(|info| Account {
+                nonce: info.nonce,
+                balance: info.balance,
+                bytecode_hash: (info.code_hash != KECCAK256_EMPTY).then_some(info.code_hash),
             })
             .unwrap_or_default();
         let max_nonce = account.nonce.saturating_add(MAX_NONCE_AHEAD);
@@ -746,8 +749,8 @@ where
             ));
         }
         account.nonce = nonce;
-        if let Some(ref mut cached) = cache_account.account {
-            cached.info.nonce = nonce;
+        if let Some(info) = info {
+            db.insert_account_info(&addr, info.with_nonce(nonce));
         }
         account_infos.insert(addr, account);
     }
@@ -774,17 +777,19 @@ where
 
     let total_start = Instant::now();
     {
-        let evm_config = BaseEvmConfig::base(chain_spec);
-        let evm_env = evm_config.next_evm_env(header, &attributes)?;
-        let spec = evm_env.cfg_env.spec;
-        let metered_opcodes = Arc::new(metered_opcodes.clone().for_spec(spec));
-        let inspector = MeteringInspector::new(Arc::clone(&metered_opcodes));
-        let evm = evm_config.evm_with_env_and_inspector(&mut db, evm_env, inspector);
+        let evm_config = BaseEvmConfig::base(Arc::clone(&chain_spec));
+        let mut evm_env = evm_config.next_evm_env(header, &attributes)?;
+        let block = evm_env.block_env_mut();
+        block.basefee = block.basefee.min(U256::from(MIN_BASEFEE));
+        let version = *evm_env.version();
+        let upgrade = BaseUpgrade::from_timestamp(chain_spec.as_ref(), timestamp);
+        let metered_opcodes = Arc::new(metered_opcodes.clone().for_upgrade(upgrade));
+        let inspector = Rc::new(RefCell::new(MeteringInspector::new(Arc::clone(&metered_opcodes))));
+        let mut evm = evm_config.evm_with_env(&mut db, evm_env.clone());
+        evm.set_inspector(SharedMeteringInspector(Rc::clone(&inspector)));
         let ctx = evm_config.context_for_next_block(header, attributes)?;
-        let mut builder = evm_config.create_block_builder(evm, header, ctx);
+        let mut builder = evm_config.create_block_builder(evm, evm_env, header, ctx);
 
-        let block = &mut builder.evm_mut().block;
-        block.basefee = block.basefee.min(MIN_BASEFEE);
         builder.apply_pre_execution_changes()?;
 
         if let Some(base_time) = base_time {
@@ -800,7 +805,7 @@ where
 
             // The deposit shares the inspector with the bundle; discard what it recorded so it
             // is not attributed to the first user transaction.
-            let inspector = builder.evm_mut().inspector_mut();
+            let mut inspector = inspector.borrow_mut();
             inspector.take_opcode_gas();
             inspector.take_precompile_gas();
         }
@@ -834,21 +839,23 @@ where
                 .copied()
                 .ok_or_else(|| eyre!("Account not found for address: {from}"))?;
 
-            validate_tx(account, tx, &mut l1_block_info, spec)
+            validate_tx(account, tx, &l1_block_info, upgrade)
                 .map_err(|e| eyre!("Transaction {tx_hash} validation failed: {e}"))?;
 
             let mut tx_succeeded = false;
             let mut state_effects = Vec::new();
             let gas_used = builder
-                .execute_transaction_with_result_closure(tx.clone(), |result| {
-                    let result_and_state = result.result();
-                    tx_succeeded = result_and_state.result.is_success();
-                    // Count net post-state even when the call reverts. Revm still
+                .execute_transaction_with_result_closure(tx.clone(), |executed| {
+                    tx_succeeded = executed.result.result.is_success();
+                    // Count net post-state even when the call reverts. Execution still
                     // commits gas payment, nonce, and coinbase balance; rolled-back
-                    // storage writes are already absent from `EvmState`. Gating on
+                    // storage writes are already absent from the pending state. Gating on
                     // success would undercount committed account effects that resource
                     // admission prices.
-                    state_effects = state_effect_entries(&result_and_state.state, &metered_opcodes);
+                    state_effects = state_effect_entries(
+                        executed.result.pending_state.account_changes(),
+                        &metered_opcodes,
+                    );
                 })
                 .map_err(|e| eyre!("Transaction {tx_hash} execution failed: {e}"))?
                 .tx_gas_used();
@@ -864,12 +871,18 @@ where
             total_gas_fees = total_gas_fees.saturating_add(gas_fees);
 
             // Extract per-transaction opcode and precompile gas, then reset for next tx.
-            let inspector = builder.evm_mut().inspector_mut();
-            let opcode_data = inspector.take_opcode_gas();
-            let precompile_data = inspector.take_precompile_gas();
+            let (opcode_data, precompile_data) = {
+                let mut inspector = inspector.borrow_mut();
+                (inspector.take_opcode_gas(), inspector.take_precompile_gas())
+            };
 
-            let mut opcode_gas =
-                intrinsic_gas_entries(tx, recipient_is_dead, tx_succeeded, &metered_opcodes, spec);
+            let mut opcode_gas = intrinsic_gas_entries(
+                tx,
+                recipient_is_dead,
+                tx_succeeded,
+                &metered_opcodes,
+                &version,
+            );
             opcode_gas.extend(state_effects);
             opcode_gas.extend(opcode_data.iter().filter(|(_, usage)| usage.count > 0).map(
                 |(&(contract_address, opcode), usage)| OpcodeGas {
@@ -936,13 +949,17 @@ mod tests {
         Account, ContractFactory, DEVNET_CHAIN_ID, SimpleStorage, build_test_genesis,
         build_test_genesis_everest,
     };
+    use evm2::evm::{AccountInfo, StorageOverlay, StorageSlot, Tracked};
     use eyre::Context;
     use reth_chainspec::ForkCondition;
     use reth_provider::StateProviderFactory;
     use reth_transaction_pool::test_utils::TransactionBuilder;
-    use revm::state::{Account as RevmAccount, EvmStorageSlot, TransactionId};
 
     use super::*;
+
+    fn azul_version() -> Version {
+        Version::new(base_common_evm2::BaseSpecId::new(BaseUpgrade::Azul).into())
+    }
     use crate::TestSupport;
 
     fn custom_chain_spec(chain_id: u64, denim: Option<u64>) -> BaseChainSpec {
@@ -1114,24 +1131,29 @@ mod tests {
 
     #[test]
     fn state_effect_entries_count_net_original_to_present() {
-        let mut account = RevmAccount::default();
-        account.mark_touch();
-        account.storage.insert(
-            U256::from(1),
-            EvmStorageSlot::new_changed(U256::ZERO, U256::from(7), TransactionId::ZERO),
-        );
-        account.storage.insert(
-            U256::from(2),
-            EvmStorageSlot::new_changed(U256::from(4), U256::ZERO, TransactionId::ZERO),
-        );
-        account
-            .storage
-            .insert(U256::from(3), EvmStorageSlot::new(U256::from(5), TransactionId::ZERO));
-        let mut state = EvmState::default();
-        state.insert(Address::ZERO, account);
+        let slot = |original: u64, present: u64| StorageSlot {
+            value: Tracked::from_parts(U256::from(original), U256::from(present)),
+            is_warm: false,
+            _non_exhaustive: (),
+        };
+        let mut storage = StorageOverlay::default();
+        storage.slots.insert(U256::from(1), slot(0, 7));
+        storage.slots.insert(U256::from(2), slot(4, 0));
+        storage.slots.insert(U256::from(3), slot(5, 5));
+        let info = AccountInfo::default();
+        let account = AccountChanges {
+            address: Address::ZERO,
+            original: Some(&info),
+            current: Some(&info),
+            created: false,
+            selfdestructed: false,
+            touched: true,
+            code: None,
+            storage: &storage,
+        };
 
         let metered = MeteredOpcodes::parse(&state_effect_names()).unwrap();
-        let entries = state_effect_entries(&state, &metered);
+        let entries = state_effect_entries([account], &metered);
         assert_eq!(opcode_count(&entries, "STATE_NEW_STORAGE_SLOT"), Some(1));
         assert_eq!(opcode_count(&entries, "STATE_CHANGED_STORAGE_SLOT"), Some(2));
         assert_eq!(opcode_count(&entries, "STATE_CLEARED_STORAGE_SLOT"), Some(1));
@@ -2043,8 +2065,7 @@ mod tests {
 
         // Azul is Base's Osaka execution schedule. EIP-2780 is not active, so its
         // primitive names must not be populated with legacy gas values.
-        let entries =
-            intrinsic_gas_entries(&tx, false, true, &metered, BaseSpecId::new(BaseUpgrade::Azul));
+        let entries = intrinsic_gas_entries(&tx, false, true, &metered, &azul_version());
         assert!(entries.iter().any(|entry| entry.opcode == "INTRINSIC_LEGACY_TX_BASE_COST"));
         for name in [
             "INTRINSIC_TX_BASE_COST",
@@ -2117,9 +2138,8 @@ mod tests {
 
     #[test]
     fn metered_opcodes_for_spec_filters_beryl_before_activation() {
-        let result = MeteredOpcodes::default()
-            .with_all_precompiles()
-            .for_spec(BaseSpecId::new(BaseUpgrade::Azul));
+        let result =
+            MeteredOpcodes::default().with_all_precompiles().for_upgrade(BaseUpgrade::Azul);
         let (asset, _) =
             B20Variant::Asset.compute_address(Address::repeat_byte(0x11), B256::repeat_byte(0x22));
 
@@ -2132,9 +2152,8 @@ mod tests {
 
     #[test]
     fn metered_opcodes_for_spec_keeps_beryl_after_activation() {
-        let result = MeteredOpcodes::default()
-            .with_all_precompiles()
-            .for_spec(BaseSpecId::new(BaseUpgrade::Beryl));
+        let result =
+            MeteredOpcodes::default().with_all_precompiles().for_upgrade(BaseUpgrade::Beryl);
         let (asset, _) =
             B20Variant::Asset.compute_address(Address::repeat_byte(0x11), B256::repeat_byte(0x22));
 
@@ -2166,7 +2185,7 @@ mod tests {
             chain_spec: harness.chain_spec(),
             bundle: ParsedBundle::try_from(Bundle::default()).map_err(|e| eyre::eyre!(e))?,
             header: sealed_without_root,
-            l1_block_info: L1BlockInfo::default(),
+            l1_block_info: L1FeeParams::default(),
             metered_opcodes: Arc::new(MeteredOpcodes::default()),
         })
         .expect_err("missing parent beacon block root should fail");
