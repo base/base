@@ -5,6 +5,9 @@ _ha := "-f etc/docker/docker-compose.yml -f etc/docker/docker-compose.ha.yml"
 _base := "-f etc/docker/docker-compose.yml"
 _anvil := "-f etc/docker/docker-compose.yml -f etc/docker/docker-compose.anvil-l1.yml"
 _env := "--env-file etc/docker/devnet-env"
+# OP Labs' published build of the op-batcher commit pinned in Dockerfile.op-batcher; its
+# provenance records ethereum-optimism/optimism@abe047af. Update both pins together.
+_op_batcher_published := "us-docker.pkg.dev/oplabs-tools-artifacts/images/op-batcher:v1.16.5@sha256:312d8898af75181a06bfaac5146ec7abb38d9246dc0632584f89aff1c0326731"
 
 mod snapshot '../just/snapshot.just'
 
@@ -343,9 +346,58 @@ _up-devnet compose_profile mode:
         ;;
     esac
 
+    # DEVNET_BASE_IMAGE, DEVNET_SETUP_IMAGE, and DEVNET_OP_BATCHER_IMAGE select prebuilt
+    # images; unset ones are built under the local tags Compose defaults to.
+    # DEVNET_IMAGES=pull fills unset ones with the images published for a clean HEAD.
+    ensure_image() { docker image inspect "$1" >/dev/null 2>&1 || docker pull "$1"; }
+    for var in DEVNET_BASE_IMAGE DEVNET_SETUP_IMAGE DEVNET_OP_BATCHER_IMAGE; do
+      if [ -n "${!var:-}" ]; then
+        ensure_image "${!var}" || {
+          echo "ERROR: ${var}=${!var} is neither a local image nor pullable" >&2
+          exit 1
+        }
+        export "$var"
+      fi
+    done
+    case "${DEVNET_IMAGES:-build}" in
+      build) ;;
+      pull)
+        if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
+          echo "DEVNET_IMAGES=pull: tracked files have uncommitted changes, so published images would not match this tree; building locally." >&2
+        else
+          head="$(git rev-parse HEAD)"
+          published=(
+            "DEVNET_BASE_IMAGE=ghcr.io/base/node:sha-${head}"
+            "DEVNET_SETUP_IMAGE=ghcr.io/base/devnet-setup:sha-${head}"
+            "DEVNET_OP_BATCHER_IMAGE={{ _op_batcher_published }}"
+          )
+          for entry in "${published[@]}"; do
+            var="${entry%%=*}"
+            image="${entry#*=}"
+            [ -z "${!var:-}" ] || continue
+            if ensure_image "$image"; then
+              export "${var}=${image}"
+            else
+              echo "DEVNET_IMAGES=pull: ${image} is not published (the Docker workflow publishes main commits and may skip superseded ones); building it locally." >&2
+            fi
+          done
+        fi
+        ;;
+      *)
+        echo "ERROR: DEVNET_IMAGES must be 'build' or 'pull' (got '${DEVNET_IMAGES}')" >&2
+        exit 1
+        ;;
+    esac
+
     just --justfile {{ source_file() }} down
-    just --justfile {{ source_file() }} _build-setup-image
-    just --justfile {{ source_file() }} _build-rust-images "devnet" "dev"
+    [ -n "${DEVNET_SETUP_IMAGE:-}" ] || just --justfile {{ source_file() }} _build-setup-image
+    build_targets=()
+    [ -n "${DEVNET_BASE_IMAGE:-}" ] || build_targets+=(base)
+    [ -n "${DEVNET_OP_BATCHER_IMAGE:-}" ] || build_targets+=(op-batcher)
+    if ((${#build_targets[@]})); then
+      PROFILE=dev docker buildx bake -f etc/docker/docker-bake.hcl "${build_targets[@]}" --load
+    fi
+    echo "Devnet images: base=${DEVNET_BASE_IMAGE:-base:local} setup=${DEVNET_SETUP_IMAGE:-devnet-setup:local-v2} op-batcher=${DEVNET_OP_BATCHER_IMAGE:-op-batcher:local}"
     docker compose {{ _env }} "${compose_files[@]}" up -d --no-build --remove-orphans
 
 [private]

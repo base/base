@@ -18,7 +18,7 @@ x-node-healthcheck: &node-healthcheck
 
 services:
   setup-devnet:
-    image: devnet-setup:local-v2
+    image: ${DEVNET_SETUP_IMAGE:-devnet-setup:local-v2}
     build:
       context: ../..
       dockerfile: etc/docker/Dockerfile.devnet
@@ -176,7 +176,7 @@ services:
     restart: unless-stopped
 
   base-bootnode:
-    image: base:local
+    image: ${DEVNET_BASE_IMAGE:-base:local}
     build:
       <<: *rust-service-build
       target: base
@@ -233,7 +233,7 @@ services:
     restart: unless-stopped
 
   base-builder:
-    image: base:local
+    image: ${DEVNET_BASE_IMAGE:-base:local}
     build:
       <<: *rust-service-build
       target: base
@@ -358,11 +358,14 @@ services:
   # Canonical DA: the Go op-batcher posts to the canonical batch inbox from
   # BATCHER_ADDR. base-client / base-rpc derive from this.
   op-batcher:
-    image: op-batcher:local
+    image: ${DEVNET_OP_BATCHER_IMAGE:-op-batcher:local}
     build:
       context: ../..
       dockerfile: etc/docker/Dockerfile.op-batcher
     container_name: op-batcher
+    # The upstream OP Labs image sets CMD rather than ENTRYPOINT; resolve from PATH
+    # so the local build and the upstream image start the same binary.
+    entrypoint: ["op-batcher"]
     # Skip the L1 receipt drain when stopping the disposable devnet batcher.
     stop_signal: SIGKILL
     depends_on:
@@ -401,7 +404,7 @@ services:
   # base-shadow-validator, whose rollup node derives its chain from the shadow inbox,
   # and compares the validator's blocks with the builder's.
   base-batcher:
-    image: base:local
+    image: ${DEVNET_BASE_IMAGE:-base:local}
     build:
       <<: *rust-service-build
       target: base
@@ -437,7 +440,7 @@ services:
     restart: unless-stopped
 
   base-client:
-    image: base:local
+    image: ${DEVNET_BASE_IMAGE:-base:local}
     build:
       <<: *rust-service-build
       target: base
@@ -554,7 +557,7 @@ services:
     restart: unless-stopped
 
   base-rpc:
-    image: base:local
+    image: ${DEVNET_BASE_IMAGE:-base:local}
     build:
       <<: *rust-service-build
       target: base
@@ -660,7 +663,7 @@ services:
   # base-batcher. Its derived safe head can be compared against the canonical
   # chain (see etc/scripts/devnet/compare-heads.sh) for batcher parity testing.
   base-shadow-validator:
-    image: base:local
+    image: ${DEVNET_BASE_IMAGE:-base:local}
     build:
       <<: *rust-service-build
       target: base

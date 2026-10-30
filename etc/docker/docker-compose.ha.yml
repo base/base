@@ -1,5 +1,5 @@
 x-sequencer-base: &sequencer-base
-  image: base:local
+  image: ${DEVNET_BASE_IMAGE:-base:local}
   build:
     context: ../..
     dockerfile: etc/docker/Dockerfile.rust-services
@@ -393,7 +393,7 @@ services:
       <<: *conductor-healthcheck
 
   setup-conductor:
-    image: devnet-setup:local-v2
+    image: ${DEVNET_SETUP_IMAGE:-devnet-setup:local-v2}
     container_name: setup-conductor
     depends_on:
       op-conductor-0:

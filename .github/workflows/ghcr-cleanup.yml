@@ -72,3 +72,31 @@ jobs:
           older-than: 60 days
           dry-run: ${{ inputs.dry_run }}
           validate: true
+
+      # The Docker workflow publishes devnet-setup for `just devnet up` with
+      # DEVNET_IMAGES=pull; skip it until the first push creates the package.
+      - name: Find devnet setup image
+        id: devnet-setup-image
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          set -euo pipefail
+          if gh api "/orgs/${OWNER}/packages/container/devnet-setup/versions?per_page=1" >/dev/null 2>&1; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::Skipping devnet-setup cleanup until the package exists and is readable"
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Clean up devnet setup images
+        if: steps.devnet-setup-image.outputs.ready == 'true'
+        uses: dataaxiom/ghcr-cleanup-action@d52806a0dc70b430571a37da1fde39733ffd640f # v1.2.2
+        with:
+          owner: ${{ github.repository_owner }}
+          packages: devnet-setup
+          delete-tags: "*"
+          delete-untagged: true
+          older-than: 60 days
+          dry-run: ${{ inputs.dry_run }}
+          validate: true

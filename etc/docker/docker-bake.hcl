@@ -178,6 +178,12 @@ target "audit-archiver" {
   tags = ["audit-archiver:local"]
 }
 
+target "devnet-setup" {
+  context = "."
+  dockerfile = "etc/docker/Dockerfile.devnet"
+  tags = ["devnet-setup:local-v2"]
+}
+
 target "op-batcher" {
   context = "."
   dockerfile = "etc/docker/Dockerfile.op-batcher"
