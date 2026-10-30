@@ -255,7 +255,7 @@ impl<R: ForwardRequest> DestinationForwarder<R> {
         // Parallel to `batch` by index, so a batch response entry maps back to the request that
         // produced it. Collected once up front because both are read on every retry attempt.
         let tx_hashes: Vec<Option<TxHash>> = batch.iter().map(ForwardRequest::tx_hash).collect();
-        let methods: Vec<&'static str> = batch.iter().map(ForwardRequest::method).collect();
+        let methods: Vec<&str> = batch.iter().map(ForwardRequest::method).collect();
         let tx_count = batch.len() as u64;
         let overall_start = Instant::now();
         for attempt in 0..=self.config.max_retries {
@@ -285,15 +285,19 @@ impl<R: ForwardRequest> DestinationForwarder<R> {
 
                     let mut ok_count = 0u64;
                     let mut err_count = 0u64;
-                    for (idx, res) in response.into_iter().enumerate() {
+                    for (idx, (request, res)) in batch.iter().zip(response).enumerate() {
                         let tx_hash = tx_hashes.get(idx).copied().flatten();
                         let method = methods.get(idx).copied().unwrap_or_default();
                         match res {
                             // Delivery is journaled by the destination as
                             // `TXPOOL_VALIDATED_INSERT_ACCEPTED`; a node-side success event per
                             // destination would duplicate it.
-                            Ok(()) => ok_count += 1,
+                            Ok(()) => {
+                                request.on_result(Ok(()));
+                                ok_count += 1;
+                            }
                             Err(e) => {
+                                request.on_result(Err(Arc::new(ClientError::Call(e.clone()))));
                                 debug!(
                                     builder_url = %self.builder_url,
                                     error = %e,
@@ -336,6 +340,10 @@ impl<R: ForwardRequest> DestinationForwarder<R> {
                     time::sleep(backoff).await;
                 }
                 Err(err) => {
+                    let err = Arc::new(err);
+                    for request in &batch {
+                        request.on_result(Err(Arc::clone(&err)));
+                    }
                     ForwarderMetrics::rpc_latency(Arc::clone(&self.url_label))
                         .record(overall_start.elapsed().as_secs_f64());
                     for (tx_hash, method) in tx_hashes.iter().zip(&methods) {
@@ -421,14 +429,22 @@ impl<R: ForwardRequest> DestinationForwarder<R> {
             .collect()
     }
 
-    async fn send_batch(&self, batch: &[R]) -> Result<BatchResponse<'_, ()>, ClientError> {
+    async fn send_batch<'a>(
+        &'a self,
+        batch: &'a [R],
+    ) -> Result<BatchResponse<'a, ()>, ClientError> {
         let mut request = BatchRequestBuilder::new();
         for item in batch {
             // A payload that will not serialize fails the whole batch rather than panicking the
             // task. `ParseError` is classified non-retryable below, which is correct: re-encoding
             // the same value fails identically, so retrying would only delay the drop.
-            let params = item.params().map_err(ClientError::ParseError)?;
-            request.insert(item.method(), params).expect("valid method name");
+            match item.raw_params() {
+                Some(params) => request.insert(item.method(), params),
+                None => {
+                    request.insert(item.method(), item.params().map_err(ClientError::ParseError)?)
+                }
+            }
+            .map_err(ClientError::ParseError)?;
         }
         self.client.batch_request(request).await
     }
@@ -444,7 +460,7 @@ impl<R: ForwardRequest> DestinationForwarder<R> {
         &self,
         event_type: TransactionEventType,
         tx_hash: Option<TxHash>,
-        rpc_method: &'static str,
+        rpc_method: &str,
         attempt: Option<u32>,
         mut data: Map<String, serde_json::Value>,
     ) {
