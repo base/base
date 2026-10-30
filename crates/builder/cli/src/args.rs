@@ -18,6 +18,8 @@ use base_observability_events::{
 use eyre::WrapErr;
 use tracing::{info, warn};
 
+use crate::ReplayArgs;
+
 /// Parameters for Flashblocks configuration.
 ///
 /// The names in the struct are prefixed with `flashblocks` to avoid conflicts
@@ -139,6 +141,10 @@ impl TransactionEventsArgs {
 #[derive(Debug, Clone, clap::Args)]
 #[command(next_help_heading = "Rollup")]
 pub struct Args {
+    /// Transaction replay configuration.
+    #[command(flatten)]
+    pub replay: ReplayArgs,
+
     /// Rollup configuration
     #[command(flatten)]
     pub rollup_args: RollupArgs,
@@ -340,6 +346,7 @@ impl Default for Args {
     fn default() -> Self {
         Self {
             rollup_args: RollupArgs::default(),
+            replay: ReplayArgs::default(),
             chain_block_time: 1000,
             max_gas_per_txn: None,
             max_execution_time_per_tx_us: None,

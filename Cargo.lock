@@ -3196,7 +3196,9 @@ dependencies = [
  "base-shadow-indexer",
  "base-txpool-rpc",
  "clap",
+ "eyre",
  "reth-cli-util",
+ "tracing",
 ]
 
 [[package]]
@@ -3207,6 +3209,7 @@ dependencies = [
  "base-builder-core",
  "base-builder-metering",
  "base-bundles",
+ "base-clock",
  "base-execution-cli",
  "base-node-core",
  "base-observability-events",

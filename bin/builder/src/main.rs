@@ -9,7 +9,7 @@ use base_builder_cli::Args;
 use base_builder_core::BuilderApiExtension;
 use base_builder_metering::MeteringStoreExtension;
 use base_builder_multiplex::MultiplexingServiceBuilder;
-use base_execution_cli::{Cli, StandardBaseRethNode};
+use base_execution_cli::{Cli, StandardBaseRethNode, commands::Commands};
 use base_node_runner::BaseNodeRunner;
 use base_observability_events::GlobalTransactionEventWriter;
 use base_shadow_indexer::{ShadowIndexerConfig, ShadowIndexerExtension};
@@ -17,6 +17,7 @@ use base_txpool_rpc::{
     SendRawTransactionValidityConfig, SendRawTransactionValidityExtension, TxPoolRpcConfig,
     TxPoolRpcExtension,
 };
+use tracing::info;
 
 type BuilderCli = Cli<Args>;
 
@@ -27,14 +28,21 @@ static ALLOC: reth_cli_util::allocator::Allocator = reth_cli_util::allocator::ne
 #[unsafe(export_name = "malloc_conf")]
 static MALLOC_CONF: &[u8] = b"prof:true,prof_active:true,lg_prof_sample:19\0";
 
-fn main() {
+fn main() -> eyre::Result<()> {
     base_cli_utils::init_common!();
     base_reth_cli::init_reth!();
     base_reth_cli::init_snapshots!();
 
     let cli = base_cli_utils::parse_cli!(BuilderCli);
 
+    if let Commands::Node(command) = &cli.command {
+        command.ext.replay.install_clock()?;
+    }
+
     cli.run(|builder, builder_args| async move {
+        if let Some(ms) = builder_args.replay.clock_start_ms {
+            info!(clock_start_ms = %ms, "installed replay offset clock");
+        }
         let rollup_args = builder_args.rollup_args.clone();
         let builder =
             StandardBaseRethNode::apply_initial_upgrade_signal(builder, &builder_args).await?;
@@ -85,5 +93,4 @@ fn main() {
 
         runner.run(builder).await
     })
-    .unwrap();
 }
