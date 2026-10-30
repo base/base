@@ -140,8 +140,6 @@ To pin a run to a known snapshot boundary, pass all three of `--expected-head-nu
 `--expected-head-hash`, and `--expected-head-timestamp`. Startup fails before load generation if
 the captured boundary differs.
 
-## Run a snapshot benchmark
-
 ## Run a quick local transfer benchmark
 
 For a no-configuration smoke benchmark, `base-bench` starts a fresh temporary
@@ -196,6 +194,8 @@ Swap workloads can opt into fresh-devnet contract provisioning with
 fresh devnet USDC token plus Uniswap/Aerodrome router shims for each workload,
 then auto-wires swap and real-token setup addresses before execution.
 
+## Run a snapshot benchmark
+
 `base-bench snapshot` owns the process lifecycle around one load test: it generates an ephemeral
 funder, deposits funds to it in the first local descendant, replaces placeholder endpoints in the
 YAML with dynamically allocated builder endpoints, runs the load generator, writes JSON, and shuts
@@ -214,7 +214,7 @@ how `--benchmark-run`, `--scenario`, and `--run-id` select runs in `base/benchma
 [Snapshot Benchmarking](../../docs/guides/SNAPSHOT_BENCHMARKS.md).
 
 Always use an optimized build for performance measurements. Debug payload execution becomes
-CPU-bound far below the 400M block gas limit.
+CPU-bound far below the snapshot block gas limits.
 
 ```bash
 mkdir -p results
@@ -232,15 +232,15 @@ just devnet bench snapshot \
 ```
 
 The account-create workload uses the adaptive open-loop load generator. Every successful transfer
-targets a runtime-random fresh address, forcing an account-trie insertion. Its 100 senders and
-1,024 in-flight transactions per sender can hold more than five 400M-gas blocks of 21K-gas
-transfers. The cross-cadence example keeps 1M gas outstanding. Larger 20M and 80M fresh-account
-queues overran payload deadlines in local storage: the 2s Flashblocks builder missed subsequent FCUs
-and the 200ms standard builder could remain inside state-root construction without advancing the
-measurement. It measures exactly 500 newly observed canonical blocks. Setup, prefill, and post-run
-confirmation draining are outside the measured block count. Use `duration` instead of (or in
-addition to) `measurement_blocks` in a custom YAML when a time-bounded smoke test is preferable;
-when both are set, the first limit reached stops submissions.
+targets a runtime-random fresh address, forcing an account-trie insertion. Its 100 senders and 1,024
+in-flight transactions per sender can hold about 2.1 Ggas of 21K-gas transfers, more than two
+default 200ms blocks. The cross-cadence example keeps 1M gas outstanding. Larger 20M and 80M
+fresh-account queues overran payload deadlines in local storage: the 2s Flashblocks builder missed
+subsequent FCUs and the 200ms standard builder could remain inside state-root construction without
+advancing the measurement. It measures exactly 500 newly observed canonical blocks. Setup, prefill,
+and post-run confirmation draining are outside the measured block count. Use `duration` instead of
+(or in addition to) `measurement_blocks` in a custom YAML when a time-bounded smoke test is
+preferable; when both are set, the first limit reached stops submissions.
 
 The result includes cadence, boundary number/hash, builder/client endpoints, the generated funder
 address (never its private key), explicit measurement boundaries, every measured block's
@@ -296,7 +296,7 @@ For a saturated Blake2f comparison with equal 60-second measured windows, provid
 50,000-round Blake2f call per transaction with identical sender, in-flight, batching, funding, and
 seed settings. The report labels these runs with `TransactionPayload=blake2f`; use scenarios such
 as `blake2f-2s-run-1` and `blake2f-200ms-run-1` to distinguish repetitions. A
-5,000-transaction global in-flight cap is exactly one 400M-gas block of queue headroom at the
+5,000-transaction global in-flight cap is 400M gas of queue headroom at the
 configured 80,000 gas limit per transaction, which keeps the builder saturated without leaving an
 oversized submission backlog at cutoff.
 
