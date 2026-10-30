@@ -205,9 +205,15 @@ impl L1FeeParams {
     ///
     /// Missing scalars fall back to zero to match the execution path during the
     /// txpool bootstrap window before the first L1 attributes deposit.
+    #[inline]
     pub fn operator_fee_charge_inner(&self, gas: U256, upgrade: BaseUpgrade) -> U256 {
         let operator_fee_scalar = self.operator_fee_scalar.unwrap_or_default();
         let operator_fee_constant = self.operator_fee_constant.unwrap_or_default();
+        // The charge is zero for every `gas` when both parameters are zero, so skip the 256-bit
+        // products; the EVM handler evaluates this four times per transaction.
+        if operator_fee_scalar.is_zero() && operator_fee_constant.is_zero() {
+            return U256::ZERO;
+        }
 
         let product = if Self::is_enabled(upgrade, BaseUpgrade::Jovian) {
             gas.saturating_mul(operator_fee_scalar)
@@ -274,6 +280,39 @@ mod tests {
         assert_eq!(
             p.operator_fee_charge_inner(U256::from(21_000), BaseUpgrade::Isthmus),
             U256::ZERO
+        );
+    }
+
+    #[test]
+    fn operator_fee_charges_either_nonzero_parameter() {
+        let gas = U256::from(21_000);
+        let constant_only = L1FeeParams {
+            operator_fee_scalar: Some(U256::ZERO),
+            operator_fee_constant: Some(U256::from(7)),
+            ..Default::default()
+        };
+        assert_eq!(
+            constant_only.operator_fee_charge_inner(gas, BaseUpgrade::Isthmus),
+            U256::from(7)
+        );
+        assert_eq!(
+            constant_only.operator_fee_charge_inner(gas, BaseUpgrade::Jovian),
+            U256::from(7)
+        );
+
+        let scalar_only = L1FeeParams {
+            operator_fee_scalar: Some(U256::from(2_000_000)),
+            operator_fee_constant: Some(U256::ZERO),
+            ..Default::default()
+        };
+        // Isthmus: 21_000 * 2_000_000 / 1e6; Jovian: 21_000 * 2_000_000 * 100.
+        assert_eq!(
+            scalar_only.operator_fee_charge_inner(gas, BaseUpgrade::Isthmus),
+            U256::from(42_000)
+        );
+        assert_eq!(
+            scalar_only.operator_fee_charge_inner(gas, BaseUpgrade::Jovian),
+            U256::from(4_200_000_000_000u64)
         );
     }
 }
