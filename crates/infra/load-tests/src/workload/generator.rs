@@ -93,9 +93,11 @@ impl WorkloadGenerator {
                         weight_pct,
                     );
                 }
-                TxType::Storage { contract, slots_per_tx } => {
-                    generator = generator
-                        .with_payload(StoragePayload::new(*contract, *slots_per_tx), weight_pct);
+                TxType::Storage { contract, slots_per_tx, new_slot_ratio } => {
+                    generator = generator.with_payload(
+                        StoragePayload::new(*contract, *slots_per_tx, *new_slot_ratio),
+                        weight_pct,
+                    );
                 }
                 TxType::DoubleCounter { contract } => {
                     generator =
