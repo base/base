@@ -3,14 +3,13 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use base_proof_primitives::{ProofResult, ProverBackend};
-use base_proof_tee_nitro_enclave::Oracle;
+use base_proof_tee_nitro_enclave::{EnclaveClient, Oracle};
 
-use super::transport::NitroTransport;
 use crate::NitroHostError;
 
-/// TEE proof backend that dispatches to a Nitro Enclave via [`NitroTransport`].
+/// TEE proof backend that dispatches to a Nitro Enclave via [`EnclaveClient`].
 pub struct NitroBackend {
-    transport: Arc<NitroTransport>,
+    enclave_client: Arc<EnclaveClient>,
 }
 
 impl fmt::Debug for NitroBackend {
@@ -20,9 +19,9 @@ impl fmt::Debug for NitroBackend {
 }
 
 impl NitroBackend {
-    /// Create a new backend dispatching proofs over the given transport.
-    pub const fn new(transport: Arc<NitroTransport>) -> Self {
-        Self { transport }
+    /// Create a new backend dispatching proofs to the given enclave.
+    pub const fn new(enclave_client: Arc<EnclaveClient>) -> Self {
+        Self { enclave_client }
     }
 }
 
@@ -41,7 +40,10 @@ impl ProverBackend for NitroBackend {
 
     async fn prove(&self, witness: Oracle) -> Result<ProofResult, NitroHostError> {
         let preimages = witness.into_preimages().map_err(NitroHostError::Enclave)?;
-        self.transport.prove(preimages).await
+        #[cfg(feature = "metrics")]
+        base_proof_host::Metrics::witness_size_bytes(base_proof_host::Metrics::PROVER_NITRO)
+            .record(preimages.iter().map(|(_, value)| value.len()).sum::<usize>() as f64);
+        Ok(self.enclave_client.prove(preimages).await?)
     }
 }
 
@@ -67,8 +69,8 @@ mod tests {
     #[tokio::test]
     async fn backend_create_oracle_returns_empty() {
         let server = Arc::new(Server::new_local().unwrap());
-        let transport = Arc::new(NitroTransport::local(server));
-        let backend = NitroBackend::new(transport);
+        let enclave_client = Arc::new(EnclaveClient::in_process(server));
+        let backend = NitroBackend::new(enclave_client);
 
         let oracle = backend.create_oracle();
         let preimages = oracle.into_preimages().unwrap();
