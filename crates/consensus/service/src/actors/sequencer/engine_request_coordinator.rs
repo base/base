@@ -435,15 +435,22 @@ where
         }
     }
 
-    async fn advance_canonical_catchup(&mut self) -> Result<(), EngineError> {
+    /// Applies one bounded batch of the buffered canonical suffix.
+    ///
+    /// Returns whether more buffered payloads may remain, so the caller can serve queued requests
+    /// between batches instead of blocking on one long run.
+    async fn advance_canonical_catchup(&mut self) -> Result<bool, EngineError> {
         let anchor = self.processor.engine_state().sync_state.unsafe_head();
         let payloads = match &mut self.sequencer_state {
-            SequencerEngineState::CatchingUp { catchup } => catchup.contiguous_payloads(anchor),
-            _ => return Ok(()),
+            SequencerEngineState::CatchingUp { catchup } => {
+                catchup.contiguous_payloads(anchor, CanonicalUnsafeCatchup::MAX_APPLY_BATCH)
+            }
+            _ => return Ok(false),
         };
         if payloads.is_empty() {
-            return Ok(());
+            return Ok(false);
         }
+        let more_pending = payloads.len() == CanonicalUnsafeCatchup::MAX_APPLY_BATCH;
 
         debug!(
             target: "engine",
@@ -465,6 +472,7 @@ where
                 if let SequencerEngineState::CatchingUp { catchup } = &mut self.sequencer_state {
                     catchup.commit(head);
                 }
+                Ok(more_pending)
             }
             Err(error) => {
                 debug!(
@@ -473,15 +481,14 @@ where
                     severity = ?error.severity(),
                     "Ordered canonical unsafe payload application deferred"
                 );
-                return match error.severity() {
+                match error.severity() {
                     EngineTaskErrorSeverity::Temporary | EngineTaskErrorSeverity::Deferred => {
-                        Ok(())
+                        Ok(false)
                     }
                     _ => Err(EngineError::CriticalEngineTask(format!("{error:?}"))),
-                };
+                }
             }
         }
-        Ok(())
     }
 }
 
@@ -588,7 +595,7 @@ where
                     }
                 }
 
-                self.advance_canonical_catchup().await?;
+                let more_catchup_pending = self.advance_canonical_catchup().await?;
 
                 // If the unsafe head has updated, propagate it to the outbound channels.
                 self.unsafe_head_tx.send_if_modified(|val| {
@@ -604,7 +611,18 @@ where
                 let recv_wait_timer = base_metrics::timed!(
                     EngineMetrics::engine_processor_recv_wait_duration_seconds()
                 );
-                let recv_result = if (self.processor.engine_state().el_sync_finished
+                let recv_result = if more_catchup_pending {
+                    // Serve any queued request, then continue the next catch-up batch without
+                    // waiting for new traffic.
+                    match request_channel.try_recv() {
+                        Ok(request) => Some(request),
+                        Err(mpsc::error::TryRecvError::Empty) => {
+                            drop(recv_wait_timer);
+                            continue;
+                        }
+                        Err(mpsc::error::TryRecvError::Disconnected) => None,
+                    }
+                } else if (self.processor.engine_state().el_sync_finished
                     && self.sequencer_kind != SequencerKind::Isolated)
                     || self.is_isolated_active()
                 {
