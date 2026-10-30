@@ -44,6 +44,43 @@ pub enum Pool {
     Queued,
 }
 
+/// Transaction flow used to label inclusion metrics.
+///
+/// Validity transactions carry predicates that can hold them in the pool until the predicates
+/// are satisfied, so their inclusion latency is reported separately from standard transactions.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum TxFlow {
+    /// Transaction without validity predicates.
+    #[default]
+    Standard,
+    /// Transaction carrying validity predicates.
+    Validity,
+}
+
+impl TxFlow {
+    /// Returns the flow for a transaction, given whether it carries validity predicates.
+    pub const fn from_validity_predicates(has_validity_predicates: bool) -> Self {
+        if has_validity_predicates { Self::Validity } else { Self::Standard }
+    }
+
+    /// Returns the metric label value for this flow.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Standard => "standard",
+            Self::Validity => "validity",
+        }
+    }
+}
+
+/// Pool metadata resolved for a transaction when it enters the pending or queued pool.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PooledTxInfo {
+    /// Sender and nonce of the transaction.
+    pub nonce_slot: NonceSlot,
+    /// Flow used to label the transaction's inclusion metrics.
+    pub flow: TxFlow,
+}
+
 /// Key for tracking a unique nonce slot: `(sender, nonce)`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct NonceSlot {
@@ -89,6 +126,7 @@ pub struct EventLog {
     pub(crate) mempool_time: Instant,
     pub(crate) pending_time: Option<Instant>,
     pub(crate) fb_included: bool,
+    pub(crate) flow: TxFlow,
     pub(crate) events: Vec<(DateTime<Local>, TxEvent)>,
     pub(crate) limit: usize,
 }
@@ -102,6 +140,7 @@ impl EventLog {
             mempool_time: now,
             pending_time,
             fb_included: false,
+            flow: TxFlow::Standard,
             events: vec![(t, event)],
             limit: 10,
         }
