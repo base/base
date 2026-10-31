@@ -6198,6 +6198,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-replay-recorder"
+version = "0.0.0"
+dependencies = [
+ "alloy-primitives",
+ "axum 0.8.9",
+ "base-clock",
+ "base-replay",
+ "base-replay-store",
+ "futures",
+ "jsonrpsee-types",
+ "reqwest 0.13.4",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tokio-util",
+ "tracing",
+]
+
+[[package]]
 name = "base-replay-store"
 version = "0.0.0"
 dependencies = [
