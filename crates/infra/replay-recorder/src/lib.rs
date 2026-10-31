@@ -5,3 +5,6 @@ pub use call::{CaptureContext, RecordedCall, RecordedTransaction, RpcEnvelope, R
 
 mod recorder;
 pub use recorder::Recorder;
+
+mod command;
+pub use command::RecordArgs;

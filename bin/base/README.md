@@ -286,6 +286,24 @@ To use a third-party consensus client, point it at the `base execution` auth end
 secret. To use a third-party execution client, point `base consensus --l2-engine-rpc` at that
 client's authenticated Engine API and pass its JWT secret.
 
+## `base replay record`
+
+Record JSON-RPC ingress without executing calls or starting a builder:
+
+```sh
+base replay record --network sepolia --store ./capture
+base replay record --network mainnet --store s3://bucket/capture \
+  --s3-endpoint https://storage.example.com --s3-region us-east-1
+```
+
+`--listen` defaults to `127.0.0.1:8545`. `--network` accepts `sepolia`, `mainnet`,
+or `devnet` and selects the storage key prefix. S3 credentials use the standard
+AWS chain, including `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`.
+Use a fresh capture root. Ctrl+C or SIGTERM drains requests and publishes the
+last minute; publication failures exit unsuccessfully. See
+[`base-replay-recorder`](../../crates/infra/replay-recorder/README.md) for limits
+and durability semantics.
+
 ## `base update`
 
 `base update` updates the installed `base` binary by running `baseup --bin base` against the same
