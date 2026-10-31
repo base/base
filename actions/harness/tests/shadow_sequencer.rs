@@ -57,7 +57,8 @@ async fn late_shadow_catches_up_safe_then_unsafe() {
     assert_eq!(shadow.run_until_idle().await, SAFE_BLOCKS);
     assert_eq!(shadow.l2_safe_number(), SAFE_BLOCKS as u64);
 
-    let payloads = catchup.contiguous_payloads(shadow.l2_unsafe());
+    let payloads =
+        catchup.contiguous_payloads(shadow.l2_unsafe(), CanonicalUnsafeCatchup::MAX_APPLY_BATCH);
     assert_eq!(payloads.len(), UNSAFE_BLOCKS);
     for payload in payloads {
         let block = ExecutionPayloadConverter::block_from_envelope(&payload)
