@@ -1,3 +1,5 @@
+//! HTTP boundary regressions for admission, raw IDs, batches, and lossless storage.
+
 use std::{
     sync::{
         Arc,
