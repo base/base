@@ -5,7 +5,7 @@ default:
     @just --justfile {{source_file()}} --list --list-prefix '  check::'
 
 # Runs formatting, clippy, udeps, and deny checks
-all: format clippy udeps deny
+all: format clippy udeps deny docker-ca-bundle
 
 # Checks formatting
 format:
@@ -60,6 +60,10 @@ crate-deps:
 # Verifies git-based reth-* workspace deps match etc/upstream-pins/reth.toml
 reth-pin:
     python3 {{justfile_directory()}}/etc/scripts/local/pin-reth.py check
+
+# Verifies optional ca_bundle BuildKit secret mounts and conditional build plumbing in etc/docker/
+docker-ca-bundle:
+    python3 {{justfile_directory()}}/etc/scripts/ci/check-docker-ca-bundle.py
 
 [private]
 _build-contracts:

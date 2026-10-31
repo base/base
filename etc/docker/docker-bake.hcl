@@ -14,6 +14,12 @@ variable "ZK_HOST_PROFILE" {
   default = "release"
 }
 
+# Optional host CA bundle path for BuildKit secret `id=ca_bundle` under TLS inspection.
+# Leave empty in CI and on hosts where DOCKER_CA_BUNDLE is unset so targets emit no `--secret id=ca_bundle` mount.
+variable "DOCKER_CA_BUNDLE" {
+  default = ""
+}
+
 # The devnet always builds both batchers: the canonical Go op-batcher and the
 # Rust base batcher (part of the `base` image), which runs in shadow mode.
 variable "DEVNET_TARGETS" {
@@ -54,10 +60,15 @@ group "tx-observability" {
   targets = TX_OBSERVABILITY_TARGETS
 }
 
+target "_ca-bundle" {
+  secret = DOCKER_CA_BUNDLE != "" ? ["id=ca_bundle,src=${DOCKER_CA_BUNDLE}"] : []
+}
+
 target "profiling-tools" {
   context = "."
   dockerfile = "etc/docker/Dockerfile.profiling-tools"
   tags = ["base-profiling-tools:local"]
+  inherits = ["_ca-bundle"]
 }
 
 target "_rust-service-common" {
@@ -68,6 +79,7 @@ target "_rust-service-common" {
     RUST_VERSION = "${RUST_VERSION}"
     RUSTFLAGS = PROFILE == "profiling" ? "-C link-arg=-fuse-ld=lld -Cforce-frame-pointers=yes" : "-C link-arg=-fuse-ld=lld"
   }
+  inherits = ["_ca-bundle"]
 }
 
 # Keep SCCACHE_CACHE_ID stable for a target so repeated builds reuse cached Rust
@@ -182,6 +194,7 @@ target "op-batcher" {
   context = "."
   dockerfile = "etc/docker/Dockerfile.op-batcher"
   tags = ["op-batcher:local"]
+  inherits = ["_ca-bundle"]
 }
 
 target "sidecrush" {
@@ -212,6 +225,7 @@ target "nitro-host-local" {
     CARGO_FEATURES = "--features local"
   }
   tags = ["base-prover-nitro-host:local"]
+  inherits = ["_ca-bundle"]
 }
 
 target "zk-host" {

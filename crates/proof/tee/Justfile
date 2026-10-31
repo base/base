@@ -3,6 +3,7 @@ set positional-arguments
 eif_describe_image := "base-prover-nitro-enclave-describe"
 eif_output := "eif.bin"
 
+import '../../../etc/just/ca-bundle.just'
 # Pinned upstream sources for reproducible enclave artifact builds. Bump in lockstep
 # with etc/docker/Dockerfile.nitro-enclave.
 eif_build_repo := "https://github.com/aws/aws-nitro-enclaves-image-format.git"
@@ -43,14 +44,14 @@ build-host *args="":
     #!/usr/bin/env bash
     set -euo pipefail
     cd ../../..
-    DOCKER_BUILDKIT=1 docker build --platform linux/amd64 {{ args }} -f etc/docker/Dockerfile.nitro-host -t base-prover-nitro-host .
+    DOCKER_BUILDKIT=1 docker build --platform linux/amd64 {{ _ca_bundle_secret }} {{ args }} -f etc/docker/Dockerfile.nitro-host -t base-prover-nitro-host .
 
 # Build the nitro enclave Docker image (full runtime image with EIF, nitro-cli, allocator, entrypoint)
 build-enclave *args="":
     #!/usr/bin/env bash
     set -euo pipefail
     cd ../../..
-    DOCKER_BUILDKIT=1 docker build --platform linux/amd64 {{ args }} -f etc/docker/Dockerfile.nitro-enclave -t base-prover-nitro-enclave .
+    DOCKER_BUILDKIT=1 docker build --platform linux/amd64 {{ _ca_bundle_secret }} {{ args }} -f etc/docker/Dockerfile.nitro-enclave -t base-prover-nitro-enclave .
 
 # --- Inline build recipes (no docker build) ----------------------------------
 #
@@ -252,7 +253,7 @@ build-eif *args="":
     #!/usr/bin/env bash
     set -euo pipefail
     cd ../../..
-    DOCKER_BUILDKIT=1 docker build --platform linux/amd64 {{ args }} -f etc/docker/Dockerfile.nitro-enclave --target describe -t {{ eif_describe_image }} .
+    DOCKER_BUILDKIT=1 docker build --platform linux/amd64 {{ _ca_bundle_secret }} {{ args }} -f etc/docker/Dockerfile.nitro-enclave --target describe -t {{ eif_describe_image }} .
     docker rm -f eif-extract 2>/dev/null || true
     docker create --name eif-extract {{ eif_describe_image }}
     docker cp eif-extract:/app/eif.bin crates/proof/tee/{{ eif_output }}

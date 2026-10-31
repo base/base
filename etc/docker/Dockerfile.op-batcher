@@ -1,18 +1,27 @@
+# Optional ca_bundle secret mounts support custom CA bundles; see etc/docker/README.md.
 FROM public.ecr.aws/docker/library/golang:1.24.13-alpine3.22 AS builder
+# Export CA bundle env vars only when /run/secrets/ca_bundle is mounted, then exec the RUN string.
+# The secret mount itself must still be declared on each network-fetching RUN.
+SHELL ["/bin/sh", "-c", "if [ -f /run/secrets/ca_bundle ]; then export SSL_CERT_FILE=/run/secrets/ca_bundle CURL_CA_BUNDLE=/run/secrets/ca_bundle CARGO_HTTP_CAINFO=/run/secrets/ca_bundle GIT_SSL_CAINFO=/run/secrets/ca_bundle NODE_EXTRA_CA_CERTS=/run/secrets/ca_bundle; fi; exec /bin/sh -c \"$1\"", "--"]
 
-RUN apk add --no-cache git
+RUN --mount=type=secret,id=ca_bundle,target=/run/secrets/ca_bundle,required=false \
+    apk add --no-cache git
 WORKDIR /app
 
 # Match the op-batcher source pin used by Base mainnet infrastructure.
 ARG OP_BATCHER_TAG=op-batcher/v1.16.5
 ARG OP_BATCHER_COMMIT=abe047afc995e0e22abf5ea9b157e267e907d494
-RUN git clone --depth 1 --branch "${OP_BATCHER_TAG}" https://github.com/ethereum-optimism/optimism.git . && \
+RUN --mount=type=secret,id=ca_bundle,target=/run/secrets/ca_bundle,required=false \
+    git clone --depth 1 --branch "${OP_BATCHER_TAG}" https://github.com/ethereum-optimism/optimism.git . && \
     test "$(git rev-parse HEAD)" = "${OP_BATCHER_COMMIT}"
-RUN CGO_ENABLED=0 go build -trimpath \
+RUN --mount=type=secret,id=ca_bundle,target=/run/secrets/ca_bundle,required=false \
+    CGO_ENABLED=0 go build -trimpath \
     -ldflags "-X main.Version=${OP_BATCHER_TAG#op-batcher/} -X main.GitCommit=${OP_BATCHER_COMMIT} -X main.GitDate=$(git show -s --format=%ct HEAD)" \
     -o /bin/op-batcher ./op-batcher/cmd
 
 FROM public.ecr.aws/docker/library/alpine:3.22
-RUN apk add --no-cache ca-certificates
+RUN --mount=type=secret,id=ca_bundle,target=/run/secrets/ca_bundle,required=false \
+    if [ -f /run/secrets/ca_bundle ]; then export SSL_CERT_FILE=/run/secrets/ca_bundle; fi && \
+    apk add --no-cache ca-certificates
 COPY --from=builder /bin/op-batcher /bin/op-batcher
 ENTRYPOINT ["/bin/op-batcher"]
