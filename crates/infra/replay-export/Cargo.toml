@@ -12,13 +12,19 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+futures.workspace = true
 thiserror.workspace = true
+serde_json.workspace = true
 alloy-provider.workspace = true
 alloy-transport.workspace = true
-tokio = { workspace = true, features = ["time"] }
+base-replay-store = { path = "../replay-store" }
+base-replay = { path = "../../utilities/replay" }
+serde = { workspace = true, features = ["derive"] }
+tokio = { workspace = true, features = ["fs", "io-util", "time"] }
 
 [dev-dependencies]
 rstest.workspace = true
+tempfile.workspace = true
 alloy-rpc-types-eth.workspace = true
 jsonrpsee = { workspace = true, features = ["server"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
