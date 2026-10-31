@@ -26,7 +26,7 @@ async fn produces_diff_when_replaying_export_against_real_builder() -> eyre::Res
         transactions.push(tx);
     }
     let from = blocks[0].header.timestamp * 1000;
-    GlobalClock::set(OffsetClock::new(UNIX_EPOCH + Duration::from_millis(from - 2000)))?;
+    GlobalClock::set(OffsetClock::new(UNIX_EPOCH + Duration::from_millis(from - 20_000)))?;
     let shadow = LocalInstance::flashblocks().await?;
     let provider = shadow.provider().await?;
     let mut rpc = RpcModule::new(provider);

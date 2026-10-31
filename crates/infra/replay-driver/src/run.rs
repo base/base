@@ -35,6 +35,9 @@ where
     I: Injector,
     C: Upgrades,
 {
+    /// Maximum lead for the first whole-second build, including large parent timestamp gaps.
+    pub const FIRST_BUILD_LEAD_MS: u64 = 2_000;
+
     /// Acknowledge warmup, drive inclusive export heights sequentially, and join scheduled ingress.
     /// The first exported block is retained as warmup and excluded from report aggregates.
     /// Errors stop both futures; cancellation can leave an engine request in flight.
@@ -56,8 +59,12 @@ where
             InjectionSchedule::delay(window.from_timestamp_ms, now)? > Duration::ZERO,
             "first builder deadline already expired"
         );
-        let cutoff =
-            parent.header.timestamp.checked_mul(1000).ok_or_eyre("parent timestamp overflow")?;
+        let cutoff = parent
+            .header
+            .timestamp
+            .checked_mul(1000)
+            .ok_or_eyre("parent timestamp overflow")?
+            .max(window.from_timestamp_ms.saturating_sub(Self::FIRST_BUILD_LEAD_MS));
         let mut recorded =
             dataset.records.iter().map(|record| record.tx_hash).collect::<Option<HashSet<_>>>();
         let mut schedule = InjectionSchedule::new(dataset.records);

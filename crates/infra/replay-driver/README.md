@@ -50,8 +50,9 @@ saturating at the Unix epoch. This is an epoch, not clock synchronization.
 
 `ReplayRunner::run` replays `from_block..=to_block`, using `from_block - 1` as N
 for `DiffReport`. The builder must already have that canonical parent state.
-Warmup through the parent's timestamp is acknowledged before FCU. The first
-build waits for that timestamp; remaining ingress runs concurrently with the
+Warmup through the later of the parent's timestamp and two seconds before the
+first block is acknowledged before FCU. The first build waits for that cutoff;
+remaining ingress runs concurrently with the
 sequential engine calls. Any failure drops both futures. Canonical reads are
 bounded and parent hashes are checked between blocks. Whole-second, increasing
 block timestamps are required; subsecond-slot orchestration is not supported.
