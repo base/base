@@ -15,5 +15,5 @@ workspace = true
 jsonrpsee-types.workspace = true
 base-replay = { path = "../../utilities/replay" }
 serde = { workspace = true, features = ["derive"] }
-alloy-primitives = { workspace = true, features = ["serde"] }
 serde_json = { workspace = true, features = ["raw_value"] }
+alloy-primitives = { workspace = true, features = ["serde"] }
