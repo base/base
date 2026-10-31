@@ -14,15 +14,17 @@ workspace = true
 [dependencies]
 tracing.workspace = true
 base-clock.workspace = true
-jsonrpsee-types.workspace = true
 tokio-util.workspace = true
+jsonrpsee-types.workspace = true
 base-replay-store = { path = "../replay-store" }
 base-replay = { path = "../../utilities/replay" }
 serde = { workspace = true, features = ["derive"] }
-alloy-primitives = { workspace = true, features = ["serde"] }
 serde_json = { workspace = true, features = ["raw_value"] }
+alloy-primitives = { workspace = true, features = ["serde"] }
 axum = { workspace = true, features = ["tokio", "http1", "json"] }
-tokio = { workspace = true, features = ["net", "sync", "time"] }
+hyper = { workspace = true, features = ["server", "http1"] }
+hyper-util = { workspace = true, features = ["tokio", "service"] }
+tokio = { workspace = true, features = ["sync", "net", "time", "io-util"] }
 
 [dev-dependencies]
 futures.workspace = true

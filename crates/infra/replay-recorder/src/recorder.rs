@@ -1,108 +1,114 @@
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 
 use axum::{
-    Json, Router,
+    Extension, Router,
     body::to_bytes,
     extract::{ConnectInfo, Request, State},
     http::StatusCode,
     response::{IntoResponse, Response},
     routing::post,
 };
-use base_clock::GlobalClock;
 use base_replay_store::{ReplayWriter, StoreError};
-use serde_json::json;
-use tokio::{net::TcpListener, sync::Mutex, time::timeout};
+use hyper::server::conn::http1;
+use hyper_util::{rt::TokioIo, service::TowerToHyperService};
+use tokio::{net::TcpListener, task::JoinSet, time::timeout};
 use tokio_util::sync::CancellationToken;
 
-use crate::{CaptureContext, RpcEnvelope};
+use crate::ArrivalQueue;
 
-/// Serialized recording state. Batches never interleave other requests.
+/// HTTP capture service owning both connections and the final writer flush.
 #[derive(Debug)]
 pub struct Recorder {
     writer: ReplayWriter,
-    next_batch: u64,
     shutdown: CancellationToken,
-    failure: Option<StoreError>,
 }
 
 impl Recorder {
-    /// Maximum HTTP body size, 8 `MiB`.
+    /// Maximum collected HTTP body, 8 `MiB`.
     pub const MAX_BODY_BYTES: usize = 8 * 1024 * 1024;
+    /// Maximum connection tasks, including clients not reading responses.
+    pub const MAX_CONNECTIONS: usize = 8;
+    /// Grace period before remaining connections are aborted and joined.
+    pub const DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
 
     /// Create one capture session owning its writer and shutdown token.
     pub const fn new(writer: ReplayWriter, shutdown: CancellationToken) -> Self {
-        Self { writer, next_batch: 0, shutdown, failure: None }
+        Self { writer, shutdown }
     }
 
-    /// Drain requests and close the writer on shutdown, returning server or storage errors.
+    /// Stop admission, bound connection draining, then always await writer close.
     pub async fn serve(self, listener: TcpListener) -> Result<(), StoreError> {
-        let shutdown = self.shutdown.clone();
-        let state = Arc::new(Mutex::new(self));
-        let app = Router::new().route("/", post(Self::record)).with_state(Arc::clone(&state));
-        tracing::info!(listen = %listener.local_addr()?, "replay recorder listening");
-        let served = axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>())
-            .with_graceful_shutdown(shutdown.cancelled_owned())
-            .await;
-        let mut state = state.lock().await;
-        state.writer.close().await?;
-        if let Some(error) = state.failure.take() {
-            return Err(error);
+        let (queue, jobs) = ArrivalQueue::channel();
+        let queue = Arc::new(queue);
+        let worker = tokio::spawn(ArrivalQueue::write(self.writer, jobs, self.shutdown.clone()));
+        let app = Router::new().route("/", post(Self::record)).with_state(Arc::clone(&queue));
+        let mut connections = JoinSet::new();
+        tracing::info!(listen = ?listener.local_addr(), "replay recorder listening");
+        let serving = loop {
+            tokio::select! {
+                _ = self.shutdown.cancelled() => break Ok(()),
+                Some(result) = connections.join_next(), if !connections.is_empty() => {
+                    if let Err(error) = result { break Err(std::io::Error::other(error)); }
+                }
+                accepted = listener.accept() => {
+                    let (stream, peer) = match accepted { Ok(pair) => pair, Err(error) => break Err(error) };
+                    if connections.len() >= Self::MAX_CONNECTIONS { continue; }
+                    let app = app.clone().layer(Extension(ConnectInfo(peer)));
+                    let shutdown = self.shutdown.clone();
+                    connections.spawn(async move {
+                        let connection = http1::Builder::new().serve_connection(TokioIo::new(stream), TowerToHyperService::new(app));
+                        tokio::pin!(connection);
+                        let result = tokio::select! {
+                            result = &mut connection => result,
+                            _ = shutdown.cancelled() => {
+                                connection.as_mut().graceful_shutdown();
+                                connection.await
+                            }
+                        };
+                        if let Err(error) = result { tracing::debug!(%error, "recorder connection closed"); }
+                    });
+                }
+            }
+        };
+        self.shutdown.cancel();
+        if timeout(Self::DRAIN_TIMEOUT, async { while connections.join_next().await.is_some() {} })
+            .await
+            .is_err()
+        {
+            tracing::warn!("recorder connection drain timed out");
+            connections.abort_all();
+            while connections.join_next().await.is_some() {}
         }
-        Ok(served?)
+        drop(app);
+        drop(queue);
+        worker.await??;
+        Ok(serving?)
     }
 
-    /// Bound and parse the body before entering the ordered writer queue.
+    /// Reject excess admission before polling or buffering the request body.
     pub async fn record(
-        State(state): State<Arc<Mutex<Self>>>,
+        State(queue): State<Arc<ArrivalQueue>>,
         ConnectInfo(source): ConnectInfo<SocketAddr>,
         request: Request,
     ) -> Response {
-        let body = match timeout(
+        let (body, response) = match queue.admit(source) {
+            Ok(slot) => slot,
+            Err(status) => return status.into_response(),
+        };
+        let bytes = match timeout(
             Duration::from_secs(10),
             to_bytes(request.into_body(), Self::MAX_BODY_BYTES),
         )
         .await
         {
-            Ok(Ok(body)) => body,
+            Ok(Ok(bytes)) => bytes,
             Ok(Err(_)) => return StatusCode::PAYLOAD_TOO_LARGE.into_response(),
             Err(_) => return StatusCode::REQUEST_TIMEOUT.into_response(),
         };
-        let envelope = match RpcEnvelope::parse(&body) {
-            Ok(envelope) => envelope,
-            Err(_) => return (StatusCode::BAD_REQUEST, Json(json!({"jsonrpc":"2.0","id":null,"error":{"code":-32600,"message":"Invalid request"}}))).into_response(),
-        };
-        let mut state = state.lock().await;
-        if state.failure.is_some() {
+        if body.send(bytes).is_err() {
             return StatusCode::SERVICE_UNAVAILABLE.into_response();
         }
-        let received_at_ms =
-            match GlobalClock::get().now_unix_millis().ok().and_then(|ms| u64::try_from(ms).ok()) {
-                Some(ms) => ms,
-                None => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-            };
-        let is_batch = matches!(&envelope, RpcEnvelope::Batch(_));
-        let context = CaptureContext { received_at_ms, source, batch_id: state.next_batch };
-        state.next_batch += u64::from(is_batch);
-        let mut responses = Vec::new();
-        for (id, record) in envelope.into_records(&context) {
-            if let Err(error) = state.writer.push(&record).await {
-                tracing::error!(%error, "replay recording failed");
-                state.failure = Some(error);
-                state.shutdown.cancel();
-                return StatusCode::INTERNAL_SERVER_ERROR.into_response();
-            }
-            if let Some(id) = id {
-                responses.push(json!({"jsonrpc":"2.0","id":id,"result":null}));
-            }
-        }
-        if responses.is_empty() {
-            return StatusCode::NO_CONTENT.into_response();
-        }
-        if is_batch {
-            Json(responses).into_response()
-        } else {
-            Json(responses.pop()).into_response()
-        }
+        response.await.unwrap_or_else(|_| StatusCode::SERVICE_UNAVAILABLE.into_response())
     }
 }
 
@@ -113,61 +119,15 @@ mod tests {
     use base_clock::GlobalClock;
     use base_replay_store::{ReplayStore, ReplayWriter};
     use futures::TryStreamExt;
-    use serde_json::{Value, json};
-    use tokio::{net::TcpListener, task::JoinSet, time::timeout};
+    use tokio::{
+        io::{AsyncReadExt, AsyncWriteExt},
+        net::{TcpListener, TcpSocket},
+        task::JoinSet,
+        time::timeout,
+    };
     use tokio_util::sync::CancellationToken;
 
     use super::Recorder;
-
-    #[tokio::test]
-    async fn records_single_and_batch_verbatim_when_shutdown_flushes() {
-        let dir = tempfile::tempdir().unwrap();
-        let store = ReplayStore::Local(dir.path().into());
-        let writer = ReplayWriter::new(store.clone(), "devnet".into()).unwrap();
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let url = format!("http://{}", listener.local_addr().unwrap());
-        let cancel = CancellationToken::new();
-        let mut tasks = JoinSet::new();
-        tasks.spawn(Recorder::new(writer, cancel.clone()).serve(listener));
-        let client = reqwest::Client::builder().timeout(Duration::from_secs(5)).build().unwrap();
-        let start = u64::try_from(GlobalClock::get().now_unix_millis().unwrap()).unwrap();
-        let params = r#"[ { "n" : 1.2300e+02, "s": "\u0061" } ]"#;
-        let call = format!(r#"{{"jsonrpc":"2.0","id":7,"method":"future","params":{params}}}"#);
-        let single = json!({"jsonrpc":"2.0","id":7,"result":null});
-        for (body, expected) in
-            [(call.clone(), single.clone()), (format!("[{call},{call}]"), json!([single, single]))]
-        {
-            let response = client.post(&url).body(body).send().await.unwrap();
-            assert_eq!(response.status(), 200);
-            assert_eq!(
-                serde_json::from_str::<Value>(&response.text().await.unwrap()).unwrap(),
-                expected
-            );
-        }
-        for body in ["[]", "not json", "{\"jsonrpc\":\"2.0\",\"method\":\"bad\",\"params\":[\n1]}"]
-        {
-            assert_eq!(client.post(&url).body(body).send().await.unwrap().status(), 400);
-        }
-        let oversized = "x".repeat(Recorder::MAX_BODY_BYTES + 1);
-        let response = client.post(&url).body(oversized).send().await.unwrap();
-        assert_eq!(response.status(), 413);
-        cancel.cancel();
-        timeout(Duration::from_secs(10), tasks.join_next())
-            .await
-            .unwrap()
-            .unwrap()
-            .unwrap()
-            .unwrap();
-
-        let end = u64::try_from(GlobalClock::get().now_unix_millis().unwrap()).unwrap();
-        let records: Vec<_> = store.read("devnet", start..=end).try_collect().await.unwrap();
-        assert_eq!(
-            records.iter().map(|r| r.batch_id).collect::<Vec<_>>(),
-            [None, Some(0), Some(0)]
-        );
-        assert!(records.iter().all(|r| r.params.get().as_bytes() == params.as_bytes()));
-        assert!(records.iter().all(|r| r.source.starts_with("127.0.0.1:")));
-    }
 
     #[tokio::test]
     async fn returns_error_when_final_minute_cannot_be_published() {
@@ -180,7 +140,54 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let cancel = CancellationToken::new();
         cancel.cancel();
-
         assert!(Recorder::new(writer, cancel).serve(listener).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn closes_writer_when_client_stops_reading_large_response() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = ReplayStore::Local(dir.path().into());
+        let writer = ReplayWriter::new(store.clone(), "devnet".into()).unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let cancel = CancellationToken::new();
+        let mut tasks = JoinSet::new();
+        tasks.spawn(Recorder::new(writer, cancel.clone()).serve(listener));
+        let socket = TcpSocket::new_v4().unwrap();
+        socket.set_recv_buffer_size(1024).unwrap();
+        let mut stalled = socket.connect(address).await.unwrap();
+        let body = format!(
+            r#"{{"jsonrpc":"2.0","id":"{}","method":"large"}}"#,
+            "x".repeat(2 * 1024 * 1024)
+        );
+        let headers = format!(
+            "POST / HTTP/1.1\r\nHost: local\r\nExpect: 100-continue\r\nContent-Length: {}\r\n\r\n",
+            body.len()
+        );
+        stalled.write_all(headers.as_bytes()).await.unwrap();
+        let mut interim = [0; 25];
+        stalled.read_exact(&mut interim).await.unwrap();
+        stalled.write_all(body.as_bytes()).await.unwrap();
+        let client = reqwest::Client::builder().timeout(Duration::from_secs(3)).build().unwrap();
+        assert_eq!(
+            client
+                .post(format!("http://{address}"))
+                .body(r#"{"jsonrpc":"2.0","id":2,"method":"probe"}"#)
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            200
+        );
+        cancel.cancel();
+        timeout(Duration::from_secs(3), tasks.join_next())
+            .await
+            .expect("bounded shutdown")
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        let end = u64::try_from(GlobalClock::get().now_unix_millis().unwrap()).unwrap();
+        let records: Vec<_> = store.read("devnet", end - 60_000..=end).try_collect().await.unwrap();
+        assert_eq!(records.len(), 2);
     }
 }

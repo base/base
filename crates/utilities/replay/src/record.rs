@@ -2,8 +2,10 @@ use alloy_primitives::B256;
 use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
 
+use crate::ReplayFrame;
+
 /// External format identifier; readers select this schema from transport or dataset metadata.
-pub const REPLAY_RECORD_FORMAT: &str = "replay-record/v1";
+pub const REPLAY_RECORD_FORMAT: &str = "replay-record/v2";
 
 /// Ingress boundary at which a call was recorded.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -18,7 +20,7 @@ pub enum ReplayStream {
 /// One JSON-RPC call in a [`REPLAY_RECORD_FORMAT`] dataset.
 ///
 /// Use [`Self::to_jsonl_line`] for checked JSONL framing. Batch calls retain order and share a batch ID.
-/// The enclosing transport or dataset metadata must identify v1 before deserialization.
+/// JSONL uses a versioned envelope; direct Serde represents the logical record only.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReplayRecord {
     /// Ingress boundary that received this call.
@@ -42,9 +44,9 @@ pub struct ReplayRecord {
 /// Failure to serialize a replay record as one JSONL line.
 #[derive(Debug, thiserror::Error)]
 pub enum ReplayRecordError {
-    /// Raw parameters contain a literal LF or CR, which would break JSONL framing.
-    #[error("raw params contain a literal LF or CR")]
-    MultilineParams,
+    /// JSONL uses an unsupported framing version.
+    #[error("unsupported replay framing version: {0}")]
+    UnsupportedVersion(u8),
     /// JSON serialization failed.
     #[error(transparent)]
     Serialization(#[from] serde_json::Error),
@@ -54,15 +56,22 @@ impl ReplayRecord {
     /// Serialize one physical JSONL line, preserving raw params and appending a newline.
     ///
     /// # Errors
-    /// Returns [`ReplayRecordError::MultilineParams`] for literal LF or CR in raw params,
-    /// or [`ReplayRecordError::Serialization`] if JSON serialization fails.
+    /// Returns [`ReplayRecordError::Serialization`] if JSON serialization fails.
     pub fn to_jsonl_line(&self) -> Result<String, ReplayRecordError> {
-        let mut line = serde_json::to_string(self)?;
-        if line.contains(['\n', '\r']) {
-            return Err(ReplayRecordError::MultilineParams);
-        }
+        let frame = ReplayFrame { version: Some(2), record: serde_json::to_string(self)? };
+        let mut line = serde_json::to_string(&frame)?;
         line.push('\n');
         Ok(line)
+    }
+
+    /// Decode v2 JSONL losslessly, or read an unframed v1 record.
+    pub fn from_jsonl_line(line: &str) -> Result<Self, ReplayRecordError> {
+        let frame: ReplayFrame = serde_json::from_str(line)?;
+        match frame.version {
+            Some(2) => Ok(serde_json::from_str(&frame.record)?),
+            None => Ok(serde_json::from_str(line)?),
+            Some(version) => Err(ReplayRecordError::UnsupportedVersion(version)),
+        }
     }
 }
 
@@ -98,7 +107,7 @@ mod tests {
         };
 
         let line = record.to_jsonl_line().unwrap();
-        let decoded: ReplayRecord = serde_json::from_str(line.trim_end()).unwrap();
+        let decoded = ReplayRecord::from_jsonl_line(&line).unwrap();
 
         assert_eq!(line.lines().count(), 1);
         assert_eq!(decoded.method, "base_insertValidatedTransaction");
@@ -122,10 +131,9 @@ mod tests {
         };
 
         let encoded = record.to_jsonl_line().unwrap();
-        let decoded: ReplayRecord = serde_json::from_str(&encoded).unwrap();
+        let decoded = ReplayRecord::from_jsonl_line(&encoded).unwrap();
 
         assert_eq!(decoded.params.get().as_bytes(), params.as_bytes());
-        assert!(encoded.contains(params));
         assert_eq!(decoded.stream, record.stream);
         assert_eq!(decoded.received_at_ms, record.received_at_ms);
         assert_eq!(decoded.method, record.method);
@@ -135,16 +143,17 @@ mod tests {
     }
 
     #[test]
-    fn jsonl_rejects_params_when_line_breaks_are_literal() {
+    fn jsonl_preserves_params_when_line_breaks_are_literal() {
         for separator in ["\n", "\r", "\r\n"] {
             let input = format!(
                 r#"{{"stream":"builder_ingress","received_at_ms":0,"method":"call","params":[{separator}1{separator}],"source":"[::1]:1234"}}"#
             );
             let record: ReplayRecord = serde_json::from_str(&input).unwrap();
 
-            let result = record.to_jsonl_line();
-
-            assert!(matches!(result, Err(ReplayRecordError::MultilineParams)));
+            let line = record.to_jsonl_line().unwrap();
+            assert_eq!(line.lines().count(), 1);
+            let decoded = ReplayRecord::from_jsonl_line(&line).unwrap();
+            assert_eq!(decoded.params.get().as_bytes(), record.params.get().as_bytes());
         }
     }
 
@@ -160,7 +169,7 @@ mod tests {
 
         assert!(line.ends_with('\n'));
         assert!(!line[..line.len() - 1].contains(['\n', '\r']));
-        let decoded: ReplayRecord = serde_json::from_str(&line).unwrap();
+        let decoded = ReplayRecord::from_jsonl_line(&line).unwrap();
         assert_eq!(decoded.params.get().as_bytes(), params.as_bytes());
     }
 
@@ -197,5 +206,15 @@ mod tests {
         let result = serde_json::from_str::<ReplayRecord>(input);
 
         assert!(result.unwrap_err().to_string().contains("unknown variant"));
+    }
+
+    #[test]
+    fn framing_reads_legacy_records_and_rejects_unknown_versions() {
+        let legacy = r#"{"stream":"builder_ingress","received_at_ms":0,"method":"call","params":[1.2300],"source":"x"}"#;
+        assert_eq!(ReplayRecord::from_jsonl_line(legacy).unwrap().params.get(), "[1.2300]");
+        assert!(matches!(
+            ReplayRecord::from_jsonl_line(r#"{"version":3,"record":"{}"}"#),
+            Err(ReplayRecordError::UnsupportedVersion(3))
+        ));
     }
 }
