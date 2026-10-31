@@ -12,7 +12,7 @@ use std::{
 use alloy_consensus::{BlockHeader, Transaction, constants::KECCAK_EMPTY};
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, B256, LogData, U256, map::AddressSet};
-use base_common_chains::{BaseUpgrade, Upgrades};
+use base_common_chains::{BaseFeature, Upgrades};
 use base_common_consensus::{
     BaseTimeUpdateTx, Eip8130Constants, Eip8130Contracts, Eip8130Signed, Eip8130StructuralError,
     Eip8130Structure, Eip8130TimestampError,
@@ -937,7 +937,7 @@ where
         let timestamp = header.timestamp();
         let timestamp_ms = self
             .chain_spec()
-            .is_denim_active_at_timestamp(timestamp)
+            .is_feature_active_at_timestamp(BaseFeature::SubsecondBlocks, timestamp)
             .then(|| BaseTimeUpdateTx::decode_timestamp_ms(transactions, timestamp))
             .flatten()
             .unwrap_or_else(|| timestamp.saturating_mul(1_000));
@@ -1105,8 +1105,8 @@ where
         let now_ms = self.block_timestamp_ms();
         // Before Zenith there is no Keystore: authorization, lock state, and the
         // high-rate payer classification never read `AccountConfiguration`.
-        let keystore =
-            BaseSpecId::from_timestamp(self.chain_spec(), now).is_enabled_in(BaseUpgrade::Zenith);
+        let keystore = BaseSpecId::from_timestamp(self.chain_spec(), now)
+            .is_feature_enabled(BaseFeature::Keystore);
         let state = self.client().latest().map_err(|error| Self::provider_unavailable(error))?;
 
         // Authorize *and apply* the account changes against a writable overlay so
@@ -1220,7 +1220,9 @@ where
         // EIP-7825 (from Azul): `gas_limit` plus the payer authentication
         // metered on top of it is bounded by the per-transaction gas cap,
         // matching execution.
-        if self.chain_spec().is_azul_active_at_timestamp(now)
+        if self
+            .chain_spec()
+            .is_feature_active_at_timestamp(BaseFeature::TransactionGasLimitCap, now)
             && FeeCheck::max_chargeable_gas(signed.tx().gas_limit, intrinsic.payer_auth)
                 > MAX_TX_GAS_LIMIT_OSAKA
         {
@@ -1860,12 +1862,13 @@ where
         let now_ms = self.block_timestamp_ms();
         // Fork gate: EIP-8130 (account abstraction) transactions are only
         // admissible to the pool once the Everest upgrade is active.
-        if !self.chain_spec().is_everest_active_at_timestamp(now) {
+        if !self.chain_spec().is_feature_active_at_timestamp(BaseFeature::Eip8130, now) {
             return Err(InvalidTransactionError::TxTypeNotSupported.into());
         }
         // Without the Keystore an EIP-8130 transaction may use only delegation
         // and native secp256k1 keys; anything else is an unsupported type.
-        if !BaseSpecId::from_timestamp(self.chain_spec(), now).is_enabled_in(BaseUpgrade::Zenith)
+        if !BaseSpecId::from_timestamp(self.chain_spec(), now)
+            .is_feature_enabled(BaseFeature::Keystore)
             && TransactionAuthorizer::check_without_keystore(signed).is_err()
         {
             return Err(InvalidTransactionError::TxTypeNotSupported.into());
@@ -2007,7 +2010,10 @@ where
             let mut l1_block_info = self.block_info.l1_block_info.read().clone();
 
             // Check to ensure tx doesn't exceed the DA footprint limit
-            if self.chain_spec().is_jovian_active_at_timestamp(self.block_timestamp()) {
+            if self
+                .chain_spec()
+                .is_feature_active_at_timestamp(BaseFeature::DaFootprint, self.block_timestamp())
+            {
                 let da_footprint = valid_tx.transaction().estimated_da_size().saturating_mul(
                     l1_block_info
                         .da_footprint_gas_scalar

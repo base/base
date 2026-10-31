@@ -13,7 +13,7 @@ use alloy_evm::{
 use alloy_primitives::{Address, B256, TxHash, U256};
 use alloy_rpc_types_debug::ExecutionWitness;
 use alloy_rpc_types_engine::PayloadId;
-use base_common_chains::Upgrades;
+use base_common_chains::{BaseFeature, Upgrades};
 use base_common_consensus::{BaseTransaction, DepositReceiptExt, Predeploys};
 use base_common_evm::{BaseSpecId, L1BlockInfo};
 use base_execution_eip8130::IntrinsicGas;
@@ -472,7 +472,8 @@ impl<Txs> Builder<'_, Txs> {
             resting = resting_predicates
                 .as_ref()
                 .filter(|_| {
-                    ctx.builder_config.resting_predicate_mode.is_enabled() && ctx.is_denim_active()
+                    ctx.builder_config.resting_predicate_mode.is_enabled()
+                        && ctx.is_one_shot_building_active()
                 })
                 .map(|store| {
                     let start = Instant::now();
@@ -521,7 +522,7 @@ impl<Txs> Builder<'_, Txs> {
             }
 
             // check if the new payload is even more valuable
-            if !ctx.is_denim_active() && !ctx.is_better_payload(info.total_fees) {
+            if !ctx.is_one_shot_building_active() && !ctx.is_better_payload(info.total_fees) {
                 // can skip building the block
                 return Ok(BuildOutcomeKind::Aborted { fees: info.total_fees });
             }
@@ -601,7 +602,7 @@ impl<Txs> Builder<'_, Txs> {
             BuilderMetrics::record_native_build(execution_duration, build_start.elapsed());
         }
 
-        if no_tx_pool || ctx.is_denim_active() {
+        if no_tx_pool || ctx.is_one_shot_building_active() {
             // if `no_tx_pool` is set only transactions from the payload attributes will be included
             // in the payload. In other words, the payload is deterministic and we can
             // freeze it once we've successfully built it.
@@ -649,7 +650,10 @@ impl<Txs> Builder<'_, Txs> {
             return Err(PayloadBuilderError::other(BasePayloadBuilderError::Cancelled));
         }
 
-        if ctx.chain_spec.is_isthmus_active_at_timestamp(ctx.attributes().timestamp()) {
+        if ctx.chain_spec.is_feature_active_at_timestamp(
+            BaseFeature::L2ToL1MessageRoot,
+            ctx.attributes().timestamp(),
+        ) {
             // force load `L2ToL1MessagePasser.sol` so l2 withdrawals root can be computed even if
             // no l2 withdrawals in block
             _ = db.load_cache_account(Predeploys::L2_TO_L1_MESSAGE_PASSER)?;
@@ -791,9 +795,12 @@ where
         &self.config.attributes
     }
 
-    /// Returns `true` if Denim is active at this payload's timestamp.
-    pub fn is_denim_active(&self) -> bool {
-        self.chain_spec.is_denim_active_at_timestamp(self.attributes().timestamp())
+    /// Returns whether this payload uses one-shot building rather than fee-based replacement.
+    pub fn is_one_shot_building_active(&self) -> bool {
+        self.chain_spec.is_feature_active_at_timestamp(
+            BaseFeature::OneShotPayloadBuilding,
+            self.attributes().timestamp(),
+        )
     }
 
     /// Returns the current fee settings for transactions from the mempool
@@ -1039,14 +1046,14 @@ where
             BaseSpecId::from_timestamp(&*self.chain_spec, block_timestamp),
             u128::from(base_fee),
         );
-        let can_finalize_early = self.is_denim_active();
+        let can_finalize_early = self.is_one_shot_building_active();
         let resource_metering = &self.builder_config.resource_metering;
         let mut resource_throttled = 0u64;
         // Only deposits can write the L1 block info predeploy, so the scalar left in state by the
         // sequencer transactions holds for every pool candidate in this scan.
         let da_footprint_gas_scalar = self
             .chain_spec
-            .is_jovian_active_at_timestamp(self.attributes().timestamp())
+            .is_feature_active_at_timestamp(BaseFeature::DaFootprint, self.attributes().timestamp())
             .then(|| {
                 L1BlockInfo::fetch_da_footprint_gas_scalar(builder.evm_mut().db_mut())
                     .expect("DA footprint should always be available from the database post jovian")

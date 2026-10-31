@@ -17,7 +17,7 @@ use alloy_rlp::Decodable;
 use alloy_sol_types::SolValue;
 use anyhow::{Context, Result, anyhow, bail};
 use base_common_consensus::BaseBlock;
-use base_common_genesis::RollupConfig;
+use base_common_genesis::{BaseFeature, RollupConfig};
 use base_common_network::Base;
 use base_optimism_rpc::DebugProviderExt;
 use base_proof_host::HostConfig;
@@ -218,7 +218,9 @@ impl OPSuccinctDataFetcher {
 
         // Add warning if the chain is pre-Holocene, as derivation is significantly slower.
         let unix_timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
-        if !rollup_config.is_holocene_active(unix_timestamp) {
+        if !rollup_config
+            .is_feature_active_cascading(BaseFeature::StrictDerivationOrdering, unix_timestamp)
+        {
             tracing::warn!(
                 "Chain is not using Holocene upgrade. This will cause significant performance degradation compared to chains that have activated Holocene."
             );

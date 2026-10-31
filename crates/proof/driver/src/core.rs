@@ -7,7 +7,7 @@ use alloy_consensus::BlockBody;
 use alloy_primitives::B256;
 use alloy_rlp::Decodable;
 use base_common_consensus::{BaseBlock, BaseTxEnvelope, OpTxType};
-use base_common_genesis::RollupConfig;
+use base_common_genesis::{BaseFeature, RollupConfig};
 use base_consensus_derive::{Pipeline, PipelineError, PipelineErrorKind, Signal, SignalReceiver};
 use base_protocol::L2BlockInfo;
 use spin::RwLock;
@@ -92,7 +92,10 @@ where
                 Err(e) => {
                     error!(target: "client", error = %e, "Failed to execute L2 block");
 
-                    if !cfg.is_holocene_active(attributes.payload_attributes.timestamp) {
+                    if !cfg.is_feature_active_cascading(
+                        BaseFeature::DepositsOnlyOnInvalidPayload,
+                        attributes.payload_attributes.timestamp,
+                    ) {
                         // Pre-Holocene, discard the block if execution fails.
                         continue;
                     }

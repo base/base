@@ -2,7 +2,7 @@
 
 use alloy_consensus::BlockHeader;
 use alloy_eips::{BlockId, BlockNumberOrTag};
-use base_common_chains::Upgrades;
+use base_common_chains::{BaseFeature, Upgrades};
 use base_common_rpc_types::{BaseRpcTypes, EIP8130_PRE_EVEREST_RPC_ERROR};
 use jsonrpsee_types::{
     ErrorObjectOwned,
@@ -40,7 +40,7 @@ impl Eip8130EverestGate {
     {
         let provider = eth_api.provider();
         let timestamp = Self::resolve_timestamp(provider, block_id)?;
-        if !provider.chain_spec().is_everest_active_at_timestamp(timestamp) {
+        if !provider.chain_spec().is_feature_active_at_timestamp(BaseFeature::Eip8130, timestamp) {
             return Err(ErrorObjectOwned::owned(
                 INVALID_PARAMS_CODE,
                 EIP8130_PRE_EVEREST_RPC_ERROR,

@@ -11,7 +11,7 @@ use alloy_primitives::{
 };
 use base_bundles::{BundleExtensions, BundleTxs, OpcodeGas, ParsedBundle, TransactionResult};
 use base_common_consensus::{BaseTxEnvelope, SystemAddresses};
-use base_common_evm::{BaseSpecId, BaseUpgrade, L1BlockInfo};
+use base_common_evm::{BaseFeature, BaseSpecId, BaseUpgrade, L1BlockInfo};
 use base_common_genesis::{ChainGenesis, RollupConfig};
 use base_common_precompiles::{
     ActivationRegistryStorage, B20FactoryStorage, B20Variant, PolicyRegistryStorage,
@@ -63,7 +63,7 @@ fn next_block_schedule(
 
     let (timestamp, timestamp_millis_part) = rollup_config.l2_block_timestamp_parts(block_number);
     let base_time = rollup_config
-        .is_denim_active(timestamp)
+        .is_feature_active_cascading(BaseFeature::SubsecondBlocks, timestamp)
         .then(|| BaseTimeUpdateTx::new(timestamp_millis_part))
         .transpose()
         .map_err(|error| eyre!("invalid canonical BaseTime update: {error}"))?;
@@ -333,7 +333,7 @@ impl MeteredOpcodes {
 
     /// Filters the precompile set to those active in `spec`, consuming `self`.
     pub fn for_spec(mut self, spec: BaseSpecId) -> Self {
-        if spec.is_enabled_in(BaseUpgrade::Beryl) {
+        if spec.is_feature_enabled(BaseFeature::TokenPrecompiles) {
             return self;
         }
 

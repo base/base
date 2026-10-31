@@ -9,7 +9,7 @@ use std::{
 
 use alloy_consensus::BlockHeader;
 use alloy_rpc_types_engine::PayloadId;
-use base_common_chains::Upgrades;
+use base_common_chains::{BaseFeature, Upgrades};
 use base_execution_chainspec::BaseChainSpec;
 use base_node_core::BaseEngineTypes;
 use futures::{FutureExt, StreamExt, future::BoxFuture, stream::FuturesUnordered};
@@ -186,8 +186,10 @@ impl MultiplexRouter {
         tx: tokio::sync::oneshot::Sender<Result<PayloadId, PayloadBuilderError>>,
     ) -> BoxFuture<'static, ()> {
         let payload_id = input.payload_id();
-        let selected_basic =
-            self.chain_spec.is_denim_active_at_timestamp(input.attributes.timestamp());
+        let selected_basic = self.chain_spec.is_feature_active_at_timestamp(
+            BaseFeature::OneShotPayloadBuilding,
+            input.attributes.timestamp(),
+        );
         self.record_payload_route(payload_id, selected_basic);
 
         let mut shadow_attributes = input.attributes.clone();
@@ -397,7 +399,7 @@ impl MultiplexRouter {
                     _ = events_tx.closed() => break,
                     result = flashblocks_events.recv(), if !flashblocks_closed => match result {
                         Ok(event) => {
-                            if !chain_spec.is_denim_active_at_timestamp(Self::event_timestamp(&event)) {
+                            if !chain_spec.is_feature_active_at_timestamp(BaseFeature::OneShotPayloadBuilding, Self::event_timestamp(&event)) {
                                 let _ = events_tx.send(event);
                             }
                         }
@@ -421,7 +423,7 @@ impl MultiplexRouter {
                     },
                     result = basic_events.recv(), if !basic_closed => match result {
                         Ok(event) => {
-                            if chain_spec.is_denim_active_at_timestamp(Self::event_timestamp(&event)) {
+                            if chain_spec.is_feature_active_at_timestamp(BaseFeature::OneShotPayloadBuilding, Self::event_timestamp(&event)) {
                                 let _ = events_tx.send(event);
                             }
                         }

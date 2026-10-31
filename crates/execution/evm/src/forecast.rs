@@ -6,7 +6,7 @@ use alloy_rpc_types_eth::{
     BlockId,
     state::{AccountOverride, EvmOverrides, StateOverride},
 };
-use base_common_chains::Upgrades;
+use base_common_chains::{BaseFeature, Upgrades};
 use base_common_consensus::Predeploys;
 use base_common_evm::{BaseTime, BaseTimeTransitionError};
 use base_execution_chainspec::{BaseChainSpec, BaseChainSpecError};
@@ -98,7 +98,8 @@ impl BasePendingForecast {
         db: DB,
         mut overrides: EvmOverrides,
     ) -> Result<EvmOverrides, BaseTimeTransitionError<EvmDatabaseError<DB::Error>>> {
-        if !chain_spec.is_denim_active_at_timestamp(self.timestamp) {
+        if !chain_spec.is_feature_active_at_timestamp(BaseFeature::SubsecondBlocks, self.timestamp)
+        {
             return Ok(overrides);
         }
         let mut state = State::builder().with_database(db).with_bundle_update().build();

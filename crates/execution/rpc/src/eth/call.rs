@@ -11,10 +11,10 @@ use alloy_rpc_types_eth::{
     simulate::{SimBlock, SimulatePayload, SimulatedBlock},
     state::EvmOverrides,
 };
-use base_common_chains::BaseUpgrade;
+use base_common_chains::{BaseFeature, Upgrades};
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_evm::{BaseNextBlockEnvAttributes, BasePendingForecast};
-use reth_chainspec::{ChainSpecProvider, EthChainSpec, EthereumHardforks, Hardforks};
+use reth_chainspec::{ChainSpecProvider, EthChainSpec, EthereumHardforks};
 use reth_errors::RethError;
 use reth_evm::{ConfigureEvm, Evm, HaltReasonFor, execute::BlockBuilder};
 use reth_primitives_traits::SealedHeader;
@@ -95,7 +95,8 @@ where
 
             let chain_spec = this.provider().chain_spec();
             let genesis = chain_spec.genesis_header();
-            let denim_timestamp = chain_spec.fork(BaseUpgrade::Denim).as_timestamp();
+            let denim_timestamp =
+                chain_spec.feature_activation_timestamp(BaseFeature::SubsecondBlocks);
 
             // Validate block ordering and fill gaps with empty blocks so every entry has an
             // explicit `number` and `time` override and the chain is contiguous (see the
@@ -495,8 +496,17 @@ where
 #[cfg(test)]
 mod tests {
     use alloy_consensus::Header;
+    use base_common_chains::BaseUpgrade;
+    use base_execution_chainspec::BaseChainSpecBuilder;
+    use reth_chainspec::ForkCondition;
 
     use super::*;
+
+    fn denim_spec() -> BaseChainSpec {
+        BaseChainSpecBuilder::base_mainnet()
+            .with_fork(BaseUpgrade::Denim, ForkCondition::Timestamp(10))
+            .build()
+    }
 
     #[test]
     fn sanitize_base_chain_uses_denim_schedule() {
@@ -515,6 +525,8 @@ mod tests {
 
     #[test]
     fn sanitize_base_chain_accepts_repeated_timestamp_after_denim() {
+        let chain_spec = denim_spec();
+        let timestamp = chain_spec.feature_activation_timestamp(BaseFeature::SubsecondBlocks);
         let parent =
             SealedHeader::seal_slow(Header { number: 5, timestamp: 10, ..Default::default() });
         let blocks = vec![SimBlock::<()> {
@@ -522,7 +534,7 @@ mod tests {
             ..Default::default()
         }];
 
-        assert!(sanitize_base_chain(blocks, &parent, 0, 0, Some(10), 256).is_ok());
+        assert!(sanitize_base_chain(blocks, &parent, 0, 0, timestamp, 256).is_ok());
     }
 
     #[test]
@@ -535,6 +547,24 @@ mod tests {
         }];
 
         assert!(sanitize_base_chain(blocks, &parent, 0, 0, Some(10), 256).is_err());
+    }
+
+    #[test]
+    fn sanitize_base_chain_requires_timestamp_schedule_for_repeated_timestamps() {
+        let parent =
+            SealedHeader::seal_slow(Header { number: 5, timestamp: 10, ..Default::default() });
+        for condition in [ForkCondition::Never, ForkCondition::Block(0)] {
+            let chain_spec = BaseChainSpecBuilder::base_mainnet()
+                .with_fork(BaseUpgrade::Denim, condition)
+                .build();
+            let blocks = vec![SimBlock::<()> {
+                block_overrides: Some(BlockOverrides { time: Some(10), ..Default::default() }),
+                ..Default::default()
+            }];
+
+            let timestamp = chain_spec.feature_activation_timestamp(BaseFeature::SubsecondBlocks);
+            assert!(sanitize_base_chain(blocks, &parent, 0, 0, timestamp, 256).is_err());
+        }
     }
 
     #[test]

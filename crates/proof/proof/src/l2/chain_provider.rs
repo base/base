@@ -8,7 +8,7 @@ use alloy_primitives::{Address, B256, Bytes};
 use alloy_rlp::Decodable;
 use async_trait::async_trait;
 use base_common_consensus::{BaseBlock, BaseTxEnvelope};
-use base_common_genesis::{RollupConfig, SystemConfig};
+use base_common_genesis::{BaseFeature, RollupConfig, SystemConfig};
 use base_consensus_derive::L2ChainProvider;
 use base_proof_driver::PipelineCursor;
 use base_proof_executor::TrieDBProvider;
@@ -66,7 +66,11 @@ impl<T: CommsClient> OracleL2ChainProvider<T> {
 
         let mut linear_fallback = false;
         while header.number > block_number {
-            if self.rollup_config.is_isthmus_active(header.timestamp) && !linear_fallback {
+            if self
+                .rollup_config
+                .is_feature_active_cascading(BaseFeature::HistoryStorage, header.timestamp)
+                && !linear_fallback
+            {
                 // If Isthmus is active, the EIP-2935 contract is used to perform leaping lookbacks
                 // through consulting the ring buffer within the contract. If this
                 // lookup fails for any reason, we fall back to linear walk back.
@@ -156,7 +160,7 @@ impl<T: CommsClient + Send + Sync> OracleL2ChainProvider<T> {
                 ommers: Vec::new(),
                 withdrawals: self
                     .rollup_config
-                    .is_canyon_active(timestamp)
+                    .is_feature_active_cascading(BaseFeature::Withdrawals, timestamp)
                     .then(|| alloy_eips::eip4895::Withdrawals::new(Vec::new())),
             },
         };

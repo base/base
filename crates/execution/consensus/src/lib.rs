@@ -17,7 +17,7 @@ use alloy_consensus::{
 };
 use alloy_eips::eip7685::EMPTY_REQUESTS_HASH;
 use alloy_primitives::{B64, B256};
-use base_common_chains::Upgrades;
+use base_common_chains::{BaseFeature, Upgrades};
 use base_common_consensus::{BaseTxEnvelope, DepositReceiptExt};
 use base_execution_chainspec::BaseChainSpec;
 use base_protocol::BaseTimeScheduleError;
@@ -139,7 +139,10 @@ where
         )?;
 
         // Check empty shanghai-withdrawals
-        if self.chain_spec.is_canyon_active_at_timestamp(block.timestamp()) {
+        if self
+            .chain_spec
+            .is_feature_active_at_timestamp(BaseFeature::Withdrawals, block.timestamp())
+        {
             canyon::ensure_empty_shanghai_withdrawals(block.body()).map_err(|err| {
                 ConsensusError::Other(Arc::from(Box::<dyn core::error::Error + Send + Sync>::from(
                     format!("failed to verify block {}: {err}", block.number()),
@@ -153,14 +156,23 @@ where
         // In Jovian, the blob gas used computation has changed. We are moving the blob base fee
         // validation to post-execution since the DA footprint calculation is stateful.
         // Pre-execution we only validate that the blob gas used is present in the header.
-        if self.chain_spec.is_jovian_active_at_timestamp(block.timestamp()) {
+        if self
+            .chain_spec
+            .is_feature_active_at_timestamp(BaseFeature::DaFootprint, block.timestamp())
+        {
             block.blob_gas_used().ok_or(ConsensusError::BlobGasUsedMissing)?;
-        } else if self.chain_spec.is_ecotone_active_at_timestamp(block.timestamp()) {
+        } else if self
+            .chain_spec
+            .is_feature_active_at_timestamp(BaseFeature::BlobHeader, block.timestamp())
+        {
             validate_cancun_gas(block)?;
         }
 
         // Check withdrawals root field in header
-        if self.chain_spec.is_isthmus_active_at_timestamp(block.timestamp()) {
+        if self
+            .chain_spec
+            .is_feature_active_at_timestamp(BaseFeature::L2ToL1MessageRoot, block.timestamp())
+        {
             // storage root of withdrawals pre-deploy is verified post-execution
             isthmus::ensure_withdrawals_storage_root_is_some(block.header()).map_err(|err| {
                 ConsensusError::Other(Arc::from(Box::<dyn core::error::Error + Send + Sync>::from(
@@ -202,6 +214,9 @@ impl HeaderValidator<Header> for BaseBeaconConsensus {
         validate_header_base_fee(header, &self.chain_spec)?;
         holocene::ensure_valid_extra_data(&self.chain_spec, header)?;
 
+        // Select the timestamp schedule by block number, not by the untrusted timestamp being
+        // validated: a post-transition header must not bypass this check by claiming an earlier
+        // timestamp. The genesis anchor is not a produced block.
         if let Some(schedule) =
             self.chain_spec.denim_timestamp_schedule().map_err(ConsensusError::other)?
             && header.number() != schedule.genesis_block_number
@@ -228,7 +243,10 @@ impl HeaderValidator<Header> for BaseBeaconConsensus {
         // Engine path — a block-validity differential that could lead to a chain split.
         //
         // See `docs/specs/pages/upgrades/isthmus/exec-engine.md`.
-        if self.chain_spec.is_isthmus_active_at_timestamp(header.timestamp()) {
+        if self
+            .chain_spec
+            .is_feature_active_at_timestamp(BaseFeature::EmptyRequestsHash, header.timestamp())
+        {
             match header.requests_hash() {
                 None => return Err(ConsensusError::RequestsHashMissing),
                 Some(hash) if hash != EMPTY_REQUESTS_HASH => {
@@ -252,12 +270,20 @@ impl HeaderValidator<Header> for BaseBeaconConsensus {
     ) -> Result<(), ConsensusError> {
         validate_against_parent_hash_number(header.header(), parent)?;
 
-        let allows_same_timestamp =
-            self.chain_spec.is_denim_active_at_timestamp(header.timestamp())
-                && self.chain_spec.is_denim_active_at_timestamp(parent.timestamp());
+        let allows_same_timestamp = self
+            .chain_spec
+            .is_feature_active_at_timestamp(BaseFeature::SubsecondBlocks, header.timestamp())
+            && self
+                .chain_spec
+                .is_feature_active_at_timestamp(BaseFeature::SubsecondBlocks, parent.timestamp());
         let timestamp_is_invalid = header.timestamp() < parent.timestamp()
             || (header.timestamp() == parent.timestamp() && !allows_same_timestamp);
-        if self.chain_spec.is_bedrock_active_at_block(header.number()) && timestamp_is_invalid {
+        if self
+            .chain_spec
+            .fork(BaseFeature::MonotonicBlockTimestamps.activation_upgrade())
+            .active_at_block(header.number())
+            && timestamp_is_invalid
+        {
             return Err(ConsensusError::TimestampIsInPast {
                 parent_timestamp: parent.timestamp(),
                 timestamp: header.timestamp(),
@@ -274,11 +300,16 @@ impl HeaderValidator<Header> for BaseBeaconConsensus {
         // On Base, the excess blob gas is always 0 for all blocks after ecotone.
         // The blob gas used and the excess blob gas should both be set after ecotone.
         // After Jovian, the blob gas used contains the current DA footprint.
-        if self.chain_spec.is_ecotone_active_at_timestamp(header.timestamp()) {
+        if self
+            .chain_spec
+            .is_feature_active_at_timestamp(BaseFeature::BlobHeader, header.timestamp())
+        {
             let blob_gas_used = header.blob_gas_used().ok_or(ConsensusError::BlobGasUsedMissing)?;
 
             // Before Jovian and after ecotone, the blob gas used should be 0.
-            if !self.chain_spec.is_jovian_active_at_timestamp(header.timestamp())
+            if !self
+                .chain_spec
+                .is_feature_active_at_timestamp(BaseFeature::DaFootprint, header.timestamp())
                 && blob_gas_used != 0
             {
                 return Err(ConsensusError::BlobGasUsedDiff(GotExpected {

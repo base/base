@@ -3,7 +3,7 @@ use std::{marker::PhantomData, sync::Arc};
 use alloy_consensus::BlockHeader;
 use alloy_primitives::{B256, Bytes};
 use alloy_rpc_types_engine::{ExecutionPayloadEnvelopeV2, ExecutionPayloadV1};
-use base_common_chains::Upgrades;
+use base_common_chains::{BaseFeature, Upgrades};
 use base_common_consensus::{BaseBlock, BaseTransaction, Predeploys};
 use base_common_evm::BaseTime;
 use base_common_rpc_types_engine::{
@@ -161,7 +161,10 @@ where
         parent_state: impl FnOnce() -> ProviderResult<StateProviderBox>,
     ) -> Result<(), InsertBlockErrorKind> {
         let timestamp = block.timestamp();
-        if !self.chain_spec().is_isthmus_active_at_timestamp(timestamp) {
+        if !self
+            .chain_spec()
+            .is_feature_active_at_timestamp(BaseFeature::L2ToL1MessageRoot, timestamp)
+        {
             return Ok(());
         }
 
@@ -169,7 +172,10 @@ where
         let state_updates = state_updates();
         self.validate_isthmus_post_execution(state_updates, parent_state.as_ref(), block.header())?;
 
-        if !self.chain_spec().is_denim_active_at_timestamp(timestamp) {
+        if !self
+            .chain_spec()
+            .is_feature_active_at_timestamp(BaseFeature::SubsecondBlocks, timestamp)
+        {
             return Ok(());
         }
 
@@ -178,7 +184,10 @@ where
                 .map_err(ConsensusError::other)?
                 .timestamp_millis_part();
 
-        if !self.chain_spec().is_denim_active_at_timestamp(parent_header.timestamp()) {
+        if !self
+            .chain_spec()
+            .is_feature_active_at_timestamp(BaseFeature::SubsecondBlocks, parent_header.timestamp())
+        {
             // The legacy parent has no millisecond component to anchor the 200ms progression
             // check, so the activation block must claim exactly 0 instead.
             if child_millis != 0 {
@@ -227,7 +236,10 @@ where
         header: &<Self::Block as Block>::Header,
     ) -> Result<(), InvalidPayloadAttributesError> {
         let timestamp = attributes.timestamp();
-        if !self.chain_spec().is_denim_active_at_timestamp(timestamp) {
+        if !self
+            .chain_spec()
+            .is_feature_active_at_timestamp(BaseFeature::SubsecondBlocks, timestamp)
+        {
             return (timestamp > header.timestamp())
                 .then_some(())
                 .ok_or(InvalidPayloadAttributesError::InvalidTimestamp);
@@ -309,10 +321,10 @@ where
             ));
         }
 
-        if self
-            .chain_spec()
-            .is_holocene_active_at_timestamp(attributes.payload_attributes.timestamp)
-        {
+        if self.chain_spec().is_feature_active_at_timestamp(
+            BaseFeature::DynamicBaseFeeParameters,
+            attributes.payload_attributes.timestamp,
+        ) {
             let (elasticity, denominator) =
                 attributes.decode_eip_1559_params().ok_or_else(|| {
                     EngineObjectValidationError::InvalidParams(
@@ -331,8 +343,10 @@ where
             }
         }
 
-        if self.chain_spec().is_jovian_active_at_timestamp(attributes.payload_attributes.timestamp)
-        {
+        if self.chain_spec().is_feature_active_at_timestamp(
+            BaseFeature::MinBaseFee,
+            attributes.payload_attributes.timestamp,
+        ) {
             if attributes.min_base_fee.is_none() {
                 return Err(EngineObjectValidationError::InvalidParams(
                     "MissingMinBaseFeeInPayloadAttributes".to_string().into(),
@@ -362,7 +376,8 @@ pub fn validate_withdrawals_presence(
     timestamp: u64,
     has_withdrawals: bool,
 ) -> Result<(), EngineObjectValidationError> {
-    let is_shanghai = chain_spec.is_canyon_active_at_timestamp(timestamp);
+    let is_shanghai =
+        chain_spec.is_feature_active_at_timestamp(BaseFeature::Withdrawals, timestamp);
 
     match version {
         EngineApiMessageVersion::V1 => {
