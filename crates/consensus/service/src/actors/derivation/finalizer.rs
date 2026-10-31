@@ -220,8 +220,10 @@ impl L2Finalizer {
     ///
     /// `inclusion` is the L1 inclusion block derivation produced the safe head from. It is
     /// [`None`] for safe heads derivation did not produce: the engine echoing the head a reset
-    /// restarted from, which changes nothing, or a head adopted during EL sync, which forgets the
-    /// confirmation because the engine's chain was replaced.
+    /// restarted from, which changes nothing, or a head at another height that derivation did not
+    /// produce, such as one adopted after EL sync, which forgets the confirmation because the
+    /// engine's chain was replaced. A head at the same height is treated as the echo, so the
+    /// finalizer cannot tell a replaced block there from the reset head.
     pub fn confirm_safe_head(&mut self, safe_head: &L2BlockInfo, inclusion: Option<BlockInfo>) {
         if inclusion.is_some() {
             self.safe_head = Some(*safe_head);
@@ -260,7 +262,8 @@ impl L2Finalizer {
     /// never moved to another inclusion block, and barriers at or below the retained bound stay.
     ///
     /// A reset with no recorded confirmation keeps nothing, barriers included: the finalizer does
-    /// not know the chain the engine holds.
+    /// not know the chain the engine holds, so a barrier from before that point does not survive
+    /// it. The engine's replaced chain is not covered by the evidence the barrier recorded.
     pub fn retain_valid_after_reset(&mut self, l2_safe_head: &L2BlockInfo) {
         let Some(confirmed_through) = self.confirmed_through else {
             self.records.clear();

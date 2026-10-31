@@ -261,12 +261,11 @@ where
     async fn signal(&mut self, signal: Signal) {
         if let Signal::Reset(ResetSignal { l2_safe_head: reset_safe_head }) = signal {
             Metrics::derivation_l1_origin().absolute(reset_safe_head.l1_origin.number);
-            // Keep the candidates that the reset still allows to be finalized. Clearing the
-            // whole queue used to lose every block at or below the confirmed safe head, which is
-            // never re-derived, so a reset rate above the L1 finality cadence starved
-            // finalization indefinitely. Nothing is finalized here: retention only keeps
-            // candidates at or below the last confirmed safe head, and those were already offered
-            // to the engine by the finalized L1 signal they were confirmed with.
+            // Keep the records that the reset still allows to be finalized. Clearing the whole
+            // queue used to lose every block at or below the confirmed safe head, which is never
+            // re-derived, so a reset rate above the L1 finality cadence starved finalization
+            // indefinitely. Nothing is finalized here: retained records are verified against L1
+            // when they are promoted, like any other.
             self.finalizer.retain_valid_after_reset(&reset_safe_head);
             // Discard any in-flight derived_from so that a stale pre-reset L1 inclusion
             // block is never recorded for a post-reset safe head confirmation.
@@ -442,10 +441,9 @@ where
                     error!(target: "derivation", error = %e, "failed to record safe head update");
                 }
 
-                // Remember which L1 block this safe head's inputs came from. A later reset keeps
-                // the derived candidates up to that inclusion block rather than only up to the
-                // safe head's epoch origin, which is what makes retention independent of how
-                // often the pipeline resets.
+                // Remember that derivation produced this safe head. A later reset keeps the
+                // records at or below it, which makes retention independent of how often the
+                // pipeline resets.
                 self.finalizer.confirm_safe_head(safe_head.as_ref(), derived_from);
 
                 self.derivation_state_machine
