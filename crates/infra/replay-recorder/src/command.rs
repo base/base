@@ -17,7 +17,7 @@ pub struct RecordArgs {
     /// Network component of storage object keys.
     #[arg(long, value_parser = ["sepolia", "mainnet", "devnet"])]
     pub network: String,
-    /// Dedicated local capture directory or s3://bucket/prefix.
+    /// Dedicated local capture directory or `s3://bucket/prefix`.
     #[arg(long)]
     pub store: String,
     /// S3-compatible endpoint URL; credentials use the standard AWS chain.
