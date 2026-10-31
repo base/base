@@ -1,6 +1,6 @@
 # base-replay-store
 
-Minute-keyed zstd JSONL storage for `replay-record/v1` datasets on local disk or S3.
+Minute-keyed zstd JSONL storage for versioned replay datasets on local disk or S3.
 This infrastructure crate keeps storage dependencies out of the shared record schema.
 This crate targets Unix, including Linux and macOS. The recorder owns the local root;
 directory-relative no-follow handles contain local reads and create-only publication,
@@ -8,7 +8,8 @@ including when an opened directory's name or final object is replaced with a sym
 
 Keys are `<network>/<yyyy>/<mm>/<dd>/<hh>/<mm>.jsonl.zst`, in UTC from
 `received_at_ms`. Networks contain only ASCII letters, digits, `_`, or `-`.
-Selecting this API selects `replay-record/v1`; do not mix other formats in its root.
+Writers emit `replay-record/v2` envelopes; readers also accept legacy unframed v1.
+The v2 frame preserves multiline raw params byte-for-byte without physical newlines.
 
 Create `ReplayStore::Local(root)` and `ReplayWriter::new(store, network)`.
 `push` buffers one minute per writer, serializing through `to_jsonl_line`.

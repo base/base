@@ -31,7 +31,7 @@ pub enum StoreError {
     S3(Box<dyn std::error::Error + Send + Sync>),
 }
 
-/// Local directory or S3 bucket/prefix containing a `replay-record/v1` dataset.
+/// Local directory or S3 bucket/prefix containing versioned replay JSONL.
 /// The local directory is recorder-owned; symlinks below its root are rejected.
 #[derive(Debug, Clone)]
 pub enum ReplayStore {
@@ -90,7 +90,7 @@ impl ReplayStore {
                         }
                         let mut records = text
                             .lines()
-                            .map(serde_json::from_str::<ReplayRecord>)
+                            .map(ReplayRecord::from_jsonl_line)
                             .collect::<Result<Vec<_>, _>>()?;
                         if records.iter().any(|r| r.received_at_ms / Self::MINUTE_MS != minute) {
                             return Err(StoreError::Invalid("record minute"));
