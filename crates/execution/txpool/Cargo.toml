@@ -83,6 +83,14 @@ harness = false
 name = "builder_insert"
 harness = false
 
+[[bench]]
+name = "best_transactions"
+harness = false
+
+[[bench]]
+name = "admission"
+harness = false
+
 [features]
 default = [ "metrics" ]
 metrics = [
