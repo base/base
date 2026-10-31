@@ -26,10 +26,11 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
 use super::{
-    BlockPulse, BlockWatcher, CanonicalHeadWatcher, DisplaySnapshot, FlashblockWatcher, GasPricer,
-    InclusionPulse, InclusionSource, LoadRunner, LoadTestDisplay, LoadTestStage,
-    PipelineStartConfig, PreparedTransaction, PresignBuffer, QueuedSubmitFailures, ResultsTracker,
-    SignedBatch, SignedTransaction, SubmissionPipeline, SubmitEvent, TxType, ValidityRouter,
+    BlockPulse, BlockWatcher, CanonicalHeadWatcher, DisplaySnapshot, FlashblockWatcher,
+    GasEstimate, GasPricer, InclusionPulse, InclusionSource, LoadRunner, LoadTestDisplay,
+    LoadTestStage, PipelineStartConfig, PreparedTransaction, PresignBuffer, QueuedSubmitFailures,
+    ResultsTracker, SignedBatch, SignedTransaction, SubmissionPipeline, SubmitEvent, TxType,
+    ValidityRouter,
 };
 use crate::{
     BaselineError, Result,
@@ -103,7 +104,7 @@ struct PresignConfig {
     max_gas_price: u128,
     validity_priority_lead_multiplier: u128,
     validity_priority_fee_divisor: u128,
-    estimated_gas: u64,
+    gas_estimate: GasEstimate,
     fresh_recipient_ratio: f64,
     signed_chunk_tx: mpsc::Sender<Vec<PresignedSenderBatch>>,
     nonce_reset_rx: mpsc::Receiver<SenderNonceReset>,
@@ -229,6 +230,7 @@ struct PresignEnqueueState<'a> {
     buffer: &'a mut PresignBuffer,
     progress: &'a mut EnqueueProgress,
     base_fee_tx: &'a watch::Sender<u128>,
+    gas_estimate: &'a GasEstimate,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -369,6 +371,12 @@ impl MempoolDepthController {
     /// Records when the previous refill cycle ran, for the steady catch-up bound.
     pub const fn with_previous_cycle(mut self, previous_cycle_at: Option<Instant>) -> Self {
         self.previous_cycle_at = previous_cycle_at;
+        self
+    }
+
+    /// Replaces the sender capacity gas, for when the per-transaction gas estimate changes.
+    pub const fn with_capacity_gas(mut self, capacity_gas: u128) -> Self {
+        self.capacity_gas = capacity_gas;
         self
     }
 
@@ -557,6 +565,7 @@ impl LoadRunner {
         let max_in_flight_per_sender = self.config.max_in_flight_per_sender;
 
         let initial_avg_gas = self.calibrate_avg_gas().await?;
+        let gas_estimate = GasEstimate::new(initial_avg_gas);
         // Seed the collector so live throughput (rolling GPS) has a non-zero
         // gas figure before canonical receipt gas lands.
         self.collector.set_estimated_gas(initial_avg_gas);
@@ -741,7 +750,7 @@ impl LoadRunner {
                 max_gas_price: self.config.max_gas_price,
                 validity_priority_lead_multiplier: self.config.validity_priority_lead_multiplier,
                 validity_priority_fee_divisor: self.config.validity_priority_fee_divisor,
-                estimated_gas: initial_avg_gas,
+                gas_estimate: gas_estimate.clone(),
                 fresh_recipient_ratio: self.config.fresh_recipient_ratio,
                 signed_chunk_tx,
                 nonce_reset_rx,
@@ -768,6 +777,7 @@ impl LoadRunner {
                 buffer: &mut presign_buffer,
                 progress: &mut progress,
                 base_fee_tx: &pacing_base_fee_tx,
+                gas_estimate: &gas_estimate,
             },
             floor_gas.min(u128::from(capacity as u64).saturating_mul(u128::from(initial_avg_gas))),
             max_in_flight_per_sender,
@@ -888,6 +898,7 @@ impl LoadRunner {
                     buffer: &mut presign_buffer,
                     progress: &mut progress,
                     base_fee_tx: &pacing_base_fee_tx,
+                    gas_estimate: &gas_estimate,
                 },
                 BlockAlignedEnqueueConfig {
                     controller: depth_controller,
@@ -1377,7 +1388,7 @@ impl LoadRunner {
                     value,
                     data,
                     gas_limit,
-                    estimated_gas: config.estimated_gas,
+                    estimated_gas: config.gas_estimate.get(),
                     validity,
                     cohort,
                 });
@@ -1894,11 +1905,25 @@ impl LoadRunner {
         }
 
         let plan_started = Instant::now();
+        let (observed_gas, observed_count) = drain_state.results_tracker.observed_gas();
+        let previous_estimate = enqueue_state.gas_estimate.get();
+        let estimated_gas = enqueue_state.gas_estimate.update(observed_gas, observed_count);
+        if estimated_gas != previous_estimate {
+            drain_state.collector.set_estimated_gas(estimated_gas);
+            info!(
+                estimated_gas,
+                previous_estimate, observed_count, "corrected pacing gas estimate from receipt gas"
+            );
+        }
         let depth_gas = drain_state.mempool_depth_gas();
         let block_gas_limit = canonical.map_or(fallback_block_gas_limit, |block| block.gas_limit);
         let (_, canonical_p99) = drain_state.collector.rolling_p50_p99();
         let plan = config
             .controller
+            .with_capacity_gas(
+                u128::from(config.max_total_in_flight as u64)
+                    .saturating_mul(u128::from(estimated_gas)),
+            )
             .with_confirmation_latency(canonical_p99)
             .with_previous_cycle(enqueue_state.progress.last_cycle_at)
             .plan(
@@ -2322,7 +2347,7 @@ mod tests {
             max_gas_price: config.max_gas_price,
             validity_priority_lead_multiplier: 1,
             validity_priority_fee_divisor: 1,
-            estimated_gas: 50_000,
+            gas_estimate: super::GasEstimate::new(50_000),
             fresh_recipient_ratio: 1.0,
             signed_chunk_tx,
             nonce_reset_rx,
@@ -2351,6 +2376,15 @@ mod tests {
                 "pacing must use calibrated gas rather than ceiling"
             );
         }
+
+        presign.gas_estimate.update(64 * 70_000, 64);
+        let jobs =
+            LoadRunner::build_sender_jobs(&mut generator, &mut keys, &mut rng, &presign, 1, 0)
+                .expect("native requests must prepare");
+        assert_eq!(
+            jobs[0].prepared_txs[0].estimated_gas, 60_000,
+            "later transactions must carry the receipt-corrected estimate"
+        );
     }
 
     #[test]
@@ -2815,6 +2849,7 @@ mod tests {
             buffer: &mut presign_buffer,
             progress: &mut progress,
             base_fee_tx: &base_fee_tx,
+            gas_estimate: &super::GasEstimate::new(21_000),
         };
         let mut drain_state = EnqueueDrainState {
             submit_event_rx: &mut submit_event_rx,
@@ -2948,6 +2983,7 @@ mod tests {
                     buffer: &mut presign_buffer,
                     progress: &mut progress,
                     base_fee_tx: &base_fee_tx,
+                    gas_estimate: &super::GasEstimate::new(21_000),
                 },
                 BlockAlignedEnqueueConfig {
                     controller: MempoolDepthController::new(

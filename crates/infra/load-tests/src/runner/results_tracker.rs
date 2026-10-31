@@ -547,13 +547,10 @@ impl ResultsTracker {
         }
     }
 
-    /// Returns average canonical gas for measured transactions observed during this run.
-    pub fn observed_avg_gas(&self) -> Option<u64> {
+    /// Returns total canonical receipt gas and the count of measured transactions it covers.
+    pub fn observed_gas(&self) -> (u128, u64) {
         let inner = self.inner.read();
-        if inner.observed_gas_count == 0 {
-            return None;
-        }
-        u64::try_from(inner.observed_gas_total / u128::from(inner.observed_gas_count)).ok()
+        (inner.observed_gas_total, inner.observed_gas_count)
     }
 
     /// Returns the number of senders at or above the given in-flight limit.
@@ -829,7 +826,7 @@ mod tests {
             effective_gas_price: 1,
             success: true,
         }]);
-        assert_eq!(tracker.observed_avg_gas(), Some(42_000));
+        assert_eq!(tracker.observed_gas(), (42_000, 1));
     }
 
     #[test]
