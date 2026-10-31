@@ -2,3 +2,6 @@
 
 mod window;
 pub use window::{ExportWindow, WindowError};
+
+mod writer;
+pub use writer::{ExportError, ExportManifest, ExportWriter};
