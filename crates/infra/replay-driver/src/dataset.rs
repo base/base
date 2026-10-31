@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use base_replay::{REPLAY_RECORD_FORMAT, ReplayRecord, ReplayStream};
+use base_replay::{ReplayRecord, ReplayStream};
 use base_replay_export::{ExportManifest, ExportWindow};
 use eyre::{Result, WrapErr, ensure};
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -23,12 +23,17 @@ impl ReplayDataset {
         let manifest: ExportManifest =
             serde_json::from_slice(&tokio::fs::read(directory.join("manifest.json")).await?)?;
         ensure!(manifest.format == "replay-export/v1", "unsupported export format");
-        ensure!(manifest.record_format == REPLAY_RECORD_FORMAT, "unsupported record format");
+        ensure!(
+            ReplayRecord::supports_format(&manifest.record_format),
+            "unsupported record format"
+        );
         let mut lines =
             BufReader::new(tokio::fs::File::open(directory.join("records.jsonl")).await?).lines();
         let mut records = Vec::new();
         while let Some(line) = lines.next_line().await? {
-            records.push(serde_json::from_str(&line).wrap_err("invalid replay JSONL record")?);
+            records.push(
+                ReplayRecord::from_jsonl_line(&line).wrap_err("invalid replay JSONL record")?,
+            );
         }
         Self::new(manifest, records)
     }
@@ -36,7 +41,10 @@ impl ReplayDataset {
     /// Validate an export before making any calls to the builder.
     pub fn new(manifest: ExportManifest, records: Vec<ReplayRecord>) -> Result<Self> {
         ensure!(manifest.format == "replay-export/v1", "unsupported export format");
-        ensure!(manifest.record_format == REPLAY_RECORD_FORMAT, "unsupported record format");
+        ensure!(
+            ReplayRecord::supports_format(&manifest.record_format),
+            "unsupported record format"
+        );
         ensure!(manifest.record_count == u64::try_from(records.len())?, "record count mismatch");
         let window = &manifest.window;
         ensure!(
@@ -70,14 +78,16 @@ impl ReplayDataset {
 
 #[cfg(test)]
 mod tests {
-    use base_replay_export::{ExportManifest, ExportWindow};
+    use base_replay::{REPLAY_RECORD_FORMAT, ReplayRecord};
+    use base_replay_export::{ExportManifest, ExportWindow, ExportWriter};
+    use base_replay_store::{ReplayStore, ReplayWriter};
 
     use super::ReplayDataset;
 
     fn manifest() -> ExportManifest {
         ExportManifest {
             format: "replay-export/v1".into(),
-            record_format: "replay-record/v1".into(),
+            record_format: REPLAY_RECORD_FORMAT.into(),
             network: "base".into(),
             record_count: 0,
             window: ExportWindow {
@@ -91,6 +101,29 @@ mod tests {
                 end_ms: 66_000,
             },
         }
+    }
+
+    #[tokio::test]
+    async fn loads_real_export_without_changing_captured_parameters() -> eyre::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let store = ReplayStore::Local(dir.path().join("store"));
+        let record: ReplayRecord = serde_json::from_str(
+            r#"{"stream":"builder_ingress","received_at_ms":52000,"method":"call","params":[ { "amount": 1.2300e+02, "n": -0 } ],"source":"test"}"#,
+        )?;
+        let mut recorder = ReplayWriter::new(store.clone(), "base".into())?;
+        recorder.push(&record).await?;
+        recorder.close().await?;
+        let out = dir.path().join("export");
+        ExportWriter { store, network: "base".into() }.export(manifest().window, &out).await?;
+
+        let dataset = ReplayDataset::load(&out).await?;
+
+        assert_eq!(dataset.manifest.record_format, REPLAY_RECORD_FORMAT);
+        assert_eq!(dataset.records.len(), 1);
+        assert_eq!(dataset.records[0].method, record.method);
+        assert_eq!(dataset.records[0].received_at_ms, record.received_at_ms);
+        assert_eq!(dataset.records[0].params.get().as_bytes(), record.params.get().as_bytes());
+        Ok(())
     }
 
     #[tokio::test]
@@ -117,7 +150,7 @@ mod tests {
             let mut manifest = manifest();
             match mutation {
                 0 => manifest.format = "replay-export/v2".into(),
-                1 => manifest.record_format = "replay-record/v2".into(),
+                1 => manifest.record_format = "replay-record/unsupported".into(),
                 2 => manifest.record_count = 1,
                 3 => manifest.window.from_block = 0,
                 4 => manifest.window.start_ms += 1,

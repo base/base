@@ -47,5 +47,6 @@ jsonrpsee = { workspace = true, features = ["server"] }
 base-execution-txpool.workspace = true
 alloy-provider = { workspace = true, features = ["ipc"] }
 base-common-genesis.workspace = true
+base-replay-store = { path = "../replay-store" }
 base-execution-payload-builder.workspace = true
 base-builder-core = { workspace = true, features = ["test-utils"] }
