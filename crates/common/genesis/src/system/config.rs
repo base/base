@@ -8,7 +8,7 @@ use alloy_primitives::B256;
 use alloy_primitives::{Address, B64, Log, U256};
 
 use crate::{
-    RollupConfig, SystemConfigLog, SystemConfigUpdate, SystemConfigUpdateError,
+    BaseFeature, RollupConfig, SystemConfigLog, SystemConfigUpdate, SystemConfigUpdateError,
     SystemConfigUpdateKind,
 };
 
@@ -160,15 +160,21 @@ impl SystemConfig {
         parent_timestamp: u64,
         next_timestamp: u64,
     ) -> Option<B64> {
-        let is_holocene = rollup_config.is_holocene_active(next_timestamp);
+        let dynamic_params = rollup_config
+            .is_feature_active_cascading(BaseFeature::DynamicBaseFeeParameters, next_timestamp);
 
         // For the first holocene block, a zero'd out B64 is returned to signal the
         // execution layer to use the canyon base fee parameters. Else, the system
         // config's eip1559 parameters are encoded as a B64.
-        if is_holocene && !rollup_config.is_holocene_active(parent_timestamp) {
+        if dynamic_params
+            && !rollup_config.is_feature_active_cascading(
+                BaseFeature::DynamicBaseFeeParameters,
+                parent_timestamp,
+            )
+        {
             Some(B64::ZERO)
         } else {
-            is_holocene.then_some(B64::from_slice(
+            dynamic_params.then_some(B64::from_slice(
                 &[
                     self.eip1559_denominator.unwrap_or_default().to_be_bytes(),
                     self.eip1559_elasticity.unwrap_or_default().to_be_bytes(),

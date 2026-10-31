@@ -10,7 +10,7 @@
 use alloc::string::ToString;
 
 use alloy_sol_types::SolInterface;
-use base_common_genesis::BaseUpgrade;
+use base_common_genesis::{BaseFeature, BaseUpgrade};
 use base_precompile_storage::{BasePrecompileError, Result};
 
 use crate::{
@@ -129,11 +129,11 @@ pub struct PolicyVersions;
 
 impl PolicyVersions {
     /// Returns the version active at `upgrade`, or `None` before the introduction
-    pub fn from_base_upgrade(upgrade: BaseUpgrade) -> Option<PolicyVersion> {
+    pub const fn from_base_upgrade(upgrade: BaseUpgrade) -> Option<PolicyVersion> {
         match upgrade {
-            u if u >= BaseUpgrade::Denim => Some(PolicyVersion::V3),
-            u if u >= BaseUpgrade::Cobalt => Some(PolicyVersion::V2),
-            u if u >= BaseUpgrade::Beryl => Some(PolicyVersion::V1),
+            u if u.is_feature_enabled(BaseFeature::PolicyPrecompileV3) => Some(PolicyVersion::V3),
+            u if u.is_feature_enabled(BaseFeature::PolicyPrecompileV2) => Some(PolicyVersion::V2),
+            u if u.is_feature_enabled(BaseFeature::PolicyPrecompile) => Some(PolicyVersion::V1),
             _ => None,
         }
     }

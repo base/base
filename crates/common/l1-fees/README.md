@@ -9,5 +9,6 @@ dependency, so it is shared by both `base-common-evm` (revm) and
 `base-common-evm2` (EVM2), each of which adapts it with its own engine-specific
 state loading and caching.
 
-Fork gating mirrors `BaseSpecId::is_enabled_in` (upgrade-discriminant ordering).
+Behavior gates use the shared `BaseFeature` registry through
+`BaseUpgrade::is_feature_enabled`, preserving execution-spec ordering.
 Calldata compression estimation is delegated to `base-common-flz`.
