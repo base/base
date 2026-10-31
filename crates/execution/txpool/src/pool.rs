@@ -327,7 +327,7 @@ where
     }
 
     /// Clears every guarded transaction, attributing the flush to `cause` for
-    /// metrics. Used for the two fail-safe bulk paths (reorg and feed gap).
+    /// metrics. Used for the fail-safe bulk paths (reorg, feed gap, and fork transition).
     pub fn invalidate_all_tracked_transactions(
         &self,
         cause: InvalidationCause,
@@ -1851,6 +1851,13 @@ where
                 guard.release(transaction.hash());
             }
         }
+        // Crossing Zenith changes which state classifies EIP-8130 admissions.
+        // Flush after mined pruning so included transactions still report Mined.
+        if self.validator().validator().take_keystore_activation_change() {
+            let removed =
+                self.invalidate_all_tracked_transactions(InvalidationCause::ForkTransition);
+            debug!(count = removed.len(), "EIP-8130 transactions invalidated by Zenith transition");
+        }
         self.expire_due_buckets(now);
         self.expire_by_block(block_number);
         self.reconcile_guard();
@@ -2473,6 +2480,208 @@ mod tests {
         build_integration_pool_at(true, PoolConfig::default(), false)
     }
 
+    #[tokio::test]
+    async fn keystore_classification_changes_are_inactive_before_zenith() {
+        for zenith in [false, true] {
+            for nonce_key in [U256::ZERO, U256::from(1), Eip8130Constants::NONCE_KEY_MAX] {
+                for code_change in [false, true] {
+                    for related in [false, true] {
+                        let (pool, client) =
+                            build_integration_pool_at(zenith, PoolConfig::default(), false);
+                        let signer = signer();
+                        fund(&client, signer.address());
+                        let tx = self_paid_eoa_8130(
+                            &signer,
+                            nonce_key,
+                            0,
+                            INTEGRATION_POOL_NOW_MS + 10_000,
+                            1_000,
+                        );
+                        let hash = *tx.hash();
+                        let balance_epoch = pool.nonce_pool.read().balance_epoch();
+                        let validated = pool
+                            .validator()
+                            .validate_transaction(TransactionOrigin::Local, tx)
+                            .await;
+                        assert!(validated.as_valid_transaction().is_some());
+                        let account =
+                            if related { signer.address() } else { Address::repeat_byte(0xab) };
+                        let diff = if code_change {
+                            AccountStateDiff {
+                                code_changed: true,
+                                ..AccountStateDiff::new(account)
+                            }
+                        } else {
+                            AccountStateDiff {
+                                changed_slots: vec![(base_execution_eip8130::AccountConfigurationStorage::account_state_slot(account), U256::from(42))],
+                                ..AccountStateDiff::new(base_execution_eip8130::AccountConfigurationStorage::ADDRESS)
+                            }
+                        };
+                        pool.apply_state_diff(&[diff]);
+                        let admitted = if nonce_key.is_zero() {
+                            pool.add_validated_protocol_transaction(
+                                TransactionOrigin::Local,
+                                hash,
+                                signer.address(),
+                                0,
+                                validated,
+                            )
+                        } else {
+                            pool.add_validated_sidecar_transaction(
+                                validated,
+                                TransactionOrigin::Local,
+                                balance_epoch,
+                            )
+                        };
+                        if zenith {
+                            // Preserve the existing conservative Zenith generation check.
+                            assert!(
+                                admitted
+                                    .unwrap_err()
+                                    .to_string()
+                                    .contains("classification changed during validation")
+                            );
+                        } else {
+                            admitted.expect("inactive Keystore/code classification must not stale Everest admission");
+                            assert!(pool.get(&hash).is_some());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn advance_keystore_test_head(pool: &IntegrationPool, timestamp: u64) {
+        let update_kind = if timestamp < pool.validator().validator().block_timestamp_ms() / 1_000 {
+            PoolUpdateKind::Reorg
+        } else {
+            PoolUpdateKind::Commit
+        };
+        let block = SealedBlock::seal_slow(BaseBlock {
+            header: alloy_consensus::Header {
+                timestamp,
+                number: 1,
+                gas_limit: 30_000_000,
+                ..Default::default()
+            },
+            body: Default::default(),
+        });
+        pool.on_canonical_state_change(CanonicalStateUpdate {
+            new_tip: &block,
+            pending_block_base_fee: 0,
+            pending_block_blob_fee: None,
+            changed_accounts: Vec::new(),
+            mined_transactions: Vec::new(),
+            update_kind,
+        });
+    }
+
+    #[tokio::test]
+    async fn keystore_fork_transition_flushes_old_admissions_in_either_feed_order() {
+        let activation = INTEGRATION_POOL_NOW_SECS + 2;
+        for backwards in [false, true] {
+            for nonce_key in [U256::ZERO, U256::from(1), Eip8130Constants::NONCE_KEY_MAX] {
+                // No diff, diff before head maintenance, diff after head maintenance.
+                for diff_order in 0..3 {
+                    let (pool, client) = build_integration_pool_with_policies(PoolPolicies {
+                        zenith_timestamp: Some(activation),
+                        ..Default::default()
+                    });
+                    if backwards {
+                        advance_keystore_test_head(&pool, activation);
+                    }
+                    let old_signer = signer();
+                    let pending_signer = signer();
+                    let ordinary_signer = signer();
+                    for account in
+                        [old_signer.address(), pending_signer.address(), ordinary_signer.address()]
+                    {
+                        fund(&client, account);
+                    }
+                    let old = self_paid_eoa_8130(
+                        &old_signer,
+                        nonce_key,
+                        0,
+                        INTEGRATION_POOL_NOW_MS + 10_000,
+                        1_000,
+                    );
+                    let old_hash = *old.hash();
+                    pool.add_transaction(TransactionOrigin::Local, old).await.unwrap();
+                    let ordinary = signed_1559(&ordinary_signer, 0);
+                    let ordinary_hash = *ordinary.hash();
+                    pool.add_transaction(TransactionOrigin::Local, ordinary).await.unwrap();
+                    let pending = self_paid_eoa_8130(
+                        &pending_signer,
+                        nonce_key,
+                        0,
+                        INTEGRATION_POOL_NOW_MS + 10_000,
+                        1_000,
+                    );
+                    let pending_hash = *pending.hash();
+                    let balance_epoch = pool.nonce_pool.read().balance_epoch();
+                    let validated = pool
+                        .validator()
+                        .validate_transaction(TransactionOrigin::Local, pending.clone())
+                        .await;
+                    assert!(validated.as_valid_transaction().is_some());
+                    let diff = AccountStateDiff {
+                        changed_slots: vec![(B256::repeat_byte(0xab), U256::from(42))],
+                        ..AccountStateDiff::new(
+                            base_execution_eip8130::AccountConfigurationStorage::ADDRESS,
+                        )
+                    };
+                    if diff_order == 1 {
+                        pool.apply_state_diff(std::slice::from_ref(&diff));
+                    }
+                    advance_keystore_test_head(
+                        &pool,
+                        if backwards { INTEGRATION_POOL_NOW_SECS } else { activation },
+                    );
+                    if diff_order == 2 {
+                        pool.apply_state_diff(&[diff]);
+                    }
+                    assert!(pool.get(&old_hash).is_none(), "old-fork admission must not survive");
+                    assert!(!pool.guard.read().contains(&old_hash));
+                    assert!(
+                        pool.get(&ordinary_hash).is_some(),
+                        "ordinary transactions must survive the fork flush"
+                    );
+                    let admitted = if nonce_key.is_zero() {
+                        pool.add_validated_protocol_transaction(
+                            TransactionOrigin::Local,
+                            pending_hash,
+                            pending_signer.address(),
+                            0,
+                            validated,
+                        )
+                    } else {
+                        pool.add_validated_sidecar_transaction(
+                            validated,
+                            TransactionOrigin::Local,
+                            balance_epoch,
+                        )
+                    };
+                    assert!(
+                        admitted
+                            .unwrap_err()
+                            .to_string()
+                            .contains("classification changed during validation")
+                    );
+                    pool.add_transaction(TransactionOrigin::Local, pending).await.unwrap();
+                    assert_eq!(
+                        pool.get(&pending_hash)
+                            .unwrap()
+                            .transaction
+                            .limit_class()
+                            .unwrap()
+                            .sender_locked,
+                        backwards
+                    );
+                }
+            }
+        }
+    }
+
     fn build_integration_pool_with_config(
         config: PoolConfig,
     ) -> (IntegrationPool, MockEthProvider<BasePrimitives, Arc<BaseChainSpec>>) {
@@ -2492,6 +2701,7 @@ mod tests {
         max_tx_gas_limit: Option<u64>,
         minimum_priority_fee: Option<u128>,
         tx_fee_cap: u128,
+        zenith_timestamp: Option<u64>,
     }
 
     impl Default for PoolPolicies {
@@ -2502,6 +2712,7 @@ mod tests {
                 max_tx_gas_limit: None,
                 minimum_priority_fee: None,
                 tx_fee_cap: 1_000_000_000_000_000_000,
+                zenith_timestamp: None,
             }
         }
     }
@@ -2529,11 +2740,11 @@ mod tests {
     ) -> (IntegrationPool, MockEthProvider<BasePrimitives, Arc<BaseChainSpec>>) {
         let mut genesis = build_test_genesis_everest();
         genesis.config.chain_id = test_chain_id();
-        if zenith {
+        if let Some(timestamp) = policies.zenith_timestamp.or_else(|| zenith.then_some(0)) {
             genesis.config.extra_fields.insert(
                 "base".to_string(),
                 serde_json::json!({
-                    "azul": 0, "beryl": 0, "cobalt": 0, "denim": 0, "everest": 0, "zenith": 0
+                    "azul": 0, "beryl": 0, "cobalt": 0, "denim": 0, "everest": 0, "zenith": timestamp
                 }),
             );
         }

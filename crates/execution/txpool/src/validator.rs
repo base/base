@@ -4,7 +4,7 @@ use std::{
     num::NonZeroUsize,
     sync::{
         Arc,
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     time::Instant,
 };
@@ -723,6 +723,13 @@ pub struct BaseTransactionValidator<Client, Tx, Evm> {
     max_tx_gas_limit: Option<u64>,
     limit_class_cache: Arc<RwLock<LimitClassCache>>,
     limit_class_cache_generation: Arc<AtomicU64>,
+    /// Whether Zenith (and so Keystore-backed classification) is active at the
+    /// current head. Before Zenith, Keystore and code changes cannot affect an
+    /// EIP-8130 limit class, so they must not stale Everest admissions.
+    keystore_active: Arc<AtomicBool>,
+    /// Set when a head update crosses the Zenith boundary in either direction.
+    /// The pool consumes it and flushes admissions classified under the old fork.
+    keystore_activation_changed: Arc<AtomicBool>,
 }
 
 impl<Client, Tx, Evm> BaseTransactionValidator<Client, Tx, Evm> {
@@ -819,6 +826,12 @@ impl<Client, Tx, Evm> BaseTransactionValidator<Client, Tx, Evm> {
         self.limit_class_cache_generation.load(Ordering::Acquire)
     }
 
+    /// Returns and clears whether the last head update crossed the Zenith
+    /// boundary, changing which state can classify an EIP-8130 transaction.
+    pub fn take_keystore_activation_change(&self) -> bool {
+        self.keystore_activation_changed.swap(false, Ordering::AcqRel)
+    }
+
     /// Invalidates classifications affected by canonical state changes.
     pub fn invalidate_limit_class_cache(&self, diffs: &[crate::AccountStateDiff]) {
         let mut cache = self.limit_class_cache.write();
@@ -827,14 +840,18 @@ impl<Client, Tx, Evm> BaseTransactionValidator<Client, Tx, Evm> {
         // inserted it. Its guarded insertion or later pool admission must see a
         // changed generation rather than retain that stale classification.
         let mut changed = false;
+        // Before Zenith there is no Keystore and no trusted (code-classified)
+        // payer, so these surfaces are not part of any classification. A fork
+        // crossing is handled by the pool's fork-transition flush instead.
+        let keystore_active = self.keystore_active.load(Ordering::Acquire);
         for diff in diffs {
             if diff.code_changed {
-                changed = true;
+                changed |= keystore_active;
                 cache.invalidate_code(diff.address);
             }
             if diff.address == AccountConfigurationStorage::ADDRESS {
                 for (slot, _) in &diff.changed_slots {
-                    changed = true;
+                    changed |= keystore_active;
                     cache.invalidate_slot(slot);
                 }
             }
@@ -888,10 +905,7 @@ where
             // so that we will accept txs into the pool before the first block
             if block.header().number() == 0 {
                 let timestamp = block.header().timestamp();
-                this.block_info.timestamp.store(timestamp, Ordering::Relaxed);
-                this.block_info
-                    .timestamp_ms
-                    .store(timestamp.saturating_mul(1_000), Ordering::Relaxed);
+                this.store_head_clock(timestamp, timestamp.saturating_mul(1_000));
             } else {
                 this.update_l1_block_info(block.header(), block.body().transactions());
             }
@@ -918,6 +932,8 @@ where
             max_tx_gas_limit: None,
             limit_class_cache: Arc::default(),
             limit_class_cache_generation: Arc::default(),
+            keystore_active: Arc::default(),
+            keystore_activation_changed: Arc::default(),
         }
     }
 
@@ -929,7 +945,9 @@ where
     /// `tx[1]`; before Denim, or without one, it is the whole second.
     ///
     /// Note: the system transactions are optional, in case this is used in a dev setup
-    pub fn update_l1_block_info<H, T>(&self, header: &H, transactions: &[T])
+    ///
+    /// Returns whether the update crossed the Zenith boundary.
+    pub fn update_l1_block_info<H, T>(&self, header: &H, transactions: &[T]) -> bool
     where
         H: BlockHeader,
         T: Transaction,
@@ -941,14 +959,22 @@ where
             .then(|| BaseTimeUpdateTx::decode_timestamp_ms(transactions, timestamp))
             .flatten()
             .unwrap_or_else(|| timestamp.saturating_mul(1_000));
-        self.block_info.timestamp.store(timestamp, Ordering::Relaxed);
-        self.block_info.timestamp_ms.store(timestamp_ms, Ordering::Relaxed);
+        let keystore_changed = self.store_head_clock(timestamp, timestamp_ms);
 
         if let Some(Ok(l1_block_info)) =
             transactions.first().map(base_execution_evm::extract_l1_info_from_tx)
         {
             *self.block_info.l1_block_info.write() = l1_block_info;
         }
+        keystore_changed
+    }
+
+    /// Stores the head clock and returns whether Zenith activation changed.
+    fn store_head_clock(&self, timestamp: u64, timestamp_ms: u64) -> bool {
+        self.block_info.timestamp.store(timestamp, Ordering::Relaxed);
+        self.block_info.timestamp_ms.store(timestamp_ms, Ordering::Relaxed);
+        let active = self.chain_spec().is_zenith_active_at_timestamp(timestamp);
+        self.keystore_active.swap(active, Ordering::AcqRel) != active
     }
 
     /// Validates a single transaction.
@@ -2109,7 +2135,9 @@ where
 
     fn on_new_head_block(&self, new_tip_block: &SealedBlock<Self::Block>) {
         self.inner.on_new_head_block(new_tip_block);
-        self.update_l1_block_info(new_tip_block.header(), new_tip_block.body().transactions());
+        if self.update_l1_block_info(new_tip_block.header(), new_tip_block.body().transactions()) {
+            self.keystore_activation_changed.store(true, Ordering::Release);
+        }
     }
 }
 
