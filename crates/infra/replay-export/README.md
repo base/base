@@ -29,3 +29,18 @@ Records stream in timestamp order across minutes, stable within timestamp ties.
 Memory is bounded by one store minute plus one serialized record, not the range.
 Missing minutes are skipped, not proof of recording coverage. Empty exports are
 valid. Malformed or unreadable minutes fail rather than silently truncate.
+
+## CLI
+
+```sh
+base replay export --from 100 --to 120 --rpc-url http://localhost:8545 \
+  --network base --store ./recordings --warmup 8s --out ./export
+```
+
+Warmup defaults to 8s. `--out` must name a new directory. The manifest never
+contains credentials or the RPC URL.
+
+For S3 use `--store s3://bucket/prefix`, optional `--s3-endpoint <url>` and
+`--s3-region <region>`. Credentials use the AWS SDK chain, including
+`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and `AWS_SESSION_TOKEN`. S3 options
+are rejected for local stores.
