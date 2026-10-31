@@ -7,6 +7,7 @@ mod consensus;
 mod dev;
 mod execution;
 mod follow;
+mod replay;
 mod reth;
 mod rpc;
 mod sequencer;
