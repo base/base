@@ -5,7 +5,7 @@ use core::fmt::Debug;
 
 use alloy_primitives::Bytes;
 use async_trait::async_trait;
-use base_common_genesis::RollupConfig;
+use base_common_genesis::{BaseFeature, RollupConfig};
 use base_protocol::{BlockInfo, Frame};
 
 use crate::{
@@ -53,14 +53,12 @@ where
         Self { prev, queue: VecDeque::new(), rollup_config: cfg }
     }
 
-    /// Returns if holocene is active.
-    pub fn is_holocene_active(&self, origin: BlockInfo) -> bool {
-        self.rollup_config.is_holocene_active(origin.timestamp)
-    }
-
     /// Prunes frames if Holocene is active.
     pub fn prune(&mut self, origin: BlockInfo) {
-        if !self.is_holocene_active(origin) {
+        if !self
+            .rollup_config
+            .is_feature_active_cascading(BaseFeature::StrictDerivationOrdering, origin.timestamp)
+        {
             return;
         }
 
@@ -237,7 +235,7 @@ pub(super) mod tests {
         let mut mock = TestFrameQueueProvider::new(data);
         mock.set_origin(BlockInfo::default());
         let mut frame_queue = FrameQueue::new(mock, Default::default());
-        assert!(!frame_queue.is_holocene_active(BlockInfo::default()));
+        assert!(!frame_queue.rollup_config.is_holocene_active(0));
         let err = frame_queue.next_frame().await.unwrap_err();
         assert_eq!(err, PipelineError::NotEnoughData.temp());
     }
@@ -248,7 +246,7 @@ pub(super) mod tests {
         let mut mock = TestFrameQueueProvider::new(data);
         mock.set_origin(BlockInfo::default());
         let mut frame_queue = FrameQueue::new(mock, Default::default());
-        assert!(!frame_queue.is_holocene_active(BlockInfo::default()));
+        assert!(!frame_queue.rollup_config.is_holocene_active(0));
         let err = frame_queue.next_frame().await.unwrap_err();
         assert_eq!(err, PipelineError::NotEnoughData.temp());
     }

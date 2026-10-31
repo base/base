@@ -1,6 +1,6 @@
 //! Encoder configuration and its validation error type.
 
-use base_common_genesis::RollupConfig;
+use base_common_genesis::{BaseFeature, RollupConfig};
 use base_protocol::{
     BLOB_DERIVATION_PREFIX_SIZE as PROTOCOL_BLOB_DERIVATION_PREFIX_SIZE,
     BLOB_MAX_DATA_SIZE as PROTOCOL_BLOB_MAX_DATA_SIZE, Frame,
@@ -176,7 +176,9 @@ impl EncoderConfig {
     ) -> Result<(), EncoderConfigError> {
         self.validate()?;
 
-        if !rollup_config.is_fjord_active(next_l2_timestamp) {
+        if !rollup_config
+            .is_feature_active_cascading(BaseFeature::BrotliCompression, next_l2_timestamp)
+        {
             return Err(EncoderConfigError::BrotliRequiresFjord { next_l2_timestamp });
         }
 

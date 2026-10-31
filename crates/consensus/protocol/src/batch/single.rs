@@ -6,7 +6,7 @@ use alloy_eips::BlockNumHash;
 use alloy_primitives::{BlockHash, Bytes};
 use alloy_rlp::{Encodable, Header, RlpDecodable, RlpEncodable};
 use base_common_consensus::OpTxType;
-use base_common_genesis::RollupConfig;
+use base_common_genesis::{BaseFeature, RollupConfig};
 use tracing::warn;
 
 use crate::{BatchDropReason, BatchValidity, BlockInfo, L2BlockInfo};
@@ -51,13 +51,19 @@ impl SingleBatch {
         let next_timestamp =
             cfg.l2_block_timestamp(l2_safe_head.block_info.number.saturating_add(1));
         if self.timestamp > next_timestamp {
-            if cfg.is_holocene_active(inclusion_block.timestamp) {
+            if cfg.is_feature_active_cascading(
+                BaseFeature::StrictDerivationOrdering,
+                inclusion_block.timestamp,
+            ) {
                 return BatchValidity::Drop(BatchDropReason::FutureTimestampHolocene);
             }
             return BatchValidity::Future;
         }
         if self.timestamp < next_timestamp {
-            if cfg.is_holocene_active(inclusion_block.timestamp) {
+            if cfg.is_feature_active_cascading(
+                BaseFeature::StrictDerivationOrdering,
+                inclusion_block.timestamp,
+            ) {
                 return BatchValidity::Past;
             }
             return BatchValidity::Drop(BatchDropReason::PastTimestampPreHolocene);
@@ -98,7 +104,8 @@ impl SingleBatch {
 
         // Denim permits only one L1 origin per whole second. Compare against the exact parent
         // origin because the derivation pipeline's current epoch may already be one block ahead.
-        let same_second = cfg.is_denim_active(self.timestamp)
+        let same_second = cfg
+            .is_feature_active_cascading(BaseFeature::SubsecondBlocks, self.timestamp)
             && self.timestamp == l2_safe_head.block_info.timestamp;
         if same_second && self.epoch() != l2_safe_head.l1_origin {
             return BatchValidity::Drop(BatchDropReason::SameSecondOriginChange);
@@ -174,8 +181,11 @@ impl SingleBatch {
 
         // If this is the first block in the jovian upgrade, and the batch contains any
         // transactions, it must be dropped.
-        if cfg.is_first_jovian_block(self.timestamp, l2_safe_head.block_info.timestamp)
-            && !self.transactions.is_empty()
+        if cfg.is_feature_activation_block_cascading(
+            BaseFeature::JovianUpgradeTransactions,
+            self.timestamp,
+            l2_safe_head.block_info.timestamp,
+        ) && !self.transactions.is_empty()
         {
             warn!(
                 target: "single_batch",
@@ -193,13 +203,13 @@ impl SingleBatch {
                 return BatchValidity::Drop(BatchDropReason::DepositTransaction);
             }
             // If isthmus is not active yet and the transaction is a 7702, drop the batch.
-            if !cfg.is_isthmus_active(self.timestamp)
+            if !cfg.is_feature_active_cascading(BaseFeature::Eip7702, self.timestamp)
                 && tx.as_ref().first() == Some(&(OpTxType::Eip7702 as u8))
             {
                 return BatchValidity::Drop(BatchDropReason::Eip7702PreIsthmus);
             }
             // If Everest is not active yet and the transaction is an 8130, drop the batch.
-            if !cfg.is_everest_active(self.timestamp)
+            if !cfg.is_feature_active_cascading(BaseFeature::Eip8130, self.timestamp)
                 && tx.as_ref().first() == Some(&(OpTxType::Eip8130 as u8))
             {
                 return BatchValidity::Drop(BatchDropReason::Eip8130PreEverest);

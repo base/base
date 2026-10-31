@@ -6,7 +6,7 @@ use core::fmt::Debug;
 use alloy_eips::BlockNumHash;
 use alloy_primitives::Bytes;
 use async_trait::async_trait;
-use base_common_genesis::{RollupConfig, SystemConfig};
+use base_common_genesis::{BaseFeature, RollupConfig, SystemConfig};
 use base_protocol::{Batch, BatchReader, BlockInfo};
 use tracing::{debug, warn};
 
@@ -63,8 +63,11 @@ where
                 self.prev.next_data().await?.ok_or(PipelineError::ChannelReaderEmpty.temp())?;
 
             let origin = self.prev.origin().ok_or(PipelineError::MissingOrigin.crit())?;
-            let fjord_active = self.cfg.is_fjord_active(origin.timestamp);
-            let max_rlp_bytes_per_channel = if fjord_active {
+            let [brotli_enabled, large_channels] = BaseFeature::activation_states(
+                [BaseFeature::BrotliCompression, BaseFeature::LargeChannels],
+                |feature| self.cfg.is_feature_active_cascading(feature, origin.timestamp),
+            );
+            let max_rlp_bytes_per_channel = if large_channels {
                 RollupConfig::MAX_RLP_BYTES_PER_CHANNEL_FJORD
             } else {
                 RollupConfig::MAX_RLP_BYTES_PER_CHANNEL_BEDROCK
@@ -73,7 +76,7 @@ where
             self.next_batch = Some(BatchReader::new(
                 &channel[..],
                 max_rlp_bytes_per_channel as usize,
-                fjord_active,
+                brotli_enabled,
             ));
             Metrics::pipeline_batch_reader_set().set(1);
         }

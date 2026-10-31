@@ -6,7 +6,7 @@ use alloy_consensus::Receipt;
 use alloy_eips::BlockNumHash;
 use alloy_primitives::Address;
 use async_trait::async_trait;
-use base_common_genesis::{RollupConfig, SystemConfig};
+use base_common_genesis::{BaseFeature, RollupConfig, SystemConfig};
 use base_protocol::BlockInfo;
 use tracing::{info, warn};
 
@@ -128,7 +128,9 @@ impl<F: ChainProvider + Send> OriginAdvancer for PollingTraversal<F> {
             self.data_source.receipts_by_hash(next_l1_origin.hash).await.map_err(Into::into)?;
 
         let l1_system_config_address = self.rollup_config.l1_system_config_address;
-        let ecotone_active = self.rollup_config.is_ecotone_active(next_l1_origin.timestamp);
+        let ecotone_active = self
+            .rollup_config
+            .is_feature_active_cascading(BaseFeature::BlobAwareL1Fees, next_l1_origin.timestamp);
         self.update_system_config_with_receipts(
             &receipts,
             l1_system_config_address,
@@ -136,8 +138,14 @@ impl<F: ChainProvider + Send> OriginAdvancer for PollingTraversal<F> {
             next_l1_origin.number,
         );
 
-        let prev_block_holocene = self.rollup_config.is_holocene_active(block.timestamp);
-        let next_block_holocene = self.rollup_config.is_holocene_active(next_l1_origin.timestamp);
+        // Preserve parent-first, unconditional reads of the live schedule.
+        let parent_active = self
+            .rollup_config
+            .is_feature_active_cascading(BaseFeature::StrictDerivationOrdering, block.timestamp);
+        let next_active = self.rollup_config.is_feature_active_cascading(
+            BaseFeature::StrictDerivationOrdering,
+            next_l1_origin.timestamp,
+        );
 
         // Update the block origin regardless of if a holocene activation is required.
         self.update_origin(next_l1_origin);
@@ -146,7 +154,7 @@ impl<F: ChainProvider + Send> OriginAdvancer for PollingTraversal<F> {
 
         // If the prev block is not holocene, but the next is, we need to flag this
         // so the pipeline driver will reset the pipeline for holocene activation.
-        if !prev_block_holocene && next_block_holocene {
+        if !parent_active && next_active {
             return Err(ResetError::HoloceneActivation.reset());
         }
 

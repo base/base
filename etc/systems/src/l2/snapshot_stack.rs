@@ -8,7 +8,7 @@ use std::{
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types_engine::JwtSecret;
 use alloy_rpc_types_eth::SyncStatus as EthSyncStatus;
-use base_common_genesis::{BaseUpgrade, RollupConfig, SystemConfig};
+use base_common_genesis::{BaseFeature, BaseUpgrade, RollupConfig, SystemConfig};
 use base_common_network::Base;
 use base_consensus_node::StandalonePrefund;
 use base_execution_chainspec::BaseChainSpec;
@@ -278,7 +278,10 @@ impl SnapshotL2Stack {
             .ok_or_else(|| eyre::eyre!("snapshot boundary block number overflow"))?;
         if block_interval == DevnetBlockInterval::TwoSeconds {
             ensure!(
-                !config.is_denim_active(config.l2_block_timestamp(boundary_number)),
+                !config.is_feature_active_cascading(
+                    BaseFeature::SubsecondBlocks,
+                    config.l2_block_timestamp(boundary_number)
+                ),
                 "two-second snapshot continuation requires a pre-Denim snapshot head"
             );
         }

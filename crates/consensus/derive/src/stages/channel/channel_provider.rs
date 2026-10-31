@@ -6,7 +6,7 @@ use core::fmt::Debug;
 use alloy_eips::BlockNumHash;
 use alloy_primitives::Bytes;
 use async_trait::async_trait;
-use base_common_genesis::{RollupConfig, SystemConfig};
+use base_common_genesis::{BaseFeature, RollupConfig, SystemConfig};
 use base_protocol::BlockInfo;
 
 use super::{ChannelAssembler, ChannelBank, ChannelReaderProvider, NextFrameProvider};
@@ -61,18 +61,30 @@ where
         if let Some(prev) = self.prev.take() {
             // On the first call to `attempt_update`, we need to determine the active stage to
             // initialize the mux with.
-            if self.cfg.is_holocene_active(origin.timestamp) {
+            if self.cfg.is_feature_active_cascading(
+                BaseFeature::StrictDerivationOrdering,
+                origin.timestamp,
+            ) {
                 self.channel_assembler = Some(ChannelAssembler::new(Arc::clone(&self.cfg), prev));
             } else {
                 self.channel_bank = Some(ChannelBank::new(Arc::clone(&self.cfg), prev));
             }
-        } else if self.channel_bank.is_some() && self.cfg.is_holocene_active(origin.timestamp) {
+        } else if self.channel_bank.is_some()
+            && self.cfg.is_feature_active_cascading(
+                BaseFeature::StrictDerivationOrdering,
+                origin.timestamp,
+            )
+        {
             // If the channel bank is active and Holocene is also active, transition to the channel
             // assembler.
             let channel_bank = self.channel_bank.take().expect("Must have channel bank");
             self.channel_assembler =
                 Some(ChannelAssembler::new(Arc::clone(&self.cfg), channel_bank.prev));
-        } else if self.channel_assembler.is_some() && !self.cfg.is_holocene_active(origin.timestamp)
+        } else if self.channel_assembler.is_some()
+            && !self.cfg.is_feature_active_cascading(
+                BaseFeature::StrictDerivationOrdering,
+                origin.timestamp,
+            )
         {
             // If the channel assembler is active, and Holocene is not active, it indicates an L1
             // reorg around Holocene activation. Transition back to the channel bank

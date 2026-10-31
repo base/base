@@ -5,7 +5,7 @@ use core::fmt::Debug;
 
 use alloy_eips::BlockNumHash;
 use async_trait::async_trait;
-use base_common_genesis::{RollupConfig, SystemConfig};
+use base_common_genesis::{BaseFeature, RollupConfig, SystemConfig};
 use base_protocol::{
     Batch, BatchValidity, BatchWithInclusionBlock, BlockInfo, L2BlockInfo, SingleBatch, SpanBatch,
     SpanBatchError,
@@ -68,7 +68,9 @@ where
     /// origin timestamp and holocene activation timestamp.
     pub fn is_active(&self) -> PipelineResult<bool> {
         let origin = self.prev.origin().ok_or(PipelineError::MissingOrigin.crit())?;
-        Ok(self.config.is_holocene_active(origin.timestamp))
+        Ok(self
+            .config
+            .is_feature_active_cascading(BaseFeature::StrictDerivationOrdering, origin.timestamp))
     }
 
     /// Gets a span-derived [`SingleBatch`] from the in-memory buffer and assigns its parent hash.
@@ -136,8 +138,10 @@ where
         }
 
         let next = parent.block_info.number + 1;
-        if self.config.is_denim_active(self.config.l2_block_timestamp(next))
-            && (self.span.is_some() || !self.buffer.is_empty())
+        if self.config.is_feature_active_cascading(
+            BaseFeature::SingularBatchesOnly,
+            self.config.l2_block_timestamp(next),
+        ) && (self.span.is_some() || !self.buffer.is_empty())
         {
             warn!(target: "batch_span", next_block_number = next, "Dropping cached span state after Denim activation");
             self.flush();

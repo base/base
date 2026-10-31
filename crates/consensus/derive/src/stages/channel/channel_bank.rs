@@ -5,7 +5,7 @@ use core::fmt::Debug;
 
 use alloy_primitives::{Bytes, hex, map::HashMap};
 use async_trait::async_trait;
-use base_common_genesis::RollupConfig;
+use base_common_genesis::{BaseFeature, RollupConfig};
 use base_protocol::{BlockInfo, Channel, ChannelId, Frame};
 
 use crate::{
@@ -64,7 +64,10 @@ where
     pub fn prune(&mut self) -> PipelineResult<()> {
         let mut total_size = self.size();
         let origin = self.origin().ok_or(PipelineError::MissingOrigin.crit())?;
-        let max_channel_bank_size = if self.cfg.is_fjord_active(origin.timestamp) {
+        let max_channel_bank_size = if self
+            .cfg
+            .is_feature_active_cascading(BaseFeature::ChannelBankSizeExpansion, origin.timestamp)
+        {
             FJORD_MAX_CHANNEL_BANK_SIZE
         } else {
             MAX_CHANNEL_BANK_SIZE
@@ -147,7 +150,10 @@ where
         // If no channel is available, we return `PipelineError::Eof`.
         // Canyon is activated when the first L1 block whose time >= CanyonTime, not on the L2
         // timestamp.
-        if !self.cfg.is_canyon_active(origin.timestamp) {
+        if !self
+            .cfg
+            .is_feature_active_cascading(BaseFeature::ReadyChannelSelection, origin.timestamp)
+        {
             return self.try_read_channel_at_index(0).map(Some);
         }
 

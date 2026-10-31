@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use base_common_genesis::RollupConfig;
+use base_common_genesis::{BaseFeature, RollupConfig};
 use base_common_rpc_types_engine::BasePayloadAttributes;
 use base_protocol::BlockInfo;
 
@@ -54,11 +54,21 @@ impl PoolActivation {
         // Do not include transactions in the first block of each of these upgrades.
         // Jovian: `<https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/jovian/derivation.md#activation-block-rules>`
         let timestamp = attributes.payload_attributes.timestamp;
-        !(self.rollup_config.is_first_ecotone_block(timestamp, parent_timestamp)
-            || self.rollup_config.is_first_fjord_block(timestamp, parent_timestamp)
-            || self.rollup_config.is_first_granite_block(timestamp, parent_timestamp)
-            || self.rollup_config.is_first_holocene_block(timestamp, parent_timestamp)
-            || self.rollup_config.is_first_isthmus_block(timestamp, parent_timestamp)
-            || self.rollup_config.is_first_jovian_block(timestamp, parent_timestamp))
+        ![
+            BaseFeature::EcotoneUpgradeTransactions,
+            BaseFeature::FjordUpgradeTransactions,
+            BaseFeature::GraniteTransitionNoTxPool,
+            BaseFeature::HoloceneTransitionNoTxPool,
+            BaseFeature::IsthmusUpgradeTransactions,
+            BaseFeature::JovianUpgradeTransactions,
+        ]
+        .into_iter()
+        .any(|feature| {
+            self.rollup_config.is_feature_activation_block_cascading(
+                feature,
+                timestamp,
+                parent_timestamp,
+            )
+        })
     }
 }
