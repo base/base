@@ -34,8 +34,8 @@ pub struct RunCommand {
     #[arg(long, required_unless_present = "print_clock_start")]
     pub builder_engine: Option<Url>,
     /// Existing builder JWT file; never creates or replaces it.
-    #[arg(long, required_unless_present = "print_clock_start")]
-    pub builder_jwt: Option<PathBuf>,
+    #[arg(long = "builder.jwt-secret", required_unless_present = "print_clock_start")]
+    pub jwt_secret: Option<PathBuf>,
     /// Builder ingress HTTP RPC endpoint.
     #[arg(long, required_unless_present = "print_clock_start")]
     pub builder_rpc: Option<Url>,
@@ -75,11 +75,8 @@ impl RunCommand {
             "canonical and ingress RPC require HTTP URLs"
         );
         let out = self.out.ok_or_eyre("--out required")?;
-        let jwt = JwtSecret::from_hex(
-            tokio::fs::read_to_string(self.builder_jwt.ok_or_eyre("--builder-jwt required")?)
-                .await?
-                .trim(),
-        )?;
+        let jwt =
+            JwtSecret::from_file(&self.jwt_secret.ok_or_eyre("--builder.jwt-secret required")?)?;
         let engine = tokio::time::timeout(
             Duration::from_secs(15),
             BaseEngineClient::<RootProvider, RootProvider<Base>>::rpc_client::<Base>(
@@ -132,5 +129,29 @@ mod tests {
                 .unwrap();
         assert!(command.print_clock_start);
         assert!(command.builder_engine.is_none());
+    }
+
+    #[test]
+    fn parses_builder_jwt_secret_path_when_attaching() {
+        let command = RunCommand::try_parse_from([
+            "run",
+            "--export",
+            "export",
+            "--l2-rpc",
+            "http://localhost:8545",
+            "--builder-engine",
+            "http://localhost:8551",
+            "--builder-rpc",
+            "http://localhost:9545",
+            "--builder.jwt-secret",
+            "builder.jwt",
+            "--builder-started-at-ms",
+            "0",
+            "--out",
+            "diff",
+        ])
+        .unwrap();
+
+        assert_eq!(command.jwt_secret.as_deref(), Some(std::path::Path::new("builder.jwt")));
     }
 }

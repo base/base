@@ -90,7 +90,7 @@ async fn writes_reports_when_cli_attaches_to_real_builder() -> eyre::Result<()> 
                 "--builder-rpc",
                 &rpc_url,
             ])
-            .arg("--builder-jwt")
+            .arg("--builder.jwt-secret")
             .arg(&jwt)
             .args([
                 "--builder-started-at-ms",

@@ -71,7 +71,7 @@ base replay run --export ./export --print-clock-start
 # Start the builder with the printed --replay.clock-start-ms value.
 base replay run --export ./export --chain mainnet \
   --l2-rpc http://localhost:8545 --builder-engine http://localhost:8551 \
-  --builder-jwt ./builder.jwt --builder-rpc http://localhost:9545 \
+  --builder.jwt-secret ./builder.jwt --builder-rpc http://localhost:9545 \
   --builder-started-at-ms <system-unix-ms-at-builder-clock-install> --out ./diff
 ```
 
