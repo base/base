@@ -13,14 +13,14 @@ workspace = true
 [dependencies]
 # Alloy
 alloy-signer.workspace = true
-alloy-provider.workspace = true
+alloy-provider = { workspace = true, optional = true }
 alloy-sol-types.workspace = true
 alloy-primitives.workspace = true
 
 # AWS
-aws-sdk-ec2.workspace = true
-aws-sdk-elasticloadbalancingv2.workspace = true
-aws-config = { workspace = true, features = ["default-https-client", "rt-tokio"] }
+aws-sdk-ec2 = { workspace = true, optional = true }
+aws-sdk-elasticloadbalancingv2 = { workspace = true, optional = true }
+aws-config = { workspace = true, optional = true, features = ["default-https-client", "rt-tokio"] }
 
 # Crypto
 sha2.workspace = true
@@ -58,18 +58,18 @@ tokio = { workspace = true, features = ["rt", "sync", "net", "time", "macros"] }
 thiserror.workspace = true
 
 # CLI
-base-cli-utils.workspace = true
+base-cli-utils = { workspace = true, optional = true }
 
 # Metrics
 base-metrics.workspace = true
-base-balance-monitor.workspace = true
+base-balance-monitor = { workspace = true, optional = true }
 metrics = { workspace = true, optional = true }
 
 # TLS
-rustls = { workspace = true, features = ["ring"] }
+rustls = { workspace = true, optional = true, features = ["ring"] }
 
 # Health
-base-health = { workspace = true, features = ["axum-server"] }
+base-health = { workspace = true, optional = true, features = ["axum-server"] }
 
 # Tracing
 tracing.workspace = true
@@ -87,4 +87,17 @@ metrics-util = { workspace = true, features = ["debugging"] }
 tokio = { workspace = true, features = ["rt", "macros", "test-util"] }
 
 [features]
+default = [ "service" ]
+# AWS target-group discovery and the registrar service runtime. Turn off to use
+# only the attestation planner, hints, and parsing without the AWS SDKs.
+service = [
+	"dep:alloy-provider",
+	"dep:aws-config",
+	"dep:aws-sdk-ec2",
+	"dep:aws-sdk-elasticloadbalancingv2",
+	"dep:base-balance-monitor",
+	"dep:base-cli-utils",
+	"dep:base-health",
+	"dep:rustls",
+]
 metrics = [ "base-metrics/metrics", "base-tx-manager/metrics", "dep:metrics" ]

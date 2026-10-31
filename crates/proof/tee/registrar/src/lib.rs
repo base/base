@@ -4,7 +4,9 @@
 mod crl;
 pub use crl::{CertCrlInfo, CrlCheckResult, CrlError, check_chain_against_crls};
 
+#[cfg(feature = "service")]
 mod discovery;
+#[cfg(feature = "service")]
 pub use discovery::AwsTargetGroupDiscovery;
 
 mod driver;
@@ -37,7 +39,9 @@ pub use signer_manager::{
     ProofTaskSet, SignerManager, SignerManagerConfig,
 };
 
+#[cfg(feature = "service")]
 mod service;
+#[cfg(feature = "service")]
 pub use service::RegistrarConfig;
 
 mod traits;
