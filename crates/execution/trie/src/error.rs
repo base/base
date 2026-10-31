@@ -110,6 +110,10 @@ pub enum BaseProofsStorageError {
     /// Batch session used after its underlying transaction has been committed or aborted.
     #[error("Batch session used after its underlying transaction was closed")]
     BatchSessionClosed,
+    /// A transaction opened by one [`ProofsBackend`](crate::ProofsBackend) variant was passed to
+    /// the other.
+    #[error("Proofs storage transaction belongs to a different backend")]
+    BackendMismatch,
 }
 
 impl From<BlockExecutionError> for BaseProofsStorageError {
