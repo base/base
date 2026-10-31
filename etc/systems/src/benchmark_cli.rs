@@ -217,6 +217,9 @@ pub struct SnapshotBenchmarkArgs {
     /// Opt-in state sharing for the snapshot's native payload builder.
     #[command(flatten)]
     pub builder_engine: crate::BuilderEngineSharingConfig,
+    /// Persistence policy applied to both snapshot execution nodes.
+    #[command(flatten)]
+    pub persistence: crate::SnapshotPersistenceConfig,
     /// How the snapshot's native payload builder tracks validity transactions whose predicates
     /// did not match: `off` evaluates every candidate on every flashblock, `shadow` tracks
     /// resting transactions while still evaluating them, `enforce` parks them until a state
@@ -990,14 +993,12 @@ impl AggregateBenchmarkArgs {
 }
 
 impl SnapshotBenchmarkArgs {
-    /// Starts the devnet, runs the load test, writes results, and shuts down.
-    pub async fn run(self) -> Result<()> {
-        let (test_config, pending_fixtures) = PendingFixtures::load(&self.load_test_config)?;
-        let block_interval = Self::block_interval_from_test_config(&test_config)?;
-        let funder_key = PrivateKeySigner::random();
-        let client_version = self.client_version.clone().ok_or_else(|| {
-            eyre::eyre!("--client-version or BASE_BENCH_CLIENT_VERSION is required")
-        })?;
+    /// Builds the exact snapshot configuration used by the benchmark without starting nodes.
+    pub fn snapshot_devnet(
+        &self,
+        block_interval: DevnetBlockInterval,
+        prefund: Option<DevnetPrefund>,
+    ) -> Result<DevnetConfig> {
         let mut devnet = DevnetConfig::snapshot(
             self.builder_datadir.clone(),
             self.client_datadir.clone(),
@@ -1013,9 +1014,24 @@ impl SnapshotBenchmarkArgs {
         snapshot.block_gas_limit = self.block_gas_limit.map(NonZeroU64::get);
         snapshot.eip1559_elasticity_override = Some(SNAPSHOT_BENCHMARK_EIP1559_ELASTICITY);
         snapshot.builder_engine = self.builder_engine;
+        snapshot.persistence = self.persistence;
         snapshot.resting_predicate_mode = self.resting_predicate_mode;
-        snapshot.prefund =
-            Some(DevnetPrefund { address: funder_key.address(), amount: PREFUND_AMOUNT_WEI });
+        snapshot.prefund = prefund;
+        Ok(devnet)
+    }
+
+    /// Starts the devnet, runs the load test, writes results, and shuts down.
+    pub async fn run(self) -> Result<()> {
+        let (test_config, pending_fixtures) = PendingFixtures::load(&self.load_test_config)?;
+        let block_interval = Self::block_interval_from_test_config(&test_config)?;
+        let funder_key = PrivateKeySigner::random();
+        let client_version = self.client_version.clone().ok_or_else(|| {
+            eyre::eyre!("--client-version or BASE_BENCH_CLIENT_VERSION is required")
+        })?;
+        let devnet = self.snapshot_devnet(
+            block_interval,
+            Some(DevnetPrefund { address: funder_key.address(), amount: PREFUND_AMOUNT_WEI }),
+        )?;
 
         Self::reset_output_dir(&self.output_dir)?;
         let result_path = self.output_dir.join(RESULT_FILE_NAME);
@@ -1031,6 +1047,7 @@ impl SnapshotBenchmarkArgs {
             client_version,
         );
 
+        crate::PrometheusSnapshot::install_window_recorder()?;
         let mut stack = SystemTestStackBuilder::new()
             .with_devnet_config(devnet)
             .build_snapshot_sequencer()
@@ -1414,6 +1431,7 @@ impl SnapshotBenchmarkArgs {
             blocks.len(),
             summary.measurement_block_count
         );
+        SnapshotBenchmarkReportConfig::add_window_metrics(&mut blocks);
         Ok(blocks)
     }
 
@@ -1508,6 +1526,63 @@ mod tests {
             crate::BuilderEngineSharingConfig::default(),
             "sharing defaults stay disabled"
         );
+    }
+
+    /// Persistence flags parse independently and keep legacy defaults when omitted.
+    #[test]
+    fn parses_snapshot_persistence_options() {
+        for (flags, suppress, defaults) in [
+            (vec![], false, false),
+            (vec!["--engine.suppress-persistence-during-build"], true, false),
+            (vec!["--use-reth-persistence-defaults"], false, true),
+            (vec!["--use-reth-persistence-defaults", "--engine.suppress-persistence-during-build"], true, true),
+        ] {
+            let mut argv = vec!["base-bench", "snapshot", "--builder-datadir", "/snapshot/builder",
+                "--load-test-config", "load.yaml", "--output-dir", "results", "--scenario", "persistence"];
+            argv.extend(flags);
+            let cli = BenchmarkCli::try_parse_from(argv).expect("persistence options must parse");
+            let Some(BenchmarkCommand::Snapshot(args)) = cli.command else {
+                panic!("expected snapshot benchmark command");
+            };
+            assert_eq!(args.builder_engine.suppress_persistence_during_build, suppress, "suppression must match its flag exactly");
+            assert_eq!(args.persistence.use_reth_persistence_defaults, defaults, "reth defaults must be explicit opt-in");
+        }
+    }
+
+    /// CLI flags must reach the snapshot and both production node configurations.
+    #[test]
+    fn persistence_flags_reach_snapshot_node_configs() {
+        for use_defaults in [false, true] {
+            let mut argv = vec!["base-bench", "snapshot", "--chain", "mainnet",
+                "--builder-datadir", "/snapshot/builder", "--client-datadir", "/snapshot/client",
+                "--load-test-config", "load.yaml", "--output-dir", "results",
+                "--scenario", "persistence", "--engine.suppress-persistence-during-build"];
+            if use_defaults { argv.push("--use-reth-persistence-defaults"); }
+            let cli = BenchmarkCli::try_parse_from(argv).expect("snapshot flags must parse");
+            let Some(BenchmarkCommand::Snapshot(args)) = cli.command else {
+                panic!("expected snapshot command");
+            };
+            let devnet = args.snapshot_devnet(crate::DevnetBlockInterval::TwoHundredMilliseconds, None)
+                .expect("snapshot configuration requires no running nodes");
+            let crate::DevnetL2State::Snapshot(snapshot) = devnet.l2_state else {
+                panic!("expected snapshot configuration");
+            };
+            assert_eq!(snapshot.persistence.use_reth_persistence_defaults, use_defaults, "CLI persistence policy reaches snapshot configuration");
+            assert!(snapshot.builder_engine.suppress_persistence_during_build, "CLI suppression reaches snapshot configuration");
+            let config = crate::SnapshotL2StackConfig { snapshot: *snapshot, container_config: None };
+            let chain = std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet());
+            let jwt = alloy_rpc_types_engine::JwtSecret::random();
+            let builder = config.builder_config(std::sync::Arc::clone(&chain), jwt);
+            let follower = config.client_config(chain, jwt, "http://127.0.0.1:8545".to_owned(), String::new())
+                .expect("client datadir enables follower configuration");
+            let threshold = if use_defaults { None } else { Some(0) };
+            let backpressure = if use_defaults { None } else { Some(160) };
+            assert_eq!(builder.persistence_threshold, threshold, "snapshot policy reaches builder threshold");
+            assert_eq!(builder.persistence_backpressure_threshold, backpressure, "snapshot policy reaches builder backpressure");
+            assert!(builder.engine_sharing.suppress_persistence_during_build, "suppression reaches builder config only");
+            assert_eq!(follower.persistence_threshold, threshold, "snapshot policy reaches follower threshold");
+            assert_eq!(follower.persistence_backpressure_threshold, backpressure, "snapshot policy reaches follower backpressure");
+        }
     }
 
     /// Both sharing CLI flags reach the configuration passed to the snapshot launcher.

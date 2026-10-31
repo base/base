@@ -4,7 +4,9 @@ mod config;
 pub use config::L2ContainerConfig;
 
 mod runtime;
-pub use runtime::{BuilderEngineSharingConfig, InProcessNodeRuntime, TestNodeRuntime};
+pub use runtime::{
+    BuilderEngineSharingConfig, InProcessNodeRuntime, SnapshotPersistenceConfig, TestNodeRuntime,
+};
 
 mod consensus_task;
 pub use consensus_task::ConsensusTask;

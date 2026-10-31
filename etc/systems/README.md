@@ -209,6 +209,76 @@ the Flashblocks builder. Sparse sharing requires at least five available CPUs;
 an unsupported host fails rather than silently ignoring the option. Host-derived
 worker-pool sizing is unchanged. The options are CLI-only, not load-test YAML keys.
 
+Snapshot reports add `_window_p50`, `_window_p95`, and `_window_p99` to duration
+metric names in `metrics-sequencer.json`, `metrics-validator.json`, and each block's
+Prometheus metrics in `benchmark-result.json`. They are whole-window estimates
+repeated on each block for compatibility with the existing report format, not
+per-block percentiles. Existing `_avg` fields are unchanged.
+
+The benchmark configures cumulative duration buckets before starting Reth, whose
+default exporter otherwise uses rolling summaries. It subtracts cumulative bucket
+counts between scrapes and sums those deltas over the selected block window,
+then uses Prometheus `histogram_quantile` linear interpolation. Precision is bounded
+by bucket edges (1ms to 10s; ranks in +Inf return the highest finite edge). A scrape
+spanning multiple blocks is attributed evenly across those blocks, as existing
+counters are; partial edge intervals therefore have scrape-resolution uncertainty.
+Empty or missing histograms emit no percentiles. Summary quantiles and native-only
+histograms are not converted into window percentiles: their windows/buckets cannot
+be reconstructed by this classic-bucket path. Their existing `_avg` outputs remain.
+
+Covered duration metrics, all in seconds:
+
+- `reth_base_builder_native_payload_build_duration` (native payload building).
+- `reth_engine_rpc_get_payload_v1` through `reth_engine_rpc_get_payload_v6`
+  (only versions actually called appear).
+- `reth_consensus_engine_beacon_new_payload_latency` and
+  `reth_consensus_engine_beacon_block_insert_total_duration` (follower import).
+
+`reth_consensus_engine_beacon_executed_blocks` also adds `_sampled_min`,
+`_sampled_avg`, and `_sampled_max`. This gauge counts executed blocks retained in
+the engine tree, including forks. It is not canonical persisted-head lag. Fully
+included scrape intervals are weighted once, not once per covered block; partial
+edge intervals receive proportional weight. These are sampled statistics,
+not continuous extrema. No direct persisted-head lag gauge was found at the
+pinned Reth revision. Missing metrics are omitted, never represented as zero.
+
+Snapshot persistence experiments use `--engine.suppress-persistence-during-build`
+(default false, builder only) and `--use-reth-persistence-defaults` (default false).
+The latter leaves persistence settings unset on both builder and follower, so Reth
+selects threshold 50, memory buffer target 5, backpressure 100, and state masking 30
+at the current pin. These numbers are not copied into benchmark configuration.
+Without the option, the existing threshold 0 and cadence-dependent backpressure
+(16 at 2s, 160 at 200ms) remain unchanged to preserve existing benchmark baselines.
+Followers use the same persistence policy for comparable validation, but never
+receive the builder's suppression option.
+
+For a base-metal mainnet mixed-workload A/B, use the same optimized binary and
+load-test YAML for both arms. Set `MAINNET_MIX_CONFIG` to the base-metal workload
+file and restore separate writable snapshot datadirs for **each** run. Keep the
+gas limit and all workload settings identical. Cadence is selected by the YAML's
+`block_time`; use `200ms` in that file for the subsecond A/B:
+
+```bash
+# Control: suppression remains off.
+export BASE_BENCH_CLIENT_VERSION="base/$(git rev-parse --short HEAD)"
+base-bench snapshot --chain mainnet \
+  --builder-datadir "$CONTROL_BUILDER_DATADIR" \
+  --client-datadir "$CONTROL_CLIENT_DATADIR" \
+  --load-test-config "$MAINNET_MIX_CONFIG" \
+  --use-reth-persistence-defaults \
+  --scenario mainnet-mix-persistence-control \
+  --output-dir "$CONTROL_OUTPUT_DIR"
+
+# Treatment: only suppression changes.
+base-bench snapshot --chain mainnet \
+  --builder-datadir "$TREATMENT_BUILDER_DATADIR" \
+  --client-datadir "$TREATMENT_CLIENT_DATADIR" \
+  --load-test-config "$MAINNET_MIX_CONFIG" \
+  --use-reth-persistence-defaults --engine.suppress-persistence-during-build \
+  --scenario mainnet-mix-persistence-treatment \
+  --output-dir "$TREATMENT_OUTPUT_DIR"
+```
+
 For the end-to-end workflow, including disposable snapshot restores, report artifact conventions, and
 how `--benchmark-run`, `--scenario`, and `--run-id` select runs in `base/benchmark`, see
 [Snapshot Benchmarking](../../docs/guides/SNAPSHOT_BENCHMARKS.md).
