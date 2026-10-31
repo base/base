@@ -47,3 +47,13 @@ Exports beginning at genesis are unsupported because replay needs a parent.
 Loading retains all records in memory; size exports to fit the runner's memory.
 `clock_start_ms()` suggests the window start minus a 30-second startup allowance,
 saturating at the Unix epoch. This is an epoch, not clock synchronization.
+
+`ReplayRunner::run` replays `from_block..=to_block`, using `from_block - 1` as N
+for `DiffReport`. The builder must already have that canonical parent state.
+Warmup through the parent's timestamp is acknowledged before FCU. The first
+build waits for that timestamp; remaining ingress runs concurrently with the
+sequential engine calls. Any failure drops both futures. Canonical reads are
+bounded and parent hashes are checked between blocks. Whole-second, increasing
+block timestamps are required; subsecond-slot orchestration is not supported.
+Recording coverage is unknown if any call lacks `tx_hash`; forced deposits count
+as covered. Clock margin and exported warmup extend the injector's deadline bound.
