@@ -39,7 +39,7 @@ pub struct RunCommand {
     /// Builder ingress HTTP RPC endpoint.
     #[arg(long, required_unless_present = "print_clock_start")]
     pub builder_rpc: Option<Url>,
-    /// System Unix milliseconds when the builder installed its OffsetClock.
+    /// System Unix milliseconds when the builder installed its `OffsetClock`.
     #[arg(long, required_unless_present = "print_clock_start")]
     pub builder_started_at_ms: Option<u64>,
     /// Override the epoch passed to the builder's --replay.clock-start-ms.
