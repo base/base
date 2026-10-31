@@ -7,7 +7,7 @@ mod engine_client;
 pub use engine_client::{DerivationEngineClient, QueuedDerivationEngineClient};
 
 mod finalizer;
-pub use finalizer::{InclusionBatch, L2Finalizer, PendingFinalization};
+pub use finalizer::{L2Finalizer, PendingFinalization};
 
 mod l1_canonical;
 #[cfg(test)]

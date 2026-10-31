@@ -152,17 +152,21 @@ where
     }
 
     /// Sends a finalized L2 block to the engine when the retained finalized L1 signal makes one
-    /// eligible and its L1 inclusion block is still canonical.
+    /// eligible and the L1 inclusion block of every L2 block it would finalize is still
+    /// canonical.
     ///
-    /// Verification is attempted at most once per finalized L1 update: a whole batch of L2 blocks
-    /// can share one inclusion block, and a failed lookup is not retried on every safe-head
-    /// confirmation. Within one attempt the number of L1 requests is bounded by the number of
-    /// distinct inclusion identities checked, which a mismatch drop advances.
+    /// Finalizing an L2 block finalizes every block below it, so the candidate lists each
+    /// distinct inclusion block of that prefix and all of them are verified, not just the
+    /// highest. One verification is cached per inclusion identity, so a batch of L2 blocks that
+    /// share an inclusion block, and later attempts, cost no further requests. The requests in
+    /// one attempt are bounded by the number of distinct, unverified inclusion blocks in the
+    /// finalized prefix. A failed lookup is not retried on every safe-head confirmation.
     ///
     /// A lookup is bounded by [`L1_CANONICALITY_TIMEOUT`] and cancelled on shutdown, so a hung L1
-    /// endpoint cannot stall derivation. Candidates whose inclusion block was replaced on L1 are
-    /// dropped; a candidate whose lookup failed or timed out is kept until finality advances or the
-    /// cooldown passes. Neither is ever finalized.
+    /// endpoint cannot stall derivation. An inclusion block that was replaced on L1 is rejected:
+    /// the L2 blocks recorded under it go on a barrier that holds back everything at or above
+    /// them until they are derived again. A candidate whose lookup failed or timed out is kept
+    /// until finality advances or the cooldown passes. Neither is ever finalized.
     async fn try_finalize_pending(&mut self) -> Result<(), DerivationError> {
         let Some(finalized_l1_block) = self.finalizer.finalized_l1_block() else {
             return Ok(());
@@ -182,74 +186,72 @@ where
         self.canonicality_deferral = None;
 
         while let Some(candidate) = self.finalizer.pending_candidate(finalized_l1_block.number) {
-            // One verification covers every L2 block derived from the same inclusion block, so a
-            // catching-up node does not make one L1 request per derived block.
-            let canonical = if self.finalizer.verified_inclusion(candidate.inclusion) {
-                Some(Ok(true))
-            } else {
-                select! {
+            let mut rejected = false;
+            for inclusion in candidate.inclusions {
+                // One verification covers every L2 block derived from the same inclusion block,
+                // so a catching-up node does not make one L1 request per derived block.
+                if self.finalizer.verified_inclusion(inclusion) {
+                    continue;
+                }
+                let canonical = select! {
                     biased;
                     // Shutdown must not wait on an L1 endpoint.
-                    _ = self.cancellation_token.cancelled() => None,
+                    _ = self.cancellation_token.cancelled() => return Ok(()),
                     result = tokio::time::timeout(
                         L1_CANONICALITY_TIMEOUT,
-                        self.l1_canonical_chain.is_canonical(candidate.inclusion),
-                    ) => Some(result.unwrap_or_else(|_| {
-                        Err(L1CanonicalChainError::Timeout {
-                            number: candidate.inclusion.number,
-                        })
-                    })),
-                }
-            };
-            let Some(canonical) = canonical else {
-                return Ok(());
-            };
+                        self.l1_canonical_chain.is_canonical(inclusion),
+                    ) => result.unwrap_or_else(|_| {
+                        Err(L1CanonicalChainError::Timeout { number: inclusion.number })
+                    }),
+                };
 
-            match canonical {
-                Ok(true) => {
-                    self.finalizer.mark_inclusion_verified(candidate.inclusion);
-                    if let Some(l2_block_number) =
-                        self.finalizer.try_finalize_next(finalized_l1_block)
-                    {
-                        self.engine_client
-                            .send_finalized_l2_block(l2_block_number)
-                            .await
-                            .map_err(|e| DerivationError::Sender(Box::new(e)))?;
+                match canonical {
+                    Ok(true) => self.finalizer.mark_inclusion_verified(inclusion),
+                    Ok(false) => {
+                        // The batch that produced these blocks is no longer on the canonical L1
+                        // chain, so their inputs are not final. Reject it and look again: the
+                        // blocks below the rejected ones may still be finalizable.
+                        warn!(
+                            target: "derivation",
+                            inclusion_block = inclusion.number,
+                            inclusion_hash = %inclusion.hash,
+                            l2_block = candidate.l2_block,
+                            "rejecting derived blocks whose L1 inclusion block is not canonical",
+                        );
+                        self.finalizer.reject_inclusion(inclusion);
+                        rejected = true;
+                        break;
                     }
-
-                    return Ok(());
-                }
-                Ok(false) => {
-                    // The batch that produced this block is no longer on the canonical L1 chain,
-                    // so the block's inputs are not final. Drop it and keep checking lower
-                    // candidates: the next one may still be canonical.
-                    warn!(
-                        target: "derivation",
-                        inclusion_block = candidate.inclusion.number,
-                        inclusion_hash = %candidate.inclusion.hash,
-                        l2_block = candidate.l2_block,
-                        "dropping derived candidate whose L1 inclusion block is not canonical",
-                    );
-                    self.finalizer.drop_candidate(candidate.inclusion.number);
-                }
-                Err(error) => {
-                    // Never finalize on an unverified inclusion block. The candidate and the
-                    // finalized L1 signal are both retained, and the check is retried once
-                    // finality advances, not on every safe-head confirmation.
-                    warn!(
-                        target: "derivation",
-                        inclusion_block = candidate.inclusion.number,
-                        l2_block = candidate.l2_block,
-                        %error,
-                        "L1 inclusion canonicity lookup failed, deferring finalization",
-                    );
-                    self.canonicality_deferral = Some(CanonicalityDeferral {
-                        finalized_height: finalized_l1_block.number,
-                        retry_at: Instant::now() + CANONICALITY_RETRY_COOLDOWN,
-                    });
-                    return Ok(());
+                    Err(error) => {
+                        // Never finalize on an unverified inclusion block. The records and the
+                        // finalized L1 signal are both retained, and the check is retried once
+                        // finality advances, not on every safe-head confirmation.
+                        warn!(
+                            target: "derivation",
+                            inclusion_block = inclusion.number,
+                            l2_block = candidate.l2_block,
+                            %error,
+                            "L1 inclusion canonicity lookup failed, deferring finalization",
+                        );
+                        self.canonicality_deferral = Some(CanonicalityDeferral {
+                            finalized_height: finalized_l1_block.number,
+                            retry_at: Instant::now() + CANONICALITY_RETRY_COOLDOWN,
+                        });
+                        return Ok(());
+                    }
                 }
             }
+            if rejected {
+                continue;
+            }
+
+            if let Some(l2_block_number) = self.finalizer.try_finalize_next(finalized_l1_block) {
+                self.engine_client
+                    .send_finalized_l2_block(l2_block_number)
+                    .await
+                    .map_err(|e| DerivationError::Sender(Box::new(e)))?;
+            }
+            return Ok(());
         }
 
         Ok(())
@@ -1360,13 +1362,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn reset_drops_candidates_included_above_the_reset_origin() {
+    async fn reset_keeps_confirmed_blocks_included_above_the_reset_origin() {
         let mut engine_client = MockDerivationEngineClient::new();
-        engine_client.expect_send_finalized_l2_block().times(1).with(eq(480)).returning(|_| Ok(()));
+        engine_client.expect_send_finalized_l2_block().times(1).with(eq(490)).returning(|_| Ok(()));
         let (mut actor, _request_tx) = test_actor(engine_client);
 
-        // Both candidates are below the reset safe head, but only the first was included at or
-        // below the L1 range the engine's safe chain was built from.
+        // Both blocks are below the reset safe head and are never derived again, so both records
+        // stay. The block included above the reset origin is finalized on its own verified
+        // inclusion block, not on the origin.
         actor.finalizer.confirm_safe_head(&safe_head_at(600, 100), Some(l1_at(101)));
         actor.finalizer.enqueue_for_finalization(&attrs(479, 100));
         actor.finalizer.enqueue_for_finalization(&attrs(489, 101));
@@ -1379,5 +1382,156 @@ mod tests {
             ))
             .await
             .expect("finalized L1 update failed");
+    }
+
+    /// An L1 whose block with hash byte `0xa` is no longer canonical, the way a reorg replaces a
+    /// batch's inclusion block.
+    fn l1_rejecting_hash_a() -> Arc<dyn L1CanonicalChain> {
+        let mut l1 = MockL1CanonicalChain::new();
+        l1.expect_is_canonical().returning(|block| Ok(block.hash != B256::with_last_byte(0xa)));
+        Arc::new(l1)
+    }
+
+    /// Derives L2 `l2_block` from `inclusion` after a reset and has the engine confirm it, the way
+    /// the actor sees it: the finalizer queues the attributes, then the engine reports the safe
+    /// head.
+    async fn derive_and_confirm(
+        actor: &mut DerivationActor<MockDerivationEngineClient, IdlePipeline>,
+        l2_block: u64,
+        inclusion: BlockInfo,
+        origin: u64,
+    ) {
+        actor.finalizer.enqueue_for_finalization(&attrs_with_inclusion(l2_block - 1, inclusion));
+        actor.pending_derived_from = Some(inclusion);
+        actor
+            .handle_derivation_actor_request(
+                DerivationActorRequest::ProcessEngineSafeHeadUpdateRequest(Box::new(safe_head_at(
+                    l2_block, origin,
+                ))),
+            )
+            .await
+            .expect("safe head update failed");
+    }
+
+    /// Reports `block` as the finalized L1 block.
+    async fn finalize_l1(
+        actor: &mut DerivationActor<MockDerivationEngineClient, IdlePipeline>,
+        block: BlockInfo,
+    ) {
+        actor
+            .handle_derivation_actor_request(DerivationActorRequest::ProcessFinalizedL1Block(
+                Box::new(block),
+            ))
+            .await
+            .expect("finalized L1 update failed");
+    }
+
+    #[tokio::test]
+    async fn a_finalized_prefix_verifies_every_inclusion_it_covers() {
+        let mut engine_client = MockDerivationEngineClient::new();
+        // L2 500 came from L1 120/A, which a reorg replaced; the reset kept 500 because its epoch
+        // origin is still canonical. Verifying only 501's inclusion, 121/B, would finalize 500.
+        engine_client.expect_send_finalized_l2_block().times(0);
+        let (mut actor, _request_tx) = test_actor_with_l1(engine_client, l1_rejecting_hash_a());
+
+        let inclusion_a = inclusion_at(120, 0xa);
+        actor.finalizer.enqueue_for_finalization(&attrs_with_inclusion(499, inclusion_a));
+        actor.finalizer.confirm_safe_head(&safe_head_at(500, 118), Some(inclusion_a));
+        actor.signal(ResetSignal { l2_safe_head: safe_head_at(500, 118) }.signal()).await;
+
+        derive_and_confirm(&mut actor, 501, inclusion_at(121, 0xb), 118).await;
+        finalize_l1(&mut actor, inclusion_at(121, 0xb)).await;
+    }
+
+    #[tokio::test]
+    async fn a_new_identity_at_a_height_does_not_vouch_for_a_retained_block() {
+        let mut engine_client = MockDerivationEngineClient::new();
+        // 500 is retained from 120/A and 501 arrives from 120/B. Replacing the queued identity
+        // would drop 120/A from the prefix, so nothing would ever check it.
+        engine_client.expect_send_finalized_l2_block().times(0);
+        let (mut actor, _request_tx) = test_actor_with_l1(engine_client, l1_rejecting_hash_a());
+
+        let inclusion_a = inclusion_at(120, 0xa);
+        actor.finalizer.enqueue_for_finalization(&attrs_with_inclusion(499, inclusion_a));
+        actor.finalizer.confirm_safe_head(&safe_head_at(500, 118), Some(inclusion_a));
+        actor.signal(ResetSignal { l2_safe_head: safe_head_at(500, 118) }.signal()).await;
+
+        derive_and_confirm(&mut actor, 501, inclusion_at(120, 0xb), 118).await;
+        finalize_l1(&mut actor, inclusion_at(120, 0xb)).await;
+    }
+
+    #[tokio::test]
+    async fn a_rejected_inclusion_keeps_blocking_later_blocks() {
+        let mut engine_client = MockDerivationEngineClient::new();
+        // 500's batch was rejected, so nothing built on 500 may finalize until 500 is derived
+        // again. The reset that preceded the rejection kept 500, and nothing resets after it.
+        engine_client.expect_send_finalized_l2_block().times(0);
+        let (mut actor, _request_tx) = test_actor_with_l1(engine_client, l1_rejecting_hash_a());
+
+        let inclusion_a = inclusion_at(120, 0xa);
+        actor.finalizer.enqueue_for_finalization(&attrs_with_inclusion(499, inclusion_a));
+        actor.finalizer.confirm_safe_head(&safe_head_at(500, 118), Some(inclusion_a));
+        actor.signal(ResetSignal { l2_safe_head: safe_head_at(500, 118) }.signal()).await;
+
+        finalize_l1(&mut actor, inclusion_at(120, 0xb)).await;
+
+        derive_and_confirm(&mut actor, 501, inclusion_at(121, 0xb), 118).await;
+        finalize_l1(&mut actor, inclusion_at(121, 0xb)).await;
+    }
+
+    #[tokio::test]
+    async fn two_resets_before_a_confirmation_keep_the_retained_block_gated() {
+        let mut engine_client = MockDerivationEngineClient::new();
+        // L2 480 was included in L1 105. After two resets that move the safe head, a block derived
+        // from L1 100 must not finalize 480 while L1 105 is not final.
+        engine_client.expect_send_finalized_l2_block().times(0);
+        let (mut actor, _request_tx) = test_actor(engine_client);
+
+        actor.finalizer.enqueue_for_finalization(&attrs(479, 105));
+        for l2_block in 481..=500 {
+            actor.finalizer.enqueue_for_finalization(&attrs(l2_block - 1, 110));
+        }
+        for l2_block in 501..=600 {
+            actor.finalizer.enqueue_for_finalization(&attrs(l2_block - 1, 112));
+        }
+        actor.finalizer.confirm_safe_head(&safe_head_at(600, 111), Some(l1_at(112)));
+
+        // Each reset is followed by the engine reporting the moved safe head, which carries no
+        // inclusion block because derivation did not produce it.
+        for reset_head in [safe_head_at(500, 110), safe_head_at(480, 100)] {
+            actor.signal(ResetSignal { l2_safe_head: reset_head }.signal()).await;
+            actor
+                .handle_derivation_actor_request(
+                    DerivationActorRequest::ProcessEngineSafeHeadUpdateRequest(Box::new(
+                        reset_head,
+                    )),
+                )
+                .await
+                .expect("safe head update failed");
+        }
+
+        derive_and_confirm(&mut actor, 481, l1_at(100), 100).await;
+        finalize_l1(&mut actor, l1_at(100)).await;
+    }
+
+    #[tokio::test]
+    async fn a_block_retained_across_a_reset_is_not_vouched_for_by_another_block_at_its_height() {
+        let mut engine_client = MockDerivationEngineClient::new();
+        // L2 490 came from L1 101/A, which a reorg replaced. A block derived later from 101/B must
+        // not finalize it just because L1 101 is final.
+        engine_client.expect_send_finalized_l2_block().times(0);
+        let (mut actor, _request_tx) = test_actor_with_l1(engine_client, l1_rejecting_hash_a());
+
+        actor
+            .finalizer
+            .enqueue_for_finalization(&attrs_with_inclusion(489, inclusion_at(101, 0xa)));
+        actor
+            .finalizer
+            .enqueue_for_finalization(&attrs_with_inclusion(599, inclusion_at(112, 0xc)));
+        actor.finalizer.confirm_safe_head(&safe_head_at(600, 100), Some(inclusion_at(112, 0xc)));
+        actor.signal(ResetSignal { l2_safe_head: safe_head_at(500, 100) }.signal()).await;
+
+        derive_and_confirm(&mut actor, 501, inclusion_at(100, 0xb), 100).await;
+        finalize_l1(&mut actor, inclusion_at(101, 0xb)).await;
     }
 }
