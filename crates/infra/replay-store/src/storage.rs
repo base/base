@@ -1,11 +1,12 @@
-use std::{io::Read, ops::RangeInclusive, path::PathBuf};
+use std::{io::Read, ops::RangeInclusive, path::PathBuf, pin::Pin, time::Duration};
 
+use aws_sdk_s3::primitives::ByteStream;
 use base_replay::{ReplayRecord, ReplayRecordError};
 use chrono::{DateTime, Datelike, Utc};
 use futures::{Stream, StreamExt, TryStreamExt, stream};
-use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncRead, AsyncReadExt};
 
-use crate::LocalObject;
+use crate::{LocalObject, ReplayS3};
 
 /// Failures at the storage boundary.
 #[derive(Debug, thiserror::Error)]
@@ -25,14 +26,19 @@ pub enum StoreError {
     /// Blocking worker failed.
     #[error(transparent)]
     Worker(#[from] tokio::task::JoinError),
+    /// S3 request failure, including create-only conflicts.
+    #[error("S3 request failed: {0}")]
+    S3(Box<dyn std::error::Error + Send + Sync>),
 }
 
-/// Local directory containing a `replay-record/v1` dataset.
+/// Local directory or S3 bucket/prefix containing a `replay-record/v1` dataset.
 /// The local directory is recorder-owned; symlinks below its root are rejected.
 #[derive(Debug, Clone)]
 pub enum ReplayStore {
     /// Root directory; objects are atomically published without replacement.
     Local(PathBuf),
+    /// S3-compatible storage.
+    S3(ReplayS3),
 }
 
 impl ReplayStore {
@@ -101,7 +107,7 @@ impl ReplayStore {
     }
 
     async fn get(&self, key: &str) -> Result<Option<Vec<u8>>, StoreError> {
-        let reader = match self {
+        let reader: Pin<Box<dyn AsyncRead + Send>> = match self {
             Self::Local(root) => {
                 let root = root.clone();
                 let key = key.to_owned();
@@ -110,17 +116,35 @@ impl ReplayStore {
                 })
                 .await?;
                 match opened {
-                    Ok(file) => tokio::fs::File::from_std(file),
+                    Ok(file) => Box::pin(tokio::fs::File::from_std(file)),
                     Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
                     Err(e) => return Err(e.into()),
                 }
             }
+            Self::S3(backend) => match backend
+                .client
+                .get_object()
+                .bucket(&backend.bucket)
+                .key(format!("{}/{key}", backend.prefix).trim_start_matches('/'))
+                .send()
+                .await
+            {
+                Ok(object) => Box::pin(object.body.into_async_read()),
+                Err(e) if e.as_service_error().is_some_and(|e| e.is_no_such_key()) => {
+                    return Ok(None);
+                }
+                Err(e) => return Err(StoreError::S3(Box::new(e))),
+            },
         };
         let mut bytes = Vec::new();
-        reader
-            .take(u64::try_from(Self::MAX_OBJECT_BYTES + 1).map_err(std::io::Error::other)?)
-            .read_to_end(&mut bytes)
-            .await?;
+        tokio::time::timeout(
+            Duration::from_secs(60),
+            reader
+                .take(u64::try_from(Self::MAX_OBJECT_BYTES + 1).map_err(std::io::Error::other)?)
+                .read_to_end(&mut bytes),
+        )
+        .await
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::TimedOut, e))??;
         if bytes.len() > Self::MAX_OBJECT_BYTES {
             return Err(StoreError::Invalid("object size"));
         }
@@ -141,6 +165,18 @@ impl ReplayStore {
                     LocalObject::open(&root, &key, true)?.publish(&bytes)
                 })
                 .await??;
+            }
+            Self::S3(backend) => {
+                backend
+                    .client
+                    .put_object()
+                    .bucket(&backend.bucket)
+                    .key(format!("{}/{key}", backend.prefix).trim_start_matches('/'))
+                    .if_none_match("*")
+                    .body(ByteStream::from(bytes))
+                    .send()
+                    .await
+                    .map_err(|e| StoreError::S3(Box::new(e)))?;
             }
         }
         Ok(())

@@ -6201,14 +6201,20 @@ dependencies = [
 name = "base-replay-store"
 version = "0.0.0"
 dependencies = [
+ "aws-config",
+ "aws-sdk-s3",
  "base-replay",
  "chrono",
  "futures",
  "rustix",
  "serde_json",
  "tempfile",
+ "testcontainers",
+ "testcontainers-modules",
  "thiserror 2.0.19",
  "tokio",
+ "url",
+ "uuid",
  "zstd",
 ]
 
