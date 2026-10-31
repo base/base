@@ -102,4 +102,30 @@ impl<Ext: clap::Args + fmt::Debug> Commands<Ext> {
             _ => false,
         }
     }
+
+    /// Splits off the `node` command, the only variant generic over `Ext`.
+    ///
+    /// Every other command comes back as a [`Commands`] with the default `Ext`, so its dispatch
+    /// compiles once instead of once per `Ext` the CLI is instantiated with.
+    pub fn split_node(
+        self,
+    ) -> Result<Box<node::NodeCommand<BaseChainSpecParser, Ext>>, Box<Commands>> {
+        match self {
+            Self::Node(cmd) => Ok(cmd),
+            Self::Init(cmd) => Err(Box::new(Commands::Init(cmd))),
+            Self::InitState(cmd) => Err(Box::new(Commands::InitState(cmd))),
+            Self::DumpGenesis(cmd) => Err(Box::new(Commands::DumpGenesis(cmd))),
+            Self::Db(cmd) => Err(Box::new(Commands::Db(cmd))),
+            Self::Stage(cmd) => Err(Box::new(Commands::Stage(cmd))),
+            Self::P2P(cmd) => Err(Box::new(Commands::P2P(cmd))),
+            Self::Config(cmd) => Err(Box::new(Commands::Config(cmd))),
+            Self::Prune(cmd) => Err(Box::new(Commands::Prune(cmd))),
+            #[cfg(feature = "dev")]
+            Self::TestVectors(cmd) => Err(Box::new(Commands::TestVectors(cmd))),
+            Self::ReExecute(cmd) => Err(Box::new(Commands::ReExecute(cmd))),
+            Self::BaseProofs(cmd) => Err(Box::new(Commands::BaseProofs(cmd))),
+            Self::SnapshotManifest(cmd) => Err(Box::new(Commands::SnapshotManifest(cmd))),
+            Self::Download(cmd) => Err(Box::new(Commands::Download(cmd))),
+        }
+    }
 }
