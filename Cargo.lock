@@ -6184,6 +6184,7 @@ dependencies = [
  "base-execution-txpool",
  "base-replay",
  "base-replay-export",
+ "base-replay-store",
  "base-tx-forwarding",
  "eyre",
  "jsonrpsee",
