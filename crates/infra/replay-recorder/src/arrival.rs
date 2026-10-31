@@ -136,10 +136,7 @@ impl ArrivalQueue {
             }
         }
         writer.close().await?;
-        match failure {
-            Some(error) => Err(error),
-            None => Ok(()),
-        }
+        failure.map_or(Ok(()), Err)
     }
 }
 
