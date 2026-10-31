@@ -37,6 +37,7 @@ base-execution-chainspec.workspace = true
 base-execution-consensus.workspace = true
 base-shadow-indexer.workspace = true
 base-cli-utils = { workspace = true, features = ["otlp"] }
+base-replay-export = { path = "../../crates/infra/replay-export" }
 
 # alloy
 alloy-chains = { workspace = true, features = ["std"] }
