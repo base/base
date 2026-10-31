@@ -36,14 +36,17 @@ pub struct PendingFinalization {
 /// [`Self::try_finalize_next`] enforces this itself: it returns nothing while any inclusion in the
 /// finalized prefix is unverified.
 ///
-/// Evidence is never lost silently. A record is removed only when
+/// Known evidence is never turned into permission. A record is removed only when
 ///
-/// - the L2 block it describes was finalized,
+/// - the L2 block it describes was finalized, or
 /// - the L2 block is above the safe head a reset restarted from, so derivation produces it
-///   again, or
-/// - its inclusion block was rejected as not canonical. The L2 block then stays on a barrier
-///   ([`Self::reject_inclusion`]): nothing at or above it finalizes until the block is derived
-///   again or a reset rolls the safe head back below it.
+///   again.
+///
+/// A rejected inclusion block ([`Self::reject_inclusion`]) and a record a reset cannot vouch for
+/// (see [`Self::retain_valid_after_reset`]) both leave the L2 block on a barrier: nothing at or
+/// above the lowest barrier block finalizes. A barrier is removed only when the block is derived
+/// again or a reset restarts from a safe head below it, so it can hold finalization back
+/// indefinitely if neither happens.
 ///
 /// # Keys are L1 inclusion blocks, not L2 epochs
 ///
@@ -74,8 +77,7 @@ pub struct PendingFinalization {
 /// # Limits
 ///
 /// The finalizer only knows the blocks it recorded. It records nothing for blocks derived before
-/// it started, blocks the engine adopted without derivation, or blocks whose records a reset
-/// cleared because the safe head is not one derivation confirmed. Finalizing a higher block
+/// it started, or blocks the engine adopted without derivation. Finalizing a higher block
 /// finalizes those too, and the engine resolves the target by number. Retained records also assume
 /// that the engine's safe chain at or below the retained bound is the chain derivation confirmed.
 #[derive(Debug, Default)]
@@ -261,14 +263,21 @@ impl L2Finalizer {
     /// inclusion block in the finalized prefix first. A record that reset retention keeps is
     /// never moved to another inclusion block, and barriers at or below the retained bound stay.
     ///
-    /// A reset with no recorded confirmation keeps nothing, barriers included: the finalizer does
-    /// not know the chain the engine holds, so a barrier from before that point does not survive
-    /// it. The engine's replaced chain is not covered by the evidence the barrier recorded.
+    /// A reset with no recorded confirmation cannot vouch for the engine's chain, so it keeps the
+    /// evidence as barriers instead of discarding it: every record at or below `l2_safe_head`
+    /// becomes a barrier, barriers at or below it stay, and everything above it is dropped
+    /// because derivation produces it again. Treating the unknown chain as proof would let a
+    /// later block finalize those blocks without their inclusion blocks being final and
+    /// canonical. The cost is liveness: a barrier at or below the restart point is released only
+    /// by deriving that block again or by a later reset to a lower safe head, so finalization can
+    /// stop until one of those happens.
     pub fn retain_valid_after_reset(&mut self, l2_safe_head: &L2BlockInfo) {
         let Some(confirmed_through) = self.confirmed_through else {
-            self.records.clear();
-            self.unproven.clear();
-            self.safe_head = None;
+            let first_dropped = l2_safe_head.block_info.number.saturating_add(1);
+            self.records.split_off(&first_dropped);
+            self.unproven.split_off(&first_dropped);
+            self.unproven.extend(std::mem::take(&mut self.records).into_keys());
+            self.safe_head = Some(*l2_safe_head);
             return;
         };
 
@@ -551,15 +560,58 @@ mod tests {
     }
 
     #[test]
-    fn reset_without_a_confirmation_keeps_nothing() {
+    fn reset_without_a_confirmation_turns_retained_records_into_barriers() {
         let mut f = L2Finalizer::default();
-        f.enqueue_for_finalization(&attrs(495, 119));
-        f.enqueue_for_finalization(&attrs(499, 120));
+        f.enqueue_for_finalization(&attrs(495, 119)); // l2=496
+        f.enqueue_for_finalization(&attrs(499, 120)); // l2=500, the reset safe head
+        f.enqueue_for_finalization(&attrs(509, 121)); // l2=510, rolled back by the reset
 
-        // No safe head was ever confirmed, so no record has a confirmed block behind it.
+        // No safe head was ever confirmed, so the reset cannot vouch for 496 and 500. They stay
+        // as barriers instead of disappearing, and 510 is derived again.
+        f.retain_valid_after_reset(&safe_head_at(500, 118));
+        assert!(finalize_verified(&mut f, l1_at(1_000)).is_none());
+
+        // A block derived afterwards does not finalize them.
+        f.enqueue_for_finalization(&attrs(500, 119)); // l2=501
+        assert!(finalize_verified(&mut f, l1_at(1_000)).is_none());
+        assert_eq!(f.pending_candidate(1_000), None);
+    }
+
+    #[test]
+    fn a_barrier_from_a_reset_without_a_confirmation_is_released_by_deriving_the_block_again() {
+        let mut f = L2Finalizer::default();
+        f.enqueue_for_finalization(&attrs_included_at(499, inclusion_at(120, 0xa)));
         f.retain_valid_after_reset(&safe_head_at(500, 118));
 
-        assert!(finalize_verified(&mut f, l1_at(1_000)).is_none());
+        // The pipeline derives 500 again from a canonical batch.
+        f.enqueue_for_finalization(&attrs_included_at(499, inclusion_at(121, 0xb)));
+
+        assert_eq!(finalize_verified(&mut f, l1_at(121)), Some(500));
+    }
+
+    #[test]
+    fn a_barrier_from_a_reset_without_a_confirmation_is_released_by_a_lower_reset() {
+        let mut f = L2Finalizer::default();
+        f.enqueue_for_finalization(&attrs_included_at(499, inclusion_at(120, 0xa)));
+        f.retain_valid_after_reset(&safe_head_at(500, 118));
+
+        // A later reset restarts below the barrier, so derivation produces 500 again.
+        f.retain_valid_after_reset(&safe_head_at(499, 118));
+        f.enqueue_for_finalization(&attrs_included_at(499, inclusion_at(121, 0xb)));
+
+        assert_eq!(finalize_verified(&mut f, l1_at(121)), Some(500));
+    }
+
+    #[test]
+    fn a_reset_without_a_confirmation_keeps_a_rejected_barrier() {
+        let mut f = L2Finalizer::default();
+        f.enqueue_for_finalization(&attrs_included_at(499, inclusion_at(120, 0xa)));
+        assert_eq!(promote(&mut f, l1_at(120), not_a), None);
+
+        f.retain_valid_after_reset(&safe_head_at(500, 118));
+        f.enqueue_for_finalization(&attrs_included_at(500, inclusion_at(121, 0xb)));
+
+        assert_eq!(promote(&mut f, l1_at(121), |_| true), None);
     }
 
     #[test]

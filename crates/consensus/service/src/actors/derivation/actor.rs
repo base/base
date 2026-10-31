@@ -162,10 +162,11 @@ where
     /// one attempt are bounded by the number of distinct, unverified inclusion blocks in the
     /// finalized prefix. A failed lookup is not retried on every safe-head confirmation.
     ///
-    /// A lookup is bounded by [`L1_CANONICALITY_TIMEOUT`] and cancelled on shutdown, so a hung L1
-    /// endpoint cannot stall derivation. An inclusion block that was replaced on L1 is rejected:
+    /// Each lookup is bounded by [`L1_CANONICALITY_TIMEOUT`] and cancelled on shutdown. The bound is
+    /// per request: an attempt that verifies several inclusion blocks can hold this loop for up to
+    /// that many timeouts. An inclusion block that was replaced on L1 is rejected:
     /// the L2 blocks recorded under it go on a barrier that holds back everything at or above
-    /// them until they are derived again. A candidate whose lookup failed or timed out is kept
+    /// them until they are derived again or a reset restarts below them. A candidate whose lookup failed or timed out is kept
     /// until finality advances or the cooldown passes. Neither is ever finalized.
     async fn try_finalize_pending(&mut self) -> Result<(), DerivationError> {
         let Some(finalized_l1_block) = self.finalizer.finalized_l1_block() else {
@@ -1531,5 +1532,58 @@ mod tests {
 
         derive_and_confirm(&mut actor, 501, inclusion_at(100, 0xb), 100).await;
         finalize_l1(&mut actor, inclusion_at(101, 0xb)).await;
+    }
+
+    #[tokio::test]
+    async fn a_reset_before_the_first_confirmation_keeps_the_dispatched_block_gated() {
+        let mut engine_client = MockDerivationEngineClient::new();
+        // L2 500 was dispatched from L1 120/A and the engine reset to it before confirming it.
+        // The successor 501 comes from 119/B, so finalizing 501 would finalize 500 with it while
+        // L1 120 is not final.
+        engine_client.expect_send_finalized_l2_block().times(0);
+        let (mut actor, _request_tx) = test_actor(engine_client);
+
+        actor
+            .finalizer
+            .enqueue_for_finalization(&attrs_with_inclusion(499, inclusion_at(120, 0xa)));
+        actor.signal(ResetSignal { l2_safe_head: safe_head_at(500, 118) }.signal()).await;
+        actor
+            .handle_derivation_actor_request(
+                DerivationActorRequest::ProcessEngineSafeHeadUpdateRequest(Box::new(safe_head_at(
+                    500, 118,
+                ))),
+            )
+            .await
+            .expect("safe head update failed");
+
+        derive_and_confirm(&mut actor, 501, inclusion_at(119, 0xb), 118).await;
+        finalize_l1(&mut actor, inclusion_at(119, 0xb)).await;
+    }
+
+    #[tokio::test]
+    async fn a_reset_before_the_first_confirmation_keeps_a_rejected_block_gated() {
+        let mut engine_client = MockDerivationEngineClient::new();
+        // L2 500's batch, in L1 120/A, was rejected before the engine confirmed it. A reset that
+        // keeps 500 must not release the barrier for a successor from a canonical block.
+        engine_client.expect_send_finalized_l2_block().times(0);
+        let (mut actor, _request_tx) = test_actor_with_l1(engine_client, l1_rejecting_hash_a());
+
+        actor
+            .finalizer
+            .enqueue_for_finalization(&attrs_with_inclusion(499, inclusion_at(120, 0xa)));
+        finalize_l1(&mut actor, inclusion_at(120, 0xb)).await;
+
+        actor.signal(ResetSignal { l2_safe_head: safe_head_at(500, 118) }.signal()).await;
+        actor
+            .handle_derivation_actor_request(
+                DerivationActorRequest::ProcessEngineSafeHeadUpdateRequest(Box::new(safe_head_at(
+                    500, 118,
+                ))),
+            )
+            .await
+            .expect("safe head update failed");
+
+        derive_and_confirm(&mut actor, 501, inclusion_at(121, 0xb), 118).await;
+        finalize_l1(&mut actor, inclusion_at(121, 0xb)).await;
     }
 }
