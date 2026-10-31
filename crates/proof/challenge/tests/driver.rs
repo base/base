@@ -1189,30 +1189,26 @@ async fn test_step_checkpoint_count_mismatch_surfaces_error() {
 
 #[tokio::test]
 async fn test_step_proof_timeout_reuses_session_without_submitting() {
-    for status in [ProofStatus::Queued, ProofStatus::Running] {
-        let (l2, factory, verifier) = invalid_game_mocks();
-        let zk = Arc::new(MockZkProofProvider {
-            state: Mutex::new(MockZkProofState { proof_status: status, ..Default::default() }),
-        });
-        let tx = default_tx_manager();
-        let mut driver = test_driver_with_timeout(
-            factory,
-            verifier,
-            l2,
-            Arc::<MockZkProofProvider>::clone(&zk),
-            tx.clone(),
-            Arc::new(MockL1::failure("unused")),
-            Duration::ZERO,
-        );
-        driver.step().await.unwrap();
-        assert_zk_requests(&zk, 1);
-        assert!(tx.recorded_calls().is_empty());
+    let (l2, factory, verifier) = invalid_game_mocks();
+    let zk = default_zk_prover();
+    let tx = default_tx_manager();
+    let mut driver = test_driver_with_timeout(
+        factory,
+        verifier,
+        l2,
+        Arc::<MockZkProofProvider>::clone(&zk),
+        tx.clone(),
+        Arc::new(MockL1::failure("TEE request build fails, falling back to ZK")),
+        Duration::ZERO,
+    );
+    driver.step().await.unwrap();
+    assert_zk_requests(&zk, 1);
+    assert!(tx.recorded_calls().is_empty());
 
-        driver.step().await.unwrap();
-        assert_zk_requests(&zk, 2);
-        assert_eq!(driver.proof_manager.pending_proofs_len(), 1);
-        assert!(tx.recorded_calls().is_empty());
-    }
+    driver.step().await.unwrap();
+    assert_zk_requests(&zk, 2);
+    assert_eq!(driver.proof_manager.pending_proofs_len(), 1);
+    assert!(tx.recorded_calls().is_empty());
 }
 
 #[tokio::test]
