@@ -39,3 +39,11 @@ unknown (`null` in JSON) when recording coverage is unknown. Optional aggregate
 measurements are unknown if any scored block is unknown; empty scored windows
 have known zero totals. `builder_missing` is an additive v1 field; existing fields
 retain their meanings.
+
+`ReplayDataset::load` reads an export's `manifest.json` and `records.jsonl` using
+the shared export schema. It rejects unknown versions, inconsistent windows,
+record counts, out-of-window records, and reserved streams before builder calls.
+Exports beginning at genesis are unsupported because replay needs a parent.
+Loading retains all records in memory; size exports to fit the runner's memory.
+`clock_start_ms()` suggests the window start minus a 30-second startup allowance,
+saturating at the Unix epoch. This is an epoch, not clock synchronization.
