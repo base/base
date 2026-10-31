@@ -6,7 +6,8 @@
 //! event. Execute each returned `Submit` or `Reprove` and apply its result
 //! before calling `need` again, including any action returned by that result.
 //! `Wait` continues the loop; its update is only for reporting. `Idle` ends
-//! the tick. Terminal actions remove the attempt. Out-of-order events are inert.
+//! the tick. Terminal actions remove the attempt. Events that don't match the
+//! current phase are inert.
 //!
 //! The attempt requests at most one poll and one chain check per tick. A poll
 //! that obtains a proof or fails proceeds to the chain check in the same tick.
@@ -117,7 +118,7 @@ pub enum Event {
 /// Reporting data accompanying a wait; use `need` to determine the next step.
 #[derive(Debug)]
 pub enum AttemptUpdate {
-    /// The prover is queued or running, or an event is out of order.
+    /// The prover is queued or running, or an event doesn't match the current phase.
     Pending,
     /// A proof was obtained.
     Ready(AttemptProofSource),
@@ -1118,7 +1119,8 @@ mod tests {
                         if status != GameStatus::InProgress {
                             assert!(matches!(
                                 action,
-                                Action::Drop(DropReason::GameNotInProgress(actual)) if actual == status
+                                Action::Drop(DropReason::GameNotInProgress(actual))
+                                    if actual == status
                             ));
                         } else if resolved[index] {
                             assert!(matches!(
@@ -1271,7 +1273,9 @@ mod tests {
                             limit: actual_limit,
                             has_zk_fallback,
                             ..
-                        }) if actual == count && actual_limit == limit && has_zk_fallback == fallback
+                        }) if actual == count
+                            && actual_limit == limit
+                            && has_zk_fallback == fallback
                     ));
                     now += Duration::from_secs(1);
                     attempt.need(now);
@@ -1296,7 +1300,9 @@ mod tests {
                         Action::Reprove(AttemptReprove {
                             fallback: true,
                             retry_count: 0,
-                            submission_failure: Some(TeeSubmissionFailure::RetryLimit { count, .. }),
+                            submission_failure: Some(TeeSubmissionFailure::RetryLimit {
+                                count, ..
+                            }),
                             ..
                         }) if count == limit
                     ));
