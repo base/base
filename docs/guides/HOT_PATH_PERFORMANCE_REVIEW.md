@@ -25,7 +25,8 @@ even while mainnet still runs flashblocks.
 | Native block assembly | `crates/execution/payload/src/builder.rs` `build_payload`/`try_build`, sealing, state root, `crates/builder/multiplex` block stream | block | ~4×10^5/day after Denim |
 | Flashblock transaction selection and execution (until Denim) | `crates/builder/core/src/flashblocks/context.rs` `execute_best_transactions` loop body, plus everything it calls | candidate transaction, per flashblock | ~10^9 candidates/day vs ~10^7 included |
 | Best-transaction iteration and parking (both builders) | `crates/execution/payload/src/parkable.rs`, `crates/builder/core` parkable iterators, `crates/execution/txpool` ordering and validity predicates | candidate transaction | same order as above |
-| Transaction pool admission | `crates/execution/txpool` validation, RPC `eth_sendRawTransaction` | submitted transaction | ~10^8/day |
+| Best-transaction snapshot (both builders) | building the best-transactions iterator in `crates/execution/txpool`, including each store's snapshot | flashblock, or block after Denim | ~4×10^5/day |
+| Transaction pool admission | `crates/execution/txpool` validation and insertion into each store, RPC `eth_sendRawTransaction` | submitted transaction | ~10^8/day |
 | Flashblock publish (until Denim) | `crates/builder/publish` | flashblock (10 per block) | ~4×10^5/day |
 | Block execution and state root | `crates/execution/*` executor, trie | block and touched account/slot | ~4×10^4 blocks/day, ~4×10^5 after Denim |
 
@@ -40,6 +41,19 @@ and import must fit in what remains. Per-candidate work multiplies:
 1 µs per candidate at 10^9 candidates/day is ~17 CPU-minutes per day spent inside
 the latency-critical build loop and directly steals transactions from blocks.
 
+## Review procedure
+
+1. Find how often each changed function runs, using the registry. Then read the
+   full body of every function and data structure it calls, changed or not.
+   Existing code becomes hot when a PR calls it from a hotter loop or feeds it a
+   much larger collection.
+2. Multiply the work inside a loop by how often the loop runs. Bound each
+   collection by its worst case, not by a comment or PR description that says
+   it stays small.
+3. Before trusting a PR's benchmark, check that its inputs reach the worst case.
+   Prices, nonces, and lane lengths that let each candidate win at once can hide
+   super-linear cost.
+
 ## What to flag
 
 On a hot path, flag any added per-unit work that block building does not need,
@@ -48,7 +62,8 @@ with the per-unit cost and the multiplier:
 - Serialization or formatting: `serde_json`, `to_value`, `format!`, `to_string`,
   `{:#x}` hex encoding, building `Map<String, Value>`.
 - Heap allocation and cloning: `Vec`/`String`/`Map` construction, `clone()` of
-  non-`Copy` data, `Arc` churn, boxing closures.
+  non-`Copy` data, `Arc` churn, boxing closures, and collecting a whole store
+  only to count, sum, or truncate it.
 - Observability done eagerly: events, logs, and metrics whose fields are built
   before the level or enabled check, and metrics labels allocated per call.
   Deferring to a background thread still pays the allocation and moves the data;
@@ -58,9 +73,12 @@ with the per-unit cost and the multiplier:
   looks it up in the recorder on every call. Resolve handles once per loop.
 - Locks, channel sends, syscalls, file or network I/O.
 - Repeated work: recomputing per candidate what is fixed per flashblock or block,
-  re-emitting identical records for the same transaction.
-- Super-linear behavior in the number of candidates, parked transactions, or
-  predicates.
+  re-emitting identical records for the same transaction, and copying or
+  re-indexing a pool-sized collection on every build instead of keeping it up
+  to date on insert and remove.
+- Super-linear behavior in the number of candidates, parked transactions,
+  predicates, or transactions per sender, including a scan on every candidate
+  of a collection that persists across candidates.
 
 **Evaluate default-off features as enabled.** Production enables features that
 default off in tests, benchmarks, and devnet (for example
