@@ -32,11 +32,18 @@ const REAL_CONTRACT_CALL: &[u8] = &hex!(
 /// setup phase so allocation and generation are excluded from the counted region, exactly
 /// as the Criterion version hoists it out of the timed closure.
 fn synthetic_calldata(len: usize) -> Vec<u8> {
-    (0..len).map(|i| ((i * 31 + 7) % 256) as u8).collect()
+    warmed((0..len).map(|i| ((i * 31 + 7) % 256) as u8).collect())
+}
+
+/// Runs one unmeasured call first so the counted call excludes the one-time setup of the
+/// per-thread hash table, matching steady-state use.
+fn warmed(input: Vec<u8>) -> Vec<u8> {
+    flz_compress_len(&input);
+    input
 }
 
 #[library_benchmark]
-#[bench::real_contract_call(REAL_CONTRACT_CALL.to_vec())]
+#[bench::real_contract_call(args = (REAL_CONTRACT_CALL.to_vec()), setup = warmed)]
 #[benches::synthetic(args = [128usize, 1024, 8192], setup = synthetic_calldata)]
 fn compress_len(input: Vec<u8>) -> u32 {
     black_box(flz_compress_len(black_box(&input)))
