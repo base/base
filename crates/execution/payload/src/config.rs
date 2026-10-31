@@ -57,6 +57,11 @@ pub struct BaseBuilderConfig {
     /// Whether validity transactions whose predicate was found unsatisfied in an earlier block skip
     /// evaluation until a state change wakes them. Applies from Denim onward.
     pub resting_predicate_mode: RestingPredicateMode,
+    /// Whether a candidate first seen by the build loop rests on the pool's admission-time
+    /// evaluation of its state predicates instead of being evaluated: off, shadow (check the
+    /// result and count candidates that matched anyway), or enforce. Only effective while
+    /// [`Self::resting_predicate_mode`] is enabled, and never more than that mode allows.
+    pub ingestion_rest_mode: RestingPredicateMode,
 }
 
 impl Default for BaseBuilderConfig {
@@ -71,6 +76,7 @@ impl Default for BaseBuilderConfig {
             rejection_cache: RejectionCache::default(),
             state_provider_metrics: false,
             resting_predicate_mode: RestingPredicateMode::Off,
+            ingestion_rest_mode: RestingPredicateMode::Off,
         }
     }
 }
@@ -92,6 +98,7 @@ impl BaseBuilderConfig {
             rejection_cache: RejectionCache::default(),
             state_provider_metrics: false,
             resting_predicate_mode: RestingPredicateMode::Off,
+            ingestion_rest_mode: RestingPredicateMode::Off,
         }
     }
 
@@ -100,6 +107,19 @@ impl BaseBuilderConfig {
     pub const fn with_resting_predicate_mode(mut self, mode: RestingPredicateMode) -> Self {
         self.resting_predicate_mode = mode;
         self
+    }
+
+    /// Sets the mode for resting candidates on the pool's admission-time predicate evaluation.
+    #[must_use]
+    pub const fn with_ingestion_rest_mode(mut self, mode: RestingPredicateMode) -> Self {
+        self.ingestion_rest_mode = mode;
+        self
+    }
+
+    /// The ingestion-rest mode in effect: [`Self::ingestion_rest_mode`] capped by
+    /// [`Self::resting_predicate_mode`], since an adopted result is a resting member.
+    pub const fn effective_ingestion_rest_mode(&self) -> RestingPredicateMode {
+        self.ingestion_rest_mode.capped_by(self.resting_predicate_mode)
     }
 
     /// Sets whether build-loop state reads are timed.

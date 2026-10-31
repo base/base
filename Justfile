@@ -208,6 +208,7 @@ benches:
     @just bench-execution-trie-witness-reads
     @just bench-execution-trie-deep-history-reads
     @just bench-builder-core
+    @just bench-builder-build-loop
     @just bench-builder-publish
 
 # Runs flashblocks pending state benchmarks
@@ -249,6 +250,21 @@ bench-execution-trie-deep-history-reads:
 # Runs builder core state root benchmarks
 bench-builder-core:
     cargo bench -p base-builder-core --bench state_root
+
+# Runs the flashblocks build-loop benchmark over a mainnet-shaped block, one arm per resting-predicate workload (Off, Enforce, Enforce+ingestion)
+bench-builder-build-loop:
+    cargo bench -p base-builder-core --bench build_loop -- mainnet_block
+
+# Runs the mainnet build-loop benchmark across cold-read delays with the predicate budget and collects the summary tables in target/build_loop_summary.md
+bench-builder-build-loop-matrix delays="0 5 20 50" budget_ms="20":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    rm -f target/build_loop_summary.md
+    for delay in {{ delays }}; do
+        BUILD_LOOP_READ_DELAY_US="$delay" BUILD_LOOP_PREDICATE_BUDGET_MS="{{ budget_ms }}" BUILD_LOOP_SUMMARY=1 \
+            cargo bench -p base-builder-core --bench build_loop -- mainnet_block
+    done
+    cat target/build_loop_summary.md
 
 # Runs builder publish benchmarks
 bench-builder-publish:

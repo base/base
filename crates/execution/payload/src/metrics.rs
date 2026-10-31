@@ -3,8 +3,8 @@
 use std::time::Duration;
 
 use crate::{
-    FLOW_STANDARD, FLOW_VALIDITY, InclusionTracker, ParkedPredicateIndex, PredicateLoadTracker,
-    RestingCarryOver,
+    FLOW_STANDARD, FLOW_VALIDITY, InclusionTracker, IngestionRestStats, ParkedPredicateIndex,
+    PredicateLoadTracker, RestingCarryOver,
 };
 
 base_metrics::define_metrics! {
@@ -80,6 +80,13 @@ base_metrics::define_metrics! {
     resting_predicate_sweep_wait_duration: histogram,
     #[describe("Block builds that stopped waiting for the previous block's resting sweep and started with an empty resting set")]
     resting_predicate_sweep_wait_timeouts_total: counter,
+    #[describe("Validity transactions whose pool admission-time predicate evaluation applied, so they rested without the build loop evaluating them")]
+    ingestion_rest_applied_total: counter,
+    #[describe("Validity transactions whose pool admission-time predicate evaluation did not apply, by reason")]
+    #[label(reason)]
+    ingestion_rest_stale_total: counter,
+    #[describe("Validity transactions whose admission-time predicate evaluation applied but that matched when evaluated in shadow mode")]
+    ingestion_rest_shadow_mismatches_total: counter,
 }
 
 base_metrics::define_metrics! {
@@ -157,6 +164,21 @@ impl ValidityMetrics {
         Self::predicate_slots_loaded_unique().record(tracker.unique_slots() as f64);
     }
 
+    /// Records how one build used the pool's admission-time predicate evaluations.
+    pub fn record_ingestion_rest(stats: &IngestionRestStats) {
+        if stats.applied > 0 {
+            Self::ingestion_rest_applied_total().increment(stats.applied);
+        }
+        for (reason, count) in stats.stale_counts() {
+            if count > 0 {
+                Self::ingestion_rest_stale_total(reason.as_str()).increment(count);
+            }
+        }
+        if stats.shadow_mismatches > 0 {
+            Self::ingestion_rest_shadow_mismatches_total().increment(stats.shadow_mismatches);
+        }
+    }
+
     /// Records what carrying resting validity transactions into a new block did, and how long it
     /// took.
     pub fn record_resting_carry_over(carry_over: &RestingCarryOver, duration: Duration) {
@@ -223,6 +245,8 @@ pub enum ValidityEvaluationOutcome {
     Expired,
     /// Primary scan: rejected unevaluated because of an unsupported predicate (native builder).
     Unsupported,
+    /// Parked unevaluated by the pool iterator on the pool's admission-time evaluation.
+    RestedAtIngestion,
     /// Rescan: every predicate held.
     RescanMatched,
     /// Rescan: a predicate did not hold.
@@ -235,13 +259,14 @@ pub enum ValidityEvaluationOutcome {
 
 impl ValidityEvaluationOutcome {
     /// Every variant in declaration order; its length sizes [`ValidityEvaluationCounters`].
-    const ALL: [Self; 10] = [
+    const ALL: [Self; 11] = [
         Self::Matched,
         Self::NotSatisfied,
         Self::ReadError,
         Self::BudgetExhausted,
         Self::Expired,
         Self::Unsupported,
+        Self::RestedAtIngestion,
         Self::RescanMatched,
         Self::RescanNotSatisfied,
         Self::RescanReadError,
@@ -258,6 +283,7 @@ impl ValidityEvaluationOutcome {
             Self::BudgetExhausted => "budget_exhausted",
             Self::Expired => "expired",
             Self::Unsupported => "unsupported",
+            Self::RestedAtIngestion => "rested_at_ingestion",
             Self::RescanMatched => "rescan_matched",
             Self::RescanNotSatisfied => "rescan_not_satisfied",
             Self::RescanReadError => "rescan_read_error",
