@@ -216,6 +216,8 @@ pub enum TeeSubmissionFailure {
 pub struct AttemptReprove {
     /// Prover request to execute.
     pub request: SnarkPlonkProofRequest,
+    /// Index of the invalid intermediate root.
+    pub invalid_index: u64,
     /// Failure count before the fallback reset, matching retry-start reporting.
     pub retry_count: u32,
     /// Whether this reprove switched from TEE to ZK.
@@ -273,59 +275,6 @@ pub enum AttemptSource {
     Tee(TeeAttempt),
     /// ZK policy state.
     Zk(ZkAttempt),
-}
-
-impl AttemptSource {
-    /// Records one proof failure against the current proof source.
-    pub const fn increment_retry(&mut self) {
-        match self {
-            Self::Tee(state) => state.retry_count = state.retry_count.saturating_add(1),
-            Self::Zk(state) => state.retry_count = state.retry_count.saturating_add(1),
-        }
-    }
-
-    /// Reports the current proof source and its fixed or requested intent.
-    pub const fn proof_source(&self) -> (AttemptProofSource, DisputeIntent) {
-        match self {
-            Self::Tee(_) => (AttemptProofSource::Tee, DisputeIntent::Nullify),
-            Self::Zk(state) => (AttemptProofSource::Zk, state.intent),
-        }
-    }
-
-    /// Requests a reprove after chain validation or a rejected TEE submission.
-    pub fn reprove(
-        &mut self,
-        phase: &mut AttemptPhase,
-        limits: AttemptLimits,
-        submission_failure: Option<TeeSubmissionFailure>,
-    ) -> Action {
-        let retry_count = match self {
-            Self::Tee(state) => state.retry_count,
-            Self::Zk(state) => state.retry_count,
-        };
-        if retry_count > limits.max_proof_retries {
-            *phase = AttemptPhase::Done;
-            return Action::Drop(DropReason::RetriesExhausted { retry_count, submission_failure });
-        }
-        let fallback = matches!(self, Self::Tee(_));
-        let request = match self {
-            Self::Tee(state) => {
-                let Some(fallback) = state.zk_fallback.clone() else {
-                    *phase = AttemptPhase::Done;
-                    return Action::Drop(DropReason::NoZkFallback { submission_failure });
-                };
-                *self = Self::Zk(ZkAttempt {
-                    request: fallback.request.clone(),
-                    intent: fallback.intent,
-                    retry_count: 0,
-                });
-                fallback.request
-            }
-            Self::Zk(state) => state.request.clone(),
-        };
-        *phase = AttemptPhase::Reproving { retry_count };
-        Action::Reprove(AttemptReprove { request, retry_count, fallback, submission_failure })
-    }
 }
 
 /// Lifecycle state of a dispute attempt.
@@ -411,7 +360,7 @@ impl DisputeAttempt {
         if let AttemptPhase::Awaiting { started_at, .. } = &self.phase {
             let elapsed = now.saturating_duration_since(*started_at);
             if elapsed > self.limits.max_proof_duration {
-                self.source.increment_retry();
+                self.increment_retry();
                 self.phase = AttemptPhase::NeedsRetry;
                 return Need::CheckChain {
                     timeout: Some(RetryReason::Timeout {
@@ -440,7 +389,7 @@ impl DisputeAttempt {
                     ProofStatus::Failed => RetryReason::ProverFailed(response.error_message),
                     ProofStatus::Succeeded => {
                         if let Some(result) = response.result {
-                            let (source, _) = self.source.proof_source();
+                            let (source, _) = self.proof_source();
                             let decoded = match source {
                                 AttemptProofSource::Tee => {
                                     ChallengerProofAdapter::tee_dispute_proof_bytes(
@@ -468,14 +417,14 @@ impl DisputeAttempt {
                         }
                     }
                 };
-                self.source.increment_retry();
+                self.increment_retry();
                 self.phase = AttemptPhase::NeedsRetry;
                 Action::Wait(AttemptUpdate::NeedsRetry(reason))
             }
             Event::ChainState { status, tee_prover, zk_prover }
                 if matches!(self.phase, AttemptPhase::NeedsRetry | AttemptPhase::Ready { .. }) =>
             {
-                let (source, intent) = self.source.proof_source();
+                let (source, intent) = self.proof_source();
                 if status != GameStatus::InProgress {
                     self.phase = AttemptPhase::Done;
                     return Action::Drop(DropReason::GameNotInProgress(status));
@@ -505,7 +454,7 @@ impl DisputeAttempt {
                         source,
                         just_obtained: *just_obtained,
                     },
-                    _ => self.source.reprove(&mut self.phase, self.limits, None),
+                    _ => self.reprove(None),
                 }
             }
             Event::Submitted(result) if matches!(self.phase, AttemptPhase::Ready { .. }) => {
@@ -550,27 +499,19 @@ impl DisputeAttempt {
                     ) | ChallengeSubmitError::TxReverted { .. }
                         | ChallengeSubmitError::TxManager(TxManagerError::ExecutionReverted { .. })
                 ) {
-                    return self.source.reprove(
-                        &mut self.phase,
-                        self.limits,
-                        Some(TeeSubmissionFailure::Rejected(error)),
-                    );
+                    return self.reprove(Some(TeeSubmissionFailure::Rejected(error)));
                 }
                 let AttemptSource::Tee(state) = &mut self.source else { unreachable!() };
                 let count = state.submit_retry_count;
                 let limit = self.limits.tee_submit_retry_limit;
                 let has_zk_fallback = state.zk_fallback.is_some();
                 if count >= limit {
-                    return self.source.reprove(
-                        &mut self.phase,
-                        self.limits,
-                        Some(TeeSubmissionFailure::RetryLimit {
-                            count,
-                            limit,
-                            has_zk_fallback,
-                            error,
-                        }),
-                    );
+                    return self.reprove(Some(TeeSubmissionFailure::RetryLimit {
+                        count,
+                        limit,
+                        has_zk_fallback,
+                        error,
+                    }));
                 }
                 state.submit_retry_count = count.saturating_add(1);
                 Action::Wait(AttemptUpdate::TeeSubmitRetry {
@@ -593,7 +534,7 @@ impl DisputeAttempt {
                         Action::Wait(AttemptUpdate::ReproveStarted { session_id, retry_count })
                     }
                     Err(error) => {
-                        self.source.increment_retry();
+                        self.increment_retry();
                         self.phase = AttemptPhase::NeedsRetry;
                         Action::Wait(AttemptUpdate::ReproveFailed { error, retry_count })
                     }
@@ -601,6 +542,57 @@ impl DisputeAttempt {
             }
             _ => Action::Wait(AttemptUpdate::Pending),
         }
+    }
+
+    const fn retry_count_mut(&mut self) -> &mut u32 {
+        match &mut self.source {
+            AttemptSource::Tee(state) => &mut state.retry_count,
+            AttemptSource::Zk(state) => &mut state.retry_count,
+        }
+    }
+
+    const fn increment_retry(&mut self) {
+        let retry_count = self.retry_count_mut();
+        *retry_count = retry_count.saturating_add(1);
+    }
+
+    const fn proof_source(&self) -> (AttemptProofSource, DisputeIntent) {
+        match &self.source {
+            AttemptSource::Tee(_) => (AttemptProofSource::Tee, DisputeIntent::Nullify),
+            AttemptSource::Zk(state) => (AttemptProofSource::Zk, state.intent),
+        }
+    }
+
+    fn reprove(&mut self, submission_failure: Option<TeeSubmissionFailure>) -> Action {
+        let retry_count = *self.retry_count_mut();
+        if retry_count > self.limits.max_proof_retries {
+            self.phase = AttemptPhase::Done;
+            return Action::Drop(DropReason::RetriesExhausted { retry_count, submission_failure });
+        }
+        let fallback = matches!(self.source, AttemptSource::Tee(_));
+        let request = match &self.source {
+            AttemptSource::Tee(state) => {
+                let Some(fallback) = state.zk_fallback.clone() else {
+                    self.phase = AttemptPhase::Done;
+                    return Action::Drop(DropReason::NoZkFallback { submission_failure });
+                };
+                self.source = AttemptSource::Zk(ZkAttempt {
+                    request: fallback.request.clone(),
+                    intent: fallback.intent,
+                    retry_count: 0,
+                });
+                fallback.request
+            }
+            AttemptSource::Zk(state) => state.request.clone(),
+        };
+        self.phase = AttemptPhase::Reproving { retry_count };
+        Action::Reprove(AttemptReprove {
+            request,
+            invalid_index: self.target.invalid_index,
+            retry_count,
+            fallback,
+            submission_failure,
+        })
     }
 }
 
@@ -1120,6 +1112,106 @@ mod tests {
                 attempt.apply(chain(), now),
                 Action::Drop(DropReason::RetriesExhausted { retry_count: 3, .. })
             ));
+        }
+    }
+
+    #[test]
+    fn out_of_order_events_preserve_the_next_need_and_action() {
+        let now = Instant::now();
+        for phase in ["awaiting", "ready", "needs_retry", "reproving", "done"] {
+            for event_kind in ["prover", "chain", "submitted", "reprove_started"] {
+                if matches!(
+                    (phase, event_kind),
+                    ("awaiting", "prover")
+                        | ("ready" | "needs_retry", "chain")
+                        | ("ready", "submitted")
+                        | ("reproving", "reprove_started")
+                ) {
+                    continue;
+                }
+                let mut attempt = zk(now);
+                match phase {
+                    "ready" | "done" => {
+                        attempt.apply(success(false), now);
+                        if phase == "done" {
+                            attempt.apply(Event::Submitted(Ok(())), now);
+                        }
+                    }
+                    "needs_retry" | "reproving" => {
+                        attempt.apply(response(ProofStatus::Failed), now);
+                        if phase == "reproving" {
+                            attempt.apply(chain(), now);
+                        }
+                    }
+                    _ => {}
+                }
+                let event = match event_kind {
+                    "prover" => response(ProofStatus::Failed),
+                    "chain" => chain(),
+                    "submitted" => Event::Submitted(Ok(())),
+                    _ => Event::ReproveStarted(Ok("out-of-order".into())),
+                };
+                let action = attempt.apply(event, now);
+                assert!(
+                    matches!(action, Action::Wait(AttemptUpdate::Pending)),
+                    "{phase}/{event_kind}: {action:?}"
+                );
+                let need = attempt.need(now);
+                if phase == "awaiting" {
+                    assert!(matches!(need, Need::PollProver(id) if id == "first"));
+                    assert!(matches!(
+                        attempt.apply(success(false), now),
+                        Action::Wait(AttemptUpdate::Ready(AttemptProofSource::Zk))
+                    ));
+                } else {
+                    assert!(matches!(need, Need::CheckChain { timeout: None }));
+                }
+                match phase {
+                    "awaiting" | "ready" => {
+                        let Action::Submit { proof_bytes, .. } = attempt.apply(chain(), now) else {
+                            panic!("out-of-order event must preserve the ready proof");
+                        };
+                        assert_eq!(proof_bytes.as_ref(), &[1, 0x5a, 0x09, 0x3a, 0x2f, 0xab, 0xcd]);
+                    }
+                    "needs_retry" => assert!(matches!(
+                        attempt.apply(chain(), now),
+                        Action::Reprove(AttemptReprove { retry_count: 1, .. })
+                    )),
+                    "reproving" => {
+                        assert!(matches!(
+                            attempt.apply(Event::ReproveStarted(Ok("next".into())), now),
+                            Action::Wait(AttemptUpdate::ReproveStarted { retry_count: 1, .. })
+                        ));
+                        assert!(matches!(attempt.need(now), Need::PollProver(id) if id == "next"));
+                    }
+                    _ => assert!(matches!(
+                        attempt.apply(chain(), now),
+                        Action::Wait(AttemptUpdate::Pending)
+                    )),
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn retry_before_first_proof_preserves_dispute_index() {
+        let now = Instant::now();
+        for is_tee in [false, true] {
+            for timed_out in [false, true] {
+                let mut attempt = if is_tee { tee(now, true) } else { zk(now) };
+                if timed_out {
+                    assert!(matches!(
+                        attempt.need(now + Duration::from_secs(11)),
+                        Need::CheckChain { timeout: Some(_) }
+                    ));
+                } else {
+                    attempt.apply(response(ProofStatus::Failed), now);
+                }
+                let Action::Reprove(reprove) = attempt.apply(chain(), now) else {
+                    panic!("failed initial proof must request a reprove");
+                };
+                assert_eq!(reprove.invalid_index, 3);
+            }
         }
     }
 
