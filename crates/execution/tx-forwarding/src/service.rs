@@ -18,6 +18,13 @@ use crate::{
     reader::DestinationReader,
 };
 
+/// Delivery receipts a destination's forwarder may hold for its reader.
+///
+/// The reader takes them before every snapshot, so this only needs to cover the receipts from the
+/// batches sent while one snapshot is in use. A receipt that does not fit is dropped and the
+/// transaction keeps its regular resend schedule.
+const DELIVERY_RECEIPT_CAPACITY: usize = 16_384;
+
 /// Why a forwarding destination could not be started.
 #[derive(Debug, thiserror::Error)]
 pub enum ForwardingSetupError {
@@ -95,6 +102,8 @@ impl TxForwardingService {
             };
 
             let (sender, receiver) = mpsc::channel(reader_config.channel_capacity);
+            let (receipts, receipts_rx) = mpsc::channel(DELIVERY_RECEIPT_CAPACITY);
+            let destination_lost = Arc::default();
             // `E` is named explicitly: nothing else in this expression pins the queue's item type,
             // since both ends are generic over it.
             let mut reader = DestinationReader::<P, E>::new(
@@ -103,13 +112,15 @@ impl TxForwardingService {
                 sender,
                 reader_cancel.child_token(),
                 builder_url.clone(),
-            );
+            )
+            .with_delivery_receipts(receipts_rx, Arc::clone(&destination_lost));
             let forwarder = DestinationForwarder::new(
                 builder_url.clone(),
                 client,
                 receiver,
                 Arc::clone(&forwarder_config),
-            );
+            )
+            .with_delivery_receipts(receipts, destination_lost);
 
             reader_tasks.push(executor.spawn_blocking_task(Box::pin(async move {
                 reader.run().await;

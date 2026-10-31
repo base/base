@@ -1,7 +1,10 @@
 use std::{
     collections::HashMap,
     fmt,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     time::{Duration, Instant},
 };
 
@@ -101,7 +104,8 @@ impl<P: TransactionPool> ReaderPool for P {
 /// Each pass waits until at least half of the destination queue is free, refreshes its lanes, and
 /// fills the free slots from two lanes: a configured percentage of picks goes to the oldest pending
 /// transaction and the rest to the highest tip-per-gas bid (see [`LaneMix`] and [`LaneScheduler`]).
-/// Transactions recently accepted by this destination's queue are skipped.
+/// Transactions recently accepted by this destination's queue are skipped, and so, for longer, are
+/// transactions the destination reported it holds (see [`RecentlySent`]).
 ///
 /// The lanes come from a full `best_transactions()` read about every [`Self::FULL_READ_INTERVAL`].
 /// In between, the reader looks up the transactions the pool announces as pending and adds them to
@@ -140,6 +144,10 @@ pub(crate) struct DestinationReader<P: ReaderPool, E = NoExtensions> {
     full_read_interval: Duration,
     lane_mix: LaneMix,
     sender: mpsc::Sender<InsertValidatedTransaction<E>>,
+    /// Hashes the destination reported it holds, from this destination's forwarder.
+    delivered: mpsc::Receiver<(TxHash, Instant)>,
+    /// Set by this destination's forwarder when the destination failed a send.
+    destination_lost: Arc<AtomicBool>,
     cancel: CancellationToken,
     builder_url: Url,
     url_label: Arc<str>,
@@ -197,10 +205,26 @@ where
             full_read_interval: Self::FULL_READ_INTERVAL,
             lane_mix,
             sender,
+            delivered: mpsc::channel(1).1,
+            destination_lost: Arc::default(),
             cancel,
             builder_url,
             url_label,
         }
+    }
+
+    /// Takes the hashes the destination confirmed it holds from `delivered`, deferring their
+    /// resends, until `lost` reports a failed send to the destination.
+    ///
+    /// The forwarder for the same destination feeds both, see its `with_delivery_receipts`.
+    pub(crate) fn with_delivery_receipts(
+        mut self,
+        delivered: mpsc::Receiver<(TxHash, Instant)>,
+        lost: Arc<AtomicBool>,
+    ) -> Self {
+        self.delivered = delivered;
+        self.destination_lost = lost;
+        self
     }
 
     /// Reader loop — runs until the [`CancellationToken`] is cancelled.
@@ -278,8 +302,16 @@ where
     }
 
     /// Reads the pool into a fresh [`Snapshot`], skipping transactions this destination's queue
-    /// accepted recently. Returns `None` if the reader was cancelled while reading.
+    /// accepted recently or that the destination confirmed it holds. Returns `None` if the reader was
+    /// cancelled while reading.
     fn take_snapshot(&mut self) -> Option<Snapshot<P::Transaction>> {
+        while let Ok((hash, acked_at)) = self.delivered.try_recv() {
+            self.recently_sent.mark_delivered(hash, acked_at);
+        }
+        if self.destination_lost.swap(false, Ordering::Relaxed) {
+            self.recently_sent.forget_deliveries();
+        }
+
         let mut txs_read: u64 = 0;
         let mut txs_ignored: u64 = 0;
 
@@ -1001,5 +1033,68 @@ mod tests {
             .await
             .expect("reader exits well before the gap or another snapshot ends")
             .unwrap();
+    }
+
+    /// The hashes a full read queues, in pick order.
+    fn snapshot_hashes(reader: &mut DestinationReader<MockReaderPool>) -> Vec<TxHash> {
+        let mut lanes = reader.take_snapshot().unwrap();
+        std::iter::from_fn(|| lanes.pop(Lane::Priority)).map(|tx| *tx.hash()).collect()
+    }
+
+    /// A reader over `txs` whose resends are all due at once, with its delivery receipt channel.
+    fn resending_reader(
+        txs: Vec<Arc<ValidPoolTransaction<BasePooledTransaction>>>,
+        lost: Arc<AtomicBool>,
+    ) -> (DestinationReader<MockReaderPool>, mpsc::Sender<(TxHash, Instant)>) {
+        let mut pool = MockReaderPool::new();
+        pool.expect_block_info().returning(BlockInfo::default);
+        pool.expect_best_transactions().returning(move || Box::new(txs.clone().into_iter()));
+        let (receipts, receipts_rx) = mpsc::channel(4);
+        let reader = DestinationReader::new(
+            pool,
+            ReaderConfig {
+                resend_after: Duration::ZERO,
+                channel_capacity: 4,
+                poll_interval: ReaderConfig::POLL_INTERVAL,
+                fifo_percent: 0,
+            },
+            mpsc::channel(4).0,
+            CancellationToken::new(),
+            "http://builder.test".parse().unwrap(),
+        )
+        .with_delivery_receipts(receipts_rx, lost);
+        (reader, receipts)
+    }
+
+    /// A transaction the destination confirmed it holds is left out of a full read that resends
+    /// one it never confirmed.
+    #[test]
+    fn a_full_read_skips_confirmed_transactions() {
+        let (delivered, undelivered) = (transaction(0), transaction(1));
+        let (mut reader, receipts) = resending_reader(
+            vec![Arc::clone(&delivered), Arc::clone(&undelivered)],
+            Arc::default(),
+        );
+        reader.recently_sent.mark_sent(*delivered.hash());
+        reader.recently_sent.mark_sent(*undelivered.hash());
+        receipts.try_send((*delivered.hash(), Instant::now())).unwrap();
+
+        assert_eq!(snapshot_hashes(&mut reader), vec![*undelivered.hash()]);
+    }
+
+    /// Once the forwarder reports the destination lost, the transactions it confirmed are resent.
+    #[test]
+    fn a_lost_destination_gets_its_confirmed_transactions_again() {
+        let delivered = transaction(0);
+        let lost = Arc::new(AtomicBool::new(false));
+        let (mut reader, receipts) =
+            resending_reader(vec![Arc::clone(&delivered)], Arc::clone(&lost));
+        reader.recently_sent.mark_sent(*delivered.hash());
+        receipts.try_send((*delivered.hash(), Instant::now())).unwrap();
+        assert!(snapshot_hashes(&mut reader).is_empty());
+
+        lost.store(true, Ordering::Relaxed);
+
+        assert_eq!(snapshot_hashes(&mut reader), vec![*delivered.hash()]);
     }
 }
