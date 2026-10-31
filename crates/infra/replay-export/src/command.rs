@@ -26,7 +26,7 @@ pub struct ExportCommand {
     /// Storage network namespace.
     #[arg(long)]
     pub network: String,
-    /// Local root or s3://bucket/prefix.
+    /// Local root or `s3://bucket/prefix`.
     #[arg(long)]
     pub store: String,
     /// S3-compatible endpoint override.
@@ -77,7 +77,7 @@ impl ExportCommand {
         provider: &impl Provider,
         store: &ReplayStore,
     ) -> Result<ExportManifest, ExportError> {
-        if self.from > self.to || self.warmup.subsec_nanos() % 1_000_000 != 0 {
+        if self.from > self.to || !self.warmup.subsec_nanos().is_multiple_of(1_000_000) {
             return Err(ExportError::Invalid(
                 "reversed block range or fractional millisecond warmup",
             ));
