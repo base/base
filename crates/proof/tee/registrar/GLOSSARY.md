@@ -15,8 +15,9 @@ _Avoid_: resolution outcome, instance result
 
 **Unresolved instance**:
 An instance whose signer set this cycle cannot be trusted as complete, because
-resolution failed, attestations were unavailable, or it went missing and is
-still within its grace period.
+resolution failed, attestations were unavailable, it went missing and is still
+within its grace period, or it is unhealthy with no last-known signers (as after
+a restart) and is still within its grace period.
 _Avoid_: inconclusive instance, uncertain instance
 
 **Grace period**:
