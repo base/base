@@ -12,8 +12,19 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+tracing.workspace = true
+base-clock.workspace = true
+tokio-util.workspace = true
 jsonrpsee-types.workspace = true
+base-replay-store = { path = "../replay-store" }
 base-replay = { path = "../../utilities/replay" }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true, features = ["raw_value"] }
 alloy-primitives = { workspace = true, features = ["serde"] }
+axum = { workspace = true, features = ["json"] }
+tokio = { workspace = true, features = ["sync"] }
+
+[dev-dependencies]
+futures.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

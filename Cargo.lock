@@ -6215,10 +6215,18 @@ name = "base-replay-recorder"
 version = "0.0.0"
 dependencies = [
  "alloy-primitives",
+ "axum 0.8.9",
+ "base-clock",
  "base-replay",
+ "base-replay-store",
+ "futures",
  "jsonrpsee-types",
  "serde",
  "serde_json",
+ "tempfile",
+ "tokio",
+ "tokio-util",
+ "tracing",
 ]
 
 [[package]]
