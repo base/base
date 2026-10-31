@@ -36,6 +36,15 @@ const WAIT_TIMEOUT: Duration = Duration::from_secs(10);
 const ISOLATION_TIMEOUT: Duration = Duration::from_millis(500);
 const SNAPSHOT_AGE_OUT: Duration = Duration::from_millis(50);
 
+/// Receiver for forwarded transactions, and optional hooks that hold each insert call.
+type MockContext = (
+    mpsc::UnboundedSender<ValidatedTransaction<TransactionValidity>>,
+    Option<Arc<Barrier>>,
+    Option<Arc<Notify>>,
+    Option<Arc<Semaphore>>,
+);
+
+/// A builder serving both insert methods, as production builders do.
 struct MockBuilder {
     url: Url,
     handle: ServerHandle,
@@ -55,26 +64,44 @@ impl MockBuilder {
             "base_insertValidatedTransaction",
             |params, context, _| async move {
                 let transaction: ValidatedTransaction<TransactionValidity> = params.one()?;
-                context.0.send(transaction).expect("test receiver should remain open");
-
-                if let (Some(entered), Some(release)) = (&context.1, &context.2) {
-                    entered.wait().await;
-                    release.notified().await;
-                }
-
-                // Each call holds the gate until it returns, so the destination stays blocked
-                // until the test opens it and then accepts every later call.
-                if let Some(gate) = &context.3 {
-                    let _open = gate.acquire().await.expect("gate is never closed");
-                }
-
+                Self::accept(&context, vec![transaction]).await;
                 Ok::<(), jsonrpsee::types::ErrorObjectOwned>(())
+            },
+        )?;
+        module.register_async_method(
+            "base_insertValidatedTransactions",
+            |params, context, _| async move {
+                let transactions: Vec<ValidatedTransaction<TransactionValidity>> = params.one()?;
+                let accepted = vec![None::<()>; transactions.len()];
+                Self::accept(&context, transactions).await;
+                Ok::<_, jsonrpsee::types::ErrorObjectOwned>(accepted)
             },
         )?;
         let handle = server.start(module);
         let url = Url::parse(&format!("http://{address}"))?;
 
         Ok(Self { url, handle })
+    }
+
+    /// Records one insert call's transactions, then holds the call as the test configured.
+    async fn accept(
+        context: &MockContext,
+        transactions: Vec<ValidatedTransaction<TransactionValidity>>,
+    ) {
+        for transaction in transactions {
+            context.0.send(transaction).expect("test receiver should remain open");
+        }
+
+        if let (Some(entered), Some(release)) = (&context.1, &context.2) {
+            entered.wait().await;
+            release.notified().await;
+        }
+
+        // Each call holds the gate until it returns, so the destination stays blocked
+        // until the test opens it and then accepts every later call.
+        if let Some(gate) = &context.3 {
+            let _open = gate.acquire().await.expect("gate is never closed");
+        }
     }
 
     async fn shutdown(self) -> Result<()> {
