@@ -30,6 +30,7 @@ jsonrpsee = { workspace = true, features = ["http-client"] }
 
 base-clock.workspace = true
 base-replay = { path = "../../utilities/replay" }
+base-replay-export = { path = "../replay-export" }
 base-common-chains.workspace = true
 base-common-network.workspace = true
 base-common-consensus.workspace = true
@@ -39,6 +40,7 @@ base-tx-forwarding.workspace = true
 
 [dev-dependencies]
 mockall.workspace = true
+tempfile.workspace = true
 tracing-subscriber.workspace = true
 axum = { workspace = true, features = ["http1", "tokio"] }
 jsonrpsee = { workspace = true, features = ["server"] }
