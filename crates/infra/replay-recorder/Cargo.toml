@@ -18,14 +18,18 @@ jsonrpsee-types.workspace = true
 tokio-util.workspace = true
 base-replay-store = { path = "../replay-store" }
 base-replay = { path = "../../utilities/replay" }
+clap = { workspace = true, features = ["derive"] }
 serde = { workspace = true, features = ["derive"] }
 alloy-primitives = { workspace = true, features = ["serde"] }
 serde_json = { workspace = true, features = ["raw_value"] }
 axum = { workspace = true, features = ["tokio", "http1", "json"] }
 tokio = { workspace = true, features = ["net", "sync", "time"] }
+aws-config = { workspace = true, features = ["default-https-client", "rt-tokio"] }
 
 [dev-dependencies]
 futures.workspace = true
+reth-tasks.workspace = true
 reqwest.workspace = true
 tempfile.workspace = true
+base-replay-driver = { path = "../replay-driver" }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

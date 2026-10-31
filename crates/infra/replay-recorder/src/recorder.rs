@@ -127,8 +127,11 @@ mod tests {
     use std::time::Duration;
 
     use base_clock::GlobalClock;
+    use base_replay::{ReplayRecord, ReplayStream};
+    use base_replay_driver::{BuilderIngressInjector, Injector};
     use base_replay_store::{ReplayStore, ReplayWriter};
     use futures::TryStreamExt;
+    use reth_tasks::{RuntimeBuilder, RuntimeConfig, TokioConfig};
     use serde_json::{Value, json};
     use tokio::{net::TcpListener, task::JoinSet, time::timeout};
     use tokio_util::sync::CancellationToken;
@@ -182,6 +185,26 @@ mod tests {
         ] {
             assert_eq!(client.post(&url).body(body).send().await.unwrap().status(), 400);
         }
+        let runtime = RuntimeBuilder::new(
+            RuntimeConfig::default()
+                .with_tokio(TokioConfig::existing_handle(tokio::runtime::Handle::current())),
+        )
+        .build()
+        .unwrap();
+        let injector = BuilderIngressInjector::new(url.parse().unwrap(), &runtime).unwrap();
+        injector
+            .inject(ReplayRecord {
+                stream: ReplayStream::BuilderIngress,
+                received_at_ms: 0,
+                method: "forwarded_call".into(),
+                params: serde_json::from_str(params).unwrap(),
+                batch_id: None,
+                source: String::new(),
+                tx_hash: None,
+            })
+            .await
+            .unwrap();
+        drop(injector);
         assert_eq!(
             client
                 .post(&url)
@@ -208,7 +231,8 @@ mod tests {
                 "future_method",
                 "base_insertValidatedTransactions",
                 "unknown",
-                "base_insertValidatedTransaction"
+                "base_insertValidatedTransaction",
+                "forwarded_call"
             ]
         );
         assert_eq!(records[0].params.get().as_bytes(), params.as_bytes());

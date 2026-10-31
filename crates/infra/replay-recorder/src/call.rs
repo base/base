@@ -90,3 +90,47 @@ impl RecordedCall {
         (!raw.is_empty()).then(|| keccak256(raw))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use alloy_primitives::keccak256;
+
+    use super::RecordedCall;
+
+    #[test]
+    fn derives_hash_when_insert_identifies_one_transaction() {
+        for (method, params, expected) in [
+            ("base_insertValidatedTransaction", r#"[{"raw":"0x0102"}]"#, Some(keccak256([1, 2]))),
+            (
+                "base_insertValidatedTransactions",
+                r#"[[{"raw":"0x0102"}]]"#,
+                Some(keccak256([1, 2])),
+            ),
+            ("base_insertValidatedTransactions", r#"[[{"raw":"0x01"},{"raw":"0x02"}]]"#, None),
+            ("base_insertValidatedTransaction", r#"[{"raw":"invalid"}]"#, None),
+            ("unknown", r#"[{"raw":"0x0102"}]"#, None),
+        ] {
+            let call: RecordedCall = serde_json::from_str(&format!(
+                r#"{{"jsonrpc":"2.0","method":"{method}","params":{params}}}"#
+            ))
+            .unwrap();
+
+            assert_eq!(call.tx_hash(), expected);
+        }
+    }
+
+    #[test]
+    fn preserves_id_when_signed_or_null_and_distinguishes_notifications() {
+        for id in ["-7", "null", "\"text\""] {
+            let call: RecordedCall =
+                serde_json::from_str(&format!(r#"{{"jsonrpc":"2.0","id":{id},"method":"any"}}"#))
+                    .unwrap();
+
+            assert_eq!(serde_json::to_string(&call.id.unwrap()).unwrap(), id);
+            assert_eq!(call.params.get(), "null");
+        }
+        let notification: RecordedCall =
+            serde_json::from_str(r#"{"jsonrpc":"2.0","method":"any"}"#).unwrap();
+        assert!(notification.id.is_none());
+    }
+}

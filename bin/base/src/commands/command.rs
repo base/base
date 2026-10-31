@@ -9,7 +9,7 @@ use reth_cli_runner::CliRunner;
 
 use crate::{
     commands::{
-        bootnode::BootnodeCommand, consensus::ConsensusCommand, dev::DevCommand,
+        ReplayCommand, bootnode::BootnodeCommand, consensus::ConsensusCommand, dev::DevCommand,
         execution::ExecutionCommand, follow::FollowCommand, reth::RethCommand, rpc::RpcCommand,
         sequencer::SequencerCommand, snapshot::SnapshotCommand, update::UpdateCommand,
     },
@@ -56,6 +56,8 @@ pub(crate) enum BaseCommand {
     /// Snapshot manifest generation and download utilities (uses its own --chain flag).
     #[command(name = "snapshot")]
     Snapshot(Box<SnapshotCommand>),
+    /// Record and manage replay datasets (uses its own --network flag).
+    Replay(Box<ReplayCommand>),
 }
 
 impl BaseCommand {
@@ -65,6 +67,10 @@ impl BaseCommand {
         metrics_enabled: bool,
     ) -> eyre::Result<()> {
         match self {
+            Self::Replay(replay) => {
+                chain_resolver.reject_for_reth_command("base replay")?;
+                replay.command.run()
+            }
             Self::Batcher(batcher) => {
                 chain_resolver.reject_for_reth_command("base batcher")?;
                 RuntimeManager::new()
