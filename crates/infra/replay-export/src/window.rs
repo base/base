@@ -1,9 +1,10 @@
 use std::{ops::RangeInclusive, time::Duration};
 
 use alloy_provider::Provider;
+use serde::{Deserialize, Serialize};
 
 /// Canonical block endpoints and their half-open replay window, in Unix milliseconds.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExportWindow {
     /// RPC chain ID.
     pub chain_id: u64,
