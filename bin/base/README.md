@@ -5,6 +5,9 @@ Unified Base node binary.
 `base replay export` exports recorded ingress for a block range. See the
 [export format and CLI reference](../../crates/infra/replay-export/README.md).
 
+`base replay run` attaches to a replay-clock builder and writes `diff.json` and
+`diff.md`. See the [attach setup and clock contract](../../crates/infra/replay-driver/README.md#attach-cli).
+
 ## OTLP Tracing
 
 Unified commands, including `rpc`, `follow`, and `sequencer`, support the same

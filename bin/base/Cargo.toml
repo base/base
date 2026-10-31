@@ -38,6 +38,7 @@ base-execution-consensus.workspace = true
 base-shadow-indexer.workspace = true
 base-cli-utils = { workspace = true, features = ["otlp"] }
 base-replay-export = { path = "../../crates/infra/replay-export" }
+base-replay-driver = { path = "../../crates/infra/replay-driver" }
 
 # alloy
 alloy-chains = { workspace = true, features = ["std"] }
@@ -67,10 +68,14 @@ url.workspace = true
 rstest.workspace = true
 reqwest.workspace = true
 tempfile.workspace = true
+base-clock.workspace = true
 serde_json.workspace = true
 base-common-genesis.workspace = true
+alloy-provider = { workspace = true, features = ["ipc"] }
+jsonrpsee = { workspace = true, features = ["server"] }
 figment = { workspace = true, features = ["test"] }
 axum = { workspace = true, features = ["tokio", "http1", "http2"] }
+base-builder-core = { workspace = true, features = ["test-utils"] }
 tokio = { workspace = true, features = ["net", "time", "macros", "process", "rt-multi-thread"] }
 
 [features]
