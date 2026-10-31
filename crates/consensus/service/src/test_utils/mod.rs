@@ -8,6 +8,9 @@ pub use fake_engine_client::{
 mod fake_l1;
 pub use fake_l1::FakeL1;
 
+mod fake_l1_canonical;
+pub use fake_l1_canonical::AlwaysCanonical;
+
 mod fake_safedb;
 pub use fake_safedb::{FakeSafeDB, FakeSafeDBHandle};
 

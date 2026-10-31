@@ -27,16 +27,17 @@ use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    AlloyL1BlockFetcher, CheckpointActor, CheckpointClient, CheckpointDB, CheckpointWriter,
-    Conductor, ConductorClient, DelayedL1OriginSelectorProvider, DerivationActor, EngineActor,
-    EngineActorRequest, EngineConfig, EngineProcessor, EngineRequestReceiver, EngineRpcProcessor,
-    L1OriginSelector, L1WatcherActor, L1WatcherQueryExecutor, L1WatcherQueryProcessor,
-    NetworkActor, NetworkBuilder, NetworkConfig, NodeActor, NodeOperatingMode, PayloadBuilder,
-    PrefetchedChainProvider, PreparedL1Origin, QueuedDerivationEngineClient,
-    QueuedEngineDerivationClient, QueuedEngineRpcClient, QueuedL1WatcherDerivationClient,
-    QueuedNetworkEngineClient, QueuedSequencerAdminAPIClient, QueuedSequencerEngineClient,
-    RecoveryModeGuard, RpcActor, RpcContext, SequencerActor, SequencerConfig,
-    SequencerEngineRequestCoordinator, UpgradeSignalNodeConfig, ValidatorEngineRequestHandler,
+    AlloyL1BlockFetcher, ChainProviderCanonicalChain, CheckpointActor, CheckpointClient,
+    CheckpointDB, CheckpointWriter, Conductor, ConductorClient, DelayedL1OriginSelectorProvider,
+    DerivationActor, EngineActor, EngineActorRequest, EngineConfig, EngineProcessor,
+    EngineRequestReceiver, EngineRpcProcessor, L1OriginSelector, L1WatcherActor,
+    L1WatcherQueryExecutor, L1WatcherQueryProcessor, NetworkActor, NetworkBuilder, NetworkConfig,
+    NodeActor, NodeOperatingMode, PayloadBuilder, PrefetchedChainProvider, PreparedL1Origin,
+    QueuedDerivationEngineClient, QueuedEngineDerivationClient, QueuedEngineRpcClient,
+    QueuedL1WatcherDerivationClient, QueuedNetworkEngineClient, QueuedSequencerAdminAPIClient,
+    QueuedSequencerEngineClient, RecoveryModeGuard, RpcActor, RpcContext, SequencerActor,
+    SequencerConfig, SequencerEngineRequestCoordinator, UpgradeSignalNodeConfig,
+    ValidatorEngineRequestHandler,
     actors::{BlockStream, NetworkInboundData, QueuedUnsafePayloadGossipClient},
 };
 
@@ -404,6 +405,13 @@ impl RollupNode {
             pipeline,
             safe_head_listener,
             derivation_origin_tx,
+            // Finalization verifies a candidate's L1 inclusion block against the canonical L1
+            // chain before promoting it. The provider is only queried on finalization events.
+            Arc::new(ChainProviderCanonicalChain::new(AlloyChainProvider::new_with_trust(
+                self.l1_config.engine_provider.clone(),
+                DERIVATION_PROVIDER_CACHE_SIZE,
+                self.l1_config.trust_rpc,
+            ))),
         );
 
         // Create the p2p actor.

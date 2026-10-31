@@ -16,8 +16,8 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 
 use super::{
-    FakeEngineClient, FakeEngineClientHandle, FakeL1, FakeSafeDB, FakeSafeDBHandle,
-    ScriptedForkchoiceResponse,
+    AlwaysCanonical, FakeEngineClient, FakeEngineClientHandle, FakeL1, FakeSafeDB,
+    FakeSafeDBHandle, ScriptedForkchoiceResponse,
 };
 use crate::{
     DerivationActor, DerivationActorRequest, DerivationState, EngineActorRequest, EngineProcessor,
@@ -279,6 +279,8 @@ impl HarnessBuilder {
             // the harness never observes the channel, so the Receiver is
             // intentionally dropped here.
             watch::channel(None).0,
+            // The harness's L1 never reorgs a block derivation already built on.
+            Arc::new(AlwaysCanonical),
         );
         let derivation_handle = tokio::spawn(async move {
             // Cancellation exits via `Ok(())`, so any `Err` here is a genuine
