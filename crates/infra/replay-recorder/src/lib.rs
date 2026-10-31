@@ -2,3 +2,6 @@
 
 mod call;
 pub use call::{CaptureContext, RecordedCall, RecordedTransaction, RpcEnvelope, RpcId};
+
+mod recorder;
+pub use recorder::Recorder;
