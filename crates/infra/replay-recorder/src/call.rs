@@ -29,11 +29,20 @@ pub enum RpcEnvelope {
 }
 
 impl RpcEnvelope {
+    /// Bound per-member parsing and response expansion independently of body bytes.
+    pub const MAX_BATCH_CALLS: usize = 1024;
+
     /// Parse envelopes while preserving raw params.
     pub fn parse(bytes: &[u8]) -> Result<Self, serde_json::Error> {
         let raw: &RawValue = serde_json::from_slice(bytes)?;
         let envelope = if raw.get().starts_with('[') {
             let members: Vec<&RawValue> = serde_json::from_str(raw.get())?;
+            if members.len() > Self::MAX_BATCH_CALLS {
+                return Err(serde_json::Error::io(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "batch limit",
+                )));
+            }
             Self::Batch(
                 members.into_iter().map(|member| serde_json::from_str(member.get())).collect(),
             )
@@ -125,5 +134,7 @@ mod tests {
         assert_eq!(results.len(), 2);
         assert_eq!(results[0].as_ref().unwrap().1.method, "ok");
         assert!(results[1].is_err());
+        let oversized = format!("[{}]", vec!["1"; RpcEnvelope::MAX_BATCH_CALLS + 1].join(","));
+        assert!(RpcEnvelope::parse(oversized.as_bytes()).is_err());
     }
 }
