@@ -1,0 +1,35 @@
+[package]
+name = "base-replay-export"
+description = "Streaming block-range replay exports"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+url.workspace = true
+eyre.workspace = true
+futures.workspace = true
+humantime.workspace = true
+thiserror.workspace = true
+serde_json.workspace = true
+alloy-provider.workspace = true
+alloy-transport.workspace = true
+base-replay = { path = "../../utilities/replay" }
+base-replay-store = { path = "../replay-store" }
+clap = { workspace = true, features = ["derive"] }
+serde = { workspace = true, features = ["derive"] }
+tokio = { workspace = true, features = ["fs", "io-util", "time"] }
+aws-config = { workspace = true, features = ["default-https-client", "rt-tokio"] }
+
+[dev-dependencies]
+rstest.workspace = true
+tempfile.workspace = true
+alloy-rpc-types-eth.workspace = true
+jsonrpsee = { workspace = true, features = ["server"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

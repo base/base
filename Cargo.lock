@@ -6198,6 +6198,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-replay-export"
+version = "0.0.0"
+dependencies = [
+ "alloy-provider",
+ "alloy-rpc-types-eth 2.5.0",
+ "alloy-transport",
+ "aws-config",
+ "base-replay",
+ "base-replay-store",
+ "clap",
+ "eyre",
+ "futures",
+ "humantime",
+ "jsonrpsee",
+ "rstest",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.19",
+ "tokio",
+ "url",
+]
+
+[[package]]
 name = "base-replay-store"
 version = "0.0.0"
 dependencies = [
