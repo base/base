@@ -17,11 +17,11 @@ use crate::{RegistrarMetrics, Result};
 pub struct PendingRegistration {
     /// Originating instance ID, used to preserve tasks when the source
     /// instance is unresolved and to attribute log lines.
-    pub instance_id: String,
+    instance_id: String,
     /// `JoinSet` task id for this registration task.
-    pub task_id: task::Id,
+    task_id: task::Id,
     /// Cooperative cancel handle for this single task.
-    pub cancel: CancellationToken,
+    cancel: CancellationToken,
 }
 
 /// Driver-owned set of in-flight registration tasks.
