@@ -6,8 +6,12 @@
 //! event. Execute each returned `Submit` or `Reprove` and apply its result
 //! before calling `need` again, including any action returned by that result.
 //! `Wait` continues the loop; its update is only for reporting. `Idle` ends
-//! the tick. Terminal actions remove the attempt. Events that don't match the
-//! current phase are inert.
+//! the tick. Terminal actions remove the attempt and request no further I/O.
+//! Events that don't match the current phase are inert.
+//!
+//! If a `Submit` or `Reprove` result is never applied, the next tick rechecks
+//! the chain before retrying the action. An unapplied reprove spends no retry
+//! and preserves any switch to ZK fallback, including its reset retry count.
 //!
 //! The attempt requests at most one poll and one chain check per tick. A poll
 //! that obtains a proof or fails proceeds to the chain check in the same tick.
@@ -374,6 +378,9 @@ impl DisputeAttempt {
     /// requested I/O response and any resulting action's result before calling again.
     pub fn need(&mut self, now: Instant) -> Need {
         if self.tick != Some(now) {
+            if self.tick.is_some() && matches!(self.phase, AttemptPhase::Reproving { .. }) {
+                self.phase = AttemptPhase::NeedsRetry;
+            }
             self.tick = Some(now);
             self.polled = false;
             self.checked_chain = false;
@@ -915,6 +922,58 @@ mod tests {
                 "{name}",
             );
         }
+    }
+
+    #[test]
+    fn unapplied_zk_reprove_retries_next_tick_without_spending_budget() {
+        let now = Instant::now();
+        assert_unapplied_reprove_recovers(zk(now), now, false);
+    }
+
+    #[test]
+    fn unapplied_tee_fallback_retries_as_zk_with_reset_budget() {
+        let now = Instant::now();
+        assert_unapplied_reprove_recovers(tee(now, true), now, true);
+    }
+
+    fn assert_unapplied_reprove_recovers(
+        mut attempt: DisputeAttempt,
+        now: Instant,
+        fallback: bool,
+    ) {
+        assert!(matches!(attempt.need(now), Need::PollProver(_)));
+        attempt.apply(response(ProofStatus::Failed), now);
+        assert!(matches!(attempt.need(now), Need::CheckChain { timeout: None }));
+        let Action::Reprove(first) = attempt.apply(chain(), now) else {
+            panic!("failed proof must request a reprove");
+        };
+        assert_eq!(first.retry_count, 1);
+        assert_eq!(first.fallback, fallback);
+        assert!(matches!(attempt.need(now), Need::Idle));
+
+        let next = now + Duration::from_secs(1);
+        let need = attempt.need(next);
+        assert!(
+            matches!(need, Need::CheckChain { timeout: None }),
+            "unapplied reprove must recheck the chain next tick, got {need:?}"
+        );
+        let Action::Reprove(retry) = attempt.apply(chain(), next) else {
+            panic!("unapplied reprove must retry after the chain check");
+        };
+        assert_eq!(retry.request, first.request);
+        assert_eq!(retry.retry_count, if fallback { 0 } else { 1 });
+        assert!(!retry.fallback);
+        assert!(matches!(attempt.need(next), Need::Idle));
+
+        attempt.apply(Event::ReproveStarted(Ok("next".into())), next);
+        let proof_tick = next + Duration::from_secs(1);
+        assert!(matches!(attempt.need(proof_tick), Need::PollProver(id) if id == "next"));
+        attempt.apply(success(false), proof_tick);
+        assert!(matches!(attempt.need(proof_tick), Need::CheckChain { timeout: None }));
+        assert!(matches!(
+            attempt.apply(chain(), proof_tick),
+            Action::Submit { source: AttemptProofSource::Zk, intent: DisputeIntent::Challenge, .. }
+        ));
     }
 
     #[test]
