@@ -1,14 +1,18 @@
 //! A dispute attempt's policy, without prover, chain, or transaction I/O.
 //!
-//! Each tick calls `need(now)` first. Poll the prover only for `PollProver`, then
-//! apply its response. `Wait(Ready | NeedsRetry)` continues with a chain check
-//! in the same tick; other waits end the tick. `CheckChain` goes straight to
-//! that check, carrying a newly applied timeout for reporting. Apply the chain
-//! response, execute `Submit` or `Reprove`, and apply its result in the same
-//! tick. Transport failures during polling or chain reads end the tick without
-//! an event. Never call `need` again within a tick: `Submit.just_obtained` is
-//! cleared there so a failed chain read cannot count a TEE proof next tick.
-//! Terminal actions remove the attempt. Out-of-order events are inert.
+//! Drive each tick by calling `need(now)` in a loop with the same `now`. A
+//! different `now` starts a new tick. For `PollProver` or `CheckChain`, perform
+//! that I/O and apply its response. Transport failures end the tick without an
+//! event. Execute each returned `Submit` or `Reprove` and apply its result
+//! before calling `need` again, including any action returned by that result.
+//! `Wait` continues the loop; its update is only for reporting. `Idle` ends
+//! the tick. Terminal actions remove the attempt. Out-of-order events are inert.
+//!
+//! The attempt requests at most one poll and one chain check per tick. A poll
+//! that obtains a proof or fails proceeds to the chain check in the same tick.
+//! A queued or running prover, a ZK decode error, or a completed chain check
+//! leaves the tick idle. Only a proof obtained in the current tick sets
+//! `Submit.just_obtained`.
 
 use std::time::{Duration, Instant};
 
@@ -76,9 +80,11 @@ pub enum RetryReason {
     ProverFailed(Option<String>),
 }
 
-/// I/O needed at the start of a tick.
+/// Next I/O within a tick, or an indication that the tick is idle.
 #[derive(Debug)]
 pub enum Need {
+    /// Nothing more to do this tick.
+    Idle,
     /// Poll this prover session.
     PollProver(String),
     /// Read game status and both provers; report a newly applied timeout first.
@@ -108,14 +114,14 @@ pub enum Event {
     ReproveStarted(Result<String, eyre::Report>),
 }
 
-/// Information accompanying a wait; only `Ready` and `NeedsRetry` continue this tick.
+/// Reporting data accompanying a wait; use `need` to determine the next step.
 #[derive(Debug)]
 pub enum AttemptUpdate {
     /// The prover is queued or running, or an event is out of order.
     Pending,
-    /// A proof was obtained; check the chain in this tick.
+    /// A proof was obtained.
     Ready(AttemptProofSource),
-    /// A proof failed; check the chain before retry handling.
+    /// A proof failed.
     NeedsRetry(RetryReason),
     /// ZK decoding failed without spending a retry or leaving the awaiting state.
     ZkDecodeError(eyre::Report),
@@ -229,7 +235,7 @@ pub struct AttemptReprove {
 /// Policy result; the caller performs all effects.
 #[derive(Debug)]
 pub enum Action {
-    /// End this tick unless the update explicitly requires a chain check.
+    /// Report the update and call `need` again with this tick's `now`.
     Wait(AttemptUpdate),
     /// Submit the ready proof.
     Submit {
@@ -312,6 +318,9 @@ pub struct DisputeAttempt {
     limits: AttemptLimits,
     source: AttemptSource,
     phase: AttemptPhase,
+    tick: Option<Instant>,
+    polled: bool,
+    checked_chain: bool,
 }
 
 impl DisputeAttempt {
@@ -331,6 +340,9 @@ impl DisputeAttempt {
                 retry_count: 0,
                 submit_retry_count: 0,
             }),
+            tick: None,
+            polled: false,
+            checked_chain: false,
             phase: AttemptPhase::Awaiting { session_id, started_at: now },
         }
     }
@@ -348,20 +360,38 @@ impl DisputeAttempt {
             target,
             limits,
             source: AttemptSource::Zk(ZkAttempt { request, intent, retry_count: 0 }),
+            tick: None,
+            polled: false,
+            checked_chain: false,
             phase: AttemptPhase::Awaiting { session_id, started_at: now },
         }
     }
 
-    /// Applies timeout before requesting any prover I/O.
+    /// Requests the next step, applying timeout at tick start before any prover I/O.
+    ///
+    /// Reuse `now` within a tick; a different value starts a new tick. Apply each
+    /// requested I/O response and any resulting action's result before calling again.
     pub fn need(&mut self, now: Instant) -> Need {
-        if let AttemptPhase::Ready { just_obtained, .. } = &mut self.phase {
-            *just_obtained = false;
+        if self.tick != Some(now) {
+            self.tick = Some(now);
+            self.polled = false;
+            self.checked_chain = false;
+            if let AttemptPhase::Ready { just_obtained, .. } = &mut self.phase {
+                *just_obtained = false;
+            }
+        }
+        if self.checked_chain {
+            return Need::Idle;
         }
         if let AttemptPhase::Awaiting { started_at, .. } = &self.phase {
+            if self.polled {
+                return Need::Idle;
+            }
             let elapsed = now.saturating_duration_since(*started_at);
             if elapsed > self.limits.max_proof_duration {
                 self.increment_retry();
                 self.phase = AttemptPhase::NeedsRetry;
+                self.checked_chain = true;
                 return Need::CheckChain {
                     timeout: Some(RetryReason::Timeout {
                         elapsed,
@@ -371,8 +401,15 @@ impl DisputeAttempt {
             }
         }
         match &self.phase {
-            AttemptPhase::Awaiting { session_id, .. } => Need::PollProver(session_id.clone()),
-            _ => Need::CheckChain { timeout: None },
+            AttemptPhase::Awaiting { session_id, .. } => {
+                self.polled = true;
+                Need::PollProver(session_id.clone())
+            }
+            AttemptPhase::Ready { .. } | AttemptPhase::NeedsRetry => {
+                self.checked_chain = true;
+                Need::CheckChain { timeout: None }
+            }
+            AttemptPhase::Reproving { .. } | AttemptPhase::Done => Need::Idle,
         }
     }
 
@@ -694,23 +731,237 @@ mod tests {
         }))
     }
 
+    fn drive_tick(
+        attempt: &mut DisputeAttempt,
+        now: Instant,
+        events: Vec<Event>,
+    ) -> Vec<&'static str> {
+        let mut events = events.into_iter();
+        let mut trace = Vec::new();
+        for _ in 0..8 {
+            let need = attempt.need(now);
+            trace.push(match need {
+                Need::Idle => "idle",
+                Need::PollProver(_) => "poll",
+                Need::CheckChain { timeout: None } => "chain",
+                Need::CheckChain { timeout: Some(_) } => "timeout",
+            });
+            if matches!(need, Need::Idle) {
+                assert!(events.next().is_none(), "unused scripted response");
+                return trace;
+            }
+            let Some(event) = events.next() else {
+                trace.push("transport error");
+                return trace;
+            };
+            let mut action = attempt.apply(event, now);
+            loop {
+                match action {
+                    Action::Wait(_) => break,
+                    Action::Submit { .. } => trace.push("submit"),
+                    Action::Reprove(_) => trace.push("reprove"),
+                    Action::Drop(_) | Action::Ignore(_) => {
+                        trace.push("remove");
+                        return trace;
+                    }
+                }
+                action = attempt.apply(events.next().expect("action result"), now);
+            }
+        }
+        trace
+    }
+
+    fn submit_failure() -> Event {
+        Event::Submitted(Err(ChallengeSubmitError::TxManager(TxManagerError::NonceTooLow)))
+    }
+
+    #[test]
+    fn tick_sequences_follow_needs_without_inspecting_updates() {
+        let now = Instant::now();
+        let mut ready = tee(now, true);
+        ready.apply(success(true), now);
+        let mut retry = zk(now);
+        retry.apply(response(ProofStatus::Failed), now);
+        let cases = [
+            ("running", zk(now), now, vec![response(ProofStatus::Running)], vec!["poll", "idle"]),
+            ("decode error", zk(now), now, vec![success(true)], vec!["poll", "idle"]),
+            (
+                "tee success",
+                tee(now, true),
+                now,
+                vec![success(true), chain(), submit_failure()],
+                vec!["poll", "chain", "submit", "idle"],
+            ),
+            (
+                "zk success",
+                zk(now),
+                now,
+                vec![success(false), chain(), submit_failure()],
+                vec!["poll", "chain", "submit", "idle"],
+            ),
+            (
+                "failed",
+                zk(now),
+                now,
+                vec![
+                    response(ProofStatus::Failed),
+                    chain(),
+                    Event::ReproveStarted(Ok("next".into())),
+                ],
+                vec!["poll", "chain", "reprove", "idle"],
+            ),
+            (
+                "tee failed",
+                tee(now, true),
+                now,
+                vec![
+                    response(ProofStatus::Failed),
+                    chain(),
+                    Event::ReproveStarted(Ok("fallback".into())),
+                ],
+                vec!["poll", "chain", "reprove", "idle"],
+            ),
+            (
+                "needs retry",
+                retry,
+                now,
+                vec![chain(), Event::ReproveStarted(Ok("next".into()))],
+                vec!["chain", "reprove", "idle"],
+            ),
+            (
+                "reprove error",
+                zk(now),
+                now,
+                vec![
+                    response(ProofStatus::Failed),
+                    chain(),
+                    Event::ReproveStarted(Err(eyre::eyre!("transport"))),
+                ],
+                vec!["poll", "chain", "reprove", "idle"],
+            ),
+            ("ready", ready, now, vec![chain(), submit_failure()], vec!["chain", "submit", "idle"]),
+            (
+                "timeout",
+                zk(now),
+                now + Duration::from_secs(11),
+                vec![chain(), Event::ReproveStarted(Ok("next".into()))],
+                vec!["timeout", "reprove", "idle"],
+            ),
+            (
+                "fallback",
+                tee(now, true),
+                now,
+                vec![
+                    success(true),
+                    chain(),
+                    Event::Submitted(Err(ChallengeSubmitError::KnownRevert(
+                        KnownRevert::InvalidProof,
+                    ))),
+                    Event::ReproveStarted(Ok("fallback".into())),
+                ],
+                vec!["poll", "chain", "submit", "reprove", "idle"],
+            ),
+        ];
+        let mut failures = Vec::new();
+        for (name, mut attempt, tick, events, expected) in cases {
+            let trace = drive_tick(&mut attempt, tick, events);
+            if trace != expected {
+                failures.push(format!("{name}: {trace:?} != {expected:?}"));
+            }
+        }
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
+    }
+
+    #[test]
+    fn idle_ticks_resume_only_with_a_new_now() {
+        let now = Instant::now();
+        for (name, mut attempt, events, next) in [
+            ("running", zk(now), vec![response(ProofStatus::Running)], "poll"),
+            ("decode error", zk(now), vec![success(true)], "poll"),
+            ("tee retry", tee(now, true), vec![success(true), chain(), submit_failure()], "chain"),
+            ("zk retry", zk(now), vec![success(false), chain(), submit_failure()], "chain"),
+            (
+                "reprove",
+                zk(now),
+                vec![
+                    response(ProofStatus::Failed),
+                    chain(),
+                    Event::ReproveStarted(Ok("next".into())),
+                ],
+                "poll",
+            ),
+            (
+                "reprove error",
+                zk(now),
+                vec![
+                    response(ProofStatus::Failed),
+                    chain(),
+                    Event::ReproveStarted(Err(eyre::eyre!("transport"))),
+                ],
+                "chain",
+            ),
+            ("done", zk(now), vec![success(false), chain(), Event::Submitted(Ok(()))], "idle"),
+        ] {
+            drive_tick(&mut attempt, now, events);
+            for _ in 0..2 {
+                assert_eq!(drive_tick(&mut attempt, now, vec![]), ["idle"], "{name}");
+            }
+            let expected =
+                if next == "idle" { vec!["idle"] } else { vec![next, "transport error"] };
+            assert_eq!(
+                drive_tick(&mut attempt, now + Duration::from_secs(1), vec![]),
+                expected,
+                "{name}",
+            );
+        }
+    }
+
+    #[test]
+    fn tee_proof_is_just_obtained_only_in_its_poll_tick() {
+        let now = Instant::now();
+        for chain_read_fails in [false, true] {
+            let mut attempt = tee(now, true);
+            assert!(matches!(attempt.need(now), Need::PollProver(_)));
+            attempt.apply(success(true), now);
+            assert!(matches!(attempt.need(now), Need::CheckChain { .. }));
+            let tick = if chain_read_fails {
+                let next = now + Duration::from_secs(1);
+                assert!(matches!(attempt.need(next), Need::CheckChain { .. }));
+                next
+            } else {
+                now
+            };
+            let Action::Submit { just_obtained, .. } = attempt.apply(chain(), tick) else {
+                panic!("ready TEE proof must submit");
+            };
+            assert_eq!(just_obtained, !chain_read_fails);
+            attempt.apply(submit_failure(), tick);
+            assert!(matches!(attempt.need(tick), Need::Idle));
+        }
+    }
+
     #[test]
     fn proof_results_validate_each_field_and_report_without_io() {
         let now = Instant::now();
         for is_tee in [false, true] {
             let mut attempt = if is_tee { tee(now, true) } else { zk(now) };
+            let mut tick = now;
             for status in [ProofStatus::Queued, ProofStatus::Running] {
+                assert!(matches!(attempt.need(tick), Need::PollProver(_)));
                 assert!(matches!(
-                    attempt.apply(response(status), now),
+                    attempt.apply(response(status), tick),
                     Action::Wait(AttemptUpdate::Pending)
                 ));
-                assert!(matches!(attempt.need(now), Need::PollProver(_)));
+                assert!(matches!(attempt.need(tick), Need::Idle));
+                tick += Duration::from_secs(1);
             }
+            assert!(matches!(attempt.need(tick), Need::PollProver(_)));
             assert!(matches!(
-                attempt.apply(success(is_tee), now),
+                attempt.apply(success(is_tee), tick),
                 Action::Wait(AttemptUpdate::Ready(_))
             ));
-            let Action::Submit { proof_bytes, .. } = attempt.apply(chain(), now) else {
+            assert!(matches!(attempt.need(tick), Need::CheckChain { .. }));
+            let Action::Submit { proof_bytes, .. } = attempt.apply(chain(), tick) else {
                 panic!("ready proof must submit")
             };
             if is_tee {
@@ -888,11 +1139,13 @@ mod tests {
                                     ..
                                 } if actual == intent && actual_target == target()
                             ));
-                            attempt.need(now);
+                            attempt.apply(submit_failure(), now);
+                            let next_tick = now + Duration::from_secs(1);
+                            attempt.need(next_tick);
                             assert!(matches!(
                                 attempt.apply(
                                     Event::ChainState { status, tee_prover, zk_prover },
-                                    now
+                                    next_tick
                                 ),
                                 Action::Submit { just_obtained: false, .. }
                             ));
@@ -991,6 +1244,7 @@ mod tests {
         let now = Instant::now();
         for fallback in [false, true] {
             for limit in [0, 1, 3] {
+                let mut now = now;
                 let mut limits = limits();
                 limits.tee_submit_retry_limit = limit;
                 let mut attempt = DisputeAttempt::awaiting_tee(
@@ -1019,6 +1273,7 @@ mod tests {
                             ..
                         }) if actual == count && actual_limit == limit && has_zk_fallback == fallback
                     ));
+                    now += Duration::from_secs(1);
                     attempt.need(now);
                     assert!(matches!(
                         attempt.apply(chain(), now),
@@ -1057,6 +1312,7 @@ mod tests {
                             ),
                             Action::Wait(AttemptUpdate::ZkSubmitRetry(_))
                         ));
+                        now += Duration::from_secs(1);
                         attempt.need(now);
                         assert!(matches!(
                             attempt.apply(chain(), now),
@@ -1163,6 +1419,8 @@ mod tests {
                         attempt.apply(success(false), now),
                         Action::Wait(AttemptUpdate::Ready(AttemptProofSource::Zk))
                     ));
+                } else if matches!(phase, "reproving" | "done") {
+                    assert!(matches!(need, Need::Idle));
                 } else {
                     assert!(matches!(need, Need::CheckChain { timeout: None }));
                 }
@@ -1182,7 +1440,9 @@ mod tests {
                             attempt.apply(Event::ReproveStarted(Ok("next".into())), now),
                             Action::Wait(AttemptUpdate::ReproveStarted { retry_count: 1, .. })
                         ));
-                        assert!(matches!(attempt.need(now), Need::PollProver(id) if id == "next"));
+                        let next_tick = now + Duration::from_secs(1);
+                        let need = attempt.need(next_tick);
+                        assert!(matches!(need, Need::PollProver(id) if id == "next"));
                     }
                     _ => assert!(matches!(
                         attempt.apply(chain(), now),
@@ -1231,7 +1491,7 @@ mod tests {
                         timeout: Some(RetryReason::Timeout { elapsed: actual, limit })
                     } if actual == elapsed && limit == Duration::from_secs(10)
                 ));
-                assert!(matches!(attempt.need(now + elapsed), Need::CheckChain { timeout: None }));
+                assert!(matches!(attempt.need(now + elapsed), Need::Idle));
             } else {
                 assert!(matches!(need, Need::PollProver(id) if id == "first"));
             }
