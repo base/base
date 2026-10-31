@@ -436,6 +436,23 @@ services:
       - "${SHADOW_BATCHER_METRICS_PORT}:${SHADOW_BATCHER_METRICS_PORT}"   # Metrics
     restart: unless-stopped
 
+  replay-recorder:
+    image: base:local
+    build:
+      <<: *rust-service-build
+      target: base
+    profiles: ["replay"]
+    volumes:
+      - ${DEVNET_ROOT:-../../.devnet}/replay:/data/replay
+    entrypoint: /app/base
+    command:
+      - replay
+      - record
+      - --listen=0.0.0.0:${REPLAY_RECORDER_PORT:-8550}
+      - --network=devnet
+      - --store=/data/replay
+    stop_grace_period: 30s
+
   base-client:
     image: base:local
     build:
