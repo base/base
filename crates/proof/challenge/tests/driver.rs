@@ -402,6 +402,33 @@ async fn test_step_invalid_game_submits_zk_challenge() {
 }
 
 #[tokio::test]
+async fn test_step_resolved_game_drops_completed_challenge() {
+    let (l2, factory, verifier) = invalid_game_mocks();
+    let zk = succeeded_zk_prover();
+    let tx = default_tx_manager();
+    let mut driver = test_driver(
+        Arc::<MockDisputeGameFactory>::clone(&factory),
+        Arc::clone(&verifier),
+        l2,
+        Arc::clone(&zk),
+        tx.clone(),
+    );
+
+    driver.step().await.unwrap();
+    assert_zk_requests(&zk, 1);
+    assert_eq!(driver.proof_manager.pending_proofs_len(), 1);
+    assert!(sent_disputes(&tx).is_empty());
+
+    verifier.games.lock().unwrap().get_mut(&addr(0)).unwrap().status = GameStatus::ChallengerWins;
+    factory.games.lock().unwrap().clear();
+    driver.step().await.unwrap();
+
+    assert!(sent_disputes(&tx).is_empty());
+    assert_eq!(driver.proof_manager.pending_proofs_len(), 0);
+    assert_zk_requests(&zk, 1);
+}
+
+#[tokio::test]
 async fn test_step_failed_submission_reuses_completed_proof() {
     let (l2, factory, verifier) = invalid_game_mocks();
     let zk = succeeded_zk_prover();
@@ -478,6 +505,7 @@ async fn test_step_proof_retry_reuses_deterministic_session_id() {
         tx.clone(),
     );
 
+    // The prover service requeues a failed row only for the same deterministic session ID.
     driver.step().await.unwrap();
     assert_zk_requests(&zk, 1);
     driver.step().await.unwrap();
@@ -604,6 +632,43 @@ async fn test_step_invalid_game_tee_proof_succeeds() {
     assert_eq!(sent_disputes(&tx_manager), vec![(addr(0), DisputeKind::Nullify)]);
     assert_eq!(proof_requester.state.lock().unwrap().prove_block_range_log.len(), 1);
     assert_eq!(driver.proof_manager.pending_proofs_len(), 0);
+}
+
+#[tokio::test]
+async fn test_step_nullified_tee_prover_drops_completed_nullification() {
+    let (l2, factory, root_15, root_20) = base_game_mocks();
+    let verifier = single_game_verifier(MockGameState {
+        tee_prover: DEFAULT_TEE_PROVER,
+        intermediate_output_roots: vec![root_15, BOGUS_ROOT],
+        ..game_state(20)
+    });
+    let prover = succeeded_tee_prover(tee_proposal(root_20, root_15));
+    let tx = default_tx_manager();
+    let mut driver = test_driver_with_l1_provider(
+        Arc::<MockDisputeGameFactory>::clone(&factory),
+        Arc::clone(&verifier),
+        l2,
+        Arc::clone(&prover),
+        tx.clone(),
+        Arc::new(MockL1::success(DEFAULT_L1_HEAD, 100)),
+    );
+
+    driver.step().await.unwrap();
+    {
+        let state = prover.state.lock().unwrap();
+        assert_eq!(state.prove_block_range_log.len(), 1);
+        assert!(matches!(state.prove_block_range_log[0].proof.request, ProofRequestKind::Tee(_)));
+    }
+    assert_eq!(driver.proof_manager.pending_proofs_len(), 1);
+    assert!(sent_disputes(&tx).is_empty());
+
+    verifier.games.lock().unwrap().get_mut(&addr(0)).unwrap().tee_prover = Address::ZERO;
+    factory.games.lock().unwrap().clear();
+    driver.step().await.unwrap();
+
+    assert!(sent_disputes(&tx).is_empty());
+    assert_eq!(driver.proof_manager.pending_proofs_len(), 0);
+    assert_eq!(prover.state.lock().unwrap().prove_block_range_log.len(), 1);
 }
 
 #[tokio::test]
@@ -873,6 +938,33 @@ async fn test_step_fraudulent_zk_challenge_nullifies() {
     driver.step().await.unwrap();
     assert_eq!(sent_disputes(&tx), vec![(addr(0), DisputeKind::Nullify)]);
     assert_eq!(driver.proof_manager.pending_proofs_len(), 0);
+}
+
+#[tokio::test]
+async fn test_step_nullified_zk_prover_drops_completed_nullification() {
+    let (l2, factory, verifier) = fraudulent_zk_challenge_mocks(true);
+    let zk = succeeded_zk_prover();
+    let tx = default_tx_manager();
+    let mut driver = test_driver(
+        Arc::<MockDisputeGameFactory>::clone(&factory),
+        Arc::clone(&verifier),
+        l2,
+        Arc::clone(&zk),
+        tx.clone(),
+    );
+
+    driver.step().await.unwrap();
+    assert_zk_requests(&zk, 1);
+    assert_eq!(driver.proof_manager.pending_proofs_len(), 1);
+    assert!(sent_disputes(&tx).is_empty());
+
+    verifier.games.lock().unwrap().get_mut(&addr(0)).unwrap().zk_prover = Address::ZERO;
+    factory.games.lock().unwrap().clear();
+    driver.step().await.unwrap();
+
+    assert!(sent_disputes(&tx).is_empty());
+    assert_eq!(driver.proof_manager.pending_proofs_len(), 0);
+    assert_zk_requests(&zk, 1);
 }
 
 #[tokio::test]
