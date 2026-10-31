@@ -2,3 +2,6 @@
 
 mod record;
 pub use record::{REPLAY_RECORD_FORMAT, ReplayRecord, ReplayRecordError, ReplayStream};
+
+mod frame;
+pub use frame::ReplayFrame;

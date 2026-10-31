@@ -69,28 +69,24 @@ impl ReplayWriter {
 
 #[cfg(test)]
 mod tests {
-    use base_replay::{ReplayRecord, ReplayRecordError};
+    use base_replay::ReplayRecord;
     use futures::TryStreamExt;
 
     use super::{ReplayStore, ReplayWriter, StoreError};
 
     #[tokio::test]
-    async fn multiline_record_is_rejected_before_rollover() {
+    async fn multiline_record_survives_rollover_and_store_readback() {
         let dir = tempfile::tempdir().unwrap();
         let store = ReplayStore::Local(dir.path().to_owned());
         let mut writer = ReplayWriter::new(store.clone(), "base".into()).unwrap();
         let record: ReplayRecord = serde_json::from_str(r#"{"stream":"builder_ingress","received_at_ms":0,"method":"call","params":[],"source":"x"}"#).unwrap();
         writer.push(&record).await.unwrap();
         let invalid: ReplayRecord = serde_json::from_str("{\"stream\":\"builder_ingress\",\"received_at_ms\":60000,\"method\":\"call\",\"params\":[\n1],\"source\":\"x\"}").unwrap();
-        assert!(matches!(
-            writer.push(&invalid).await,
-            Err(StoreError::Record(ReplayRecordError::MultilineParams))
-        ));
-        let unpublished: Vec<_> = store.read("base", 0..=60_000).try_collect().await.unwrap();
-        assert!(unpublished.is_empty());
+        writer.push(&invalid).await.unwrap();
         writer.close().await.unwrap();
         let records: Vec<_> = store.read("base", 0..=60_000).try_collect().await.unwrap();
-        assert_eq!(records.len(), 1);
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[1].params.get().as_bytes(), b"[\n1]");
     }
 
     #[tokio::test]
