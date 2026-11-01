@@ -4,7 +4,7 @@
 //! signer cleanup after the driver has resolved discovered prover instances.
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     sync::{Arc, Mutex, Weak},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -26,9 +26,9 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, instrument, warn};
 
 use crate::{
-    AttestationPlanner, CertKind, CertPlan, DiscoveryResolution, P384Hints, PINNED_ROOT_CERT_HASH,
+    AttestationPlanner, CertKind, CertPlan, P384Hints, PINNED_ROOT_CERT_HASH, ProtectedSigners,
     RegistrarError, RegistrarMetrics, RegistrationHints, RegistrationPlan, RegistrationTaskSet,
-    Result, crl,
+    Result, SignerReconciliation, crl,
 };
 
 /// Default maximum number of transaction submission retries for transient
@@ -1116,7 +1116,7 @@ where
     /// Queries onchain signers and deregisters orphans.
     pub async fn run_orphan_dereg(
         &self,
-        protected_signers: &HashSet<Address>,
+        protected_signers: &ProtectedSigners,
         cancel: &CancellationToken,
     ) -> Result<()> {
         let Some(registered_signers) =
@@ -1170,7 +1170,7 @@ where
     /// Reconciles in-flight registration tasks against fetched prover signers.
     pub fn reconcile_registration_tasks(
         self: &Arc<Self>,
-        resolution: &DiscoveryResolution,
+        resolution: &SignerReconciliation,
         registration_tasks: &mut RegistrationTaskSet,
         cancel: &CancellationToken,
     ) {
@@ -1209,7 +1209,7 @@ mod tests {
     //! writes, which `mockall` cannot express while transactions race through per-certificate locks.
 
     use std::{
-        collections::VecDeque,
+        collections::{HashSet, VecDeque},
         sync::{
             OnceLock,
             atomic::{AtomicBool, Ordering},
@@ -2390,8 +2390,8 @@ mod tests {
         assert_eq!(chain.sent().len(), 1);
     }
 
-    fn resolution(entries: &[(&str, Address)]) -> DiscoveryResolution {
-        DiscoveryResolution {
+    fn resolution(entries: &[(&str, Address)]) -> SignerReconciliation {
+        SignerReconciliation {
             registerable: entries
                 .iter()
                 .map(|(endpoint, signer)| RegisterableSigner {
@@ -2400,7 +2400,7 @@ mod tests {
                     attestation: b"synthetic-attestation".to_vec(),
                 })
                 .collect(),
-            active_signers: HashSet::new(),
+            orphan_cleanup: None,
             unresolved_instance_ids: HashSet::new(),
         }
     }
@@ -2425,7 +2425,7 @@ mod tests {
         let (manager, _) = manager_with_plan(&plan);
         let mut tasks = RegistrationTaskSet::default();
         let pending_cancel = spawn_pending(&mut tasks, SIGNER_A, TEST_INSTANCE);
-        let unresolved = DiscoveryResolution {
+        let unresolved = SignerReconciliation {
             unresolved_instance_ids: HashSet::from([TEST_INSTANCE.into()]),
             ..Default::default()
         };
@@ -2440,7 +2440,7 @@ mod tests {
         assert_eq!(tasks.pending().len(), 1);
 
         manager.reconcile_registration_tasks(
-            &DiscoveryResolution::default(),
+            &SignerReconciliation::default(),
             &mut tasks,
             &CancellationToken::new(),
         );
@@ -2470,10 +2470,20 @@ mod tests {
         let (manager, chain) = manager_with_plan(&plan);
         chain.0.lock().unwrap().registered.extend([SIGNER_A, SIGNER_B]);
 
-        manager
-            .run_orphan_dereg(&HashSet::from([SIGNER_A]), &CancellationToken::new())
-            .await
+        let protected = crate::SignerReconciler::new(2)
+            .step(
+                vec![(
+                    healthy_prover_instance(EP1),
+                    crate::InstanceObservation::Resolved {
+                        signers: vec![SIGNER_A],
+                        registerable: vec![],
+                    },
+                )],
+                std::iter::empty(),
+            )
+            .orphan_cleanup
             .unwrap();
+        manager.run_orphan_dereg(&protected, &CancellationToken::new()).await.unwrap();
 
         assert_eq!(chain.tx_count_to(TEST_REGISTRY_ADDRESS), 1);
         let sent = chain.sent();
@@ -2487,7 +2497,10 @@ mod tests {
         let (manager, chain) = manager_with_plan(&plan);
         manager.registry.stall_get_registered.store(true, Ordering::SeqCst);
         let cancel = CancellationToken::new();
-        let protected = HashSet::new();
+        let protected = crate::SignerReconciler::new(2)
+            .step(vec![], std::iter::empty())
+            .orphan_cleanup
+            .unwrap();
         let run = manager.run_orphan_dereg(&protected, &cancel);
         tokio::pin!(run);
         tokio::select! {

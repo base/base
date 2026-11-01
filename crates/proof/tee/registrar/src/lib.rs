@@ -9,8 +9,8 @@ pub use discovery::AwsTargetGroupDiscovery;
 
 mod driver;
 pub use driver::{
-    DEFAULT_MAX_CONCURRENCY, DiscoveryResolution, DriverConfig, INSTANCE_CACHE_TTL_CYCLES,
-    InstanceObservation, RegisterableSigner, RegistrationDriver,
+    DEFAULT_MAX_CONCURRENCY, DriverConfig, INSTANCE_CACHE_TTL_CYCLES, InstanceObservation,
+    RegisterableSigner, RegistrationDriver,
 };
 
 mod error;
@@ -30,6 +30,9 @@ pub use planner::{AttestationPlanner, CertManagerKeys, PINNED_ROOT_CERT_HASH};
 
 mod prover;
 pub use prover::ProverClient;
+
+mod reconciler;
+pub use reconciler::{CachedInstance, ProtectedSigners, SignerReconciler, SignerReconciliation};
 
 mod registration_tasks;
 pub use registration_tasks::{PendingRegistration, RegistrationTaskSet};
