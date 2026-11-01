@@ -21,10 +21,13 @@ base-replay = { path = "../../utilities/replay" }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true, features = ["raw_value"] }
 alloy-primitives = { workspace = true, features = ["serde"] }
-axum = { workspace = true, features = ["json"] }
-tokio = { workspace = true, features = ["sync"] }
+axum = { workspace = true, features = ["tokio", "http1", "json"] }
+hyper = { workspace = true, features = ["server", "http1"] }
+hyper-util = { workspace = true, features = ["tokio", "service"] }
+tokio = { workspace = true, features = ["sync", "net", "time", "io-util"] }
 
 [dev-dependencies]
 futures.workspace = true
+reqwest.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

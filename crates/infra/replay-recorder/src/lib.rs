@@ -8,3 +8,6 @@ pub use call::{CaptureContext, CaptureResult, RpcEnvelope};
 
 mod arrival;
 pub use arrival::{Admission, ArrivalQueue, CaptureJob};
+
+mod recorder;
+pub use recorder::Recorder;
