@@ -36,6 +36,7 @@ use reth_primitives_traits::{
     Block, BlockBody, BlockTy, GotExpected, SealedBlock, constants::MAX_TX_GAS_LIMIT_OSAKA,
     transaction::error::InvalidTransactionError,
 };
+use reth_revm::database::StateProviderDatabase;
 use reth_storage_api::{
     AccountInfoReader, AccountReader, BlockReaderIdExt, StateProvider, StateProviderFactory,
 };
@@ -51,8 +52,8 @@ use revm::{
 };
 
 use crate::{
-    BasePooledTx, ConfigSlot, InvalidationKey, LimitClass, ValidatorMetrics, WatchManifest,
-    WatchSet,
+    BasePooledTx, ConfigSlot, IngestionRest, InvalidationKey, LimitClass, ValidatorMetrics,
+    WatchManifest, WatchSet,
 };
 
 /// Base-specific transaction pool validation errors.
@@ -721,6 +722,10 @@ pub struct BaseTransactionValidator<Client, Tx, Evm> {
     /// validator holds the same value but does not expose it, and EIP-8130
     /// admission does not run the inner validator.
     max_tx_gas_limit: Option<u64>,
+    /// Whether admitted validity transactions get their state predicates evaluated against the
+    /// canonical head, recording the first unsatisfied one for builders; see
+    /// [`IngestionRest`].
+    validity_ingestion_rest: bool,
     limit_class_cache: Arc<RwLock<LimitClassCache>>,
     limit_class_cache_generation: Arc<AtomicU64>,
 }
@@ -811,6 +816,15 @@ impl<Client, Tx, Evm> BaseTransactionValidator<Client, Tx, Evm> {
     #[must_use]
     pub const fn with_max_tx_gas_limit(mut self, max_tx_gas_limit: Option<u64>) -> Self {
         self.max_tx_gas_limit = max_tx_gas_limit;
+        self
+    }
+
+    /// Sets whether admitted validity transactions get their state predicates evaluated against
+    /// the canonical head so builders working on that head can rest them without evaluating them.
+    /// Costs the state reads of those predicates per admitted validity transaction.
+    #[must_use]
+    pub const fn with_validity_ingestion_rest(mut self, enabled: bool) -> Self {
+        self.validity_ingestion_rest = enabled;
         self
     }
 
@@ -916,6 +930,7 @@ where
             trusted_proxy_code_hashes: Arc::new(trusted_proxy_code_hashes),
             allowlisted_payers: Arc::default(),
             max_tx_gas_limit: None,
+            validity_ingestion_rest: false,
             limit_class_cache: Arc::default(),
             limit_class_cache_generation: Arc::default(),
         }
@@ -1006,7 +1021,7 @@ where
             );
         }
 
-        if transaction.as_eip8130().is_some() {
+        let (outcome, check_cost) = if transaction.as_eip8130().is_some() {
             let validation = {
                 let signed = transaction.as_eip8130().expect("checked above");
                 self.validate_eip8130_structural(signed)
@@ -1048,10 +1063,54 @@ where
                 // bounds what it sponsors.
                 authorities: None,
             };
-            return self.apply_base_checks(outcome, false);
+            (outcome, false)
+        } else {
+            (self.inner.validate_one_with_state(origin, transaction, state), true)
+        };
+        let outcome = self.apply_base_checks(outcome, check_cost);
+        if self.validity_ingestion_rest
+            && let TransactionValidationOutcome::Valid { transaction, .. } = &outcome
+        {
+            self.record_ingestion_rest(transaction.transaction());
         }
-        let outcome = self.inner.validate_one_with_state(origin, transaction, state);
-        self.apply_base_checks(outcome, true)
+        outcome
+    }
+
+    /// Evaluates an admitted validity transaction's state predicates against the canonical head
+    /// and records the first unsatisfied one on the transaction, so a builder working on that
+    /// head can rest it without reading predicate state; see [`IngestionRest`].
+    ///
+    /// Transactions without state predicates, and heads whose state cannot be read, record
+    /// nothing: the build loop then evaluates the transaction as before.
+    fn record_ingestion_rest(&self, transaction: &Tx) {
+        let conditions = transaction.validity_conditions();
+        if conditions.state_predicates().next().is_none() {
+            return;
+        }
+        let start = Instant::now();
+        let evaluation = self.client().latest_header().and_then(|header| {
+            let Some(header) = header else { return Ok(None) };
+            let state = self.client().state_by_block_hash(header.hash())?;
+            let mut db = StateProviderDatabase::new((&state).into_evm_state_provider());
+            IngestionRest::evaluate(conditions, &mut db, header.hash())
+        });
+        let outcome = match evaluation {
+            Ok(Some(rest)) => {
+                transaction.set_ingestion_rest(rest);
+                "unsatisfied"
+            }
+            Ok(None) => "satisfied",
+            Err(error) => {
+                tracing::debug!(
+                    target: "txpool",
+                    error = %error,
+                    tx_hash = %transaction.hash(),
+                    "failed to evaluate validity predicates at admission"
+                );
+                "read_error"
+            }
+        };
+        ValidatorMetrics::ingestion_rest_seconds(outcome).record(start.elapsed().as_secs_f64());
     }
 
     /// Returns a low-cardinality sender authenticator label for metrics.
@@ -2137,7 +2196,7 @@ mod tests {
     };
 
     use super::*;
-    use crate::BasePooledTransaction;
+    use crate::{BasePooledTransaction, ValidityOperator, ValidityPredicate};
 
     type TestValidator = BaseTransactionValidator<
         MockEthProvider<BasePrimitives, Arc<BaseChainSpec>>,
@@ -2225,6 +2284,102 @@ mod tests {
             .no_cancun()
             .build(InMemoryBlobStore::default());
         BaseTransactionValidator::with_block_info(inner, BaseL1BlockInfo::default())
+    }
+
+    /// A signed EIP-1559 transfer from `signer`, wrapped for the pool with `predicates`.
+    fn pooled_validity_transfer(
+        signer: &PrivateKeySigner,
+        predicates: Vec<ValidityPredicate>,
+    ) -> BasePooledTransaction {
+        let tx = TxEip1559 {
+            chain_id: test_chain_id(),
+            nonce: 0,
+            gas_limit: 50_000,
+            max_fee_per_gas: 1_000_000_000,
+            max_priority_fee_per_gas: 1,
+            to: TxKind::Call(Address::repeat_byte(0x11)),
+            value: U256::ZERO,
+            access_list: Default::default(),
+            input: Default::default(),
+        };
+        let signature = signer.sign_hash_sync(&tx.signature_hash()).unwrap();
+        let envelope = BaseTxEnvelope::Eip1559(tx.into_signed(signature));
+        let recovered = envelope.clone().try_into_recovered().unwrap();
+        BasePooledTransaction::new(recovered, envelope.encode_2718_len())
+            .with_validity_predicates(predicates)
+    }
+
+    /// Admits `predicates` on a funded sender and returns what the validator recorded about them.
+    async fn admit_with_ingestion_rest(
+        enabled: bool,
+        predicates: Vec<ValidityPredicate>,
+    ) -> (Option<IngestionRest>, B256) {
+        let chain_spec = everest_chain_spec();
+        let signer = PrivateKeySigner::random();
+        let validator = build_test_validator_with_account_and_spec(
+            signer.address(),
+            ExtendedAccount::new(0, U256::from(10u128.pow(21))),
+            Arc::clone(&chain_spec),
+        )
+        .require_l1_data_gas_fee(false)
+        .with_validity_ingestion_rest(enabled);
+
+        let outcome = validator
+            .validate_one(
+                TransactionOrigin::External,
+                pooled_validity_transfer(&signer, predicates),
+            )
+            .await;
+        let TransactionValidationOutcome::Valid { transaction, .. } = outcome else {
+            panic!("funded transfer must be admitted, got {outcome:?}")
+        };
+        (transaction.transaction().ingestion_rest().cloned(), chain_spec.genesis_hash())
+    }
+
+    #[tokio::test]
+    async fn admission_records_the_first_unsatisfied_state_predicate_against_the_head() {
+        let watched = Address::repeat_byte(0xaa);
+        let satisfied = ValidityPredicate::Balance {
+            address: watched,
+            op: ValidityOperator::Equal,
+            value: U256::ZERO,
+        };
+        let unsatisfied = ValidityPredicate::Balance {
+            address: watched,
+            op: ValidityOperator::GreaterThanOrEqual,
+            value: U256::ONE,
+        };
+
+        let (rest, head) =
+            admit_with_ingestion_rest(true, vec![satisfied, unsatisfied.clone()]).await;
+
+        assert_eq!(rest, Some(IngestionRest { state_block_hash: head, predicate: unsatisfied }));
+    }
+
+    #[tokio::test]
+    async fn admission_records_nothing_for_satisfied_state_predicates() {
+        let satisfied = ValidityPredicate::Balance {
+            address: Address::repeat_byte(0xaa),
+            op: ValidityOperator::Equal,
+            value: U256::ZERO,
+        };
+
+        let (rest, _) = admit_with_ingestion_rest(true, vec![satisfied]).await;
+
+        assert_eq!(rest, None);
+    }
+
+    #[tokio::test]
+    async fn admission_records_nothing_when_ingestion_rest_is_off() {
+        let unsatisfied = ValidityPredicate::Balance {
+            address: Address::repeat_byte(0xaa),
+            op: ValidityOperator::GreaterThanOrEqual,
+            value: U256::ONE,
+        };
+
+        let (rest, _) = admit_with_ingestion_rest(false, vec![unsatisfied]).await;
+
+        assert_eq!(rest, None);
     }
 
     #[test]

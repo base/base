@@ -27,6 +27,7 @@ reth-execution-types.workspace = true
 reth-eth-wire-types.workspace = true
 reth-storage-api.workspace = true
 reth-transaction-pool.workspace = true
+reth-revm.workspace = true
 reth-primitives-traits.workspace = true
 
 base-bundles.workspace = true

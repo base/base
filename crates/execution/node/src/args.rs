@@ -408,6 +408,13 @@ pub struct RollupArgs {
     )]
     pub mempool_allowlisted_payer_limit: u32,
 
+    /// Evaluate the state predicates of each admitted validity transaction against the canonical
+    /// head and record the first unsatisfied one on the transaction, so a builder with
+    /// `--builder.ingestion-rest` can park it without reading state. Costs those state reads per
+    /// admitted validity transaction, on the pool's validation tasks.
+    #[arg(long = "rollup.mempool-validity-ingestion-rest", default_value_t = false)]
+    pub mempool_validity_ingestion_rest: bool,
+
     /// If true, initialize external-proofs exex to save and serve trie nodes to provide proofs
     /// faster.
     #[arg(
@@ -526,6 +533,7 @@ impl Default for RollupArgs {
             mempool_trusted_delegation_targets: Vec::new(),
             mempool_allowlisted_payers: Vec::new(),
             mempool_allowlisted_payer_limit: DEFAULT_ALLOWLISTED_PAYMENT_LIMIT,
+            mempool_validity_ingestion_rest: false,
             proofs_history: false,
             proofs_history_storage_path: None,
             proofs_history_db: ProofsHistoryDbBackend::default(),

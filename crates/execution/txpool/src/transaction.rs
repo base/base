@@ -117,6 +117,10 @@ pub struct BasePooledTransaction<
     /// EIP-8130 validation. Unset for other transaction types; see
     /// [`crate::WatchManifest`].
     watch_manifest: OnceLock<crate::WatchManifest>,
+    /// The first state predicate found unsatisfied at admission, for builders working on the
+    /// block it was evaluated against. Unset for other transactions and when the pool does not
+    /// evaluate predicates at admission; see [`crate::IngestionRest`].
+    ingestion_rest: OnceLock<crate::IngestionRest>,
     /// In-process `meter_bundle` result, attached after sim and before pool insert.
     ///
     /// Behind [`Arc`] so [`Clone`] stays a pointer bump once later PRs populate
@@ -165,6 +169,7 @@ impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
             sender_cost: OnceLock::new(),
             coinbase_tip_backing: CoinbaseTipBacking::default(),
             watch_manifest: OnceLock::new(),
+            ingestion_rest: OnceLock::new(),
             metering: None,
         }
     }
@@ -638,6 +643,18 @@ pub trait BasePooledTx: PoolTransaction + DataAvailabilitySized {
     /// Defaults to a no-op for transaction types that do not carry a manifest.
     fn set_watch_manifest(&self, _watch_manifest: crate::WatchManifest) {}
 
+    /// Returns the state predicate found unsatisfied at pool admission, if recorded.
+    ///
+    /// Defaults to `None` for transaction types that never carry validity predicates.
+    fn ingestion_rest(&self) -> Option<&crate::IngestionRest> {
+        None
+    }
+
+    /// Records the state predicate found unsatisfied at pool admission.
+    ///
+    /// Defaults to a no-op for transaction types that never carry validity predicates.
+    fn set_ingestion_rest(&self, _ingestion_rest: crate::IngestionRest) {}
+
     /// Returns the attached `meter_bundle` result, if any.
     fn metering(&self) -> Option<&MeterBundleResponse> {
         None
@@ -710,6 +727,14 @@ where
 
     fn set_watch_manifest(&self, watch_manifest: crate::WatchManifest) {
         let _ = self.watch_manifest.set(watch_manifest);
+    }
+
+    fn ingestion_rest(&self) -> Option<&crate::IngestionRest> {
+        self.ingestion_rest.get()
+    }
+
+    fn set_ingestion_rest(&self, ingestion_rest: crate::IngestionRest) {
+        let _ = self.ingestion_rest.set(ingestion_rest);
     }
 
     fn set_limit_class(&self, limit_class: crate::LimitClass) {

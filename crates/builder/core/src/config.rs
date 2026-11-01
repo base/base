@@ -77,6 +77,11 @@ pub struct BuilderConfig {
     /// resting set carries across flashblocks and across blocks this builder finishes in sequence.
     pub resting_predicate_mode: RestingPredicateMode,
 
+    /// Whether a candidate first seen by the build loop rests on the pool's admission-time
+    /// evaluation of its state predicates instead of being evaluated. Capped by
+    /// [`Self::resting_predicate_mode`].
+    pub ingestion_rest_mode: RestingPredicateMode,
+
     /// Resource metering provider
     pub metering_provider: SharedMeteringProvider,
     /// Resource-unit metering used to throttle transactions in the native
@@ -108,6 +113,12 @@ impl BuilderConfig {
         }
         (self.block_time.as_millis() / self.flashblocks_interval.as_millis()) as u64
     }
+
+    /// The ingestion-rest mode in effect: [`Self::ingestion_rest_mode`] capped by
+    /// [`Self::resting_predicate_mode`], since an adopted result is a resting member.
+    pub const fn effective_ingestion_rest_mode(&self) -> RestingPredicateMode {
+        self.ingestion_rest_mode.capped_by(self.resting_predicate_mode)
+    }
 }
 
 impl core::fmt::Debug for BuilderConfig {
@@ -129,6 +140,7 @@ impl core::fmt::Debug for BuilderConfig {
             .field("predicate_eval_hard_cutoff", &self.predicate_eval_hard_cutoff)
             .field("predicate_bucket_ordered_threshold", &self.predicate_bucket_ordered_threshold)
             .field("resting_predicate_mode", &self.resting_predicate_mode)
+            .field("ingestion_rest_mode", &self.ingestion_rest_mode)
             .field("metering_provider", &self.metering_provider)
             .field("resource_metering", &self.resource_metering)
             .field("rejection_cache_size", &self.rejection_cache.entry_count())
@@ -158,6 +170,7 @@ impl Default for BuilderConfig {
             predicate_eval_hard_cutoff: Duration::from_millis(10),
             predicate_bucket_ordered_threshold: DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD,
             resting_predicate_mode: RestingPredicateMode::Off,
+            ingestion_rest_mode: RestingPredicateMode::Off,
             metering_provider: Arc::clone(&metering_provider),
             resource_metering: ResourceMeteringConfig {
                 provider: metering_provider,
@@ -252,6 +265,13 @@ impl BuilderConfig {
     #[must_use]
     pub const fn with_resting_predicate_mode(mut self, mode: RestingPredicateMode) -> Self {
         self.resting_predicate_mode = mode;
+        self
+    }
+
+    /// Sets the mode for resting candidates on the pool's admission-time predicate evaluation.
+    #[must_use]
+    pub const fn with_ingestion_rest_mode(mut self, mode: RestingPredicateMode) -> Self {
+        self.ingestion_rest_mode = mode;
         self
     }
 }

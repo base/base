@@ -13,6 +13,7 @@ use base_builder_core::{
 use base_execution_txpool::{
     TransactionValidity, ValidatedTransaction, ValidityOperator, ValidityPredicate,
 };
+use base_node_core::args::RollupArgs;
 use futures::{StreamExt, future::join_all, stream};
 
 /// This test ensures that the transactions are ordered by fee priority within each flashblock.
@@ -344,6 +345,83 @@ async fn resting_transaction_is_included_once_its_blocking_state_changes() -> ey
     let instance = LocalInstanceBuilder::new(
         BuilderConfig::for_tests().with_resting_predicate_mode(RestingPredicateMode::Enforce),
     )
+    .install_ext::<BuilderApiExtension>(
+        BuilderApiExtensionConfig::new(DEFAULT_MAX_VALIDITY_PREDICATES).with_noop_metering(),
+    )
+    .build()
+    .await?;
+    let driver = instance.driver().await?;
+    let accounts = driver.fund_accounts(2, ONE_ETH).await?;
+    let watched = Address::random();
+
+    let resting = driver
+        .create_transaction()
+        .with_signer(&accounts[0])
+        .with_nonce(0)
+        .with_to(Address::random())
+        .with_max_priority_fee_per_gas(100)
+        .build()
+        .await;
+    let resting_hash = resting.tx_hash();
+    driver
+        .provider()
+        .raw_request::<_, ()>(
+            "base_insertValidatedTransaction".into(),
+            (ValidatedTransaction {
+                sender: accounts[0].address(),
+                raw: resting.encoded_2718().into(),
+                metering: None,
+                extensions: TransactionValidity {
+                    validity: vec![ValidityPredicate::Balance {
+                        address: watched,
+                        op: ValidityOperator::Equal,
+                        value: U256::from(1),
+                    }],
+                    validity_signature: None,
+                },
+            },),
+        )
+        .await?;
+
+    let unsatisfied = driver.build_new_block().await?;
+    assert!(!unsatisfied.transactions.hashes().any(|hash| hash == resting_hash));
+
+    let trigger_hash = *driver
+        .create_transaction()
+        .with_signer(&accounts[1])
+        .with_to(watched)
+        .with_value(1)
+        .with_max_priority_fee_per_gas(50)
+        .send()
+        .await?
+        .tx_hash();
+
+    let block = driver.build_new_block().await?;
+    let tracked = [trigger_hash, resting_hash];
+    let actual = block
+        .transactions
+        .into_transactions()
+        .filter_map(|transaction| {
+            tracked.contains(&transaction.tx_hash()).then(|| transaction.tx_hash())
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(actual, tracked);
+
+    Ok(())
+}
+
+/// With the pool evaluating predicates at admission and the builder enforcing those results, an
+/// unsatisfied transaction is parked without the build loop evaluating it, and is still included
+/// in the block whose execution first satisfies it.
+#[tokio::test]
+async fn admission_rested_transaction_is_included_once_its_blocking_state_changes()
+-> eyre::Result<()> {
+    let instance = LocalInstanceBuilder::new(
+        BuilderConfig::for_tests()
+            .with_resting_predicate_mode(RestingPredicateMode::Enforce)
+            .with_ingestion_rest_mode(RestingPredicateMode::Enforce),
+    )
+    .with_rollup_args(RollupArgs { mempool_validity_ingestion_rest: true, ..Default::default() })
     .install_ext::<BuilderApiExtension>(
         BuilderApiExtensionConfig::new(DEFAULT_MAX_VALIDITY_PREDICATES).with_noop_metering(),
     )

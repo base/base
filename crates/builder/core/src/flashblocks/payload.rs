@@ -334,6 +334,7 @@ where
                 self.config.predicate_bucket_ordered_threshold,
                 self.config.flashblocks_interval,
             );
+            resting.track_written_keys(self.config.effective_ingestion_rest_mode().is_enabled());
             let carry_over = resting.begin_block(
                 ctx.parent().hash(),
                 ctx.block_number(),
@@ -461,7 +462,8 @@ where
         // this block, whose hold parks resting members before the build loop sees them.
         let resting = SharedRestingPredicates::new(resting.unwrap_or_else(|| {
             RestingPredicates::new(self.config.predicate_bucket_ordered_threshold)
-        }));
+        }))
+        .with_ingestion_rest_adoption(self.config.effective_ingestion_rest_mode().is_enforced());
         let hold =
             self.config.resting_predicate_mode.is_enforced().then(|| resting.iterator_hold());
         let best_txs_attributes = ctx.best_transaction_attributes();

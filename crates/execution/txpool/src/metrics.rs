@@ -138,6 +138,9 @@ base_metrics::define_metrics! {
     #[describe("EIP-8130 lock-classification account-state resolutions by read source")]
     #[label(name = "source", default = ["cache", "prefetch", "sload"])]
     classification_state_reads: counter,
+    #[describe("Wall time of evaluating a validity transaction's state predicates at admission, by outcome")]
+    #[label(name = "outcome", default = ["unsatisfied", "satisfied", "read_error"])]
+    ingestion_rest_seconds: histogram,
 }
 
 #[cfg(test)]

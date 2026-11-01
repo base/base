@@ -75,6 +75,7 @@ impl MultiplexingServiceBuilder {
             rejection_cache: self.builder_config.rejection_cache.clone(),
             state_provider_metrics,
             resting_predicate_mode: self.builder_config.resting_predicate_mode,
+            ingestion_rest_mode: self.builder_config.ingestion_rest_mode,
         }
     }
 }
