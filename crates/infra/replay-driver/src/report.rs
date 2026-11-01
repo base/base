@@ -72,6 +72,8 @@ pub struct DiffReport {
     pub blocks: Vec<BlockDiff>,
     /// Totals excluding N+1; empty scored windows have zero totals.
     pub aggregate: DiffTotals,
+    /// Missed builds across the entire run, including warmup; excluded from scoring.
+    pub missed_deadline_blocks: usize,
 }
 
 impl DiffReport {
@@ -88,8 +90,16 @@ impl DiffReport {
             block.warmup = index == 0;
             previous = block.block_number;
         }
-        let aggregate = blocks.iter().filter(|b| !b.warmup).map(|b| &b.totals).sum();
-        Ok(Self { schema: "replay-diff/v1", parent_block_number, blocks, aggregate })
+        let aggregate =
+            blocks.iter().filter(|b| !b.warmup && !b.missed_deadline).map(|b| &b.totals).sum();
+        let missed_deadline_blocks = blocks.iter().filter(|b| b.missed_deadline).count();
+        Ok(Self {
+            schema: "replay-diff/v1",
+            parent_block_number,
+            blocks,
+            aggregate,
+            missed_deadline_blocks,
+        })
     }
 
     /// Renders inclusion and ordering summaries; unknown recording gaps are explicit.
@@ -102,7 +112,12 @@ impl DiffReport {
             .iter()
             .map(|b| {
                 (
-                    format!("{}{}", b.block_number, if b.warmup { " (warmup)" } else { "" }),
+                    format!(
+                        "{}{}{}",
+                        b.block_number,
+                        if b.warmup { " (warmup)" } else { "" },
+                        if b.missed_deadline { " (missed deadline; unscored)" } else { "" }
+                    ),
                     &b.totals,
                     b.first_divergence_index,
                 )
@@ -119,6 +134,10 @@ impl DiffReport {
                 divergence.map_or_else(|| "—".into(), |v| v.to_string())
             ));
         }
+        out.push_str(&format!(
+            "\nMissed deadline blocks: {} (including warmup; excluded from scoring).\n",
+            self.missed_deadline_blocks
+        ));
         out
     }
 }
@@ -133,7 +152,13 @@ mod tests {
     use crate::{Candidate, CanonicalBlock};
 
     fn block(block_number: u64, totals: DiffTotals) -> BlockDiff {
-        BlockDiff { block_number, warmup: false, first_divergence_index: None, totals }
+        BlockDiff {
+            block_number,
+            warmup: false,
+            missed_deadline: false,
+            first_divergence_index: None,
+            totals,
+        }
     }
 
     #[test]

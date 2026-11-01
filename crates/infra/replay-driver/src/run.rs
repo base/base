@@ -14,7 +14,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     BlockDiff, BuilderIngressInjector, CanonicalBlock, DiffReport, InjectionSchedule, Injector,
-    ReplayDataset, ShadowDriver,
+    ReplayDataset, ShadowDriver, ShadowError,
 };
 
 /// Runs one export against an already initialized canonical parent and replay-clock builder.
@@ -69,11 +69,6 @@ where
             "export start timestamp differs from canonical block"
         );
         ensure!(first.header.parent_hash == parent.hash_slow(), "canonical parent mismatch");
-        let now = GlobalClock::get().now();
-        ensure!(
-            InjectionSchedule::delay(window.from_timestamp_ms, now)? > Duration::ZERO,
-            "first builder deadline already expired"
-        );
         let cutoff = parent
             .header
             .timestamp
@@ -137,13 +132,21 @@ where
                     build_deadline: Some(UNIX_EPOCH + Duration::from_millis(deadline)),
                     ..self.driver
                 };
-                let candidate = driver.replay_block(&self.engine, &block, self.chain).await?;
+                let candidate = match driver.replay_block(&self.engine, &block, self.chain).await {
+                    Ok(candidate) => Some(candidate),
+                    Err(ShadowError::MissedDeadline(_)) => {
+                        tracing::warn!(block_number = number, "skipped expired build deadline");
+                        driver.import_canonical(&self.engine, &block, self.chain).await?;
+                        None
+                    }
+                    Err(error) => return Err(error.into()),
+                };
                 let canonical: HashSet<_> =
                     block.body.transactions.iter().map(|tx| tx.tx_hash()).collect();
                 let mut restored = 0;
                 let mut obsolete = 0;
                 tokio::time::timeout(self.driver.timeout, async {
-                    for hash in &candidate.transaction_hashes {
+                    for hash in candidate.iter().flat_map(|c| &c.transaction_hashes) {
                         if canonical.contains(hash) {
                             continue;
                         }
@@ -171,7 +174,12 @@ where
                     obsolete,
                     "restored candidate-only transactions"
                 );
-                diffs.push(BlockDiff::compare(&candidate, &baseline, recorded.as_ref())?);
+                diffs.push(match candidate {
+                    Some(candidate) => {
+                        BlockDiff::compare(&candidate, &baseline, recorded.as_ref())?
+                    }
+                    None => BlockDiff::missed_deadline(number),
+                });
                 parent_hash = block.hash_slow();
                 parent_timestamp = block.header.timestamp;
             }

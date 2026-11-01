@@ -72,6 +72,8 @@ pub struct BlockDiff {
     pub block_number: u64,
     /// N+1 is retained separately and excluded from aggregates.
     pub warmup: bool,
+    /// No candidate was scored because its build deadline expired.
+    pub missed_deadline: bool,
     /// Zero-based first mismatch over full lists; a strict prefix diverges at its end.
     pub first_divergence_index: Option<usize>,
     /// Inclusion and resource measurements.
@@ -79,6 +81,17 @@ pub struct BlockDiff {
 }
 
 impl BlockDiff {
+    /// Records an unscored height; zero totals are placeholders, not measured fidelity.
+    pub fn missed_deadline(block_number: u64) -> Self {
+        Self {
+            block_number,
+            warmup: false,
+            missed_deadline: true,
+            first_divergence_index: None,
+            totals: DiffTotals::default(),
+        }
+    }
+
     /// Compares unique inclusion sets and full ordering; recording gaps are a subset of missing.
     ///
     /// # Errors
@@ -109,6 +122,7 @@ impl BlockDiff {
         Ok(Self {
             block_number: candidate.block_number,
             warmup: false,
+            missed_deadline: false,
             first_divergence_index,
             totals: DiffTotals {
                 missing: missing.len(),
