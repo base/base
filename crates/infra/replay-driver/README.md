@@ -69,8 +69,12 @@ After each canonical import, the runner restores candidate-only transactions thr
 the injector before starting the next build. It uses each transaction's recorded
 method and raw parameters, preserving validated-ingress metering and extensions.
 Canonical transactions, including forced deposits, are not resent. The entire
-restore phase is bounded by `timeout` and logs the restored count per block.
-Missing recorded ingress, RPC rejection, or timeout terminates the run. Restoration
+restore phase is bounded by `timeout` and logs restored and obsolete counts per block.
+Known pool rejections for a nonce below state, an already-known transaction, or an
+underpriced replacement are skipped with a warning containing the block, hash, and
+RPC error. Both ingress APIs reuse generic error codes, so classification also
+checks the known message format. Unexpected rejections, missing recorded ingress,
+and timeouts terminate the run. The `replay-diff/v1` report schema is unchanged. Restoration
 requires `tx_hash` on candidate-only records. Restoration time consumes the next
 build's budget; the next attributes-bearing FCU still checks its original deadline.
 
