@@ -396,11 +396,7 @@ impl<L2: L2Provider, P: ProofRequesterProvider> DisputeProofManager<L2, P> {
                         return Ok(());
                     }
                 };
-                action = self
-                    .attempts
-                    .get_mut(&game_address)
-                    .expect("active attempt")
-                    .apply(event, Instant::now());
+                action = attempt.apply(event, Instant::now());
             }
         }
     }
