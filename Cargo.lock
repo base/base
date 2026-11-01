@@ -2873,6 +2873,9 @@ name = "base"
 version = "0.0.0"
 dependencies = [
  "alloy-chains",
+ "alloy-eips 2.5.0",
+ "alloy-primitives",
+ "alloy-provider",
  "alloy-rpc-types-engine",
  "axum 0.8.9",
  "base-batcher-cli",
@@ -2881,6 +2884,7 @@ dependencies = [
  "base-builder-metering",
  "base-builder-multiplex",
  "base-cli-utils",
+ "base-clock",
  "base-common-chains",
  "base-common-genesis",
  "base-consensus-cli",
@@ -2892,6 +2896,7 @@ dependencies = [
  "base-execution-evm",
  "base-node-core",
  "base-node-runner",
+ "base-replay",
  "base-replay-driver",
  "base-replay-export",
  "base-replay-recorder",
@@ -2902,6 +2907,7 @@ dependencies = [
  "clap",
  "eyre",
  "figment",
+ "jsonrpsee",
  "reqwest 0.13.4",
  "reth-cli-commands",
  "reth-cli-runner",
