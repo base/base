@@ -29,8 +29,9 @@ use jsonrpsee::{RpcModule, server::Server, types::ErrorObjectOwned};
 use reth_tasks::{RuntimeBuilder, RuntimeConfig, TokioConfig};
 use serde_json::Value;
 
+/// Replay clock advanced by the fake RPC server rather than by elapsed time.
 #[derive(Debug)]
-struct RpcClock(Arc<AtomicU64>);
+pub struct RpcClock(Arc<AtomicU64>);
 impl Clock for RpcClock {
     fn now(&self) -> SystemTime {
         UNIX_EPOCH + Duration::from_millis(self.0.load(Ordering::SeqCst))
