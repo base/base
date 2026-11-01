@@ -56,16 +56,6 @@ pub enum ReplayRecordError {
 }
 
 impl ReplayRecord {
-    /// Accept the current writer schema and legacy v1 exports.
-    pub fn supports_format(format: &str) -> bool {
-        format == REPLAY_RECORD_FORMAT || format == "replay-record/v1"
-    }
-
-    /// Decode a JSONL record using the framing owned by this crate.
-    pub fn from_jsonl_line(line: &str) -> Result<Self, ReplayRecordError> {
-        Ok(serde_json::from_str(line)?)
-    }
-
     /// Serialize one physical JSONL line, preserving raw params and appending a newline.
     ///
     /// # Errors
@@ -104,19 +94,6 @@ mod tests {
     struct CapturedCall {
         method: String,
         params: Box<RawValue>,
-    }
-
-    #[test]
-    fn public_decoder_reads_writer_format_and_retains_legacy_support() {
-        let input = r#"{"stream":"builder_ingress","received_at_ms":0,"method":"call","params":[1.2300],"source":"test"}"#;
-        let record: ReplayRecord = serde_json::from_str(input).unwrap();
-
-        let decoded = ReplayRecord::from_jsonl_line(&record.to_jsonl_line().unwrap()).unwrap();
-
-        assert_eq!(decoded.params.get(), "[1.2300]");
-        assert!(ReplayRecord::supports_format(super::REPLAY_RECORD_FORMAT));
-        assert!(ReplayRecord::supports_format("replay-record/v1"));
-        assert!(!ReplayRecord::supports_format("replay-record/unsupported"));
     }
 
     #[test]
