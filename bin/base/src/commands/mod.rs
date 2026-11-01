@@ -7,6 +7,8 @@ mod consensus;
 mod dev;
 mod execution;
 mod follow;
+mod replay;
+pub use replay::{ReplayCommand, ReplaySubcommand};
 mod reth;
 mod rpc;
 mod sequencer;
