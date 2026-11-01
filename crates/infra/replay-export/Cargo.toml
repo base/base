@@ -12,15 +12,20 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+url.workspace = true
+eyre.workspace = true
 futures.workspace = true
+humantime.workspace = true
 thiserror.workspace = true
 serde_json.workspace = true
 alloy-provider.workspace = true
 alloy-transport.workspace = true
 base-replay-store = { path = "../replay-store" }
 base-replay = { path = "../../utilities/replay" }
+clap = { workspace = true, features = ["derive"] }
 serde = { workspace = true, features = ["derive"] }
 tokio = { workspace = true, features = ["fs", "io-util", "time"] }
+aws-config = { workspace = true, features = ["default-https-client", "rt-tokio"] }
 
 [dev-dependencies]
 rstest.workspace = true
