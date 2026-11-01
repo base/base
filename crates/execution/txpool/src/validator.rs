@@ -1193,8 +1193,14 @@ where
             .map_err(Self::map_nonce_error)
         })?;
 
-        let sender_nonce =
-            self.eip8130_nonce_state(&*state, local_chain_id, now, signed, sender, protocol_nonce)?;
+        let sender_nonce = self.eip8130_sender_nonce(
+            &*state,
+            local_chain_id,
+            now,
+            signed,
+            sender,
+            protocol_nonce,
+        )?;
         let encoded = self.eip8130_encoded(signed);
         // Intrinsic gas is a pure function of the transaction, so admission,
         // `eth_estimateGas` and execution all charge the same amount.
@@ -1591,7 +1597,7 @@ where
         Ok(())
     }
 
-    fn eip8130_nonce_state(
+    fn eip8130_sender_nonce(
         &self,
         state: &dyn StateProvider,
         local_chain_id: u64,
@@ -3619,9 +3625,7 @@ mod tests {
         let chain_spec = everest_chain_spec();
         let signer = PrivateKeySigner::random();
         let sender = signer.address();
-        // Headroom above the worst-case intrinsic: admission pins the sender policy
-        // gate on, which the tight 50k fixture limit no longer covers.
-        let tx = TxEip8130 { gas_limit: 100_000, ..minimal_valid_eoa_tx() };
+        let tx = minimal_valid_eoa_tx();
         let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
         let signed =
             Eip8130Signed::new(tx, Bytes::from(signature.as_bytes().to_vec()), Bytes::new());

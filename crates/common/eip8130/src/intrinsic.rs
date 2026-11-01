@@ -93,8 +93,8 @@ pub struct IntrinsicGas {
     pub bytecode: u64,
     /// `account_changes_cost` — config-change and delegation entries.
     pub account_changes: u64,
-    /// `sender_auth_cost` — sender authenticator execution, its `authorize`
-    /// SLOAD (see `auth_sloads`) and the policy-manager SLOAD.
+    /// `sender_auth_cost` — sender authenticator execution and its `authorize`
+    /// SLOAD (see `auth_sloads`).
     pub sender_auth: u64,
     /// `payer_auth_cost` — payer authenticator execution and its `authorize`
     /// SLOAD, plus the `payer_auth` bytes at the EIP-7623 floor rate
@@ -611,18 +611,19 @@ mod tests {
 
     #[test]
     fn eth_transfer_costs_more_than_eip2780() {
-        // A self-paid k1 value transfer to another account costs at least
-        // EIP-2780's 12,000 base + cold recipient + 6,000 value before its
-        // payload bytes, so an AA transaction is never cheaper than the
-        // equivalent EIP-1559 one.
+        // A self-paid k1 value transfer costs more than the same transfer under
+        // EIP-2780 before its payload bytes, so an AA transaction is never
+        // cheaper than the equivalent EIP-1559 one.
+        const EIP2780_TX_BASE_COST: u64 = 12_000;
         let other = address!("0x3333333333333333333333333333333333333333");
         let tx = TxEip8130 {
             calls: vec![vec![Call { to: other, value: U256::from(1u64), data: Bytes::new() }]],
             ..Default::default()
         };
         let gas = intrinsic(&signed(tx, vec![0xcd; 65], vec![]));
-        let eip2780 =
-            12_000 + Eip8130GasSchedule::COLD_ACCOUNT_ACCESS + Eip8130GasSchedule::TX_VALUE_COST;
+        let eip2780 = EIP2780_TX_BASE_COST
+            + Eip8130GasSchedule::COLD_ACCOUNT_ACCESS
+            + Eip8130GasSchedule::TX_VALUE_COST;
         assert!(gas.sender_intrinsic() - gas.payload > eip2780);
     }
 
