@@ -449,4 +449,118 @@ mod tests {
         assert!(!manager.is_ignored(addr(0)));
         assert!(manager.is_ignored(addr(TestManager::MAX_IGNORED_GAMES as u64)));
     }
+
+    #[cfg(feature = "metrics")]
+    mod metrics_tests {
+        use std::sync::Mutex;
+
+        use alloy_primitives::Bytes;
+        use base_proof_primitives::Proposal;
+        use base_prover_service_protocol::{ProofResult, ProofStatus, TeeKind, TeeProofResult};
+        use metrics_util::{
+            MetricKind,
+            debugging::{DebugValue, DebuggingRecorder},
+        };
+
+        use super::*;
+        use crate::test_utils::{MockGameState, MockTxManager, MockZkProofState};
+
+        #[test]
+        fn poll_emits_failure_metrics() {
+            let expected_root = B256::repeat_byte(0xaa);
+            let bad_proposal = Proposal {
+                output_root: B256::repeat_byte(0xbb),
+                signature: Bytes::from_static(&[0; 65]),
+                l1_origin_hash: B256::ZERO,
+                l1_origin_number: 0,
+                l2_block_number: 0,
+                prev_output_root: B256::ZERO,
+                config_hash: B256::ZERO,
+                schedule_id: B256::ZERO,
+            };
+
+            for (state, max_proof_duration, expected_reason) in [
+                (
+                    MockZkProofState::default(),
+                    Duration::ZERO,
+                    ChallengerMetrics::PROOF_FAILURE_TIMEOUT,
+                ),
+                (
+                    MockZkProofState { proof_status: ProofStatus::Failed, ..Default::default() },
+                    Duration::from_secs(3600),
+                    ChallengerMetrics::PROOF_FAILURE_FAILED,
+                ),
+                (
+                    MockZkProofState {
+                        proof_status: ProofStatus::Succeeded,
+                        omit_result_on_success: true,
+                        ..Default::default()
+                    },
+                    Duration::from_secs(3600),
+                    ChallengerMetrics::PROOF_FAILURE_MALFORMED,
+                ),
+                (
+                    MockZkProofState {
+                        proof_status: ProofStatus::Succeeded,
+                        result: Some(ProofResult::Tee(TeeProofResult {
+                            intermediate_roots: vec![bad_proposal.output_root],
+                            aggregate_proposal: bad_proposal,
+                            tee_kind: TeeKind::AwsNitro,
+                            tee_signer: Address::repeat_byte(0x11),
+                        })),
+                        ..Default::default()
+                    },
+                    Duration::from_secs(3600),
+                    ChallengerMetrics::PROOF_FAILURE_TEE_VALIDATION,
+                ),
+            ] {
+                let recorder = DebuggingRecorder::new();
+                let snapshotter = recorder.snapshotter();
+                metrics::with_local_recorder(&recorder, || {
+                    let runtime =
+                        tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+                    runtime.block_on(async {
+                        let mut manager = TestManager::new(
+                            OutputValidator::new(Arc::new(MockL2Provider::default())),
+                            Arc::new(MockZkProofProvider { state: Mutex::new(state) }),
+                            Arc::new(MockL1::failure("unused")),
+                            Arc::new(MockAggregateVerifier::new(HashMap::from([(
+                                addr(0),
+                                MockGameState::default(),
+                            )]))),
+                            max_proof_duration,
+                            3,
+                        );
+                        manager.attempts.insert(
+                            addr(0),
+                            DisputeAttempt::awaiting_tee(
+                                "session".to_owned(),
+                                DisputeTarget { invalid_index: 0, expected_root },
+                                None,
+                                manager.attempt_limits(),
+                                Instant::now() - Duration::from_secs(1),
+                            ),
+                        );
+                        let submitter =
+                            ChallengeSubmitter::new(MockTxManager::with_responses(vec![]));
+                        manager.poll_pending_proofs(&submitter).await;
+                    });
+                });
+                let count =
+                    snapshotter.snapshot().into_vec().into_iter().find_map(|(key, _, _, value)| {
+                        if key.kind() == MetricKind::Counter
+                            && key.key().name() == "base_challenger.proof_session_failures_total"
+                            && key.key().labels().any(|label| {
+                                label.key() == "reason" && label.value() == expected_reason
+                            })
+                            && let DebugValue::Counter(count) = value
+                        {
+                            return Some(count);
+                        }
+                        None
+                    });
+                assert_eq!(count, Some(1), "{expected_reason}");
+            }
+        }
+    }
 }

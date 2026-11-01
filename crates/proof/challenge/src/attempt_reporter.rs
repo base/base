@@ -261,51 +261,12 @@ impl AttemptReporter {
 
 #[cfg(all(test, feature = "metrics"))]
 mod tests {
-    use std::time::Duration;
-
     use metrics_util::{
         MetricKind,
         debugging::{DebugValue, DebuggingRecorder},
     };
 
     use super::*;
-
-    #[test]
-    fn poll_emits_failure_metrics() {
-        for (reason, label) in [
-            (
-                RetryReason::Timeout {
-                    elapsed: Duration::from_secs(2),
-                    limit: Duration::from_secs(1),
-                },
-                "timeout",
-            ),
-            (RetryReason::Malformed, "malformed"),
-            (RetryReason::ProverFailed(Some("backend error".into())), "failed"),
-            (RetryReason::TeeValidation(eyre::eyre!("wrong root")), "tee_validation_failed"),
-        ] {
-            let recorder = DebuggingRecorder::new();
-            let snapshotter = recorder.snapshotter();
-            metrics::with_local_recorder(&recorder, || {
-                AttemptReporter::action(
-                    Address::ZERO,
-                    &Action::Wait(AttemptUpdate::NeedsRetry(reason)),
-                );
-            });
-            let count =
-                snapshotter.snapshot().into_vec().into_iter().find_map(|(key, _, _, value)| {
-                    if key.kind() == MetricKind::Counter
-                        && key.key().name() == "base_challenger.proof_session_failures_total"
-                        && key.key().labels().any(|l| l.key() == "reason" && l.value() == label)
-                        && let DebugValue::Counter(count) = value
-                    {
-                        return Some(count);
-                    }
-                    None
-                });
-            assert_eq!(count, Some(1), "{label}");
-        }
-    }
 
     #[test]
     fn proof_exhaustion_emits_metric() {
