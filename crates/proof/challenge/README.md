@@ -12,8 +12,7 @@ See the [challenger glossary](GLOSSARY.md) for proof and dispute lifecycle terms
 - **Driver**: Main polling loop that ties together scanning, validation, proof requests, and dispute submission.
 - **Scanner**: Scans the `DisputeGameFactory` for `IN_PROGRESS` dispute games and classifies each into a `GameCategory` (`InvalidTeeProposal`, `FraudulentZkChallenge`, `InvalidZkProposal`, or `InvalidDualProposal`) based on prover state.
 - **Validator**: Verifies final and intermediate output roots for each `CandidateGame` by fetching L2 block headers and `L2ToL1MessagePasser` storage proofs, recomputing expected roots via `OutputRoot`, and comparing them against onchain claims.
-- **Dispute attempt**: Models one game's proof and dispute lifecycle across TEE and ZK proof sources, including ZK fallback, without I/O. Not yet wired into the driver.
-- **Pending**: Tracks in-flight proof sessions through a `ProofPhase` lifecycle (`AwaitingProof` → `ReadyToSubmit` or `NeedsRetry`).
+- **Dispute attempt**: Models one game's proof and dispute lifecycle across TEE and ZK proof sources, including ZK fallback, without I/O. Driven by the dispute proof manager.
 - **Submitter**: Submits dispute transactions onchain (`nullify()` / `challenge()`) for invalid games.
 - **Bond**: Resolves dispute games, unlocks bond credits, and withdraws them once the withdrawal delay has elapsed.
 - **Error**: Challenge submission error types.
