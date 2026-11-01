@@ -1,10 +1,12 @@
 {
   "schema": "replay-diff/v1",
   "parent_block_number": 10,
+  "missed_deadline_blocks": 0,
   "blocks": [
     {
       "block_number": 11,
       "warmup": true,
+      "missed_deadline": false,
       "first_divergence_index": 1,
       "totals": {
         "missing": 2,
@@ -23,6 +25,7 @@
     {
       "block_number": 12,
       "warmup": false,
+      "missed_deadline": false,
       "first_divergence_index": 1,
       "totals": {
         "missing": 2,
