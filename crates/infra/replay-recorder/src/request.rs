@@ -39,12 +39,22 @@ pub struct RecordedCall {
     pub id: Option<RpcId>,
     /// Arbitrary RPC method name.
     pub method: String,
-    /// Original params; omitted parameters are represented as null.
-    #[serde(default)]
+    /// Original structured params; omission is represented as null.
+    #[serde(default, deserialize_with = "RecordedCall::deserialize_params")]
     pub params: Box<RawValue>,
 }
 
 impl RecordedCall {
+    /// Reject non-structured params as an invalid request object under JSON-RPC §4.2.
+    pub fn deserialize_params<'de, D: Deserializer<'de>>(d: D) -> Result<Box<RawValue>, D::Error> {
+        let raw = Box::<RawValue>::deserialize(d)?;
+        if matches!(raw.get().bytes().next(), Some(b'[' | b'{')) {
+            Ok(raw)
+        } else {
+            Err(serde::de::Error::custom("params must be an array or object"))
+        }
+    }
+
     /// Preserve the distinction between missing and explicit null IDs.
     pub fn deserialize_id<'de, D: Deserializer<'de>>(d: D) -> Result<Option<RpcId>, D::Error> {
         RpcId::deserialize(d).map(Some)
@@ -82,6 +92,26 @@ mod tests {
     use alloy_primitives::keccak256;
 
     use super::RecordedCall;
+
+    #[test]
+    fn rejects_present_params_when_not_structured() {
+        for params in ["42", "null", "true", r#""text""#] {
+            let input = format!(r#"{{"jsonrpc":"2.0","method":"any","params":{params}}}"#);
+            assert!(serde_json::from_str::<RecordedCall>(&input).is_err(), "{params}");
+        }
+    }
+
+    #[test]
+    fn preserves_structured_params_when_present_or_omitted() {
+        for params in ["[\r\n 1.2300e+02 ]", r#"{ "s": "\u0061" }"#] {
+            let input = format!(r#"{{"jsonrpc":"2.0","method":"any","params":{params}}}"#);
+            let call: RecordedCall = serde_json::from_str(&input).unwrap();
+            assert_eq!(call.params.get().as_bytes(), params.as_bytes());
+        }
+        let call: RecordedCall =
+            serde_json::from_str(r#"{"jsonrpc":"2.0","method":"any"}"#).unwrap();
+        assert_eq!(call.params.get(), "null");
+    }
 
     #[test]
     fn derives_hash_when_insert_identifies_one_transaction() {
