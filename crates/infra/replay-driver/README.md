@@ -60,6 +60,7 @@ Recording coverage is unknown if any call lacks `tx_hash`; forced deposits count
 as covered. Comparison blocks and receipts are prefetched before the timed loop;
 size exports for their memory as well as recorded calls. Each build waits until
 its parent timestamp or two seconds before its target, whichever is later.
-A deadline check immediately before driving each block rejects expired builds;
+Each attributes-bearing FCU attempt checks the build deadline against `GlobalClock`,
+including retries after SYNCING/ACCEPTED. Expiry returns `ShadowError::MissedDeadline`;
 no report is emitted for an incomplete run. Scheduled waits follow recorded
 deadlines within the validated export horizon, independently of delivery timeout.
