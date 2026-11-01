@@ -202,6 +202,37 @@ impl TxEip8130 {
         self.payer == Some(Eip8130Constants::OPEN_PAYER)
     }
 
+    /// Length of the RLP fields that precede the metered payload in wire order,
+    /// so the payload starts at this offset within [`Self::rlp_encode_fields`].
+    pub fn metered_payload_offset(&self) -> usize {
+        self.chain_id.length()
+            + Self::address_opt_encoded_length(&self.sender)
+            + self.nonce_key.length()
+            + self.nonce_sequence.length()
+            + self.valid_after.length()
+            + self.valid_before.length()
+            + self.max_priority_fee_per_gas.length()
+            + self.max_fee_per_gas.length()
+            + self.gas_limit.length()
+    }
+
+    /// Length of the bytes [`Self::encode_metered_payload`] writes.
+    pub fn metered_payload_length(&self) -> usize {
+        self.account_changes.length()
+            + Self::calls_encoded_length(&self.calls)
+            + self.metadata.length()
+    }
+
+    /// Encodes the fields `tx_payload_cost` meters: the RLP of
+    /// `account_changes`, `calls` and `metadata`, in wire order. The envelope
+    /// is excluded so the cost does not depend on `gas_limit`, the fees or the
+    /// signatures that commit to them.
+    pub fn encode_metered_payload(&self, out: &mut dyn BufMut) {
+        self.account_changes.encode(out);
+        Self::encode_calls(&self.calls, out);
+        self.metadata.encode(out);
+    }
+
     /// Encodes the inner phase list of `calls` as `rlp([rlp([Call, ...]), ...])`.
     fn encode_calls(calls: &[Vec<Call>], out: &mut dyn BufMut) {
         let mut payload_len = 0usize;
