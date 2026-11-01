@@ -119,13 +119,15 @@ async fn expired_deadlines_stop_initial_and_retried_build_fcus() -> eyre::Result
     clock.store(0, Ordering::SeqCst);
     delay_receipts.store(false, Ordering::SeqCst);
 
-    let error = runner.run(dataset()?).await.unwrap_err();
+    let block = runner.block(1).await?;
+    let driver = ShadowDriver {
+        build_deadline: Some(UNIX_EPOCH + Duration::from_millis(1000)),
+        ..ShadowDriver::default()
+    };
+    let error = driver.replay_block(&runner.engine, &block, &chain).await.unwrap_err();
 
     assert_eq!(builds.load(Ordering::SeqCst), 1, "expired retries must not be sent");
-    assert!(
-        matches!(error.downcast_ref::<ShadowError>(), Some(ShadowError::MissedDeadline(1))),
-        "{error}"
-    );
+    assert!(matches!(error, ShadowError::MissedDeadline(1)), "{error}");
     server.stop()?;
     Ok(())
 }

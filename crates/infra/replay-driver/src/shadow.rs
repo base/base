@@ -143,6 +143,17 @@ impl ShadowDriver {
         .map_err(|_| ShadowError::Timeout("getPayload"))??;
         let candidate = Candidate::from_payload(payload.as_v1(), block_value, start.elapsed());
         drop(payload);
+        self.import_canonical(engine, block, chain).await?;
+        Ok(candidate)
+    }
+
+    /// Imports and selects the canonical block without starting a build, even after its deadline.
+    pub async fn import_canonical(
+        &self,
+        engine: &(impl BaseEngineApi + Sync),
+        block: &Block<BaseTxEnvelope>,
+        chain: &impl Upgrades,
+    ) -> Result<(), ShadowError> {
         let (canonical, _) = BaseExecutionPayload::from_block_slow(block);
         let beacon_root = block.header.parent_beacon_block_root.unwrap_or_default();
         self.valid(block.header.number, None, || async {
@@ -169,10 +180,21 @@ impl ShadowDriver {
         })
         .await?;
         self.valid(block.header.number, None, || {
-            forkchoice(ForkchoiceState { head_block_hash: block.hash_slow(), ..parent }, None)
+            let state = ForkchoiceState {
+                head_block_hash: block.hash_slow(),
+                safe_block_hash: block.header.parent_hash,
+                finalized_block_hash: block.header.parent_hash,
+            };
+            async move {
+                if chain.is_ecotone_active_at_timestamp(block.header.timestamp) {
+                    engine.fork_choice_updated_v3(state, None).await
+                } else {
+                    engine.fork_choice_updated_v2(state, None).await
+                }
+            }
         })
         .await?;
-        Ok(candidate)
+        Ok(())
     }
 
     /// Bounds a complete status-retry phase, including every RPC within it.
