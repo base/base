@@ -57,7 +57,7 @@ pub(crate) enum BaseCommand {
     /// Snapshot manifest generation and download utilities (uses its own --chain flag).
     #[command(name = "snapshot")]
     Snapshot(Box<SnapshotCommand>),
-    /// Export and inspect replay datasets (uses its own --network flag).
+    /// Record and export replay datasets (uses its own --network flag).
     Replay(Box<ReplayCommand>),
 }
 

@@ -11,3 +11,6 @@ pub use arrival::{Admission, ArrivalQueue, CaptureJob};
 
 mod recorder;
 pub use recorder::Recorder;
+
+mod command;
+pub use command::RecordArgs;
