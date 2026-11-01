@@ -69,11 +69,6 @@ where
             "export start timestamp differs from canonical block"
         );
         ensure!(first.header.parent_hash == parent.hash_slow(), "canonical parent mismatch");
-        let now = GlobalClock::get().now();
-        ensure!(
-            InjectionSchedule::delay(window.from_timestamp_ms, now)? > Duration::ZERO,
-            "first builder deadline already expired"
-        );
         let cutoff = parent
             .header
             .timestamp

@@ -21,6 +21,7 @@ use base_replay_driver::{
 use base_replay_export::{ExportManifest, ExportWindow};
 use jsonrpsee::{RpcModule, server::Server, types::ErrorObjectOwned};
 use reth_tasks::{RuntimeBuilder, RuntimeConfig, TokioConfig};
+use serde_json::Value;
 
 /// Clock controlled by completion of the canonical receipts RPC.
 #[derive(Debug)]
@@ -62,7 +63,14 @@ async fn expired_deadlines_stop_initial_and_retried_build_fcus() -> eyre::Result
         None::<Vec<BaseTransactionReceipt>>
     })?;
     for method in ["engine_forkchoiceUpdatedV2", "engine_forkchoiceUpdatedV3"] {
-        rpc.register_method(method, |_, ctx, _| {
+        rpc.register_method(method, |params, ctx, _| {
+            let (_, attrs): (Value, Option<Value>) = params.parse()?;
+            if attrs.is_none() {
+                return Ok(ForkchoiceUpdated {
+                    payload_status: PayloadStatus::from_status(PayloadStatusEnum::Valid),
+                    payload_id: None,
+                });
+            }
             if ctx.2.fetch_add(1, Ordering::SeqCst) > 0 {
                 return Err(ErrorObjectOwned::owned(-32000, "late build attempted", None::<()>));
             }
@@ -73,6 +81,9 @@ async fn expired_deadlines_stop_initial_and_retried_build_fcus() -> eyre::Result
             })
         })?;
     }
+    rpc.register_method("engine_newPayloadV2", |_, _, _| {
+        Ok::<_, ErrorObjectOwned>(PayloadStatus::from_status(PayloadStatusEnum::Valid))
+    })?;
     let server = Server::builder().build("127.0.0.1:0").await?;
     let url: url::Url = format!("http://{}", server.local_addr()?).parse()?;
     let server = server.start(rpc);
@@ -111,10 +122,11 @@ async fn expired_deadlines_stop_initial_and_retried_build_fcus() -> eyre::Result
         )
     };
 
-    let error = runner.run(dataset()?).await.unwrap_err();
+    let report = runner.run(dataset()?).await?;
 
     assert_eq!(builds.load(Ordering::SeqCst), 0, "expired builds must not be sent");
-    assert!(error.to_string().contains("deadline"), "{error}");
+    assert!(report.blocks[0].missed_deadline);
+    assert_eq!(report.missed_deadline_blocks, 1);
 
     clock.store(0, Ordering::SeqCst);
     delay_receipts.store(false, Ordering::SeqCst);
