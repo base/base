@@ -1,30 +1,40 @@
-//! Replay capture utilities.
+//! Replay recording and export utilities.
 
 use base_cli_utils::RuntimeManager;
+use base_replay_export::ExportCommand;
 use base_replay_recorder::RecordArgs;
 use clap::{Parser, Subcommand};
+use reth_cli_runner::CliRunner;
 
 /// Replay dataset utilities.
 #[derive(Debug, Parser)]
-pub(crate) struct ReplayCommand {
+pub struct ReplayCommand {
     /// Replay operation.
     #[command(subcommand)]
-    pub(crate) command: ReplaySubcommand,
+    pub command: ReplaySubcommand,
 }
 
-/// Supported replay operations.
+/// Operations on replay datasets.
 #[derive(Debug, Subcommand)]
-pub(crate) enum ReplaySubcommand {
+pub enum ReplaySubcommand {
     /// Record HTTP JSON-RPC calls into local or S3 storage.
     Record(RecordArgs),
+    /// Export recorded ingress for a canonical L2 block range.
+    Export(ExportCommand),
 }
 
 impl ReplaySubcommand {
-    /// Dispatch through the cooperative shutdown runtime.
-    pub(crate) fn run(self) -> eyre::Result<()> {
+    /// Execute the selected replay operation.
+    pub fn run(self) -> eyre::Result<()> {
         match self {
             Self::Record(args) => RuntimeManager::new()
                 .run_until_shutdown(|cancel| async move { Ok(args.run(cancel).await?) }),
+            Self::Export(command) => {
+                CliRunner::try_default_runtime()?.run_blocking_until_ctrl_c(async move {
+                    command.execute().await?;
+                    Ok(())
+                })
+            }
         }
     }
 }

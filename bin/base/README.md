@@ -2,6 +2,9 @@
 
 Unified Base node binary.
 
+`base replay export` exports recorded ingress for a block range. See the
+[export format and CLI reference](../../crates/infra/replay-export/README.md).
+
 ## OTLP Tracing
 
 Unified commands, including `rpc`, `follow`, and `sequencer`, support the same

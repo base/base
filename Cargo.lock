@@ -2892,6 +2892,7 @@ dependencies = [
  "base-execution-evm",
  "base-node-core",
  "base-node-runner",
+ "base-replay-export",
  "base-replay-recorder",
  "base-reth-cli",
  "base-shadow-indexer",
@@ -6199,6 +6200,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-replay-export"
+version = "0.0.0"
+dependencies = [
+ "alloy-provider",
+ "alloy-rpc-types-eth 2.5.0",
+ "alloy-transport",
+ "aws-config",
+ "base-replay",
+ "base-replay-store",
+ "clap",
+ "eyre",
+ "futures",
+ "humantime",
+ "jsonrpsee",
+ "rstest",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.19",
+ "tokio",
+ "url",
+]
+
+[[package]]
 name = "base-replay-recorder"
 version = "0.0.0"
 dependencies = [
@@ -6211,6 +6236,8 @@ dependencies = [
  "base-replay-store",
  "clap",
  "futures",
+ "hyper 1.11.0",
+ "hyper-util",
  "jsonrpsee-types",
  "reqwest 0.13.4",
  "reth-tasks",

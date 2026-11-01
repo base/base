@@ -5,6 +5,7 @@
 
 mod cli;
 mod commands;
+pub use commands::{ReplayCommand, ReplaySubcommand};
 mod config;
 
 #[global_allocator]
