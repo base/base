@@ -128,12 +128,13 @@ mod tests {
             source: "127.0.0.1:4321".parse().unwrap(),
             batch_id: 42,
         };
-        let results = RpcEnvelope::parse(br#"[{"jsonrpc":"2.0","id":1,"method":"ok"},1]"#)
-            .unwrap()
-            .into_records(&context);
-        assert_eq!(results.len(), 2);
-        assert_eq!(results[0].as_ref().unwrap().1.method, "ok");
-        assert!(results[1].is_err());
+        for invalid in ["1", r#"{"jsonrpc":"2.0","id":2,"method":"bad","params":42}"#] {
+            let input = format!(r#"[{invalid},{{"jsonrpc":"2.0","id":1,"method":"ok"}}]"#);
+            let results = RpcEnvelope::parse(input.as_bytes()).unwrap().into_records(&context);
+            assert_eq!(results.len(), 2);
+            assert!(results[0].is_err());
+            assert_eq!(results[1].as_ref().unwrap().1.method, "ok");
+        }
         let oversized = format!("[{}]", vec!["1"; RpcEnvelope::MAX_BATCH_CALLS + 1].join(","));
         assert!(RpcEnvelope::parse(oversized.as_bytes()).is_err());
     }
