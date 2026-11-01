@@ -27,7 +27,21 @@ use base_proof_submission::KnownRevert;
 use base_prover_service_protocol::{GetProofResponse, ProofStatus, SnarkPlonkProofRequest};
 use base_tx_manager::TxManagerError;
 
-use crate::{ChallengeSubmitError, ChallengerProofAdapter, DisputeIntent};
+use crate::{ChallengeSubmitError, ChallengerProofAdapter};
+
+/// The intended onchain action for a completed proof.
+///
+/// A TEE proof always targets `nullify()`. A ZK proof may target either
+/// `challenge()` (Path 1: challenging a wrong TEE proposal) or `nullify()`
+/// (Path 2: nullifying a fraudulent ZK challenge, Path 3: nullifying a
+/// wrong ZK proposal).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DisputeIntent {
+    /// Submit via `challenge()` — challenges a TEE proof with a competing ZK proof.
+    Challenge,
+    /// Submit via `nullify()` — nullifies an existing proof.
+    Nullify,
+}
 
 /// Retry and prover-duration limits for one dispute attempt.
 #[derive(Debug, Clone, Copy)]
@@ -201,7 +215,10 @@ pub enum IgnoreReason {
     /// The L1 origin is outside the history window.
     L1OriginTooOld,
     /// The onchain verifier rejected the ZK proof.
-    ZkInvalidProof,
+    ZkInvalidProof {
+        /// Index rejected by the verifier.
+        invalid_index: u64,
+    },
 }
 
 /// Why a TEE submission triggered retry handling.
@@ -523,7 +540,9 @@ impl DisputeAttempt {
                         Some(Action::Ignore(IgnoreReason::L1OriginTooOld))
                     }
                     ChallengeSubmitError::KnownRevert(KnownRevert::InvalidProof) if !is_tee => {
-                        Some(Action::Ignore(IgnoreReason::ZkInvalidProof))
+                        Some(Action::Ignore(IgnoreReason::ZkInvalidProof {
+                            invalid_index: self.target.invalid_index,
+                        }))
                     }
                     ChallengeSubmitError::KnownRevert(KnownRevert::InvalidSigner) if !is_tee => {
                         Some(Action::Drop(DropReason::ZkInvalidSigner))
@@ -1220,6 +1239,23 @@ mod tests {
     }
 
     #[test]
+    fn tee_nullification_completes_without_further_effects() {
+        let now = Instant::now();
+        let mut attempt = tee(now, false);
+        attempt.need(now);
+        attempt.apply(success(true), now);
+        assert!(matches!(
+            attempt.apply(chain(), now),
+            Action::Submit { intent: DisputeIntent::Nullify, source: AttemptProofSource::Tee, .. }
+        ));
+        assert!(matches!(
+            attempt.apply(Event::Submitted(Ok(())), now),
+            Action::Drop(DropReason::Disputed)
+        ));
+        assert!(matches!(attempt.need(now + Duration::from_secs(1)), Need::Idle));
+    }
+
+    #[test]
     fn submit_errors_follow_source_specific_policy() {
         let now = Instant::now();
         for is_tee in [false, true] {
@@ -1263,7 +1299,10 @@ mod tests {
                             assert!(matches!(action, Action::Ignore(IgnoreReason::L1OriginTooOld)))
                         }
                         "proof" if !is_tee => {
-                            assert!(matches!(action, Action::Ignore(IgnoreReason::ZkInvalidProof)))
+                            assert!(matches!(
+                                action,
+                                Action::Ignore(IgnoreReason::ZkInvalidProof { .. })
+                            ))
                         }
                         "signer" if !is_tee => {
                             assert!(matches!(action, Action::Drop(DropReason::ZkInvalidSigner)))
