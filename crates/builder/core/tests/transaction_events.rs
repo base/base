@@ -34,7 +34,6 @@ async fn recoverable_predicate_emits_builder_deferred() -> eyre::Result<()> {
     let gated = driver
         .create_transaction()
         .with_signer(&accounts[0])
-        .with_nonce(0)
         .with_to(Address::random())
         .with_max_priority_fee_per_gas(100)
         .build()
@@ -124,7 +123,6 @@ async fn blocked_transaction_emits_one_builder_deferred_across_blocks() -> eyre:
     let blocked = driver
         .create_transaction()
         .with_signer(&accounts[0])
-        .with_nonce(0)
         .with_to(Address::random())
         .build()
         .await;
@@ -189,7 +187,6 @@ async fn expired_position_predicate_emits_builder_expired() -> eyre::Result<()> 
     let expired = driver
         .create_transaction()
         .with_signer(&accounts[0])
-        .with_nonce(0)
         .with_to(Address::random())
         .build()
         .await;
@@ -264,10 +261,11 @@ async fn expired_flashblock_predicate_releases_same_nonce_before_block_seals() -
     let listener = instance.spawn_flashblocks_listener();
     // Wait for the WebSocket handshake before asking the driver to build flashblock 1.
     tokio::time::sleep(Duration::from_millis(50)).await;
+    let nonce = driver.provider().get_transaction_count(accounts[0].address()).pending().await?;
     let original = driver
         .create_transaction()
         .with_signer(&accounts[0])
-        .with_nonce(0)
+        .with_nonce(nonce)
         .with_to(Address::random())
         .with_max_priority_fee_per_gas(100)
         .build()
@@ -321,7 +319,7 @@ async fn expired_flashblock_predicate_releases_same_nonce_before_block_seals() -
     let replacement = driver
         .create_transaction()
         .with_signer(&accounts[0])
-        .with_nonce(0)
+        .with_nonce(nonce)
         .with_to(Address::random())
         .with_max_priority_fee_per_gas(1)
         .send()
