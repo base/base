@@ -623,19 +623,9 @@ impl TestConfig {
 
     /// Returns the funder key from the `FUNDER_KEY` environment variable.
     pub fn funder_key() -> Result<PrivateKeySigner> {
-        Self::resolve_funder_key(None)
-    }
-
-    /// Resolves the funder key from an explicit override string, falling back to the
-    /// `FUNDER_KEY` environment variable when no override is provided.
-    pub fn resolve_funder_key(override_key: Option<&str>) -> Result<PrivateKeySigner> {
-        let key_str = if let Some(s) = override_key {
-            s.to_string()
-        } else {
-            std::env::var("FUNDER_KEY").map_err(|_| {
-                BaselineError::Config("FUNDER_KEY environment variable is required".into())
-            })?
-        };
+        let key_str = std::env::var("FUNDER_KEY").map_err(|_| {
+            BaselineError::Config("FUNDER_KEY environment variable is required".into())
+        })?;
         key_str.parse().map_err(|e| {
             BaselineError::Config(format!("invalid funder key (expected 0x-prefixed hex): {e}"))
         })
