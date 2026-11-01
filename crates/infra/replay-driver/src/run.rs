@@ -13,7 +13,8 @@ use eyre::{OptionExt, Result, WrapErr, ensure};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    BlockDiff, CanonicalBlock, DiffReport, InjectionSchedule, Injector, ReplayDataset, ShadowDriver,
+    BlockDiff, BuilderIngressInjector, CanonicalBlock, DiffReport, InjectionSchedule, Injector,
+    ReplayDataset, ShadowDriver,
 };
 
 /// Runs one export against an already initialized canonical parent and replay-clock builder.
@@ -140,6 +141,7 @@ where
                 let canonical: HashSet<_> =
                     block.body.transactions.iter().map(|tx| tx.tx_hash()).collect();
                 let mut restored = 0;
+                let mut obsolete = 0;
                 tokio::time::timeout(self.driver.timeout, async {
                     for hash in &candidate.transaction_hashes {
                         if canonical.contains(hash) {
@@ -148,10 +150,16 @@ where
                         let record = records.get(hash).ok_or_else(|| {
                             eyre::eyre!("candidate-only transaction {hash} has no recorded ingress")
                         })?;
-                        self.injector.inject(record.clone()).await.wrap_err_with(|| {
-                            format!("restoring transaction {hash} after block {number}")
-                        })?;
-                        restored += 1;
+                        match self.injector.inject(record.clone()).await {
+                            Ok(()) => restored += 1,
+                            Err(error) if BuilderIngressInjector::is_obsolete(&error, *hash) => {
+                                obsolete += 1;
+                                tracing::warn!(block_number = number, tx_hash = %hash, error = %error, "skipped obsolete pool restoration");
+                            }
+                            Err(error) => return Err(error).wrap_err_with(|| {
+                                format!("restoring transaction {hash} after block {number}")
+                            }),
+                        }
                     }
                     Ok::<_, eyre::Report>(())
                 })
@@ -160,6 +168,7 @@ where
                 tracing::info!(
                     block_number = number,
                     restored,
+                    obsolete,
                     "restored candidate-only transactions"
                 );
                 diffs.push(BlockDiff::compare(&candidate, &baseline, recorded.as_ref())?);
