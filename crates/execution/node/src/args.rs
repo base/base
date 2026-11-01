@@ -11,6 +11,7 @@ use alloy_primitives::Address;
 use base_execution_trie::{MdbxProofsStorageOptions, RocksdbProofsStorageOptions};
 use base_execution_txpool::{
     DEFAULT_ALLOWLISTED_PAYMENT_LIMIT, DEFAULT_PAYMENT_LIMIT, DEFAULT_SIGNATURE_LIMIT,
+    ValidityPoolLimits,
 };
 use base_upgrade_signal::{UpgradeSignalArgs, UpgradeSignalL1RpcArgs};
 use clap::{ArgAction, ValueEnum, builder::ArgPredicate};
@@ -408,6 +409,21 @@ pub struct RollupArgs {
     )]
     pub mempool_allowlisted_payer_limit: u32,
 
+    /// Maximum number of transactions carrying validity predicates held by the
+    /// validity pool. Defaults to `--txpool.pending-max-count`.
+    #[arg(long = "rollup.validity-pool-max-count")]
+    pub validity_pool_max_count: Option<usize>,
+
+    /// Maximum total size of the validity pool, in megabytes. Defaults to
+    /// `--txpool.pending-max-size`.
+    #[arg(long = "rollup.validity-pool-max-size")]
+    pub validity_pool_max_size: Option<usize>,
+
+    /// Maximum validity transactions one external sender may hold in the validity
+    /// pool. Defaults to `--txpool.max-account-slots`.
+    #[arg(long = "rollup.validity-pool-max-account-slots")]
+    pub validity_pool_max_account_slots: Option<usize>,
+
     /// If true, initialize external-proofs exex to save and serve trie nodes to provide proofs
     /// faster.
     #[arg(
@@ -506,6 +522,19 @@ pub struct RollupArgs {
     pub upgrade_signal_l1_rpc: UpgradeSignalL1RpcArgs,
 }
 
+impl RollupArgs {
+    /// Resolves the validity pool flags, converting the size cap from megabytes.
+    pub fn validity_pool_limits(&self) -> ValidityPoolLimits {
+        ValidityPoolLimits {
+            max_txs: self.validity_pool_max_count,
+            max_size: self
+                .validity_pool_max_size
+                .map(|megabytes| megabytes.saturating_mul(MIB as usize)),
+            max_account_slots: self.validity_pool_max_account_slots,
+        }
+    }
+}
+
 impl HasRollupArgs for RollupArgs {
     fn rollup_args(&self) -> &RollupArgs {
         self
@@ -526,6 +555,9 @@ impl Default for RollupArgs {
             mempool_trusted_delegation_targets: Vec::new(),
             mempool_allowlisted_payers: Vec::new(),
             mempool_allowlisted_payer_limit: DEFAULT_ALLOWLISTED_PAYMENT_LIMIT,
+            validity_pool_max_count: None,
+            validity_pool_max_size: None,
+            validity_pool_max_account_slots: None,
             proofs_history: false,
             proofs_history_storage_path: None,
             proofs_history_db: ProofsHistoryDbBackend::default(),
@@ -607,6 +639,33 @@ mod tests {
         assert_eq!(
             args.max_inflight_delegated_slots,
             RollupArgs::default().max_inflight_delegated_slots
+        );
+    }
+
+    #[test]
+    fn validity_pool_limits_default_to_inherit() {
+        let args = CommandParser::<RollupArgs>::parse_from(["reth"]).args;
+        assert_eq!(args.validity_pool_limits(), ValidityPoolLimits::inherit());
+    }
+
+    #[test]
+    fn validity_pool_limits_parse_with_size_in_megabytes() {
+        let args = CommandParser::<RollupArgs>::parse_from([
+            "reth",
+            "--rollup.validity-pool-max-count",
+            "5000",
+            "--rollup.validity-pool-max-size",
+            "3",
+            "--rollup.validity-pool-max-account-slots",
+            "32",
+        ])
+        .args;
+        assert_eq!(
+            args.validity_pool_limits(),
+            ValidityPoolLimits::inherit()
+                .with_max_txs(5000)
+                .with_max_size(3 * 1024 * 1024)
+                .with_max_account_slots(32)
         );
     }
 
