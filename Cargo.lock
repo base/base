@@ -6195,6 +6195,7 @@ dependencies = [
  "base-execution-txpool",
  "base-replay",
  "base-replay-export",
+ "base-replay-recorder",
  "base-replay-store",
  "base-tx-forwarding",
  "clap",
