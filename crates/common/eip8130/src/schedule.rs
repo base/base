@@ -60,9 +60,9 @@ impl Eip8130GasSchedule {
     pub const TX_TOTAL_COST_FLOOR_PER_TOKEN: u64 = 10;
 
     // ── EIP-8130 table values ────────────────────────────────────────────────
-    /// Base intrinsic cost for any AA transaction (`AA_BASE_COST`): the EIP-8430
-    /// base (9,000) rounded up to 12,000 to cover the sender's cold
-    /// `policy_manager` SLOAD. Whether the sender's actor is policy-gated is
+    /// Base intrinsic cost for any AA transaction (`AA_BASE_COST`), equal to
+    /// EIP-2780's `TX_BASE_COST`. It also covers the sender's cold
+    /// `policy_manager` SLOAD: whether the sender's actor is policy-gated is
     /// state, so every transaction pays the read that authorization performs
     /// for a gated actor.
     pub const AA_BASE_COST: u64 = 12_000;
