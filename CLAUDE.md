@@ -24,6 +24,7 @@
 - Sort `Cargo.toml` dependencies by line length (waterfall style) and preserve the workspace's logical grouping.
 - Put features sections at the bottom of manifests.
 - Every crate and binary manifest must inherit workspace lints with `[lints] workspace = true`.
+- Before choosing a new crate's directory, check its dependencies, including dev-dependencies, against `etc/scripts/ci/check-crate-deps.sh`, and run that script before opening a PR.
 - Do not enable dependency features in the workspace root `Cargo.toml`. Enable them only in the crates or binaries that need them to prevent feature leakage into `no_std` crates.
 
 ## Documentation and Lints
@@ -97,5 +98,6 @@ let bal = wallet.account.balance();
 - Keep modules and actor loops focused; put state-specific logic on the type that owns it.
 - Document contracts and non-obvious reasons, not code narration or change history; keep docs consistent with behavior.
 - Preserve historical fork behavior and parity across execution paths; test both old and new fork behavior.
-- Avoid unnecessary I/O, cloning, and allocation on hot paths; benchmark production code when claiming performance gains.
+- Cost hot-path work at its production frequency, not per call. Hot paths and their rates are listed in [docs/guides/HOT_PATH_PERFORMANCE_REVIEW.md](docs/guides/HOT_PATH_PERFORMANCE_REVIEW.md). Keep allocation, cloning, serialization, I/O, and metric-handle lookups out of per-candidate work, and do not scan pool-sized collections per candidate or rejection.
+- Measure default-off features with the feature enabled, and benchmark production code when claiming performance gains.
 - Make async lifetimes explicit: bound waits, distinguish retryable from terminal errors, and clean up tasks on failure and shutdown.

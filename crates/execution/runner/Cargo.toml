@@ -47,8 +47,8 @@ alloy-rpc-types-engine = { workspace = true, optional = true, features = [
 ] }
 
 # base-alloy
+base-common-network.workspace = true
 base-common-rpc-types = { workspace = true, optional = true }
-base-common-network = { workspace = true, optional = true }
 base-common-consensus = { workspace = true, features = ["reth"] }
 base-common-rpc-types-engine = { workspace = true, optional = true }
 
@@ -56,7 +56,7 @@ base-common-rpc-types-engine = { workspace = true, optional = true }
 tokio = { workspace = true, optional = true }
 
 # rpc
-jsonrpsee = { workspace = true, optional = true }
+jsonrpsee.workspace = true
 
 # misc
 eyre.workspace = true
@@ -70,6 +70,9 @@ tracing-subscriber = { workspace = true, optional = true }
 [dev-dependencies]
 base-protocol.workspace = true
 base-common-evm.workspace = true
+base-common-genesis.workspace = true
+base-consensus-engine.workspace = true
+base-consensus-providers.workspace = true
 base-node-runner = { path = ".", features = ["test-utils"] }
 serde_json.workspace = true
 tokio-tungstenite.workspace = true
@@ -89,12 +92,10 @@ test-utils = [
 	"dep:alloy-rpc-client",
 	"dep:alloy-rpc-types",
 	"dep:alloy-rpc-types-engine",
-	"dep:base-common-network",
 	"dep:base-common-rpc-types",
 	"dep:base-common-rpc-types-engine",
 	"dep:base-test-utils",
 	"dep:chrono",
-	"dep:jsonrpsee",
 	"dep:reth-ipc",
 	"dep:reth-node-core",
 	"dep:reth-primitives-traits",

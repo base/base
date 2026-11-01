@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use crate::{
     FLOW_STANDARD, FLOW_VALIDITY, InclusionTracker, ParkedPredicateIndex, PredicateLoadTracker,
+    RestingCarryOver,
 };
 
 base_metrics::define_metrics! {
@@ -58,6 +59,27 @@ base_metrics::define_metrics! {
     #[describe("Validity predicate evaluation attempts")]
     #[label(outcome)]
     validity_predicate_evaluations_total: counter,
+    #[describe("Resting validity transactions carried into a block build from the previous block")]
+    resting_predicate_carried: histogram,
+    #[describe("Resting validity transactions released from the carried set, by reason")]
+    #[label(reason)]
+    resting_predicate_carry_released_total: counter,
+    #[describe("Block builds that discarded carried resting validity transactions because the parent was not the last block the builder finished")]
+    resting_predicate_carry_resets_total: counter,
+    #[describe("Resting validity transactions parked in the transaction iterator without reaching the build loop")]
+    resting_predicate_parked_total: counter,
+    #[describe("Resting validity transactions whose predicates matched when evaluated in shadow mode")]
+    resting_predicate_shadow_mismatches_total: counter,
+    #[describe("Of the parked resting validity transactions, those carried over from an earlier block")]
+    resting_predicate_carried_parked_total: counter,
+    #[describe("Duration of carrying resting validity transactions into a block build, on the build path before the selection loop, in seconds")]
+    resting_predicate_begin_block_duration: histogram,
+    #[describe("Duration of the periodic sweep of resting validity transactions no build yielded, run off the build path, in seconds")]
+    resting_predicate_sweep_duration: histogram,
+    #[describe("Time a block build waited for the previous block's resting sweep to finish, in seconds")]
+    resting_predicate_sweep_wait_duration: histogram,
+    #[describe("Block builds that stopped waiting for the previous block's resting sweep and started with an empty resting set")]
+    resting_predicate_sweep_wait_timeouts_total: counter,
 }
 
 base_metrics::define_metrics! {
@@ -84,6 +106,18 @@ base_metrics::define_metrics! {
     #[label(name = "flow", default = ["standard", "validity"])]
     #[label(name = "bid", default = ["coinbase_tip", "priority_fee"])]
     tip_per_gas: histogram,
+    #[describe(
+        "Time to build one block from the transaction pool in the native payload builder in seconds"
+    )]
+    native_payload_build_duration: histogram,
+    #[describe(
+        "Time spent applying pre-execution changes and executing transactions in one native payload build in seconds"
+    )]
+    native_payload_execution_duration: histogram,
+    #[describe(
+        "Time from the end of transaction execution until the native payload is sealed, including the state root, in seconds"
+    )]
+    native_payload_state_root_duration: histogram,
 }
 
 impl ValidityMetrics {
@@ -123,6 +157,42 @@ impl ValidityMetrics {
         Self::predicate_slots_loaded_unique().record(tracker.unique_slots() as f64);
     }
 
+    /// Records what carrying resting validity transactions into a new block did, and how long it
+    /// took.
+    pub fn record_resting_carry_over(carry_over: &RestingCarryOver, duration: Duration) {
+        Self::resting_predicate_begin_block_duration().record(duration.as_secs_f64());
+        if carry_over.reset {
+            Self::resting_predicate_carry_resets_total().increment(1);
+        }
+        for (reason, released) in [
+            ("pre_block_state", carry_over.released_by_state),
+            ("block_number", carry_over.released_by_block_number),
+        ] {
+            if released > 0 {
+                Self::resting_predicate_carry_released_total(reason).increment(released as u64);
+            }
+        }
+        Self::resting_predicate_carried().record(carry_over.carried as f64);
+    }
+
+    /// Records one sweep of resting validity transactions no build yielded.
+    pub fn record_resting_unseen_sweep(released: usize, duration: Duration) {
+        if released > 0 {
+            Self::resting_predicate_carry_released_total("unseen").increment(released as u64);
+        }
+        Self::resting_predicate_sweep_duration().record(duration.as_secs_f64());
+    }
+
+    /// Records how long a block build waited for the previous block's resting sweep.
+    pub fn record_resting_sweep_wait(waited: Duration) {
+        Self::resting_predicate_sweep_wait_duration().record(waited.as_secs_f64());
+    }
+
+    /// Records a block build that gave up waiting for the previous block's resting sweep.
+    pub fn record_resting_sweep_wait_timeout() {
+        Self::resting_predicate_sweep_wait_timeouts_total().increment(1);
+    }
+
     /// Records validity-predicate index bucket wakeups and depth distribution for one build.
     pub fn record_predicate_index_diagnostics<T>(wakeups: u64, index: &ParkedPredicateIndex<T>) {
         Self::predicate_bucket_wakeups().record(wakeups as f64);
@@ -137,8 +207,8 @@ type CounterHandle = metrics::Counter;
 #[cfg(not(feature = "metrics"))]
 type CounterHandle = base_metrics::NoopMetric;
 
-/// `outcome` label of `validity_predicate_evaluations_total` recorded by the flashblocks build
-/// loop.
+/// `outcome` label of `validity_predicate_evaluations_total` recorded by the flashblocks and
+/// native build loops.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ValidityEvaluationOutcome {
     /// Primary scan: every predicate held.
@@ -149,6 +219,10 @@ pub enum ValidityEvaluationOutcome {
     ReadError,
     /// Primary scan: deferred unevaluated because the evaluation budget was exhausted.
     BudgetExhausted,
+    /// Primary scan: a predicate can no longer be satisfied (native builder).
+    Expired,
+    /// Primary scan: rejected unevaluated because of an unsupported predicate (native builder).
+    Unsupported,
     /// Rescan: every predicate held.
     RescanMatched,
     /// Rescan: a predicate did not hold.
@@ -161,11 +235,13 @@ pub enum ValidityEvaluationOutcome {
 
 impl ValidityEvaluationOutcome {
     /// Every variant in declaration order; its length sizes [`ValidityEvaluationCounters`].
-    const ALL: [Self; 8] = [
+    const ALL: [Self; 10] = [
         Self::Matched,
         Self::NotSatisfied,
         Self::ReadError,
         Self::BudgetExhausted,
+        Self::Expired,
+        Self::Unsupported,
         Self::RescanMatched,
         Self::RescanNotSatisfied,
         Self::RescanReadError,
@@ -180,6 +256,8 @@ impl ValidityEvaluationOutcome {
             Self::NotSatisfied => "not_satisfied",
             Self::ReadError => "read_error",
             Self::BudgetExhausted => "budget_exhausted",
+            Self::Expired => "expired",
+            Self::Unsupported => "unsupported",
             Self::RescanMatched => "rescan_matched",
             Self::RescanNotSatisfied => "rescan_not_satisfied",
             Self::RescanReadError => "rescan_read_error",
@@ -226,6 +304,14 @@ impl BuilderMetrics {
         Self::base_fee_revenue_wei(FLOW_VALIDITY).record(tracker.validity.base_fees_f64());
         Self::coinbase_tip_revenue_wei(FLOW_STANDARD).record(tracker.standard.coinbase_tips_f64());
         Self::coinbase_tip_revenue_wei(FLOW_VALIDITY).record(tracker.validity.coinbase_tips_f64());
+    }
+
+    /// Records the execution and total duration of one native payload build.
+    pub fn record_native_build(execution: Duration, total: Duration) {
+        Self::native_payload_build_duration().record(total.as_secs_f64());
+        Self::native_payload_execution_duration().record(execution.as_secs_f64());
+        Self::native_payload_state_root_duration()
+            .record(total.saturating_sub(execution).as_secs_f64());
     }
 
     /// Records one included transaction's tip per gas by flow and bid mechanism.

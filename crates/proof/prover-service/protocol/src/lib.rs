@@ -22,5 +22,5 @@ pub use types::{
     ProofType, ProveBlockRangeRequest, ProveBlockRangeResponse, RecordProofSessionRequest,
     RecordProofSessionResponse, SessionType, SnarkPlonkProofRequest, SnarkPlonkProofResult,
     TeeKind, TeeProofRequest, TeeProofResult, WorkerSubmitProofRequest, WorkerSubmitProofResponse,
-    ZkBackend, ZkProofRequest, ZkProofResult, ZkVm,
+    ZkBackend, ZkProofRequest, ZkProofResult, ZkRangeError, ZkVm,
 };

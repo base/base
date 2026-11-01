@@ -6,6 +6,24 @@ real builder and client execution and consensus components in one managed launch
 applications against a snapshot, use `base dev` instead; see
 [docs/guides/DEVNET.md](../../docs/guides/DEVNET.md).
 
+## Test port ownership
+
+In-process nodes use a node-owned `PortPool` for ports that must be selected before binding.
+Create a pool with `PortPool::default()` and call `pool.claim()`; keep the pool alive through node
+shutdown. Its file locks coordinate ports 20000–29999 across test processes and are released on
+drop, rather than accumulating until process exit. TCP and UDP availability checks also reject
+ports still bound during asynchronous socket cleanup. Explicit caller-supplied ports remain the
+caller's responsibility; services that bind port zero directly continue to use OS allocation.
+
+Consensus task owners request cooperative cancellation on drop, including startup failure.
+If the service has not exited after five seconds, its future is forcibly dropped so unresponsive
+startup or shutdown cannot retain its port claims indefinitely. Explicit follow-node shutdown
+waits for that cleanup rather than detaching the service when the grace period expires.
+
+System-test consensus nodes use fresh outbound TCP ports. libp2p's default listener-port reuse
+binds outbound sockets to a wildcard address, which conflicts with sandbox forwarding listeners
+on other local interfaces. Production consensus keeps listener-port reuse enabled.
+
 ## Snapshot devnet topology
 
 The snapshot mode starts these real local network roles inside one managed launcher process:
@@ -122,8 +140,6 @@ To pin a run to a known snapshot boundary, pass all three of `--expected-head-nu
 `--expected-head-hash`, and `--expected-head-timestamp`. Startup fails before load generation if
 the captured boundary differs.
 
-## Run a snapshot benchmark
-
 ## Run a quick local transfer benchmark
 
 For a no-configuration smoke benchmark, `base-bench` starts a fresh temporary
@@ -178,17 +194,27 @@ Swap workloads can opt into fresh-devnet contract provisioning with
 fresh devnet USDC token plus Uniswap/Aerodrome router shims for each workload,
 then auto-wires swap and real-token setup addresses before execution.
 
+## Run a snapshot benchmark
+
 `base-bench snapshot` owns the process lifecycle around one load test: it generates an ephemeral
 funder, deposits funds to it in the first local descendant, replaces placeholder endpoints in the
 YAML with dynamically allocated builder endpoints, runs the load generator, writes JSON, and shuts
 the stack down. It does not own the caller-provided snapshot datadirs.
+
+Snapshot runs can opt into native-builder state sharing with
+`--engine.share-sparse-trie-with-payload-builder` and
+`--engine.share-execution-cache-with-payload-builder`. Both default to false.
+These settings affect the basic builder selected at Denim for 200 ms runs, not
+the Flashblocks builder. Sparse sharing requires at least five available CPUs;
+an unsupported host fails rather than silently ignoring the option. Host-derived
+worker-pool sizing is unchanged. The options are CLI-only, not load-test YAML keys.
 
 For the end-to-end workflow, including disposable snapshot restores, report artifact conventions, and
 how `--benchmark-run`, `--scenario`, and `--run-id` select runs in `base/benchmark`, see
 [Snapshot Benchmarking](../../docs/guides/SNAPSHOT_BENCHMARKS.md).
 
 Always use an optimized build for performance measurements. Debug payload execution becomes
-CPU-bound far below the 400M block gas limit.
+CPU-bound far below the snapshot block gas limits.
 
 ```bash
 mkdir -p results
@@ -206,15 +232,15 @@ just devnet bench snapshot \
 ```
 
 The account-create workload uses the adaptive open-loop load generator. Every successful transfer
-targets a runtime-random fresh address, forcing an account-trie insertion. Its 100 senders and
-1,024 in-flight transactions per sender can hold more than five 400M-gas blocks of 21K-gas
-transfers. The cross-cadence example keeps 1M gas outstanding. Larger 20M and 80M fresh-account
-queues overran payload deadlines in local storage: the 2s Flashblocks builder missed subsequent FCUs
-and the 200ms standard builder could remain inside state-root construction without advancing the
-measurement. It measures exactly 500 newly observed canonical blocks. Setup, prefill, and post-run
-confirmation draining are outside the measured block count. Use `duration` instead of (or in
-addition to) `measurement_blocks` in a custom YAML when a time-bounded smoke test is preferable;
-when both are set, the first limit reached stops submissions.
+targets a runtime-random fresh address, forcing an account-trie insertion. Its 100 senders and 1,024
+in-flight transactions per sender can hold about 2.1 Ggas of 21K-gas transfers, more than two
+default 200ms blocks. The cross-cadence example keeps 1M gas outstanding. Larger 20M and 80M
+fresh-account queues overran payload deadlines in local storage: the 2s Flashblocks builder missed
+subsequent FCUs and the 200ms standard builder could remain inside state-root construction without
+advancing the measurement. It measures exactly 500 newly observed canonical blocks. Setup, prefill,
+and post-run confirmation draining are outside the measured block count. Use `duration` instead of
+(or in addition to) `measurement_blocks` in a custom YAML when a time-bounded smoke test is
+preferable; when both are set, the first limit reached stops submissions.
 
 The result includes cadence, boundary number/hash, builder/client endpoints, the generated funder
 address (never its private key), explicit measurement boundaries, every measured block's
@@ -226,9 +252,22 @@ written before the command returns the error.
 Omit `--client-datadir` to run only the builder and the standalone sequencer: the run skips the
 validator phase and its outputs.
 
+Pass `--export-blocks <dir>` (or `BASE_BENCH_EXPORT_BLOCKS`) to keep the run's blocks for a later
+validator replay on a restored copy of the same snapshot, without a second datadir. After the
+sequencer stops, the run fetches every builder block after the snapshot boundary, setup blocks
+included, and writes `<dir>/blocks.jsonl`: one JSON line per block in order, holding its number,
+hash, millisecond timestamp, state root, payload version, and the engine payload envelope exactly
+as produced. It then writes `<dir>/replay.json`, with the chain, rollup config, block interval,
+boundary, first block timestamp, and the last block's hash and state root the replay must reach.
+The manifest is written last, so its presence marks a complete export; a failed export fails the
+run. Put the directory outside the restored datadirs so restoring the snapshot does not erase it.
+
 `--output-dir` is one self-contained `base/benchmark` run directory. It receives
 `benchmark-result.json`, `metadata.json`, `metrics-sequencer.json`, `load-test-result.json`, and,
-with a client datadir, `metrics-validator.json`. Set `BASE_BENCH_CLIENT_VERSION` to a stable
+with a client datadir, `metrics-validator.json`. When `<config>.targets.json` from
+`etc/scripts/local/mainnet-mix.py` sits beside the load-test config, it also receives
+`calibration.json`: per metric, the mainnet target, the run's value, the relative error, and whether
+it is within tolerance. Set `BASE_BENCH_CLIENT_VERSION` to a stable
 build label when the report should compare commits or releases. The role metrics contain
 `gas/per_block`, `gas/per_second`, `transactions/per_block`, `transactions/per_second`, and selected
 Reth Prometheus diagnostics. `BlockNumber` uses two-second-equivalent measurement units: each 2s
@@ -245,14 +284,73 @@ series are identified by scenario and node role; `--run-id` is only the unique a
 defaults to `<benchmark-run>-<timestamp>` when omitted. Upload the metrics and artifact files before
 `metadata.json` when publishing to the report service because metadata is its completion signal.
 
+Which builder metrics describe the canonical blocks depends on cadence. At 2s the flashblocks
+builder produces them, so read `reth_base_builder_total_block_built_duration_avg` and the other
+flashblocks series. At 200ms the payload-builder cutover selects the native builder after Denim and
+sends the flashblocks builder a no-pool build of each block, so its series describe that discarded
+payload. Read `reth_base_builder_native_payload_{build,execution,state_root}_duration_avg` instead.
+`reth_base_builder_txs_included_per_block_flow_*_avg` and
+`reth_base_builder_tx_gas_used_per_block_flow_*_avg` count pool transactions, excluding sequencer
+transactions, in blocks from whichever builder was selected. Like every histogram average they span
+the scrape interval; `transactions/per_block` and `gas/per_block` are exact per block.
+
 For a saturated Blake2f comparison with equal 60-second measured windows, provide separate 2s and
-200ms YAMLs with 30 and 300 measured blocks, respectively. Both should issue one fixed
-50,000-round Blake2f call per transaction with identical sender, in-flight, batching, funding, and
-seed settings. The report labels these runs with `TransactionPayload=blake2f`; use scenarios such
-as `blake2f-2s-run-1` and `blake2f-200ms-run-1` to distinguish repetitions. A
-5,000-transaction global in-flight cap is exactly one 400M-gas block of queue headroom at the
-configured 80,000 gas limit per transaction, which keeps the builder saturated without leaving an
-oversized submission backlog at cutoff.
+200ms YAMLs with 30 and 300 measured blocks, respectively. Both should issue one fixed 50,000-round
+Blake2f call per transaction with identical sender, in-flight, batching, funding, and seed settings.
+The report labels these runs with `TransactionPayload=blake2f`; use scenarios such as
+`blake2f-2s-run-1` and `blake2f-200ms-run-1` to distinguish repetitions. Size the global in-flight
+cap in gas: at the configured 80,000 gas limit per transaction, a 125,000-transaction cap queues 10
+Ggas, one default 2s block. Because both cadence defaults provide 5 Ggas/s, that is 2s of capacity
+at either cadence. A 5,000-transaction cap queues only 400M gas, 4% of a default 2s block and 40% of
+a default 200ms block.
+
+## Replay exported blocks into a validator
+
+`base-bench replay` measures a validator without a second restored datadir. A snapshot run with
+`--export-blocks <dir>` writes every produced block to `<dir>/blocks.jsonl` and then
+`<dir>/replay.json`. Restore the same snapshot again and replay the export into it:
+
+```bash
+just devnet bench replay \
+  --datadir "$RESTORED_DATADIR" \
+  --export-dir "$EXPORT_DIR" \
+  --output-dir results/account-create-2s-replay
+```
+
+The command rebuilds the run's chain spec from the manifest (chain, rollup config, cadence, and
+the first block's timestamp, where 200ms runs activate Denim), starts one execution node on
+`--datadir`, and requires its head to be the export boundary. Each block is then inserted with
+`engine_newPayload` (V2 to V4, by payload version) and made canonical with
+`engine_forkchoiceUpdatedV3`, keeping the snapshot's safe and finalized heads. Both calls must
+return `VALID`. By default blocks are sent as fast as the node accepts them; `--paced` sends each
+block at its recorded offset from the first block and records how late it was.
+
+`<output-dir>/replay-result.json` holds the manifest, mode, block count, wall time, blocks per
+second, `newPayload` and forkchoice latency (mean, p50, p99, max), paced lag, the node's final
+hash and state root, `match`, and per-block timings. A complete replay also writes
+`metrics-validator.json` in the snapshot benchmark's format; without pacing, several blocks often
+land in one scrape, so its counter deltas are averages across those blocks. The command exits
+nonzero if any block is rejected or the final hash or state root differs from the manifest. The
+replay mutates `--datadir`; restore it again before another run.
+
+## Measure DA bytes for a block range
+
+`base-bench da` runs blocks through the batcher encoder with the Rust batcher's default settings
+and reports the L1 data they need, with no L1. It reads a snapshot run's export or a range from an
+L2 RPC:
+
+```bash
+just devnet bench da --export-dir "$EXPORT_DIR" --output-dir results/account-create-2s-da
+just devnet bench da --rpc-url "$BASE_MAINNET_RPC" --from 53091727 --to 53095326 \
+  --output-dir results/mainnet-da
+```
+
+The encoder's L1 clock advances every 12 s of block time and every submission counts as included
+at once. `<output-dir>/da-result.json` holds the range's gas, its non-deposit transactions and
+their bytes, the L1 transactions, blobs and frame bytes the encoder produced, and rates over block
+time: gas per second, frame bytes per second, bytes per gas, compression ratio, blobs per L1 slot,
+blob fill, and the gas per second that full blobs at the 14-blob L1 target carry at this range's
+bytes per gas. Mainnet ranges read over RPC check the encoder against the blob bytes Base posted.
 
 ## Compare 2s and 200ms fairly
 

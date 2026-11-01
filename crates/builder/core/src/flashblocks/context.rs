@@ -743,9 +743,7 @@ impl BasePayloadBuilderCtx {
         best_txs: &mut impl PayloadTxsBounds,
         limits: &ResourceLimits,
     ) -> Result<FlashblockDiagnostics, PayloadBuilderError> {
-        let execute_txs_start_time = Instant::now();
         let mut num_txs_considered = 0;
-        let mut num_txs_simulated = 0;
         let mut num_txs_simulated_success = 0;
         let mut num_txs_simulated_fail = 0;
         let mut reverted_gas_used: u64 = 0;
@@ -887,15 +885,19 @@ impl BasePayloadBuilderCtx {
                     ValidityEvaluationOutcome::Matched
                 };
                 evaluation_counters.increment(outcome, 1);
+                // Only matched candidates pay for the resting lookup.
                 if outcome == ValidityEvaluationOutcome::Matched
                     && best_txs.is_resting(tx_hash, tx.validity_conditions())
                 {
-                    BuilderMetrics::resting_predicate_shadow_mismatches_total().increment(1);
+                    ValidityMetrics::resting_predicate_shadow_mismatches_total().increment(1);
                     debug!(
                         target: "payload_builder",
                         tx_hash = ?tx_hash,
                         "resting validity transaction matched when evaluated"
                     );
+                }
+                if predicate_read_failed || predicate_expired || blocking_predicate.is_none() {
+                    best_txs.release(tx_hash);
                 }
             }
             if predicate_read_failed || blocking_predicate.is_some() {
@@ -1318,7 +1320,6 @@ impl BasePayloadBuilderCtx {
             // this is not metering service simulation data from MeterBundleResponse.
             BuilderMetrics::tx_simulation_duration().record(execution_time);
             BuilderMetrics::tx_byte_size().record(tx.inner().size() as f64);
-            num_txs_simulated += 1;
 
             // Record state modification counts (trie work proxy)
             let accounts_modified = state.len();
@@ -1495,12 +1496,14 @@ impl BasePayloadBuilderCtx {
                 evaluation_counters.increment(outcome, 1);
                 if predicate_read_failed {
                     predicate_index.remove(*parked_hash);
+                    best_txs.release(*parked_hash);
                     best_txs.discard_parked(*parked_hash);
                 } else if let Some((_, predicate)) = blocking_predicate {
                     best_txs.rest(*parked_hash, &predicate);
                     predicate_index.reindex(*parked_hash, predicate);
                 } else {
                     predicate_index.remove(*parked_hash);
+                    best_txs.release(*parked_hash);
                     best_txs.promote(*parked_hash);
                 }
             }
@@ -1559,7 +1562,11 @@ impl BasePayloadBuilderCtx {
         }
         let resting_stats = best_txs.take_resting_stats();
         if resting_stats.parked > 0 {
-            BuilderMetrics::resting_predicate_parked_total().increment(resting_stats.parked);
+            ValidityMetrics::resting_predicate_parked_total().increment(resting_stats.parked);
+        }
+        if resting_stats.carried_parked > 0 {
+            ValidityMetrics::resting_predicate_carried_parked_total()
+                .increment(resting_stats.carried_parked);
         }
         let validity_handling = validity_handling + resting_stats.duration;
         if !validity_handling.is_zero() {
@@ -1571,11 +1578,8 @@ impl BasePayloadBuilderCtx {
             predicate_eval_cutoff_hit,
         );
 
-        let payload_transaction_simulation_time = execute_txs_start_time.elapsed();
         BuilderMetrics::set_payload_builder_metrics(
-            payload_transaction_simulation_time.as_secs_f64(),
             num_txs_considered as f64,
-            num_txs_simulated as f64,
             num_txs_simulated_success as f64,
             num_txs_simulated_fail as f64,
             reverted_gas_used as f64,
@@ -1622,7 +1626,6 @@ impl BasePayloadBuilderCtx {
 
     /// Record metrics for a limit that requires execution data (enforcement is configurable).
     fn record_execution_metering_limit_exceeded(&self, limit: &ExecutionMeteringLimitExceeded) {
-        BuilderMetrics::resource_limit_would_reject_total().increment(1);
         match limit {
             ExecutionMeteringLimitExceeded::TransactionExecutionTime(_, _) => {
                 BuilderMetrics::tx_execution_time_exceeded_total().increment(1);

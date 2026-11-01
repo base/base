@@ -11,13 +11,14 @@ use std::{
         atomic::{AtomicBool, Ordering},
     },
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
-use alloy_primitives::Address;
+use alloy_primitives::{Address, B256};
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types_eth::BlockNumberOrTag;
 use alloy_signer_local::PrivateKeySigner;
+use base_builder_core::RestingPredicateMode;
 use base_common_network::Base;
 use base_common_precompiles::ActivationFeature;
 use base_load_tests::{
@@ -27,15 +28,19 @@ use base_load_tests::{
 use chrono::{DateTime, SecondsFormat, Utc};
 use clap::{Args, Parser, Subcommand};
 use eyre::{Result, WrapErr};
+use futures::{StreamExt, stream};
 use serde::{Deserialize, Serialize};
 use tokio::process::Command;
+use tracing::{info, warn};
 
 use crate::{
-    ANVIL_ACCOUNT_1, ANVIL_ACCOUNT_5, B20PrecompileClient, DevnetBlockInterval, DevnetConfig,
-    DevnetL2State, DevnetPrefund, PrometheusBlockCollector, SnapshotBenchmarkReportConfig,
-    SnapshotBenchmarkResult, SnapshotBlockMetrics, SnapshotChainConfig, SnapshotL2Stack,
-    SystemTestStack, SystemTestStackBuilder, VisualizerMetadata, VisualizerRun,
-    VisualizerRunResult, VisualizerSequencerMetrics, VisualizerValidatorMetrics,
+    ANVIL_ACCOUNT_1, ANVIL_ACCOUNT_5, B20PrecompileClient, BlockExportWriter, Calibration,
+    DevnetBlockInterval, DevnetConfig, DevnetL2State, DevnetPrefund, EXPORT_BLOCKS_FILE,
+    ExportedBlock, PendingFixtures, PrometheusBlockCollector, ReplayManifest,
+    SnapshotBenchmarkReportConfig, SnapshotBenchmarkResult, SnapshotBlockMetrics,
+    SnapshotChainConfig, SnapshotL2Stack, SystemTestStack, SystemTestStackBuilder, TxProfile,
+    VisualizerMetadata, VisualizerRun, VisualizerRunResult, VisualizerSequencerMetrics,
+    VisualizerValidatorMetrics,
 };
 
 /// Base benchmark launcher.
@@ -56,6 +61,10 @@ pub enum BenchmarkCommand {
     Snapshot(Box<SnapshotBenchmarkArgs>),
     /// Aggregate selected snapshot run artifacts into one report metadata file.
     Aggregate(AggregateBenchmarkArgs),
+    /// Replay blocks exported by a snapshot run into one validator on a restored snapshot.
+    Replay(crate::ReplayBenchmarkArgs),
+    /// Measure the L1 data an exported run or an RPC block range needs.
+    Da(crate::DaBenchmarkArgs),
 }
 
 /// Arguments for a fresh-devnet benchmark.
@@ -189,18 +198,53 @@ pub struct SnapshotBenchmarkArgs {
     /// 1 Ggas for 200ms blocks.
     #[arg(long)]
     pub block_gas_limit: Option<NonZeroU64>,
+    /// Minimum time between Prometheus scrapes, in milliseconds. A scrape also waits for a new
+    /// canonical block, and its counter deltas are split evenly across the blocks since the
+    /// previous scrape.
+    #[arg(long, env = "BASE_BENCH_METRICS_SCRAPE_INTERVAL_MS", default_value = "1000")]
+    pub metrics_scrape_interval_ms: NonZeroU64,
     /// Maximum time to wait for graceful shutdown after writing results. Zero terminates the
     /// process immediately because snapshot datadirs are disposable.
     #[arg(long, default_value_t = 0)]
     pub shutdown_timeout_seconds: u64,
+    /// Directory to export every block produced after the snapshot boundary to, for a later
+    /// `base-bench replay` on a restored copy of the same snapshot.
+    ///
+    /// Writes `<dir>/blocks.jsonl` (one engine payload per line, in order) and then
+    /// `<dir>/replay.json`, whose presence marks a complete export. A failed export fails the run.
+    #[arg(long, env = "BASE_BENCH_EXPORT_BLOCKS")]
+    pub export_blocks: Option<PathBuf>,
+    /// Opt-in state sharing for the snapshot's native payload builder.
+    #[command(flatten)]
+    pub builder_engine: crate::BuilderEngineSharingConfig,
+    /// How the snapshot's native payload builder tracks validity transactions whose predicates
+    /// did not match: `off` evaluates every candidate on every flashblock, `shadow` tracks
+    /// resting transactions while still evaluating them, `enforce` parks them until a state
+    /// change can satisfy their predicate.
+    #[arg(
+        long,
+        env = "BASE_BENCH_RESTING_PREDICATE_MODE",
+        value_enum,
+        default_value_t = RestingPredicateMode::Off
+    )]
+    pub resting_predicate_mode: RestingPredicateMode,
+    /// Pause between `DoubleCounter.increment()` calls from the fixture's mutator account while
+    /// the load test runs, measured from the previous call's receipt (or its timeout), flipping
+    /// slot 0 so parity-gated validity transactions swap between matching and resting. Only used
+    /// when the workload references `__DOUBLE_COUNTER__`; `0` disables the mutator.
+    #[arg(long, env = "BASE_BENCH_DOUBLE_COUNTER_MUTATOR_INTERVAL_MS", default_value_t = 5_000)]
+    pub double_counter_mutator_interval_ms: u64,
 }
 
-/// Wei minted to the benchmark's ephemeral funder in the first local descendant (1000 ETH).
-const PREFUND_AMOUNT_WEI: u128 = 1_000_000_000_000_000_000_000;
+/// Wei minted to the benchmark's ephemeral funder in the first local descendant (1,000,000 ETH),
+/// so per-sender `funding_amount` is never limited by the prefund.
+const PREFUND_AMOUNT_WEI: u128 = 1_000_000_000_000_000_000_000_000;
 /// Use the full block gas limit as the EIP-1559 target in snapshot benchmarks, so synthetic
 /// benchmark load cannot raise the base fee and strand already-submitted transaction nonce lanes.
 const SNAPSHOT_BENCHMARK_EIP1559_ELASTICITY: u32 = 1;
 const RESULT_FILE_NAME: &str = "benchmark-result.json";
+/// Concurrent full-block requests to the builder while exporting produced blocks.
+const EXPORT_FETCH_CONCURRENCY: usize = 16;
 const LOCAL_RESULT_FILE_NAME: &str = "load-test-result.json";
 const FRESH_DEVNET_BLOCK_TIME: Duration = Duration::from_secs(2);
 const FRESH_DEVNET_AZUL_ACTIVATION_BLOCK: u64 = 0;
@@ -226,6 +270,8 @@ impl BenchmarkCli {
             Some(BenchmarkCommand::Local(args)) => args.run().await,
             Some(BenchmarkCommand::Snapshot(args)) => args.run().await,
             Some(BenchmarkCommand::Aggregate(args)) => args.run(),
+            Some(BenchmarkCommand::Replay(args)) => args.run().await,
+            Some(BenchmarkCommand::Da(args)) => args.run().await,
         }
     }
 }
@@ -594,12 +640,16 @@ impl LocalBenchmarkArgs {
                 }
                 TxTypeConfig::Transfer
                 | TxTypeConfig::Eip8430Transfer
+                | TxTypeConfig::X402
+                | TxTypeConfig::TokenMove { .. }
                 | TxTypeConfig::Calldata { .. }
                 | TxTypeConfig::Erc20 { .. }
                 | TxTypeConfig::Storage { .. }
                 | TxTypeConfig::DoubleCounter { .. }
+                | TxTypeConfig::AaBundle { .. }
                 | TxTypeConfig::Precompile { .. }
                 | TxTypeConfig::Osaka { .. }
+                | TxTypeConfig::UniswapV3Liquidity(_)
                 | TxTypeConfig::B20 => {}
             }
         }
@@ -942,8 +992,7 @@ impl AggregateBenchmarkArgs {
 impl SnapshotBenchmarkArgs {
     /// Starts the devnet, runs the load test, writes results, and shuts down.
     pub async fn run(self) -> Result<()> {
-        let test_config = TestConfig::load(&self.load_test_config)
-            .wrap_err("failed to load benchmark load-test configuration")?;
+        let (test_config, pending_fixtures) = PendingFixtures::load(&self.load_test_config)?;
         let block_interval = Self::block_interval_from_test_config(&test_config)?;
         let funder_key = PrivateKeySigner::random();
         let client_version = self.client_version.clone().ok_or_else(|| {
@@ -963,6 +1012,8 @@ impl SnapshotBenchmarkArgs {
         snapshot.block_interval = block_interval;
         snapshot.block_gas_limit = self.block_gas_limit.map(NonZeroU64::get);
         snapshot.eip1559_elasticity_override = Some(SNAPSHOT_BENCHMARK_EIP1559_ELASTICITY);
+        snapshot.builder_engine = self.builder_engine;
+        snapshot.resting_predicate_mode = self.resting_predicate_mode;
         snapshot.prefund =
             Some(DevnetPrefund { address: funder_key.address(), amount: PREFUND_AMOUNT_WEI });
 
@@ -984,8 +1035,9 @@ impl SnapshotBenchmarkArgs {
             .with_devnet_config(devnet)
             .build_snapshot_sequencer()
             .await?;
-        let benchmark_result =
-            self.execute(&mut stack, test_config, block_interval, funder_key).await;
+        let benchmark_result = self
+            .execute(&mut stack, test_config, pending_fixtures, block_interval, funder_key)
+            .await;
 
         // Persist the report before teardown. Reth may have a non-cancellable serial state-root
         // fallback still running after consensus shutdown, and dropping its runtime waits for
@@ -1039,23 +1091,33 @@ impl SnapshotBenchmarkArgs {
             std::process::exit(if output_result.is_ok() { 0 } else { 1 });
         }
 
-        let shutdown_result =
-            Self::shutdown_with_deadline(stack, self.shutdown_timeout_seconds).await;
+        let shutdown_result = Self::shutdown_with_deadline(
+            "snapshot stack",
+            stack.shutdown(),
+            self.shutdown_timeout_seconds,
+        )
+        .await;
         output_result?;
         shutdown_result
     }
 
-    /// Gracefully shuts down the stack, but terminates the process if runtime destruction remains
+    /// Runs a graceful node shutdown, but terminates the process if runtime destruction remains
     /// blocked after the deadline. A native thread is used because the Tokio runtime itself may be
-    /// the component waiting on a non-cancellable blocking state-root task.
-    async fn shutdown_with_deadline(stack: SnapshotL2Stack, timeout_seconds: u64) -> Result<()> {
+    /// the component waiting on a non-cancellable blocking state-root task. Shared by the snapshot
+    /// and replay commands.
+    pub async fn shutdown_with_deadline(
+        component: &str,
+        shutdown: impl Future<Output = Result<()>>,
+        timeout_seconds: u64,
+    ) -> Result<()> {
         let complete = Arc::new(AtomicBool::new(false));
         let watchdog_complete = Arc::clone(&complete);
+        let component = component.to_string();
         thread::spawn(move || {
             thread::sleep(Duration::from_secs(timeout_seconds));
             if !watchdog_complete.load(Ordering::Acquire) {
                 eprintln!(
-                    "snapshot stack shutdown exceeded {timeout_seconds}s after result output; forcing failed process exit"
+                    "{component} shutdown exceeded {timeout_seconds}s after result output; forcing failed process exit"
                 );
                 let _ = std::io::stderr().flush();
                 // The result path was explicitly flushed before teardown. A graceful shutdown is
@@ -1065,7 +1127,7 @@ impl SnapshotBenchmarkArgs {
             }
         });
 
-        let result = stack.shutdown().await;
+        let result = shutdown.await;
         complete.store(true, Ordering::Release);
         result
     }
@@ -1075,10 +1137,25 @@ impl SnapshotBenchmarkArgs {
         &self,
         stack: &mut SnapshotL2Stack,
         mut test_config: TestConfig,
+        pending_fixtures: Option<PendingFixtures>,
         block_interval: DevnetBlockInterval,
         funder_key: PrivateKeySigner,
     ) -> Result<(SnapshotBenchmarkResult, Option<BaselineError>)> {
         let builder_rpc = stack.builder_rpc_url()?;
+        // Fixtures deploy before the load tester funds its senders, so the funder's nonce stream
+        // is used by one party at a time; the mutator then runs on its own funded key and stops
+        // when its handle drops, on every exit path from here.
+        let mutator = match pending_fixtures {
+            Some(pending) => {
+                let (resolved, deployed) = pending.deploy(&builder_rpc, &funder_key).await?;
+                test_config = resolved;
+                deployed.start_mutator(
+                    &builder_rpc,
+                    Duration::from_millis(self.double_counter_mutator_interval_ms),
+                )
+            }
+            None => None,
+        };
         test_config.transaction_submission_rpcs = vec![builder_rpc.clone()];
         test_config.query_rpc = Some(builder_rpc.clone());
         // Each snapshot benchmark starts a fresh in-process builder, so its txpool
@@ -1092,9 +1169,13 @@ impl SnapshotBenchmarkArgs {
         let mut load_config = test_config.to_load_config(None)?;
         load_config.canonical_heads_ws = Some(stack.builder_ws_url()?);
         let funder_address = funder_key.address();
-        let sequencer_metrics =
-            PrometheusBlockCollector::start(builder_rpc.clone(), stack.builder_metrics_url()?)
-                .await?;
+        let scrape_interval = Duration::from_millis(self.metrics_scrape_interval_ms.get());
+        let sequencer_metrics = PrometheusBlockCollector::start(
+            builder_rpc.clone(),
+            stack.builder_metrics_url()?,
+            scrape_interval,
+        )
+        .await?;
         let load_result = LoadTestExecutor::run_prepared(
             test_config,
             load_config,
@@ -1110,6 +1191,7 @@ impl SnapshotBenchmarkArgs {
             },
         )
         .await;
+        drop(mutator);
         let output = load_result?;
         let summary = output.summary;
         let measurement_end = summary
@@ -1117,11 +1199,27 @@ impl SnapshotBenchmarkArgs {
             .ok_or_else(|| eyre::eyre!("load test did not report a measurement end block"))?;
         let sequencer_metrics = sequencer_metrics.finish(measurement_end).await?;
         stack.stop_sequencer().await?;
+        if let Some(export_dir) = &self.export_blocks {
+            // Export while the builder is idle and before the validator starts, so the fetches
+            // do not perturb validator metrics.
+            self.export_produced_blocks(
+                export_dir,
+                &builder_rpc,
+                stack.boundary().head.number,
+                stack.boundary().head.hash,
+                block_interval,
+            )
+            .await
+            .wrap_err_with(|| format!("failed to export blocks to {}", export_dir.display()))?;
+        }
         let validator = if self.client_datadir.is_some() {
             let client_rpc = stack.client_rpc_url()?;
-            let validator_metrics =
-                PrometheusBlockCollector::start(client_rpc.clone(), stack.client_metrics_url()?)
-                    .await?;
+            let validator_metrics = PrometheusBlockCollector::start(
+                client_rpc.clone(),
+                stack.client_metrics_url()?,
+                scrape_interval,
+            )
+            .await?;
             stack.start_validator().await?;
             Some((client_rpc, validator_metrics.finish(measurement_end).await?))
         } else {
@@ -1146,6 +1244,25 @@ impl SnapshotBenchmarkArgs {
                     })),
             "follow client does not match the builder over the measured block window"
         );
+        // `etc/scripts/local/mainnet-mix.py` writes targets beside the config it generates.
+        let targets_path = self.load_test_config.with_extension("targets.json");
+        if let (true, Some(start), Some(end)) =
+            (targets_path.is_file(), summary.measurement_start_block, summary.measurement_end_block)
+        {
+            // Calibration is a diagnostic; its failure must not discard the benchmark result.
+            let calibration = async {
+                let targets = fs::read_to_string(&targets_path)?;
+                let txs = TxProfile::measure(&builder_rpc, start, end).await?;
+                LocalBenchmarkArgs::write_json(
+                    &self.output_dir.join("calibration.json"),
+                    &Calibration::compare(&targets, &txs)?,
+                    "calibration",
+                )
+            };
+            if let Err(error) = calibration.await {
+                warn!(%error, targets = %targets_path.display(), "skipping calibration report");
+            }
+        }
 
         let result = SnapshotBenchmarkResult {
             chain_id: stack.chain_id(),
@@ -1160,6 +1277,79 @@ impl SnapshotBenchmarkArgs {
             validator_blocks,
         };
         Ok((result, output.run_error))
+    }
+
+    /// Writes every block the builder holds after the snapshot boundary to `dir`, including setup
+    /// blocks before the measured window, which change state the replay depends on.
+    pub async fn export_produced_blocks(
+        &self,
+        dir: &Path,
+        rpc_url: &url::Url,
+        boundary_number: u64,
+        boundary_hash: B256,
+        block_interval: DevnetBlockInterval,
+    ) -> Result<ReplayManifest> {
+        let started = Instant::now();
+        let provider = RootProvider::<Base>::new_http(rpc_url.clone());
+        let head = provider
+            .get_block_number()
+            .await
+            .wrap_err_with(|| format!("failed to read the builder head from {rpc_url}"))?;
+        eyre::ensure!(
+            head > boundary_number,
+            "builder head {head} is not past snapshot boundary {boundary_number}"
+        );
+        let mut writer = BlockExportWriter::create(dir)?;
+        let mut blocks = stream::iter(boundary_number + 1..=head)
+            .map(|number| {
+                let provider = &provider;
+                async move {
+                    provider
+                        .get_block_by_number(BlockNumberOrTag::Number(number))
+                        .full()
+                        .await
+                        .wrap_err_with(|| format!("failed to fetch block {number} from {rpc_url}"))?
+                        .ok_or_else(|| eyre::eyre!("block {number} is unavailable from {rpc_url}"))
+                }
+            })
+            .buffered(EXPORT_FETCH_CONCURRENCY);
+        let mut parent_hash = boundary_hash;
+        let mut first_block_timestamp = None;
+        while let Some(block) = blocks.next().await {
+            let block = ExportedBlock::from_rpc_block(block?);
+            eyre::ensure!(
+                block.envelope.execution_payload.parent_hash() == parent_hash,
+                "block {} does not extend {parent_hash}",
+                block.number
+            );
+            parent_hash = block.hash;
+            first_block_timestamp
+                .get_or_insert_with(|| block.envelope.execution_payload.timestamp());
+            writer.write(&block)?;
+        }
+        let manifest = writer.finish(ReplayManifest {
+            chain: self.chain.clone(),
+            rollup_config: self.rollup_config.clone(),
+            block_interval_ms: block_interval.duration().as_millis() as u64,
+            boundary_number,
+            boundary_hash,
+            first_block_timestamp: first_block_timestamp.unwrap_or_default(),
+            last_number: 0,
+            last_hash: B256::ZERO,
+            last_state_root: B256::ZERO,
+            block_count: 0,
+        })?;
+        let bytes = fs::metadata(dir.join(EXPORT_BLOCKS_FILE))
+            .wrap_err("failed to stat exported blocks")?
+            .len();
+        info!(
+            blocks = manifest.block_count,
+            bytes,
+            elapsed_ms = started.elapsed().as_millis() as u64,
+            dir = %dir.display(),
+            "exported produced blocks for replay"
+        );
+        Ok(manifest)
     }
 
     /// Fetches every canonical block in the measured window from the builder.
@@ -1310,7 +1500,44 @@ mod tests {
         assert!(args.run_id.is_none());
         assert!(args.client_version.is_none());
         assert!(args.block_gas_limit.is_none());
+        assert_eq!(args.metrics_scrape_interval_ms.get(), 1000);
         assert_eq!(args.shutdown_timeout_seconds, 0);
+        assert!(args.export_blocks.is_none());
+        assert_eq!(
+            args.builder_engine,
+            crate::BuilderEngineSharingConfig::default(),
+            "sharing defaults stay disabled"
+        );
+    }
+
+    /// Both sharing CLI flags reach the configuration passed to the snapshot launcher.
+    #[test]
+    fn parses_snapshot_builder_sharing() {
+        let cli = BenchmarkCli::parse_from([
+            "base-bench",
+            "snapshot",
+            "--builder-datadir",
+            "/snapshot/builder",
+            "--load-test-config",
+            "load.yaml",
+            "--output-dir",
+            "results",
+            "--scenario",
+            "sharing",
+            "--engine.share-sparse-trie-with-payload-builder",
+            "--engine.share-execution-cache-with-payload-builder",
+        ]);
+        let Some(BenchmarkCommand::Snapshot(args)) = cli.command else {
+            panic!("expected snapshot benchmark command");
+        };
+        assert!(
+            args.builder_engine.share_sparse_trie_with_payload_builder,
+            "sparse flag is parsed"
+        );
+        assert!(
+            args.builder_engine.share_execution_cache_with_payload_builder,
+            "cache flag is parsed"
+        );
     }
 
     #[test]
@@ -1336,6 +1563,10 @@ mod tests {
             "30",
             "--block-gas-limit",
             "12000000000",
+            "--metrics-scrape-interval-ms",
+            "200",
+            "--export-blocks",
+            "/boot/export",
         ]);
 
         let Some(BenchmarkCommand::Snapshot(args)) = cli.command else {
@@ -1344,7 +1575,9 @@ mod tests {
         assert_eq!(args.output_dir.to_string_lossy(), "result-dir");
         assert_eq!(args.run_id.as_deref(), Some("manual-run-id"));
         assert_eq!(args.block_gas_limit.map(NonZeroU64::get), Some(12_000_000_000));
+        assert_eq!(args.metrics_scrape_interval_ms.get(), 200);
         assert_eq!(args.shutdown_timeout_seconds, 30);
+        assert_eq!(args.export_blocks.as_deref(), Some(std::path::Path::new("/boot/export")));
     }
 
     #[test]

@@ -17,6 +17,10 @@ pub enum TransportError {
     /// Serialization or deserialization of a message failed.
     #[error("codec error: {0}")]
     Codec(String),
+
+    /// The peer did not deliver a complete frame in time.
+    #[error("frame read timed out")]
+    Timeout,
 }
 
 /// Maximum bytes per individual `write()` syscall on vsock.
@@ -93,5 +97,22 @@ impl Frame {
             writer.write_all(chunk).await?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn multi_segment_frame_round_trips_with_u64_length_prefix() {
+        let value = vec![0xAB_u8; 3 * MAX_WRITE_SIZE + 7];
+        let mut wire = Vec::new();
+        Frame::write(&mut wire, &value).await.unwrap();
+
+        let payload_len = wire.len() - 8;
+        assert_eq!(wire[..8], (payload_len as u64).to_be_bytes());
+        let decoded: Vec<u8> = Frame::read(&mut wire.as_slice()).await.unwrap();
+        assert_eq!(decoded, value);
     }
 }

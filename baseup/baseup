@@ -5,7 +5,7 @@ set -e
 # Downloads release binaries from GitHub releases and installs them locally.
 
 # NOTE: If you change this script, increment the version below.
-BASEUP_INSTALLER_VERSION="0.1.9"
+BASEUP_INSTALLER_VERSION="0.1.10"
 
 BASEUP_REPO="${BASEUP_REPO:-base/base}"
 BASEUP_REPO_REF="${BASEUP_REPO_REF:-main}"
@@ -48,8 +48,10 @@ warn() {
     echo -e "${YELLOW}warn${NC}: $1"
 }
 
+# Writes to stderr so the message still reaches the terminal when the failing function runs
+# inside a command substitution, such as `platform="$(detect_platform)"`.
 error() {
-    echo -e "${RED}error${NC}: $1"
+    echo -e "${RED}error${NC}: $1" >&2
     exit 1
 }
 
@@ -772,11 +774,16 @@ load_release_assets() {
     local tag="$1"
     local asset_name
 
+    # Capture first: a here-string ignores the substitution's exit status, so a failed lookup
+    # would otherwise be read as an empty asset list.
+    local asset_names
+    asset_names="$(list_release_asset_names "$tag")"
+
     RELEASE_ASSETS=()
     while IFS= read -r asset_name; do
         [[ -n "$asset_name" ]] || continue
         RELEASE_ASSETS+=("$asset_name")
-    done <<< "$(list_release_asset_names "$tag")"
+    done <<< "$asset_names"
 
     if [[ ${#RELEASE_ASSETS[@]} -eq 0 ]]; then
         error "Release $tag has no published assets to verify."

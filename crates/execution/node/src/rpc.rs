@@ -89,9 +89,10 @@
 //! }
 //! ```
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use alloy_rpc_types_engine::ClientVersionV1;
+use base_common_network::SharedEngineApi;
 use base_common_rpc_types_engine::ExecutionData;
 use base_execution_rpc::{BaseEngineApi, engine::ENGINE_CAPABILITIES};
 use reth_chainspec::EthereumHardforks;
@@ -109,6 +110,16 @@ use crate::CLIENT_NAME;
 #[derive(Debug, Default, Clone)]
 pub struct BaseEngineApiBuilder<EV> {
     engine_validator_builder: EV,
+    in_process_sink: Option<Arc<OnceLock<SharedEngineApi>>>,
+}
+
+impl<EV> BaseEngineApiBuilder<EV> {
+    /// Stores the built Engine API in `sink`, so a consensus client in the same process can call
+    /// its handlers directly instead of over JSON-RPC.
+    pub fn with_in_process_sink(mut self, sink: Arc<OnceLock<SharedEngineApi>>) -> Self {
+        self.in_process_sink = Some(sink);
+        self
+    }
 }
 
 impl<N, EV> EngineApiBuilder<N> for BaseEngineApiBuilder<EV>
@@ -121,6 +132,13 @@ where
     >,
     EV: PayloadValidatorBuilder<N>,
     EV::Validator: EngineApiValidator<<N::Types as NodeTypes>::Payload>,
+    BaseEngineApi<
+        N::Provider,
+        <N::Types as NodeTypes>::Payload,
+        N::Pool,
+        EV::Validator,
+        <N::Types as NodeTypes>::ChainSpec,
+    >: base_common_network::BaseEngineApi + Send + Sync + 'static,
 {
     type EngineApi = BaseEngineApi<
         N::Provider,
@@ -131,9 +149,7 @@ where
     >;
 
     async fn build_engine_api(self, ctx: &AddOnsContext<'_, N>) -> eyre::Result<Self::EngineApi> {
-        let Self { engine_validator_builder } = self;
-
-        let engine_validator = engine_validator_builder.build(ctx).await?;
+        let engine_validator = self.engine_validator_builder.build(ctx).await?;
         let client = ClientVersionV1 {
             code: CLIENT_CODE,
             name: CLIENT_NAME.to_string(),
@@ -154,6 +170,11 @@ where
             ctx.node.network().clone(),
         );
 
-        Ok(BaseEngineApi::new(inner))
+        let engine_api = BaseEngineApi::new(inner);
+        if let Some(sink) = self.in_process_sink {
+            sink.set(SharedEngineApi::new(engine_api.clone()))
+                .map_err(|_| eyre::eyre!("in-process Engine API sink was already set"))?;
+        }
+        Ok(engine_api)
     }
 }

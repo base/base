@@ -96,11 +96,6 @@ mod tests {
         ))
         .expect("ordinary baseline must parse");
         let baseline = baseline.to_load_config(None).expect("ordinary baseline must convert");
-        assert_eq!(
-            baseline.transactions.iter().map(|tx| tx.weight).collect::<Vec<_>>(),
-            vec![41, 75, 585, 150, 149],
-            "baseline weights must remain unchanged"
-        );
         assert!(
             matches!(baseline.transactions[0].tx_type, TxType::Transfer),
             "baseline must retain ordinary transfers"

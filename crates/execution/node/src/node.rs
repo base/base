@@ -1093,8 +1093,10 @@ where
                     resource_metering: self.resource_metering,
                     rejection_cache: self.rejection_cache,
                     state_provider_metrics: ctx.config().engine.state_provider_metrics,
+                    resting_predicate_mode: Default::default(),
                 },
-            );
+            )
+            .with_task_executor(ctx.task_executor().clone());
         Ok(payload_builder)
     }
 }

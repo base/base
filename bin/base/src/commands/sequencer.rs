@@ -10,6 +10,7 @@ use base_consensus_cli::{
     CliMetrics, ConsensusNodeArgs, ConsensusNodeConfigArgs, ConsensusNodeOverrides,
     ConsensusNodeStartOptions, EmbeddedSequencerConsensusNodeConfigArgs,
 };
+use base_consensus_engine::{EngineEndpoint, InMemoryTransport};
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_cli::{
     ExecutionNodeConfigArgs, StandardBaseRethNode, chainspec::chain_value_parser,
@@ -25,7 +26,7 @@ use clap::Args;
 use reth_cli_runner::CliRunner;
 use tokio_util::sync::CancellationToken;
 
-use crate::{commands::rpc::engine_ipc_url, config::ResolvedChainConfig};
+use crate::config::ResolvedChainConfig;
 
 /// Arguments for `base sequencer`.
 #[derive(Args, Clone, Debug)]
@@ -99,7 +100,6 @@ impl SequencerCommand {
                 rollup_args.upgrade_signal_l1_rpc.upgrade_signal_l1_rpc.clone();
             let execution =
                 execution.into_runtime_config(execution_chain).with_unified_auth_endpoint();
-            let l2_engine_rpc = engine_ipc_url(execution.auth_ipc_path())?;
 
             let task_executor = ctx.task_executor.clone();
             let builder = execution.into_default_node_builder(ctx)?;
@@ -137,6 +137,10 @@ impl SequencerCommand {
             let _upgrade_countdown_metrics =
                 CliMetrics::spawn_upgrade_countdown_recorder(rollup_config.clone());
 
+            let l2_engine = EngineEndpoint::InMemory {
+                transport: InMemoryTransport { module: launched.auth_module },
+                engine_api: launched.engine_api,
+            };
             let handle = launched.handle;
             // Keep the execution node handle alive until both services have coordinated shutdown.
             let execution_node = handle.node;
@@ -146,7 +150,7 @@ impl SequencerCommand {
             let consensus_exit = consensus_args.start_with_options(
                 ConsensusNodeStartOptions::new(rollup_config)
                     .with_overrides(ConsensusNodeOverrides::embedded_execution(
-                        l2_engine_rpc,
+                        l2_engine,
                         upgrade_signal_l1_rpc,
                     ))
                     .with_cancellation(consensus_cancellation.clone())
@@ -183,8 +187,11 @@ impl SequencerCommand {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
+    use base_builder_core::MeteringProvider;
     use base_consensus_cli::ConsensusNodeConfigArgs;
-    use clap::Parser;
+    use clap::{CommandFactory, Parser};
 
     use crate::{cli::BaseCli, commands::BaseCommand};
 
@@ -270,6 +277,164 @@ mod tests {
         let config = ShadowIndexerConfig::try_from(&sequencer.builder.shadow_indexer)
             .expect("shadow indexer config should build from valid args");
         assert!(config.enabled);
+    }
+
+    #[test]
+    fn parses_resource_metering_schedule_in_sequencer_command() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let schedule_path = dir.path().join("schedule.json");
+        std::fs::write(
+            &schedule_path,
+            r#"{
+                "version": 1,
+                "dimensions": [{
+                    "name": "compute",
+                    "blockLimit": 1000,
+                    "transactionLimit": 500,
+                    "baseGasWeight": 1,
+                    "operations": [{"name": "SSTORE", "gasUsedWeight": 2, "countCost": 10}],
+                    "dryRun": true
+                }]
+            }"#,
+        )
+        .expect("write temp schedule");
+
+        let schedule_path_str = schedule_path.to_str().expect("utf-8 schedule path");
+        let args = sequencer_args(&[
+            "base",
+            "sequencer",
+            "--p2p.sequencer.key",
+            SEQUENCER_KEY,
+            "--builder.enable-resource-metering",
+        ]);
+        let cli = BaseCli::try_parse_from(
+            args.into_iter().chain(["--payload.resource-metering-schedule", schedule_path_str]),
+        )
+        .expect("sequencer command should accept --payload.resource-metering-schedule");
+
+        let BaseCommand::Sequencer(sequencer) = cli.command else {
+            panic!("expected sequencer command");
+        };
+
+        assert!(sequencer.builder.enable_resource_metering);
+        assert_eq!(
+            sequencer.builder.resource_metering_schedule.as_deref(),
+            Some(schedule_path.as_path())
+        );
+
+        let metering_provider: base_builder_core::SharedMeteringProvider =
+            Arc::new(sequencer.builder.build_metering_store());
+        let builder_config = sequencer
+            .builder
+            .into_builder_config(Arc::clone(&metering_provider))
+            .expect("valid schedule should build active BuilderConfig");
+
+        assert!(builder_config.resource_metering.enabled);
+        assert!(builder_config.resource_metering.is_active());
+        assert_eq!(builder_config.resource_metering.schedule.dimensions.len(), 1);
+    }
+
+    #[test]
+    fn builder_and_sequencer_parse_identical_metering_flags_envs_and_validation() {
+        #[derive(clap::Parser)]
+        struct StandaloneBuilderCli {
+            #[command(flatten)]
+            args: base_builder_cli::Args,
+        }
+        let builder_cmd = StandaloneBuilderCli::command();
+        let seq_cmd = BaseCli::command();
+        let seq_sub = seq_cmd.find_subcommand("sequencer").expect("sequencer subcommand");
+        for cmd in [&builder_cmd, seq_sub] {
+            let enable = cmd
+                .get_arguments()
+                .find(|a| a.get_long() == Some("builder.enable-resource-metering"))
+                .unwrap();
+            assert_eq!(
+                enable.get_env(),
+                Some(std::ffi::OsStr::new("BUILDER_ENABLE_RESOURCE_METERING"))
+            );
+            let sched = cmd
+                .get_arguments()
+                .find(|a| a.get_long() == Some("payload.resource-metering-schedule"))
+                .unwrap();
+            assert_eq!(
+                sched.get_env(),
+                Some(std::ffi::OsStr::new("PAYLOAD_RESOURCE_METERING_SCHEDULE"))
+            );
+        }
+        let dir = tempfile::tempdir().expect("tempdir");
+        let valid_path = dir.path().join("valid.json");
+        std::fs::write(&valid_path, r#"{"version":1,"dimensions":[{"name":"compute","blockLimit":1000,"transactionLimit":500,"baseGasWeight":1,"dryRun":true}]}"#).unwrap();
+        let valid_str = valid_path.to_str().unwrap();
+        let b_on = StandaloneBuilderCli::try_parse_from([
+            "base-builder",
+            "--builder.enable-resource-metering",
+            "--payload.resource-metering-schedule",
+            valid_str,
+        ])
+        .unwrap()
+        .args;
+        let BaseCommand::Sequencer(s_on) = BaseCli::try_parse_from(
+            sequencer_args(&[
+                "base",
+                "sequencer",
+                "--p2p.sequencer.key",
+                SEQUENCER_KEY,
+                "--builder.enable-resource-metering",
+            ])
+            .into_iter()
+            .chain(["--payload.resource-metering-schedule", valid_str]),
+        )
+        .unwrap()
+        .command
+        else {
+            panic!()
+        };
+        let b_store = Arc::new(b_on.build_metering_store());
+        let s_store = Arc::new(s_on.builder.build_metering_store());
+        assert!(b_store.is_enabled() && s_store.is_enabled());
+        let b_cfg = b_on.into_builder_config(b_store).unwrap();
+        let s_cfg = s_on.builder.into_builder_config(s_store).unwrap();
+        assert!(b_cfg.resource_metering.is_active() && s_cfg.resource_metering.is_active());
+        assert_eq!(b_cfg.resource_metering.schedule, s_cfg.resource_metering.schedule);
+        let no_dry_run = dir.path().join("missing-dry-run.json");
+        std::fs::write(&no_dry_run, r#"{"version":1,"dimensions":[{"name":"compute","blockLimit":1000,"baseGasWeight":1}]}"#).unwrap();
+        let no_dry_str = no_dry_run.to_str().unwrap();
+        let b_bad = StandaloneBuilderCli::try_parse_from([
+            "base-builder",
+            "--builder.enable-resource-metering",
+            "--payload.resource-metering-schedule",
+            no_dry_str,
+        ])
+        .unwrap()
+        .args;
+        let BaseCommand::Sequencer(s_bad) = BaseCli::try_parse_from(
+            sequencer_args(&[
+                "base",
+                "sequencer",
+                "--p2p.sequencer.key",
+                SEQUENCER_KEY,
+                "--builder.enable-resource-metering",
+            ])
+            .into_iter()
+            .chain(["--payload.resource-metering-schedule", no_dry_str]),
+        )
+        .unwrap()
+        .command
+        else {
+            panic!()
+        };
+        let b_err = b_bad
+            .into_builder_config(Arc::new(base_builder_metering::MeteringStore::default()))
+            .unwrap_err()
+            .to_string();
+        let s_err = s_bad
+            .builder
+            .into_builder_config(Arc::new(base_builder_metering::MeteringStore::default()))
+            .unwrap_err()
+            .to_string();
+        assert_eq!(b_err, s_err);
+        assert!(b_err.contains(no_dry_str));
     }
 
     #[test]

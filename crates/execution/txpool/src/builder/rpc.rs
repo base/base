@@ -4,11 +4,8 @@ use std::{
     time::Instant,
 };
 
-use alloy_consensus::transaction::Recovered;
-use alloy_eips::Decodable2718;
 use alloy_primitives::TxHash;
 use base_bundles::MeterBundleResponse;
-use base_common_consensus::BaseTransactionSigned;
 use base_observability_events::{
     TransactionEventProducer, TransactionEventType, transaction_event,
 };
@@ -19,6 +16,7 @@ use jsonrpsee::{
 };
 use reth_transaction_pool::{
     AddedTransactionOutcome, PoolResult, PoolTransaction, TransactionOrigin, TransactionPool,
+    error::{PoolError, PoolErrorKind},
 };
 use serde_json::{Map, json};
 use tracing::debug;
@@ -159,6 +157,9 @@ where
         debug!(sender = %tx.sender, "rpc::insert_validated_transaction");
         let (origin, pool_tx, metering) = self.prepare_insert(tx)?;
         let (tx_hash, encoded_len) = (*pool_tx.hash(), pool_tx.encoded_length());
+        if let Some(result) = self.already_pooled(tx_hash) {
+            return self.finish_insert(tx_hash, encoded_len, metering, result);
+        }
         let start = Instant::now();
         let result = self.pool.add_transaction(origin, pool_tx).await;
         BuilderApiMetrics::insert_duration().record(start.elapsed().as_secs_f64());
@@ -177,7 +178,13 @@ where
         for (index, tx) in txs.into_iter().enumerate() {
             match self.prepare_insert(tx) {
                 Ok((origin, pool_tx, metering)) => {
-                    admitted.push((index, *pool_tx.hash(), pool_tx.encoded_length(), metering));
+                    let (tx_hash, encoded_len) = (*pool_tx.hash(), pool_tx.encoded_length());
+                    if let Some(result) = self.already_pooled(tx_hash) {
+                        results[index] =
+                            self.finish_insert(tx_hash, encoded_len, metering, result).err();
+                        continue;
+                    }
+                    admitted.push((index, tx_hash, encoded_len, metering));
                     batch.push((origin, pool_tx));
                 }
                 Err(error) => results[index] = Some(error),
@@ -193,6 +200,24 @@ where
             results[index] = self.finish_insert(tx_hash, encoded_len, metering, result).err();
         }
         Ok(results)
+    }
+}
+
+impl<P, E> BuilderApiImpl<P, E>
+where
+    P: TransactionPool<Transaction = BasePooledTransaction>,
+{
+    /// Returns the pool's already-imported verdict for a transaction it already holds.
+    ///
+    /// Every mempool node forwards each transaction to every builder, so most inserts a builder
+    /// receives are duplicates. The pool validates a transaction against state before it checks
+    /// whether it holds the hash, so answering duplicates here skips that validation and the pool
+    /// write lock. A pooled duplicate is reported as already imported even when validation would
+    /// now reject it.
+    fn already_pooled(&self, tx_hash: TxHash) -> Option<PoolResult<AddedTransactionOutcome>> {
+        self.pool
+            .contains(&tx_hash)
+            .then(|| Err(PoolError::new(tx_hash, PoolErrorKind::AlreadyImported)))
     }
 }
 
@@ -238,9 +263,10 @@ where
             ErrorObjectOwned::owned(ErrorCode::InvalidParams.code(), e.to_string(), None::<()>)
         })?;
 
-        // Decode the EIP-2718 transaction bytes
-        let consensus_tx =
-            BaseTransactionSigned::decode_2718(&mut tx.raw.as_ref()).map_err(|e| {
+        // Decode the EIP-2718 bytes, keeping them as the pool transaction's cached encoding so
+        // validation and block building do not re-encode the transaction.
+        let mut pool_tx =
+            BasePooledTransaction::decode_2718_with_sender(tx.raw, sender).map_err(|e| {
                 BuilderApiMetrics::decode_errors().increment(1);
                 ErrorObjectOwned::owned(
                     ErrorCode::InvalidParams.code(),
@@ -248,10 +274,6 @@ where
                     None::<()>,
                 )
             })?;
-        let encoded_len = tx.raw.len();
-
-        let recovered = Recovered::new_unchecked(consensus_tx, sender);
-        let mut pool_tx = BasePooledTransaction::new(recovered, encoded_len);
         let metering = tx.metering;
         if let Some(ref metering) = metering {
             pool_tx = pool_tx.with_metering(metering.clone());
@@ -264,8 +286,9 @@ where
             ErrorObjectOwned::owned(ErrorCode::InvalidParams.code(), error.to_string(), None::<()>)
         })?;
         // Every extension implementation must obey this builder's local rollout policy.
+        let has_validity_predicates = !pool_tx.validity_conditions().is_empty();
         self.validity_signature_mode
-            .check(pool_tx.validity_predicates(), pool_tx.validity_signature().as_ref())
+            .check(has_validity_predicates, pool_tx.validity_signature().as_ref())
             .map_err(|error| {
                 ValiditySignatureMetrics::rejected("builder", error.as_label()).increment(1);
                 ErrorObjectOwned::owned(
@@ -274,7 +297,7 @@ where
                     Some(error.as_label()),
                 )
             })?;
-        if !pool_tx.validity_predicates().is_empty() {
+        if has_validity_predicates {
             ValiditySignatureMetrics::accepted(
                 "builder",
                 if pool_tx.validity_signature().is_some() { "signed" } else { "unsigned" },
@@ -307,7 +330,7 @@ where
                 self.emit_validated_insert_event(
                     TransactionEventType::TxpoolValidatedInsertAccepted,
                     tx_hash,
-                    Map::from_iter([("encoded_len".to_string(), json!(encoded_len))]),
+                    || Map::from_iter([("encoded_len".to_string(), json!(encoded_len))]),
                 );
                 debug!(tx_hash = %tx_hash, "inserted validated transaction");
                 BuilderApiMetrics::txs_inserted().increment(1);
@@ -317,11 +340,13 @@ where
                 self.emit_validated_insert_event(
                     TransactionEventType::TxpoolValidatedInsertRejected,
                     tx_hash,
-                    Map::from_iter([
-                        ("rejection_stage".to_string(), json!("pool_insert")),
-                        ("encoded_len".to_string(), json!(encoded_len)),
-                        ("error".to_string(), json!(e.to_string())),
-                    ]),
+                    || {
+                        Map::from_iter([
+                            ("rejection_stage".to_string(), json!("pool_insert")),
+                            ("encoded_len".to_string(), json!(encoded_len)),
+                            ("error".to_string(), json!(e.to_string())),
+                        ])
+                    },
                 );
                 debug!(tx_hash = %tx_hash, error = %e, "pool rejected transaction");
                 BuilderApiMetrics::txs_rejected(PoolRejectionLabel::from_error(&e)).increment(1);
@@ -336,15 +361,15 @@ where
 }
 
 impl<P, E> BuilderApiImpl<P, E> {
+    /// Emits a validated-insert event, calling `data` for its fields only when an event writer is
+    /// configured. Every forwarded transaction reaches here, most of them as rejected duplicates,
+    /// and builders with transaction events disabled have no writer.
     fn emit_validated_insert_event(
         &self,
         event_type: TransactionEventType,
         tx_hash: TxHash,
-        mut data: Map<String, serde_json::Value>,
+        data: impl FnOnce() -> Map<String, serde_json::Value>,
     ) {
-        data.entry("rpc_method".to_string())
-            .or_insert_with(|| json!("base_insertValidatedTransaction"));
-
         let _ = transaction_event!(
             producer: TransactionEventProducer::BaseBuilder,
             event_type: event_type,
@@ -353,7 +378,12 @@ impl<P, E> BuilderApiImpl<P, E> {
                 "builder_host" => BUILDER_HOST.as_str(),
                 "tx_hash" => format!("{tx_hash:#x}"),
             },
-            data: data,
+            data: {
+                let mut data = data();
+                data.entry("rpc_method".to_string())
+                    .or_insert_with(|| json!("base_insertValidatedTransaction"));
+                data
+            },
         );
     }
 }

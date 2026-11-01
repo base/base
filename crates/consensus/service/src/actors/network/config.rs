@@ -27,6 +27,8 @@ pub struct NetworkConfig {
     pub enr_update: bool,
     /// The gossip address.
     pub gossip_address: libp2p::Multiaddr,
+    /// Whether gossip dials may reuse the listener port. Enabled by default for NAT traversal.
+    pub reuse_listener_port: bool,
     /// The unsafe block signer.
     pub unsafe_block_signer: Address,
     /// The keypair.
@@ -90,6 +92,7 @@ impl NetworkConfig {
             discovery_interval: Self::DEFAULT_DISCOVERY_INTERVAL,
             discovery_randomize: Self::DEFAULT_DISCOVERY_RANDOMIZE,
             gossip_address,
+            reuse_listener_port: true,
             unsafe_block_signer,
             enr_update: true,
             keypair: Keypair::generate_secp256k1(),

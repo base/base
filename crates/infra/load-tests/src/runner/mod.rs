@@ -15,6 +15,9 @@ pub use block_watcher::{BlockClock, BlockPulse, BlockWatcher};
 mod canonical_head_watcher;
 pub use canonical_head_watcher::CanonicalHeadWatcher;
 
+mod gas_estimate;
+pub use gas_estimate::GasEstimate;
+
 mod inclusion;
 pub use inclusion::{InclusionPulse, InclusionSource};
 

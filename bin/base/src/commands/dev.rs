@@ -4,6 +4,7 @@ use std::sync::mpsc;
 
 use alloy_rpc_types_engine::JwtSecret;
 use base_common_chains::ChainConfig;
+use base_consensus_engine::{EngineEndpoint, InMemoryTransport};
 use base_consensus_node::{StandaloneDevChain, StandaloneImpersonationQueue};
 use base_execution_cli::ExecutionNodeConfigArgs;
 use base_node_core::args::RollupArgs;
@@ -15,7 +16,7 @@ use reth_provider::HeaderProvider;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 
-use crate::{commands::rpc::engine_ipc_url, config::ResolvedChainConfig};
+use crate::config::ResolvedChainConfig;
 
 /// Arguments for `base dev`.
 #[derive(Args, Clone, Debug)]
@@ -68,7 +69,6 @@ impl DevCommand {
             datadir.data_dir().display()
         );
         let dev_chain = StandaloneDevChain::open(datadir.data_dir(), rollup_config)?;
-        let engine_url = engine_ipc_url(execution.auth_ipc_path())?;
         // Graceful shutdown completes the runner before the command future returns, so a
         // consensus failure that triggers it is reported here.
         let (consensus_failure_tx, consensus_failure) = mpsc::channel();
@@ -80,7 +80,12 @@ impl DevCommand {
             let builder = execution.into_default_node_builder(ctx)?;
             let mut runner = BaseNodeRunner::new(RollupArgs::default());
             runner.install_ext::<ImpersonationRpcExtension>(impersonation.clone());
-            let handle = runner.launch(builder).await?.handle;
+            let launched = runner.launch(builder).await?;
+            let engine = EngineEndpoint::InMemory {
+                transport: InMemoryTransport { module: launched.auth_module },
+                engine_api: launched.engine_api,
+            };
+            let handle = launched.handle;
             let rpc = handle.node.rpc_server_handle();
             info!(
                 target: "base::dev",
@@ -94,9 +99,9 @@ impl DevCommand {
 
             let consensus_cancellation = CancellationToken::new();
             let provider = execution_node.provider.clone();
-            // Engine API IPC does not authenticate, so the secret is unused.
+            // The in-memory transport never sends the secret.
             let consensus_exit = dev_chain.run(
-                engine_url,
+                engine,
                 JwtSecret::random(),
                 move |number| provider.header_by_number(number),
                 impersonation,

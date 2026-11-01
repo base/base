@@ -8,6 +8,7 @@ use url::Url;
 use crate::{
     config::{OsakaTarget, ValiditySigningMode},
     utils::{BaselineError, Result},
+    workload::UniswapV3Hop,
 };
 
 /// Source for a validity predicate's address, resolved per transaction at
@@ -156,6 +157,11 @@ pub enum TxType {
     Transfer,
     /// EIP-8430 EOA self-pay ETH transfer (requires Everest activation).
     Eip8430Transfer,
+    /// Facilitator-paid real USDC EIP-3009 settlement.
+    X402 {
+        /// Snapshot signing state shared across calibration and measured generators.
+        context: std::sync::Arc<std::sync::OnceLock<crate::workload::X402Context>>,
+    },
     /// ETH transfer with random calldata.
     Calldata {
         /// Maximum calldata size in bytes.
@@ -174,11 +180,27 @@ pub enum TxType {
         contract: Address,
         /// Number of storage slots to write per transaction.
         slots_per_tx: u32,
+        /// Mean fraction of written slots that are fresh.
+        new_slot_ratio: f64,
     },
     /// Deterministic `DoubleCounter` `increment()` call.
     DoubleCounter {
         /// `DoubleCounter` contract address.
         contract: Address,
+    },
+    /// Batched real-token transfers through Disperse.
+    TokenMove {
+        /// Number of token transfers per transaction.
+        transfers_per_tx: u32,
+        /// Token and recipients shared across calibration and measured generators.
+        context: std::sync::Arc<std::sync::OnceLock<crate::workload::TokenMoveContext>>,
+    },
+    /// ERC-4337 `handleOps` stand-in bundling signed ops.
+    AaBundle {
+        /// Signed ops per bundle transaction.
+        ops_per_bundle: u32,
+        /// Random calldata bytes appended to each bundle.
+        padding_bytes: u32,
     },
     /// Precompile call.
     Precompile {
@@ -201,6 +223,8 @@ pub enum TxType {
     },
     /// Uniswap V3 style swap.
     UniswapV3 {
+        /// Batch approval and swap in a native EIP-8430 envelope.
+        native: bool,
         /// Router contract address.
         router: Address,
         /// Input token address.
@@ -217,6 +241,10 @@ pub enum TxType {
         reverse_min_amount: U256,
         /// Maximum amount when swapping `token_out` to `token_in`.
         reverse_max_amount: U256,
+        /// Replaces the reverse range with the forward range priced at the pool before the run.
+        derive_reverse_amounts: bool,
+        /// Intermediate tokens for a multi-hop route; empty for a single pool.
+        via: Vec<UniswapV3Hop>,
     },
     /// Aerodrome Slipstream (concentrated liquidity) swap.
     AerodromeCl {
@@ -237,6 +265,8 @@ pub enum TxType {
         /// Maximum amount when swapping `token_out` to `token_in`.
         reverse_max_amount: U256,
     },
+    /// Uniswap V3 position-manager operations.
+    UniswapV3Liquidity(crate::workload::UniswapV3LiquidityPayload),
 }
 
 /// Default maximum gas price cap (1000 gwei).
@@ -271,6 +301,9 @@ pub struct LoadConfig {
     pub block_gas_limit: Option<u64>,
     /// Expected cadence between canonical blocks.
     pub block_time: Duration,
+    /// Optional fixed interval at which to submit `target_gps` worth of gas per elapsed time,
+    /// instead of refilling once per observed block.
+    pub steady_submission_interval: Option<Duration>,
     /// Benchmark-only control directory used to separate setup from measurement.
     pub separate_setup: Option<PathBuf>,
     /// Duration of the load test. `None` means run indefinitely until stopped.
@@ -340,6 +373,7 @@ impl LoadConfig {
             target_gps: None,
             block_gas_limit: None,
             block_time: Duration::from_secs(2),
+            steady_submission_interval: None,
             separate_setup: None,
             duration: Some(Duration::from_secs(30)),
             measurement_blocks: None,
@@ -370,14 +404,44 @@ impl LoadConfig {
     /// Validates the configuration, returning an error if invalid.
     pub fn validate(&self) -> Result<()> {
         if self.validity_ratio > 0.0
-            && self
-                .transactions
-                .iter()
-                .any(|tx| tx.weight > 0 && matches!(tx.tx_type, TxType::Eip8430Transfer))
+            && self.transactions.iter().any(|tx| {
+                tx.weight > 0
+                    && matches!(
+                        tx.tx_type,
+                        TxType::Eip8430Transfer | TxType::UniswapV3 { native: true, .. }
+                    )
+            })
         {
             return Err(BaselineError::Config(
-                "eip8430_transfer cannot be combined with validity submission".into(),
+                "native EIP-8430 workloads cannot be combined with validity submission".into(),
             ));
+        }
+        for tx in self.transactions.iter().filter(|tx| tx.weight > 0) {
+            if let TxType::UniswapV3 { native: true, router, token_in, token_out, .. } = &tx.tx_type
+            {
+                for other in self.transactions.iter().filter(|other| other.weight > 0) {
+                    let (other_router, other_in, other_out) = match &other.tx_type {
+                        TxType::UniswapV3 {
+                            native: false, router, token_in, token_out, ..
+                        }
+                        | TxType::AerodromeCl { router, token_in, token_out, .. } => {
+                            (router, token_in, token_out)
+                        }
+                        _ => continue,
+                    };
+                    // Both directions spend allowance, so either token can overlap.
+                    if router == other_router
+                        && [token_in, token_out]
+                            .iter()
+                            .any(|token| *token == other_in || *token == other_out)
+                    {
+                        return Err(BaselineError::Config(
+                            "native and ordinary swaps cannot share a router/token allowance"
+                                .into(),
+                        ));
+                    }
+                }
+            }
         }
         if self.account_count == 0 {
             return Err(BaselineError::Config("account_count must be > 0".into()));
@@ -390,6 +454,14 @@ impl LoadConfig {
         }
         if self.block_time.is_zero() {
             return Err(BaselineError::Config("block_time must be > 0".into()));
+        }
+        if self.steady_submission_interval.is_some_and(|interval| interval.is_zero()) {
+            return Err(BaselineError::Config("steady_submission_interval must be > 0".into()));
+        }
+        if self.steady_submission_interval.is_some() && self.target_gps.is_none() {
+            return Err(BaselineError::Config(
+                "steady_submission_interval requires target_gps".into(),
+            ));
         }
         if self.max_in_flight_per_sender == 0 {
             return Err(BaselineError::Config("max_in_flight_per_sender must be > 0".into()));

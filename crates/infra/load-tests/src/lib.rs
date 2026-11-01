@@ -6,8 +6,8 @@ mod config;
 pub use config::{
     OsakaTarget, PrecompileTarget, PredicateAddressConfig, PredicateSlotConfig,
     PredicateValueConfig, RealTokenAcquisitionConfig, RealTokenPairTokenConfig,
-    RealTokenSetupConfig, TestConfig, TxTypeConfig, ValidityConfig, ValidityPredicateConfig,
-    ValiditySigningMode, WeightedTxType, WorkloadConfig,
+    RealTokenSetupConfig, ReverseAmounts, TestConfig, TxTypeConfig, ValidityConfig,
+    ValidityPredicateConfig, ValiditySigningMode, WeightedTxType, WorkloadConfig,
 };
 
 mod executor;
@@ -37,12 +37,14 @@ pub use metrics::{
 
 mod workload;
 pub use workload::{
-    AccountPool, AerodromeClPayload, B20TransferPayload, CalldataPayload, ChainPrepContext,
-    ChainPrepOutputs, DOUBLE_COUNTER_GAS_LIMIT, DoubleCounterPayload, EIP8430_TRANSFER_GAS_LIMIT,
-    Eip8430TransferPayload, Erc20Payload, FundedAccount, KeyStream, OsakaPayload, Payload,
-    PrecompileLooper, PrecompilePayload, RealTokenAcquisition, RealTokenPairTokenSetup,
-    RealTokenRecoverySummary, RealTokenSetup, SeededRng, StoragePayload, TransferPayload,
-    UniswapV3Payload, WorkloadGenerator, recover_real_tokens,
+    AaBundlePayload, AccountPool, AerodromeClPayload, B20TransferPayload, CalldataPayload,
+    ChainPrepContext, ChainPrepOutputs, DOUBLE_COUNTER_GAS_LIMIT, DoubleCounterPayload,
+    EIP8430_TRANSFER_GAS_LIMIT, Eip8430TransferPayload, Erc20Payload, FundedAccount, KeyStream,
+    LiquidityOps, OsakaPayload, Payload, PrecompileLooper, PrecompilePayload, RealTokenAcquisition,
+    RealTokenPairTokenSetup, RealTokenRecoverySummary, RealTokenSetup, SeededRng, SenderPosition,
+    StoragePayload, TokenMoveContext, TokenMovePayload, TransferPayload, USDC, UniswapPositions,
+    UniswapV3Hop, UniswapV3LiquidityPayload, UniswapV3Payload, WorkloadGenerator, X402Context,
+    X402Payload, encode_erc20_approve, recover_real_tokens,
 };
 
 mod runner;
@@ -50,9 +52,9 @@ pub use runner::{
     BatchTxError, BlockClock, BlockMatch, BlockNumberBound, BlockObservation, BlockPulse,
     BlockReceipt, BlockWatcher, CanonicalHeadWatcher, DEFAULT_MAX_GAS_PRICE,
     DEFAULT_MAX_IN_FLIGHT_PER_SENDER, DisplaySnapshot, FUNDING_MAX_FEE_BASE_FEE_MULTIPLIER, Fees,
-    FlashblockInclusion, FlashblockWatcher, GasPricer, InclusionPulse, InclusionSource,
-    InjectLimit, InjectPlan, LoadConfig, LoadRunner, LoadTestDisplay, LoadTestStage,
-    MAX_FEE_BASE_FEE_MULTIPLIER, MAX_SENDER_WORKER_COUNT, MAX_SIGNER_WORKER_COUNT,
+    FlashblockInclusion, FlashblockWatcher, GasEstimate, GasPricer, InclusionPulse,
+    InclusionSource, InjectLimit, InjectPlan, LoadConfig, LoadRunner, LoadTestDisplay,
+    LoadTestStage, MAX_FEE_BASE_FEE_MULTIPLIER, MAX_SENDER_WORKER_COUNT, MAX_SIGNER_WORKER_COUNT,
     MIN_PRIORITY_FEE, MeasurementWindow, MempoolDepthController, PipelineQueue,
     PipelineStartConfig, PredicateAddress, PredicateValue, PreparedBatch, PreparedTransaction,
     PresignBuffer, QueuedSubmitFailures, ResultsTracker, SENDER_WORKERS_PER_RPC,

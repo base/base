@@ -2,14 +2,14 @@
 //!
 //! This module provides [`InProcessBuilder`], which spawns a real builder node in the
 //! current process instead of using Docker containers. This enables faster test execution
-//! and easier debugging while maintaining the same external interface as [`BuilderContainer`].
+//! and easier debugging.
 
 use core::net::{Ipv4Addr, SocketAddr};
 use std::{any::Any, path::PathBuf, sync::Arc, time::Duration};
 
 use alloy_primitives::hex::ToHexExt;
 use alloy_rpc_types_engine::JwtSecret;
-use base_builder_core::BuilderConfig;
+use base_builder_core::{BuilderConfig, RestingPredicateMode};
 use base_builder_multiplex::MultiplexingServiceBuilder;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_txpool::{
@@ -43,11 +43,13 @@ use crate::{PortPool, config::BUILDER, setup::BUILDER_ENODE_ID};
 pub struct InProcessBuilderConfig {
     /// Runtime sizing policy for the execution node.
     pub runtime: InProcessNodeRuntime,
+    /// Opt-in state sharing with the native payload builder.
+    pub engine_sharing: super::BuilderEngineSharingConfig,
     /// Pre-built chain specification.
     pub chain_spec: Arc<BaseChainSpec>,
     /// Existing caller-owned datadir. A temporary datadir is created when omitted.
     pub datadir: Option<PathBuf>,
-    /// JWT secret hex for Engine API authentication.
+    /// JWT secret for Engine API authentication.
     pub jwt_secret: JwtSecret,
     /// Optional fixed HTTP RPC port (uses random if None).
     pub http_port: Option<u16>,
@@ -65,6 +67,9 @@ pub struct InProcessBuilderConfig {
     pub payload_builder_cutover: bool,
     /// Staged signature policy used by both validity-bearing RPC endpoints.
     pub validity_signature_mode: ValiditySignatureMode,
+    /// How the native payload builder tracks validity transactions whose predicates did not
+    /// match. `Off` evaluates every candidate on every flashblock.
+    pub resting_predicate_mode: RestingPredicateMode,
     /// Additional node extensions installed after the builder's built-in RPC wiring.
     ///
     /// Lets downstream consumers layer their own [`BaseNodeExtension`] onto the standard
@@ -95,7 +100,7 @@ impl InProcessBuilderConfig {
     }
 }
 
-/// An in-process builder node that replaces Docker-based `BuilderContainer`.
+/// An in-process builder node.
 ///
 /// This spawns a real builder node within the current process, binding to dynamic ports.
 /// Docker containers (like consensus nodes) can connect via `host.docker.internal`.
@@ -113,6 +118,8 @@ pub struct InProcessBuilder {
     _node: Box<dyn Any + Sync + Send>,
     _runtime: Runtime,
     _temp_dir: Option<TempDir>,
+    // Retain claims through explicit shutdown and drop them after the runtime on plain drop.
+    _ports: PortPool,
 }
 
 impl std::fmt::Debug for InProcessBuilder {
@@ -140,6 +147,7 @@ impl InProcessBuilder {
         std::fs::write(&jwt_path, config.jwt_secret.as_bytes().encode_hex().as_bytes())
             .wrap_err("Failed to write JWT secret")?;
 
+        let mut ports = PortPool::default();
         let runtime = RuntimeBuilder::new(
             config
                 .runtime
@@ -150,16 +158,17 @@ impl InProcessBuilder {
 
         let chain_spec = Arc::clone(&config.chain_spec);
 
-        let flashblocks_port = config.flashblocks_port.unwrap_or_else(PortPool::claim);
+        let flashblocks_port = config.flashblocks_port.unwrap_or_else(|| ports.claim());
         let metrics_addr = SocketAddr::new(
             Ipv4Addr::LOCALHOST.into(),
-            config.metrics_port.unwrap_or_else(PortPool::claim),
+            config.metrics_port.unwrap_or_else(|| ports.claim()),
         );
         let builder_config = BuilderConfig {
             block_time: config.block_time,
             block_time_leeway: Duration::from_secs(20),
             flashblocks_ws_addr: SocketAddr::new(Ipv4Addr::LOCALHOST.into(), flashblocks_port),
             flashblocks_interval: Duration::from_millis(200),
+            resting_predicate_mode: config.resting_predicate_mode,
             ..Default::default()
         };
 
@@ -271,6 +280,7 @@ impl InProcessBuilder {
             _node: Box::new(node_handle),
             _runtime: runtime,
             _temp_dir: temp_dir,
+            _ports: ports,
         })
     }
 
@@ -459,6 +469,7 @@ fn create_node_config(
     }
 
     config.runtime.bound_engine_memory(&mut node_config);
+    config.engine_sharing.apply(&mut node_config)?;
     if let Some(persistence_threshold) = config.persistence_threshold {
         node_config.engine.persistence_threshold = persistence_threshold;
     }

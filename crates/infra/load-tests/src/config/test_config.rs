@@ -1,5 +1,6 @@
 use std::{fmt, path::Path, time::Duration};
 
+use alloy_eips::eip7825::MAX_TX_GAS_LIMIT_OSAKA;
 use alloy_primitives::{Address, U256};
 use alloy_signer_local::PrivateKeySigner;
 use serde::{Deserialize, Deserializer, Serialize, de::Error as SerdeError};
@@ -16,7 +17,10 @@ use crate::{
     rpc::MAX_BATCH_RPC_SIZE,
     runner::{TxConfig, TxType},
     utils::{BaselineError, Result},
-    workload::RealTokenSetup,
+    workload::{
+        AaBundlePayload, MAX_TOKEN_MOVE_TRANSFERS_PER_TX, RealTokenSetup, StoragePayload,
+        UniswapV3Hop,
+    },
 };
 
 /// Configuration for a load test, loadable from YAML.
@@ -97,6 +101,12 @@ pub struct TestConfig {
     #[serde(default = "default_block_time")]
     pub block_time: String,
 
+    /// Optional fixed interval (for example, "20ms") at which to submit `target_gps` worth of gas
+    /// per elapsed time, instead of refilling once per observed block. Arrivals then stay even no
+    /// matter when the builder stops taking transactions for a block. Requires `target_gps`.
+    #[serde(default)]
+    pub steady_submission_interval: Option<String>,
+
     /// Seed for deterministic account generation (used if mnemonic not provided).
     ///
     /// Defaults to `12345` for reproducible single-run testing and fund recovery. Concurrent runs
@@ -174,6 +184,7 @@ impl Default for TestConfig {
             measurement_blocks: None,
             target_gps: Some(20_000_000),
             block_time: default_block_time(),
+            steady_submission_interval: None,
             seed: 12345,
             chain_id: None,
             transactions: vec![WeightedTxType { weight: 100, tx_type: TxTypeConfig::Transfer }],
@@ -207,6 +218,7 @@ impl fmt::Debug for TestConfig {
             .field("measurement_blocks", &self.measurement_blocks)
             .field("target_gps", &self.target_gps)
             .field("block_time", &self.block_time)
+            .field("steady_submission_interval", &self.steady_submission_interval)
             .field("seed", &self.seed)
             .field("chain_id", &self.chain_id)
             .field("transactions", &self.transactions)
@@ -245,6 +257,15 @@ pub enum OsakaTarget {
     ModexpOsaka,
 }
 
+/// How a `uniswap_v3` workload sizes its `token_out → token_in` swaps.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReverseAmounts {
+    /// Converts the forward amount range into `token_out` units at the pool price read during
+    /// setup, so both directions move equal value and neither balance drains.
+    Auto,
+}
+
 /// Transaction type configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -254,6 +275,9 @@ pub enum TxTypeConfig {
 
     /// EIP-8430 EOA self-pay ETH transfer (requires Everest activation).
     Eip8430Transfer,
+
+    /// Facilitator-paid real USDC EIP-3009 settlement on a mainnet snapshot.
+    X402,
 
     /// ETH transfer with random calldata.
     Calldata {
@@ -271,19 +295,46 @@ pub enum TxTypeConfig {
         contract: Address,
     },
 
-    /// Storage-heavy contract write (requires deployed contract).
+    /// Storage-heavy contract write.
     Storage {
-        /// Storage-writer contract address.
-        contract: Address,
+        /// Storage-writer contract address. Default: `StorageFiller`, deployed during setup
+        /// through the CREATE2 deployment proxy when missing.
+        #[serde(default)]
+        contract: Option<Address>,
         /// Number of storage slots to write per transaction.
         #[serde(default = "default_storage_slots_per_tx")]
         slots_per_tx: u32,
+        /// Mean fraction of written slots that are fresh (0.0..=1.0); the rest overwrite
+        /// slots written earlier. Values below 1.0 call `writeStorage` instead of `fillStorage`;
+        /// overwrites pick from the contract's earlier `writeStorage` fresh slots, so they spread
+        /// across the trie only once enough fresh slots exist (0.0 alone never adds any).
+        #[serde(default = "default_storage_new_slot_ratio")]
+        new_slot_ratio: f64,
     },
 
     /// Deterministic `DoubleCounter` `increment()` call.
     DoubleCounter {
         /// `DoubleCounter` contract address.
         contract: Address,
+    },
+
+    /// Batched `real_token_setup` pair-token transfers through Disperse.
+    TokenMove {
+        /// Number of token transfers per transaction.
+        #[serde(default = "default_token_move_transfers_per_tx")]
+        transfers_per_tx: u32,
+    },
+
+    /// ERC-4337 `handleOps` stand-in; setup deploys the bundle contract. The resulting gas limit
+    /// (`40_000 + 60_000 * ops_per_bundle + 40 * padding_bytes`) must fit the EIP-7825 per-tx
+    /// cap of 2^24 gas.
+    AaBundle {
+        /// Signed ops per bundle transaction.
+        #[serde(default = "default_aa_ops_per_bundle")]
+        ops_per_bundle: u32,
+        /// Random calldata bytes appended to each bundle.
+        #[serde(default)]
+        padding_bytes: u32,
     },
 
     /// Precompile call.
@@ -303,6 +354,9 @@ pub enum TxTypeConfig {
     },
     /// Uniswap V3 style swap.
     UniswapV3 {
+        /// Batch an exact approval and swap in a native EIP-8430 envelope.
+        #[serde(default)]
+        native: bool,
         /// Router contract address.
         ///
         /// Required unless a harness flow auto-wires swap addresses.
@@ -333,6 +387,12 @@ pub enum TxTypeConfig {
         /// Maximum amount when swapping `token_out` to `token_in`.
         #[serde(default)]
         reverse_max_amount: Option<U256>,
+        /// Derives the reverse range from the pool price; excludes the explicit reverse amounts.
+        #[serde(default)]
+        reverse_amounts: Option<ReverseAmounts>,
+        /// Intermediate tokens for a multi-hop `exactInput` route; `fee` is the last pool's fee.
+        #[serde(default)]
+        via: Vec<UniswapV3Hop>,
     },
     /// B-20 precompile token transfer. Each sender creates and transfers its own token, created
     /// per run during setup.
@@ -371,6 +431,9 @@ pub enum TxTypeConfig {
         #[serde(default)]
         reverse_max_amount: Option<U256>,
     },
+
+    /// Uniswap V3 position-manager operations on a real pool (requires `real_token_setup`).
+    UniswapV3Liquidity(crate::workload::UniswapV3LiquidityPayload),
 }
 
 const fn default_calldata_size() -> usize {
@@ -389,10 +452,23 @@ const fn default_storage_slots_per_tx() -> u32 {
     10
 }
 
+const fn default_storage_new_slot_ratio() -> f64 {
+    1.0
+}
+
+const fn default_aa_ops_per_bundle() -> u32 {
+    12
+}
+
 /// Upper bound on `slots_per_tx` so the payload's gas limit
 /// (`slots_per_tx * 23_000 + 30_000`) stays under the ~30M per-tx block cap.
 /// Target RPCs may enforce a lower per-tx ceiling; tune `slots_per_tx` to fit.
 const MAX_STORAGE_SLOTS_PER_TX: u32 = 1_300;
+
+/// About 332k gas per tx with real USDC on a Base mainnet fork.
+const fn default_token_move_transfers_per_tx() -> u32 {
+    25
+}
 
 fn default_swap_min_amount() -> U256 {
     U256::from(1_000_000_000_000_000u64)
@@ -492,6 +568,16 @@ impl TestConfig {
         if self.parse_block_time()?.is_zero() {
             return Err(BaselineError::Config("block_time must be > 0".into()));
         }
+        if let Some(interval) = self.parse_steady_submission_interval()? {
+            if interval.is_zero() {
+                return Err(BaselineError::Config("steady_submission_interval must be > 0".into()));
+            }
+            if self.target_gps.is_none() {
+                return Err(BaselineError::Config(
+                    "steady_submission_interval requires target_gps".into(),
+                ));
+            }
+        }
 
         self.validity.validate()?;
 
@@ -573,6 +659,20 @@ impl TestConfig {
         })
     }
 
+    /// Parses the optional fixed submission interval.
+    pub fn parse_steady_submission_interval(&self) -> Result<Option<Duration>> {
+        self.steady_submission_interval
+            .as_deref()
+            .map(|interval| {
+                humantime::parse_duration(interval.trim()).map_err(|e| {
+                    BaselineError::Config(format!(
+                        "invalid steady_submission_interval '{interval}': {e}"
+                    ))
+                })
+            })
+            .transpose()
+    }
+
     /// Parses the funding amount string into a U256.
     pub fn parse_funding_amount(&self) -> Result<alloy_primitives::U256> {
         self.funding_amount.parse().map_err(|e| {
@@ -619,6 +719,7 @@ impl TestConfig {
             measurement_blocks: self.measurement_blocks,
             target_gps: self.target_gps,
             block_time: self.block_time.clone(),
+            steady_submission_interval: self.steady_submission_interval.clone(),
             seed: self.seed,
             chain_id: self.chain_id,
             transactions: serde_json::to_value(&self.transactions)
@@ -671,6 +772,7 @@ impl TestConfig {
 
         let duration = self.parse_duration()?;
         let block_time = self.parse_block_time()?;
+        let steady_submission_interval = self.parse_steady_submission_interval()?;
 
         let transactions = if self.transactions.is_empty() {
             vec![TxConfig { weight: 100, tx_type: TxType::Transfer }]
@@ -691,6 +793,7 @@ impl TestConfig {
             target_gps: self.target_gps,
             block_gas_limit: None,
             block_time,
+            steady_submission_interval,
             separate_setup: None,
             duration,
             measurement_blocks: self.measurement_blocks,
@@ -717,20 +820,67 @@ impl TestConfig {
         let tx_type = match &weighted.tx_type {
             TxTypeConfig::Transfer => TxType::Transfer,
             TxTypeConfig::Eip8430Transfer => TxType::Eip8430Transfer,
+            TxTypeConfig::X402 => {
+                if !self.real_token_setup.as_ref().is_some_and(|setup| setup.enabled) {
+                    return Err(BaselineError::Config(
+                        "x402 requires enabled real_token_setup".into(),
+                    ));
+                }
+                TxType::X402 { context: Default::default() }
+            }
             TxTypeConfig::Calldata { max_size, repeat_count } => {
                 TxType::Calldata { max_size: *max_size, repeat_count: *repeat_count }
             }
             TxTypeConfig::Erc20 { contract } => TxType::Erc20 { contract: *contract },
-            TxTypeConfig::Storage { contract, slots_per_tx } => {
+            TxTypeConfig::Storage { contract, slots_per_tx, new_slot_ratio } => {
                 if !(1..=MAX_STORAGE_SLOTS_PER_TX).contains(slots_per_tx) {
                     return Err(BaselineError::Config(format!(
                         "storage slots_per_tx must be 1..={MAX_STORAGE_SLOTS_PER_TX}"
                     )));
                 }
-                TxType::Storage { contract: *contract, slots_per_tx: *slots_per_tx }
+                if !(0.0..=1.0).contains(new_slot_ratio) {
+                    return Err(BaselineError::Config(
+                        "storage new_slot_ratio must be between 0.0 and 1.0".into(),
+                    ));
+                }
+                TxType::Storage {
+                    contract: contract.unwrap_or_else(StoragePayload::default_contract),
+                    slots_per_tx: *slots_per_tx,
+                    new_slot_ratio: *new_slot_ratio,
+                }
             }
             TxTypeConfig::DoubleCounter { contract } => {
                 TxType::DoubleCounter { contract: *contract }
+            }
+            TxTypeConfig::TokenMove { transfers_per_tx } => {
+                if !self.real_token_setup.as_ref().is_some_and(|setup| setup.enabled) {
+                    return Err(BaselineError::Config(
+                        "token_move requires enabled real_token_setup".into(),
+                    ));
+                }
+                if !(1..=MAX_TOKEN_MOVE_TRANSFERS_PER_TX).contains(transfers_per_tx) {
+                    return Err(BaselineError::Config(format!(
+                        "token_move transfers_per_tx must be 1..={MAX_TOKEN_MOVE_TRANSFERS_PER_TX}"
+                    )));
+                }
+                TxType::TokenMove {
+                    transfers_per_tx: *transfers_per_tx,
+                    context: Default::default(),
+                }
+            }
+            TxTypeConfig::AaBundle { ops_per_bundle, padding_bytes } => {
+                if *ops_per_bundle == 0 {
+                    return Err(BaselineError::Config(
+                        "aa_bundle ops_per_bundle must be > 0".into(),
+                    ));
+                }
+                let gas_limit = AaBundlePayload::gas_limit(*ops_per_bundle, *padding_bytes);
+                if gas_limit > MAX_TX_GAS_LIMIT_OSAKA {
+                    return Err(BaselineError::Config(format!(
+                        "aa_bundle ops_per_bundle {ops_per_bundle} with padding_bytes {padding_bytes} needs a {gas_limit} gas limit, above the {MAX_TX_GAS_LIMIT_OSAKA} per-tx cap"
+                    )));
+                }
+                TxType::AaBundle { ops_per_bundle: *ops_per_bundle, padding_bytes: *padding_bytes }
             }
             TxTypeConfig::Precompile { target, iterations } => {
                 let looper_contract = if *iterations > 1 {
@@ -752,6 +902,7 @@ impl TestConfig {
             TxTypeConfig::B20 => TxType::B20,
             TxTypeConfig::Osaka { target } => TxType::Osaka { target: target.clone() },
             TxTypeConfig::UniswapV3 {
+                native,
                 router,
                 token_in,
                 token_out,
@@ -760,14 +911,31 @@ impl TestConfig {
                 max_amount,
                 reverse_min_amount,
                 reverse_max_amount,
+                reverse_amounts,
+                via,
             } => {
                 let max_u24: u32 = (1 << 24) - 1;
-                if *fee > max_u24 {
-                    return Err(BaselineError::Config(format!(
-                        "uniswap_v3 fee {fee} exceeds u24 max ({max_u24})"
-                    )));
+                for fee in via.iter().map(|hop| &hop.fee).chain([fee]) {
+                    if *fee > max_u24 {
+                        return Err(BaselineError::Config(format!(
+                            "uniswap_v3 fee {fee} exceeds u24 max ({max_u24})"
+                        )));
+                    }
+                }
+                if *native && !via.is_empty() {
+                    return Err(BaselineError::Config(
+                        "uniswap_v3 via cannot be combined with native".into(),
+                    ));
                 }
                 validate_swap_amounts(*min_amount, *max_amount, "uniswap_v3")?;
+                let derive_reverse_amounts = reverse_amounts.is_some();
+                if derive_reverse_amounts
+                    && (reverse_min_amount.is_some() || reverse_max_amount.is_some())
+                {
+                    return Err(BaselineError::Config(
+                        "uniswap_v3 reverse_amounts: auto cannot be combined with reverse_min_amount or reverse_max_amount".into(),
+                    ));
+                }
                 let reverse_min_amount = reverse_min_amount.unwrap_or(*min_amount);
                 let reverse_max_amount = reverse_max_amount.unwrap_or(*max_amount);
                 validate_swap_amounts(
@@ -779,6 +947,7 @@ impl TestConfig {
                 let token_in = require_address(*token_in, "uniswap_v3 token_in")?;
                 let token_out = require_address(*token_out, "uniswap_v3 token_out")?;
                 TxType::UniswapV3 {
+                    native: *native,
                     router,
                     token_in,
                     token_out,
@@ -787,6 +956,8 @@ impl TestConfig {
                     max_amount: *max_amount,
                     reverse_min_amount,
                     reverse_max_amount,
+                    derive_reverse_amounts,
+                    via: via.clone(),
                 }
             }
             TxTypeConfig::AerodromeCl {
@@ -825,6 +996,15 @@ impl TestConfig {
                     reverse_min_amount,
                     reverse_max_amount,
                 }
+            }
+            TxTypeConfig::UniswapV3Liquidity(payload) => {
+                if !self.real_token_setup.as_ref().is_some_and(|setup| setup.enabled) {
+                    return Err(BaselineError::Config(
+                        "uniswap_v3_liquidity requires enabled real_token_setup".into(),
+                    ));
+                }
+                payload.validate()?;
+                TxType::UniswapV3Liquidity(payload.clone())
             }
         };
         Ok(TxConfig { weight: weighted.weight, tx_type })
@@ -914,6 +1094,37 @@ block_time: 0s
         let error = TestConfig::from_yaml(yaml).unwrap_err();
 
         assert!(error.to_string().contains("block_time must be > 0"));
+    }
+
+    #[test]
+    fn parses_steady_submission_interval() {
+        let yaml = r#"
+transaction_submission_rpcs: http://localhost:8545
+target_gps: 400000000
+block_time: 200ms
+steady_submission_interval: 20ms
+"#;
+
+        let config = TestConfig::from_yaml(yaml).unwrap();
+
+        assert_eq!(
+            config.to_load_config(Some(8453)).unwrap().steady_submission_interval,
+            Some(Duration::from_millis(20))
+        );
+        assert_eq!(config.to_summary().steady_submission_interval.as_deref(), Some("20ms"));
+    }
+
+    #[test]
+    fn rejects_steady_submission_without_target_rate() {
+        let yaml = r#"
+transaction_submission_rpcs: http://localhost:8545
+target_gps: null
+steady_submission_interval: 20ms
+"#;
+
+        let error = TestConfig::from_yaml(yaml).unwrap_err();
+
+        assert!(error.to_string().contains("steady_submission_interval requires target_gps"));
     }
 
     #[test]
@@ -1113,15 +1324,16 @@ transactions:
     type: storage
     contract: "0x1234567890123456789012345678901234567890"
     slots_per_tx: 25
+    new_slot_ratio: 0.25
 "#,
         );
         let config = TestConfig::from_yaml(&yaml).unwrap();
         assert_eq!(config.transactions.len(), 1);
         match &config.transactions[0].tx_type {
-            TxTypeConfig::Storage { contract, slots_per_tx } => {
+            TxTypeConfig::Storage { contract, slots_per_tx, .. } => {
                 assert_eq!(
                     *contract,
-                    "0x1234567890123456789012345678901234567890".parse::<Address>().unwrap()
+                    Some("0x1234567890123456789012345678901234567890".parse::<Address>().unwrap())
                 );
                 assert_eq!(*slots_per_tx, 25);
             }
@@ -1131,13 +1343,14 @@ transactions:
         let load_config = config.to_load_config(Some(1337)).unwrap();
         assert_eq!(load_config.transactions.len(), 1);
         match &load_config.transactions[0].tx_type {
-            TxType::Storage { contract, slots_per_tx } => {
+            TxType::Storage { contract, slots_per_tx, new_slot_ratio } => {
                 assert_eq!(
                     *contract,
                     "0x1234567890123456789012345678901234567890".parse::<Address>().unwrap(),
                     "storage contract address must round-trip through conversion"
                 );
                 assert_eq!(*slots_per_tx, 25, "slots_per_tx must be preserved");
+                assert_eq!(*new_slot_ratio, 0.25, "new_slot_ratio must be preserved");
             }
             _ => panic!("expected TxType::Storage after conversion"),
         }
@@ -1150,15 +1363,62 @@ transactions:
 transactions:
   - weight: 100
     type: storage
-    contract: "0x1234567890123456789012345678901234567890"
 "#,
         );
         let config = TestConfig::from_yaml(&yaml).unwrap();
         match &config.transactions[0].tx_type {
-            TxTypeConfig::Storage { slots_per_tx, .. } => {
+            TxTypeConfig::Storage { slots_per_tx, new_slot_ratio, .. } => {
                 assert_eq!(*slots_per_tx, 10, "slots_per_tx must default to 10");
+                assert_eq!(*new_slot_ratio, 1.0, "new_slot_ratio must default to 1.0");
             }
             _ => panic!("expected Storage"),
+        }
+        match &config.to_load_config(Some(1337)).unwrap().transactions[0].tx_type {
+            TxType::Storage { contract, .. } => {
+                assert_eq!(*contract, StoragePayload::default_contract());
+            }
+            _ => panic!("expected TxType::Storage"),
+        }
+    }
+
+    #[test]
+    fn storage_config_rejects_new_slot_ratio_above_one() {
+        let yaml = config_yaml(
+            r#"
+transactions:
+  - weight: 100
+    type: storage
+    contract: "0x1234567890123456789012345678901234567890"
+    new_slot_ratio: 1.5
+"#,
+        );
+        let err = TestConfig::from_yaml(&yaml).unwrap().to_load_config(Some(1337)).unwrap_err();
+        assert!(err.to_string().contains("new_slot_ratio must be between 0.0 and 1.0"), "{err}");
+    }
+
+    #[test]
+    fn aa_bundle_config_defaults_and_bounds() {
+        let parse = |fields: &str| {
+            TestConfig::from_yaml(&config_yaml(&format!(
+                "transactions:\n  - weight: 100\n    type: aa_bundle\n{fields}"
+            )))
+            .unwrap()
+            .to_load_config(Some(1337))
+        };
+        let load_config = parse("").unwrap();
+        assert!(matches!(
+            load_config.transactions[0].tx_type,
+            TxType::AaBundle { ops_per_bundle: 12, padding_bytes: 0 }
+        ));
+        assert!(parse("    ops_per_bundle: 0\n").is_err());
+        // 40k + 60k * 278 = 16,720,000 and 40k + 60k + 40 * 416,930 = 16,777,200 fit 2^24.
+        assert!(parse("    ops_per_bundle: 278\n").is_ok());
+        assert!(parse("    ops_per_bundle: 1\n    padding_bytes: 416930\n").is_ok());
+        for fields in
+            ["    ops_per_bundle: 279\n", "    ops_per_bundle: 1\n    padding_bytes: 416931\n"]
+        {
+            let err = parse(fields).unwrap_err().to_string();
+            assert!(err.contains("padding_bytes") && err.contains("per-tx cap"), "{err}");
         }
     }
 
@@ -1376,6 +1636,72 @@ transactions:
             }
             _ => panic!("expected UniswapV3"),
         }
+    }
+
+    fn uniswap_v3_reverse(reverse: &str) -> Result<TxType> {
+        let yaml = config_yaml(&format!(
+            r#"
+transactions:
+  - weight: 10
+    type: uniswap_v3
+    router: "0x1010101010101010101010101010101010101010"
+    token_in: "0x1111111111111111111111111111111111111111"
+    token_out: "0x2222222222222222222222222222222222222222"
+    min_amount: "10000000000000"
+    max_amount: "100000000000000"
+{reverse}"#
+        ));
+        let load = TestConfig::from_yaml(&yaml).unwrap().to_load_config(Some(1337))?;
+        Ok(load.transactions[0].tx_type.clone())
+    }
+
+    #[test]
+    fn uniswap_v3_reverse_amounts_auto_defers_reverse_range_to_setup() {
+        let tx = uniswap_v3_reverse("    reverse_amounts: auto\n").unwrap();
+        assert!(matches!(tx, TxType::UniswapV3 { derive_reverse_amounts: true, .. }));
+    }
+
+    #[test]
+    fn uniswap_v3_reverse_amounts_auto_rejects_explicit_reverse_amounts() {
+        for explicit in ["reverse_min_amount: \"10000\"", "reverse_max_amount: \"100000\""] {
+            let err = uniswap_v3_reverse(&format!("    reverse_amounts: auto\n    {explicit}\n"))
+                .unwrap_err();
+            assert!(err.to_string().contains("cannot be combined"), "{explicit}: {err}");
+        }
+    }
+
+    #[test]
+    fn uniswap_v3_explicit_reverse_amounts_are_kept() {
+        let tx = uniswap_v3_reverse(
+            "    reverse_min_amount: \"10000\"\n    reverse_max_amount: \"100000\"\n",
+        )
+        .unwrap();
+        let TxType::UniswapV3 {
+            reverse_min_amount,
+            reverse_max_amount,
+            derive_reverse_amounts,
+            ..
+        } = tx
+        else {
+            panic!("expected UniswapV3");
+        };
+        assert_eq!(reverse_min_amount, U256::from(10_000));
+        assert_eq!(reverse_max_amount, U256::from(100_000));
+        assert!(!derive_reverse_amounts);
+    }
+
+    #[test]
+    fn uniswap_v3_via_parses_and_validates_hops() {
+        let hop = "    via:\n      - token: \"0x3333333333333333333333333333333333333333\"\n        fee: 500\n";
+        let TxType::UniswapV3 { via, .. } = uniswap_v3_reverse(hop).unwrap() else {
+            panic!("expected UniswapV3");
+        };
+        assert_eq!(via, vec![UniswapV3Hop { token: Address::repeat_byte(0x33), fee: 500 }]);
+
+        let err = uniswap_v3_reverse(&hop.replace("fee: 500", "fee: 16777216")).unwrap_err();
+        assert!(err.to_string().contains("exceeds u24 max"), "{err}");
+        let err = uniswap_v3_reverse(&format!("{hop}    native: true\n")).unwrap_err();
+        assert!(err.to_string().contains("via cannot be combined with native"), "{err}");
     }
 
     #[test]

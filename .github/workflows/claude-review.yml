@@ -25,7 +25,7 @@ jobs:
       group: BaseRunnerGroup
     steps:
       - name: Harden the runner (Block unauthorized outbound calls)
-        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
         with:
           egress-policy: block
           allowed-endpoints: >
@@ -37,7 +37,7 @@ jobs:
             release-assets.githubusercontent.com:443
             ${{ vars.LLM_GATEWAY_HOSTNAME }}:443
 
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
 
@@ -67,7 +67,7 @@ jobs:
 
       - name: Run Claude Code
         id: claude-review
-        uses: anthropics/claude-code-action@6fed3ca145920b639991cb756090506e1bcaf515 # v1.0.245
+        uses: anthropics/claude-code-action@ae68417a745a5df4b2124873632bd73a2255e6f6 # v1.0.259
         env:
           ANTHROPIC_BASE_URL: https://${{ vars.LLM_GATEWAY_HOSTNAME }}
 
@@ -128,6 +128,10 @@ jobs:
 
             Leave an inline Critical finding for any unmitigated change that can introduce, widen, or obscure a block-production halt/stall trigger described in the guide or an analogous trigger you identify.
             A Critical finding must explain the triggering input/state/config, affected code path, propagated error or panic, why block production or validator progression can halt/stall, and the missing mitigation or test.
+
+            HOT-PATH PERFORMANCE FINDINGS:
+            A diff rarely shows how often changed code runs. If the PR touches code reachable from a path listed in the hot-path registry of `docs/guides/HOT_PATH_PERFORMANCE_REVIEW.md` (per-candidate transaction selection, pool admission, native block building, flashblock building and publishing, block execution), run `git show HEAD:docs/guides/HOT_PATH_PERFORMANCE_REVIEW.md` and apply it.
+            Cost added per-unit work at its production frequency. Evaluate default-off features on their enabled branch, because production enables features that tests, benchmarks, and devnet leave off.
 
             COMMENT MANAGEMENT:
             If you have findings, post one summary using `gh pr comment ${{ github.event.pull_request.number }} --body ...`.

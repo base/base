@@ -4,6 +4,7 @@ use std::{sync::Arc, time::Duration};
 
 use alloy_rpc_types_engine::JwtSecret;
 use base_common_genesis::{RollupConfig, SystemConfig};
+use base_consensus_engine::EngineEndpoint;
 use base_consensus_node::{
     EngineConfig, NodeOperatingMode, StandalonePrefund, StandaloneSequencerNode,
 };
@@ -51,7 +52,7 @@ impl InProcessStandaloneSequencer {
         let rollup_config = Arc::new(config.rollup_config);
         let engine_config = EngineConfig {
             config: Arc::clone(&rollup_config),
-            l2_url: config.l2_engine_url,
+            l2_endpoint: EngineEndpoint::Url(config.l2_engine_url),
             l2_jwt_secret: config.jwt_secret,
             // The engine client constructs this provider lazily. Standalone sequencing never
             // issues an L1 request.

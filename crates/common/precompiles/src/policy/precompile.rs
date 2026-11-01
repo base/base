@@ -47,7 +47,7 @@ impl PolicyRegistryPrecompile {
             |ctx, calldata| {
             let observer = observer.clone();
             PolicyRegistryStorage::new(ctx)
-                .dispatch_with_observer(ctx, &calldata, upgrade, observer)
+                .dispatch_with_observer(ctx, calldata, upgrade, observer)
             }
         )
     }

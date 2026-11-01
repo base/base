@@ -33,8 +33,8 @@ use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
 use crate::succinct::{
-    L1HeadSource, OpSuccinctWitnessProvider, SuccinctRpcConfig, SuccinctZkProverBuildError,
-    SuccinctZkProverBuilder, WitnessParams,
+    OpSuccinctWitnessProvider, SuccinctRpcConfig, SuccinctZkProverBuildError,
+    SuccinctZkProverBuilder,
 };
 
 macro_rules! backend_error {
@@ -69,12 +69,6 @@ pub struct SuccinctClusterBackendConfig {
 /// Configuration for [`ClusterZkProver`].
 #[derive(Clone)]
 pub struct ClusterZkProverConfig {
-    /// Base consensus node RPC URL.
-    pub base_consensus_url: String,
-    /// L1 execution node RPC URL.
-    pub l1_node_url: String,
-    /// Default sequence window for L1 head calculations.
-    pub default_sequence_window: u64,
     /// Cluster proof submission and artifact configuration.
     pub cluster: Arc<ClusterProofConfig>,
     /// Range program verification key used by the aggregation program.
@@ -94,7 +88,6 @@ pub struct ClusterZkProverConfig {
 impl std::fmt::Debug for ClusterZkProverConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ClusterZkProverConfig")
-            .field("default_sequence_window", &self.default_sequence_window)
             .field("range_vk", &self.range_vk.bytes32())
             .field("timeout", &self.timeout)
             .field("range_cycle_limit", &self.range_cycle_limit)
@@ -199,9 +192,6 @@ impl ClusterZkProver {
             aggregation_cycle_limit,
             aggregation_gas_limit,
         } = config;
-        let base_consensus_url = rpc.base_consensus_rpc.as_str().to_owned();
-        let l1_node_url = rpc.l1_rpc.as_str().to_owned();
-        let default_sequence_window = rpc.default_sequence_window;
 
         info!(backend = "cluster", "using Succinct SP1 cluster backend");
         info!("computing range verification key");
@@ -244,7 +234,7 @@ impl ClusterZkProver {
             async {
                 // The upstream constructor consumes the endpoint string, and the proof config
                 // needs to retain it for request submission.
-                ClusterServiceClient::new(cluster_rpc.clone()).await.map_err(|error| {
+                ClusterServiceClient::new(cluster_rpc.clone(), None).await.map_err(|error| {
                     SuccinctZkProverBuildError::boxed_operation(
                         "failed to create SP1 cluster client",
                         error.into(),
@@ -258,9 +248,6 @@ impl ClusterZkProver {
             return Ok(None);
         };
         let prover_config = ClusterZkProverConfig {
-            base_consensus_url,
-            l1_node_url,
-            default_sequence_window,
             cluster: Arc::new(ClusterProofConfig {
                 cluster_rpc,
                 artifact_store,
@@ -610,61 +597,17 @@ impl ClusterZkProver {
             return Ok(backend_session_id);
         }
 
-        let start_block = request.start_block_number;
-        let end_block = start_block
-            .checked_add(request.number_of_blocks_to_prove)
-            .ok_or_else(|| backend_error!("proof range end block overflowed u64"))?;
-        let sequence_window =
-            request.sequence_window.unwrap_or(self.config.default_sequence_window);
-
-        info!(
-            proof_id = %proof_id,
-            start_block = start_block,
-            end_block = end_block,
-            number_of_blocks = request.number_of_blocks_to_prove,
-            sequence_window = sequence_window,
-            intermediate_block_interval = request.intermediate_block_interval,
-            l1_head = ?request.l1_head,
-            "starting SP1 cluster range proof generation"
-        );
-
-        let witness_start = std::time::Instant::now();
-        let stdin = match self
+        let stdin = self
             .provider
-            .generate_witness(WitnessParams {
-                start_block,
-                end_block,
-                l1_head: request.l1_head.map_or(
-                    L1HeadSource::SequenceWindow {
-                        sequence_window,
-                        l1_node_url: &self.config.l1_node_url,
-                        base_consensus_url: &self.config.base_consensus_url,
-                    },
-                    L1HeadSource::Pinned,
-                ),
-                schedule_l2_block_number: request.schedule_l2_block_number,
-                intermediate_block_interval: request.intermediate_block_interval,
-            })
+            .generate_range_witness(request)
             .await
-        {
-            Ok(stdin) => stdin,
-            Err(e) => {
-                error!(
-                    start_block = start_block,
-                    end_block = end_block,
-                    error = %e,
-                    "witness generation failed"
-                );
-                return Err(backend_error!("witness generation failed: {e}"));
-            }
-        };
+            .map_err(|e| backend_error!("witness generation failed: {e}"))?;
 
         info!(
             proof_id = %proof_id,
             timeout_secs = self.config.timeout.as_secs(),
             range_cycle_limit = self.config.range_cycle_limit,
             range_gas_limit = self.config.range_gas_limit,
-            witness_gen_duration_ms = witness_start.elapsed().as_millis(),
             "witness generated, submitting range proof to SP1 cluster"
         );
 
@@ -827,7 +770,6 @@ impl ClusterZkProver {
 
         let range_session = ClusterSessionId::parse(range_backend_session_id)?;
         let range_proof = self.download_cluster_proof(&range_session).await?;
-        let witness_start = std::time::Instant::now();
         let stdin = self
             .provider
             .generate_aggregation_witness(
@@ -837,7 +779,6 @@ impl ClusterZkProver {
             )
             .await
             .map_err(|e| backend_error!("aggregation witness generation failed: {e}"))?;
-        let witness_gen_duration_ms = witness_start.elapsed().as_millis();
 
         let session = self.create_cluster_request(proof_id, stdin, ProofMode::Plonk).await?;
         let backend_session_id = session.to_backend_session_id()?;
@@ -846,7 +787,6 @@ impl ClusterZkProver {
             proof_output_id = %session.proof_output_id,
             cycle_limit = self.config.aggregation_cycle_limit,
             gas_limit = self.config.aggregation_gas_limit,
-            witness_gen_duration_ms = witness_gen_duration_ms,
             "aggregation proof request submitted to SP1 cluster"
         );
 

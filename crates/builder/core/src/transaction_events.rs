@@ -11,8 +11,8 @@ use serde_json::{Map, Value};
 use tracing::warn;
 
 use crate::{
-    BuilderMetrics, ExecutionInfo, ExecutionMeteringLimitExceeded, ResourceLimits, TxResources,
-    TxnExecutionError,
+    BUILDER_EVENT_METRICS, BuilderMetrics, ExecutionInfo, ExecutionMeteringLimitExceeded,
+    ResourceLimits, TxResources, TxnExecutionError,
 };
 
 /// Stable decision context attached to each builder transaction event.
@@ -497,7 +497,7 @@ fn record_builder_event_enqueue(
 ) {
     match result {
         Ok(()) => {
-            BuilderMetrics::builder_transaction_events_emitted(event_type.to_string()).increment(1);
+            BUILDER_EVENT_METRICS.emitted(event_type).increment(1);
         }
         Err(err) => {
             BuilderMetrics::builder_transaction_events_dropped(event_type.to_string(), "write")

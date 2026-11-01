@@ -62,6 +62,7 @@ impl FlashblocksServiceBuilder {
             ctx.provider().clone(),
             self.config.clone(),
             BuilderOutputs { payload_tx: built_payload_tx, ws_pub },
+            ctx.task_executor().clone(),
         );
         let payload_generator = BlockPayloadJobGenerator::with_builder(
             ctx.provider().clone(),

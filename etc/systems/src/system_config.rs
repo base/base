@@ -10,12 +10,15 @@ use std::{
 
 use alloy_genesis::Genesis;
 use alloy_primitives::{Address, B256};
+use base_builder_core::RestingPredicateMode;
 use base_common_chains::ChainConfig;
 use base_common_genesis::RollupConfig;
 use base_execution_chainspec::BaseChainSpec;
 use clap::ValueEnum;
 use eyre::{Result, WrapErr, bail, ensure};
 use serde::{Deserialize, Serialize};
+
+use crate::BuilderEngineSharingConfig;
 
 const DEFAULT_SLOT_DURATION: u64 = 1;
 
@@ -80,6 +83,16 @@ impl DevnetBlockInterval {
         match self {
             Self::TwoSeconds => 10_000_000_000,
             Self::TwoHundredMilliseconds => 1_000_000_000,
+        }
+    }
+
+    /// Keeps Reth's default 16-block persistence-backpressure window equivalent in wall-clock time.
+    /// At a 200ms cadence, 160 blocks provide the same 32 seconds of persistence headroom as 16
+    /// two-second blocks instead of stalling Engine API intake after only 3.2 seconds.
+    pub const fn snapshot_persistence_backpressure_threshold(self) -> u64 {
+        match self {
+            Self::TwoSeconds => 16,
+            Self::TwoHundredMilliseconds => 160,
         }
     }
 }
@@ -193,6 +206,13 @@ pub struct DevnetSnapshotConfig {
     /// modify the captured snapshot's system configuration.
     #[serde(default)]
     pub eip1559_elasticity_override: Option<u32>,
+    /// Opt-in state sharing for the snapshot's native payload builder.
+    #[serde(default)]
+    pub builder_engine: BuilderEngineSharingConfig,
+    /// How the snapshot's native payload builder tracks validity transactions whose predicates
+    /// did not match. `Off` (the default) evaluates every candidate on every flashblock.
+    #[serde(default)]
+    pub resting_predicate_mode: RestingPredicateMode,
 }
 
 /// Initial execution state used by a devnet stack.
@@ -370,6 +390,8 @@ impl DevnetConfig {
                 block_interval: DevnetBlockInterval::default(),
                 block_gas_limit: None,
                 eip1559_elasticity_override: None,
+                builder_engine: BuilderEngineSharingConfig::default(),
+                resting_predicate_mode: RestingPredicateMode::Off,
             })),
             stable: StableSystemTestConfig::standard(),
             use_stable_ports: false,

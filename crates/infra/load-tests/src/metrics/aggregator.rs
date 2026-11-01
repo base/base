@@ -8,6 +8,9 @@ use super::{
     ThroughputMetrics, ThroughputPercentiles, ThroughputSample, TransactionMetrics,
 };
 
+/// Bucket width of [`MetricsSummary::submit_offset_histogram`].
+const SUBMIT_OFFSET_BUCKET_MS: i64 = 10;
+
 /// Aggregates raw transaction metrics into summary statistics.
 #[derive(Debug)]
 pub struct MetricsAggregator<'a> {
@@ -74,6 +77,7 @@ impl<'a> MetricsAggregator<'a> {
             receipt_coverage,
             fresh_recipient_count,
             by_cohort: Self::compute_by_cohort(self.transactions),
+            submit_offset_histogram: Self::compute_submit_offset_histogram(self.transactions),
         }
     }
 
@@ -243,6 +247,19 @@ impl<'a> MetricsAggregator<'a> {
         })
     }
 
+    /// Counts confirmed transactions by submission time relative to their inclusion block's
+    /// timestamp, in buckets of [`SUBMIT_OFFSET_BUCKET_MS`] keyed by each bucket's lower bound.
+    pub fn compute_submit_offset_histogram(
+        transactions: &[TransactionMetrics],
+    ) -> BTreeMap<i64, u64> {
+        let mut histogram = BTreeMap::new();
+        for offset in transactions.iter().filter_map(|transaction| transaction.submit_offset_ms) {
+            let bucket = offset.div_euclid(SUBMIT_OFFSET_BUCKET_MS) * SUBMIT_OFFSET_BUCKET_MS;
+            *histogram.entry(bucket).or_insert(0) += 1;
+        }
+        histogram
+    }
+
     fn compute_throughput_percentiles(
         tps_samples: &[f64],
         gps_samples: &[f64],
@@ -329,6 +346,12 @@ pub struct MetricsSummary {
     /// unless validity transactions were exercised during the run.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub by_cohort: Vec<CohortMetrics>,
+    /// Confirmed transactions by submission time relative to their inclusion block's timestamp,
+    /// in 10 ms buckets keyed by each bucket's lower bound (`"-180"` counts submissions 180 to
+    /// 171 ms before the block timestamp). Shows when the builder stops taking transactions
+    /// for a block: later submissions wait for the next one.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub submit_offset_histogram: BTreeMap<i64, u64>,
 }
 
 impl MetricsSummary {
@@ -427,6 +450,24 @@ mod tests {
         );
         transaction.cohort = cohort;
         transaction
+    }
+
+    #[test]
+    fn submit_offset_histogram_buckets_by_lower_bound() {
+        let offsets = [-181, -180, -171, -1, 0, 9, 10];
+        let mut transactions: Vec<_> = offsets
+            .into_iter()
+            .map(|offset| {
+                let mut transaction = transaction(7, 1);
+                transaction.submit_offset_ms = Some(offset);
+                transaction
+            })
+            .collect();
+        transactions.push(transaction(7, 1));
+
+        let histogram = MetricsAggregator::compute_submit_offset_histogram(&transactions);
+
+        assert_eq!(histogram, BTreeMap::from([(-190, 1), (-180, 2), (-10, 1), (0, 2), (10, 1)]));
     }
 
     #[test]

@@ -3,7 +3,7 @@
 use std::{
     collections::{BTreeSet, HashMap, HashSet, VecDeque, hash_map::Entry},
     sync::Arc,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use alloy_primitives::{Address, TxHash};
@@ -41,6 +41,9 @@ pub struct BlockObservation {
     /// Local time when the load-test process observed the block. Used as the
     /// landing time for transactions first seen in this block.
     pub observed_at: Instant,
+    /// Block header millisecond timestamp, when the observer read one. `None` for headers
+    /// with only second-resolution timestamps.
+    pub timestamp_ms: Option<u64>,
 }
 
 /// Load-test transactions matched while scanning one canonical block.
@@ -130,6 +133,9 @@ struct ResultsTrackerInner {
 struct PendingTransaction {
     from: Address,
     submit_time: Instant,
+    /// Wall-clock time a submission RPC last accepted the transaction (registration time until
+    /// then), comparable with block timestamps.
+    submitted_at: SystemTime,
     /// Whether in-flight accounting was already released (e.g. by flashblock confirmation).
     in_flight_released: bool,
     measured: bool,
@@ -212,9 +218,21 @@ impl ResultsTracker {
         }
     }
 
+    /// Restamps pending transactions a submission RPC accepted with the start of that attempt,
+    /// so a retried batch is measured from the send that succeeded rather than its first one.
+    pub fn accepted_transactions(&self, tx_hashes: &[TxHash], sent_at: SystemTime) {
+        let mut inner = self.inner.write();
+        for tx_hash in tx_hashes {
+            if let Some(pending) = inner.pending.get_mut(tx_hash) {
+                pending.submitted_at = sent_at;
+            }
+        }
+    }
+
     /// Records signed transactions entering submission.
     pub fn sent_transactions(&self, transactions: Vec<SentTransaction>) {
         let submit_time = Instant::now();
+        let submitted_at = SystemTime::now();
         let mut inner = self.inner.write();
         let mut reconciled_gas = 0u128;
 
@@ -230,6 +248,7 @@ impl ResultsTracker {
                 PendingTransaction {
                     from: transaction.from,
                     submit_time,
+                    submitted_at,
                     in_flight_released: flashblock_observed_at.is_some(),
                     measured,
                     estimated_gas: transaction.estimated_gas,
@@ -528,13 +547,10 @@ impl ResultsTracker {
         }
     }
 
-    /// Returns average canonical gas for measured transactions observed during this run.
-    pub fn observed_avg_gas(&self) -> Option<u64> {
+    /// Returns total canonical receipt gas and the count of measured transactions it covers.
+    pub fn observed_gas(&self) -> (u128, u64) {
         let inner = self.inner.read();
-        if inner.observed_gas_count == 0 {
-            return None;
-        }
-        u64::try_from(inner.observed_gas_total / u128::from(inner.observed_gas_count)).ok()
+        (inner.observed_gas_total, inner.observed_gas_count)
     }
 
     /// Returns the number of senders at or above the given in-flight limit.
@@ -576,6 +592,13 @@ impl ResultsTracker {
 }
 
 impl ResultsTrackerInner {
+    /// Milliseconds from a block's timestamp to a submission; negative when submitted before it.
+    fn submit_offset_ms(submitted_at: SystemTime, block_timestamp_ms: u64) -> Option<i64> {
+        let submitted_ms =
+            i64::try_from(submitted_at.duration_since(UNIX_EPOCH).ok()?.as_millis()).ok()?;
+        Some(submitted_ms - i64::try_from(block_timestamp_ms).ok()?)
+    }
+
     /// Records the first observation of `tx_hash` in a polled block, emitting its
     /// landing metrics. Idempotent: a tx is removed from `pending` on first landing,
     /// so later blocks containing the same hash are ignored.
@@ -619,6 +642,9 @@ impl ResultsTrackerInner {
         );
         metrics.cohort = pending.cohort.to_metric_label();
         metrics.confirmed_at = Some(block.observed_at);
+        metrics.submit_offset_ms = block
+            .timestamp_ms
+            .and_then(|timestamp_ms| Self::submit_offset_ms(pending.submitted_at, timestamp_ms));
         self.unreported_confirmations.push_back(metrics);
 
         if pending.measured {
@@ -670,7 +696,7 @@ mod tests {
     }
 
     fn block_at(number: u64, observed_at: Instant) -> BlockObservation {
-        BlockObservation { number, observed_at }
+        BlockObservation { number, observed_at, timestamp_ms: None }
     }
 
     fn sent(tx_hash: TxHash, from: Address, measured: bool) -> SentTransaction {
@@ -721,6 +747,55 @@ mod tests {
     }
 
     #[test]
+    fn records_submission_offset_from_block_timestamp() {
+        let from = addr();
+        let tx_hash = TxHash::repeat_byte(1);
+        let tracker = ResultsTracker::new(&[from]);
+        tracker.begin_measurement(6, Some(1));
+        let before = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64;
+        tracker.sent_transactions(vec![sent(tx_hash, from, true)]);
+        let after = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64;
+
+        let block_timestamp_ms = before + 150;
+        let block = BlockObservation {
+            number: 7,
+            observed_at: Instant::now(),
+            timestamp_ms: Some(block_timestamp_ms),
+        };
+        tracker.on_new_block_hashes(block, vec![tx_hash]);
+
+        let offset = tracker.drain_confirmed_metrics()[0].submit_offset_ms.unwrap();
+        let earliest = before as i64 - block_timestamp_ms as i64;
+        let latest = after as i64 - block_timestamp_ms as i64;
+        assert!(
+            (earliest..=latest).contains(&offset),
+            "offset {offset} outside {earliest}..={latest}"
+        );
+    }
+
+    #[test]
+    fn acceptance_restamps_submission_time() {
+        let from = addr();
+        let tx_hash = TxHash::repeat_byte(1);
+        let tracker = ResultsTracker::new(&[from]);
+        tracker.begin_measurement(6, Some(1));
+        tracker.sent_transactions(vec![sent(tx_hash, from, true)]);
+        // A retried send that succeeded 30 ms before the block timestamp, long after registration.
+        let block_timestamp_ms = 4_000_000_000_000;
+        let sent_at = UNIX_EPOCH + Duration::from_millis(block_timestamp_ms - 30);
+        tracker.accepted_transactions(&[tx_hash], sent_at);
+
+        let block = BlockObservation {
+            number: 7,
+            observed_at: Instant::now(),
+            timestamp_ms: Some(block_timestamp_ms),
+        };
+        tracker.on_new_block_hashes(block, vec![tx_hash]);
+
+        assert_eq!(tracker.drain_confirmed_metrics()[0].submit_offset_ms, Some(-30));
+    }
+
+    #[test]
     fn confirms_pending_transaction_from_block_hashes() {
         let from = addr();
         let tx_hash = TxHash::repeat_byte(1);
@@ -751,7 +826,7 @@ mod tests {
             effective_gas_price: 1,
             success: true,
         }]);
-        assert_eq!(tracker.observed_avg_gas(), Some(42_000));
+        assert_eq!(tracker.observed_gas(), (42_000, 1));
     }
 
     #[test]

@@ -7,7 +7,7 @@
 
 use std::{
     hint::black_box,
-    sync::Arc,
+    sync::{Arc, OnceLock},
     time::{Duration, Instant},
 };
 
@@ -21,9 +21,12 @@ use base_builder_core::{
 };
 use base_common_consensus::{BaseTransactionSigned, BaseTxEnvelope};
 use base_execution_chainspec::BaseChainSpec;
+use base_execution_payload_builder::{
+    DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD, RestingPredicates, SharedRestingPredicates,
+};
 use base_execution_txpool::{
-    BaseOrdering, BasePooledTransaction, ParkedBestTransactions, PredicateContext,
-    ValidityOperator, ValidityPredicate,
+    BaseOrdering, BasePooledTransaction, BestTransactionsHold, ParkedBestTransactions,
+    PredicateContext, ValidityOperator, ValidityPredicate,
 };
 use base_observability_events::{
     GlobalTransactionEventWriter, TransactionEventProducer, TransactionEventWriterConfig,
@@ -38,7 +41,7 @@ use reth_transaction_pool::{
     pool::PendingPool,
 };
 use revm::{
-    database::InMemoryDB,
+    database::{InMemoryDB, TransitionState},
     state::{Account, AccountInfo, EvmState},
 };
 
@@ -142,6 +145,19 @@ fn parkable(pool: &Pool) -> ParkableBestPayloadTransactions<BasePooledTransactio
         Ordering::coinbase_tip(),
         0,
     )))
+}
+
+/// A parkable iterator whose `hold` parks resting members at the source, as the production pool
+/// iterator of an enforcing flashblocks build does.
+fn resting_parkable(
+    pool: &Pool,
+    hold: Option<Box<dyn BestTransactionsHold<BasePooledTransaction>>>,
+) -> ParkableBestPayloadTransactions<BasePooledTransaction> {
+    let mut inner = pool.best();
+    inner.no_updates();
+    ParkableBestPayloadTransactions::new(Box::new(
+        ParkedBestTransactions::new(inner, Ordering::coinbase_tip(), 0).with_hold(hold),
+    ))
 }
 
 fn selection_benches(c: &mut Criterion) {
@@ -451,26 +467,63 @@ fn resting_builder_context() -> BasePayloadBuilderCtx {
     )
 }
 
+type BenchBestTxs = BestFlashblocksTxs<
+    BasePooledTransaction,
+    ParkableBestPayloadTransactions<BasePooledTransaction>,
+>;
+
+fn resting_best_txs(
+    pool: &Pool,
+    mode: RestingPredicateMode,
+    resting: RestingPredicates,
+) -> BenchBestTxs {
+    resting_best_txs_with_cache(
+        pool,
+        mode,
+        resting,
+        RejectionCache::new(1_000, Duration::from_secs(60)),
+    )
+}
+
+fn resting_best_txs_with_cache(
+    pool: &Pool,
+    mode: RestingPredicateMode,
+    resting: RestingPredicates,
+    rejection_cache: RejectionCache,
+) -> BenchBestTxs {
+    let resting = SharedRestingPredicates::new(resting);
+    let hold = mode.is_enforced().then(|| resting.iterator_hold());
+    BestFlashblocksTxs::new(resting_parkable(pool, hold), rejection_cache)
+        .with_resting_predicate_mode(mode)
+        .with_resting_predicates(resting)
+}
+
+/// A rejection cache sized like the builder default, holding `rejected` hashes of transactions
+/// that are not in the pool, as a running builder accumulates from earlier blocks.
+fn populated_rejection_cache(rejected: usize) -> RejectionCache {
+    let cache = RejectionCache::new(100_000, Duration::from_secs(1_800));
+    for index in 0..rejected {
+        cache.insert(B256::from(U256::from(index) | (U256::from(1) << 255)));
+    }
+    cache.run_pending_tasks();
+    cache
+}
+
 /// Runs every flashblock of one block through the build loop and returns the number of
 /// executed transactions.
 fn run_resting_block(
     ctx: &BasePayloadBuilderCtx,
     pool: &Pool,
     state: &mut State<InMemoryDB>,
-    mode: RestingPredicateMode,
+    best: &mut BenchBestTxs,
 ) -> usize {
     let mut info = ExecutionInfo::default();
     let mut deferrals = BlockDeferrals::default();
-    let mut best = BestFlashblocksTxs::new(
-        parkable(pool),
-        RejectionCache::new(1_000, Duration::from_secs(60)),
-    )
-    .with_resting_predicate_mode(mode);
     let mut committed_until = 0;
 
     for flashblock in 0..RESTING_FLASHBLOCKS {
         if flashblock > 0 {
-            best.refresh_iterator(parkable(pool));
+            best.refresh_iterator(resting_parkable(pool, best.iterator_hold()));
         }
         let limits = ResourceLimits {
             block_gas_limit: ((flashblock + 1) * RESTING_FILLER_PER_FLASHBLOCK) as u64
@@ -478,7 +531,7 @@ fn run_resting_block(
             ..Default::default()
         };
         black_box(
-            ctx.execute_best_transactions(&mut info, &mut deferrals, state, &mut best, &limits)
+            ctx.execute_best_transactions(&mut info, &mut deferrals, state, best, &limits)
                 .expect("in-memory execution cannot fail"),
         );
         let committed = info.executed_transactions[committed_until..]
@@ -492,21 +545,29 @@ fn run_resting_block(
     info.executed_transactions.len()
 }
 
+/// Enables transaction events, as production does, for the rest of the process.
+fn enable_transaction_events() {
+    static EVENTS: OnceLock<tempfile::TempDir> = OnceLock::new();
+    EVENTS.get_or_init(|| {
+        let events = tempfile::tempdir().expect("temporary event directory");
+        GlobalTransactionEventWriter::init(Some(TransactionEventWriterConfig {
+            enabled: true,
+            ..TransactionEventWriterConfig::disabled(
+                TransactionEventProducer::BaseBuilder,
+                "bench",
+                events.path().join("events.jsonl"),
+            )
+        }))
+        .expect("event writer initializes");
+        events
+    });
+}
+
 /// Measures a full block in which `resting` validity transactions stay unsatisfied. With
 /// resting predicates off, every flashblock re-evaluates them and emits a deferral event;
 /// enforced, the iterator holds them back after the first evaluation.
 fn resting_predicate_benches(c: &mut Criterion) {
-    let events = tempfile::tempdir().expect("temporary event directory");
-    GlobalTransactionEventWriter::init(Some(TransactionEventWriterConfig {
-        enabled: true,
-        ..TransactionEventWriterConfig::disabled(
-            TransactionEventProducer::BaseBuilder,
-            "bench",
-            events.path().join("events.jsonl"),
-        )
-    }))
-    .expect("event writer initializes");
-
+    enable_transaction_events();
     let ctx = resting_builder_context();
     let mut group = c.benchmark_group("tx_selection/resting_predicates");
     group.sample_size(10);
@@ -519,7 +580,12 @@ fn resting_predicate_benches(c: &mut Criterion) {
                     b.iter_batched(
                         || State::builder().with_database(db.clone()).with_bundle_update().build(),
                         |mut state| {
-                            let executed = run_resting_block(&ctx, &pool, &mut state, mode);
+                            let mut best = resting_best_txs(
+                                &pool,
+                                mode,
+                                RestingPredicates::new(DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD),
+                            );
+                            let executed = run_resting_block(&ctx, &pool, &mut state, &mut best);
                             assert_eq!(
                                 executed,
                                 RESTING_FLASHBLOCKS * RESTING_FILLER_PER_FLASHBLOCK
@@ -529,6 +595,69 @@ fn resting_predicate_benches(c: &mut Criterion) {
                     );
                 },
             );
+        }
+    }
+    group.finish();
+}
+
+/// Blocks built per iteration of the multi-block resting benchmark.
+const RESTING_BLOCKS: u64 = 5;
+
+/// Resting validity transaction counts to measure.
+const RESTING_COUNTS: [usize; 2] = [20_000, 40_000];
+
+/// Rejection-cache populations to measure: empty, and the order of magnitude a running builder
+/// holds from rejections in earlier blocks.
+const REJECTED_COUNTS: [usize; 2] = [0, 10_000];
+
+/// Builds [`RESTING_BLOCKS`] consecutive blocks under resting `mode`, which carries the resting
+/// set across flashblocks and blocks. Every block builds on the same parent state, so carried
+/// members stay valid.
+fn run_resting_blocks(
+    ctx: &BasePayloadBuilderCtx,
+    pool: &Pool,
+    db: &InMemoryDB,
+    mode: RestingPredicateMode,
+    rejection_cache: &RejectionCache,
+) {
+    let mut resting = RestingPredicates::new(DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD);
+    let mut parent = B256::ZERO;
+    for block in 1..=RESTING_BLOCKS {
+        resting.begin_block(parent, block, Some(&TransitionState::default()));
+        let mut best = resting_best_txs_with_cache(pool, mode, resting, rejection_cache.clone());
+        let mut state = State::builder().with_database(db.clone()).with_bundle_update().build();
+        let executed = run_resting_block(ctx, pool, &mut state, &mut best);
+        assert_eq!(executed, RESTING_FLASHBLOCKS * RESTING_FILLER_PER_FLASHBLOCK);
+        resting = best.take_resting_predicates();
+        parent = B256::from(U256::from(block));
+        resting.end_block(parent);
+    }
+}
+
+/// Measures consecutive blocks with a large set of validity transactions that stay
+/// unsatisfied. Off evaluates them in every flashblock; enforced, only the first flashblock of
+/// the first block does. The rejection cache is shared across the blocks, as in the builder, and
+/// optionally starts with unrelated rejected hashes.
+fn multi_block_resting_predicate_benches(c: &mut Criterion) {
+    enable_transaction_events();
+    let ctx = resting_builder_context();
+    let mut group = c.benchmark_group("tx_selection/resting_blocks");
+    group.sample_size(10);
+    for resting in RESTING_COUNTS {
+        let (pool, db) = resting_block(resting);
+        for rejected in REJECTED_COUNTS {
+            let rejection_cache = populated_rejection_cache(rejected);
+            // The empty-cache case keeps its original name so earlier results stay comparable.
+            let rejected_suffix =
+                if rejected == 0 { String::new() } else { format!("/rejected={rejected}") };
+            for mode in [RestingPredicateMode::Off, RestingPredicateMode::Enforce] {
+                group.bench_function(
+                    format!(
+                        "resting={resting}/blocks={RESTING_BLOCKS}/flashblocks={RESTING_FLASHBLOCKS}/mode={mode:?}{rejected_suffix}"
+                    ),
+                    |b| b.iter(|| run_resting_blocks(&ctx, &pool, &db, mode, &rejection_cache)),
+                );
+            }
         }
     }
     group.finish();
@@ -544,7 +673,8 @@ criterion_group!(
     predicate_index_population_benches,
     predicate_index_crossing_benches,
     predicate_index_ordered_churn_benches,
-    resting_predicate_benches
+    resting_predicate_benches,
+    multi_block_resting_predicate_benches
 );
 criterion_main!(benches);
 

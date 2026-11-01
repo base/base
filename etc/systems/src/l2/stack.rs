@@ -17,6 +17,7 @@ use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types_engine::JwtSecret;
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
+use base_builder_core::RestingPredicateMode;
 use base_common_genesis::RollupConfig;
 use base_common_network::Base;
 use base_common_rpc_types::BaseTransactionRequest;
@@ -67,7 +68,7 @@ pub struct L2StackConfig {
     pub p2p_key: B256,
     /// Sequencer private key for block signing.
     pub sequencer_key: B256,
-    /// Batcher private key (hex-encoded string, e.g., "0x...").
+    /// Batcher private key for signing L1 transactions.
     pub batcher_key: B256,
     /// L1 RPC endpoint URL (host-accessible).
     pub l1_rpc_url: String,
@@ -82,6 +83,8 @@ pub struct L2StackConfig {
     pub tx_forwarding_config: Option<TxForwardingConfig>,
     /// Signature policy shared by forwarding ingress and builder admission.
     pub validity_signature_mode: ValiditySignatureMode,
+    /// How the builder tracks validity transactions whose predicates did not match.
+    pub resting_predicate_mode: RestingPredicateMode,
     /// Whether the active builder cuts over from flashblocks to basic at Denim.
     pub payload_builder_cutover: bool,
     /// Number of L1 blocks to keep distance from the L1 head for the client (validator)
@@ -218,6 +221,7 @@ impl L2Stack {
         // 1. Start the builder (in-process EL).
         let builder_config = InProcessBuilderConfig {
             runtime: InProcessNodeRuntime::SystemTest,
+            engine_sharing: Default::default(),
             chain_spec: builder_chain_spec,
             datadir: config.builder_datadir,
             jwt_secret: config.jwt_secret,
@@ -230,6 +234,7 @@ impl L2Stack {
             payload_builder_cutover: config.payload_builder_cutover,
             validity_signature_mode: config.validity_signature_mode,
             extra_extensions: config.extra_builder_extensions,
+            resting_predicate_mode: config.resting_predicate_mode,
             block_time: Duration::from_secs(rollup_config.block_time),
             persistence_threshold: None,
             persistence_backpressure_threshold: None,

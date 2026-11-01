@@ -9,10 +9,12 @@ use alloy_eips::{BlockNumHash, BlockNumberOrTag, eip2718::Decodable2718};
 use alloy_primitives::B256;
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types_engine::{ForkchoiceState, JwtSecret};
+use base_builder_core::RestingPredicateMode;
 use base_common_consensus::{BaseBlock, BaseTxEnvelope};
 use base_common_genesis::{BaseUpgrade, ChainGenesis, RollupConfig, SystemConfig, UpgradeConfig};
 use base_common_network::{Base, BaseEngineApi};
 use base_consensus_derive::AttributesBuilder;
+use base_consensus_engine::EngineEndpoint;
 use base_consensus_node::{
     EngineConfig, NodeOperatingMode, StandaloneAttributesBuilder, StandaloneDenimSchedule,
 };
@@ -48,6 +50,7 @@ async fn standalone_sequencer_paces_historical_denim_activation() -> Result<()> 
     let jwt_secret = JwtSecret::random();
     let builder = InProcessBuilder::start(InProcessBuilderConfig {
         runtime: InProcessNodeRuntime::Host,
+        engine_sharing: Default::default(),
         chain_spec: Arc::clone(&chain_spec),
         datadir: None,
         jwt_secret,
@@ -59,6 +62,7 @@ async fn standalone_sequencer_paces_historical_denim_activation() -> Result<()> 
         metrics_port: None,
         payload_builder_cutover: true,
         validity_signature_mode: ValiditySignatureMode::Off,
+        resting_predicate_mode: RestingPredicateMode::Off,
         extra_extensions: Vec::new(),
         block_time: Duration::from_millis(200),
         persistence_threshold: None,
@@ -122,7 +126,7 @@ async fn standalone_sequencer_paces_historical_denim_activation() -> Result<()> 
     .await?;
     let engine = EngineConfig {
         config: Arc::new(canonical.clone()),
-        l2_url: engine_url.clone(),
+        l2_endpoint: EngineEndpoint::Url(engine_url.clone()),
         l2_jwt_secret: jwt_secret,
         l1_url: Url::parse("http://127.0.0.1:1")?,
         mode: NodeOperatingMode::Sequencer,

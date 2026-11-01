@@ -32,10 +32,10 @@ use tokio::{
 use tracing::debug;
 
 use crate::{
-    Admission, BasePooledTx, BaseTransactionValidator, BaseTxPoolError, FlashblockExpiry,
-    GuardLimits, GuardMetrics, InvalidationCause, InvalidationKey, LimitRejection, MempoolGuard,
-    ParkableBestTransactions, ParkableTransactionPool, ParkedBestTransactions, PredicateContext,
-    StateDiffInvalidation, ValidityPoolMetrics,
+    Admission, BasePooledTx, BaseTransactionValidator, BaseTxPoolError, BestTransactionsHold,
+    FlashblockExpiry, GuardLimits, GuardMetrics, InvalidationCause, InvalidationKey,
+    LimitRejection, MempoolGuard, ParkableBestTransactions, ParkableTransactionPool,
+    ParkedBestTransactions, PredicateContext, StateDiffInvalidation, ValidityPoolMetrics,
     best::MergeBestTransactions,
     two_d_nonce_pool::{InsertOutcome, LaneId, LaneUpdate, SidecarLimits, TwoDNoncePool},
 };
@@ -1105,6 +1105,11 @@ where
         let expired = self.expire_published_locked(block_number, flashblock_index);
         Ok((result, expired))
     }
+
+    fn expire_published(&self, block_number: u64, flashblock_index: u64) -> usize {
+        let _admission_guard = self.protocol_admission_lock.lock();
+        self.expire_published_locked(block_number, flashblock_index)
+    }
 }
 
 impl<Client, S, Evm, T, O> TransactionPool for BaseTransactionPool<Client, S, Evm, T, O>
@@ -1770,6 +1775,7 @@ where
     fn best_transactions_with_attributes_and_parking(
         &self,
         attributes: BestTransactionsAttributes,
+        hold: Option<Box<dyn BestTransactionsHold<Self::Transaction>>>,
     ) -> Box<dyn ParkableBestTransactions<Self::Transaction>> {
         let base_fee = attributes.basefee;
         let merged = MergeBestTransactions::new(
@@ -1778,7 +1784,9 @@ where
             self.ordering.clone(),
             base_fee,
         );
-        Box::new(ParkedBestTransactions::new(merged, self.ordering.clone(), base_fee))
+        Box::new(
+            ParkedBestTransactions::new(merged, self.ordering.clone(), base_fee).with_hold(hold),
+        )
     }
 }
 
@@ -2812,6 +2820,39 @@ mod tests {
         let size = |pool: &IntegrationPool| (pool.pool_size().pending, pool.pool_size().queued);
         assert_eq!(size(&batch_pool), size(&single_pool));
         assert_eq!(size(&batch_pool), (3, 0));
+    }
+
+    #[tokio::test]
+    async fn rpc_insert_reports_pooled_duplicates_as_already_imported() {
+        let (pool, client) = build_integration_pool();
+        let sender = signer();
+        fund(&client, sender.address());
+        let tx = signed_1559(&sender, 0);
+        let recovered = tx.clone_into_consensus();
+        let wire = ValidatedTransaction {
+            sender: recovered.signer(),
+            raw: recovered.inner().encoded_2718().into(),
+            metering: None,
+            extensions: NoExtensions::default(),
+        };
+        let handler = BuilderApiImpl::new(pool.clone());
+        assert_eq!(handler.insert_validated_transaction(wire.clone()).await, Ok(()));
+
+        // Validating the duplicate now would fail for lack of funds.
+        client.add_account(sender.address(), ExtendedAccount::new(0, U256::ZERO));
+        let expected = format!(
+            "pool rejected transaction: {}",
+            reth_transaction_pool::error::PoolError::new(
+                *tx.hash(),
+                PoolErrorKind::AlreadyImported
+            )
+        );
+        let single = handler.insert_validated_transaction(wire.clone()).await.unwrap_err();
+        let batched = handler.insert_validated_transactions(vec![wire]).await.unwrap();
+
+        assert_eq!(single.message(), expected);
+        assert_eq!(batched, vec![Some(single)]);
+        assert_eq!(pool.pool_size().pending, 1);
     }
 
     #[tokio::test]
@@ -4652,6 +4693,55 @@ mod tests {
         assert!(pool.get(&hash).is_none());
         pool.add_transaction(TransactionOrigin::Local, signed_1559(&signer, 0)).await.unwrap();
         assert!(pool.get(&hash).is_some());
+    }
+
+    #[tokio::test]
+    async fn received_publication_frees_same_nonce_slot_without_publishing() {
+        let (pool, client) = build_integration_pool();
+        let signer = signer();
+        fund(&client, signer.address());
+        let predicates = vec![
+            ValidityPredicate::BlockNumber {
+                op: ValidityOperator::LessThanOrEqual,
+                value: U256::from(101),
+            },
+            ValidityPredicate::FlashblockIndex {
+                op: ValidityOperator::LessThanOrEqual,
+                value: U256::from(2),
+            },
+        ];
+        let original = self_paid_eoa_8130(&signer, U256::ZERO, 0, 0, 1_000)
+            .with_validity_predicates(predicates.clone());
+        let original_hash = *original.hash();
+        pool.add_transaction(TransactionOrigin::Local, original).await.unwrap();
+
+        // Same nonce and fees as the original; the gas limit only makes it a distinct transaction.
+        let unbumped = || signed_8130(&signer, U256::ZERO, 0, 0, 1_000, 999_999);
+
+        // A follower observes flashblock 1 of the deadline block: the deadline still holds, so an
+        // unbumped same-nonce replacement is priced against the original.
+        assert_eq!(pool.expire_published(101, 1), 0);
+        let early = unbumped();
+        let err = pool.add_transaction(TransactionOrigin::Local, early).await.unwrap_err();
+        assert!(matches!(err.kind, PoolErrorKind::ReplacementUnderpriced), "got {err:?}");
+        assert!(pool.get(&original_hash).is_some());
+
+        // Observing the deadline flashblock evicts the original and frees the slot, and a stale
+        // position received afterwards is ignored.
+        assert_eq!(pool.expire_published(101, 2), 1);
+        assert!(pool.get(&original_hash).is_none());
+        assert_eq!(pool.expire_published(101, 0), 0);
+        let replacement = unbumped();
+        let replacement_hash = *replacement.hash();
+        pool.add_transaction(TransactionOrigin::Local, replacement)
+            .await
+            .expect("unbumped replacement is admitted once the deadline flashblock is received");
+        assert!(pool.get(&replacement_hash).is_some());
+
+        let late = self_paid_eoa_8130(&signer, U256::ZERO, 0, 0, 1_001)
+            .with_validity_predicates(predicates);
+        let error = pool.add_transaction(TransactionOrigin::Local, late).await.unwrap_err();
+        assert!(error.to_string().contains("validity deadline expired"), "{error}");
     }
 
     #[tokio::test]

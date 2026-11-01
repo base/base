@@ -15,11 +15,21 @@ pub use utils::unique_name;
 mod b20;
 pub use b20::{B20CreateConfig, B20PrecompileClient};
 
+mod block_export;
+pub use block_export::{
+    BlockExportWriter, EXPORT_BLOCKS_FILE, EXPORT_MANIFEST_FILE, ExportedBlock, ReplayManifest,
+    read_export_manifest, read_exported_blocks,
+};
+
 mod benchmark_cli;
+mod benchmark_fixtures;
 pub use benchmark_cli::{
     AggregateBenchmarkArgs, BenchmarkCli, BenchmarkCommand, LocalBenchmarkArgs,
     LocalBenchmarkResult, LocalBenchmarkWorkload, LocalBenchmarkWorkloadConfig,
     LocalBenchmarkWorkloadResult, LocalBenchmarkWorkloadResults, SnapshotBenchmarkArgs,
+};
+pub use benchmark_fixtures::{
+    DOUBLE_COUNTER_PLACEHOLDER, DOUBLE_COUNTER_SENTINEL, DeployedFixtures, PendingFixtures,
 };
 
 mod benchmark_report;
@@ -27,6 +37,23 @@ pub use benchmark_report::{
     SnapshotBenchmarkReportConfig, SnapshotBenchmarkResult, SnapshotBlockMetrics,
     VisualizerBlockMetrics, VisualizerMetadata, VisualizerRun, VisualizerRunResult,
     VisualizerSequencerMetrics, VisualizerValidatorMetrics,
+};
+
+mod calibration;
+pub use calibration::{Calibration, TxProfile};
+
+mod da_cli;
+pub use da_cli::{DA_RESULT_FILE, DaBenchmarkArgs, DaResult};
+
+mod replay_cli;
+pub use replay_cli::{
+    LatencySummary, REPLAY_METRICS_FILE, REPLAY_RESULT_FILE, ReplayBenchmarkArgs,
+    ReplayBlockTiming, ReplayMode, ReplayResult,
+};
+
+mod replay_proofs;
+pub use replay_proofs::{
+    CountSummary, ProofsMethodSummary, ProofsSamples, ProofsSummary, ReplayProofsProbe,
 };
 
 mod config;
@@ -66,13 +93,14 @@ pub use l1::{
 
 mod l2;
 pub use l2::{
-    ChainSpecSource, InProcessBatcher, InProcessBatcherConfig, InProcessBuilder,
-    InProcessBuilderConfig, InProcessClient, InProcessClientConfig, InProcessConsensus,
-    InProcessConsensusConfig, InProcessFollowConsensus, InProcessFollowConsensusConfig,
-    InProcessNodeRuntime, InProcessStandaloneSequencer, InProcessStandaloneSequencerConfig,
-    L2ClientConsensus, L2ClientConsensusMode, L2ContainerConfig, L2Stack, L2StackConfig,
-    ShadowSequencer, ShadowSequencerConfig, ShadowSequencersConfig, SnapshotBoundary,
-    SnapshotL2Stack, SnapshotL2StackConfig, TestNodeRuntime,
+    BuilderEngineSharingConfig, ChainSpecSource, ConsensusTask, InProcessBatcher,
+    InProcessBatcherConfig, InProcessBuilder, InProcessBuilderConfig, InProcessClient,
+    InProcessClientConfig, InProcessConsensus, InProcessConsensusConfig, InProcessFollowConsensus,
+    InProcessFollowConsensusConfig, InProcessNodeRuntime, InProcessStandaloneSequencer,
+    InProcessStandaloneSequencerConfig, L2ClientConsensus, L2ClientConsensusMode,
+    L2ContainerConfig, L2Stack, L2StackConfig, ShadowSequencer, ShadowSequencerConfig,
+    ShadowSequencersConfig, SnapshotBoundary, SnapshotL2Stack, SnapshotL2StackConfig,
+    TestNodeRuntime,
 };
 
 mod network;

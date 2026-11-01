@@ -35,7 +35,8 @@ use crate::{
     },
     workload::{
         AccountPool, ChainPrepContext, KeyStream, PREP_CONCURRENCY, RealTokenRecoverySummary,
-        RealTokenSetup, SeededRng, WorkloadGenerator, recover_real_tokens,
+        RealTokenSetup, SeededRng, StoragePayload, UniswapV3Payload, WorkloadGenerator,
+        recover_real_tokens,
     },
 };
 
@@ -259,7 +260,16 @@ impl LoadRunner {
 
         let accounts = self.accounts.accounts();
         let mut weighted_gas = 0u128;
-        for (type_index, tx_config) in self.config.transactions.iter().enumerate() {
+        // Calibration submits and confirms on the submission node, so its nonce comes from there
+        // too: a separate query node can lag behind the previous round's receipt.
+        let submission = RpcProviders::query(self.config.primary_submission_rpc().clone())?;
+        // Each type is sent twice and only the second receipt counts: the first pays one-time
+        // costs the run amortizes away, such as a recipient's first token balance write.
+        let rounds =
+            self.config.transactions.iter().enumerate().flat_map(|(index, tx_config)| {
+                [(index, tx_config, false), (index, tx_config, true)]
+            });
+        for (type_index, tx_config, measured) in rounds {
             if tx_config.weight == 0 {
                 continue;
             }
@@ -278,88 +288,93 @@ impl LoadRunner {
             let account = &accounts[sender_index];
             let from = account.address;
             let to = accounts[recipient_index].address;
-            let nonce = self
-                .client
-                .get_transaction_count(from)
-                .pending()
-                .await
-                .rpc("get calibration transaction nonce")?;
-            let base_fee = self.client.get_base_fee().await?;
-            let priority_fee = (base_fee / 10).max(1);
-            let max_fee = SubmissionPipeline::submission_max_fee(
-                base_fee,
-                priority_fee,
-                self.config.max_gas_price,
-            );
-            let request = generator
-                .generate_payload(from, to)?
-                .with_from(from)
-                .with_nonce(nonce)
-                .with_chain_id(self.config.chain_id)
-                .with_max_fee_per_gas(max_fee)
-                .with_max_priority_fee_per_gas(priority_fee);
-            let (success, average) =
-                if request.transaction_type == Some(Eip8130Constants::EIP8130_TX_TYPE) {
-                    let prepared = PreparedTransaction {
-                        native: true,
-                        from,
-                        to: request.to.and_then(|kind| kind.to().copied()),
-                        value: request.value.unwrap_or(U256::ZERO),
-                        data: request.input.input().cloned().unwrap_or_default(),
-                        gas_limit: request.gas.unwrap_or(EIP8430_TRANSFER_GAS_LIMIT),
-                        estimated_gas: 0,
-                        validity: Vec::new(),
-                        cohort: SubmitCohort::Plain,
+            // Both rounds send every variant, so each variant gets its own warm-up.
+            let (mut variant_gas, mut variant_weight) = (0u128, 0u128);
+            for (request, weight) in generator.calibration_requests(from, to)? {
+                let nonce = submission
+                    .get_transaction_count(from)
+                    .pending()
+                    .await
+                    .rpc("get calibration transaction nonce")?;
+                let base_fee = self.client.get_base_fee().await?;
+                let priority_fee = (base_fee / 10).max(1);
+                let max_fee = SubmissionPipeline::submission_max_fee(
+                    base_fee,
+                    priority_fee,
+                    self.config.max_gas_price,
+                );
+                let request = request
+                    .with_from(from)
+                    .with_nonce(nonce)
+                    .with_chain_id(self.config.chain_id)
+                    .with_max_fee_per_gas(max_fee)
+                    .with_max_priority_fee_per_gas(priority_fee);
+                let (success, average) =
+                    if request.transaction_type == Some(Eip8130Constants::EIP8130_TX_TYPE) {
+                        let prepared = PreparedTransaction {
+                            native: true,
+                            from,
+                            to: request.to.and_then(|kind| kind.to().copied()),
+                            value: request.value.unwrap_or(U256::ZERO),
+                            data: request.input.input().cloned().unwrap_or_default(),
+                            gas_limit: request.gas.unwrap_or(EIP8430_TRANSFER_GAS_LIMIT),
+                            estimated_gas: 0,
+                            validity: Vec::new(),
+                            cohort: SubmitCohort::Plain,
+                        };
+                        let signed = SubmissionPipeline::sign_at_nonce(
+                            &account.signer,
+                            &prepared,
+                            self.config.chain_id,
+                            nonce,
+                            Fees { max_fee, priority_fee },
+                        )?;
+                        let receipt = submission
+                            .send_raw_transaction(&signed.raw)
+                            .await
+                            .rpc("submit native calibration transaction")?
+                            .with_timeout(Some(Duration::from_secs(60)))
+                            .get_receipt()
+                            .await
+                            .rpc("confirm native calibration transaction (requires Everest)")?;
+                        (
+                            receipt.status() && receipt.phase_statuses.as_deref() == Some(&[1]),
+                            receipt.gas_used(),
+                        )
+                    } else {
+                        let provider = create_wallet_provider(
+                            self.config.primary_submission_rpc().clone(),
+                            EthereumWallet::from(account.signer.clone()),
+                        );
+                        let receipt = provider
+                            .send_transaction(request)
+                            .await
+                            .rpc("submit calibration transaction")?
+                            .get_receipt()
+                            .await
+                            .rpc("confirm calibration transaction")?;
+                        (receipt.status(), receipt.gas_used)
                     };
-                    let signed = SubmissionPipeline::sign_at_nonce(
-                        &account.signer,
-                        &prepared,
-                        self.config.chain_id,
-                        nonce,
-                        Fees { max_fee, priority_fee },
-                    )?;
-                    let native_provider =
-                        RpcProviders::query(self.config.primary_submission_rpc().clone())?;
-                    let receipt = native_provider
-                        .send_raw_transaction(&signed.raw)
-                        .await
-                        .rpc("submit native calibration transaction")?
-                        .with_timeout(Some(Duration::from_secs(60)))
-                        .get_receipt()
-                        .await
-                        .rpc("confirm native calibration transaction (requires Everest)")?;
-                    (
-                        receipt.status() && receipt.phase_statuses.as_deref() == Some(&[1]),
-                        receipt.gas_used(),
-                    )
-                } else {
-                    let provider = create_wallet_provider(
-                        self.config.primary_submission_rpc().clone(),
-                        EthereumWallet::from(account.signer.clone()),
-                    );
-                    let receipt = provider
-                        .send_transaction(request)
-                        .await
-                        .rpc("submit calibration transaction")?
-                        .get_receipt()
-                        .await
-                        .rpc("confirm calibration transaction")?;
-                    (receipt.status(), receipt.gas_used)
-                };
-            if !success {
-                return Err(BaselineError::Transaction(format!(
-                    "calibration transaction type {type_index} ({:?}) reverted",
-                    tx_config.tx_type
-                )));
+                if !success {
+                    return Err(BaselineError::Transaction(format!(
+                        "calibration transaction type {type_index} ({:?}) reverted",
+                        tx_config.tx_type
+                    )));
+                }
+                variant_gas += u128::from(average) * u128::from(weight);
+                variant_weight += u128::from(weight);
             }
+            if !measured {
+                continue;
+            }
+            let average = variant_gas / variant_weight;
             info!(
                 transaction_type_index = type_index,
                 weight = tx_config.weight,
                 average_gas = average,
                 "calibrated transaction gas"
             );
-            weighted_gas =
-                weighted_gas.saturating_add(u128::from(average) * u128::from(tx_config.weight));
+            weighted_gas = weighted_gas.saturating_add(average * u128::from(tx_config.weight));
         }
 
         u64::try_from(weighted_gas / u128::from(total_weight))
@@ -431,6 +446,67 @@ impl LoadRunner {
         Ok(())
     }
 
+    /// Prices the forward range of each `reverse_amounts: auto` swap at its pool and uses the
+    /// result as the reverse range, so generated amounts stay fixed for the run.
+    pub(super) async fn derive_reverse_swap_amounts(&mut self) -> Result<()> {
+        let mut derived = false;
+        for tx in &mut self.config.transactions {
+            let TxType::UniswapV3 {
+                router,
+                token_in,
+                token_out,
+                fee,
+                min_amount,
+                max_amount,
+                reverse_min_amount,
+                reverse_max_amount,
+                derive_reverse_amounts: derive @ true,
+                via,
+                ..
+            } = &mut tx.tx_type
+            else {
+                continue;
+            };
+            // Multi-hop routes chain each pool's price, so the reverse leg moves equal value.
+            let (mut min, mut max) = (*min_amount, *max_amount);
+            for (input, output, pool_fee) in
+                UniswapV3Payload::pools(*token_in, via, *fee, *token_out)
+            {
+                let sqrt_price_x96 = UniswapV3Payload::read_sqrt_price_x96(
+                    &self.client,
+                    *router,
+                    input,
+                    output,
+                    pool_fee,
+                )
+                .await?;
+                min = UniswapV3Payload::amount_at_price(min, sqrt_price_x96, input, output)?;
+                max = UniswapV3Payload::amount_at_price(max, sqrt_price_x96, input, output)?;
+            }
+            *reverse_min_amount = min;
+            *reverse_max_amount = max;
+            *derive = false;
+            derived = true;
+            info!(
+                token_in = %token_in,
+                token_out = %token_out,
+                fee = *fee,
+                pools = via.len() + 1,
+                reverse_min_amount = %reverse_min_amount,
+                reverse_max_amount = %reverse_max_amount,
+                "derived uniswap_v3 reverse swap amounts from pool price"
+            );
+        }
+        if derived {
+            self.generator = WorkloadGenerator::from_tx_configs(
+                self.workload_config(),
+                &self.config.transactions,
+                self.b20_run_salt,
+            )?;
+        }
+        Ok(())
+    }
+
     /// Tears down payload chain state (e.g. B-20 burns).
     pub async fn teardown_payloads(&self) -> Result<()> {
         let ctx = ChainPrepContext {
@@ -454,6 +530,16 @@ impl LoadRunner {
     /// Returns true when any configured transaction type is B-20.
     pub fn needs_b20_setup(&self) -> bool {
         self.config.transactions.iter().any(|t| matches!(t.tx_type, TxType::B20))
+    }
+
+    /// Returns true when an `aa_bundle` workload, or a `storage` workload on the default
+    /// `StorageFiller`, needs its contract deployed.
+    pub fn needs_contract_setup(&self) -> bool {
+        self.config.transactions.iter().any(|t| match t.tx_type {
+            TxType::AaBundle { .. } => true,
+            TxType::Storage { contract, .. } => contract == StoragePayload::default_contract(),
+            _ => false,
+        })
     }
 
     /// Ensures B-20 workloads have even sender count so every alice has a funded bob.
@@ -557,8 +643,300 @@ impl std::fmt::Debug for LoadRunner {
 
 #[cfg(test)]
 mod tests {
+    use alloy_node_bindings::Anvil;
+    use alloy_primitives::{Address, Bytes, U256};
+    use alloy_provider::{Provider, RootProvider};
+    use alloy_signer_local::PrivateKeySigner;
+
     use super::{LoadConfig, LoadRunner};
-    use crate::runner::{TxConfig, TxType};
+    use crate::{
+        LoadTestExecutor, LoadTestSetupAmounts, StoragePayload,
+        runner::{TxConfig, TxType},
+        workload::{
+            LiquidityOps, SenderPosition, UniswapPositions, UniswapV3Hop, UniswapV3LiquidityPayload,
+        },
+    };
+
+    #[tokio::test]
+    async fn calibration_excludes_first_storage_write() {
+        let anvil = Anvil::new().spawn();
+        // A query node that never sees the calibration transactions, the worst case of a lagging one.
+        let query = Anvil::new().spawn();
+        let provider: RootProvider = RootProvider::new_http(anvil.endpoint_url());
+        let counter = Address::repeat_byte(0xc0);
+        // slot0 += 1: the first call writes zero to nonzero (20,000 gas), later calls 2,900.
+        let code =
+            Bytes::from_static(&[0x60, 0x00, 0x54, 0x60, 0x01, 0x01, 0x60, 0x00, 0x55, 0x00]);
+        let _: () = provider.raw_request("anvil_setCode".into(), (counter, code)).await.unwrap();
+        let config = LoadConfig {
+            transaction_submission_rpcs: vec![anvil.endpoint_url()],
+            query_rpc: query.endpoint_url(),
+            chain_id: anvil.chain_id(),
+            account_count: 1,
+            transactions: vec![TxConfig {
+                weight: 100,
+                tx_type: TxType::DoubleCounter { contract: counter },
+            }],
+            ..LoadConfig::devnet()
+        };
+        let runner = LoadRunner::new(config).expect("valid config");
+        let sender = runner.accounts.accounts()[0].address;
+        let _: () = provider
+            .raw_request("anvil_setBalance".into(), (sender, U256::from(10u128.pow(18))))
+            .await
+            .unwrap();
+
+        let gas = runner.calibrate_avg_gas().await.expect("calibration succeeds");
+        assert!(gas < 41_000, "calibrated {gas} gas includes the first-write cost");
+    }
+
+    #[tokio::test]
+    async fn storage_setup_deploys_the_default_contract() {
+        let anvil = Anvil::new().spawn();
+        let provider: RootProvider = RootProvider::new_http(anvil.endpoint_url());
+        let contract = StoragePayload::default_contract();
+        let config = LoadConfig {
+            transaction_submission_rpcs: vec![anvil.endpoint_url()],
+            query_rpc: anvil.endpoint_url(),
+            chain_id: anvil.chain_id(),
+            account_count: 1,
+            transactions: vec![TxConfig {
+                weight: 100,
+                tx_type: TxType::Storage { contract, slots_per_tx: 4, new_slot_ratio: 0.5 },
+            }],
+            ..LoadConfig::devnet()
+        };
+        let mut runner = LoadRunner::new(config).expect("valid config");
+        let deployer = runner.accounts.accounts()[0].address;
+        let _: () = provider
+            .raw_request("anvil_setBalance".into(), (deployer, U256::from(10u128.pow(18))))
+            .await
+            .unwrap();
+
+        let setup = LoadTestSetupAmounts {
+            funding: U256::ZERO,
+            swap_token: U256::ZERO,
+            b20_mint: U256::ZERO,
+            real_token_setup: None,
+        };
+        LoadTestExecutor::setup_tokens(&mut runner, &PrivateKeySigner::random(), &setup)
+            .await
+            .expect("storage contract deploys");
+
+        let tx = runner
+            .generator
+            .generate_payload(Address::ZERO, Address::ZERO)
+            .unwrap()
+            .from(anvil.addresses()[0]);
+        let receipt = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
+        assert!(receipt.status());
+        // `written` starts at the constructor's one seeded slot.
+        let written = provider.get_storage_at(contract, U256::from(1)).await.unwrap();
+        assert!(written > U256::from(1), "writeStorage added fresh slots");
+    }
+
+    /// Calibration weights each payload variant: a 3:1 mint/collect mix lands at 3:1 of their gas.
+    #[tokio::test]
+    async fn calibration_averages_payload_variants_by_weight() {
+        let anvil = Anvil::new().spawn();
+        let provider: RootProvider = RootProvider::new_http(anvil.endpoint_url());
+        // STOP: each op costs only its calldata, which differs by op.
+        let manager = Address::repeat_byte(0x10);
+        let _: () = provider
+            .raw_request("anvil_setCode".into(), (manager, Bytes::from_static(&[0x00])))
+            .await
+            .unwrap();
+        let calibrate = async |ops: LiquidityOps| {
+            let payload = UniswapV3LiquidityPayload {
+                position_manager: manager,
+                token0: Address::repeat_byte(0x11),
+                token1: Address::repeat_byte(0x22),
+                fee: 500,
+                amount0: U256::from(17),
+                amount1: U256::from(29),
+                ops,
+                positions: Default::default(),
+            };
+            let config = LoadConfig {
+                transaction_submission_rpcs: vec![anvil.endpoint_url()],
+                query_rpc: anvil.endpoint_url(),
+                chain_id: anvil.chain_id(),
+                account_count: 1,
+                transactions: vec![TxConfig {
+                    weight: 100,
+                    tx_type: TxType::UniswapV3Liquidity(payload.clone()),
+                }],
+                ..LoadConfig::devnet()
+            };
+            let runner = LoadRunner::new(config).expect("valid config");
+            let sender = runner.accounts.accounts()[0].address;
+            let position = SenderPosition { token_id: U256::from(7), decrease_liquidity: 1 };
+            payload
+                .positions
+                .set(UniswapPositions {
+                    tick_lower: Default::default(),
+                    tick_upper: Default::default(),
+                    positions: [(sender, position)].into(),
+                })
+                .unwrap();
+            let _: () = provider
+                .raw_request("anvil_setBalance".into(), (sender, U256::from(10u128.pow(18))))
+                .await
+                .unwrap();
+            runner.calibrate_avg_gas().await.expect("calibration succeeds")
+        };
+        let mint = calibrate(LiquidityOps { mint: 1, ..Default::default() }).await;
+        let collect = calibrate(LiquidityOps { collect: 1, ..Default::default() }).await;
+        let mixed = calibrate(LiquidityOps { mint: 3, collect: 1, ..Default::default() }).await;
+        assert!(mint > collect, "mint calldata costs more: {mint} vs {collect}");
+        assert_eq!(mixed, (3 * mint + collect) / 4, "variants are averaged by op weight");
+    }
+
+    #[tokio::test]
+    async fn aa_bundle_deploys_and_executes_signed_ops() {
+        let anvil = Anvil::new().spawn();
+        let provider: RootProvider = RootProvider::new_http(anvil.endpoint_url());
+        let config = LoadConfig {
+            transaction_submission_rpcs: vec![anvil.endpoint_url()],
+            query_rpc: anvil.endpoint_url(),
+            chain_id: anvil.chain_id(),
+            account_count: 1,
+            transactions: vec![TxConfig {
+                weight: 100,
+                tx_type: TxType::AaBundle { ops_per_bundle: 3, padding_bytes: 100 },
+            }],
+            ..LoadConfig::devnet()
+        };
+        let mut runner = LoadRunner::new(config).expect("valid config");
+        let deployer = runner.accounts.accounts()[0].address;
+        let _: () = provider
+            .raw_request("anvil_setBalance".into(), (deployer, U256::from(10u128.pow(18))))
+            .await
+            .unwrap();
+
+        let setup = LoadTestSetupAmounts {
+            funding: U256::ZERO,
+            swap_token: U256::ZERO,
+            b20_mint: U256::ZERO,
+            real_token_setup: None,
+        };
+        LoadTestExecutor::setup_tokens(&mut runner, &PrivateKeySigner::random(), &setup)
+            .await
+            .expect("bundle contract deploys");
+
+        for _ in 0..2 {
+            let tx = runner
+                .generator
+                .generate_payload(Address::ZERO, Address::ZERO)
+                .unwrap()
+                .from(anvil.addresses()[0]);
+            let receipt = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
+            assert!(receipt.status(), "signed ops pass verification");
+            assert_eq!(receipt.inner.logs().len(), 3, "one event per op");
+        }
+
+        let gas = runner.calibrate_avg_gas().await.expect("calibration succeeds");
+        assert!(gas > 120_000, "calibrated {gas} gas skips fresh recipient writes");
+
+        let mut tx = runner
+            .generator
+            .generate_payload(Address::ZERO, Address::ZERO)
+            .unwrap()
+            .from(anvil.addresses()[0]);
+        let mut input = tx.input.input().unwrap().to_vec();
+        // Last byte of the first op's `to`, which the signature covers.
+        input[163] ^= 1;
+        tx.input = Bytes::from(input).into();
+        let receipt = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
+        assert!(!receipt.status(), "a tampered op fails verification");
+    }
+
+    #[tokio::test]
+    async fn reverse_amounts_auto_prices_reverse_swaps_at_the_pool() {
+        let anvil = Anvil::new().spawn();
+        let provider: RootProvider = RootProvider::new_http(anvil.endpoint_url());
+        let (router, factory, pool) =
+            (Address::repeat_byte(0x10), Address::repeat_byte(0x20), Address::repeat_byte(0x30));
+        // sqrt(2320e6 / 1e18) * 2^96: 2,320 token_out (6 decimals) per token_in (18 decimals).
+        let sqrt_price_x96 = U256::from(3_816_133_648_877_761_641_136_391u128);
+        // Each stub returns `word` padded to `len` bytes: PUSH32 word, MSTORE at 0, RETURN.
+        for (contract, word, len) in [
+            (router, factory.into_word().0, 32u8),
+            (factory, pool.into_word().0, 32),
+            (pool, sqrt_price_x96.to_be_bytes::<32>(), 224),
+        ] {
+            let mut code = vec![0x7f];
+            code.extend_from_slice(&word);
+            code.extend_from_slice(&[0x60, 0x00, 0x52, 0x60, len, 0x60, 0x00, 0xf3]);
+            let _: () = provider
+                .raw_request("anvil_setCode".into(), (contract, Bytes::from(code)))
+                .await
+                .unwrap();
+        }
+        let config = LoadConfig {
+            transaction_submission_rpcs: vec![anvil.endpoint_url()],
+            query_rpc: anvil.endpoint_url(),
+            chain_id: anvil.chain_id(),
+            account_count: 1,
+            transactions: vec![TxConfig {
+                weight: 100,
+                tx_type: TxType::UniswapV3 {
+                    native: false,
+                    router,
+                    token_in: Address::repeat_byte(0x11),
+                    token_out: Address::repeat_byte(0x22),
+                    fee: 500,
+                    min_amount: U256::from(10_000_000_000_000u64),
+                    max_amount: U256::from(10_000_000_000_000u64),
+                    reverse_min_amount: U256::from(10_000_000_000_000u64),
+                    reverse_max_amount: U256::from(10_000_000_000_000u64),
+                    derive_reverse_amounts: true,
+                    via: vec![],
+                },
+            }],
+            ..LoadConfig::devnet()
+        };
+        let mut runner = LoadRunner::new(config).expect("valid config");
+
+        runner.derive_reverse_swap_amounts().await.expect("pool price is readable");
+
+        let TxType::UniswapV3 { reverse_min_amount, derive_reverse_amounts, .. } =
+            runner.config.transactions[0].tx_type
+        else {
+            panic!("expected UniswapV3");
+        };
+        assert_eq!(reverse_min_amount, U256::from(23_200), "forward amount at the pool price");
+        assert!(!derive_reverse_amounts, "amounts are derived once per run");
+        let amounts: std::collections::BTreeSet<_> = (0..32)
+            .map(|_| {
+                let tx = runner.generator.generate_payload(Address::ZERO, Address::ZERO).unwrap();
+                // amountIn is the fifth word of exactInputSingle's arguments.
+                U256::from_be_slice(&tx.input.input().unwrap()[132..164])
+            })
+            .collect();
+        assert_eq!(
+            amounts,
+            [U256::from(23_200), U256::from(10_000_000_000_000u64)].into(),
+            "the run generator swaps derived reverse amounts"
+        );
+
+        // Every stub pool has the same price, so 0x11 -> 0x22 -> 0x12 converts at the price and
+        // back: the reverse leg is priced through both pools.
+        let TxType::UniswapV3 { token_out, derive_reverse_amounts, via, .. } =
+            &mut runner.config.transactions[0].tx_type
+        else {
+            panic!("expected UniswapV3");
+        };
+        *token_out = Address::repeat_byte(0x12);
+        *derive_reverse_amounts = true;
+        *via = vec![UniswapV3Hop { token: Address::repeat_byte(0x22), fee: 500 }];
+        runner.derive_reverse_swap_amounts().await.expect("route prices are readable");
+        let TxType::UniswapV3 { reverse_min_amount, .. } = runner.config.transactions[0].tx_type
+        else {
+            panic!("expected UniswapV3");
+        };
+        assert_eq!(reverse_min_amount, U256::from(10_000_000_000_000u64), "chained pool prices");
+    }
 
     #[test]
     fn b20_odd_sender_count_adds_funded_partner() {

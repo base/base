@@ -19,7 +19,7 @@ inputs:
     default: "false"
   sp1-version:
     description: SP1 release tag used when sp1 is enabled (matches etc/just/succinct.just)
-    default: "v6.9.0"
+    default: "v6.10.0"
   native-deps:
     description: Install native build dependencies (clang, llvm, etc.)
     default: "false"
@@ -61,15 +61,15 @@ runs:
 
     - name: Install Rust (nightly)
       if: inputs.toolchain == 'nightly'
-      uses: dtolnay/rust-toolchain@0c3131df9e5407c0c36352032d04af846dbe0fb7 # nightly
+      uses: dtolnay/rust-toolchain@2c76c034f9e32a5d6e2c104dc4df23a22476db04 # nightly
       with:
         components: ${{ inputs.components }}
 
     - name: Setup sccache
-      uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
+      uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
 
     - name: Cache Cargo dependencies
-      uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
+      uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       with:
         shared-key: cargo-dependencies
         cache-bin: "false"
@@ -83,23 +83,25 @@ runs:
 
     - name: Install cargo tools
       if: inputs.tools != ''
-      uses: taiki-e/install-action@3575e532701a5fc614b0c842e4119af4cc5fd16d # v2.62.60
+      uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
       with:
         tool: ${{ inputs.tools }}
 
     - name: Install Foundry
       if: inputs.foundry == 'true'
-      uses: foundry-rs/foundry-toolchain@50d5a8956f2e319df19e6b57539d7e2acb9f8c1e # v1.5.0
+      uses: foundry-rs/foundry-toolchain@dba66c27052e63476d886f22216e119ba7e615bf # v1.9.2
       with:
-        version: stable
+        # Pinned so a Foundry release cannot change CI behavior without a reviewed bump
+        # (anvil 1.8.7 changed evm_revert mempool semantics and broke a test overnight).
+        version: v1.8.7
 
     - name: Install SP1 toolchain
       if: inputs.sp1 == 'true'
       shell: bash
       env:
         GITHUB_TOKEN: ${{ github.token }}
-        # Commit for succinctlabs/sp1 v6.9.0; update alongside SP1_VERSION.
-        SP1UP_REF: b8387fa61e1361d90ee7de49f551863418ca0f08
+        # Commit for succinctlabs/sp1 v6.10.0; update alongside SP1_VERSION.
+        SP1UP_REF: d83ed91f96701209613720708f36ffce0e98ed33
         SP1_VERSION: ${{ inputs.sp1-version }}
       run: |
         if [ -x "$HOME/.sp1/bin/cargo-prove" ]; then

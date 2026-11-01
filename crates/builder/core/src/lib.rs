@@ -11,7 +11,7 @@ mod config;
 pub use config::BuilderConfig;
 
 mod metrics;
-pub use metrics::BuilderMetrics;
+pub use metrics::{BUILDER_EVENT_METRICS, BuilderEventMetrics, BuilderMetrics, CounterHandle};
 
 mod execution;
 pub use execution::{
@@ -22,13 +22,10 @@ pub use execution::{
 mod execution_metering_mode;
 pub use execution_metering_mode::ExecutionMeteringMode;
 
-mod resting_predicate_mode;
-pub use resting_predicate_mode::RestingPredicateMode;
-
 mod traits;
 pub use base_execution_payload_builder::{
     MeteringProvider, NoopMeteringProvider, RejectionCache, ResourceMeteringConfig,
-    SharedMeteringProvider,
+    RestingPredicateMode, SharedMeteringProvider,
 };
 pub use traits::{ClientBounds, NodeBounds, PayloadTxsBounds, PoolBounds};
 

@@ -7,7 +7,7 @@ use std::{
         Arc,
         atomic::{AtomicBool, AtomicU64, Ordering},
     },
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime},
 };
 
 use alloy_consensus::transaction::SignableTransaction;
@@ -814,7 +814,7 @@ impl SubmissionPipeline {
             })?;
             if !prepared.validity.is_empty() || prepared.cohort.is_validity() {
                 return Err(BaselineError::Config(
-                    "native transfers do not support validity submission".into(),
+                    "native EIP-8430 workloads do not support validity submission".into(),
                 ));
             }
             let tx = TxEip8130 {
@@ -823,7 +823,16 @@ impl SubmissionPipeline {
                 max_fee_per_gas: fees.max_fee,
                 max_priority_fee_per_gas: fees.priority_fee,
                 gas_limit: prepared.gas_limit,
-                calls: vec![vec![Call { to, value: prepared.value, data: prepared.data.clone() }]],
+                calls: vec![if prepared.data.is_empty() {
+                    vec![Call { to, value: prepared.value, data: prepared.data.clone() }]
+                } else {
+                    if prepared.value != U256::ZERO {
+                        return Err(BaselineError::Config(
+                            "native token swaps require zero ETH value".into(),
+                        ));
+                    }
+                    crate::workload::UniswapV3Payload::native_calls(to, &prepared.data)?
+                }],
                 ..Default::default()
             };
             let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).map_err(|e| {
@@ -1027,6 +1036,7 @@ impl SubmissionPipeline {
                     validity_signature: signed.validity_signature,
                 })
                 .collect();
+            let attempt_started_at = SystemTime::now();
             let batch_results = match ctx.submission_batch_rpcs[rpc_index]
                 .send_raw_transactions(&submit_items, ctx.submit_request_limiter.as_deref())
                 .await
@@ -1090,6 +1100,15 @@ impl SubmissionPipeline {
             let mut retry_rejected_error = None;
             let mut retry_rate_limited_error = None;
             let mut terminal_rejection_error = None;
+
+            let accepted: Vec<TxHash> = batch
+                .txs
+                .iter()
+                .zip(&batch_results)
+                .filter(|(_, result)| matches!(result, BatchSendResult::Success(_)))
+                .map(|(signed, _)| signed.tx_hash)
+                .collect();
+            ctx.results_tracker.accepted_transactions(&accepted, attempt_started_at);
 
             for (signed, result) in batch.txs.into_iter().zip(batch_results) {
                 match result {
@@ -1417,6 +1436,29 @@ mod tests {
         SignedTransaction, SubmissionPipeline, SubmitCohort, SubmitEvent,
     };
     use crate::{BatchRpcClient, ResultsTracker, config::ValiditySigningMode};
+
+    /// Pool pressure remains retryable with bounded exponential RPC backoff.
+    #[test]
+    fn pool_pressure_retains_bounded_retry_backoff() {
+        let message = "RPC error -32011: transaction pool is full".to_string();
+        assert_eq!(
+            SubmissionPipeline::classify_batch_error(message.clone()),
+            BatchTxError::RetryableRejected(message),
+            "pool pressure must retain work for retry"
+        );
+        let delays: Vec<_> =
+            (1..super::SUBMIT_MAX_ATTEMPTS).map(SubmissionPipeline::submit_retry_delay).collect();
+        assert_eq!(
+            delays,
+            vec![
+                Duration::from_millis(100),
+                Duration::from_millis(200),
+                Duration::from_millis(400),
+                Duration::from_millis(800)
+            ],
+            "all permitted retry delays must remain bounded and exponential"
+        );
+    }
 
     #[test]
     fn batch_error_classification_identifies_retryable_transport_gaps() {

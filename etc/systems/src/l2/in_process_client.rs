@@ -1,6 +1,4 @@
-//! In-process Base client node.
-//!
-//! Replaces Docker-based `ClientContainer` with an in-process node for faster tests.
+//! In-process Base client node for system tests.
 
 use std::{any::Any, net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 
@@ -100,8 +98,6 @@ pub struct InProcessClientConfig {
 }
 
 /// In-process Base client node that syncs from a builder.
-///
-/// This replaces the Docker-based `ClientContainer` for faster test execution.
 pub struct InProcessClient {
     http_api_addr: SocketAddr,
     ws_api_addr: SocketAddr,
@@ -113,6 +109,8 @@ pub struct InProcessClient {
     _runtime: Runtime,
     data_dir: PathBuf,
     _temp_dir: Option<TempDir>,
+    // Retain claims through explicit shutdown and drop them after the runtime on plain drop.
+    _ports: PortPool,
 }
 
 impl std::fmt::Debug for InProcessClient {
@@ -136,6 +134,7 @@ impl InProcessClient {
         );
 
         let (data_dir, temp_dir) = Self::prepare_datadir(config.datadir.clone())?;
+        let mut ports = PortPool::default();
         let runtime = RuntimeBuilder::new(
             config
                 .runtime
@@ -229,7 +228,7 @@ impl InProcessClient {
         node_config.txpool.transactions_backup_path = None;
         let metrics_addr = SocketAddr::new(
             std::net::Ipv4Addr::LOCALHOST.into(),
-            config.metrics_port.unwrap_or_else(PortPool::claim),
+            config.metrics_port.unwrap_or_else(|| ports.claim()),
         );
         node_config.metrics = MetricArgs { prometheus: Some(metrics_addr), ..Default::default() };
         if config.http_port.is_none()
@@ -305,6 +304,7 @@ impl InProcessClient {
             _runtime: runtime,
             data_dir,
             _temp_dir: temp_dir,
+            _ports: ports,
         })
     }
 
@@ -406,7 +406,7 @@ impl InProcessClient {
     fn build_extensions(config: &InProcessClientConfig) -> Result<BuiltExtensions> {
         let mut extensions: Vec<Box<dyn BaseNodeExtension>> = Vec::new();
 
-        // TxPool extension (tracing disabled for client)
+        // Optional builder Flashblocks subscription, also used by the txpool extension.
         let flashblocks_config = config
             .builder_flashblocks_url
             .as_ref()

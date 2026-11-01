@@ -48,6 +48,8 @@ use tokio::{
 };
 use tokio_stream::{StreamExt, wrappers::BroadcastStream};
 
+use crate::PoolExpiringReceiver;
+
 // The amount of time to wait (in milliseconds) after sending a new flashblock or canonical block
 // so it can be processed by the state processor
 const SLEEP_TIME: u64 = 10;
@@ -163,7 +165,9 @@ impl BaseNodeExtension for FlashblocksTestExtension {
             );
             ctx.modules.replace_configured(eth_pubsub.into_rpc())?;
 
-            let fb_for_task = fb;
+            // Mirror production: the local pool observes every flashblock before the pending
+            // state does, so validity deadlines expire at flashblock cadence on this node too.
+            let fb_for_task = PoolExpiringReceiver::new(fb, ctx.pool().clone());
             let mut receiver = receiver
                 .lock()
                 .expect("flashblock receiver mutex poisoned")
@@ -192,12 +196,20 @@ pub struct FlashblocksHarness {
 impl FlashblocksHarness {
     /// Launch a flashblocks-enabled harness with automatic canonical processing.
     pub async fn new() -> Result<Self> {
-        Self::with_options(true).await
+        Self::with_options(true, Vec::new()).await
     }
 
     /// Launch the harness configured for manual canonical progression.
     pub async fn manual_canonical() -> Result<Self> {
-        Self::with_options(false).await
+        Self::with_options(false, Vec::new()).await
+    }
+
+    /// Launch the harness for manual canonical progression with additional node extensions,
+    /// such as the RPC ingress a mempool node exposes.
+    pub async fn manual_canonical_with_extensions(
+        extensions: Vec<Box<dyn BaseNodeExtension>>,
+    ) -> Result<Self> {
+        Self::with_options(false, extensions).await
     }
 
     /// Get a handle to the in-memory Flashblocks state backing the harness.
@@ -210,7 +222,10 @@ impl FlashblocksHarness {
         self.extension.send(flashblock).await
     }
 
-    async fn with_options(process_canonical: bool) -> Result<Self> {
+    async fn with_options(
+        process_canonical: bool,
+        mut extensions: Vec<Box<dyn BaseNodeExtension>>,
+    ) -> Result<Self> {
         init_silenced_tracing();
 
         let genesis = build_test_genesis_azul();
@@ -218,7 +233,9 @@ impl FlashblocksHarness {
 
         let extension = FlashblocksTestExtension::new(process_canonical);
 
-        let node = LocalNode::new(vec![Box::new(extension.clone())], chain_spec, None).await?;
+        // The flashblocks extension replaces configured RPC modules, so it is installed last.
+        extensions.push(Box::new(extension.clone()));
+        let node = LocalNode::new(extensions, chain_spec, None).await?;
         let engine = node.engine_api()?;
 
         tokio::time::sleep(Duration::from_millis(NODE_STARTUP_DELAY_MS)).await;
@@ -244,9 +261,14 @@ pub struct FlashblocksBuilderTestHarness {
 impl FlashblocksBuilderTestHarness {
     /// Launch a new flashblocks builder test harness.
     pub async fn new() -> Self {
+        Self::with_extensions(Vec::new()).await
+    }
+
+    /// Launch the harness with additional node extensions installed before flashblocks.
+    pub async fn with_extensions(extensions: Vec<Box<dyn BaseNodeExtension>>) -> Self {
         // These tests simulate pathological timing (missing receipts, reorgs, etc.), so we disable
         // the automatic canonical listener and only apply blocks when the test explicitly requests it.
-        let node = FlashblocksHarness::manual_canonical()
+        let node = FlashblocksHarness::manual_canonical_with_extensions(extensions)
             .await
             .expect("able to launch flashblocks harness");
         let provider = node.blockchain_provider();

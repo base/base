@@ -1,15 +1,25 @@
 //! Implements the Base engine API RPC methods.
 
 use alloy_eips::eip7685::Requests;
+use alloy_json_rpc::{ErrorPayload, RpcError};
 use alloy_primitives::{B256, BlockHash, U64};
 use alloy_rpc_types_engine::{
-    ClientVersionV1, ExecutionPayloadBodiesV1, ExecutionPayloadInputV2, ExecutionPayloadV3,
-    ForkchoiceState, ForkchoiceUpdated, PayloadId, PayloadStatus,
+    ClientVersionV1, ExecutionPayloadBodiesV1, ExecutionPayloadEnvelopeV2, ExecutionPayloadInputV2,
+    ExecutionPayloadV3, ForkchoiceState, ForkchoiceUpdated, PayloadId, PayloadStatus,
 };
-use base_common_rpc_types_engine::{BaseExecutionPayloadV4, ExecutionData};
+use alloy_transport::{TransportError, TransportErrorKind, TransportResult};
+use base_common_rpc_types_engine::{
+    BaseExecutionPayloadEnvelopeV3, BaseExecutionPayloadEnvelopeV4, BaseExecutionPayloadEnvelopeV5,
+    BaseExecutionPayloadV4, BasePayloadAttributes, ExecutionData,
+};
+use base_execution_payload_builder::Attributes;
 use derive_more::Constructor;
 use jsonrpsee::proc_macros::rpc;
 use jsonrpsee_core::{RpcResult, server::RpcModule};
+use jsonrpsee_types::{
+    ErrorObjectOwned,
+    error::{INVALID_PARAMS_CODE, INVALID_PARAMS_MSG},
+};
 use reth_chainspec::EthereumHardforks;
 use reth_node_api::{EngineApiValidator, EngineTypes};
 use reth_rpc_api::IntoEngineApiRpcModule;
@@ -429,6 +439,234 @@ where
 
     async fn exchange_capabilities(&self, _capabilities: Vec<String>) -> RpcResult<Vec<String>> {
         Ok(self.inner.capabilities().list())
+    }
+}
+
+/// Calls the Engine API handlers directly, for a consensus client in the same process.
+///
+/// Requests skip JSON-RPC encoding but otherwise match the JSON path: payload attributes are
+/// converted the way the JSON-RPC deserializer converts them, handler errors keep their
+/// JSON-RPC code, message, and data, and each call runs on its own task.
+#[async_trait::async_trait]
+impl<Provider, EngineT, Pool, Validator, ChainSpec> base_common_network::BaseEngineApi
+    for BaseEngineApi<Provider, EngineT, Pool, Validator, ChainSpec>
+where
+    Self: BaseEngineApiServer<EngineT>,
+    EngineT: EngineTypes<
+            PayloadAttributes: Attributes<RpcPayloadAttributes = BasePayloadAttributes>,
+            ExecutionPayloadEnvelopeV2 = ExecutionPayloadEnvelopeV2,
+            ExecutionPayloadEnvelopeV3 = BaseExecutionPayloadEnvelopeV3,
+            ExecutionPayloadEnvelopeV4 = BaseExecutionPayloadEnvelopeV4,
+            ExecutionPayloadEnvelopeV5 = BaseExecutionPayloadEnvelopeV5,
+        >,
+{
+    async fn new_payload_v2(
+        &self,
+        payload: ExecutionPayloadInputV2,
+    ) -> TransportResult<PayloadStatus> {
+        self.spawn_call(move |api| async move {
+            BaseEngineApiServer::new_payload_v2(&api, payload).await
+        })
+        .await
+    }
+
+    async fn new_payload_v3(
+        &self,
+        payload: ExecutionPayloadV3,
+        parent_beacon_block_root: B256,
+    ) -> TransportResult<PayloadStatus> {
+        self.spawn_call(move |api| async move {
+            BaseEngineApiServer::new_payload_v3(&api, payload, Vec::new(), parent_beacon_block_root)
+                .await
+        })
+        .await
+    }
+
+    async fn new_payload_v4(
+        &self,
+        payload: BaseExecutionPayloadV4,
+        parent_beacon_block_root: B256,
+    ) -> TransportResult<PayloadStatus> {
+        self.spawn_call(move |api| async move {
+            BaseEngineApiServer::new_payload_v4(
+                &api,
+                payload,
+                Vec::new(),
+                parent_beacon_block_root,
+                Requests::default(),
+            )
+            .await
+        })
+        .await
+    }
+
+    async fn fork_choice_updated_v2(
+        &self,
+        fork_choice_state: ForkchoiceState,
+        payload_attributes: Option<BasePayloadAttributes>,
+    ) -> TransportResult<ForkchoiceUpdated> {
+        let payload_attributes = Self::builder_attributes(payload_attributes)?;
+        self.spawn_call(move |api| async move {
+            BaseEngineApiServer::fork_choice_updated_v2(&api, fork_choice_state, payload_attributes)
+                .await
+        })
+        .await
+    }
+
+    async fn fork_choice_updated_v3(
+        &self,
+        fork_choice_state: ForkchoiceState,
+        payload_attributes: Option<BasePayloadAttributes>,
+    ) -> TransportResult<ForkchoiceUpdated> {
+        let payload_attributes = Self::builder_attributes(payload_attributes)?;
+        self.spawn_call(move |api| async move {
+            BaseEngineApiServer::fork_choice_updated_v3(&api, fork_choice_state, payload_attributes)
+                .await
+        })
+        .await
+    }
+
+    async fn get_payload_v2(
+        &self,
+        payload_id: PayloadId,
+    ) -> TransportResult<ExecutionPayloadEnvelopeV2> {
+        self.spawn_call(move |api| async move {
+            BaseEngineApiServer::get_payload_v2(&api, payload_id).await
+        })
+        .await
+    }
+
+    async fn get_payload_v3(
+        &self,
+        payload_id: PayloadId,
+    ) -> TransportResult<BaseExecutionPayloadEnvelopeV3> {
+        self.spawn_call(move |api| async move {
+            BaseEngineApiServer::get_payload_v3(&api, payload_id).await
+        })
+        .await
+    }
+
+    async fn get_payload_v4(
+        &self,
+        payload_id: PayloadId,
+    ) -> TransportResult<BaseExecutionPayloadEnvelopeV4> {
+        self.spawn_call(move |api| async move {
+            BaseEngineApiServer::get_payload_v4(&api, payload_id).await
+        })
+        .await
+    }
+
+    async fn get_payload_v5(
+        &self,
+        payload_id: PayloadId,
+    ) -> TransportResult<BaseExecutionPayloadEnvelopeV5> {
+        self.spawn_call(move |api| async move {
+            BaseEngineApiServer::get_payload_v5(&api, payload_id).await
+        })
+        .await
+    }
+
+    async fn get_payload_bodies_by_hash_v1(
+        &self,
+        block_hashes: Vec<BlockHash>,
+    ) -> TransportResult<ExecutionPayloadBodiesV1> {
+        self.spawn_call(move |api| async move {
+            BaseEngineApiServer::get_payload_bodies_by_hash_v1(&api, block_hashes).await
+        })
+        .await
+    }
+
+    async fn get_payload_bodies_by_range_v1(
+        &self,
+        start: u64,
+        count: u64,
+    ) -> TransportResult<ExecutionPayloadBodiesV1> {
+        self.spawn_call(move |api| async move {
+            BaseEngineApiServer::get_payload_bodies_by_range_v1(
+                &api,
+                U64::from(start),
+                U64::from(count),
+            )
+            .await
+        })
+        .await
+    }
+
+    async fn get_client_version_v1(
+        &self,
+        client_version: ClientVersionV1,
+    ) -> TransportResult<Vec<ClientVersionV1>> {
+        self.spawn_call(move |api| async move {
+            BaseEngineApiServer::get_client_version_v1(&api, client_version).await
+        })
+        .await
+    }
+
+    async fn exchange_capabilities(
+        &self,
+        capabilities: Vec<String>,
+    ) -> TransportResult<Vec<String>> {
+        self.spawn_call(move |api| async move {
+            BaseEngineApiServer::exchange_capabilities(&api, capabilities).await
+        })
+        .await
+    }
+}
+
+impl<Provider, EngineT, Pool, Validator, ChainSpec>
+    BaseEngineApi<Provider, EngineT, Pool, Validator, ChainSpec>
+where
+    EngineT: EngineTypes,
+{
+    /// Payload attributes version the JSON-RPC deserializer passes to [`Attributes::try_new`].
+    pub const RPC_PAYLOAD_ATTRIBUTES_VERSION: u8 = 3;
+
+    /// Builds payload builder attributes the way the JSON-RPC deserializer does, and reports a
+    /// conversion failure as invalid params.
+    pub fn builder_attributes(
+        payload_attributes: Option<BasePayloadAttributes>,
+    ) -> TransportResult<Option<EngineT::PayloadAttributes>>
+    where
+        EngineT::PayloadAttributes: Attributes<RpcPayloadAttributes = BasePayloadAttributes>,
+    {
+        payload_attributes
+            .map(|attributes| {
+                EngineT::PayloadAttributes::try_new(
+                    B256::ZERO,
+                    attributes,
+                    Self::RPC_PAYLOAD_ATTRIBUTES_VERSION,
+                )
+            })
+            .transpose()
+            .map_err(|error| {
+                Self::transport_error(ErrorObjectOwned::owned(
+                    INVALID_PARAMS_CODE,
+                    INVALID_PARAMS_MSG,
+                    Some(error.to_string()),
+                ))
+            })
+    }
+
+    /// Runs a handler call on its own task, as the RPC server runs each request. A handler panic
+    /// comes back as an error, and dropping the caller's future does not cancel the handler.
+    pub async fn spawn_call<T, F>(&self, call: impl FnOnce(Self) -> F) -> TransportResult<T>
+    where
+        F: Future<Output = RpcResult<T>> + Send + 'static,
+        T: Send + 'static,
+    {
+        tokio::spawn(call(self.clone()))
+            .await
+            .map_err(TransportErrorKind::custom)?
+            .map_err(Self::transport_error)
+    }
+
+    /// Converts a handler error into the error response a JSON-RPC client would have received.
+    pub fn transport_error(error: ErrorObjectOwned) -> TransportError {
+        RpcError::ErrorResp(ErrorPayload {
+            code: error.code().into(),
+            message: error.message().to_owned().into(),
+            data: error.data().map(ToOwned::to_owned),
+        })
     }
 }
 

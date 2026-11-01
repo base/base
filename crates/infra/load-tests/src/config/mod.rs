@@ -12,7 +12,7 @@ mod real_token;
 pub use real_token::{RealTokenAcquisitionConfig, RealTokenPairTokenConfig, RealTokenSetupConfig};
 
 mod test_config;
-pub use test_config::{OsakaTarget, TestConfig, TxTypeConfig, WeightedTxType};
+pub use test_config::{OsakaTarget, ReverseAmounts, TestConfig, TxTypeConfig, WeightedTxType};
 
 mod validity;
 pub use validity::{
