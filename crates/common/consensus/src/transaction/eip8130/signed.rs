@@ -224,10 +224,11 @@ impl Eip8130Signed {
     /// Returns the cached transaction hash.
     ///
     /// This is [`TxEip8130::transaction_hash`] over the resolved sender, so it
-    /// excludes `sender_auth` and `payer_auth`: encodings that differ only in
-    /// those fields share a hash, and at most one of them can be included. It
-    /// is not `keccak256` of the EIP-2718 encoding; that value is
-    /// [`Self::encoded_hash`].
+    /// excludes `sender_auth` and `payer_auth`: for a fixed resolved sender,
+    /// encodings that differ only in those fields share a hash, and at most one
+    /// can be included. This does not identify the exact authorization, open
+    /// payer, or execution result. Use [`Self::encoded_hash`] for exact-byte
+    /// identity; transaction inclusion proofs commit to the full encoding.
     ///
     /// When `sender` is empty and `sender_auth` does not recover, the
     /// transaction has no resolved sender and can never be valid. Its hash
@@ -466,9 +467,8 @@ impl Eip8130Signed {
     }
 
     /// Parses a raw `r || s || v` secp256k1 signature, requiring exactly 65
-    /// bytes and `v in {27, 28}`. The auth blob is not covered by the hash it
-    /// signs, so accepting the alternative `v in {0, 1}` encoding would let a
-    /// relayer mint a second transaction hash for the same signer.
+    /// bytes and canonical `v in {27, 28}` per EIP-8430. The alternative
+    /// `v in {0, 1}` encoding is invalid even when it recovers the same signer.
     fn parse_raw_k1_signature(
         raw: &[u8],
     ) -> Result<alloy_primitives::Signature, alloy_consensus::crypto::RecoveryError> {
@@ -865,7 +865,13 @@ impl Transaction for Eip8130Signed {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "k256")]
+    use alloy_consensus::proofs::calculate_transaction_root;
     use alloy_primitives::address;
+    #[cfg(feature = "k256")]
+    use alloy_signer::SignerSync;
+    #[cfg(feature = "k256")]
+    use alloy_signer_local::PrivateKeySigner;
     #[cfg(feature = "reth")]
     use reth_codecs::Compact;
     use rstest::rstest;
@@ -975,6 +981,83 @@ mod tests {
         let other_signed =
             Eip8130Signed::new(tx, Bytes::from(signature.as_bytes().to_vec()), Bytes::new());
         assert_ne!(signed.hash(), other_signed.hash());
+    }
+
+    #[cfg(feature = "k256")]
+    #[test]
+    fn open_payer_variants_share_hash_but_not_transaction_root() {
+        let sender = PrivateKeySigner::from_slice(&[1; 32]).unwrap();
+        let payer_a = PrivateKeySigner::from_slice(&[2; 32]).unwrap();
+        let payer_b = PrivateKeySigner::from_slice(&[3; 32]).unwrap();
+        let mut tx = sample_signed_8130(false).into_tx();
+        tx.sender = None;
+        tx.payer = Some(Eip8130Constants::OPEN_PAYER);
+        let sender_auth =
+            Bytes::from(sender.sign_hash_sync(&tx.sender_signature_hash()).unwrap().as_bytes());
+        let payer_hash = tx.payer_signature_hash(sender.address());
+        let a = Eip8130Signed::new(
+            tx.clone(),
+            sender_auth.clone(),
+            Bytes::from(payer_a.sign_hash_sync(&payer_hash).unwrap().as_bytes()),
+        );
+        let b = Eip8130Signed::new(
+            tx,
+            sender_auth,
+            Bytes::from(payer_b.sign_hash_sync(&payer_hash).unwrap().as_bytes()),
+        );
+
+        assert_eq!(a.recover_sender().unwrap(), sender.address());
+        assert_eq!(b.recover_sender().unwrap(), sender.address());
+        assert_eq!(a.resolved_payer(sender.address()).unwrap(), payer_a.address());
+        assert_eq!(b.resolved_payer(sender.address()).unwrap(), payer_b.address());
+        assert_eq!(a.hash(), b.hash());
+        assert_ne!(a.encoded_hash(), b.encoded_hash());
+        assert_ne!(
+            calculate_transaction_root(core::slice::from_ref(&a)),
+            calculate_transaction_root(core::slice::from_ref(&b))
+        );
+
+        // Decode what the block actually included, not a pending variant with the same hash.
+        let included = Eip8130Signed::decode_2718(&mut b.encoded_2718().as_slice()).unwrap();
+        assert_eq!(included.hash(), a.hash());
+        assert_eq!(included.resolved_payer(sender.address()).unwrap(), payer_b.address());
+    }
+
+    #[cfg(feature = "k256")]
+    #[test]
+    fn sender_forms_share_hash_but_not_transaction_root() {
+        let sender = PrivateKeySigner::from_slice(&[1; 32]).unwrap();
+        let mut tx = sample_signed_8130(false).into_tx();
+        tx.sender = None;
+        let recovered_signature = sender.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
+        let recovered = Eip8130Signed::new(
+            tx.clone(),
+            Bytes::from(recovered_signature.as_bytes()),
+            Bytes::new(),
+        );
+
+        tx.sender = Some(sender.address());
+        let named_signature = sender.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
+        let mut named_auth = Eip8130Constants::K1_AUTHENTICATOR.to_vec();
+        named_auth.extend_from_slice(&named_signature.as_bytes());
+        let named = Eip8130Signed::new(tx, named_auth.into(), Bytes::new());
+
+        assert_eq!(recovered.recover_sender().unwrap(), sender.address());
+        assert_eq!(
+            Eip8130Signed::recover_raw_k1(
+                named.tx().sender_signature_hash(),
+                &named.sender_auth()[20..],
+            )
+            .unwrap(),
+            sender.address()
+        );
+        assert_ne!(recovered_signature, named_signature);
+        assert_eq!(recovered.hash(), named.hash());
+        assert_ne!(recovered.encoded_hash(), named.encoded_hash());
+        assert_ne!(
+            calculate_transaction_root(core::slice::from_ref(&recovered)),
+            calculate_transaction_root(core::slice::from_ref(&named))
+        );
     }
 
     #[test]
@@ -1177,10 +1260,9 @@ mod tests {
         tx.sender = None;
         let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
         let mut bytes = signature.as_bytes().to_vec();
-        // Honest tooling emits `v` in 'Electrum' notation (`{27, 28}`). Rewrite it
-        // to the `{0, 1}` encoding of the same parity: it recovers the same signer
-        // but is a distinct byte string (txid malleability), so both the checked
-        // and unchecked recovery paths must reject it.
+        // Honest tooling emits `v` in 'Electrum' notation (`{27, 28}`). The
+        // alternative `{0, 1}` form is not a valid wire encoding, so both the
+        // checked and unchecked recovery paths must reject it.
         assert!(matches!(bytes[64], 27 | 28));
         bytes[64] -= 27;
         let signed = Eip8130Signed::new(tx, Bytes::from(bytes), Bytes::new());
