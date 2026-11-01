@@ -1,5 +1,5 @@
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     time::{Duration, UNIX_EPOCH},
 };
 
@@ -9,7 +9,7 @@ use base_clock::GlobalClock;
 use base_common_chains::Upgrades;
 use base_common_consensus::BaseTxEnvelope;
 use base_common_network::{Base, BaseEngineApi};
-use eyre::{OptionExt, Result, ensure};
+use eyre::{OptionExt, Result, WrapErr, ensure};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
@@ -81,6 +81,11 @@ where
             .max(window.from_timestamp_ms.saturating_sub(Self::BUILD_LEAD_MS));
         let mut recorded =
             dataset.records.iter().map(|record| record.tx_hash).collect::<Option<HashSet<_>>>();
+        let records: HashMap<_, _> = dataset
+            .records
+            .iter()
+            .filter_map(|record| record.tx_hash.map(|hash| (hash, record.clone())))
+            .collect();
         let mut schedule = InjectionSchedule::new(dataset.records);
         schedule.timeout = self.driver.timeout;
         schedule.warmup(&self.injector, cutoff).await?;
@@ -132,6 +137,31 @@ where
                     ..self.driver
                 };
                 let candidate = driver.replay_block(&self.engine, &block, self.chain).await?;
+                let canonical: HashSet<_> =
+                    block.body.transactions.iter().map(|tx| tx.tx_hash()).collect();
+                let mut restored = 0;
+                tokio::time::timeout(self.driver.timeout, async {
+                    for hash in &candidate.transaction_hashes {
+                        if canonical.contains(hash) {
+                            continue;
+                        }
+                        let record = records.get(hash).ok_or_else(|| {
+                            eyre::eyre!("candidate-only transaction {hash} has no recorded ingress")
+                        })?;
+                        self.injector.inject(record.clone()).await.wrap_err_with(|| {
+                            format!("restoring transaction {hash} after block {number}")
+                        })?;
+                        restored += 1;
+                    }
+                    Ok::<_, eyre::Report>(())
+                })
+                .await
+                .wrap_err_with(|| format!("pool restoration timed out after block {number}"))??;
+                tracing::info!(
+                    block_number = number,
+                    restored,
+                    "restored candidate-only transactions"
+                );
                 diffs.push(BlockDiff::compare(&candidate, &baseline, recorded.as_ref())?);
                 parent_hash = block.hash_slow();
                 parent_timestamp = block.header.timestamp;
