@@ -19,8 +19,8 @@ use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, debug, info, warn};
 
 use crate::{
-    EnclaveEndpointClient, InstanceDiscovery, InstanceHealthStatus, ProofTaskSet, ProverClient,
-    ProverInstance, RegistrarMetrics, Result, SignerManager,
+    EnclaveEndpointClient, InstanceDiscovery, InstanceHealthStatus, ProverClient, ProverInstance,
+    RegistrarMetrics, RegistrationTaskSet, Result, SignerManager,
 };
 
 /// Default maximum number of instances processed concurrently.
@@ -147,7 +147,7 @@ where
             "starting registration driver"
         );
 
-        let mut proof_tasks = ProofTaskSet::default();
+        let mut registration_tasks = RegistrationTaskSet::default();
         let mut last_known_active = HashMap::new();
         let mut unhealthy_instance_ids_with_grace = HashSet::new();
 
@@ -160,20 +160,21 @@ where
                 .await;
 
             // Keep task state current before reconcile decisions each cycle.
-            proof_tasks.reap_finished_tasks();
+            registration_tasks.reap_finished_tasks();
 
             match discovery {
                 Ok(_) if self.config.cancel.is_cancelled() => {}
                 Ok(resolution) => {
-                    self.signer_manager.reconcile_proof_tasks(
+                    self.signer_manager.reconcile_registration_tasks(
                         &resolution,
-                        &mut proof_tasks,
+                        &mut registration_tasks,
                         &self.config.cancel,
                     );
 
                     if resolution.unresolved_instance_ids.is_empty() {
                         let mut protected_signers = resolution.active_signers.clone();
-                        protected_signers.extend(proof_tasks.pending.keys().copied());
+                        protected_signers
+                            .extend(registration_tasks.pending().map(|(signer, _)| *signer));
                         if let Err(e) = self
                             .signer_manager
                             .run_orphan_dereg(&protected_signers, &self.config.cancel)
@@ -190,13 +191,13 @@ where
                 }
             }
 
-            RegistrarMetrics::proof_tasks_pending().set(proof_tasks.pending.len() as f64);
+            RegistrarMetrics::proof_tasks_pending().set(registration_tasks.pending().len() as f64);
 
             tokio::select! {
                 biased;
                 () = self.config.cancel.cancelled() => {
                     info!(
-                        pending = proof_tasks.pending.len(),
+                        pending = registration_tasks.pending().len(),
                         "registration driver received shutdown signal"
                     );
                     break;
@@ -205,7 +206,7 @@ where
             }
         }
 
-        proof_tasks.drain_proof_tasks().await;
+        registration_tasks.drain().await;
 
         info!("registration driver stopped");
         Ok(())
