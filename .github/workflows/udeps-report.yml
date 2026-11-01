@@ -37,7 +37,7 @@ jobs:
       - uses: ./.github/actions/setup
         with:
           free-disk: "true"
-          toolchain: nightly
+          toolchain: ${{ env.UDEPS_TOOLCHAIN }}
           native-deps: "true"
           foundry: "true"
           tools: cargo-udeps
