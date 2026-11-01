@@ -33,6 +33,42 @@ pub struct AppliedTransaction {
     pub applied: AppliedAccountChanges,
 }
 
+/// The sender account of a signed EIP-8130 transaction, resolved but not yet
+/// authenticated: the explicit wire `sender` for a configured account, or the
+/// recovered signer for an EOA.
+///
+/// Resolving the sender ahead of authorization lets block execution check the
+/// nonce before any account change runs. The EOA recovery token is carried into
+/// [`TransactionAuthorizer`] so the secp256k1 ecrecover runs once per
+/// transaction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ResolvedSender {
+    account: Address,
+    recovered: Option<RecoveredActorId>,
+}
+
+impl ResolvedSender {
+    /// Resolves the sender account of `signed`.
+    ///
+    /// # Errors
+    /// Returns [`TxAuthError::SenderRecovery`] when an EOA `sender_auth` does
+    /// not recover a signer.
+    pub fn resolve(signed: &Eip8130Signed) -> Result<Self, TxAuthError> {
+        if let Some(account) = signed.explicit_sender() {
+            return Ok(Self { account, recovered: None });
+        }
+        let recovered = RecoveredActorId::recover_eoa_sender(signed)
+            .map_err(|_| TxAuthError::SenderRecovery)?
+            .ok_or(TxAuthError::SenderRecovery)?;
+        Ok(Self { account: recovered.address(), recovered: Some(recovered) })
+    }
+
+    /// The resolved sender account.
+    pub const fn account(&self) -> Address {
+        self.account
+    }
+}
+
 /// Authorizes and applies a signed EIP-8130 transaction against a mutable
 /// [`AccountConfigurationStorage`] view.
 ///
@@ -47,7 +83,8 @@ pub struct TransactionAuthorizer;
 impl TransactionAuthorizer {
     /// Authorizes and applies `signed` against `storage` for `local_chain_id` at
     /// time `now` (block timestamp at inclusion, wall-clock in the pool, used for
-    /// actor expiry and the account lock).
+    /// actor expiry and the account lock). `sender` MUST be resolved from the
+    /// same `signed`.
     ///
     /// The flow mirrors the canonical `AccountConfiguration` contract, which
     /// applies a transaction's changes against an *evolving* state rather than a
@@ -77,26 +114,15 @@ impl TransactionAuthorizer {
     /// [`ConfigChange`]: base_common_consensus::ConfigChange
     pub fn authorize_and_apply(
         signed: &Eip8130Signed,
+        sender: ResolvedSender,
         storage: &mut AccountConfigurationStorage<'_>,
         local_chain_id: u64,
         now: u64,
     ) -> Result<AppliedTransaction, TxAuthError> {
-        // Resolve the sender account up front (without authenticating it yet):
-        // config changes mutate this account and a create must derive to it. For
-        // the configured path it is the explicit wire `sender`; for the EOA path
-        // it is the recovered signer. The sender's *authorization* is deferred to
-        // the final post-apply check (step 4 below). The EOA recovery token is
-        // kept and threaded into that final check so the secp256k1 ecrecover runs
-        // exactly once per transaction rather than again inside `verify`.
-        let (sender_account, recovered_sender) = match signed.explicit_sender() {
-            Some(account) => (account, None),
-            None => {
-                let recovered = RecoveredActorId::recover_eoa_sender(signed)
-                    .map_err(|_| TxAuthError::SenderRecovery)?
-                    .ok_or(TxAuthError::SenderRecovery)?;
-                (recovered.address(), Some(recovered))
-            }
-        };
+        // Config changes mutate the resolved sender account and a create must
+        // derive to it. Its authentication is deferred to the final post-apply
+        // check (step 4 below).
+        let sender_account = sender.account;
 
         // 1–3. Walk the account changes in order, applying each against the
         //       evolving state and authorizing every config change as it is
@@ -177,9 +203,9 @@ impl TransactionAuthorizer {
         }
 
         // 4. Authenticate sender + payer against the final post-apply state,
-        //    reusing the EOA sender token recovered above (no second ecrecover).
+        //    reusing the resolved EOA sender token (no second ecrecover).
         let actors =
-            ActorTxVerifier::verify_with_recovered_sender(signed, storage, now, recovered_sender)?;
+            ActorTxVerifier::verify_with_recovered_sender(signed, storage, now, sender.recovered)?;
 
         if applied.delegation.is_some() {
             Self::authorize_delegation(storage, now, &actors.sender)?;
@@ -201,21 +227,22 @@ impl TransactionAuthorizer {
     /// - the only account change is delegation, recorded as a deferred code
     ///   effect.
     ///
-    /// Anything else is rejected by [`Self::check_without_keystore`].
+    /// Anything else is rejected by [`Self::check_without_keystore`]. `sender`
+    /// MUST be resolved from the same `signed`.
     pub fn authorize_without_keystore(
         signed: &Eip8130Signed,
+        sender: ResolvedSender,
     ) -> Result<AppliedTransaction, TxAuthError> {
         Self::check_without_keystore(signed)?;
         let tx = signed.tx();
 
-        let sender = match signed.explicit_sender() {
-            Some(account) => {
-                Self::recover_named_k1(account, tx.sender_signature_hash(), signed.sender_auth())?
-            }
-            None => RecoveredActorId::recover_eoa_sender(signed)
-                .map_err(|_| TxAuthError::SenderRecovery)?
-                .ok_or(TxAuthError::SenderRecovery)?
-                .address(),
+        let sender = match sender.recovered {
+            Some(recovered) => recovered.address(),
+            None => Self::recover_named_k1(
+                sender.account,
+                tx.sender_signature_hash(),
+                signed.sender_auth(),
+            )?,
         };
 
         let payer = match tx.payer {
@@ -256,10 +283,10 @@ impl TransactionAuthorizer {
         })
     }
 
-    /// Checks the shape of `signed` without the Keystore, before any signature
-    /// is recovered: delegation is the only account change, and a named sender
-    /// or payer selects the native secp256k1 authenticator. An open payer's
-    /// `payer_auth` is a raw signature and carries no selector.
+    /// Checks the shape of `signed` without the Keystore: delegation is the
+    /// only account change, and a named sender or payer selects the native
+    /// secp256k1 authenticator. An open payer's `payer_auth` is a raw signature
+    /// and carries no selector.
     pub fn check_without_keystore(signed: &Eip8130Signed) -> Result<(), TxAuthError> {
         let tx = signed.tx();
         if tx.account_changes.iter().any(|change| !matches!(change, AccountChange::Delegation(_))) {
@@ -401,6 +428,21 @@ mod tests {
         change
     }
 
+    /// Resolves the sender of `signed` and authorizes it with the Keystore.
+    fn authorize(
+        signed: &Eip8130Signed,
+        acc: &mut AccountConfigurationStorage<'_>,
+    ) -> Result<AppliedTransaction, TxAuthError> {
+        let sender = ResolvedSender::resolve(signed)?;
+        TransactionAuthorizer::authorize_and_apply(signed, sender, acc, LOCAL, NOW)
+    }
+
+    /// Resolves the sender of `signed` and authorizes it without the Keystore.
+    fn authorize_pre_zenith(signed: &Eip8130Signed) -> Result<AppliedTransaction, TxAuthError> {
+        let sender = ResolvedSender::resolve(signed)?;
+        TransactionAuthorizer::authorize_without_keystore(signed, sender)
+    }
+
     /// Signs `tx` as an EOA (bare `sender_auth`, no payer) and authorizes it.
     fn eoa_signed(tx: TxEip8130, sender: &K256SigningKey) -> Eip8130Signed {
         let hash = tx.sender_signature_hash();
@@ -439,7 +481,7 @@ mod tests {
             &k,
         );
         with_storage(|acc| {
-            let out = TransactionAuthorizer::authorize_and_apply(&signed, acc, LOCAL, NOW).unwrap();
+            let out = authorize(&signed, acc).unwrap();
             assert_eq!(out.actors.sender.account, account);
             assert!(out.actors.payer.is_none());
             assert_eq!(out.config_changes.len(), 2);
@@ -467,7 +509,7 @@ mod tests {
         );
         with_storage(|acc| {
             assert_eq!(
-                TransactionAuthorizer::authorize_and_apply(&signed, acc, LOCAL, NOW),
+                authorize(&signed, acc),
                 Err(TxAuthError::BadSequence { expected: 1, got: 0 }),
             );
         });
@@ -494,7 +536,7 @@ mod tests {
             &k,
         );
         with_storage(|acc| {
-            let out = TransactionAuthorizer::authorize_and_apply(&signed, acc, LOCAL, NOW).unwrap();
+            let out = authorize(&signed, acc).unwrap();
             assert_eq!(out.config_changes.len(), 3);
             assert_eq!(acc.get_change_sequences(account).unwrap(), (2, 1));
         });
@@ -514,7 +556,7 @@ mod tests {
             b[16..20].copy_from_slice(&1u32.to_be_bytes());
             acc.account_state.at_mut(&account).write(U256::from_be_bytes(b)).unwrap();
             assert_eq!(
-                TransactionAuthorizer::authorize_and_apply(&signed, acc, LOCAL, NOW),
+                authorize(&signed, acc),
                 Err(TxAuthError::StaleEpoch { expected: 1, got: 0 }),
             );
         });
@@ -532,10 +574,7 @@ mod tests {
         let signed = eoa_signed(tx_with(None, None, vec![AccountChange::ConfigChange(at_max)]), &k);
         with_storage(|acc| {
             acc.account_state.at_mut(&account).write(pack_state(u64::MAX, 0, 0, 0)).unwrap();
-            assert_eq!(
-                TransactionAuthorizer::authorize_and_apply(&signed, acc, LOCAL, NOW),
-                Err(TxAuthError::SequenceSaturated),
-            );
+            assert_eq!(authorize(&signed, acc), Err(TxAuthError::SequenceSaturated),);
         });
     }
 
@@ -570,13 +609,9 @@ mod tests {
                 .write(pack_default_eoa_scope(Eip8130Constants::SCOPE_OPERATOR))
                 .unwrap();
 
-            let ordinary =
-                TransactionAuthorizer::authorize_and_apply(&ordinary, acc, LOCAL, NOW).unwrap();
+            let ordinary = authorize(&ordinary, acc).unwrap();
             assert_eq!(ordinary.actors.sender.resolved.scope, Eip8130Constants::SCOPE_OPERATOR);
-            assert_eq!(
-                TransactionAuthorizer::authorize_and_apply(&delegation, acc, LOCAL, NOW),
-                Err(TxAuthError::DelegationUnauthorized),
-            );
+            assert_eq!(authorize(&delegation, acc), Err(TxAuthError::DelegationUnauthorized),);
         });
     }
 
@@ -601,7 +636,7 @@ mod tests {
                 .at_mut(&account)
                 .write(pack(K1, Eip8130Constants::SCOPE_UNRESTRICTED, 0))
                 .unwrap();
-            let out = TransactionAuthorizer::authorize_and_apply(&signed, acc, LOCAL, NOW).unwrap();
+            let out = authorize(&signed, acc).unwrap();
             assert_eq!(out.actors.sender.account, account);
             assert_eq!(out.actors.sender.resolved.actor_id, signer_id);
             assert_ne!(
@@ -650,10 +685,7 @@ mod tests {
                 .at_mut(&payer_account)
                 .write(pack(K1, Eip8130Constants::SCOPE_SPONSOR_PAYER, 0))
                 .unwrap();
-            assert_eq!(
-                TransactionAuthorizer::authorize_and_apply(&signed, acc, LOCAL, NOW),
-                Err(TxAuthError::DelegationUnauthorized),
-            );
+            assert_eq!(authorize(&signed, acc), Err(TxAuthError::DelegationUnauthorized),);
         });
     }
 
@@ -672,10 +704,7 @@ mod tests {
                 .at_mut(&account)
                 .write(pack_state(0, 0, Eip8130Constants::FLAG_LOCKED, 0))
                 .unwrap();
-            assert_eq!(
-                TransactionAuthorizer::authorize_and_apply(&signed, acc, LOCAL, NOW),
-                Err(TxAuthError::AccountIsLocked),
-            );
+            assert_eq!(authorize(&signed, acc), Err(TxAuthError::AccountIsLocked),);
         });
     }
 
@@ -690,7 +719,7 @@ mod tests {
         );
 
         with_storage(|acc| {
-            let out = TransactionAuthorizer::authorize_and_apply(&signed, acc, LOCAL, NOW).unwrap();
+            let out = authorize(&signed, acc).unwrap();
             assert_eq!(out.applied.delegation, Some(DelegationEffect::new(account, target)));
         });
     }
@@ -709,7 +738,7 @@ mod tests {
         assert!(signed.sender_auth().starts_with(K1.as_slice()));
 
         with_storage(|acc| {
-            let out = TransactionAuthorizer::authorize_and_apply(&signed, acc, LOCAL, NOW).unwrap();
+            let out = authorize(&signed, acc).unwrap();
 
             assert_eq!(out.actors.sender.account, account);
             assert_eq!(
@@ -777,7 +806,7 @@ mod tests {
                 .at_mut(&account)
                 .write(pack(K1, Eip8130Constants::SCOPE_UNRESTRICTED, 0))
                 .unwrap();
-            let out = TransactionAuthorizer::authorize_and_apply(&signed, acc, LOCAL, NOW).unwrap();
+            let out = authorize(&signed, acc).unwrap();
             assert!(out.config_changes[0].is_admin());
             assert_eq!(acc.get_change_sequences(account).unwrap(), (1, 0));
         });
@@ -828,7 +857,7 @@ mod tests {
                 .at_mut(&sender_account)
                 .write(pack(K1, Eip8130Constants::SCOPE_UNRESTRICTED, 0))
                 .unwrap();
-            let out = TransactionAuthorizer::authorize_and_apply(&signed, acc, LOCAL, NOW).unwrap();
+            let out = authorize(&signed, acc).unwrap();
             assert_eq!(out.actors.sender.account, sender_account);
             assert_eq!(out.actors.payer.expect("payer present").account, payer_account);
             assert_eq!(out.config_changes.len(), 1);
@@ -888,8 +917,7 @@ mod tests {
         let (derived, signed) = create_tx_and_signed(&k, vec![]);
 
         with_storage(|acc| {
-            let out = TransactionAuthorizer::authorize_and_apply(&signed, acc, LOCAL, NOW)
-                .expect("create tx on empty account must authorize");
+            let out = authorize(&signed, acc).expect("create tx on empty account must authorize");
             assert_eq!(out.actors.sender.account, derived);
             assert!(out.actors.sender.resolved.is_admin(), "create sender must be unrestricted");
             assert!(out.actors.payer.is_none());
@@ -976,7 +1004,7 @@ mod tests {
         };
 
         with_storage(|acc| {
-            let result = TransactionAuthorizer::authorize_and_apply(&signed, acc, LOCAL, NOW);
+            let result = authorize(&signed, acc);
             match scenario {
                 CounterfactualCreate::CreateThenDelegation
                 | CounterfactualCreate::DelegationThenCreate => assert!(
@@ -1022,8 +1050,7 @@ mod tests {
         signed = Eip8130Signed::new(new_tx, auth_blob(K1, &sig(&k, hash)), Bytes::new());
 
         with_storage(|acc| {
-            let err = TransactionAuthorizer::authorize_and_apply(&signed, acc, LOCAL, NOW)
-                .expect_err("create + delegation must be rejected");
+            let err = authorize(&signed, acc).expect_err("create + delegation must be rejected");
             assert!(
                 matches!(err, TxAuthError::Apply(ApplyError::CreateAndDelegation)),
                 "expected CreateAndDelegation, got {err:?}"
@@ -1044,7 +1071,7 @@ mod tests {
         let delegation = AccountChange::Delegation(Delegation { target: payer });
 
         let eoa = eoa_signed(tx_with(None, None, vec![delegation]), &sender_key);
-        let applied = TransactionAuthorizer::authorize_without_keystore(&eoa).unwrap();
+        let applied = authorize_pre_zenith(&eoa).unwrap();
         assert_eq!(applied.actors.sender.account, sender);
         assert!(applied.actors.sender.resolved.is_admin());
         assert!(applied.applied.delegation.is_some());
@@ -1054,14 +1081,14 @@ mod tests {
             &sender_key,
             Some(&payer_key),
         );
-        let applied = TransactionAuthorizer::authorize_without_keystore(&named).unwrap();
+        let applied = authorize_pre_zenith(&named).unwrap();
         assert_eq!(applied.actors.payer.map(|actor| actor.account), Some(payer));
 
         let open_tx = tx_with(None, Some(Eip8130Constants::OPEN_PAYER), Vec::new());
         let payer_auth = sig(&payer_key, open_tx.payer_signature_hash(sender));
         let sender_auth = sig(&sender_key, open_tx.sender_signature_hash());
         let open = Eip8130Signed::new(open_tx, Bytes::from(sender_auth), Bytes::from(payer_auth));
-        let applied = TransactionAuthorizer::authorize_without_keystore(&open).unwrap();
+        let applied = authorize_pre_zenith(&open).unwrap();
         assert_eq!(applied.actors.payer.map(|actor| actor.account), Some(payer));
 
         let p256_sender = Eip8130Signed::new(
@@ -1070,7 +1097,7 @@ mod tests {
             Bytes::new(),
         );
         assert!(matches!(
-            TransactionAuthorizer::authorize_without_keystore(&p256_sender),
+            authorize_pre_zenith(&p256_sender),
             Err(TxAuthError::UnsupportedAuthenticator)
         ));
 
@@ -1088,7 +1115,7 @@ mod tests {
             &sender_key,
         );
         assert!(matches!(
-            TransactionAuthorizer::authorize_without_keystore(&config_change),
+            authorize_pre_zenith(&config_change),
             Err(TxAuthError::UnsupportedAccountChange)
         ));
     }
@@ -1103,15 +1130,9 @@ mod tests {
         let padded =
             Eip8130Signed::new(tx, Bytes::from(sender_auth), Bytes::from_static(&[0xab; 32]));
 
-        assert!(matches!(
-            TransactionAuthorizer::authorize_without_keystore(&padded),
-            Err(TxAuthError::UnexpectedPayerAuth)
-        ));
+        assert!(matches!(authorize_pre_zenith(&padded), Err(TxAuthError::UnexpectedPayerAuth)));
         with_storage(|acc| {
-            assert!(matches!(
-                TransactionAuthorizer::authorize_and_apply(&padded, acc, LOCAL, NOW),
-                Err(TxAuthError::UnexpectedPayerAuth)
-            ));
+            assert!(matches!(authorize(&padded, acc), Err(TxAuthError::UnexpectedPayerAuth)));
         });
     }
 }
