@@ -452,18 +452,140 @@ mod tests {
 
     #[cfg(feature = "metrics")]
     mod metrics_tests {
-        use std::sync::Mutex;
+        use std::{num::NonZeroU64, sync::Mutex};
 
         use alloy_primitives::Bytes;
+        use base_proof_contracts::invalid_proof_selector;
         use base_proof_primitives::Proposal;
+        use base_proof_submission::test_utils::SnarkReceiptFixture;
         use base_prover_service_protocol::{ProofResult, ProofStatus, TeeKind, TeeProofResult};
+        use base_tx_manager::TxManagerError;
         use metrics_util::{
             MetricKind,
             debugging::{DebugValue, DebuggingRecorder},
         };
+        use tracing::{Event as TracingEvent, Level, field::Field};
+        use tracing_subscriber::{Layer, Registry, layer::Context, prelude::*};
 
         use super::*;
         use crate::test_utils::{MockGameState, MockTxManager, MockZkProofState};
+
+        #[derive(Debug)]
+        struct CapturedEvent {
+            level: Level,
+            fields: HashMap<String, String>,
+        }
+
+        struct CaptureEvents(Arc<Mutex<Vec<CapturedEvent>>>);
+
+        impl Layer<Registry> for CaptureEvents {
+            fn on_event(&self, event: &TracingEvent<'_>, _context: Context<'_, Registry>) {
+                let mut fields = HashMap::new();
+                event.record(&mut |field: &Field, value: &dyn std::fmt::Debug| {
+                    fields.insert(field.name().to_owned(), format!("{value:?}"));
+                });
+                self.0
+                    .lock()
+                    .unwrap()
+                    .push(CapturedEvent { level: *event.metadata().level(), fields });
+            }
+        }
+
+        #[test]
+        fn poll_zk_invalid_proof_logs_error_counts_and_ignores_game() {
+            let game = addr(42);
+            let events = Arc::new(Mutex::new(Vec::new()));
+            let subscriber = Registry::default().with(CaptureEvents(Arc::clone(&events)));
+            let _subscriber = tracing::subscriber::set_default(subscriber);
+            let recorder = DebuggingRecorder::new();
+            let snapshotter = recorder.snapshotter();
+            metrics::with_local_recorder(&recorder, || {
+                let runtime =
+                    tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+                runtime.block_on(async {
+                    let mut manager = TestManager::new(
+                        OutputValidator::new(Arc::new(MockL2Provider::default())),
+                        Arc::new(MockZkProofProvider {
+                            state: Mutex::new(MockZkProofState {
+                                proof_status: ProofStatus::Succeeded,
+                                proof: SnarkReceiptFixture::plonk_receipt_bytes(
+                                    [0x5a, 0x09, 0x3a, 0x2f],
+                                    "dead",
+                                ),
+                                ..Default::default()
+                            }),
+                        }),
+                        Arc::new(MockL1::failure("unused")),
+                        Arc::new(MockAggregateVerifier::new(HashMap::from([(
+                            game,
+                            MockGameState { tee_prover: addr(1), ..Default::default() },
+                        )]))),
+                        Duration::from_secs(60),
+                        3,
+                    );
+                    manager.attempts.insert(
+                        game,
+                        DisputeAttempt::awaiting_zk(
+                            "session".to_owned(),
+                            DisputeTarget {
+                                invalid_index: 7,
+                                expected_root: B256::repeat_byte(0xaa),
+                            },
+                            SnarkPlonkProofRequest {
+                                proof: ZkProofRequest {
+                                    start_block_number: 0,
+                                    number_of_blocks_to_prove: 1,
+                                    sequence_window: None,
+                                    l1_head: None,
+                                    schedule_l2_block_number: None,
+                                    intermediate_block_interval: NonZeroU64::MIN,
+                                    zk_vm: ZkVm::Sp1,
+                                    zk_backend: ZkBackend::Cluster,
+                                },
+                                prover_address: Address::ZERO,
+                            },
+                            DisputeIntent::Challenge,
+                            manager.attempt_limits(),
+                            Instant::now(),
+                        ),
+                    );
+                    let submitter = ChallengeSubmitter::new(MockTxManager::new(Err(
+                        TxManagerError::ExecutionReverted {
+                            reason: None,
+                            data: Some(Bytes::from(invalid_proof_selector().to_vec())),
+                        },
+                    )));
+
+                    manager.poll_pending_proofs(&submitter).await;
+
+                    assert!(manager.is_ignored(game));
+                });
+            });
+
+            let events = events.lock().unwrap();
+            let errors: Vec<_> =
+                events.iter().filter(|event| event.level == Level::ERROR).collect();
+            assert_eq!(errors.len(), 1, "expected one ERROR event, got {events:?}");
+            assert_eq!(
+                errors[0].fields["message"],
+                "onchain verifier rejected the ZK proof (InvalidProof); the prover \
+                 likely runs a program other than the game's ZK hashes. Ignoring the \
+                 game until restart; it remains unchallenged"
+            );
+            assert_eq!(errors[0].fields["game"], game.to_string());
+            assert_eq!(errors[0].fields["invalid_index"], "7");
+            let count =
+                snapshotter.snapshot().into_vec().into_iter().find_map(|(key, _, _, value)| {
+                    if key.kind() == MetricKind::Counter
+                        && key.key().name() == "base_challenger.zk_invalid_proof_total"
+                        && let DebugValue::Counter(count) = value
+                    {
+                        return Some(count);
+                    }
+                    None
+                });
+            assert_eq!(count, Some(1), "ZK InvalidProof must increment its counter once");
+        }
 
         #[test]
         fn poll_emits_failure_metrics() {
