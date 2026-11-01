@@ -141,6 +141,34 @@ just devnet status # Check block numbers and sync status
 
 To choose between this devnet and the snapshot devnet, see [docs/guides/DEVNET.md](../../docs/guides/DEVNET.md).
 
+### Record forwarded transactions
+
+Enable the optional `replay` profile when starting a fresh devnet:
+
+```bash
+COMPOSE_PROFILES=replay just devnet up-single
+# Or: COMPOSE_PROFILES=replay just devnet up
+```
+
+The startup recipe appends `replay-recorder` to both mempool nodes' builder RPC
+destinations, preserving all three builder destinations in HA mode. Submit
+transactions to `base-client` or `base-rpc`, not directly to the builder.
+The recorder reuses `base:local` and listens only inside the Compose network
+on port 8550. Set `REPLAY_RECORDER_PORT` to override that port.
+
+Captures live under `.devnet/replay/devnet/YYYY/MM/DD/HH/MM.jsonl.zst`.
+The recorder publishes one object per occupied UTC minute when a call arrives
+in a later minute, then flushes the last minute on graceful shutdown. Empty
+minutes produce no object. Inspect captures before `just devnet down`, which
+deletes the store:
+
+```bash
+docker compose --env-file etc/docker/devnet-env -f etc/docker/docker-compose.yml stop replay-recorder
+ls -R .devnet/replay
+zstd -dc .devnet/replay/devnet/YYYY/MM/DD/HH/MM.jsonl.zst | head -n 1
+just devnet down
+```
+
 ### Single-Anvil L1 local Nitro proving
 
 The optional single-Anvil variant replaces the Reth execution node and both
