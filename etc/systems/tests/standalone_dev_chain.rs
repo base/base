@@ -20,9 +20,10 @@ use alloy_provider::{Network, Provider, RootProvider, transport::TransportResult
 use alloy_rpc_types_engine::{ForkchoiceState, JwtSecret};
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
+use alloy_sol_types::{SolCall, sol};
 use axum::{Router, http::HeaderMap};
 use base_builder_core::RestingPredicateMode;
-use base_common_consensus::{BaseBlock, BaseTxEnvelope};
+use base_common_consensus::{BaseBlock, BaseTxEnvelope, Predeploys};
 use base_common_genesis::{
     ChainGenesis, RollupConfig, RuntimeUpgradeRegistry, SystemConfig, UpgradeConfig,
 };
@@ -60,6 +61,18 @@ const BOUNDARY_NUMBER: u64 = 8;
 const GUARDED: Address = Address::repeat_byte(0xc0);
 /// Owner of [`GUARDED`], whose private key is unknown.
 const OWNER: Address = Address::repeat_byte(0x0a);
+
+sol! {
+    interface IL1Block {
+        function number() external view returns (uint64);
+        function hash() external view returns (bytes32);
+        function sequenceNumber() external view returns (uint64);
+    }
+
+    interface IBaseTime {
+        function timestampMs() external view returns (uint64);
+    }
+}
 
 #[derive(Debug)]
 struct ImpersonationRpcExtension(StandaloneImpersonationQueue);
@@ -427,6 +440,128 @@ async fn standalone_dev_chain_persists_and_restores_schedule() -> Result<()> {
     assert!(matches!(error, StandaloneDevError::MissingState { .. }), "{error}");
 
     proxy.abort();
+    builder.shutdown().await
+}
+
+/// Starts `base dev --fresh`'s embedded genesis, extends its genesis head, and resumes the chain.
+#[tokio::test]
+async fn standalone_dev_chain_starts_from_fresh_genesis() -> Result<()> {
+    base_node_runner::test_utils::init_silenced_tracing();
+    let state_dir = tempfile::tempdir()?;
+    let (chain, genesis) = StandaloneDevChain::open_fresh(state_dir.path())?;
+    let chain_spec = Arc::new(BaseChainSpec::try_from_genesis(genesis)?);
+    let chain_id = chain_spec.inner.chain.id();
+    let rollup_config = chain.rollup_config.clone();
+    let jwt_secret = JwtSecret::random();
+    let queue = StandaloneImpersonationQueue::default();
+    let builder = InProcessBuilder::start(InProcessBuilderConfig {
+        runtime: InProcessNodeRuntime::Host,
+        engine_sharing: Default::default(),
+        chain_spec: Arc::clone(&chain_spec),
+        datadir: None,
+        jwt_secret,
+        http_port: None,
+        ws_port: None,
+        auth_port: None,
+        p2p_port: None,
+        flashblocks_port: None,
+        metrics_port: None,
+        payload_builder_cutover: true,
+        validity_signature_mode: ValiditySignatureMode::Off,
+        resting_predicate_mode: RestingPredicateMode::Off,
+        extra_extensions: vec![Box::new(ImpersonationRpcExtension(queue.clone()))],
+        block_time: Duration::from_millis(200),
+        persistence_threshold: Some(0),
+        persistence_backpressure_threshold: None,
+        txpool_max_transactions: None,
+        txpool_max_size_mb: None,
+        txpool_max_account_slots: None,
+    })
+    .await?;
+    let provider = RootProvider::<Base>::new_http(builder.rpc_url()?);
+    let engine_url = builder.engine_url()?;
+    let start = |chain: StandaloneDevChain, token: CancellationToken| {
+        let headers = builder.provider.clone();
+        tokio::spawn(chain.run(
+            EngineEndpoint::Url(engine_url.clone()),
+            jwt_secret,
+            move |number| headers.header_by_number(number),
+            queue.clone(),
+            token,
+        ))
+    };
+
+    // The first run extends the genesis head, which has no L1-info deposit.
+    let token = CancellationToken::new();
+    let first = start(chain, token.clone());
+    let included = send_transaction(&provider, chain_id).await?;
+    let funded = Address::repeat_byte(0xf3);
+    let mint = impersonate(
+        &provider,
+        json!({ "from": funded, "to": funded, "gas": "0x5208", "mint": "0x64" }),
+    )
+    .await?;
+    assert!(receipt(&provider, mint).await?.status());
+    assert_eq!(provider.get_balance(funded).await?, U256::from(0x64));
+
+    let included_block = block(&provider, included).await?;
+    let genesis_millis = rollup_config.genesis.l2_time * 1_000;
+    assert_eq!(
+        BaseTimeUpdateTx::extract_timestamp_ms(
+            &included_block.body.transactions,
+            included,
+            included_block.header.timestamp
+        )?,
+        genesis_millis + included * 200
+    );
+    let call = |to: Address, input: Vec<u8>| {
+        let provider = provider.clone();
+        async move {
+            let output: Bytes = provider
+                .raw_request(
+                    "eth_call".into(),
+                    (json!({ "to": to, "input": Bytes::from(input) }), U256::from(included)),
+                )
+                .await?;
+            Ok::<_, eyre::Report>(U256::from_be_slice(&output))
+        }
+    };
+    // L1Block records the synthetic genesis L1 origin and the block's position in its epoch.
+    let l1_block = Predeploys::L1_BLOCK_INFO;
+    assert_eq!(call(l1_block, IL1Block::numberCall {}.abi_encode()).await?, U256::ZERO);
+    assert_eq!(
+        call(l1_block, IL1Block::hashCall {}.abi_encode()).await?,
+        U256::from_be_bytes(rollup_config.genesis.l1.hash.0)
+    );
+    assert_eq!(
+        call(l1_block, IL1Block::sequenceNumberCall {}.abi_encode()).await?,
+        U256::from(included)
+    );
+    assert_eq!(
+        call(Predeploys::BASE_TIME, IBaseTime::timestampMsCall {}.abi_encode()).await?,
+        U256::from(genesis_millis + included * 200)
+    );
+
+    // A restart reopens the persisted genesis and continues its schedule.
+    token.cancel();
+    first.await??;
+    let head = provider.get_block_number().await?;
+    let (chain, _) = StandaloneDevChain::open_fresh(state_dir.path())?;
+    let token = CancellationToken::new();
+    let second = start(chain, token.clone());
+    wait_for_block(&provider, head + 3).await?;
+    token.cancel();
+    second.await??;
+    let next = block(&provider, head + 1).await?;
+    assert_eq!(
+        BaseTimeUpdateTx::extract_timestamp_ms(
+            &next.body.transactions,
+            head + 1,
+            next.header.timestamp
+        )?,
+        genesis_millis + (head + 1) * 200
+    );
+
     builder.shutdown().await
 }
 

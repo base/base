@@ -57,6 +57,7 @@ clap = { workspace = true, features = ["env"] }
 eyre.workspace = true
 tokio.workspace = true
 tracing.workspace = true
+tempfile.workspace = true
 tokio-util.workspace = true
 serde = { workspace = true, features = ["derive"] }
 figment = { workspace = true, features = ["env", "toml"] }
@@ -65,7 +66,6 @@ figment = { workspace = true, features = ["env", "toml"] }
 url.workspace = true
 rstest.workspace = true
 reqwest.workspace = true
-tempfile.workspace = true
 serde_json.workspace = true
 base-common-genesis.workspace = true
 figment = { workspace = true, features = ["test"] }

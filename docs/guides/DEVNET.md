@@ -9,11 +9,12 @@ owning doc for details. App developers can start from the
 | Docker devnet | Full-stack sequencing, derivation, batching, hardfork activation | `just devnet up-single` | Fresh genesis in `.devnet/`; Reth + Lighthouse L1 |
 | Docker HA devnet | Conductor leadership and failover | `just devnet up` | Same as above with three conductor-managed sequencers |
 | Anvil + local Nitro proving | Proof generation and proposer integration without Nitro hardware | `just devnet build-anvil-image`, then `just anvil-nitro-local up` | Fresh `.devnet/`; Base-Anvil L1; contracts bypass attestation |
+| Fresh devnet (`base dev --fresh`) | Contract development against Base's execution client from an empty genesis, like Anvil, with prefunded accounts and 200ms Denim blocks | `just devnet fresh` | Temporary datadir, or `--dir D` to keep it; no L1 |
 | Snapshot devnet (`base dev`) | Real Base Mainnet or Sepolia contracts and state, impersonating any account, 200ms Denim blocks | `just devnet snapshot download --dir D`, then `just devnet snapshot run --dir D` | One disposable snapshot datadir; no L1 |
 | Snapshot benchmark harness | Builder/follow-client experiments and snapshot performance work | `cargo run -p base-system-tests --bin base-devnet -- snapshot --builder-datadir B --client-datadir C` | Two writable copies of one snapshot; no L1 |
 
-Snapshot environments have no L1 derivation, bridges, safe/finalized heads, or proofs. Use a Docker
-devnet to test those.
+Fresh and snapshot environments have no L1 derivation, bridges, safe/finalized heads, or proofs. Use
+a Docker devnet to test those.
 
 ## Docker Devnet
 
@@ -43,6 +44,21 @@ just anvil-nitro-local down
 
 `up` and `down` start from and remove fresh data. Do not use Anvil timestamp-warp RPCs here. Details:
 [etc/docker/README.md](../../etc/docker/README.md#single-anvil-l1-local-nitro-proving).
+
+## Fresh Devnet
+
+Builds `base` natively with Cargo; Docker is not required.
+
+```sh
+just devnet fresh                                 # temporary datadir, deleted on exit
+just devnet fresh --dir "$HOME/data/fresh-devnet" # kept; rerun the same command to resume
+```
+
+Starts a new chain with every current upgrade active at genesis and RPC on `http://127.0.0.1:8545`
+and `ws://127.0.0.1:8546`. Startup prints the funded test accounts and their private keys (the
+`test test ... junk` mnemonic, 10,000 ETH each). The genesis comes from the offline devnet
+`op-deployer`, so predeploys such as `L1Block`, `GasPriceOracle`, and `BaseTime` and the usual
+preinstalls are present. Details: [bin/base/README.md](../../bin/base/README.md#fresh-chain---fresh).
 
 ## Snapshot Devnet
 
