@@ -12,7 +12,7 @@ use alloy_primitives::{Address, B256, Bytes, ChainId, Signature, TxKind, U256};
 use alloy_rpc_types_eth::{AccessList, TransactionInput, TransactionRequest};
 use base_common_consensus::{
     AccountChange, BaseTxEnvelope, BaseTypedTransaction, Call, EIP8130_TX_TYPE_ID,
-    Eip8130Constants, Eip8130Contracts, Eip8130PayerSerde, TxDeposit,
+    Eip8130Constants, Eip8130Contracts, Eip8130PayerSerde, Eip8130Signed, TxDeposit, TxEip8130,
 };
 use serde::{
     Deserialize, Deserializer, Serialize,
@@ -627,11 +627,49 @@ impl From<BaseTypedTransaction> for BaseTransactionRequest {
             BaseTypedTransaction::Eip2930(tx) => Into::<TransactionRequest>::into(tx).into(),
             BaseTypedTransaction::Eip1559(tx) => Into::<TransactionRequest>::into(tx).into(),
             BaseTypedTransaction::Eip7702(tx) => Into::<TransactionRequest>::into(tx).into(),
-            BaseTypedTransaction::Eip8130(_) => unimplemented!(
-                "BaseTypedTransaction::Eip8130 cannot be projected onto BaseTransactionRequest; AA transactions have no single sender/recipient/value"
-            ),
+            BaseTypedTransaction::Eip8130(tx) => tx.into(),
             BaseTypedTransaction::Deposit(tx) => tx.into(),
         }
+    }
+}
+
+impl From<TxEip8130> for BaseTransactionRequest {
+    fn from(tx: TxEip8130) -> Self {
+        let inner = TransactionRequest {
+            from: tx.sender,
+            nonce: Some(tx.nonce_sequence),
+            chain_id: Some(tx.chain_id),
+            gas: Some(tx.gas_limit),
+            max_fee_per_gas: Some(tx.max_fee_per_gas),
+            max_priority_fee_per_gas: Some(tx.max_priority_fee_per_gas),
+            transaction_type: Some(EIP8130_TX_TYPE_ID),
+            ..Default::default()
+        };
+        let eip8130 = Eip8130RequestFields {
+            nonce_key: Some(tx.nonce_key),
+            account_changes: Some(tx.account_changes),
+            calls: Some(tx.calls),
+            valid_after: Some(tx.valid_after),
+            valid_before: Some(tx.valid_before),
+            metadata: Some(tx.metadata),
+            sender: tx.sender,
+            sender_auth: None,
+            payer: tx.payer,
+            payer_auth: None,
+            sender_actor_id: None,
+        };
+        Self { inner, eip8130 }
+    }
+}
+
+impl From<Eip8130Signed> for BaseTransactionRequest {
+    fn from(signed: Eip8130Signed) -> Self {
+        let sender_auth = signed.sender_auth().clone();
+        let payer_auth = signed.payer_auth().clone();
+        let mut request: Self = signed.into_tx().into();
+        request.eip8130.sender_auth = Some(sender_auth);
+        request.eip8130.payer_auth = (!payer_auth.is_empty()).then_some(payer_auth);
+        request
     }
 }
 
@@ -642,9 +680,7 @@ impl From<BaseTxEnvelope> for BaseTransactionRequest {
             BaseTxEnvelope::Eip2930(tx) => tx.into(),
             BaseTxEnvelope::Eip1559(tx) => tx.into(),
             BaseTxEnvelope::Eip7702(tx) => tx.into(),
-            BaseTxEnvelope::Eip8130(_) => unimplemented!(
-                "BaseTxEnvelope::Eip8130 cannot be projected onto BaseTransactionRequest; AA transactions have no single sender/recipient/value"
-            ),
+            BaseTxEnvelope::Eip8130(tx) => tx.into(),
             BaseTxEnvelope::Deposit(tx) => tx.into(),
         }
     }
@@ -770,6 +806,7 @@ impl TransactionBuilder for BaseTransactionRequest {
 
 #[cfg(test)]
 mod tests {
+    use alloy_consensus::transaction::Recovered;
     use alloy_eips::{
         eip2930::AccessListItem,
         eip4844::{BlobTransactionSidecar, Bytes48},
@@ -990,5 +1027,89 @@ mod tests {
         let json = r#"{"from":"0x0000000000000000000000000000000000000001","nonce":"0x0","gas":"0x5208","maxFeePerGas":"0x1","maxPriorityFeePerGas":"0x1","type":"0x79"}"#;
         let req: BaseTransactionRequest = serde_json::from_str(json).unwrap();
         assert!(req.build_typed_tx().is_err(), "an 8130 request must not become a plain tx");
+    }
+
+    fn sample_signed_8130(payer: Option<Address>) -> Eip8130Signed {
+        let tx = TxEip8130 {
+            chain_id: 8453,
+            sender: Some(SENDER),
+            nonce_key: U256::from(7),
+            nonce_sequence: 3,
+            valid_after: 10,
+            valid_before: 20,
+            max_priority_fee_per_gas: 1,
+            max_fee_per_gas: 2,
+            gas_limit: 250_000,
+            account_changes: vec![AccountChange::Delegation(Delegation {
+                target: Address::repeat_byte(0x06),
+            })],
+            calls: vec![vec![Call {
+                to: Address::repeat_byte(0x07),
+                value: U256::from(8),
+                data: Bytes::from_static(&[0x09]),
+            }]],
+            metadata: Bytes::from_static(&[0x0a]),
+            payer,
+        };
+        let payer_auth = if payer.is_some() { Bytes::from_static(&[0xbb]) } else { Bytes::new() };
+        Eip8130Signed::new(tx, Bytes::from_static(&[0xaa]), payer_auth)
+    }
+
+    #[test]
+    fn eip8130_envelope_projects_onto_request() {
+        for payer in [None, Some(Address::repeat_byte(0xcc))] {
+            let signed = sample_signed_8130(payer);
+            let tx = signed.tx().clone();
+            let req: BaseTransactionRequest = BaseTxEnvelope::Eip8130(signed.clone()).into();
+
+            assert_eq!(req.as_ref().transaction_type, Some(EIP8130_TX_TYPE_ID));
+            assert_eq!(req.as_ref().from, Some(SENDER));
+            assert_eq!(req.as_ref().nonce, Some(tx.nonce_sequence));
+            assert_eq!(req.as_ref().chain_id, Some(tx.chain_id));
+            assert_eq!(req.as_ref().gas, Some(tx.gas_limit));
+            assert_eq!(req.as_ref().max_fee_per_gas, Some(tx.max_fee_per_gas));
+            assert_eq!(req.as_ref().max_priority_fee_per_gas, Some(tx.max_priority_fee_per_gas));
+            assert_eq!(req.as_ref().to, None);
+            assert_eq!(
+                req.as_eip8130(),
+                Some(&Eip8130RequestFields {
+                    nonce_key: Some(tx.nonce_key),
+                    account_changes: Some(tx.account_changes),
+                    calls: Some(tx.calls),
+                    valid_after: Some(tx.valid_after),
+                    valid_before: Some(tx.valid_before),
+                    metadata: Some(tx.metadata),
+                    sender: Some(SENDER),
+                    sender_auth: Some(signed.sender_auth().clone()),
+                    payer,
+                    payer_auth: payer.map(|_| signed.payer_auth().clone()),
+                    sender_actor_id: None,
+                })
+            );
+        }
+    }
+
+    #[test]
+    fn eip8130_typed_tx_projects_onto_request_without_auth() {
+        let signed = sample_signed_8130(None);
+        let req: BaseTransactionRequest = BaseTypedTransaction::Eip8130(signed.tx().clone()).into();
+        let fields = req.as_eip8130().expect("8130 request");
+
+        assert_eq!(fields.calls.as_ref(), Some(&signed.tx().calls));
+        assert_eq!(fields.sender_auth, None);
+        assert_eq!(fields.payer_auth, None);
+    }
+
+    #[test]
+    fn eip8130_rpc_transaction_projects_onto_request() {
+        let envelope = BaseTxEnvelope::Eip8130(sample_signed_8130(None));
+        let rpc_tx = Transaction::from_transaction(
+            Recovered::new_unchecked(envelope, SENDER),
+            Default::default(),
+        );
+        let req: BaseTransactionRequest = rpc_tx.into();
+
+        assert_eq!(req.as_ref().from, Some(SENDER));
+        assert_eq!(req.as_eip8130().and_then(|fields| fields.sender), Some(SENDER));
     }
 }

@@ -5,8 +5,6 @@ use alloy_consensus::{
     transaction::{TransactionInfo, TxHashRef},
 };
 use alloy_eips::eip2718::Encodable2718;
-#[cfg(feature = "evm")]
-use alloy_evm::{FromRecoveredTx, FromTxWithEncoded};
 #[cfg(feature = "alloy-compat")]
 use alloy_network::{AnyRpcTransaction, AnyTxEnvelope};
 use alloy_primitives::{B256, Bytes, Signature, TxHash};
@@ -14,8 +12,6 @@ use alloy_primitives::{B256, Bytes, Signature, TxHash};
 use alloy_rpc_types_eth::{ConversionError, Transaction as AlloyRpcTransaction};
 #[cfg(feature = "alloy-compat")]
 use alloy_serde::WithOtherFields;
-#[cfg(feature = "evm")]
-use revm::context::TxEnv;
 
 use crate::{
     BasePooledTransaction, TxDeposit,
@@ -212,45 +208,21 @@ impl TryFrom<BaseTxEnvelope> for TxEnvelope {
     }
 }
 
-#[cfg(feature = "evm")]
-impl FromRecoveredTx<BaseTxEnvelope> for TxEnv {
-    fn from_recovered_tx(tx: &BaseTxEnvelope, caller: alloy_primitives::Address) -> Self {
-        match tx {
-            BaseTxEnvelope::Legacy(tx) => Self::from_recovered_tx(tx.tx(), caller),
-            BaseTxEnvelope::Eip1559(tx) => Self::from_recovered_tx(tx.tx(), caller),
-            BaseTxEnvelope::Eip2930(tx) => Self::from_recovered_tx(tx.tx(), caller),
-            BaseTxEnvelope::Eip7702(tx) => Self::from_recovered_tx(tx.tx(), caller),
-            BaseTxEnvelope::Eip8130(_) => {
-                unimplemented!("EIP-8130 AA transactions cannot be converted to TxEnv yet")
-            }
-            BaseTxEnvelope::Deposit(tx) => Self::from_recovered_tx(tx.inner(), caller),
-        }
-    }
-}
-
-#[cfg(feature = "evm")]
-impl FromTxWithEncoded<BaseTxEnvelope> for TxEnv {
-    fn from_encoded_tx(
-        tx: &BaseTxEnvelope,
-        caller: alloy_primitives::Address,
-        _encoded: alloy_primitives::Bytes,
-    ) -> Self {
-        Self::from_recovered_tx(tx, caller)
-    }
-}
-
 #[cfg(feature = "alloy-compat")]
-impl From<BaseTxEnvelope> for alloy_rpc_types_eth::TransactionRequest {
-    fn from(value: BaseTxEnvelope) -> Self {
+impl TryFrom<BaseTxEnvelope> for alloy_rpc_types_eth::TransactionRequest {
+    type Error = ValueError<BaseTxEnvelope>;
+
+    fn try_from(value: BaseTxEnvelope) -> Result<Self, Self::Error> {
         match value {
-            BaseTxEnvelope::Eip2930(tx) => tx.into_parts().0.into(),
-            BaseTxEnvelope::Eip1559(tx) => tx.into_parts().0.into(),
-            BaseTxEnvelope::Eip7702(tx) => tx.into_parts().0.into(),
-            BaseTxEnvelope::Legacy(tx) => tx.into_parts().0.into(),
-            BaseTxEnvelope::Eip8130(_) => unimplemented!(
-                "BaseTxEnvelope::Eip8130 cannot be converted to an alloy TransactionRequest; AA transactions have no single sender/recipient/value to project into the legacy request shape"
-            ),
-            BaseTxEnvelope::Deposit(tx) => tx.into_inner().into(),
+            BaseTxEnvelope::Eip2930(tx) => Ok(tx.into_parts().0.into()),
+            BaseTxEnvelope::Eip1559(tx) => Ok(tx.into_parts().0.into()),
+            BaseTxEnvelope::Eip7702(tx) => Ok(tx.into_parts().0.into()),
+            BaseTxEnvelope::Legacy(tx) => Ok(tx.into_parts().0.into()),
+            tx @ BaseTxEnvelope::Eip8130(_) => Err(ValueError::new(
+                tx,
+                "EIP-8130 transactions have no single recipient, value, or input to project into an alloy TransactionRequest",
+            )),
+            BaseTxEnvelope::Deposit(tx) => Ok(tx.into_inner().into()),
         }
     }
 }
@@ -358,17 +330,22 @@ impl BaseTxEnvelope {
     /// Returns an error if the envelope's variant is incompatible with the ethereum pooled
     /// format: [`TxDeposit`] (not pooled at all) or [`Eip8130Signed`] (pooled, but has no
     /// ethereum-format representation since the alloy `PooledTransaction` enum has no
-    /// EIP-8130 variant). Rejecting [`Eip8130Signed`] here prevents
-    /// `From<BasePooledTransaction> for alloy_consensus::PooledTransaction` from panicking.
+    /// EIP-8130 variant).
     pub fn try_into_eth_pooled(
         self,
     ) -> Result<alloy_consensus::transaction::PooledTransaction, ValueError<Self>> {
         match self {
+            Self::Legacy(tx) => Ok(tx.into()),
+            Self::Eip2930(tx) => Ok(tx.into()),
+            Self::Eip1559(tx) => Ok(tx.into()),
+            Self::Eip7702(tx) => Ok(tx.into()),
             tx @ Self::Eip8130(_) => Err(ValueError::new(
                 tx,
                 "EIP-8130 transactions cannot be converted to ethereum PooledTransaction",
             )),
-            other => other.try_into_pooled().map(Into::into),
+            tx @ Self::Deposit(_) => {
+                Err(ValueError::new(tx, "Deposit transactions cannot be pooled"))
+            }
         }
     }
 
@@ -420,26 +397,6 @@ impl BaseTxEnvelope {
             TxEnvelope::Eip1559(tx) => Ok(tx.into()),
             tx @ TxEnvelope::Eip4844(_) => Err(tx),
             TxEnvelope::Eip7702(tx) => Ok(tx.into()),
-        }
-    }
-
-    /// Returns mutable access to the input bytes.
-    ///
-    /// Caution: modifying this will cause side-effects on the hash.
-    ///
-    /// Panics for [`Self::Eip8130`] since EIP-8130 transactions have no single
-    /// input field; their payload is a list of calls.
-    #[doc(hidden)]
-    pub fn input_mut(&mut self) -> &mut Bytes {
-        match self {
-            Self::Eip1559(tx) => &mut tx.tx_mut().input,
-            Self::Eip2930(tx) => &mut tx.tx_mut().input,
-            Self::Legacy(tx) => &mut tx.tx_mut().input,
-            Self::Eip7702(tx) => &mut tx.tx_mut().input,
-            Self::Eip8130(_) => {
-                unimplemented!("EIP-8130 transactions have no single input field")
-            }
-            Self::Deposit(tx) => &mut tx.inner_mut().input,
         }
     }
 
@@ -1119,5 +1076,38 @@ mod tests {
         assert_eq!(remaining, trailing);
         assert_eq!(decoded.tx_type(), OpTxType::Eip8130);
         assert_eq!(decoded.ty(), crate::EIP8130_TX_TYPE_ID);
+    }
+
+    #[test]
+    fn try_into_eth_pooled_rejects_variants_without_ethereum_pooled_form() {
+        let eip8130 = BaseTxEnvelope::Eip8130(sample_signed_8130(true));
+        assert_eq!(eip8130.clone().try_into_eth_pooled().unwrap_err().into_value(), eip8130);
+
+        let deposit = BaseTxEnvelope::Deposit(sample_deposit().seal_slow());
+        assert_eq!(deposit.clone().try_into_eth_pooled().unwrap_err().into_value(), deposit);
+
+        let eip1559 =
+            BaseTxEnvelope::Eip1559(TxEip1559::default().into_signed(Signature::test_signature()));
+        let pooled = eip1559.clone().try_into_eth_pooled().unwrap();
+        assert_eq!(*pooled.hash(), eip1559.tx_hash());
+    }
+
+    #[cfg(feature = "alloy-compat")]
+    #[test]
+    fn eip8130_has_no_alloy_transaction_request_form() {
+        let envelope = BaseTxEnvelope::Eip8130(sample_signed_8130(true));
+        let err = alloy_rpc_types_eth::TransactionRequest::try_from(envelope.clone()).unwrap_err();
+        assert_eq!(err.into_value(), envelope);
+
+        let typed = BaseTypedTransaction::from(envelope);
+        let err = alloy_rpc_types_eth::TransactionRequest::try_from(typed.clone()).unwrap_err();
+        assert_eq!(err.into_value(), typed);
+
+        let eip1559 = TxEip1559 { gas_limit: 21_000, ..Default::default() };
+        let request = alloy_rpc_types_eth::TransactionRequest::try_from(BaseTxEnvelope::Eip1559(
+            eip1559.into_signed(Signature::test_signature()),
+        ))
+        .unwrap();
+        assert_eq!(request.gas, Some(21_000));
     }
 }
