@@ -63,8 +63,6 @@ The engine actor is the hub of the service. All other actors that need to affect
 
 `GetPayloadRequest` carries attributes and a result channel; the processing task calls `engine_api::get_payload` and returns the sealed `BaseExecutionPayloadEnvelope`.
 
-`SealRequest` is similar to `GetPayloadRequest` but used in the sequencer path where the result will be gossiped and then inserted.
-
 `ProcessUnsafeL2BlockRequest` is fire-and-forget. It takes a `BaseExecutionPayloadEnvelope` received from the P2P network or from the sequencer's insert step, calls `engine_api::new_payload`, then calls `engine_api::forkchoice_updated` to make the block the new unsafe head.
 
 `ProcessDerivedAttributesRequest` takes the `AttributesWithParent` the derivation actor derived and enqueues a `ConsolidateTask`, which makes the matching unsafe block safe or builds the block from the attributes, and the resulting safe head is sent back to the derivation actor via the `QueuedEngineDerivationClient`.
