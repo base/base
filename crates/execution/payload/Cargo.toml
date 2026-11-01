@@ -74,6 +74,7 @@ reth-revm = { workspace = true, features = ["test-utils"] }
 base-observability-events = { workspace = true, features = ["test-utils"] }
 criterion.workspace = true
 tempfile.workspace = true
+k256 = { workspace = true, features = ["ecdsa"] }
 
 [[bench]]
 name = "resource_metering"
