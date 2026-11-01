@@ -106,9 +106,10 @@ runs:
         fi
 
     - name: Install Rust (nightly)
-      if: inputs.toolchain == 'nightly'
+      if: startsWith(inputs.toolchain, 'nightly')
       uses: dtolnay/rust-toolchain@2c76c034f9e32a5d6e2c104dc4df23a22476db04 # nightly
       with:
+        toolchain: ${{ inputs.toolchain }}
         components: ${{ inputs.components }}
 
     - name: Configure sccache

@@ -61,7 +61,7 @@ def render_report(args: argparse.Namespace) -> int:
     lines = [
         "## Summary",
         "",
-        "`cargo +nightly udeps --locked --workspace --all-features --all-targets --output json` reported unused dependencies.",
+        "`cargo udeps --locked --workspace --all-features --all-targets --output json` reported unused dependencies.",
         "",
         f"- Updated at: {datetime.now(timezone.utc).isoformat()}",
         f"- Workflow run: {args.server_url}/{args.repository}/actions/runs/{args.run_id}",
