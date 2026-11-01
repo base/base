@@ -62,8 +62,9 @@ impl Eip8130GasSchedule {
     // ── EIP-8130 table values ────────────────────────────────────────────────
     /// Base intrinsic cost for any AA transaction (`AA_BASE_COST`): the EIP-8430
     /// base (9,000) rounded up to 12,000 to cover the sender's cold
-    /// `policy_manager` SLOAD. Whether the sender's actor is policy-gated is state, so every
-    /// transaction pays the read that authorization performs for a gated actor.
+    /// `policy_manager` SLOAD. Whether the sender's actor is policy-gated is
+    /// state, so every transaction pays the read that authorization performs
+    /// for a gated actor.
     pub const AA_BASE_COST: u64 = 12_000;
     /// `nonce_key_cost` for nonce-free (`NONCE_KEY_MAX`) transactions: 13,000 gas
     /// for the enshrined ring-buffer replay state, composed of 2 cold SLOADs, 1

@@ -888,13 +888,12 @@ impl Eip8130Executor {
         let mut provider = JournalStorageProvider::new(internals, Address::ZERO);
 
         let outcome = StorageCtx::enter(&mut provider, |sctx| {
-            // 1. Intrinsic gas. It is a pure function of the transaction body
-            //    (auth gas is priced from the auth-blob shape, so a stub
-            //    signature of the right authenticator type estimates exactly),
-            //    so it equals what execution charges. Estimation neither
-            //    validates nor advances the nonce. None of this depends on the
-            //    applied account changes, so a `gas_limit` that cannot cover it
-            //    is rejected before any change is applied.
+            // 1. Intrinsic gas. It is a pure function of the signed transaction
+            //    and its sender (auth gas is priced from the auth-blob shape, so
+            //    a stub signature of the right authenticator type estimates
+            //    exactly), so it equals what execution charges. Estimation
+            //    neither validates nor advances the nonce. A `gas_limit` that
+            //    cannot cover it is rejected before any change is applied.
             let (intrinsic, execution_gas_available) =
                 Self::resolve_execution_gas(signed, sender, gas_limit)?;
 
@@ -3759,8 +3758,8 @@ mod tests {
         let mut payer_auth = Eip8130Constants::K1_AUTHENTICATOR.to_vec();
         payer_auth.extend_from_slice(&[0xab; 65]);
         let signed = Eip8130Signed::new(tx, eoa_sig(&key, B256::ZERO), Bytes::from(payer_auth));
-        let payer_auth_ceiling = IntrinsicGas::payer_auth_cost_of(&signed).unwrap();
-        assert!(payer_auth_ceiling > 0);
+        let payer_auth_cost = IntrinsicGas::payer_auth_cost_of(&signed).unwrap();
+        assert!(payer_auth_cost > 0);
 
         let mut sim = into_base_tx(&signed);
         sim.base.caller = sender;
@@ -3774,7 +3773,7 @@ mod tests {
         // the simulated `gas_limit`.
         assert!(
             result.tx_gas_used() <= cap,
-            "simulated gas {} (with payer authentication {payer_auth_ceiling}) exceeds the cap {cap}",
+            "simulated gas {} (with payer authentication {payer_auth_cost}) exceeds the cap {cap}",
             result.tx_gas_used()
         );
     }

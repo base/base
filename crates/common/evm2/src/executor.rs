@@ -272,7 +272,7 @@ impl<'a> BaseBlockExecutor<'a> {
         let signer = tx.signer();
 
         // Reject a transaction whose reserved gas exceeds the block's remaining gas, before
-        // executing it. For an EIP-8130 transaction the reservation adds the payer's worst-case
+        // executing it. For an EIP-8130 transaction the reservation adds the payer's
         // authentication gas (metered on top of the sender-signed gas limit), matching the
         // reference `reserved_block_gas`. Pre-Regolith deposits are exempt (matching the reference's
         // `is_regolith || !is_deposit` guard); every other transaction is checked.
