@@ -1,6 +1,6 @@
 # base-replay
 
-Builder transaction replay records: the `replay-record/v1` JSON schema shared by
+Builder transaction replay records: the `replay-record/v2` JSONL format shared by
 recorders and replayers. This crate contains no recorder or storage implementation.
 
 ## Wire contract
@@ -9,15 +9,19 @@ Each record represents one JSON-RPC call, not an entire JSON-RPC batch. Writers
 use `ReplayRecord::to_jsonl_line` for JSONL: one JSON object followed by a newline per call, in
 arrival order. `params` retains the original JSON value's bytes, including internal
 whitespace and number formatting; whitespace outside that value is not retained.
-The method rejects literal LF or CR in raw params with `ReplayRecordError::MultilineParams`;
-it never re-minifies them. Escaped `\n` and `\r` inside JSON strings are accepted
-and preserved verbatim. Generic Serde serialization does not enforce JSONL framing.
+The v2 envelope is `{"version":2,"record":"<logical record JSON>"}`. Escaping the
+complete record as a JSON string preserves literal LF/CR and escaped characters
+without compacting params. `ReplayRecord::from_jsonl_line` reverses this framing
+and also reads legacy unframed v1 lines. Generic Serde represents logical records,
+not the physical JSONL envelope.
 
-Readers must select this schema using the external format identifier
-`REPLAY_RECORD_FORMAT` (`replay-record/v1`), supplied by the enclosing transport or
-dataset metadata. It is not repeated in each record. Readers must reject unsupported
-format identifiers before deserializing records; field compatibility alone does not
-identify a format version.
+Writers advertise `REPLAY_RECORD_FORMAT` (`replay-record/v2`). Readers can check
+dataset metadata against `SUPPORTED_REPLAY_RECORD_FORMATS`, which includes
+`replay-record/v1` and `replay-record/v2`, then decode each physical line with
+`ReplayRecord::from_jsonl_line(&str) -> Result<ReplayRecord, ReplayRecordError>`.
+Each v2 line identifies its framing version; unsupported versions are rejected
+rather than guessed. Direct `serde_json::from_str::<ReplayRecord>` is not a JSONL
+decoder and must not be used for stored or exported lines.
 
 - `stream`: `builder_ingress`, or `mempool_ingress` (reserved for future use).
 - `received_at_ms`: Unix timestamp in milliseconds at recorder ingress.
