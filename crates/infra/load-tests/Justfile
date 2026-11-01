@@ -25,7 +25,7 @@ run network='devnet' *args:
     if [ -z "${FUNDER_KEY:-}" ] && [ "{{network}}" = "devnet" ]; then
         export FUNDER_KEY=0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d
     fi
-    cargo run -p base-load-tester-bin --bin base-load-tester -- crates/infra/load-tests/examples/{{network}}.yaml {{args}}
+    cargo run -p base-load-tester-bin --bin base-load-tester -- "${LOAD_TEST_CONFIG:-crates/infra/load-tests/examples/{{network}}.yaml}" {{args}}
 
 # Devnet deploys a local WETH/USDC harness and renders dynamic addresses.
 # Other networks use examples/real-token-<network>.yaml and expect contracts
