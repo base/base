@@ -137,7 +137,7 @@ mod tests {
         let records = std::fs::read_to_string(out.join("records.jsonl")).unwrap();
         let timestamps: Vec<_> = records
             .lines()
-            .map(|line| serde_json::from_str::<ReplayRecord>(line).unwrap().received_at_ms)
+            .map(|line| ReplayRecord::from_jsonl_line(line).unwrap().received_at_ms)
             .collect();
         assert_eq!(timestamps, expected);
         assert_eq!(manifest.record_count, u64::try_from(expected.len()).unwrap());
@@ -146,7 +146,7 @@ mod tests {
         assert_eq!(saved, manifest);
         let json = serde_json::to_value(&saved).unwrap();
         assert_eq!(json["format"], "replay-export/v1");
-        assert_eq!(json["record_format"], "replay-record/v1");
+        assert_eq!(json["record_format"], "replay-record/v2");
         assert_eq!(json["start_ms"], 52_000);
         assert_eq!(json["end_ms"], 182_000);
         assert!(writer.export(window(), &out).await.is_err());
