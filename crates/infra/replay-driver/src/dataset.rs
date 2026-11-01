@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use base_replay::{ReplayRecord, ReplayStream};
+use base_replay::{ReplayRecord, ReplayStream, SUPPORTED_REPLAY_RECORD_FORMATS};
 use base_replay_export::{ExportManifest, ExportWindow};
 use eyre::{Result, WrapErr, ensure};
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -24,7 +24,7 @@ impl ReplayDataset {
             serde_json::from_slice(&tokio::fs::read(directory.join("manifest.json")).await?)?;
         ensure!(manifest.format == "replay-export/v1", "unsupported export format");
         ensure!(
-            ReplayRecord::supports_format(&manifest.record_format),
+            SUPPORTED_REPLAY_RECORD_FORMATS.contains(&manifest.record_format.as_str()),
             "unsupported record format"
         );
         let mut lines =
@@ -42,7 +42,7 @@ impl ReplayDataset {
     pub fn new(manifest: ExportManifest, records: Vec<ReplayRecord>) -> Result<Self> {
         ensure!(manifest.format == "replay-export/v1", "unsupported export format");
         ensure!(
-            ReplayRecord::supports_format(&manifest.record_format),
+            SUPPORTED_REPLAY_RECORD_FORMATS.contains(&manifest.record_format.as_str()),
             "unsupported record format"
         );
         ensure!(manifest.record_count == u64::try_from(records.len())?, "record count mismatch");
@@ -104,11 +104,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn loads_real_export_without_changing_captured_parameters() -> eyre::Result<()> {
+    async fn loads_real_v2_export_without_changing_multiline_parameters() -> eyre::Result<()> {
         let dir = tempfile::tempdir()?;
         let store = ReplayStore::Local(dir.path().join("store"));
         let record: ReplayRecord = serde_json::from_str(
-            r#"{"stream":"builder_ingress","received_at_ms":52000,"method":"call","params":[ { "amount": 1.2300e+02, "n": -0 } ],"source":"test"}"#,
+            r#"{"stream":"builder_ingress","received_at_ms":52000,"method":"call","params":[
+ { "amount": 1.2300e+02, "n": -0 }
+],"source":"test"}"#,
         )?;
         let mut recorder = ReplayWriter::new(store.clone(), "base".into())?;
         recorder.push(&record).await?;
@@ -123,6 +125,24 @@ mod tests {
         assert_eq!(dataset.records[0].method, record.method);
         assert_eq!(dataset.records[0].received_at_ms, record.received_at_ms);
         assert_eq!(dataset.records[0].params.get().as_bytes(), record.params.get().as_bytes());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn loads_legacy_v1_line_with_original_parameters() -> eyre::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let mut manifest = manifest();
+        manifest.record_format = "replay-record/v1".into();
+        manifest.record_count = 1;
+        tokio::fs::write(dir.path().join("manifest.json"), serde_json::to_vec(&manifest)?).await?;
+        tokio::fs::write(dir.path().join("records.jsonl"),
+            "{\"stream\":\"builder_ingress\",\"received_at_ms\":52000,\"method\":\"call\",\"params\":[1.2300],\"source\":\"test\"}\n"
+        ).await?;
+
+        let dataset = ReplayDataset::load(dir.path()).await?;
+
+        assert_eq!(dataset.records.len(), 1);
+        assert_eq!(dataset.records[0].params.get(), "[1.2300]");
         Ok(())
     }
 
