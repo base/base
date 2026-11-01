@@ -1396,10 +1396,9 @@ where
             }
 
             let tx_encoded = tx.encoded_2718().into_owned();
-            let tx = tx.clone_into_consensus();
 
             // A sequencer's block should never contain blob or deposit transactions from the pool.
-            if tx.is_eip4844() || tx.is_deposit() {
+            if tx.is_eip4844() || tx.consensus_ref().is_deposit() {
                 if has_validity_predicates {
                     self.emit_validity_rejection(
                         tx_hash,
@@ -1409,7 +1408,7 @@ where
                         true,
                     );
                 }
-                Self::skip_current(&mut best_txs, tx.signer(), tx.nonce(), replay_independent);
+                Self::skip_current(&mut best_txs, tx.sender(), tx.nonce(), replay_independent);
                 continue;
             }
 
@@ -1422,7 +1421,7 @@ where
             let mut pending_resource_usage = None;
             let mut executed_decision = None;
             let gas_output = match builder.execute_transaction_with_commit_condition(
-                WithEncoded::new(tx_encoded, tx.clone()),
+                WithEncoded::new(tx_encoded, tx.clone_into_consensus()),
                 |result| {
                     let result_and_state = result.result();
                     let decision = resource_metering.check_executed_usage(
@@ -1471,7 +1470,7 @@ where
                                 .is_some_and(|decision| decision.is_permanent()),
                         );
                     }
-                    Self::skip_current(&mut best_txs, tx.signer(), tx.nonce(), replay_independent);
+                    Self::skip_current(&mut best_txs, tx.sender(), tx.nonce(), replay_independent);
                     continue;
                 }
                 Err(BlockExecutionError::Validation(BlockValidationError::InvalidTx {
@@ -1503,7 +1502,7 @@ where
                         }
                         Self::skip_current(
                             &mut best_txs,
-                            tx.signer(),
+                            tx.sender(),
                             tx.nonce(),
                             replay_independent,
                         );
@@ -1605,6 +1604,7 @@ where
             }
 
             let miner_fee = tx
+                .consensus_ref()
                 .effective_tip_per_gas(base_fee)
                 .expect("fee is always valid; execution succeeded");
             let gas_used = gas_output.tx_gas_used();
@@ -1697,13 +1697,13 @@ mod tests {
         time::{Duration, Instant},
     };
 
-    use alloy_consensus::{Header, SignableTransaction, Transaction, TxEip1559};
+    use alloy_consensus::{Header, SignableTransaction, Transaction, TxEip1559, TxReceipt};
     use alloy_eips::eip2718::Encodable2718;
     use alloy_evm::Evm;
     use alloy_primitives::{Address, B256, Signature, StorageKey, TxHash, TxKind, U256};
     use base_bundles::{MeterBundleResponse, OpcodeGas, TransactionResult};
     use base_common_chains::BaseUpgrade;
-    use base_common_consensus::{BasePrimitives, BaseTxEnvelope, Predeploys};
+    use base_common_consensus::{BasePrimitives, BaseTxEnvelope, DepositReceiptExt, Predeploys};
     use base_common_evm::BaseTime;
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
     use base_execution_evm::BaseEvmConfig;
@@ -1714,13 +1714,13 @@ mod tests {
     use reth_basic_payload_builder::{BuildOutcomeKind, PayloadConfig};
     use reth_chainspec::ChainSpec;
     use reth_ethereum_forks::ForkCondition;
-    use reth_evm::execute::BlockBuilder;
+    use reth_evm::execute::{BlockBuilder, BlockExecutor};
     use reth_payload_builder::PayloadId;
     use reth_payload_util::{NoopPayloadTransactions, PayloadTransactions};
-    use reth_primitives_traits::{Account, SealedHeader, SignedTransaction, WithEncoded};
+    use reth_primitives_traits::{Account, Recovered, SealedHeader, SignedTransaction, WithEncoded};
     use reth_provider::noop::NoopProvider;
     use reth_revm::{database::StateProviderDatabase, db::State, test_utils::StateProviderTest};
-    use reth_storage_api::StateProvider;
+    use reth_storage_api::{AccountReader, StateProvider};
     use reth_tasks::CancelOnDrop;
     use reth_transaction_pool::{
         PoolTransaction, TransactionOrigin, ValidPoolTransaction, identifier::TransactionId,
@@ -2173,6 +2173,157 @@ mod tests {
             self.transactions.discard_parked(transaction_hash)
         }
     }
+
+    /// Keeps sequential fixture nonces in one funded lane without signing unrelated test senders.
+    fn fixture_transaction(nonce: u64) -> BasePooledTransaction {
+        let tx = pool_transaction(nonce);
+        let length = tx.encoded_2718().len();
+        BasePooledTransaction::new(
+            Recovered::new_unchecked(tx.into_consensus().into_inner(), pool_transaction(0).sender()), length,
+        )
+    }
+
+    /// Phase-zero tip revenue follows the committed phase even when the same phase reverts.
+    #[test]
+    fn native_phase_zero_revenue_fixture() {
+        for revert in [false, true] {
+            let tx = base_common_consensus::TxEip8130 {
+                chain_id: 8_453, gas_limit: 250_000,
+                max_fee_per_gas: 2_000_000_000, max_priority_fee_per_gas: 1,
+                calls: vec![vec![base_common_consensus::Call {
+                    to: Predeploys::SEQUENCER_FEE_VAULT, value: U256::from(123), data: Default::default(),
+                }]],
+                ..Default::default()
+            };
+            let envelope = BaseTxEnvelope::Eip8130(base_common_consensus::Eip8130Signed::new(
+                tx, Signature::test_signature().as_bytes().to_vec().into(), Default::default(),
+            ));
+            let len = envelope.encode_2718_len();
+            let tx = BasePooledTransaction::new(envelope.try_into_recovered().expect("EOA signature recovers"), len);
+            let sender = tx.sender();
+            let chain_spec = Arc::new(BaseChainSpecBuilder::base_mainnet()
+                .with_fork(BaseUpgrade::Denim, ForkCondition::Timestamp(DENIM_TIMESTAMP))
+                .with_fork(BaseUpgrade::Everest, ForkCondition::Timestamp(DENIM_TIMESTAMP))
+                .build());
+            let mut ctx = pool_payload_context(DENIM_TIMESTAMP);
+            ctx.evm_config = BaseEvmConfig::base(Arc::clone(&chain_spec));
+            ctx.chain_spec = chain_spec;
+            let mut provider = funded_provider(&[sender]);
+            if revert {
+                provider.insert_account(Predeploys::SEQUENCER_FEE_VAULT, Account::default(),
+                    Some(alloy_primitives::Bytes::from_static(&[0x60, 0, 0x60, 0, 0xfd])), HashMap::default());
+            }
+            let mut state = State::builder().with_database(StateProviderDatabase::new((&provider).into_evm_state_provider())).with_bundle_update().build();
+            let mut builder = ctx.block_builder(&mut state).expect("native block builder");
+            let mut info = ExecutionInfo::default();
+            ctx.execute_best_transactions(&mut info, &mut builder, TestParkableTransactions::new(vec![tx]), None).expect("phase-zero execution succeeds");
+            let receipts = builder.executor().receipts();
+            assert_eq!(receipts.len(), 1, "a phase revert still produces one included native receipt");
+            assert_eq!(receipts[0].status(), !revert, "receipt status preserves phase-zero success or revert");
+            assert_eq!(receipts[0].as_eip8130_receipt().unwrap().phase_committed(0), !revert, "only successful phase zero is committed");
+            assert_eq!(info.cumulative_gas_used, if revert { 30_366 } else { 55_360 }, "native gas matches the unchanged-production golden fixture");
+            assert_eq!(info.inclusion.standard.txs, 1, "native candidate is included exactly once");
+            assert_eq!(info.inclusion.standard.coinbase_tips, U256::from(if revert { 0 } else { 123 }), "tip revenue requires a committed phase zero");
+            assert_eq!(info.total_fees, U256::from(info.cumulative_gas_used), "priority revenue remains separate from phase-zero coinbase revenue");
+            println!("phase-zero-golden revert={revert} receipts={receipts:?} fees={} inclusion={:?}", info.total_fees, info.inclusion);
+        }
+    }
+
+    /// Gas admission must win over the sequencer-only rejection when both reject a deposit.
+    #[test]
+    fn native_limit_rejection_precedes_deposit_rejection() {
+        let capture = TransactionEventCapture::install();
+        let sender = Address::repeat_byte(0xa7);
+        let transactions = [100_001, 99_999].map(|gas_limit| {
+            let envelope = BaseTxEnvelope::from(base_common_consensus::TxDeposit {
+                from: sender, to: TxKind::Call(Address::repeat_byte(0xa8)), gas_limit,
+                ..Default::default()
+            });
+            let length = envelope.encode_2718_len();
+            BasePooledTransaction::new(envelope.try_into_recovered().expect("deposit has an explicit sender"), length)
+                .with_validity_predicates(vec![ValidityPredicate::BlockNumber { op: ValidityOperator::Equal, value: U256::ONE }])
+        });
+        let hashes = transactions.each_ref().map(|tx| *tx.hash());
+        let ctx = pool_payload_context(DENIM_TIMESTAMP);
+        ctx.builder_config.gas_limit_config.set_gas_limit(100_000);
+        let BuildOutcomeKind::Freeze(payload) = build_parkable_pool_payload(
+            ctx, TestParkableTransactions::new(Vec::from(transactions)), &[sender],
+        ) else { panic!("Denim must freeze"); };
+        assert_eq!(payload.block().body().transactions.len(), 0, "neither pool deposit can execute");
+        assert_eq!(payload.fees(), U256::ZERO, "early rejects pay no fees");
+        let events = capture.events().into_iter().filter(|event| event.tx_hash.is_some_and(|hash| hashes.contains(&hash)))
+            .map(|event| (event.tx_hash.unwrap(), event.data["rejection_reason"].clone())).collect::<Vec<_>>();
+        assert_eq!(events, vec![(hashes[0], "block_limits_exceeded".into()), (hashes[1], "sequencer_transaction".into())], "gas limits remain checked before the deposit guard");
+    }
+
+    /// Computes a real Merkle-Patricia root from the fixture prestate plus executed bundle changes.
+    fn fixture_state_root(payload: &crate::BaseBuiltPayload<BasePrimitives>, funded: &[Address]) -> B256 {
+        let provider = funded_provider(funded);
+        let mut accounts = HashMap::new();
+        for address in funded.iter().copied().chain([Predeploys::BASE_TIME]) {
+            let mut storage = HashMap::new();
+            if address == Predeploys::BASE_TIME {
+                storage.insert(B256::from(BaseTime::ADMIN_SLOT.to_be_bytes::<32>()), U256::from_be_slice(Predeploys::PROXY_ADMIN.as_slice()));
+            }
+            accounts.insert(address, (provider.basic_account(&address).unwrap().unwrap(), storage));
+        }
+        let executed = payload.executed_block.as_ref().expect("fixture retains its execution output");
+        for (address, changed) in &executed.execution_output.state.state {
+            let Some(info) = &changed.info else { accounts.remove(address); continue; };
+            let entry = accounts.entry(*address).or_default();
+            entry.0 = Account::from(info.clone());
+            for (slot, value) in &changed.storage {
+                entry.1.insert(B256::from(slot.to_be_bytes::<32>()), value.present_value);
+            }
+        }
+        reth_trie_common::root::state_root_unhashed(accounts.into_iter().map(|(address, (account, storage))| {
+            let root = reth_trie_common::root::storage_root_unhashed(storage.into_iter().filter(|(_, value)| !value.is_zero()));
+            (address, account.into_trie_account(root))
+        }))
+    }
+
+    /// Freezes the observable selection, rejection, receipt, and fee contract on both fork paths.
+    #[test]
+    fn native_selection_behavior_fixture() {
+        for timestamp in [DENIM_TIMESTAMP - 1, DENIM_TIMESTAMP] {
+            let first = fixture_transaction(0);
+            let gap = fixture_transaction(2);
+            let second = fixture_transaction(1);
+            let last = fixture_transaction(3);
+            let hashes = vec![*first.hash(), *second.hash()];
+            let funded = [first.sender()];
+            let invalid = Arc::new(Mutex::new(Vec::new()));
+            let expected_invalid = vec![(gap.sender(), 2), (last.sender(), 3)];
+            let mut ctx = pool_payload_context(timestamp);
+            ctx.builder_config.gas_limit_config.set_gas_limit(121_000);
+            ctx.config.attributes.gas_limit = Some(121_000);
+            let outcome = build_pool_payload(ctx, TestParkableTransactions::recording(
+                vec![first, gap, second, last], Arc::clone(&invalid),
+            ));
+            let payload = match outcome {
+                BuildOutcomeKind::Freeze(payload) | BuildOutcomeKind::Better { payload } => payload,
+                _ => panic!("both fork paths must produce a payload"),
+            };
+            assert_eq!(payload.block().body().transactions.iter().map(|tx| *tx.tx_hash()).collect::<Vec<_>>(), hashes, "nonce-gap and over-budget candidates must not change included order or set");
+            assert_eq!(*invalid.lock().unwrap(), expected_invalid, "EVM nonce rejection must precede final gas-budget rejection");
+            assert_eq!(payload.fees(), U256::from(42_000), "two 21000-gas transfers must pay one wei per gas priority fees");
+            assert_eq!(payload.block().gas_used, 42_000, "rejected candidates must consume no block gas");
+            let executed = payload.executed_block.as_ref().expect("execution output is retained");
+            assert_eq!(executed.execution_output.result.receipts.len(), 2, "only committed candidates produce receipts");
+            assert_eq!(executed.execution_output.result.receipts.iter().map(|receipt| (receipt.status(), receipt.cumulative_gas_used(), receipt.logs().len())).collect::<Vec<_>>(), vec![(true, 21_000, 0), (true, 42_000, 0)], "exact receipt outcomes, cumulative gas, and logs match baseline");
+            let expected_root = if timestamp == 0 {
+                "5e35301800c2f497ec7903c50522e01a6fca82dbc0bc56c9a30754ae529839a0"
+            } else {
+                "708dd4d24a0ebd3d34c2b1066b14ae450bb4813cc943d50b0a6f56ec2b9ccae9"
+            };
+            assert_eq!(fixture_state_root(&payload, &funded), expected_root.parse::<B256>().unwrap(), "actual poststate MPT root matches the unchanged-production golden fixture");
+            assert_eq!(payload.block().transactions_root, "c93ab923a269c3d8110a3778c86b905de40fa9b27d035f7333a32ad6cd241223".parse::<B256>().unwrap(), "transaction trie preserves order and envelopes");
+            assert_eq!(payload.block().receipts_root, "75308898d571eafb5cd8cde8278bf5b3d13c5f6ec074926de3bb895b519264e1".parse::<B256>().unwrap(), "receipt trie matches the unchanged-production golden fixture");
+            println!("native-state-root timestamp={timestamp} root={}", fixture_state_root(&payload, &funded));
+            println!("native-golden timestamp={timestamp} tx_root={} receipt_root={} receipts={:?} hashed_state={:?}", payload.block().transactions_root, payload.block().receipts_root, executed.execution_output.result.receipts, executed.hashed_state);
+        }
+    }
+
 
     #[test]
     fn pre_denim_ignores_finalization_requests() {
