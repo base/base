@@ -60,8 +60,12 @@ impl Eip8130GasSchedule {
     pub const TX_TOTAL_COST_FLOOR_PER_TOKEN: u64 = 10;
 
     // ── EIP-8130 table values ────────────────────────────────────────────────
-    /// Base intrinsic cost for any AA transaction (`AA_BASE_COST`).
-    pub const AA_BASE_COST: u64 = Eip8130Constants::EIP8130_BASE_COST;
+    /// Base intrinsic cost for any AA transaction (`AA_BASE_COST`), equal to
+    /// EIP-2780's `TX_BASE_COST`. It also covers the sender's cold
+    /// `policy_manager` SLOAD: whether the sender's actor is policy-gated is
+    /// state, so every transaction pays the read that authorization performs
+    /// for a gated actor.
+    pub const AA_BASE_COST: u64 = 12_000;
     /// `nonce_key_cost` for nonce-free (`NONCE_KEY_MAX`) transactions: 13,000 gas
     /// for the enshrined ring-buffer replay state, composed of 2 cold SLOADs, 1
     /// warm SLOAD, and 3 warm SSTORE resets. The ring pointer's SLOAD/SSTORE are
@@ -132,26 +136,16 @@ impl Eip8130GasSchedule {
     /// this write, and a config change may be the first state established for an
     /// otherwise untouched EOA.
     pub const ACCOUNT_STATE_SET_COST: u64 = Self::COLD_SLOAD + Self::SSTORE_SET;
-    /// Conservative cost for the **first** access to the packed account-state
-    /// slot in a transaction (a create bootstrap or the first config change). The
-    /// same access also supplies the lock status and both sequence channels, so
-    /// those checks must not be charged as extra reads.
+    /// Conservative cost of a config change's access to the packed
+    /// account-state slot. The same access also supplies the lock status and
+    /// both sequence channels, so those checks must not be charged as extra
+    /// reads.
     ///
-    /// A previously initialized account would pay the lower reset cost, but the
-    /// transaction body cannot prove the pre-state. Pricing the possible
-    /// zero-to-nonzero transition prevents first-change undercharging.
+    /// A previously initialized account, or a slot an earlier entry in the same
+    /// transaction already wrote, costs less, but every config change pays the
+    /// possible cold zero-to-nonzero transition so the charge never depends on
+    /// state or on entry order.
     pub const CONFIG_CHANGE_STATE_COST: u64 = Self::ACCOUNT_STATE_SET_COST;
-    /// Cost for a **subsequent** config change to the same account's packed
-    /// account-state slot within one transaction. A create or an earlier config
-    /// change already made this slot warm *and modified it earlier in the same
-    /// transaction*, so the further sequence bump is a warm SLOAD plus a **dirty**
-    /// `SSTORE` (EIP-2200 `original != current`) — not another cold zero-to-nonzero
-    /// write, nor even a reset (which applies only to the first, `original ==
-    /// current`, modification). All config changes in a transaction target the
-    /// same (`sender`) account, so every change after the first is priced here.
-    /// This is body-derivable (the change's position is known), so estimation and
-    /// execution price it identically.
-    pub const CONFIG_CHANGE_STATE_COST_SUBSEQUENT: u64 = Self::WARM_SLOAD + Self::SSTORE_DIRTY;
     /// Marginal cost of an `IncrementLocalEpoch` op. The op rewrites the packed
     /// account-state slot (`local_epoch ‖ local_sequence`) that the config
     /// change's own channel-sequence advance already touched and modified earlier
@@ -159,7 +153,7 @@ impl Eip8130GasSchedule {
     /// (EIP-2200 `original != current`) with no extra SLOAD — the ~100-gas
     /// already-warm write the contract notes for the trailing increment. In the
     /// rarer unsequenced-and-initialized case the advance performs no write, but
-    /// the first change's `CONFIG_CHANGE_STATE_COST` conservatively charged a full
+    /// the change's `CONFIG_CHANGE_STATE_COST` conservatively charged a full
     /// zero-to-nonzero set for that slot, so adding this marginal cost still never
     /// undercharges.
     pub const INCREMENT_LOCAL_EPOCH_COST: u64 = Self::SSTORE_DIRTY;
@@ -167,20 +161,9 @@ impl Eip8130GasSchedule {
     ///
     /// Policy slots are cleared on every revoke. Charging all three as resets is
     /// conservative for ungated actors (whose policy slots are already zero) and
-    /// exact for a policy-bearing actor.
+    /// for an inline secp256k1 self key (whose `actor_config` slot is empty),
+    /// and exact for a policy-bearing actor.
     pub const ACTOR_REVOKE_COST: u64 = Self::ACTOR_SLOT_RESET_COST * 3;
-    /// Gas over-charged by [`Self::ACTOR_REVOKE_COST`] for a single revoke slot
-    /// that was actually an empty zero-to-zero touch rather than an `SSTORE` reset:
-    /// the reset-vs-cold-noop delta ([`Self::ACTOR_SLOT_RESET_COST`] −
-    /// [`Self::COLD_SLOT_NOOP_COST`]). A revoke of the account's **inline** secp256k1
-    /// self key has an empty `actor_config` slot always, and empty policy slots when
-    /// the self was ungated: 3 empty slots ungated, 1 when policy-gated (its two
-    /// policy slots are real resets). Execution resolves how many of a revoke's
-    /// three slots were empty and the intrinsic layer subtracts this discount per
-    /// such slot; a non-resolved (zero) count leaves the conservative reset price in
-    /// place, so this can only reduce, never under-price, the charge.
-    pub const COLD_SLOT_RESET_DISCOUNT: u64 =
-        Self::ACTOR_SLOT_RESET_COST - Self::COLD_SLOT_NOOP_COST;
 
     // ── Enshrined authenticator execution gas (chain policy) ─────────────────
     /// secp256k1 (`K1_AUTHENTICATOR` sentinel / EOA path) execution gas — the

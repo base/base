@@ -22,8 +22,8 @@ use base_common_genesis::DaFootprintGasScalarUpdate;
 use base_common_precompiles::NonceManagerStorage;
 use base_execution_eip8130::{
     AccountConfigurationStorage, AccountState, ApplyError, AuthorizeError, FeeCheck, IntrinsicGas,
-    IntrinsicGasError, IntrinsicGasInput, LockStatus, NonceError, NonceMode, NonceValidator,
-    TransactionAuthorizer, TxAuthError,
+    IntrinsicGasError, LockStatus, NonceError, NonceMode, NonceValidator, TransactionAuthorizer,
+    TxAuthError,
 };
 use base_precompile_storage::{
     BasePrecompileError, PrecompileStorageProvider, StorageCtx, validate_loaded_code_presence,
@@ -1193,20 +1193,19 @@ where
             .map_err(Self::map_nonce_error)
         })?;
 
-        let (nonce_key_first_use, sender_nonce) =
-            self.eip8130_nonce_state(&*state, local_chain_id, now, signed, sender, protocol_nonce)?;
-        let encoded = self.eip8130_encoded(signed);
-        // Admission uses the same safe ceiling as `eth_estimateGas`, so a tx whose
-        // `gas_limit` was set from the estimate is never rejected here and can
-        // never be admitted only to OOG at inclusion. The non-monotonic,
-        // state-dependent costs are pinned to their worst case: the sender's policy
-        // gate charged (from Zenith; there are none before) and zero revoke discount.
-        // Execution reprices them precisely.
-        let intrinsic = IntrinsicGas::compute(
+        let sender_nonce = self.eip8130_sender_nonce(
+            &*state,
+            local_chain_id,
+            now,
             signed,
-            &IntrinsicGasInput::worst_case(sender, nonce_key_first_use, keystore),
-        )
-        .map_err(Self::map_intrinsic_gas_error)?;
+            sender,
+            protocol_nonce,
+        )?;
+        let encoded = self.eip8130_encoded(signed);
+        // Intrinsic gas is a pure function of the transaction, so admission,
+        // `eth_estimateGas` and execution all charge the same amount.
+        let intrinsic =
+            IntrinsicGas::compute(signed, sender).map_err(Self::map_intrinsic_gas_error)?;
         // EIP-7623 calldata floor: a `gas_limit` below the floor branch is
         // invalid. Sender-intrinsic gas is checked too, matching execution,
         // since the floor excludes the state-dependent costs.
@@ -1219,7 +1218,7 @@ where
         // metered on top of it is bounded by the per-transaction gas cap,
         // matching execution.
         if self.chain_spec().is_azul_active_at_timestamp(now)
-            && FeeCheck::max_chargeable_gas(signed.tx().gas_limit, intrinsic.payer_reserve())
+            && FeeCheck::max_chargeable_gas(signed.tx().gas_limit, intrinsic.payer_auth_cost)
                 > MAX_TX_GAS_LIMIT_OSAKA
         {
             return Err(InvalidTransactionError::GasLimitTooHigh.into());
@@ -1232,7 +1231,7 @@ where
         FeeCheck::validate_balance(
             payer_account.balance,
             signed.tx().gas_limit,
-            intrinsic.payer_reserve(),
+            intrinsic.payer_auth_cost,
             signed.tx().max_fee_per_gas,
         )
         .map_err(|_| {
@@ -1241,7 +1240,7 @@ where
                     got: payer_account.balance,
                     expected: FeeCheck::max_fee_charge(
                         signed.tx().gas_limit,
-                        intrinsic.payer_reserve(),
+                        intrinsic.payer_auth_cost,
                         signed.tx().max_fee_per_gas,
                     ),
                 }
@@ -1348,7 +1347,7 @@ where
 
         let gas_charge = FeeCheck::max_fee_charge(
             signed.tx().gas_limit,
-            intrinsic.payer_reserve(),
+            intrinsic.payer_auth_cost,
             signed.tx().max_fee_per_gas,
         );
         let additional_fee = if self.requires_l1_data_gas_fee() {
@@ -1358,7 +1357,7 @@ where
                 &encoded,
                 U256::from(FeeCheck::max_chargeable_gas(
                     signed.tx().gas_limit,
-                    intrinsic.payer_reserve(),
+                    intrinsic.payer_auth_cost,
                 )),
                 spec_id,
             )
@@ -1598,7 +1597,7 @@ where
         Ok(())
     }
 
-    fn eip8130_nonce_state(
+    fn eip8130_sender_nonce(
         &self,
         state: &dyn StateProvider,
         local_chain_id: u64,
@@ -1606,19 +1605,15 @@ where
         signed: &Eip8130Signed,
         sender: Address,
         protocol_nonce: u64,
-    ) -> Result<(bool, u64), InvalidPoolTransactionError> {
+    ) -> Result<u64, InvalidPoolTransactionError> {
         let nonce_key = signed.tx().nonce_key;
-        if nonce_key == Eip8130Constants::NONCE_KEY_MAX {
-            return Ok((false, protocol_nonce));
-        }
-        if nonce_key.is_zero() {
-            return Ok((protocol_nonce == 0, protocol_nonce));
+        if nonce_key == Eip8130Constants::NONCE_KEY_MAX || nonce_key.is_zero() {
+            return Ok(protocol_nonce);
         }
         let mut storage = StateProviderPrecompileStorage::new(state, local_chain_id, now);
         StorageCtx::enter(&mut storage, |ctx| {
             NonceManagerStorage::new(ctx)
                 .get_nonce(sender, nonce_key)
-                .map(|nonce| (nonce == 0, nonce))
                 .map_err(|error| Self::precompile_storage_error(error, "nonce manager read failed"))
         })
     }
@@ -1932,7 +1927,7 @@ where
     ) -> Result<(), InvalidPoolTransactionError> {
         let tx = signed.tx();
         let payer_auth =
-            IntrinsicGas::max_payer_auth_cost(signed).map_err(Self::map_intrinsic_gas_error)?;
+            IntrinsicGas::payer_auth_cost_of(signed).map_err(Self::map_intrinsic_gas_error)?;
         let reserved_gas = FeeCheck::max_chargeable_gas(tx.gas_limit, payer_auth);
 
         let block_gas_limit = self.inner.block_gas_limit();
@@ -3630,9 +3625,7 @@ mod tests {
         let chain_spec = everest_chain_spec();
         let signer = PrivateKeySigner::random();
         let sender = signer.address();
-        // Headroom above the worst-case intrinsic: admission pins the sender policy
-        // gate on, which the tight 50k fixture limit no longer covers.
-        let tx = TxEip8130 { gas_limit: 100_000, ..minimal_valid_eoa_tx() };
+        let tx = minimal_valid_eoa_tx();
         let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
         let signed =
             Eip8130Signed::new(tx, Bytes::from(signature.as_bytes().to_vec()), Bytes::new());

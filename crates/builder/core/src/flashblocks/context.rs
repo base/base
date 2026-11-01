@@ -988,12 +988,10 @@ impl BasePayloadBuilderCtx {
             let tx_received_at_ms = tx.received_at();
 
             // EIP-8130 meters payer authentication gas on top of the declared gas limit, so it must
-            // be reserved against the block gas budget in addition to `gas_limit`. Reserve a
-            // conservative upper bound (the payer auth bytes at the EIP-7623 floor rate) derived
-            // from the payer auth blob (`0` for non-8130 / self-pay); see
-            // `IntrinsicGas::max_payer_auth_cost`.
+            // be reserved against the block gas budget in addition to `gas_limit` (`0` for
+            // non-8130 / self-pay); see `IntrinsicGas::payer_auth_cost_of`.
             let tx_payer_auth = match tx.as_eip8130() {
-                Some(signed) => match IntrinsicGas::max_payer_auth_cost(signed) {
+                Some(signed) => match IntrinsicGas::payer_auth_cost_of(signed) {
                     Ok(payer_auth) => payer_auth,
                     Err(err) => {
                         trace!(

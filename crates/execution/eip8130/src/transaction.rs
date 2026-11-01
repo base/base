@@ -31,10 +31,6 @@ pub struct AppliedTransaction {
     /// `AccountConfiguration` *storage* transitions are already written to
     /// `storage` by the time this is returned.
     pub applied: AppliedAccountChanges,
-    /// Number of empty zero-to-zero revoke slots resolved during application
-    /// (see [`crate::IntrinsicGasInput::revoke_discount_slots`]). Threaded into
-    /// intrinsic gas to discount the over-conservative three-reset revoke price.
-    pub revoke_discount_slots: u32,
 }
 
 /// Authorizes and applies a signed EIP-8130 transaction against a mutable
@@ -108,7 +104,6 @@ impl TransactionAuthorizer {
         //       one delegation) are enforced inline.
         let mut applied = AppliedAccountChanges::default();
         let mut config_changes = Vec::new();
-        let mut revoke_discount_slots = 0u32;
         for (index, change) in signed.tx().account_changes.iter().enumerate() {
             match change {
                 AccountChange::Create(entry) => {
@@ -156,17 +151,15 @@ impl TransactionAuthorizer {
                     // sequenced and multichain batches retain such a grant and
                     // install it inert. Nothing reverts on expiry. `now` (block
                     // seconds) drives that skip.
-                    revoke_discount_slots = revoke_discount_slots.saturating_add(
-                        AccountChangeApplier::apply_config_change_with_account_state(
-                            storage,
-                            sender_account,
-                            &cc.changes,
-                            cc.channel,
-                            cc.sequence,
-                            &mut state,
-                            now,
-                        )?,
-                    );
+                    AccountChangeApplier::apply_config_change_with_account_state(
+                        storage,
+                        sender_account,
+                        &cc.changes,
+                        cc.channel,
+                        cc.sequence,
+                        &mut state,
+                        now,
+                    )?;
                     storage
                         .set_account_state(sender_account, state)
                         .map_err(ApplyError::Storage)?;
@@ -192,7 +185,7 @@ impl TransactionAuthorizer {
             Self::authorize_delegation(storage, now, &actors.sender)?;
         }
 
-        Ok(AppliedTransaction { actors, config_changes, applied, revoke_discount_slots })
+        Ok(AppliedTransaction { actors, config_changes, applied })
     }
 
     /// Authorizes `signed` without the Keystore, as before Zenith.
@@ -260,7 +253,6 @@ impl TransactionAuthorizer {
             actors: TxActors { sender: owner(sender), payer: payer.map(owner) },
             config_changes: Vec::new(),
             applied,
-            revoke_discount_slots: 0,
         })
     }
 

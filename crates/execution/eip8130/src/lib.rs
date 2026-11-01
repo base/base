@@ -3,9 +3,7 @@
 // The intrinsic-gas schedule and computation now live in the engine-neutral
 // `base-common-eip8130` crate (shared with the EVM2 path); re-exported here so
 // this crate's executor and its consumers keep a single import surface.
-pub use base_common_eip8130::{
-    AuthWireForm, Eip8130GasSchedule, IntrinsicGas, IntrinsicGasError, IntrinsicGasInput,
-};
+pub use base_common_eip8130::{AuthWireForm, Eip8130GasSchedule, IntrinsicGas, IntrinsicGasError};
 
 mod error;
 pub use error::AuthError;

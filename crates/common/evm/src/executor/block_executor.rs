@@ -98,12 +98,9 @@ where
     /// `gas_limit` alone could admit a transaction whose true consumption
     /// (`gas_limit + payer_auth`) pushes cumulative block gas over the limit.
     ///
-    /// The payer authentication gas is a *conservative upper bound*
-    /// ([`IntrinsicGas::max_payer_auth_cost`]): it prices the `payer_auth` bytes
-    /// at the EIP-7623 floor rate, which settlement can only meet or undercharge.
-    /// Reserving a ceiling can only over-reserve (never admit an over-limit
-    /// block), and the same bound is used by block building and validation,
-    /// keeping them consistent.
+    /// The payer authentication gas ([`IntrinsicGas::payer_auth_cost_of`])
+    /// depends only on the payer fields, so block building, validation and
+    /// settlement all use the same value.
     ///
     /// A transaction whose payer authentication cannot be priced is invalid, so
     /// the failure is a validation error rather than an internal one.
@@ -112,7 +109,7 @@ where
         let Some(signed) = tx_env.eip8130_signed() else {
             return Ok(gas_limit);
         };
-        let payer_auth = IntrinsicGas::max_payer_auth_cost(signed)
+        let payer_auth = IntrinsicGas::payer_auth_cost_of(signed)
             .map_err(|error| BlockExecutionError::Validation(BlockValidationError::other(error)))?;
         Ok(gas_limit.saturating_add(payer_auth))
     }
@@ -710,7 +707,7 @@ mod tests {
         const JOVIAN_TIMESTAMP: u64 = 1746806402;
 
         let signed = signed_eip8130(GAS_LIMIT, true);
-        let payer_auth = IntrinsicGas::max_payer_auth_cost(&signed).expect("payer auth cost");
+        let payer_auth = IntrinsicGas::payer_auth_cost_of(&signed).expect("payer auth cost");
         assert!(payer_auth > 0, "payer auth must be metered on top of gas_limit");
 
         // Block admits `gas_limit` alone but not `gas_limit + payer_auth`.
@@ -766,7 +763,7 @@ mod tests {
         let mut unscheduled_payer_auth = Address::repeat_byte(0xee).to_vec();
         unscheduled_payer_auth.extend_from_slice(&[0u8; 65]);
         let signed = Eip8130Signed::new(tx, Bytes::new(), Bytes::from(unscheduled_payer_auth));
-        assert!(IntrinsicGas::max_payer_auth_cost(&signed).is_err());
+        assert!(IntrinsicGas::payer_auth_cost_of(&signed).is_err());
 
         let mut db = prepare_jovian_db(0);
         let base_chain_upgrades = ChainUpgrades::new(
@@ -804,7 +801,7 @@ mod tests {
 
         let signed = signed_eip8130(GAS_LIMIT, false);
         assert_eq!(
-            IntrinsicGas::max_payer_auth_cost(&signed).expect("payer auth cost"),
+            IntrinsicGas::payer_auth_cost_of(&signed).expect("payer auth cost"),
             0,
             "self-pay meters no payer authentication",
         );
