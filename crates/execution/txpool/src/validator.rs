@@ -74,6 +74,29 @@ pub enum BaseTxPoolError {
         /// Static validation label for the failure.
         reason: &'static str,
     },
+    /// The transaction failed a check whose outcome depends on its
+    /// `sender_auth` or `payer_auth`: the authentication itself, or a limit
+    /// that counts their bytes or gas (encoded size, intrinsic gas, the
+    /// EIP-7825 cap, the DA footprint).
+    ///
+    /// The transaction hash does not cover either field, so anyone can attach
+    /// invalid or oversized authentication to a valid body under that body's
+    /// hash. This error is therefore not a bad transaction: the network layer
+    /// must not cache the hash as invalid, or such a copy would block the
+    /// valid transaction.
+    #[error("EIP-8130 authentication-dependent check failed: {reason}")]
+    Eip8130Authentication {
+        /// Static validation label for the failure.
+        reason: &'static str,
+    },
+}
+
+impl BaseTxPoolError {
+    /// [`Self::Eip8130Authentication`] reason for an EIP-8130 transaction whose
+    /// `gas_limit` fits the block gas limit but whose payer authentication gas,
+    /// metered on top of it, does not.
+    pub const PAYER_AUTH_EXCEEDS_BLOCK_GAS_LIMIT: &'static str =
+        "gas limit plus payer authentication gas exceeds the block gas limit";
 }
 
 /// Resolved EIP-8130 actors and state data required to build the pool outcome.
@@ -669,7 +692,7 @@ impl PrecompileStorageProvider for OverlayPrecompileStorage<'_> {
 
 impl PoolTransactionError for BaseTxPoolError {
     fn is_bad_transaction(&self) -> bool {
-        true
+        !matches!(self, Self::Eip8130Authentication { .. })
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -1219,12 +1242,19 @@ where
         }
         // EIP-7825 (from Azul): `gas_limit` plus the payer authentication
         // metered on top of it is bounded by the per-transaction gas cap,
-        // matching execution.
+        // matching execution. A `gas_limit` over the cap on its own is a bad
+        // body; one pushed over only by `payer_auth` gas is not, because the
+        // hash does not cover `payer_auth`.
         if self.chain_spec().is_azul_active_at_timestamp(now)
             && FeeCheck::max_chargeable_gas(signed.tx().gas_limit, intrinsic.payer_auth)
                 > MAX_TX_GAS_LIMIT_OSAKA
         {
-            return Err(InvalidTransactionError::GasLimitTooHigh.into());
+            if signed.tx().gas_limit > MAX_TX_GAS_LIMIT_OSAKA {
+                return Err(InvalidTransactionError::GasLimitTooHigh.into());
+            }
+            return Err(Self::eip8130_auth_error(
+                "gas limit plus payer authentication gas exceeds the per-transaction cap",
+            ));
         }
 
         let payer_account = state
@@ -1655,10 +1685,21 @@ where
 
     fn map_tx_auth_error(error: TxAuthError) -> InvalidPoolTransactionError {
         tracing::debug!(error = ?error, "EIP-8130 actor authorization failed");
-        let reason = match error {
-            TxAuthError::UnsupportedAccountChange | TxAuthError::UnsupportedAuthenticator => {
-                return InvalidTransactionError::TxTypeNotSupported.into();
-            }
+        if matches!(error, TxAuthError::UnsupportedAccountChange) {
+            return InvalidTransactionError::TxTypeNotSupported.into();
+        }
+        let from_auth = Self::is_auth_derived(&error);
+        let reason = Self::tx_auth_error_reason(error);
+        if from_auth { Self::eip8130_auth_error(reason) } else { Self::eip8130_error(reason) }
+    }
+
+    /// Names the pool-rejection reason for `error`. A
+    /// [`TxAuthError::ConfigChange`] reports its inner failure's reason.
+    fn tx_auth_error_reason(error: TxAuthError) -> &'static str {
+        match error {
+            TxAuthError::UnsupportedAccountChange => "unsupported account change type",
+            TxAuthError::ConfigChange(inner) => Self::tx_auth_error_reason(*inner),
+            TxAuthError::UnsupportedAuthenticator => "unsupported authenticator",
             TxAuthError::Authorize(AuthorizeError::Authenticate(_)) => {
                 "actor authentication failed"
             }
@@ -1691,8 +1732,37 @@ where
                 "secp256k1 signature does not recover to the named account"
             }
             TxAuthError::Apply(apply) => Self::map_apply_error(apply),
-        };
-        Self::eip8130_error(reason)
+        }
+    }
+
+    /// Whether `error` is decided by `sender_auth` or `payer_auth` (which
+    /// authenticator or key signed, and whether the signature verifies) rather
+    /// than by the transaction body or account state. Those fields are not
+    /// covered by the transaction hash.
+    ///
+    /// [`TxAuthError::SenderRecovery`] is excluded: it only arises on the EOA
+    /// path, where an unrecoverable `sender_auth` makes the transaction hash
+    /// fall back to the encoded hash, so the rejection identifies these exact
+    /// bytes and stays a bad transaction. [`TxAuthError::ConfigChange`] is
+    /// excluded too: a config change's signature is in `account_changes`, which
+    /// the transaction hash covers.
+    const fn is_auth_derived(error: &TxAuthError) -> bool {
+        matches!(
+            error,
+            TxAuthError::Authorize(
+                AuthorizeError::Authenticate(_)
+                    | AuthorizeError::AuthenticationFailed
+                    | AuthorizeError::AuthenticatorMismatch { .. }
+                    | AuthorizeError::DefaultEoaRevoked { .. }
+                    | AuthorizeError::ActorExpired { .. }
+                    | AuthorizeError::NestedSignatureScope { .. }
+            ) | TxAuthError::PayerRecovery
+                | TxAuthError::UnexpectedPayerAuth
+                | TxAuthError::Scope { .. }
+                | TxAuthError::DelegationUnauthorized
+                | TxAuthError::UnsupportedAuthenticator
+                | TxAuthError::SignerMismatch
+        )
     }
 
     /// Maps an [`ApplyError`] (surfaced via [`TxAuthError::Apply`] when an
@@ -1817,6 +1887,17 @@ where
         InvalidPoolTransactionError::other(BaseTxPoolError::Eip8130Validation { reason })
     }
 
+    fn eip8130_auth_error(reason: &'static str) -> InvalidPoolTransactionError {
+        InvalidPoolTransactionError::other(BaseTxPoolError::Eip8130Authentication { reason })
+    }
+
+    /// Returns a copy of `signed` with empty `sender_auth` and `payer_auth`:
+    /// the smallest encoding any transaction sharing its hash can have. Size
+    /// limits that this copy already exceeds are failures of the body itself.
+    fn eip8130_without_auth(signed: &Eip8130Signed) -> Eip8130Signed {
+        Eip8130Signed::new(signed.tx().clone(), Default::default(), Default::default())
+    }
+
     fn provider_unavailable(error: impl core::fmt::Display) -> InvalidPoolTransactionError {
         tracing::debug!(error = %error, "EIP-8130 state provider unavailable");
         Self::eip8130_error("state provider unavailable")
@@ -1846,13 +1927,25 @@ where
         &self,
         signed: &Eip8130Signed,
     ) -> Result<(), InvalidPoolTransactionError> {
+        // The encoded size counts `sender_auth` and `payer_auth`, which the
+        // hash does not cover, so an oversized copy of a valid body must not
+        // mark that body's hash as bad. A body that is oversized even with
+        // empty authentication can never be valid under its hash, so it stays
+        // a bad transaction.
         let size = signed.encode_2718_len();
         let limit = self.inner.max_tx_input_bytes();
         if size > limit {
-            return Err(InvalidPoolTransactionError::OversizedData { size, limit });
+            let unauthenticated = Self::eip8130_without_auth(signed);
+            let body_size = unauthenticated.encode_2718_len();
+            if body_size > limit {
+                return Err(InvalidPoolTransactionError::OversizedData { size, limit });
+            }
+            tracing::debug!(size, limit, "EIP-8130 transaction exceeds max_tx_input_bytes");
+            return Err(Self::eip8130_auth_error("encoded size exceeds max_tx_input_bytes"));
         }
         // Cheap shape checks run before the fork gate and signature recovery.
-        Eip8130Structure::validate(signed).map_err(Self::map_structural_error)?;
+        Eip8130Structure::validate(signed)
+            .map_err(|error| Self::map_structural_error(signed, error))?;
 
         // Read the head-block clock up front so a concurrent `on_new_head_block`
         // cannot move it between the fork gate and the expiry check.
@@ -1866,9 +1959,9 @@ where
         // Without the Keystore an EIP-8130 transaction may use only delegation
         // and native secp256k1 keys; anything else is an unsupported type.
         if !BaseSpecId::from_timestamp(self.chain_spec(), now).is_enabled_in(BaseUpgrade::Zenith)
-            && TransactionAuthorizer::check_without_keystore(signed).is_err()
+            && let Err(error) = TransactionAuthorizer::check_without_keystore(signed)
         {
-            return Err(InvalidTransactionError::TxTypeNotSupported.into());
+            return Err(Self::map_tx_auth_error(error));
         }
         let local_chain_id = self.inner.chain_spec().chain().id();
         signed.validate_static(local_chain_id).map_err(InvalidPoolTransactionError::from)?;
@@ -1897,16 +1990,31 @@ where
     }
 
     /// Maps a structural rule failure to the pool's rejection: a named reason for
-    /// the call phase cap, and an unsupported transaction type for every
-    /// malformed shape (the pool's long-standing response to those).
-    fn map_structural_error(error: Eip8130StructuralError) -> InvalidPoolTransactionError {
+    /// the call phase cap, an authentication error for a malformed
+    /// `sender_auth` or `payer_auth` (not covered by the transaction hash), and
+    /// an unsupported transaction type for the other malformed shapes.
+    ///
+    /// A malformed EOA-path `sender_auth` is the exception: it cannot recover a
+    /// sender, so the transaction hash falls back to the encoded hash and
+    /// identifies these exact bytes. That rejection stays a bad transaction.
+    fn map_structural_error(
+        signed: &Eip8130Signed,
+        error: Eip8130StructuralError,
+    ) -> InvalidPoolTransactionError {
         match error {
             Eip8130StructuralError::TooManyCallPhases => {
                 Self::eip8130_error("call phase count exceeds maximum")
             }
-            Eip8130StructuralError::MalformedSenderAuth
-            | Eip8130StructuralError::MalformedPayerAuth
-            | Eip8130StructuralError::TooManyAccountChanges
+            Eip8130StructuralError::MalformedSenderAuth if signed.explicit_sender().is_none() => {
+                Self::eip8130_error("sender_auth is malformed")
+            }
+            Eip8130StructuralError::MalformedSenderAuth => {
+                Self::eip8130_auth_error("sender_auth is malformed")
+            }
+            Eip8130StructuralError::MalformedPayerAuth => {
+                Self::eip8130_auth_error("payer_auth is malformed")
+            }
+            Eip8130StructuralError::TooManyAccountChanges
             | Eip8130StructuralError::MalformedAccountChange => {
                 InvalidTransactionError::TxTypeNotSupported.into()
             }
@@ -1932,11 +2040,19 @@ where
             IntrinsicGas::max_payer_auth_cost(signed).map_err(Self::map_intrinsic_gas_error)?;
         let reserved_gas = FeeCheck::max_chargeable_gas(tx.gas_limit, payer_auth);
 
+        // A `gas_limit` over the block gas limit on its own is a bad body; one
+        // pushed over only by `payer_auth` gas is not, because the hash does not
+        // cover `payer_auth`.
         let block_gas_limit = self.inner.block_gas_limit();
         if reserved_gas > block_gas_limit {
-            return Err(InvalidPoolTransactionError::ExceedsGasLimit(
-                reserved_gas,
-                block_gas_limit,
+            if tx.gas_limit > block_gas_limit {
+                return Err(InvalidPoolTransactionError::ExceedsGasLimit(
+                    reserved_gas,
+                    block_gas_limit,
+                ));
+            }
+            return Err(Self::eip8130_auth_error(
+                BaseTxPoolError::PAYER_AUTH_EXCEEDS_BLOCK_GAS_LIMIT,
             ));
         }
         if let Some(max_tx_gas_limit) = self.max_tx_gas_limit
@@ -1968,8 +2084,10 @@ where
         Ok(())
     }
 
+    /// Both failures are decided by the authenticators named in `sender_auth` /
+    /// `payer_auth`, which the hash does not cover.
     fn map_intrinsic_gas_error(error: IntrinsicGasError) -> InvalidPoolTransactionError {
-        Self::eip8130_error(match error {
+        Self::eip8130_auth_error(match error {
             IntrinsicGasError::PayerAuthGasExceeded(_) => {
                 "payer authentication gas exceeds MAX_AUTHENTICATION_GAS"
             }
@@ -2008,22 +2126,41 @@ where
 
             // Check to ensure tx doesn't exceed the DA footprint limit
             if self.chain_spec().is_jovian_active_at_timestamp(self.block_timestamp()) {
-                let da_footprint = valid_tx.transaction().estimated_da_size().saturating_mul(
-                    l1_block_info
-                        .da_footprint_gas_scalar
-                        .unwrap_or(DaFootprintGasScalarUpdate::DEFAULT_DA_FOOTPRINT_GAS_SCALAR)
-                        as u64,
-                );
+                let da_footprint_gas_scalar = l1_block_info
+                    .da_footprint_gas_scalar
+                    .unwrap_or(DaFootprintGasScalarUpdate::DEFAULT_DA_FOOTPRINT_GAS_SCALAR)
+                    as u64;
+                let da_footprint = valid_tx
+                    .transaction()
+                    .estimated_da_size()
+                    .saturating_mul(da_footprint_gas_scalar);
                 let block_gas_limit = self.inner.block_gas_limit();
                 if da_footprint > block_gas_limit {
-                    return TransactionValidationOutcome::Invalid(
-                        valid_tx.into_transaction(),
+                    // An EIP-8130 DA size counts its authentication, which the
+                    // hash does not cover, so it must not mark the hash as bad
+                    // unless the body exceeds the limit with empty authentication.
+                    let auth_dependent =
+                        valid_tx.transaction().as_eip8130().is_some_and(|signed| {
+                            let unauthenticated = Self::eip8130_without_auth(signed);
+                            base_common_flz::tx_estimated_size_fjord_bytes(
+                                &unauthenticated.encoded_2718(),
+                            )
+                            .saturating_mul(da_footprint_gas_scalar)
+                                <= block_gas_limit
+                        });
+                    let error = if auth_dependent {
+                        Self::eip8130_auth_error("DA footprint exceeds block gas limit")
+                    } else {
                         InvalidPoolTransactionError::other(
                             BaseTxPoolError::DaFootprintExceedsBlockGasLimit {
                                 transaction_da_footprint: da_footprint,
                                 block_gas_limit,
                             },
-                        ),
+                        )
+                    };
+                    return TransactionValidationOutcome::Invalid(
+                        valid_tx.into_transaction(),
+                        error,
                     );
                 }
             }
@@ -2504,11 +2641,13 @@ mod tests {
         }
     }
 
-    /// Maps a shared structural check to the pool's rejection, as admission does.
+    /// Runs a shared structural check on `signed` and maps it to the pool's
+    /// rejection, as admission does.
     fn structural(
-        result: Result<(), Eip8130StructuralError>,
+        signed: &Eip8130Signed,
+        check: fn(&Eip8130Signed) -> Result<(), Eip8130StructuralError>,
     ) -> Result<(), InvalidPoolTransactionError> {
-        result.map_err(TestValidator::map_structural_error)
+        check(signed).map_err(|error| TestValidator::map_structural_error(signed, error))
     }
 
     /// Helper: assert structural validation returns `Invalid` with `TxTypeNotSupported`.
@@ -2545,7 +2684,8 @@ mod tests {
     }
 
     /// Helper: assert a structural (`()`-returning) validation failed with a
-    /// named [`BaseTxPoolError::Eip8130Validation`] reason.
+    /// named [`BaseTxPoolError::Eip8130Validation`] or
+    /// [`BaseTxPoolError::Eip8130Authentication`] reason.
     #[track_caller]
     fn assert_structural_reason(
         result: Result<(), InvalidPoolTransactionError>,
@@ -2553,6 +2693,53 @@ mod tests {
     ) {
         match result {
             Err(InvalidPoolTransactionError::Other(error)) => {
+                match error.as_any().downcast_ref::<BaseTxPoolError>() {
+                    Some(
+                        BaseTxPoolError::Eip8130Validation { reason }
+                        | BaseTxPoolError::Eip8130Authentication { reason },
+                    ) => {
+                        assert_eq!(*reason, expected);
+                    }
+                    other => panic!("expected Eip8130Validation, got {other:?}"),
+                }
+            }
+            other => panic!("expected Eip8130Validation, got {other:?}"),
+        }
+    }
+
+    /// Helper: assert validation failed with [`BaseTxPoolError::Eip8130Authentication`]
+    /// and `expected` as the reason, and that the error does not mark the
+    /// transaction hash as bad (the hash does not cover the authentication).
+    #[track_caller]
+    fn assert_auth_error<T: core::fmt::Debug>(
+        result: Result<T, InvalidPoolTransactionError>,
+        expected: &'static str,
+    ) {
+        match result {
+            Err(InvalidPoolTransactionError::Other(error)) => {
+                assert!(!error.is_bad_transaction());
+                match error.as_any().downcast_ref::<BaseTxPoolError>() {
+                    Some(BaseTxPoolError::Eip8130Authentication { reason }) => {
+                        assert_eq!(*reason, expected);
+                    }
+                    other => panic!("expected Eip8130Authentication, got {other:?}"),
+                }
+            }
+            other => panic!("expected Eip8130Authentication, got {other:?}"),
+        }
+    }
+
+    /// Helper: assert validation failed with [`BaseTxPoolError::Eip8130Validation`]
+    /// and `expected` as the reason, and that the error marks the transaction
+    /// hash as bad.
+    #[track_caller]
+    fn assert_bad_validation_error<T: core::fmt::Debug>(
+        result: Result<T, InvalidPoolTransactionError>,
+        expected: &'static str,
+    ) {
+        match result {
+            Err(InvalidPoolTransactionError::Other(error)) => {
+                assert!(error.is_bad_transaction());
                 match error.as_any().downcast_ref::<BaseTxPoolError>() {
                     Some(BaseTxPoolError::Eip8130Validation { reason }) => {
                         assert_eq!(*reason, expected);
@@ -2564,6 +2751,14 @@ mod tests {
         }
     }
 
+    #[test]
+    fn eoa_sender_recovery_failure_is_bad_transaction() {
+        assert_bad_validation_error::<()>(
+            Err(TestValidator::map_tx_auth_error(TxAuthError::SenderRecovery)),
+            "EOA sender recovery failed",
+        );
+    }
+
     #[track_caller]
     fn assert_eip8130_validation_reason(
         result: Result<Eip8130ValidationState, InvalidPoolTransactionError>,
@@ -2572,7 +2767,10 @@ mod tests {
         match result {
             Err(InvalidPoolTransactionError::Other(error)) => {
                 match error.as_any().downcast_ref::<BaseTxPoolError>() {
-                    Some(BaseTxPoolError::Eip8130Validation { reason }) => {
+                    Some(
+                        BaseTxPoolError::Eip8130Validation { reason }
+                        | BaseTxPoolError::Eip8130Authentication { reason },
+                    ) => {
                         assert_eq!(*reason, expected);
                     }
                     other => panic!("expected Eip8130Validation, got {other:?}"),
@@ -2600,17 +2798,56 @@ mod tests {
     #[test]
     fn rejects_eip8130_over_encoded_size_limit() {
         let signed = sign_eoa_eip8130(minimal_valid_eoa_tx());
+        let validator = build_test_validator_with_max_tx_input_bytes(signed.encode_2718_len() - 1);
+
+        assert_auth_error(
+            validator.validate_eip8130_structural(&signed),
+            "encoded size exceeds max_tx_input_bytes",
+        );
+    }
+
+    /// A copy of a valid transaction with padded `sender_auth` shares its hash,
+    /// so rejecting the oversized copy must not mark that hash as bad.
+    #[test]
+    fn oversized_auth_copy_does_not_mark_valid_hash_bad() {
+        let signed = sign_eoa_eip8130(TxEip8130 {
+            sender: Some(Address::repeat_byte(0xaa)),
+            ..minimal_valid_eoa_tx()
+        });
+        let mut padded_auth = signed.sender_auth().to_vec();
+        padded_auth.resize(padded_auth.len() + 1024, 0);
+        let padded =
+            Eip8130Signed::new(signed.tx().clone(), Bytes::from(padded_auth), Bytes::new());
+        assert_eq!(signed.hash(), padded.hash());
+
+        let validator = build_test_validator_with_max_tx_input_bytes(signed.encode_2718_len());
+        assert_auth_error(
+            validator.validate_eip8130_structural(&padded),
+            "encoded size exceeds max_tx_input_bytes",
+        );
+    }
+
+    /// A body that exceeds the size limit even with empty authentication can
+    /// never be valid under its hash, so it is still rejected as a bad
+    /// transaction.
+    #[test]
+    fn oversized_body_is_bad_transaction() {
+        let signed = sign_eoa_eip8130(minimal_valid_eoa_tx());
         let size = signed.encode_2718_len();
-        let limit = size - 1;
+        let body_size =
+            Eip8130Signed::new(signed.tx().clone(), Bytes::new(), Bytes::new()).encode_2718_len();
+        let limit = body_size - 1;
         let validator = build_test_validator_with_max_tx_input_bytes(limit);
 
-        assert!(matches!(
-            validator.validate_eip8130_structural(&signed),
-            Err(InvalidPoolTransactionError::OversizedData {
-                size: rejected_size,
-                limit: rejected_limit,
-            }) if rejected_size == size && rejected_limit == limit
-        ));
+        let error = validator.validate_eip8130_structural(&signed).unwrap_err();
+        assert!(
+            matches!(
+                error,
+                InvalidPoolTransactionError::OversizedData { size: rejected_size, limit: rejected_limit }
+                    if rejected_size == size && rejected_limit == limit
+            ),
+            "{error:?}"
+        );
     }
 
     #[test]
@@ -2881,14 +3118,20 @@ mod tests {
         // EOA path requires exactly 65 bytes; anything else is rejected.
         let tx = minimal_valid_eoa_tx();
         let signed = Eip8130Signed::new(tx, Bytes::from_static(&[0u8; 32]), Bytes::new());
-        assert_unsupported(structural(Eip8130Structure::validate_sender_auth(&signed)));
+        assert_bad_validation_error(
+            structural(&signed, Eip8130Structure::validate_sender_auth),
+            "sender_auth is malformed",
+        );
     }
 
     #[test]
     fn rejects_eip8130_with_empty_sender_auth() {
         let tx = minimal_valid_eoa_tx();
         let signed = Eip8130Signed::new(tx, Bytes::new(), Bytes::new());
-        assert_unsupported(structural(Eip8130Structure::validate_sender_auth(&signed)));
+        assert_bad_validation_error(
+            structural(&signed, Eip8130Structure::validate_sender_auth),
+            "sender_auth is malformed",
+        );
     }
 
     // Regression: configured-actor path must reject the reserved authenticator
@@ -2899,21 +3142,30 @@ mod tests {
         let tx = TxEip8130 { sender: Some(Address::repeat_byte(0xaa)), ..minimal_valid_eoa_tx() };
         let auth = Bytes::from(Address::ZERO.to_vec());
         let signed = Eip8130Signed::new(tx, auth, Bytes::new());
-        assert_unsupported(structural(Eip8130Structure::validate_sender_auth(&signed)));
+        assert_auth_error(
+            structural(&signed, Eip8130Structure::validate_sender_auth),
+            "sender_auth is malformed",
+        );
     }
 
     #[test]
     fn rejects_eip8130_configured_actor_with_short_auth() {
         let tx = TxEip8130 { sender: Some(Address::repeat_byte(0xaa)), ..minimal_valid_eoa_tx() };
         let signed = Eip8130Signed::new(tx, Bytes::from_static(&[0u8; 5]), Bytes::new());
-        assert_unsupported(structural(Eip8130Structure::validate_sender_auth(&signed)));
+        assert_auth_error(
+            structural(&signed, Eip8130Structure::validate_sender_auth),
+            "sender_auth is malformed",
+        );
     }
 
     #[test]
     fn rejects_eip8130_payer_present_without_auth() {
         let tx = TxEip8130 { payer: Some(Address::repeat_byte(0x11)), ..minimal_valid_eoa_tx() };
         let signed = Eip8130Signed::new(tx, Bytes::from_static(&[0u8; 65]), Bytes::new());
-        assert_unsupported(structural(Eip8130Structure::validate_payer_auth(&signed)));
+        assert_auth_error(
+            structural(&signed, Eip8130Structure::validate_payer_auth),
+            "payer_auth is malformed",
+        );
     }
 
     #[test]
@@ -2921,7 +3173,10 @@ mod tests {
         let tx = minimal_valid_eoa_tx();
         let signed =
             Eip8130Signed::new(tx, Bytes::from_static(&[0u8; 65]), Bytes::from_static(&[0u8; 20]));
-        assert_unsupported(structural(Eip8130Structure::validate_payer_auth(&signed)));
+        assert_auth_error(
+            structural(&signed, Eip8130Structure::validate_payer_auth),
+            "payer_auth is malformed",
+        );
     }
 
     #[test]
@@ -2932,11 +3187,15 @@ mod tests {
             Bytes::from_static(&[0u8; 65]),
             Bytes::from(Address::ZERO.to_vec()),
         );
-        assert_unsupported(structural(Eip8130Structure::validate_payer_auth(&signed)));
+        assert_auth_error(
+            structural(&signed, Eip8130Structure::validate_payer_auth),
+            "payer_auth is malformed",
+        );
     }
 
-    /// A configured sender naming a canonical non-k1 authenticator is an
-    /// unsupported transaction type before Zenith, and admissible from it.
+    /// A configured sender naming a canonical non-k1 authenticator is rejected
+    /// as unsupported authentication (not a bad transaction) before Zenith, and
+    /// admissible from it.
     #[test]
     fn non_k1_sender_authenticator_is_unsupported_before_zenith() {
         let tx = TxEip8130 { sender: Some(Address::repeat_byte(0xaa)), ..minimal_valid_eoa_tx() };
@@ -2944,7 +3203,10 @@ mod tests {
         auth.extend_from_slice(&[0u8; 64]);
         let signed = Eip8130Signed::new(tx, Bytes::from(auth), Bytes::new());
 
-        assert_unsupported(build_test_validator().validate_eip8130_structural(&signed));
+        assert_auth_error(
+            build_test_validator().validate_eip8130_structural(&signed),
+            "unsupported authenticator",
+        );
         let zenith = build_test_validator_with_spec(zenith_chain_spec());
         assert!(!matches!(
             zenith.validate_eip8130_structural(&signed),
@@ -2952,7 +3214,7 @@ mod tests {
                 InvalidTransactionError::TxTypeNotSupported
             ))
         ));
-        assert!(structural(Eip8130Structure::validate_sender_auth(&signed)).is_ok());
+        assert!(structural(&signed, Eip8130Structure::validate_sender_auth).is_ok());
     }
 
     /// Returns an authenticator address comfortably above the `K1_AUTHENTICATOR`
@@ -3006,9 +3268,10 @@ mod tests {
             ],
             ..minimal_valid_eoa_tx()
         };
-        assert_unsupported(structural(Eip8130Structure::validate_account_changes(
+        assert_unsupported(structural(
             &sign_eoa_eip8130(tx),
-        )));
+            Eip8130Structure::validate_account_changes,
+        ));
     }
 
     #[test]
@@ -3020,9 +3283,10 @@ mod tests {
             ],
             ..minimal_valid_eoa_tx()
         };
-        assert_unsupported(structural(Eip8130Structure::validate_account_changes(
+        assert_unsupported(structural(
             &sign_eoa_eip8130(tx),
-        )));
+            Eip8130Structure::validate_account_changes,
+        ));
     }
 
     #[test]
@@ -3033,9 +3297,10 @@ mod tests {
             account_changes: vec![AccountChange::Create(entry)],
             ..minimal_valid_eoa_tx()
         };
-        assert_unsupported(structural(Eip8130Structure::validate_account_changes(
+        assert_unsupported(structural(
             &sign_eoa_eip8130(tx),
-        )));
+            Eip8130Structure::validate_account_changes,
+        ));
     }
 
     #[test]
@@ -3046,9 +3311,10 @@ mod tests {
             account_changes: vec![AccountChange::Create(entry)],
             ..minimal_valid_eoa_tx()
         };
-        assert_unsupported(structural(Eip8130Structure::validate_account_changes(
+        assert_unsupported(structural(
             &sign_eoa_eip8130(tx),
-        )));
+            Eip8130Structure::validate_account_changes,
+        ));
     }
 
     #[test]
@@ -3059,9 +3325,10 @@ mod tests {
             account_changes: vec![AccountChange::Create(entry)],
             ..minimal_valid_eoa_tx()
         };
-        assert_unsupported(structural(Eip8130Structure::validate_account_changes(
+        assert_unsupported(structural(
             &sign_eoa_eip8130(tx),
-        )));
+            Eip8130Structure::validate_account_changes,
+        ));
     }
 
     #[test]
@@ -3072,9 +3339,10 @@ mod tests {
             account_changes: vec![AccountChange::Create(entry)],
             ..minimal_valid_eoa_tx()
         };
-        assert_unsupported(structural(Eip8130Structure::validate_account_changes(
+        assert_unsupported(structural(
             &sign_eoa_eip8130(tx),
-        )));
+            Eip8130Structure::validate_account_changes,
+        ));
     }
 
     #[test]
@@ -3088,7 +3356,7 @@ mod tests {
             ..minimal_valid_eoa_tx()
         };
         assert!(
-            structural(Eip8130Structure::validate_account_changes(&sign_eoa_eip8130(tx))).is_ok()
+            structural(&sign_eoa_eip8130(tx), Eip8130Structure::validate_account_changes).is_ok()
         );
     }
 
@@ -3102,9 +3370,10 @@ mod tests {
             account_changes: vec![AccountChange::Create(entry)],
             ..minimal_valid_eoa_tx()
         };
-        assert_unsupported(structural(Eip8130Structure::validate_account_changes(
+        assert_unsupported(structural(
             &sign_eoa_eip8130(tx),
-        )));
+            Eip8130Structure::validate_account_changes,
+        ));
     }
 
     #[test]
@@ -3117,7 +3386,7 @@ mod tests {
             ..minimal_valid_eoa_tx()
         };
         assert!(
-            structural(Eip8130Structure::validate_account_changes(&sign_eoa_eip8130(tx))).is_ok()
+            structural(&sign_eoa_eip8130(tx), Eip8130Structure::validate_account_changes).is_ok()
         );
     }
 
@@ -3132,9 +3401,10 @@ mod tests {
             account_changes: vec![AccountChange::Create(entry)],
             ..minimal_valid_eoa_tx()
         };
-        assert_unsupported(structural(Eip8130Structure::validate_account_changes(
+        assert_unsupported(structural(
             &sign_eoa_eip8130(tx),
-        )));
+            Eip8130Structure::validate_account_changes,
+        ));
     }
 
     #[test]
@@ -3149,7 +3419,7 @@ mod tests {
             ..minimal_valid_eoa_tx()
         };
         assert!(
-            structural(Eip8130Structure::validate_account_changes(&sign_eoa_eip8130(tx))).is_ok()
+            structural(&sign_eoa_eip8130(tx), Eip8130Structure::validate_account_changes).is_ok()
         );
     }
 
@@ -3173,9 +3443,10 @@ mod tests {
             account_changes: vec![AccountChange::ConfigChange(cfg)],
             ..minimal_valid_eoa_tx()
         };
-        assert_unsupported(structural(Eip8130Structure::validate_account_changes(
+        assert_unsupported(structural(
             &sign_eoa_eip8130(tx),
-        )));
+            Eip8130Structure::validate_account_changes,
+        ));
     }
 
     #[test]
@@ -3194,7 +3465,7 @@ mod tests {
             ..minimal_valid_eoa_tx()
         };
         assert!(
-            structural(Eip8130Structure::validate_account_changes(&sign_eoa_eip8130(tx))).is_ok()
+            structural(&sign_eoa_eip8130(tx), Eip8130Structure::validate_account_changes).is_ok()
         );
     }
 
@@ -3212,9 +3483,10 @@ mod tests {
             account_changes: vec![AccountChange::ConfigChange(cfg)],
             ..minimal_valid_eoa_tx()
         };
-        assert_unsupported(structural(Eip8130Structure::validate_account_changes(
+        assert_unsupported(structural(
             &sign_eoa_eip8130(tx),
-        )));
+            Eip8130Structure::validate_account_changes,
+        ));
     }
 
     #[test]
@@ -3229,9 +3501,10 @@ mod tests {
             account_changes: vec![AccountChange::ConfigChange(cfg)],
             ..minimal_valid_eoa_tx()
         };
-        assert_unsupported(structural(Eip8130Structure::validate_account_changes(
+        assert_unsupported(structural(
             &sign_eoa_eip8130(tx),
-        )));
+            Eip8130Structure::validate_account_changes,
+        ));
     }
 
     #[test]
@@ -3244,9 +3517,10 @@ mod tests {
             account_changes: vec![AccountChange::ConfigChange(cfg)],
             ..minimal_valid_eoa_tx()
         };
-        assert_unsupported(structural(Eip8130Structure::validate_account_changes(
+        assert_unsupported(structural(
             &sign_eoa_eip8130(tx),
-        )));
+            Eip8130Structure::validate_account_changes,
+        ));
     }
 
     // Repeated `actor_id` targets within one batch are admitted: Keystore and the
@@ -3268,7 +3542,7 @@ mod tests {
             ..minimal_valid_eoa_tx()
         };
         assert!(
-            structural(Eip8130Structure::validate_account_changes(&sign_eoa_eip8130(tx))).is_ok()
+            structural(&sign_eoa_eip8130(tx), Eip8130Structure::validate_account_changes).is_ok()
         );
     }
 
@@ -3285,9 +3559,10 @@ mod tests {
             account_changes: vec![AccountChange::ConfigChange(cfg)],
             ..minimal_valid_eoa_tx()
         };
-        assert_unsupported(structural(Eip8130Structure::validate_account_changes(
+        assert_unsupported(structural(
             &sign_eoa_eip8130(tx),
-        )));
+            Eip8130Structure::validate_account_changes,
+        ));
     }
 
     #[test]
@@ -3302,7 +3577,7 @@ mod tests {
             ..minimal_valid_eoa_tx()
         };
         assert!(
-            structural(Eip8130Structure::validate_account_changes(&sign_eoa_eip8130(tx))).is_ok()
+            structural(&sign_eoa_eip8130(tx), Eip8130Structure::validate_account_changes).is_ok()
         );
     }
 
@@ -3316,9 +3591,10 @@ mod tests {
             account_changes: vec![AccountChange::ConfigChange(cfg)],
             ..minimal_valid_eoa_tx()
         };
-        assert_unsupported(structural(Eip8130Structure::validate_account_changes(
+        assert_unsupported(structural(
             &sign_eoa_eip8130(tx),
-        )));
+            Eip8130Structure::validate_account_changes,
+        ));
     }
 
     // A `RevokeActor` op carries only its 32-byte target and names no
@@ -3335,7 +3611,7 @@ mod tests {
             ..minimal_valid_eoa_tx()
         };
         assert!(
-            structural(Eip8130Structure::validate_account_changes(&sign_eoa_eip8130(tx))).is_ok()
+            structural(&sign_eoa_eip8130(tx), Eip8130Structure::validate_account_changes).is_ok()
         );
     }
 
@@ -3356,9 +3632,10 @@ mod tests {
             account_changes: vec![AccountChange::ConfigChange(cfg)],
             ..minimal_valid_eoa_tx()
         };
-        assert_unsupported(structural(Eip8130Structure::validate_account_changes(
+        assert_unsupported(structural(
             &sign_eoa_eip8130(tx),
-        )));
+            Eip8130Structure::validate_account_changes,
+        ));
     }
 
     // The authenticator word (`payload[32..64]`) is an ABI-encoded `address`;
@@ -3375,9 +3652,10 @@ mod tests {
             account_changes: vec![AccountChange::ConfigChange(cfg)],
             ..minimal_valid_eoa_tx()
         };
-        assert_unsupported(structural(Eip8130Structure::validate_account_changes(
+        assert_unsupported(structural(
             &sign_eoa_eip8130(tx),
-        )));
+            Eip8130Structure::validate_account_changes,
+        ));
     }
 
     // A batch may target the same `actor_id` across mixed `Authorize`/`Revoke`
@@ -3398,7 +3676,7 @@ mod tests {
             ..minimal_valid_eoa_tx()
         };
         assert!(
-            structural(Eip8130Structure::validate_account_changes(&sign_eoa_eip8130(tx))).is_ok()
+            structural(&sign_eoa_eip8130(tx), Eip8130Structure::validate_account_changes).is_ok()
         );
     }
 
@@ -3412,9 +3690,10 @@ mod tests {
         let account_changes =
             (0..count).map(|_| AccountChange::ConfigChange(make_valid_config_change())).collect();
         let tx = TxEip8130 { account_changes, ..minimal_valid_eoa_tx() };
-        assert_unsupported(structural(Eip8130Structure::validate_account_change_entries(
+        assert_unsupported(structural(
             &sign_eoa_eip8130(tx),
-        )));
+            Eip8130Structure::validate_account_change_entries,
+        ));
     }
 
     #[test]
@@ -3427,7 +3706,7 @@ mod tests {
             (0..count).map(|_| AccountChange::ConfigChange(make_valid_config_change())).collect();
         let tx = TxEip8130 { account_changes, ..minimal_valid_eoa_tx() };
         assert!(
-            structural(Eip8130Structure::validate_account_change_entries(&sign_eoa_eip8130(tx)))
+            structural(&sign_eoa_eip8130(tx), Eip8130Structure::validate_account_change_entries)
                 .is_ok()
         );
     }
@@ -3439,7 +3718,7 @@ mod tests {
             (0..count).map(|_| AccountChange::ConfigChange(make_valid_config_change())).collect();
         let tx = TxEip8130 { account_changes, ..minimal_valid_eoa_tx() };
         assert!(
-            structural(Eip8130Structure::validate_account_changes(&sign_eoa_eip8130(tx))).is_ok()
+            structural(&sign_eoa_eip8130(tx), Eip8130Structure::validate_account_changes).is_ok()
         );
     }
 
@@ -3449,9 +3728,10 @@ mod tests {
         let account_changes =
             (0..count).map(|_| AccountChange::ConfigChange(make_valid_config_change())).collect();
         let tx = TxEip8130 { account_changes, ..minimal_valid_eoa_tx() };
-        assert_unsupported(structural(Eip8130Structure::validate_account_changes(
+        assert_unsupported(structural(
             &sign_eoa_eip8130(tx),
-        )));
+            Eip8130Structure::validate_account_changes,
+        ));
     }
 
     #[test]
@@ -3463,9 +3743,10 @@ mod tests {
             ],
             ..minimal_valid_eoa_tx()
         };
-        assert_unsupported(structural(Eip8130Structure::validate_account_changes(
+        assert_unsupported(structural(
             &sign_eoa_eip8130(tx),
-        )));
+            Eip8130Structure::validate_account_changes,
+        ));
     }
 
     #[test]
@@ -3479,9 +3760,10 @@ mod tests {
             AccountChange::Delegation(Delegation { target: Address::repeat_byte(0x55) }),
         ];
         let tx = TxEip8130 { account_changes, ..minimal_valid_eoa_tx() };
-        assert_unsupported(structural(Eip8130Structure::validate_account_changes(
+        assert_unsupported(structural(
             &sign_eoa_eip8130(tx),
-        )));
+            Eip8130Structure::validate_account_changes,
+        ));
     }
 
     #[test]
@@ -3494,9 +3776,10 @@ mod tests {
             AccountChange::Delegation(Delegation { target: Address::repeat_byte(0x55) }),
         ];
         let tx = TxEip8130 { account_changes, ..minimal_valid_eoa_tx() };
-        assert_unsupported(structural(Eip8130Structure::validate_account_changes(
+        assert_unsupported(structural(
             &sign_eoa_eip8130(tx),
-        )));
+            Eip8130Structure::validate_account_changes,
+        ));
     }
 
     /// L1 attribute deposit calldata that activates Isthmus and seeds a non-zero
@@ -3974,6 +4257,107 @@ mod tests {
                 "captured read must also be indexed for invalidation: {read:?}"
             );
         }
+    }
+
+    /// Builds a counterfactual `Create` followed by a `ConfigChange` signed by
+    /// `config_signer`, with `sender_auth` signed by `owner`. The create installs
+    /// `owner` as the unrestricted admin plus `extra_actors` (`(signer, scope)`).
+    fn create_then_config_change_fixture(
+        owner: &PrivateKeySigner,
+        config_signer: &PrivateKeySigner,
+        extra_actors: &[(&PrivateKeySigner, u16)],
+    ) -> (TestValidator, Eip8130Signed) {
+        let actor_id = |signer: &PrivateKeySigner| {
+            let mut id = [0u8; 32];
+            id[12..].copy_from_slice(signer.address().as_slice());
+            B256::from_slice(&id)
+        };
+        let mut initial_actors =
+            vec![InitialActor::owner(actor_id(owner), Eip8130Constants::K1_AUTHENTICATOR)];
+        for (signer, scope) in extra_actors {
+            initial_actors.push(InitialActor {
+                scope: *scope,
+                ..InitialActor::owner(actor_id(signer), Eip8130Constants::K1_AUTHENTICATOR)
+            });
+        }
+        initial_actors.sort_by_key(|actor| actor.actor_id);
+        let create = CreateEntry {
+            user_salt: B256::ZERO,
+            code: Bytes::from_static(&[0x60, 0x00]),
+            initial_actors: initial_actors.clone(),
+        };
+        let derived = AccountChangeApplier::compute_address(
+            create.user_salt,
+            create.code.as_ref(),
+            &initial_actors,
+        )
+        .expect("address derivation");
+
+        let mut config = SignedAccountChanges {
+            channel: AccountChangeChannel::Multichain,
+            sequence: 0,
+            changes: vec![make_authorize_change(B256::repeat_byte(0x01), ok_authenticator())],
+            signature: Bytes::new(),
+        };
+        let config_digest =
+            ConfigChangeAuthorizer::changes_digest(derived, test_chain_id(), &config);
+        config.signature = k1_auth_blob(config_signer, config_digest);
+
+        let tx = TxEip8130 {
+            chain_id: test_chain_id(),
+            sender: Some(derived),
+            nonce_key: U256::ZERO,
+            nonce_sequence: 0,
+            valid_after: 0,
+            valid_before: 0,
+            max_priority_fee_per_gas: 0,
+            max_fee_per_gas: 100,
+            gas_limit: 1_000_000,
+            account_changes: vec![
+                AccountChange::Create(create),
+                AccountChange::ConfigChange(config),
+            ],
+            calls: Vec::new(),
+            metadata: Bytes::new(),
+            payer: None,
+        };
+        let sender_auth = k1_auth_blob(owner, tx.sender_signature_hash());
+        let signed = Eip8130Signed::new(tx, sender_auth, Bytes::new());
+        let validator = build_test_validator_with_account_and_spec(
+            derived,
+            ExtendedAccount::new(0, U256::from(1_000_000_000_000_000_000u64)),
+            zenith_chain_spec(),
+        );
+        (validator, signed)
+    }
+
+    /// A config change's signature is part of the hashed body, so a forged one
+    /// marks the transaction hash bad even though it fails actor authentication.
+    #[test]
+    fn forged_config_change_signature_is_bad_transaction() {
+        let owner = PrivateKeySigner::random();
+        let attacker = PrivateKeySigner::random();
+        let (validator, signed) = create_then_config_change_fixture(&owner, &attacker, &[]);
+
+        assert_bad_validation_error(validator.validate_eip8130_full(&signed), "actor is not bound");
+    }
+
+    /// A config change signed by a bound actor without admin scope marks the
+    /// transaction hash bad: the signature is covered by the hash.
+    #[test]
+    fn under_scoped_config_change_signature_is_bad_transaction() {
+        let owner = PrivateKeySigner::random();
+        let operator = PrivateKeySigner::random();
+        let (validator, signed) = create_then_config_change_fixture(
+            &owner,
+            &operator,
+            &[(&operator, Eip8130Constants::SCOPE_OPERATOR)],
+        );
+
+        assert_bad_validation_error(
+            validator.validate_eip8130_full(&signed),
+            "actor scope insufficient",
+        );
     }
 
     #[test]

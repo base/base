@@ -18,7 +18,8 @@ workspace = true
 alloy-rlp.workspace = true
 alloy-eips.workspace = true
 alloy-genesis.workspace = true
-alloy-consensus.workspace = true
+# k256: the transaction hash of an empty-sender AA transaction needs sender recovery.
+alloy-consensus = { workspace = true, features = ["k256"] }
 alloy-sol-types.workspace = true
 alloy-primitives = { workspace = true, features = ["rlp"] }
 
