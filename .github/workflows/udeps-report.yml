@@ -11,6 +11,9 @@ concurrency:
 
 env:
   ISSUE_TITLE: "ci: cargo-udeps findings"
+  # Pinned nightly: f9ceb4a4d (master 2026-10-31) ICEs on boa_engine 0.21.1
+  # (error[E0391] async-drop cycle). Unpin once that rustc regression is fixed.
+  UDEPS_TOOLCHAIN: nightly-2026-10-31
 
 permissions:
   contents: read
@@ -34,7 +37,7 @@ jobs:
       - uses: ./.github/actions/setup
         with:
           free-disk: "true"
-          toolchain: nightly
+          toolchain: ${{ env.UDEPS_TOOLCHAIN }}
           native-deps: "true"
           foundry: "true"
           tools: cargo-udeps
@@ -52,7 +55,7 @@ jobs:
           ISSUE_BODY: ${{ runner.temp }}/udeps-issue.md
         run: |
           set +e
-          BASE_SUCCINCT_ELF_STUB=1 cargo +nightly udeps --locked --workspace --all-features --all-targets --output json >"$UDEPS_JSON" 2>"$UDEPS_STDERR"
+          BASE_SUCCINCT_ELF_STUB=1 cargo +"$UDEPS_TOOLCHAIN" udeps --locked --workspace --all-features --all-targets --output json >"$UDEPS_JSON" 2>"$UDEPS_STDERR"
           status=$?
           set -e
           python3 etc/scripts/ci/udeps-report.py render \
