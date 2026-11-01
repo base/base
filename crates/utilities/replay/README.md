@@ -15,9 +15,13 @@ without compacting params. `ReplayRecord::from_jsonl_line` reverses this framing
 and also reads legacy unframed v1 lines. Generic Serde represents logical records,
 not the physical JSONL envelope.
 
-Readers must select this schema using the external format identifier
-`REPLAY_RECORD_FORMAT` (`replay-record/v2`). Each physical line also identifies its
-framing version; unsupported versions are rejected rather than guessed.
+Writers advertise `REPLAY_RECORD_FORMAT` (`replay-record/v2`). Readers can check
+dataset metadata against `SUPPORTED_REPLAY_RECORD_FORMATS`, which includes
+`replay-record/v1` and `replay-record/v2`, then decode each physical line with
+`ReplayRecord::from_jsonl_line(&str) -> Result<ReplayRecord, ReplayRecordError>`.
+Each v2 line identifies its framing version; unsupported versions are rejected
+rather than guessed. Direct `serde_json::from_str::<ReplayRecord>` is not a JSONL
+decoder and must not be used for stored or exported lines.
 
 - `stream`: `builder_ingress`, or `mempool_ingress` (reserved for future use).
 - `received_at_ms`: Unix timestamp in milliseconds at recorder ingress.

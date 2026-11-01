@@ -7,6 +7,9 @@ use crate::ReplayFrame;
 /// External format identifier; readers select this schema from transport or dataset metadata.
 pub const REPLAY_RECORD_FORMAT: &str = "replay-record/v2";
 
+/// Dataset format identifiers accepted by [`ReplayRecord::from_jsonl_line`].
+pub const SUPPORTED_REPLAY_RECORD_FORMATS: &[&str] = &["replay-record/v1", REPLAY_RECORD_FORMAT];
+
 /// Ingress boundary at which a call was recorded.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -65,6 +68,10 @@ impl ReplayRecord {
     }
 
     /// Decode v2 JSONL losslessly, or read an unframed v1 record.
+    ///
+    /// # Errors
+    /// Returns [`ReplayRecordError::UnsupportedVersion`] for unknown framing versions,
+    /// or [`ReplayRecordError::Serialization`] for malformed frames or logical records.
     pub fn from_jsonl_line(line: &str) -> Result<Self, ReplayRecordError> {
         let frame: ReplayFrame = serde_json::from_str(line)?;
         match frame.version {

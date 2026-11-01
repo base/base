@@ -9,9 +9,10 @@ use reth_cli_runner::CliRunner;
 
 use crate::{
     commands::{
-        ReplayCommand, bootnode::BootnodeCommand, consensus::ConsensusCommand, dev::DevCommand,
-        execution::ExecutionCommand, follow::FollowCommand, reth::RethCommand, rpc::RpcCommand,
-        sequencer::SequencerCommand, snapshot::SnapshotCommand, update::UpdateCommand,
+        bootnode::BootnodeCommand, consensus::ConsensusCommand, dev::DevCommand,
+        execution::ExecutionCommand, follow::FollowCommand, replay::ReplayCommand,
+        reth::RethCommand, rpc::RpcCommand, sequencer::SequencerCommand, snapshot::SnapshotCommand,
+        update::UpdateCommand,
     },
     config::ChainResolver,
 };
@@ -56,7 +57,7 @@ pub(crate) enum BaseCommand {
     /// Snapshot manifest generation and download utilities (uses its own --chain flag).
     #[command(name = "snapshot")]
     Snapshot(Box<SnapshotCommand>),
-    /// Record and manage replay datasets (uses its own --network flag).
+    /// Record and export replay datasets (uses its own --network flag).
     Replay(Box<ReplayCommand>),
 }
 
@@ -67,10 +68,6 @@ impl BaseCommand {
         metrics_enabled: bool,
     ) -> eyre::Result<()> {
         match self {
-            Self::Replay(replay) => {
-                chain_resolver.reject_for_reth_command("base replay")?;
-                replay.command.run()
-            }
             Self::Batcher(batcher) => {
                 chain_resolver.reject_for_reth_command("base batcher")?;
                 RuntimeManager::new()
@@ -99,6 +96,10 @@ impl BaseCommand {
             Self::Snapshot(snapshot) => {
                 chain_resolver.reject_for_reth_command("base snapshot")?;
                 snapshot.command.run()
+            }
+            Self::Replay(replay) => {
+                chain_resolver.reject_for_reth_command("base replay")?;
+                replay.command.run()
             }
         }
     }

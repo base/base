@@ -2892,6 +2892,7 @@ dependencies = [
  "base-execution-evm",
  "base-node-core",
  "base-node-runner",
+ "base-replay-export",
  "base-replay-recorder",
  "base-reth-cli",
  "base-shadow-indexer",
@@ -6205,9 +6206,13 @@ dependencies = [
  "alloy-provider",
  "alloy-rpc-types-eth 2.5.0",
  "alloy-transport",
+ "aws-config",
  "base-replay",
  "base-replay-store",
+ "clap",
+ "eyre",
  "futures",
+ "humantime",
  "jsonrpsee",
  "rstest",
  "serde",
@@ -6215,6 +6220,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.19",
  "tokio",
+ "url",
 ]
 
 [[package]]

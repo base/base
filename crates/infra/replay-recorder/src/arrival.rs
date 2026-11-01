@@ -45,6 +45,9 @@ impl ArrivalQueue {
     /// JSON-RPC error for an invalid individual member.
     pub const INVALID: &'static str =
         r#"{"jsonrpc":"2.0","id":null,"error":{"code":-32600,"message":"Invalid request"}}"#;
+    /// JSON-RPC error for malformed JSON text.
+    pub const PARSE_ERROR: &'static str =
+        r#"{"jsonrpc":"2.0","id":null,"error":{"code":-32700,"message":"Parse error"}}"#;
 
     /// Create an admission boundary and its ordered consumer.
     pub fn channel() -> (Self, mpsc::Receiver<CaptureJob>) {
@@ -91,9 +94,13 @@ impl ArrivalQueue {
             let Ok(body) = job.body.await else { continue };
             let envelope = match RpcEnvelope::parse(&body) {
                 Ok(envelope) => envelope,
-                Err(_) => {
-                    let _ =
-                        job.response.send((StatusCode::BAD_REQUEST, Self::INVALID).into_response());
+                Err(error) => {
+                    let body = if error.is_syntax() || error.is_eof() {
+                        Self::PARSE_ERROR
+                    } else {
+                        Self::INVALID
+                    };
+                    let _ = job.response.send((StatusCode::BAD_REQUEST, body).into_response());
                     continue;
                 }
             };
@@ -161,6 +168,27 @@ mod tests {
             StatusCode::SERVICE_UNAVAILABLE
         );
         drop(held);
+    }
+
+    #[tokio::test]
+    async fn distinguishes_parse_errors_when_envelopes_are_invalid() {
+        let dir = tempfile::tempdir().unwrap();
+        let writer =
+            ReplayWriter::new(ReplayStore::Local(dir.path().into()), "devnet".into()).unwrap();
+        let (queue, jobs) = ArrivalQueue::channel();
+        let task = tokio::spawn(ArrivalQueue::write(writer, jobs, CancellationToken::new()));
+        for (input, code) in [("{", -32700), ("[]", -32600), ("{}", -32600), ("1", -32600)] {
+            let (body, reply) = queue.admit("127.0.0.1:1".parse().unwrap()).unwrap();
+            body.send(Bytes::from_static(input.as_bytes())).unwrap();
+            let response = reply.await.unwrap();
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+            let bytes = to_bytes(response.into_body(), 4096).await.unwrap();
+            let error: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(error["error"]["code"], code, "{input}");
+            assert_eq!(error["id"], serde_json::Value::Null);
+        }
+        drop(queue);
+        task.await.unwrap().unwrap();
     }
 
     #[tokio::test]
