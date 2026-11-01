@@ -169,6 +169,41 @@ zstd -dc .devnet/replay/devnet/YYYY/MM/DD/HH/MM.jsonl.zst | head -n 1
 just devnet down
 ```
 
+### Run the replay end-to-end test
+
+The replay test records a disposable devnet, prepares a shadow builder at
+canonical state `N=0`, and replays blocks `1..M` through `base replay run`:
+
+```bash
+just replay e2e
+```
+
+Run from the repository root with Docker Compose, Buildx, Just, Foundry `cast`,
+`jq` and `curl` installed. The command rebuilds the devnet and builder images
+from your checkout under task-specific tags. It generates a Compose configuration
+with project-scoped container names, a separate subnet and store, and randomly
+assigned loopback RPC ports. An existing devnet can keep running. The guard
+refuses only a collision with the test's own project.
+
+The scenario disables Denim to preserve the whole-second block timestamps that
+the replay driver requires. It sends funded transfers through `base-client` for
+120 seconds, stops the recorder to flush its last minute, and exports blocks
+`1..M`. The export must contain at least one record.
+
+A fresh standalone builder uses the generated execution genesis and an empty
+database. This prepares exactly state `N=0` without copying a live database or
+depending on stage-unwind behavior. Only the replay CLI drives its Engine API;
+the shadow exposes no host ports and reuses the generated devnet Engine JWT.
+Its replay clock starts at the export's
+suggested epoch. The container records its system launch time immediately before
+the builder starts, which approximates rather than measures clock installation.
+
+Success checks `diff.json` for schema `replay-diff/v1`, parent `0`, and every
+block `1..M`, then checks that `diff.md` is nonempty and prints it. It does not
+impose a fidelity threshold. Artifacts remain under `.devnet/replay-e2e.*/`,
+including the export and reports. Failure saves container logs there. Exit and
+signal traps remove the test's containers and network without deleting artifacts.
+
 ### Single-Anvil L1 local Nitro proving
 
 The optional single-Anvil variant replaces the Reth execution node and both
