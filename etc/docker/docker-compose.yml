@@ -288,9 +288,6 @@ services:
       - --ws.port=${L2_BUILDER_WS_PORT}
       - --ws.api=eth,web3,net,txpool,debug
       - --ws.origins=*
-      - --authrpc.port=${L2_BUILDER_AUTH_PORT}
-      - --authrpc.addr=0.0.0.0
-      - --authrpc.jwtsecret=/genesis/jwt.hex
       - --port=${L2_BUILDER_P2P_PORT}
       - --discovery.port=${L2_BUILDER_P2P_PORT}
       - --nat=extip:${L2_BUILDER_ADVERTISE_IP}
@@ -493,9 +490,6 @@ services:
       - --ws.port=${L2_CLIENT_WS_PORT}
       - --ws.api=eth,web3,net,txpool,debug
       - --ws.origins=*
-      - --authrpc.port=${L2_CLIENT_AUTH_PORT}
-      - --authrpc.addr=0.0.0.0
-      - --authrpc.jwtsecret=/genesis/jwt.hex
       - --port=${L2_CLIENT_P2P_PORT}
       - --discovery.port=${L2_CLIENT_P2P_PORT}
       - --nat=extip:${L2_CLIENT_ADVERTISE_IP}
@@ -607,9 +601,6 @@ services:
       - --ws.port=${L2_BASE_RPC_WS_PORT}
       - --ws.api=eth,web3,net,txpool,debug
       - --ws.origins=*
-      - --authrpc.port=${L2_BASE_RPC_AUTH_PORT}
-      - --authrpc.addr=0.0.0.0
-      - --authrpc.jwtsecret=/genesis/jwt.hex
       - --port=${L2_BASE_RPC_P2P_PORT}
       - --discovery.port=${L2_BASE_RPC_P2P_PORT}
       - --nat=extip:${L2_BASE_RPC_ADVERTISE_IP}
@@ -709,9 +700,6 @@ services:
       - --ws.port=${L2_SHADOW_WS_PORT}
       - --ws.api=eth,web3,net,txpool,debug
       - --ws.origins=*
-      - --authrpc.port=${L2_SHADOW_AUTH_PORT}
-      - --authrpc.addr=0.0.0.0
-      - --authrpc.jwtsecret=/genesis/jwt.hex
       - --port=${L2_SHADOW_P2P_PORT}
       - --discovery.port=${L2_SHADOW_P2P_PORT}
       - --nat=extip:${L2_SHADOW_ADVERTISE_IP}
