@@ -18,13 +18,11 @@ use tokio::process::Command;
 async fn writes_reports_when_cli_attaches_to_real_builder() -> eyre::Result<()> {
     let canonical = LocalInstance::flashblocks().await?;
     let source = canonical.driver().await?;
-    let transactions = [
-        source.create_transaction().with_nonce(0).build().await,
-        source.create_transaction().with_nonce(1).build().await,
-    ];
-    let first =
-        source.build_new_block_with_txs(vec![transactions[0].encoded_2718().into()]).await?;
-    let last = source.build_new_block_with_txs(vec![transactions[1].encoded_2718().into()]).await?;
+    let first_tx = source.create_transaction().build().await;
+    let first = source.build_new_block_with_txs(vec![first_tx.encoded_2718().into()]).await?;
+    let last_tx = source.create_transaction().build().await;
+    let last = source.build_new_block_with_txs(vec![last_tx.encoded_2718().into()]).await?;
+    let transactions = [first_tx, last_tx];
     let from = first.header.timestamp * 1000;
     let epoch = from - 8_000 - ReplayDataset::CLOCK_MARGIN_MS;
     let started = SystemClock.now_unix_millis()?;
