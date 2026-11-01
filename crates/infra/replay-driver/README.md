@@ -32,7 +32,9 @@ Mempool ingress is reserved. Infra permits the execution dependency utilities fo
 
 `BlockDiff::compare` compares inclusion, ordering (including deposits), gas and fees.
 `CanonicalBlock::from_block` computes tips from complete RPC receipts, otherwise unknown.
-`DiffReport::new(N, diffs)` requires N+1..M, excluding warmup N+1 from all totals.
+`DiffReport::new(N, diffs)` requires N+1..M, excluding warmup N+1 and missed
+deadlines from all scoring totals. `missed_deadline_blocks` counts missed builds
+across the entire run, including warmup.
 Serialize with serde (`replay-diff/v1`) or render `markdown()`; no fidelity threshold.
 `missing` includes `recording_gap`; `builder_missing` subtracts those gaps and is
 unknown (`null` in JSON) when recording coverage is unknown. Optional aggregate
@@ -61,8 +63,13 @@ as covered. Comparison blocks and receipts are prefetched before the timed loop;
 size exports for their memory as well as recorded calls. Each build waits until
 its parent timestamp or two seconds before its target, whichever is later.
 Each attributes-bearing FCU attempt checks the build deadline against `GlobalClock`,
-including retries after SYNCING/ACCEPTED. Expiry returns `ShadowError::MissedDeadline`;
-no report is emitted for an incomplete run. Scheduled waits follow recorded
+including retries after SYNCING/ACCEPTED. On `ShadowError::MissedDeadline`, the
+runner imports canonical K with newPayload and FCU without attributes, records
+`missed_deadline: true`, and continues. No late build is started or scored.
+Missed rows contain zero placeholder totals, not measured fidelity, and are
+excluded from all aggregate measurements. Markdown labels those rows unscored.
+There is no consecutive-miss abort; engine and ingress failures still terminate.
+Scheduled waits follow recorded
 deadlines within the validated export horizon, independently of delivery timeout.
 
 After each canonical import, the runner restores candidate-only transactions through
@@ -74,7 +81,7 @@ Known pool rejections for a nonce below state, an already-known transaction, or 
 underpriced replacement are skipped with a warning containing the block, hash, and
 RPC error. Both ingress APIs reuse generic error codes, so classification also
 checks the known message format. Unexpected rejections, missing recorded ingress,
-and timeouts terminate the run. The `replay-diff/v1` report schema is unchanged. Restoration
+and timeouts terminate the run. New deadline fields are additive in `replay-diff/v1`. Restoration
 requires `tx_hash` on candidate-only records. Restoration time consumes the next
 build's budget; the next attributes-bearing FCU still checks its original deadline.
 
