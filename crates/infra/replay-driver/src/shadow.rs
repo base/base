@@ -1,6 +1,6 @@
 use std::{
     future::Future,
-    time::{Duration, Instant, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use alloy_consensus::Block;
@@ -34,17 +34,22 @@ pub struct ShadowDriver {
     pub timeout: Duration,
     /// Build scheduling policy shared with the builder's replay clock.
     pub wait: BuildWait,
+    /// Optional replay-clock deadline checked before each attributes-bearing FCU attempt.
+    pub build_deadline: Option<SystemTime>,
 }
 
 impl Default for ShadowDriver {
     fn default() -> Self {
-        Self { timeout: Duration::from_secs(15), wait: BuildWait::default() }
+        Self { timeout: Duration::from_secs(15), wait: BuildWait::default(), build_deadline: None }
     }
 }
 
 /// Terminal replay failure; transient ACCEPTED/SYNCING statuses are retried until timeout.
 #[derive(Debug, thiserror::Error)]
 pub enum ShadowError {
+    /// The build budget expired before an attributes-bearing FCU attempt.
+    #[error("builder deadline missed for block {0}")]
+    MissedDeadline(u64),
     /// RPC or retry phase exceeded its configured bound.
     #[error("shadow phase timed out: {0}")]
     Timeout(&'static str),
@@ -101,8 +106,11 @@ impl ShadowDriver {
             finalized_block_hash: block.header.parent_hash,
         };
         let start = Instant::now();
-        let fcu =
-            self.valid(block.header.number, || forkchoice(parent, Some(attrs.clone()))).await?;
+        let fcu = self
+            .valid(block.header.number, self.build_deadline, || {
+                forkchoice(parent, Some(attrs.clone()))
+            })
+            .await?;
         let id = fcu.payload_id.ok_or(ShadowError::MissingPayloadId)?;
         let wait = match self.wait {
             BuildWait::UntilTimestamp => Duration::from_secs(timestamp)
@@ -137,7 +145,7 @@ impl ShadowDriver {
         drop(payload);
         let (canonical, _) = BaseExecutionPayload::from_block_slow(block);
         let beacon_root = block.header.parent_beacon_block_root.unwrap_or_default();
-        self.valid(block.header.number, || async {
+        self.valid(block.header.number, None, || async {
             let status = match canonical.clone() {
                 BaseExecutionPayload::V1(payload) => {
                     engine
@@ -160,7 +168,7 @@ impl ShadowDriver {
             Ok(ForkchoiceUpdated { payload_status: status, payload_id: None })
         })
         .await?;
-        self.valid(block.header.number, || {
+        self.valid(block.header.number, None, || {
             forkchoice(ForkchoiceState { head_block_hash: block.hash_slow(), ..parent }, None)
         })
         .await?;
@@ -171,6 +179,7 @@ impl ShadowDriver {
     pub async fn valid<F, Fut>(
         &self,
         block_number: u64,
+        deadline: Option<SystemTime>,
         call: F,
     ) -> Result<ForkchoiceUpdated, ShadowError>
     where
@@ -181,6 +190,9 @@ impl ShadowDriver {
             let mut retry = tokio::time::interval(Duration::from_millis(50));
             loop {
                 retry.tick().await;
+                if deadline.is_some_and(|deadline| GlobalClock::get().now() >= deadline) {
+                    return Err(ShadowError::MissedDeadline(block_number));
+                }
                 let response = call().await?;
                 match response.payload_status.status {
                     PayloadStatusEnum::Valid => return Ok(response),
@@ -215,7 +227,7 @@ mod tests {
     async fn retries_when_engine_syncs_or_accepts() {
         let attempt = Cell::new(0);
         let result = ShadowDriver::default()
-            .valid(1, || {
+            .valid(1, None, || {
                 let status = [
                     PayloadStatusEnum::Syncing,
                     PayloadStatusEnum::Accepted,
@@ -237,7 +249,7 @@ mod tests {
     #[tokio::test]
     async fn times_out_when_engine_never_responds() {
         let driver = ShadowDriver { timeout: Duration::from_millis(1), ..Default::default() };
-        let result = driver.valid(1, pending).await;
+        let result = driver.valid(1, None, pending).await;
         assert!(matches!(result, Err(ShadowError::Timeout(_))));
     }
 }

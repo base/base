@@ -1,4 +1,7 @@
-use std::{collections::HashSet, time::Duration};
+use std::{
+    collections::HashSet,
+    time::{Duration, UNIX_EPOCH},
+};
 
 use alloy_consensus::Block;
 use alloy_provider::Provider;
@@ -124,11 +127,11 @@ where
                     GlobalClock::get().now(),
                 )?)
                 .await;
-                ensure!(
-                    InjectionSchedule::delay(deadline, GlobalClock::get().now())? > Duration::ZERO,
-                    "builder deadline missed for block {number}"
-                );
-                let candidate = self.driver.replay_block(&self.engine, &block, self.chain).await?;
+                let driver = ShadowDriver {
+                    build_deadline: Some(UNIX_EPOCH + Duration::from_millis(deadline)),
+                    ..self.driver
+                };
+                let candidate = driver.replay_block(&self.engine, &block, self.chain).await?;
                 diffs.push(BlockDiff::compare(&candidate, &baseline, recorded.as_ref())?);
                 parent_hash = block.hash_slow();
                 parent_timestamp = block.header.timestamp;
