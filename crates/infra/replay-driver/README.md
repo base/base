@@ -64,3 +64,34 @@ Each attributes-bearing FCU attempt checks the build deadline against `GlobalClo
 including retries after SYNCING/ACCEPTED. Expiry returns `ShadowError::MissedDeadline`;
 no report is emitted for an incomplete run. Scheduled waits follow recorded
 deadlines within the validated export horizon, independently of delivery timeout.
+
+## Attach CLI
+
+Use only trusted exports against a disposable builder, never a production builder.
+Captured methods and parameters are resent verbatim. Initialize the builder at
+the canonical parent of `from_block`, with the same fork schedule as `--chain`.
+Start no other engine driver or transaction source on that builder.
+
+```text
+base replay run --export ./export --print-clock-start
+# Start the builder with the printed --replay.clock-start-ms value.
+base replay run --export ./export --chain mainnet \
+  --l2-rpc http://localhost:8545 --builder-engine http://localhost:8551 \
+  --builder.jwt-secret ./builder.jwt --builder-rpc http://localhost:9545 \
+  --builder-started-at-ms <system-unix-ms-at-builder-clock-install> --out ./diff
+```
+
+The suggested epoch is `start_ms - 30000`, saturating at zero. Preserve that epoch
+and the system Unix milliseconds when the builder installed its clock. Attach adds
+elapsed system milliseconds to that epoch before installing the runner's clock.
+`--clock-start-ms` overrides the epoch if the builder used a different value.
+The runner and builder need synchronized system clocks. Alignment error equals
+error in the supplied install instant plus host clock skew; a shell launch time
+is only an approximation. Attach cannot inspect or verify the builder's clock.
+Restart both if alignment is unknown or startup consumes the replay window.
+
+`diff.json` uses `replay-diff/v1`; `diff.md` contains the same report as Markdown.
+Existing output directories are rejected. Failure can leave an empty directory or
+partial report files; success prints the output directory after both writes.
+Ctrl+C drops the joined replay futures. Resume only from a known canonical head.
+Builder spawning and automatic clock synchronization are follow-up work.

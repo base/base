@@ -6,6 +6,9 @@ pub use dataset::ReplayDataset;
 mod run;
 pub use run::ReplayRunner;
 
+mod command;
+pub use command::RunCommand;
+
 mod attributes;
 pub use attributes::CanonicalAttributes;
 
