@@ -2839,11 +2839,15 @@ mod tests {
         let limit = body_size - 1;
         let validator = build_test_validator_with_max_tx_input_bytes(limit);
 
-        assert!(matches!(
-            validator.validate_eip8130_structural(&signed),
-            Err(InvalidPoolTransactionError::OversizedData { size: rejected_size, limit: rejected_limit }
-                ) if rejected_size == size && rejected_limit == limit
-        ));
+        let error = validator.validate_eip8130_structural(&signed).unwrap_err();
+        assert!(
+            matches!(
+                error,
+                InvalidPoolTransactionError::OversizedData { size: rejected_size, limit: rejected_limit }
+                    if rejected_size == size && rejected_limit == limit
+            ),
+            "{error:?}"
+        );
     }
 
     #[test]

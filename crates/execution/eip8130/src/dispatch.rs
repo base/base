@@ -174,10 +174,11 @@ impl AuthenticatorDispatch {
         // payload gas. A non-canonical re-encoding (trailing padding or
         // non-minimal dynamic offsets) decodes to the same value and still passes
         // the P-256 check, but inflates sender-intrinsic gas, letting a relayer
-        // shrink the execution-gas budget without the key. Requiring the input to equal its canonical ABI
-        // re-encoding makes any such mutation invalidate the transaction. Honest
-        // producers (Solidity `abi.encode` / `alloy` `abi_encode_params`) always
-        // emit this canonical form, so this rejects only malleated blobs.
+        // shrink the execution-gas budget without the key. Requiring the input to
+        // equal its canonical ABI re-encoding makes any such mutation invalidate
+        // the transaction. Honest producers (Solidity `abi.encode` / `alloy`
+        // `abi_encode_params`) always emit this canonical form, so this rejects
+        // only malleated blobs.
         if decoded.abi_encode_params() != data {
             return Err(AuthError::MalformedAuth);
         }
