@@ -22,8 +22,8 @@ use base_common_genesis::DaFootprintGasScalarUpdate;
 use base_common_precompiles::NonceManagerStorage;
 use base_execution_eip8130::{
     AccountConfigurationStorage, AccountState, ApplyError, AuthorizeError, FeeCheck, IntrinsicGas,
-    IntrinsicGasError, LockStatus, NonceError, NonceMode, NonceValidator, TransactionAuthorizer,
-    TxAuthError,
+    IntrinsicGasError, LockStatus, NonceError, NonceMode, NonceValidator, ResolvedSender,
+    TransactionAuthorizer, TxAuthError,
 };
 use base_precompile_storage::{
     BasePrecompileError, PrecompileStorageProvider, StorageCtx, validate_loaded_code_presence,
@@ -1121,16 +1121,18 @@ where
         ));
         let auth_start = Instant::now();
         let auth_result = StorageCtx::enter(&mut storage, |ctx| {
+            let resolved_sender = ResolvedSender::resolve(signed)?;
             let applied = if keystore {
                 let mut account_config = AccountConfigurationStorage::new(ctx);
                 TransactionAuthorizer::authorize_and_apply(
                     signed,
+                    resolved_sender,
                     &mut account_config,
                     local_chain_id,
                     now,
                 )?
             } else {
-                TransactionAuthorizer::authorize_without_keystore(signed)?
+                TransactionAuthorizer::authorize_without_keystore(signed, resolved_sender)?
             };
             if let Some(delegation) = applied.applied.delegation {
                 delegation.install(ctx).map_err(TxAuthError::from)?;
