@@ -209,6 +209,9 @@ pub struct DevnetSnapshotConfig {
     /// Opt-in state sharing for the snapshot's native payload builder.
     #[serde(default)]
     pub builder_engine: BuilderEngineSharingConfig,
+    /// Persistence policy applied equally to snapshot builder and follower.
+    #[serde(default)]
+    pub persistence: crate::SnapshotPersistenceConfig,
     /// How the snapshot's native payload builder tracks validity transactions whose predicates
     /// did not match. `Off` (the default) evaluates every candidate on every flashblock.
     #[serde(default)]
@@ -391,6 +394,7 @@ impl DevnetConfig {
                 block_gas_limit: None,
                 eip1559_elasticity_override: None,
                 builder_engine: BuilderEngineSharingConfig::default(),
+                persistence: crate::SnapshotPersistenceConfig::default(),
                 resting_predicate_mode: RestingPredicateMode::Off,
             })),
             stable: StableSystemTestConfig::standard(),

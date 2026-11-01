@@ -530,6 +530,53 @@ mod tests {
 
     use super::InProcessBuilder;
 
+    /// The real builder node configuration receives suppression and persistence overrides.
+    #[test]
+    fn builder_engine_receives_persistence_options() {
+        let datadir = TempDir::new().unwrap();
+        let mut config = super::InProcessBuilderConfig {
+            runtime: super::InProcessNodeRuntime::Host,
+            engine_sharing: crate::BuilderEngineSharingConfig {
+                suppress_persistence_during_build: true,
+                ..Default::default()
+            },
+            chain_spec: std::sync::Arc::new(super::BaseChainSpec::mainnet()),
+            datadir: None,
+            jwt_secret: alloy_rpc_types_engine::JwtSecret::random(),
+            http_port: None, ws_port: None, auth_port: None, p2p_port: None,
+            flashblocks_port: None, metrics_port: None,
+            payload_builder_cutover: false,
+            validity_signature_mode: super::ValiditySignatureMode::Off,
+            resting_predicate_mode: Default::default(),
+            extra_extensions: Vec::new(),
+            block_time: std::time::Duration::from_millis(200),
+            persistence_threshold: Some(37),
+            persistence_backpressure_threshold: None,
+            txpool_max_transactions: None, txpool_max_size_mb: None,
+            txpool_max_account_slots: None,
+        };
+        let node = super::create_node_config(
+            std::sync::Arc::clone(&config.chain_spec), datadir.path(),
+            &datadir.path().join("jwt"), &config,
+        ).unwrap();
+        assert!(node.engine.suppress_persistence_during_build, "builder configuration must apply suppression");
+        assert_eq!(node.engine.persistence_threshold, 37, "builder configuration must apply threshold");
+        assert_eq!(node.engine.persistence_backpressure_threshold(), 74, "reth derives backpressure from threshold");
+        assert!(node.engine.tree_config().suppress_persistence_during_build(),
+            "suppression must reach the engine tree");
+        config.persistence_threshold = crate::SnapshotPersistenceConfig {
+            use_reth_persistence_defaults: true,
+        }.threshold();
+        let production = super::create_node_config(
+            std::sync::Arc::clone(&config.chain_spec), datadir.path(),
+            &datadir.path().join("jwt"), &config,
+        ).unwrap();
+        assert_eq!(production.engine.persistence_threshold, 50, "builder retains upstream threshold");
+        assert_eq!(production.engine.memory_block_buffer_target(), 5, "builder retains upstream buffer");
+        assert_eq!(production.engine.persistence_backpressure_threshold(), 100, "builder retains upstream backpressure");
+        assert_eq!(production.engine.num_state_masking_blocks(), 30, "builder retains upstream masking");
+    }
+
     #[test]
     fn retains_caller_owned_datadir() {
         let parent = TempDir::new().unwrap();

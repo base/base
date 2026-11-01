@@ -100,6 +100,7 @@ pub use l2::{
     InProcessStandaloneSequencerConfig, L2ClientConsensus, L2ClientConsensusMode,
     L2ContainerConfig, L2Stack, L2StackConfig, ShadowSequencer, ShadowSequencerConfig,
     ShadowSequencersConfig, SnapshotBoundary, SnapshotL2Stack, SnapshotL2StackConfig,
+    SnapshotPersistenceConfig,
     TestNodeRuntime,
 };
 
@@ -113,7 +114,9 @@ mod prover_service;
 pub use prover_service::InProcessProverService;
 
 mod prometheus_metrics;
-pub use prometheus_metrics::{PrometheusBlockCollector, PrometheusSnapshot};
+pub use prometheus_metrics::{
+    PrometheusBlockCollector, PrometheusSnapshot, WINDOW_GAUGE, WINDOW_HISTOGRAMS,
+};
 
 mod rpc;
 pub use rpc::{SystemTestProviderExt, SystemTestRpcClient};
