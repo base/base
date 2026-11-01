@@ -67,19 +67,9 @@ impl<'a> TxContextStorage<'a> {
     pub fn sender_actor_id(&self) -> Result<B256> {
         let raw = self.storage.tload_unmetered(Self::ADDRESS, Self::SENDER_ACTOR_ID_SLOT)?;
         if raw.is_zero() {
-            return Ok(Self::address_to_actor_id(self.storage.origin()));
+            return Ok(self.storage.origin().into_word());
         }
         Ok(B256::from(raw.to_be_bytes::<32>()))
-    }
-
-    /// Derives the EOA actor id for `addr` as `bytes32(uint256(uint160(addr)))`:
-    /// the 20 address bytes occupy the low-order bytes of the word, high 12 bytes
-    /// zero (right-aligned, matching the finalized `Keystore.ActorId.fromAddress`
-    /// — the same word produced by [`Address::into_word`]).
-    fn address_to_actor_id(addr: Address) -> B256 {
-        let mut word = [0u8; 32];
-        word[12..].copy_from_slice(addr.as_slice());
-        B256::from(word)
     }
 
     /// Writes the resolved transaction context into transient storage.
