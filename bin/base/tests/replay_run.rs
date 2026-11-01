@@ -2,9 +2,12 @@
 
 use std::time::{Duration, UNIX_EPOCH};
 
+use alloy_eips::Encodable2718;
+use alloy_primitives::Bytes;
 use alloy_provider::Provider;
 use base_builder_core::test_utils::LocalInstance;
 use base_clock::{Clock, GlobalClock, OffsetClock, SystemClock};
+use base_replay::{REPLAY_RECORD_FORMAT, ReplayRecord};
 use base_replay_driver::ReplayDataset;
 use base_replay_export::{ExportManifest, ExportWindow};
 use jsonrpsee::{RpcModule, server::Server, types::ErrorObjectOwned};
@@ -15,8 +18,13 @@ use tokio::process::Command;
 async fn writes_reports_when_cli_attaches_to_real_builder() -> eyre::Result<()> {
     let canonical = LocalInstance::flashblocks().await?;
     let source = canonical.driver().await?;
-    let first = source.build_new_block_with_no_tx_pool().await?;
-    let last = source.build_new_block_with_no_tx_pool().await?;
+    let transactions = [
+        source.create_transaction().with_nonce(0).build().await,
+        source.create_transaction().with_nonce(1).build().await,
+    ];
+    let first =
+        source.build_new_block_with_txs(vec![transactions[0].encoded_2718().into()]).await?;
+    let last = source.build_new_block_with_txs(vec![transactions[1].encoded_2718().into()]).await?;
     let from = first.header.timestamp * 1000;
     let epoch = from - 8_000 - ReplayDataset::CLOCK_MARGIN_MS;
     let started = SystemClock.now_unix_millis()?;
@@ -49,9 +57,9 @@ async fn writes_reports_when_cli_attaches_to_real_builder() -> eyre::Result<()> 
     tokio::fs::create_dir(&export).await?;
     let manifest = ExportManifest {
         format: "replay-export/v1".into(),
-        record_format: "replay-record/v1".into(),
+        record_format: REPLAY_RECORD_FORMAT.into(),
         network: "test".into(),
-        record_count: 0,
+        record_count: 2,
         window: ExportWindow {
             chain_id: 901,
             from_block: 1,
@@ -64,7 +72,22 @@ async fn writes_reports_when_cli_attaches_to_real_builder() -> eyre::Result<()> 
         },
     };
     tokio::fs::write(export.join("manifest.json"), serde_json::to_vec(&manifest)?).await?;
-    tokio::fs::write(export.join("records.jsonl"), "").await?;
+    let mut lines = String::new();
+    for (index, tx) in transactions.iter().enumerate() {
+        let record: ReplayRecord = serde_json::from_str(
+            &serde_json::json!({
+                "stream": "builder_ingress",
+                "received_at_ms": if index == 0 { from - 2000 } else { from + 100 },
+                "method": "eth_sendRawTransaction",
+                "params": [Bytes::from(tx.encoded_2718())],
+                "source": "test",
+                "tx_hash": tx.tx_hash(),
+            })
+            .to_string(),
+        )?;
+        lines.push_str(&record.to_jsonl_line()?);
+    }
+    tokio::fs::write(export.join("records.jsonl"), lines).await?;
     let chain = dir.path().join("genesis.json");
     tokio::fs::write(&chain, serde_json::to_vec(&shadow.node_config().chain.inner.genesis)?)
         .await?;
@@ -108,9 +131,10 @@ async fn writes_reports_when_cli_attaches_to_real_builder() -> eyre::Result<()> 
     assert_eq!(report["schema"], "replay-diff/v1");
     assert_eq!(report["blocks"].as_array().unwrap().len(), 2);
     assert_eq!(report["blocks"][0]["warmup"], true);
+    assert_eq!(report["blocks"][0]["totals"]["missing"], 0);
     assert_eq!(report["aggregate"]["missing"], 0);
     assert_eq!(report["aggregate"]["extra"], 0);
-    assert_eq!(report["aggregate"]["common"], 1);
+    assert_eq!(report["aggregate"]["common"], 2);
     let markdown = tokio::fs::read_to_string(out.join("diff.md")).await?;
     println!("CLI stdout:\n{}\ndiff.md:\n{markdown}", String::from_utf8_lossy(&output.stdout));
     assert_eq!(shadow.driver().await?.latest().await?.header.hash, last.header.hash);

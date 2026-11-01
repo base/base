@@ -2873,6 +2873,8 @@ name = "base"
 version = "0.0.0"
 dependencies = [
  "alloy-chains",
+ "alloy-eips 2.5.0",
+ "alloy-primitives",
  "alloy-provider",
  "alloy-rpc-types-engine",
  "axum 0.8.9",
@@ -2894,6 +2896,7 @@ dependencies = [
  "base-execution-evm",
  "base-node-core",
  "base-node-runner",
+ "base-replay",
  "base-replay-driver",
  "base-replay-export",
  "base-reth-cli",
