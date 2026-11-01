@@ -2899,6 +2899,7 @@ dependencies = [
  "base-replay",
  "base-replay-driver",
  "base-replay-export",
+ "base-replay-recorder",
  "base-reth-cli",
  "base-shadow-indexer",
  "base-txpool-rpc",
@@ -6234,6 +6235,32 @@ dependencies = [
  "thiserror 2.0.19",
  "tokio",
  "url",
+]
+
+[[package]]
+name = "base-replay-recorder"
+version = "0.0.0"
+dependencies = [
+ "alloy-primitives",
+ "aws-config",
+ "axum 0.8.9",
+ "base-clock",
+ "base-replay",
+ "base-replay-driver",
+ "base-replay-store",
+ "clap",
+ "futures",
+ "hyper 1.11.0",
+ "hyper-util",
+ "jsonrpsee-types",
+ "reqwest 0.13.4",
+ "reth-tasks",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tokio-util",
+ "tracing",
 ]
 
 [[package]]
