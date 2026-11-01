@@ -1,11 +1,12 @@
 use std::{sync::Arc, time::Duration};
 
+use alloy_primitives::TxHash;
 use base_replay::{ReplayRecord, ReplayStream};
 use base_tx_forwarding::{
     ForwardRequest, ForwardingSetupError, TxForwardingConfig, TxForwardingService,
 };
 use eyre::{Result, ensure};
-use jsonrpsee::core::ClientError;
+use jsonrpsee::{core::ClientError, types::error::INTERNAL_ERROR_CODE};
 use reth_tasks::TaskExecutor;
 use tokio::{sync::mpsc, task::AbortHandle};
 use tokio_util::sync::CancellationToken;
@@ -50,6 +51,35 @@ pub struct BuilderIngressInjector {
 }
 
 impl BuilderIngressInjector {
+    /// Recognizes only known pool obsolescence errors during restoration, not initial delivery.
+    pub fn is_obsolete(error: &eyre::Report, hash: TxHash) -> bool {
+        let Some(error) = error.downcast_ref::<Arc<ClientError>>() else { return false };
+        let ClientError::Call(error) = error.as_ref() else { return false };
+        let reason = match error.code() {
+            INTERNAL_ERROR_CODE => {
+                error.message().strip_prefix(&format!("pool rejected transaction: [{hash}]: "))
+            }
+            -32000 => Some(error.message()),
+            _ => None,
+        };
+        let Some(reason) = reason else { return false };
+        if matches!(
+            reason,
+            "already imported"
+                | "already known"
+                | "insufficient gas price to replace existing transaction"
+                | "replacement transaction underpriced"
+        ) {
+            return true;
+        }
+        reason
+            .strip_prefix("transaction nonce is not consistent: next nonce ")
+            .or_else(|| reason.strip_prefix("nonce too low: next nonce "))
+            .and_then(|nonces| nonces.split_once(", tx nonce "))
+            .and_then(|(state, tx)| state.parse::<u64>().ok().zip(tx.parse::<u64>().ok()))
+            .is_some_and(|(state, tx)| tx < state)
+    }
+
     /// Starts a bounded, unthrottled single-call queue; returns endpoint setup errors.
     pub fn new(url: Url, executor: &TaskExecutor) -> Result<Self, ForwardingSetupError> {
         let (sender, receiver) = mpsc::channel(1);
@@ -90,5 +120,45 @@ impl Drop for BuilderIngressInjector {
         for task in &self.aborts {
             task.abort();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use jsonrpsee::types::ErrorObjectOwned;
+
+    use super::*;
+
+    #[test]
+    fn skips_only_recognized_pool_obsolescence_during_restoration() {
+        let hash = TxHash::ZERO;
+        let pool_code = INTERNAL_ERROR_CODE;
+        for (code, reason, expected) in [
+            (pool_code, "already imported", true),
+            (pool_code, "insufficient gas price to replace existing transaction", true),
+            (pool_code, "transaction nonce is not consistent: next nonce 3, tx nonce 2", true),
+            (pool_code, "transaction nonce is not consistent: next nonce 2, tx nonce 3", false),
+            (pool_code, "transaction nonce is not consistent: next nonce x, tx nonce 2", false),
+            (pool_code, "insufficient funds", false),
+            (-32000, "already known", true),
+            (-32000, "replacement transaction underpriced", true),
+            (-32000, "nonce too low: next nonce 3, tx nonce 2", true),
+            (-32000, "transaction underpriced", false),
+            (-32602, "already known", false),
+        ] {
+            let message = if code == INTERNAL_ERROR_CODE {
+                format!("pool rejected transaction: [{hash}]: {reason}")
+            } else {
+                reason.into()
+            };
+            let error = eyre::Report::new(Arc::new(ClientError::Call(ErrorObjectOwned::owned(
+                code, message, None::<()>,
+            ))));
+            assert_eq!(BuilderIngressInjector::is_obsolete(&error, hash), expected, "{reason}");
+        }
+        assert!(!BuilderIngressInjector::is_obsolete(
+            &eyre::Report::new(Arc::new(ClientError::RequestTimeout)),
+            hash
+        ));
     }
 }
