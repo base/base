@@ -10,9 +10,7 @@
 use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_sol_types::SolValue;
 use base_common_consensus::{Eip8130Constants, Eip8130Signed, TxEip8130};
-use base_execution_eip8130::{
-    AccountChangeApplier, Eip8130GasSchedule, IntrinsicGas, IntrinsicGasInput,
-};
+use base_execution_eip8130::{AccountChangeApplier, Eip8130GasSchedule, IntrinsicGas};
 use revm::{context_interface::cfg::gas::get_tokens_in_calldata_istanbul, interpreter::gas};
 
 alloy_sol_types::sol! {
@@ -63,19 +61,6 @@ fn gas_primitives_match_evm_reference() {
         Eip8130GasSchedule::COLD_SLOT_NOOP_COST,
         gas::COLD_SLOAD_COST + gas::WARM_STORAGE_READ_COST
     );
-    // A subsequent same-account state bump is a warm SLOAD + a dirty SSTORE (the
-    // slot was already modified earlier in this transaction).
-    assert_eq!(
-        Eip8130GasSchedule::CONFIG_CHANGE_STATE_COST_SUBSEQUENT,
-        gas::WARM_STORAGE_READ_COST + gas::WARM_STORAGE_READ_COST
-    );
-    // An empty revoke slot is priced down from a reset to a cold zero-to-zero
-    // touch; the per-slot discount is the difference.
-    assert_eq!(
-        Eip8130GasSchedule::COLD_SLOT_RESET_DISCOUNT,
-        (gas::COLD_SLOAD_COST + gas::WARM_SSTORE_RESET)
-            - (gas::COLD_SLOAD_COST + gas::WARM_STORAGE_READ_COST)
-    );
     // Nonce-free ring-buffer cost: 2 cold SLOADs + 1 warm SLOAD + 3 warm SSTORE
     // resets = 13,000 gas.
     assert_eq!(
@@ -104,9 +89,7 @@ fn payload_token_count_matches_evm_reference() {
     payer_auth.extend([0xabu8; 65]);
     let signed = Eip8130Signed::new(tx, Bytes::from(vec![0xcdu8; 65]), Bytes::from(payer_auth));
 
-    let gas =
-        IntrinsicGas::compute(&signed, &IntrinsicGasInput::new(Address::repeat_byte(0x11), false))
-            .expect("intrinsic gas");
+    let gas = IntrinsicGas::compute(&signed, Address::repeat_byte(0x11)).expect("intrinsic gas");
     let mut metered = Vec::new();
     signed.tx().encode_metered_payload(&mut metered);
     let tokens = get_tokens_in_calldata_istanbul(&metered);
