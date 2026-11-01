@@ -61,7 +61,7 @@ use base_common_precompiles::{NonceManagerStorage, TxContextStorage};
 use base_execution_eip8130::{
     AccountChangeApplier, AccountConfigurationStorage, ApplyError, DelegationEffect,
     Eip8130GasSchedule, FeeCheck, FeeError, IntrinsicGas, NonceMode, NonceValidator,
-    TransactionAuthorizer,
+    ResolvedSender, TransactionAuthorizer,
 };
 use base_precompile_storage::{JournalStorageProvider, StorageCtx};
 use revm::{
@@ -990,9 +990,9 @@ impl Eip8130Executor {
         Ok((policy_gated, policy_target))
     }
 
-    /// Runs the storage-backed pre-call pipeline (authorize, nonce, intrinsic
-    /// gas, fee-cap check, account-change apply) over a gas-free
-    /// journal view and publishes the transaction context, returning the resolved
+    /// Runs the storage-backed pre-call pipeline (nonce check, authorize and
+    /// apply account changes, nonce advance, intrinsic gas, fee-cap check) over a
+    /// gas-free journal view and publishes the transaction context, returning the resolved
     /// [`Eip8130Outcome`]. Storage writes land on the journal directly; the
     /// caller discards the transaction on error.
     fn authorize_and_apply<DB>(
@@ -1055,29 +1055,53 @@ impl Eip8130Executor {
         let mut provider = JournalStorageProvider::new(internals, Address::ZERO);
 
         let outcome = StorageCtx::enter(&mut provider, |sctx| {
-            // Ordering note: the apply step (1) and code effects (2) write journal
-            // storage *before* the nonce is validated (3). Any `Err` returned from
-            // this closure propagates out of `authorize_and_apply` and the caller
+            // Ordering note: the apply step (2) and code effects (3) write journal
+            // storage before the nonce advances (4). Any `Err` returned from this
+            // closure propagates out of `authorize_and_apply` and the caller
             // discards the transaction, so these earlier writes never persist for a
             // rejected transaction. This mirrors the caller-MUST-discard contract
             // documented on `TransactionAuthorizer::authorize_and_apply`.
-            let mut acc = AccountConfigurationStorage::new(sctx);
 
-            // 1. Authorize and apply the account changes interleaved against the
+            // 1. Validate the nonce against the pre-transaction state, before any
+            //    authentication or account-change work, so a stale transaction
+            //    fails on a single read.
+            let resolved_sender =
+                ResolvedSender::resolve(signed).map_err(BaseTransactionError::eip8130)?;
+            let sender = resolved_sender.account();
+            let protocol_nonce = sctx
+                .with_account_info(sender, |info| Ok(info.nonce))
+                .map_err(BaseTransactionError::eip8130)?;
+            NonceValidator::validate(
+                tx,
+                sender,
+                protocol_nonce,
+                &NonceManagerStorage::new(sctx),
+                NonceMode::Inclusion,
+                now_ms,
+            )
+            .map_err(BaseTransactionError::eip8130)?;
+
+            // 2. Authorize and apply the account changes interleaved against the
             //    evolving state, then authenticate sender/payer against the
             //    resulting post-apply state. `AccountConfiguration` storage
             //    transitions are written here; the deferred account-code effects
-            //    are installed in step 2.
+            //    are installed in step 3.
             //    Before Zenith there is no Keystore: authorization is pure
             //    secp256k1 recovery and never reads `AccountConfiguration`.
+            let mut acc = AccountConfigurationStorage::new(sctx);
             let applied_tx = if keystore {
-                TransactionAuthorizer::authorize_and_apply(signed, &mut acc, chain_id, now)
+                TransactionAuthorizer::authorize_and_apply(
+                    signed,
+                    resolved_sender,
+                    &mut acc,
+                    chain_id,
+                    now,
+                )
             } else {
-                TransactionAuthorizer::authorize_without_keystore(signed)
+                TransactionAuthorizer::authorize_without_keystore(signed, resolved_sender)
             }
             .map_err(BaseTransactionError::eip8130)?;
             let sender_actor = applied_tx.actors.sender.resolved;
-            let sender = applied_tx.actors.sender.account;
             let payer = applied_tx.actors.payer.as_ref().map_or(sender, |p| p.account);
             // Defense-in-depth: `authorize_and_apply` -> `verify_sender` already
             // gates `can_use_nonce_key(nonce_key)` on both the configured and
@@ -1090,7 +1114,7 @@ impl Eip8130Executor {
                 ));
             }
 
-            // 2. Install the deferred account-*code* effects (created-account
+            // 3. Install the deferred account-*code* effects (created-account
             //    bytecode, delegation indicator) the apply step surfaced.
             if let Some(created) = &applied_tx.applied.created {
                 Self::install_created_code(sctx, created.address, &created.code)?;
@@ -1099,53 +1123,25 @@ impl Eip8130Executor {
                 delegation.install(sctx).map_err(BaseTransactionError::eip8130)?;
             }
 
-            // 3. Validate and advance the nonce.
+            // 4. Advance the nonce validated in step 1. It follows the account
+            //    changes so a create entry sees the sender's pre-transaction zero
+            //    nonce. The protocol nonce (key 0) is bumped with the caller.
             let mut nonce_mgr = NonceManagerStorage::new(sctx);
-            let protocol_nonce = sctx
-                .with_account_info(sender, |info| Ok(info.nonce))
-                .map_err(BaseTransactionError::eip8130)?;
-            // The nonce-free replay lookup works in milliseconds (`now_ms`),
-            // matching the validity window and the ring buffer; the
-            // sequence-channel branches ignore this argument.
             let bump_protocol_nonce = if nonce_key == Eip8130Constants::NONCE_KEY_MAX {
-                NonceValidator::validate(
-                    tx,
-                    sender,
-                    protocol_nonce,
-                    &nonce_mgr,
-                    NonceMode::Inclusion,
-                    now_ms,
-                )
-                .map_err(BaseTransactionError::eip8130)?;
-                let replay = tx.replay_id(sender);
                 nonce_mgr
-                    .check_and_mark_expiring_nonce(replay, valid_before, now_ms)
+                    .check_and_mark_expiring_nonce(tx.replay_id(sender), valid_before, now_ms)
                     .map_err(BaseTransactionError::eip8130)?;
                 false
             } else if nonce_key == U256::ZERO {
-                NonceValidator::validate(
-                    tx,
-                    sender,
-                    protocol_nonce,
-                    &nonce_mgr,
-                    NonceMode::Inclusion,
-                    now_ms,
-                )
-                .map_err(BaseTransactionError::eip8130)?;
                 true
             } else {
-                let current_nonce = nonce_mgr
-                    .get_nonce(sender, nonce_key)
-                    .map_err(BaseTransactionError::eip8130)?;
-                NonceValidator::validate_sequence(tx, current_nonce, NonceMode::Inclusion)
-                    .map_err(BaseTransactionError::eip8130)?;
                 nonce_mgr
                     .increment_nonce(sender, nonce_key)
                     .map_err(BaseTransactionError::eip8130)?;
                 false
             };
 
-            // 4. Intrinsic gas under the EIP-8130 schedule.
+            // 5. Intrinsic gas under the EIP-8130 schedule.
             let (intrinsic, execution_gas_available) =
                 Self::resolve_execution_gas(signed, sender, gas_limit)?;
             // EIP-7825: the transaction may consume `gas_limit` plus the payer
@@ -1158,7 +1154,7 @@ impl Eip8130Executor {
                 ));
             }
 
-            // 5. Fee caps and payer balance.
+            // 6. Fee caps and payer balance.
             FeeCheck::validate_fees(max_fee, max_priority, base_fee)
                 .map_err(BaseTransactionError::eip8130)?;
             let payer_balance = sctx
@@ -1177,7 +1173,7 @@ impl Eip8130Executor {
                 error => BaseTransactionError::eip8130(error),
             })?;
 
-            // 6. Publish the transaction context (sender / payer / actor id) so it
+            // 7. Publish the transaction context (sender / payer / actor id) so it
             //    is readable by the `TxContext` precompile during `calls`.
             TxContextStorage::new(sctx)
                 .set_context(sender, payer, sender_actor.actor_id)
@@ -2569,6 +2565,36 @@ mod tests {
             reason.contains("delegation cannot replace non-delegation code"),
             "unexpected delegation rejection: {reason}"
         );
+        assert_eq!(journal_account_code(&mut evm, sender), ordinary_code);
+    }
+
+    /// Inclusion validates the nonce before authorizing or applying account
+    /// changes, so a stale transaction is rejected for its nonce even when an
+    /// account change would also fail.
+    #[test]
+    fn stale_nonce_is_rejected_before_account_changes() {
+        let key = signing_key(0x25);
+        let sender = eoa_address(&key);
+        let ordinary_code = bytes!("60006000");
+        let mut tx = base_tx();
+        tx.sender = Some(sender);
+        tx.account_changes = vec![AccountChange::Delegation(Delegation {
+            target: address!("0x00000000000000000000000000000000000000dd"),
+        })];
+        let signed = configured_signed(tx, &key);
+        let mut evm = evm_with(U256::from(10u64).pow(U256::from(18u64)), sender);
+        seed_account_code(&mut evm, sender, ordinary_code.clone());
+        let db = evm.ctx_mut().journal_mut().db_mut();
+        let mut info = db.basic(sender).expect("account").unwrap_or_default();
+        info.nonce = 1;
+        db.insert_account_info(sender, info);
+
+        let error = evm.transact_raw(into_base_tx(&signed)).unwrap_err();
+
+        let EVMError::Transaction(BaseTransactionError::Eip8130(reason)) = error else {
+            panic!("a stale nonce must reject inclusion, got {error:?}");
+        };
+        assert!(reason.contains("below the channel nonce"), "unexpected rejection: {reason}");
         assert_eq!(journal_account_code(&mut evm, sender), ordinary_code);
     }
 
