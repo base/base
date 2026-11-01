@@ -24,8 +24,8 @@ Metrics: ordered transaction hashes, gas, builder-reported priority-fee revenue
 Flashblock count stays `None`; subscriptions and CLI remain separate.
 
 `InjectionSchedule::warmup(injector, cutoff_ms)` awaits immediate delivery before first
-FCU. `run(injector, cancellation)` orders remaining calls against `GlobalClock`, bounded
-by `timeout`. `BuilderIngressInjector` preserves method/raw params through tx-forwarding:
+FCU. `run(injector, cancellation)` orders remaining calls against `GlobalClock`.
+`timeout` bounds delivery, not silence between recorded calls. `BuilderIngressInjector` preserves method/raw params through tx-forwarding:
 transport failures retry, RPC rejections terminate. Ordered acknowledgements can make
 sends late, never early. Drop aborts transport work; cancelled calls may have arrived.
 Mempool ingress is reserved. Infra permits the execution dependency utilities forbid.
@@ -57,4 +57,10 @@ sequential engine calls. Any failure drops both futures. Canonical reads are
 bounded and parent hashes are checked between blocks. Whole-second, increasing
 block timestamps are required; subsecond-slot orchestration is not supported.
 Recording coverage is unknown if any call lacks `tx_hash`; forced deposits count
-as covered. Clock margin and exported warmup extend the injector's deadline bound.
+as covered. Comparison blocks and receipts are prefetched before the timed loop;
+size exports for their memory as well as recorded calls. Each build waits until
+its parent timestamp or two seconds before its target, whichever is later.
+Each attributes-bearing FCU attempt checks the build deadline against `GlobalClock`,
+including retries after SYNCING/ACCEPTED. Expiry returns `ShadowError::MissedDeadline`;
+no report is emitted for an incomplete run. Scheduled waits follow recorded
+deadlines within the validated export horizon, independently of delivery timeout.
