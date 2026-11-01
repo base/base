@@ -34,11 +34,6 @@ impl Eip8130Constants {
     /// Pinned to the EIP-8130 constant-table value `AA_PAYER_TYPE = 0x7A`.
     pub const EIP8130_PAYER_TYPE: u8 = 0x7A;
 
-    /// Base intrinsic gas cost for any AA transaction (`EIP8130_BASE_COST`):
-    /// EIP-2780's `TX_BASE_COST` (12,000) less the ECDSA recovery (3,000) that
-    /// the k1 authentication cost carries.
-    pub const EIP8130_BASE_COST: u64 = 9_000;
-
     /// Sentinel `nonce_key` value selecting nonce-free mode (`NONCE_KEY_MAX`).
     ///
     /// When `nonce_key == NONCE_KEY_MAX`, no nonce state is read or written

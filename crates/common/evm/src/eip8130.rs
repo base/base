@@ -3380,13 +3380,13 @@ mod tests {
 
         // Tx 1 already bumped the protocol nonce (0 -> 1) (committed above), so
         // tx 2 is a second-use transaction:
-        // base AA_BASE_COST 9_000
+        // base AA_BASE_COST 12_000
         // payload EIP-2028 DA over account_changes, calls, metadata 220
         // nonce_key protocol nonce (key 0) 0
-        // sender_auth ECRECOVER 3_000 + config and policy SLOADs 4_200 7_200
+        // sender_auth ECRECOVER 3_000 + config SLOAD 2_100 5_100
         // first_call cold loader account (COLD_ACCOUNT_ACCESS_COST)
         // call JUMPDEST pad (WARMTH_PROBE_PAD_GAS) + PUSH1 (3) + COLD SLOAD (2_100) + STOP
-        // total 18_523 + COLD_ACCOUNT_ACCESS_COST + WARMTH_PROBE_PAD_GAS
+        // total 19_423 + COLD_ACCOUNT_ACCESS_COST + WARMTH_PROBE_PAD_GAS
         let mut load_tx = base_tx();
         load_tx.nonce_sequence = 1;
         load_tx.calls = vec![vec![Call { to: loader, value: U256::ZERO, data: Bytes::new() }]];
@@ -3397,7 +3397,7 @@ mod tests {
 
         assert_eq!(
             load_outcome.result.gas().tx_gas_used(),
-            18_523 + COLD_ACCOUNT_ACCESS_COST + WARMTH_PROBE_PAD_GAS,
+            19_423 + COLD_ACCOUNT_ACCESS_COST + WARMTH_PROBE_PAD_GAS,
             "loader SLOAD must be COLD (2_100); a warm read (100) would be 2_000 \
              less, meaning tx 1's warmth leaked across the transaction boundary",
         );
@@ -3436,19 +3436,19 @@ mod tests {
         assert!(matches!(outcome.result, ExecutionResult::Success { .. }));
 
         // First-use, single-tx, two phases each calling `loader`:
-        // base AA_BASE_COST 9_000
+        // base AA_BASE_COST 12_000
         // payload EIP-2028 DA over account_changes, calls, metadata 392
         // nonce_key protocol nonce (key 0), even on first use 0
-        // sender_auth ECRECOVER 3_000 + config and policy SLOADs 4_200 7_200
+        // sender_auth ECRECOVER 3_000 + config SLOAD 2_100 5_100
         // first_call cold loader account in phase 0 (COLD_ACCOUNT_ACCESS_COST)
         // access warm loader account in phase 1 (WARM_STORAGE_READ_COST)
         // call phase 0 JUMPDEST pad + PUSH1 (3) + COLD SLOAD (2_100) + STOP
         // call phase 1 JUMPDEST pad + PUSH1 (3) + WARM SLOAD (100) + STOP
-        // total 18_798 + COLD_ACCOUNT_ACCESS_COST + WARM_STORAGE_READ_COST
+        // total 19_698 + COLD_ACCOUNT_ACCESS_COST + WARM_STORAGE_READ_COST
         // + 2 * WARMTH_PROBE_PAD_GAS (the pad runs once per phase)
         assert_eq!(
             outcome.result.gas().tx_gas_used(),
-            18_798 + COLD_ACCOUNT_ACCESS_COST + WARM_STORAGE_READ_COST + 2 * WARMTH_PROBE_PAD_GAS,
+            19_698 + COLD_ACCOUNT_ACCESS_COST + WARM_STORAGE_READ_COST + 2 * WARMTH_PROBE_PAD_GAS,
             "phase 1's SLOAD must be WARM (100): committed phase 0 warmed \
              (loader, slot 0). A cold read (2_100) would be 2_000 more, meaning \
              the committed phase's warmth failed to carry across phases",
@@ -3494,16 +3494,16 @@ mod tests {
         // `loader` (PUSH1 0, SLOAD, STOP). Its gas splits into the EIP-8130
         // sender-intrinsic charge (including the loader's cold access as the
         // first call) plus the dispatched call:
-        // base AA_BASE_COST 9_000
+        // base AA_BASE_COST 12_000
         // payload EIP-2028 DA over account_changes, calls, metadata 220
         // nonce_key protocol nonce (key 0), even on first use 0
-        // sender_auth ECRECOVER 3_000 + config and policy SLOADs 4_200 7_200
+        // sender_auth ECRECOVER 3_000 + config SLOAD 2_100 5_100
         // first_call cold loader account (COLD_ACCOUNT_ACCESS_COST)
         // call JUMPDEST pad (WARMTH_PROBE_PAD_GAS) + PUSH1 (3) + COLD SLOAD (2_100) + STOP
-        // total 18_523 + COLD_ACCOUNT_ACCESS_COST + WARMTH_PROBE_PAD_GAS
+        // total 19_423 + COLD_ACCOUNT_ACCESS_COST + WARMTH_PROBE_PAD_GAS
         assert_eq!(
             load_outcome.result.gas().tx_gas_used(),
-            18_523 + COLD_ACCOUNT_ACCESS_COST + WARMTH_PROBE_PAD_GAS,
+            19_423 + COLD_ACCOUNT_ACCESS_COST + WARMTH_PROBE_PAD_GAS,
             "loader SLOAD must be COLD (2_100); a warm read (100) would be 2_000 \
              less, meaning the discarded invalid tx leaked warmth",
         );

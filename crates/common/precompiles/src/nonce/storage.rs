@@ -76,13 +76,13 @@ impl NonceManagerStorage<'_> {
     /// reclaimable as long as no more than this many nonce-free transactions are
     /// included within one window.
     ///
-    /// The cheapest nonce-free transaction costs at least 27,100 gas
-    /// (`AA_BASE_COST` 9,000, `NONCE_FREE_COST` 13,000, k1 sender auth 5,100).
+    /// The cheapest nonce-free transaction costs at least 30,100 gas
+    /// (`AA_BASE_COST` 12,000, `NONCE_FREE_COST` 13,000, k1 sender auth 5,100).
     /// The buffer is sized for blocks of up to 600M gas every 2 s (equivalently
     /// 60M gas per 200 ms Denim block, since Denim scales the gas limit down
-    /// with the block interval): 300M gas/s, or about 11,070 nonce-free
-    /// transactions per second. Over the 30 s window that is at most 332,100
-    /// live entries, rounded up to 340,000. Sustained nonce-free
+    /// with the block interval): 300M gas/s, or about 9,970 nonce-free
+    /// transactions per second. Over the 30 s window that is at most 299,010
+    /// live entries, within the 340,000 capacity. Sustained nonce-free
     /// throughput above that fails with [`INonceManager::ExpiringNonceSetFull`]
     /// rather than admitting a replay.
     /// `replay_buffer_covers_peak_nonce_free_throughput` pins this sizing.
