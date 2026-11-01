@@ -32,7 +32,7 @@ mod prover;
 pub use prover::ProverClient;
 
 mod reconciler;
-pub use reconciler::{ProtectedSigners, SignerReconciler, SignerReconciliation};
+pub use reconciler::{CachedInstance, ProtectedSigners, SignerReconciler, SignerReconciliation};
 
 mod signer_manager;
 pub use signer_manager::{

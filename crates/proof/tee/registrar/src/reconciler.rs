@@ -9,9 +9,9 @@ use crate::{
     InstanceObservation, PendingRegistration, ProverInstance, RegisterableSigner, RegistrarMetrics,
 };
 
-/// Signers protected from orphan cleanup after every instance has been resolved.
+/// Built only by [`SignerReconciler::step`] when no instance is unresolved, from the caller's
+/// observations and pending tasks.
 ///
-/// Only the reconciler can authorize an orphan pass.
 /// ```compile_fail
 /// use base_proof_tee_registrar::ProtectedSigners;
 /// use std::collections::HashSet;
@@ -48,8 +48,9 @@ pub struct SignerReconciler {
     instance_cache_ttl_cycles: u32,
 }
 
+/// Cached signers and elapsed grace cycles for an instance.
 #[derive(Debug)]
-struct CachedInstance {
+pub struct CachedInstance {
     signers: Vec<Address>,
     ttl_cycles: u32,
 }
