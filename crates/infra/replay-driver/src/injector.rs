@@ -22,7 +22,7 @@ pub trait Injector: Sync {
 #[derive(Debug)]
 pub struct InjectionSchedule {
     records: VecDeque<ReplayRecord>,
-    /// Maximum wait for an individual deadline or delivery.
+    /// Maximum duration of one delivery; recorded waiting time is not a delivery timeout.
     pub timeout: Duration,
 }
 
@@ -73,16 +73,13 @@ impl InjectionSchedule {
                     break;
                 }
             } else {
-                tokio::time::timeout(self.timeout, async {
-                    loop {
-                        let wait = Self::delay(record.received_at_ms, GlobalClock::get().now())?;
-                        if wait.is_zero() {
-                            return Ok::<_, eyre::Report>(());
-                        }
-                        tokio::time::sleep(wait).await;
+                loop {
+                    let wait = Self::delay(record.received_at_ms, GlobalClock::get().now())?;
+                    if wait.is_zero() {
+                        break;
                     }
-                })
-                .await??;
+                    tokio::time::sleep(wait).await;
+                }
             }
             tokio::time::timeout(self.timeout, injector.inject(record.clone())).await??;
             self.records.pop_front();
@@ -94,6 +91,47 @@ impl InjectionSchedule {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test(start_paused = true)]
+    async fn sparse_prefix_and_large_inter_record_gap_preserve_deadlines() {
+        #[derive(Debug)]
+        struct VirtualClock(tokio::time::Instant);
+        impl base_clock::Clock for VirtualClock {
+            fn now(&self) -> std::time::SystemTime {
+                UNIX_EPOCH + self.0.elapsed()
+            }
+        }
+        GlobalClock::set(VirtualClock(tokio::time::Instant::now())).unwrap();
+        let records = [100_000, 300_000].map(|ms| serde_json::from_str(&format!(
+            r#"{{"stream":"builder_ingress","received_at_ms":{ms},"method":"call","params":[],"source":"test"}}"#
+        )).unwrap());
+        let mut injector = MockInjector::new();
+        injector.expect_stream().return_const(ReplayStream::BuilderIngress);
+        injector.expect_inject().times(2).returning(|record| {
+            assert_eq!(
+                GlobalClock::get().now_unix_millis().unwrap(),
+                u128::from(record.received_at_ms)
+            );
+            Box::pin(async { Ok(()) })
+        });
+        let mut schedule = InjectionSchedule::new(records.into());
+
+        schedule.run(&injector, &CancellationToken::new()).await.unwrap();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn delivery_still_times_out_when_injector_never_acknowledges() {
+        let record = serde_json::from_str(
+            r#"{"stream":"builder_ingress","received_at_ms":0,"method":"call","params":[],"source":"test"}"#,
+        ).unwrap();
+        let mut injector = MockInjector::new();
+        injector.expect_stream().return_const(ReplayStream::BuilderIngress);
+        injector.expect_inject().once().returning(|_| Box::pin(std::future::pending()));
+        let mut schedule = InjectionSchedule::new(vec![record]);
+        schedule.timeout = Duration::from_millis(1);
+
+        assert!(schedule.run(&injector, &CancellationToken::new()).await.is_err());
+    }
 
     #[test]
     fn computes_offsets_against_clock_when_call_is_future_or_late() {

@@ -35,8 +35,8 @@ where
     I: Injector,
     C: Upgrades,
 {
-    /// Maximum lead for the first whole-second build, including large parent timestamp gaps.
-    pub const FIRST_BUILD_LEAD_MS: u64 = 2_000;
+    /// Maximum lead for a whole-second build, including large parent timestamp gaps.
+    pub const BUILD_LEAD_MS: u64 = 2_000;
 
     /// Acknowledge warmup, drive inclusive export heights sequentially, and join scheduled ingress.
     /// The first exported block is retained as warmup and excluded from report aggregates.
@@ -48,7 +48,18 @@ where
             tokio::time::timeout(self.driver.timeout, self.canonical.get_chain_id()).await??;
         ensure!(chain_id == window.chain_id, "canonical chain ID differs from export");
         let parent = self.block(window.from_block - 1).await?;
-        let first = self.block(window.from_block).await?;
+        let mut prepared = Vec::new();
+        for number in window.from_block..=window.to_block {
+            let block = self.block(number).await?;
+            let receipts = tokio::time::timeout(
+                self.driver.timeout,
+                self.canonical.get_block_receipts(block.hash_slow().into()),
+            )
+            .await??;
+            let baseline = CanonicalBlock::from_block(&block, receipts.as_deref());
+            prepared.push((block, baseline));
+        }
+        let first = &prepared[0].0;
         ensure!(
             first.header.timestamp.checked_mul(1000) == Some(window.from_timestamp_ms),
             "export start timestamp differs from canonical block"
@@ -64,26 +75,17 @@ where
             .timestamp
             .checked_mul(1000)
             .ok_or_eyre("parent timestamp overflow")?
-            .max(window.from_timestamp_ms.saturating_sub(Self::FIRST_BUILD_LEAD_MS));
+            .max(window.from_timestamp_ms.saturating_sub(Self::BUILD_LEAD_MS));
         let mut recorded =
             dataset.records.iter().map(|record| record.tx_hash).collect::<Option<HashSet<_>>>();
         let mut schedule = InjectionSchedule::new(dataset.records);
-        schedule.timeout = self.driver.timeout.saturating_add(Duration::from_millis(
-            window.warmup_ms.saturating_add(ReplayDataset::CLOCK_MARGIN_MS),
-        ));
+        schedule.timeout = self.driver.timeout;
         schedule.warmup(&self.injector, cutoff).await?;
-        let startup_timeout = schedule.timeout;
         let drive = async {
-            let delay = InjectionSchedule::delay(cutoff, GlobalClock::get().now())?;
-            tokio::time::timeout(startup_timeout, tokio::time::sleep(delay)).await?;
             let mut diffs = Vec::new();
-            let mut block = first;
             let mut parent_hash = parent.hash_slow();
             let mut parent_timestamp = parent.header.timestamp;
-            for number in window.from_block..=window.to_block {
-                if number != window.from_block {
-                    block = self.block(number).await?;
-                }
+            for (number, (block, baseline)) in (window.from_block..=window.to_block).zip(prepared) {
                 ensure!(
                     block.header.number == number && block.header.parent_hash == parent_hash,
                     "canonical chain changed during replay"
@@ -108,12 +110,24 @@ where
                             .map(|tx| tx.tx_hash()),
                     );
                 }
-                let receipts = tokio::time::timeout(
-                    self.driver.timeout,
-                    self.canonical.get_block_receipts(block.hash_slow().into()),
-                )
-                .await??;
-                let baseline = CanonicalBlock::from_block(&block, receipts.as_deref());
+                let deadline = block
+                    .header
+                    .timestamp
+                    .checked_mul(1000)
+                    .ok_or_eyre("block timestamp overflow")?;
+                let build_start = parent_timestamp
+                    .checked_mul(1000)
+                    .ok_or_eyre("parent timestamp overflow")?
+                    .max(deadline.saturating_sub(Self::BUILD_LEAD_MS));
+                tokio::time::sleep(InjectionSchedule::delay(
+                    build_start,
+                    GlobalClock::get().now(),
+                )?)
+                .await;
+                ensure!(
+                    InjectionSchedule::delay(deadline, GlobalClock::get().now())? > Duration::ZERO,
+                    "builder deadline missed for block {number}"
+                );
                 let candidate = self.driver.replay_block(&self.engine, &block, self.chain).await?;
                 diffs.push(BlockDiff::compare(&candidate, &baseline, recorded.as_ref())?);
                 parent_hash = block.hash_slow();
