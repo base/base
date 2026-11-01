@@ -18,6 +18,11 @@ reported unhealthy, the registrar preserves its last-known active signers for
 genuinely removed instances but increase exposure to transient AWS/ALB flakes;
 longer TTLs protect against flakes but delay real cleanup.
 
+`SignerReconciler` owns this in-process cache. Discovery errors and cancelled
+cycles do not age it. Orphan cleanup runs only when no instance is unresolved
+and protects active signers plus all pending registrations, including cancelled
+tasks until they are reaped.
+
 ## Modules
 
 - **`service`** — [`RegistrarConfig`] runtime config and lifecycle runner.
@@ -25,6 +30,7 @@ longer TTLs protect against flakes but delay real cleanup.
 - **`planner`** — [`AttestationPlanner`] for CertManager-oriented registration plans.
 - **`hints`** — [`P384Hints`] Agora / `nitro-validator` inverse-transcript generator.
 - **`prover`** — [`ProverClient`] JSON-RPC client for polling prover readiness and signer endpoints.
+- **`reconciler`** — [`SignerReconciler`] unavailable-instance grace cache and [`ProtectedSigners`] gate for orphan cleanup.
 - **`signer_manager`** — [`SignerManager`] lifecycle management for signer-registration tasks and transaction execution.
 - **`traits`** — [`InstanceDiscovery`] and [`EnclaveEndpointClient`] abstractions.
 - **`types`** — Core domain types: [`ProverInstance`], [`RegistrationPlan`], [`RegistrationHints`].

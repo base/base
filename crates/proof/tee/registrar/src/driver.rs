@@ -1,15 +1,9 @@
 //! Registration driver — core orchestration loop.
 //!
-//! Discovers prover instances, checks onchain registration status, prepares
-//! hinted attestations for unregistered signers, and submits registration transactions
-//! to L1 via the [`TxManager`]. Also detects orphaned onchain signers (those
-//! no longer backed by a healthy instance) and deregisters them.
+//! Observes prover endpoints and feeds completed discovery cycles to [`SignerReconciler`].
+//! Delegates registration tasks and gated orphan cleanup to [`SignerManager`].
 
-use std::{
-    collections::{HashMap, HashSet},
-    sync::Arc,
-    time::Duration,
-};
+use std::{sync::Arc, time::Duration};
 
 use alloy_primitives::Address;
 use base_proof_contracts::{CertManagerClient, TEEProverRegistryClient};
@@ -20,7 +14,7 @@ use tracing::{Instrument, debug, info, warn};
 
 use crate::{
     EnclaveEndpointClient, InstanceDiscovery, InstanceHealthStatus, ProofTaskSet, ProverClient,
-    ProverInstance, RegistrarMetrics, Result, SignerManager,
+    ProverInstance, RegistrarMetrics, Result, SignerManager, SignerReconciler,
 };
 
 /// Default maximum number of instances processed concurrently.
@@ -88,17 +82,6 @@ pub enum InstanceObservation {
     Failed,
 }
 
-/// Per-cycle discovery snapshot consumed by signer reconciliation.
-#[derive(Debug, Default)]
-pub struct DiscoveryResolution {
-    /// Signers eligible for registration this cycle.
-    pub registerable: Vec<RegisterableSigner>,
-    /// Signers contributed by reachable instances.
-    pub active_signers: HashSet<Address>,
-    /// Instance IDs whose resolution was inconclusive this cycle.
-    pub unresolved_instance_ids: HashSet<String>,
-}
-
 /// Core registration loop tying together discovery, attestation polling, signer
 /// lifecycle reconciliation, and orphan cleanup.
 ///
@@ -148,40 +131,34 @@ where
         );
 
         let mut proof_tasks = ProofTaskSet::default();
-        let mut last_known_active = HashMap::new();
-        let mut unhealthy_instance_ids_with_grace = HashSet::new();
+        let mut reconciler = SignerReconciler::new(self.config.instance_cache_ttl_cycles);
 
         loop {
-            let discovery = self
-                .discover_and_resolve(
-                    &mut last_known_active,
-                    &mut unhealthy_instance_ids_with_grace,
-                )
-                .await;
+            let discovery = self.discover_and_resolve().await;
 
             // Keep task state current before reconcile decisions each cycle.
             proof_tasks.reap_finished_tasks();
 
             match discovery {
                 Ok(_) if self.config.cancel.is_cancelled() => {}
-                Ok(resolution) => {
+                Ok(None) => {}
+                Ok(Some(observations)) => {
+                    // Newly spawned tasks use signers already protected by the active set.
+                    let resolution = reconciler.step(observations, &proof_tasks.pending);
                     self.signer_manager.reconcile_proof_tasks(
                         &resolution,
                         &mut proof_tasks,
                         &self.config.cancel,
                     );
 
-                    if resolution.unresolved_instance_ids.is_empty() {
-                        let mut protected_signers = resolution.active_signers.clone();
-                        protected_signers.extend(proof_tasks.pending.keys().copied());
-                        if let Err(e) = self
+                    if let Some(protected_signers) = &resolution.orphan_cleanup
+                        && let Err(e) = self
                             .signer_manager
-                            .run_orphan_dereg(&protected_signers, &self.config.cancel)
+                            .run_orphan_dereg(protected_signers, &self.config.cancel)
                             .await
-                        {
-                            warn!(error = %e, "orphan deregistration pass failed");
-                            RegistrarMetrics::processing_errors_total().increment(1);
-                        }
+                    {
+                        warn!(error = %e, "orphan deregistration pass failed");
+                        RegistrarMetrics::processing_errors_total().increment(1);
                     }
                 }
                 Err(e) => {
@@ -367,124 +344,17 @@ where
         observations
     }
 
-    /// Applies observations and the unavailable-instance grace cache without endpoint I/O.
-    pub fn fold_observations(
-        &self,
-        observations: Vec<(ProverInstance, InstanceObservation)>,
-        discovered_instance_ids: &HashSet<String>,
-        last_known_active: &mut HashMap<String, (Vec<Address>, u32)>,
-        unhealthy_instance_ids_with_grace: &mut HashSet<String>,
-    ) -> DiscoveryResolution {
-        let mut resolution = DiscoveryResolution::default();
-        let mut unhealthy_instance_ids = HashSet::new();
-        for (instance, observation) in observations {
-            let (signers, registerable) = match observation {
-                InstanceObservation::Unreachable => {
-                    unhealthy_instance_ids.insert(instance.instance_id);
-                    continue;
-                }
-                InstanceObservation::Failed => {
-                    // Failed key resolution neither refreshes nor ages cached signers.
-                    resolution.unresolved_instance_ids.insert(instance.instance_id);
-                    continue;
-                }
-                InstanceObservation::AttestationsUnavailable { signers } => {
-                    resolution.unresolved_instance_ids.insert(instance.instance_id.clone());
-                    (signers, Vec::new())
-                }
-                InstanceObservation::Resolved { signers, registerable } => (signers, registerable),
-            };
-            let signers = signers.into_iter().collect::<HashSet<_>>();
-            resolution.active_signers.extend(signers.iter().copied());
-            if signers.is_empty() {
-                last_known_active.remove(&instance.instance_id);
-            } else {
-                last_known_active.insert(instance.instance_id, (signers.into_iter().collect(), 0));
-            }
-            resolution.registerable.extend(registerable);
-        }
-
-        unhealthy_instance_ids_with_grace
-            .retain(|instance_id| unhealthy_instance_ids.contains(instance_id));
-        for instance_id in &unhealthy_instance_ids {
-            // A process restart has no signer addresses to cache. Keep an
-            // empty cache entry for one unhealthy period so the global orphan
-            // cleanup pass is deferred by the configured grace TTL.
-            if unhealthy_instance_ids_with_grace.insert(instance_id.clone())
-                && !last_known_active.contains_key(instance_id)
-            {
-                last_known_active.insert(instance_id.clone(), (Vec::new(), 0));
-            }
-        }
-        RegistrarMetrics::discovered_instances_count().set(discovered_instance_ids.len() as f64);
-
-        last_known_active.retain(|instance_id, (addresses, ttl_cycles)| {
-            if discovered_instance_ids.contains(instance_id)
-                && !unhealthy_instance_ids.contains(instance_id)
-            {
-                return true;
-            }
-
-            *ttl_cycles = ttl_cycles.saturating_add(1);
-            if *ttl_cycles <= self.config.instance_cache_ttl_cycles {
-                warn!(
-                    instance = %instance_id,
-                    cached_signers = addresses.len(),
-                    ttl_cycles = *ttl_cycles,
-                    max_ttl_cycles = self.config.instance_cache_ttl_cycles,
-                    "instance unavailable, preserving last-known active signers"
-                );
-                resolution.active_signers.extend(addresses.iter().copied());
-                if addresses.is_empty() {
-                    // We cannot identify signers to protect for an unhealthy
-                    // instance first observed after a restart.
-                    resolution.unresolved_instance_ids.insert(instance_id.clone());
-                } else if !unhealthy_instance_ids.contains(instance_id) {
-                    // A missing instance could have changed signers since its
-                    // cached addresses were last refreshed.
-                    resolution.unresolved_instance_ids.insert(instance_id.clone());
-                }
-                true
-            } else {
-                warn!(
-                    instance = %instance_id,
-                    ttl_cycles = *ttl_cycles,
-                    max_ttl_cycles = self.config.instance_cache_ttl_cycles,
-                    "last-known active signer cache expired for unavailable instance"
-                );
-                false
-            }
-        });
-
-        RegistrarMetrics::active_signers_count().set(resolution.active_signers.len() as f64);
-        RegistrarMetrics::registerable_signers_count().set(resolution.registerable.len() as f64);
-        RegistrarMetrics::unresolved_instances_count()
-            .set(resolution.unresolved_instance_ids.len() as f64);
-
-        resolution
-    }
-
-    /// Runs discovery I/O, then folds observations into the grace-period cache.
+    /// Runs discovery and endpoint I/O, returning no cycle when cancelled.
     async fn discover_and_resolve(
         &self,
-        last_known_active: &mut HashMap<String, (Vec<Address>, u32)>,
-        unhealthy_instance_ids_with_grace: &mut HashSet<String>,
-    ) -> Result<DiscoveryResolution> {
+    ) -> Result<Option<Vec<(ProverInstance, InstanceObservation)>>> {
         let instances = self.discovery.discover_instances().await?;
         RegistrarMetrics::discovery_success_total().increment(1);
-        let discovered_instance_ids =
-            instances.iter().map(|instance| instance.instance_id.clone()).collect();
         let observations = self.observe_instances(instances).await;
         if self.config.cancel.is_cancelled() {
-            return Ok(DiscoveryResolution::default());
+            return Ok(None);
         }
-        let resolution = self.fold_observations(
-            observations,
-            &discovered_instance_ids,
-            last_known_active,
-            unhealthy_instance_ids_with_grace,
-        );
-        Ok(resolution)
+        Ok(Some(observations))
     }
 }
 
@@ -653,13 +523,32 @@ mod tests {
         )
     }
 
-    async fn discover_once(driver: &TestDriver) -> DiscoveryResolution {
-        let mut last_known_active = HashMap::new();
-        let mut unhealthy_instance_ids_with_grace = HashSet::new();
-        driver
-            .discover_and_resolve(&mut last_known_active, &mut unhealthy_instance_ids_with_grace)
-            .await
-            .unwrap()
+    async fn discover_once(
+        driver: &TestDriver,
+    ) -> Option<Vec<(ProverInstance, InstanceObservation)>> {
+        driver.discover_and_resolve().await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn observations_resolve_draining_signers_without_registration_io() {
+        let mut client =
+            MockEnclaveEndpointClient::multi_enclave(EP1, &[&HARDHAT_KEY_0, &HARDHAT_KEY_1]);
+        client.fail_attestation.insert(endpoint_url(EP1));
+        client.fail_readyz.insert(endpoint_url(EP1));
+        let driver = cycle_driver(vec![], client, CancellationToken::new());
+        let observations = driver
+            .observe_instances(vec![prover_instance(EP1, InstanceHealthStatus::Draining)])
+            .await;
+        assert!(matches!(
+            &observations[..],
+            [(_, InstanceObservation::Resolved { signers, registerable })]
+            if *signers == vec![
+                signer_from_private_key(&HARDHAT_KEY_0),
+                signer_from_private_key(&HARDHAT_KEY_1),
+            ] && registerable.is_empty()
+        ));
+        assert!(driver.signer_client.requested_readyz.lock().unwrap().is_empty());
+        assert!(driver.signer_client.requested_nonces.lock().unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -698,10 +587,11 @@ mod tests {
 
         let observations = driver.observe_instances(vec![healthy_prover_instance(EP1)]).await;
 
-        assert!(
-            matches!(&observations[..], [(_, InstanceObservation::AttestationsUnavailable { signers })]
-            if *signers == vec![signer_from_private_key(&HARDHAT_KEY_0)])
-        );
+        assert!(matches!(
+            &observations[..],
+            [(_, InstanceObservation::AttestationsUnavailable { signers })]
+            if *signers == vec![signer_from_private_key(&HARDHAT_KEY_0)]
+        ));
     }
 
     #[tokio::test]
@@ -712,10 +602,11 @@ mod tests {
 
         let observations = driver.observe_instances(vec![healthy_prover_instance(EP1)]).await;
 
-        assert!(
-            matches!(&observations[..], [(_, InstanceObservation::AttestationsUnavailable { signers })]
-            if *signers == vec![signer_from_private_key(&HARDHAT_KEY_0)])
-        );
+        assert!(matches!(
+            &observations[..],
+            [(_, InstanceObservation::AttestationsUnavailable { signers })]
+            if *signers == vec![signer_from_private_key(&HARDHAT_KEY_0)]
+        ));
     }
 
     #[tokio::test]
@@ -726,10 +617,11 @@ mod tests {
 
         let observations = driver.observe_instances(vec![healthy_prover_instance(EP1)]).await;
 
-        assert!(
-            matches!(&observations[..], [(_, InstanceObservation::AttestationsUnavailable { signers })]
-            if *signers == vec![signer_from_private_key(&HARDHAT_KEY_0)])
-        );
+        assert!(matches!(
+            &observations[..],
+            [(_, InstanceObservation::AttestationsUnavailable { signers })]
+            if *signers == vec![signer_from_private_key(&HARDHAT_KEY_0)]
+        ));
     }
 
     #[tokio::test]
@@ -756,42 +648,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn discover_and_resolve_failed_keys_leave_cache_unaged_without_protecting_signers() {
-        let instance = healthy_prover_instance(EP1);
-        let signer = signer_from_private_key(&HARDHAT_KEY_0);
-        let mut last_known_active =
-            HashMap::from([(instance.instance_id.clone(), (vec![signer], 2))]);
-        let driver = cycle_driver(
-            vec![instance.clone()],
-            MockEnclaveEndpointClient::default(),
-            CancellationToken::new(),
-        );
-
-        let resolution =
-            driver.discover_and_resolve(&mut last_known_active, &mut HashSet::new()).await.unwrap();
-
-        assert!(resolution.active_signers.is_empty());
-        assert_eq!(
-            resolution.unresolved_instance_ids,
-            HashSet::from([instance.instance_id.clone()])
-        );
-        assert_eq!(last_known_active[&instance.instance_id], (vec![signer], 2));
-    }
-
-    #[tokio::test]
-    async fn discover_and_resolve_allows_orphan_pass_when_discovery_is_empty() {
-        let driver = cycle_driver(
-            vec![],
-            MockEnclaveEndpointClient::from_keys(&[]),
-            CancellationToken::new(),
-        );
-
-        let resolution = discover_once(&driver).await;
-        assert!(resolution.active_signers.is_empty());
-        assert!(resolution.unresolved_instance_ids.is_empty());
-    }
-
-    #[tokio::test]
     async fn discover_and_resolve_includes_all_reachable_when_one_instance_is_unreachable() {
         let unreachable = healthy_prover_instance("10.0.0.4:8000");
         let instances = vec![
@@ -809,28 +665,23 @@ mod tests {
 
         let driver = cycle_driver(instances, signer_client, CancellationToken::new());
 
-        let resolution = discover_once(&driver).await;
-        assert_eq!(resolution.registerable.len(), 3);
-        assert_eq!(resolution.unresolved_instance_ids, HashSet::from([unreachable.instance_id]));
-    }
-
-    #[tokio::test]
-    async fn discover_and_resolve_multi_enclave_draining_protects_all_signers_from_deregistration()
-    {
-        let addr0 = signer_from_private_key(&HARDHAT_KEY_0);
-        let addr1 = signer_from_private_key(&HARDHAT_KEY_1);
-
-        let instances = vec![prover_instance(EP1, InstanceHealthStatus::Draining)];
-        let signer_client =
-            MockEnclaveEndpointClient::multi_enclave(EP1, &[&HARDHAT_KEY_0, &HARDHAT_KEY_1]);
-
-        let driver = cycle_driver(instances, signer_client, CancellationToken::new());
-
-        let resolution = discover_once(&driver).await;
-        assert!(resolution.registerable.is_empty());
-        assert!(resolution.active_signers.contains(&addr0));
-        assert!(resolution.active_signers.contains(&addr1));
-        assert!(resolution.unresolved_instance_ids.is_empty());
+        let observations = discover_once(&driver).await;
+        let observations = observations.unwrap();
+        assert_eq!(observations.len(), 4);
+        assert!(
+            observations
+                .iter()
+                .any(|(instance, observation)| instance.instance_id == unreachable.instance_id
+                    && matches!(observation, InstanceObservation::Failed))
+        );
+        let resolved = observations.iter().filter(|(_, observation)| {
+            matches!(
+                observation,
+                InstanceObservation::Resolved { registerable, .. }
+                if registerable.len() == 1
+            )
+        });
+        assert_eq!(resolved.count(), 3);
     }
 
     #[tokio::test]
@@ -847,9 +698,13 @@ mod tests {
             CancellationToken::new(),
         );
 
-        let resolution = discover_once(&driver).await;
+        let observations = discover_once(&driver).await;
 
-        assert_eq!(resolution.registerable.len(), 2);
+        assert!(matches!(
+            &observations.unwrap()[..],
+            [(_, InstanceObservation::Resolved { registerable, .. })]
+            if registerable.len() == 2
+        ));
         let nonce_a = SignerManager::<(), (), NoopTxManager>::attestation_nonce_for(
             TEST_REGISTRY_ADDRESS,
             signer_a,
@@ -873,11 +728,9 @@ mod tests {
 
         cancel.cancel();
 
-        let resolution = discover_once(&driver).await;
+        let observations = discover_once(&driver).await;
 
-        assert!(resolution.registerable.is_empty());
-        assert!(resolution.active_signers.is_empty());
-        assert!(resolution.unresolved_instance_ids.is_empty());
+        assert!(observations.is_none());
         assert!(requested_readyz.lock().unwrap().is_empty());
     }
 
@@ -897,7 +750,9 @@ mod tests {
         tokio::pin!(discovery);
 
         tokio::select! {
-            resolution = &mut discovery => panic!("discovery completed before cancellation: {resolution:?}"),
+            resolution = &mut discovery => {
+                panic!("discovery completed before cancellation: {resolution:?}");
+            }
             result = tokio::time::timeout(Duration::from_secs(1), public_key_requested.notified()) => {
                 result.expect("healthy instance should resolve while another readyz probe blocks");
             }
@@ -907,9 +762,7 @@ mod tests {
         let resolution = tokio::time::timeout(Duration::from_secs(1), &mut discovery)
             .await
             .expect("discovery should stop after cancellation");
-        assert!(resolution.registerable.is_empty());
-        assert!(resolution.active_signers.is_empty());
-        assert!(resolution.unresolved_instance_ids.is_empty());
+        assert!(resolution.is_none());
     }
 
     #[tokio::test]
@@ -929,11 +782,23 @@ mod tests {
 
         let driver = cycle_driver(instances, signer_client, CancellationToken::new());
 
-        let resolution = discover_once(&driver).await;
-        assert_eq!(resolution.registerable.len(), 1);
-        assert_eq!(resolution.registerable[0].signer, addr_healthy);
-        assert!(!resolution.active_signers.contains(&signer_from_private_key(&HARDHAT_KEY_0)));
-        assert_eq!(resolution.unresolved_instance_ids, HashSet::from([format!("i-{EP1}")]));
+        let observations = discover_once(&driver).await;
+        let observations = observations.unwrap();
+        assert_eq!(observations.len(), 2);
+        assert!(
+            observations
+                .iter()
+                .any(|(instance, observation)| instance.instance_id == format!("i-{EP1}")
+                    && matches!(observation, InstanceObservation::Unreachable))
+        );
+        assert!(observations.iter().any(|(_, observation)| {
+            matches!(
+                observation,
+                InstanceObservation::Resolved { signers, registerable }
+                if *signers == vec![addr_healthy] && registerable.len() == 1
+                    && registerable[0].signer == addr_healthy
+            )
+        }));
         assert_eq!(*requested_public_keys.lock().unwrap(), vec![endpoint_url(EP2)]);
         let mut probed = requested_readyz.lock().unwrap().clone();
         probed.sort();
@@ -949,260 +814,13 @@ mod tests {
 
         let driver = cycle_driver(instances, signer_client, CancellationToken::new());
 
-        let resolution = discover_once(&driver).await;
-        assert_eq!(resolution.registerable.len(), 1);
-        assert_eq!(resolution.registerable[0].signer, addr);
-        assert!(resolution.active_signers.contains(&addr));
-        assert!(resolution.unresolved_instance_ids.is_empty());
+        let observations = discover_once(&driver).await;
+        assert!(matches!(
+            &observations.unwrap()[..],
+            [(_, InstanceObservation::Resolved { signers, registerable })]
+            if *signers == vec![addr] && registerable.len() == 1
+                && registerable[0].signer == addr
+        ));
         assert_eq!(*requested_readyz.lock().unwrap(), vec![endpoint_url(EP1)]);
-    }
-
-    #[tokio::test]
-    async fn discover_and_resolve_defers_orphan_dereg_for_initial_unhealthy_instance() {
-        const TEST_TTL_CYCLES: u32 = 2;
-
-        let instance = prover_instance(EP1, InstanceHealthStatus::Unhealthy);
-        let mut signer_client = MockEnclaveEndpointClient::default();
-        signer_client.fail_readyz.insert(endpoint_url(EP1));
-        let requested_public_keys = Arc::clone(&signer_client.requested_public_keys);
-        let driver = cycle_driver_with_instance_cache_ttl(
-            vec![instance.clone()],
-            signer_client,
-            CancellationToken::new(),
-            TEST_TTL_CYCLES,
-        );
-        let mut last_known_active = HashMap::new();
-        let mut unhealthy_instance_ids_with_grace = HashSet::new();
-
-        for expected_ttl in 1..=TEST_TTL_CYCLES {
-            let resolution = driver
-                .discover_and_resolve(
-                    &mut last_known_active,
-                    &mut unhealthy_instance_ids_with_grace,
-                )
-                .await
-                .unwrap();
-
-            assert!(resolution.active_signers.is_empty());
-            assert_eq!(
-                resolution.unresolved_instance_ids,
-                HashSet::from([instance.instance_id.clone()])
-            );
-            assert_eq!(
-                last_known_active.get(&instance.instance_id).map(|(_, ttl)| *ttl),
-                Some(expected_ttl)
-            );
-        }
-
-        let resolution = driver
-            .discover_and_resolve(&mut last_known_active, &mut unhealthy_instance_ids_with_grace)
-            .await
-            .unwrap();
-
-        assert!(resolution.unresolved_instance_ids.is_empty());
-        assert!(!last_known_active.contains_key(&instance.instance_id));
-
-        let resolution = driver
-            .discover_and_resolve(&mut last_known_active, &mut unhealthy_instance_ids_with_grace)
-            .await
-            .unwrap();
-
-        assert!(resolution.unresolved_instance_ids.is_empty());
-        assert!(requested_public_keys.lock().unwrap().is_empty());
-    }
-
-    #[tokio::test]
-    async fn discover_and_resolve_preserves_cached_signers_for_unhealthy_instances_until_ttl() {
-        const TEST_TTL_CYCLES: u32 = 2;
-
-        let signer = signer_from_private_key(&HARDHAT_KEY_0);
-        let instance = prover_instance(EP1, InstanceHealthStatus::Unhealthy);
-        let mut signer_client = MockEnclaveEndpointClient::default();
-        signer_client.fail_readyz.insert(endpoint_url(EP1));
-        let requested_public_keys = Arc::clone(&signer_client.requested_public_keys);
-        let driver = cycle_driver_with_instance_cache_ttl(
-            vec![instance.clone()],
-            signer_client,
-            CancellationToken::new(),
-            TEST_TTL_CYCLES,
-        );
-        let mut last_known_active =
-            HashMap::from([(instance.instance_id.clone(), (vec![signer], 0))]);
-        let mut unhealthy_instance_ids_with_grace = HashSet::new();
-
-        for expected_ttl in 1..=TEST_TTL_CYCLES {
-            let resolution = driver
-                .discover_and_resolve(
-                    &mut last_known_active,
-                    &mut unhealthy_instance_ids_with_grace,
-                )
-                .await
-                .unwrap();
-
-            assert!(resolution.active_signers.contains(&signer));
-            assert!(resolution.unresolved_instance_ids.is_empty());
-            assert_eq!(
-                last_known_active.get(&instance.instance_id).map(|(_, ttl)| *ttl),
-                Some(expected_ttl)
-            );
-        }
-
-        let resolution = driver
-            .discover_and_resolve(&mut last_known_active, &mut unhealthy_instance_ids_with_grace)
-            .await
-            .unwrap();
-
-        assert!(resolution.active_signers.is_empty());
-        assert!(resolution.unresolved_instance_ids.is_empty());
-        assert!(!last_known_active.contains_key(&instance.instance_id));
-        assert!(requested_public_keys.lock().unwrap().is_empty());
-    }
-
-    #[tokio::test]
-    async fn discover_and_resolve_bad_attestations_keep_signer_active_and_unresolved() {
-        let signer_addr = signer_from_private_key(&HARDHAT_KEY_0);
-        let inst = healthy_prover_instance(EP1);
-        let mut missing_attestation =
-            MockEnclaveEndpointClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]);
-        missing_attestation.attestations.insert(endpoint_url(EP1), vec![]);
-        let mut extra_attestation = MockEnclaveEndpointClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]);
-        extra_attestation
-            .attestations
-            .insert(endpoint_url(EP1), vec![b"mock-attestation".to_vec(), b"extra".to_vec()]);
-        let mut failing_attestation =
-            MockEnclaveEndpointClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]);
-        failing_attestation.fail_attestation.insert(endpoint_url(EP1));
-        let signer_clients = [
-            ("missing attestation", missing_attestation),
-            ("extra attestation", extra_attestation),
-            ("failing attestation", failing_attestation),
-        ];
-
-        for (case, signer_client) in signer_clients {
-            let driver = cycle_driver(vec![inst.clone()], signer_client, CancellationToken::new());
-
-            let resolution = discover_once(&driver).await;
-
-            assert!(resolution.active_signers.contains(&signer_addr), "{case}");
-            assert!(resolution.registerable.is_empty(), "{case}");
-            assert_eq!(
-                resolution.unresolved_instance_ids,
-                HashSet::from([inst.instance_id.clone()]),
-                "{case}"
-            );
-        }
-    }
-
-    #[tokio::test]
-    async fn discover_and_resolve_evicts_cached_missing_instance_after_configured_ttl() {
-        const TEST_TTL_CYCLES: u32 = 2;
-
-        let signer_addr = signer_from_private_key(&HARDHAT_KEY_0);
-        let inst = healthy_prover_instance(EP1);
-        let signer_client = MockEnclaveEndpointClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]);
-        let first_cycle = cycle_driver_with_instance_cache_ttl(
-            vec![inst.clone()],
-            signer_client.clone(),
-            CancellationToken::new(),
-            TEST_TTL_CYCLES,
-        );
-        let missing_cycle = cycle_driver_with_instance_cache_ttl(
-            vec![],
-            signer_client,
-            CancellationToken::new(),
-            TEST_TTL_CYCLES,
-        );
-        let mut last_known_active = HashMap::new();
-        let mut unhealthy_instance_ids_with_grace = HashSet::new();
-
-        first_cycle
-            .discover_and_resolve(&mut last_known_active, &mut unhealthy_instance_ids_with_grace)
-            .await
-            .unwrap();
-
-        for expected_ttl in 1..=TEST_TTL_CYCLES {
-            let resolution = missing_cycle
-                .discover_and_resolve(
-                    &mut last_known_active,
-                    &mut unhealthy_instance_ids_with_grace,
-                )
-                .await
-                .unwrap();
-
-            assert!(resolution.registerable.is_empty());
-            assert!(resolution.active_signers.contains(&signer_addr));
-            assert_eq!(
-                resolution.unresolved_instance_ids,
-                HashSet::from([inst.instance_id.clone()])
-            );
-            assert_eq!(
-                last_known_active.get(&inst.instance_id).map(|(_, ttl)| *ttl),
-                Some(expected_ttl)
-            );
-        }
-
-        let expired_resolution = missing_cycle
-            .discover_and_resolve(&mut last_known_active, &mut unhealthy_instance_ids_with_grace)
-            .await
-            .unwrap();
-
-        assert!(expired_resolution.active_signers.is_empty());
-        assert!(expired_resolution.unresolved_instance_ids.is_empty());
-        assert!(!last_known_active.contains_key(&inst.instance_id));
-    }
-
-    #[tokio::test]
-    async fn discover_and_resolve_refresh_resets_cached_missing_instance_ttl() {
-        let signer_addr = signer_from_private_key(&HARDHAT_KEY_0);
-        let inst = healthy_prover_instance(EP1);
-        let signer_client = MockEnclaveEndpointClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]);
-        let present_cycle =
-            cycle_driver(vec![inst.clone()], signer_client.clone(), CancellationToken::new());
-        let missing_cycle = cycle_driver(vec![], signer_client, CancellationToken::new());
-        let mut last_known_active = HashMap::new();
-        let mut unhealthy_instance_ids_with_grace = HashSet::new();
-
-        present_cycle
-            .discover_and_resolve(&mut last_known_active, &mut unhealthy_instance_ids_with_grace)
-            .await
-            .unwrap();
-        missing_cycle
-            .discover_and_resolve(&mut last_known_active, &mut unhealthy_instance_ids_with_grace)
-            .await
-            .unwrap();
-        assert_eq!(last_known_active.get(&inst.instance_id).map(|(_, ttl)| *ttl), Some(1));
-
-        let refresh_resolution = present_cycle
-            .discover_and_resolve(&mut last_known_active, &mut unhealthy_instance_ids_with_grace)
-            .await
-            .unwrap();
-
-        assert!(refresh_resolution.active_signers.contains(&signer_addr));
-        assert!(refresh_resolution.unresolved_instance_ids.is_empty());
-        assert_eq!(last_known_active.get(&inst.instance_id).map(|(_, ttl)| *ttl), Some(0));
-
-        for expected_ttl in 1..=INSTANCE_CACHE_TTL_CYCLES {
-            let resolution = missing_cycle
-                .discover_and_resolve(
-                    &mut last_known_active,
-                    &mut unhealthy_instance_ids_with_grace,
-                )
-                .await
-                .unwrap();
-
-            assert!(resolution.active_signers.contains(&signer_addr));
-            assert_eq!(
-                last_known_active.get(&inst.instance_id).map(|(_, ttl)| *ttl),
-                Some(expected_ttl)
-            );
-        }
-
-        let expired_resolution = missing_cycle
-            .discover_and_resolve(&mut last_known_active, &mut unhealthy_instance_ids_with_grace)
-            .await
-            .unwrap();
-
-        assert!(expired_resolution.active_signers.is_empty());
-        assert!(expired_resolution.unresolved_instance_ids.is_empty());
     }
 }
