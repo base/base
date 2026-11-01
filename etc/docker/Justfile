@@ -155,7 +155,7 @@ profiling-diff baseline comparison service kind='cpu': _build-profiling-tools-im
 
 # Stops devnet and deletes all data
 down:
-    -docker compose {{ _env }} {{ _ha }} --profile profiling down
+    -docker compose {{ _env }} {{ _ha }} --profile profiling --profile replay down
     -[ ! -d .devnet ] || docker run --rm -v "$(pwd)/.devnet:/devnet" alpine sh -c 'rm -rf /devnet/*'
 
 # Shows devnet block numbers and sync status
@@ -340,6 +340,12 @@ _up-devnet compose_profile mode:
       *)
         echo "ERROR: compose profile must be 'ha' or 'base' (got '${compose_profile}')" >&2
         exit 1
+        ;;
+    esac
+
+    case ",${COMPOSE_PROFILES:-}," in
+      *,replay,*)
+        export VALIDITY_BUILDER_RPC_URLS="${VALIDITY_BUILDER_RPC_URLS},http://replay-recorder:${REPLAY_RECORDER_PORT:-8550}"
         ;;
     esac
 
