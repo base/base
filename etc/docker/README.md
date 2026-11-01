@@ -169,6 +169,65 @@ zstd -dc .devnet/replay/devnet/YYYY/MM/DD/HH/MM.jsonl.zst | head -n 1
 just devnet down
 ```
 
+### Run the replay end-to-end test
+
+Run from the repository root:
+
+```bash
+just replay e2e
+```
+
+Install Docker Compose, Buildx, Just, Cargo, Foundry `cast`, `jq`, and `curl`.
+The test rebuilds the devnet and shadow-builder images from your checkout under
+task-specific tags. It uses project-scoped containers, a separate subnet and
+store, and randomly assigned loopback RPC ports. An existing devnet can keep
+running. Cleanup removes only the test's containers and network.
+
+The scenario disables Denim to preserve the whole-second block timestamps that
+the replay driver requires. It invokes `just load-test run devnet` with a
+task-local `LOAD_TEST_CONFIG`, targeting the isolated `base-client` for submission
+and `base-builder` for reads. The load tester owns account funding and signing.
+Two senders generate transfers for 120 seconds at a 42,000 gas/s target.
+The test stops the recorder to flush its last minute, then exports blocks `1..M`.
+The export must contain at least one record.
+
+A fresh standalone builder uses the generated execution genesis and an empty
+database, preparing canonical state `N=0` without copying a live database. Only
+the replay CLI drives its Engine API. The shadow exposes no host ports and
+reuses the generated devnet Engine JWT. Its replay clock starts at the export's
+suggested epoch. The container records system time immediately before launching
+the builder, which approximates rather than measures clock installation.
+
+Success checks `diff.json` for schema `replay-diff/v1`, parent `0`, warmup block
+`1`, and every block `1..M`. It also checks that `diff.md` is nonempty and prints
+the report. This test asserts report production, not a fidelity threshold.
+Artifacts remain under `.devnet/replay-e2e.*/`, including load-test results,
+the export, diff reports, replay output, and container logs.
+
+#### CHAIN-6464 fidelity measurement
+
+On November 1, 2026, `just replay e2e` completed with 251 exported records and
+canonical parent `N=0`. Run artifacts remain locally in
+`.devnet/replay-e2e.lrBLel/`. The measured checkout was `232a967a6`, based on
+deadline-recovery commit `a5194660e` and pool-restoration merge `64eed252e`.
+The later first-deadline prefetch correction has a separate controlled-clock
+regression test. This run did not exercise a missed deadline.
+
+| Run | Blocks | Missing | Extra | Common | Missed deadlines |
+| --- | --- | --- | --- | --- | --- |
+| Pre-fix baseline supplied with CHAIN-6464 | 1..62 | 111 | 16 | 359 | Not reported |
+| Completed isolated run | 1..69 | 0 | 0 | 319 | 0 |
+
+These are separate recordings, not a paired replay of identical input. Common
+counts therefore do not measure a fidelity gain. In the completed run, every
+block has zero missing and extra transactions and no ordering divergence.
+All 69 restoration log rows report `restored=0` and `obsolete=0`, so this run
+does not exercise candidate-only restoration. Aggregate execution gas matches
+at 8,494,056, and priority-fee totals match at `0x1d7c141400020` wei.
+An earlier attempt reached export but exceeded the terminal's 600-second limit.
+The completed attempt used a 1,200-second command budget. Both attempts removed
+only their isolated stacks, leaving the unrelated devnet running.
+
 ### Single-Anvil L1 local Nitro proving
 
 The optional single-Anvil variant replaces the Reth execution node and both
