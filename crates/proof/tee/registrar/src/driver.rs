@@ -390,6 +390,14 @@ mod tests {
         }
     }
 
+    struct FailingDiscovery;
+
+    impl InstanceDiscovery for FailingDiscovery {
+        async fn discover_instances(&self) -> Result<Vec<ProverInstance>> {
+            Err(RegistrarError::Discovery("discovery unavailable".into()))
+        }
+    }
+
     #[derive(Clone, Debug, Default)]
     struct MockEnclaveEndpointClient {
         keys: HashMap<Url, Vec<Vec<u8>>>,
@@ -474,11 +482,11 @@ mod tests {
         Url::parse(&format!("http://{host_port}")).unwrap()
     }
 
-    fn cycle_driver(
-        instances: Vec<ProverInstance>,
+    fn cycle_driver<D: InstanceDiscovery>(
+        instances: D,
         signer_client: MockEnclaveEndpointClient,
         cancel: CancellationToken,
-    ) -> TestDriver {
+    ) -> RegistrationDriver<D, MockEnclaveEndpointClient, (), (), NoopTxManager> {
         cycle_driver_with_instance_cache_ttl(
             instances,
             signer_client,
@@ -487,12 +495,12 @@ mod tests {
         )
     }
 
-    fn cycle_driver_with_instance_cache_ttl(
-        instances: Vec<ProverInstance>,
+    fn cycle_driver_with_instance_cache_ttl<D: InstanceDiscovery>(
+        instances: D,
         signer_client: MockEnclaveEndpointClient,
         cancel: CancellationToken,
         instance_cache_ttl_cycles: u32,
-    ) -> TestDriver {
+    ) -> RegistrationDriver<D, MockEnclaveEndpointClient, (), (), NoopTxManager> {
         let signer_manager = Arc::new(
             SignerManager::new(
                 (),
@@ -527,6 +535,26 @@ mod tests {
         driver: &TestDriver,
     ) -> Option<Vec<(ProverInstance, InstanceObservation)>> {
         driver.discover_and_resolve().await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn discover_and_resolve_propagates_discovery_error_without_endpoint_io() {
+        let driver = cycle_driver(
+            FailingDiscovery,
+            MockEnclaveEndpointClient::default(),
+            CancellationToken::new(),
+        );
+
+        let result = driver.discover_and_resolve().await;
+
+        assert!(
+            matches!(&result, Err(RegistrarError::Discovery(source))
+                if source.to_string() == "discovery unavailable"),
+            "expected discovery error, got {result:?}"
+        );
+        assert!(driver.signer_client.requested_readyz.lock().unwrap().is_empty());
+        assert!(driver.signer_client.requested_public_keys.lock().unwrap().is_empty());
+        assert!(driver.signer_client.requested_nonces.lock().unwrap().is_empty());
     }
 
     #[tokio::test]

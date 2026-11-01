@@ -5734,6 +5734,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
+ "tracing-subscriber",
  "url",
  "x509-parser",
 ]

@@ -180,10 +180,93 @@ impl SignerReconciler {
 
 #[cfg(test)]
 mod tests {
+    use std::{
+        fmt::Debug,
+        sync::{Arc, Mutex},
+    };
+
+    use tracing::{
+        Event, Level, Subscriber,
+        field::{Field, Visit},
+    };
+    use tracing_subscriber::{Layer, layer::Context, prelude::*};
+
     use super::*;
     use crate::test_utils::{EP1, healthy_prover_instance};
 
     const SIGNER: Address = Address::repeat_byte(1);
+
+    #[derive(Debug, PartialEq, Eq)]
+    struct CapturedEvent {
+        level: Level,
+        fields: HashMap<String, String>,
+    }
+
+    impl Visit for CapturedEvent {
+        fn record_debug(&mut self, field: &Field, value: &dyn Debug) {
+            self.fields.insert(field.name().to_owned(), format!("{value:?}"));
+        }
+    }
+
+    struct EventCapture(Arc<Mutex<Vec<CapturedEvent>>>);
+
+    impl<S: Subscriber> Layer<S> for EventCapture {
+        fn on_event(&self, event: &Event<'_>, _context: Context<'_, S>) {
+            let mut captured =
+                CapturedEvent { level: *event.metadata().level(), fields: HashMap::new() };
+            event.record(&mut captured);
+            self.0.lock().unwrap().push(captured);
+        }
+    }
+
+    #[test]
+    fn missing_instance_warnings_report_grace_and_expiration() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        // Two dispatchers prevent parallel tests from caching this callsite as disabled.
+        let _other_dispatch = tracing::Dispatch::new(tracing::subscriber::NoSubscriber::default());
+        let subscriber = tracing_subscriber::registry().with(EventCapture(Arc::clone(&events)));
+        let instance = healthy_prover_instance(EP1);
+        let mut reconciler = SignerReconciler::new(2);
+
+        tracing::subscriber::with_default(subscriber, || {
+            reconciler.step(
+                vec![(
+                    instance.clone(),
+                    InstanceObservation::Resolved { signers: vec![SIGNER], registerable: vec![] },
+                )],
+                &HashMap::new(),
+            );
+            for _ in 0..3 {
+                reconciler.step(vec![], &HashMap::new());
+            }
+        });
+
+        let events = events.lock().unwrap();
+        assert_eq!(
+            events.len(),
+            3,
+            "expected two preservation warnings and one expiration warning"
+        );
+        for (event, ttl_cycles) in events.iter().zip([1, 2, 3]) {
+            let mut expected_fields = HashMap::from([
+                ("instance".into(), instance.instance_id.clone()),
+                ("ttl_cycles".into(), ttl_cycles.to_string()),
+                ("max_ttl_cycles".into(), "2".into()),
+            ]);
+            let message = if ttl_cycles <= 2 {
+                expected_fields.insert("cached_signers".into(), "1".into());
+                "instance unavailable, preserving last-known active signers"
+            } else {
+                "last-known active signer cache expired for unavailable instance"
+            };
+            expected_fields.insert("message".into(), message.into());
+            assert_eq!(
+                event,
+                &CapturedEvent { level: Level::WARN, fields: expected_fields },
+                "unexpected warning at grace cycle {ttl_cycles}"
+            );
+        }
+    }
 
     #[tokio::test]
     async fn protects_active_and_cancelled_pending_signers() {
