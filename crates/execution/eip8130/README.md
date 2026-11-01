@@ -76,12 +76,12 @@ intrinsic_gas = AA_BASE_COST + tx_payload_cost + nonce_key_cost + value_transfer
 
 The pricing follows the [EIP-2780](https://eips.ethereum.org/EIPS/eip-2780)
 resource-based intrinsic gas: a self-paid k1 transaction pays EIP-2780's
-amount for the same transaction plus the 2,100 Keystore read in its k1
-authentication cost.
+amount for the same transaction plus 5,100 (Base's 3,000 higher base and the
+2,100 config read in its k1 authentication cost).
 
 | Component | Source |
 |---|---|
-| `base` | `AA_BASE_COST` (9,000): EIP-2780's 12,000 base less the ECDSA recovery the k1 authentication cost carries |
+| `base` | `AA_BASE_COST` (12,000): EIP-8430's 9,000 base rounded up to cover the sender's cold `policy_manager` SLOAD, which every transaction pays since whether the sender's actor is policy-gated is state |
 | `payload` | EIP-2028 data-availability cost (16/non-zero, 4/zero byte) over the RLP of `account_changes`, `calls` and `metadata`, plus `sender_auth` unless it is a k1 signature — the *standard* rate, subject to the EIP-7623 calldata floor below. The envelope (nonces, fees, `gas_limit`, validity window) is not metered, as in EIP-2780 |
 | `payload_floor` | EIP-7623 calldata floor over the same bytes: `TX_TOTAL_COST_FLOOR_PER_TOKEN` (10) per payload token instead of the standard 4, so a data-heavy transaction cannot post data availability more cheaply than a standard EIP-7623 transaction on the same chain (always `>= payload`) |
 | `first_call` | `2,600` cold account access for the first call's target (the first call of the first non-empty phase), as EIP-2780 charges `tx.to`; `0` when `calls` is empty or the target is the sender |
@@ -89,7 +89,7 @@ authentication cost.
 | `value_transfer` | `6,000` per call with `value > 0` and `to != sender` |
 | `bytecode` | per create entry: `32,000 + 200 · code_len` |
 | `account_changes` | per create entry: one fresh packed `account_state` write plus one fresh `actor_config` slot write per initial actor; policy actors set `policy_commitment`/`policy_manager`, while ungated actors pay the cold zero-to-zero touches that preserve access warming; per config-change entry: a packed `account_state` write covering the sequence advance and lock read, always priced as a cold zero-to-nonzero write even when an earlier entry already touched the slot, its `auth` cost, and each mutated actor/policy slot; a revoke always prices all three actor/policy resets, whatever the slots hold; a self-actor change adds no separate bump — its inline-self write is already covered by the config-change `account_state` cost and its `actor_config(self)` home by the per-change slot cost; per delegation entry: the `4,600` indicator deposit |
-| `sender_auth` / `payer_auth` | authenticator execution gas + one cold config/state SLOAD; `sender_auth` always adds one cold `policy_manager` SLOAD, since whether the resolved sender actor is policy-gated is state, while a payer only needs its sponsor scope and resolves no policy; `payer_auth` is `0` for self-pay. A k1 signature's bytes are covered by its authentication cost; any other `payer_auth` adds its bytes at the EIP-7623 floor rate (`10` per token) to `payer_auth_cost`. `payer_auth_cost` is the exact amount used for the payer's pre-charge, the EIP-7825 cap, the block gas reservation and settlement, and must not exceed `MAX_AUTHENTICATION_GAS` (100,000) |
+| `sender_auth` / `payer_auth` | authenticator execution gas + one cold config/state SLOAD (the sender's policy read is in `base`); `payer_auth` is `0` for self-pay. A k1 signature's bytes are covered by its authentication cost; any other `payer_auth` adds its bytes at the EIP-7623 floor rate (`10` per token) to `payer_auth_cost`. `payer_auth_cost` is the exact amount used for the payer's pre-charge, the EIP-7825 cap, the block gas reservation and settlement, and must not exceed `MAX_AUTHENTICATION_GAS` (100,000) |
 
 A value-bearing call to an account that does not exist also pays `25,000` for
 account creation when it runs, since existence is only known at dispatch.

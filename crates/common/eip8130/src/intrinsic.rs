@@ -225,8 +225,7 @@ impl IntrinsicGas {
                     // `signature` is always `authenticator || data` (never a bare
                     // signature); an implicit-EOA owner names itself explicitly as
                     // `K1_AUTHENTICATOR || sig` here.
-                    let auth =
-                        Self::auth_cost(cc.signature.as_ref(), AuthWireForm::Prefixed, false)?;
+                    let auth = Self::auth_cost(cc.signature.as_ref(), AuthWireForm::Prefixed)?;
                     account_changes = account_changes.saturating_add(auth);
                     for op in &cc.changes {
                         account_changes =
@@ -246,7 +245,7 @@ impl IntrinsicGas {
         // bare signature.
         let sender_auth_bytes = signed.sender_auth().as_ref();
         let sender_form = AuthWireForm::for_sender(tx.sender);
-        let sender_auth = Self::auth_cost(sender_auth_bytes, sender_form, true)?;
+        let sender_auth = Self::auth_cost(sender_auth_bytes, sender_form)?;
         let payer_auth_cost = Self::payer_auth_cost_of(signed)?;
 
         let first_call = match tx.calls.iter().flatten().next() {
@@ -309,7 +308,7 @@ impl IntrinsicGas {
         } else {
             AuthWireForm::Prefixed
         };
-        let auth = Self::auth_cost(payer_auth, form, false)?;
+        let auth = Self::auth_cost(payer_auth, form)?;
         let (_, floor_data) = Self::metered_auth_data_costs(payer_auth, form);
         let payer_auth_cost = auth.saturating_add(floor_data);
         if payer_auth_cost > Eip8130GasSchedule::MAX_AUTHENTICATION_GAS {
@@ -347,11 +346,8 @@ impl IntrinsicGas {
     }
 
     /// Cost of authenticating one auth blob: authenticator execution gas plus the
-    /// cold SLOADs the `authorize` step reads. With `policy_read`, it adds the
-    /// `policy_manager` SLOAD a policy-gated sender actor reads in addition to
-    /// its config/state slot. Whether the actor is gated is state, so the
-    /// sender always pays it; a payer or config-change authorizer never reads a
-    /// policy.
+    /// cold SLOADs the `authorize` step reads. The sender's `policy_manager`
+    /// read is in [`Eip8130GasSchedule::AA_BASE_COST`].
     ///
     /// `form` selects how the blob is parsed:
     /// [`AuthWireForm::BareSignature`] is a raw 65-byte secp256k1 signature with
@@ -361,14 +357,9 @@ impl IntrinsicGas {
     /// `K1_AUTHENTICATOR || sig`).
     ///
     /// See [`Self::auth_sloads`] for how the SLOAD count is derived.
-    fn auth_cost(
-        auth: &[u8],
-        form: AuthWireForm,
-        policy_read: bool,
-    ) -> Result<u64, IntrinsicGasError> {
+    fn auth_cost(auth: &[u8], form: AuthWireForm) -> Result<u64, IntrinsicGasError> {
         let exec = Self::auth_exec_cost(auth, form)?;
-        let sloads =
-            Self::auth_sloads(auth, form, exec).saturating_add(u64::from(policy_read && exec > 0));
+        let sloads = Self::auth_sloads(auth, form, exec);
         Ok(exec.saturating_add(Eip8130GasSchedule::COLD_SLOAD.saturating_mul(sloads)))
     }
 
@@ -536,10 +527,8 @@ mod tests {
 
     const ACCOUNT: Address = address!("0x1111111111111111111111111111111111111111");
     const K1: Address = Eip8130Constants::K1_AUTHENTICATOR;
-    /// A sender's k1 authentication: ecrecover, its config SLOAD and the
-    /// policy-manager SLOAD.
-    const K1_SENDER_AUTH: u64 =
-        Eip8130GasSchedule::AUTH_EXEC_K1 + 2 * Eip8130GasSchedule::COLD_SLOAD;
+    /// A k1 authentication: ecrecover and its config SLOAD.
+    const K1_AUTH: u64 = Eip8130GasSchedule::AUTH_EXEC_K1 + Eip8130GasSchedule::COLD_SLOAD;
 
     fn signed(tx: TxEip8130, sender_auth: Vec<u8>, payer_auth: Vec<u8>) -> Eip8130Signed {
         Eip8130Signed::new(tx, Bytes::from(sender_auth), Bytes::from(payer_auth))
@@ -614,31 +603,27 @@ mod tests {
         assert_eq!(gas.nonce_key, 0);
         assert_eq!(gas.bytecode, 0);
         assert_eq!(gas.account_changes, 0);
-        assert_eq!(gas.sender_auth, K1_SENDER_AUTH);
+        assert_eq!(gas.sender_auth, K1_AUTH);
         assert_eq!(gas.first_call, 0);
         assert_eq!(gas.payer_auth_cost, 0);
         assert!(gas.payload > 0);
     }
 
     #[test]
-    fn eth_transfer_matches_eip2780_plus_the_keystore_reads() {
-        // A self-paid k1 value transfer to another account costs EIP-2780's
-        // 12,000 base + 3,000 recipient + 6,000 value, plus the Keystore config
-        // and policy reads in the sender's authentication, before its payload
-        // bytes.
+    fn eth_transfer_costs_more_than_eip2780() {
+        // A self-paid k1 value transfer to another account costs at least
+        // EIP-2780's 12,000 base + cold recipient + 6,000 value before its
+        // payload bytes, so an AA transaction is never cheaper than the
+        // equivalent EIP-1559 one.
         let other = address!("0x3333333333333333333333333333333333333333");
         let tx = TxEip8130 {
             calls: vec![vec![Call { to: other, value: U256::from(1u64), data: Bytes::new() }]],
             ..Default::default()
         };
         let gas = intrinsic(&signed(tx, vec![0xcd; 65], vec![]));
-        assert_eq!(
-            gas.sender_intrinsic() - gas.payload,
-            Eip8130GasSchedule::AA_BASE_COST
-                + K1_SENDER_AUTH
-                + Eip8130GasSchedule::COLD_ACCOUNT_ACCESS
-                + Eip8130GasSchedule::TX_VALUE_COST
-        );
+        let eip2780 =
+            12_000 + Eip8130GasSchedule::COLD_ACCOUNT_ACCESS + Eip8130GasSchedule::TX_VALUE_COST;
+        assert!(gas.sender_intrinsic() - gas.payload > eip2780);
     }
 
     #[test]
@@ -885,9 +870,9 @@ mod tests {
         // A sub-20-byte prefixed (non-bare) blob resolves no authenticator, so it
         // reads no `actor_config` slot and must cost 0 (not a phantom cold SLOAD).
         // A bare signature still pays the authenticator exec + one cold SLOAD.
-        assert_eq!(IntrinsicGas::auth_cost(&[0u8; 5], AuthWireForm::Prefixed, false), Ok(0));
+        assert_eq!(IntrinsicGas::auth_cost(&[0u8; 5], AuthWireForm::Prefixed), Ok(0));
         assert_eq!(
-            IntrinsicGas::auth_cost(&[0u8; 65], AuthWireForm::BareSignature, false),
+            IntrinsicGas::auth_cost(&[0u8; 65], AuthWireForm::BareSignature),
             Ok(Eip8130GasSchedule::AUTH_EXEC_K1 + Eip8130GasSchedule::COLD_SLOAD)
         );
     }
@@ -1112,7 +1097,7 @@ mod tests {
         // surface. The inline self config resolves in a single cold SLOAD.
         let auth_cost = Eip8130GasSchedule::AUTH_EXEC_K1 + Eip8130GasSchedule::COLD_SLOAD;
         assert_eq!(
-            IntrinsicGas::auth_cost(&configured_auth(K1), AuthWireForm::Prefixed, false),
+            IntrinsicGas::auth_cost(&configured_auth(K1), AuthWireForm::Prefixed),
             Ok(auth_cost)
         );
 
@@ -1150,11 +1135,11 @@ mod tests {
         // blob reads exactly one slot too (the inline self, or a non-self k1
         // actor's `actor_config`).
         assert_eq!(
-            IntrinsicGas::auth_cost(&[0u8; 65], AuthWireForm::BareSignature, false),
+            IntrinsicGas::auth_cost(&[0u8; 65], AuthWireForm::BareSignature),
             Ok(Eip8130GasSchedule::AUTH_EXEC_K1 + Eip8130GasSchedule::COLD_SLOAD)
         );
         assert_eq!(
-            IntrinsicGas::auth_cost(&configured_auth(K1), AuthWireForm::Prefixed, false),
+            IntrinsicGas::auth_cost(&configured_auth(K1), AuthWireForm::Prefixed),
             Ok(Eip8130GasSchedule::AUTH_EXEC_K1 + Eip8130GasSchedule::COLD_SLOAD)
         );
         // A non-k1 leaf actor reads only its `actor_config` slot: one cold SLOAD.
@@ -1162,7 +1147,6 @@ mod tests {
             IntrinsicGas::auth_cost(
                 &configured_auth(Eip8130Contracts::P256_AUTHENTICATOR),
                 AuthWireForm::Prefixed,
-                false,
             ),
             Ok(Eip8130GasSchedule::AUTH_EXEC_P256 + Eip8130GasSchedule::COLD_SLOAD)
         );
@@ -1174,7 +1158,7 @@ mod tests {
         // authenticator selector. A configured (`AuthWireForm::Prefixed`) blob naming
         // it is rejected as unscheduled rather than silently priced as k1.
         assert_eq!(
-            IntrinsicGas::auth_cost(&configured_auth(Address::ZERO), AuthWireForm::Prefixed, false,),
+            IntrinsicGas::auth_cost(&configured_auth(Address::ZERO), AuthWireForm::Prefixed),
             Err(IntrinsicGasError::UnscheduledAuthenticator(Address::ZERO))
         );
     }
@@ -1187,22 +1171,20 @@ mod tests {
         ] {
             let tx = TxEip8130 { sender: Some(ACCOUNT), ..Default::default() };
             let gas = intrinsic(&signed(tx, configured_auth(authenticator), vec![]));
-            assert_eq!(gas.sender_auth, exec + 2 * Eip8130GasSchedule::COLD_SLOAD);
+            assert_eq!(gas.sender_auth, exec + Eip8130GasSchedule::COLD_SLOAD);
         }
     }
 
     #[test]
-    fn only_the_sender_pays_the_policy_read() {
-        // Whether the sender's actor is policy-gated is state, so every sender
-        // pays the policy-manager SLOAD; the payer never reads a policy.
+    fn sender_and_payer_k1_authentication_cost_the_same() {
         let tx = TxEip8130 {
             sender: Some(ACCOUNT),
             payer: Some(Address::repeat_byte(0x22)),
             ..Default::default()
         };
         let gas = intrinsic(&signed(tx, configured_auth(K1), configured_auth(K1)));
-        assert_eq!(gas.sender_auth, K1_SENDER_AUTH);
-        assert_eq!(gas.sender_auth - gas.payer_auth_cost, Eip8130GasSchedule::COLD_SLOAD);
+        assert_eq!(gas.sender_auth, K1_AUTH);
+        assert_eq!(gas.payer_auth_cost, K1_AUTH);
     }
 
     #[test]
@@ -1214,11 +1196,10 @@ mod tests {
         blob.extend_from_slice(&[0xab; 65]);
         let tx = TxEip8130 { sender: Some(ACCOUNT), ..Default::default() };
         let gas = intrinsic(&signed(tx, blob, vec![]));
-        // delegate overhead + nested k1 exec, then the outer config and policy
-        // SLOADs.
+        // delegate overhead + nested k1 exec, then the outer config SLOAD.
         let expected = Eip8130GasSchedule::AUTH_EXEC_DELEGATE_OVERHEAD
             + Eip8130GasSchedule::AUTH_EXEC_K1
-            + 2 * Eip8130GasSchedule::COLD_SLOAD;
+            + Eip8130GasSchedule::COLD_SLOAD;
         assert_eq!(gas.sender_auth, expected);
     }
 
