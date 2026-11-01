@@ -12,6 +12,8 @@ mod tee 'crates/proof/tee'
 mod actions 'actions'
 # Docker-based local devnet management
 mod devnet 'etc/docker'
+# Record and replay a disposable devnet
+mod replay 'etc/just/replay.just'
 # Load testing for networks
 mod load-test 'crates/infra/load-tests'
 # Formatting, clippy, udeps, and deny checks
