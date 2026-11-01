@@ -43,6 +43,7 @@ base-tx-forwarding.workspace = true
 mockall.workspace = true
 tempfile.workspace = true
 tracing-subscriber.workspace = true
+tokio = { workspace = true, features = ["test-util"] }
 axum = { workspace = true, features = ["http1", "tokio"] }
 jsonrpsee = { workspace = true, features = ["server"] }
 base-execution-txpool.workspace = true
