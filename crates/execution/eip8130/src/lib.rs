@@ -56,7 +56,7 @@ pub use apply::{
 };
 
 mod transaction;
-pub use transaction::{AppliedTransaction, TransactionAuthorizer};
+pub use transaction::{AppliedTransaction, ResolvedSender, TransactionAuthorizer};
 
 mod fee;
 pub use fee::{FeeCheck, FeeError};

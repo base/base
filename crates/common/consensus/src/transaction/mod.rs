@@ -12,8 +12,8 @@ pub use eip8130::Eip8130PayerSerde;
 pub use eip8130::{
     AccountChange, AccountChangeChannel, Call, ChangeType, CoinbaseTip, CreateEntry, Delegation,
     Eip8130Constants, Eip8130Contracts, Eip8130Signed, Eip8130StaticError, Eip8130StructuralError,
-    Eip8130Structure, Eip8130TimestampError, IDefaultAccount, InitialActor, Scope,
-    SignedAccountChanges, SignedChange, TxEip8130,
+    Eip8130Structure, Eip8130TimestampError, IDefaultAccount, InitialActor, SignedAccountChanges,
+    SignedChange, TxEip8130,
 };
 
 mod tx_type;
