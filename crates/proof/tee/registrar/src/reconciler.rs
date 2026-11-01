@@ -5,9 +5,7 @@ use std::collections::{HashMap, HashSet};
 use alloy_primitives::Address;
 use tracing::warn;
 
-use crate::{
-    InstanceObservation, PendingRegistration, ProverInstance, RegisterableSigner, RegistrarMetrics,
-};
+use crate::{InstanceObservation, ProverInstance, RegisterableSigner, RegistrarMetrics};
 
 /// Built only by [`SignerReconciler::step`] when no instance is unresolved, from the caller's
 /// observations and pending tasks.
@@ -69,10 +67,10 @@ impl SignerReconciler {
     ///
     /// Each step ages missing and unreachable entries once; discovery errors and cancellation skip it.
     /// Pending signers remain protected until reaped, including cancelled tasks.
-    pub fn step(
+    pub fn step<'a>(
         &mut self,
         observations: Vec<(ProverInstance, InstanceObservation)>,
-        pending: &HashMap<Address, PendingRegistration>,
+        pending: impl Iterator<Item = (&'a Address, &'a str)>,
     ) -> SignerReconciliation {
         let mut resolution = SignerReconciliation::default();
         let mut active_signers = HashSet::new();
@@ -172,7 +170,7 @@ impl SignerReconciler {
             .set(resolution.unresolved_instance_ids.len() as f64);
 
         if resolution.unresolved_instance_ids.is_empty() {
-            active_signers.extend(pending.keys().copied());
+            active_signers.extend(pending.map(|(signer, _)| *signer));
             resolution.orphan_cleanup = Some(ProtectedSigners { signers: active_signers });
         }
         resolution
@@ -193,7 +191,10 @@ mod tests {
     use tracing_subscriber::{Layer, layer::Context, prelude::*};
 
     use super::*;
-    use crate::test_utils::{EP1, healthy_prover_instance};
+    use crate::{
+        RegistrationTaskSet,
+        test_utils::{EP1, healthy_prover_instance},
+    };
 
     const SIGNER: Address = Address::repeat_byte(1);
 
@@ -235,10 +236,10 @@ mod tests {
                     instance.clone(),
                     InstanceObservation::Resolved { signers: vec![SIGNER], registerable: vec![] },
                 )],
-                &HashMap::new(),
+                std::iter::empty(),
             );
             for _ in 0..3 {
-                reconciler.step(vec![], &HashMap::new());
+                reconciler.step(vec![], std::iter::empty());
             }
         });
 
@@ -271,26 +272,27 @@ mod tests {
 
     #[tokio::test]
     async fn protects_active_and_cancelled_pending_signers() {
-        let mut tasks = tokio::task::JoinSet::new();
-        let handle = tasks.spawn(std::future::pending::<()>());
+        let mut tasks = RegistrationTaskSet::default();
         let cancel = tokio_util::sync::CancellationToken::new();
-        cancel.cancel();
+        let task_cancel = cancel.clone();
         let pending_signer = Address::repeat_byte(2);
-        let pending = HashMap::from([(
-            pending_signer,
-            PendingRegistration { instance_id: "absent".into(), task_id: handle.id(), cancel },
-        )]);
+        tasks.spawn(pending_signer, "absent".into(), cancel, async move {
+            task_cancel.cancelled().await;
+            Ok(())
+        });
+        tasks.cancel(&pending_signer);
         let result = SignerReconciler::new(2).step(
             vec![(
                 healthy_prover_instance(EP1),
                 InstanceObservation::Resolved { signers: vec![SIGNER], registerable: vec![] },
             )],
-            &pending,
+            tasks.pending(),
         );
         let protected = result.orphan_cleanup.unwrap();
         assert!(protected.contains(&SIGNER));
         assert!(protected.contains(&pending_signer));
         assert!(!protected.contains(&Address::ZERO));
+        tasks.drain().await;
     }
 
     #[test]
@@ -302,7 +304,7 @@ mod tests {
                 instance.clone(),
                 InstanceObservation::AttestationsUnavailable { signers: vec![SIGNER] },
             )],
-            &HashMap::new(),
+            std::iter::empty(),
         );
         assert!(result.orphan_cleanup.is_none());
         assert_eq!(result.unresolved_instance_ids, HashSet::from([instance.instance_id]));
@@ -311,7 +313,7 @@ mod tests {
 
     #[test]
     fn empty_discovery_allows_cleanup() {
-        let result = SignerReconciler::new(2).step(vec![], &HashMap::new());
+        let result = SignerReconciler::new(2).step(vec![], std::iter::empty());
         let protected = result.orphan_cleanup.unwrap();
         assert!(!protected.contains(&SIGNER));
         assert!(result.registerable.is_empty());
@@ -327,10 +329,10 @@ mod tests {
                 instance.clone(),
                 InstanceObservation::Resolved { signers: vec![SIGNER], registerable: vec![] },
             )],
-            &HashMap::new(),
+            std::iter::empty(),
         );
         for _ in 0..2 {
-            let result = reconciler.step(vec![], &HashMap::new());
+            let result = reconciler.step(vec![], std::iter::empty());
             assert!(result.orphan_cleanup.is_none());
             assert!(result.registerable.is_empty());
             assert_eq!(
@@ -338,7 +340,7 @@ mod tests {
                 HashSet::from([instance.instance_id.clone()])
             );
         }
-        let expired = reconciler.step(vec![], &HashMap::new());
+        let expired = reconciler.step(vec![], std::iter::empty());
         assert!(expired.unresolved_instance_ids.is_empty());
         assert!(!expired.orphan_cleanup.unwrap().contains(&SIGNER));
     }
@@ -348,8 +350,10 @@ mod tests {
         let mut reconciler = SignerReconciler::new(2);
         let instance = healthy_prover_instance(EP1);
         for cycle in 1..=5 {
-            let result = reconciler
-                .step(vec![(instance.clone(), InstanceObservation::Unreachable)], &HashMap::new());
+            let result = reconciler.step(
+                vec![(instance.clone(), InstanceObservation::Unreachable)],
+                std::iter::empty(),
+            );
             assert!(result.registerable.is_empty());
             if cycle <= 2 {
                 assert!(result.orphan_cleanup.is_none());
@@ -373,9 +377,9 @@ mod tests {
                 instance.clone(),
                 InstanceObservation::Resolved { signers: vec![SIGNER], registerable: vec![] },
             )],
-            &HashMap::new(),
+            std::iter::empty(),
         );
-        reconciler.step(vec![], &HashMap::new());
+        reconciler.step(vec![], std::iter::empty());
         for _ in 0..3 {
             let healthy = healthy_prover_instance(crate::test_utils::EP2);
             let result = reconciler.step(
@@ -393,7 +397,7 @@ mod tests {
                         },
                     ),
                 ],
-                &HashMap::new(),
+                std::iter::empty(),
             );
             assert!(result.orphan_cleanup.is_none());
             assert_eq!(
@@ -410,11 +414,11 @@ mod tests {
                     InstanceObservation::Resolved { signers: vec![], registerable: vec![] },
                 ),
             ],
-            &HashMap::new(),
+            std::iter::empty(),
         );
         assert!(result.orphan_cleanup.unwrap().contains(&SIGNER));
         let expired =
-            reconciler.step(vec![(instance, InstanceObservation::Unreachable)], &HashMap::new());
+            reconciler.step(vec![(instance, InstanceObservation::Unreachable)], std::iter::empty());
         assert!(!expired.orphan_cleanup.unwrap().contains(&SIGNER));
     }
 
@@ -427,18 +431,22 @@ mod tests {
                 instance.clone(),
                 InstanceObservation::Resolved { signers: vec![SIGNER], registerable: vec![] },
             )],
-            &HashMap::new(),
+            std::iter::empty(),
         );
         for _ in 0..2 {
-            let result = reconciler
-                .step(vec![(instance.clone(), InstanceObservation::Unreachable)], &HashMap::new());
+            let result = reconciler.step(
+                vec![(instance.clone(), InstanceObservation::Unreachable)],
+                std::iter::empty(),
+            );
             assert!(result.unresolved_instance_ids.is_empty());
             assert!(result.registerable.is_empty());
             assert!(result.orphan_cleanup.unwrap().contains(&SIGNER));
         }
         for _ in 0..2 {
-            let expired = reconciler
-                .step(vec![(instance.clone(), InstanceObservation::Unreachable)], &HashMap::new());
+            let expired = reconciler.step(
+                vec![(instance.clone(), InstanceObservation::Unreachable)],
+                std::iter::empty(),
+            );
             assert!(!expired.orphan_cleanup.unwrap().contains(&SIGNER));
         }
     }
@@ -453,14 +461,14 @@ mod tests {
                     instance.clone(),
                     InstanceObservation::Resolved { signers: vec![SIGNER], registerable: vec![] },
                 )],
-                &HashMap::new(),
+                std::iter::empty(),
             );
             assert!(result.orphan_cleanup.unwrap().contains(&SIGNER));
-            assert!(reconciler.step(vec![], &HashMap::new()).orphan_cleanup.is_none());
+            assert!(reconciler.step(vec![], std::iter::empty()).orphan_cleanup.is_none());
         }
-        assert!(reconciler.step(vec![], &HashMap::new()).orphan_cleanup.is_none());
+        assert!(reconciler.step(vec![], std::iter::empty()).orphan_cleanup.is_none());
         assert!(
-            !reconciler.step(vec![], &HashMap::new()).orphan_cleanup.unwrap().contains(&SIGNER)
+            !reconciler.step(vec![], std::iter::empty()).orphan_cleanup.unwrap().contains(&SIGNER)
         );
     }
 
@@ -472,7 +480,7 @@ mod tests {
                 crate::test_utils::prover_instance(EP1, crate::InstanceHealthStatus::Draining),
                 InstanceObservation::Resolved { signers: signers.clone(), registerable: vec![] },
             )],
-            &HashMap::new(),
+            std::iter::empty(),
         );
         assert!(result.registerable.is_empty());
         assert!(result.unresolved_instance_ids.is_empty());
@@ -495,9 +503,9 @@ mod tests {
                     instance.clone(),
                     InstanceObservation::Resolved { signers: vec![SIGNER], registerable: vec![] },
                 )],
-                &HashMap::new(),
+                std::iter::empty(),
             );
-            reconciler.step(vec![(instance, InstanceObservation::Failed)], &HashMap::new());
+            reconciler.step(vec![(instance, InstanceObservation::Failed)], std::iter::empty());
         });
         let snapshot = snapshotter.snapshot().into_vec();
         for (name, expected) in [
@@ -523,27 +531,29 @@ mod tests {
                     registerable: vec![],
                 },
             )],
-            &HashMap::new(),
+            std::iter::empty(),
         );
-        reconciler.step(vec![], &HashMap::new());
+        reconciler.step(vec![], std::iter::empty());
         let result = reconciler.step(
             vec![(
                 instance.clone(),
                 InstanceObservation::AttestationsUnavailable { signers: vec![SIGNER, SIGNER] },
             )],
-            &HashMap::new(),
+            std::iter::empty(),
         );
         assert!(result.orphan_cleanup.is_none());
         assert!(result.registerable.is_empty());
         for _ in 0..2 {
-            let result = reconciler
-                .step(vec![(instance.clone(), InstanceObservation::Unreachable)], &HashMap::new());
+            let result = reconciler.step(
+                vec![(instance.clone(), InstanceObservation::Unreachable)],
+                std::iter::empty(),
+            );
             let protected = result.orphan_cleanup.unwrap();
             assert!(protected.contains(&SIGNER));
             assert!(!protected.contains(&Address::repeat_byte(2)));
         }
         let result =
-            reconciler.step(vec![(instance, InstanceObservation::Unreachable)], &HashMap::new());
+            reconciler.step(vec![(instance, InstanceObservation::Unreachable)], std::iter::empty());
         assert!(!result.orphan_cleanup.unwrap().contains(&SIGNER));
     }
 
@@ -582,7 +592,7 @@ mod tests {
             (vec![], [0.0, 0.0, 0.0, 0.0]),
         ] {
             metrics::with_local_recorder(&recorder, || {
-                reconciler.step(observations, &HashMap::new());
+                reconciler.step(observations, std::iter::empty());
             });
             let snapshot = snapshotter.snapshot().into_vec();
             for (name, expected) in [

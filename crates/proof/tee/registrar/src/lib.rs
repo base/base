@@ -34,10 +34,13 @@ pub use prover::ProverClient;
 mod reconciler;
 pub use reconciler::{CachedInstance, ProtectedSigners, SignerReconciler, SignerReconciliation};
 
+mod registration_tasks;
+pub use registration_tasks::{PendingRegistration, RegistrationTaskSet};
+
 mod signer_manager;
 pub use signer_manager::{
-    CacheTxAttempt, DEFAULT_MAX_TX_RETRIES, DEFAULT_TX_RETRY_DELAY_SECS, PendingRegistration,
-    ProofTaskSet, SignerManager, SignerManagerConfig,
+    CacheTxAttempt, DEFAULT_MAX_TX_RETRIES, DEFAULT_TX_RETRY_DELAY_SECS, SignerManager,
+    SignerManagerConfig,
 };
 
 mod service;

@@ -10,6 +10,8 @@ documents via `enclave_signerAttestation`, validates and plans them locally,
 generates P-384 inverse hints, caches certificate chains through `CertManager`,
 and submits hinted registration transactions to `TEEProverRegistry` on L1.
 
+Domain terms (active, registerable, orphan, and protected signers; unresolved instances; registration tasks) are defined in [GLOSSARY.md](<GLOSSARY.md>).
+
 ## Discovery Cache TTL
 
 When an instance disappears from otherwise successful discovery output or is
@@ -32,6 +34,7 @@ including cancelled tasks until they are reaped.
 - **`hints`** — [`P384Hints`] Agora / `nitro-validator` inverse-transcript generator.
 - **`prover`** — [`ProverClient`] JSON-RPC client for polling prover readiness and signer endpoints.
 - **`reconciler`** — [`SignerReconciler`] unavailable-instance grace cache and [`ProtectedSigners`] set for orphan cleanup.
-- **`signer_manager`** — [`SignerManager`] lifecycle management for signer-registration tasks and transaction execution.
+- **`signer_manager`** — [`SignerManager`] registration task reconciliation, transaction execution, and orphan cleanup.
+- **`registration_tasks`** — [`RegistrationTaskSet`] bookkeeping and completion handling for registration tasks.
 - **`traits`** — [`InstanceDiscovery`] and [`EnclaveEndpointClient`] abstractions.
 - **`types`** — Core domain types: [`ProverInstance`], [`RegistrationPlan`], [`RegistrationHints`].
