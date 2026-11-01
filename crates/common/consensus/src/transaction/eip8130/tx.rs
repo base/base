@@ -202,7 +202,21 @@ impl TxEip8130 {
         self.payer == Some(Eip8130Constants::OPEN_PAYER)
     }
 
-    /// Length of [`Self::encode_metered_payload`].
+    /// Length of the RLP fields that precede the metered payload in wire order,
+    /// so the payload starts at this offset within [`Self::rlp_encode_fields`].
+    pub fn metered_payload_offset(&self) -> usize {
+        self.chain_id.length()
+            + Self::address_opt_encoded_length(&self.sender)
+            + self.nonce_key.length()
+            + self.nonce_sequence.length()
+            + self.valid_after.length()
+            + self.valid_before.length()
+            + self.max_priority_fee_per_gas.length()
+            + self.max_fee_per_gas.length()
+            + self.gas_limit.length()
+    }
+
+    /// Length of the bytes [`Self::encode_metered_payload`] writes.
     pub fn metered_payload_length(&self) -> usize {
         self.account_changes.length()
             + Self::calls_encoded_length(&self.calls)

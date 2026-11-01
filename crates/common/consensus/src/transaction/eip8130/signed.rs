@@ -58,6 +58,11 @@ pub struct Eip8130Signed {
     payer_auth: Bytes,
     /// Cached EIP-2718 transaction hash (`keccak256(encode_2718(self))`).
     hash: B256,
+    /// Length of [`TxEip8130::encode_metered_payload`].
+    metered_payload_len: usize,
+    /// Zero bytes in [`TxEip8130::encode_metered_payload`], counted from the
+    /// hashing encoding so intrinsic gas never re-encodes the payload.
+    metered_payload_zero_bytes: usize,
 }
 
 /// JSON is flat, like every other transaction type: the [`TxEip8130`] fields
@@ -194,8 +199,24 @@ impl Eip8130Signed {
     /// Constructs a new [`Eip8130Signed`] from its parts, computing and caching
     /// the EIP-2718 transaction hash.
     pub fn new(tx: TxEip8130, sender_auth: Bytes, payer_auth: Bytes) -> Self {
-        let mut this = Self { tx, sender_auth, payer_auth, hash: B256::ZERO };
-        this.hash = this.recompute_hash();
+        let mut this = Self {
+            tx,
+            sender_auth,
+            payer_auth,
+            hash: B256::ZERO,
+            metered_payload_len: 0,
+            metered_payload_zero_bytes: 0,
+        };
+        let mut encoded = Vec::with_capacity(this.encode_2718_len());
+        this.encode_2718(&mut encoded);
+        this.hash = keccak256(&encoded);
+
+        let start = 1 + this.rlp_header().length() + this.tx.metered_payload_offset();
+        this.metered_payload_len = this.tx.metered_payload_length();
+        this.metered_payload_zero_bytes = encoded[start..start + this.metered_payload_len]
+            .iter()
+            .filter(|byte| **byte == 0)
+            .count();
         this
     }
 
@@ -222,6 +243,16 @@ impl Eip8130Signed {
     /// Returns the cached EIP-2718 transaction hash.
     pub const fn hash(&self) -> &B256 {
         &self.hash
+    }
+
+    /// Length of the metered payload ([`TxEip8130::encode_metered_payload`]).
+    pub const fn metered_payload_len(&self) -> usize {
+        self.metered_payload_len
+    }
+
+    /// Zero bytes in the metered payload ([`TxEip8130::encode_metered_payload`]).
+    pub const fn metered_payload_zero_bytes(&self) -> usize {
+        self.metered_payload_zero_bytes
     }
 
     /// Validates static admission rules without node-specific dependencies.
@@ -313,12 +344,6 @@ impl Eip8130Signed {
             }
         }
         Ok(())
-    }
-
-    fn recompute_hash(&self) -> B256 {
-        let mut buf = Vec::with_capacity(self.encode_2718_len());
-        self.encode_2718(&mut buf);
-        keccak256(&buf)
     }
 
     /// Returns the sender address if it is explicitly provided by the
@@ -702,6 +727,23 @@ mod tests {
 
     use super::*;
     use crate::test_utils::sample_signed_8130;
+
+    #[rstest]
+    #[case::self_pay(false)]
+    #[case::sponsored(true)]
+    fn metered_payload_counts_match_its_encoding(#[case] payer_present: bool) {
+        let mut tx = sample_signed_8130(payer_present).into_tx();
+        tx.calls[0][0].data = (0..300u16).map(|i| (i % 3) as u8).collect();
+        let signed = Eip8130Signed::new(tx, Bytes::new(), Bytes::new());
+
+        let mut metered = Vec::new();
+        signed.tx().encode_metered_payload(&mut metered);
+        assert_eq!(signed.metered_payload_len(), metered.len());
+        assert_eq!(
+            signed.metered_payload_zero_bytes(),
+            metered.iter().filter(|byte| **byte == 0).count()
+        );
+    }
 
     #[rstest]
     #[case::self_pay(false)]

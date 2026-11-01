@@ -396,9 +396,10 @@ impl IntrinsicGas {
         let value_transfer = Eip8130GasSchedule::TX_VALUE_COST
             .saturating_mul(u64::try_from(value_calls).unwrap_or(u64::MAX));
 
-        let mut metered = Vec::with_capacity(tx.metered_payload_length());
-        tx.encode_metered_payload(&mut metered);
-        let (mut payload, mut payload_floor) = Self::data_costs(&metered);
+        let (mut payload, mut payload_floor) = Self::data_costs_of_counts(
+            signed.metered_payload_zero_bytes(),
+            signed.metered_payload_len() - signed.metered_payload_zero_bytes(),
+        );
         let (auth_standard, auth_floor) =
             Self::metered_auth_data_costs(sender_auth_bytes, sender_form);
         payload = payload.saturating_add(auth_standard);
@@ -479,30 +480,22 @@ impl IntrinsicGas {
         if k1 { (0, 0) } else { Self::data_costs(auth) }
     }
 
-    /// Standard EIP-2028 cost and EIP-7623 floor cost of one payload byte.
-    ///
-    /// A zero byte is one token (`TX_DATA_ZERO_BYTE` / `TX_TOTAL_COST_FLOOR_PER_TOKEN`).
-    /// A non-zero byte is four tokens.
-    const fn byte_payload_costs(byte: u8) -> (u64, u64) {
-        if byte == 0 {
-            (
-                Eip8130GasSchedule::TX_DATA_ZERO_BYTE,
-                Eip8130GasSchedule::TX_TOTAL_COST_FLOOR_PER_TOKEN,
-            )
-        } else {
-            (
-                Eip8130GasSchedule::TX_DATA_NONZERO_BYTE,
-                Eip8130GasSchedule::TX_TOTAL_COST_FLOOR_PER_TOKEN.saturating_mul(4),
-            )
-        }
-    }
-
     /// Standard EIP-2028 and EIP-7623 floor data costs of `bytes`.
     fn data_costs(bytes: &[u8]) -> (u64, u64) {
-        bytes.iter().fold((0u64, 0u64), |(standard, floor), &byte| {
-            let (byte_standard, byte_floor) = Self::byte_payload_costs(byte);
-            (standard.saturating_add(byte_standard), floor.saturating_add(byte_floor))
-        })
+        let zero_bytes = bytes.iter().filter(|byte| **byte == 0).count();
+        Self::data_costs_of_counts(zero_bytes, bytes.len() - zero_bytes)
+    }
+
+    /// Standard EIP-2028 and EIP-7623 floor data costs of a payload with the
+    /// given byte counts. A zero byte is one token and a non-zero byte is four.
+    fn data_costs_of_counts(zero_bytes: usize, nonzero_bytes: usize) -> (u64, u64) {
+        let zero = u64::try_from(zero_bytes).unwrap_or(u64::MAX);
+        let nonzero = u64::try_from(nonzero_bytes).unwrap_or(u64::MAX);
+        let standard = zero
+            .saturating_mul(Eip8130GasSchedule::TX_DATA_ZERO_BYTE)
+            .saturating_add(nonzero.saturating_mul(Eip8130GasSchedule::TX_DATA_NONZERO_BYTE));
+        let tokens = zero.saturating_add(nonzero.saturating_mul(4));
+        (standard, tokens.saturating_mul(Eip8130GasSchedule::TX_TOTAL_COST_FLOOR_PER_TOKEN))
     }
 
     /// Cost of authenticating one auth blob: authenticator execution gas plus the
