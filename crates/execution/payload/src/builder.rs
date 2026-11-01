@@ -621,7 +621,7 @@ impl ExecutionInfo {
     /// - block gas limit: ensures the transaction still fits into the block. `tx_reserved_gas` is
     ///   the gas reserved against the block budget: `gas_limit` for ordinary transactions, and
     ///   `gas_limit + payer_auth` for EIP-8130, since payer authentication is metered on top of the
-    ///   declared gas limit (see `IntrinsicGas::max_payer_auth_cost`).
+    ///   declared gas limit (see `IntrinsicGas::payer_auth_cost_of`).
     /// - tx DA limit: if configured, ensures the tx does not exceed the maximum allowed DA limit
     ///   per tx.
     /// - block DA limit: if configured, ensures the transaction's DA size does not exceed the
@@ -1163,12 +1163,10 @@ where
             let tx_da_size = tx.estimated_da_size();
 
             // EIP-8130 meters payer authentication gas on top of the declared gas limit, so it must
-            // be reserved against the block gas budget in addition to `gas_limit`. Reserve a
-            // conservative upper bound (the payer auth bytes at the EIP-7623 floor rate) derived
-            // from the payer auth blob (`0` for non-8130 / self-pay); see
-            // `IntrinsicGas::max_payer_auth_cost`.
+            // be reserved against the block gas budget in addition to `gas_limit` (`0` for
+            // non-8130 / self-pay); see `IntrinsicGas::payer_auth_cost_of`.
             let tx_payer_auth = match tx.as_eip8130() {
-                Some(signed) => match IntrinsicGas::max_payer_auth_cost(signed) {
+                Some(signed) => match IntrinsicGas::payer_auth_cost_of(signed) {
                     Ok(payer_auth) => payer_auth,
                     Err(err) => {
                         trace!(
