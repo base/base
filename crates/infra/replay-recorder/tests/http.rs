@@ -56,10 +56,12 @@ async fn records_valid_batch_members_with_exact_ids_and_multiline_params() {
         r#"{{"jsonrpc":"2.0","id":18446744073709551617,"method":"future","params":{params}}}"#
     );
     let success = r#"{"jsonrpc":"2.0","id":18446744073709551617,"result":null}"#;
-    let batch = format!(r#"[{call},1,{{"jsonrpc":"2.0","method":"notification"}}]"#);
+    let invalid_params = r#"{"jsonrpc":"2.0","id":2,"method":"bad","params":42}"#;
+    let batch =
+        format!(r#"[{call},1,{invalid_params},{{"jsonrpc":"2.0","method":"notification"}}]"#);
 
     for (body, expected) in
-        [(call, success.to_owned()), (batch, format!("[{success},{}]", ArrivalQueue::INVALID))]
+        [(call, success.to_owned()), (batch, format!("[{success},{0},{0}]", ArrivalQueue::INVALID))]
     {
         let response = client.post(&url).body(body).send().await.unwrap();
         assert_eq!(response.status(), 200);
@@ -68,7 +70,20 @@ async fn records_valid_batch_members_with_exact_ids_and_multiline_params() {
     let response =
         client.post(&url).body("x".repeat(Recorder::MAX_BODY_BYTES + 1)).send().await.unwrap();
     assert_eq!(response.status(), 413);
-    assert_eq!(client.post(&url).body("[]").send().await.unwrap().status(), 400);
+    for (body, code, message) in [
+        ("{", -32700, "Parse error"),
+        ("[}", -32700, "Parse error"),
+        ("[]", -32600, "Invalid request"),
+        ("{}", -32600, "Invalid request"),
+    ] {
+        let response = client.post(&url).body(body).send().await.unwrap();
+        assert_eq!(response.status(), 400);
+        let error: serde_json::Value =
+            serde_json::from_str(&response.text().await.unwrap()).unwrap();
+        assert_eq!(error["error"]["code"], code);
+        assert_eq!(error["error"]["message"], message);
+        assert_eq!(error["id"], serde_json::Value::Null);
+    }
     cancel.cancel();
     timeout(Duration::from_secs(5), tasks.join_next()).await.unwrap().unwrap().unwrap().unwrap();
 
