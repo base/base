@@ -8,6 +8,8 @@
 //! `Wait` continues the loop; its update is only for reporting. `Idle` ends
 //! the tick. Terminal actions remove the attempt and request no further I/O.
 //! Events that don't match the current phase are inert.
+//! Pass the response time to `apply` for `ReproveStarted`; it starts the new
+//! session's timeout without changing the tick. Other events ignore `apply`'s clock.
 //!
 //! If a `Submit` or `Reprove` result is never applied, the next tick rechecks
 //! the chain before retrying the action. An unapplied reprove spends no retry
@@ -439,6 +441,7 @@ impl DisputeAttempt {
     }
 
     /// Applies external results without performing I/O or returning an error.
+    /// `now` starts a successful reprove's timeout; it does not identify the tick.
     pub fn apply(&mut self, event: Event, now: Instant) -> Action {
         match event {
             Event::ProverStatus(response)
@@ -897,6 +900,29 @@ mod tests {
             }
         }
         assert!(failures.is_empty(), "{}", failures.join("\n"));
+    }
+
+    #[test]
+    fn reprove_timeout_starts_at_completion_without_starting_a_new_tick() {
+        let tick = Instant::now();
+        let mut attempt = zk(tick);
+        assert!(matches!(attempt.need(tick), Need::PollProver(_)));
+        attempt.apply(response(ProofStatus::Failed), tick);
+        assert!(matches!(attempt.need(tick), Need::CheckChain { timeout: None }));
+        assert!(matches!(attempt.apply(chain(), tick), Action::Reprove(_)));
+
+        let completed_at = tick + Duration::from_secs(20);
+        attempt.apply(Event::ReproveStarted(Ok("next".into())), completed_at);
+        assert!(matches!(attempt.need(tick), Need::Idle));
+
+        let deadline = completed_at + Duration::from_secs(10);
+        assert!(matches!(attempt.need(deadline), Need::PollProver(id) if id == "next"));
+        assert!(matches!(
+            attempt.need(deadline + Duration::from_secs(1)),
+            Need::CheckChain {
+                timeout: Some(RetryReason::Timeout { elapsed, limit }),
+            } if elapsed == Duration::from_secs(11) && limit == Duration::from_secs(10)
+        ));
     }
 
     #[test]
