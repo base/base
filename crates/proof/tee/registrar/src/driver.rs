@@ -609,6 +609,10 @@ mod tests {
             (DiscoveryCycle::Cancelled, 0),
             (DiscoveryCycle::Complete, 1),
         ] {
+            #[cfg(feature = "metrics")]
+            let recorder = metrics_util::debugging::DebuggingRecorder::new();
+            #[cfg(feature = "metrics")]
+            let _guard = metrics::set_default_local_recorder(&recorder);
             let cancel = CancellationToken::new();
             let reads = Arc::new(AtomicUsize::new(0));
             let failed = Arc::new(Notify::new());
@@ -653,6 +657,18 @@ mod tests {
             .await
             .expect("driver should stop after one cycle")
             .unwrap();
+            #[cfg(feature = "metrics")]
+            {
+                let snapshot = recorder.snapshotter().snapshot().into_vec();
+                let stepped = snapshot.iter().any(|(key, _, _, _)| {
+                    key.key().name() == "base_registrar.discovered_instances_count"
+                });
+                assert_eq!(
+                    stepped,
+                    matches!(cycle, DiscoveryCycle::Complete),
+                    "{cycle:?}: reconciler must step only after completed discovery"
+                );
+            }
             assert_eq!(reads.load(Ordering::SeqCst), expected_reads, "{cycle:?}");
         }
     }

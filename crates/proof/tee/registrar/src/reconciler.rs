@@ -12,7 +12,7 @@ use crate::{
 /// Built only by [`SignerReconciler::step`] when no instance is unresolved, from the caller's
 /// observations and pending tasks.
 ///
-/// ```compile_fail
+/// ```compile_fail,E0451
 /// use base_proof_tee_registrar::ProtectedSigners;
 /// use std::collections::HashSet;
 /// let protected = ProtectedSigners { signers: HashSet::new() };
