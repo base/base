@@ -363,12 +363,19 @@ mod tests {
     //! Driver tests use a hand-rolled endpoint client because they coordinate
     //! scripted responses with a blocked readiness request across concurrent
     //! calls.
+    //! The counting registry implements an external trait without an automock.
 
     use std::{
         collections::{HashMap, HashSet},
-        sync::{Arc, Mutex},
+        sync::{
+            Arc, Mutex,
+            atomic::{AtomicUsize, Ordering},
+        },
     };
 
+    use alloy_primitives::B256;
+    use async_trait::async_trait;
+    use base_proof_contracts::{CertManagerContractClient, ContractError};
     use tokio::sync::Notify;
     use tokio_util::sync::CancellationToken;
     use url::Url;
@@ -395,6 +402,78 @@ mod tests {
     impl InstanceDiscovery for FailingDiscovery {
         async fn discover_instances(&self) -> Result<Vec<ProverInstance>> {
             Err(RegistrarError::Discovery("discovery unavailable".into()))
+        }
+    }
+
+    #[derive(Clone, Copy, Debug)]
+    enum DiscoveryCycle {
+        Failed,
+        Cancelled,
+        Complete,
+    }
+
+    struct OneCycleDiscovery {
+        cycle: DiscoveryCycle,
+        cancel: CancellationToken,
+        failed: Arc<Notify>,
+    }
+
+    impl InstanceDiscovery for OneCycleDiscovery {
+        async fn discover_instances(&self) -> Result<Vec<ProverInstance>> {
+            match self.cycle {
+                DiscoveryCycle::Failed => {
+                    self.failed.notify_one();
+                    Err(RegistrarError::Discovery("discovery unavailable".into()))
+                }
+                DiscoveryCycle::Cancelled => {
+                    self.cancel.cancel();
+                    Ok(vec![])
+                }
+                DiscoveryCycle::Complete => Ok(vec![]),
+            }
+        }
+    }
+
+    struct CountingRegistry {
+        reads: Arc<AtomicUsize>,
+        cancel: CancellationToken,
+    }
+
+    #[async_trait]
+    impl TEEProverRegistryClient for CountingRegistry {
+        fn address(&self) -> Address {
+            TEST_REGISTRY_ADDRESS
+        }
+
+        async fn nitro_validator(&self) -> std::result::Result<Address, ContractError> {
+            unreachable!("empty discovery does not resolve the validator")
+        }
+
+        async fn is_valid_signer(
+            &self,
+            _signer: Address,
+        ) -> std::result::Result<bool, ContractError> {
+            unreachable!("empty discovery does not validate signers")
+        }
+
+        async fn is_registered_signer(
+            &self,
+            _signer: Address,
+        ) -> std::result::Result<bool, ContractError> {
+            unreachable!("empty discovery does not check individual signers")
+        }
+
+        async fn signer_image_hash(
+            &self,
+            _signer: Address,
+        ) -> std::result::Result<B256, ContractError> {
+            unreachable!("empty discovery does not read signer image hashes")
+        }
+
+        async fn get_registered_signers(&self) -> std::result::Result<Vec<Address>, ContractError> {
+            self.reads.fetch_add(1, Ordering::SeqCst);
+            self.cancel.cancel();
+            Ok(vec![])
         }
     }
 
@@ -487,20 +566,6 @@ mod tests {
         signer_client: MockEnclaveEndpointClient,
         cancel: CancellationToken,
     ) -> RegistrationDriver<D, MockEnclaveEndpointClient, (), (), NoopTxManager> {
-        cycle_driver_with_instance_cache_ttl(
-            instances,
-            signer_client,
-            cancel,
-            INSTANCE_CACHE_TTL_CYCLES,
-        )
-    }
-
-    fn cycle_driver_with_instance_cache_ttl<D: InstanceDiscovery>(
-        instances: D,
-        signer_client: MockEnclaveEndpointClient,
-        cancel: CancellationToken,
-        instance_cache_ttl_cycles: u32,
-    ) -> RegistrationDriver<D, MockEnclaveEndpointClient, (), (), NoopTxManager> {
         let signer_manager = Arc::new(
             SignerManager::new(
                 (),
@@ -525,7 +590,7 @@ mod tests {
                 poll_interval: Duration::from_secs(1),
                 cancel,
                 max_concurrency: DEFAULT_MAX_CONCURRENCY,
-                instance_cache_ttl_cycles,
+                instance_cache_ttl_cycles: INSTANCE_CACHE_TTL_CYCLES,
             },
             signer_manager,
         )
@@ -535,6 +600,61 @@ mod tests {
         driver: &TestDriver,
     ) -> Option<Vec<(ProverInstance, InstanceObservation)>> {
         driver.discover_and_resolve().await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn run_cleans_up_orphans_only_after_completed_discovery() {
+        for (cycle, expected_reads) in [
+            (DiscoveryCycle::Failed, 0),
+            (DiscoveryCycle::Cancelled, 0),
+            (DiscoveryCycle::Complete, 1),
+        ] {
+            let cancel = CancellationToken::new();
+            let reads = Arc::new(AtomicUsize::new(0));
+            let failed = Arc::new(Notify::new());
+            let manager = SignerManager::new(
+                CountingRegistry { reads: Arc::clone(&reads), cancel: cancel.clone() },
+                CertManagerContractClient::new(Address::ZERO, endpoint_url(EP1)),
+                NoopTxManager,
+                SignerManagerConfig {
+                    registry_address: TEST_REGISTRY_ADDRESS,
+                    max_concurrency: DEFAULT_MAX_CONCURRENCY,
+                    max_tx_retries: DEFAULT_MAX_TX_RETRIES,
+                    tx_retry_delay: Duration::from_secs(DEFAULT_TX_RETRY_DELAY_SECS),
+                    max_attestation_age: TEST_MAX_ATTESTATION_AGE,
+                    crl_checks_enabled: false,
+                },
+            )
+            .unwrap();
+            let driver = RegistrationDriver::new(
+                OneCycleDiscovery { cycle, cancel: cancel.clone(), failed: Arc::clone(&failed) },
+                MockEnclaveEndpointClient::default(),
+                DriverConfig {
+                    poll_interval: Duration::from_secs(30),
+                    cancel: cancel.clone(),
+                    max_concurrency: DEFAULT_MAX_CONCURRENCY,
+                    instance_cache_ttl_cycles: INSTANCE_CACHE_TTL_CYCLES,
+                },
+                Arc::new(manager),
+            );
+
+            let run = driver.run();
+            tokio::pin!(run);
+            tokio::time::timeout(Duration::from_secs(1), async {
+                tokio::select! {
+                    biased;
+                    result = &mut run => result,
+                    () = failed.notified() => {
+                        cancel.cancel();
+                        run.await
+                    }
+                }
+            })
+            .await
+            .expect("driver should stop after one cycle")
+            .unwrap();
+            assert_eq!(reads.load(Ordering::SeqCst), expected_reads, "{cycle:?}");
+        }
     }
 
     #[tokio::test]
