@@ -1,5 +1,8 @@
 #![doc = include_str!("../README.md")]
 
+mod dataset;
+pub use dataset::ReplayDataset;
+
 mod attributes;
 pub use attributes::CanonicalAttributes;
 
