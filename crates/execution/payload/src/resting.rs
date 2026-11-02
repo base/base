@@ -429,15 +429,6 @@ impl SharedRestingPredicates {
         self.inner.lock().predicates.remove(transaction_hash)
     }
 
-    /// Returns the member for a transaction with `conditions`.
-    pub fn member(
-        &self,
-        transaction_hash: TxHash,
-        conditions: &ValidityConditions,
-    ) -> Option<RestingMember> {
-        self.inner.lock().predicates.member(transaction_hash, conditions)
-    }
-
     /// Removes the members whose predicate may have changed in `state`, one committed
     /// transaction's changes, and returns those the current iterator held so the caller can
     /// promote them.

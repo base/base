@@ -658,7 +658,7 @@ mod tests {
     }
 
     /// Builds the production lane-parking iterator over a snapshot of `pool` whose hold parks the
-    /// resting members of `resting`, as the pool does for an enforcing build.
+    /// resting members of `resting`, as the pool does for every flashblock.
     fn parkable_with_hold(
         pool: &PendingPool<Ordering>,
         hold: Option<Box<dyn BestTransactionsHold<BasePooledTransaction>>>,

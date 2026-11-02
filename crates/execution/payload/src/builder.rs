@@ -364,8 +364,8 @@ fn job_interrupt(cancel: &Arc<CancelOnDrop>) -> HoldInterrupt {
     Arc::new(move || cancel.upgrade().is_none_or(|cancel| cancel.is_interrupted()))
 }
 
-/// Creates the candidate iterator of one build from the fee attributes and, for an enforcing
-/// build, the resting set whose hold the iterator parks members with.
+/// Creates the candidate iterator of one build from the fee attributes and, when the build carries
+/// resting transactions, the resting set whose hold the iterator parks members with.
 pub type BestTransactionsFactory<'a, Txs> =
     dyn FnOnce(BestTransactionsAttributes, Option<&SharedRestingPredicates>) -> Txs + 'a;
 
@@ -392,7 +392,7 @@ pub struct Builder<'a, Txs> {
     /// Permanently removes mempool transactions that exceeded a per-transaction resource limit.
     #[debug(skip)]
     evict_permanently_rejected: Box<dyn FnOnce(Vec<TxHash>) + 'a>,
-    /// Carries resting validity transactions between builds when the carried mode is enabled.
+    /// Carries resting validity transactions between builds; used from Denim on.
     resting_predicates: Option<RestingPredicateStore>,
 }
 
