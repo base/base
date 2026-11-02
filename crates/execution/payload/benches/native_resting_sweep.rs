@@ -241,12 +241,13 @@ fn main() {
         state.load_cache_account(Predeploys::L1_BLOCK_INFO).expect("in-memory load cannot fail");
         let mut builder = ctx.block_builder(&mut state).expect("block builder");
         let mut info = ExecutionInfo::default();
-        let best = ParkableBestPayloadTransactions::new(Box::new(ParkedBestTransactions::new(
-            pool.best(),
-            Ordering::coinbase_tip(),
-            0,
-        )));
+        // The production builder hands the pool iterator a hold over the shared set, so resting
+        // members are parked at the source instead of reaching the build loop.
         let shared = SharedRestingPredicates::new(resting);
+        let best = ParkableBestPayloadTransactions::new(Box::new(
+            ParkedBestTransactions::new(pool.best(), Ordering::coinbase_tip(), 0)
+                .with_hold(Some(shared.iterator_hold())),
+        ));
         ctx.execute_best_transactions(&mut info, &mut builder, best, Some(&shared))
             .expect("in-memory execution cannot fail");
         let mut resting = shared.take_predicates();

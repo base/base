@@ -382,6 +382,9 @@ pub struct RestingStats {
     pub duration: Duration,
 }
 
+/// Reports whether the build driving a pool iterator has stopped selecting transactions.
+pub type HoldInterrupt = Arc<dyn Fn() -> bool + Send + Sync>;
+
 /// A resting set shared between one build and the pool iterators it drives.
 ///
 /// The build loop populates the set through [`Self::rest`] and reports commits through
@@ -390,9 +393,20 @@ pub struct RestingStats {
 /// predicate is still unsatisfied. The iterator and the build loop run on the build thread, so
 /// the lock is uncontended; it exists because the iterator is a boxed trait object the build loop
 /// does not own.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct SharedRestingPredicates {
     inner: Arc<Mutex<SharedRestingState>>,
+    /// Interrupts the walks of the iterators this handle's holds park members in.
+    interrupt: Option<HoldInterrupt>,
+}
+
+impl std::fmt::Debug for SharedRestingPredicates {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SharedRestingPredicates")
+            .field("inner", &self.inner)
+            .field("interrupt", &self.interrupt.is_some())
+            .finish()
+    }
 }
 
 #[derive(Debug)]
@@ -413,7 +427,17 @@ impl SharedRestingPredicates {
                 held: B256Set::default(),
                 stats: RestingStats::default(),
             })),
+            interrupt: None,
         }
+    }
+
+    /// Interrupts the holds this handle creates once `interrupt` returns true, so a pool iterator
+    /// stops advancing past held members when its build is cancelled. Clones share the resting
+    /// set, so a builder can give each iterator a handle that observes that iterator's build.
+    #[must_use]
+    pub fn with_interrupt(mut self, interrupt: HoldInterrupt) -> Self {
+        self.interrupt = Some(interrupt);
+        self
     }
 
     /// Returns a hold for a new pool iterator. Members the previous iterator held are forgotten,
@@ -507,6 +531,10 @@ impl<T: BasePooledTx> BestTransactionsHold<T> for RestingHold {
 
     fn record_duration(&mut self, duration: Duration) {
         self.shared.inner.lock().stats.duration += duration;
+    }
+
+    fn is_interrupted(&self) -> bool {
+        self.shared.interrupt.as_ref().is_some_and(|interrupt| interrupt())
     }
 }
 

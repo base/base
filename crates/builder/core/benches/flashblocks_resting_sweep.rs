@@ -55,6 +55,7 @@ use revm::{
     database::{InMemoryDB, TransitionState},
     state::AccountInfo,
 };
+use tokio_util::sync::CancellationToken;
 
 type Ordering = BaseOrdering<BasePooledTransaction>;
 type Pool = PendingPool<Ordering>;
@@ -185,7 +186,7 @@ fn run_flashblocks(
     let mut committed_until = 0;
     for flashblock in 0..FLASHBLOCKS {
         if flashblock > 0 {
-            best.refresh_iterator(parkable(pool, best.iterator_hold()));
+            best.refresh_iterator(parkable(pool, best.iterator_hold(&CancellationToken::new())));
         }
         let limits = ResourceLimits {
             block_gas_limit: ((flashblock + 1) * FILLER_PER_FLASHBLOCK) as u64 * TRANSFER_GAS,
