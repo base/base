@@ -4,12 +4,10 @@ use std::{marker::PhantomData, sync::Arc};
 
 use alloy_primitives::{Address, TxHash, map::B256Set};
 use base_execution_payload_builder::{
-    DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD, IngestionRestStale, ParkablePayloadTransactions,
-    RestingPredicates, SharedRestingPredicates,
+    DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD, ParkablePayloadTransactions, RestingPredicates,
+    SharedRestingPredicates,
 };
-use base_execution_txpool::{
-    BasePooledTx, BestTransactionsHold, IngestionRest, ValidityConditions, ValidityPredicate,
-};
+use base_execution_txpool::{BasePooledTx, BestTransactionsHold, ValidityPredicate};
 use reth_payload_util::PayloadTransactions;
 use revm::state::EvmState;
 use tokio_util::sync::CancellationToken;
@@ -231,14 +229,6 @@ where
         for transaction_hash in self.resting.wake_by_state(state) {
             self.inner.promote(transaction_hash);
         }
-    }
-
-    fn ingestion_rest_applies(
-        &self,
-        rest: &IngestionRest,
-        conditions: &ValidityConditions,
-    ) -> Result<(), IngestionRestStale> {
-        self.resting.ingestion_rest_applies(rest, conditions)
     }
 
     fn take_adopted(&mut self) -> Vec<TxHash> {

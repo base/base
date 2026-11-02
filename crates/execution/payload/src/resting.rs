@@ -654,15 +654,6 @@ impl SharedRestingPredicates {
         self
     }
 
-    /// Returns whether the pool's admission-time evaluation of a candidate still applies.
-    pub fn ingestion_rest_applies(
-        &self,
-        rest: &IngestionRest,
-        conditions: &ValidityConditions,
-    ) -> Result<(), IngestionRestStale> {
-        self.inner.lock().predicates.ingestion_rest_applies(rest, conditions)
-    }
-
     /// Returns the transactions the hold adopted since the last call, so the build loop can report
     /// their deferral. An adopted transaction was deferred even if a later commit wakes it, as it
     /// would have been had the build loop evaluated it.
