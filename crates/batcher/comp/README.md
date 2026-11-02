@@ -5,11 +5,11 @@ Channel compression for Base.
 ## Overview
 
 `CompressionStream::append` incrementally compresses input and returns the new
-stable output without recompressing earlier input. It flushes the encoder every
-`CompressionStream::FLUSH_INTERVAL` bytes of input, so the output returned so
-far covers all but that much of the input. `finish` returns the remaining
-suffix. Concatenating those bytes produces one protocol-compatible channel,
-including Brotli's channel-version byte.
+stable output without recompressing earlier input. With a flush interval, it
+flushes the encoder each time that many input bytes have been appended, so the
+output returned so far covers all but less than one interval of the input.
+`finish` returns the remaining suffix. Concatenating those bytes produces one
+protocol-compatible channel, including Brotli's channel-version byte.
 
 `BrotliLevel::compress_channel` is the one-shot API used by fixtures.
 `BrotliCompressor` exposes raw stateless Brotli output.

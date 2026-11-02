@@ -176,7 +176,10 @@ impl Channel {
         Ok(Self {
             id,
             rollup_config,
-            compressor: Some(CompressionStream::new(config.brotli_level)),
+            compressor: Some(CompressionStream::new(
+                config.brotli_level,
+                config.compressed_size_target.map(Self::flush_interval),
+            )),
             output: VecDeque::new(),
             available_output: 0,
             compressed_bytes: 0,
@@ -194,6 +197,17 @@ impl Channel {
             first_confirmed_l1_block: None,
             last_confirmed_l1_block: None,
         })
+    }
+
+    /// Input bytes between compression-stream flushes for a soft `target`.
+    ///
+    /// The target is checked against the bytes the stream has emitted, which cover
+    /// all but less than one flush interval of the input. A quarter of the target
+    /// keeps that lag, and so the overshoot, small relative to the target, at a
+    /// constant few flushes per channel whatever the target. Without a target the
+    /// stream never flushes.
+    pub const fn flush_interval(target: usize) -> usize {
+        target.div_ceil(4)
     }
 
     /// Returns the channel identifier.
@@ -549,17 +563,18 @@ mod tests {
         assert_eq!(channel.compressed_bytes(), 0);
     }
 
-    /// Unflushed, Brotli emits nothing until it holds about a window of input, so this
-    /// channel would first see output, and close, at about 1.17 MB. The stream's flush
-    /// makes it close right after the batch that reaches the target, for small and
-    /// large blocks alike, and the closed channel still decodes to the accepted batches.
+    /// Unflushed, Brotli emits nothing until it holds about a window of input, so these
+    /// channels would first see output, and close, at about 1.17 MB. The stream's flush
+    /// makes them close right after the batch that reaches the target, for small and
+    /// large targets and blocks alike, and the closed channel still decodes to the
+    /// accepted batches.
     #[rstest]
-    #[case::small_blocks(4_600)]
-    #[case::large_blocks(60_000)]
-    fn soft_target_closes_near_the_target(#[case] block_len: usize) {
-        const TARGET: usize = 700_000;
+    fn soft_target_closes_near_the_target(
+        #[values(150_000, 700_000)] target: usize,
+        #[values(4_600, 60_000)] block_len: usize,
+    ) {
         let mut channel = channel(EncoderConfig {
-            compressed_size_target: Some(TARGET),
+            compressed_size_target: Some(target),
             ..EncoderConfig::default()
         });
 
@@ -581,13 +596,13 @@ mod tests {
 
         // Before the closing batch, the emitted bytes trail the input by less than one
         // flush interval; the closing batch adds at most its own compressed bytes.
-        let lagging_input = &input[last_batch_start - CompressionStream::FLUSH_INTERVAL..];
+        let lagging_input = &input[last_batch_start - Channel::flush_interval(target)..];
         let max_overshoot = BrotliLevel::DEFAULT.compress_channel(lagging_input).unwrap().len();
         let closed_at = channel.compressed_bytes() as usize;
         assert!(
-            (TARGET..=TARGET + max_overshoot).contains(&closed_at),
-            "closed at {closed_at} bytes, expected {TARGET}..={}",
-            TARGET + max_overshoot
+            (target..=target + max_overshoot).contains(&closed_at),
+            "closed at {closed_at} bytes, expected {target}..={}",
+            target + max_overshoot
         );
 
         channel.close().unwrap();
