@@ -458,7 +458,7 @@ where
             .config
             .resting_predicate_mode
             .is_enforced()
-            .then(|| super::best_txs::flashblock_hold(&resting, &fb_cancel));
+            .then(|| crate::flashblock_hold(&resting, &fb_cancel));
         let best_txs_attributes = ctx.best_transaction_attributes();
         let mut best_txs = BestFlashblocksTxs::new(
             ParkableBestPayloadTransactions::new(
