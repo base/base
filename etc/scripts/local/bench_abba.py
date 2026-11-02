@@ -43,10 +43,9 @@ RESTING_BENCHES = [
     (
         "base-builder-core",
         "tx_selection",
-        r"resting_blocks/.*mode=Enforce|resting_predicates/resting=10000/.*mode=Enforce"
-        r"|resting_blocks/resting=20000/.*mode=Off",
+        r"resting_blocks/|resting_predicates/resting=10000/",
     ),
-    ("base-execution-payload-builder", "native_build_loop", r"mode=Enforce"),
+    ("base-execution-payload-builder", "native_build_loop", r"resting_predicates/"),
 ]
 
 # `tx_selection/resting_blocks/... time:   [1.2 s 1.3 s 1.4 s]` across two lines. The middle

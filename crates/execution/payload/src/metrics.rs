@@ -70,8 +70,6 @@ base_metrics::define_metrics! {
     resting_predicate_parked_total: counter,
     #[describe("Time one native block build's transaction iterator spent advancing past held resting validity transactions, in seconds")]
     resting_predicate_hold_duration: histogram,
-    #[describe("Resting validity transactions whose predicates matched when evaluated in shadow mode")]
-    resting_predicate_shadow_mismatches_total: counter,
     #[describe("Of the parked resting validity transactions, those carried over from an earlier block")]
     resting_predicate_carried_parked_total: counter,
     #[describe("Duration of carrying resting validity transactions into a block build, on the build path before the selection loop, in seconds")]

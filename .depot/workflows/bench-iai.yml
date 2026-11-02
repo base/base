@@ -5,7 +5,7 @@ name: Benchmarks (iai · deterministic)
 # base-vs-head delta reflects a code change, not machine noise — unlike the
 # wall-clock advisory job, which cannot reliably read these per PR. It posts a
 # single comment. Every bench is advisory except `build_loop/mainnet_block`
-# (the builder's whole-block selection loop, Off and Enforce modes), whose
+# (the builder's whole-block selection loop with resting predicates), whose
 # instruction count fails the job if it rises 3% or more over the base commit,
 # or if it stops producing a result. On PRs it runs only when a path that can
 # move its numbers changed (see the prepare step). Its counts vary by about
@@ -208,7 +208,7 @@ jobs:
           # The gate result is held until the comment is posted, so a failing gate
           # still shows its numbers on the PR.
           gate_failed=false
-          gate_args=(--gate build_loop/mainnet_block/off --gate build_loop/mainnet_block/enforce)
+          gate_args=(--gate build_loop/mainnet_block/enforce)
           [ "$RUN_GATE" = true ] || gate_args=()
           python3 "$RUNNER_TEMP/iai_compare.py" \
             --base "$RUNNER_TEMP/base.txt" \

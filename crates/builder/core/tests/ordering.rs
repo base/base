@@ -7,7 +7,6 @@ use alloy_primitives::{Address, U256};
 use alloy_provider::Provider;
 use base_builder_core::{
     BuilderApiExtension, BuilderApiExtensionConfig, BuilderConfig, DEFAULT_MAX_VALIDITY_PREDICATES,
-    RestingPredicateMode,
     test_utils::{ChainDriverExt, LocalInstanceBuilder, ONE_ETH, setup_test_instance},
 };
 use base_execution_txpool::{
@@ -336,18 +335,16 @@ async fn predicate_eval_hard_cutoff_defers_without_evaluating() -> eyre::Result<
     Ok(())
 }
 
-/// With resting predicates enforced, a transaction whose predicate is unsatisfied is still
-/// included in the block whose execution first satisfies it.
+/// A resting transaction whose predicate is unsatisfied is still included in the block whose
+/// execution first satisfies it.
 #[tokio::test]
 async fn resting_transaction_is_included_once_its_blocking_state_changes() -> eyre::Result<()> {
-    let instance = LocalInstanceBuilder::new(
-        BuilderConfig::for_tests().with_resting_predicate_mode(RestingPredicateMode::Enforce),
-    )
-    .install_ext::<BuilderApiExtension>(
-        BuilderApiExtensionConfig::new(DEFAULT_MAX_VALIDITY_PREDICATES).with_noop_metering(),
-    )
-    .build()
-    .await?;
+    let instance = LocalInstanceBuilder::new(BuilderConfig::for_tests())
+        .install_ext::<BuilderApiExtension>(
+            BuilderApiExtensionConfig::new(DEFAULT_MAX_VALIDITY_PREDICATES).with_noop_metering(),
+        )
+        .build()
+        .await?;
     let driver = instance.driver().await?;
     let accounts = driver.fund_accounts(2, ONE_ETH).await?;
     let watched = Address::random();

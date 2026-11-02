@@ -20,45 +20,37 @@ mod fixture;
 
 use std::hint::black_box;
 
-use base_builder_core::{RejectionCache, RestingPredicateMode};
+use base_builder_core::RejectionCache;
 use fixture::{BlockTotals, MainnetBlock};
 use iai_callgrind::{library_benchmark, library_benchmark_group, main};
 use reth_revm::State;
 use revm::database::InMemoryDB;
 
-/// A block ready to build, plus the mode to build it in.
-type Input = (MainnetBlock, State<InMemoryDB>, RejectionCache, RestingPredicateMode);
+/// A block ready to build.
+type Input = (MainnetBlock, State<InMemoryDB>, RejectionCache);
 
 /// Builds the fixture and the per-block state outside the counted region.
-fn setup(mode: RestingPredicateMode) -> Input {
+fn setup() -> Input {
     let block = MainnetBlock::new();
     let state = block.fresh_state();
     let rejection_cache = block.rejection_cache();
-    (block, state, rejection_cache, mode)
+    (block, state, rejection_cache)
 }
 
 /// Checks the block's outcomes against the workload's documented counts.
-fn check_outcomes((totals, (block, _, _, mode)): (BlockTotals, Input)) {
-    let (considered, included) = match mode {
-        RestingPredicateMode::Off => (31_537, 187),
-        RestingPredicateMode::Enforce => (3_357, 187),
-        RestingPredicateMode::Shadow => {
-            unimplemented!("the mainnet block measures Off and Enforce")
-        }
-    };
+fn check_outcomes((totals, (block, _, _)): (BlockTotals, Input)) {
     assert_eq!(
         (totals.considered, totals.included),
-        (considered, included),
-        "build_loop/mainnet_block mode={mode:?} selection changed: {totals:?}"
+        (3_357, 187),
+        "build_loop/mainnet_block selection changed: {totals:?}"
     );
-    assert_eq!(totals, block.expected_totals(mode), "block outcomes match the documented workload");
+    assert_eq!(totals, block.expected_totals(), "block outcomes match the documented workload");
 }
 
 #[library_benchmark]
-#[bench::off(args = (RestingPredicateMode::Off), setup = setup, teardown = check_outcomes)]
-#[bench::enforce(args = (RestingPredicateMode::Enforce), setup = setup, teardown = check_outcomes)]
+#[bench::enforce(setup = setup, teardown = check_outcomes)]
 fn mainnet_block(mut input: Input) -> (BlockTotals, Input) {
-    let totals = input.0.build(&mut input.1, &input.2, input.3);
+    let totals = input.0.build(&mut input.1, &input.2);
     (black_box(totals), input)
 }
 

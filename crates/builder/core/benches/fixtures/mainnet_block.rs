@@ -14,7 +14,6 @@ use alloy_primitives::{Address, Bytes, Signature, TxKind, U256, keccak256};
 use base_builder_core::{
     BasePayloadBuilderCtx, BestFlashblocksTxs, BlockDeferrals, ExecutionInfo,
     FlashblockDiagnostics, ParkableBestPayloadTransactions, RejectionCache, ResourceLimits,
-    RestingPredicateMode,
 };
 use base_common_consensus::{BaseTransactionSigned, BaseTxEnvelope};
 use base_execution_chainspec::BaseChainSpec;
@@ -378,20 +377,18 @@ impl MainnetBlock {
         &self,
         state: &mut State<InMemoryDB>,
         rejection_cache: &RejectionCache,
-        mode: RestingPredicateMode,
     ) -> BlockTotals {
         let mut info = ExecutionInfo::default();
         let mut deferrals = BlockDeferrals::default();
         let mut totals = BlockTotals::default();
         let mut best =
-            BestFlashblocksTxs::new(parkable(&self.pools[0], None), rejection_cache.clone())
-                .with_resting_predicate_mode(mode);
+            BestFlashblocksTxs::new(parkable(&self.pools[0], None), rejection_cache.clone());
 
         for (flashblock, pool) in self.pools.iter().enumerate() {
             if flashblock > 0 {
                 best.refresh_iterator(parkable(
                     pool,
-                    best.iterator_hold(&CancellationToken::new()),
+                    Some(best.iterator_hold(&CancellationToken::new())),
                 ));
             }
             let committed_until = info.executed_transactions.len();
@@ -420,27 +417,19 @@ impl MainnetBlock {
 
     /// Outcomes the workload is designed to produce.
     ///
-    /// With resting predicates off, every flashblock defers every parked transaction. Enforced,
-    /// only the first flashblock does; later ones defer just the transactions a wake promotes.
+    /// Only the first flashblock defers every parked transaction; later ones defer just the
+    /// transactions a wake promotes.
     /// Buckets at or above the ordered threshold wake only transactions whose `Equal` value is
     /// reached, so a wake promotes none of theirs. The resting index uses the same default
     /// threshold as the builder config.
-    pub(crate) fn expected_totals(&self, mode: RestingPredicateMode) -> BlockTotals {
+    pub(crate) fn expected_totals(&self) -> BlockTotals {
         let ordered_threshold = self.ctx.builder_config.predicate_bucket_ordered_threshold;
-        let deferred = match mode {
-            RestingPredicateMode::Off => MAINNET_PARKED * MAINNET_FLASHBLOCKS,
-            RestingPredicateMode::Enforce => {
-                let rewoken: usize = (MAINNET_WAKES_PER_FLASHBLOCK
-                    ..MAINNET_FLASHBLOCKS * MAINNET_WAKES_PER_FLASHBLOCK)
-                    .map(|wake| self.bucket_depths[Self::woken_bucket(wake)])
-                    .filter(|&depth| depth < ordered_threshold)
-                    .sum();
-                MAINNET_PARKED + rewoken
-            }
-            RestingPredicateMode::Shadow => {
-                unimplemented!("the mainnet block measures Off and Enforce")
-            }
-        } as u64;
+        let rewoken: usize = (MAINNET_WAKES_PER_FLASHBLOCK
+            ..MAINNET_FLASHBLOCKS * MAINNET_WAKES_PER_FLASHBLOCK)
+            .map(|wake| self.bucket_depths[Self::woken_bucket(wake)])
+            .filter(|&depth| depth < ordered_threshold)
+            .sum();
+        let deferred = (MAINNET_PARKED + rewoken) as u64;
         let included = (MAINNET_FLASHBLOCKS * MAINNET_FILLER_PER_FLASHBLOCK) as u64;
         let rejected_gas = (MAINNET_FLASHBLOCKS * MAINNET_OVER_GAS_CANDIDATES) as u64;
         let rejected_da = (MAINNET_FLASHBLOCKS * MAINNET_OVER_DA_PER_FLASHBLOCK) as u64;

@@ -32,7 +32,7 @@ use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, B256, Bytes, Signature, TxKind, U256, keccak256};
 use base_builder_core::{
     BasePayloadBuilderCtx, BestFlashblocksTxs, BlockDeferrals, ExecutionInfo,
-    ParkableBestPayloadTransactions, RejectionCache, ResourceLimits, RestingPredicateMode,
+    ParkableBestPayloadTransactions, RejectionCache, ResourceLimits,
 };
 use base_common_consensus::{BaseTransactionSigned, BaseTxEnvelope};
 use base_execution_chainspec::BaseChainSpec;
@@ -186,7 +186,10 @@ fn run_flashblocks(
     let mut committed_until = 0;
     for flashblock in 0..FLASHBLOCKS {
         if flashblock > 0 {
-            best.refresh_iterator(parkable(pool, best.iterator_hold(&CancellationToken::new())));
+            best.refresh_iterator(parkable(
+                pool,
+                Some(best.iterator_hold(&CancellationToken::new())),
+            ));
         }
         let limits = ResourceLimits {
             block_gas_limit: ((flashblock + 1) * FILLER_PER_FLASHBLOCK) as u64 * TRANSFER_GAS,
@@ -274,7 +277,6 @@ fn main() {
             parkable(&pool, Some(resting.iterator_hold())),
             rejection_cache.clone(),
         )
-        .with_resting_predicate_mode(RestingPredicateMode::Enforce)
         .with_resting_predicates(resting);
         let mut state = State::builder().with_database(db.clone()).with_bundle_update().build();
         let executed = run_flashblocks(&ctx, &pool, &mut state, &mut best);

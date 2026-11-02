@@ -863,17 +863,6 @@ impl BasePayloadBuilderCtx {
                     ValidityEvaluationOutcome::Matched
                 };
                 evaluation_counters.increment(outcome, 1);
-                // Only matched candidates pay for the resting lookup.
-                if outcome == ValidityEvaluationOutcome::Matched
-                    && best_txs.is_resting(tx_hash, tx.validity_conditions())
-                {
-                    ValidityMetrics::resting_predicate_shadow_mismatches_total().increment(1);
-                    debug!(
-                        target: "payload_builder",
-                        tx_hash = ?tx_hash,
-                        "resting validity transaction matched when evaluated"
-                    );
-                }
                 if predicate_read_failed || predicate_expired || blocking_predicate.is_none() {
                     best_txs.release(tx_hash);
                 }

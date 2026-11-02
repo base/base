@@ -6,10 +6,11 @@
 //! - `execute_best_transactions`: one flashblock over a production-like candidate mix:
 //!   successful transfers and contract calls, reverting calls, candidates rejected by the DA and
 //!   gas limits, and validity-gated candidates that are parked.
-//! - `mainnet_block/mode={Off,Enforce}`: a whole 11-flashblock block shaped like Base mainnet,
-//!   under each resting-predicate mode. Every flashblock includes 17 transfers, rejects 10
-//!   over-limit candidates, and first considers 2,840 parked validity transactions spread over
-//!   518 watched addresses (median depth 2, p99 depth 46), five of which a transfer wakes.
+//! - `mainnet_block`: a whole 11-flashblock block shaped like Base mainnet. Every flashblock
+//!   includes 17 transfers and rejects 10 over-limit candidates. The first flashblock considers
+//!   2,840 parked validity transactions spread over 518 watched addresses (median depth 2, p99
+//!   depth 46); later flashblocks consider only those a transfer wakes, five buckets per
+//!   flashblock.
 //!
 //! The observability configuration is process-global (the transaction event writer is a
 //! `OnceLock`), so the arm is selected per process with `BUILD_LOOP_PROFILE`:
@@ -40,7 +41,6 @@ use alloy_primitives::{Address, Bytes, U256};
 use base_builder_core::{
     BasePayloadBuilderCtx, BestFlashblocksTxs, BlockDeferrals, ExecutionInfo,
     FlashblockDiagnostics, ParkableBestPayloadTransactions, RejectionCache, ResourceLimits,
-    RestingPredicateMode,
 };
 use base_execution_txpool::{BasePooledTransaction, ValidityOperator, ValidityPredicate};
 use base_observability_events::{
@@ -395,44 +395,36 @@ fn mainnet_block_bench(c: &mut Criterion, profile: Profile, observability: &Obse
 
     let mut group = c.benchmark_group("build_loop");
     group.sample_size(10);
-    for mode in [RestingPredicateMode::Off, RestingPredicateMode::Enforce] {
-        let expected = block.expected_totals(mode);
-        let totals = block.build(&mut block.fresh_state(), &block.rejection_cache(), mode);
-        eprintln!(
-            "build_loop/mainnet_block[{} mode={mode:?}]: considered={} included={} deferred={} rejected_gas={} rejected_da={} rejected_other={}",
-            profile.label(),
-            totals.considered,
-            totals.included,
-            totals.deferred,
-            totals.rejected_gas,
-            totals.rejected_da,
-            totals.rejected_other,
-        );
-        assert_eq!(totals, expected, "block outcomes match the documented workload");
+    let expected = block.expected_totals();
+    let totals = block.build(&mut block.fresh_state(), &block.rejection_cache());
+    eprintln!(
+        "build_loop/mainnet_block[{}]: considered={} included={} deferred={} rejected_gas={} rejected_da={} rejected_other={}",
+        profile.label(),
+        totals.considered,
+        totals.included,
+        totals.deferred,
+        totals.rejected_gas,
+        totals.rejected_da,
+        totals.rejected_other,
+    );
+    assert_eq!(totals, expected, "block outcomes match the documented workload");
 
-        group.throughput(Throughput::Elements(totals.considered));
-        group.bench_function(
-            BenchmarkId::new(format!("mainnet_block/mode={mode:?}"), profile.label()),
-            |b| {
-                // `iter_batched_ref` drops the state and cache after timing stops.
-                b.iter_batched_ref(
-                    || {
-                        observability.wait_for_event_writer();
-                        (block.fresh_state(), block.rejection_cache())
-                    },
-                    |(state, rejection_cache)| {
-                        let totals = block.build(state, rejection_cache, mode);
-                        assert_eq!(
-                            totals, expected,
-                            "block outcomes match the documented workload"
-                        );
-                        black_box(totals)
-                    },
-                    BatchSize::PerIteration,
-                );
+    group.throughput(Throughput::Elements(totals.considered));
+    group.bench_function(BenchmarkId::new("mainnet_block", profile.label()), |b| {
+        // `iter_batched_ref` drops the state and cache after timing stops.
+        b.iter_batched_ref(
+            || {
+                observability.wait_for_event_writer();
+                (block.fresh_state(), block.rejection_cache())
             },
+            |(state, rejection_cache)| {
+                let totals = block.build(state, rejection_cache);
+                assert_eq!(totals, expected, "block outcomes match the documented workload");
+                black_box(totals)
+            },
+            BatchSize::PerIteration,
         );
-    }
+    });
     group.finish();
 }
 

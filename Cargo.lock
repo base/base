@@ -4599,7 +4599,6 @@ dependencies = [
  "base-execution-txpool",
  "base-metrics",
  "base-observability-events",
- "clap",
  "criterion",
  "derive_more 2.1.1",
  "iai-callgrind",

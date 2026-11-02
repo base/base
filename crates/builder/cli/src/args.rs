@@ -5,8 +5,8 @@ use std::{path::PathBuf, sync::Arc};
 
 use base_builder_core::{
     BuilderApiExtensionConfig, BuilderConfig, DEFAULT_MAX_VALIDITY_PREDICATES,
-    ExecutionMeteringMode, RejectionCache, ResourceMeteringConfig, RestingPredicateMode,
-    SharedMeteringProvider, ValiditySignatureMode,
+    ExecutionMeteringMode, RejectionCache, ResourceMeteringConfig, SharedMeteringProvider,
+    ValiditySignatureMode,
 };
 use base_builder_metering::MeteringStore;
 use base_execution_cli::ShadowIndexerArgs;
@@ -252,13 +252,6 @@ pub struct Args {
     )]
     pub predicate_bucket_ordered_threshold: usize,
 
-    /// Hold back validity transactions whose predicate was found unsatisfied until a state change
-    /// wakes them: off, shadow (track and count mismatches only), or enforce. Resting transactions
-    /// carry across flashblocks and across blocks this builder finishes in sequence; the native
-    /// builder carries them across blocks from Denim onward.
-    #[arg(long = "builder.resting-predicates", value_enum, default_value = "off")]
-    pub resting_predicate_mode: RestingPredicateMode,
-
     /// Buffer size for tx data store (LRU eviction when full)
     #[arg(long = "builder.tx-data-store-buffer-size", default_value = "10000")]
     pub tx_data_store_buffer_size: usize,
@@ -357,7 +350,6 @@ impl Default for Args {
             metering_wait_duration_ms: None,
             predicate_eval_hard_cutoff_ms: 10,
             predicate_bucket_ordered_threshold: 32,
-            resting_predicate_mode: RestingPredicateMode::Off,
             tx_data_store_buffer_size: 10000,
             metering_store_ttl_secs: 30,
             rejection_cache_max_capacity: 100_000,
@@ -452,7 +444,6 @@ impl Args {
             metering_wait_duration: self.metering_wait_duration_ms.map(Duration::from_millis),
             predicate_eval_hard_cutoff: Duration::from_millis(self.predicate_eval_hard_cutoff_ms),
             predicate_bucket_ordered_threshold: self.predicate_bucket_ordered_threshold,
-            resting_predicate_mode: self.resting_predicate_mode,
             metering_provider,
             resource_metering,
             rejection_cache: RejectionCache::new(
@@ -750,19 +741,6 @@ mod tests {
         assert_eq!(args.block_state_root_gas_limit, Some(1_000_000));
         assert_eq!(args.state_root_gas_coefficient, Some(0.1));
         assert_eq!(args.state_root_gas_anchor_us, Some(5_000));
-    }
-
-    #[rstest]
-    #[case::default(&[], RestingPredicateMode::Off)]
-    #[case::shadow(&["--builder.resting-predicates", "shadow"], RestingPredicateMode::Shadow)]
-    #[case::enforce(&["--builder.resting-predicates", "enforce"], RestingPredicateMode::Enforce)]
-    fn resting_predicate_mode_is_propagated(
-        #[case] flags: &[&str],
-        #[case] expected: RestingPredicateMode,
-    ) {
-        let args =
-            CommandParser::parse_from(std::iter::once("builder").chain(flags.iter().copied())).args;
-        assert_eq!(convert(args).resting_predicate_mode, expected);
     }
 
     #[test]

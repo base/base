@@ -19,8 +19,7 @@ use tracing::{debug, warn};
 use crate::{
     DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD, MeteringProvider, NoopMeteringProvider,
     RejectionCache, ResourceMeteringError, ResourceMeteringMetrics, ResourceMeteringSchedule,
-    ResourceMeteringUsage, ResourceSample, ResourceThrottlingDecision, RestingPredicateMode,
-    SharedMeteringProvider,
+    ResourceMeteringUsage, ResourceSample, ResourceThrottlingDecision, SharedMeteringProvider,
 };
 
 /// Settings for the Base payload builder.
@@ -54,9 +53,6 @@ pub struct BaseBuilderConfig {
     /// label. Adds overhead to every state read, so it follows reth's
     /// `--engine.state-provider-metrics` and stays off by default.
     pub state_provider_metrics: bool,
-    /// Whether validity transactions whose predicate was found unsatisfied in an earlier block skip
-    /// evaluation until a state change wakes them. Applies from Denim onward.
-    pub resting_predicate_mode: RestingPredicateMode,
 }
 
 impl Default for BaseBuilderConfig {
@@ -70,7 +66,6 @@ impl Default for BaseBuilderConfig {
             resource_metering: ResourceMeteringConfig::default(),
             rejection_cache: RejectionCache::default(),
             state_provider_metrics: false,
-            resting_predicate_mode: RestingPredicateMode::Off,
         }
     }
 }
@@ -91,15 +86,7 @@ impl BaseBuilderConfig {
             resource_metering: ResourceMeteringConfig::default(),
             rejection_cache: RejectionCache::default(),
             state_provider_metrics: false,
-            resting_predicate_mode: RestingPredicateMode::Off,
         }
-    }
-
-    /// Sets the mode for validity transactions resting from an earlier block.
-    #[must_use]
-    pub const fn with_resting_predicate_mode(mut self, mode: RestingPredicateMode) -> Self {
-        self.resting_predicate_mode = mode;
-        self
     }
 
     /// Sets whether build-loop state reads are timed.

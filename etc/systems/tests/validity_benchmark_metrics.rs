@@ -7,7 +7,6 @@
 //! that the flattened keys the benchmark allowlists are present with the expected shape.
 
 use alloy_signer_local::PrivateKeySigner;
-use base_builder_core::RestingPredicateMode;
 use base_load_tests::{
     LoadTestExecutor, LoadTestRunHooks, LoadTestRunOptions, MetricsSummary, SubmitCohortLabel,
     TestConfig,
@@ -47,11 +46,7 @@ transactions:
 async fn validity_resting_workload_populates_benchmark_series() -> Result<()> {
     let devnet = DevnetConfig::standard();
     let chain_id = devnet.l2_chain_id;
-    let stack = SystemTestStackBuilder::new()
-        .with_devnet_config(devnet)
-        .with_resting_predicate_mode(RestingPredicateMode::Enforce)
-        .build()
-        .await?;
+    let stack = SystemTestStackBuilder::new().with_devnet_config(devnet).build().await?;
 
     let result: Result<(MetricsSummary, PrometheusSnapshot)> = async {
         let mut test_config = TestConfig::from_yaml(WORKLOAD)?;
