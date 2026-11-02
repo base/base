@@ -243,6 +243,8 @@ impl ReplayBenchmarkArgs {
             persistence_backpressure_threshold: Some(
                 block_interval.snapshot_persistence_backpressure_threshold(),
             ),
+            memory_block_buffer_target: None,
+            num_state_masking_blocks: None,
             tx_forwarding_config: None,
             validity_signature_mode: ValiditySignatureMode::Off,
             upgrade_signal: None,

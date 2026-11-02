@@ -104,6 +104,8 @@ impl ShadowSequencer {
             resting_predicate_mode: RestingPredicateMode::Off,
             persistence_threshold: None,
             persistence_backpressure_threshold: None,
+            memory_block_buffer_target: None,
+            num_state_masking_blocks: None,
             txpool_max_transactions: None,
             txpool_max_size_mb: None,
             txpool_max_account_slots: None,

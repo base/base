@@ -76,17 +76,33 @@ pub struct SnapshotPersistenceConfig {
     /// Applies equally to builder and follower; disabled to preserve benchmark baselines.
     #[arg(long)]
     pub use_reth_persistence_defaults: bool,
+    /// Override the canonical block persistence threshold.
+    #[arg(long = "engine.persistence-threshold")]
+    pub persistence_threshold: Option<u64>,
+    /// Override the unpersisted block backpressure threshold.
+    #[arg(long = "engine.persistence-backpressure-threshold")]
+    pub persistence_backpressure_threshold: Option<u64>,
+    /// Override the number of canonical blocks retained in memory.
+    #[arg(long = "engine.memory-block-buffer-target")]
+    pub memory_block_buffer_target: Option<u64>,
+    /// Override the state masking window.
+    #[arg(long = "engine.num-state-masking-blocks")]
+    pub num_state_masking_blocks: Option<u64>,
 }
 
 impl SnapshotPersistenceConfig {
     /// Returns the legacy threshold override, or leaves Reth's default untouched.
     pub const fn threshold(self) -> Option<u64> {
-        if self.use_reth_persistence_defaults { None } else { Some(0) }
+        if let Some(threshold) = self.persistence_threshold {
+            Some(threshold)
+        } else if self.use_reth_persistence_defaults { None } else { Some(0) }
     }
 
     /// Returns the legacy cadence-dependent backpressure override, or Reth's default.
     pub const fn backpressure(self, interval: crate::DevnetBlockInterval) -> Option<u64> {
-        if self.use_reth_persistence_defaults {
+        if let Some(threshold) = self.persistence_backpressure_threshold {
+            Some(threshold)
+        } else if self.use_reth_persistence_defaults {
             None
         } else {
             Some(interval.snapshot_persistence_backpressure_threshold())
@@ -146,7 +162,7 @@ mod tests {
         let legacy = SnapshotPersistenceConfig::default();
         assert_eq!(legacy.threshold(), Some(0), "legacy persists every block");
         assert_eq!(legacy.backpressure(crate::DevnetBlockInterval::TwoHundredMilliseconds), Some(160), "legacy cadence backpressure is retained");
-        let production = SnapshotPersistenceConfig { use_reth_persistence_defaults: true };
+        let production = SnapshotPersistenceConfig { use_reth_persistence_defaults: true, ..Default::default() };
         assert_eq!(production.threshold(), None, "production threshold must be left to reth");
         assert_eq!(production.backpressure(crate::DevnetBlockInterval::TwoHundredMilliseconds), None, "production backpressure must be left to reth");
     }

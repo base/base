@@ -78,6 +78,10 @@ pub struct InProcessClientConfig {
     pub persistence_threshold: Option<u64>,
     /// Optional number of unpersisted blocks allowed before Engine API intake is stalled.
     pub persistence_backpressure_threshold: Option<u64>,
+    /// Optional canonical block buffer override.
+    pub memory_block_buffer_target: Option<u64>,
+    /// Optional state masking window override.
+    pub num_state_masking_blocks: Option<u64>,
     /// Optional transaction forwarding configuration.
     /// When set, the client will forward transactions to builder RPC endpoints.
     pub tx_forwarding_config: Option<TxForwardingConfig>,
@@ -458,6 +462,12 @@ impl InProcessClientConfig {
         if let Some(backpressure) = self.persistence_backpressure_threshold {
             node_config.engine.persistence_backpressure_threshold = Some(backpressure);
         }
+        if let Some(buffer) = self.memory_block_buffer_target {
+            node_config.engine.memory_block_buffer_target = Some(buffer);
+        }
+        if let Some(masking) = self.num_state_masking_blocks {
+            node_config.engine.num_state_masking_blocks = masking;
+        }
     }
 }
 
@@ -470,7 +480,7 @@ mod tests {
     /// Production follower configuration applies persistence without builder suppression.
     #[test]
     fn follower_persistence_keeps_suppression_disabled() {
-        let policy = crate::SnapshotPersistenceConfig { use_reth_persistence_defaults: true };
+        let policy = crate::SnapshotPersistenceConfig { use_reth_persistence_defaults: true, ..Default::default() };
         let mut config = super::InProcessClientConfig {
             runtime: super::InProcessNodeRuntime::Host,
             chain_spec: super::ChainSpecSource::Parsed(std::sync::Arc::new(super::BaseChainSpec::mainnet())),
@@ -480,6 +490,8 @@ mod tests {
             http_port: None, ws_port: None, auth_port: None, p2p_port: None, metrics_port: None,
             persistence_threshold: policy.threshold(),
             persistence_backpressure_threshold: policy.backpressure(crate::DevnetBlockInterval::TwoHundredMilliseconds),
+            memory_block_buffer_target: None,
+            num_state_masking_blocks: None,
             tx_forwarding_config: None, validity_signature_mode: super::ValiditySignatureMode::Off,
             upgrade_signal: None, extra_extensions: Vec::new(),
         };
@@ -490,6 +502,18 @@ mod tests {
         assert_eq!(node.engine.persistence_backpressure_threshold(), 100, "follower keeps upstream backpressure");
         assert_eq!(node.engine.num_state_masking_blocks(), 30, "follower keeps upstream masking");
         assert!(!node.engine.tree_config().suppress_persistence_during_build(), "follower must not suppress persistence");
+        config.persistence_threshold = Some(10);
+        config.persistence_backpressure_threshold = Some(100);
+        config.memory_block_buffer_target = Some(5);
+        config.num_state_masking_blocks = Some(4);
+        config.configure_engine(&mut node);
+        assert_eq!(node.engine.persistence_threshold, 10, "follower applies explicit threshold");
+        assert_eq!(node.engine.persistence_backpressure_threshold(), 100, "follower applies explicit backpressure");
+        assert_eq!(node.engine.memory_block_buffer_target(), 5, "follower applies explicit buffer");
+        assert_eq!(node.engine.num_state_masking_blocks(), 4, "follower applies explicit masking");
+        node.engine.validate().expect("explicit follower settings must be valid");
+        config.memory_block_buffer_target = None;
+        config.num_state_masking_blocks = None;
         config.persistence_threshold = Some(0);
         config.persistence_backpressure_threshold = Some(160);
         config.configure_engine(&mut node);

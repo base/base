@@ -1585,6 +1585,43 @@ mod tests {
         }
     }
 
+    /// Numeric persistence overrides survive CLI parsing and snapshot configuration.
+    #[test]
+    fn parses_numeric_snapshot_persistence() {
+        let cli = BenchmarkCli::try_parse_from([
+            "base-bench", "snapshot", "--builder-datadir", "/snapshot/builder",
+            "--load-test-config", "load.yaml", "--output-dir", "results", "--scenario", "persistence",
+            "--use-reth-persistence-defaults", "--engine.persistence-threshold", "10",
+            "--engine.persistence-backpressure-threshold", "100",
+            "--engine.memory-block-buffer-target", "5", "--engine.num-state-masking-blocks", "4",
+        ]).expect("numeric overrides must parse");
+        let Some(BenchmarkCommand::Snapshot(args)) = cli.command else { panic!("expected snapshot"); };
+        let policy = args.persistence;
+        assert_eq!(policy.threshold(), Some(10), "explicit threshold overrides defaults");
+        assert_eq!(policy.backpressure(crate::DevnetBlockInterval::TwoHundredMilliseconds), Some(100), "explicit backpressure overrides defaults");
+        assert_eq!(policy.memory_block_buffer_target, Some(5), "buffer override must parse");
+        assert_eq!(policy.num_state_masking_blocks, Some(4), "masking override must parse");
+        let devnet = args.snapshot_devnet(crate::DevnetBlockInterval::TwoHundredMilliseconds, None)
+            .expect("snapshot configuration must accept overrides");
+        let crate::DevnetL2State::Snapshot(snapshot) = devnet.l2_state else { panic!("expected snapshot"); };
+        let mut snapshot = *snapshot;
+        snapshot.client_datadir = Some("/snapshot/client".into());
+        let stack = crate::SnapshotL2StackConfig { snapshot, container_config: None };
+        let chain = std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet());
+        let jwt = alloy_rpc_types_engine::JwtSecret::random();
+        let builder = stack.builder_config(std::sync::Arc::clone(&chain), jwt);
+        let follower = stack.client_config(chain, jwt, "http://127.0.0.1:8545".to_owned(), String::new())
+            .expect("client datadir enables follower");
+        assert_eq!(builder.persistence_threshold, Some(10), "builder receives threshold");
+        assert_eq!(builder.persistence_backpressure_threshold, Some(100), "builder receives backpressure");
+        assert_eq!(builder.memory_block_buffer_target, Some(5), "builder receives buffer");
+        assert_eq!(builder.num_state_masking_blocks, Some(4), "builder receives masking");
+        assert_eq!(follower.persistence_threshold, Some(10), "follower receives threshold");
+        assert_eq!(follower.persistence_backpressure_threshold, Some(100), "follower receives backpressure");
+        assert_eq!(follower.memory_block_buffer_target, Some(5), "follower receives buffer");
+        assert_eq!(follower.num_state_masking_blocks, Some(4), "follower receives masking");
+    }
+
     /// Both sharing CLI flags reach the configuration passed to the snapshot launcher.
     #[test]
     fn parses_snapshot_builder_sharing() {

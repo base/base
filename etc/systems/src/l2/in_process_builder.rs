@@ -81,6 +81,10 @@ pub struct InProcessBuilderConfig {
     pub persistence_threshold: Option<u64>,
     /// Optional number of unpersisted blocks allowed before Engine API intake is stalled.
     pub persistence_backpressure_threshold: Option<u64>,
+    /// Optional canonical block buffer override.
+    pub memory_block_buffer_target: Option<u64>,
+    /// Optional state masking window override.
+    pub num_state_masking_blocks: Option<u64>,
     /// Optional pending/basefee/queued transaction count limit for benchmark workloads.
     pub txpool_max_transactions: Option<usize>,
     /// Optional pending/basefee/queued transaction size limit in megabytes.
@@ -477,6 +481,12 @@ fn create_node_config(
         node_config.engine.persistence_backpressure_threshold =
             Some(persistence_backpressure_threshold);
     }
+    if let Some(buffer) = config.memory_block_buffer_target {
+        node_config.engine.memory_block_buffer_target = Some(buffer);
+    }
+    if let Some(masking) = config.num_state_masking_blocks {
+        node_config.engine.num_state_masking_blocks = masking;
+    }
     if let Some(max_transactions) = config.txpool_max_transactions {
         node_config.txpool.pending_max_count = max_transactions;
         node_config.txpool.basefee_max_count = max_transactions;
@@ -552,6 +562,8 @@ mod tests {
             block_time: std::time::Duration::from_millis(200),
             persistence_threshold: Some(37),
             persistence_backpressure_threshold: None,
+            memory_block_buffer_target: None,
+            num_state_masking_blocks: None,
             txpool_max_transactions: None, txpool_max_size_mb: None,
             txpool_max_account_slots: None,
         };
@@ -564,8 +576,25 @@ mod tests {
         assert_eq!(node.engine.persistence_backpressure_threshold(), 74, "reth derives backpressure from threshold");
         assert!(node.engine.tree_config().suppress_persistence_during_build(),
             "suppression must reach the engine tree");
+        config.persistence_threshold = Some(10);
+        config.persistence_backpressure_threshold = Some(100);
+        config.memory_block_buffer_target = Some(5);
+        config.num_state_masking_blocks = Some(4);
+        let explicit = super::create_node_config(
+            std::sync::Arc::clone(&config.chain_spec), datadir.path(),
+            &datadir.path().join("jwt"), &config,
+        ).expect("explicit engine settings must configure");
+        assert_eq!(explicit.engine.persistence_threshold, 10, "builder applies explicit threshold");
+        assert_eq!(explicit.engine.persistence_backpressure_threshold(), 100, "builder applies explicit backpressure");
+        assert_eq!(explicit.engine.memory_block_buffer_target(), 5, "builder applies explicit buffer");
+        assert_eq!(explicit.engine.num_state_masking_blocks(), 4, "builder applies explicit masking");
+        explicit.engine.validate().expect("explicit settings must be valid");
+        config.persistence_backpressure_threshold = None;
+        config.memory_block_buffer_target = None;
+        config.num_state_masking_blocks = None;
         config.persistence_threshold = crate::SnapshotPersistenceConfig {
             use_reth_persistence_defaults: true,
+            ..Default::default()
         }.threshold();
         let production = super::create_node_config(
             std::sync::Arc::clone(&config.chain_spec), datadir.path(),
