@@ -107,7 +107,11 @@ pub struct TxEip8130 {
     /// must authenticate.
     #[cfg_attr(
         feature = "serde",
-        serde(default, deserialize_with = "super::Eip8130PayerSerde::deserialize")
+        serde(
+            default,
+            serialize_with = "super::Eip8130PayerSerde::serialize",
+            deserialize_with = "super::Eip8130PayerSerde::deserialize"
+        )
     )]
     pub payer: Option<Address>,
 }
@@ -1125,8 +1129,8 @@ mod tests {
 
     /// The JSON is flat and uses hex quantities for every integer, with the
     /// standard `nonce` / `gas` names and single-call fields generic tooling
-    /// reads. The EIP field names `nonceSequence` / `gasLimit` and a short
-    /// `"0x00"` open payer are also accepted.
+    /// reads. An open payer is `"0x00"`, its wire form. The EIP field names
+    /// `nonceSequence` / `gasLimit` are also accepted.
     #[cfg(feature = "serde")]
     #[test]
     fn eip8130_json_is_a_standard_transaction_shape() {
@@ -1156,6 +1160,7 @@ mod tests {
         assert_eq!(json["value"], "0x0");
         assert_eq!(json["input"], "0x");
         assert_eq!(json["senderAuth"], "0xab");
+        assert_eq!(json["payer"], "0x00");
         assert!(json.get("tx").is_none(), "the transaction fields are not nested");
         assert_eq!(serde_json::from_value::<BaseTxEnvelope>(json.clone()).unwrap(), envelope);
 
@@ -1165,7 +1170,6 @@ mod tests {
         let gas = fields.remove("gas").unwrap();
         fields.insert("nonceSequence".into(), nonce);
         fields.insert("gasLimit".into(), gas);
-        fields.insert("payer".into(), "0x00".into());
         assert_eq!(serde_json::from_value::<BaseTxEnvelope>(eip_names).unwrap(), envelope);
     }
 
