@@ -119,10 +119,10 @@ optional_fee_charge = [ "revm?/optional_fee_charge" ]
 optional_balance_check = [ "revm?/optional_balance_check" ]
 optional_block_gas_limit = [ "revm?/optional_block_gas_limit" ]
 test-utils = [
-	"std",
 	"base-common-chains?/test-utils",
 	"base-common-genesis/test-utils",
 	"base-precompile-storage/test-utils",
+	"std",
 ]
 # Node-only wall-clock call timing. Leave off in zkVM guests.
 metrics = [ "std" ]
