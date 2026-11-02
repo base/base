@@ -100,6 +100,8 @@ base_metrics::define_metrics! {
     #[describe("Validity transactions admitted to the pool, labeled by whether the admission replaced an existing same-sender/nonce transaction or added a new pool entry")]
     #[label(name = "outcome", default = ["added", "replaced"])]
     admitted: counter,
+    #[describe("Validity predicates carried by each validity transaction admitted to the pool")]
+    predicates_per_tx: histogram,
 }
 
 impl ValidityPoolMetrics {
@@ -108,8 +110,11 @@ impl ValidityPoolMetrics {
     /// a fee bump or cancellation) from a net-new pool entry. Together the two
     /// series decompose lane churn: their sum is total validity admissions and
     /// `replaced` over that sum is the replacement rate.
-    pub fn record_admission(replaced: bool) {
+    ///
+    /// Also records how many validity predicates the admitted transaction carries.
+    pub fn record_admission(replaced: bool, predicates: usize) {
         Self::admitted(if replaced { "replaced" } else { "added" }).increment(1);
+        Self::predicates_per_tx().record(predicates as f64);
     }
 }
 
@@ -172,18 +177,32 @@ mod tests {
     }
 
     #[test]
-    fn record_admission_splits_added_and_replaced() {
+    fn record_admission_splits_added_and_replaced_and_counts_predicates() {
         let recorder = DebuggingRecorder::new();
         let snapshotter = recorder.snapshotter();
         metrics::with_local_recorder(&recorder, || {
-            ValidityPoolMetrics::record_admission(false);
-            ValidityPoolMetrics::record_admission(false);
-            ValidityPoolMetrics::record_admission(true);
+            ValidityPoolMetrics::record_admission(false, 1);
+            ValidityPoolMetrics::record_admission(false, 2);
+            ValidityPoolMetrics::record_admission(true, 6);
         });
 
         // `snapshot()` drains, so materialize once and query the vec.
         let snapshot = snapshotter.snapshot().into_vec();
         assert_eq!(admitted_count(&snapshot, "added"), Some(2));
         assert_eq!(admitted_count(&snapshot, "replaced"), Some(1));
+
+        let predicates = snapshot
+            .iter()
+            .find_map(|(ck, _, _, value)| match value {
+                DebugValue::Histogram(values)
+                    if ck.kind() == MetricKind::Histogram
+                        && ck.key().name() == "txpool.validity.predicates_per_tx" =>
+                {
+                    Some(values.iter().map(|value| value.into_inner()).collect::<Vec<_>>())
+                }
+                _ => None,
+            })
+            .expect("predicates_per_tx histogram recorded");
+        assert_eq!(predicates, vec![1.0, 2.0, 6.0]);
     }
 }
