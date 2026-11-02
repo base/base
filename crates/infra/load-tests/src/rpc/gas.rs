@@ -308,7 +308,7 @@ mod tests {
         let payloads: Vec<Box<dyn Payload>> = vec![
             Box::new(TransferPayload::default()),
             Box::new(Erc20Payload::new(address, U256::from(1), U256::from(1))),
-            Box::new(StoragePayload::new(address, 100)),
+            Box::new(StoragePayload::new(address, 100, 1.0)),
             Box::new(DoubleCounterPayload::new(address)),
             Box::new(CalldataPayload::new(256)),
             Box::new(OsakaPayload::new(OsakaTarget::Clz)),
