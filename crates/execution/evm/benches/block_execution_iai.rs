@@ -6,8 +6,8 @@
 //! [`BaseEvmConfig`], create the production `BaseBlockExecutor`, apply pre-execution changes,
 //! execute each transaction, and finish. Transactions arrive with their EVM environments
 //! already built, as the payload processor's conversion workers hand them over. The state is an
-//! in-memory database behind `reth_revm`'s `State`, configured as block import configures it,
-//! so database reads cost a hash-map lookup rather than a provider read.
+//! evm2 in-memory database, so database reads cost a hash-map lookup rather than a provider
+//! read; the executor accumulates the block's changes in its own block state, as on import.
 //!
 //! The block is described in `fixtures/mainnet_block.rs` (`MAINNET_MIX`): 387 transactions,
 //! mostly plain transfers carrying calldata, plus token transfers and withdrawals. Building it, the pre-state, and the
@@ -35,15 +35,14 @@ use alloy_consensus::TxReceipt;
 use base_common_consensus::BaseReceipt;
 use fixture::{BlockTx, MAINNET_MIX, MainnetBlock};
 use iai_callgrind::{library_benchmark, library_benchmark_group, main};
-use reth_execution_types::BlockExecutionResult;
-use reth_revm::State;
-use revm::database::InMemoryDB;
+use evm2::evm::InMemoryDB;
+use reth_evm::BlockExecutionOutput;
 
 /// A block ready to execute: the fixture, a fresh pre-state, and the converted transactions.
-type Input = (MainnetBlock, State<InMemoryDB>, Vec<BlockTx>);
+type Input = (MainnetBlock, InMemoryDB, Vec<BlockTx>);
 
 /// The execution result, plus the inputs that must drop outside the counted region.
-type Output = (BlockExecutionResult<BaseReceipt>, (MainnetBlock, State<InMemoryDB>));
+type Output = (BlockExecutionOutput<BaseReceipt>, (MainnetBlock, InMemoryDB));
 
 /// Outcome counts the workload fixes.
 #[derive(Debug, PartialEq, Eq)]
@@ -66,7 +65,8 @@ fn setup() -> Input {
 }
 
 /// Checks the block's outcomes against the workload's documented counts.
-fn check_outcomes((result, _): Output) {
+fn check_outcomes((output, _): Output) {
+    let result = &output.result;
     let count = |deposit: bool, success: bool| {
         result
             .receipts

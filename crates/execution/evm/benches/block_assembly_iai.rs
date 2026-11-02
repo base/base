@@ -38,11 +38,12 @@ use alloy_primitives::{
     map::B256Map,
 };
 use base_common_consensus::{BaseReceipt, BaseTransactionSigned, Predeploys};
-use base_common_evm::{BaseBlockExecutionCtx, BaseSpecId};
-use base_execution_evm::BaseEvmConfig;
+use base_common_evm2::BaseBlockExecutionCtx;
+use base_execution_evm::{BaseEvmConfig, BaseEvmEnv};
+use evm2::evm::InMemoryDB;
 use fixture::{MAINNET_MIX, MainnetBlock};
 use iai_callgrind::{library_benchmark, library_benchmark_group, main};
-use reth_evm::{ConfigureEvm, EvmEnv, execute::BlockAssemblerInput};
+use reth_evm::{BundleState, ConfigureEvm, execute::BlockAssemblerInput};
 use reth_execution_types::BlockExecutionResult;
 use reth_primitives_traits::{Account, Bytecode, SealedHeader};
 use reth_storage_api::{
@@ -54,7 +55,6 @@ use reth_trie_common::{
     MultiProof, MultiProofTargets, MultiProofTargetsV2, StorageMultiProof, StorageProof, TrieInput,
     root::storage_root_unsorted, updates::TrieUpdates,
 };
-use revm::database::{BundleState, InMemoryDB, states::bundle_state::BundleRetention};
 
 /// The block executor factory whose assembly input [`BaseEvmConfig`] builds.
 type Factory = <BaseEvmConfig as ConfigureEvm>::BlockExecutorFactory;
@@ -74,8 +74,8 @@ struct MessagePasserStorage {
 impl MessagePasserStorage {
     /// Captures the predeploy's pre-block storage from the block's pre-state.
     fn new(pre_state: &InMemoryDB) -> Self {
-        let hashed_storage = pre_state.cache.accounts[&Predeploys::L2_TO_L1_MESSAGE_PASSER]
-            .storage
+        let hashed_storage = pre_state.cache.storage[&Predeploys::L2_TO_L1_MESSAGE_PASSER]
+            .slots
             .iter()
             .map(|(slot, value)| (keccak256(B256::from(*slot)), *value))
             .collect();
@@ -191,7 +191,7 @@ impl StateProvider for MessagePasserStorage {
 struct Input {
     /// The fixture, whose EVM configuration holds the production assembler.
     block: MainnetBlock,
-    evm_env: EvmEnv<BaseSpecId>,
+    evm_env: BaseEvmEnv,
     ctx: BaseBlockExecutionCtx,
     parent: SealedHeader,
     transactions: Vec<BaseTransactionSigned>,
@@ -225,15 +225,14 @@ struct HeaderPins {
 fn setup() -> Input {
     let block = MainnetBlock::new(MAINNET_MIX);
     let mut state = block.fresh_state();
-    let result = block.execute(&mut state, block.block_txs());
-    state.merge_transitions(BundleRetention::Reverts);
+    let output = block.execute(&mut state, block.block_txs());
     Input {
         evm_env: block.evm_env.clone(),
         ctx: block.ctx.clone(),
         parent: SealedHeader::default(),
         transactions: block.transactions.iter().map(|tx| tx.1.inner().clone()).collect(),
-        result,
-        bundle_state: state.take_bundle(),
+        result: output.result,
+        bundle_state: output.state,
         provider: MessagePasserStorage::new(&block.pre_state),
         block,
     }
