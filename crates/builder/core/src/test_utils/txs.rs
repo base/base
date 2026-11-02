@@ -71,7 +71,7 @@ impl TransactionBuilder {
 
     /// Sets an explicit nonce instead of fetching it from the provider.
     pub const fn with_nonce(mut self, nonce: u64) -> Self {
-        self.tx.nonce = nonce;
+        self.nonce = Some(nonce);
         self
     }
 
