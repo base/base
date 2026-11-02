@@ -9,9 +9,9 @@
 //! with the builder on every block. A sponsored EIP-8130 transaction is then billed to its payer
 //! for the reserved `gas_limit + payer_auth` budget.
 
-#[path = "common/balance.rs"]
-mod balance;
 mod common;
+#[path = "common/everest.rs"]
+mod everest;
 
 use std::time::Duration;
 
@@ -28,21 +28,17 @@ use base_common_genesis::{BaseUpgrade, RollupConfig};
 use base_common_network::Base;
 use base_common_rpc_types::{BaseTransactionReceipt, BaseTransactionRequest};
 use base_system_tests::{
-    ANVIL_ACCOUNT_1, ANVIL_ACCOUNT_2, SystemTestStack, SystemTestStackBuilder,
+    ANVIL_ACCOUNT_1, ANVIL_ACCOUNT_2, SystemTestProviderExt, SystemTestStack,
+    SystemTestStackBuilder,
 };
 use eyre::{OptionExt, Result, WrapErr, ensure};
 use tokio::time::{sleep, timeout};
 
-use crate::common::{
-    BASE_AZUL_ACTIVATION_BLOCK, BASE_BERYL_ACTIVATION_BLOCK, L1_CHAIN_ID, L2_CHAIN_ID,
-    wait_for_block,
-};
+use crate::common::{L2_CHAIN_ID, wait_for_block};
 
-/// The schedule leading up to Zenith mirrors the Everest system tests (Everest at block 7), so
-/// the post-Zenith chain carries every real upgrade; Zenith follows a few blocks later, leaving
-/// pre-Zenith runway for the first transfer.
-const BASE_COBALT_ACTIVATION_BLOCK: u64 = 5;
-const BASE_EVEREST_ACTIVATION_BLOCK: u64 = 7;
+/// Zenith follows the Everest schedule of the Everest system tests (Everest at block 7) a few
+/// blocks later, so the post-Zenith chain carries every real upgrade and the first transfer has
+/// pre-Zenith runway.
 const ZENITH_ACTIVATION_BLOCK: u64 = 14;
 /// A plain transfer needs 21k gas; the limit is deliberately ~5x that.
 const TRANSFER_GAS_USED: u64 = 21_000;
@@ -54,6 +50,8 @@ const TX_VALUE: U256 = U256::from_limbs([1, 0, 0, 0]);
 const RECIPIENT: Address = Address::repeat_byte(0xfe);
 const MAX_FEE_PER_GAS: u128 = 2_000_000_000;
 const MAX_PRIORITY_FEE_PER_GAS: u128 = 1_000_000;
+const RECEIPT_TIMEOUT: Duration = Duration::from_secs(60);
+const FUNDING_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// A running Zenith stack with its builder and validator providers.
 struct ZenithSystem {
@@ -69,19 +67,12 @@ impl ZenithSystem {
     /// Starts the stack with Zenith at [`ZENITH_ACTIVATION_BLOCK`] and waits past Everest.
     async fn start() -> Result<Self> {
         base_node_runner::test_utils::init_silenced_tracing();
-        let system = SystemTestStackBuilder::new()
-            .with_l1_chain_id(L1_CHAIN_ID)
-            .with_l2_chain_id(L2_CHAIN_ID)
-            .with_base_azul_activation_block(BASE_AZUL_ACTIVATION_BLOCK)
-            .with_base_beryl_activation_block(BASE_BERYL_ACTIVATION_BLOCK)
-            .with_base_cobalt_activation_block(BASE_COBALT_ACTIVATION_BLOCK)
-            .with_base_everest_activation_block(BASE_EVEREST_ACTIVATION_BLOCK)
-            .with_base_zenith_activation_block(ZENITH_ACTIVATION_BLOCK)
-            .build()
-            .await?;
-        let builder = system.l2_builder_provider()?;
+        let (system, builder) = everest::start_everest_stack(
+            SystemTestStackBuilder::new()
+                .with_base_zenith_activation_block(ZENITH_ACTIVATION_BLOCK),
+        )
+        .await?;
         let client = system.l2_client_provider()?;
-        wait_for_block(&builder, BASE_EVEREST_ACTIVATION_BLOCK + 1).await?;
         let rollup_config: RollupConfig =
             serde_json::from_slice(&std::fs::read(system.l2_deployment().rollup_config_path())?)?;
         let zenith_timestamp = rollup_config
@@ -265,7 +256,7 @@ async fn zenith_bills_sponsored_eip8130_for_its_reserved_budget() -> Result<()> 
     let builder = &system.builder;
     let sender = PrivateKeySigner::from_bytes(&ANVIL_ACCOUNT_1.private_key)?;
     let payer = PrivateKeySigner::from_bytes(&ANVIL_ACCOUNT_2.private_key)?;
-    balance::wait_for_balance(builder, payer.address()).await?;
+    builder.wait_for_balance(payer.address(), FUNDING_TIMEOUT).await?;
     system.wait_for_zenith().await?;
 
     let nonce_sequence = builder.get_transaction_count(sender.address()).await?;
@@ -401,7 +392,7 @@ async fn settle(
     let tx_hash = *pending.tx_hash();
     drop(pending);
 
-    let receipt = wait_for_receipt(provider, tx_hash).await?;
+    let receipt = provider.wait_for_receipt(tx_hash, RECEIPT_TIMEOUT).await?;
     let block_number = receipt.block_number().ok_or_eyre("receipt missing block number")?;
     let block = provider
         .get_block_by_number(BlockNumberOrTag::Number(block_number))
@@ -412,13 +403,20 @@ async fn settle(
         "expected only the L1 attributes deposit and the transaction in block {block_number}"
     );
 
-    let delta = async |address: Address| -> Result<U256> {
+    // Deltas are signed: the payer must be debited and every recipient credited, so a settlement
+    // that moved ETH the wrong way fails here instead of passing the identities by magnitude.
+    let balances = async |address: Address| -> Result<(U256, U256)> {
         let before =
             provider.get_balance(address).block_id(BlockId::number(block_number - 1)).await?;
         let after = provider.get_balance(address).block_id(BlockId::number(block_number)).await?;
-        Ok(after.abs_diff(before))
+        Ok((before, after))
     };
-    let payer_paid = delta(payer).await?;
+    let credited = async |address: Address| -> Result<U256> {
+        let (before, after) = balances(address).await?;
+        after.checked_sub(before).ok_or_eyre("fee recipient was debited")
+    };
+    let (payer_before, payer_after) = balances(payer).await?;
+    let payer_paid = payer_before.checked_sub(payer_after).ok_or_eyre("payer was credited")?;
     ensure!(payer_paid < U256::from(ETH_TO_WEI), "payer paid an implausible amount");
 
     let settlement = Settlement {
@@ -430,25 +428,9 @@ async fn settle(
         l1_fee: receipt.l1_block_info.l1_fee.ok_or_eyre("receipt missing l1Fee")?,
         value_paid,
         payer_paid,
-        coinbase_received: delta(block.header.beneficiary).await?,
-        base_fee_vault_received: delta(Predeploys::BASE_FEE_VAULT).await?,
-        operator_fee_vault_received: delta(Predeploys::OPERATOR_FEE_VAULT).await?,
+        coinbase_received: credited(block.header.beneficiary).await?,
+        base_fee_vault_received: credited(Predeploys::BASE_FEE_VAULT).await?,
+        operator_fee_vault_received: credited(Predeploys::OPERATOR_FEE_VAULT).await?,
     };
     Ok((settlement, receipt))
-}
-
-async fn wait_for_receipt(
-    provider: &RootProvider<Base>,
-    tx_hash: B256,
-) -> Result<BaseTransactionReceipt> {
-    timeout(balance::TX_RECEIPT_TIMEOUT, async {
-        loop {
-            if let Some(receipt) = provider.get_transaction_receipt(tx_hash).await? {
-                return Ok::<_, eyre::Error>(receipt);
-            }
-            sleep(Duration::from_millis(100)).await;
-        }
-    })
-    .await
-    .wrap_err("transaction receipt timed out")?
 }
