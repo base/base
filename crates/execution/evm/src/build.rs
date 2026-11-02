@@ -10,7 +10,7 @@ use alloy_primitives::logs_bloom;
 use base_common_chains::Upgrades;
 use base_common_consensus::DepositReceiptExt;
 use base_common_evm::BaseBlockExecutionCtx;
-use base_execution_consensus::{calculate_receipt_root_no_memo, isthmus};
+use base_execution_consensus::{calculate_receipt_root_no_memo, expected_slot_number, isthmus};
 use reth_evm::execute::{BlockAssembler, BlockAssemblerInput};
 use reth_execution_errors::BlockExecutionError;
 use reth_execution_types::BlockExecutionResult;
@@ -51,6 +51,7 @@ impl<ChainSpec: Upgrades> BaseBlockAssembler<ChainSpec> {
             bundle_state,
             state_root,
             state_provider,
+            block_access_list_hash,
             ..
         } = input;
         let ctx = ctx.into();
@@ -62,6 +63,13 @@ impl<ChainSpec: Upgrades> BaseBlockAssembler<ChainSpec> {
         let logs_bloom = logs_bloom(receipts.iter().flat_map(|r| r.logs()));
 
         let mut requests_hash = None;
+
+        let number = evm_env.block_env.number().saturating_to();
+
+        // EIP-7843: from Amsterdam on, the header carries a slot number. Base pins it to the L2
+        // block number, so a value the consensus layer supplied in the payload attributes can
+        // never make this path assemble a header that header validation rejects.
+        let slot_number = expected_slot_number(&*self.chain_spec, timestamp, number);
 
         let withdrawals_root =
             if Upgrades::is_isthmus_active_at_timestamp(&*self.chain_spec, timestamp) {
@@ -104,7 +112,7 @@ impl<ChainSpec: Upgrades> BaseBlockAssembler<ChainSpec> {
             mix_hash: evm_env.block_env.prevrandao().unwrap_or_default(),
             nonce: BEACON_NONCE.into(),
             base_fee_per_gas: Some(evm_env.block_env.basefee()),
-            number: evm_env.block_env.number().saturating_to(),
+            number,
             gas_limit: evm_env.block_env.gas_limit(),
             difficulty: evm_env.block_env.difficulty(),
             gas_used: *gas_used,
@@ -113,8 +121,8 @@ impl<ChainSpec: Upgrades> BaseBlockAssembler<ChainSpec> {
             blob_gas_used,
             excess_blob_gas,
             requests_hash,
-            block_access_list_hash: None,
-            slot_number: None,
+            block_access_list_hash,
+            slot_number,
         };
 
         Ok(Block::new(

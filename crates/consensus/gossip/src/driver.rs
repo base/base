@@ -229,6 +229,8 @@ where
             ("v1", &self.handler.blocks_v1_topic),
             ("v2", &self.handler.blocks_v2_topic),
             ("v3", &self.handler.blocks_v3_topic),
+            ("v4", &self.handler.blocks_v4_topic),
+            ("v5", &self.handler.blocks_v5_topic),
         ] {
             if !active_topics.contains(&topic.hash())
                 && self.swarm.behaviour_mut().gossipsub.unsubscribe(topic)
@@ -253,6 +255,7 @@ where
             ("v2", &self.handler.blocks_v2_topic),
             ("v3", &self.handler.blocks_v3_topic),
             ("v4", &self.handler.blocks_v4_topic),
+            ("v5", &self.handler.blocks_v5_topic),
         ] {
             let hash = topic.hash();
             let subscribed = gossip.topics().any(|topic| *topic == hash);
@@ -687,6 +690,7 @@ mod tests {
             pair.legacy.swarm.dial(address).unwrap();
             let v3 = pair.retiring.handler.blocks_v3_topic.hash();
             let v4 = pair.retiring.handler.blocks_v4_topic.hash();
+            let v5 = pair.retiring.handler.blocks_v5_topic.hash();
 
             // Both old and future topic meshes must actually form before retirement.
             while [&pair.retiring, &pair.legacy].iter().any(|driver| {
@@ -707,14 +711,12 @@ mod tests {
             // peer must learn the unsubscribe over the wire, not by shared state.
             assert_eq!(pair.retiring.retire_block_topics(now + 60), 3);
             loop {
-                if pair
-                    .legacy
-                    .swarm
-                    .behaviour()
-                    .gossipsub
-                    .all_peers()
-                    .any(|(peer, topics)| peer == pair.retiring.local_peer_id() && topics == [&v4])
-                {
+                if pair.legacy.swarm.behaviour().gossipsub.all_peers().any(|(peer, topics)| {
+                    peer == pair.retiring.local_peer_id()
+                        && topics.contains(&&v4)
+                        && topics.contains(&&v5)
+                        && !topics.contains(&&v3)
+                }) {
                     break;
                 }
                 pair.poll().await;
@@ -752,7 +754,7 @@ mod tests {
         let handle = recorder.handle();
         metrics::with_local_recorder(&recorder, || {
             let mut driver = test_driver();
-            for version in ["v1", "v2", "v3", "v4"] {
+            for version in ["v1", "v2", "v3", "v4", "v5"] {
                 assert!(handle.render().contains(&format!(
                     "base_node_block_topic_subscribed{{version=\"{version}\"}} 1"
                 )));
@@ -771,6 +773,7 @@ mod tests {
                 )));
             }
             assert!(output.contains("base_node_block_topic_subscribed{version=\"v4\"} 1"));
+            assert!(output.contains("base_node_block_topic_subscribed{version=\"v5\"} 1"));
             assert!(output.contains("base_node_block_topic_mesh_peers{version=\"v3\"} 0"));
             assert!(output.contains("base_node_block_topic_peers{version=\"v4\"} 0"));
         });
@@ -839,6 +842,7 @@ mod tests {
             driver.handler.blocks_v2_topic.hash(),
             driver.handler.blocks_v3_topic.hash(),
             driver.handler.blocks_v4_topic.hash(),
+            driver.handler.blocks_v5_topic.hash(),
         ];
         for (timestamp, first_topic, removed) in [
             (159, 0, 0),
@@ -864,7 +868,7 @@ mod tests {
         // Complete the initial no-op retirement check, then cancel the idle
         // poll. Subsequent checks must still run without a swarm event.
         assert!(tokio::time::timeout(Duration::from_millis(1), driver.next()).await.is_err());
-        assert_eq!(driver.swarm.behaviour().gossipsub.topics().count(), 4);
+        assert_eq!(driver.swarm.behaviour().gossipsub.topics().count(), 5);
 
         // Make retirement due after startup without depending on wall-clock
         // sleeps. Tokio's paused clock advances the periodic poll deadline.
@@ -877,10 +881,13 @@ mod tests {
             .await
             .is_err()
         );
-        assert_eq!(
-            driver.swarm.behaviour().gossipsub.topics().cloned().collect::<Vec<_>>(),
-            [driver.handler.blocks_v4_topic.hash()]
-        );
+        let mut subscribed =
+            driver.swarm.behaviour().gossipsub.topics().cloned().collect::<Vec<_>>();
+        subscribed.sort();
+        let mut expected =
+            vec![driver.handler.blocks_v4_topic.hash(), driver.handler.blocks_v5_topic.hash()];
+        expected.sort();
+        assert_eq!(subscribed, expected);
     }
 
     #[test]

@@ -12,7 +12,10 @@ use alloy_rpc_types_engine::{
     CancunPayloadFields, ExecutionPayloadInputV2, ExecutionPayloadV3, PraguePayloadFields,
 };
 
-use crate::{BaseExecutionPayload, BaseExecutionPayloadSidecar, BaseExecutionPayloadV4};
+use crate::{
+    BaseExecutionPayload, BaseExecutionPayloadSidecar, BaseExecutionPayloadV4,
+    BaseExecutionPayloadV5,
+};
 #[cfg(feature = "std")]
 use crate::{BoundedExecutionPayloadV1, BoundedExecutionPayloadV2, BoundedExecutionPayloadV3};
 
@@ -180,7 +183,13 @@ impl ExecutionData {
         T: Encodable2718 + Transaction,
         H: BlockHeader,
     {
-        let (payload, sidecar) = BaseExecutionPayload::from_block_unchecked(block_hash, block);
+        // A block that commits to a list rebuilds an Amsterdam (V5) payload, so every consumer that
+        // reconstructs the block from it derives the same header.
+        let (payload, sidecar) = BaseExecutionPayload::from_block_unchecked_with_extras(
+            block_hash,
+            block,
+            block_access_list.clone(),
+        );
 
         Self::new(payload, sidecar, block_access_list)
     }
@@ -229,6 +238,29 @@ impl ExecutionData {
         )
     }
 
+    /// Creates a new instance from args to engine API method `newPayloadV5`.
+    ///
+    /// The payload already carries the Amsterdam block access list, so it is also mirrored into
+    /// [`ExecutionData::block_access_list`] for the carried-list consensus validation.
+    ///
+    /// Spec: <https://specs.base.org/upgrades/denim/exec-engine#engine_newpayloadv5>
+    pub fn v5(
+        payload: BaseExecutionPayloadV5,
+        versioned_hashes: Vec<B256>,
+        parent_beacon_block_root: B256,
+        execution_requests: Requests,
+    ) -> Self {
+        let block_access_list = Some(payload.block_access_list.clone());
+        Self::new(
+            BaseExecutionPayload::v5(payload),
+            BaseExecutionPayloadSidecar::v4(
+                CancunPayloadFields::new(parent_beacon_block_root, versioned_hashes),
+                PraguePayloadFields::new(execution_requests),
+            ),
+            block_access_list,
+        )
+    }
+
     /// Returns the parent beacon block root, if any.
     pub fn parent_beacon_block_root(&self) -> Option<B256> {
         self.sidecar.parent_beacon_block_root()
@@ -246,6 +278,9 @@ impl ExecutionData {
             }
             BaseExecutionPayload::V4(base_execution_payload_v4) => {
                 Some(base_execution_payload_v4.payload_inner.withdrawals())
+            }
+            BaseExecutionPayload::V5(base_execution_payload_v5) => {
+                Some(base_execution_payload_v5.payload_inner.payload_inner.withdrawals())
             }
         }
     }
@@ -492,6 +527,60 @@ impl NetworkPayloadEnvelope {
 
         Ok(snap::raw::Encoder::new().compress_vec(&data)?)
     }
+
+    /// Decode a payload envelope from a snappy-compressed byte array.
+    /// The payload version decoded is `BaseExecutionPayloadV5` from SSZ bytes, which carries the
+    /// Amsterdam block access list and slot number.
+    #[cfg(feature = "std")]
+    pub fn decode_v5(data: &[u8]) -> Result<Self, PayloadEnvelopeError> {
+        use ssz::Decode;
+        let decompressed = Self::decompress_bounded(data)?;
+
+        if decompressed.len() < 98 {
+            return Err(PayloadEnvelopeError::InvalidLength);
+        }
+
+        let sig_data = &decompressed[..65];
+        let parent_beacon_block_root = &decompressed[65..97];
+        let block_data = &decompressed[97..];
+
+        let signature = Signature::try_from(sig_data)?;
+        let parent_beacon_block_root = B256::from_slice(parent_beacon_block_root);
+        let hash = PayloadHash::from(
+            [parent_beacon_block_root.as_slice(), block_data].concat().as_slice(),
+        );
+
+        let payload = BaseExecutionPayload::V5(BaseExecutionPayloadV5::from_ssz_bytes(block_data)?);
+
+        Ok(Self {
+            payload,
+            signature,
+            payload_hash: hash,
+            parent_beacon_block_root: Some(parent_beacon_block_root),
+        })
+    }
+
+    /// Encodes a payload envelope as a snappy-compressed byte array.
+    #[cfg(feature = "std")]
+    pub fn encode_v5(&self) -> Result<Vec<u8>, PayloadEnvelopeEncodeError> {
+        use ssz::Encode;
+        let execution_payload_v5 = match &self.payload {
+            BaseExecutionPayload::V5(execution_payload_v5) => execution_payload_v5,
+            _ => return Err(PayloadEnvelopeEncodeError::WrongVersion),
+        };
+
+        let mut data = Vec::new();
+        let mut sig = self.signature.as_bytes();
+        sig[64] = self.signature.v() as u8;
+        data.extend_from_slice(&sig[..]);
+        let parent_beacon_block_root =
+            self.parent_beacon_block_root.ok_or(PayloadEnvelopeEncodeError::MissingData)?;
+        data.extend_from_slice(parent_beacon_block_root.as_slice());
+        let block_data = execution_payload_v5.as_ssz_bytes();
+        data.extend_from_slice(block_data.as_slice());
+
+        Ok(snap::raw::Encoder::new().compress_vec(&data)?)
+    }
 }
 
 /// Errors that can occur when encoding a payload envelope.
@@ -687,6 +776,126 @@ mod tests {
         assert_eq!(1741842007, payload_envelop.payload.timestamp());
         let encoded = payload_envelop.encode_v4().unwrap();
         assert_eq!(data, encoded);
+    }
+
+    /// Builds a V5 envelope carrying `block_access_list` and `slot_number`.
+    #[cfg(feature = "std")]
+    fn v5_envelope(block_access_list: &'static [u8], slot_number: u64) -> NetworkPayloadEnvelope {
+        use alloy_rpc_types_engine::{ExecutionPayloadV1, ExecutionPayloadV2};
+
+        let v3 = ExecutionPayloadV3 {
+            payload_inner: ExecutionPayloadV2 {
+                payload_inner: ExecutionPayloadV1 {
+                    parent_hash: B256::repeat_byte(0x01),
+                    fee_recipient: Default::default(),
+                    state_root: B256::repeat_byte(0x02),
+                    receipts_root: B256::repeat_byte(0x03),
+                    logs_bloom: Default::default(),
+                    prev_randao: B256::repeat_byte(0x04),
+                    block_number: slot_number,
+                    gas_limit: 30_000_000,
+                    gas_used: 0,
+                    timestamp: 1_741_842_007,
+                    extra_data: Bytes::new(),
+                    base_fee_per_gas: alloy_primitives::U256::from(7),
+                    block_hash: B256::repeat_byte(0x05),
+                    transactions: Vec::new(),
+                },
+                withdrawals: Vec::new(),
+            },
+            blob_gas_used: 0,
+            excess_blob_gas: 0,
+        };
+        let v4 = BaseExecutionPayloadV4::from_v3_with_withdrawals_root(v3, B256::repeat_byte(0x06));
+        let payload =
+            BaseExecutionPayloadV5::new(v4, Bytes::from_static(block_access_list), slot_number);
+
+        NetworkPayloadEnvelope {
+            payload: BaseExecutionPayload::V5(payload),
+            signature: Signature::test_signature(),
+            payload_hash: PayloadHash(B256::ZERO),
+            parent_beacon_block_root: Some(B256::repeat_byte(0x07)),
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "std")]
+    fn test_roundtrip_encode_envelope_v5() {
+        const LIST: &[u8] = &[0xc2, 0x01, 0x02, 0xde, 0xad, 0xbe, 0xef];
+        let envelope = v5_envelope(LIST, 42);
+
+        let encoded = envelope.encode_v5().unwrap();
+        let decoded = NetworkPayloadEnvelope::decode_v5(&encoded).unwrap();
+
+        let payload = decoded.payload.as_v5().expect("decoded payload must be V5");
+        assert_eq!(
+            payload.block_access_list,
+            Bytes::from_static(LIST),
+            "the block access list bytes must survive the v5 round trip"
+        );
+        assert_eq!(payload.slot_number, 42, "the slot number must survive the v5 round trip");
+        assert_eq!(
+            decoded.payload, envelope.payload,
+            "the whole payload must survive the v5 round trip"
+        );
+        assert_eq!(decoded.signature, envelope.signature, "the signature must be preserved");
+        assert_eq!(
+            decoded.parent_beacon_block_root, envelope.parent_beacon_block_root,
+            "the parent beacon block root must be preserved"
+        );
+        assert_eq!(
+            decoded.encode_v5().unwrap(),
+            encoded,
+            "re-encoding the decoded envelope must be byte-identical"
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "std")]
+    fn test_encode_v5_rejects_other_payload_versions() {
+        let mut envelope = v5_envelope(&[0x01], 1);
+        let v5 = envelope.payload.as_v5().unwrap().clone();
+        envelope.payload = BaseExecutionPayload::V4(v5.payload_inner);
+        assert_eq!(
+            envelope.encode_v5(),
+            Err(PayloadEnvelopeEncodeError::WrongVersion),
+            "a V4 payload must not be encodable as v5"
+        );
+    }
+
+    /// The payload hash covers the block access list and slot number, so tampering with either
+    /// changes the message the signature is verified against. Signer recovery for the tampered
+    /// message is exercised by the gossip handler tests.
+    #[test]
+    #[cfg(feature = "std")]
+    fn test_v5_payload_hash_covers_block_access_list_and_slot_number() {
+        let original = NetworkPayloadEnvelope::decode_v5(
+            &v5_envelope(&[0xaa, 0xbb, 0xcc], 42).encode_v5().unwrap(),
+        )
+        .unwrap();
+        let chain_id = 8453;
+        // Same payload, different list byte.
+        let tampered_list = NetworkPayloadEnvelope::decode_v5(
+            &v5_envelope(&[0xaa, 0xbb, 0xcd], 42).encode_v5().unwrap(),
+        )
+        .unwrap();
+        // Same payload, different slot number (the block number is kept equal to the original).
+        let mut tampered_slot = v5_envelope(&[0xaa, 0xbb, 0xcc], 42);
+        tampered_slot.payload.as_v5_mut().unwrap().slot_number = 43;
+        let tampered_slot =
+            NetworkPayloadEnvelope::decode_v5(&tampered_slot.encode_v5().unwrap()).unwrap();
+
+        for (name, tampered) in [("list", tampered_list), ("slot number", tampered_slot)] {
+            assert_ne!(
+                tampered.payload_hash, original.payload_hash,
+                "tampering with the {name} must change the payload hash"
+            );
+            assert_ne!(
+                tampered.payload_hash.signature_message(chain_id),
+                original.payload_hash.signature_message(chain_id),
+                "the signed message must differ, so the original signature cannot verify a payload with a tampered {name}"
+            );
+        }
     }
 
     #[test]

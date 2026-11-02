@@ -16,7 +16,7 @@ use base_execution_txpool::{
     BasePooledTransaction, BuilderApiImpl, BuilderApiServer, DEFAULT_MAX_VALIDITY_PREDICATES,
     ValiditySignatureMode,
 };
-use base_node_core::{args::RollupArgs, node::BasePoolBuilder};
+use base_node_core::{BaseLaunchPolicy, args::RollupArgs, node::BasePoolBuilder};
 use base_node_runner::{BaseNode, BaseNodeExtension, BaseProvider, FromExtensionConfig, NodeHooks};
 use base_txpool_rpc::{SendRawTransactionValidityConfig, SendRawTransactionValidityExtension};
 use eyre::{Result, WrapErr, eyre};
@@ -464,6 +464,9 @@ fn create_node_config(
         .with_datadir_args(datadir)
         .with_rpc(rpc)
         .with_network(network);
+    // The in-process node must import the same way production does: Base always imports serially,
+    // because reth's BAL-parallel ordered commit does not apply Base's admission rules.
+    BaseLaunchPolicy::force_serial_import(&mut node_config.engine);
     if config.datadir.is_some() {
         node_config.debug.startup_sync_state_idle = true;
     }

@@ -11,6 +11,8 @@ extern crate alloc;
 
 mod affordability;
 pub use affordability::CoinbaseTipAffordability;
+mod bal_budget;
+pub use bal_budget::{BlockAccessListBudget, BlockAccessListLimit};
 pub mod builder;
 pub use builder::BasePayloadBuilder;
 pub mod config;
