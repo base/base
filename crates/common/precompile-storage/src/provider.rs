@@ -82,7 +82,7 @@ pub trait PrecompileStorageProvider {
     fn deduct_gas(&mut self, gas: u64) -> Result<()>;
     /// Deducts state-creating gas (EIP-8037 reservoir model).
     ///
-    /// Counts only state-creation operations: new account creation and code deposit.
+    /// Includes storage-slot creation, new accounts and code deposit.
     /// State gas is tracked separately from regular gas and also deducted from the
     /// regular gas counter when no reservoir is available.
     fn deduct_state_gas(&mut self, gas: u64) -> Result<()>;
@@ -94,7 +94,8 @@ pub trait PrecompileStorageProvider {
     fn gas_used(&self) -> u64;
     /// Returns the state-creating gas spent so far (EIP-8037).
     ///
-    /// Counts only new account creation and code deposit operations.
+    /// Includes new slots, account creation and code deposit; negative frame-local
+    /// refills are available through [`Self::gas_tracker`].
     fn state_gas_used(&self) -> u64;
     /// Returns the gas refunded so far.
     fn gas_refunded(&self) -> i64;
@@ -103,6 +104,20 @@ pub trait PrecompileStorageProvider {
     /// State gas is first deducted from this reservoir before spilling into regular gas.
     /// Returns zero when no reservoir was provided at construction time.
     fn reservoir(&self) -> u64;
+
+    /// Returns complete frame accounting, including signed state gas and spills.
+    /// Providers without a reservoir use their existing scalar accounting.
+    fn gas_tracker(&self) -> revm::interpreter::gas::GasTracker {
+        let mut gas = revm::interpreter::gas::GasTracker::new_used_gas(
+            self.gas_limit(),
+            self.gas_used(),
+            self.reservoir(),
+        );
+        gas.set_state_gas_spent(self.state_gas_used() as i64);
+        gas.set_state_gas_spilled(self.state_gas_used());
+        gas.set_refunded(self.gas_refunded());
+        gas
+    }
 
     /// Returns the active persistent-storage features.
     fn storage_features(&self) -> StorageFeatures {

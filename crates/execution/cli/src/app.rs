@@ -177,7 +177,10 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
 
     use clap::Parser;
     use tempfile::TempDir;

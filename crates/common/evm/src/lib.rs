@@ -39,6 +39,8 @@ mod api;
 pub use api::{BaseContext, BaseContextTr, BaseError, Builder, DefaultBase};
 
 mod evm;
+#[cfg(test)]
+mod native_gas_tests;
 pub use evm::BaseEvm;
 
 #[cfg(feature = "std")]

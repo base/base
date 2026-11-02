@@ -863,6 +863,9 @@ impl SubmissionPipeline {
             .with_gas_limit(prepared.gas_limit);
         if let Some(to) = prepared.to {
             tx = tx.with_to(to);
+        } else {
+            // PreparedTransaction represents CREATE with no recipient address.
+            tx.set_create();
         }
 
         let typed_tx = tx

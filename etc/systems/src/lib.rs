@@ -32,6 +32,9 @@ pub use benchmark_fixtures::{
     DOUBLE_COUNTER_PLACEHOLDER, DOUBLE_COUNTER_SENTINEL, DeployedFixtures, PendingFixtures,
 };
 
+mod benchmark_da;
+pub use benchmark_da::{BlockDaMetrics, ByteUsageSummary, DaUsageSummary};
+
 mod benchmark_report;
 pub use benchmark_report::{
     SnapshotBenchmarkReportConfig, SnapshotBenchmarkResult, SnapshotBlockMetrics,

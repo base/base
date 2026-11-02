@@ -49,6 +49,7 @@ impl ActivationRegistry {
         let storage_features = UpgradeGatedStorageFeatures::from_upgrade(upgrade);
         base_precompile!(
             "ActivationRegistry",
+            upgrade: upgrade,
             storage_features: storage_features,
             |ctx, calldata| {
             let observer = observer.clone();

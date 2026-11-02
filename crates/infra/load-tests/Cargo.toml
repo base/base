@@ -57,6 +57,11 @@ tokio = { workspace = true, features = ["signal"] }
 tokio-tungstenite = { workspace = true, features = ["native-tls"] }
 
 [dev-dependencies]
-alloy-node-bindings.workspace = true
-httpmock.workspace = true
 rstest.workspace = true
+httpmock.workspace = true
+alloy-evm.workspace = true
+miniz_oxide.workspace = true
+base-common-flz.workspace = true
+alloy-node-bindings.workspace = true
+brotli = { workspace = true, features = ["std"] }
+base-common-evm = { workspace = true, features = ["std"] }

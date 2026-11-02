@@ -75,6 +75,7 @@ pub(super) async fn prepare(
     let submit_futs = account_data.into_iter().map(|(sender, signer)| {
         let rpc_url = rpc_url.clone();
         let pb_submit = pb_submit.clone();
+        let query_client = ctx.client.clone();
         async move {
             let wallet = EthereumWallet::from(signer);
             let provider = create_wallet_provider(rpc_url, wallet);
@@ -105,6 +106,7 @@ pub(super) async fn prepare(
 
             let result = submit_b20_create(
                 provider,
+                query_client,
                 sender,
                 input,
                 chain_id,
@@ -195,6 +197,7 @@ pub(super) async fn prepare(
 #[allow(clippy::too_many_arguments)]
 async fn submit_b20_create(
     provider: WalletProvider,
+    query_client: crate::rpc::QueryProvider,
     sender: Address,
     input: Bytes,
     chain_id: u64,
@@ -209,6 +212,17 @@ async fn submit_b20_create(
         .pending()
         .await
         .rpc("get pending transaction count")?;
+
+    let estimated = crate::rpc::GasEstimator::setup(
+        &query_client,
+        TransactionRequest::default()
+            .with_to(B20FactoryStorage::ADDRESS)
+            .with_input(input.clone())
+            .with_gas_limit(gas_limit),
+        sender,
+    )
+    .await?;
+    let gas_limit = estimated.gas.expect("setup request has gas");
 
     let build = |nonce: u64, max_fee: u128, priority_fee: u128| {
         TransactionRequest::default()
@@ -318,6 +332,7 @@ pub(super) async fn teardown(
             let signer = signers.get(&sender)?.clone();
             let wallet = EthereumWallet::from(signer);
             let provider = create_wallet_provider(rpc_url.clone(), wallet);
+            let query_client = ctx.client.clone();
             Some(async move {
                 let sender_nonce = match provider.get_transaction_count(sender).pending().await {
                     Ok(n) => n,
@@ -336,6 +351,9 @@ pub(super) async fn teardown(
                     .with_max_fee_per_gas(max_fee)
                     .with_max_priority_fee_per_gas(max_priority_fee);
 
+                let tx = crate::rpc::GasEstimator::setup(&query_client, tx, sender).await.map_err(
+                    |error| (sender, eyre::eyre!("burn gas estimation failed: {error}")),
+                )?;
                 match provider.send_transaction(tx).await {
                     Ok(pending) => Ok((sender, balance, pending)),
                     Err(e) => Err((sender, eyre::eyre!("send failed: {e}"))),

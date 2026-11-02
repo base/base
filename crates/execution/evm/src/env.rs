@@ -5,6 +5,7 @@ use base_common_chains::Upgrades;
 use base_common_evm::BaseSpecId;
 #[cfg(feature = "std")]
 use base_common_rpc_types_engine::ExecutionData;
+use base_execution_consensus::expected_slot_number;
 use reth_chainspec::EthChainSpec;
 use reth_primitives_traits::constants::MAX_TX_GAS_LIMIT_OSAKA;
 use revm::{
@@ -57,7 +58,8 @@ impl BaseEvmEnvBuilder {
             gas_limit: header.gas_limit,
             basefee: header.base_fee_per_gas.unwrap_or_default(),
             blob_excess_gas_and_price,
-            slot_num: 0,
+            slot_num: expected_slot_number(chain_spec, header.timestamp, header.number)
+                .unwrap_or_default(),
         };
 
         EvmEnv { cfg_env, block_env }
@@ -84,7 +86,12 @@ impl BaseEvmEnvBuilder {
             gas_limit: attributes.gas_limit,
             basefee: base_fee_per_gas,
             blob_excess_gas_and_price,
-            slot_num: 0,
+            slot_num: expected_slot_number(
+                chain_spec,
+                attributes.timestamp,
+                parent.number.saturating_add(1),
+            )
+            .unwrap_or_default(),
         };
 
         EvmEnv { cfg_env, block_env }
@@ -116,7 +123,7 @@ impl BaseEvmEnvBuilder {
             gas_limit: payload.payload.as_v1().gas_limit,
             basefee: payload.payload.as_v1().base_fee_per_gas.to(),
             blob_excess_gas_and_price,
-            slot_num: 0,
+            slot_num: expected_slot_number(chain_spec, timestamp, block_number).unwrap_or_default(),
         };
 
         EvmEnv { cfg_env, block_env }
@@ -127,5 +134,178 @@ impl BaseEvmEnvBuilder {
         spec.into_eth_spec()
             .is_enabled_in(SpecId::CANCUN)
             .then_some(BlobExcessGasAndPrice { excess_blob_gas: 0, blob_gasprice: 1 })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy_genesis::Genesis;
+    use base_common_genesis::BaseUpgrade;
+    use base_execution_chainspec::BaseChainSpecBuilder;
+    use reth_chainspec::ForkCondition;
+    use revm::context_interface::Cfg;
+
+    use super::*;
+
+    /// Execute SLOTNUM through all production environment paths, including the fork boundary.
+    #[cfg(feature = "std")]
+    #[test]
+    fn slotnum_returns_l2_number_for_execution_building_and_payloads() {
+        use alloy_evm::{Evm, EvmFactory};
+        use alloy_primitives::{Address, B256, bytes};
+        use base_common_consensus::BaseBlock;
+        use base_common_evm::{BaseEvmFactory, BaseHaltReason, BaseTransaction, L1BlockInfo};
+        use revm::{
+            context::TxEnv,
+            context_interface::result::{ExecutionResult, HaltReason},
+            database::InMemoryDB,
+            state::{AccountInfo, Bytecode},
+        };
+
+        let chain = BaseChainSpecBuilder::default()
+            .chain(1.into())
+            .genesis(Genesis::default())
+            .azul_activated()
+            .with_fork(BaseUpgrade::Denim, ForkCondition::Timestamp(100))
+            .with_fork(reth_chainspec::EthereumHardfork::Amsterdam, ForkCondition::Timestamp(100))
+            .build();
+        for timestamp in [99, 100] {
+            let number = 48_526_667;
+            let header = Header {
+                number,
+                timestamp,
+                gas_limit: 40_000_000,
+                base_fee_per_gas: Some(0),
+                ..Default::default()
+            };
+            let parent = Header { number: number - 1, ..header.clone() };
+            let attributes = BaseNextBlockEnvAttributes {
+                timestamp,
+                suggested_fee_recipient: Address::ZERO,
+                prev_randao: B256::ZERO,
+                gas_limit: header.gas_limit,
+                parent_beacon_block_root: None,
+                extra_data: Default::default(),
+                slot_number: Some(number),
+            };
+            let payload = ExecutionData::from_block_slow(&BaseBlock {
+                header: header.clone(),
+                body: Default::default(),
+            });
+            for (path, env) in [
+                ("execution", BaseEvmEnvBuilder::evm_env(&header, &chain)),
+                ("building", BaseEvmEnvBuilder::next_evm_env(&parent, &attributes, 0, &chain)),
+                ("payload", BaseEvmEnvBuilder::payload_evm_env(&payload, &chain)),
+            ] {
+                assert_eq!(env.block_env.number, U256::from(number), "{path} block number");
+                assert_eq!(
+                    env.block_env.slot_num,
+                    if timestamp >= 100 { number } else { 0 },
+                    "{path} must share the header slot rule at timestamp {timestamp}",
+                );
+                let caller = Address::repeat_byte(0x11);
+                let contract = Address::repeat_byte(0x22);
+                let mut db = InMemoryDB::default();
+                db.insert_account_info(
+                    caller,
+                    AccountInfo { balance: U256::from(10u64).pow(U256::from(18)), ..Default::default() },
+                );
+                db.insert_account_info(
+                    contract,
+                    AccountInfo {
+                        nonce: 1,
+                        code: Some(Bytecode::new_legacy(bytes!("4b5f5260205ff3"))),
+                        ..Default::default()
+                    },
+                );
+                let mut evm = BaseEvmFactory::default().create_evm(db, env);
+                evm.ctx_mut().chain = L1BlockInfo {
+                    l2_block: Some(U256::from(number)),
+                    operator_fee_scalar: Some(U256::ZERO),
+                    operator_fee_constant: Some(U256::ZERO),
+                    ..Default::default()
+                };
+                let tx = BaseTransaction::builder()
+                    .base(TxEnv::builder().caller(caller).kind(contract.into()).gas_limit(100_000))
+                    .enveloped_tx(Some(bytes!("FACADE")))
+                    .build_fill();
+                let result = evm.transact(tx).expect("SLOTNUM transaction must be valid").result;
+                if timestamp >= 100 {
+                    assert!(result.is_success(), "{path} SLOTNUM must execute: {result:?}");
+                    assert_eq!(
+                        result.output().map(|bytes| U256::from_be_slice(bytes)),
+                        Some(U256::from(number)),
+                        "{path} SLOTNUM must return the exact L2 block number",
+                    );
+                } else {
+                    assert!(
+                        matches!(result, ExecutionResult::Halt {
+                            reason: BaseHaltReason::Base(HaltReason::NotActivated), ..
+                        }),
+                        "{path} SLOTNUM must remain unavailable before Amsterdam: {result:?}",
+                    );
+                }
+            }
+        }
+    }
+
+    /// Denim enables upstream Amsterdam; Everest inherits it without resetting L1 prices.
+    #[test]
+    fn everest_inherits_amsterdam_l1_parameters() {
+        let chain = BaseChainSpecBuilder::default()
+            .chain(0.into())
+            .genesis(Genesis::default())
+            .azul_activated()
+            .with_fork(BaseUpgrade::Denim, ForkCondition::Timestamp(100))
+            .with_fork(BaseUpgrade::Everest, ForkCondition::Timestamp(200))
+            .build();
+
+        for (timestamp, upgrade, eth_spec) in [
+            (99, BaseUpgrade::Azul, SpecId::OSAKA),
+            (100, BaseUpgrade::Denim, SpecId::AMSTERDAM),
+            (199, BaseUpgrade::Denim, SpecId::AMSTERDAM),
+            (200, BaseUpgrade::Everest, SpecId::AMSTERDAM),
+        ] {
+            let header = Header { timestamp, ..Default::default() };
+            let env = BaseEvmEnvBuilder::evm_env(&header, &chain);
+            let cfg = env.cfg_env;
+            assert_eq!(cfg.spec.upgrade(), upgrade, "Base fork at timestamp {timestamp}");
+            assert_eq!(cfg.spec.into_eth_spec(), eth_spec, "Ethereum spec at {timestamp}");
+            let amsterdam = eth_spec == SpecId::AMSTERDAM;
+            assert_eq!(cfg.enable_amsterdam_eip8037, amsterdam, "state gas gate at {timestamp}");
+            assert_eq!(
+                cfg.enable_amsterdam_eip2780, amsterdam,
+                "intrinsic gas gate at {timestamp}"
+            );
+            assert!(!cfg.amsterdam_eip7708_disabled, "transfer logs must retain upstream default");
+            assert_eq!(cfg.tx_gas_limit_cap, Some(MAX_TX_GAS_LIMIT_OSAKA), "retain Azul cap");
+            assert_eq!(
+                cfg.gas_params().code_deposit_state_gas(1),
+                if amsterdam { 1530 } else { 0 },
+                "one code byte must use upstream CPSB at {timestamp}",
+            );
+            let calldata = cfg.gas_params().initial_tx_gas(&[0, 1], false, 0, 0, 0, None);
+            assert_eq!(
+                calldata.floor_gas,
+                if amsterdam { 12_128 } else { 21_050 },
+                "zero and nonzero calldata bytes must use the fork's L1 floor at {timestamp}",
+            );
+            assert!(!cfg.amsterdam_eip8246_delayed_clear_disabled, "retain upstream clearing");
+            assert_eq!(
+                cfg.max_code_size(),
+                if amsterdam { 65_536 } else { 24_576 },
+                "L1 code limit"
+            );
+            assert_eq!(
+                cfg.max_initcode_size(),
+                if amsterdam { 131_072 } else { 49_152 },
+                "L1 initcode limit"
+            );
+            assert_eq!(
+                cfg.gas_params().transfer_value_cost(),
+                if amsterdam { 11_300 } else { 9_000 },
+                "CALL value charge must use L1 EIP-8038 pricing at {timestamp}",
+            );
+        }
     }
 }
