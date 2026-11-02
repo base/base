@@ -398,16 +398,18 @@ where
 mod tests {
     use alloc::{string::ToString, vec};
 
-    use alloy_consensus::{SignableTransaction, TxLegacy, transaction::Recovered};
+    use alloy_consensus::{Sealed, SignableTransaction, TxLegacy, transaction::Recovered};
     use alloy_eips::eip2718::WithEncoded;
     use alloy_evm::{
         EvmEnv, EvmFactory, ToTxEnv, block::BlockExecutorFactory, precompiles::PrecompilesMap,
     };
     use alloy_hardforks::ForkCondition;
-    use alloy_primitives::{Address, Bytes, Signature, U256, address, bytes, keccak256, uint};
+    use alloy_primitives::{
+        Address, B256, Bytes, Signature, TxKind, U256, address, bytes, keccak256, uint,
+    };
     use base_common_chains::{BaseUpgradeExt, ChainUpgrades};
     use base_common_consensus::{
-        BaseTxEnvelope, Call, Eip8130Constants, Eip8130Signed, Predeploys, TxEip8130,
+        BaseTxEnvelope, Call, Eip8130Constants, Eip8130Signed, Predeploys, TxDeposit, TxEip8130,
     };
     use base_common_genesis::BaseUpgrade;
     use k256::ecdsa::SigningKey;
@@ -938,5 +940,167 @@ mod tests {
         .expect("EIP-8130 transaction is included");
 
         assert_eq!(result.eip8130_committed_phases, 1);
+    }
+
+    // ---- Gas-limit billing (BaseFeature::GasLimitBilling) ----
+
+    /// The gas-limit billing block fixture: a `GAS_LIMIT_BILLING_BLOCK_GAS` block filled with
+    /// `GAS_LIMIT_BILLING_TX_GAS` transactions that each use only a plain transfer's 21k gas.
+    const GAS_LIMIT_BILLING_TX_GAS: u64 = 100_000;
+    const GAS_LIMIT_BILLING_BLOCK_GAS: u64 = 250_000;
+    const GAS_LIMIT_BILLING_RECIPIENT: Address = Address::repeat_byte(0xaa);
+    /// Metered gas of a plain value transfer.
+    const TRANSFER_GAS: u64 = 21_000;
+
+    /// A deposit from the pre-funded zero address with the fixture's gas limit.
+    fn gas_limit_billing_deposit() -> Recovered<BaseTxEnvelope> {
+        let tx = TxDeposit {
+            source_hash: B256::repeat_byte(0xd0),
+            from: Address::ZERO,
+            to: TxKind::Call(GAS_LIMIT_BILLING_RECIPIENT),
+            gas_limit: GAS_LIMIT_BILLING_TX_GAS,
+            ..Default::default()
+        };
+        Recovered::new_unchecked(
+            BaseTxEnvelope::Deposit(Sealed::new_unchecked(tx, B256::repeat_byte(0xd1))),
+            Address::ZERO,
+        )
+    }
+
+    /// A zero-priced legacy transfer from the pre-funded zero address with `nonce` and the
+    /// fixture's gas limit.
+    fn gas_limit_billing_transfer(nonce: u64) -> Recovered<BaseTxEnvelope> {
+        let tx = TxLegacy {
+            nonce,
+            gas_limit: GAS_LIMIT_BILLING_TX_GAS,
+            to: TxKind::Call(GAS_LIMIT_BILLING_RECIPIENT),
+            ..Default::default()
+        };
+        Recovered::new_unchecked(
+            BaseTxEnvelope::Legacy(tx.into_signed(Signature::new(
+                Default::default(),
+                Default::default(),
+                Default::default(),
+            ))),
+            Address::ZERO,
+        )
+    }
+
+    /// What the block executor recorded after filling a block under gas-limit billing or not.
+    #[derive(Debug, PartialEq, Eq)]
+    struct BlockGasAccounting {
+        /// `GasOutput::tx_gas_used` of each accepted transaction, as handed to payload builders.
+        charged: Vec<u64>,
+        /// Each receipt's `cumulative_gas_used`.
+        cumulative: Vec<u64>,
+        /// The executor's running total, which becomes the header `gas_used`.
+        header_gas_used: u64,
+        /// Whether the last transfer was admitted.
+        last_transfer_fits: bool,
+    }
+
+    /// Executes a deposit followed by three transfers, every one declaring
+    /// `GAS_LIMIT_BILLING_TX_GAS`, into a `GAS_LIMIT_BILLING_BLOCK_GAS` block at `upgrade`.
+    fn fill_block_under(upgrade: BaseUpgrade) -> BlockGasAccounting {
+        const JOVIAN_TIMESTAMP: u64 = 1746806402;
+
+        let mut db = prepare_jovian_db(0);
+        let base_chain_upgrades = ChainUpgrades::new(
+            BaseUpgrade::mainnet()
+                .into_iter()
+                .chain(vec![(BaseUpgrade::Jovian, ForkCondition::Timestamp(JOVIAN_TIMESTAMP))]),
+        );
+        let receipt_builder = AlloyReceiptBuilder::default();
+        let mut executor = build_executor(
+            &mut db,
+            &receipt_builder,
+            &base_chain_upgrades,
+            GAS_LIMIT_BILLING_BLOCK_GAS,
+            JOVIAN_TIMESTAMP,
+        );
+        executor.evm.ctx_mut().cfg.spec = BaseSpecId::new(upgrade);
+
+        let mut charged = Vec::new();
+        let mut last_transfer_fits = true;
+        // The deposit bumps the sender's nonce (Regolith deposit nonces), so transfers start at 1.
+        let txs = core::iter::once(gas_limit_billing_deposit())
+            .chain((1..=3).map(gas_limit_billing_transfer));
+        for (index, tx) in txs.enumerate() {
+            match executor.execute_transaction(&tx) {
+                Ok(gas_output) => charged.push(gas_output.tx_gas_used()),
+                Err(BlockExecutionError::Validation(
+                    BlockValidationError::TransactionGasLimitMoreThanAvailableBlockGas {
+                        transaction_gas_limit,
+                        block_available_gas,
+                    },
+                )) => {
+                    assert_eq!(index, 3, "only the last transfer may be refused");
+                    assert_eq!(transaction_gas_limit, GAS_LIMIT_BILLING_TX_GAS);
+                    assert_eq!(
+                        block_available_gas,
+                        GAS_LIMIT_BILLING_BLOCK_GAS - executor.gas_used
+                    );
+                    last_transfer_fits = false;
+                }
+                Err(err) => panic!("unexpected execution error: {err:?}"),
+            }
+        }
+        BlockGasAccounting {
+            charged,
+            cumulative: executor
+                .receipts
+                .iter()
+                .map(|receipt| receipt.cumulative_gas_used())
+                .collect(),
+            header_gas_used: executor.gas_used,
+            last_transfer_fits,
+        }
+    }
+
+    /// Before the feature a block is charged what its transactions consume: a deposit and three
+    /// 100k-limit transfers using 21k each fit a 250k block with room to spare.
+    #[test]
+    fn pre_gas_limit_billing_block_gas_accounts_metered_usage() {
+        assert_eq!(
+            fill_block_under(BaseUpgrade::Jovian),
+            BlockGasAccounting {
+                charged: vec![TRANSFER_GAS; 4],
+                cumulative: vec![
+                    TRANSFER_GAS,
+                    2 * TRANSFER_GAS,
+                    3 * TRANSFER_GAS,
+                    4 * TRANSFER_GAS
+                ],
+                header_gas_used: 4 * TRANSFER_GAS,
+                last_transfer_fits: true,
+            }
+        );
+    }
+
+    /// With the feature on, a non-deposit transaction is charged its full declared `gas_limit`
+    /// against the block while the deposit keeps its metered gas: the `GasOutput` handed to the
+    /// payload builder, each receipt's `cumulative_gas_used` and the executor's `gas_used` (the
+    /// header's) all carry the reserved gas, so the block is full after two transfers and the
+    /// third is refused before it executes. A block's fullness follows from gas limits alone.
+    #[test]
+    fn gas_limit_billing_block_gas_accounts_reserved_gas() {
+        const AFTER_DEPOSIT: u64 = TRANSFER_GAS;
+        const AFTER_FIRST_TRANSFER: u64 = AFTER_DEPOSIT + GAS_LIMIT_BILLING_TX_GAS;
+        const AFTER_SECOND_TRANSFER: u64 = AFTER_FIRST_TRANSFER + GAS_LIMIT_BILLING_TX_GAS;
+        // The third transfer fits by metered gas but not by its declared limit.
+        const {
+            assert!(AFTER_SECOND_TRANSFER + GAS_LIMIT_BILLING_TX_GAS > GAS_LIMIT_BILLING_BLOCK_GAS);
+            assert!(AFTER_SECOND_TRANSFER + TRANSFER_GAS <= GAS_LIMIT_BILLING_BLOCK_GAS);
+        }
+
+        assert_eq!(
+            fill_block_under(BaseUpgrade::Zenith),
+            BlockGasAccounting {
+                charged: vec![TRANSFER_GAS, GAS_LIMIT_BILLING_TX_GAS, GAS_LIMIT_BILLING_TX_GAS],
+                cumulative: vec![AFTER_DEPOSIT, AFTER_FIRST_TRANSFER, AFTER_SECOND_TRANSFER],
+                header_gas_used: AFTER_SECOND_TRANSFER,
+                last_transfer_fits: false,
+            }
+        );
     }
 }
