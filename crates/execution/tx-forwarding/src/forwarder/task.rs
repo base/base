@@ -4,7 +4,7 @@ use std::{
 };
 
 use alloy_primitives::TxHash;
-use base_execution_txpool::MAX_VALIDATED_INSERT_BATCH;
+use base_execution_txpool::{MAX_VALIDATED_INSERT_BATCH, is_already_imported_rejection};
 use base_observability_events::{
     TransactionEventProducer, TransactionEventType, transaction_event,
 };
@@ -105,6 +105,8 @@ pub(crate) struct DestinationForwarder<R> {
     limiter: RateLimiter,
     buffer: Vec<R>,
     buffer_limit: usize,
+    /// Where to report hashes whose forward failed, so the reader can resend them.
+    failures: Option<mpsc::Sender<TxHash>>,
 }
 
 impl<R: ForwardRequest> DestinationForwarder<R> {
@@ -119,7 +121,31 @@ impl<R: ForwardRequest> DestinationForwarder<R> {
         let buffer_limit = config.batch_limit();
         let buffer = Vec::with_capacity(buffer_limit);
         let url_label: Arc<str> = builder_url.to_string().into();
-        Self { builder_url, url_label, client, receiver, config, limiter, buffer, buffer_limit }
+        Self {
+            builder_url,
+            url_label,
+            client,
+            receiver,
+            config,
+            limiter,
+            buffer,
+            buffer_limit,
+            failures: None,
+        }
+    }
+
+    /// Reports the hash of every request whose forward failed on `failures`: those in a batch
+    /// dropped after its retries, and those the destination rejected for any reason other than
+    /// already holding the transaction. Reports are dropped when the channel is full.
+    pub(crate) fn with_failure_reports(mut self, failures: mpsc::Sender<TxHash>) -> Self {
+        self.failures = Some(failures);
+        self
+    }
+
+    fn report_failure(&self, tx_hash: Option<TxHash>) {
+        if let (Some(failures), Some(tx_hash)) = (&self.failures, tx_hash) {
+            let _ = failures.try_send(tx_hash);
+        }
     }
 
     /// Runs the forwarder loop until the destination queue closes.
@@ -299,6 +325,9 @@ impl<R: ForwardRequest> DestinationForwarder<R> {
                                     error = %e,
                                     "batch item rejected",
                                 );
+                                if !is_already_imported_rejection(&e) {
+                                    self.report_failure(tx_hash);
+                                }
                                 err_count += 1;
                                 self.emit_forward_event(
                                     TransactionEventType::TxpoolBuilderForwardFailure,
@@ -339,6 +368,7 @@ impl<R: ForwardRequest> DestinationForwarder<R> {
                     ForwarderMetrics::rpc_latency(Arc::clone(&self.url_label))
                         .record(overall_start.elapsed().as_secs_f64());
                     for (tx_hash, method) in tx_hashes.iter().zip(&methods) {
+                        self.report_failure(*tx_hash);
                         self.emit_forward_event(
                             TransactionEventType::TxpoolBuilderForwardDropped,
                             *tx_hash,
@@ -969,5 +999,60 @@ mod tests {
         let mixed = [TestRequest::Insert(Box::new(transaction::<NoExtensions>(0).transaction))];
         mixed_forwarder.send(&mixed).await.unwrap();
         assert_eq!(methods(&received), [INSERT_METHOD]);
+    }
+
+    /// A destination that accepts nonce 0, reports nonce 1 as already held and rejects nonce 2,
+    /// with the messages the builder's insert RPC uses.
+    async fn rejecting_rpc_server() -> (url::Url, jsonrpsee::server::ServerHandle) {
+        let mut module = RpcModule::new(());
+        module
+            .register_method(INSERT_METHOD, |params, _, _| {
+                let (tx,): (Value,) = params.parse()?;
+                let message = match tx["raw"].as_str() {
+                    Some("0x01") => "pool rejected transaction: [0x01]: already imported",
+                    Some("0x02") => "pool rejected transaction: [0x02]: nonce too low",
+                    _ => return Ok(()),
+                };
+                Err(ErrorObjectOwned::owned(-32603, message, None::<()>))
+            })
+            .unwrap();
+        let server = Server::builder().build(SocketAddr::from(([127, 0, 0, 1], 0))).await.unwrap();
+        let address = server.local_addr().unwrap();
+        (url::Url::parse(&format!("http://{address}")).unwrap(), server.start(module))
+    }
+
+    fn reported(failures: &mut mpsc::Receiver<TxHash>) -> Vec<TxHash> {
+        std::iter::from_fn(|| failures.try_recv().ok()).collect()
+    }
+
+    /// A rejection is a failed forward unless the destination already holds the transaction.
+    #[tokio::test]
+    async fn rejections_other_than_already_imported_are_reported_as_failures() {
+        let (url, _server) = rejecting_rpc_server().await;
+        let (_sender, receiver) = mpsc::channel(1);
+        let (report, mut failures) = mpsc::channel(8);
+        let forwarder = forwarder(url, receiver, config(0, 0)).with_failure_reports(report);
+        let batch: Vec<_> = (0..3).map(transaction::<NoExtensions>).collect();
+
+        forwarder.send_with_retries(batch).await;
+
+        assert_eq!(reported(&mut failures), [transaction::<NoExtensions>(2).tx_hash]);
+    }
+
+    /// Every transaction in a batch dropped after its retries is reported as a failure.
+    #[tokio::test]
+    async fn a_dropped_batch_reports_every_transaction() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = url::Url::parse(&format!("http://{}", listener.local_addr().unwrap())).unwrap();
+        drop(listener);
+        let (_sender, receiver) = mpsc::channel(1);
+        let (report, mut failures) = mpsc::channel(8);
+        let forwarder = forwarder(url, receiver, config(0, 0)).with_failure_reports(report);
+        let batch: Vec<_> = (0..2).map(transaction::<NoExtensions>).collect();
+        let expected: Vec<_> = batch.iter().map(|request| request.tx_hash).collect();
+
+        forwarder.send_with_retries(batch).await;
+
+        assert_eq!(reported(&mut failures), expected);
     }
 }

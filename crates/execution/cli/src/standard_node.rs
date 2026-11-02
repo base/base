@@ -634,6 +634,7 @@ impl From<&StandardNodeArgs> for TxForwardingConfig {
 
         Self::new(args.rpc.builder_rpc_urls.clone())
             .with_resend_after_ms(args.rpc.tx_forwarding_resend_after_ms)
+            .with_validity_lifetime_secs(args.rpc.validity_max_expiry_secs)
             .with_max_batch_size(args.rpc.tx_forwarding_batch_size)
             .with_max_rps(args.rpc.tx_forwarding_max_rps)
             .with_fifo_percent(args.rpc.tx_forwarding_fifo_percent)
