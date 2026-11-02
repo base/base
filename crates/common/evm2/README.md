@@ -78,8 +78,9 @@ transaction registry and static handler hooks. This crate defines that family fo
 The `tests/*_parity.rs` harnesses run the same input through both engines and compare the
 results across the execution fork ladder (`BaseUpgrade::EXECUTION_VARIANTS`):
 
-- `deposit_parity`: deposit outcome, gas, created address, and post-state, Regolith onward
-  (Bedrock deposit rules are not implemented because Base launched with Regolith active).
+- `deposit_parity`: deposit outcome, gas, logs, created address, and post-state, including
+  pre-Regolith system deposits, which both engines execute like any other deposit (neither
+  implements the historical Bedrock gas rules because Base launched with Regolith active).
 - `standard_fee_parity`: gas used and every fee recipient's balance for a standard transaction.
 - `block_parity`: per-transaction success and cumulative gas for a block of a deposit followed
   by standard transactions.

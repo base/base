@@ -2,6 +2,7 @@
 
 use alloy_primitives::U256;
 use base_common_consensus::{DEPOSIT_TX_TYPE_ID, EIP8130_TX_TYPE_ID, TxDeposit};
+use base_common_genesis::BaseUpgrade;
 use evm2::{
     Evm, TxResult,
     env::TxEnvExt,
@@ -75,14 +76,16 @@ impl BaseEvmTypes {
     }
 
     /// Executes a deposit transaction, mirroring the OP-stack deposit rules of the revm
-    /// execution path (`base-common-evm`), for which Base is always Regolith-active.
+    /// execution path (`base-common-evm`).
     ///
     /// The minted value is credited to the sender before execution and kept regardless of the
-    /// outcome. System-transaction deposits are rejected (post-Regolith) and settled as failed
-    /// deposits. Deposits are exempt from the L1 data fee, the operator fee, and the
-    /// beneficiary reward, so gas is finalized without charging any fee. A halted deposit is
-    /// charged the full gas limit — there is no L2 fee payer to refund — while a reverted
-    /// deposit reports its actual gas, like any transaction.
+    /// outcome. From Regolith, system-transaction deposits are rejected and settled as failed
+    /// deposits; before Regolith they execute like any other deposit, as in the reference, which
+    /// dropped the historical pre-Regolith gas rules because Base launched with Regolith active.
+    /// Deposits are exempt from the L1 data fee, the operator fee, and the beneficiary reward,
+    /// so gas is finalized without charging any fee. A halted deposit is charged the full gas
+    /// limit — there is no L2 fee payer to refund — while a reverted deposit reports its actual
+    /// gas, like any transaction.
     pub fn handle_deposit(
         req: TxRequest<'_, '_, Self, TxDeposit>,
     ) -> HandlerResult<TxResult<Self>> {
@@ -94,8 +97,8 @@ impl BaseEvmTypes {
         // deposit's contract-address derivation.
         let nonce = Self::prepare_deposit_sender(host, tx)?;
 
-        // System-transaction deposits are rejected post-Regolith (always active on Base).
-        if tx.is_system_transaction {
+        let regolith = (host.config_spec_id().upgrade() as u8) >= (BaseUpgrade::Regolith as u8);
+        if tx.is_system_transaction && regolith {
             return Ok(Self::failed_deposit(tx));
         }
 
@@ -216,7 +219,6 @@ impl BaseEvmTypes {
 mod tests {
     use alloy_consensus::transaction::Recovered;
     use alloy_primitives::{Address, Bytes, TxKind, U256};
-    use base_common_genesis::BaseUpgrade;
     use evm2::{Evm, Precompiles, env::BlockEnv, evm::InMemoryDB};
 
     use super::*;
