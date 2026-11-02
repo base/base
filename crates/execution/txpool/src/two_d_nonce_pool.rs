@@ -704,6 +704,15 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
         self.hashes.get(hash).cloned()
     }
 
+    /// Returns the hashes of `sender`'s transactions, from the per-sender index
+    /// rather than a pool scan.
+    pub(crate) fn sender_transaction_hashes(&self, sender: &Address) -> Vec<TxHash> {
+        self.usage
+            .sender_hashes
+            .get(sender)
+            .map_or_else(Vec::new, |hashes| hashes.iter().copied().collect())
+    }
+
     /// Returns transactions for the given sender.
     pub(crate) fn transactions_by_sender(
         &self,
