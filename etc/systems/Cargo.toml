@@ -144,6 +144,7 @@ base-consensus-engine = { workspace = true, features = ["test-utils"] }
 alloy-json-rpc.workspace = true
 
 # base-alloy
+base-common-eip8130 = { workspace = true, features = ["std"] }
 
 # proof
 base-optimism-rpc.workspace = true
