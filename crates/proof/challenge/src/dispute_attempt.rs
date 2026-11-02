@@ -8,6 +8,8 @@
 //! `Wait` continues the loop; its update is only for reporting. `Idle` ends
 //! the tick. Terminal actions remove the attempt and request no further I/O.
 //! Events that don't match the current phase are inert.
+//! Pass the response time to `apply` for `ReproveStarted`; it starts the new
+//! session's timeout without changing the tick. Other events ignore `apply`'s clock.
 //!
 //! If a `Submit` or `Reprove` result is never applied, the next tick rechecks
 //! the chain before retrying the action. An unapplied reprove spends no retry
@@ -27,7 +29,21 @@ use base_proof_submission::KnownRevert;
 use base_prover_service_protocol::{GetProofResponse, ProofStatus, SnarkPlonkProofRequest};
 use base_tx_manager::TxManagerError;
 
-use crate::{ChallengeSubmitError, ChallengerProofAdapter, DisputeIntent};
+use crate::{ChallengeSubmitError, ChallengerProofAdapter};
+
+/// The intended onchain action for a completed proof.
+///
+/// A TEE proof always targets `nullify()`. A ZK proof may target either
+/// `challenge()` (Path 1: challenging a wrong TEE proposal) or `nullify()`
+/// (Path 2: nullifying a fraudulent ZK challenge, Path 3: nullifying a
+/// wrong ZK proposal).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DisputeIntent {
+    /// Submit via `challenge()` — challenges a TEE proof with a competing ZK proof.
+    Challenge,
+    /// Submit via `nullify()` — nullifies an existing proof.
+    Nullify,
+}
 
 /// Retry and prover-duration limits for one dispute attempt.
 #[derive(Debug, Clone, Copy)]
@@ -201,7 +217,10 @@ pub enum IgnoreReason {
     /// The L1 origin is outside the history window.
     L1OriginTooOld,
     /// The onchain verifier rejected the ZK proof.
-    ZkInvalidProof,
+    ZkInvalidProof {
+        /// Index rejected by the verifier.
+        invalid_index: u64,
+    },
 }
 
 /// Why a TEE submission triggered retry handling.
@@ -422,6 +441,7 @@ impl DisputeAttempt {
     }
 
     /// Applies external results without performing I/O or returning an error.
+    /// `now` starts a successful reprove's timeout; it does not identify the tick.
     pub fn apply(&mut self, event: Event, now: Instant) -> Action {
         match event {
             Event::ProverStatus(response)
@@ -523,7 +543,9 @@ impl DisputeAttempt {
                         Some(Action::Ignore(IgnoreReason::L1OriginTooOld))
                     }
                     ChallengeSubmitError::KnownRevert(KnownRevert::InvalidProof) if !is_tee => {
-                        Some(Action::Ignore(IgnoreReason::ZkInvalidProof))
+                        Some(Action::Ignore(IgnoreReason::ZkInvalidProof {
+                            invalid_index: self.target.invalid_index,
+                        }))
                     }
                     ChallengeSubmitError::KnownRevert(KnownRevert::InvalidSigner) if !is_tee => {
                         Some(Action::Drop(DropReason::ZkInvalidSigner))
@@ -881,6 +903,29 @@ mod tests {
     }
 
     #[test]
+    fn reprove_timeout_starts_at_completion_without_starting_a_new_tick() {
+        let tick = Instant::now();
+        let mut attempt = zk(tick);
+        assert!(matches!(attempt.need(tick), Need::PollProver(_)));
+        attempt.apply(response(ProofStatus::Failed), tick);
+        assert!(matches!(attempt.need(tick), Need::CheckChain { timeout: None }));
+        assert!(matches!(attempt.apply(chain(), tick), Action::Reprove(_)));
+
+        let completed_at = tick + Duration::from_secs(20);
+        attempt.apply(Event::ReproveStarted(Ok("next".into())), completed_at);
+        assert!(matches!(attempt.need(tick), Need::Idle));
+
+        let deadline = completed_at + Duration::from_secs(10);
+        assert!(matches!(attempt.need(deadline), Need::PollProver(id) if id == "next"));
+        assert!(matches!(
+            attempt.need(deadline + Duration::from_secs(1)),
+            Need::CheckChain {
+                timeout: Some(RetryReason::Timeout { elapsed, limit }),
+            } if elapsed == Duration::from_secs(11) && limit == Duration::from_secs(10)
+        ));
+    }
+
+    #[test]
     fn idle_ticks_resume_only_with_a_new_now() {
         let now = Instant::now();
         for (name, mut attempt, events, next) in [
@@ -1220,6 +1265,23 @@ mod tests {
     }
 
     #[test]
+    fn tee_nullification_completes_without_further_effects() {
+        let now = Instant::now();
+        let mut attempt = tee(now, false);
+        attempt.need(now);
+        attempt.apply(success(true), now);
+        assert!(matches!(
+            attempt.apply(chain(), now),
+            Action::Submit { intent: DisputeIntent::Nullify, source: AttemptProofSource::Tee, .. }
+        ));
+        assert!(matches!(
+            attempt.apply(Event::Submitted(Ok(())), now),
+            Action::Drop(DropReason::Disputed)
+        ));
+        assert!(matches!(attempt.need(now + Duration::from_secs(1)), Need::Idle));
+    }
+
+    #[test]
     fn submit_errors_follow_source_specific_policy() {
         let now = Instant::now();
         for is_tee in [false, true] {
@@ -1263,7 +1325,10 @@ mod tests {
                             assert!(matches!(action, Action::Ignore(IgnoreReason::L1OriginTooOld)))
                         }
                         "proof" if !is_tee => {
-                            assert!(matches!(action, Action::Ignore(IgnoreReason::ZkInvalidProof)))
+                            assert!(matches!(
+                                action,
+                                Action::Ignore(IgnoreReason::ZkInvalidProof { .. })
+                            ))
                         }
                         "signer" if !is_tee => {
                             assert!(matches!(action, Action::Drop(DropReason::ZkInvalidSigner)))

@@ -40,7 +40,7 @@ pub struct DriverComponents<L2: L2Provider, P: ProofRequesterProvider, T: TxMana
     pub anchor_updater: AnchorUpdater,
     /// How often the driver polls for new games.
     pub poll_interval: Duration,
-    /// Maximum wall-clock time to wait for a ZK proof session before treating it as failed.
+    /// Maximum wall-clock time to wait for a ZK prover session before treating it as failed.
     pub max_proof_duration: Duration,
     /// Retryable TEE submission failures to tolerate before falling back to ZK.
     pub tee_submit_retry_limit: u32,
@@ -71,7 +71,7 @@ where
     pub verifier_client: Arc<dyn AggregateVerifierClient>,
     /// Validates L2 output roots against the local node.
     pub validator: OutputValidator<L2>,
-    /// Manages proof sessions, retries, submissions, and TEE-to-ZK fallback.
+    /// Manages dispute attempts, submissions, and ZK fallback.
     pub proof_manager: DisputeProofManager<L2, P>,
     /// Bond lifecycle manager (optional; enabled when claim addresses are configured).
     pub bond_manager: Option<BondManager<TokioRuntime>>,

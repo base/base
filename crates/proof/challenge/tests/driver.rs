@@ -9,13 +9,13 @@ use std::{
 
 use alloy_primitives::{Address, B256, Bytes};
 use base_challenger::{
-    AnchorUpdater, ChallengeSubmitter, ChallengerProofAdapter, DisputeIntent, DisputeProofManager,
-    Driver, DriverComponents, GameScanner, OutputValidator, PendingProof, ProofKind, ProofPhase,
+    AnchorUpdater, ChallengeSubmitter, ChallengerProofAdapter, DisputeProofManager, Driver,
+    DriverComponents, GameScanner, OutputValidator,
     test_utils::{
         DEFAULT_L1_HEAD, DEFAULT_TEE_PROVER, MockAggregateVerifier, MockDisputeGameFactory,
         MockGameState, MockL1, MockL2Provider, MockTxManager, MockZkProofProvider,
         MockZkProofState, addr, build_test_header_and_account, factory_game, mock_anchor_registry,
-        mock_state, mock_state_with_tee, receipt_with_status,
+        receipt_with_status,
     },
 };
 use base_proof_contracts::{
@@ -27,8 +27,8 @@ use base_proof_rpc::L1Provider;
 use base_proof_submission::test_utils::SnarkReceiptFixture;
 use base_protocol::OutputRoot;
 use base_prover_service_protocol::{
-    ProofRequestKind, ProofResult as ApiProofResult, ProofStatus, SnarkPlonkProofRequest, TeeKind,
-    TeeProofResult, ZkBackend, ZkProofRequest, ZkVm,
+    ProofRequestKind, ProofResult as ApiProofResult, ProofStatus, TeeKind, TeeProofResult,
+    ZkBackend, ZkProofRequest, ZkVm,
 };
 use base_tx_manager::TxManagerError;
 use tokio_util::sync::CancellationToken;
@@ -166,30 +166,6 @@ fn single_game_verifier(state: MockGameState) -> Arc<MockAggregateVerifier> {
     Arc::new(MockAggregateVerifier::new(HashMap::from([(addr(0), state)])))
 }
 
-fn default_ready_proof(intent: DisputeIntent) -> PendingProof {
-    let request = SnarkPlonkProofRequest {
-        proof: ZkProofRequest {
-            start_block_number: 15,
-            number_of_blocks_to_prove: 5,
-            sequence_window: None,
-            l1_head: Some(DEFAULT_L1_HEAD),
-            schedule_l2_block_number: None,
-            intermediate_block_interval: NonZeroU64::new(5).unwrap(),
-            zk_vm: ZkVm::Sp1,
-            zk_backend: ZkBackend::Cluster,
-        },
-        prover_address: addr(0),
-    };
-
-    PendingProof::ready(
-        Bytes::from_static(&[0x01, 0xDE, 0xAD]),
-        1,
-        B256::repeat_byte(0xEE),
-        request,
-        intent,
-    )
-}
-
 /// Bincode SNARK receipt fixture (matches prover-service download payloads).
 fn snark_receipt_bytes() -> Vec<u8> {
     SnarkReceiptFixture::plonk_receipt_bytes([0x5a, 0x09, 0x3a, 0x2f], "dead")
@@ -255,22 +231,6 @@ fn invalid_game_mocks()
     });
 
     (l2, factory, verifier)
-}
-
-/// Stages a ready challenge for a game with the given verifier state.
-fn driver_with_ready_proof(
-    game_state: MockGameState,
-    tx: MockTxManager,
-) -> Driver<MockL2Provider, MockZkProofProvider, MockTxManager> {
-    let factory = single_game_factory();
-    let verifier = single_game_verifier(game_state);
-    let l2 = default_l2();
-    let mut driver = test_driver(factory, verifier, l2, default_zk_prover(), tx);
-    driver
-        .proof_manager
-        .pending_proofs_mut()
-        .insert(addr(0), default_ready_proof(DisputeIntent::Challenge));
-    driver
 }
 
 fn sent_disputes(tx: &MockTxManager) -> Vec<(Address, DisputeKind)> {
@@ -455,21 +415,6 @@ async fn test_step_failed_submission_reuses_completed_proof() {
     assert_eq!(sent_disputes(&tx), vec![(addr(0), DisputeKind::Challenge); 2]);
     assert_eq!(driver.proof_manager.pending_proofs_len(), 0);
     assert_zk_requests(&zk, 1);
-}
-
-#[tokio::test]
-async fn test_poll_or_submit_drops_stale_challenge_proofs() {
-    for game_state in [
-        mock_state(GameStatus::ChallengerWins, Address::ZERO, 20),
-        mock_state(GameStatus::InProgress, ZK_PROVER_ADDR, 20),
-        mock_state_with_tee(GameStatus::InProgress, Address::ZERO, Address::ZERO, 20),
-    ] {
-        let tx = default_tx_manager();
-        let mut driver = driver_with_ready_proof(game_state, tx.clone());
-        driver.step().await.unwrap();
-        assert_eq!(driver.proof_manager.pending_proofs_len(), 0);
-        assert!(tx.recorded_calls().is_empty());
-    }
 }
 
 #[tokio::test]
@@ -782,93 +727,6 @@ async fn test_step_invalid_tee_result_falls_back_to_zk_without_timeout() {
 // Path 2: Correct TEE proof challenged with wrong ZK proof → nullify ZK
 // ──────────────────────────────────────────────────────────────────────────
 
-#[tokio::test]
-async fn test_poll_or_submit_nullify_intent_not_dropped_when_zk_prover_set() {
-    // A pending proof with DisputeIntent::Nullify should NOT be dropped
-    // when zkProver is non-zero (unlike DisputeIntent::Challenge, which
-    // requires zkProver == ZERO).
-    let factory = single_game_factory();
-    let l2 = default_l2();
-    let mut game_state =
-        mock_state_with_tee(GameStatus::InProgress, ZK_PROVER_ADDR, DEFAULT_TEE_PROVER, 20);
-    game_state.countered_index = 2; // challenged at 0-based index 1
-    // Provide intermediate roots so the scanner's FraudulentZkChallenge
-    // processing (which runs after the pending proof is submitted) does not
-    // panic when fetching the root at the challenged index.
-    game_state.intermediate_output_roots = vec![B256::repeat_byte(0x01), B256::repeat_byte(0x02)];
-    let verifier = single_game_verifier(game_state);
-
-    let tx = default_tx_manager();
-    let mut driver = test_driver(factory, verifier, l2, default_zk_prover(), tx.clone());
-    driver
-        .proof_manager
-        .pending_proofs_mut()
-        .insert(addr(0), default_ready_proof(DisputeIntent::Nullify));
-
-    driver.step().await.unwrap();
-
-    assert_eq!(driver.proof_manager.pending_proofs_len(), 0);
-    assert_eq!(sent_disputes(&tx), vec![(addr(0), DisputeKind::Nullify)]);
-}
-
-#[tokio::test]
-async fn test_successful_staged_tee_nullify_sends_only_dispute() {
-    let factory = Arc::new(MockDisputeGameFactory::new(vec![]));
-    let l2 = default_l2();
-    let verifier = single_game_verifier(mock_state_with_tee(
-        GameStatus::InProgress,
-        ZK_PROVER_ADDR,
-        DEFAULT_TEE_PROVER,
-        20,
-    ));
-
-    let tx = default_tx_manager();
-    let mut driver = test_driver(factory, verifier, l2, default_zk_prover(), tx.clone());
-    driver.proof_manager.pending_proofs_mut().insert(
-        addr(0),
-        PendingProof {
-            phase: ProofPhase::ReadyToSubmit { proof_bytes: Bytes::from_static(&[0x00, 0xAA]) },
-            kind: ProofKind::Tee { zk_fallback: None },
-            invalid_index: 1,
-            expected_root: BOGUS_ROOT,
-            retry_count: 0,
-            tee_submit_retry_count: 0,
-            intent: DisputeIntent::Nullify,
-        },
-    );
-
-    driver.step().await.unwrap();
-
-    assert_eq!(driver.proof_manager.pending_proofs_len(), 0);
-    assert_eq!(sent_disputes(&tx), vec![(addr(0), DisputeKind::Nullify)]);
-}
-
-#[tokio::test]
-async fn test_poll_or_submit_challenge_intent_dropped_when_zk_prover_set() {
-    // A pending proof with DisputeIntent::Challenge should be dropped
-    // when zkProver is non-zero (game already challenged).
-    let factory = single_game_factory();
-    let l2 = default_l2();
-    let verifier = single_game_verifier(mock_state_with_tee(
-        GameStatus::InProgress,
-        ZK_PROVER_ADDR,
-        DEFAULT_TEE_PROVER,
-        20,
-    ));
-
-    let tx = MockTxManager::new(Err(TxManagerError::NonceTooLow)); // Should never be called
-    let mut driver = test_driver(factory, verifier, l2, default_zk_prover(), tx.clone());
-    driver
-        .proof_manager
-        .pending_proofs_mut()
-        .insert(addr(0), default_ready_proof(DisputeIntent::Challenge));
-
-    driver.step().await.unwrap();
-
-    assert_eq!(driver.proof_manager.pending_proofs_len(), 0);
-    assert!(tx.recorded_calls().is_empty());
-}
-
 /// Builds mocks for a Path 2 (`FraudulentZkChallenge`) scenario.
 ///
 /// The game at `addr(0)` has both TEE and ZK provers set with
@@ -1176,7 +1034,7 @@ async fn test_step_checkpoint_count_mismatch_surfaces_error() {
     let mut driver = test_driver(factory, verifier, l2, default_zk_prover(), default_tx_manager());
 
     // step() should succeed (per-game errors are caught at the candidate
-    // level), but the game should NOT have a pending proof — the mismatch
+    // level), but the game should not have a dispute attempt because the mismatch
     // error prevents silent skipping and instead logs an error.
     driver.step().await.unwrap();
 
