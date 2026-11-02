@@ -52,7 +52,7 @@ where
 /// iterator's walk past them once `cancel`, the flashblock's cancellation, fires. The build loop
 /// checks the same token before each candidate, so a deadline that fires mid-walk ends the
 /// flashblock as promptly as one that fires between candidates.
-pub(crate) fn flashblock_hold<T: BasePooledTx>(
+pub fn flashblock_hold<T: BasePooledTx>(
     resting: &SharedRestingPredicates,
     cancel: &CancellationToken,
 ) -> Box<dyn BestTransactionsHold<T>> {
