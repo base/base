@@ -40,11 +40,12 @@ pub struct AppliedTransaction {
 /// Resolving the sender ahead of authorization lets block execution check the
 /// nonce before any account change runs. The EOA recovery token is carried into
 /// [`TransactionAuthorizer`] so the secp256k1 ecrecover runs once per
-/// transaction.
+/// transaction, and the transaction hash binds it to the `signed` it came from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ResolvedSender {
     account: Address,
     recovered: Option<RecoveredActorId>,
+    tx_hash: B256,
 }
 
 impl ResolvedSender {
@@ -54,18 +55,32 @@ impl ResolvedSender {
     /// Returns [`TxAuthError::SenderRecovery`] when an EOA `sender_auth` does
     /// not recover a signer.
     pub fn resolve(signed: &Eip8130Signed) -> Result<Self, TxAuthError> {
+        let tx_hash = *signed.hash();
         if let Some(account) = signed.explicit_sender() {
-            return Ok(Self { account, recovered: None });
+            return Ok(Self { account, recovered: None, tx_hash });
         }
         let recovered = RecoveredActorId::recover_eoa_sender(signed)
             .map_err(|_| TxAuthError::SenderRecovery)?
             .ok_or(TxAuthError::SenderRecovery)?;
-        Ok(Self { account: recovered.address(), recovered: Some(recovered) })
+        Ok(Self { account: recovered.address(), recovered: Some(recovered), tx_hash })
     }
 
     /// The resolved sender account.
     pub const fn account(&self) -> Address {
         self.account
+    }
+
+    /// Checks that this sender was resolved from `signed`.
+    ///
+    /// # Errors
+    /// Returns [`TxAuthError::ResolvedSenderMismatch`] when it was resolved
+    /// from a different transaction.
+    pub fn check_resolved_from(&self, signed: &Eip8130Signed) -> Result<(), TxAuthError> {
+        if self.tx_hash == *signed.hash() {
+            Ok(())
+        } else {
+            Err(TxAuthError::ResolvedSenderMismatch)
+        }
     }
 }
 
@@ -83,8 +98,8 @@ pub struct TransactionAuthorizer;
 impl TransactionAuthorizer {
     /// Authorizes and applies `signed` against `storage` for `local_chain_id` at
     /// time `now` (block timestamp at inclusion, wall-clock in the pool, used for
-    /// actor expiry and the account lock). `sender` MUST be resolved from the
-    /// same `signed`.
+    /// actor expiry and the account lock). A `sender` resolved from a different
+    /// transaction is rejected with [`TxAuthError::ResolvedSenderMismatch`].
     ///
     /// The flow mirrors the canonical `AccountConfiguration` contract, which
     /// applies a transaction's changes against an *evolving* state rather than a
@@ -119,6 +134,7 @@ impl TransactionAuthorizer {
         local_chain_id: u64,
         now: u64,
     ) -> Result<AppliedTransaction, TxAuthError> {
+        sender.check_resolved_from(signed)?;
         // Config changes mutate the resolved sender account and a create must
         // derive to it. Its authentication is deferred to the final post-apply
         // check (step 4 below).
@@ -227,12 +243,14 @@ impl TransactionAuthorizer {
     /// - the only account change is delegation, recorded as a deferred code
     ///   effect.
     ///
-    /// Anything else is rejected by [`Self::check_without_keystore`]. `sender`
-    /// MUST be resolved from the same `signed`.
+    /// Anything else is rejected by [`Self::check_without_keystore`]. A
+    /// `sender` resolved from a different transaction is rejected with
+    /// [`TxAuthError::ResolvedSenderMismatch`].
     pub fn authorize_without_keystore(
         signed: &Eip8130Signed,
         sender: ResolvedSender,
     ) -> Result<AppliedTransaction, TxAuthError> {
+        sender.check_resolved_from(signed)?;
         Self::check_without_keystore(signed)?;
         let tx = signed.tx();
 
@@ -1133,6 +1151,24 @@ mod tests {
         assert!(matches!(authorize_pre_zenith(&padded), Err(TxAuthError::UnexpectedPayerAuth)));
         with_storage(|acc| {
             assert!(matches!(authorize(&padded, acc), Err(TxAuthError::UnexpectedPayerAuth)));
+        });
+    }
+
+    #[test]
+    fn sender_resolved_from_another_transaction_is_rejected() {
+        let first = eoa_signed(TxEip8130::default(), &key(0x11));
+        let second = eoa_signed(TxEip8130::default(), &key(0x22));
+        let sender = ResolvedSender::resolve(&first).unwrap();
+
+        assert_eq!(
+            TransactionAuthorizer::authorize_without_keystore(&second, sender),
+            Err(TxAuthError::ResolvedSenderMismatch)
+        );
+        with_storage(|acc| {
+            assert_eq!(
+                TransactionAuthorizer::authorize_and_apply(&second, sender, acc, LOCAL, NOW),
+                Err(TxAuthError::ResolvedSenderMismatch)
+            );
         });
     }
 }
