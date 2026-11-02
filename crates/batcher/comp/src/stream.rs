@@ -1,6 +1,7 @@
 //! Incremental derivation-channel compression.
 
 use alloc::{boxed::Box, vec::Vec};
+use core::num::NonZeroUsize;
 use std::io::Write;
 
 use brotli::{CompressorWriter, enc::BrotliEncoderMaxCompressedSize};
@@ -16,7 +17,7 @@ pub struct CompressionStream {
     /// Total bytes returned by prior appends.
     output_size: usize,
     /// Input bytes after which an append flushes the encoder, if any.
-    flush_interval: Option<usize>,
+    flush_interval: Option<NonZeroUsize>,
     /// Input bytes appended since the last flush.
     unflushed_input: usize,
 }
@@ -39,7 +40,7 @@ impl CompressionStream {
     /// anything, so [`output_size`](Self::output_size) can trail the real
     /// compressed size by that much input. A flush keeps the window, so it costs
     /// only a meta-block boundary.
-    pub fn new(level: BrotliLevel, flush_interval: Option<usize>) -> Self {
+    pub fn new(level: BrotliLevel, flush_interval: Option<NonZeroUsize>) -> Self {
         let mut output = Vec::with_capacity(Self::BROTLI_BUFFER_SIZE);
         output.push(BrotliLevel::CHANNEL_VERSION);
         let compressor = CompressorWriter::new(
@@ -64,7 +65,7 @@ impl CompressionStream {
     pub fn append(&mut self, input: &[u8]) -> Result<Vec<u8>, CompressionError> {
         self.compressor.write_all(input)?;
         self.unflushed_input += input.len();
-        if self.flush_interval.is_some_and(|interval| self.unflushed_input >= interval) {
+        if self.flush_interval.is_some_and(|interval| self.unflushed_input >= interval.get()) {
             self.compressor.flush()?;
             self.unflushed_input = 0;
         }
@@ -152,7 +153,7 @@ mod tests {
             })
             .collect();
 
-        for flush_interval in [None, Some(1), Some(100_000)] {
+        for flush_interval in [None, NonZeroUsize::new(1), NonZeroUsize::new(100_000)] {
             let mut compressor = CompressionStream::new(BrotliLevel::Brotli10, flush_interval);
             let bound = compressor.max_output_size(input.len());
             let mut output_size = 0usize;
