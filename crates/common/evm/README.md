@@ -51,8 +51,15 @@ and receipts agree by construction.
 | Deposit transactions | no fee, metered gas | no fee, metered gas |
 | L1 data fee, DA footprint, intrinsic gas, pool ordering | unchanged | unchanged |
 
-EIP-8130 transactions settle fees in `Eip8130Executor` rather than `BaseHandler` and are billed
-separately.
+EIP-8130 transactions settle fees in `Eip8130Executor` rather than `BaseHandler`. Under the feature
+it bills the reserved budget, `gas_limit + payer_floor`, instead of the gas the `calls` metered:
+exactly what `prepay` pre-charged and what the block executor and builder reserve against the block
+gas limit. The payer's surplus refund is zero; the coinbase tip, `BaseFeeVault` and
+`OperatorFeeVault` amounts are computed on the reserved budget, and the result reports it as the gas
+used. The `eth_estimateGas` estimate (`Eip8130Executor::simulate`) stays metered but stops folding
+`payer_floor` into the returned limit, because settlement adds it on top of whatever limit the sender
+declares: a sponsored transaction submitted at `gas_limit = estimate` settles `estimate + payer_floor`
+once. Before the feature the estimate includes `payer_floor` and settlement bills metered gas.
 
 ## License
 
