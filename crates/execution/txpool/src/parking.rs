@@ -93,7 +93,20 @@ pub trait BestTransactionsHold<T: PoolTransaction>: Send + Sync {
     /// which includes advancing past further held transactions. Calls that hold nothing record
     /// nothing.
     fn record_duration(&mut self, duration: Duration);
+
+    /// Returns whether the build driving the iterator has stopped selecting transactions.
+    ///
+    /// One `next` call can advance past many held transactions without returning to the build
+    /// loop, so the iterator checks this every [`HOLD_INTERRUPT_INTERVAL`] holds and returns
+    /// early once it is true. The default never interrupts.
+    fn is_interrupted(&self) -> bool {
+        false
+    }
 }
+
+/// Number of held transactions a parking iterator advances past between checks of
+/// [`BestTransactionsHold::is_interrupted`], so the check stays off the per-transaction path.
+pub const HOLD_INTERRUPT_INTERVAL: u32 = 256;
 
 /// A transaction pool that can create lane-aware parkable best iterators.
 pub trait ParkableTransactionPool: TransactionPool
@@ -248,8 +261,13 @@ where
     /// the source only exposes other lanes after these transactions are pulled and buffered. The
     /// `Invalid` arm is defensive because terminal invalidation is already forwarded to `inner`,
     /// whose [`BestTransactions`] contract excludes the invalid transaction's descendants.
+    ///
+    /// Every [`HOLD_INTERRUPT_INTERVAL`] holds it stops early, without a source head, once the
+    /// hold reports its build interrupted. `next` then yields a promoted transaction or `None`,
+    /// and the build loop observes the same interruption and stops.
     pub fn fill_source_head(&mut self) {
         let mut hold_start = None;
+        let mut held = 0_u32;
         while self.source_head.is_none() {
             let Some(transaction) = self.inner.next() else {
                 break;
@@ -280,6 +298,10 @@ where
                     vacant.insert(BestTransactionLaneState::Occupied(VecDeque::new()));
                 }
                 self.parked.insert(*transaction.hash(), (transaction, lane));
+                held += 1;
+                if held.is_multiple_of(HOLD_INTERRUPT_INTERVAL) && hold.is_interrupted() {
+                    break;
+                }
                 continue;
             }
             self.source_head = Some((transaction, lane));
@@ -794,5 +816,54 @@ mod tests {
         assert_eq!(best.next().unwrap().hash(), candidate.hash());
         assert_eq!(hold.lock().checked, vec![*candidate.hash()]);
         assert_eq!(hold.lock().durations, 0);
+    }
+
+    /// Holds every validity transaction until `interrupted` is cleared, counting holds.
+    struct InterruptibleHold {
+        interrupted: bool,
+        held: usize,
+    }
+
+    impl BestTransactionsHold<BasePooledTransaction> for Arc<Mutex<InterruptibleHold>> {
+        fn hold(&mut self, _transaction: &ValidPoolTransaction<BasePooledTransaction>) -> bool {
+            self.lock().held += 1;
+            true
+        }
+
+        fn record_duration(&mut self, _duration: Duration) {}
+
+        fn is_interrupted(&self) -> bool {
+            self.lock().interrupted
+        }
+    }
+
+    #[test]
+    fn interrupted_hold_stops_advancing_past_held_transactions() {
+        let held_count = 2 * HOLD_INTERRUPT_INTERVAL as usize + 1;
+        let mut transactions = (0..held_count)
+            .map(|_| {
+                let signer = PrivateKeySigner::random();
+                validity_transaction(&signer, U256::ZERO, 0, 100, vec![balance_predicate()])
+            })
+            .collect::<Vec<_>>();
+        let plain = transaction(&PrivateKeySigner::random(), U256::ZERO, 0, 50);
+        transactions.push(Arc::clone(&plain));
+        let hold = Arc::new(Mutex::new(InterruptibleHold { interrupted: true, held: 0 }));
+        let mut best = ParkedBestTransactions::new(
+            StaticBestTransactions::new(transactions),
+            BaseOrdering::coinbase_tip(),
+            0,
+        )
+        .with_hold(Some(Box::new(Arc::clone(&hold))));
+
+        // An interrupted build gets control back after one check interval of holds.
+        assert!(best.next().is_none());
+        assert_eq!(hold.lock().held, HOLD_INTERRUPT_INTERVAL as usize);
+
+        // Nothing is lost: an uninterrupted call resumes the walk where it stopped.
+        hold.lock().interrupted = false;
+        assert_eq!(best.next().unwrap().hash(), plain.hash());
+        assert_eq!(hold.lock().held, held_count);
+        assert_eq!(best.parked.len(), held_count);
     }
 }

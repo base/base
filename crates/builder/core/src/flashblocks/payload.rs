@@ -454,8 +454,11 @@ where
         let resting = SharedRestingPredicates::new(resting.unwrap_or_else(|| {
             RestingPredicates::new(self.config.predicate_bucket_ordered_threshold)
         }));
-        let hold =
-            self.config.resting_predicate_mode.is_enforced().then(|| resting.iterator_hold());
+        let hold = self
+            .config
+            .resting_predicate_mode
+            .is_enforced()
+            .then(|| super::best_txs::flashblock_hold(&resting, &fb_cancel));
         let best_txs_attributes = ctx.best_transaction_attributes();
         let mut best_txs = BestFlashblocksTxs::new(
             ParkableBestPayloadTransactions::new(
@@ -667,7 +670,7 @@ where
         best_txs.refresh_iterator(ParkableBestPayloadTransactions::new(
             self.pool.best_transactions_with_attributes_and_parking(
                 best_txs_attributes,
-                best_txs.iterator_hold(),
+                best_txs.iterator_hold(&ctx.cancel),
             ),
         ));
         let transaction_pool_fetch_time = best_txs_start_time.elapsed();
