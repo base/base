@@ -74,6 +74,10 @@ pub enum BaseTxPoolError {
         /// Static validation label for the failure.
         reason: &'static str,
     },
+    /// The transaction carries validity predicates but is an EIP-7702
+    /// transaction or comes from an EIP-7702 delegated sender.
+    #[error("validity predicates are not allowed on EIP-7702 transactions or delegated senders")]
+    DelegatedValidityTransaction,
 }
 
 /// Resolved EIP-8130 actors and state data required to build the pool outcome.
@@ -86,6 +90,8 @@ struct Eip8130ValidationState {
     payer_balance_after_auth: U256,
     sender_nonce: u64,
     sender_bytecode_hash: Option<B256>,
+    /// Whether the sender's code is an EIP-7702 delegation designator.
+    sender_delegated: bool,
     /// Payer-authentication gas metered on top of `gas_limit`. The execution
     /// path charges the operator fee on `gas_limit + payer_auth`, so admission
     /// must do the same to avoid admitting operator-fee-underfunded sponsored
@@ -947,10 +953,48 @@ where
                 bytecode_hash: state.sender_bytecode_hash,
                 authorities: (state.payer != state.sender).then_some(vec![state.payer]),
             };
+            let outcome = Self::reject_delegated_validity(outcome, state.sender_delegated);
             return self.apply_base_checks(outcome, state.payer_auth);
         }
         let outcome = self.inner.validate_one_with_state(origin, transaction, state);
-        self.apply_base_checks(outcome, 0)
+        // The inner validator admits a sender with code only when that code is
+        // an EIP-7702 delegation (EIP-3607), so any code hash here is one.
+        let sender_delegated = matches!(
+            &outcome,
+            TransactionValidationOutcome::Valid { bytecode_hash: Some(hash), .. }
+                if *hash != KECCAK_EMPTY
+        );
+        self.apply_base_checks(Self::reject_delegated_validity(outcome, sender_delegated), 0)
+    }
+
+    /// Rejects a transaction with validity predicates that is an EIP-7702
+    /// transaction or whose sender is EIP-7702 delegated.
+    ///
+    /// Validity transactions live in their own pool, which does not enforce
+    /// reth's in-flight limits for delegated accounts and pending
+    /// authorizations. Keeping delegation out of validity transactions entirely
+    /// means those limits never need to span both pools. A sender delegated
+    /// after admission loses its validity transactions on the code change (see
+    /// `BaseTransactionPool::apply_state_diff`).
+    fn reject_delegated_validity(
+        outcome: TransactionValidationOutcome<Tx>,
+        sender_delegated: bool,
+    ) -> TransactionValidationOutcome<Tx> {
+        match outcome {
+            TransactionValidationOutcome::Valid { transaction, .. }
+                if !transaction.transaction().validity_conditions().is_empty()
+                    && (sender_delegated
+                        || transaction.transaction().authorization_list().is_some()) =>
+            {
+                TransactionValidationOutcome::Invalid(
+                    transaction.into_transaction(),
+                    InvalidPoolTransactionError::other(
+                        BaseTxPoolError::DelegatedValidityTransaction,
+                    ),
+                )
+            }
+            outcome => outcome,
+        }
     }
 
     /// Returns a low-cardinality sender authenticator label for metrics.
@@ -1059,6 +1103,7 @@ where
             .map_err(|error| Self::state_read_error(error, "sender account read failed"))?
             .unwrap_or_default();
         let protocol_nonce = sender_account.nonce;
+        let sender_delegated = Self::is_delegated(&*state, &sender_account)?;
         if is_create {
             Self::validate_eip8130_create_freshness(&*state, sender, &sender_account)?;
         }
@@ -1304,6 +1349,7 @@ where
             payer_balance_after_auth: payer_account.balance.saturating_sub(payer_auth_charge),
             sender_nonce,
             sender_bytecode_hash: sender_account.bytecode_hash,
+            sender_delegated,
             payer_auth: intrinsic.payer_auth,
             watch_set,
             sender_locked,
@@ -1519,6 +1565,20 @@ where
                 .map(|nonce| (nonce == 0, nonce))
                 .map_err(|error| Self::precompile_storage_error(error, "nonce manager read failed"))
         })
+    }
+
+    /// Returns whether `account`'s code is an EIP-7702 delegation designator.
+    fn is_delegated(
+        state: &dyn StateProvider,
+        account: &reth_primitives_traits::Account,
+    ) -> Result<bool, InvalidPoolTransactionError> {
+        let Some(code_hash) = account.bytecode_hash.filter(|hash| *hash != KECCAK_EMPTY) else {
+            return Ok(false);
+        };
+        Ok(state
+            .bytecode_by_hash(&code_hash)
+            .map_err(|error| Self::state_read_error(error, "sender code read failed"))?
+            .is_some_and(|code| code.is_eip7702()))
     }
 
     fn account_has_code(

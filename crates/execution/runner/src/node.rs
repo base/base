@@ -120,6 +120,7 @@ impl BaseNode {
                         signature_limit: mempool_sender_limit,
                         payment_limit: mempool_payer_limit,
                     })
+                    .with_validity_pool_limits(self.args.validity_pool_limits())
                     .with_additional_trusted_delegation_targets(
                         self.args.mempool_trusted_delegation_targets.iter().copied(),
                     ),
