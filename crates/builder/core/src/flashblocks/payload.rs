@@ -16,7 +16,7 @@ use alloy_eips::{Encodable2718, eip7685::EMPTY_REQUESTS_HASH, merge::BEACON_NONC
 use alloy_evm::Database;
 use alloy_primitives::{Address, B256, Bloom, U256, logs_bloom, map::foldhash::HashMap};
 use base_builder_publish::WebSocketPublisher;
-use base_common_chains::Upgrades;
+use base_common_chains::{BaseFeature, Upgrades};
 use base_common_consensus::{BaseReceipt, BaseTransactionSigned};
 use base_common_flashblocks::{
     ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, FlashblockId, FlashblocksPayloadV1,
@@ -208,19 +208,22 @@ where
         let chain_spec = self.client.chain_spec();
         let timestamp = config.attributes.timestamp();
 
-        let extra_data = if chain_spec.is_jovian_active_at_timestamp(timestamp) {
-            config
-                .attributes
-                .get_jovian_extra_data(chain_spec.base_fee_params_at_timestamp(timestamp))
-                .wrap_err("failed to get jovian extra data for flashblocks payload builder")?
-        } else if chain_spec.is_holocene_active_at_timestamp(timestamp) {
-            config
-                .attributes
-                .get_holocene_extra_data(chain_spec.base_fee_params_at_timestamp(timestamp))
-                .wrap_err("failed to get holocene extra data for flashblocks payload builder")?
-        } else {
-            Default::default()
-        };
+        let extra_data =
+            if chain_spec.is_feature_active_at_timestamp(BaseFeature::MinBaseFee, timestamp) {
+                config
+                    .attributes
+                    .get_jovian_extra_data(chain_spec.base_fee_params_at_timestamp(timestamp))
+                    .wrap_err("failed to get jovian extra data for flashblocks payload builder")?
+            } else if chain_spec
+                .is_feature_active_at_timestamp(BaseFeature::DynamicBaseFeeParameters, timestamp)
+            {
+                config
+                    .attributes
+                    .get_holocene_extra_data(chain_spec.base_fee_params_at_timestamp(timestamp))
+                    .wrap_err("failed to get holocene extra data for flashblocks payload builder")?
+            } else {
+                Default::default()
+            };
 
         let block_env_attributes = BaseNextBlockEnvAttributes {
             timestamp,
@@ -1299,23 +1302,23 @@ where
         BuilderMetrics::state_root_calculation_gauge().set(state_root_calculation_time);
     }
 
-    let mut requests_hash = None;
-    let withdrawals_root =
-        if ctx.chain_spec.is_isthmus_active_at_timestamp(ctx.attributes().timestamp()) {
-            // always empty requests hash post isthmus
-            requests_hash = Some(EMPTY_REQUESTS_HASH);
-
-            // withdrawals root field in block header is used for storage root of L2 predeploy
-            // `l2tol1-message-passer`
-            Some(
-                isthmus::withdrawals_root(&state.bundle_state, state_provider)
-                    .map_err(PayloadBuilderError::other)?,
-            )
-        } else if ctx.chain_spec.is_canyon_active_at_timestamp(ctx.attributes().timestamp()) {
-            Some(EMPTY_WITHDRAWALS)
-        } else {
-            None
-        };
+    let [empty_requests_hash, message_root] = BaseFeature::activation_states(
+        [BaseFeature::EmptyRequestsHash, BaseFeature::L2ToL1MessageRoot],
+        |feature| ctx.is_feature_active(feature),
+    );
+    let requests_hash = empty_requests_hash.then_some(EMPTY_REQUESTS_HASH);
+    let withdrawals_root = if message_root {
+        // withdrawals root field in block header is used for storage root of L2 predeploy
+        // `l2tol1-message-passer`
+        Some(
+            isthmus::withdrawals_root(&state.bundle_state, state_provider)
+                .map_err(PayloadBuilderError::other)?,
+        )
+    } else if ctx.is_feature_active(BaseFeature::Withdrawals) {
+        Some(EMPTY_WITHDRAWALS)
+    } else {
+        None
+    };
 
     // create the block header
     let transactions_root = proofs::calculate_transaction_root(&info.executed_transactions);
@@ -1411,7 +1414,7 @@ where
         .collect::<HashMap<B256, BaseReceipt>>();
 
     let metadata: FlashblocksMetadata =
-        if ctx.chain_spec.is_azul_active_at_timestamp(ctx.attributes().timestamp()) {
+        if ctx.is_feature_active(BaseFeature::CompactFlashblockMetadata) {
             FlashblocksMetadata {
                 metadata: Metadata { block_number: ctx.parent().number + 1, prev_flashblock_id },
                 receipts: None,

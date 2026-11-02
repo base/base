@@ -10,7 +10,7 @@ use std::{
 use alloy_consensus::BlockHeader;
 use alloy_primitives::{Address, B64, B256, Bytes, map::AddressSet};
 use alloy_rlp::encode;
-use base_common_chains::Upgrades;
+use base_common_chains::{BaseFeature, Upgrades};
 use base_common_consensus::{BasePrimitives, BaseTransaction, BaseTxEnvelope};
 use base_common_rpc_types_engine::{BasePayloadAttributes, ExecutionData};
 use base_execution_chainspec::BaseChainSpec;
@@ -168,11 +168,11 @@ impl PayloadAttributesBuilder<BasePayloadBuilderAttributes<BaseTxEnvelope>>
                 suggested_fee_recipient: Address::random(),
                 withdrawals: self
                     .chain_spec
-                    .is_canyon_active_at_timestamp(timestamp)
+                    .is_feature_active_at_timestamp(BaseFeature::Withdrawals, timestamp)
                     .then(Default::default),
                 parent_beacon_block_root: self
                     .chain_spec
-                    .is_ecotone_active_at_timestamp(timestamp)
+                    .is_feature_active_at_timestamp(BaseFeature::BeaconRoots, timestamp)
                     .then(B256::random),
                 slot_number: None,
                 target_gas_limit: None,

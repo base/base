@@ -7,7 +7,7 @@ use alloy_primitives::{B256, Bytes};
 use alloy_rlp::Decodable;
 use anyhow::Result;
 use base_common_consensus::{BaseBlock, BaseTxEnvelope, OpTxType};
-use base_common_genesis::RollupConfig;
+use base_common_genesis::{BaseFeature, RollupConfig};
 use base_consensus_derive::{Pipeline, PipelineError, PipelineErrorKind, Signal, SignalReceiver};
 use base_proof::{HintType, IntermediateRootSampler, OracleProviderError};
 use base_proof_driver::{Driver, DriverError, DriverPipeline, DriverResult, Executor, TipCursor};
@@ -94,7 +94,10 @@ where
 
                 // If we are in interop mode, this error must be handled by the caller.
                 // Otherwise, we continue the loop to halt derivation on the next iteration.
-                if cfg.is_isthmus_active(tip_cursor.l2_safe_head.block_info.timestamp) {
+                if cfg.is_feature_active_cascading(
+                    BaseFeature::StrictProofSourceExhaustion,
+                    tip_cursor.l2_safe_head.block_info.timestamp,
+                ) {
                     return Err(PipelineError::EndOfSource.crit().into());
                 }
                 continue;
@@ -116,7 +119,10 @@ where
             Err(e) => {
                 error!(target: "client", error = %e, "Failed to execute L2 block");
 
-                if !cfg.is_holocene_active(attributes.payload_attributes.timestamp) {
+                if !cfg.is_feature_active_cascading(
+                    BaseFeature::DepositsOnlyOnInvalidPayload,
+                    attributes.payload_attributes.timestamp,
+                ) {
                     // Pre-Holocene, discard the block if execution fails.
                     continue;
                 }

@@ -4,7 +4,7 @@
 //! transactions seamlessly, without requiring error handling at the call site.
 
 use alloy_consensus::{Eip658Value, Receipt, transaction::Recovered};
-use base_common_chains::Upgrades;
+use base_common_chains::{BaseFeature, Upgrades};
 use base_common_consensus::{
     BaseReceipt, BaseTxEnvelope, DepositReceipt, Eip8130Receipt, OpTxType,
 };
@@ -101,11 +101,15 @@ impl<C: Upgrades> UnifiedReceiptBuilder<C> {
 
         if tx_type == OpTxType::Deposit {
             // Handle deposit transaction
-            let is_canyon_active = self.chain_spec.is_canyon_active_at_timestamp(timestamp);
-            let is_regolith_active = self.chain_spec.is_regolith_active_at_timestamp(timestamp);
+            let has_receipt_version = self
+                .chain_spec
+                .is_feature_active_at_timestamp(BaseFeature::DepositReceiptVersion, timestamp);
+            let has_deposit_nonce = self
+                .chain_spec
+                .is_feature_active_at_timestamp(BaseFeature::DepositNonce, timestamp);
 
             // Fetch deposit nonce if Regolith is active
-            let deposit_nonce = if is_regolith_active {
+            let deposit_nonce = if has_deposit_nonce {
                 Some(
                     evm.db_mut()
                         .basic(transaction.signer())
@@ -120,7 +124,7 @@ impl<C: Upgrades> UnifiedReceiptBuilder<C> {
             Ok(BaseReceipt::Deposit(DepositReceipt {
                 inner: receipt,
                 deposit_nonce,
-                deposit_receipt_version: is_canyon_active.then_some(1),
+                deposit_receipt_version: has_receipt_version.then_some(1),
             }))
         } else {
             // Handle non-deposit transaction
