@@ -102,6 +102,15 @@ base_metrics::define_metrics! {
     admitted: counter,
     #[describe("Validity predicates carried by each validity transaction admitted to the pool")]
     predicates_per_tx: histogram,
+    #[describe("Validity transactions evicted by the validity pool's own count or size cap")]
+    evicted: counter,
+    #[describe("Same-slot replacements that crossed between the validity pool and a standard store, labeled by the direction a validity transaction moved")]
+    #[label(name = "direction", default = ["into_validity", "out_of_validity"])]
+    cross_store_replaced: counter,
+    #[describe("Transactions currently held by the validity pool")]
+    pool_transactions: gauge,
+    #[describe("Summed size of transactions currently held by the validity pool, in bytes")]
+    pool_bytes: gauge,
 }
 
 impl ValidityPoolMetrics {
@@ -115,6 +124,27 @@ impl ValidityPoolMetrics {
     pub fn record_admission(replaced: bool, predicates: usize) {
         Self::admitted(if replaced { "replaced" } else { "added" }).increment(1);
         Self::predicates_per_tx().record(predicates as f64);
+    }
+
+    /// Records validity transactions evicted by the validity pool's capacity cap.
+    pub fn record_evictions(count: usize) {
+        if count > 0 {
+            Self::evicted().increment(count as u64);
+        }
+    }
+
+    /// Records a same-slot replacement whose old and new transaction live in
+    /// different stores. `into_validity` means a validity transaction replaced
+    /// a standard one; `out_of_validity` the reverse.
+    pub fn record_cross_store_replacement(into_validity: bool) {
+        Self::cross_store_replaced(if into_validity { "into_validity" } else { "out_of_validity" })
+            .increment(1);
+    }
+
+    /// Publishes the validity pool's current occupancy.
+    pub fn record_occupancy(transactions: usize, bytes: usize) {
+        Self::pool_transactions().set(transactions as f64);
+        Self::pool_bytes().set(bytes as f64);
     }
 }
 

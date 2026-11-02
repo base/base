@@ -444,6 +444,12 @@ pub trait BasePooledTx: PoolTransaction + DataAvailabilitySized {
         None
     }
 
+    /// Returns whether this is a nonce-free EIP-8130 transaction (`nonce_key ==
+    /// NONCE_KEY_MAX`), which has a replay id instead of a nonce lane.
+    fn is_eip8130_nonce_free(&self) -> bool {
+        self.eip8130_replay_id().is_some()
+    }
+
     /// Returns the invalidation watch set computed during validation, if set.
     ///
     /// Defaults to `None` for implementers that do not track invalidation
@@ -527,6 +533,11 @@ where
             return None;
         }
         Some(signed.tx().replay_id(self.sender()))
+    }
+
+    fn is_eip8130_nonce_free(&self) -> bool {
+        self.as_eip8130()
+            .is_some_and(|signed| signed.tx().nonce_key == Eip8130Constants::NONCE_KEY_MAX)
     }
 
     fn watch_set(&self) -> Option<&crate::WatchSet> {
