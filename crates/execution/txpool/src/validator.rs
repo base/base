@@ -74,6 +74,10 @@ pub enum BaseTxPoolError {
         /// Static validation label for the failure.
         reason: &'static str,
     },
+    /// The transaction carries validity predicates but is an EIP-7702
+    /// transaction or comes from an EIP-7702 delegated sender.
+    #[error("validity predicates are not allowed on EIP-7702 transactions or delegated senders")]
+    DelegatedValidityTransaction,
 }
 
 /// Resolved EIP-8130 actors and state data required to build the pool outcome.
@@ -1048,10 +1052,39 @@ where
                 // bounds what it sponsors.
                 authorities: None,
             };
-            return self.apply_base_checks(outcome, false);
+            return self.apply_base_checks(Self::reject_delegated_validity(outcome), false);
         }
         let outcome = self.inner.validate_one_with_state(origin, transaction, state);
-        self.apply_base_checks(outcome, true)
+        self.apply_base_checks(Self::reject_delegated_validity(outcome), true)
+    }
+
+    /// Rejects a transaction with validity predicates that is an EIP-7702
+    /// transaction or whose sender is EIP-7702 delegated.
+    ///
+    /// Validity transactions live in their own pool, which does not enforce
+    /// reth's in-flight limits for delegated accounts and pending
+    /// authorizations. Keeping delegation out of validity transactions entirely
+    /// means those limits never need to span both pools. A sender delegated
+    /// after admission loses its validity transactions on the code change (see
+    /// `BaseTransactionPool::apply_state_diff`).
+    fn reject_delegated_validity(
+        outcome: TransactionValidationOutcome<Tx>,
+    ) -> TransactionValidationOutcome<Tx> {
+        match outcome {
+            TransactionValidationOutcome::Valid { transaction, bytecode_hash, .. }
+                if !transaction.transaction().validity_conditions().is_empty()
+                    && (transaction.transaction().authorization_list().is_some()
+                        || bytecode_hash.is_some_and(|hash| hash != KECCAK_EMPTY)) =>
+            {
+                TransactionValidationOutcome::Invalid(
+                    transaction.into_transaction(),
+                    InvalidPoolTransactionError::other(
+                        BaseTxPoolError::DelegatedValidityTransaction,
+                    ),
+                )
+            }
+            outcome => outcome,
+        }
     }
 
     /// Returns a low-cardinality sender authenticator label for metrics.
