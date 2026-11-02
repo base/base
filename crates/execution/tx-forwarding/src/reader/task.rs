@@ -5,7 +5,7 @@ use std::{
 };
 
 use alloy_eips::Encodable2718;
-use alloy_primitives::Bytes;
+use alloy_primitives::{Bytes, TxHash};
 use base_execution_txpool::{
     BasePooledTx, BestTransactionLane, NoExtensions, UnifiedTipOrdering, UnifiedTipPriority,
     ValidatedTransaction, ValidatedTransactionExtensions,
@@ -49,6 +49,8 @@ pub(crate) struct DestinationReader<P: TransactionPool, E = NoExtensions> {
     pool: P,
     config: ReaderConfig,
     recently_sent: RecentlySent,
+    /// Hashes whose forward to this destination failed, reported by its forwarder.
+    failures: Option<mpsc::Receiver<TxHash>>,
     lane_mix: LaneMix,
     sender: mpsc::Sender<InsertValidatedTransaction<E>>,
     cancel: CancellationToken,
@@ -81,10 +83,42 @@ where
         cancel: CancellationToken,
         builder_url: Url,
     ) -> Self {
-        let recently_sent = RecentlySent::new(config.resend_after);
+        let recently_sent = RecentlySent::new(config.resend_after, config.validity_hold);
         let lane_mix = LaneMix::new(config.fifo_percent);
         let url_label = builder_url.to_string().into();
-        Self { pool, config, recently_sent, lane_mix, sender, cancel, builder_url, url_label }
+        Self {
+            pool,
+            config,
+            recently_sent,
+            failures: None,
+            lane_mix,
+            sender,
+            cancel,
+            builder_url,
+            url_label,
+        }
+    }
+
+    /// Puts transactions whose forward failed, as reported on `failures`, back on the standard
+    /// resend schedule. A validity transaction is otherwise never resent on a timer.
+    pub(crate) fn with_failure_reports(mut self, failures: mpsc::Receiver<TxHash>) -> Self {
+        self.failures = Some(failures);
+        self
+    }
+
+    /// Applies the failures the forwarder has reported since the last call.
+    fn drain_failures(&mut self) {
+        let Some(failures) = self.failures.as_mut() else { return };
+        loop {
+            match failures.try_recv() {
+                Ok(hash) => self.recently_sent.mark_failed(&hash),
+                Err(mpsc::error::TryRecvError::Empty) => return,
+                Err(mpsc::error::TryRecvError::Disconnected) => {
+                    self.failures = None;
+                    return;
+                }
+            }
+        }
     }
 
     /// Blocking loop — runs until the [`CancellationToken`] is cancelled.
@@ -92,6 +126,7 @@ where
         info!(
             builder_url = %self.builder_url,
             resend_after_ms = self.config.resend_after.as_millis() as u64,
+            validity_hold_ms = self.config.validity_hold.as_millis() as u64,
             channel_capacity = self.config.channel_capacity,
             poll_interval_ms = self.config.poll_interval.as_millis() as u64,
             fifo_percent = self.config.fifo_percent,
@@ -100,6 +135,7 @@ where
 
         let mut snapshot: Option<(Instant, Snapshot<P::Transaction>)> = None;
         while self.wait_for_capacity() {
+            self.drain_failures();
             let stale = snapshot.as_ref().is_none_or(|(taken_at, lanes)| {
                 lanes.is_empty() || taken_at.elapsed() >= Self::SNAPSHOT_MAX_AGE
             });
@@ -168,12 +204,17 @@ where
     /// forwarder is gone.
     fn fill_queue(&mut self, lanes: &mut Snapshot<P::Transaction>) -> Option<u64> {
         let mut txs_sent: u64 = 0;
+        let (mut standard_resent, mut validity_resent) = (0u64, 0u64);
         while self.sender.capacity() > 0 {
             let Some(tx) = lanes.pop(self.lane_mix.next_lane()) else { break };
             let hash = *tx.hash();
             match self.try_enqueue(&tx) {
                 Ok(()) => {
-                    self.recently_sent.mark_sent(hash);
+                    let is_validity = Self::is_validity(&tx);
+                    if self.recently_sent.was_sent(&hash) {
+                        if is_validity { validity_resent += 1 } else { standard_resent += 1 }
+                    }
+                    self.recently_sent.mark_sent(hash, is_validity);
                     txs_sent += 1;
                 }
                 // Only this reader produces into the queue, so capacity cannot shrink between the
@@ -183,6 +224,11 @@ where
             }
         }
         Metrics::txs_sent(Arc::clone(&self.url_label)).increment(txs_sent);
+        for (kind, resent) in [("standard", standard_resent), ("validity", validity_resent)] {
+            if resent > 0 {
+                Metrics::txs_resent(Arc::clone(&self.url_label), kind).increment(resent);
+            }
+        }
         Some(txs_sent)
     }
 
@@ -200,6 +246,12 @@ where
             std::thread::sleep(Self::CAPACITY_POLL_INTERVAL);
         }
         !self.sender.is_closed()
+    }
+
+    /// Returns whether `transaction` carries validity predicates, which hold it for
+    /// [`ReaderConfig::validity_hold`] instead of resending it after the standard window.
+    fn is_validity(transaction: &ValidPoolTransaction<P::Transaction>) -> bool {
+        !transaction.transaction.validity_conditions().is_empty()
     }
 
     /// Attempts to queue the transaction without waiting on a stale pool snapshot.
@@ -247,7 +299,7 @@ mod tests {
     use alloy_consensus::transaction::Recovered;
     use alloy_primitives::{Address, B256, TxKind, U256};
     use base_common_consensus::{BaseTransactionSigned, TxDeposit};
-    use base_execution_txpool::BasePooledTransaction;
+    use base_execution_txpool::{BasePooledTransaction, ValidityOperator, ValidityPredicate};
     use reth_transaction_pool::{
         TransactionOrigin, identifier::TransactionId, noop::NoopTransactionPool,
     };
@@ -301,6 +353,7 @@ mod tests {
             NoopTransactionPool::new(),
             ReaderConfig {
                 resend_after: Duration::from_secs(4),
+                validity_hold: Duration::from_secs(60),
                 channel_capacity: 1,
                 poll_interval: Duration::from_millis(1),
                 fifo_percent: 20,
@@ -347,5 +400,54 @@ mod tests {
             reader.try_enqueue(&transaction(1)),
             Err(mpsc::error::TrySendError::Closed(()))
         ));
+    }
+
+    /// A validity transaction is not resent on a timer, while a standard transaction sent with it
+    /// is; a reported forwarding failure puts the validity transaction back on the standard
+    /// schedule.
+    #[test]
+    fn a_validity_transaction_is_resent_only_after_a_reported_failure() {
+        let standard = transaction(0);
+        let plain = transaction(1);
+        let predicate = ValidityPredicate::BlockNumber {
+            op: ValidityOperator::LessThan,
+            value: U256::from(1_000),
+        };
+        let validity = Arc::new(ValidPoolTransaction {
+            transaction_id: plain.transaction_id,
+            transaction: plain.transaction.clone().with_validity_predicates(vec![predicate]),
+            propagate: plain.propagate,
+            timestamp: plain.timestamp,
+            origin: plain.origin,
+            authority_ids: None,
+        });
+        let (sender, _queue) = mpsc::channel::<InsertValidatedTransaction<NoExtensions>>(8);
+        let (report, failures) = mpsc::channel(4);
+        let mut reader = DestinationReader::new(
+            NoopTransactionPool::<BasePooledTransaction>::new(),
+            ReaderConfig {
+                resend_after: Duration::ZERO,
+                validity_hold: Duration::from_secs(60),
+                channel_capacity: 8,
+                poll_interval: ReaderConfig::POLL_INTERVAL,
+                fifo_percent: 20,
+            },
+            sender,
+            CancellationToken::new(),
+            "http://builder.test".parse().unwrap(),
+        )
+        .with_failure_reports(failures);
+        let mut lanes = LaneScheduler::new();
+        for tx in [&standard, &validity] {
+            lanes.push(Arc::clone(tx), None, tx.timestamp, Priority::None);
+        }
+
+        assert_eq!(reader.fill_queue(&mut lanes), Some(2));
+        assert!(!reader.recently_sent.was_recently_sent(standard.hash()));
+        assert!(reader.recently_sent.was_recently_sent(validity.hash()), "held");
+
+        report.try_send(*validity.hash()).unwrap();
+        reader.drain_failures();
+        assert!(!reader.recently_sent.was_recently_sent(validity.hash()), "due after a failure");
     }
 }

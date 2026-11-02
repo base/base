@@ -223,7 +223,8 @@ Forwarding:
 
 A mempool node forwards each pending transaction to every configured builder,
 and forwards it again every `--tx-forwarding-resend-after-ms` while it stays
-pending. Each destination has its own pool reader and queue, so the mempool
+pending. A transaction carrying validity predicates is resent only after its
+forward to that builder failed. Each destination has its own pool reader and queue, so the mempool
 node does not journal the hand-off: it no longer emits
 `TXPOOL_BUILDER_CONSUMED` or `TXPOOL_BUILDER_FORWARD_SUCCESS`. Successful
 delivery is recorded by the receiving builder as

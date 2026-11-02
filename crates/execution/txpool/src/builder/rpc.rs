@@ -336,6 +336,20 @@ where
     }
 }
 
+/// End of the message a builder's insert RPC returns for a transaction its pool already holds:
+/// the `Display` of [`PoolErrorKind::AlreadyImported`], which the rejection message ends with.
+const ALREADY_IMPORTED: &str = "already imported";
+
+/// Returns `true` if `error` is a builder insert rejection for a transaction the builder's pool
+/// already holds, which delivered it as surely as an accepted insert.
+///
+/// The insert RPC reports every pool rejection with the same code, so this matches the end of the
+/// message. Tests pin [`ALREADY_IMPORTED`] to the pool error's `Display` and run a real rejection
+/// through this check, so a change on either side fails them.
+pub fn is_already_imported_rejection(error: &ErrorObjectOwned) -> bool {
+    error.message().ends_with(ALREADY_IMPORTED)
+}
+
 impl<P, E> BuilderApiImpl<P, E> {
     fn emit_validated_insert_event(
         &self,
@@ -370,7 +384,10 @@ mod tests {
     use alloy_signer_local::PrivateKeySigner;
     use base_bundles::MeterBundleResponse;
     use base_common_consensus::{BaseTransactionSigned, BaseTypedTransaction, TxDeposit};
-    use reth_transaction_pool::noop::NoopTransactionPool;
+    use reth_transaction_pool::{
+        error::{PoolError, PoolErrorKind},
+        noop::NoopTransactionPool,
+    };
 
     use super::*;
     use crate::{
@@ -863,5 +880,23 @@ mod tests {
         // Decode should succeed, but the txpool is a noop so it will reject the tx
         // This error code should be InternalError
         assert_eq!(err.code(), ErrorCode::InternalError.code());
+    }
+
+    #[test]
+    fn already_imported_matches_the_pool_error_display() {
+        assert_eq!(ALREADY_IMPORTED, PoolErrorKind::AlreadyImported.to_string());
+    }
+
+    /// A duplicate's rejection is recognised as already imported; any other rejection is not.
+    #[test]
+    fn insert_rejections_are_classified_by_is_already_imported_rejection() {
+        let handler = BuilderApiImpl::new(NoopTransactionPool::<BasePooledTransaction>::new());
+        let hash = TxHash::repeat_byte(0x11);
+        let reject = |kind| handler.finish_insert(hash, 0, None, Err(PoolError::new(hash, kind)));
+
+        let duplicate = reject(PoolErrorKind::AlreadyImported).unwrap_err();
+        assert!(is_already_imported_rejection(&duplicate), "{duplicate:?}");
+        let underpriced = reject(PoolErrorKind::ReplacementUnderpriced).unwrap_err();
+        assert!(!is_already_imported_rejection(&underpriced), "{underpriced:?}");
     }
 }
