@@ -3,10 +3,11 @@
 use std::time::{Duration, Instant};
 
 use alloy_network::{EthereumWallet, TransactionBuilder};
-use alloy_primitives::{Address, B256, Bytes, U256, address};
+use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::TransactionRequest;
 use alloy_sol_types::{SolCall, sol};
+use base_common_consensus::Eip8130Contracts;
 use indicatif::{ProgressBar, ProgressStyle};
 use tracing::{trace, warn};
 use url::Url;
@@ -16,9 +17,6 @@ use crate::{
     rpc::{BaseFeeExt, QueryProvider, RpcResultExt, create_wallet_provider},
     workload::AccountPool,
 };
-
-/// Deterministic deployment proxy, preinstalled on OP Stack chains and anvil.
-const CREATE2_FACTORY: Address = address!("0x4e59b44847b379578588920cA78FbF26c0B4956C");
 
 /// Concurrent RPC requests during chain-prep operations (matches funding concurrency).
 pub(crate) const PREP_CONCURRENCY: usize = 32;
@@ -180,7 +178,7 @@ pub(crate) fn prep_submission_max_fee(
 
 /// Address [`deploy_create2`] deploys `init_code` to.
 pub(crate) fn create2_address(init_code: &[u8]) -> Address {
-    CREATE2_FACTORY.create2_from_code(B256::ZERO, init_code)
+    Eip8130Contracts::CREATE2_FACTORY.create2_from_code(B256::ZERO, init_code)
 }
 
 /// Deploys `init_code` through the CREATE2 deployment proxy unless its address already has code.
@@ -204,7 +202,7 @@ pub(crate) async fn deploy_create2(ctx: &mut ChainPrepContext<'_>, init_code: &[
     let priority_fee = (base_fee / 10).max(1);
     let max_fee = prep_submission_max_fee(base_fee, priority_fee, ctx.max_gas_price);
     let tx = TransactionRequest::default()
-        .with_to(CREATE2_FACTORY)
+        .with_to(Eip8130Contracts::CREATE2_FACTORY)
         .with_input([B256::ZERO.as_slice(), init_code].concat())
         .with_nonce(nonce)
         .with_gas_limit(500_000)
