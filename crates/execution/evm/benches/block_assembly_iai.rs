@@ -1,10 +1,10 @@
 //! Deterministic instruction-count benchmark for assembling a Base mainnet-shaped block.
 //!
 //! Counts [`BaseBlockAssembler::assemble_block`], which turns an executed block into its header
-//! and body: the transactions root, the receipts root (`calculate_receipt_root_no_memo`), the
-//! logs bloom, and the Isthmus withdrawals root (the `L2ToL1MessagePasser` storage root). The
-//! native payload builder runs it once per built block, about 4×10^5 blocks per day after the
-//! Denim upgrade.
+//! and body: the transactions root, the receipts root and logs bloom
+//! (`calculate_receipt_root_and_logs_bloom`), and the Isthmus withdrawals root (the
+//! `L2ToL1MessagePasser` storage root). The native payload builder runs it once per built block,
+//! about 4×10^5 blocks per day after the Denim upgrade.
 //!
 //! The block is the one `block_execution_iai.rs` executes (`fixtures/mainnet_block.rs`,
 //! `MAINNET_MIX`), 387 transactions. Executing it

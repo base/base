@@ -6,7 +6,7 @@ pub mod isthmus;
 
 use alloc::vec::Vec;
 
-use alloy_consensus::{BlockHeader, EMPTY_OMMER_ROOT_HASH, TxReceipt};
+use alloy_consensus::{BlockHeader, EMPTY_OMMER_ROOT_HASH};
 use alloy_eips::Encodable2718;
 use alloy_primitives::{B256, Bloom, Bytes};
 use alloy_trie::EMPTY_ROOT_HASH;
@@ -19,7 +19,7 @@ use reth_execution_types::BlockExecutionResult;
 use reth_primitives_traits::{BlockBody, GotExpected, receipt::gas_spent_by_transactions};
 use tracing::debug;
 
-use crate::proof::calculate_receipt_root;
+use crate::proof::calculate_receipt_root_and_logs_bloom;
 
 fn should_trust_precomputed_receipt_root(chain_spec: &impl Upgrades, timestamp: u64) -> bool {
     chain_spec.is_canyon_active_at_timestamp(timestamp)
@@ -206,12 +206,8 @@ fn verify_receipts<R: DepositReceiptExt>(
     chain_spec: impl Upgrades,
     timestamp: u64,
 ) -> Result<(), ConsensusError> {
-    // Calculate receipts root.
-    let receipts_with_bloom = receipts.iter().map(TxReceipt::with_bloom_ref).collect::<Vec<_>>();
-    let receipts_root = calculate_receipt_root(&receipts_with_bloom, chain_spec, timestamp);
-
-    // Calculate header logs bloom.
-    let logs_bloom = receipts_with_bloom.iter().fold(Bloom::ZERO, |bloom, r| bloom | r.bloom_ref());
+    let (receipts_root, logs_bloom) =
+        calculate_receipt_root_and_logs_bloom(receipts, chain_spec, timestamp);
 
     compare_receipts_root_and_logs_bloom(
         receipts_root,
@@ -261,6 +257,7 @@ mod tests {
     use reth_chainspec::{BaseFeeParams, EthChainSpec, ForkCondition};
 
     use super::*;
+    use crate::proof::calculate_receipt_root;
 
     const HOLOCENE_TIMESTAMP: u64 = 1700000000;
     const ISTHMUS_TIMESTAMP: u64 = 1750000000;
