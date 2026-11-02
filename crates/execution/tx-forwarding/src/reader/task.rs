@@ -423,6 +423,7 @@ where
     /// forwarder is gone.
     fn fill_queue(&mut self, lanes: &mut Snapshot<P::Transaction>) -> Option<u64> {
         let mut txs_sent: u64 = 0;
+        let (mut standard_resent, mut validity_resent) = (0u64, 0u64);
         while self.sender.capacity() > 0 {
             let Some(tx) = lanes.pop(self.lane_mix.next_lane()) else { break };
             let hash = *tx.hash();
@@ -434,8 +435,7 @@ where
                 Ok(()) => {
                     let is_validity = Self::is_validity(&tx);
                     if self.recently_sent.was_sent(&hash) {
-                        let kind = if is_validity { "validity" } else { "standard" };
-                        Metrics::txs_resent(Arc::clone(&self.url_label), kind).increment(1);
+                        if is_validity { validity_resent += 1 } else { standard_resent += 1 }
                     }
                     self.recently_sent.mark_sent(hash, is_validity);
                     txs_sent += 1;
@@ -447,6 +447,11 @@ where
             }
         }
         Metrics::txs_sent(Arc::clone(&self.url_label)).increment(txs_sent);
+        for (kind, resent) in [("standard", standard_resent), ("validity", validity_resent)] {
+            if resent > 0 {
+                Metrics::txs_resent(Arc::clone(&self.url_label), kind).increment(resent);
+            }
+        }
         Some(txs_sent)
     }
 
