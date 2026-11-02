@@ -55,12 +55,12 @@ use tracing::{debug, debug_span, info, instrument, trace, warn};
 
 use crate::{
     Attributes, BasePayloadBuilderAttributes, BlockDeferrals, BuilderMetrics,
-    CoinbaseTipAffordability, InclusionTracker, MeteringProvider, ParkableBestPayloadTransactions,
-    ParkablePayloadTransactions, ParkedPredicateIndex, PayloadPrimitives, PredicateLoadTracker,
-    PredicateReadRecorder, RejectionCacheMetrics, RestingPredicateStore, SharedRestingPredicates,
-    StateChangeEffects, ValidityEvaluationCounters, ValidityEvaluationOutcome, ValidityMetrics,
-    ValidityPredicateEvaluation, config::BaseBuilderConfig, error::BasePayloadBuilderError,
-    payload::BaseBuiltPayload,
+    CoinbaseTipAffordability, HoldInterrupt, InclusionTracker, MeteringProvider,
+    ParkableBestPayloadTransactions, ParkablePayloadTransactions, ParkedPredicateIndex,
+    PayloadPrimitives, PredicateLoadTracker, PredicateReadRecorder, RejectionCacheMetrics,
+    RestingPredicateStore, SharedRestingPredicates, StateChangeEffects, ValidityEvaluationCounters,
+    ValidityEvaluationOutcome, ValidityMetrics, ValidityPredicateEvaluation,
+    config::BaseBuilderConfig, error::BasePayloadBuilderError, payload::BaseBuiltPayload,
 };
 
 macro_rules! emit_native_validity_event {
@@ -356,6 +356,14 @@ where
     }
 }
 
+/// Interrupts a pool iterator's walk past held resting transactions once its job is cancelled or
+/// asked to finalize, as the build loop checks before each candidate. Resting transactions are
+/// only held from Denim on, where the build loop honours finalization requests.
+fn job_interrupt(cancel: &Arc<CancelOnDrop>) -> HoldInterrupt {
+    let cancel = Arc::downgrade(cancel);
+    Arc::new(move || cancel.upgrade().is_none_or(|cancel| cancel.is_interrupted()))
+}
+
 /// Creates the candidate iterator of one build from the fee attributes and, for an enforcing
 /// build, the resting set whose hold the iterator parks members with.
 pub type BestTransactionsFactory<'a, Txs> =
@@ -440,6 +448,10 @@ impl<Txs> Builder<'_, Txs> {
         Attrs: Attributes<Transaction = N::SignedTx>,
     {
         let Self { best, evict_permanently_rejected, resting_predicates } = self;
+        // The pool iterator's hold watches the job's cancellation through a weak reference. A
+        // dropped `CancelOnDrop` clone cancels the job, so only this owner, dropped with `ctx` when
+        // the build returns, keeps one.
+        let cancel_watch = Arc::new(ctx.cancel.clone());
         let build_start = Instant::now();
         debug!(target: "payload_builder", id=%ctx.payload_id(), parent_header = ?ctx.parent().hash(), parent_number = ctx.parent().number(), "building new payload");
 
@@ -490,6 +502,7 @@ impl<Txs> Builder<'_, Txs> {
                     );
                     ValidityMetrics::record_resting_carry_over(&carry_over, start.elapsed());
                     SharedRestingPredicates::new(resting)
+                        .with_interrupt(job_interrupt(&cancel_watch))
                 });
             // Only an enforcing build hands the pool iterator a hold; a shadow build evaluates
             // resting members to count mismatches.
@@ -1675,6 +1688,7 @@ where
             ValidityMetrics::resting_predicate_parked_total().increment(stats.parked);
             ValidityMetrics::resting_predicate_carried_parked_total()
                 .increment(stats.carried_parked);
+            ValidityMetrics::record_resting_hold_duration(stats.duration);
         }
         if carried_shadow_mismatches > 0 {
             ValidityMetrics::resting_predicate_shadow_mismatches_total()
@@ -1749,7 +1763,9 @@ mod tests {
     };
     use revm::{Database, database::TransitionState, state::EvmState};
 
-    use super::{BasePayloadBuilderCtx, Builder, ExecutionInfo, RESTING_SWEEP_WAIT_LIMIT};
+    use super::{
+        BasePayloadBuilderCtx, Builder, ExecutionInfo, RESTING_SWEEP_WAIT_LIMIT, job_interrupt,
+    };
     use crate::{
         BasePayloadBuilderAttributes, DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD, MeteringProvider,
         NoopMeteringProvider, ParkablePayloadTransactions, ResourceMeteringConfig,
@@ -2709,6 +2725,23 @@ mod tests {
             );
         }
         assert!(!rendered.contains(r#"outcome="matched""#));
+    }
+
+    #[test]
+    fn job_interrupt_observes_the_job_without_cancelling_it() {
+        let cancel = CancelOnDrop::default();
+        let watch = Arc::new(cancel.clone());
+
+        let interrupt = job_interrupt(&watch);
+        assert!(!interrupt());
+        drop(interrupt);
+        assert!(!cancel.is_interrupted(), "dropping the hold's interrupt must not cancel the job");
+
+        let interrupt = job_interrupt(&watch);
+        cancel.request_finalization();
+        assert!(interrupt(), "a finalization request interrupts the walk");
+        drop(watch);
+        assert!(interrupt(), "a finished build interrupts the walk");
     }
 
     #[test]

@@ -43,7 +43,7 @@ pub use flashblocks::{
     ParkedPredicateIndex, PayloadBuilder, PayloadHandler, PayloadJobDeadline,
     PayloadTransactionInvalidated, PredicateLoadTracker, PredicateReadRecorder, ResolvePayload,
     RestingPayloadTransactions, RestingStats, StateChangeEffects, ValidityPredicateEvaluation,
-    ValidityPredicateKey,
+    ValidityPredicateKey, flashblock_hold,
 };
 
 mod extension;
