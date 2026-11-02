@@ -775,7 +775,7 @@ impl BasePayloadBuilderCtx {
         // Total validity-predicate evaluation time (inclusive of the state loads each
         // evaluation performs) across this flashblock build. `None` until the first
         // evaluation, so it both accumulates and records whether any validity
-        // transaction was seen; emitted once when the loop finishes.
+        // transaction was seen; emitted once when the loop ends, including on cancellation.
         let mut predicate_eval_total: Option<Duration> = None;
         let mut validity_candidates_evaluated = 0_u64;
         let mut validity_candidates_deferred = 0_u64;
@@ -784,12 +784,12 @@ impl BasePayloadBuilderCtx {
         let mut validity_handling = Duration::ZERO;
 
         while let Some(tx) = best_txs.next(()) {
+            // Break rather than return so the per-build metrics below are still recorded. A
+            // flashblock whose selection loop runs until the deadline is the case where
+            // validity handling costs the most, so dropping its observations would hide it.
             if self.cancel.is_cancelled() {
                 diag.cancelled = true;
-                diag.txs_considered = num_txs_considered;
-                diag.txs_included =
-                    (info.executed_transactions.len() as u64).saturating_sub(min_tx_index);
-                return Ok(diag);
+                break;
             }
 
             num_txs_considered += 1;
@@ -1909,6 +1909,41 @@ mod tests {
         assert_eq!(diagnostics.txs_rejected_gas, 1);
         assert_eq!(best_txs.over_limit_rejections, 1);
         assert!(best_txs.over_limit_remaining > OVER_LIMIT - 10);
+    }
+
+    #[test]
+    fn cancelled_selection_still_records_per_build_metrics() {
+        let ctx = test_builder_context();
+        let mut best_txs = LimitRejectionTransactions::new(0, 2, ctx.cancel.clone());
+        let db = StateProviderDatabase::new(NoopProvider::default());
+        let mut state = State::builder().with_database(db).with_bundle_update().build();
+        let mut info = ExecutionInfo::default();
+        let limits = ResourceLimits { block_gas_limit: 0, ..Default::default() };
+        let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+        let handle = recorder.handle();
+
+        let diagnostics = metrics::with_local_recorder(&recorder, || {
+            ctx.execute_best_transactions(
+                &mut info,
+                &mut BlockDeferrals::default(),
+                &mut state,
+                &mut best_txs,
+                &limits,
+            )
+            .expect("cancelled selection should succeed")
+        });
+
+        assert!(diagnostics.cancelled);
+        let rendered = handle.render();
+        assert!(
+            rendered
+                .contains("base_builder_validity_predicate_candidates_evaluated_per_build_count 1"),
+            "cancelled build must record per-build validity metrics:\n{rendered}"
+        );
+        assert!(
+            rendered.contains("base_builder_payload_num_tx_considered_count 1"),
+            "cancelled build must record payload builder metrics:\n{rendered}"
+        );
     }
 
     #[test]
