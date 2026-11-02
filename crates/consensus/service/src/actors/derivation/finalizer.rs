@@ -84,7 +84,10 @@ pub struct PendingFinalization {
 pub struct L2Finalizer {
     /// The L1 inclusion block recorded for each derived L2 block awaiting finalization.
     records: BTreeMap<L2BlockNumber, BlockInfo>,
-    /// L2 blocks whose inclusion block was rejected as not canonical.
+    /// Barrier L2 blocks: blocks the finalizer holds no usable evidence for. An entry is added when
+    /// the block's inclusion block was rejected as not canonical ([`Self::reject_inclusion`]), or
+    /// when a reset leaves a block at or below its safe head that it cannot vouch for
+    /// ([`Self::retain_valid_after_reset`]), such as one that was dispatched but never confirmed.
     ///
     /// Nothing at or above the lowest of them is finalized. An entry is removed when the block is
     /// derived again, or when a reset moves the safe head below it.
@@ -98,10 +101,12 @@ pub struct L2Finalizer {
     /// restarted from. It identifies the engine's own echo of a reset, and a reset to a different
     /// block at the same height.
     safe_head: Option<L2BlockInfo>,
-    /// The highest L2 block whose record describes a block the engine holds. A reset keeps
-    /// nothing above it, because those blocks were dispatched but never confirmed. `None` before
-    /// the first confirmation, and after the engine adopted a safe head derivation did not
-    /// produce.
+    /// The highest L2 block whose record describes a block the engine holds. A reset keeps the
+    /// records at or below it (and at or below the reset safe head). Records above it that are at
+    /// or below the reset safe head were dispatched but never confirmed, so they become barriers;
+    /// records above the reset safe head are dropped. `None` before the first confirmation, after
+    /// the engine adopted a safe head derivation did not produce, and after a reset that left no
+    /// confirmed block to keep.
     confirmed_through: Option<L2BlockNumber>,
     /// Inclusion blocks already verified canonical, keyed by L1 block number.
     ///
