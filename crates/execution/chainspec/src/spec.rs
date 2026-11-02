@@ -7,7 +7,7 @@ use alloy_eips::eip7840::BlobParams;
 use alloy_genesis::Genesis;
 use alloy_hardforks::Hardfork;
 use alloy_primitives::{Address, B256, U256};
-use base_common_chains::{BaseUpgradeExt, ChainConfig, Upgrades};
+use base_common_chains::{BaseFeature, BaseUpgradeExt, ChainConfig, Upgrades};
 use base_common_consensus::Predeploys;
 use base_common_genesis::{
     BaseUpgrade, DenimTimestampSchedule, RuntimeUpgradeRegistry, UpgradeActivation,
@@ -284,7 +284,10 @@ impl BaseChainSpec {
         activation_admin_address: Option<Address>,
         chain_id: u64,
     ) -> Result<(), BaseChainSpecError> {
-        let beryl_scheduled = !matches!(upgrades.fork(BaseUpgrade::Beryl), ForkCondition::Never);
+        let beryl_scheduled = !matches!(
+            upgrades.fork(BaseFeature::ActivationRegistry.activation_upgrade()),
+            ForkCondition::Never
+        );
 
         if activation_admin_address.is_none() && beryl_scheduled {
             return Err(BaseChainSpecError::MissingActivationAdminAddress { chain_id });
@@ -305,7 +308,9 @@ impl BaseChainSpec {
     pub fn make_genesis_header(genesis: &Genesis, upgrades: &ChainHardforks) -> Header {
         let mut header = reth_chainspec::make_genesis_header(genesis, upgrades);
 
-        if upgrades.fork(BaseUpgrade::Isthmus).active_at_timestamp(header.timestamp)
+        if upgrades
+            .fork(BaseFeature::L2ToL1MessageRoot.activation_upgrade())
+            .active_at_timestamp(header.timestamp)
             && let Some(storage_root) = Self::l2_to_l1_message_passer_storage_root(genesis)
         {
             header.withdrawals_root = Some(storage_root);
@@ -680,9 +685,12 @@ impl EthChainSpec for BaseChainSpec {
     }
 
     fn next_block_base_fee(&self, parent: &Header, target_timestamp: u64) -> Option<u64> {
-        if Upgrades::is_jovian_active_at_timestamp(self, parent.timestamp()) {
+        if self.is_feature_active_at_timestamp(BaseFeature::DaAwareBaseFee, parent.timestamp()) {
             compute_jovian_base_fee(self, parent, target_timestamp).ok()
-        } else if Upgrades::is_holocene_active_at_timestamp(self, parent.timestamp()) {
+        } else if self.is_feature_active_at_timestamp(
+            BaseFeature::DynamicBaseFeeParameters,
+            parent.timestamp(),
+        ) {
             decode_holocene_base_fee(self, parent, target_timestamp).ok()
         } else {
             self.runtime_chain_spec().next_block_base_fee(parent, target_timestamp)

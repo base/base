@@ -1,7 +1,7 @@
 //! `BaseTime` predeploy artifacts, deployment, storage layout, and ABI surface.
 
 use alloy_primitives::{Address, B256, Bytes, address, b256, hex};
-use base_common_chains::Upgrades;
+use base_common_chains::{BaseFeature, Upgrades};
 use base_common_consensus::Predeploys;
 use revm::{
     DatabaseCommit,
@@ -104,7 +104,7 @@ impl BaseTime {
     where
         DB: Database + DatabaseCommit,
     {
-        if !chain_spec.is_denim_active_at_timestamp(timestamp) {
+        if !chain_spec.is_feature_active_at_timestamp(BaseFeature::SubsecondBlocks, timestamp) {
             return Ok(());
         }
 

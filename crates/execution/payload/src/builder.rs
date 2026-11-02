@@ -13,7 +13,7 @@ use alloy_evm::{
 use alloy_primitives::{Address, B256, TxHash, U256};
 use alloy_rpc_types_debug::ExecutionWitness;
 use alloy_rpc_types_engine::PayloadId;
-use base_common_chains::Upgrades;
+use base_common_chains::{BaseFeature, Upgrades};
 use base_common_consensus::{BaseTransaction, DepositReceiptExt, Predeploys};
 use base_common_evm::{BaseSpecId, L1BlockInfo};
 use base_execution_eip8130::IntrinsicGas;
@@ -55,12 +55,12 @@ use tracing::{debug, debug_span, info, instrument, trace, warn};
 
 use crate::{
     Attributes, BasePayloadBuilderAttributes, BlockDeferrals, BuilderMetrics,
-    CoinbaseTipAffordability, InclusionTracker, MeteringProvider, ParkableBestPayloadTransactions,
-    ParkablePayloadTransactions, ParkedPredicateIndex, PayloadPrimitives, PredicateLoadTracker,
-    PredicateReadRecorder, RejectionCacheMetrics, RestingPredicateStore, SharedRestingPredicates,
-    StateChangeEffects, ValidityEvaluationCounters, ValidityEvaluationOutcome, ValidityMetrics,
-    ValidityPredicateEvaluation, config::BaseBuilderConfig, error::BasePayloadBuilderError,
-    payload::BaseBuiltPayload,
+    CoinbaseTipAffordability, HoldInterrupt, InclusionTracker, MeteringProvider,
+    ParkableBestPayloadTransactions, ParkablePayloadTransactions, ParkedPredicateIndex,
+    PayloadPrimitives, PredicateLoadTracker, PredicateReadRecorder, RejectionCacheMetrics,
+    RestingPredicateStore, SharedRestingPredicates, StateChangeEffects, ValidityEvaluationCounters,
+    ValidityEvaluationOutcome, ValidityMetrics, ValidityPredicateEvaluation,
+    config::BaseBuilderConfig, error::BasePayloadBuilderError, payload::BaseBuiltPayload,
 };
 
 macro_rules! emit_native_validity_event {
@@ -356,6 +356,14 @@ where
     }
 }
 
+/// Interrupts a pool iterator's walk past held resting transactions once its job is cancelled or
+/// asked to finalize, as the build loop checks before each candidate. Resting transactions are
+/// only held from Denim on, where the build loop honours finalization requests.
+fn job_interrupt(cancel: &Arc<CancelOnDrop>) -> HoldInterrupt {
+    let cancel = Arc::downgrade(cancel);
+    Arc::new(move || cancel.upgrade().is_none_or(|cancel| cancel.is_interrupted()))
+}
+
 /// Creates the candidate iterator of one build from the fee attributes and, for an enforcing
 /// build, the resting set whose hold the iterator parks members with.
 pub type BestTransactionsFactory<'a, Txs> =
@@ -440,6 +448,10 @@ impl<Txs> Builder<'_, Txs> {
         Attrs: Attributes<Transaction = N::SignedTx>,
     {
         let Self { best, evict_permanently_rejected, resting_predicates } = self;
+        // The pool iterator's hold watches the job's cancellation through a weak reference. A
+        // dropped `CancelOnDrop` clone cancels the job, so only this owner, dropped with `ctx` when
+        // the build returns, keeps one.
+        let cancel_watch = Arc::new(ctx.cancel.clone());
         let build_start = Instant::now();
         debug!(target: "payload_builder", id=%ctx.payload_id(), parent_header = ?ctx.parent().hash(), parent_number = ctx.parent().number(), "building new payload");
 
@@ -472,7 +484,8 @@ impl<Txs> Builder<'_, Txs> {
             resting = resting_predicates
                 .as_ref()
                 .filter(|_| {
-                    ctx.builder_config.resting_predicate_mode.is_enabled() && ctx.is_denim_active()
+                    ctx.builder_config.resting_predicate_mode.is_enabled()
+                        && ctx.is_one_shot_building_active()
                 })
                 .map(|store| {
                     let start = Instant::now();
@@ -489,6 +502,7 @@ impl<Txs> Builder<'_, Txs> {
                     );
                     ValidityMetrics::record_resting_carry_over(&carry_over, start.elapsed());
                     SharedRestingPredicates::new(resting)
+                        .with_interrupt(job_interrupt(&cancel_watch))
                 });
             // Only an enforcing build hands the pool iterator a hold; a shadow build evaluates
             // resting members to count mismatches.
@@ -521,7 +535,7 @@ impl<Txs> Builder<'_, Txs> {
             }
 
             // check if the new payload is even more valuable
-            if !ctx.is_denim_active() && !ctx.is_better_payload(info.total_fees) {
+            if !ctx.is_one_shot_building_active() && !ctx.is_better_payload(info.total_fees) {
                 // can skip building the block
                 return Ok(BuildOutcomeKind::Aborted { fees: info.total_fees });
             }
@@ -601,7 +615,7 @@ impl<Txs> Builder<'_, Txs> {
             BuilderMetrics::record_native_build(execution_duration, build_start.elapsed());
         }
 
-        if no_tx_pool || ctx.is_denim_active() {
+        if no_tx_pool || ctx.is_one_shot_building_active() {
             // if `no_tx_pool` is set only transactions from the payload attributes will be included
             // in the payload. In other words, the payload is deterministic and we can
             // freeze it once we've successfully built it.
@@ -649,7 +663,10 @@ impl<Txs> Builder<'_, Txs> {
             return Err(PayloadBuilderError::other(BasePayloadBuilderError::Cancelled));
         }
 
-        if ctx.chain_spec.is_isthmus_active_at_timestamp(ctx.attributes().timestamp()) {
+        if ctx.chain_spec.is_feature_active_at_timestamp(
+            BaseFeature::L2ToL1MessageRoot,
+            ctx.attributes().timestamp(),
+        ) {
             // force load `L2ToL1MessagePasser.sol` so l2 withdrawals root can be computed even if
             // no l2 withdrawals in block
             _ = db.load_cache_account(Predeploys::L2_TO_L1_MESSAGE_PASSER)?;
@@ -791,9 +808,12 @@ where
         &self.config.attributes
     }
 
-    /// Returns `true` if Denim is active at this payload's timestamp.
-    pub fn is_denim_active(&self) -> bool {
-        self.chain_spec.is_denim_active_at_timestamp(self.attributes().timestamp())
+    /// Returns whether this payload uses one-shot building rather than fee-based replacement.
+    pub fn is_one_shot_building_active(&self) -> bool {
+        self.chain_spec.is_feature_active_at_timestamp(
+            BaseFeature::OneShotPayloadBuilding,
+            self.attributes().timestamp(),
+        )
     }
 
     /// Returns the current fee settings for transactions from the mempool
@@ -1039,22 +1059,26 @@ where
             BaseSpecId::from_timestamp(&*self.chain_spec, block_timestamp),
             u128::from(base_fee),
         );
-        let can_finalize_early = self.is_denim_active();
+        let can_finalize_early = self.is_one_shot_building_active();
         let resource_metering = &self.builder_config.resource_metering;
         let mut resource_throttled = 0u64;
         // Only deposits can write the L1 block info predeploy, so the scalar left in state by the
         // sequencer transactions holds for every pool candidate in this scan.
         let da_footprint_gas_scalar = self
             .chain_spec
-            .is_jovian_active_at_timestamp(self.attributes().timestamp())
+            .is_feature_active_at_timestamp(BaseFeature::DaFootprint, self.attributes().timestamp())
             .then(|| {
                 L1BlockInfo::fetch_da_footprint_gas_scalar(builder.evm_mut().db_mut())
                     .expect("DA footprint should always be available from the database post jovian")
             });
+        // Set when the job is cancelled mid-scan. The loop breaks instead of returning so the
+        // per-build validity metrics below are still recorded for scans cut short.
+        let mut cancelled = false;
         while let Some(pooled) = best_txs.next(()) {
             let tx = &pooled.transaction;
             if self.cancel.is_cancelled() {
-                return Ok(Some(()));
+                cancelled = true;
+                break;
             }
             if can_finalize_early && self.cancel.is_finalization_requested() {
                 break;
@@ -1414,7 +1438,8 @@ where
             }
 
             if self.cancel.is_cancelled() {
-                return Ok(Some(()));
+                cancelled = true;
+                break;
             }
 
             let mut state_change_effects = StateChangeEffects::default();
@@ -1663,6 +1688,7 @@ where
             ValidityMetrics::resting_predicate_parked_total().increment(stats.parked);
             ValidityMetrics::resting_predicate_carried_parked_total()
                 .increment(stats.carried_parked);
+            ValidityMetrics::record_resting_hold_duration(stats.duration);
         }
         if carried_shadow_mismatches > 0 {
             ValidityMetrics::resting_predicate_shadow_mismatches_total()
@@ -1677,6 +1703,9 @@ where
             );
         }
 
+        if cancelled {
+            return Ok(Some(()));
+        }
         // A cancellation that raced the finalization break (or an empty iterator) must still
         // win, so re-check it before the finalized payload is assembled. Gated on Denim so
         // pre-Denim control flow is unchanged.
@@ -1734,7 +1763,9 @@ mod tests {
     };
     use revm::{Database, database::TransitionState, state::EvmState};
 
-    use super::{BasePayloadBuilderCtx, Builder, ExecutionInfo, RESTING_SWEEP_WAIT_LIMIT};
+    use super::{
+        BasePayloadBuilderCtx, Builder, ExecutionInfo, RESTING_SWEEP_WAIT_LIMIT, job_interrupt,
+    };
     use crate::{
         BasePayloadBuilderAttributes, DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD, MeteringProvider,
         NoopMeteringProvider, ParkablePayloadTransactions, ResourceMeteringConfig,
@@ -2694,6 +2725,23 @@ mod tests {
             );
         }
         assert!(!rendered.contains(r#"outcome="matched""#));
+    }
+
+    #[test]
+    fn job_interrupt_observes_the_job_without_cancelling_it() {
+        let cancel = CancelOnDrop::default();
+        let watch = Arc::new(cancel.clone());
+
+        let interrupt = job_interrupt(&watch);
+        assert!(!interrupt());
+        drop(interrupt);
+        assert!(!cancel.is_interrupted(), "dropping the hold's interrupt must not cancel the job");
+
+        let interrupt = job_interrupt(&watch);
+        cancel.request_finalization();
+        assert!(interrupt(), "a finalization request interrupts the walk");
+        drop(watch);
+        assert!(interrupt(), "a finished build interrupts the walk");
     }
 
     #[test]

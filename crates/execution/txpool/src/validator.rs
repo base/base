@@ -12,7 +12,7 @@ use std::{
 use alloy_consensus::{BlockHeader, Transaction, constants::KECCAK_EMPTY};
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, B256, LogData, U256, map::AddressSet};
-use base_common_chains::{BaseUpgrade, Upgrades};
+use base_common_chains::{BaseFeature, Upgrades};
 use base_common_consensus::{
     BaseTimeUpdateTx, Eip8130Constants, Eip8130Contracts, Eip8130Signed, Eip8130StructuralError,
     Eip8130Structure, Eip8130TimestampError,
@@ -74,6 +74,10 @@ pub enum BaseTxPoolError {
         /// Static validation label for the failure.
         reason: &'static str,
     },
+    /// The transaction carries validity predicates but is an EIP-7702
+    /// transaction or comes from an EIP-7702 delegated sender.
+    #[error("validity predicates are not allowed on EIP-7702 transactions or delegated senders")]
+    DelegatedValidityTransaction,
     /// The transaction failed a check whose outcome depends on its
     /// `sender_auth` or `payer_auth`: the authentication itself, or a limit
     /// that counts their bytes or gas (encoded size, intrinsic gas, the
@@ -960,7 +964,7 @@ where
         let timestamp = header.timestamp();
         let timestamp_ms = self
             .chain_spec()
-            .is_denim_active_at_timestamp(timestamp)
+            .is_feature_active_at_timestamp(BaseFeature::SubsecondBlocks, timestamp)
             .then(|| BaseTimeUpdateTx::decode_timestamp_ms(transactions, timestamp))
             .flatten()
             .unwrap_or_else(|| timestamp.saturating_mul(1_000));
@@ -1071,10 +1075,39 @@ where
                 // bounds what it sponsors.
                 authorities: None,
             };
-            return self.apply_base_checks(outcome, false);
+            return self.apply_base_checks(Self::reject_delegated_validity(outcome), false);
         }
         let outcome = self.inner.validate_one_with_state(origin, transaction, state);
-        self.apply_base_checks(outcome, true)
+        self.apply_base_checks(Self::reject_delegated_validity(outcome), true)
+    }
+
+    /// Rejects a transaction with validity predicates that is an EIP-7702
+    /// transaction or whose sender is EIP-7702 delegated.
+    ///
+    /// Validity transactions live in their own pool, which does not enforce
+    /// reth's in-flight limits for delegated accounts and pending
+    /// authorizations. Keeping delegation out of validity transactions entirely
+    /// means those limits never need to span both pools. A sender delegated
+    /// after admission loses its validity transactions on the code change (see
+    /// `BaseTransactionPool::apply_state_diff`).
+    fn reject_delegated_validity(
+        outcome: TransactionValidationOutcome<Tx>,
+    ) -> TransactionValidationOutcome<Tx> {
+        match outcome {
+            TransactionValidationOutcome::Valid { transaction, bytecode_hash, .. }
+                if !transaction.transaction().validity_conditions().is_empty()
+                    && (transaction.transaction().authorization_list().is_some()
+                        || bytecode_hash.is_some_and(|hash| hash != KECCAK_EMPTY)) =>
+            {
+                TransactionValidationOutcome::Invalid(
+                    transaction.into_transaction(),
+                    InvalidPoolTransactionError::other(
+                        BaseTxPoolError::DelegatedValidityTransaction,
+                    ),
+                )
+            }
+            outcome => outcome,
+        }
     }
 
     /// Returns a low-cardinality sender authenticator label for metrics.
@@ -1128,8 +1161,8 @@ where
         let now_ms = self.block_timestamp_ms();
         // Before Zenith there is no Keystore: authorization, lock state, and the
         // high-rate payer classification never read `AccountConfiguration`.
-        let keystore =
-            BaseSpecId::from_timestamp(self.chain_spec(), now).is_enabled_in(BaseUpgrade::Zenith);
+        let keystore = BaseSpecId::from_timestamp(self.chain_spec(), now)
+            .is_feature_enabled(BaseFeature::Keystore);
         let state = self.client().latest().map_err(|error| Self::provider_unavailable(error))?;
 
         // Authorize *and apply* the account changes against a writable overlay so
@@ -1245,7 +1278,9 @@ where
         // matching execution. A `gas_limit` over the cap on its own is a bad
         // body; one pushed over only by `payer_auth` gas is not, because the
         // hash does not cover `payer_auth`.
-        if self.chain_spec().is_azul_active_at_timestamp(now)
+        if self
+            .chain_spec()
+            .is_feature_active_at_timestamp(BaseFeature::TransactionGasLimitCap, now)
             && FeeCheck::max_chargeable_gas(signed.tx().gas_limit, intrinsic.payer_auth)
                 > MAX_TX_GAS_LIMIT_OSAKA
         {
@@ -1953,12 +1988,13 @@ where
         let now_ms = self.block_timestamp_ms();
         // Fork gate: EIP-8130 (account abstraction) transactions are only
         // admissible to the pool once the Everest upgrade is active.
-        if !self.chain_spec().is_everest_active_at_timestamp(now) {
+        if !self.chain_spec().is_feature_active_at_timestamp(BaseFeature::Eip8130, now) {
             return Err(InvalidTransactionError::TxTypeNotSupported.into());
         }
         // Without the Keystore an EIP-8130 transaction may use only delegation
         // and native secp256k1 keys; anything else is an unsupported type.
-        if !BaseSpecId::from_timestamp(self.chain_spec(), now).is_enabled_in(BaseUpgrade::Zenith)
+        if !BaseSpecId::from_timestamp(self.chain_spec(), now)
+            .is_feature_enabled(BaseFeature::Keystore)
             && let Err(error) = TransactionAuthorizer::check_without_keystore(signed)
         {
             return Err(Self::map_tx_auth_error(error));
@@ -2125,7 +2161,10 @@ where
             let mut l1_block_info = self.block_info.l1_block_info.read().clone();
 
             // Check to ensure tx doesn't exceed the DA footprint limit
-            if self.chain_spec().is_jovian_active_at_timestamp(self.block_timestamp()) {
+            if self
+                .chain_spec()
+                .is_feature_active_at_timestamp(BaseFeature::DaFootprint, self.block_timestamp())
+            {
                 let da_footprint_gas_scalar = l1_block_info
                     .da_footprint_gas_scalar
                     .unwrap_or(DaFootprintGasScalarUpdate::DEFAULT_DA_FOOTPRINT_GAS_SCALAR)

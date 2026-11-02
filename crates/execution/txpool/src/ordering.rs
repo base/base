@@ -44,6 +44,11 @@ impl<P: Ord + Clone> BestTransactionPriority<P> {
             hash: *transaction.hash(),
         }
     }
+
+    /// The hash of the transaction this key was computed for.
+    pub const fn hash(&self) -> &TxHash {
+        &self.hash
+    }
 }
 
 /// Transaction ordering strategy for the pool.

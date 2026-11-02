@@ -15,7 +15,7 @@ use alloy_evm::{
     },
     eth::{EthTxResult, receipt_builder::ReceiptBuilderCtx},
 };
-use base_common_chains::Upgrades;
+use base_common_chains::{BaseFeature, Upgrades};
 use base_common_consensus::{DepositReceipt, Predeploys};
 use base_common_flz::{flz_compress_len, tx_estimated_size_fjord_from_fastlz_size};
 #[cfg(feature = "std")]
@@ -52,8 +52,10 @@ pub struct BaseBlockExecutor<Evm, R: BaseReceiptBuilder, Spec> {
     /// This is only set for blocks post-Jovian activation.
     /// See [DA footprint block limit spec](https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/jovian/exec-engine.md#da-footprint-block-limit)
     pub da_footprint_used: u64,
-    /// Whether Regolith upgrade is active.
-    pub is_regolith: bool,
+    /// Whether deposit transactions reserve gas against the block limit.
+    pub deposit_gas_accounting: bool,
+    /// Whether deposit receipts include the sender nonce.
+    pub deposit_nonce_enabled: bool,
     /// Utility to call system smart contracts.
     pub system_caller: SystemCaller<Spec>,
 }
@@ -66,9 +68,18 @@ where
 {
     /// Creates a new [`BaseBlockExecutor`].
     pub fn new(evm: E, ctx: BaseBlockExecutionCtx, spec: Spec, receipt_builder: R) -> Self {
+        let [deposit_gas_accounting, deposit_nonce_enabled] = BaseFeature::activation_states(
+            [BaseFeature::DepositGasAccounting, BaseFeature::DepositNonce],
+            |feature| {
+                spec.is_feature_active_at_timestamp(
+                    feature,
+                    evm.block().timestamp().saturating_to(),
+                )
+            },
+        );
         Self {
-            is_regolith: spec
-                .is_regolith_active_at_timestamp(evm.block().timestamp().saturating_to()),
+            deposit_gas_accounting,
+            deposit_nonce_enabled,
             evm,
             system_caller: SystemCaller::new(spec.clone()),
             spec,
@@ -227,7 +238,7 @@ where
         // gas_limit (see `reserved_block_gas`); for every other transaction it is `gas_limit`.
         let reserved_gas = Self::reserved_block_gas(&tx_env, tx.tx().gas_limit())?;
         let block_available_gas = self.evm.block().gas_limit().saturating_sub(self.gas_used);
-        if reserved_gas > block_available_gas && (self.is_regolith || !is_deposit) {
+        if reserved_gas > block_available_gas && (self.deposit_gas_accounting || !is_deposit) {
             return Err(BlockValidationError::TransactionGasLimitMoreThanAvailableBlockGas {
                 transaction_gas_limit: reserved_gas,
                 block_available_gas,
@@ -235,10 +246,10 @@ where
             .into());
         }
 
-        let da_footprint_used = if self
-            .spec
-            .is_jovian_active_at_timestamp(self.evm.block().timestamp().saturating_to())
-            && !is_deposit
+        let da_footprint_used = if self.spec.is_feature_active_at_timestamp(
+            BaseFeature::DaFootprint,
+            self.evm.block().timestamp().saturating_to(),
+        ) && !is_deposit
         {
             let da_footprint_available =
                 self.evm.block().gas_limit().saturating_sub(self.da_footprint_used);
@@ -272,7 +283,7 @@ where
 
         // Fetch the depositor account from the database for the deposit nonce.
         // This *only* needs to be done post-Regolith for deposit transactions.
-        let depositor = (self.is_regolith && is_deposit)
+        let depositor = (self.deposit_nonce_enabled && is_deposit)
             .then(|| self.evm.db_mut().basic(*tx.signer()).map(|acc| acc.unwrap_or_default()))
             .transpose()
             .map_err(BlockExecutionError::other)?;
@@ -304,8 +315,10 @@ where
 
         self.gas_used += tx_gas_used;
 
-        if self.spec.is_jovian_active_at_timestamp(self.evm.block().timestamp().saturating_to())
-            && !is_deposit
+        if self.spec.is_feature_active_at_timestamp(
+            BaseFeature::DaFootprint,
+            self.evm.block().timestamp().saturating_to(),
+        ) && !is_deposit
         {
             self.da_footprint_used = self.da_footprint_used.saturating_add(blob_gas_used);
         }
@@ -333,7 +346,8 @@ where
                         inner: receipt,
                         deposit_nonce: depositor.map(|account| account.nonce),
                         deposit_receipt_version: (is_deposit
-                            && self.spec.is_canyon_active_at_timestamp(
+                            && self.spec.is_feature_active_at_timestamp(
+                                BaseFeature::DepositReceiptVersion,
                                 self.evm.block().timestamp().saturating_to(),
                             ))
                         .then_some(1),

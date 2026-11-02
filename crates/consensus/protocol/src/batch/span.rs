@@ -10,7 +10,7 @@ use alloc::vec::Vec;
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{FixedBytes, bytes};
 use base_common_consensus::OpTxType;
-use base_common_genesis::RollupConfig;
+use base_common_genesis::{BaseFeature, RollupConfig};
 use tracing::{info, warn};
 
 use crate::{
@@ -491,7 +491,7 @@ impl SpanBatch {
                 }
 
                 // If isthmus is not active yet and the transaction is a 7702, drop the batch.
-                if !cfg.is_isthmus_active(batch.timestamp)
+                if !cfg.is_feature_active_cascading(BaseFeature::Eip7702, batch.timestamp)
                     && tx.as_ref().first() == Some(&(OpTxType::Eip7702 as u8))
                 {
                     warn!(target: "batch_span", tx_index = i, "EIP-7702 transactions are not supported pre-isthmus");
@@ -499,7 +499,7 @@ impl SpanBatch {
                 }
 
                 // If Everest is not active yet and the transaction is an 8130, drop the batch.
-                if !cfg.is_everest_active(batch.timestamp)
+                if !cfg.is_feature_active_cascading(BaseFeature::Eip8130, batch.timestamp)
                     && tx.as_ref().first() == Some(&(OpTxType::Eip8130 as u8))
                 {
                     warn!(target: "batch_span", tx_index = i, "EIP-8130 transactions are not supported pre-Everest");
@@ -597,7 +597,10 @@ impl SpanBatch {
             return (BatchValidity::Undecided, None);
         }
         let next = l2_safe_head.block_info.number + 1;
-        if cfg.is_denim_active(cfg.l2_block_timestamp(next)) {
+        if cfg.is_feature_active_cascading(
+            BaseFeature::SingularBatchesOnly,
+            cfg.l2_block_timestamp(next),
+        ) {
             warn!(target: "batch_span", next_block_number = next, "Dropping span batch after Denim activation");
             return (BatchValidity::Drop(BatchDropReason::SpanBatchPostDenim), None);
         }
@@ -618,7 +621,7 @@ impl SpanBatch {
             }
             batch_origin = l1_origins[1];
         }
-        if !cfg.is_delta_active(batch_origin.timestamp) {
+        if !cfg.is_feature_active_cascading(BaseFeature::SpanBatches, batch_origin.timestamp) {
             warn!(
                 target: "batch_span",
                 "received SpanBatch (id {:?}) with L1 origin (timestamp {}) before Delta upgrade",
@@ -637,7 +640,10 @@ impl SpanBatch {
             );
 
             // After holocene is activated, gaps are disallowed.
-            if cfg.is_holocene_active(inclusion_block.timestamp) {
+            if cfg.is_feature_active_cascading(
+                BaseFeature::StrictDerivationOrdering,
+                inclusion_block.timestamp,
+            ) {
                 return (BatchValidity::Drop(BatchDropReason::FutureTimestampHolocene), None);
             }
             return (BatchValidity::Future, None);
@@ -646,7 +652,10 @@ impl SpanBatch {
         // Drop the batch if it has no new blocks after the safe head.
         if self.final_timestamp() < next_timestamp {
             warn!(target: "batch_span", "span batch has no new blocks after safe head");
-            return if cfg.is_holocene_active(inclusion_block.timestamp) {
+            return if cfg.is_feature_active_cascading(
+                BaseFeature::StrictDerivationOrdering,
+                inclusion_block.timestamp,
+            ) {
                 (BatchValidity::Past, None)
             } else {
                 (BatchValidity::Drop(BatchDropReason::SpanBatchNoNewBlocksPreHolocene), None)

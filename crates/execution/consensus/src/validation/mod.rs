@@ -10,7 +10,7 @@ use alloy_consensus::{BlockHeader, EMPTY_OMMER_ROOT_HASH, TxReceipt};
 use alloy_eips::Encodable2718;
 use alloy_primitives::{B256, Bloom, Bytes};
 use alloy_trie::EMPTY_ROOT_HASH;
-use base_common_chains::Upgrades;
+use base_common_chains::{BaseFeature, Upgrades};
 use base_common_consensus::{BaseTxEnvelope, DepositReceiptExt};
 use base_execution_chainspec::BaseChainSpec;
 use base_protocol::BaseTimeUpdateTx;
@@ -22,7 +22,7 @@ use tracing::debug;
 use crate::proof::calculate_receipt_root;
 
 fn should_trust_precomputed_receipt_root(chain_spec: &impl Upgrades, timestamp: u64) -> bool {
-    chain_spec.is_canyon_active_at_timestamp(timestamp)
+    chain_spec.is_feature_active_at_timestamp(BaseFeature::DepositReceiptVersion, timestamp)
 }
 
 /// Validates the full Denim timestamp and metadata schedule.
@@ -82,7 +82,9 @@ where
         (Some(header_withdrawals_root), Some(withdrawals_root)) => {
             // after isthmus, the withdrawals root field is repurposed and no longer mirrors the
             // withdrawals root computed from the body
-            if chain_spec.is_isthmus_active_at_timestamp(header.timestamp()) {
+            if chain_spec
+                .is_feature_active_at_timestamp(BaseFeature::L2ToL1MessageRoot, header.timestamp())
+            {
                 // After isthmus we only ensure that the body has empty withdrawals
                 if withdrawals_root != EMPTY_ROOT_HASH {
                     return Err(ConsensusError::BodyWithdrawalsRootDiff(
@@ -126,7 +128,7 @@ pub fn validate_block_post_execution<R: DepositReceiptExt>(
         should_trust_precomputed_receipt_root(&chain_spec, timestamp);
 
     // Validate that the blob gas used is present and correctly computed if Jovian is active.
-    if chain_spec.is_jovian_active_at_timestamp(timestamp) {
+    if chain_spec.is_feature_active_at_timestamp(BaseFeature::DaFootprint, timestamp) {
         let computed_blob_gas_used = result.blob_gas_used;
         let header_blob_gas_used =
             header.blob_gas_used().ok_or(ConsensusError::BlobGasUsedMissing)?;

@@ -103,11 +103,13 @@ async fn predicates_delay_priority_without_blocking_nonce_descendants() -> eyre:
     let driver = instance.driver().await?;
     let accounts = driver.fund_accounts(4, ONE_ETH).await?;
     let watched = Address::random();
+    let parent_nonce =
+        driver.provider().get_transaction_count(accounts[0].address()).pending().await?;
 
     let parent = driver
         .create_transaction()
         .with_signer(&accounts[0])
-        .with_nonce(0)
+        .with_nonce(parent_nonce)
         .with_to(Address::random())
         .with_max_priority_fee_per_gas(100)
         .build()
@@ -134,7 +136,7 @@ async fn predicates_delay_priority_without_blocking_nonce_descendants() -> eyre:
     let child_hash = *driver
         .create_transaction()
         .with_signer(&accounts[0])
-        .with_nonce(1)
+        .with_nonce(parent_nonce + 1)
         .with_to(Address::random())
         .with_max_priority_fee_per_gas(90)
         .send()
@@ -261,7 +263,6 @@ async fn predicate_eval_hard_cutoff_defers_without_evaluating() -> eyre::Result<
     let first = driver
         .create_transaction()
         .with_signer(&accounts[0])
-        .with_nonce(0)
         .with_to(Address::random())
         .with_max_priority_fee_per_gas(100)
         .build()
@@ -286,7 +287,6 @@ async fn predicate_eval_hard_cutoff_defers_without_evaluating() -> eyre::Result<
     let deferred = driver
         .create_transaction()
         .with_signer(&accounts[1])
-        .with_nonce(0)
         .with_to(Address::random())
         .with_max_priority_fee_per_gas(90)
         .build()
@@ -311,7 +311,6 @@ async fn predicate_eval_hard_cutoff_defers_without_evaluating() -> eyre::Result<
     let ordinary_hash = *driver
         .create_transaction()
         .with_signer(&accounts[2])
-        .with_nonce(0)
         .with_to(Address::random())
         .with_max_priority_fee_per_gas(50)
         .send()
@@ -356,7 +355,6 @@ async fn resting_transaction_is_included_once_its_blocking_state_changes() -> ey
     let resting = driver
         .create_transaction()
         .with_signer(&accounts[0])
-        .with_nonce(0)
         .with_to(Address::random())
         .with_max_priority_fee_per_gas(100)
         .build()

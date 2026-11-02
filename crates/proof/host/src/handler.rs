@@ -19,6 +19,7 @@ use alloy_rpc_types::{Block, debug::ExecutionWitness};
 use alloy_transport::TransportError;
 use ark_ff::{BigInteger, PrimeField};
 use base_common_consensus::{HoloceneExtraData, JovianExtraData, Predeploys};
+use base_common_genesis::BaseFeature;
 use base_common_network::Base;
 use base_common_rpc_types_engine::BasePayloadAttributes;
 use base_consensus_providers::BlobWithCommitmentAndProof;
@@ -931,14 +932,18 @@ fn payload_attributes_from_l2_block(
     payload_attributes.no_tx_pool = Some(true);
     payload_attributes.gas_limit = Some(block.header.inner.gas_limit);
 
-    if cfg.prover.rollup_config.is_jovian_active(timestamp) {
+    if cfg.prover.rollup_config.is_feature_active_cascading(BaseFeature::MinBaseFee, timestamp) {
         let (elasticity, denominator, min_base_fee) =
             JovianExtraData::decode(&block.header.inner.extra_data)
                 .map_err(|err| HostError::Custom(err.to_string()))?;
         payload_attributes.eip_1559_params =
             Some(encode_payload_eip_1559_params(elasticity, denominator));
         payload_attributes.min_base_fee = Some(min_base_fee);
-    } else if cfg.prover.rollup_config.is_holocene_active(timestamp) {
+    } else if cfg
+        .prover
+        .rollup_config
+        .is_feature_active_cascading(BaseFeature::DynamicBaseFeeParameters, timestamp)
+    {
         let (elasticity, denominator) = HoloceneExtraData::decode(&block.header.inner.extra_data)
             .map_err(|err| HostError::Custom(err.to_string()))?;
         payload_attributes.eip_1559_params =

@@ -30,6 +30,7 @@ use reth_transaction_pool::{
     pool::PendingPool,
 };
 use revm::{database::InMemoryDB, state::AccountInfo};
+use tokio_util::sync::CancellationToken;
 
 pub(crate) type Ordering = BaseOrdering<BasePooledTransaction>;
 pub(crate) type Pool = PendingPool<Ordering>;
@@ -388,7 +389,10 @@ impl MainnetBlock {
 
         for (flashblock, pool) in self.pools.iter().enumerate() {
             if flashblock > 0 {
-                best.refresh_iterator(parkable(pool, best.iterator_hold()));
+                best.refresh_iterator(parkable(
+                    pool,
+                    best.iterator_hold(&CancellationToken::new()),
+                ));
             }
             let committed_until = info.executed_transactions.len();
             let diag = self

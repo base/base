@@ -3,7 +3,7 @@
 use std::fmt;
 
 use alloy_consensus::BlockHeader;
-use base_common_chains::Upgrades;
+use base_common_chains::{BaseFeature, Upgrades};
 use base_execution_rpc::SequencerClient;
 use jsonrpsee::{
     core::{RpcResult, async_trait},
@@ -79,7 +79,9 @@ where
         header
             .map(|header| header.timestamp())
             .filter(|timestamp| {
-                self.provider.chain_spec().is_everest_active_at_timestamp(*timestamp)
+                self.provider
+                    .chain_spec()
+                    .is_feature_active_at_timestamp(BaseFeature::Eip8430, *timestamp)
             })
             .ok_or_else(|| invalid_params(PAYER_PRE_EVEREST_RPC_ERROR))
     }
@@ -93,7 +95,10 @@ where
     /// `SENDER_BALANCE_INSUFFICIENT` with other offers to switch to. A nonce that cannot be read
     /// passes the transaction on, since the payer checks it too.
     async fn check_transaction(&self, raw: &[u8], timestamp: u64) -> RpcResult<()> {
-        let keystore = self.provider.chain_spec().is_zenith_active_at_timestamp(timestamp);
+        let keystore = self
+            .provider
+            .chain_spec()
+            .is_feature_active_at_timestamp(BaseFeature::Keystore, timestamp);
         let transaction =
             PayerTransaction::decode(raw, self.chain_id(), keystore).map_err(|error| {
                 debug!(error = %error, "rejected payer_sendTransaction transaction before forward");

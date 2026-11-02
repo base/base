@@ -7,8 +7,9 @@ historical derivation.
 
 The writable channel is the FIFO tail. Each accepted batch is compressed once;
 hard limits are checked before the stream is mutated. `compressed_size_target`
-tracks stable output emitted by the compression stream and closes after the
-batch that reaches it.
+tracks stable output emitted by the compression stream, which a channel with a
+target flushes every quarter target of input, and closes after the batch that
+reaches it.
 
 `DaEgress` frames compressor output against remaining blob capacity, so a full
 blob can emit while the channel is still open. Artifacts are immutable after

@@ -6,7 +6,7 @@ use std::{
 };
 
 use alloy_primitives::{Address, B256};
-use base_common_genesis::RollupConfig;
+use base_common_genesis::{BaseFeature, RollupConfig};
 use base_common_rpc_types_engine::{NetworkPayloadEnvelope, PayloadEnvelopeError};
 use libp2p::gossipsub::{IdentTopic, Message, MessageAcceptance, TopicHash};
 use tokio::sync::watch::Receiver;
@@ -170,11 +170,17 @@ impl BlockHandler {
     ///
     /// Reference: <https://github.com/ethereum-optimism/optimism/blob/0bc5fe8d16155dc68bcdf1fa5733abc58689a618/op-node/p2p/gossip.go#L604C1-L612C3>
     pub fn topic(&self, timestamp: u64) -> IdentTopic {
-        if self.rollup_config.is_isthmus_active(timestamp) {
+        if self.rollup_config.is_feature_active_cascading(BaseFeature::GossipPayloadV4, timestamp) {
             self.blocks_v4_topic.clone()
-        } else if self.rollup_config.is_ecotone_active(timestamp) {
+        } else if self
+            .rollup_config
+            .is_feature_active_cascading(BaseFeature::GossipPayloadV3, timestamp)
+        {
             self.blocks_v3_topic.clone()
-        } else if self.rollup_config.is_canyon_active(timestamp) {
+        } else if self
+            .rollup_config
+            .is_feature_active_cascading(BaseFeature::GossipPayloadV2, timestamp)
+        {
             self.blocks_v2_topic.clone()
         } else {
             self.blocks_v1_topic.clone()

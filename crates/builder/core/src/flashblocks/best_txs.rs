@@ -1,6 +1,6 @@
 //! Flashblocks adapters for parkable best-transaction iterators.
 
-use std::marker::PhantomData;
+use std::{marker::PhantomData, sync::Arc};
 
 use alloy_primitives::{Address, TxHash, map::B256Set};
 use base_execution_payload_builder::{
@@ -12,6 +12,7 @@ use base_execution_txpool::{
 };
 use reth_payload_util::PayloadTransactions;
 use revm::state::EvmState;
+use tokio_util::sync::CancellationToken;
 
 use crate::{
     BuilderMetrics, CounterHandle, RejectionCache, RestingPayloadTransactions,
@@ -45,6 +46,18 @@ where
     // Resolved on the first hit so later hits on the candidate path skip the registry lookup.
     rejection_cache_hits: Option<CounterHandle>,
     transaction: PhantomData<T>,
+}
+
+/// Returns a hold that parks members of `resting` in a flashblock's pool iterator and stops the
+/// iterator's walk past them once `cancel`, the flashblock's cancellation, fires. The build loop
+/// checks the same token before each candidate, so a deadline that fires mid-walk ends the
+/// flashblock as promptly as one that fires between candidates.
+pub fn flashblock_hold<T: BasePooledTx>(
+    resting: &SharedRestingPredicates,
+    cancel: &CancellationToken,
+) -> Box<dyn BestTransactionsHold<T>> {
+    let cancel = cancel.clone();
+    resting.clone().with_interrupt(Arc::new(move || cancel.is_cancelled())).iterator_hold()
 }
 
 impl<T, I> std::fmt::Debug for BestFlashblocksTxs<T, I>
@@ -100,9 +113,13 @@ where
     }
 
     /// Returns the hold a new inner iterator parks resting members with, or `None` when resting
-    /// transactions are not enforced and the build loop evaluates them.
-    pub fn iterator_hold(&self) -> Option<Box<dyn BestTransactionsHold<T>>> {
-        self.resting_predicate_mode.is_enforced().then(|| self.resting.iterator_hold())
+    /// transactions are not enforced and the build loop evaluates them. `cancel` is the
+    /// cancellation of the flashblock the iterator serves.
+    pub fn iterator_hold(
+        &self,
+        cancel: &CancellationToken,
+    ) -> Option<Box<dyn BestTransactionsHold<T>>> {
+        self.resting_predicate_mode.is_enforced().then(|| flashblock_hold(&self.resting, cancel))
     }
 
     /// Takes the resting set, leaving an empty one, so it can be carried into the next block.
@@ -260,8 +277,8 @@ mod tests {
     use alloy_primitives::{Address, B256, Signature, TxHash, TxKind, U256};
     use base_common_consensus::{BaseTransactionSigned, BaseTxEnvelope};
     use base_execution_txpool::{
-        BaseOrdering, BasePooledTransaction, ParkedBestTransactions, ValidityOperator,
-        ValidityPredicate,
+        BaseOrdering, BasePooledTransaction, HOLD_INTERRUPT_INTERVAL, ParkedBestTransactions,
+        ValidityOperator, ValidityPredicate,
     };
     use reth_payload_util::PayloadTransactions;
     use reth_primitives_traits::Recovered;
@@ -710,7 +727,10 @@ mod tests {
         iterator: &mut BestFlashblocksTxs<BasePooledTransaction, Parkable>,
         pool: &PendingPool<Ordering>,
     ) {
-        iterator.refresh_iterator(parkable_with_hold(pool, iterator.iterator_hold()));
+        iterator.refresh_iterator(parkable_with_hold(
+            pool,
+            iterator.iterator_hold(&CancellationToken::new()),
+        ));
     }
 
     /// Plays the build loop's part for a candidate whose predicate is unsatisfied.
@@ -757,6 +777,37 @@ mod tests {
         assert_eq!(*iterator.next(()).unwrap().hash(), *resting.hash());
         iterator.mark_current_committed();
         assert_eq!(*iterator.next(()).unwrap().hash(), *low.hash());
+    }
+
+    #[test]
+    fn cancelled_flashblock_stops_walking_past_resting_transactions() {
+        let members = u64::from(HOLD_INTERRUPT_INTERVAL) + 1;
+        let mut transactions = (0..members)
+            .map(|sender| validity_transaction(sender, 0, 10, vec![balance_at_least(WATCHED, 1)]))
+            .collect::<Vec<_>>();
+        let plain = transaction(members, 0, 1);
+        transactions.push(Arc::clone(&plain));
+        let pool = pending_pool(&transactions);
+        let mut iterator = resting_iterator(&pool);
+
+        // Flashblock 1: the build loop finds every validity candidate unsatisfied.
+        for _ in 0..members {
+            let candidate = iterator.next(()).unwrap();
+            park_unsatisfied(&mut iterator, &candidate);
+        }
+
+        // Flashblock 2 is cancelled before its walk past the resting members reaches `plain`, so
+        // the iterator returns control after one check interval instead of finishing the walk.
+        let cancelled = CancellationToken::new();
+        cancelled.cancel();
+        iterator.refresh_iterator(parkable_with_hold(&pool, iterator.iterator_hold(&cancelled)));
+        assert!(iterator.next(()).is_none());
+        assert_eq!(iterator.take_resting_stats().parked, u64::from(HOLD_INTERRUPT_INTERVAL));
+
+        // Flashblock 3 runs to its deadline and walks past every member.
+        refresh(&mut iterator, &pool);
+        assert_eq!(*iterator.next(()).unwrap().hash(), *plain.hash());
+        assert_eq!(iterator.take_resting_stats().parked, members);
     }
 
     #[test]

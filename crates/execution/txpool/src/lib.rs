@@ -66,8 +66,8 @@ pub use ordering::{
 
 mod parking;
 pub use parking::{
-    BestTransactionLane, BestTransactionLaneState, BestTransactionsHold, ParkableBestTransactions,
-    ParkableTransactionPool, ParkedBestTransactions,
+    BestTransactionLane, BestTransactionLaneState, BestTransactionsHold, HOLD_INTERRUPT_INTERVAL,
+    ParkableBestTransactions, ParkableTransactionPool, ParkedBestTransactions,
 };
 
 mod pool;
@@ -83,7 +83,8 @@ pub use pool_error_label::PoolRejectionLabel;
 
 mod builder;
 pub use builder::{
-    BuilderApiImpl, BuilderApiMetrics, BuilderApiServer, InsertMetering, MAX_VALIDATED_INSERT_BATCH,
+    BuilderApiImpl, BuilderApiMetrics, BuilderApiServer, InsertMetering,
+    MAX_VALIDATED_INSERT_BATCH, is_already_imported_rejection,
 };
 
 mod wire;
@@ -93,6 +94,12 @@ pub use wire::{
 
 mod two_d_nonce_pool;
 pub use two_d_nonce_pool::SidecarSenderIds;
+
+mod store;
+pub use store::PoolStore;
+
+mod validity_limits;
+pub use validity_limits::ValidityPoolLimits;
 
 mod metrics;
 pub use metrics::{GuardMetrics, ValidatorMetrics, ValidityPoolMetrics, ValiditySignatureMetrics};
