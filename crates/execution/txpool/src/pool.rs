@@ -836,6 +836,20 @@ where
     /// Records a transaction's last valid block in the block-expiry index,
     /// dropping any replaced transaction's stale entry in the same pass so a
     /// fee-bump replacement does not orphan the old hash until its expiry block.
+    /// Drops the block-expiry entries of transactions that left the pool by
+    /// another path (eviction), so the index stays bounded by the live pool.
+    /// Takes the index lock only when there is something to drop; call it with
+    /// no store lock held.
+    fn remove_block_expiry(&self, removed: &[Arc<ValidPoolTransaction<T>>]) {
+        if removed.is_empty() {
+            return;
+        }
+        let mut block_expiry = self.block_expiry.write();
+        for transaction in removed {
+            block_expiry.remove(transaction.hash());
+        }
+    }
+
     fn register_block_expiry(
         &self,
         hash: TxHash,
@@ -1468,6 +1482,9 @@ where
                     evicted.extend(outcome.replaced);
                     listeners.on_discarded(&evicted);
                     listeners.on_lane_moved(&outcome.anchor);
+                    drop(listeners);
+                    drop(pool);
+                    self.remove_block_expiry(&evicted);
                     return Err(PoolError::new(inserted_hash, PoolErrorKind::DiscardedOnInsert));
                 }
                 listeners.on_discarded(&evicted);
@@ -1482,6 +1499,7 @@ where
                 // the block-expiry index.
                 drop(listeners);
                 drop(pool);
+                self.remove_block_expiry(&evicted);
                 if let Some(cross) = cross {
                     self.remove_cross_store_replaced(cross, inserted_hash);
                 }
@@ -6501,6 +6519,29 @@ mod tests {
         assert!(is_pending(&pool, head));
         assert_eq!(pool.validity_pool_occupancy().0, 3);
         assert_eq!(pool.pool_size().pending, 3);
+    }
+
+    #[tokio::test]
+    async fn validity_pool_eviction_drops_the_block_expiry_entry() {
+        let (pool, client) = build_integration_pool();
+        let pool = pool.with_validity_pool_limits(ValidityPoolLimits::inherit().with_max_txs(1));
+        let mut previous = None;
+        for fee in 1..=5u128 {
+            let signer = funded_signer(&client);
+            let hash = add(&pool, validity_1559(&signer, 0, fee * 1_000)).await;
+            if let Some(previous) = previous {
+                assert_gone(&pool, previous);
+            }
+            previous = Some(hash);
+            assert_eq!(pool.validity_pool_occupancy().0, 1);
+            assert_eq!(pool.block_expiry.read().len(), 1, "evicted entries leave the index");
+        }
+
+        // A newcomer discarded on insert leaves no entry behind either.
+        let cheap_signer = funded_signer(&client);
+        let error = add_err(&pool, validity_1559(&cheap_signer, 0, 500)).await;
+        assert!(matches!(error, PoolErrorKind::DiscardedOnInsert), "{error:?}");
+        assert_eq!(pool.block_expiry.read().len(), 1);
     }
 
     #[tokio::test]
