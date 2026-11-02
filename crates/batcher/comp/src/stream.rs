@@ -28,6 +28,10 @@ impl CompressionStream {
     /// Brotli sliding-window exponent (`2^22` bytes).
     const BROTLI_LGWIN: u32 = 22;
 
+    /// Worst-case bytes one flush adds: it ends a meta-block early, which costs one
+    /// more meta-block header (4 bytes), and pads it to a byte boundary (2 bytes).
+    const FLUSH_OVERHEAD: usize = 6;
+
     /// Creates an empty compressor at `level` that flushes every `flush_interval`
     /// input bytes, or never when `None`.
     ///
@@ -76,8 +80,12 @@ impl CompressionStream {
 
     /// Returns a conservative upper bound for a finished stream of `input_size`.
     pub fn max_output_size(&self, input_size: usize) -> usize {
-        // Channel-version prefix byte.
-        BrotliEncoderMaxCompressedSize(input_size).saturating_add(1)
+        // Each flush follows at least one flush interval of new input.
+        let max_flushes = self.flush_interval.map_or(0, |interval| input_size / interval);
+        BrotliEncoderMaxCompressedSize(input_size)
+            .saturating_add(max_flushes.saturating_mul(Self::FLUSH_OVERHEAD))
+            // Channel-version prefix byte.
+            .saturating_add(1)
     }
 
     /// Finishes the stream and returns compressed bytes not previously transferred.
@@ -144,7 +152,7 @@ mod tests {
             })
             .collect();
 
-        for flush_interval in [None, Some(100_000)] {
+        for flush_interval in [None, Some(1), Some(100_000)] {
             let mut compressor = CompressionStream::new(BrotliLevel::Brotli10, flush_interval);
             let bound = compressor.max_output_size(input.len());
             let mut output_size = 0usize;
