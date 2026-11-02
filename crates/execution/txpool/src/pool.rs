@@ -352,6 +352,18 @@ where
         for diff in diffs {
             diff.push_exact_keys(&mut exact);
         }
+        // An account's code changes when it gains or loses an EIP-7702
+        // delegation. Delegated senders may not hold validity transactions, so a
+        // sender delegated after admission (for example through an authorization
+        // that was still pending then) loses them here.
+        let delegated = {
+            let validity = self.validity.pool.read();
+            diffs
+                .iter()
+                .filter(|diff| diff.code_changed)
+                .flat_map(|diff| validity.sender_transaction_hashes(&diff.address))
+                .collect::<Vec<_>>()
+        };
         let dropped = {
             let mut guard = self.guard.write();
             let mut dropped = guard.invalidate_exact(exact);
@@ -360,6 +372,7 @@ where
                     dropped.extend(guard.on_balance_changed(diff.address, balance));
                 }
             }
+            dropped.extend(delegated);
             dropped
         };
         let removed = self.remove_from_stores(dropped, RemoveMode::Exact);
@@ -2674,10 +2687,10 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use alloy_consensus::{
-        SignableTransaction, Transaction, TxEip1559,
+        SignableTransaction, Transaction, TxEip1559, TxEip7702,
         transaction::{Recovered, SignerRecoverable},
     };
-    use alloy_eips::eip2718::Encodable2718;
+    use alloy_eips::{eip2718::Encodable2718, eip7702::Authorization};
     use alloy_primitives::{Bytes, TxKind, U256};
     use alloy_signer::SignerSync;
     use alloy_signer_local::PrivateKeySigner;
@@ -5139,5 +5152,107 @@ mod tests {
         pool.update_accounts(vec![account_at(signer.address(), 0)]);
         assert_eq!(pool.validity.pool.read().lane_cursor(&lane), Some(LaneCursor::at(0)));
         assert!(is_queued(&pool, validity1));
+    }
+
+    /// Funds `signer` as an EIP-7702 delegated account (its code is the
+    /// `0xef0100 || target` delegation designator).
+    fn delegate(
+        client: &MockEthProvider<BasePrimitives, Arc<BaseChainSpec>>,
+        signer: &PrivateKeySigner,
+    ) {
+        let mut designator = vec![0xef, 0x01, 0x00];
+        designator.extend_from_slice(Address::repeat_byte(0xDE).as_slice());
+        client.add_account(
+            signer.address(),
+            ExtendedAccount::new(0, U256::from(1_000_000_000_000_000_000u64))
+                .with_bytecode(Bytes::from(designator)),
+        );
+    }
+
+    fn signed_7702(signer: &PrivateKeySigner, nonce: u64) -> BasePooledTransaction {
+        let authorization = Authorization {
+            chain_id: U256::from(test_chain_id()),
+            address: Address::repeat_byte(0xDE),
+            nonce: nonce + 1,
+        };
+        let auth_signature = signer.sign_hash_sync(&authorization.signature_hash()).unwrap();
+        let tx = TxEip7702 {
+            chain_id: test_chain_id(),
+            nonce,
+            gas_limit: 100_000,
+            max_fee_per_gas: 1_000,
+            max_priority_fee_per_gas: 0,
+            to: Address::repeat_byte(0xEE),
+            value: U256::ZERO,
+            access_list: Default::default(),
+            authorization_list: vec![authorization.into_signed(auth_signature)],
+            input: Bytes::new(),
+        };
+        let signature = signer.sign_hash_sync(&tx.signature_hash()).unwrap();
+        let envelope = BaseTxEnvelope::Eip7702(tx.into_signed(signature));
+        let recovered = envelope.clone().try_into_recovered().unwrap();
+        BasePooledTransaction::new(recovered, envelope.encode_2718_len())
+    }
+
+    fn is_delegated_validity_rejection(error: &PoolErrorKind) -> bool {
+        matches!(error, PoolErrorKind::InvalidTransaction(_))
+            && format!("{error:?}").contains("DelegatedValidityTransaction")
+    }
+
+    #[tokio::test]
+    async fn a_delegated_sender_cannot_submit_validity_transactions() {
+        let (pool, client) = build_integration_pool();
+        let signer = signer();
+        delegate(&client, &signer);
+
+        let error = add_err(&pool, validity_1559(&signer, 0, 1_000)).await;
+        assert!(is_delegated_validity_rejection(&error), "{error:?}");
+        assert_eq!(pool.validity_pool_occupancy().0, 0);
+
+        // Its standard transactions still go to reth under the delegated-account limits.
+        let standard = add(&pool, signed_1559(&signer, 0)).await;
+        assert_store(&pool, standard, PoolStore::Protocol);
+    }
+
+    #[tokio::test]
+    async fn an_eip7702_transaction_cannot_carry_validity_predicates() {
+        let (pool, client) = build_integration_pool();
+        let signer = funded_signer(&client);
+        let transaction = signed_7702(&signer, 0).with_validity_predicates(resting_predicates());
+
+        let error = add_err(&pool, transaction).await;
+        assert!(is_delegated_validity_rejection(&error), "{error:?}");
+        assert_eq!(pool.validity_pool_occupancy().0, 0);
+    }
+
+    #[tokio::test]
+    async fn a_sender_delegated_after_admission_loses_its_validity_transactions() {
+        let (pool, client) = build_integration_pool();
+        let signer = funded_signer(&client);
+        let other = funded_signer(&client);
+        let standard = add(&pool, signed_1559(&signer, 0)).await;
+        let validity1 = add(&pool, validity_1559(&signer, 1, 1_000)).await;
+        let validity2 = add(&pool, validity_1559(&signer, 2, 1_000)).await;
+        let unrelated = add(&pool, validity_1559(&other, 0, 1_000)).await;
+
+        let removed = pool.apply_state_diff(&[AccountStateDiff {
+            address: signer.address(),
+            code_changed: true,
+            ..Default::default()
+        }]);
+        let mut removed: Vec<_> = removed.iter().map(|tx| *tx.hash()).collect();
+        removed.sort();
+        let mut expected = vec![validity1, validity2];
+        expected.sort();
+        assert_eq!(removed, expected);
+        assert_gone(&pool, validity1);
+        assert_gone(&pool, validity2);
+        assert_store(&pool, standard, PoolStore::Protocol);
+        assert_store(&pool, unrelated, PoolStore::Validity);
+
+        // Once delegated, the sender cannot submit new ones either.
+        delegate(&client, &signer);
+        let error = add_err(&pool, validity_1559(&signer, 1, 1_000)).await;
+        assert!(is_delegated_validity_rejection(&error), "{error:?}");
     }
 }

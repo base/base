@@ -634,6 +634,15 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
         self.hashes.get(hash).cloned()
     }
 
+    /// Returns the hashes of `sender`'s transactions. A sender with none costs
+    /// one map lookup; otherwise this walks the lanes.
+    pub(crate) fn sender_transaction_hashes(&self, sender: &Address) -> Vec<TxHash> {
+        if self.usage.sender_count(sender) == 0 {
+            return Vec::new();
+        }
+        self.transactions_by_sender(*sender).iter().map(|transaction| *transaction.hash()).collect()
+    }
+
     /// Returns transactions for the given sender.
     pub(crate) fn transactions_by_sender(
         &self,
