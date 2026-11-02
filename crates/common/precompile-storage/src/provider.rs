@@ -165,7 +165,9 @@ pub trait StorageOps {
     }
 }
 
-/// Fork-dependent features for native precompile behavior.
+/// Resolved native precompile storage behaviors, independent of the chain's schedule.
+///
+/// `Legacy` and `Cobalt` retain the historical profile names for callers and fixtures.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum StorageFeatures {
     /// Preserve precompile behavior from before Cobalt activation.
@@ -177,13 +179,13 @@ pub enum StorageFeatures {
 
 impl StorageFeatures {
     /// Returns whether dynamic storage tail cleanup is enabled.
-    pub fn dynamic_storage_tail_cleanup_enabled(self) -> bool {
-        self >= Self::Cobalt
+    pub const fn dynamic_storage_tail_cleanup_enabled(self) -> bool {
+        matches!(self, Self::Cobalt)
     }
 
     /// Returns whether ABI decode failures should omit the decoder message.
-    pub fn selector_only_abi_decode_errors_enabled(self) -> bool {
-        self >= Self::Cobalt
+    pub const fn selector_only_abi_decode_errors_enabled(self) -> bool {
+        matches!(self, Self::Cobalt)
     }
 }
 
