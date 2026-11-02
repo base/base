@@ -40,8 +40,8 @@ pub struct TxForwardingConfig {
     /// `--validity-max-expiry-secs`.
     ///
     /// A validity transaction is resent only after a failed forward. One forwarded without a
-    /// reported failure is held for twice this long, which outlives it, so it is never resent on
-    /// a timer: staying in the pool until its predicates hold is its expected state, and the
+    /// reported failure is held for twice this long (at least `resend_after_ms`), which outlives
+    /// it, so it is never resent on a timer: staying in the pool until its predicates hold is its expected state, and the
     /// builder keeps it parked until its block expiry.
     pub validity_lifetime_secs: u64,
     /// Maximum number of transactions per batch (0 = unlimited).
@@ -187,7 +187,10 @@ impl TxForwardingConfig {
             .max(1);
         ReaderConfig {
             resend_after: Duration::from_millis(self.resend_after_ms),
-            validity_hold: Duration::from_secs(self.validity_lifetime_secs.saturating_mul(2)),
+            // At least the standard window, so a short or zero lifetime cannot make held
+            // validity transactions resend faster than standard ones.
+            validity_hold: Duration::from_secs(self.validity_lifetime_secs.saturating_mul(2))
+                .max(Duration::from_millis(self.resend_after_ms)),
             channel_capacity,
             poll_interval: ReaderConfig::POLL_INTERVAL,
             fifo_percent: self.fifo_percent,
@@ -232,10 +235,16 @@ mod tests {
         assert_eq!(reader.resend_after, Duration::from_millis(DEFAULT_RESEND_AFTER_MS));
         assert_eq!(reader.validity_hold, Duration::from_secs(2 * DEFAULT_MAX_VALIDITY_EXPIRY_SECS));
 
-        let reader =
-            config.with_resend_after_ms(2_000).with_validity_lifetime_secs(15).reader_config();
+        let reader = config
+            .clone()
+            .with_resend_after_ms(2_000)
+            .with_validity_lifetime_secs(15)
+            .reader_config();
         assert_eq!(reader.resend_after, Duration::from_secs(2));
         assert_eq!(reader.validity_hold, Duration::from_secs(30));
+
+        let reader = config.with_validity_lifetime_secs(0).reader_config();
+        assert_eq!(reader.validity_hold, reader.resend_after, "never shorter than resend_after");
     }
 
     #[test]

@@ -4,7 +4,7 @@ use std::{
 };
 
 use alloy_primitives::TxHash;
-use base_execution_txpool::MAX_VALIDATED_INSERT_BATCH;
+use base_execution_txpool::{MAX_VALIDATED_INSERT_BATCH, is_already_imported_rejection};
 use base_observability_events::{
     TransactionEventProducer, TransactionEventType, transaction_event,
 };
@@ -147,15 +147,6 @@ impl<R: ForwardRequest> DestinationForwarder<R> {
             let _ = failures.try_send(tx_hash);
         }
     }
-
-    /// Returns `true` if the destination rejected a request because it already holds the
-    /// transaction, which delivered it as surely as an accepted insert.
-    fn is_already_imported(error: &ErrorObjectOwned) -> bool {
-        error.message().ends_with(Self::ALREADY_IMPORTED)
-    }
-
-    /// End of the builder's rejection message for a transaction its pool already holds.
-    const ALREADY_IMPORTED: &'static str = "already imported";
 
     /// Runs the forwarder loop until the destination queue closes.
     pub(crate) async fn run(mut self) {
@@ -334,7 +325,7 @@ impl<R: ForwardRequest> DestinationForwarder<R> {
                                     error = %e,
                                     "batch item rejected",
                                 );
-                                if !Self::is_already_imported(&e) {
+                                if !is_already_imported_rejection(&e) {
                                     self.report_failure(tx_hash);
                                 }
                                 err_count += 1;
