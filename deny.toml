@@ -268,11 +268,17 @@ skip = [
     "group",
     "k256",
     "p256",
+    "pkcs8",
     "primeorder",
     "rfc6979",
     "sec1",
+    "serdect",
     "signature",
     "spki",
+
+    # zstd version mismatch: reth v2.9 (reth-cli-commands) uses 0.14.x, other deps use 0.13.x
+    "zstd",
+    "zstd-safe",
 ]
 
 [sources]
