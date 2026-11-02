@@ -22,6 +22,7 @@ use base_execution_txpool::{
     BaseOrdering, BasePooledTransaction, ParkedBestTransactions, ValidityOperator,
     ValidityPredicate,
 };
+use evm2::evm::{AccountInfo, InMemoryDB};
 use reth_basic_payload_builder::PayloadConfig;
 use reth_ethereum_forks::ForkCondition;
 use reth_payload_builder::PayloadId;
@@ -29,7 +30,6 @@ use reth_primitives_traits::{Recovered, SealedHeader};
 use reth_transaction_pool::{
     TransactionOrigin, ValidPoolTransaction, identifier::TransactionId, pool::PendingPool,
 };
-use revm::{database::InMemoryDB, state::AccountInfo};
 
 type Ordering = BaseOrdering<BasePooledTransaction>;
 pub(crate) type Pool = PendingPool<Ordering>;
@@ -111,8 +111,8 @@ pub(crate) fn resting_pool(resting: usize) -> (Pool, InMemoryDB) {
         };
         pool.add_transaction(transaction(sender_index, priority_fee, predicates), 0);
         db.insert_account_info(
-            address(SENDER_OFFSET + sender_index),
-            AccountInfo { balance: U256::from(u128::MAX), ..Default::default() },
+            &address(SENDER_OFFSET + sender_index),
+            AccountInfo::default().with_balance(U256::from(u128::MAX)),
         );
     }
     (pool, db)

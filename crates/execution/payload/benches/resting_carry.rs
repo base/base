@@ -19,7 +19,7 @@ use base_execution_payload_builder::{
 };
 use base_execution_txpool::{ValidityOperator, ValidityPredicate};
 use criterion::{BatchSize, BenchmarkId, Criterion};
-use revm::database::TransitionState;
+use reth_execution_types::StateUpdate;
 
 /// Members still yielded by the pool, kept by the sweep.
 const LIVE_MEMBERS: usize = 75_000;
@@ -71,9 +71,9 @@ const BURST_MEMBERS: u64 = 1_000_000;
 /// `LIVE_MEMBERS` last seen in `last_block`. With `burst`, the set first grew to
 /// [`BURST_MEMBERS`] in block 1.
 fn large_set(last_block: u64, burst: bool) -> RestingPredicates {
-    let empty = TransitionState::default();
+    let empty: &[StateUpdate] = &[];
     let mut resting = RestingPredicates::new(DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD);
-    resting.begin_block(B256::ZERO, 1, Some(&empty));
+    resting.begin_block(B256::ZERO, 1, Some(empty));
     if burst {
         let first = (STALE_MEMBERS + LIVE_MEMBERS) as u64;
         for i in first..first + BURST_MEMBERS {
@@ -88,7 +88,7 @@ fn large_set(last_block: u64, burst: bool) -> RestingPredicates {
     }
     resting.end_block(block_hash(1));
     for block in 2..=last_block {
-        resting.begin_block(block_hash(block - 1), block, Some(&empty));
+        resting.begin_block(block_hash(block - 1), block, Some(empty));
         if block == last_block {
             for i in STALE_MEMBERS as u64..(STALE_MEMBERS + LIVE_MEMBERS) as u64 {
                 resting.rest(tx_hash(i), predicate(i));
@@ -101,7 +101,7 @@ fn large_set(last_block: u64, burst: bool) -> RestingPredicates {
 }
 
 fn bench_begin_block(c: &mut Criterion) {
-    let empty = TransitionState::default();
+    let empty: &[StateUpdate] = &[];
     let mut group = c.benchmark_group("resting_carry/begin_block");
     group.sample_size(10).measurement_time(Duration::from_secs(20));
     for (label, block, burst) in [
@@ -114,7 +114,7 @@ fn bench_begin_block(c: &mut Criterion) {
                 || large_set(block - 1, burst),
                 |mut resting| {
                     let carry_over =
-                        resting.begin_block(block_hash(block - 1), block, Some(&empty));
+                        resting.begin_block(block_hash(block - 1), block, Some(empty));
                     black_box(carry_over);
                     resting
                 },
@@ -127,7 +127,7 @@ fn bench_begin_block(c: &mut Criterion) {
 
 /// The unseen sweep itself, which now runs when a sweep block finishes, off the build path.
 fn bench_end_of_block_sweep(c: &mut Criterion) {
-    let empty = TransitionState::default();
+    let empty: &[StateUpdate] = &[];
     let mut group = c.benchmark_group("resting_carry/end_of_block_sweep");
     group.sample_size(10).measurement_time(Duration::from_secs(20));
     for (label, burst) in [("steady", false), ("after_burst", true)] {
@@ -135,7 +135,7 @@ fn bench_end_of_block_sweep(c: &mut Criterion) {
             b.iter_batched(
                 || {
                     let mut resting = large_set(SWEEP_BLOCK - 1, burst);
-                    resting.begin_block(block_hash(SWEEP_BLOCK - 1), SWEEP_BLOCK, Some(&empty));
+                    resting.begin_block(block_hash(SWEEP_BLOCK - 1), SWEEP_BLOCK, Some(empty));
                     resting
                 },
                 |mut resting| {
