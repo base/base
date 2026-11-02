@@ -5,8 +5,8 @@ use std::{path::PathBuf, sync::Arc};
 
 use base_builder_core::{
     BuilderApiExtensionConfig, BuilderConfig, DEFAULT_MAX_VALIDITY_PREDICATES,
-    ExecutionMeteringMode, RejectionCache, ResourceMeteringConfig, RestingPredicateMode,
-    SharedMeteringProvider, ValiditySignatureMode,
+    DEFAULT_RESTING_HOLD_CAP, ExecutionMeteringMode, RejectionCache, ResourceMeteringConfig,
+    RestingPredicateMode, SharedMeteringProvider, ValiditySignatureMode,
 };
 use base_builder_metering::MeteringStore;
 use base_execution_cli::ShadowIndexerArgs;
@@ -259,6 +259,14 @@ pub struct Args {
     #[arg(long = "builder.resting-predicates", value_enum, default_value = "off")]
     pub resting_predicate_mode: RestingPredicateMode,
 
+    /// Resting validity transactions one flashblock's transaction iterator looks up and parks under
+    /// `--builder.resting-predicates enforce` before it parks every further validity transaction
+    /// without a lookup for the rest of that flashblock. Bounds the per-flashblock work of walking
+    /// past a large resting set; validity transactions past the cap wait for a later flashblock.
+    /// Zero removes the cap.
+    #[arg(long = "builder.resting-hold-cap", default_value_t = DEFAULT_RESTING_HOLD_CAP)]
+    pub resting_hold_cap: u64,
+
     /// Buffer size for tx data store (LRU eviction when full)
     #[arg(long = "builder.tx-data-store-buffer-size", default_value = "10000")]
     pub tx_data_store_buffer_size: usize,
@@ -358,6 +366,7 @@ impl Default for Args {
             predicate_eval_hard_cutoff_ms: 10,
             predicate_bucket_ordered_threshold: 32,
             resting_predicate_mode: RestingPredicateMode::Off,
+            resting_hold_cap: DEFAULT_RESTING_HOLD_CAP,
             tx_data_store_buffer_size: 10000,
             metering_store_ttl_secs: 30,
             rejection_cache_max_capacity: 100_000,
@@ -453,6 +462,7 @@ impl Args {
             predicate_eval_hard_cutoff: Duration::from_millis(self.predicate_eval_hard_cutoff_ms),
             predicate_bucket_ordered_threshold: self.predicate_bucket_ordered_threshold,
             resting_predicate_mode: self.resting_predicate_mode,
+            resting_hold_cap: self.resting_hold_cap,
             metering_provider,
             resource_metering,
             rejection_cache: RejectionCache::new(
@@ -763,6 +773,16 @@ mod tests {
         let args =
             CommandParser::parse_from(std::iter::once("builder").chain(flags.iter().copied())).args;
         assert_eq!(convert(args).resting_predicate_mode, expected);
+    }
+
+    #[rstest]
+    #[case::default(&[], DEFAULT_RESTING_HOLD_CAP)]
+    #[case::set(&["--builder.resting-hold-cap", "2500"], 2_500)]
+    #[case::uncapped(&["--builder.resting-hold-cap", "0"], 0)]
+    fn resting_hold_cap_is_propagated(#[case] flags: &[&str], #[case] expected: u64) {
+        let args =
+            CommandParser::parse_from(std::iter::once("builder").chain(flags.iter().copied())).args;
+        assert_eq!(convert(args).resting_hold_cap, expected);
     }
 
     #[test]

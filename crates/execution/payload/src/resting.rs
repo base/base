@@ -380,6 +380,11 @@ pub struct RestingStats {
     /// Time the pool iterators spent advancing past held transactions, from the first hold of
     /// each `next` call until it found a candidate.
     pub duration: Duration,
+    /// Pool iterators that reached their resting hold cap, at most one per iterator.
+    pub hold_cap_hits: u64,
+    /// Validity transactions parked without a resting lookup because their iterator had reached
+    /// its resting hold cap.
+    pub hold_cap_excluded: u64,
 }
 
 /// Reports whether the build driving a pool iterator has stopped selecting transactions.
@@ -398,6 +403,8 @@ pub struct SharedRestingPredicates {
     inner: Arc<Mutex<SharedRestingState>>,
     /// Interrupts the walks of the iterators this handle's holds park members in.
     interrupt: Option<HoldInterrupt>,
+    /// Members each hold this handle creates may look up and park; zero is uncapped.
+    hold_cap: u64,
 }
 
 impl std::fmt::Debug for SharedRestingPredicates {
@@ -405,6 +412,7 @@ impl std::fmt::Debug for SharedRestingPredicates {
         f.debug_struct("SharedRestingPredicates")
             .field("inner", &self.inner)
             .field("interrupt", &self.interrupt.is_some())
+            .field("hold_cap", &self.hold_cap)
             .finish()
     }
 }
@@ -428,6 +436,7 @@ impl SharedRestingPredicates {
                 stats: RestingStats::default(),
             })),
             interrupt: None,
+            hold_cap: 0,
         }
     }
 
@@ -440,11 +449,22 @@ impl SharedRestingPredicates {
         self
     }
 
+    /// Caps the members each hold this handle creates looks up and parks at `cap`, or removes the
+    /// cap when `cap` is zero. Past the cap a hold parks every further validity transaction
+    /// without a lookup: its lane stays blocked and no wake promotes it, so it waits for a later
+    /// iterator, while transactions without validity predicates keep flowing. This bounds the
+    /// lookups one iterator spends walking past a large resting set.
+    #[must_use]
+    pub const fn with_hold_cap(mut self, cap: u64) -> Self {
+        self.hold_cap = cap;
+        self
+    }
+
     /// Returns a hold for a new pool iterator. Members the previous iterator held are forgotten,
     /// because they were parked in that iterator.
     pub fn iterator_hold<T: BasePooledTx>(&self) -> Box<dyn BestTransactionsHold<T>> {
         self.inner.lock().held.clear();
-        Box::new(RestingHold { shared: self.clone() })
+        Box::new(RestingHold { shared: self.clone(), holds: 0, cap_excluded: 0 })
     }
 
     /// Records that `predicate` was unsatisfied for `transaction_hash` at the current build
@@ -512,10 +532,20 @@ impl SharedRestingPredicates {
 #[derive(Debug)]
 struct RestingHold {
     shared: SharedRestingPredicates,
+    /// Members this hold has looked up and parked.
+    holds: u64,
+    /// Candidates parked past the cap since the last `record_duration`, which adds them to the
+    /// shared stats so that a past-cap candidate takes no lock.
+    cap_excluded: u64,
 }
 
 impl<T: BasePooledTx> BestTransactionsHold<T> for RestingHold {
     fn hold(&mut self, transaction: &ValidPoolTransaction<T>) -> bool {
+        let cap = self.shared.hold_cap;
+        if cap != 0 && self.holds >= cap {
+            self.cap_excluded += 1;
+            return true;
+        }
         let mut inner = self.shared.inner.lock();
         let Some(carried) = inner
             .predicates
@@ -526,11 +556,17 @@ impl<T: BasePooledTx> BestTransactionsHold<T> for RestingHold {
         inner.held.insert(*transaction.hash());
         inner.stats.parked += 1;
         inner.stats.carried_parked += u64::from(carried);
+        self.holds += 1;
+        if self.holds == cap {
+            inner.stats.hold_cap_hits += 1;
+        }
         true
     }
 
     fn record_duration(&mut self, duration: Duration) {
-        self.shared.inner.lock().stats.duration += duration;
+        let mut inner = self.shared.inner.lock();
+        inner.stats.duration += duration;
+        inner.stats.hold_cap_excluded += std::mem::take(&mut self.cap_excluded);
     }
 
     fn is_interrupted(&self) -> bool {

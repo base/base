@@ -464,7 +464,8 @@ where
         // this block, whose hold parks resting members before the build loop sees them.
         let resting = SharedRestingPredicates::new(resting.unwrap_or_else(|| {
             RestingPredicates::new(self.config.predicate_bucket_ordered_threshold)
-        }));
+        }))
+        .with_hold_cap(self.config.resting_hold_cap);
         let hold = self
             .config
             .resting_predicate_mode
