@@ -58,11 +58,10 @@ reth-payload-builder-primitives.workspace = true
 reth-node-core = { workspace = true, features = ["otlp"] }
 base-execution-rpc = { workspace = true, features = ["client"] }
 
-# revm
-revm.workspace = true
+# evm2
+evm2 = { workspace = true, features = ["std"] }
 
 # alloy
-alloy-evm.workspace = true
 alloy-signer.workspace = true
 alloy-network.workspace = true
 alloy-provider.workspace = true
@@ -83,12 +82,12 @@ alloy-sol-types = { workspace = true, features = ["json", "std"] }
 
 # base-common
 base-common-flz.workspace = true
+base-common-evm2.workspace = true
 base-common-chains.workspace = true
 base-common-network.workspace = true
 base-common-rpc-types.workspace = true
 base-execution-eip8130.workspace = true
 base-common-rpc-types-engine.workspace = true
-base-common-evm = { workspace = true, features = ["std"] }
 base-common-consensus = { workspace = true, features = ["reth"] }
 
 # tokio
@@ -179,7 +178,6 @@ http-body-util.workspace = true
 [features]
 default = [ "jemalloc", "metrics" ]
 metrics = [
-	"base-common-evm/metrics",
 	"base-execution-payload-builder/metrics",
 	"base-metrics/metrics",
 	"base-observability-events/metrics",

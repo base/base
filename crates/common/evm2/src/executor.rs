@@ -6,7 +6,7 @@ use alloy_primitives::{Address, B256, Bytes};
 use base_common_consensus::{BaseReceipt, DepositReceipt, EIP8130_TX_TYPE_ID, Eip8130Receipt};
 use base_common_genesis::BaseFeature;
 use evm2::{
-    BlockStateAccumulator, Evm, SpecId, TxResultWithState,
+    BlockStateAccumulator, Evm, PendingState, SpecId, TxResultWithState,
     evm::{BEACON_ROOTS_ADDRESS, HISTORY_STORAGE_ADDRESS, SystemTx},
     registry::{HandlerError, HandlerResult},
 };
@@ -156,6 +156,48 @@ pub struct BaseExecutedTx {
     pub da_footprint: u64,
     /// Whether the transaction is a deposit.
     pub is_deposit: bool,
+}
+
+impl BaseExecutedTx {
+    /// Builds the transaction's receipt, recording `cumulative_gas_used` as the block's gas used
+    /// through this transaction, and returns it with the detached state changes.
+    ///
+    /// `is_canyon_active` selects the versioned deposit receipt introduced in Canyon.
+    pub fn into_receipt(
+        self,
+        cumulative_gas_used: u64,
+        is_canyon_active: bool,
+    ) -> (BaseReceipt, PendingState) {
+        let TxResultWithState { result, pending_state, .. } = self.result;
+        let receipt = Receipt {
+            status: Eip658Value::Eip658(result.status),
+            cumulative_gas_used,
+            logs: result.logs,
+        };
+        let receipt = if self.is_deposit {
+            BaseReceipt::Deposit(DepositReceipt {
+                inner: receipt,
+                deposit_nonce: self.deposit_nonce,
+                deposit_receipt_version: is_canyon_active.then_some(1),
+            })
+        } else if let Some(committed_phases) = result.ext.eip8130_committed_phases {
+            debug_assert_eq!(self.ty, EIP8130_TX_TYPE_ID);
+            BaseReceipt::Eip8130(Eip8130Receipt::new(receipt, committed_phases))
+        } else {
+            match self.ty {
+                1 => BaseReceipt::Eip2930(receipt),
+                2 => BaseReceipt::Eip1559(receipt),
+                4 => BaseReceipt::Eip7702(receipt),
+                // These type bytes mirror the handlers registered in `tx_registry()`; the assert
+                // flags a registered type that gains a handler but not a receipt arm here.
+                other => {
+                    debug_assert_eq!(other, 0, "unmapped standard tx type {other:#x} in receipts");
+                    BaseReceipt::Legacy(receipt)
+                }
+            }
+        };
+        (receipt, pending_state)
+    }
 }
 
 /// Executes a Base block's transactions on an EVM2 [`Evm`], building receipts and committing
@@ -326,9 +368,8 @@ impl<'a, S: BaseBlockState> BaseBlockExecutor<'a, S> {
             }));
         }
 
-        // From Jovian, meter each non-deposit transaction's DA footprint against the block's DA
-        // footprint budget (the block gas limit less what earlier transactions consumed). Deposits
-        // are exempt. Accumulated below into `da_footprint_used` (surfaced as `blob_gas_used`).
+        // From Jovian, each non-deposit transaction's DA footprint is metered against the block's
+        // DA footprint budget: the block gas limit less what earlier transactions consumed.
         let da_footprint = if spec.is_feature_enabled(BaseFeature::DaFootprint) && !is_deposit {
             L1Block::ensure_fee_params(&mut self.evm)?;
             let enveloped = tx.enveloped().map(|bytes| bytes.as_ref()).unwrap_or_default();
@@ -366,8 +407,7 @@ impl<'a, S: BaseBlockState> BaseBlockExecutor<'a, S> {
     /// Commits `executed`'s state changes into the block state and appends its receipt, with the
     /// running cumulative gas. Returns the gas the transaction used.
     pub fn commit_transaction(&mut self, executed: BaseExecutedTx) -> HandlerResult<u64> {
-        let TxResultWithState { result, pending_state, .. } = executed.result;
-        let tx_gas_used = result.tx_gas_used();
+        let tx_gas_used = executed.result.result.tx_gas_used();
         // Fail on overflow rather than silently saturating, which would corrupt this and every
         // later receipt's cumulative gas.
         self.gas_used = self
@@ -375,37 +415,10 @@ impl<'a, S: BaseBlockState> BaseBlockExecutor<'a, S> {
             .checked_add(tx_gas_used)
             .ok_or_else(|| HandlerError::external(CumulativeGasOverflow))?;
         self.da_footprint_used = self.da_footprint_used.saturating_add(executed.da_footprint);
+        let canyon =
+            self.evm.config_spec_id().is_feature_enabled(BaseFeature::DepositReceiptVersion);
+        let (receipt, pending_state) = executed.into_receipt(self.gas_used, canyon);
         self.block_state.commit(&mut self.evm, pending_state);
-
-        let receipt = Receipt {
-            status: Eip658Value::Eip658(result.status),
-            cumulative_gas_used: self.gas_used,
-            logs: result.logs,
-        };
-        let receipt = if executed.is_deposit {
-            let canyon =
-                self.evm.config_spec_id().is_feature_enabled(BaseFeature::DepositReceiptVersion);
-            BaseReceipt::Deposit(DepositReceipt {
-                inner: receipt,
-                deposit_nonce: executed.deposit_nonce,
-                deposit_receipt_version: canyon.then_some(1),
-            })
-        } else if let Some(committed_phases) = result.ext.eip8130_committed_phases {
-            debug_assert_eq!(executed.ty, EIP8130_TX_TYPE_ID);
-            BaseReceipt::Eip8130(Eip8130Receipt::new(receipt, committed_phases))
-        } else {
-            match executed.ty {
-                1 => BaseReceipt::Eip2930(receipt),
-                2 => BaseReceipt::Eip1559(receipt),
-                4 => BaseReceipt::Eip7702(receipt),
-                // These type bytes mirror the handlers registered in `tx_registry()`; the assert
-                // flags a registered type that gains a handler but not a receipt arm here.
-                other => {
-                    debug_assert_eq!(other, 0, "unmapped standard tx type {other:#x} in receipts");
-                    BaseReceipt::Legacy(receipt)
-                }
-            }
-        };
         self.receipts.push(receipt);
         Ok(tx_gas_used)
     }
