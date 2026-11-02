@@ -74,6 +74,7 @@ reth-revm = { workspace = true, features = ["test-utils"] }
 base-observability-events = { workspace = true, features = ["test-utils"] }
 criterion.workspace = true
 tempfile.workspace = true
+iai-callgrind.workspace = true
 
 [[bench]]
 name = "resource_metering"
@@ -88,7 +89,19 @@ name = "native_build_loop"
 harness = false
 
 [[bench]]
+name = "native_build_loop_iai"
+harness = false
+
+[[bench]]
 name = "native_candidate_scan"
+harness = false
+
+[[bench]]
+name = "native_candidate_scan_iai"
+harness = false
+
+[[bench]]
+name = "validity_conditions_iai"
 harness = false
 
 [[bench]]
