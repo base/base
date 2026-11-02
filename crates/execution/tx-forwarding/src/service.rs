@@ -327,6 +327,14 @@ mod tests {
                 Ok::<_, jsonrpsee::types::ErrorObjectOwned>(())
             })
             .unwrap();
+        module
+            .register_method("base_insertValidatedTransactions", |params, received, _| {
+                let (transactions,): (Vec<Value>,) = params.parse()?;
+                let accepted = vec![None::<()>; transactions.len()];
+                received.lock().unwrap().extend(transactions);
+                Ok::<_, jsonrpsee::types::ErrorObjectOwned>(accepted)
+            })
+            .unwrap();
         let server = Server::builder().build(SocketAddr::from(([127, 0, 0, 1], 0))).await.unwrap();
         let url: Url = format!("http://{}", server.local_addr().unwrap()).parse().unwrap();
         let _handle = server.start(module);

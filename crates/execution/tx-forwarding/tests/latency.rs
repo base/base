@@ -113,6 +113,21 @@ impl BaseNodeExtension for BuilderProbe {
                     result
                 },
             )?;
+            module.register_async_method(
+                "base_insertValidatedTransactions",
+                |params, context, _| async move {
+                    let txs: Vec<ValidatedTransaction<TransactionValidity>> = params.one()?;
+                    let hashes: Vec<_> = txs.iter().map(|tx| keccak256(&tx.raw)).collect();
+                    for hash in &hashes {
+                        stamp(&context.1.builder_recv, *hash);
+                    }
+                    let result = context.0.insert_validated_transactions(txs).await;
+                    for hash in &hashes {
+                        stamp(&context.1.builder_inserted, *hash);
+                    }
+                    result
+                },
+            )?;
             ctx.modules.merge_configured(module)?;
             Ok(())
         })
