@@ -1,6 +1,12 @@
 //! Flashblocks adapters for parkable best-transaction iterators.
 
-use std::{marker::PhantomData, sync::Arc};
+use std::{
+    marker::PhantomData,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering as AtomicOrdering},
+    },
+};
 
 use alloy_primitives::{Address, TxHash, map::B256Set};
 use base_execution_payload_builder::{
@@ -10,14 +16,22 @@ use base_execution_payload_builder::{
 use base_execution_txpool::{
     BasePooledTx, BestTransactionsHold, ValidityConditions, ValidityPredicate,
 };
+use parking_lot::Mutex;
 use reth_payload_util::PayloadTransactions;
 use revm::state::EvmState;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    BuilderMetrics, CounterHandle, RejectionCache, RestingPayloadTransactions,
-    RestingPredicateMode, RestingStats,
+    BuilderMetrics, CounterHandle, FlashblockDiagnostics, RejectionCache,
+    RestingPayloadTransactions, RestingPredicateMode, RestingStats,
 };
+
+/// Resting transactions a flashblock must have held before the next flashblock resumes its cut
+/// walk.
+///
+/// A flashblock that held fewer had little resting walk to save, for example because the walk
+/// already passed the resting set, so the next flashblock refreshes and sees the current pool.
+pub const RESTING_WALK_RESUME_MIN_HOLDS: u64 = 64;
 
 /// An adapter that skips transactions already committed or permanently rejected by flashblocks.
 ///
@@ -25,7 +39,13 @@ use crate::{
 /// [`RestingPayloadTransactions`]. Under [`RestingPredicateMode::Enforce`], every pool iterator
 /// the flashblocks builder creates takes an [`Self::iterator_hold`] that parks resting members at
 /// the source, so their nonce lane stays blocked without the build loop seeing them. A commit that
-/// changes the state a member's predicate reads promotes it back at its priority position.
+/// changes the state a member's predicate reads promotes it back at its priority position. The
+/// hold also stops the pool iterator once the flashblock is cancelled.
+///
+/// A flashblock cancelled while its iterator walks a long run of held transactions leaves that
+/// walk cut. [`Self::begin_flashblock`] lets the next flashblock of the block continue the same
+/// iterator instead of building a fresh one and re-walking the run from the top, so a resting set
+/// that takes longer than one flashblock to walk is walked once rather than never finished.
 pub struct BestFlashblocksTxs<T, I>
 where
     T: BasePooledTx,
@@ -45,6 +65,21 @@ where
     resting: SharedRestingPredicates,
     // Resolved on the first hit so later hits on the candidate path skip the registry lookup.
     rejection_cache_hits: Option<CounterHandle>,
+    // Cancel token of the flashblock being built, read by the current iterator's hold, which
+    // outlives a flashblock when a cut walk resumes.
+    walk_cancel: Arc<Mutex<CancellationToken>>,
+    // Set when a flashblock was cancelled before the current iterator was exhausted.
+    walk_cut: Arc<AtomicBool>,
+    // Resting transactions held during the last flashblock whose stats were taken.
+    flashblock_holds: u64,
+    // Transactions the build loop parked in the current iterator, re-offered when a cut walk
+    // resumes as a fresh iterator would. Tracked only under enforce, the only mode that resumes.
+    parked_by_build: B256Set,
+    // `SharedRestingPredicates::hold_runs` when the build loop last received a candidate.
+    seen_hold_runs: u64,
+    // Whether the iterator held resting transactions since the previous candidate, which covers
+    // walking to the current one and, when it came from the ready set, pre-filling the next.
+    current_after_hold: bool,
     transaction: PhantomData<T>,
 }
 
@@ -92,6 +127,12 @@ where
                 DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD,
             )),
             rejection_cache_hits: None,
+            walk_cancel: Arc::new(Mutex::new(CancellationToken::new())),
+            walk_cut: Arc::new(AtomicBool::new(false)),
+            flashblock_holds: 0,
+            parked_by_build: Default::default(),
+            seen_hold_runs: 0,
+            current_after_hold: false,
             transaction: PhantomData,
         }
     }
@@ -113,13 +154,25 @@ where
     }
 
     /// Returns the hold a new inner iterator parks resting members with, or `None` when resting
-    /// transactions are not enforced and the build loop evaluates them. `cancel` is the
-    /// cancellation of the flashblock the iterator serves.
-    pub fn iterator_hold(
-        &self,
-        cancel: &CancellationToken,
-    ) -> Option<Box<dyn BestTransactionsHold<T>>> {
-        self.resting_predicate_mode.is_enforced().then(|| flashblock_hold(&self.resting, cancel))
+    /// transactions are not enforced and the build loop evaluates them. The hold stops the
+    /// iterator's walk once the flashblock passed to [`Self::begin_flashblock`] is cancelled. It
+    /// reads the current flashblock's token rather than the one it was created under, because a
+    /// resumed iterator keeps its hold into later flashblocks.
+    pub fn iterator_hold(&self) -> Option<Box<dyn BestTransactionsHold<T>>> {
+        self.resting_predicate_mode.is_enforced().then(|| {
+            let cancel = Arc::clone(&self.walk_cancel);
+            let cut = Arc::clone(&self.walk_cut);
+            self.resting
+                .clone()
+                .with_interrupt(Arc::new(move || {
+                    let interrupted = cancel.lock().is_cancelled();
+                    if interrupted {
+                        cut.store(true, AtomicOrdering::Relaxed);
+                    }
+                    interrupted
+                }))
+                .iterator_hold()
+        })
     }
 
     /// Takes the resting set, leaving an empty one, so it can be carried into the next block.
@@ -127,11 +180,97 @@ where
         self.resting.take_predicates()
     }
 
+    /// Starts a flashblock cancelled by `cancel`. Continues the current iterator if the previous
+    /// flashblock's walk can be resumed, see [`Self::resume_cut_walk`], and otherwise replaces it
+    /// with `fresh`, given the hold from [`Self::iterator_hold`]. Returns whether it resumed.
+    pub fn begin_flashblock(
+        &mut self,
+        cancel: CancellationToken,
+        fresh: impl FnOnce(Option<Box<dyn BestTransactionsHold<T>>>) -> I,
+    ) -> bool {
+        self.set_cancel(cancel);
+        if self.resume_cut_walk() {
+            return true;
+        }
+        let hold = self.iterator_hold();
+        self.refresh_iterator(fresh(hold));
+        false
+    }
+
+    /// Ends a flashblock whose selection produced `diagnostics`.
+    ///
+    /// A cancelled flashblock whose build loop stopped on a candidate it never decided on, reached
+    /// right after held transactions, left its walk cut even when the cancel came after the
+    /// hold's last periodic check. A flashblock cancelled while it builds past the resting
+    /// transactions does not, so the next flashblock refreshes.
+    ///
+    /// A cut walk is not resumed after a flashblock that skipped transactions for a limit a later
+    /// flashblock may satisfy, such as its gas or DA target, because the build loop invalidated
+    /// their lanes for the rest of the iterator and only a fresh iterator offers them again.
+    pub fn finish_flashblock(&mut self, diagnostics: &FlashblockDiagnostics) {
+        if diagnostics.cancelled
+            && self.current_transaction.is_some()
+            && self.current_after_hold
+            && self.resting_predicate_mode.is_enforced()
+        {
+            self.walk_cut.store(true, AtomicOrdering::Relaxed);
+        }
+        if diagnostics.has_retryable_limit_rejections() {
+            self.walk_cut.store(false, AtomicOrdering::Relaxed);
+        }
+    }
+
+    /// Sets the cancel token of the flashblock being built, which the current iterator's hold
+    /// also checks.
+    pub fn set_cancel(&mut self, cancel: CancellationToken) {
+        *self.walk_cancel.lock() = cancel;
+    }
+
     /// Replaces current iterator with new one. We use it on new flashblock building, to refresh
-    /// priority boundaries
+    /// priority boundaries. The new iterator starts with no cut walk to resume.
     pub fn refresh_iterator(&mut self, inner: I) {
         self.inner = inner;
         self.current_transaction = None;
+        self.walk_cut.store(false, AtomicOrdering::Relaxed);
+        self.flashblock_holds = 0;
+        self.parked_by_build.clear();
+        self.seen_hold_runs = self.resting.hold_runs();
+    }
+
+    /// Continues the current iterator in a new flashblock if the previous flashblock was cancelled
+    /// before its iterator was exhausted, after holding at least
+    /// [`RESTING_WALK_RESUME_MIN_HOLDS`] resting transactions, and returns whether it did.
+    /// Call [`Self::set_cancel`] with the new flashblock's token first.
+    ///
+    /// The resumed iterator keeps every resting transaction it held and its lane state, so it
+    /// neither re-walks nor yields them, and a later commit still promotes them. Resting
+    /// transactions the build loop parked in this block stay parked the same way. Other
+    /// transactions the build loop parked, and a candidate the cancelled flashblock yielded but
+    /// never decided on, are promoted back at their priority position, as a fresh iterator would
+    /// offer them again.
+    ///
+    /// The iterator keeps the pool snapshot of the flashblock that started the walk: transactions
+    /// that arrive since and rank above the walk's position are not offered until a flashblock
+    /// refreshes, and lanes the build loop invalidated for state-dependent reasons, such as an
+    /// unaffordable tip, stay invalid for the rest of the walk.
+    pub fn resume_cut_walk(&mut self) -> bool {
+        if !self.walk_cut.swap(false, AtomicOrdering::Relaxed)
+            || self.flashblock_holds < RESTING_WALK_RESUME_MIN_HOLDS
+        {
+            return false;
+        }
+        if let Some((transaction_hash, _, _)) = self.current_transaction.take() {
+            self.inner.park_current();
+            self.inner.promote(transaction_hash);
+        }
+        // The build loop's predicate index is per flashblock, so the hold takes over waking the
+        // resting transactions the build loop parked.
+        self.resting.hold_rested_members(&mut self.parked_by_build);
+        for transaction_hash in self.parked_by_build.drain() {
+            self.inner.promote(transaction_hash);
+        }
+        BuilderMetrics::resting_walk_resumed_total().increment(1);
+        true
     }
 
     /// Remove transaction from next iteration since it is already in the state
@@ -183,6 +322,11 @@ where
                 continue;
             }
 
+            if self.resting_predicate_mode.is_enforced() {
+                let hold_runs = self.resting.hold_runs();
+                self.current_after_hold = hold_runs != self.seen_hold_runs;
+                self.seen_hold_runs = hold_runs;
+            }
             return Some(pooled);
         }
     }
@@ -211,7 +355,11 @@ where
 
     fn park_current(&mut self) {
         self.inner.park_current();
-        self.current_transaction = None;
+        if let Some((transaction_hash, _, _)) = self.current_transaction.take()
+            && self.resting_predicate_mode.is_enforced()
+        {
+            self.parked_by_build.insert(transaction_hash);
+        }
     }
 
     fn mark_current_committed(&mut self) {
@@ -264,7 +412,10 @@ where
     }
 
     fn take_resting_stats(&mut self) -> RestingStats {
-        self.resting.take_stats()
+        let stats = self.resting.take_stats();
+        // The build loop takes the stats once per flashblock.
+        self.flashblock_holds = stats.parked;
+        stats
     }
 }
 
@@ -272,16 +423,20 @@ where
 mod tests {
     use std::{sync::Arc, time::Duration};
 
-    use alloy_consensus::{SignableTransaction, TxEip1559};
+    use alloy_consensus::{Header, SignableTransaction, TxEip1559};
     use alloy_eips::eip2718::Encodable2718;
     use alloy_primitives::{Address, B256, Signature, TxHash, TxKind, U256};
     use base_common_consensus::{BaseTransactionSigned, BaseTxEnvelope};
+    use base_execution_chainspec::BaseChainSpec;
     use base_execution_txpool::{
         BaseOrdering, BasePooledTransaction, HOLD_INTERRUPT_INTERVAL, ParkedBestTransactions,
         ValidityOperator, ValidityPredicate,
     };
+    use reth_chainspec::ChainSpec;
     use reth_payload_util::PayloadTransactions;
-    use reth_primitives_traits::Recovered;
+    use reth_primitives_traits::{Recovered, SealedHeader};
+    use reth_provider::{StateProvider, noop::NoopProvider};
+    use reth_revm::{State, database::StateProviderDatabase};
     use reth_transaction_pool::{
         TransactionOrigin, ValidPoolTransaction, identifier::TransactionId, pool::PendingPool,
     };
@@ -292,8 +447,9 @@ mod tests {
 
     use super::*;
     use crate::{
-        BestFlashblocksTxs, ParkableBestPayloadTransactions, ParkablePayloadTransactions,
-        RejectionCache, RestingPayloadTransactions, RestingPredicateMode, RestingStats,
+        BasePayloadBuilderCtx, BestFlashblocksTxs, BlockDeferrals, ExecutionInfo,
+        ParkableBestPayloadTransactions, ParkablePayloadTransactions, RejectionCache,
+        ResourceLimits, RestingPayloadTransactions, RestingPredicateMode, RestingStats,
     };
 
     type Ordering = BaseOrdering<BasePooledTransaction>;
@@ -727,10 +883,8 @@ mod tests {
         iterator: &mut BestFlashblocksTxs<BasePooledTransaction, Parkable>,
         pool: &PendingPool<Ordering>,
     ) {
-        iterator.refresh_iterator(parkable_with_hold(
-            pool,
-            iterator.iterator_hold(&CancellationToken::new()),
-        ));
+        iterator.set_cancel(CancellationToken::new());
+        iterator.refresh_iterator(parkable_with_hold(pool, iterator.iterator_hold()));
     }
 
     /// Plays the build loop's part for a candidate whose predicate is unsatisfied.
@@ -741,6 +895,452 @@ mod tests {
         iterator.park_current();
         let predicate = transaction.transaction.validity_predicates().next().unwrap();
         iterator.rest(*transaction.hash(), predicate);
+    }
+
+    /// Fills a pool with `resting` validity transactions from distinct senders that outrank
+    /// `ordinary` plain transactions from further senders, and returns the ordinary hashes.
+    fn resting_cohort(
+        resting: u64,
+        ordinary: u64,
+    ) -> (Vec<Arc<ValidPoolTransaction<BasePooledTransaction>>>, Vec<TxHash>) {
+        let mut transactions: Vec<_> = (0..resting)
+            .map(|sender| validity_transaction(sender, 0, 10, vec![balance_at_least(WATCHED, 1)]))
+            .collect();
+        let ordinary_hashes = (resting..resting + ordinary)
+            .map(|sender| {
+                let plain = transaction(sender, 0, 1);
+                let hash = *plain.hash();
+                transactions.push(plain);
+                hash
+            })
+            .collect();
+        (transactions, ordinary_hashes)
+    }
+
+    fn rest_all(
+        iterator: &mut BestFlashblocksTxs<BasePooledTransaction, Parkable>,
+        transactions: &[Arc<ValidPoolTransaction<BasePooledTransaction>>],
+    ) {
+        for transaction in transactions {
+            if let Some(predicate) = transaction.transaction.validity_predicates().next() {
+                iterator.rest(*transaction.hash(), predicate);
+            }
+        }
+    }
+
+    /// Diagnostics of a flashblock whose build loop stopped on the cancel.
+    fn cancelled_diagnostics() -> FlashblockDiagnostics {
+        FlashblockDiagnostics { cancelled: true, ..Default::default() }
+    }
+
+    /// A flashblock selection context on the test transactions' chain.
+    fn selection_context() -> BasePayloadBuilderCtx {
+        let genesis = serde_json::from_value(serde_json::json!({
+            "config": { "chainId": 1 },
+            "gasLimit": "0x1C9C380",
+            "timestamp": "0x0"
+        }))
+        .expect("valid genesis");
+        let chain_spec = ChainSpec::builder().chain(1.into()).genesis(genesis).cancun_activated();
+        let parent = Header { gas_limit: 30_000_000, timestamp: 0, ..Default::default() };
+        BasePayloadBuilderCtx::for_test(
+            Arc::new(BaseChainSpec::from(chain_spec.build())),
+            Arc::new(SealedHeader::seal_slow(parent)),
+        )
+    }
+
+    fn cancelled() -> CancellationToken {
+        let cancel = CancellationToken::new();
+        cancel.cancel();
+        cancel
+    }
+
+    /// Starts a flashblock cancelled by `cancel` the way the flashblocks builder does, and returns
+    /// whether it resumed the previous walk.
+    fn begin(
+        iterator: &mut BestFlashblocksTxs<BasePooledTransaction, Parkable>,
+        pool: &PendingPool<Ordering>,
+        cancel: CancellationToken,
+    ) -> bool {
+        iterator.begin_flashblock(cancel, |hold| parkable_with_hold(pool, hold))
+    }
+
+    /// Ends a flashblock the way the build loop and the flashblocks builder do, and returns the
+    /// resting transactions it held.
+    fn finish(
+        iterator: &mut BestFlashblocksTxs<BasePooledTransaction, Parkable>,
+        diagnostics: &FlashblockDiagnostics,
+    ) -> u64 {
+        let held = iterator.take_resting_stats().parked;
+        iterator.finish_flashblock(diagnostics);
+        held
+    }
+
+    /// A flashblock cancelled while its iterator walks a 50k resting cohort leaves the walk to the
+    /// next flashblock, which resumes it instead of re-walking the cohort from the top and fetching
+    /// a new pool snapshot: across the cut every resting transaction is held exactly once, and the
+    /// ordinary transactions behind the cohort are reached. Restarting the walk every flashblock
+    /// never reaches them while each flashblock is cut.
+    #[test]
+    fn cut_resting_walk_resumes_in_the_next_flashblock() {
+        const RESTING: u64 = 50_000;
+        let (transactions, ordinary) = resting_cohort(RESTING, 2);
+        let pool = pending_pool(&transactions);
+        let mut iterator = resting_iterator(&pool);
+        rest_all(&mut iterator, &transactions);
+
+        // Flashblock 1 is cancelled, so its walk stops early.
+        assert!(!begin(&mut iterator, &pool, cancelled()));
+        assert!(iterator.next(()).is_none());
+        let held_before_cut = finish(&mut iterator, &FlashblockDiagnostics::default());
+        assert_eq!(held_before_cut, u64::from(HOLD_INTERRUPT_INTERVAL));
+
+        // Flashblock 2 resumes the cut walk without fetching from the pool, and reaches the first
+        // ordinary transaction without holding any resting transaction a second time.
+        let resumed = iterator.begin_flashblock(CancellationToken::new(), |_| {
+            panic!("a resumed flashblock must not fetch a new pool iterator")
+        });
+        assert!(resumed);
+        assert_eq!(iterator.next(()).unwrap().hash(), &ordinary[0]);
+        iterator.mark_current_committed();
+        assert_eq!(
+            finish(&mut iterator, &FlashblockDiagnostics::default()),
+            RESTING - held_before_cut
+        );
+
+        // That flashblock was not cut, so flashblock 3 takes a fresh iterator.
+        assert!(!begin(&mut iterator, &pool, CancellationToken::new()));
+    }
+
+    /// A resumed walk is interrupted by the cancellation of the flashblock it now serves, not by
+    /// that of the flashblock that created its hold: the previous token has already fired, and
+    /// checking it would end every resumed walk at its first interrupt check.
+    #[test]
+    fn resumed_walk_checks_the_current_flashblock_cancel() {
+        const RESTING: u64 = 1_000;
+        let interval = u64::from(HOLD_INTERRUPT_INTERVAL);
+        let (transactions, ordinary) = resting_cohort(RESTING, 1);
+        let pool = pending_pool(&transactions);
+        let mut iterator = resting_iterator(&pool);
+        rest_all(&mut iterator, &transactions);
+
+        assert!(!begin(&mut iterator, &pool, cancelled()));
+        assert!(iterator.next(()).is_none());
+        assert_eq!(finish(&mut iterator, &cancelled_diagnostics()), interval);
+
+        // Flashblock 2 is cancelled too, so its walk stops after one more interval.
+        assert!(begin(&mut iterator, &pool, cancelled()));
+        assert!(iterator.next(()).is_none());
+        assert_eq!(finish(&mut iterator, &cancelled_diagnostics()), interval);
+
+        // Flashblock 3 runs to its deadline and walks the rest of the cohort.
+        assert!(begin(&mut iterator, &pool, CancellationToken::new()));
+        assert_eq!(iterator.next(()).unwrap().hash(), &ordinary[0]);
+        iterator.mark_current_committed();
+        assert_eq!(
+            finish(&mut iterator, &FlashblockDiagnostics::default()),
+            RESTING - 2 * interval
+        );
+    }
+
+    /// A candidate yielded by a cancelled flashblock that the build loop dropped without a
+    /// decision is offered again, before its nonce descendant, when the next flashblock resumes
+    /// the cut walk.
+    #[test]
+    fn resumed_walk_reoffers_the_abandoned_candidate_before_its_descendant() {
+        const RESTING: u64 = 1_000;
+        let (mut transactions, _ordinary) = resting_cohort(RESTING, 1);
+        let parent = transaction(RESTING + 1, 0, 5);
+        let child = transaction(RESTING + 1, 1, 5);
+        transactions.extend([Arc::clone(&parent), Arc::clone(&child)]);
+        let pool = pending_pool(&transactions);
+        let mut iterator = resting_iterator(&pool);
+        rest_all(&mut iterator, &transactions);
+
+        // The walk passes the cohort, then the build loop sees the cancel and drops the parent.
+        let cancel = CancellationToken::new();
+        assert!(!begin(&mut iterator, &pool, cancel.clone()));
+        assert_eq!(iterator.next(()).unwrap().hash(), parent.hash());
+        cancel.cancel();
+        finish(&mut iterator, &cancelled_diagnostics());
+
+        assert!(begin(&mut iterator, &pool, CancellationToken::new()));
+        assert_eq!(iterator.next(()).unwrap().hash(), parent.hash());
+        iterator.mark_current_committed();
+        assert_eq!(iterator.next(()).unwrap().hash(), child.hash());
+    }
+
+    /// A transaction the build loop parked without resting it, such as one deferred past the
+    /// predicate-evaluation budget, is offered again when the next flashblock resumes the cut walk,
+    /// as a fresh iterator would offer it.
+    #[test]
+    fn resumed_walk_reoffers_build_loop_deferrals() {
+        const RESTING: u64 = 1_000;
+        let (mut transactions, _ordinary) = resting_cohort(RESTING, 1);
+        let deferred =
+            validity_transaction(RESTING + 1, 0, 100, vec![balance_at_least(WATCHED, 1)]);
+        transactions.push(Arc::clone(&deferred));
+        let pool = pending_pool(&transactions);
+        let mut iterator = resting_iterator(&pool);
+        rest_all(&mut iterator, &transactions[..RESTING as usize]);
+        let cancel = CancellationToken::new();
+        assert!(!begin(&mut iterator, &pool, cancel.clone()));
+        assert_eq!(*iterator.next(()).unwrap().hash(), *deferred.hash());
+        iterator.park_current();
+
+        // The cancel then cuts the walk in the resting cohort.
+        cancel.cancel();
+        assert!(iterator.next(()).is_none());
+        finish(&mut iterator, &FlashblockDiagnostics::default());
+
+        assert!(begin(&mut iterator, &pool, CancellationToken::new()));
+        assert_eq!(*iterator.next(()).unwrap().hash(), *deferred.hash());
+    }
+
+    /// A transaction the build loop parked and rested stays parked when the next flashblock resumes
+    /// the cut walk, and a commit that wakes it promotes it, as a fresh iterator's hold would.
+    #[test]
+    fn resumed_walk_keeps_build_loop_rested_transactions_parked_until_woken() {
+        const RESTING: u64 = 1_000;
+        let (mut transactions, ordinary) = resting_cohort(RESTING, 1);
+        let predicate = balance_at_least(WATCHED, 1);
+        let rested = validity_transaction(RESTING + 1, 0, 100, vec![predicate.clone()]);
+        transactions.push(Arc::clone(&rested));
+        let pool = pending_pool(&transactions);
+        let mut iterator = resting_iterator(&pool);
+        rest_all(&mut iterator, &transactions[..RESTING as usize]);
+        let cancel = CancellationToken::new();
+        assert!(!begin(&mut iterator, &pool, cancel.clone()));
+        assert_eq!(*iterator.next(()).unwrap().hash(), *rested.hash());
+        iterator.park_current();
+        iterator.rest(*rested.hash(), &predicate);
+        cancel.cancel();
+        assert!(iterator.next(()).is_none());
+        finish(&mut iterator, &FlashblockDiagnostics::default());
+
+        assert!(begin(&mut iterator, &pool, CancellationToken::new()));
+        assert_eq!(*iterator.next(()).unwrap().hash(), ordinary[0]);
+        iterator.mark_current_committed();
+        iterator.record_committed_state(&balance_change(WATCHED, 0, 1));
+        assert_eq!(*iterator.next(()).unwrap().hash(), *rested.hash());
+    }
+
+    /// A cut walk whose flashblock skipped transactions for a limit a later flashblock may satisfy
+    /// is not resumed, so the next flashblock's fresh iterator offers those transactions again.
+    #[test]
+    fn cut_walk_after_a_retryable_limit_rejection_refreshes() {
+        let (transactions, _ordinary) = resting_cohort(1_000, 1);
+        let pool = pending_pool(&transactions);
+        let mut iterator = resting_iterator(&pool);
+        rest_all(&mut iterator, &transactions);
+        assert!(!begin(&mut iterator, &pool, cancelled()));
+        assert!(iterator.next(()).is_none());
+        finish(&mut iterator, &FlashblockDiagnostics { txs_rejected_gas: 1, ..Default::default() });
+
+        assert!(!begin(&mut iterator, &pool, CancellationToken::new()));
+    }
+
+    /// A cancel that lands right after a walk past only a few held transactions, here one held
+    /// head and its lane-blocked descendants, does not resume the walk: there is no long resting
+    /// run to save re-walking.
+    #[test]
+    fn cut_walk_behind_few_holds_refreshes() {
+        let mut transactions =
+            vec![validity_transaction(0, 0, 10, vec![balance_at_least(WATCHED, 1)])];
+        transactions.extend(
+            (1..=2 * u64::from(HOLD_INTERRUPT_INTERVAL)).map(|nonce| transaction(0, nonce, 10)),
+        );
+        let plain = transaction(1, 0, 1);
+        transactions.push(Arc::clone(&plain));
+        let pool = pending_pool(&transactions);
+        let mut iterator = resting_iterator(&pool);
+        rest_all(&mut iterator, &transactions[..1]);
+        assert!(!begin(&mut iterator, &pool, cancelled()));
+        assert_eq!(iterator.next(()).unwrap().hash(), plain.hash());
+        assert_eq!(finish(&mut iterator, &cancelled_diagnostics()), 1);
+
+        assert!(!begin(&mut iterator, &pool, CancellationToken::new()));
+    }
+
+    /// A cancel the hold never checks, because the walk finishes its resting run in fewer than
+    /// [`HOLD_INTERRUPT_INTERVAL`] holds, still leaves the walk to the next flashblock: the build
+    /// loop sees it on the candidate the iterator yields next and stops without deciding on it.
+    #[test]
+    fn cancel_after_the_last_stop_check_still_cuts_the_walk() {
+        // 70 resting, a plain transaction, then 30 resting: the second run holds 30 in one `next`
+        // call, too few for the hold to check the cancel.
+        let mut transactions: Vec<_> = (0..70)
+            .map(|sender| validity_transaction(sender, 0, 30, vec![balance_at_least(WATCHED, 1)]))
+            .collect();
+        let between = transaction(70, 0, 20);
+        transactions.push(Arc::clone(&between));
+        transactions.extend(
+            (71..101).map(|sender| {
+                validity_transaction(sender, 0, 10, vec![balance_at_least(WATCHED, 1)])
+            }),
+        );
+        let ordinary = transaction(101, 0, 1);
+        transactions.push(Arc::clone(&ordinary));
+        let pool = pending_pool(&transactions);
+        let mut iterator = resting_iterator(&pool);
+        rest_all(&mut iterator, &transactions);
+
+        let cancel = CancellationToken::new();
+        assert!(!begin(&mut iterator, &pool, cancel.clone()));
+        assert_eq!(iterator.next(()).unwrap().hash(), between.hash());
+        iterator.mark_current_committed();
+        cancel.cancel();
+        assert_eq!(iterator.next(()).unwrap().hash(), ordinary.hash());
+        assert_eq!(finish(&mut iterator, &cancelled_diagnostics()), 100);
+
+        assert!(begin(&mut iterator, &pool, CancellationToken::new()));
+        assert_eq!(iterator.next(()).unwrap().hash(), ordinary.hash());
+    }
+
+    /// A cancel that lands while the flashblock builds ordinary transactions past the resting set
+    /// does not cut the walk, even after the flashblock held many resting transactions earlier:
+    /// there is no resting run left to save re-walking, so the next flashblock refreshes.
+    #[test]
+    fn cancel_while_building_past_the_resting_set_refreshes() {
+        const RESTING: u64 = 100;
+        let (transactions, ordinary) = resting_cohort(RESTING, 2);
+        let pool = pending_pool(&transactions);
+        let mut iterator = resting_iterator(&pool);
+        rest_all(&mut iterator, &transactions);
+
+        let cancel = CancellationToken::new();
+        assert!(!begin(&mut iterator, &pool, cancel.clone()));
+        assert_eq!(iterator.next(()).unwrap().hash(), &ordinary[0]);
+        iterator.mark_current_committed();
+        assert_eq!(iterator.next(()).unwrap().hash(), &ordinary[1]);
+        cancel.cancel();
+        assert_eq!(finish(&mut iterator, &cancelled_diagnostics()), RESTING);
+
+        assert!(!begin(&mut iterator, &pool, CancellationToken::new()));
+    }
+
+    /// A resume chain ends once a cut flashblock held fewer than
+    /// [`RESTING_WALK_RESUME_MIN_HOLDS`] resting transactions itself, however many the chain held
+    /// before, so the next flashblock refreshes and sees the current pool.
+    #[test]
+    fn resume_chain_stops_once_a_flashblock_holds_few() {
+        const RESTING: u64 = 1_000;
+        let resting =
+            |sender, tip| validity_transaction(sender, 0, tip, vec![balance_at_least(WATCHED, 1)]);
+        // In priority order: the cohort, a plain transaction, 10 resting, a plain transaction, 5
+        // resting, a plain transaction, 5 resting, and a last plain transaction.
+        let mut transactions: Vec<_> = (0..RESTING).map(|sender| resting(sender, 30)).collect();
+        let first = transaction(RESTING, 0, 20);
+        transactions.push(Arc::clone(&first));
+        transactions.extend((RESTING + 1..RESTING + 11).map(|sender| resting(sender, 15)));
+        let second = transaction(RESTING + 11, 0, 12);
+        transactions.push(Arc::clone(&second));
+        transactions.extend((RESTING + 12..RESTING + 17).map(|sender| resting(sender, 10)));
+        let third = transaction(RESTING + 17, 0, 8);
+        transactions.push(Arc::clone(&third));
+        transactions.extend((RESTING + 18..RESTING + 23).map(|sender| resting(sender, 5)));
+        let last = transaction(RESTING + 23, 0, 1);
+        transactions.push(Arc::clone(&last));
+        let pool = pending_pool(&transactions);
+        let mut iterator = resting_iterator(&pool);
+        rest_all(&mut iterator, &transactions);
+
+        // Flashblock 1 is cut in the cohort.
+        assert!(!begin(&mut iterator, &pool, cancelled()));
+        assert!(iterator.next(()).is_none());
+        finish(&mut iterator, &FlashblockDiagnostics::default());
+
+        // Flashblock 2 finishes the cohort and is cut right after the run of 10.
+        let cancel = CancellationToken::new();
+        assert!(begin(&mut iterator, &pool, cancel.clone()));
+        assert_eq!(iterator.next(()).unwrap().hash(), first.hash());
+        iterator.mark_current_committed();
+        assert_eq!(iterator.next(()).unwrap().hash(), second.hash());
+        cancel.cancel();
+        assert_eq!(
+            finish(&mut iterator, &cancelled_diagnostics()),
+            RESTING - u64::from(HOLD_INTERRUPT_INTERVAL) + 10
+        );
+
+        // Flashblock 3 resumes and is cut right after the second run of 5, holding only the two
+        // runs of 5.
+        let cancel = CancellationToken::new();
+        assert!(begin(&mut iterator, &pool, cancel.clone()));
+        assert_eq!(iterator.next(()).unwrap().hash(), second.hash());
+        iterator.mark_current_committed();
+        assert_eq!(iterator.next(()).unwrap().hash(), third.hash());
+        iterator.mark_current_committed();
+        assert_eq!(iterator.next(()).unwrap().hash(), last.hash());
+        cancel.cancel();
+        assert_eq!(finish(&mut iterator, &cancelled_diagnostics()), 10);
+
+        assert!(!begin(&mut iterator, &pool, CancellationToken::new()));
+    }
+
+    /// The build loop drives the resume seam end to end: a flashblock cancelled while its hold
+    /// walks the resting cohort reports itself cancelled, and the next flashblock's selection
+    /// continues the same walk under its own cancellation and considers the transactions behind
+    /// the cohort.
+    #[test]
+    fn build_loop_resumes_a_walk_its_hold_stopped() {
+        const RESTING: u64 = 1_000;
+        let (transactions, ordinary) = resting_cohort(RESTING, 2);
+        let pool = pending_pool(&transactions);
+        let mut iterator = resting_iterator(&pool);
+        rest_all(&mut iterator, &transactions);
+        let db = StateProviderDatabase::new(NoopProvider::default().into_evm_state_provider());
+        let mut state = State::builder().with_database(db).with_bundle_update().build();
+        let mut select =
+            |ctx: &BasePayloadBuilderCtx,
+             iterator: &mut BestFlashblocksTxs<BasePooledTransaction, Parkable>| {
+                ctx.execute_best_transactions(
+                    &mut ExecutionInfo::default(),
+                    &mut BlockDeferrals::default(),
+                    &mut state,
+                    iterator,
+                    &ResourceLimits::default(),
+                )
+                .expect("selection should succeed")
+            };
+
+        // The flashblock's cancel fires before its walk past the cohort ends.
+        let cut_ctx = selection_context();
+        assert!(!begin(&mut iterator, &pool, cut_ctx.cancel.clone()));
+        cut_ctx.cancel.cancel();
+        let cut = select(&cut_ctx, &mut iterator);
+        assert!(cut.cancelled);
+        assert_eq!(cut.txs_considered, 0);
+        iterator.finish_flashblock(&cut);
+
+        let next_ctx = selection_context();
+        let resumed = iterator.begin_flashblock(next_ctx.cancel.clone(), |_| {
+            panic!("a resumed flashblock must not fetch a new pool iterator")
+        });
+        assert!(resumed);
+        let next = select(&next_ctx, &mut iterator);
+        assert!(!next.cancelled);
+        assert_eq!(next.txs_considered, ordinary.len() as u64);
+    }
+
+    /// Without the hold, under shadow or off, a cut flashblock never resumes.
+    #[test]
+    fn unenforced_modes_never_resume() {
+        for mode in [RestingPredicateMode::Shadow, RestingPredicateMode::Off] {
+            let (transactions, _ordinary) = resting_cohort(1_000, 1);
+            let pool = pending_pool(&transactions);
+            let mut iterator = resting_iterator_in_mode(
+                &pool,
+                mode,
+                RestingPredicates::new(DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD),
+            );
+            rest_all(&mut iterator, &transactions);
+            // The build loop sees the cancel on the first candidate and stops without deciding.
+            assert!(!begin(&mut iterator, &pool, cancelled()));
+            assert!(iterator.next(()).is_some());
+            finish(&mut iterator, &cancelled_diagnostics());
+
+            assert!(!begin(&mut iterator, &pool, CancellationToken::new()));
+        }
     }
 
     #[test]
@@ -798,9 +1398,8 @@ mod tests {
 
         // Flashblock 2 is cancelled before its walk past the resting members reaches `plain`, so
         // the iterator returns control after one check interval instead of finishing the walk.
-        let cancelled = CancellationToken::new();
-        cancelled.cancel();
-        iterator.refresh_iterator(parkable_with_hold(&pool, iterator.iterator_hold(&cancelled)));
+        iterator.set_cancel(cancelled());
+        iterator.refresh_iterator(parkable_with_hold(&pool, iterator.iterator_hold()));
         assert!(iterator.next(()).is_none());
         assert_eq!(iterator.take_resting_stats().parked, u64::from(HOLD_INTERRUPT_INTERVAL));
 

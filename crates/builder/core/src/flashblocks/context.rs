@@ -144,6 +144,20 @@ impl FlashblockDiagnostics {
         ]
     }
 
+    /// Returns whether a transaction was skipped for a limit a later flashblock of the block may
+    /// satisfy: the block's cumulative gas, DA, DA footprint or uncompressed size so far, the
+    /// per-transaction DA limit, which changes at runtime, or metering data that has not arrived
+    /// yet. Execution-time rejections compare a transaction's own predicted execution time with
+    /// the per-transaction limit, so they are permanent and not counted.
+    pub const fn has_retryable_limit_rejections(&self) -> bool {
+        self.txs_rejected_gas
+            + self.txs_rejected_da
+            + self.txs_rejected_da_footprint
+            + self.txs_rejected_uncompressed_size
+            + self.txs_rejected_metering_data_pending
+            > 0
+    }
+
     /// Returns the distinct rejection categories encountered while scanning the pool.
     pub fn rejection_reasons(&self) -> Vec<&'static str> {
         self.rejection_counts()
@@ -1058,6 +1072,7 @@ impl BasePayloadBuilderCtx {
                 let tx_age_ms = now_ms.saturating_sub(tx_received_at_ms);
                 if tx_age_ms < wait_duration.as_millis() {
                     let err = TxnExecutionError::MeteringDataPending;
+                    diag.record_rejection(&err);
                     let tx_resources = TxResources {
                         da_size: tx_da_size,
                         gas_limit: tx.gas_limit(),
@@ -1959,6 +1974,62 @@ mod tests {
             rendered.contains("base_builder_payload_num_tx_considered_count 1"),
             "cancelled build must record payload builder metrics:\n{rendered}"
         );
+    }
+
+    /// Reports metering enabled with no data for any transaction.
+    #[derive(Debug)]
+    struct PendingMetering;
+
+    impl base_execution_payload_builder::MeteringProvider for PendingMetering {
+        fn get(&self, _tx_hash: &TxHash) -> Option<Arc<base_bundles::MeterBundleResponse>> {
+            None
+        }
+
+        fn is_enabled(&self) -> bool {
+            true
+        }
+    }
+
+    /// A transaction skipped because its metering data has not arrived may be includable in a
+    /// later flashblock, so the flashblock reports a retryable limit rejection.
+    #[test]
+    fn metering_pending_skip_is_a_retryable_limit_rejection() {
+        let mut ctx = test_builder_context();
+        ctx.builder_config.metering_provider = Arc::new(PendingMetering);
+        ctx.builder_config.metering_wait_duration = Some(Duration::from_secs(60));
+        let mut best_txs = LimitRejectionTransactions::new(1, 0, ctx.cancel.clone());
+        let db = StateProviderDatabase::new(NoopProvider::default().into_evm_state_provider());
+        let mut state = State::builder().with_database(db).with_bundle_update().build();
+        let mut info = ExecutionInfo::default();
+
+        let diagnostics = ctx
+            .execute_best_transactions(
+                &mut info,
+                &mut BlockDeferrals::default(),
+                &mut state,
+                &mut best_txs,
+                &ResourceLimits::default(),
+            )
+            .expect("selection should succeed");
+
+        assert_eq!(diagnostics.txs_rejected_metering_data_pending, 1);
+        assert!(diagnostics.has_retryable_limit_rejections());
+    }
+
+    /// Only limits a later flashblock may satisfy count as retryable: a transaction whose own
+    /// predicted execution time or gas used exceeds the per-transaction limit never fits.
+    #[test]
+    fn permanent_rejections_are_not_retryable() {
+        let mut permanent = FlashblockDiagnostics::default();
+        permanent.record_rejection(&TxnExecutionError::MaxGasUsageExceeded);
+        permanent.record_rejection(&TxnExecutionError::ExecutionMeteringLimitExceeded(
+            ExecutionMeteringLimitExceeded::TransactionExecutionTime(2, 1),
+        ));
+        assert!(!permanent.has_retryable_limit_rejections());
+
+        let mut retryable = FlashblockDiagnostics::default();
+        retryable.record_rejection(&TxnExecutionError::TransactionDASizeExceeded(2, 1));
+        assert!(retryable.has_retryable_limit_rejections());
     }
 
     #[test]
