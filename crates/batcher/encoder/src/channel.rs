@@ -1,6 +1,6 @@
 //! One derivation channel and its admission / close types.
 
-use std::{collections::VecDeque, sync::Arc};
+use std::{collections::VecDeque, num::NonZeroUsize, sync::Arc};
 
 use alloy_primitives::Bytes;
 use alloy_rlp::Encodable;
@@ -178,7 +178,7 @@ impl Channel {
             rollup_config,
             compressor: Some(CompressionStream::new(
                 config.brotli_level,
-                config.compressed_size_target.map(Self::flush_interval),
+                config.compressed_size_target.and_then(Self::flush_interval),
             )),
             output: VecDeque::new(),
             available_output: 0,
@@ -204,10 +204,10 @@ impl Channel {
     /// The target is checked against the bytes the stream has emitted, which cover
     /// all but less than one flush interval of the input. A quarter of the target
     /// keeps that lag, and so the overshoot, small relative to the target, at a
-    /// constant few flushes per channel whatever the target. Without a target the
-    /// stream never flushes.
-    pub const fn flush_interval(target: usize) -> usize {
-        target.div_ceil(4)
+    /// constant few flushes per channel whatever the target. Without a target, or
+    /// with a zero one, the stream never flushes.
+    pub const fn flush_interval(target: usize) -> Option<NonZeroUsize> {
+        NonZeroUsize::new(target.div_ceil(4))
     }
 
     /// Returns the channel identifier.
@@ -596,7 +596,8 @@ mod tests {
 
         // Before the closing batch, the emitted bytes trail the input by less than one
         // flush interval; the closing batch adds at most its own compressed bytes.
-        let lagging_input = &input[last_batch_start - Channel::flush_interval(target)..];
+        let lagging_input =
+            &input[last_batch_start - Channel::flush_interval(target).unwrap().get()..];
         let max_overshoot = BrotliLevel::DEFAULT.compress_channel(lagging_input).unwrap().len();
         let closed_at = channel.compressed_bytes() as usize;
         assert!(
