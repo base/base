@@ -68,6 +68,8 @@ base_metrics::define_metrics! {
     resting_predicate_carry_resets_total: counter,
     #[describe("Resting validity transactions parked in the transaction iterator without reaching the build loop")]
     resting_predicate_parked_total: counter,
+    #[describe("Time one native block build's transaction iterator spent advancing past held resting validity transactions, in seconds")]
+    resting_predicate_hold_duration: histogram,
     #[describe("Resting validity transactions whose predicates matched when evaluated in shadow mode")]
     resting_predicate_shadow_mismatches_total: counter,
     #[describe("Of the parked resting validity transactions, those carried over from an earlier block")]
@@ -169,6 +171,12 @@ impl ValidityMetrics {
             Self::resting_predicate_carry_released_total("unseen").increment(released as u64);
         }
         Self::resting_predicate_sweep_duration().record(duration.as_secs_f64());
+    }
+
+    /// Records the time one native block build's transaction iterator spent advancing past held
+    /// resting validity transactions.
+    pub fn record_resting_hold_duration(duration: Duration) {
+        Self::resting_predicate_hold_duration().record(duration.as_secs_f64());
     }
 
     /// Records how long a block build waited for the previous block's resting sweep.

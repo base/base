@@ -1574,6 +1574,9 @@ impl BasePayloadBuilderCtx {
             &predicate_index,
         );
 
+        // A pool iterator whose hold the cancellation interrupted returns `None` before the loop
+        // reaches its per-candidate check, so record the cancellation here as well.
+        diag.cancelled |= self.cancel.is_cancelled();
         diag.txs_considered = num_txs_considered;
         diag.txs_included = (info.executed_transactions.len() as u64).saturating_sub(min_tx_index);
 
@@ -1944,6 +1947,29 @@ mod tests {
             rendered.contains("base_builder_payload_num_tx_considered_count 1"),
             "cancelled build must record payload builder metrics:\n{rendered}"
         );
+    }
+
+    #[test]
+    fn cancellation_that_ends_the_iterator_is_reported_as_cancelled() {
+        // An interrupted resting hold ends the pool iterator without yielding a candidate, so the
+        // loop never reaches its per-candidate cancellation check.
+        let ctx = test_builder_context();
+        ctx.cancel.cancel();
+        let mut best_txs = LimitRejectionTransactions::new(0, 0, ctx.cancel.clone());
+        let db = StateProviderDatabase::new(NoopProvider::default());
+        let mut state = State::builder().with_database(db).with_bundle_update().build();
+
+        let diagnostics = ctx
+            .execute_best_transactions(
+                &mut ExecutionInfo::default(),
+                &mut BlockDeferrals::default(),
+                &mut state,
+                &mut best_txs,
+                &ResourceLimits::default(),
+            )
+            .expect("cancelled selection should succeed");
+
+        assert_eq!(diagnostics.selection_outcome(), FlashblockSelectionOutcome::Cancelled);
     }
 
     #[test]

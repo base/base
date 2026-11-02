@@ -21,9 +21,12 @@ use base_builder_core::{
 };
 use base_common_consensus::{BaseTransactionSigned, BaseTxEnvelope};
 use base_execution_chainspec::BaseChainSpec;
+use base_execution_payload_builder::{
+    DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD, RestingPredicates, SharedRestingPredicates,
+};
 use base_execution_txpool::{
-    BaseOrdering, BasePooledTransaction, ParkedBestTransactions, PredicateContext,
-    ValidityOperator, ValidityPredicate,
+    BaseOrdering, BasePooledTransaction, BestTransactionsHold, ParkedBestTransactions,
+    PredicateContext, ValidityOperator, ValidityPredicate,
 };
 use base_observability_events::{
     GlobalTransactionEventWriter, TransactionEventProducer, TransactionEventWriterConfig,
@@ -41,6 +44,7 @@ use revm::{
     database::InMemoryDB,
     state::{Account, AccountInfo, EvmState},
 };
+use tokio_util::sync::CancellationToken;
 
 type Ordering = BaseOrdering<BasePooledTransaction>;
 type Pool = PendingPool<Ordering>;
@@ -142,6 +146,19 @@ fn parkable(pool: &Pool) -> ParkableBestPayloadTransactions<BasePooledTransactio
         Ordering::coinbase_tip(),
         0,
     )))
+}
+
+/// A parkable iterator whose `hold` parks resting members at the source, as the production pool
+/// iterator of an enforcing flashblocks build does.
+fn resting_parkable(
+    pool: &Pool,
+    hold: Option<Box<dyn BestTransactionsHold<BasePooledTransaction>>>,
+) -> ParkableBestPayloadTransactions<BasePooledTransaction> {
+    let mut inner = pool.best();
+    inner.no_updates();
+    ParkableBestPayloadTransactions::new(Box::new(
+        ParkedBestTransactions::new(inner, Ordering::coinbase_tip(), 0).with_hold(hold),
+    ))
 }
 
 fn selection_benches(c: &mut Criterion) {
@@ -461,16 +478,24 @@ fn run_resting_block(
 ) -> usize {
     let mut info = ExecutionInfo::default();
     let mut deferrals = BlockDeferrals::default();
+    let resting = SharedRestingPredicates::new(RestingPredicates::new(
+        DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD,
+    ));
+    let hold = mode.is_enforced().then(|| resting.iterator_hold());
     let mut best = BestFlashblocksTxs::new(
-        parkable(pool),
+        resting_parkable(pool, hold),
         RejectionCache::new(1_000, Duration::from_secs(60)),
     )
-    .with_resting_predicate_mode(mode);
+    .with_resting_predicate_mode(mode)
+    .with_resting_predicates(resting);
     let mut committed_until = 0;
 
     for flashblock in 0..RESTING_FLASHBLOCKS {
         if flashblock > 0 {
-            best.refresh_iterator(parkable(pool));
+            best.refresh_iterator(resting_parkable(
+                pool,
+                best.iterator_hold(&CancellationToken::new()),
+            ));
         }
         let limits = ResourceLimits {
             block_gas_limit: ((flashblock + 1) * RESTING_FILLER_PER_FLASHBLOCK) as u64
