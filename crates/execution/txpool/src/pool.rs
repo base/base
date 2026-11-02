@@ -26,10 +26,10 @@ use tokio::{spawn, sync::mpsc};
 use tracing::debug;
 
 use crate::{
-    Admission, BasePooledTx, BaseTransactionValidator, FlashblockExpiry, GuardLimits, GuardMetrics,
-    InvalidationCause, InvalidationKey, LimitRejection, MempoolGuard, ParkableBestTransactions,
-    ParkableTransactionPool, ParkedBestTransactions, PredicateContext, StateDiffInvalidation,
-    ValidityPoolMetrics,
+    Admission, BasePooledTx, BaseTransactionValidator, BestTransactionsHold, FlashblockExpiry,
+    GuardLimits, GuardMetrics, InvalidationCause, InvalidationKey, LimitRejection, MempoolGuard,
+    ParkableBestTransactions, ParkableTransactionPool, ParkedBestTransactions, PredicateContext,
+    StateDiffInvalidation, ValidityPoolMetrics,
     best::MergeBestTransactions,
     two_d_nonce_pool::{InsertOutcome, TwoDNoncePool},
 };
@@ -1577,6 +1577,7 @@ where
     fn best_transactions_with_attributes_and_parking(
         &self,
         attributes: BestTransactionsAttributes,
+        hold: Option<Box<dyn BestTransactionsHold<Self::Transaction>>>,
     ) -> Box<dyn ParkableBestTransactions<Self::Transaction>> {
         let base_fee = attributes.basefee;
         let merged = MergeBestTransactions::new(
@@ -1585,7 +1586,9 @@ where
             self.ordering.clone(),
             base_fee,
         );
-        Box::new(ParkedBestTransactions::new(merged, self.ordering.clone(), base_fee))
+        Box::new(
+            ParkedBestTransactions::new(merged, self.ordering.clone(), base_fee).with_hold(hold),
+        )
     }
 }
 

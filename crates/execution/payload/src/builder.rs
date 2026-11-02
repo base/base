@@ -10,7 +10,7 @@ use alloy_evm::{
     Evm as AlloyEvm,
     block::{CommitChanges, TxResult},
 };
-use alloy_primitives::{Address, B256, TxHash, U256, map::B256Set};
+use alloy_primitives::{Address, B256, TxHash, U256};
 use alloy_rpc_types_debug::ExecutionWitness;
 use alloy_rpc_types_engine::PayloadId;
 use base_common_chains::Upgrades;
@@ -58,7 +58,7 @@ use crate::{
     Attributes, BasePayloadBuilderAttributes, BlockDeferrals, BuilderMetrics,
     CoinbaseTipAffordability, InclusionTracker, MeteringProvider, ParkableBestPayloadTransactions,
     ParkablePayloadTransactions, ParkedPredicateIndex, PayloadPrimitives, PredicateLoadTracker,
-    PredicateReadRecorder, RejectionCacheMetrics, RestingPredicateStore, RestingPredicates,
+    PredicateReadRecorder, RejectionCacheMetrics, RestingPredicateStore, SharedRestingPredicates,
     StateChangeEffects, ValidityMetrics, ValidityPredicateEvaluation, config::BaseBuilderConfig,
     error::BasePayloadBuilderError, payload::BaseBuiltPayload,
 };
@@ -203,7 +203,10 @@ where
     fn build_payload<'a, Txs>(
         &self,
         args: BuildArguments<Attrs, BaseBuiltPayload<N>>,
-        best: impl FnOnce(BestTransactionsAttributes) -> Txs + Send + Sync + 'a,
+        best: impl FnOnce(BestTransactionsAttributes, Option<&SharedRestingPredicates>) -> Txs
+        + Send
+        + Sync
+        + 'a,
     ) -> Result<BuildOutcome<BaseBuiltPayload<N>>, PayloadBuilderError>
     where
         Txs: ParkablePayloadTransactions<
@@ -286,7 +289,7 @@ where
 
         let state_provider = self.client.state_by_block_hash(ctx.parent().hash())?;
 
-        let builder = Builder::new(|_| NoopPayloadTransactions::<Pool::Transaction>::default());
+        let builder = Builder::new(|_, _| NoopPayloadTransactions::<Pool::Transaction>::default());
         builder.witness(state_provider, &self.client, &ctx)
     }
 }
@@ -310,9 +313,12 @@ where
         &self,
         args: BuildArguments<Self::Attributes, Self::BuiltPayload>,
     ) -> Result<BuildOutcome<Self::BuiltPayload>, PayloadBuilderError> {
-        self.build_payload(args, |attrs| {
+        self.build_payload(args, |attrs, resting| {
             ParkableBestPayloadTransactions::new(
-                self.pool.best_transactions_with_attributes_and_parking(attrs),
+                self.pool.best_transactions_with_attributes_and_parking(
+                    attrs,
+                    resting.map(SharedRestingPredicates::iterator_hold),
+                ),
             )
         })
     }
@@ -340,11 +346,16 @@ where
             cancel: Default::default(),
             best_payload: None,
         };
-        self.build_payload(args, |_| NoopPayloadTransactions::<Pool::Transaction>::default())?
+        self.build_payload(args, |_, _| NoopPayloadTransactions::<Pool::Transaction>::default())?
             .into_payload()
             .ok_or_else(|| PayloadBuilderError::MissingPayload)
     }
 }
+
+/// Creates the candidate iterator of one build from the fee attributes and, for an enforcing
+/// build, the resting set whose hold the iterator parks members with.
+pub type BestTransactionsFactory<'a, Txs> =
+    dyn FnOnce(BestTransactionsAttributes, Option<&SharedRestingPredicates>) -> Txs + 'a;
 
 /// The type that builds the payload.
 ///
@@ -365,7 +376,7 @@ where
 pub struct Builder<'a, Txs> {
     /// Yields the best transaction to include if transactions from the mempool are allowed.
     #[debug(skip)]
-    best: Box<dyn FnOnce(BestTransactionsAttributes) -> Txs + 'a>,
+    best: Box<BestTransactionsFactory<'a, Txs>>,
     /// Permanently removes mempool transactions that exceeded a per-transaction resource limit.
     #[debug(skip)]
     evict_permanently_rejected: Box<dyn FnOnce(Vec<TxHash>) + 'a>,
@@ -375,7 +386,12 @@ pub struct Builder<'a, Txs> {
 
 impl<'a, Txs> Builder<'a, Txs> {
     /// Creates a new [`Builder`].
-    pub fn new(best: impl FnOnce(BestTransactionsAttributes) -> Txs + Send + Sync + 'a) -> Self {
+    pub fn new(
+        best: impl FnOnce(BestTransactionsAttributes, Option<&SharedRestingPredicates>) -> Txs
+        + Send
+        + Sync
+        + 'a,
+    ) -> Self {
         Self {
             best: Box::new(best),
             evict_permanently_rejected: Box::new(|_| {}),
@@ -467,11 +483,16 @@ impl<Txs> Builder<'_, Txs> {
                         builder.evm_mut().db_mut().transition_state.as_ref(),
                     );
                     ValidityMetrics::record_resting_carry_over(&carry_over, start.elapsed());
-                    resting
+                    SharedRestingPredicates::new(resting)
                 });
-            let best_txs = best(ctx.best_transaction_attributes(builder.evm_mut().block()));
+            // Only an enforcing build hands the pool iterator a hold; a shadow build evaluates
+            // resting members to count mismatches.
+            let hold = resting
+                .as_ref()
+                .filter(|_| ctx.builder_config.resting_predicate_mode.is_enforced());
+            let best_txs = best(ctx.best_transaction_attributes(builder.evm_mut().block()), hold);
             let cancelled =
-                ctx.execute_best_transactions(&mut info, &mut builder, best_txs, resting.as_mut())?;
+                ctx.execute_best_transactions(&mut info, &mut builder, best_txs, resting.as_ref())?;
             if !info.permanently_rejected_txs.is_empty() {
                 let rejected = std::mem::take(&mut info.permanently_rejected_txs);
                 let count = rejected.len();
@@ -501,8 +522,9 @@ impl<Txs> Builder<'_, Txs> {
             }
         }
         // Start the end-of-block sweep now so it overlaps the state root.
-        let resting =
-            resting.zip(resting_predicates.as_ref()).map(|(resting, store)| store.finish(resting));
+        let resting = resting
+            .zip(resting_predicates.as_ref())
+            .map(|(resting, store)| store.finish(resting.take_predicates()));
 
         let block_num = ctx.parent().number().saturating_add(1);
         let state_root = state_root_handle.and_then(|mut task| {
@@ -966,7 +988,7 @@ where
         mut best_txs: impl ParkablePayloadTransactions<
             Transaction: PoolTransaction<Consensus = TxTy<Evm::Primitives>> + BasePooledTx,
         >,
-        mut resting: Option<&mut RestingPredicates>,
+        resting: Option<&SharedRestingPredicates>,
     ) -> Result<Option<()>, PayloadBuilderError>
     where
         Builder: BlockBuilder<Primitives = Evm::Primitives>,
@@ -1000,11 +1022,7 @@ where
         let mut validity_candidates_deferred = 0_u64;
         let mut predicate_eval_cutoff_hit = false;
         let resting_mode = self.builder_config.resting_predicate_mode;
-        // Carried resting transactions held back unevaluated in this build. A commit that wakes one
-        // promotes it so the scan evaluates it at its priority position.
-        let mut parked_resting = B256Set::default();
         // Counted locally and recorded once per build, so the loop does no metric lookups.
-        let mut carried_parked = 0_u64;
         let mut carried_shadow_mismatches = 0_u64;
 
         let block_timestamp = self.attributes().timestamp();
@@ -1070,20 +1088,6 @@ where
             }
 
             if has_validity_predicates
-                && resting_mode.is_enforced()
-                && let Some(resting) = resting.as_deref_mut()
-                && resting.hold(tx_hash, tx.validity_conditions()).is_some()
-            {
-                // No commit since the recorded predicate was found unsatisfied changed the state it
-                // reads, so evaluating it again would park it again. The deferral was reported
-                // when it started resting, so this hot path emits nothing per member.
-                best_txs.park_current();
-                parked_resting.insert(tx_hash);
-                carried_parked += 1;
-                continue;
-            }
-
-            if has_validity_predicates
                 && predicate_eval_duration.is_some_and(|duration| {
                     duration >= self.builder_config.predicate_eval_hard_cutoff
                 })
@@ -1129,7 +1133,7 @@ where
                 };
                 *predicate_eval_duration.get_or_insert(Duration::ZERO) +=
                     evaluation_start.elapsed();
-                if let Some(resting) = resting.as_deref_mut() {
+                if let Some(resting) = resting {
                     match &evaluation {
                         Ok(ValidityPredicateEvaluation::Unsatisfied {
                             predicate,
@@ -1431,8 +1435,8 @@ where
                                 predicate_index.affected_by_state(&result_and_state.state);
                             predicate_bucket_wakeups += state_change_effects.woken_buckets as u64;
                         }
-                        if let Some(resting) = resting.as_deref() {
-                            resting_woken = resting.woken_by_state(&result_and_state.state);
+                        if let Some(resting) = resting {
+                            resting_woken = resting.wake_by_state(&result_and_state.state);
                         }
                         CommitChanges::Yes
                     }
@@ -1515,13 +1519,11 @@ where
             }
 
             best_txs.mark_current_committed();
-            if let Some(resting) = resting.as_deref_mut() {
-                for woken in resting_woken {
-                    resting.remove(woken);
-                    if parked_resting.remove(&woken) {
-                        best_txs.promote(woken);
-                    }
-                }
+            // Members the pool iterator held are parked in it; a commit that changed the state
+            // their predicate reads promotes them so the scan evaluates them at their priority
+            // position.
+            for woken in resting_woken {
+                best_txs.promote(woken);
             }
             let predicates_need_rescan = !state_change_effects.affected_transactions.is_empty();
             let predicate_rescan_start = Instant::now();
@@ -1561,7 +1563,7 @@ where
                         ValidityMetrics::validity_predicate_evaluations_total("rescan_matched")
                             .increment(1);
                         predicate_index.remove(parked_hash);
-                        if let Some(resting) = resting.as_deref_mut() {
+                        if let Some(resting) = resting {
                             resting.remove(parked_hash);
                         }
                         best_txs.promote(parked_hash);
@@ -1571,7 +1573,7 @@ where
                             "rescan_not_satisfied",
                         )
                         .increment(1);
-                        if let Some(resting) = resting.as_deref_mut() {
+                        if let Some(resting) = resting {
                             resting.rest(parked_hash, predicate.clone());
                         }
                         predicate_index.reindex(parked_hash, predicate);
@@ -1586,7 +1588,7 @@ where
                             "failed to re-read validity predicate state"
                         );
                         predicate_index.remove(parked_hash);
-                        if let Some(resting) = resting.as_deref_mut() {
+                        if let Some(resting) = resting {
                             resting.remove(parked_hash);
                         }
                         best_txs.discard_parked(parked_hash);
@@ -1641,9 +1643,12 @@ where
             predicate_bucket_wakeups,
             &predicate_index,
         );
-        if carried_parked > 0 {
-            ValidityMetrics::resting_predicate_parked_total().increment(carried_parked);
-            ValidityMetrics::resting_predicate_carried_parked_total().increment(carried_parked);
+        if let Some(stats) = resting.map(SharedRestingPredicates::take_stats)
+            && stats.parked > 0
+        {
+            ValidityMetrics::resting_predicate_parked_total().increment(stats.parked);
+            ValidityMetrics::resting_predicate_carried_parked_total()
+                .increment(stats.carried_parked);
         }
         if carried_shadow_mismatches > 0 {
             ValidityMetrics::resting_predicate_shadow_mismatches_total()
@@ -1691,7 +1696,9 @@ mod tests {
     use base_common_evm::BaseTime;
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
     use base_execution_evm::BaseEvmConfig;
-    use base_execution_txpool::{BasePooledTransaction, ValidityOperator, ValidityPredicate};
+    use base_execution_txpool::{
+        BasePooledTransaction, BestTransactionsHold, ValidityOperator, ValidityPredicate,
+    };
     use base_observability_events::{TransactionEventCapture, TransactionEventType};
     use reth_basic_payload_builder::{BuildOutcomeKind, PayloadConfig};
     use reth_chainspec::ChainSpec;
@@ -1705,7 +1712,9 @@ mod tests {
         cancelled::CancelOnDrop, database::StateProviderDatabase, db::State,
         test_utils::StateProviderTest,
     };
-    use reth_transaction_pool::PoolTransaction;
+    use reth_transaction_pool::{
+        PoolTransaction, TransactionOrigin, ValidPoolTransaction, identifier::TransactionId,
+    };
     use reth_trie_common::{HashedPostState, updates::TrieUpdates};
     use reth_trie_parallel::{
         error::StateRootTaskError,
@@ -1721,7 +1730,7 @@ mod tests {
         NoopMeteringProvider, ParkablePayloadTransactions, ResourceMeteringConfig,
         ResourceMeteringDimension, ResourceMeteringOperation, ResourceMeteringSchedule,
         RestingPredicateMode, RestingPredicateStore, SharedMeteringProvider,
-        config::BaseBuilderConfig, payload::EthPayloadBuilderAttributes,
+        SharedRestingPredicates, config::BaseBuilderConfig, payload::EthPayloadBuilderAttributes,
     };
 
     #[derive(Debug)]
@@ -1778,7 +1787,8 @@ mod tests {
             best_payload: None,
         };
         let provider = NoopProvider::default();
-        let builder = Builder::new(|_| NoopPayloadTransactions::<BasePooledTransaction>::default());
+        let builder =
+            Builder::new(|_, _| NoopPayloadTransactions::<BasePooledTransaction>::default());
         let outcome = builder
             .build(StateProviderDatabase::new(&provider), &provider, Some(state_root_handle), ctx)
             .expect("empty payload must build");
@@ -1886,7 +1896,7 @@ mod tests {
         Txs: ParkablePayloadTransactions<Transaction = BasePooledTransaction> + Send + Sync,
     {
         let provider = funded_provider(funded_senders);
-        Builder::new(|_| transactions)
+        Builder::new(|_, _| transactions)
             .build(StateProviderDatabase::new(&provider), &provider, Some(state_root_handle()), ctx)
             .expect("payload must build")
     }
@@ -1939,7 +1949,7 @@ mod tests {
         Txs: ParkablePayloadTransactions<Transaction = BasePooledTransaction> + Send + Sync,
     {
         let provider = funded_provider(funded_senders);
-        Builder::new(|_| transactions)
+        Builder::new(|_, _| transactions)
             .with_permanent_eviction(evict)
             .build(StateProviderDatabase::new(&provider), &provider, Some(state_root_handle()), ctx)
             .expect("payload must build")
@@ -1981,6 +1991,8 @@ mod tests {
         /// they outbid them.
         promoted_first: bool,
         invalid: Arc<Mutex<Vec<(Address, u64)>>>,
+        /// Parks held candidates before yielding them, as the pool's parking iterator does.
+        hold: Option<Box<dyn BestTransactionsHold<BasePooledTransaction>>>,
     }
 
     impl TestParkableTransactions {
@@ -2000,7 +2012,17 @@ mod tests {
                 current: None,
                 promoted_first: true,
                 invalid,
+                hold: None,
             }
+        }
+
+        /// Parks the candidates `hold` holds before yielding them.
+        fn with_hold(
+            mut self,
+            hold: Option<Box<dyn BestTransactionsHold<BasePooledTransaction>>>,
+        ) -> Self {
+            self.hold = hold;
+            self
         }
 
         /// Yields promoted transactions only after every queued one, so queued transactions can
@@ -2015,13 +2037,29 @@ mod tests {
 
         fn next(&mut self, _ctx: ()) -> Option<Self::Transaction> {
             assert!(self.current.is_none(), "current transaction was not lifecycle-managed");
-            let transaction = if self.promoted_first {
-                self.ready.pop_front().or_else(|| self.queued.pop_front())
-            } else {
-                self.queued.pop_front().or_else(|| self.ready.pop_front())
-            }?;
-            self.current = Some(transaction.clone());
-            Some(transaction)
+            loop {
+                let transaction = if self.promoted_first {
+                    self.ready.pop_front().or_else(|| self.queued.pop_front())
+                } else {
+                    self.queued.pop_front().or_else(|| self.ready.pop_front())
+                }?;
+                if let Some(hold) = self.hold.as_mut()
+                    && !transaction.validity_conditions().is_empty()
+                    && hold.hold(&ValidPoolTransaction {
+                        transaction_id: TransactionId::new(0.into(), 0),
+                        transaction: transaction.clone(),
+                        propagate: false,
+                        timestamp: std::time::Instant::now(),
+                        origin: TransactionOrigin::External,
+                        authority_ids: None,
+                    })
+                {
+                    self.parked.insert(*transaction.hash(), transaction);
+                    continue;
+                }
+                self.current = Some(transaction.clone());
+                return Some(transaction);
+            }
         }
 
         fn mark_invalid(&mut self, sender: Address, nonce: u64) {
@@ -2369,10 +2407,13 @@ mod tests {
         let funded_senders =
             transactions.iter().map(|transaction| transaction.sender()).collect::<Vec<_>>();
         let provider = funded_provider(&funded_senders);
-        let outcome = Builder::new(|_| TestParkableTransactions::new(transactions))
-            .with_resting_predicates(store.clone())
-            .build(StateProviderDatabase::new(&provider), &provider, Some(state_root_handle()), ctx)
-            .expect("payload must build");
+        let outcome = Builder::new(|_, resting| {
+            TestParkableTransactions::new(transactions)
+                .with_hold(resting.map(SharedRestingPredicates::iterator_hold))
+        })
+        .with_resting_predicates(store.clone())
+        .build(StateProviderDatabase::new(&provider), &provider, Some(state_root_handle()), ctx)
+        .expect("payload must build");
         let (BuildOutcomeKind::Better { payload } | BuildOutcomeKind::Freeze(payload)) = outcome
         else {
             panic!("expected a built payload, got {outcome:?}")
@@ -2568,7 +2609,7 @@ mod tests {
         ctx.config.attributes.transactions = vec![sequencer_attribute_tx(&pool_transaction(0))];
         drop(ctx.cancel.clone());
 
-        let err = Builder::new(|_| NoopPayloadTransactions::<BasePooledTransaction>::default())
+        let err = Builder::new(|_, _| NoopPayloadTransactions::<BasePooledTransaction>::default())
             .witness(test_state_provider(), NoopProvider::default(), &ctx)
             .unwrap_err();
         assert!(err.to_string().contains("cancelled"), "{err}");

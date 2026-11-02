@@ -33,6 +33,7 @@ use base_execution_evm::BaseEvmConfig;
 use base_execution_payload_builder::{
     BasePayloadBuilderAttributes, DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD,
     ParkableBestPayloadTransactions, RESTING_UNSEEN_RETAINED_BLOCKS, RestingPredicateMode,
+    SharedRestingPredicates,
     builder::{BasePayloadBuilderCtx, ExecutionInfo},
     config::BaseBuilderConfig,
     payload::EthPayloadBuilderAttributes,
@@ -245,8 +246,10 @@ fn main() {
             Ordering::coinbase_tip(),
             0,
         )));
-        ctx.execute_best_transactions(&mut info, &mut builder, best, Some(&mut resting))
+        let shared = SharedRestingPredicates::new(resting);
+        ctx.execute_best_transactions(&mut info, &mut builder, best, Some(&shared))
             .expect("in-memory execution cannot fail");
+        let mut resting = shared.take_predicates();
         assert_eq!(builder.executor().receipts().len(), FILLER_PER_BLOCK);
         let selection = start.elapsed() - carry;
 

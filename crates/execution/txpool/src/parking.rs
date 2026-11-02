@@ -3,6 +3,7 @@
 use std::{
     collections::{BinaryHeap, VecDeque},
     sync::Arc,
+    time::{Duration, Instant},
 };
 
 use alloy_primitives::{
@@ -76,6 +77,24 @@ where
     fn mark_committed(&mut self, transaction: &Arc<ValidPoolTransaction<T>>);
 }
 
+/// Decides which validity candidates a parking iterator parks before yielding them.
+///
+/// The build loop parks a validity transaction once it finds one of its predicates unsatisfied,
+/// and the pool re-yields that transaction in every later iterator until a state change wakes it.
+/// A hold recognises such transactions at the source, so they are parked exactly as if the build
+/// loop had yielded and parked them, without the build loop seeing them: their lane stays
+/// occupied and [`ParkableBestTransactions::promote`] returns them to priority competition.
+pub trait BestTransactionsHold<T: PoolTransaction>: Send + Sync {
+    /// Returns whether `transaction` is parked instead of yielded. Called once per source candidate
+    /// that carries validity predicates and is not blocked by its lane.
+    fn hold(&mut self, transaction: &ValidPoolTransaction<T>) -> bool;
+
+    /// Records the time one `next` call spent from its first hold until it found a candidate,
+    /// which includes advancing past further held transactions. Calls that hold nothing record
+    /// nothing.
+    fn record_duration(&mut self, duration: Duration);
+}
+
 /// A transaction pool that can create lane-aware parkable best iterators.
 pub trait ParkableTransactionPool: TransactionPool
 where
@@ -85,14 +104,16 @@ where
     fn best_transactions_with_attributes_and_parking(
         &self,
         attributes: BestTransactionsAttributes,
+        hold: Option<Box<dyn BestTransactionsHold<Self::Transaction>>>,
     ) -> Box<dyn ParkableBestTransactions<Self::Transaction>>;
 }
 
 /// Lane-aware parking over an existing best-transactions iterator.
 ///
 /// The inner iterator remains responsible for nonce contiguity and source ordering. This adapter
-/// only buffers descendants that the inner iterator unlocks while an earlier member of their lane
-/// is parked or waiting for an execution outcome.
+/// buffers descendants that the inner iterator unlocks while an earlier member of their lane is
+/// parked or waiting for an execution outcome, and parks the candidates a
+/// [`BestTransactionsHold`] holds before they are yielded.
 pub struct ParkedBestTransactions<T, I, O>
 where
     T: BasePooledTx,
@@ -107,6 +128,7 @@ where
     parked: HashMap<TxHash, (Arc<ValidPoolTransaction<T>>, Option<BestTransactionLane>)>,
     ready: HashMap<TxHash, (Arc<ValidPoolTransaction<T>>, Option<BestTransactionLane>)>,
     ready_heap: BinaryHeap<(BestTransactionPriority<O::PriorityValue>, TxHash)>,
+    hold: Option<Box<dyn BestTransactionsHold<T>>>,
 }
 
 impl<T, I, O> std::fmt::Debug for ParkedBestTransactions<T, I, O>
@@ -120,6 +142,7 @@ where
             .field("lanes", &self.lanes.len())
             .field("parked", &self.parked.len())
             .field("ready", &self.ready.len())
+            .field("hold", &self.hold.is_some())
             .finish_non_exhaustive()
     }
 }
@@ -141,7 +164,14 @@ where
             parked: HashMap::default(),
             ready: HashMap::default(),
             ready_heap: BinaryHeap::new(),
+            hold: None,
         }
+    }
+
+    /// Parks the candidates `hold` holds before they are yielded.
+    pub fn with_hold(mut self, hold: Option<Box<dyn BestTransactionsHold<T>>>) -> Self {
+        self.hold = hold;
+        self
     }
 
     /// Returns a complete priority key for a transaction.
@@ -211,30 +241,53 @@ where
         })
     }
 
-    /// Pulls through blocked descendants until the next source candidate is lane-eligible.
+    /// Pulls through blocked descendants and held candidates until the next source candidate is
+    /// lane-eligible.
     ///
     /// Consuming occupied-lane descendants is the intentionally naive BASE-253 implementation:
     /// the source only exposes other lanes after these transactions are pulled and buffered. The
     /// `Invalid` arm is defensive because terminal invalidation is already forwarded to `inner`,
     /// whose [`BestTransactions`] contract excludes the invalid transaction's descendants.
     pub fn fill_source_head(&mut self) {
+        let mut hold_start = None;
         while self.source_head.is_none() {
             let Some(transaction) = self.inner.next() else {
-                return;
+                break;
             };
-            let Some(lane) = BestTransactionLane::for_transaction(&transaction) else {
-                self.source_head = Some((transaction, None));
-                return;
+            let lane = BestTransactionLane::for_transaction(&transaction);
+            // One lookup serves both the lane check and occupying the lane of a held head.
+            let vacant_lane = match lane.map(|lane| self.lanes.entry(lane)) {
+                Some(Entry::Occupied(mut entry)) => match entry.get_mut() {
+                    BestTransactionLaneState::Invalid => continue,
+                    BestTransactionLaneState::Occupied(buffered) => {
+                        buffered.push_back(transaction);
+                        continue;
+                    }
+                },
+                Some(Entry::Vacant(vacant)) => Some(vacant),
+                None => None,
             };
-            match self.lanes.get_mut(&lane) {
-                Some(BestTransactionLaneState::Invalid) => continue,
-                Some(BestTransactionLaneState::Occupied(buffered)) => {
-                    buffered.push_back(transaction);
-                    continue;
+            if let Some(hold) = self.hold.as_mut()
+                && !transaction.transaction.validity_conditions().is_empty()
+                && hold.hold(&transaction)
+            {
+                // The clock starts at the first hold, so candidates that hold nothing pay no
+                // timer read.
+                hold_start.get_or_insert_with(Instant::now);
+                // Parked as if yielded and parked: the lane is occupied so descendants are
+                // buffered until the held head is promoted and committed.
+                if let Some(vacant) = vacant_lane {
+                    vacant.insert(BestTransactionLaneState::Occupied(VecDeque::new()));
                 }
-                None => {}
+                self.parked.insert(*transaction.hash(), (transaction, lane));
+                continue;
             }
-            self.source_head = Some((transaction, Some(lane)));
+            self.source_head = Some((transaction, lane));
+        }
+        if let Some(start) = hold_start
+            && let Some(hold) = self.hold.as_mut()
+        {
+            hold.record_duration(start.elapsed());
         }
     }
 
@@ -389,6 +442,7 @@ where
     fn best_transactions_with_attributes_and_parking(
         &self,
         attributes: BestTransactionsAttributes,
+        _hold: Option<Box<dyn BestTransactionsHold<Self::Transaction>>>,
     ) -> Box<dyn ParkableBestTransactions<Self::Transaction>> {
         Box::new(ParkedBestTransactions::new(
             std::iter::empty(),
@@ -411,11 +465,12 @@ mod tests {
         BasePooledTransaction as ConsensusPooledTransaction, Eip8130Constants, Eip8130Signed,
         TxEip8130,
     };
+    use parking_lot::Mutex;
     use reth_primitives_traits::Recovered;
     use reth_transaction_pool::{TransactionOrigin, identifier::TransactionId};
 
     use super::*;
-    use crate::{BaseOrdering, BasePooledTransaction};
+    use crate::{BaseOrdering, BasePooledTransaction, ValidityOperator, ValidityPredicate};
 
     #[derive(Debug)]
     struct StaticBestTransactions {
@@ -455,6 +510,16 @@ mod tests {
         nonce: u64,
         priority_fee: u128,
     ) -> Arc<ValidPoolTransaction<BasePooledTransaction>> {
+        validity_transaction(signer, nonce_key, nonce, priority_fee, Vec::new())
+    }
+
+    fn validity_transaction(
+        signer: &PrivateKeySigner,
+        nonce_key: U256,
+        nonce: u64,
+        priority_fee: u128,
+        predicates: Vec<ValidityPredicate>,
+    ) -> Arc<ValidPoolTransaction<BasePooledTransaction>> {
         let tx = TxEip8130 {
             chain_id: ChainConfig::mainnet().chain_id,
             sender: None,
@@ -477,7 +542,8 @@ mod tests {
         let transaction = BasePooledTransaction::new(
             Recovered::new_unchecked(pooled.into(), signer.address()),
             encoded_length,
-        );
+        )
+        .with_validity_predicates(predicates);
         Arc::new(ValidPoolTransaction {
             transaction_id: TransactionId::new(0u64.into(), nonce),
             transaction,
@@ -646,5 +712,87 @@ mod tests {
         assert!(best.promote(*other_parked.hash()));
         assert_eq!(best.next().unwrap().hash(), other_parked.hash());
         assert!(best.next().is_none());
+    }
+
+    /// Holds every validity transaction whose hash is in `held`, recording each check.
+    struct HashSetHold {
+        held: Vec<TxHash>,
+        checked: Vec<TxHash>,
+        durations: usize,
+    }
+
+    impl BestTransactionsHold<BasePooledTransaction> for Arc<Mutex<HashSetHold>> {
+        fn hold(&mut self, transaction: &ValidPoolTransaction<BasePooledTransaction>) -> bool {
+            let mut hold = self.lock();
+            hold.checked.push(*transaction.hash());
+            hold.held.contains(transaction.hash())
+        }
+
+        fn record_duration(&mut self, _duration: Duration) {
+            self.lock().durations += 1;
+        }
+    }
+
+    fn balance_predicate() -> ValidityPredicate {
+        ValidityPredicate::Balance {
+            address: Address::repeat_byte(0xaa),
+            op: ValidityOperator::GreaterThanOrEqual,
+            value: U256::ONE,
+        }
+    }
+
+    #[test]
+    fn held_transaction_is_parked_with_its_lane_until_promoted() {
+        let held_signer = PrivateKeySigner::random();
+        let other_signer = PrivateKeySigner::random();
+        let held =
+            validity_transaction(&held_signer, U256::ZERO, 0, 100, vec![balance_predicate()]);
+        let child = transaction(&held_signer, U256::ZERO, 1, 90);
+        let other = transaction(&other_signer, U256::ZERO, 0, 50);
+        let hold = Arc::new(Mutex::new(HashSetHold {
+            held: vec![*held.hash()],
+            checked: Vec::new(),
+            durations: 0,
+        }));
+        let inner = StaticBestTransactions::new(vec![
+            Arc::clone(&held),
+            Arc::clone(&child),
+            Arc::clone(&other),
+        ]);
+        let mut best = ParkedBestTransactions::new(inner, BaseOrdering::coinbase_tip(), 0)
+            .with_hold(Some(Box::new(Arc::clone(&hold))));
+
+        // The held head and its descendant are not yielded; the other lane is.
+        assert_eq!(best.next().unwrap().hash(), other.hash());
+        best.mark_committed(&other);
+        assert!(best.next().is_none());
+        assert_eq!(hold.lock().checked, vec![*held.hash()], "plain transactions are not checked");
+        assert_eq!(hold.lock().durations, 1);
+
+        // Promotion returns the held head, and committing it releases its descendant.
+        assert!(best.promote(*held.hash()));
+        assert_eq!(best.next().unwrap().hash(), held.hash());
+        best.mark_committed(&held);
+        assert_eq!(best.next().unwrap().hash(), child.hash());
+        assert!(best.next().is_none());
+    }
+
+    #[test]
+    fn unheld_validity_transaction_is_yielded_without_recording_hold_work() {
+        let signer = PrivateKeySigner::random();
+        let candidate =
+            validity_transaction(&signer, U256::ZERO, 0, 100, vec![balance_predicate()]);
+        let hold = Arc::new(Mutex::new(HashSetHold {
+            held: Vec::new(),
+            checked: Vec::new(),
+            durations: 0,
+        }));
+        let inner = StaticBestTransactions::new(vec![Arc::clone(&candidate)]);
+        let mut best = ParkedBestTransactions::new(inner, BaseOrdering::coinbase_tip(), 0)
+            .with_hold(Some(Box::new(Arc::clone(&hold))));
+
+        assert_eq!(best.next().unwrap().hash(), candidate.hash());
+        assert_eq!(hold.lock().checked, vec![*candidate.hash()]);
+        assert_eq!(hold.lock().durations, 0);
     }
 }
