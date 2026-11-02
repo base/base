@@ -71,7 +71,7 @@ formula:
 ```text
 intrinsic_gas = AA_BASE_COST + tx_payload_cost + nonce_key_cost + value_transfer_cost
               + bytecode_cost + account_changes_cost + sender_auth_cost
-              + first_call_cost + payer_auth_cost
+              + first_call_cost + sender_access_cost + payer_auth_cost
 ```
 
 The pricing follows the [EIP-2780](https://eips.ethereum.org/EIPS/eip-2780)
@@ -80,10 +80,11 @@ amount for the same transaction plus its 5,100 k1 authentication cost.
 
 | Component | Source |
 |---|---|
-| `base` | `AA_BASE_COST` (12,000): EIP-2780's `TX_BASE_COST`. It also covers the sender's cold `policy_manager` SLOAD, which every transaction pays since whether the sender's actor is policy-gated is state |
+| `base` | `AA_BASE_COST` (12,000): EIP-2780's `TX_BASE_COST`, covering one account access, one nonce write and one balance write in whichever accounts they land. It also covers the sender's cold `policy_manager` SLOAD, which every transaction pays since whether the sender's actor is policy-gated is state |
 | `payload` | EIP-2028 data-availability cost (16/non-zero, 4/zero byte) over the RLP of `account_changes`, `calls` and `metadata`, plus `sender_auth` unless it is a k1 signature — the *standard* rate, subject to the EIP-7623 calldata floor below. The envelope (nonces, fees, `gas_limit`, validity window) is not metered, as in EIP-2780 |
 | `payload_floor` | EIP-7623 calldata floor over the same bytes: `TX_TOTAL_COST_FLOOR_PER_TOKEN` (10) per payload token instead of the standard 4, so a data-heavy transaction cannot post data availability more cheaply than a standard EIP-7623 transaction on the same chain (always `>= payload`) |
 | `first_call` | `2,600` cold account access for the first call's target (the first call of the first non-empty phase), as EIP-2780 charges `tx.to`; `0` when `calls` is empty or the target is the sender |
+| `sender_account` | `2,600` cold account access for the sender's account when a payer is set and the transaction touches the sender's account: the protocol nonce (`nonce_key == 0`), a call with `value > 0` or targeting the sender, or a delegation. The base's one account access goes to the payer, so this is the second account; `0` for self-pay or when nothing touches the sender's account |
 | `nonce_key` | protocol nonce (`nonce_key == 0`) `0`, even on first use: it is the account nonce, bumped without touching the nonce manager and covered by `AA_BASE_COST` as a legacy transaction's base cost covers its nonce; nonce-free `13,000`; otherwise `22,100` when `nonce_sequence == 0` (the key's first use, since a sequenced key's current nonce must equal `nonce_sequence`) and `5,000` after (a cold SLOAD plus an SSTORE set or reset) |
 | `value_transfer` | `6,000` per call with `value > 0` and `to != sender` |
 | `bytecode` | per create entry: `32,000 + 200 · code_len` |
@@ -114,11 +115,12 @@ metered gas is floored so a transaction that posts many bytes relative to its
 execution cannot drive the maximum block size back up. An 8130 transaction has
 no single `data` field, so the floor is evaluated over the metered payload. As
 in EIP-2780, one floor covers the whole transaction, and its base keeps the
-base, authentication, recipient and value charges while dropping the
+base, authentication, account access and value charges while dropping the
 state-dependent ones (`nonce_key`, `bytecode`, `account_changes`):
 
 ```text
-sender_floor = base + sender_auth + first_call + value_transfer + payload_floor
+sender_floor = base + sender_auth + first_call + sender_account + value_transfer
+             + payload_floor
 metered_gas  = max(sender_intrinsic + execution_gas_used, sender_floor)
              + payer_auth_cost
 ```
