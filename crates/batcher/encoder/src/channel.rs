@@ -464,6 +464,9 @@ impl Channel {
 mod tests {
     use alloy_primitives::B256;
     use base_common_genesis::UpgradeConfig;
+    use base_comp::BrotliLevel;
+    use base_protocol::Brotli;
+    use rstest::rstest;
 
     use super::*;
 
@@ -483,6 +486,38 @@ mod tests {
             epoch_hash: B256::ZERO,
             timestamp: 0,
             transactions: vec![Bytes::from(transaction)],
+        }
+    }
+
+    /// A block of token-transfer-like transactions totalling about `block_len` bytes:
+    /// a few selectors and recipients, mostly-zero amounts, random signatures.
+    fn transfer_batch(state: &mut u64, block_len: usize) -> SingleBatch {
+        let mut next = || {
+            *state ^= *state << 13;
+            *state ^= *state >> 7;
+            *state ^= *state << 17;
+            *state
+        };
+        let mut transactions = Vec::new();
+        let mut len = 0;
+        while len < block_len {
+            let mut transaction = Vec::with_capacity(160);
+            transaction.extend_from_slice(&(next() % 4).to_be_bytes()[4..]);
+            transaction.extend_from_slice(&[(next() % 32) as u8; 20]);
+            transaction.extend_from_slice(&[0; 24]);
+            transaction.extend_from_slice(&next().to_be_bytes());
+            transaction.extend_from_slice(&(next() % 1_000).to_be_bytes());
+            transaction.extend_from_slice(&[(next() % 8) as u8; 96]);
+            transaction.extend((0..9).flat_map(|_| next().to_be_bytes()));
+            len += transaction.len();
+            transactions.push(Bytes::from(transaction));
+        }
+        SingleBatch {
+            parent_hash: B256::ZERO,
+            epoch_num: 0,
+            epoch_hash: B256::ZERO,
+            timestamp: 0,
+            transactions,
         }
     }
 
@@ -512,5 +547,57 @@ mod tests {
         assert_eq!(channel.input_bytes, maximum - 100_000);
         assert_eq!(channel.blocks_added(), 0);
         assert_eq!(channel.compressed_bytes(), 0);
+    }
+
+    /// Unflushed, Brotli emits nothing until it holds about a window of input, so this
+    /// channel would first see output, and close, at about 1.17 MB. The stream's flush
+    /// makes it close right after the batch that reaches the target, for small and
+    /// large blocks alike, and the closed channel still decodes to the accepted batches.
+    #[rstest]
+    #[case::small_blocks(4_600)]
+    #[case::large_blocks(60_000)]
+    fn soft_target_closes_near_the_target(#[case] block_len: usize) {
+        const TARGET: usize = 700_000;
+        let mut channel = channel(EncoderConfig {
+            compressed_size_target: Some(TARGET),
+            ..EncoderConfig::default()
+        });
+
+        let mut state = 1u64;
+        let mut input = Vec::new();
+        let mut last_batch_start;
+        loop {
+            let batch = transfer_batch(&mut state, block_len);
+            let outcome = channel.add_batch(&batch, 1).unwrap();
+            last_batch_start = input.len();
+            batch.rlp_header().encode(&mut input);
+            input.push(BatchType::Single as u8);
+            batch.encode(&mut input);
+            if outcome == ChannelAddOutcome::TargetReached {
+                break;
+            }
+            assert_eq!(outcome, ChannelAddOutcome::Accepted);
+        }
+
+        // Before the closing batch, the emitted bytes trail the input by less than one
+        // flush interval; the closing batch adds at most its own compressed bytes.
+        let lagging_input = &input[last_batch_start - CompressionStream::FLUSH_INTERVAL..];
+        let max_overshoot = BrotliLevel::DEFAULT.compress_channel(lagging_input).unwrap().len();
+        let closed_at = channel.compressed_bytes() as usize;
+        assert!(
+            (TARGET..=TARGET + max_overshoot).contains(&closed_at),
+            "closed at {closed_at} bytes, expected {TARGET}..={}",
+            TARGET + max_overshoot
+        );
+
+        channel.close().unwrap();
+        let frame = channel.take_frame(channel.available_output(), true).unwrap();
+        let decoded = Brotli
+            .decompress(
+                &frame.data[1..],
+                channel.rollup_config.max_rlp_bytes_per_channel(0) as usize,
+            )
+            .unwrap();
+        assert_eq!(decoded, input);
     }
 }

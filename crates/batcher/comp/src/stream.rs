@@ -15,6 +15,8 @@ pub struct CompressionStream {
     compressor: Box<CompressorWriter<Vec<u8>>>,
     /// Total bytes returned by prior appends.
     output_size: usize,
+    /// Input bytes appended since the last flush.
+    unflushed_input: usize,
 }
 
 impl CompressionStream {
@@ -23,6 +25,14 @@ impl CompressionStream {
 
     /// Brotli sliding-window exponent (`2^22` bytes).
     const BROTLI_LGWIN: u32 = 22;
+
+    /// Input bytes after which an append flushes the encoder.
+    ///
+    /// Unflushed, Brotli holds up to about one window of input before emitting
+    /// anything, so [`output_size`](Self::output_size) would trail the real
+    /// compressed size by that much input. A flush keeps the window, so it costs
+    /// only a meta-block boundary.
+    pub const FLUSH_INTERVAL: usize = 512 * 1024;
 
     /// Creates an empty compressor at `level`.
     pub fn new(level: BrotliLevel) -> Self {
@@ -34,12 +44,21 @@ impl CompressionStream {
             level.as_u32(),
             Self::BROTLI_LGWIN,
         );
-        Self { compressor: Box::new(compressor), output_size: 0 }
+        Self { compressor: Box::new(compressor), output_size: 0, unflushed_input: 0 }
     }
 
     /// Append input and return newly emitted compressed bytes.
+    ///
+    /// Flushes once [`FLUSH_INTERVAL`](Self::FLUSH_INTERVAL) input bytes have been
+    /// appended since the last flush, so the bytes returned so far always cover all
+    /// but fewer than `FLUSH_INTERVAL` bytes of the input.
     pub fn append(&mut self, input: &[u8]) -> Result<Vec<u8>, CompressionError> {
         self.compressor.write_all(input)?;
+        self.unflushed_input += input.len();
+        if self.unflushed_input >= Self::FLUSH_INTERVAL {
+            self.compressor.flush()?;
+            self.unflushed_input = 0;
+        }
         let output = core::mem::take(self.compressor.get_mut());
         self.output_size += output.len();
         Ok(output)
@@ -111,7 +130,7 @@ mod tests {
     #[test]
     fn reported_bounds_cover_incompressible_streams() {
         let mut state = 1u64;
-        let input: Vec<u8> = (0..100_000)
+        let input: Vec<u8> = (0..3 * CompressionStream::FLUSH_INTERVAL)
             .map(|_| {
                 state ^= state << 13;
                 state ^= state >> 7;
