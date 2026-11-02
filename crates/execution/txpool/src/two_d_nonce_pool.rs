@@ -1428,9 +1428,7 @@ mod tests {
     use reth_transaction_pool::{PoolTransaction, PriceBumpConfig, Priority, TransactionOrigin};
 
     use super::*;
-    use crate::{
-        BaseOrdering, BasePooledTransaction, LimitClass, ValidityOperator, ValidityPredicate,
-    };
+    use crate::{BaseOrdering, BasePooledTransaction, LimitClass};
 
     #[derive(Clone, Debug, Default)]
     struct CountingOrdering {
