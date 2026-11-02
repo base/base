@@ -1011,9 +1011,13 @@ where
         let can_finalize_early = self.is_denim_active();
         let resource_metering = &self.builder_config.resource_metering;
         let mut resource_throttled = 0u64;
+        // Set when the job is cancelled mid-scan. The loop breaks instead of returning so the
+        // per-build validity metrics below are still recorded for scans cut short.
+        let mut cancelled = false;
         while let Some(tx) = best_txs.next(()) {
             if self.cancel.is_cancelled() {
-                return Ok(Some(()));
+                cancelled = true;
+                break;
             }
             if can_finalize_early && self.cancel.is_finalization_requested() {
                 break;
@@ -1398,7 +1402,8 @@ where
             }
 
             if self.cancel.is_cancelled() {
-                return Ok(Some(()));
+                cancelled = true;
+                break;
             }
 
             let mut state_change_effects = StateChangeEffects::default();
@@ -1653,6 +1658,9 @@ where
             );
         }
 
+        if cancelled {
+            return Ok(Some(()));
+        }
         // A cancellation that raced the finalization break (or an empty iterator) must still
         // win, so re-check it before the finalized payload is assembled. Gated on Denim so
         // pre-Denim control flow is unchanged.
