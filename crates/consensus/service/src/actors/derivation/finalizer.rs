@@ -42,7 +42,7 @@ pub struct PendingFinalization {
 /// - the L2 block is above the safe head a reset restarted from, so derivation produces it
 ///   again.
 ///
-/// A rejected inclusion block ([`Self::reject_inclusion`]) and a record a reset cannot vouch for
+/// A rejected inclusion block ([`Self::reject_inclusion`]) and a block a reset cannot vouch for
 /// (see [`Self::retain_valid_after_reset`]) both leave the L2 block on a barrier: nothing at or
 /// above the lowest barrier block finalizes. A barrier is removed only when the block is derived
 /// again or a reset restarts from a safe head below it, so it can hold finalization back
@@ -239,59 +239,64 @@ impl L2Finalizer {
         }
     }
 
-    /// Drops the records that a derivation reset invalidated, keeping every record the reset
-    /// still allows to be finalized.
+    /// Applies a derivation reset to the records, keeping every record the reset still allows to
+    /// be finalized and turning every record it cannot vouch for into a barrier.
     ///
     /// A reset does not roll back derivation's whole history. The pipeline restarts from
-    /// `l2_safe_head`, and every L2 block at or below the last confirmed safe head stays safe and
-    /// is never derived again: if its record is dropped, nothing recreates it, and the L2 chain
-    /// can only be finalized once new derivation happens to reach a later L1 inclusion block.
-    /// Repeated resets would then starve finalization whenever they arrive faster than L1
-    /// finality advances, so the queue is filtered instead of cleared.
+    /// `l2_safe_head`, and every L2 block at or below it stays safe and is never derived again.
+    /// If the record of a block the engine confirmed were dropped, nothing would recreate it, and
+    /// the L2 chain could only be finalized once new derivation happens to reach a later L1
+    /// inclusion block. Repeated resets would then starve finalization whenever they arrive
+    /// faster than L1 finality advances, so the queue is filtered instead of cleared.
     ///
-    /// A record survives when its L2 block is at or below the last confirmed safe head and at or
-    /// below `l2_safe_head`. Above the confirmed head a block was dispatched but never confirmed,
-    /// so the block the engine holds there need not be the one derivation produced. Above the
-    /// reset safe head a block was rolled back and is derived again. When the reset lands on a
-    /// different block than the one confirmed at the same height, that height is dropped as well.
+    /// - A record is **kept** when its L2 block is at or below both the last confirmed safe head
+    ///   and `l2_safe_head`. When the reset lands on a different block than the one confirmed at
+    ///   the same height, that height is not kept.
+    /// - A record at or below `l2_safe_head` that is not kept becomes a **barrier**: the block
+    ///   was dispatched but never confirmed, or was confirmed as a different block, so the
+    ///   finalizer cannot vouch for what the engine holds there, and the pipeline does not derive
+    ///   it again. Treating the unknown block as proof would let a later block finalize it
+    ///   without its inclusion block being final and canonical. With no recorded confirmation at
+    ///   all, every record at or below `l2_safe_head` becomes a barrier.
+    /// - Barriers at or below `l2_safe_head` stay.
+    /// - Records and barriers above `l2_safe_head` are **dropped**: the blocks were rolled back
+    ///   and are derived again.
     ///
-    /// Retained records say nothing about whether their L1 inclusion blocks still exist. An
-    /// unchanged L2 safe head says which L2 chain the engine holds, not whether the L1 batch
-    /// behind it is still canonical: sync-start validates a block's epoch origin, so an L1 reorg
-    /// can replace the block a batch landed in while the reset returns the very same safe head. No
-    /// retained record is trusted for finalization: the actor verifies the identity of every
-    /// inclusion block in the finalized prefix first. A record that reset retention keeps is
-    /// never moved to another inclusion block, and barriers at or below the retained bound stay.
+    /// Kept records say nothing about whether their L1 inclusion blocks still exist. An unchanged
+    /// L2 safe head says which L2 chain the engine holds, not whether the L1 batch behind it is
+    /// still canonical: sync-start validates a block's epoch origin, so an L1 reorg can replace
+    /// the block a batch landed in while the reset returns the very same safe head. No kept
+    /// record is trusted for finalization: the actor verifies the identity of every inclusion
+    /// block in the finalized prefix first. A kept record is never moved to another inclusion
+    /// block.
     ///
-    /// A reset with no recorded confirmation cannot vouch for the engine's chain, so it keeps the
-    /// evidence as barriers instead of discarding it: every record at or below `l2_safe_head`
-    /// becomes a barrier, barriers at or below it stay, and everything above it is dropped
-    /// because derivation produces it again. Treating the unknown chain as proof would let a
-    /// later block finalize those blocks without their inclusion blocks being final and
-    /// canonical. The cost is liveness: a barrier at or below the restart point is released only
-    /// by deriving that block again or by a later reset to a lower safe head, so finalization can
-    /// stop until one of those happens.
+    /// The cost of a barrier is liveness. It is removed only by deriving that block again or by
+    /// a later reset to a lower safe head, so finalization can stop at a barrier the pipeline
+    /// never revisits, until one of those happens or the node restarts.
     pub fn retain_valid_after_reset(&mut self, l2_safe_head: &L2BlockInfo) {
-        let Some(confirmed_through) = self.confirmed_through else {
-            let first_dropped = l2_safe_head.block_info.number.saturating_add(1);
-            self.records.split_off(&first_dropped);
-            self.unproven.split_off(&first_dropped);
-            self.unproven.extend(std::mem::take(&mut self.records).into_keys());
-            self.safe_head = Some(*l2_safe_head);
-            return;
+        let head = l2_safe_head.block_info.number;
+        let kept_through = self.confirmed_through.and_then(|confirmed_through| {
+            let bound = confirmed_through.min(head);
+            if self.safe_head.is_some_and(|known| {
+                known.block_info.number == head
+                    && known.block_info.hash != l2_safe_head.block_info.hash
+            }) {
+                bound.checked_sub(1)
+            } else {
+                Some(bound)
+            }
+        });
+
+        let first_dropped = head.saturating_add(1);
+        self.records.split_off(&first_dropped);
+        self.unproven.split_off(&first_dropped);
+        let unvouched = match kept_through {
+            Some(kept_through) => self.records.split_off(&kept_through.saturating_add(1)),
+            None => std::mem::take(&mut self.records),
         };
+        self.unproven.extend(unvouched.into_keys());
 
-        let mut bound = confirmed_through.min(l2_safe_head.block_info.number);
-        if self.safe_head.is_some_and(|known| {
-            known.block_info.number == l2_safe_head.block_info.number
-                && known.block_info.hash != l2_safe_head.block_info.hash
-        }) {
-            bound = bound.saturating_sub(1);
-        }
-
-        self.records.split_off(&bound.saturating_add(1));
-        self.unproven.split_off(&bound.saturating_add(1));
-        self.confirmed_through = Some(bound);
+        self.confirmed_through = kept_through;
         self.safe_head = Some(*l2_safe_head);
     }
 
@@ -612,6 +617,23 @@ mod tests {
         f.enqueue_for_finalization(&attrs_included_at(500, inclusion_at(121, 0xb)));
 
         assert_eq!(promote(&mut f, l1_at(121), |_| true), None);
+    }
+
+    #[test]
+    fn reset_turns_a_dispatched_unconfirmed_block_at_the_reset_head_into_a_barrier() {
+        let mut f = L2Finalizer::default();
+        f.enqueue_for_finalization(&attrs_included_at(498, inclusion_at(119, 0xb))); // l2=499
+        f.confirm_safe_head(&safe_head_at(499, 118), Some(inclusion_at(119, 0xb)));
+        f.enqueue_for_finalization(&attrs_included_at(499, inclusion_at(120, 0xa))); // l2=500
+
+        // 500 was dispatched but not confirmed, and the reset restarts from it, so derivation
+        // never produces it again. A successor from an earlier inclusion block must not
+        // finalize it.
+        f.retain_valid_after_reset(&safe_head_at(500, 118));
+        f.enqueue_for_finalization(&attrs_included_at(500, inclusion_at(119, 0xb))); // l2=501
+
+        assert_eq!(finalize_verified(&mut f, l1_at(119)), Some(499));
+        assert_eq!(f.pending_candidate(1_000), None);
     }
 
     #[test]

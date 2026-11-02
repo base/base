@@ -1586,4 +1586,32 @@ mod tests {
         derive_and_confirm(&mut actor, 501, inclusion_at(121, 0xb), 118).await;
         finalize_l1(&mut actor, inclusion_at(121, 0xb)).await;
     }
+
+    #[tokio::test]
+    async fn a_reset_to_an_unconfirmed_dispatched_block_keeps_it_gated() {
+        let mut engine_client = MockDerivationEngineClient::new();
+        // L2 500 is confirmed. 501 is dispatched from L1 120/A and the engine consolidates it,
+        // but a reset to 501 arrives before the confirmation does. The successor 502 comes from
+        // 119/B, so finalizing 502 would finalize 501 with it while L1 120 is not final. Only 500
+        // may finalize.
+        engine_client.expect_send_finalized_l2_block().times(1).with(eq(500)).returning(|_| Ok(()));
+        let (mut actor, _request_tx) = test_actor(engine_client);
+
+        derive_and_confirm(&mut actor, 500, inclusion_at(119, 0xb), 118).await;
+        actor
+            .finalizer
+            .enqueue_for_finalization(&attrs_with_inclusion(500, inclusion_at(120, 0xa)));
+        actor.signal(ResetSignal { l2_safe_head: safe_head_at(501, 118) }.signal()).await;
+        actor
+            .handle_derivation_actor_request(
+                DerivationActorRequest::ProcessEngineSafeHeadUpdateRequest(Box::new(safe_head_at(
+                    501, 118,
+                ))),
+            )
+            .await
+            .expect("safe head update failed");
+
+        derive_and_confirm(&mut actor, 502, inclusion_at(119, 0xb), 118).await;
+        finalize_l1(&mut actor, inclusion_at(119, 0xb)).await;
+    }
 }
