@@ -34,6 +34,7 @@ impl BaseNodeExtension for TxForwardingExtension {
             info!(
                 builder_urls = ?config.builder_urls,
                 resend_after_ms = config.resend_after_ms,
+                validity_lifetime_secs = config.validity_lifetime_secs,
                 max_batch_size = config.max_batch_size,
                 max_rps = config.max_rps,
                 "starting transaction forwarding pipeline"

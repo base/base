@@ -9,7 +9,7 @@ This crate provides:
 - **`TxForwardingService`**: Starts one reader and forwarder pipeline per destination
 - **`TxForwardingHandle`**: Gracefully stops readers and drains destination queues
 - **Per-destination delivery**: Each builder has an independent bounded queue and deduplication cache
-- **Resend logic**: Automatically resends transactions that haven't been included after a configurable window
+- **Resend logic**: Automatically resends transactions that haven't been included after a configurable window; validity transactions are resent only after a failed forward, because they are expected to wait in the pool until their predicates hold and the builder keeps them until their block expiry
 
 ## Forwarding order
 

@@ -2,6 +2,7 @@
 
 use std::time::Duration;
 
+use base_execution_txpool::DEFAULT_MAX_VALIDITY_EXPIRY_SECS;
 use url::Url;
 
 use crate::{forwarder::ForwarderConfig, reader::ReaderConfig};
@@ -35,6 +36,14 @@ pub struct TxForwardingConfig {
     pub builder_urls: Vec<Url>,
     /// Resend transactions that haven't been included after this duration in milliseconds.
     pub resend_after_ms: u64,
+    /// Longest lifetime of a validity transaction in seconds, as enforced at ingress by
+    /// `--validity-max-expiry-secs`.
+    ///
+    /// A validity transaction is resent only after a failed forward. One forwarded without a
+    /// reported failure is held for twice this long, which outlives it, so it is never resent on
+    /// a timer: staying in the pool until its predicates hold is its expected state, and the
+    /// builder keeps it parked until its block expiry.
+    pub validity_lifetime_secs: u64,
     /// Maximum number of transactions per batch (0 = unlimited).
     pub max_batch_size: usize,
     /// Maximum RPC requests per second per forwarder (0 = unlimited).
@@ -73,6 +82,7 @@ impl Default for TxForwardingConfig {
             builder_urls: Vec::new(),
             // Default: 2 blocks (~4 seconds on Base)
             resend_after_ms: DEFAULT_RESEND_AFTER_MS,
+            validity_lifetime_secs: DEFAULT_MAX_VALIDITY_EXPIRY_SECS,
             max_batch_size: DEFAULT_MAX_BATCH_SIZE,
             max_rps: DEFAULT_MAX_RPS,
             fifo_percent: DEFAULT_FIFO_PERCENT,
@@ -100,6 +110,13 @@ impl TxForwardingConfig {
     /// Sets the resend-after window in milliseconds.
     pub const fn with_resend_after_ms(mut self, ms: u64) -> Self {
         self.resend_after_ms = ms;
+        self
+    }
+
+    /// Sets the longest lifetime of a validity transaction in seconds; see
+    /// [`Self::validity_lifetime_secs`].
+    pub const fn with_validity_lifetime_secs(mut self, secs: u64) -> Self {
+        self.validity_lifetime_secs = secs;
         self
     }
 
@@ -167,6 +184,7 @@ impl TxForwardingConfig {
             .max(1);
         ReaderConfig {
             resend_after: Duration::from_millis(self.resend_after_ms),
+            validity_hold: Duration::from_secs(self.validity_lifetime_secs.saturating_mul(2)),
             channel_capacity,
             poll_interval: ReaderConfig::POLL_INTERVAL,
             fifo_percent: self.fifo_percent,
@@ -187,6 +205,19 @@ impl TxForwardingConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn validity_hold_is_twice_the_validity_lifetime() {
+        let config = TxForwardingConfig::new(vec!["http://builder.test".parse().unwrap()]);
+        let reader = config.reader_config();
+        assert_eq!(reader.resend_after, Duration::from_millis(DEFAULT_RESEND_AFTER_MS));
+        assert_eq!(reader.validity_hold, Duration::from_secs(2 * DEFAULT_MAX_VALIDITY_EXPIRY_SECS));
+
+        let reader =
+            config.with_resend_after_ms(2_000).with_validity_lifetime_secs(15).reader_config();
+        assert_eq!(reader.resend_after, Duration::from_secs(2));
+        assert_eq!(reader.validity_hold, Duration::from_secs(30));
+    }
 
     #[test]
     fn queue_capacity_defaults_to_two_batches() {
