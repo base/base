@@ -36,7 +36,7 @@ pub trait RestingPayloadTransactions {
     }
 
     /// Returns the transactions the pool iterators adopted on their admission-time evaluation
-    /// since the last call and that still rest, so the build loop can report their deferral.
+    /// since the last call, so the build loop can report their deferral.
     fn take_adopted(&mut self) -> Vec<TxHash> {
         Vec::new()
     }

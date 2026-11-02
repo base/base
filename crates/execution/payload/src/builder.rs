@@ -989,6 +989,31 @@ where
         Ok(info)
     }
 
+    /// Emits the deferral of each transaction the pool iterator's hold adopted on its
+    /// admission-time evaluation since the last call, which the build loop never evaluates.
+    fn report_adopted(
+        &self,
+        resting: &SharedRestingPredicates,
+        deferrals: &mut BlockDeferrals,
+        validity_consideration_index: &mut u64,
+    ) {
+        for tx_hash in resting.take_adopted() {
+            *validity_consideration_index += 1;
+            if deferrals.record(tx_hash, "validity_predicate_not_satisfied") {
+                emit_native_validity_event!(
+                    self,
+                    TransactionEventType::BuilderDeferred,
+                    tx_hash,
+                    *validity_consideration_index,
+                    {
+                        "defer_reason" => "validity_predicate_not_satisfied",
+                        "defer_detail" => "a validity predicate is not satisfied by the current build state",
+                    }
+                );
+            }
+        }
+    }
+
     /// Executes the given best transactions and updates the execution info.
     ///
     /// Transaction-scope resource-throttling excludes are recorded on
@@ -1535,6 +1560,11 @@ where
             }
 
             best_txs.mark_current_committed();
+            // Report adoptions before promoting woken members, so a woken transaction's deferral
+            // precedes its inclusion.
+            if let Some(resting) = resting {
+                self.report_adopted(resting, &mut deferrals, &mut validity_consideration_index);
+            }
             // Members the pool iterator held are parked in it; a commit that changed the state
             // their predicate reads promotes them so the scan evaluates them at their priority
             // position.
@@ -1667,23 +1697,7 @@ where
             &predicate_index,
         );
         if let Some(resting) = resting {
-            // The hold adopted these without this loop seeing them; report each deferral once,
-            // as the loop does for candidates it parks.
-            for tx_hash in resting.take_adopted() {
-                validity_consideration_index += 1;
-                if deferrals.record(tx_hash, "validity_predicate_not_satisfied") {
-                    emit_native_validity_event!(
-                        self,
-                        TransactionEventType::BuilderDeferred,
-                        tx_hash,
-                        validity_consideration_index,
-                        {
-                            "defer_reason" => "validity_predicate_not_satisfied",
-                            "defer_detail" => "a validity predicate is not satisfied by the current build state",
-                        }
-                    );
-                }
-            }
+            self.report_adopted(resting, &mut deferrals, &mut validity_consideration_index);
             let stats = resting.take_stats();
             if stats.parked > 0 {
                 ValidityMetrics::resting_predicate_parked_total().increment(stats.parked);
@@ -2630,6 +2644,43 @@ mod tests {
             .map(|event| event.event_type)
             .collect::<Vec<_>>();
         assert_eq!(gated_events, [TransactionEventType::BuilderDeferred]);
+    }
+
+    /// A commit later in the block wakes the adopted transaction and it is included; it was still
+    /// deferred first, as it would have been had the build loop evaluated it.
+    #[test]
+    fn native_builder_reports_an_adopted_transaction_woken_in_the_same_block_as_deferred() {
+        let event_capture = TransactionEventCapture::install();
+        // Event capture is process-global, so this transaction must not share a hash with other
+        // tests.
+        let watched_address = Address::repeat_byte(0x63);
+        let blocker = ValidityPredicate::Balance {
+            address: watched_address,
+            op: ValidityOperator::Equal,
+            value: U256::ONE,
+        };
+        let gated =
+            admitted_unsatisfied(0, Address::repeat_byte(0x64), blocker, pool_parent_hash());
+        let gated_hash = *gated.hash();
+        let trigger = pool_transaction_to(0, watched_address, U256::ONE);
+        let trigger_hash = *trigger.hash();
+
+        assert_eq!(build_with_ingestion_rest(vec![gated, trigger]), [trigger_hash, gated_hash]);
+
+        let gated_events = event_capture
+            .events()
+            .into_iter()
+            .filter(|event| event.tx_hash == Some(gated_hash))
+            .map(|event| event.event_type)
+            .collect::<Vec<_>>();
+        assert_eq!(gated_events.first(), Some(&TransactionEventType::BuilderDeferred));
+        assert_eq!(
+            gated_events
+                .iter()
+                .filter(|event_type| **event_type == TransactionEventType::BuilderDeferred)
+                .count(),
+            1
+        );
     }
 
     /// The set records `gated` as resting although its predicate holds, so whether it is included

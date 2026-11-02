@@ -126,21 +126,15 @@ where
 pub struct LocalInstanceBuilder {
     builder_config: BuilderConfig,
     node_config: NodeConfig<BaseChainSpec>,
-    rollup_args: RollupArgs,
     #[debug("{}", extensions.len())]
     extensions: Vec<Box<dyn BaseNodeExtension>>,
 }
 
 impl LocalInstanceBuilder {
-    /// Creates a new builder with the given builder configuration, the default node and rollup
-    /// configuration, and no extensions.
+    /// Creates a new builder with the given builder configuration, the default node configuration,
+    /// and no extensions.
     pub fn new(builder_config: BuilderConfig) -> Self {
-        Self {
-            builder_config,
-            node_config: default_node_config(),
-            rollup_args: RollupArgs::default(),
-            extensions: Vec::new(),
-        }
+        Self { builder_config, node_config: default_node_config(), extensions: Vec::new() }
     }
 }
 
@@ -149,13 +143,6 @@ impl LocalInstanceBuilder {
     #[must_use]
     pub fn with_node_config(mut self, node_config: NodeConfig<BaseChainSpec>) -> Self {
         self.node_config = node_config;
-        self
-    }
-
-    /// Overrides the Base rollup arguments the node is built with.
-    #[must_use]
-    pub fn with_rollup_args(mut self, rollup_args: RollupArgs) -> Self {
-        self.rollup_args = rollup_args;
         self
     }
 
@@ -179,13 +166,8 @@ impl LocalInstanceBuilder {
     /// This method does not prefund any accounts, so before sending any transactions make sure that
     /// sender accounts are funded.
     pub async fn build(self) -> eyre::Result<LocalInstance> {
-        Box::pin(LocalInstance::launch(
-            self.builder_config,
-            self.node_config,
-            self.rollup_args,
-            self.extensions,
-        ))
-        .await
+        Box::pin(LocalInstance::launch(self.builder_config, self.node_config, self.extensions))
+            .await
     }
 }
 
@@ -220,7 +202,6 @@ impl LocalInstance {
     async fn launch(
         builder_config: BuilderConfig,
         node_config: NodeConfig<BaseChainSpec>,
-        rollup_args: RollupArgs,
         extensions: Vec<Box<dyn BaseNodeExtension>>,
     ) -> eyre::Result<Self> {
         clear_otel_env_vars();
@@ -231,7 +212,7 @@ impl LocalInstance {
         let gas_limit_config = builder_config.gas_limit_config.clone();
         let metering_provider = Arc::clone(&builder_config.metering_provider);
 
-        let base_node = BaseNode::new(rollup_args)
+        let base_node = BaseNode::new(RollupArgs::default())
             .with_da_config(da_config)
             .with_gas_limit_config(gas_limit_config);
 

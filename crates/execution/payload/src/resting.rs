@@ -663,16 +663,11 @@ impl SharedRestingPredicates {
         self.inner.lock().predicates.ingestion_rest_applies(rest, conditions)
     }
 
-    /// Returns the transactions the hold adopted since the last call that are still resting, so
-    /// the build loop can report their deferral once.
+    /// Returns the transactions the hold adopted since the last call, so the build loop can report
+    /// their deferral. An adopted transaction was deferred even if a later commit wakes it, as it
+    /// would have been had the build loop evaluated it.
     pub fn take_adopted(&self) -> Vec<TxHash> {
-        let mut inner = self.inner.lock();
-        if inner.adopted.is_empty() {
-            return Vec::new();
-        }
-        let mut adopted = std::mem::take(&mut inner.adopted);
-        adopted.retain(|hash| inner.held.contains(hash));
-        adopted
+        std::mem::take(&mut self.inner.lock().adopted)
     }
 
     /// Returns a hold for a new pool iterator. Members the previous iterator held are forgotten,

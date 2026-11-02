@@ -423,7 +423,6 @@ async fn admission_rested_transaction_is_included_once_its_blocking_state_change
     let resting = driver
         .create_transaction()
         .with_signer(&accounts[0])
-        .with_nonce(0)
         .with_to(Address::random())
         .with_max_priority_fee_per_gas(100)
         .build()

@@ -727,17 +727,14 @@ impl BasePayloadBuilderCtx {
         diag.txs_deferred += 1;
     }
 
-    /// Reports one flashblock's resting work: emits the deferral of each transaction the pool
-    /// iterator adopted on its admission-time evaluation, which the build loop never sees, and
-    /// records the resting and ingestion-rest counters. Returns the time the iterator spent
-    /// holding transactions back.
-    fn report_resting<B: PayloadTxsBounds>(
+    /// Emits the deferral of each transaction the pool iterator adopted on its admission-time
+    /// evaluation since the last call, which the build loop never evaluates.
+    fn report_adopted<B: PayloadTxsBounds>(
         &self,
         best_txs: &mut B,
         deferrals: &mut BlockDeferrals,
         cx: &DecisionContext<'_>,
-        evaluation_counters: &mut ValidityEvaluationCounters,
-    ) -> Duration {
+    ) {
         for tx_hash in best_txs.take_adopted() {
             if deferrals.record(tx_hash, cx.reason) {
                 self.emit_builder_decision_event(
@@ -753,6 +750,19 @@ impl BasePayloadBuilderCtx {
                 );
             }
         }
+    }
+
+    /// Reports one flashblock's resting work: emits the deferral of each transaction adopted since
+    /// the last commit and records the resting and ingestion-rest counters. Returns the time the
+    /// iterator spent holding transactions back.
+    fn report_resting<B: PayloadTxsBounds>(
+        &self,
+        best_txs: &mut B,
+        deferrals: &mut BlockDeferrals,
+        cx: &DecisionContext<'_>,
+        evaluation_counters: &mut ValidityEvaluationCounters,
+    ) -> Duration {
+        self.report_adopted(best_txs, deferrals, cx);
         let resting_stats = best_txs.take_resting_stats();
         if resting_stats.parked > 0 {
             ValidityMetrics::resting_predicate_parked_total().increment(resting_stats.parked);
@@ -1454,6 +1464,13 @@ impl BasePayloadBuilderCtx {
                 predicate_index.affected_by_state(&state)
             };
             predicate_bucket_wakeups += state_change_effects.woken_buckets as u64;
+            // Report adoptions before the commit can wake them, so a woken transaction's deferral
+            // precedes its inclusion.
+            self.report_adopted(
+                best_txs,
+                deferrals,
+                &DecisionContext::adopted(&payload_id, info, limits),
+            );
             best_txs.record_committed_state(&state);
 
             // commit changes
