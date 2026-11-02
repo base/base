@@ -419,7 +419,12 @@ impl SharedRestingPredicates {
     /// Returns a hold for a new pool iterator. Members the previous iterator held are forgotten,
     /// because they were parked in that iterator.
     pub fn iterator_hold<T: BasePooledTx>(&self) -> Box<dyn BestTransactionsHold<T>> {
-        self.inner.lock().held.clear();
+        let mut inner = self.inner.lock();
+        inner.held.clear();
+        // Every member may be held, so size the set once instead of growing it per hold.
+        let members = inner.predicates.len();
+        inner.held.reserve(members);
+        drop(inner);
         Box::new(RestingHold { shared: self.clone() })
     }
 
@@ -503,6 +508,11 @@ impl<T: BasePooledTx> BestTransactionsHold<T> for RestingHold {
         inner.stats.parked += 1;
         inner.stats.carried_parked += u64::from(carried);
         true
+    }
+
+    /// Only members can be held.
+    fn capacity(&self) -> usize {
+        self.shared.len()
     }
 
     fn record_duration(&mut self, duration: Duration) {

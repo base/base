@@ -2,13 +2,14 @@
 
 use std::{
     collections::{BinaryHeap, VecDeque},
+    hash::{Hash, Hasher},
     sync::Arc,
     time::{Duration, Instant},
 };
 
 use alloy_primitives::{
-    Address, TxHash, U256,
-    map::{HashMap, hash_map::Entry},
+    Address, TxHash, U160, U256,
+    map::{B256Map, HashMap, hash_map::Entry},
 };
 use reth_transaction_pool::{
     BestTransactions, BestTransactionsAttributes, EthPoolTransaction, PoolTransaction,
@@ -19,7 +20,7 @@ use reth_transaction_pool::{
 use crate::{BasePooledTx, BestTransactionPriority, UnifiedTipOrdering};
 
 /// A sequential transaction lane whose members must execute in nonce order.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BestTransactionLane {
     /// Transaction sender whose nonces define the lane.
     pub sender: Address,
@@ -37,6 +38,21 @@ where
     Occupied(VecDeque<Arc<ValidPoolTransaction<T>>>),
     /// The lane was terminally invalidated and is excluded for the remainder of the iterator.
     Invalid,
+}
+
+/// Hashes the lane as fixed-width words. The derived impl hashes the sender and nonce key as
+/// length-prefixed byte slices, which costs several times more and runs on every lane probe, at
+/// least once per best-transaction candidate and again for every entry when the map grows.
+impl Hash for BestTransactionLane {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        for limb in U160::from_le_bytes(self.sender.into_array())
+            .as_limbs()
+            .iter()
+            .chain(self.nonce_key.as_limbs())
+        {
+            state.write_u64(*limb);
+        }
+    }
 }
 
 impl BestTransactionLane {
@@ -89,6 +105,10 @@ pub trait BestTransactionsHold<T: PoolTransaction>: Send + Sync {
     /// that carries validity predicates and is not blocked by its lane.
     fn hold(&mut self, transaction: &ValidPoolTransaction<T>) -> bool;
 
+    /// Returns an upper bound on how many candidates this hold can hold, so the iterator can size
+    /// its parking state once instead of growing it as members are held.
+    fn capacity(&self) -> usize;
+
     /// Records the time one `next` call spent from its first hold until it found a candidate,
     /// which includes advancing past further held transactions. Calls that hold nothing record
     /// nothing.
@@ -125,8 +145,8 @@ where
     base_fee: u64,
     source_head: Option<(Arc<ValidPoolTransaction<T>>, Option<BestTransactionLane>)>,
     lanes: HashMap<BestTransactionLane, BestTransactionLaneState<T>>,
-    parked: HashMap<TxHash, (Arc<ValidPoolTransaction<T>>, Option<BestTransactionLane>)>,
-    ready: HashMap<TxHash, (Arc<ValidPoolTransaction<T>>, Option<BestTransactionLane>)>,
+    parked: B256Map<Arc<ValidPoolTransaction<T>>>,
+    ready: B256Map<(Arc<ValidPoolTransaction<T>>, Option<BestTransactionLane>)>,
     ready_heap: BinaryHeap<(BestTransactionPriority<O::PriorityValue>, TxHash)>,
     hold: Option<Box<dyn BestTransactionsHold<T>>>,
 }
@@ -161,15 +181,23 @@ where
             base_fee,
             source_head: None,
             lanes: HashMap::default(),
-            parked: HashMap::default(),
-            ready: HashMap::default(),
+            parked: B256Map::default(),
+            ready: B256Map::default(),
             ready_heap: BinaryHeap::new(),
             hold: None,
         }
     }
 
     /// Parks the candidates `hold` holds before they are yielded.
+    ///
+    /// Each held candidate is parked and occupies its lane, so both maps are sized for every
+    /// candidate the hold can hold.
     pub fn with_hold(mut self, hold: Option<Box<dyn BestTransactionsHold<T>>>) -> Self {
+        if let Some(hold) = &hold {
+            let capacity = hold.capacity();
+            self.lanes.reserve(capacity);
+            self.parked.reserve(capacity);
+        }
         self.hold = hold;
         self
     }
@@ -242,12 +270,17 @@ where
     }
 
     /// Pulls through blocked descendants and held candidates until the next source candidate is
-    /// lane-eligible.
+    /// lane-eligible, and occupies the new head's lane.
     ///
     /// Consuming occupied-lane descendants is the intentionally naive BASE-253 implementation:
     /// the source only exposes other lanes after these transactions are pulled and buffered. The
     /// `Invalid` arm is defensive because terminal invalidation is already forwarded to `inner`,
     /// whose [`BestTransactions`] contract excludes the invalid transaction's descendants.
+    ///
+    /// Occupying the head's lane when it is pulled rather than when it is yielded saves a second
+    /// lane lookup per candidate without changing what is yielded: the lane was vacant, so no
+    /// parked, ready, or uncommitted member can release it while the head waits, and invalidating
+    /// the lane drops the head.
     pub fn fill_source_head(&mut self) {
         let mut hold_start = None;
         while self.source_head.is_none() {
@@ -255,7 +288,7 @@ where
                 break;
             };
             let lane = BestTransactionLane::for_transaction(&transaction);
-            // One lookup serves both the lane check and occupying the lane of a held head.
+            // One lookup serves both the lane check and occupying the lane of the new head.
             let vacant_lane = match lane.map(|lane| self.lanes.entry(lane)) {
                 Some(Entry::Occupied(mut entry)) => match entry.get_mut() {
                     BestTransactionLaneState::Invalid => continue,
@@ -267,6 +300,11 @@ where
                 Some(Entry::Vacant(vacant)) => Some(vacant),
                 None => None,
             };
+            // A held head is parked as if yielded and parked, so either way its lane is occupied
+            // and descendants are buffered until it is committed.
+            if let Some(vacant) = vacant_lane {
+                vacant.insert(BestTransactionLaneState::Occupied(VecDeque::new()));
+            }
             if let Some(hold) = self.hold.as_mut()
                 && !transaction.transaction.validity_conditions().is_empty()
                 && hold.hold(&transaction)
@@ -274,12 +312,7 @@ where
                 // The clock starts at the first hold, so candidates that hold nothing pay no
                 // timer read.
                 hold_start.get_or_insert_with(Instant::now);
-                // Parked as if yielded and parked: the lane is occupied so descendants are
-                // buffered until the held head is promoted and committed.
-                if let Some(vacant) = vacant_lane {
-                    vacant.insert(BestTransactionLaneState::Occupied(VecDeque::new()));
-                }
-                self.parked.insert(*transaction.hash(), (transaction, lane));
+                self.parked.insert(*transaction.hash(), transaction);
                 continue;
             }
             self.source_head = Some((transaction, lane));
@@ -321,7 +354,7 @@ where
         }
     }
 
-    /// Records a transaction as yielded and occupies its sequential lane.
+    /// Records a ready transaction as yielded and occupies its sequential lane.
     pub fn record_yielded(
         &mut self,
         transaction: Arc<ValidPoolTransaction<T>>,
@@ -347,21 +380,27 @@ where
     fn next(&mut self) -> Option<Self::Item> {
         self.fill_source_head();
 
-        let ready_priority = self.ready_priority().cloned();
-        let source_priority = self.source_head.as_ref().map(|(source, _)| self.priority(source));
-        let take_ready = match (source_priority, ready_priority) {
-            (Some(source), Some(ready)) => ready >= source,
-            (None, Some(_)) => true,
-            (Some(_), None) => false,
-            (None, None) => return None,
+        let has_ready = self.ready_priority().is_some();
+        let take_ready = match (&self.source_head, has_ready) {
+            // The source priority is computed only when a ready transaction competes with it;
+            // most candidates come straight from the source with nothing ready.
+            (Some((source, _)), true) => {
+                let source = self.priority(source);
+                self.ready_heap.peek().is_some_and(|(ready, _)| *ready >= source)
+            }
+            (None, true) => true,
+            (Some(_), false) => false,
+            (None, false) => return None,
         };
 
-        let (transaction, lane) = if take_ready {
-            self.pop_ready().expect("ready priority requires a ready transaction")
+        if take_ready {
+            let (transaction, lane) =
+                self.pop_ready().expect("ready priority requires a ready transaction");
+            Some(self.record_yielded(transaction, lane))
         } else {
-            self.source_head.take().expect("source priority requires a source transaction")
-        };
-        Some(self.record_yielded(transaction, lane))
+            // `fill_source_head` already occupied the head's lane.
+            self.source_head.take().map(|(transaction, _)| transaction)
+        }
     }
 }
 
@@ -394,14 +433,14 @@ where
     O: TransactionOrdering<Transaction = T>,
 {
     fn park(&mut self, transaction: &Arc<ValidPoolTransaction<T>>) {
-        let lane = BestTransactionLane::for_transaction(transaction);
-        self.parked.insert(*transaction.hash(), (Arc::clone(transaction), lane));
+        self.parked.insert(*transaction.hash(), Arc::clone(transaction));
     }
 
     fn promote(&mut self, transaction_hash: TxHash) -> bool {
-        let Some((transaction, lane)) = self.parked.remove(&transaction_hash) else {
+        let Some(transaction) = self.parked.remove(&transaction_hash) else {
             return false;
         };
+        let lane = BestTransactionLane::for_transaction(&transaction);
         if self.is_lane_invalid(lane) {
             return false;
         }
@@ -414,9 +453,10 @@ where
         transaction_hash: TxHash,
         kind: InvalidPoolTransactionError,
     ) -> bool {
-        let Some((transaction, lane)) = self.parked.remove(&transaction_hash) else {
+        let Some(transaction) = self.parked.remove(&transaction_hash) else {
             return false;
         };
+        let lane = BestTransactionLane::for_transaction(&transaction);
         if self.is_lane_invalid(lane) {
             return false;
         }
@@ -726,6 +766,10 @@ mod tests {
             let mut hold = self.lock();
             hold.checked.push(*transaction.hash());
             hold.held.contains(transaction.hash())
+        }
+
+        fn capacity(&self) -> usize {
+            self.lock().held.len()
         }
 
         fn record_duration(&mut self, _duration: Duration) {
