@@ -211,13 +211,13 @@ fn run_revm(fixture: &Fixture, upgrade: BaseUpgrade) -> Outcome {
         }
         // revm's state holds only the accounts the transaction touched; an untouched account
         // keeps its seeded (or empty) pre-state.
-        let (balance, nonce, code_hash) = match account {
-            Some(account) => (account.info.balance, account.info.nonce, account.info.code_hash),
-            None => fixture.seed.iter().find(|seed| seed.address == *address).map_or_else(
-                || (U256::ZERO, 0, B256::ZERO),
-                |seed| (seed.balance, seed.nonce, keccak256(&seed.code)),
-            ),
-        };
+        let (balance, nonce, code_hash) = account
+            .map(|account| (account.info.balance, account.info.nonce, account.info.code_hash))
+            .or_else(|| {
+                let seed = fixture.seed.iter().find(|seed| seed.address == *address)?;
+                Some((seed.balance, seed.nonce, keccak256(&seed.code)))
+            })
+            .unwrap_or_default();
         accounts.insert(
             *address,
             AccountState { balance, nonce, code_hash: norm_code_hash(code_hash), storage },
@@ -351,7 +351,7 @@ fn parity_system_transaction() {
 }
 
 /// A pre-Regolith L1-info deposit: a 150M-gas system transaction into a contract that stores a
-/// value and emits a log, standing in for the L1Block update. Before Regolith it executes and
+/// value and emits a log, standing in for the `L1Block` update. Before Regolith it executes and
 /// reports its actual gas; from Regolith it is rejected as a failed deposit charged its gas limit.
 #[test]
 fn parity_l1_info_system_deposit_executes_only_before_regolith() {
