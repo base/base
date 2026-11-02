@@ -490,6 +490,7 @@ impl<Txs> Builder<'_, Txs> {
                         ctx.builder_config.predicate_bucket_ordered_threshold,
                         RESTING_SWEEP_WAIT_LIMIT,
                     );
+                    resting.track_written_keys();
                     // The transitions hold the system calls and deposits applied on top of the
                     // parent state.
                     let carry_over = resting.begin_block(
@@ -1665,13 +1666,38 @@ where
             predicate_bucket_wakeups,
             &predicate_index,
         );
-        if let Some(stats) = resting.map(SharedRestingPredicates::take_stats)
-            && stats.parked > 0
-        {
-            ValidityMetrics::resting_predicate_parked_total().increment(stats.parked);
-            ValidityMetrics::resting_predicate_carried_parked_total()
-                .increment(stats.carried_parked);
-            ValidityMetrics::record_resting_hold_duration(stats.duration);
+        if let Some(resting) = resting {
+            // The hold adopted these without this loop seeing them; report each deferral once,
+            // as the loop does for candidates it parks.
+            for tx_hash in resting.take_adopted() {
+                validity_consideration_index += 1;
+                if deferrals.record(tx_hash, "validity_predicate_not_satisfied") {
+                    emit_native_validity_event!(
+                        self,
+                        TransactionEventType::BuilderDeferred,
+                        tx_hash,
+                        validity_consideration_index,
+                        {
+                            "defer_reason" => "validity_predicate_not_satisfied",
+                            "defer_detail" => "a validity predicate is not satisfied by the current build state",
+                        }
+                    );
+                }
+            }
+            let stats = resting.take_stats();
+            if stats.parked > 0 {
+                ValidityMetrics::resting_predicate_parked_total().increment(stats.parked);
+                ValidityMetrics::resting_predicate_carried_parked_total()
+                    .increment(stats.carried_parked);
+                ValidityMetrics::record_resting_hold_duration(stats.duration);
+            }
+            if stats.ingestion.applied > 0 {
+                evaluation_counters.increment(
+                    ValidityEvaluationOutcome::RestedAtIngestion,
+                    stats.ingestion.applied,
+                );
+            }
+            ValidityMetrics::record_ingestion_rest(&stats.ingestion);
         }
         if resource_throttled > 0 {
             info!(
@@ -1716,7 +1742,8 @@ mod tests {
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
     use base_execution_evm::BaseEvmConfig;
     use base_execution_txpool::{
-        BasePooledTransaction, BestTransactionsHold, ValidityOperator, ValidityPredicate,
+        BasePooledTransaction, BasePooledTx as _, BestTransactionsHold, IngestionRest,
+        ValidityOperator, ValidityPredicate,
     };
     use base_observability_events::{TransactionEventCapture, TransactionEventType};
     use reth_basic_payload_builder::{BuildOutcomeKind, PayloadConfig};
@@ -2493,6 +2520,116 @@ mod tests {
 
     fn pool_parent_hash() -> B256 {
         pool_payload_context(DENIM_TIMESTAMP).parent().hash()
+    }
+
+    /// Builds one Denim block starting from an empty resting set, and returns the included hashes.
+    fn build_with_ingestion_rest(transactions: Vec<BasePooledTransaction>) -> Vec<TxHash> {
+        build_carrying_resting(&RestingPredicateStore::default(), transactions).0
+    }
+
+    /// A validity transaction whose admission-time evaluation on the parent recorded `predicate`
+    /// as unsatisfied.
+    fn admitted_unsatisfied(
+        nonce: u64,
+        to: Address,
+        predicate: ValidityPredicate,
+        evaluated_on: B256,
+    ) -> BasePooledTransaction {
+        let transaction = pool_transaction_to(nonce, to, U256::ZERO)
+            .with_validity_predicates(vec![predicate.clone()]);
+        transaction.set_ingestion_rest(IngestionRest { state_block_hash: evaluated_on, predicate });
+        transaction
+    }
+
+    /// The pool recorded `gated` as unsatisfied under a predicate that in fact holds, so whether
+    /// it is included shows whether the build evaluated it or the hold adopted the admission
+    /// result.
+    #[test]
+    fn native_builder_adopts_an_applicable_admission_result() {
+        let holds = ValidityPredicate::Balance {
+            address: Address::repeat_byte(0x4c),
+            op: ValidityOperator::Equal,
+            value: U256::ZERO,
+        };
+        let gated = admitted_unsatisfied(0, Address::repeat_byte(0x5d), holds, pool_parent_hash());
+
+        assert!(build_with_ingestion_rest(vec![gated]).is_empty());
+    }
+
+    #[test]
+    fn native_builder_evaluates_when_the_admission_result_is_from_another_block() {
+        let holds = ValidityPredicate::Balance {
+            address: Address::repeat_byte(0x4d),
+            op: ValidityOperator::Equal,
+            value: U256::ZERO,
+        };
+        let gated =
+            admitted_unsatisfied(0, Address::repeat_byte(0x5e), holds, B256::repeat_byte(0xee));
+
+        assert_eq!(build_with_ingestion_rest(vec![gated.clone()]), [*gated.hash()]);
+    }
+
+    /// The trigger writes the watched balance before `gated` is yielded, so the admission result,
+    /// evaluated before that write, no longer stands in for evaluation.
+    #[test]
+    fn native_builder_evaluates_when_the_block_already_wrote_the_predicate_state() {
+        let watched_address = Address::repeat_byte(0x4e);
+        let blocker = ValidityPredicate::Balance {
+            address: watched_address,
+            op: ValidityOperator::Equal,
+            value: U256::ONE,
+        };
+        let trigger = pool_transaction_to(0, watched_address, U256::ONE);
+        let gated =
+            admitted_unsatisfied(0, Address::repeat_byte(0x5f), blocker, pool_parent_hash());
+        let expected = [*trigger.hash(), *gated.hash()];
+
+        assert_eq!(build_with_ingestion_rest(vec![trigger, gated]), expected);
+    }
+
+    /// A candidate the hold adopted is woken by the commit that satisfies its predicate, exactly
+    /// like one the build evaluated and parked.
+    #[test]
+    fn native_builder_includes_an_adopted_transaction_once_its_state_changes() {
+        let watched_address = Address::repeat_byte(0x4f);
+        let blocker = ValidityPredicate::Balance {
+            address: watched_address,
+            op: ValidityOperator::Equal,
+            value: U256::ONE,
+        };
+        let gated =
+            admitted_unsatisfied(0, Address::repeat_byte(0x60), blocker, pool_parent_hash());
+        let trigger = pool_transaction_to(0, watched_address, U256::ONE);
+        let expected = [*trigger.hash(), *gated.hash()];
+
+        assert_eq!(build_with_ingestion_rest(vec![gated, trigger]), expected);
+    }
+
+    /// The build loop never sees an adopted transaction, so its deferral is reported from the
+    /// hold's adoption list, once.
+    #[test]
+    fn native_builder_reports_an_adopted_transaction_as_deferred_once() {
+        let event_capture = TransactionEventCapture::install();
+        // Event capture is process-global, so this transaction must not share a hash with other
+        // tests.
+        let blocker = ValidityPredicate::Balance {
+            address: Address::repeat_byte(0x61),
+            op: ValidityOperator::Equal,
+            value: U256::ONE,
+        };
+        let gated =
+            admitted_unsatisfied(0, Address::repeat_byte(0x62), blocker, pool_parent_hash());
+        let gated_hash = *gated.hash();
+
+        assert!(build_with_ingestion_rest(vec![gated]).is_empty());
+
+        let gated_events = event_capture
+            .events()
+            .into_iter()
+            .filter(|event| event.tx_hash == Some(gated_hash))
+            .map(|event| event.event_type)
+            .collect::<Vec<_>>();
+        assert_eq!(gated_events, [TransactionEventType::BuilderDeferred]);
     }
 
     /// The set records `gated` as resting although its predicate holds, so whether it is included

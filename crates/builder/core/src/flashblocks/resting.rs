@@ -1,8 +1,8 @@
 //! Payload iterators that hold back validity transactions resting under an unchanged predicate.
 
 use alloy_primitives::TxHash;
-use base_execution_payload_builder::RestingStats;
-use base_execution_txpool::ValidityPredicate;
+use base_execution_payload_builder::{IngestionRestStale, RestingStats};
+use base_execution_txpool::{IngestionRest, ValidityConditions, ValidityPredicate};
 use revm::state::EvmState;
 
 /// Lifecycle callbacks for validity transactions resting in a payload job.
@@ -22,6 +22,24 @@ pub trait RestingPayloadTransactions {
 
     /// Wakes transactions resting on state changed by one committed transaction.
     fn record_committed_state(&mut self, _state: &EvmState) {}
+
+    /// Returns whether the pool's admission-time evaluation `rest` of a candidate with
+    /// `conditions` still holds; see
+    /// [`RestingPredicates::ingestion_rest_applies`](base_execution_payload_builder::RestingPredicates::ingestion_rest_applies).
+    /// The default tracks nothing, so no result applies.
+    fn ingestion_rest_applies(
+        &self,
+        _rest: &IngestionRest,
+        _conditions: &ValidityConditions,
+    ) -> Result<(), IngestionRestStale> {
+        Err(IngestionRestStale::Untracked)
+    }
+
+    /// Returns the transactions the pool iterators adopted on their admission-time evaluation
+    /// since the last call and that still rest, so the build loop can report their deferral.
+    fn take_adopted(&mut self) -> Vec<TxHash> {
+        Vec::new()
+    }
 
     /// Returns and resets the work spent holding back resting transactions.
     fn take_resting_stats(&mut self) -> RestingStats {

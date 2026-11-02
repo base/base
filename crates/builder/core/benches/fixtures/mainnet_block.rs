@@ -1,6 +1,11 @@
 //! Fixture for the `build_loop/mainnet_block` workload: a whole 11-flashblock block shaped like
 //! Base mainnet, shared by the wall-clock bench (`build_loop.rs`) and the deterministic
 //! instruction-count gate (`build_loop_iai.rs`) so both measure the same workload.
+//!
+//! [`BenchKnobs`] adds what an in-memory database hides: a delay on every state read that misses
+//! the build's cache, standing in for a cold database read on the sequencer, and the
+//! validity-predicate evaluation budget the builder enforces. Both default off, which keeps the
+//! instruction-count gate deterministic.
 
 use std::{
     iter,
@@ -10,16 +15,17 @@ use std::{
 
 use alloy_consensus::{Header, SignableTransaction, TxEip1559};
 use alloy_eips::eip2718::Encodable2718;
-use alloy_primitives::{Address, Bytes, Signature, TxKind, U256, keccak256};
+use alloy_primitives::{Address, B256, Bytes, Signature, TxKind, U256, keccak256};
 use base_builder_core::{
     BasePayloadBuilderCtx, BestFlashblocksTxs, BlockDeferrals, ExecutionInfo,
     FlashblockDiagnostics, ParkableBestPayloadTransactions, RejectionCache, ResourceLimits,
 };
 use base_common_consensus::{BaseTransactionSigned, BaseTxEnvelope};
 use base_execution_chainspec::BaseChainSpec;
+use base_execution_payload_builder::{RestingPredicates, SharedRestingPredicates};
 use base_execution_txpool::{
-    BaseOrdering, BasePooledTransaction, BestTransactionsHold, ParkedBestTransactions,
-    ValidityOperator, ValidityPredicate,
+    BaseOrdering, BasePooledTransaction, BasePooledTx as _, BestTransactionsHold, IngestionRest,
+    ParkedBestTransactions, ValidityOperator, ValidityPredicate,
 };
 use reth_chainspec::ChainSpec;
 use reth_primitives_traits::{Recovered, SealedHeader};
@@ -28,8 +34,7 @@ use reth_transaction_pool::{
     BestTransactions, TransactionOrigin, ValidPoolTransaction, identifier::TransactionId,
     pool::PendingPool,
 };
-use revm::{database::InMemoryDB, state::AccountInfo};
-use tokio_util::sync::CancellationToken;
+use revm::{Database, bytecode::Bytecode, database::InMemoryDB, state::AccountInfo};
 
 pub(crate) type Ordering = BaseOrdering<BasePooledTransaction>;
 pub(crate) type Pool = PendingPool<Ordering>;
@@ -170,6 +175,97 @@ pub(crate) const MAINNET_TX_GAS_LIMIT: u64 = 30_000;
 /// considers them first.
 pub(crate) const MAINNET_VALIDITY_TIP: u128 = 2_000_000_000;
 
+/// What the in-memory workload adds to stand in for production conditions.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct BenchKnobs {
+    /// Added to every account or storage read that misses the build's cache, standing in for a
+    /// cold database read. Repeated reads hit the cache, as on the sequencer.
+    pub(crate) read_delay: Duration,
+    /// The builder's `predicate_eval_hard_cutoff`, or no budget. With a budget, which candidates
+    /// are evaluated depends on machine speed.
+    pub(crate) predicate_budget: Option<Duration>,
+}
+
+/// [`InMemoryDB`] whose account and storage reads take at least `delay`.
+///
+/// [`State`] caches what it loads, so the delay applies once per location per block, like a cold
+/// read that later reads find in the cache. The delay spins rather than sleeps, because sleeps
+/// shorter than the scheduler tick overshoot.
+#[derive(Debug, Clone)]
+pub(crate) struct DelayedDb {
+    inner: InMemoryDB,
+    delay: Duration,
+}
+
+impl DelayedDb {
+    fn wait(&self) {
+        if self.delay.is_zero() {
+            return;
+        }
+        let start = Instant::now();
+        while start.elapsed() < self.delay {
+            std::hint::spin_loop();
+        }
+    }
+}
+
+impl Database for DelayedDb {
+    type Error = <InMemoryDB as Database>::Error;
+
+    fn basic(&mut self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
+        self.wait();
+        self.inner.basic(address)
+    }
+
+    fn code_by_hash(&mut self, code_hash: B256) -> Result<Bytecode, Self::Error> {
+        self.inner.code_by_hash(code_hash)
+    }
+
+    fn storage(&mut self, address: Address, index: U256) -> Result<U256, Self::Error> {
+        self.wait();
+        self.inner.storage(address, index)
+    }
+
+    fn block_hash(&mut self, number: u64) -> Result<B256, Self::Error> {
+        self.inner.block_hash(number)
+    }
+}
+
+/// How the block treats validity transactions whose predicate is unsatisfied.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Workload {
+    /// No applicable admission-time evaluation, as when the head moved since admission: the first
+    /// flashblock evaluates every parked transaction, and the pool iterator holds them back in
+    /// later ones.
+    Enforce,
+    /// The pool iterator adopts the pool's admission-time evaluation: no flashblock evaluates a
+    /// parked transaction, and the build loop never sees one until a wake promotes it.
+    EnforceIngestion,
+}
+
+impl Workload {
+    /// Whether the pool's admission-time evaluations apply to the block being built.
+    pub(crate) const fn admission_results_apply(self) -> bool {
+        matches!(self, Self::EnforceIngestion)
+    }
+
+    pub(crate) const fn label(self) -> &'static str {
+        match self {
+            Self::Enforce => "Enforce",
+            Self::EnforceIngestion => "Enforce+ingestion",
+        }
+    }
+}
+
+/// Timings of one block build, for the summary the wall-clock bench prints.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub(crate) struct BlockProfile {
+    /// Wall time of each flashblock's build loop.
+    pub(crate) flashblock_times: Vec<Duration>,
+    /// Flashblocks built until every parked transaction rested, or `None` if some never did.
+    pub(crate) flashblocks_to_index: Option<usize>,
+}
+
 /// Outcomes summed over every flashblock of a block.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct BlockTotals {
@@ -201,6 +297,7 @@ impl BlockTotals {
 pub(crate) struct MainnetBlock {
     ctx: BasePayloadBuilderCtx,
     pre_state: InMemoryDB,
+    knobs: BenchKnobs,
     /// Pending pool at the start of each flashblock: the parked validity transactions and the
     /// over-gas candidates, plus that flashblock's arrivals. Earlier filler is absent because
     /// the builder prunes committed transactions after each flashblock. Earlier over-DA
@@ -218,11 +315,13 @@ impl MainnetBlock {
     pub(crate) const SENDER_COUNT: usize =
         Self::OVER_DA_START + MAINNET_FLASHBLOCKS * MAINNET_OVER_DA_PER_FLASHBLOCK;
 
-    pub(crate) fn new() -> Self {
+    pub(crate) fn with_knobs(knobs: BenchKnobs) -> Self {
         let mut ctx = builder_context();
-        // Evaluating every parked transaction is the work under test. A time budget would also
-        // make the outcome counts depend on machine speed.
-        ctx.builder_config.predicate_eval_hard_cutoff = Duration::MAX;
+        // Without a budget, evaluating every parked transaction is the work under test, and the
+        // outcome counts do not depend on machine speed.
+        ctx.builder_config.predicate_eval_hard_cutoff =
+            knobs.predicate_budget.unwrap_or(Duration::MAX);
+        let parent_hash = ctx.parent().hash();
 
         let bucket_depths: Vec<usize> = MAINNET_BUCKET_TIERS
             .iter()
@@ -244,7 +343,7 @@ impl MainnetBlock {
             .enumerate()
             .flat_map(|(bucket, &depth)| iter::repeat_n(bucket, depth))
             .enumerate()
-            .map(|(sender_id, bucket)| Self::parked_tx(sender_id, bucket))
+            .map(|(sender_id, bucket)| Self::parked_tx(sender_id, bucket, parent_hash))
             .collect();
         let over_gas: Vec<_> = (Self::OVER_GAS_START..Self::OVER_DA_START)
             .map(|sender_id| {
@@ -277,7 +376,7 @@ impl MainnetBlock {
             );
         }
 
-        Self { ctx, pre_state, pools, bucket_depths }
+        Self { ctx, pre_state, knobs, pools, bucket_depths }
     }
 
     pub(crate) fn sender(sender_id: usize) -> Address {
@@ -308,21 +407,28 @@ impl MainnetBlock {
     }
 
     /// A validity transaction waiting for its bucket's watched balance to reach an unreachable
-    /// value.
+    /// value. It carries the pool's admission-time evaluation on `parent_hash`, as the pool
+    /// records it; workloads whose admission results do not apply ignore it.
     pub(crate) fn parked_tx(
         sender_id: usize,
         bucket: usize,
+        parent_hash: B256,
     ) -> Arc<ValidPoolTransaction<BasePooledTransaction>> {
-        PoolTx {
+        let predicate = ValidityPredicate::Balance {
+            address: Self::watched(bucket),
+            op: ValidityOperator::Equal,
+            value: U256::MAX,
+        };
+        let pooled = PoolTx {
             priority_fee: spread_priority_fee(MAINNET_VALIDITY_TIP, sender_id),
-            predicates: vec![ValidityPredicate::Balance {
-                address: Self::watched(bucket),
-                op: ValidityOperator::Equal,
-                value: U256::MAX,
-            }],
+            predicates: vec![predicate.clone()],
             ..Self::transfer(sender_id)
         }
-        .into_pooled()
+        .into_pooled();
+        pooled
+            .transaction
+            .set_ingestion_rest(IngestionRest { state_block_hash: parent_hash, predicate });
+        pooled
     }
 
     /// The `filler`-th filler transfer of the block. The first few of each flashblock wake a
@@ -358,8 +464,9 @@ impl MainnetBlock {
         }
     }
 
-    pub(crate) fn fresh_state(&self) -> State<InMemoryDB> {
-        State::builder().with_database(self.pre_state.clone()).with_bundle_update().build()
+    pub(crate) fn fresh_state(&self) -> State<DelayedDb> {
+        let db = DelayedDb { inner: self.pre_state.clone(), delay: self.knobs.read_delay };
+        State::builder().with_database(db).with_bundle_update().build()
     }
 
     /// An empty rejection cache. Created outside the timed region, as the builder's cache
@@ -375,25 +482,48 @@ impl MainnetBlock {
     /// clones.
     pub(crate) fn build(
         &self,
-        state: &mut State<InMemoryDB>,
+        state: &mut State<DelayedDb>,
         rejection_cache: &RejectionCache,
+        workload: Workload,
     ) -> BlockTotals {
+        self.build_profiled(state, rejection_cache, workload).0
+    }
+
+    /// [`Self::build`], also returning the per-flashblock timings.
+    pub(crate) fn build_profiled(
+        &self,
+        state: &mut State<DelayedDb>,
+        rejection_cache: &RejectionCache,
+        workload: Workload,
+    ) -> (BlockTotals, BlockProfile) {
+        let ctx = &self.ctx;
         let mut info = ExecutionInfo::default();
         let mut deferrals = BlockDeferrals::default();
         let mut totals = BlockTotals::default();
+        let mut profile = BlockProfile::default();
+        // As `payload.rs` sets up a block: a resting set that starts empty, so every parked
+        // transaction is seen for the first time, with the pre-block writes known. Leaving written
+        // keys untracked makes every admission result stale, so it is never adopted. Every
+        // flashblock's pool iterator, the first included, takes the hold of the same set.
+        let mut resting =
+            RestingPredicates::new(ctx.builder_config.predicate_bucket_ordered_threshold);
+        if workload.admission_results_apply() {
+            resting.track_written_keys();
+        }
+        resting.begin_block(ctx.parent().hash(), ctx.block_number(), Some(&Default::default()));
+        let resting = SharedRestingPredicates::new(resting);
+        let hold = || Some(resting.iterator_hold());
         let mut best =
-            BestFlashblocksTxs::new(parkable(&self.pools[0], None), rejection_cache.clone());
+            BestFlashblocksTxs::new(parkable(&self.pools[0], hold()), rejection_cache.clone())
+                .with_resting_predicates(resting.clone());
 
         for (flashblock, pool) in self.pools.iter().enumerate() {
             if flashblock > 0 {
-                best.refresh_iterator(parkable(
-                    pool,
-                    Some(best.iterator_hold(&CancellationToken::new())),
-                ));
+                best.refresh_iterator(parkable(pool, hold()));
             }
             let committed_until = info.executed_transactions.len();
-            let diag = self
-                .ctx
+            let start = Instant::now();
+            let diag = ctx
                 .execute_best_transactions(
                     &mut info,
                     &mut deferrals,
@@ -402,6 +532,10 @@ impl MainnetBlock {
                     &Self::limits(flashblock),
                 )
                 .expect("build loop succeeds");
+            profile.flashblock_times.push(start.elapsed());
+            if profile.flashblocks_to_index.is_none() && resting.len() >= MAINNET_PARKED {
+                profile.flashblocks_to_index = Some(flashblock + 1);
+            }
             let committed: Vec<_> = info.executed_transactions[committed_until..]
                 .iter()
                 .map(|tx| tx.tx_hash())
@@ -412,24 +546,30 @@ impl MainnetBlock {
             }
             totals.add(&diag);
         }
-        totals
+        (totals, profile)
     }
 
-    /// Outcomes the workload is designed to produce.
+    /// Outcomes the workload is designed to produce, with no predicate budget.
     ///
-    /// Only the first flashblock defers every parked transaction; later ones defer just the
-    /// transactions a wake promotes.
-    /// Buckets at or above the ordered threshold wake only transactions whose `Equal` value is
-    /// reached, so a wake promotes none of theirs. The resting index uses the same default
-    /// threshold as the builder config.
-    pub(crate) fn expected_totals(&self) -> BlockTotals {
+    /// Without applicable admission results, only the first flashblock defers every parked
+    /// transaction; later ones defer just the transactions a wake promotes. Adopting them, no
+    /// flashblock defers a parked transaction, because the pool iterator parks them before the
+    /// build loop sees them, and the build loop defers only those a wake promotes, starting with
+    /// the first flashblock's wakes. Buckets at or above the ordered threshold wake only
+    /// transactions whose `Equal` value is reached, so a wake promotes none of theirs. The resting
+    /// index uses the same default threshold as the builder config.
+    pub(crate) fn expected_totals(&self, workload: Workload) -> BlockTotals {
         let ordered_threshold = self.ctx.builder_config.predicate_bucket_ordered_threshold;
-        let rewoken: usize = (MAINNET_WAKES_PER_FLASHBLOCK
-            ..MAINNET_FLASHBLOCKS * MAINNET_WAKES_PER_FLASHBLOCK)
-            .map(|wake| self.bucket_depths[Self::woken_bucket(wake)])
-            .filter(|&depth| depth < ordered_threshold)
-            .sum();
-        let deferred = (MAINNET_PARKED + rewoken) as u64;
+        let rewoken = |first_wake: usize| -> usize {
+            (first_wake..MAINNET_FLASHBLOCKS * MAINNET_WAKES_PER_FLASHBLOCK)
+                .map(|wake| self.bucket_depths[Self::woken_bucket(wake)])
+                .filter(|&depth| depth < ordered_threshold)
+                .sum()
+        };
+        let deferred = match workload {
+            Workload::Enforce => MAINNET_PARKED + rewoken(MAINNET_WAKES_PER_FLASHBLOCK),
+            Workload::EnforceIngestion => rewoken(0),
+        } as u64;
         let included = (MAINNET_FLASHBLOCKS * MAINNET_FILLER_PER_FLASHBLOCK) as u64;
         let rejected_gas = (MAINNET_FLASHBLOCKS * MAINNET_OVER_GAS_CANDIDATES) as u64;
         let rejected_da = (MAINNET_FLASHBLOCKS * MAINNET_OVER_DA_PER_FLASHBLOCK) as u64;

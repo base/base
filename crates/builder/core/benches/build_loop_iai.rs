@@ -21,36 +21,50 @@ mod fixture;
 use std::hint::black_box;
 
 use base_builder_core::RejectionCache;
-use fixture::{BlockTotals, MainnetBlock};
+use fixture::{BenchKnobs, BlockTotals, DelayedDb, MainnetBlock, Workload};
 use iai_callgrind::{library_benchmark, library_benchmark_group, main};
 use reth_revm::State;
-use revm::database::InMemoryDB;
 
-/// A block ready to build.
-type Input = (MainnetBlock, State<InMemoryDB>, RejectionCache);
+/// A block ready to build, plus the workload to build it under.
+type Input = (MainnetBlock, State<DelayedDb>, RejectionCache, Workload);
 
 /// Builds the fixture and the per-block state outside the counted region.
-fn setup() -> Input {
-    let block = MainnetBlock::new();
+fn setup(workload: Workload) -> Input {
+    // Every knob off keeps the instruction count deterministic.
+    let block = MainnetBlock::with_knobs(BenchKnobs::default());
     let state = block.fresh_state();
     let rejection_cache = block.rejection_cache();
-    (block, state, rejection_cache)
+    (block, state, rejection_cache, workload)
 }
 
 /// Checks the block's outcomes against the workload's documented counts.
-fn check_outcomes((totals, (block, _, _)): (BlockTotals, Input)) {
+fn check_outcomes((totals, (block, _, _, workload)): (BlockTotals, Input)) {
+    let (considered, included) = match workload {
+        Workload::Enforce => (3_357, 187),
+        Workload::EnforceIngestion => (523, 187),
+    };
     assert_eq!(
         (totals.considered, totals.included),
-        (3_357, 187),
-        "build_loop/mainnet_block selection changed: {totals:?}"
+        (considered, included),
+        "build_loop/mainnet_block mode={} selection changed: {totals:?}",
+        workload.label()
     );
-    assert_eq!(totals, block.expected_totals(), "block outcomes match the documented workload");
+    assert_eq!(
+        totals,
+        block.expected_totals(workload),
+        "block outcomes match the documented workload"
+    );
 }
 
 #[library_benchmark]
-#[bench::enforce(setup = setup, teardown = check_outcomes)]
+#[bench::enforce(args = (Workload::Enforce), setup = setup, teardown = check_outcomes)]
+#[bench::enforce_ingestion(
+    args = (Workload::EnforceIngestion),
+    setup = setup,
+    teardown = check_outcomes
+)]
 fn mainnet_block(mut input: Input) -> (BlockTotals, Input) {
-    let totals = input.0.build(&mut input.1, &input.2);
+    let totals = input.0.build(&mut input.1, &input.2, input.3);
     (black_box(totals), input)
 }
 

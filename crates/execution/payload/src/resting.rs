@@ -6,9 +6,13 @@ use std::{
     time::{Duration, Instant},
 };
 
-use alloy_primitives::{B256, TxHash, map::B256Set};
+use alloy_primitives::{
+    Address, B256, TxHash, U256,
+    map::{AddressSet, B256Set, HashSet},
+};
 use base_execution_txpool::{
-    BasePooledTx, BestTransactionsHold, PredicateContext, ValidityConditions, ValidityPredicate,
+    BasePooledTx, BestTransactionsHold, IngestionRest, PredicateContext, ValidityConditions,
+    ValidityPredicate,
 };
 use parking_lot::Mutex;
 use reth_tasks::Runtime;
@@ -26,6 +30,78 @@ use crate::{ParkedPredicateIndex, ValidityMetrics, ValidityPredicateKey};
 /// activates. The sweep that drops it only visits the members filed that many blocks ago, and runs
 /// off the build path; see [`RestingPredicateStore::finish`].
 pub const RESTING_UNSEEN_RETAINED_BLOCKS: u64 = 10;
+
+/// Why a pool-recorded [`IngestionRest`] cannot stand in for evaluating a candidate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IngestionRestStale {
+    /// The set is not tracking the keys the block writes, so the result cannot be checked.
+    Untracked,
+    /// The result was evaluated on a block other than the parent of the block being built.
+    ParentMismatch,
+    /// The block being built has already written the state the predicate reads, or its pre-block
+    /// writes are unknown.
+    KeyWritten,
+    /// The candidate's conditions no longer contain the recorded predicate.
+    PredicateAbsent,
+    /// The candidate's batch is expired at the current block.
+    Expired,
+}
+
+impl IngestionRestStale {
+    /// Returns the `reason` label value.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Untracked => "untracked",
+            Self::ParentMismatch => "parent_mismatch",
+            Self::KeyWritten => "key_written",
+            Self::PredicateAbsent => "predicate_absent",
+            Self::Expired => "expired",
+        }
+    }
+}
+
+/// How builds used the [`IngestionRest`] results recorded by the pool.
+///
+/// Counted locally and recorded once per build, so the hot paths do no metric lookups.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct IngestionRestStats {
+    /// Candidates whose result applied, so they rested without being evaluated.
+    pub applied: u64,
+    /// Candidates whose result was evaluated on a block other than the parent.
+    pub stale_parent: u64,
+    /// Candidates whose predicate state the block had already written.
+    pub stale_written: u64,
+    /// Candidates whose conditions no longer contained the recorded predicate.
+    pub stale_absent: u64,
+    /// Candidates whose batch was expired.
+    pub stale_expired: u64,
+    /// Candidates checked by a set that does not track written keys.
+    pub stale_untracked: u64,
+}
+
+impl IngestionRestStats {
+    /// Counts a result that did not apply for `reason`.
+    pub const fn record_stale(&mut self, reason: IngestionRestStale) {
+        match reason {
+            IngestionRestStale::Untracked => self.stale_untracked += 1,
+            IngestionRestStale::ParentMismatch => self.stale_parent += 1,
+            IngestionRestStale::KeyWritten => self.stale_written += 1,
+            IngestionRestStale::PredicateAbsent => self.stale_absent += 1,
+            IngestionRestStale::Expired => self.stale_expired += 1,
+        }
+    }
+
+    /// Returns every stale count with its reason, for recording.
+    pub const fn stale_counts(&self) -> [(IngestionRestStale, u64); 5] {
+        [
+            (IngestionRestStale::Untracked, self.stale_untracked),
+            (IngestionRestStale::ParentMismatch, self.stale_parent),
+            (IngestionRestStale::KeyWritten, self.stale_written),
+            (IngestionRestStale::PredicateAbsent, self.stale_absent),
+            (IngestionRestStale::Expired, self.stale_expired),
+        ]
+    }
+}
 
 /// Blocks in which a resting transaction was last evaluated and last yielded.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -62,14 +138,23 @@ pub struct RestingCarryOver {
 /// Members are only valid against the state they were checked on. The set records the block whose
 /// final state it last followed, and empties itself when the next block builds on anything else,
 /// such as a block built by another sequencer or a different payload version for the same height.
+///
+/// With [`Self::track_written_keys`] on, the set also records every state key the block being
+/// built has written, which lets [`Self::ingestion_rest_applies`] accept the pool's admission-time
+/// evaluation of a candidate in place of evaluating it: a predicate found unsatisfied on the parent
+/// stays unsatisfied until the block writes the state it reads.
 #[derive(Debug)]
 pub struct RestingPredicates {
     index: ParkedPredicateIndex<RestingMember>,
     ordered_threshold: usize,
     block_number: u64,
+    /// Parent of the block being built.
+    parent: B256,
     /// Hash of the block whose final state the members were last checked against. `None` while a
     /// block is being built, so a build that does not finish cannot hand its members on.
     tip: Option<B256>,
+    /// State keys the block being built has written, while [`Self::track_written_keys`] is on.
+    written: Option<Box<WrittenKeys>>,
     /// Members by the block they are filed under. A member is filed under the block that rested
     /// it, and re-filed under its latest seen block when the sweep finds it was seen since, so the
     /// sweep only visits members old enough to drop. Entries for members that were removed or
@@ -84,9 +169,18 @@ impl RestingPredicates {
             index: ParkedPredicateIndex::new(ordered_threshold),
             ordered_threshold,
             block_number: 0,
+            parent: B256::ZERO,
             tip: None,
+            written: None,
             generations: BTreeMap::new(),
         }
+    }
+
+    /// Makes the set record the state keys each block writes, which
+    /// [`Self::ingestion_rest_applies`] needs. Call it before [`Self::begin_block`], whose
+    /// pre-block writes are recorded only while tracking is on.
+    pub fn track_written_keys(&mut self) {
+        self.written = Some(Box::default());
     }
 
     /// Starts building `block_number` on `parent_hash`.
@@ -104,6 +198,10 @@ impl RestingPredicates {
     ) -> RestingCarryOver {
         let mut carry_over = RestingCarryOver::default();
         let follows_parent = self.tip.take() == Some(parent_hash);
+        self.parent = parent_hash;
+        if let Some(written) = self.written.as_deref_mut() {
+            written.begin_block(pre_block_changes);
+        }
         match pre_block_changes.filter(|_| follows_parent) {
             None => {
                 carry_over.reset = !self.index.is_empty();
@@ -286,6 +384,50 @@ impl RestingPredicates {
         self.index.affected_by_state(state).affected_transactions
     }
 
+    /// Records the state keys one committed transaction wrote, when tracking written keys.
+    ///
+    /// Builders call it for every commit of the block, in commit order, so that
+    /// [`Self::ingestion_rest_applies`] sees every write that precedes a candidate.
+    pub fn record_written(&mut self, state: &EvmState) {
+        if let Some(written) = self.written.as_deref_mut() {
+            written.record_state(state);
+        }
+    }
+
+    /// Returns whether the pool's admission-time evaluation `rest` of a candidate with
+    /// `conditions` still holds in the block being built, so the candidate can rest under
+    /// `rest.predicate` without being evaluated.
+    ///
+    /// It holds when the result was evaluated on the parent of the block being built, the block
+    /// has not written the state the predicate reads, and the candidate's batch still contains the
+    /// predicate and is unexpired. Accepting it is then the same as evaluating the candidate and
+    /// finding `rest.predicate` unsatisfied. Expiry is checked at the block's first flashblock, as
+    /// for carried members.
+    pub fn ingestion_rest_applies(
+        &self,
+        rest: &IngestionRest,
+        conditions: &ValidityConditions,
+    ) -> Result<(), IngestionRestStale> {
+        let Some(written) = self.written.as_deref() else {
+            return Err(IngestionRestStale::Untracked);
+        };
+        if rest.state_block_hash != self.parent {
+            return Err(IngestionRestStale::ParentMismatch);
+        }
+        if !conditions.contains(&rest.predicate) {
+            return Err(IngestionRestStale::PredicateAbsent);
+        }
+        if conditions
+            .is_expired(&PredicateContext { block_number: self.block_number, flashblock_index: 0 })
+        {
+            return Err(IngestionRestStale::Expired);
+        }
+        if written.may_have_changed(ValidityPredicateKey::for_predicate(&rest.predicate)) {
+            return Err(IngestionRestStale::KeyWritten);
+        }
+        Ok(())
+    }
+
     /// Returns whether the set has no members.
     pub fn is_empty(&self) -> bool {
         self.index.is_empty()
@@ -294,6 +436,98 @@ impl RestingPredicates {
     /// Returns the number of members.
     pub fn len(&self) -> usize {
         self.index.len()
+    }
+}
+
+/// State keys the block being built has written so far, for
+/// [`RestingPredicates::ingestion_rest_applies`].
+#[derive(Debug, Default)]
+struct WrittenKeys {
+    /// Whether every write of the block is recorded. False when the pre-block writes were not
+    /// reported to [`RestingPredicates::begin_block`].
+    complete: bool,
+    /// Balance, nonce, and storage keys written so far.
+    keys: HashSet<ValidityPredicateKey>,
+    /// Accounts destroyed so far, whose every storage slot reads differently.
+    storage_destroyed: AddressSet,
+}
+
+impl WrittenKeys {
+    /// Starts a block whose `pre_block_changes` were applied before the selection loop.
+    fn begin_block(&mut self, pre_block_changes: Option<&TransitionState>) {
+        self.keys.clear();
+        self.storage_destroyed.clear();
+        self.complete = pre_block_changes.is_some();
+        let Some(transitions) = pre_block_changes else { return };
+        for (address, transition) in &transitions.transitions {
+            let old = transition.previous_info.as_ref();
+            let new = transition.info.as_ref();
+            self.record_account(
+                *address,
+                old.map_or(U256::ZERO, |info| info.balance)
+                    != new.map_or(U256::ZERO, |info| info.balance),
+                old.map_or(0, |info| info.nonce) != new.map_or(0, |info| info.nonce),
+                transition.storage_was_destroyed || transition.status.was_destroyed(),
+                transition
+                    .storage
+                    .iter()
+                    .filter(|(_, slot)| slot.is_changed())
+                    .map(|(slot, _)| *slot),
+            );
+        }
+    }
+
+    /// Records one committed transaction's writes.
+    fn record_state(&mut self, state: &EvmState) {
+        for (address, account) in state {
+            let destroyed = account.is_selfdestructed();
+            let original = account.original_info();
+            self.record_account(
+                *address,
+                destroyed || original.balance != account.info.balance,
+                destroyed || original.nonce != account.info.nonce,
+                destroyed,
+                account.storage.iter().filter(|(_, slot)| slot.is_changed()).map(|(slot, _)| *slot),
+            );
+        }
+    }
+
+    fn record_account(
+        &mut self,
+        address: Address,
+        balance_changed: bool,
+        nonce_changed: bool,
+        destroyed: bool,
+        changed_slots: impl Iterator<Item = U256>,
+    ) {
+        if balance_changed {
+            self.keys.insert(ValidityPredicateKey::Balance(address));
+        }
+        if nonce_changed {
+            self.keys.insert(ValidityPredicateKey::Nonce(address));
+        }
+        if destroyed {
+            self.storage_destroyed.insert(address);
+        }
+        for slot in changed_slots {
+            self.keys.insert(ValidityPredicateKey::Storage(address, slot));
+        }
+    }
+
+    /// Returns whether the block may have written the state `key` reads.
+    fn may_have_changed(&self, key: ValidityPredicateKey) -> bool {
+        !self.complete
+            || match key {
+                ValidityPredicateKey::Balance(_) | ValidityPredicateKey::Nonce(_) => {
+                    self.keys.contains(&key)
+                }
+                ValidityPredicateKey::Storage(address, _) => {
+                    self.keys.contains(&key) || self.storage_destroyed.contains(&address)
+                }
+                // Position predicates are never recorded at admission; refuse them rather than
+                // guess.
+                ValidityPredicateKey::BlockNumber | ValidityPredicateKey::FlashblockIndex => true,
+            }
     }
 }
 
@@ -348,6 +582,9 @@ pub struct RestingStats {
     pub parked: u64,
     /// Of [`Self::parked`], transactions whose predicate was found unsatisfied in an earlier block.
     pub carried_parked: u64,
+    /// How the iterator holds used the pool's admission-time evaluations. Every adopted
+    /// transaction is also counted in [`Self::parked`].
+    pub ingestion: IngestionRestStats,
     /// Time the pool iterators spent advancing past held transactions, from the first hold of
     /// each `next` call until it found a candidate.
     pub duration: Duration,
@@ -361,7 +598,9 @@ pub type HoldInterrupt = Arc<dyn Fn() -> bool + Send + Sync>;
 /// The build loop populates the set through [`Self::rest`] and reports commits through
 /// [`Self::wake_by_state`]. Each pool iterator the build creates carries a [`Self::iterator_hold`]
 /// that parks members at the source, so the build loop never sees a transaction whose recorded
-/// predicate is still unsatisfied. The iterator and the build loop run on the build thread, so
+/// predicate is still unsatisfied. The hold also adopts a non-member whose pool admission-time
+/// evaluation still applies: it joins the set under the recorded predicate and is parked without
+/// the build loop ever evaluating it. The iterator and the build loop run on the build thread, so
 /// the lock is uncontended; it exists because the iterator is a boxed trait object the build loop
 /// does not own.
 #[derive(Clone)]
@@ -387,6 +626,9 @@ struct SharedRestingState {
     /// wakes them; members the build loop parked itself are woken by its own predicate index.
     held: B256Set,
     stats: RestingStats,
+    /// Transactions adopted since [`SharedRestingPredicates::take_adopted`] last ran, so the build
+    /// loop can report their deferral, which it never otherwise sees.
+    adopted: Vec<TxHash>,
 }
 
 impl SharedRestingPredicates {
@@ -397,6 +639,7 @@ impl SharedRestingPredicates {
                 predicates,
                 held: B256Set::default(),
                 stats: RestingStats::default(),
+                adopted: Vec::new(),
             })),
             interrupt: None,
         }
@@ -409,6 +652,27 @@ impl SharedRestingPredicates {
     pub fn with_interrupt(mut self, interrupt: HoldInterrupt) -> Self {
         self.interrupt = Some(interrupt);
         self
+    }
+
+    /// Returns whether the pool's admission-time evaluation of a candidate still applies.
+    pub fn ingestion_rest_applies(
+        &self,
+        rest: &IngestionRest,
+        conditions: &ValidityConditions,
+    ) -> Result<(), IngestionRestStale> {
+        self.inner.lock().predicates.ingestion_rest_applies(rest, conditions)
+    }
+
+    /// Returns the transactions the hold adopted since the last call that are still resting, so
+    /// the build loop can report their deferral once.
+    pub fn take_adopted(&self) -> Vec<TxHash> {
+        let mut inner = self.inner.lock();
+        if inner.adopted.is_empty() {
+            return Vec::new();
+        }
+        let mut adopted = std::mem::take(&mut inner.adopted);
+        adopted.retain(|hash| inner.held.contains(hash));
+        adopted
     }
 
     /// Returns a hold for a new pool iterator. Members the previous iterator held are forgotten,
@@ -434,6 +698,7 @@ impl SharedRestingPredicates {
     /// promote them.
     pub fn wake_by_state(&self, state: &EvmState) -> Vec<TxHash> {
         let mut inner = self.inner.lock();
+        inner.predicates.record_written(state);
         if inner.predicates.is_empty() {
             return Vec::new();
         }
@@ -479,15 +744,25 @@ struct RestingHold {
 impl<T: BasePooledTx> BestTransactionsHold<T> for RestingHold {
     fn hold(&mut self, transaction: &ValidPoolTransaction<T>) -> bool {
         let mut inner = self.shared.inner.lock();
-        let Some(carried) = inner
-            .predicates
-            .hold(*transaction.hash(), transaction.transaction.validity_conditions())
-        else {
+        let hash = *transaction.hash();
+        let conditions = transaction.transaction.validity_conditions();
+        if let Some(carried) = inner.predicates.hold(hash, conditions) {
+            inner.held.insert(hash);
+            inner.stats.parked += 1;
+            inner.stats.carried_parked += u64::from(carried);
+            return true;
+        }
+        let Some(rest) = transaction.transaction.ingestion_rest() else { return false };
+        if let Err(reason) = inner.predicates.ingestion_rest_applies(rest, conditions) {
+            inner.stats.ingestion.record_stale(reason);
             return false;
-        };
-        inner.held.insert(*transaction.hash());
+        }
+        // Equivalent to the build loop evaluating it here and parking it under `rest.predicate`.
+        inner.predicates.rest(hash, rest.predicate.clone());
+        inner.held.insert(hash);
+        inner.adopted.push(hash);
         inner.stats.parked += 1;
-        inner.stats.carried_parked += u64::from(carried);
+        inner.stats.ingestion.applied += 1;
         true
     }
 
@@ -580,7 +855,7 @@ mod tests {
     use base_execution_txpool::ValidityOperator;
     use revm::{
         database::{AccountStatus, TransitionAccount, TransitionState, states::StorageSlot},
-        state::{Account, AccountInfo},
+        state::{Account, AccountInfo, EvmStorageSlot},
     };
 
     use super::*;
@@ -919,6 +1194,192 @@ mod tests {
             ValidityPredicate::FlashblockIndex { op: ValidityOperator::Equal, value: U256::ONE },
         );
         assert!(resting.is_empty());
+    }
+
+    /// A tracking set building block 2 on [`PARENT`] with `pre_block_changes` applied.
+    fn tracking_block_two(pre_block_changes: Option<&TransitionState>) -> RestingPredicates {
+        let mut resting = RestingPredicates::new(32);
+        resting.track_written_keys();
+        resting.begin_block(PARENT, 2, pre_block_changes);
+        resting
+    }
+
+    fn ingestion_rest(predicate: ValidityPredicate) -> IngestionRest {
+        IngestionRest { state_block_hash: PARENT, predicate }
+    }
+
+    #[test]
+    fn ingestion_rest_applies_when_the_block_has_not_written_the_predicate_state() {
+        let predicate = balance_at_least(WATCHED, 1);
+        let mut resting = tracking_block_two(Some(&balance_transition(UNRELATED, 0, 5)));
+        let mut account = Account::default();
+        account.info.balance = U256::from(3);
+        resting.record_written(&EvmState::from_iter([(UNRELATED, account)]));
+
+        assert_eq!(
+            resting.ingestion_rest_applies(
+                &ingestion_rest(predicate.clone()),
+                &conditions(&[predicate]),
+            ),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn ingestion_rest_is_stale_once_a_commit_writes_the_predicate_state() {
+        let predicate = balance_at_least(WATCHED, 1);
+        let mut resting = tracking_block_two(Some(&TransitionState::default()));
+        let mut account = Account::default();
+        account.info.balance = U256::from(3);
+        resting.record_written(&EvmState::from_iter([(WATCHED, account)]));
+
+        assert_eq!(
+            resting.ingestion_rest_applies(
+                &ingestion_rest(predicate.clone()),
+                &conditions(&[predicate]),
+            ),
+            Err(IngestionRestStale::KeyWritten)
+        );
+    }
+
+    #[test]
+    fn ingestion_rest_is_stale_once_pre_block_writes_touch_the_predicate_state() {
+        let predicate = storage_equals(WATCHED, 7, 1);
+        let resting = tracking_block_two(Some(&storage_transition(WATCHED, 7, 0, 1)));
+
+        assert_eq!(
+            resting.ingestion_rest_applies(
+                &ingestion_rest(predicate.clone()),
+                &conditions(&[predicate]),
+            ),
+            Err(IngestionRestStale::KeyWritten)
+        );
+    }
+
+    #[test]
+    fn written_keys_distinguish_balance_nonce_and_slots_of_one_account() {
+        let mut resting = tracking_block_two(Some(&balance_transition(WATCHED, 0, 5)));
+        let mut account = Account::default();
+        account.storage.insert(
+            U256::from(7),
+            EvmStorageSlot::new_changed(U256::ZERO, U256::ONE, Default::default()),
+        );
+        resting.record_written(&EvmState::from_iter([(WATCHED, account)]));
+
+        // The pre-block write changed the balance, the commit changed slot 7, and nothing
+        // changed the nonce or slot 8.
+        for (predicate, expected) in [
+            (balance_at_least(WATCHED, 1), Err(IngestionRestStale::KeyWritten)),
+            (storage_equals(WATCHED, 7, 1), Err(IngestionRestStale::KeyWritten)),
+            (storage_equals(WATCHED, 8, 1), Ok(())),
+            (
+                ValidityPredicate::Nonce {
+                    address: WATCHED,
+                    op: ValidityOperator::Equal,
+                    value: U256::ONE,
+                },
+                Ok(()),
+            ),
+        ] {
+            assert_eq!(
+                resting.ingestion_rest_applies(
+                    &ingestion_rest(predicate.clone()),
+                    &conditions(std::slice::from_ref(&predicate)),
+                ),
+                expected,
+                "{predicate:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn ingestion_rest_is_stale_when_pre_block_writes_are_unknown() {
+        let predicate = balance_at_least(WATCHED, 1);
+        let resting = tracking_block_two(None);
+
+        assert_eq!(
+            resting.ingestion_rest_applies(
+                &ingestion_rest(predicate.clone()),
+                &conditions(&[predicate]),
+            ),
+            Err(IngestionRestStale::KeyWritten)
+        );
+    }
+
+    #[test]
+    fn ingestion_rest_evaluated_on_another_block_does_not_apply() {
+        let predicate = balance_at_least(WATCHED, 1);
+        let resting = tracking_block_two(Some(&TransitionState::default()));
+
+        assert_eq!(
+            resting.ingestion_rest_applies(
+                &IngestionRest { state_block_hash: BUILT, predicate: predicate.clone() },
+                &conditions(&[predicate]),
+            ),
+            Err(IngestionRestStale::ParentMismatch)
+        );
+    }
+
+    #[test]
+    fn ingestion_rest_for_a_predicate_no_longer_in_the_batch_does_not_apply() {
+        let resting = tracking_block_two(Some(&TransitionState::default()));
+
+        assert_eq!(
+            resting.ingestion_rest_applies(
+                &ingestion_rest(balance_at_least(WATCHED, 1)),
+                &conditions(&[balance_at_least(UNRELATED, 1)]),
+            ),
+            Err(IngestionRestStale::PredicateAbsent)
+        );
+    }
+
+    #[test]
+    fn ingestion_rest_of_an_expired_batch_does_not_apply() {
+        let blocker = balance_at_least(WATCHED, 1);
+        let deadline = ValidityPredicate::BlockNumber {
+            op: ValidityOperator::LessThanOrEqual,
+            value: U256::ONE,
+        };
+        let resting = tracking_block_two(Some(&TransitionState::default()));
+
+        assert_eq!(
+            resting.ingestion_rest_applies(
+                &ingestion_rest(blocker.clone()),
+                &conditions(&[deadline, blocker]),
+            ),
+            Err(IngestionRestStale::Expired)
+        );
+    }
+
+    #[test]
+    fn ingestion_rest_never_applies_without_written_key_tracking() {
+        let predicate = balance_at_least(WATCHED, 1);
+        let mut resting = RestingPredicates::new(32);
+        resting.begin_block(PARENT, 2, Some(&TransitionState::default()));
+
+        assert_eq!(
+            resting.ingestion_rest_applies(
+                &ingestion_rest(predicate.clone()),
+                &conditions(&[predicate]),
+            ),
+            Err(IngestionRestStale::Untracked)
+        );
+    }
+
+    #[test]
+    fn written_keys_reset_at_each_block() {
+        let predicate = balance_at_least(WATCHED, 1);
+        let mut resting = tracking_block_two(Some(&balance_transition(WATCHED, 0, 5)));
+        resting.end_block(BUILT);
+        resting.begin_block(BUILT, 3, Some(&TransitionState::default()));
+
+        assert_eq!(
+            resting.ingestion_rest_applies(
+                &IngestionRest { state_block_hash: BUILT, predicate: predicate.clone() },
+                &conditions(&[predicate]),
+            ),
+            Ok(())
+        );
     }
 
     #[test]

@@ -335,6 +335,7 @@ where
                 self.config.predicate_bucket_ordered_threshold,
                 self.config.flashblocks_interval,
             );
+            resting.track_written_keys();
             let carry_over = resting.begin_block(
                 ctx.parent().hash(),
                 ctx.block_number(),
