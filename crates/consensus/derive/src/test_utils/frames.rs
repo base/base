@@ -108,7 +108,10 @@ impl FrameQueueAsserter {
 
     /// Asserts that holocene is active.
     pub fn holocene_active(&self, active: bool) {
-        let holocene = self.inner.is_holocene_active(self.inner.origin().unwrap_or_default());
+        let holocene = self
+            .inner
+            .rollup_config
+            .is_holocene_active(self.inner.origin().unwrap_or_default().timestamp);
         if !active {
             assert!(!holocene);
         } else {

@@ -5,7 +5,7 @@ use core::fmt::Debug;
 
 use alloy_primitives::{Bytes, hex};
 use async_trait::async_trait;
-use base_common_genesis::RollupConfig;
+use base_common_genesis::{BaseFeature, RollupConfig};
 use base_protocol::{BlockInfo, Channel};
 
 use super::{ChannelReaderProvider, NextFrameProvider};
@@ -139,7 +139,10 @@ where
             let size = channel.size() as f64;
             Metrics::pipeline_channel_mem().set(size);
 
-            let max_rlp_bytes_per_channel = if self.cfg.is_fjord_active(origin.timestamp) {
+            let max_rlp_bytes_per_channel = if self
+                .cfg
+                .is_feature_active_cascading(BaseFeature::LargeChannels, origin.timestamp)
+            {
                 RollupConfig::MAX_RLP_BYTES_PER_CHANNEL_FJORD
             } else {
                 RollupConfig::MAX_RLP_BYTES_PER_CHANNEL_BEDROCK

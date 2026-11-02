@@ -14,7 +14,7 @@ use alloy_primitives::Address;
 use alloy_rpc_types_eth::{Filter, Log};
 use async_trait::async_trait;
 use base_common_genesis::{
-    RollupConfig, SystemConfigLog, SystemConfigUpdate, UnsafeBlockSignerUpdate,
+    BaseFeature, RollupConfig, SystemConfigLog, SystemConfigUpdate, UnsafeBlockSignerUpdate,
 };
 use base_protocol::BlockInfo;
 use futures::{Stream, StreamExt};
@@ -301,7 +301,7 @@ where
                             return Ok(());
                         };
                         let ecotone_active =
-                            self.rollup_config.is_ecotone_active(derivation_block.timestamp);
+                            self.rollup_config.is_feature_active_cascading(BaseFeature::BlobAwareL1Fees, derivation_block.timestamp);
                         for log in logs {
                             let sys_cfg_log = SystemConfigLog::new(log.into(), ecotone_active);
                             if let Ok(SystemConfigUpdate::UnsafeBlockSigner(UnsafeBlockSignerUpdate { unsafe_block_signer })) = sys_cfg_log.build() {

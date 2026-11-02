@@ -5,7 +5,7 @@ use alloc::{boxed::Box, fmt::Debug};
 
 use alloy_primitives::{Address, Bytes};
 use async_trait::async_trait;
-use base_common_genesis::RollupConfig;
+use base_common_genesis::{BaseFeature, RollupConfig};
 use base_protocol::BlockInfo;
 
 use crate::{
@@ -20,8 +20,8 @@ where
     C: ChainProvider + Send + Clone,
     B: BlobProvider + Send + Clone,
 {
-    /// The ecotone timestamp.
-    pub ecotone_timestamp: Option<u64>,
+    /// The explicitly configured blob data-source boundary, captured when the source is built.
+    pub blob_activation_timestamp: Option<u64>,
     /// The blob source.
     pub blob_source: BlobSource<C, B>,
     /// The calldata source.
@@ -39,16 +39,22 @@ where
         calldata_source: CalldataSource<C>,
         cfg: &RollupConfig,
     ) -> Self {
-        Self { ecotone_timestamp: cfg.upgrades.ecotone_time, blob_source, calldata_source }
+        Self {
+            blob_activation_timestamp: cfg
+                .upgrades
+                .activation_timestamp(BaseFeature::BlobDataSource.activation_upgrade()),
+            blob_source,
+            calldata_source,
+        }
     }
 
     /// Instantiates a new [`EthereumDataSource`] from parts.
     pub fn new_from_parts(provider: C, blobs: B, cfg: &RollupConfig) -> Self {
-        Self {
-            ecotone_timestamp: cfg.upgrades.ecotone_time,
-            blob_source: BlobSource::new(provider.clone(), blobs, cfg.batch_inbox_address),
-            calldata_source: CalldataSource::new(provider, cfg.batch_inbox_address),
-        }
+        Self::new(
+            BlobSource::new(provider.clone(), blobs, cfg.batch_inbox_address),
+            CalldataSource::new(provider, cfg.batch_inbox_address),
+            cfg,
+        )
     }
 }
 
@@ -65,9 +71,12 @@ where
         block_ref: &BlockInfo,
         batcher_address: Address,
     ) -> PipelineResult<Self::Item> {
-        let ecotone_enabled =
-            self.ecotone_timestamp.map(|e| block_ref.timestamp >= e).unwrap_or(false);
-        if ecotone_enabled {
+        // Unlike L2 format gates, blob sourcing uses the configured L1 boundary captured at
+        // construction, not a runtime override or an implied activation in a sparse schedule.
+        let blobs_enabled = self
+            .blob_activation_timestamp
+            .is_some_and(|activation| block_ref.timestamp >= activation);
+        if blobs_enabled {
             self.blob_source.next(block_ref, batcher_address).await
         } else {
             self.calldata_source.next(block_ref, batcher_address).await
@@ -87,7 +96,10 @@ mod tests {
     use alloy_consensus::TxEnvelope;
     use alloy_eips::eip2718::Decodable2718;
     use alloy_primitives::{Address, address};
-    use base_common_genesis::{RollupConfig, SystemConfig, UpgradeConfig};
+    use base_common_genesis::{
+        BaseUpgrade, RollupConfig, RuntimeUpgradeRegistry, SystemConfig, UpgradeActivation,
+        UpgradeConfig,
+    };
     use base_protocol::BlockInfo;
 
     use super::*;
@@ -139,6 +151,65 @@ mod tests {
         let mut data_source = EthereumDataSource::new(blob, calldata, &cfg);
         let data = data_source.next(&BlockInfo::default(), Address::ZERO).await.unwrap();
         assert_eq!(data, Bytes::default());
+    }
+
+    #[tokio::test]
+    async fn blob_source_uses_explicit_activation_boundary() {
+        for (ecotone_time, timestamp, expected) in [
+            (Some(10), 9, Bytes::from_static(b"calldata")),
+            (Some(10), 10, Bytes::from_static(b"blob")),
+            (Some(0), 0, Bytes::from_static(b"blob")),
+            (None, 10, Bytes::from_static(b"calldata")),
+        ] {
+            // A later scheduled fork must not imply this L1 data-source transition.
+            let cfg = RollupConfig {
+                upgrades: UpgradeConfig { ecotone_time, fjord_time: Some(0), ..Default::default() },
+                ..Default::default()
+            };
+            let mut blob = default_test_blob_source();
+            blob.open = true;
+            blob.data.push(BlobData { data: None, calldata: Some(Bytes::from_static(b"blob")) });
+            let mut calldata = CalldataSource::new(TestChainProvider::default(), Address::ZERO);
+            calldata.open = true;
+            calldata.calldata.push_back(Bytes::from_static(b"calldata"));
+            let mut source = EthereumDataSource::new(blob, calldata, &cfg);
+
+            let block = BlockInfo { timestamp, ..Default::default() };
+            assert_eq!(source.next(&block, Address::ZERO).await.unwrap(), expected);
+        }
+    }
+
+    #[tokio::test]
+    async fn blob_source_preserves_configured_schedule_snapshot() {
+        let chain_id = 4_294_962_813;
+        let cfg = RollupConfig { l2_chain_id: chain_id.into(), ..Default::default() };
+        let mut blob = default_test_blob_source();
+        blob.open = true;
+        blob.data.push(BlobData { data: None, calldata: Some(Bytes::from_static(b"blob")) });
+        let mut calldata = CalldataSource::new(TestChainProvider::default(), Address::ZERO);
+        calldata.open = true;
+        calldata.calldata.extend([
+            Bytes::from_static(b"before"),
+            Bytes::from_static(b"after"),
+            Bytes::from_static(b"disabled"),
+        ]);
+        let mut source = EthereumDataSource::new(blob, calldata, &cfg);
+        let block = BlockInfo::default();
+
+        let before = source.next(&block, Address::ZERO).await;
+        RuntimeUpgradeRegistry::set_activation_timestamp(chain_id, BaseUpgrade::Ecotone, 0);
+        let enabled = source.next(&block, Address::ZERO).await;
+        RuntimeUpgradeRegistry::set_activation(
+            chain_id,
+            BaseUpgrade::Ecotone,
+            UpgradeActivation::Never,
+        );
+        let disabled = source.next(&block, Address::ZERO).await;
+        RuntimeUpgradeRegistry::clear_chain(chain_id);
+
+        assert_eq!(before.unwrap(), Bytes::from_static(b"before"));
+        assert_eq!(enabled.unwrap(), Bytes::from_static(b"after"));
+        assert_eq!(disabled.unwrap(), Bytes::from_static(b"disabled"));
     }
 
     #[tokio::test]
