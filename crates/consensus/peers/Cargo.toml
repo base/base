@@ -52,7 +52,7 @@ rstest.workspace = true
 arbtest.workspace = true
 mockall.workspace = true
 multihash.workspace = true
-tokio = { workspace = true, features = ["macros", "rt"] }
+tokio = { workspace = true, features = ["macros", "rt", "test-util"] }
 
 arbitrary = { workspace = true, features = ["derive"] }
 alloy-primitives = { workspace = true, features = ["arbitrary"] }

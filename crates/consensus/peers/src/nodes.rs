@@ -198,6 +198,28 @@ mod tests {
         assert!(matches!(err, BootNodeResolveError::AllFailed(2)));
     }
 
+    /// A resolver whose lookups never finish. Hand-rolled because a `mockall` expectation returns
+    /// a value, so an automock cannot model a lookup that hangs.
+    struct HangingResolver;
+
+    #[async_trait::async_trait]
+    impl HostResolver for HangingResolver {
+        async fn lookup_host(&self, _host: &str) -> io::Result<Vec<IpAddr>> {
+            std::future::pending().await
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn resolve_treats_timeout_as_failure() {
+        let entries = vec![entry("slow.example.org")];
+
+        let err = BootNodes::resolve(entries, &HangingResolver, Duration::from_secs(1), false)
+            .await
+            .expect_err("a timed-out lookup is a failure");
+
+        assert!(matches!(err, BootNodeResolveError::AllFailed(1)));
+    }
+
     #[tokio::test]
     async fn resolve_without_entries_is_empty() {
         let mut resolver = MockHostResolver::new();
