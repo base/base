@@ -59,7 +59,8 @@ gas limit. The payer's surplus refund is zero; the coinbase tip, `BaseFeeVault` 
 used. The `eth_estimateGas` estimate (`Eip8130Executor::simulate`) stays metered but stops folding
 `payer_floor` into the returned limit, because settlement adds it on top of whatever limit the sender
 declares: a sponsored transaction submitted at `gas_limit = estimate` settles `estimate + payer_floor`
-once. Before the feature the estimate includes `payer_floor` and settlement bills metered gas.
+once. EIP-8130 is only valid from Everest, which also activates the feature, so EIP-8130
+transactions are always billed this way. `eth_call` still reports the metered gas.
 
 ## License
 
