@@ -7560,4 +7560,41 @@ mod tests {
             assert_eq!(drain_committing(best.as_mut()), vec![unrelated], "base fee {base_fee}");
         }
     }
+
+    #[tokio::test]
+    async fn a_promoted_single_root_releases_its_bridged_successor() {
+        let (pool, client) = build_integration_pool();
+        let a = funded_signer(&client);
+        let root = add(&pool, resting_1559(&a, 0, 100)).await;
+        let bridged = add(&pool, signed_1559_with_fees(&a, 1, 1_000, 100)).await;
+        let hold = RecordingHold::new(&pool, vec![root]);
+        let mut best = hold.parking(0);
+
+        assert!(drain_committing(best.as_mut()).is_empty());
+        assert!(best.promote(root));
+        assert_eq!(drain_committing(best.as_mut()), vec![root, bridged]);
+    }
+
+    #[tokio::test]
+    async fn a_bridged_successor_replaced_after_creation_is_frozen_until_the_next_iterator() {
+        let (pool, client) = build_integration_pool();
+        let a = funded_signer(&client);
+        let root = add(&pool, resting_1559(&a, 0, 100)).await;
+        let bridged = add(&pool, signed_1559_with_fees(&a, 1, 1_000, 100)).await;
+        let hold = RecordingHold::new(&pool, vec![root]);
+        let mut best = hold.parking(0);
+
+        let replacement = add(&pool, signed_1559_with_fees(&a, 1, 1_100, 200)).await;
+        assert_store(&pool, replacement, PoolStore::Protocol);
+        assert_gone(&pool, bridged);
+
+        assert!(drain_committing(best.as_mut()).is_empty());
+        assert!(best.promote(root));
+        assert_eq!(drain_committing(best.as_mut()), vec![root, bridged]);
+
+        let mut next = hold.parking(0);
+        assert!(drain_committing(next.as_mut()).is_empty());
+        assert!(next.promote(root));
+        assert_eq!(drain_committing(next.as_mut()), vec![root, replacement]);
+    }
 }

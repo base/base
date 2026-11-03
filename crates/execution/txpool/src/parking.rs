@@ -416,7 +416,10 @@ where
                 }
             },
             Some(Entry::Vacant(vacant)) => {
-                vacant.insert(BestTransactionLaneState::Occupied(run.collect()));
+                // Collecting an exhausted Vec iterator can leave a deque's head past its buffer.
+                let mut buffered = VecDeque::with_capacity(run.len());
+                buffered.extend(run);
+                vacant.insert(BestTransactionLaneState::Occupied(buffered));
                 self.push_ready(root, lane);
             }
             None => self.push_ready(root, None),
