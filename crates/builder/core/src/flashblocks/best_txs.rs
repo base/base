@@ -33,6 +33,37 @@ use crate::{
 /// already passed the resting set, so the next flashblock refreshes and sees the current pool.
 pub const RESTING_WALK_RESUME_MIN_HOLDS: u64 = 64;
 
+/// Why a resting walk cut by a flashblock cancel was not continued by the next flashblock.
+///
+/// Each cut walk is either resumed, counted by `resting_walk_resumed_total`, or reset for one of
+/// these reasons, counted by `resting_walk_reset_total`, so the two add up to the cut walks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RestingWalkReset {
+    /// The walk was cut in the last flashblock of a block and would have been resumed, but the
+    /// next block starts a fresh iterator.
+    BlockEnd,
+    /// The cut flashblock skipped transactions for a limit a later flashblock may satisfy.
+    LimitRejection,
+    /// The cut flashblock held fewer than [`RESTING_WALK_RESUME_MIN_HOLDS`] resting transactions.
+    FewHolds,
+}
+
+impl RestingWalkReset {
+    /// Returns the metric label value of this reason.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::BlockEnd => "block_end",
+            Self::LimitRejection => "limit_rejection",
+            Self::FewHolds => "few_holds",
+        }
+    }
+
+    /// Counts one cut walk reset for this reason.
+    pub fn record(self) {
+        BuilderMetrics::resting_walk_reset_total(self.as_str()).increment(1);
+    }
+}
+
 /// An adapter that skips transactions already committed or permanently rejected by flashblocks.
 ///
 /// It also owns the validity transactions resting under an unchanged predicate, see
@@ -68,8 +99,11 @@ where
     // Cancel token of the flashblock being built, read by the current iterator's hold, which
     // outlives a flashblock when a cut walk resumes.
     walk_cancel: Arc<Mutex<CancellationToken>>,
-    // Set when a flashblock was cancelled before the current iterator was exhausted.
+    // Set by the hold's interrupt, or by `finish_flashblock`, when a cancel cut the current
+    // flashblock's walk. Cleared by `finish_flashblock`, which turns it into `carry_pending`.
     walk_cut: Arc<AtomicBool>,
+    // Whether the next flashblock of this block continues the current iterator.
+    carry_pending: bool,
     // Resting transactions held during the last flashblock whose stats were taken.
     flashblock_holds: u64,
     // Transactions the build loop parked in the current iterator, re-offered when a cut walk
@@ -129,6 +163,7 @@ where
             rejection_cache_hits: None,
             walk_cancel: Arc::new(Mutex::new(CancellationToken::new())),
             walk_cut: Arc::new(AtomicBool::new(false)),
+            carry_pending: false,
             flashblock_holds: 0,
             parked_by_build: Default::default(),
             seen_hold_runs: 0,
@@ -197,26 +232,41 @@ where
         false
     }
 
-    /// Ends a flashblock whose selection produced `diagnostics`.
+    /// Ends a flashblock whose selection produced `diagnostics`, after the build loop took its
+    /// resting stats, and decides whether the next flashblock continues the current iterator.
     ///
-    /// A cancelled flashblock whose build loop stopped on a candidate it never decided on, reached
-    /// right after held transactions, left its walk cut even when the cancel came after the
-    /// hold's last periodic check. A flashblock cancelled while it builds past the resting
-    /// transactions does not, so the next flashblock refreshes.
+    /// The walk was cut if the hold's interrupt stopped it, or if a cancelled flashblock's build
+    /// loop stopped on a candidate it never decided on, reached right after held transactions,
+    /// which covers a cancel after the hold's last periodic check. A flashblock cancelled while
+    /// it builds past the resting transactions leaves no cut walk, so the next one refreshes.
     ///
-    /// A cut walk is not resumed after a flashblock that skipped transactions for a limit a later
-    /// flashblock may satisfy, such as its gas or DA target, because the build loop invalidated
-    /// their lanes for the rest of the iterator and only a fresh iterator offers them again.
+    /// A cut walk is carried into the next flashblock only if this flashblock held at least
+    /// [`RESTING_WALK_RESUME_MIN_HOLDS`] resting transactions and skipped nothing for a limit a
+    /// later flashblock may satisfy, such as its gas or DA target: the build loop invalidated
+    /// those lanes for the rest of the iterator, and only a fresh iterator offers them again.
+    /// Otherwise the reset is counted with its [`RestingWalkReset`] reason.
     pub fn finish_flashblock(&mut self, diagnostics: &FlashblockDiagnostics) {
-        if diagnostics.cancelled
-            && self.current_transaction.is_some()
-            && self.current_after_hold
-            && self.resting_predicate_mode.is_enforced()
-        {
-            self.walk_cut.store(true, AtomicOrdering::Relaxed);
+        let interrupted = self.walk_cut.swap(false, AtomicOrdering::Relaxed);
+        let stopped_after_hold =
+            diagnostics.cancelled && self.current_transaction.is_some() && self.current_after_hold;
+        self.carry_pending = false;
+        if !self.resting_predicate_mode.is_enforced() || !(interrupted || stopped_after_hold) {
+            return;
         }
         if diagnostics.has_retryable_limit_rejections() {
-            self.walk_cut.store(false, AtomicOrdering::Relaxed);
+            RestingWalkReset::LimitRejection.record();
+        } else if self.flashblock_holds < RESTING_WALK_RESUME_MIN_HOLDS {
+            RestingWalkReset::FewHolds.record();
+        } else {
+            self.carry_pending = true;
+        }
+    }
+
+    /// Ends the block. A walk the last flashblock left to carry is reset, because the next block
+    /// starts a fresh iterator over its own pool snapshot.
+    pub fn finish_block(&mut self) {
+        if std::mem::take(&mut self.carry_pending) {
+            RestingWalkReset::BlockEnd.record();
         }
     }
 
@@ -232,15 +282,15 @@ where
         self.inner = inner;
         self.current_transaction = None;
         self.walk_cut.store(false, AtomicOrdering::Relaxed);
+        self.carry_pending = false;
         self.flashblock_holds = 0;
         self.parked_by_build.clear();
         self.seen_hold_runs = self.resting.hold_runs();
     }
 
-    /// Continues the current iterator in a new flashblock if the previous flashblock was cancelled
-    /// before its iterator was exhausted, after holding at least
-    /// [`RESTING_WALK_RESUME_MIN_HOLDS`] resting transactions, and returns whether it did.
-    /// Call [`Self::set_cancel`] with the new flashblock's token first.
+    /// Continues the current iterator in a new flashblock if [`Self::finish_flashblock`] left the
+    /// previous flashblock's cut walk to carry, and returns whether it did. Call
+    /// [`Self::set_cancel`] with the new flashblock's token first.
     ///
     /// The resumed iterator keeps every resting transaction it held and its lane state, so it
     /// neither re-walks nor yields them, and a later commit still promotes them. Resting
@@ -254,9 +304,7 @@ where
     /// refreshes, and lanes the build loop invalidated for state-dependent reasons, such as an
     /// unaffordable tip, stay invalid for the rest of the walk.
     pub fn resume_cut_walk(&mut self) -> bool {
-        if !self.walk_cut.swap(false, AtomicOrdering::Relaxed)
-            || self.flashblock_holds < RESTING_WALK_RESUME_MIN_HOLDS
-        {
+        if !std::mem::take(&mut self.carry_pending) {
             return false;
         }
         if let Some((transaction_hash, _, _)) = self.current_transaction.take() {
@@ -1160,6 +1208,108 @@ mod tests {
         assert_eq!(finish(&mut iterator, &cancelled_diagnostics()), 1);
 
         assert!(!begin(&mut iterator, &pool, CancellationToken::new()));
+    }
+
+    /// Runs `f` against a local recorder and returns the rendered metrics.
+    fn rendered_metrics(f: impl FnOnce()) -> String {
+        let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+        let handle = recorder.handle();
+        metrics::with_local_recorder(&recorder, f);
+        handle.render()
+    }
+
+    /// Starts a block over a 1,000-member resting cohort whose first flashblock is cancelled, so
+    /// its walk is cut after one interrupt interval of holds.
+    fn cut_cohort_walk()
+    -> (PendingPool<Ordering>, BestFlashblocksTxs<BasePooledTransaction, Parkable>) {
+        let (transactions, _ordinary) = resting_cohort(1_000, 1);
+        let pool = pending_pool(&transactions);
+        let mut iterator = resting_iterator(&pool);
+        rest_all(&mut iterator, &transactions);
+        assert!(!begin(&mut iterator, &pool, cancelled()));
+        assert!(iterator.next(()).is_none());
+        (pool, iterator)
+    }
+
+    /// A cut walk the next flashblock continues counts as resumed and never as reset.
+    #[test]
+    fn resumed_walk_is_counted_as_resumed() {
+        let rendered = rendered_metrics(|| {
+            let (pool, mut iterator) = cut_cohort_walk();
+            finish(&mut iterator, &cancelled_diagnostics());
+            assert!(begin(&mut iterator, &pool, CancellationToken::new()));
+            iterator.finish_block();
+        });
+
+        assert!(rendered.contains("base_builder_resting_walk_resumed_total 1"), "{rendered}");
+        assert!(!rendered.contains("resting_walk_reset_total"), "{rendered}");
+    }
+
+    /// A walk cut in the last flashblock of a block would have been resumed, but the block ends
+    /// and the next block starts a fresh iterator, so it counts once as a block-end reset.
+    #[test]
+    fn walk_cut_in_the_last_flashblock_is_counted_as_a_block_end_reset() {
+        let rendered = rendered_metrics(|| {
+            let (_pool, mut iterator) = cut_cohort_walk();
+            finish(&mut iterator, &cancelled_diagnostics());
+            iterator.finish_block();
+            iterator.finish_block();
+        });
+
+        assert!(
+            rendered.contains("base_builder_resting_walk_reset_total{reason=\"block_end\"} 1"),
+            "{rendered}"
+        );
+        assert!(!rendered.contains("resting_walk_resumed_total"), "{rendered}");
+    }
+
+    /// A cut walk dropped because its flashblock skipped transactions for a retryable limit counts
+    /// as a limit-rejection reset, not a block-end reset when the block later ends.
+    #[test]
+    fn cut_walk_dropped_for_a_retryable_limit_rejection_is_counted() {
+        let rendered = rendered_metrics(|| {
+            let (pool, mut iterator) = cut_cohort_walk();
+            finish(
+                &mut iterator,
+                &FlashblockDiagnostics { txs_rejected_gas: 1, ..cancelled_diagnostics() },
+            );
+            assert!(!begin(&mut iterator, &pool, CancellationToken::new()));
+            iterator.finish_block();
+        });
+
+        assert!(
+            rendered
+                .contains("base_builder_resting_walk_reset_total{reason=\"limit_rejection\"} 1"),
+            "{rendered}"
+        );
+        assert!(!rendered.contains("block_end"), "{rendered}");
+    }
+
+    /// A walk cut behind too few holds to resume counts as a few-holds reset.
+    #[test]
+    fn cut_walk_behind_few_holds_is_counted() {
+        let mut transactions =
+            vec![validity_transaction(0, 0, 10, vec![balance_at_least(WATCHED, 1)])];
+        transactions.extend(
+            (1..=2 * u64::from(HOLD_INTERRUPT_INTERVAL)).map(|nonce| transaction(0, nonce, 10)),
+        );
+        transactions.push(transaction(1, 0, 1));
+        let pool = pending_pool(&transactions);
+        let rendered = rendered_metrics(|| {
+            let mut iterator = resting_iterator(&pool);
+            rest_all(&mut iterator, &transactions[..1]);
+            assert!(!begin(&mut iterator, &pool, cancelled()));
+            assert!(iterator.next(()).is_some());
+            finish(&mut iterator, &cancelled_diagnostics());
+            assert!(!begin(&mut iterator, &pool, CancellationToken::new()));
+            iterator.finish_block();
+        });
+
+        assert!(
+            rendered.contains("base_builder_resting_walk_reset_total{reason=\"few_holds\"} 1"),
+            "{rendered}"
+        );
+        assert!(!rendered.contains("block_end"), "{rendered}");
     }
 
     /// A cancel the hold never checks, because the walk finishes its resting run in fewer than

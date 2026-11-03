@@ -1047,6 +1047,7 @@ where
     where
         DB: Database<Error = ProviderError>,
     {
+        best_txs.finish_block();
         // Start the end-of-block sweep before the state root so the two overlap. The set is only
         // stored once the block is sealed, so a block that fails to seal does not hand it on.
         let resting = self
