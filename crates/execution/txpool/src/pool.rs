@@ -2937,8 +2937,8 @@ mod tests {
     use super::*;
     use crate::{
         BaseL1BlockInfo, BaseOrdering, BasePooledTransaction, BuilderApiImpl, BuilderApiServer,
-        LimitClass, NoExtensions, ValidatedTransaction, ValidityOperator, ValidityPredicate,
-        WatchSet,
+        HOLD_INTERRUPT_INTERVAL, LimitClass, NoExtensions, ValidatedTransaction, ValidityOperator,
+        ValidityPredicate, WatchSet,
     };
 
     fn test_chain_id() -> u64 {
@@ -7125,5 +7125,256 @@ mod tests {
         delegate(&client, &signer);
         let error = add_err(&pool, validity_1559(&signer, 1, 1_000)).await;
         assert!(is_delegated_validity_rejection(&error), "{error:?}");
+    }
+
+    /// What a [`RecordingHold`] was asked and how it answered.
+    #[derive(Default)]
+    struct HoldLog {
+        /// Hashes the hold holds.
+        resting: Vec<TxHash>,
+        /// Every hash the hold was asked about, in order.
+        checked: Vec<TxHash>,
+        /// Checks made while a lane store's lock was held.
+        checked_under_lock: usize,
+        /// Reports the build interrupted once this many hashes were checked.
+        interrupt_after: Option<usize>,
+    }
+
+    /// A hold that probes the lane stores' locks on every check, as a hold calling back into the
+    /// pool would take them.
+    #[derive(Clone)]
+    struct RecordingHold {
+        log: Arc<Mutex<HoldLog>>,
+        pool: IntegrationPool,
+    }
+
+    impl RecordingHold {
+        fn new(pool: &IntegrationPool, resting: Vec<TxHash>) -> Self {
+            let log = HoldLog { resting, ..HoldLog::default() };
+            Self { log: Arc::new(Mutex::new(log)), pool: pool.clone() }
+        }
+
+        fn checked(&self) -> Vec<TxHash> {
+            self.log.lock().checked.clone()
+        }
+
+        fn parking(
+            &self,
+            base_fee: u64,
+        ) -> Box<dyn ParkableBestTransactions<BasePooledTransaction>> {
+            self.pool.best_transactions_with_attributes_and_parking(
+                BestTransactionsAttributes::new(base_fee, None),
+                Some(Box::new(self.clone())),
+            )
+        }
+    }
+
+    impl BestTransactionsHold<BasePooledTransaction> for RecordingHold {
+        fn hold(&mut self, transaction: &ValidPoolTransaction<BasePooledTransaction>) -> bool {
+            let unlocked = self.pool.sidecar.pool.try_write().is_some()
+                && self.pool.validity.pool.try_write().is_some();
+            let mut log = self.log.lock();
+            log.checked.push(*transaction.hash());
+            log.checked_under_lock += usize::from(!unlocked);
+            log.resting.contains(transaction.hash())
+        }
+
+        fn record_duration(&mut self, _duration: Duration) {}
+
+        fn is_interrupted(&self) -> bool {
+            let log = self.log.lock();
+            log.interrupt_after.is_some_and(|after| log.checked.len() >= after)
+        }
+    }
+
+    fn resting_1559(signer: &PrivateKeySigner, nonce: u64, tip: u128) -> BasePooledTransaction {
+        signed_1559_with_fees(signer, nonce, 1_000, tip)
+            .with_validity_predicates(resting_predicates())
+    }
+
+    /// Yields every candidate, committing each as the build loop would, and returns their hashes.
+    fn drain_committing(
+        best: &mut dyn ParkableBestTransactions<BasePooledTransaction>,
+    ) -> Vec<TxHash> {
+        let mut yielded = Vec::new();
+        while let Some(transaction) = best.next() {
+            best.mark_committed(&transaction);
+            yielded.push(*transaction.hash());
+        }
+        yielded
+    }
+
+    #[tokio::test]
+    async fn eligible_resting_roots_are_asked_about_at_creation_outside_the_pool_locks() {
+        let (pool, client) = build_integration_pool();
+        let [a, b, c, d, n] = [(); 5].map(|_| funded_signer(&client));
+        let a0 = add(&pool, resting_1559(&a, 0, 900)).await;
+        let a1 = add(&pool, resting_1559(&a, 1, 850)).await;
+        add(&pool, signed_1559_with_fees(&a, 2, 1_000, 950)).await;
+        let b0 = add(&pool, resting_1559(&b, 0, 500)).await;
+        let c0 = add(&pool, resting_1559(&c, 0, 250)).await;
+        let d0 = add(&pool, signed_1559_with_fees(&d, 0, 1_000, 50)).await;
+        let n0 = add(
+            &pool,
+            signed_nonce_free_tx(&n, INTEGRATION_POOL_NOW_MS + 5_000, 1_000)
+                .with_validity_predicates(resting_predicates()),
+        )
+        .await;
+        let hold = RecordingHold::new(&pool, vec![a0, b0, n0]);
+
+        let mut best = hold.parking(0);
+        let mut checked = hold.checked();
+        checked.sort();
+        let mut roots = vec![a0, b0, c0, n0];
+        roots.sort();
+        assert_eq!(checked, roots, "each eligible root is asked about once, before any candidate");
+        assert_eq!(hold.log.lock().checked_under_lock, 0);
+
+        // Held roots keep their runs, including the bridged standard successor, out of the build.
+        assert_eq!(drain_committing(best.as_mut()), vec![c0, d0]);
+        assert!(!hold.checked().contains(&a1));
+        assert_eq!(hold.log.lock().checked_under_lock, 0);
+
+        // Without a hold the parking iterator matches the plain merge.
+        let attributes = BestTransactionsAttributes::new(0, None);
+        let unheld: Vec<_> = pool
+            .best_transactions_with_attributes_and_parking(attributes, None)
+            .map(|transaction| *transaction.hash())
+            .collect();
+        let merged: Vec<_> = pool
+            .best_transactions_with_attributes(attributes)
+            .map(|transaction| *transaction.hash())
+            .collect();
+        assert_eq!(unheld, merged);
+    }
+
+    #[tokio::test]
+    async fn woken_source_held_roots_compete_by_priority_and_release_their_runs_after_commit() {
+        let (pool, client) = build_integration_pool();
+        let [a, b, x, y] = [(); 4].map(|_| funded_signer(&client));
+        let a0 = add(&pool, resting_1559(&a, 0, 900)).await;
+        let a1 = add(&pool, resting_1559(&a, 1, 850)).await;
+        let a2 = add(&pool, signed_1559_with_fees(&a, 2, 1_000, 950)).await;
+        let b0 = add(&pool, resting_1559(&b, 0, 650)).await;
+        let x0 = add(&pool, signed_1559_with_fees(&x, 0, 1_000, 700)).await;
+        let x1 = add(&pool, signed_1559_with_fees(&x, 1, 1_000, 600)).await;
+        let y0 = add(&pool, signed_1559_with_fees(&y, 0, 1_000, 300)).await;
+        let hold = RecordingHold::new(&pool, vec![a0, b0]);
+        let mut best = hold.parking(0);
+
+        let first = best.next().unwrap();
+        assert_eq!(*first.hash(), x0);
+        best.mark_committed(&first);
+        assert!(best.promote(b0));
+        let second = best.next().unwrap();
+        assert_eq!(*second.hash(), b0, "the woken singleton outranks the next source candidate");
+        best.mark_committed(&second);
+
+        // x1 is now the iterator's cached next candidate. The woken run and the standard
+        // transaction bridged behind it still come out by priority, each after its predecessor
+        // commits.
+        assert!(best.promote(a0));
+        assert!(!best.promote(a0), "a root is promoted once");
+        assert_eq!(drain_committing(best.as_mut()), vec![a0, a1, a2, x1, y0]);
+    }
+
+    #[tokio::test]
+    async fn discarding_a_source_held_root_excludes_its_run() {
+        let (pool, client) = build_integration_pool();
+        let [a, z] = [(); 2].map(|_| funded_signer(&client));
+        let a0 = add(&pool, resting_1559(&a, 0, 900)).await;
+        add(&pool, resting_1559(&a, 1, 850)).await;
+        add(&pool, signed_1559_with_fees(&a, 2, 1_000, 950)).await;
+        let z0 = add(&pool, signed_1559_with_fees(&z, 0, 1_000, 100)).await;
+        let hold = RecordingHold::new(&pool, vec![a0]);
+        let mut best = hold.parking(0);
+
+        assert_eq!(drain_committing(best.as_mut()), vec![z0]);
+        assert!(best.discard_parked(a0, InvalidPoolTransactionError::Underpriced));
+        assert!(!best.discard_parked(a0, InvalidPoolTransactionError::Underpriced));
+        assert!(!best.promote(a0), "a discarded root cannot be woken");
+        assert!(best.next().is_none(), "nothing behind a discarded root is yielded");
+    }
+
+    #[tokio::test]
+    async fn anchored_resting_heads_are_held_by_the_adapter_when_reached() {
+        let (pool, client) = build_integration_pool();
+        let [s, o] = [(); 2].map(|_| funded_signer(&client));
+        let s0 = add(&pool, signed_1559_with_fees(&s, 0, 1_000, 1)).await;
+        let s1 = add(&pool, resting_1559(&s, 1, 900)).await;
+        let o0 = add(&pool, signed_1559_with_fees(&o, 0, 1_000, 500)).await;
+        let hold = RecordingHold::new(&pool, vec![s1]);
+
+        let mut best = hold.parking(0);
+        assert!(hold.checked().is_empty(), "a head riding another store's run is not asked");
+        assert_eq!(drain_committing(best.as_mut()), vec![o0, s0]);
+        assert_eq!(hold.checked(), vec![s1]);
+        assert!(best.promote(s1));
+        assert_eq!(drain_committing(best.as_mut()), vec![s1]);
+    }
+
+    #[tokio::test]
+    async fn underpriced_resting_roots_are_not_asked_about() {
+        let (pool, client) = build_integration_pool();
+        let signer = funded_signer(&client);
+        let root = add(&pool, resting_1559(&signer, 0, 900)).await;
+        let hold = RecordingHold::new(&pool, vec![root]);
+
+        let mut best = hold.parking(2_000);
+        assert!(best.next().is_none());
+        assert!(hold.checked().is_empty());
+    }
+
+    #[tokio::test]
+    async fn an_interrupted_creation_leaves_unasked_roots_to_the_adapter() {
+        let (pool, client) = build_integration_pool();
+        let count = HOLD_INTERRUPT_INTERVAL as usize + 1;
+        let mut roots = Vec::with_capacity(count);
+        for _ in 0..count {
+            roots.push(add(&pool, resting_1559(&funded_signer(&client), 0, 100)).await);
+        }
+        let hold = RecordingHold::new(&pool, roots.clone());
+
+        hold.log.lock().interrupt_after = Some(0);
+        let _cancelled = hold.parking(0);
+        assert!(hold.checked().is_empty(), "an interrupted build asks about nothing");
+
+        hold.log.lock().interrupt_after = Some(1);
+        let mut best = hold.parking(0);
+        assert_eq!(
+            hold.checked().len(),
+            HOLD_INTERRUPT_INTERVAL as usize,
+            "creation stops at the first interrupt check after it began"
+        );
+
+        hold.log.lock().interrupt_after = None;
+        assert!(best.next().is_none(), "the unasked root is held when the build reaches it");
+        assert_eq!(hold.checked().len(), count);
+        for root in &roots {
+            assert!(best.promote(*root));
+        }
+        let mut yielded = drain_committing(best.as_mut());
+        yielded.sort();
+        roots.sort();
+        assert_eq!(yielded, roots);
+    }
+
+    #[tokio::test]
+    async fn a_replaced_root_is_not_held_by_the_next_iterator() {
+        let (pool, client) = build_integration_pool();
+        let signer = funded_signer(&client);
+        let root = add(&pool, resting_1559(&signer, 0, 100)).await;
+        let hold = RecordingHold::new(&pool, vec![root]);
+        assert!(hold.parking(0).next().is_none());
+
+        let replacement = add(
+            &pool,
+            signed_1559_with_fees(&signer, 0, 1_100, 200)
+                .with_validity_predicates(resting_predicates()),
+        )
+        .await;
+        let mut best = hold.parking(0);
+        assert_eq!(drain_committing(best.as_mut()), vec![replacement]);
+        assert_eq!(hold.checked().last(), Some(&replacement));
     }
 }

@@ -180,6 +180,45 @@ Occupancy is published as `txpool.validity.pool_transactions` and
 replacements that crossed a store boundary as
 `txpool.validity.cross_store_replaced{direction}`.
 
+#### Source-held resting roots (Denim resting-predicate hold)
+
+`ParkableTransactionPool::best_transactions_with_attributes_and_parking` takes an
+optional `BestTransactionsHold`, which payload builders pass only when resting
+predicates are enforced. With no hold the iterator matches `best_transactions`.
+
+With a hold, the iterator asks it about the validity pool's lane roots when it is
+created, before ranking them. This happens after the pool's read guards are released, so
+a hold callback may use the pool. A root is asked about only if all of these hold:
+
+- it carries validity predicates;
+- it is not underpriced at the iterator's base fee;
+- its lane is anchored at canonical state, meaning it is not riding another store's
+  pending run (`TwoDNoncePool::lanes_ahead_of_state`), or it is nonce-free.
+
+Roots the hold holds never enter the iterator's priority heap. The rest of their lanes
+is not offered either. Every other candidate, including externally anchored heads, roots
+the hold declines, and roots left unasked, is held lazily by the parking adapter when the
+build reaches it. The hold's `is_interrupted` is checked before the first root and every
+`HOLD_INTERRUPT_INTERVAL` roots after that. Interruption stops the asking, and the
+remaining roots stay on the adapter path.
+
+`promote` on a source-held root moves the root to the ready set, behind any claimant of
+its nonce lane, and buffers the rest of its run behind it. A claimant is a member already
+yielded or parked, or the adapter's cached next candidate in that lane. The protocol
+snapshot can hold a replacement at the root's nonce. The root counts as yielded in the
+merge, so standard transactions bridged behind its run follow it after it commits. The
+adapter's cached next candidate goes back into priority competition, so newly released
+successors are ranked against it. Promotion fails for an unknown hash, a hash already
+promoted or discarded, or a root whose lane was invalidated. `discard_parked` on a
+source-held root invalidates its lane for the iterator and yields nothing behind it.
+
+Asking at creation marks every held root as seen by the resting set for that block, even
+roots the build budget never reaches. Such members therefore stay retained instead of
+aging out of the unseen sweep, and the hold's parked counters include them. Seen marking
+only bounds retention. Predicate applicability, predicate expiry, and pool expiry are
+evaluated as before. The snapshots, run copies, bridges, and scans are unchanged, so this
+is a constant-factor saving: the hold no longer pulls held roots through the merge one by one.
+
 ## Usage
 
 Add the dependency to your `Cargo.toml`:
