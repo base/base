@@ -443,7 +443,7 @@ mod tests {
 
     use alloy_consensus::{Transaction, transaction::Recovered};
     use alloy_eips::eip2718::Encodable2718;
-    use alloy_primitives::{Bytes, U256};
+    use alloy_primitives::{Bytes, TxHash, U256};
     use alloy_signer::SignerSync;
     use alloy_signer_local::PrivateKeySigner;
     use base_common_chains::ChainConfig;
@@ -462,11 +462,22 @@ mod tests {
     #[derive(Debug)]
     struct StaticBestTransactions<T: BasePooledTx> {
         transactions: VecDeque<Arc<ValidPoolTransaction<T>>>,
+        /// Runs held before ranking, by their root's hash.
+        held: HashMap<TxHash, (Arc<ValidPoolTransaction<T>>, Vec<Arc<ValidPoolTransaction<T>>>)>,
     }
 
     impl<T: BasePooledTx> StaticBestTransactions<T> {
         fn new(transactions: Vec<Arc<ValidPoolTransaction<T>>>) -> Self {
-            Self { transactions: transactions.into() }
+            Self { transactions: transactions.into(), held: HashMap::default() }
+        }
+
+        fn holding(
+            mut self,
+            root: Arc<ValidPoolTransaction<T>>,
+            tail: Vec<Arc<ValidPoolTransaction<T>>>,
+        ) -> Self {
+            self.held.insert(*root.hash(), (root, tail));
+            self
         }
     }
 
@@ -478,7 +489,14 @@ mod tests {
         }
     }
 
-    impl<T: BasePooledTx> MergeSource<T> for StaticBestTransactions<T> {}
+    impl<T: BasePooledTx> MergeSource<T> for StaticBestTransactions<T> {
+        fn take_held(
+            &mut self,
+            transaction_hash: &TxHash,
+        ) -> Option<(Arc<ValidPoolTransaction<T>>, Vec<Arc<ValidPoolTransaction<T>>>)> {
+            self.held.remove(transaction_hash)
+        }
+    }
 
     impl<T: BasePooledTx> BestTransactions for StaticBestTransactions<T> {
         fn mark_invalid(&mut self, transaction: &Self::Item, _kind: InvalidPoolTransactionError) {
@@ -1052,5 +1070,141 @@ mod tests {
         .with_bridged_descendants(bridged);
 
         assert_eq!(merged.map(|tx| *tx.hash()).collect::<Vec<_>>(), expected);
+    }
+
+    fn hashes(transactions: &[Arc<ValidPoolTransaction<BasePooledTransaction>>]) -> Vec<TxHash> {
+        transactions.iter().map(|transaction| *transaction.hash()).collect()
+    }
+
+    #[test]
+    fn a_promoted_held_root_releases_its_run_and_bridged_successors_once() {
+        let (a, other) = (signer(), signer());
+        let lane = (a.address(), U256::ZERO);
+        let [root, tail] = [(0, 1), (1, 2)].map(|(nonce, tip)| {
+            valid_pool_transaction(
+                signed_tx(&a, U256::ZERO, nonce, tip, 1_000)
+                    .with_validity_predicates(resting_predicates()),
+            )
+        });
+        let bridged = valid_pool_transaction(signed_tx(&a, U256::ZERO, 2, 950, 1_000));
+        let unrelated = valid_pool_transaction(
+            signed_tx(&other, U256::ZERO, 0, 500, 1_000)
+                .with_validity_predicates(resting_predicates()),
+        );
+        let validity = StaticBestTransactions::new(vec![Arc::clone(&unrelated)])
+            .holding(Arc::clone(&root), vec![Arc::clone(&tail)]);
+        let mut merged = MergeBestTransactions::new(
+            Box::new(StaticBestTransactions::new(Vec::new())),
+            Box::new(StaticBestTransactions::new(Vec::new())),
+            Box::new(validity),
+            BaseOrdering::coinbase_tip(),
+            0,
+        )
+        .with_bridged_descendants(HashMap::from_iter([(
+            lane,
+            VecDeque::from([Arc::clone(&bridged)]),
+        )]));
+
+        let promoted = merged.promote_held(*root.hash());
+        assert_eq!(promoted.as_deref().map(hashes), Some(vec![*root.hash(), *tail.hash()]));
+        assert!(merged.promote_held(*root.hash()).is_none(), "a root is promoted once");
+        let rest: Vec<_> = merged.map(|transaction| *transaction.hash()).collect();
+        assert_eq!(rest, vec![*bridged.hash(), *unrelated.hash()]);
+    }
+
+    #[test]
+    fn a_held_root_of_an_invalidated_lane_is_neither_promoted_nor_discarded() {
+        let a = signer();
+        let lane = (a.address(), U256::ZERO);
+        let replacement = valid_pool_transaction(signed_tx(&a, U256::ZERO, 0, 300, 1_000));
+        let root = valid_pool_transaction(
+            signed_tx(&a, U256::ZERO, 0, 100, 1_000).with_validity_predicates(resting_predicates()),
+        );
+        let bridged = valid_pool_transaction(signed_tx(&a, U256::ZERO, 1, 950, 1_000));
+        let build = || {
+            MergeBestTransactions::new(
+                Box::new(StaticBestTransactions::new(vec![Arc::clone(&replacement)])),
+                Box::new(StaticBestTransactions::new(Vec::new())),
+                Box::new(
+                    StaticBestTransactions::new(Vec::new()).holding(Arc::clone(&root), Vec::new()),
+                ),
+                BaseOrdering::coinbase_tip(),
+                0,
+            )
+            .with_bridged_descendants(HashMap::from_iter([(
+                lane,
+                VecDeque::from([Arc::clone(&bridged)]),
+            )]))
+        };
+
+        let mut merged = build();
+        let first = merged.next().expect("replacement");
+        merged.mark_invalid(&first, InvalidPoolTransactionError::Underpriced);
+        assert!(merged.promote_held(*root.hash()).is_none());
+        assert_eq!(merged.count(), 0, "nothing bridged behind the root is released");
+
+        let mut merged = build();
+        let first = merged.next().expect("replacement");
+        merged.mark_invalid(&first, InvalidPoolTransactionError::Underpriced);
+        let kind = InvalidPoolTransactionError::Underpriced;
+        assert!(merged.discard_held(*root.hash(), kind).is_none());
+    }
+
+    #[test]
+    fn a_held_run_stops_before_its_first_underpriced_member() {
+        let a = signer();
+        let lane = (a.address(), U256::ZERO);
+        let root = valid_pool_transaction(
+            signed_tx(&a, U256::ZERO, 0, 100, 100).with_validity_predicates(resting_predicates()),
+        );
+        let underpriced = valid_pool_transaction(
+            signed_tx(&a, U256::ZERO, 1, 5, 5).with_validity_predicates(resting_predicates()),
+        );
+        let bridged = valid_pool_transaction(signed_tx(&a, U256::ZERO, 2, 900, 900));
+        let mut merged = MergeBestTransactions::new(
+            Box::new(StaticBestTransactions::new(Vec::new())),
+            Box::new(StaticBestTransactions::new(Vec::new())),
+            Box::new(
+                StaticBestTransactions::new(Vec::new())
+                    .holding(Arc::clone(&root), vec![underpriced]),
+            ),
+            BaseOrdering::coinbase_tip(),
+            10,
+        )
+        .with_bridged_descendants(HashMap::from_iter([(lane, VecDeque::from([bridged]))]));
+
+        let promoted = merged.promote_held(*root.hash());
+        assert_eq!(promoted.as_deref().map(hashes), Some(vec![*root.hash()]));
+        assert_eq!(merged.count(), 0, "nothing behind the underpriced member is released");
+    }
+
+    #[test]
+    fn discarding_a_held_root_releases_nothing_behind_it() {
+        let (a, other) = (signer(), signer());
+        let lane = (a.address(), U256::ZERO);
+        let root = valid_pool_transaction(
+            signed_tx(&a, U256::ZERO, 0, 100, 1_000).with_validity_predicates(resting_predicates()),
+        );
+        let tail = valid_pool_transaction(
+            signed_tx(&a, U256::ZERO, 1, 90, 1_000).with_validity_predicates(resting_predicates()),
+        );
+        let bridged = valid_pool_transaction(signed_tx(&a, U256::ZERO, 2, 950, 1_000));
+        let unrelated = valid_pool_transaction(signed_tx(&other, U256::ZERO, 0, 10, 1_000));
+        let mut merged = MergeBestTransactions::new(
+            Box::new(StaticBestTransactions::new(vec![Arc::clone(&unrelated)])),
+            Box::new(StaticBestTransactions::new(Vec::new())),
+            Box::new(
+                StaticBestTransactions::new(Vec::new()).holding(Arc::clone(&root), vec![tail]),
+            ),
+            BaseOrdering::coinbase_tip(),
+            0,
+        )
+        .with_bridged_descendants(HashMap::from_iter([(lane, VecDeque::from([bridged]))]));
+
+        let discarded = merged.discard_held(*root.hash(), InvalidPoolTransactionError::Underpriced);
+        assert_eq!(discarded.map(|transaction| *transaction.hash()), Some(*root.hash()));
+        assert!(merged.promote_held(*root.hash()).is_none());
+        let rest: Vec<_> = merged.map(|transaction| *transaction.hash()).collect();
+        assert_eq!(rest, vec![*unrelated.hash()]);
     }
 }
