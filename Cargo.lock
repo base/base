@@ -4796,6 +4796,7 @@ dependencies = [
  "futures",
  "hostname",
  "iai-callgrind",
+ "imbl",
  "jsonrpsee",
  "lru 0.16.4",
  "metrics",

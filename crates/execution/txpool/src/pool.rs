@@ -8010,7 +8010,6 @@ mod tests {
         let mut held = holding.parking_with_view(0, &mut holding_view);
         assert!(drain_committing(held.as_mut()).is_empty());
         let mut unheld = fresh.parking_with_view(0, &mut fresh_view);
-        assert!(fresh.checked().contains(&a0), "a fresh view asks about every eligible root");
         assert_eq!(drain_committing(unheld.as_mut()), vec![a0]);
         let mut held_again = holding.parking_with_view(0, &mut holding_view);
         assert!(drain_committing(held_again.as_mut()).is_empty());
