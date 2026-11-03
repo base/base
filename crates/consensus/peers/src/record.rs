@@ -11,6 +11,9 @@ use core::{
     num::ParseIntError,
     str::FromStr,
 };
+use std::net::ToSocketAddrs;
+
+use url::Host;
 
 use crate::{EnodeUrl, PeerId};
 
@@ -82,21 +85,33 @@ pub enum NodeRecordParseError {
     /// Invalid discport
     #[error("Failed to discport query: {0}")]
     Discport(ParseIntError),
-    /// The host is a DNS hostname that has not been resolved.
-    #[error("Host {0} is a hostname and must be resolved first")]
-    UnresolvedHost(String),
 }
 
 impl FromStr for NodeRecord {
     type Err = NodeRecordParseError;
 
-    /// Parses an `enode://` URL with an IP address host.
+    /// Parses an `enode://` URL.
     ///
-    /// Hostnames are rejected with [`NodeRecordParseError::UnresolvedHost`]; parse them as an
-    /// [`EnodeUrl`] and resolve them with [`EnodeUrl::resolve`] instead.
+    /// A hostname is resolved with a blocking system lookup, and a lookup failure is a parse
+    /// error. Bootnode startup instead parses [`EnodeUrl`]s and resolves them asynchronously,
+    /// skipping failures (see [`BootNodes::resolve`](crate::BootNodes::resolve)).
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let url = EnodeUrl::from_str(s)?;
-        url.node_record().ok_or_else(|| NodeRecordParseError::UnresolvedHost(url.host.to_string()))
+        if let Some(record) = url.node_record() {
+            return Ok(record);
+        }
+        let Host::Domain(domain) = &url.host else {
+            return Err(NodeRecordParseError::InvalidUrl(format!("invalid host: {}", url.host)));
+        };
+        let address = (domain.as_str(), url.tcp_port)
+            .to_socket_addrs()
+            .map_err(|e| NodeRecordParseError::InvalidUrl(e.to_string()))?
+            .next()
+            .map(|addr| addr.ip())
+            .ok_or_else(|| {
+                NodeRecordParseError::InvalidUrl(format!("no IP found for host: {domain}"))
+            })?;
+        Ok(url.with_address(address))
     }
 }
 
@@ -105,13 +120,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_url_parse_domain_requires_resolution() {
-        // Parsing must not perform DNS; `.invalid` never resolves (RFC 6761).
-        let url = "enode://6f8a80d14311c39f35f516fa664deaaaa13e85b2f7493f37f6144d86991ec012937307647bd3b9a82abe2974e1407241d54947bbb39763a4cac9f77166ad92a0@bootnode.invalid:30303?discport=30301";
-        let err = url.parse::<NodeRecord>().unwrap_err();
-        assert!(
-            matches!(err, NodeRecordParseError::UnresolvedHost(host) if host == "bootnode.invalid")
-        );
+    fn test_url_parse_domain() {
+        let url = "enode://6f8a80d14311c39f35f516fa664deaaaa13e85b2f7493f37f6144d86991ec012937307647bd3b9a82abe2974e1407241d54947bbb39763a4cac9f77166ad92a0@localhost:30303?discport=30301";
+        let node: NodeRecord = url.parse().unwrap();
+        let localhost_socket_addr = "localhost:30303".to_socket_addrs().unwrap().next().unwrap();
+        assert_eq!(node, NodeRecord {
+            address: localhost_socket_addr.ip(),
+            tcp_port: 30303,
+            udp_port: 30301,
+            id: "6f8a80d14311c39f35f516fa664deaaaa13e85b2f7493f37f6144d86991ec012937307647bd3b9a82abe2974e1407241d54947bbb39763a4cac9f77166ad92a0".parse().unwrap(),
+        })
     }
 
     #[test]

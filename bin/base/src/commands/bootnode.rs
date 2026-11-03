@@ -71,7 +71,7 @@ impl BootnodeCommand {
     }
 
     async fn run_consensus(consensus: BootnodeP2PArgs, chain_id: u64) -> eyre::Result<()> {
-        let driver = consensus.discovery_driver(chain_id)?;
+        let driver = consensus.discovery_driver(chain_id).await?;
         let (handler, mut discovered_enrs) = driver.start();
         let local_enr = handler.local_enr().await.wrap_err("discovery service stopped")?;
         consensus.write_enr_output(&local_enr)?;

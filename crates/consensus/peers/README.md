@@ -53,8 +53,9 @@ to resolve is skipped with a `warn!` that names the host and the error. Resoluti
 when bootnodes were configured, none of them is usable, and the caller has no other way to seed
 discovery, such as chain default bootnodes.
 
-Hostnames are resolved once, at startup. `NodeRecord::from_str` rejects hostnames with
-`NodeRecordParseError::UnresolvedHost` instead of performing a blocking lookup.
+Hostnames are resolved once, at startup. `NodeRecord::from_str` (and so
+`BootNode::parse_bootnode`) still resolves a hostname with a blocking system lookup and fails if
+it doesn't resolve. It's kept for one-shot tools; node startup uses `BootNodeEntry` instead.
 
 ## Usage
 

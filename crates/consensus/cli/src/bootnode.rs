@@ -10,7 +10,9 @@ use alloy_primitives::B256;
 use base_cli_utils::{LogConfig, RuntimeManager};
 use base_common_genesis::RollupConfig;
 use base_consensus_disc::{Discv5Builder, LocalNode};
-use base_consensus_peers::{BootNode, BootNodes, BootStoreFile, SecretKeyLoader};
+use base_consensus_peers::{
+    BootNodeEntry, BootNodes, BootStoreFile, SecretKeyLoader, SystemHostResolver,
+};
 use clap::Args;
 use discv5::{Config, ConfigBuilder, Enr, enr::k256};
 use eyre::Context;
@@ -78,7 +80,7 @@ impl Bootnode {
         let chain_id = cfg.l2_chain_id.id();
         self.p2p.check_ports()?;
 
-        let driver = self.p2p.discovery_driver(chain_id)?;
+        let driver = self.p2p.discovery_driver(chain_id).await?;
         let (handler, mut discovered_enrs) = driver.start();
         let local_enr = handler.local_enr().await.wrap_err("discovery service stopped")?;
         self.p2p.write_enr_output(&local_enr)?;
@@ -174,7 +176,10 @@ pub struct BootnodeP2PArgs {
     #[arg(long = "p2p.no-bootstore", env = "BASE_NODE_P2P_NO_BOOTSTORE")]
     pub disable_bootstore: bool,
 
-    /// An optional list of bootnode ENRs or node records to start the node with.
+    /// An optional list of bootnodes to start the node with.
+    ///
+    /// Accepts ENRs and enode URLs. An enode host may be a DNS hostname, resolved once at startup;
+    /// a hostname that does not resolve is skipped with a warning.
     #[arg(long = "p2p.bootnodes", value_delimiter = ',', env = "BASE_NODE_P2P_BOOTNODES")]
     pub bootnodes: Vec<String>,
 
@@ -221,7 +226,7 @@ impl BootnodeP2PArgs {
     }
 
     /// Builds the discovery driver from the CLI arguments.
-    pub fn discovery_driver(
+    pub async fn discovery_driver(
         &self,
         chain_id: u64,
     ) -> eyre::Result<base_consensus_disc::Discv5Driver> {
@@ -230,7 +235,7 @@ impl BootnodeP2PArgs {
         let advertised = self.advertised_node(local_node_key);
         let discovery_config = self.discovery_config();
         let bootstore = self.bootstore(chain_id);
-        let bootnodes = self.bootnodes()?;
+        let bootnodes = self.bootnodes(chain_id).await?;
 
         let mut builder = Discv5Builder::new(advertised, chain_id, discovery_config)
             .with_bootstore_file(bootstore)
@@ -360,16 +365,28 @@ impl BootnodeP2PArgs {
         }
     }
 
-    /// Parses configured bootnodes.
-    pub fn bootnodes(&self) -> eyre::Result<BootNodes> {
-        self.bootnodes
+    /// Parses configured bootnodes and resolves their hostnames.
+    ///
+    /// A hostname that does not resolve is skipped; this fails only when bootnodes were
+    /// configured, none is usable, and the chain has no default bootnodes.
+    pub async fn bootnodes(&self, chain_id: u64) -> eyre::Result<BootNodes> {
+        let entries = self
+            .bootnodes
             .iter()
             .map(|bootnode| {
-                BootNode::parse_bootnode(bootnode)
+                bootnode
+                    .parse::<BootNodeEntry>()
                     .map_err(|e| eyre::eyre!("Failed to parse bootnode '{bootnode}': {e}"))
             })
-            .collect::<eyre::Result<Vec<BootNode>>>()
-            .map(Into::into)
+            .collect::<eyre::Result<Vec<_>>>()?;
+        let has_fallback = !BootNodes::from_chain_id(chain_id).is_empty();
+        Ok(BootNodes::resolve(
+            entries,
+            &SystemHostResolver,
+            BootNodes::DEFAULT_RESOLVE_TIMEOUT,
+            has_fallback,
+        )
+        .await?)
     }
 }
 
@@ -528,10 +545,10 @@ mod tests {
         assert_eq!(p2p.bootstore(8453), None);
     }
 
-    #[test]
-    fn invalid_bootnode_errors() {
+    #[tokio::test]
+    async fn invalid_bootnode_errors() {
         let p2p = p2p_args(&["--p2p.bootnodes", "enr:invalid"]);
-        let err = p2p.bootnodes().expect_err("invalid bootnode should fail");
+        let err = p2p.bootnodes(8453).await.expect_err("invalid bootnode should fail");
 
         assert!(err.to_string().contains("Failed to parse bootnode 'enr:invalid'"));
     }
