@@ -649,10 +649,10 @@ impl Decodable2718 for Eip8130Signed {
 
 impl InMemorySize for Eip8130Signed {
     fn size(&self) -> usize {
-        InMemorySize::size(&self.tx)
+        size_of::<Self>() - size_of::<TxEip8130>()
+            + InMemorySize::size(&self.tx)
             + self.sender_auth.len()
             + self.payer_auth.len()
-            + size_of::<B256>()
     }
 }
 
@@ -1093,5 +1093,18 @@ mod tests {
         let decoded: Eip8130Signed = serde_json::from_value(value).unwrap();
         assert_eq!(*decoded.hash(), *signed.hash());
         assert_ne!(*decoded.hash(), B256::ZERO);
+    }
+
+    #[rstest]
+    #[case::self_paid(false)]
+    #[case::sponsored(true)]
+    fn in_memory_size_counts_every_cached_field(#[case] payer_present: bool) {
+        let signed = sample_signed_8130(payer_present);
+        assert!(
+            InMemorySize::size(&signed)
+                >= size_of::<Eip8130Signed>()
+                    + signed.sender_auth().len()
+                    + signed.payer_auth().len()
+        );
     }
 }
