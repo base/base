@@ -250,6 +250,9 @@ write; it is checked again at each new position.
 `ParkableTransactionPool::best_transactions_with_attributes_and_parking` takes an
 optional `BestTransactionsHold`. Payload builders pass one only when resting predicates are
 enforced. Without a hold, the iterator matches `best_transactions`.
+If the hold reports no resting transactions, creation skips the root checks. The parking
+adapter still checks each candidate it reaches, so a transaction that starts resting after
+creation is held normally.
 
 With a hold, the iterator asks it about the validity pool's lane roots once, when the
 iterator is created and before ranking. The pool's read guards are released first, so a hold

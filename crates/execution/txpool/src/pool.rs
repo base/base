@@ -1617,7 +1617,7 @@ where
         AllTransactionsEvents::new(rx)
     }
 
-    /// With a `hold`, the validity pool's roots anchored at canonical state are
+    /// With a non-empty `hold`, the validity pool's roots anchored at canonical state are
     /// asked about once the read guards are released, before they are ranked
     /// (see `BestTwoDTransactions::hold_resting_roots`).
     fn merged_best_transactions(
@@ -7209,12 +7209,32 @@ mod tests {
             resting
         }
 
+        fn has_candidates(&self) -> bool {
+            !self.log.lock().resting.is_empty()
+        }
+
         fn record_duration(&mut self, _duration: Duration) {}
 
         fn is_interrupted(&self) -> bool {
             let log = self.log.lock();
             log.interrupt_after.is_some_and(|after| log.checked.len() >= after)
         }
+    }
+
+    #[tokio::test]
+    async fn an_empty_hold_skips_creation_checks_but_observes_later_rests() {
+        let (pool, client) = build_integration_pool();
+        let a = funded_signer(&client);
+        let root = add(&pool, resting_1559(&a, 0, 100)).await;
+        let hold = RecordingHold::new(&pool, vec![]);
+        let mut best = hold.parking(0);
+        assert!(hold.checked().is_empty(), "no resting roots to find at creation");
+
+        hold.log.lock().resting.push(root);
+        assert!(drain_committing(best.as_mut()).is_empty());
+        assert_eq!(hold.checked(), vec![root]);
+        assert!(best.promote(root));
+        assert_eq!(drain_committing(best.as_mut()), vec![root]);
     }
 
     fn resting_1559(signer: &PrivateKeySigner, nonce: u64, tip: u128) -> BasePooledTransaction {

@@ -90,6 +90,12 @@ pub trait BestTransactionsHold<T: PoolTransaction>: Send + Sync {
     /// roots when the iterator is created.
     fn hold(&mut self, transaction: &ValidPoolTransaction<T>) -> bool;
 
+    /// Returns whether any transaction could be held now. Returning false skips the creation
+    /// scan, not later checks: transactions may start resting while the iterator is in use.
+    fn has_candidates(&self) -> bool {
+        true
+    }
+
     /// Records the time one `next` call spent from its first hold until it found a candidate,
     /// which includes advancing past further held transactions, or the time spent asking about
     /// lane roots at creation. Calls that hold nothing record nothing.

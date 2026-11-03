@@ -1506,7 +1506,7 @@ where
         self
     }
 
-    /// Asks `hold` about each root anchored at canonical state, before
+    /// Unless the hold reports no candidates, asks about each root anchored at canonical state before
     /// [`Self::ranked`]. A root is asked about if it carries validity
     /// predicates, is not underpriced, and is nonce-free or its lane is absent
     /// from `external_anchors` (see `TwoDNoncePool::lanes_ahead_of_state`). A
@@ -1521,6 +1521,9 @@ where
         external_anchors: &HashMap<LaneId, u64>,
         hold: &mut dyn BestTransactionsHold<T>,
     ) {
+        if !hold.has_candidates() {
+            return;
+        }
         let started = Instant::now();
         let mut asked = 0_u32;
         for (index, lane) in self.lanes.iter_mut().enumerate() {
