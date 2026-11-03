@@ -4606,6 +4606,7 @@ dependencies = [
  "metrics-exporter-prometheus",
  "moka",
  "parking_lot",
+ "proptest",
  "reth-basic-payload-builder",
  "reth-chainspec",
  "reth-engine-tree",

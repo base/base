@@ -1379,4 +1379,352 @@ mod tests {
         assert_eq!(store.take(32, WAIT).len(), 1);
         assert!(store.take(32, WAIT).is_empty(), "a taken set leaves the store empty");
     }
+
+    /// Differential checks that no resting transaction misses a wakeup: after every commit, each
+    /// parked predicate that a plain state model reports as satisfied must have been woken, and
+    /// an admission-time result may only be adopted while its predicate is still unsatisfied.
+    mod missed_wakeups {
+        use alloy_primitives::{
+            Address, B256, U256,
+            map::{B256Set, U256Map},
+        };
+        use base_execution_txpool::{IngestionRest, ValidityOperator, ValidityPredicate};
+        use proptest::{collection::vec, option, prelude::*, sample::select};
+        use revm::{
+            database::{AccountStatus, TransitionAccount, TransitionState, states::StorageSlot},
+            state::{Account, AccountInfo, EvmState, EvmStorageSlot},
+        };
+
+        use super::{PARENT, RestingPredicates, conditions};
+
+        const ACCOUNTS: usize = 2;
+        const SLOTS: usize = 2;
+        const OPERATORS: [ValidityOperator; 6] = [
+            ValidityOperator::LessThan,
+            ValidityOperator::LessThanOrEqual,
+            ValidityOperator::Equal,
+            ValidityOperator::NotEqual,
+            ValidityOperator::GreaterThan,
+            ValidityOperator::GreaterThanOrEqual,
+        ];
+        /// Ordered buckets for every predicate, then flat buckets for every predicate.
+        const ORDERED_THRESHOLDS: [usize; 2] = [1, usize::MAX];
+
+        /// The state predicates read, per account.
+        #[derive(Debug, Clone, Copy, Default)]
+        struct ModelAccount {
+            balance: U256,
+            nonce: u64,
+            storage: [U256; SLOTS],
+        }
+
+        /// One account's writes in one committed transaction.
+        #[derive(Debug, Clone)]
+        struct AccountWrite {
+            balance: Option<U256>,
+            nonce: Option<u64>,
+            slots: Vec<(usize, U256)>,
+            destroyed: bool,
+        }
+
+        type Model = [ModelAccount; ACCOUNTS];
+        type Commit = [Option<AccountWrite>; ACCOUNTS];
+
+        fn address(index: usize) -> Address {
+            Address::with_last_byte(index as u8 + 1)
+        }
+
+        /// Small values, so predicates cross often, plus the top of the range for overflow edges.
+        fn value() -> impl Strategy<Value = U256> {
+            prop_oneof![
+                (0_u64..4).prop_map(U256::from),
+                Just(U256::MAX - U256::ONE),
+                Just(U256::MAX),
+            ]
+        }
+
+        fn predicate() -> impl Strategy<Value = ValidityPredicate> {
+            let masks = vec![U256::MAX, U256::from(1), U256::from(2), U256::from(3)];
+            (0..3_usize, 0..ACCOUNTS, 0..SLOTS, select(masks), select(OPERATORS.to_vec()), value())
+                .prop_map(|(kind, account, slot, mask, op, value)| {
+                    let address = address(account);
+                    match kind {
+                        0 => ValidityPredicate::Balance { address, op, value },
+                        1 => ValidityPredicate::Nonce { address, op, value },
+                        _ => ValidityPredicate::Storage {
+                            address,
+                            slot: U256::from(slot),
+                            mask,
+                            op,
+                            value,
+                        },
+                    }
+                })
+        }
+
+        fn model_account() -> impl Strategy<Value = ModelAccount> {
+            (value(), 0_u64..4, [value(), value()])
+                .prop_map(|(balance, nonce, storage)| ModelAccount { balance, nonce, storage })
+        }
+
+        fn account_write() -> impl Strategy<Value = AccountWrite> {
+            (
+                option::of(value()),
+                option::of(0_u64..4),
+                vec((0..SLOTS, value()), 0..3),
+                prop::bool::weighted(0.1),
+            )
+                .prop_map(|(balance, nonce, slots, destroyed)| AccountWrite {
+                    balance,
+                    nonce,
+                    slots,
+                    destroyed,
+                })
+        }
+
+        fn commit() -> impl Strategy<Value = Commit> {
+            [option::of(account_write()), option::of(account_write())]
+        }
+
+        fn holds(predicate: &ValidityPredicate, model: &Model) -> bool {
+            let account = |address: &Address| model[address.0[19] as usize - 1];
+            match predicate {
+                ValidityPredicate::Balance { address, op, value } => {
+                    op.matches(account(address).balance, *value)
+                }
+                ValidityPredicate::Nonce { address, op, value } => {
+                    op.matches(U256::from(account(address).nonce), *value)
+                }
+                ValidityPredicate::Storage { address, slot, mask, op, value } => {
+                    op.matches(account(address).storage[slot.to::<usize>()] & *mask, *value)
+                }
+                ValidityPredicate::BlockNumber { .. }
+                | ValidityPredicate::FlashblockIndex { .. } => {
+                    unreachable!("only state predicates are generated")
+                }
+            }
+        }
+
+        /// The account after `write`. A destroyed account reads as nonce zero with empty storage.
+        fn written(old: ModelAccount, write: &AccountWrite) -> ModelAccount {
+            let mut new = old;
+            new.balance = write.balance.unwrap_or(old.balance);
+            if write.destroyed {
+                new.nonce = 0;
+                new.storage = [U256::ZERO; SLOTS];
+            } else {
+                new.nonce = write.nonce.unwrap_or(old.nonce);
+                for &(slot, value) in &write.slots {
+                    new.storage[slot] = value;
+                }
+            }
+            new
+        }
+
+        fn info(account: ModelAccount) -> AccountInfo {
+            AccountInfo { balance: account.balance, nonce: account.nonce, ..Default::default() }
+        }
+
+        /// Applies `commit` to `model` and returns the [`EvmState`] a transaction making those
+        /// writes reports.
+        fn apply(model: &mut Model, commit: &Commit) -> EvmState {
+            let mut state = EvmState::default();
+            for (index, write) in commit.iter().enumerate() {
+                let Some(write) = write else { continue };
+                let old = model[index];
+                let new = written(old, write);
+                let mut account = Account::default();
+                *account.original_info_mut() = info(old);
+                account.info = info(new);
+                if write.destroyed {
+                    account.mark_selfdestruct();
+                } else {
+                    for &(slot, value) in &write.slots {
+                        account.storage.insert(
+                            U256::from(slot),
+                            EvmStorageSlot::new_changed(
+                                old.storage[slot],
+                                value,
+                                Default::default(),
+                            ),
+                        );
+                    }
+                }
+                model[index] = new;
+                state.insert(address(index), account);
+            }
+            state
+        }
+
+        /// Applies `commit` to `model` as pre-block writes, such as system calls and deposits, and
+        /// returns the [`TransitionState`] the builder hands the resting set for them.
+        fn apply_pre_block(model: &mut Model, commit: &Commit) -> TransitionState {
+            let mut transitions = TransitionState::default();
+            for (index, write) in commit.iter().enumerate() {
+                let Some(write) = write else { continue };
+                let old = model[index];
+                let new = written(old, write);
+                let storage: U256Map<StorageSlot> = if write.destroyed {
+                    U256Map::default()
+                } else {
+                    write
+                        .slots
+                        .iter()
+                        .map(|&(slot, _)| {
+                            let change =
+                                StorageSlot::new_changed(old.storage[slot], new.storage[slot]);
+                            (U256::from(slot), change)
+                        })
+                        .collect()
+                };
+                let status = if write.destroyed {
+                    AccountStatus::DestroyedChanged
+                } else {
+                    AccountStatus::Changed
+                };
+                transitions.transitions.insert(
+                    address(index),
+                    TransitionAccount {
+                        info: Some(info(new)),
+                        status,
+                        previous_info: Some(info(old)),
+                        previous_status: AccountStatus::Loaded,
+                        storage,
+                        storage_was_destroyed: write.destroyed,
+                    },
+                );
+                model[index] = new;
+            }
+            transitions
+        }
+
+        proptest! {
+            #![proptest_config(ProptestConfig::with_cases(1_000))]
+
+            #[test]
+            fn every_parked_predicate_that_becomes_satisfied_is_woken(
+                initial in [model_account(), model_account()],
+                predicates in vec(predicate(), 1..12),
+                commits in vec(commit(), 1..8),
+            ) {
+                for threshold in ORDERED_THRESHOLDS {
+                    let mut model = initial;
+                    let mut resting = RestingPredicates::new(threshold);
+                    let mut parked = Vec::new();
+                    for (index, predicate) in predicates.iter().enumerate() {
+                        if !holds(predicate, &model) {
+                            let hash = B256::with_last_byte(index as u8);
+                            resting.rest(hash, predicate.clone());
+                            parked.push((hash, predicate.clone()));
+                        }
+                    }
+                    for commit in &commits {
+                        let state = apply(&mut model, commit);
+                        let woken: B256Set = resting.woken_by_state(&state).into_iter().collect();
+                        for (hash, predicate) in &parked {
+                            prop_assert!(
+                                !holds(predicate, &model) || woken.contains(hash),
+                                "missed wakeup with ordered threshold {threshold}: {predicate:?}"
+                            );
+                        }
+                        // As a builder does: re-evaluate the woken members and rest again those
+                        // still unsatisfied.
+                        for hash in &woken {
+                            resting.remove(*hash);
+                        }
+                        parked.retain(|(hash, predicate)| {
+                            if !woken.contains(hash) {
+                                return true;
+                            }
+                            let unsatisfied = !holds(predicate, &model);
+                            if unsatisfied {
+                                resting.rest(*hash, predicate.clone());
+                            }
+                            unsatisfied
+                        });
+                    }
+                }
+            }
+
+            #[test]
+            fn an_admission_result_is_adopted_only_while_its_predicate_is_unsatisfied(
+                initial in [model_account(), model_account()],
+                predicates in vec(predicate(), 1..12),
+                commits in vec(commit(), 1..8),
+            ) {
+                let mut model = initial;
+                let mut resting = RestingPredicates::new(32);
+                resting.track_written_keys();
+                resting.begin_block(PARENT, 1, Some(&TransitionState::default()));
+                let admitted: Vec<_> = predicates
+                    .iter()
+                    .filter(|predicate| !holds(predicate, &initial))
+                    .cloned()
+                    .collect();
+                for commit in &commits {
+                    let state = apply(&mut model, commit);
+                    resting.record_written(&state);
+                    for predicate in &admitted {
+                        let rest = IngestionRest {
+                            state_block_hash: PARENT,
+                            predicate: predicate.clone(),
+                        };
+                        let adopted = resting
+                            .ingestion_rest_applies(&rest, &conditions(std::slice::from_ref(predicate)))
+                            .is_ok();
+                        prop_assert!(
+                            !adopted || !holds(predicate, &model),
+                            "adopted a satisfied predicate: {predicate:?}"
+                        );
+                    }
+                }
+            }
+
+            #[test]
+            fn pre_block_writes_release_carried_members_and_stale_admission_results(
+                initial in [model_account(), model_account()],
+                predicates in vec(predicate(), 1..12),
+                pre_block in commit(),
+            ) {
+                for threshold in ORDERED_THRESHOLDS {
+                    let mut resting = RestingPredicates::new(threshold);
+                    resting.begin_block(B256::ZERO, 1, Some(&TransitionState::default()));
+                    let unsatisfied: Vec<_> = predicates
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, predicate)| !holds(predicate, &initial))
+                        .map(|(index, predicate)| (B256::with_last_byte(index as u8), predicate.clone()))
+                        .collect();
+                    for (hash, predicate) in &unsatisfied {
+                        resting.rest(*hash, predicate.clone());
+                    }
+                    resting.end_block(PARENT);
+
+                    let mut model = initial;
+                    let transitions = apply_pre_block(&mut model, &pre_block);
+                    resting.track_written_keys();
+                    resting.begin_block(PARENT, 2, Some(&transitions));
+
+                    for (hash, predicate) in &unsatisfied {
+                        let predicate_conditions = conditions(std::slice::from_ref(predicate));
+                        let carried = resting.member(*hash, &predicate_conditions).is_some();
+                        prop_assert!(
+                            !carried || !holds(predicate, &model),
+                            "carried a satisfied member with ordered threshold {threshold}: {predicate:?}"
+                        );
+                        let rest = IngestionRest {
+                            state_block_hash: PARENT,
+                            predicate: predicate.clone(),
+                        };
+                        let adopted =
+                            resting.ingestion_rest_applies(&rest, &predicate_conditions).is_ok();
+                        prop_assert!(
+                            !adopted || !holds(predicate, &model),
+                            "adopted a satisfied predicate after pre-block writes: {predicate:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
 }
