@@ -7151,6 +7151,10 @@ mod tests {
         checked_under_lock: usize,
         /// Reports the build interrupted once this many hashes were checked.
         interrupt_after: Option<usize>,
+        /// Submitted to the pool when the keyed hash is asked about, as a concurrent admission
+        /// would land; only while no lane store's lock is held, and only on a multi-threaded
+        /// runtime.
+        admit_on_check: Option<(TxHash, BasePooledTransaction)>,
     }
 
     /// A hold that probes the lane stores' locks on every check, as a hold calling back into the
@@ -7186,10 +7190,23 @@ mod tests {
         fn hold(&mut self, transaction: &ValidPoolTransaction<BasePooledTransaction>) -> bool {
             let unlocked = self.pool.sidecar.pool.try_write().is_some()
                 && self.pool.validity.pool.try_write().is_some();
-            let mut log = self.log.lock();
-            log.checked.push(*transaction.hash());
-            log.checked_under_lock += usize::from(!unlocked);
-            log.resting.contains(transaction.hash())
+            let (resting, admit) = {
+                let mut log = self.log.lock();
+                log.checked.push(*transaction.hash());
+                log.checked_under_lock += usize::from(!unlocked);
+                let admit = log
+                    .admit_on_check
+                    .take_if(|(hash, _)| unlocked && hash == transaction.hash())
+                    .map(|(_, admitted)| admitted);
+                (log.resting.contains(transaction.hash()), admit)
+            };
+            if let Some(admitted) = admit {
+                let handle = tokio::runtime::Handle::current();
+                let admission = self.pool.add_transaction(TransactionOrigin::External, admitted);
+                tokio::task::block_in_place(|| handle.block_on(admission))
+                    .expect("admitted during the check");
+            }
+            resting
         }
 
         fn record_duration(&mut self, _duration: Duration) {}
@@ -7387,5 +7404,160 @@ mod tests {
         let mut best = hold.parking(0);
         assert_eq!(drain_committing(best.as_mut()), vec![replacement]);
         assert_eq!(hold.checked().last(), Some(&replacement));
+    }
+
+    /// A resting root with a resting successor, a standard transaction queued behind them and an
+    /// unrelated standard one. A standard replacement of the root is submitted while creation asks
+    /// the hold about the root: after the validity snapshot froze the root's run, before the
+    /// protocol snapshot picks up the replacement.
+    struct RootReplacedAtCreation {
+        hold: RecordingHold,
+        root: TxHash,
+        replacement: TxHash,
+        unrelated: TxHash,
+    }
+
+    impl RootReplacedAtCreation {
+        async fn new(
+            pool: &IntegrationPool,
+            client: &MockEthProvider<BasePrimitives, Arc<BaseChainSpec>>,
+        ) -> Self {
+            let [a, u] = [(); 2].map(|_| funded_signer(client));
+            let root = add(pool, resting_1559(&a, 0, 100)).await;
+            add(pool, resting_1559(&a, 1, 100)).await;
+            add(pool, signed_1559_with_fees(&a, 2, 1_000, 900)).await;
+            let unrelated = add(pool, signed_1559_with_fees(&u, 0, 1_000, 50)).await;
+            let replacement = signed_1559_with_fees(&a, 0, 1_100, 200);
+            let hold = RecordingHold::new(pool, vec![root]);
+            let replacement_hash = *replacement.hash();
+            hold.log.lock().admit_on_check = Some((root, replacement));
+            Self { hold, root, replacement: replacement_hash, unrelated }
+        }
+
+        fn parking(&self) -> Box<dyn ParkableBestTransactions<BasePooledTransaction>> {
+            let best = self.hold.parking(0);
+            assert_eq!(self.hold.checked(), vec![self.root]);
+            assert_store(&self.hold.pool, self.replacement, PoolStore::Protocol);
+            assert_gone(&self.hold.pool, self.root);
+            best
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_root_replaced_during_creation_waits_behind_its_parked_replacement() {
+        let (pool, client) = build_integration_pool();
+        let case = RootReplacedAtCreation::new(&pool, &client).await;
+        let mut best = case.parking();
+
+        let claimant = best.next().unwrap();
+        assert_eq!(*claimant.hash(), case.replacement);
+        best.park(&claimant);
+        assert!(best.promote(case.root));
+        assert_eq!(
+            drain_committing(best.as_mut()),
+            vec![case.unrelated],
+            "nothing in the lane bypasses its parked claimant"
+        );
+
+        assert!(best.promote(case.replacement));
+        let claimant = best.next().unwrap();
+        assert_eq!(*claimant.hash(), case.replacement);
+        best.mark_committed(&claimant);
+        // The stale root follows its committed claimant only to be rejected, and takes the run
+        // behind it along.
+        let root = best.next().unwrap();
+        assert_eq!(*root.hash(), case.root);
+        best.mark_invalid(&root, InvalidPoolTransactionError::Underpriced);
+        assert!(best.next().is_none());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_root_replaced_during_creation_waits_behind_its_cached_replacement() {
+        let (pool, client) = build_integration_pool();
+        let case = RootReplacedAtCreation::new(&pool, &client).await;
+        let woken = add(&pool, signed_1559_with_fees(&funded_signer(&client), 0, 1_000, 500)).await;
+        let mut best = case.parking();
+
+        let first = best.next().unwrap();
+        assert_eq!(*first.hash(), woken);
+        best.park(&first);
+        assert!(best.promote(woken));
+        // Yielding the promoted transaction leaves the replacement cached as the next source head.
+        let first = best.next().unwrap();
+        assert_eq!(*first.hash(), woken);
+        best.mark_committed(&first);
+
+        assert!(best.promote(case.root));
+        let claimant = best.next().unwrap();
+        assert_eq!(*claimant.hash(), case.replacement);
+        let unrelated = best.next().unwrap();
+        assert_eq!(*unrelated.hash(), case.unrelated, "the root waits for its claimant's commit");
+        best.mark_committed(&unrelated);
+        assert!(best.next().is_none());
+
+        best.mark_committed(&claimant);
+        let root = best.next().unwrap();
+        assert_eq!(*root.hash(), case.root);
+        best.mark_invalid(&root, InvalidPoolTransactionError::Underpriced);
+        assert!(best.next().is_none());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn rejecting_the_replacement_of_a_root_replaced_during_creation_drops_the_root_run() {
+        // Rejected while parked, after the root was promoted behind it.
+        let (pool, client) = build_integration_pool();
+        let case = RootReplacedAtCreation::new(&pool, &client).await;
+        let mut best = case.parking();
+        let claimant = best.next().unwrap();
+        assert_eq!(*claimant.hash(), case.replacement);
+        best.park(&claimant);
+        assert!(best.promote(case.root));
+        assert!(best.discard_parked(case.replacement, InvalidPoolTransactionError::Underpriced));
+        assert_eq!(drain_committing(best.as_mut()), vec![case.unrelated]);
+
+        // Rejected when yielded, before the root was promoted.
+        let (pool, client) = build_integration_pool();
+        let case = RootReplacedAtCreation::new(&pool, &client).await;
+        let mut best = case.parking();
+        let claimant = best.next().unwrap();
+        assert_eq!(*claimant.hash(), case.replacement);
+        best.mark_invalid(&claimant, InvalidPoolTransactionError::Underpriced);
+        assert!(!best.promote(case.root));
+        assert_eq!(drain_committing(best.as_mut()), vec![case.unrelated]);
+    }
+
+    #[tokio::test]
+    async fn a_promoted_root_releases_only_its_priced_run_and_nothing_once_rejected() {
+        const TAIL_UNDERPRICED_BASE_FEE: u64 = 2_000;
+        let (pool, client) = build_integration_pool();
+        let [a, u] = [(); 2].map(|_| funded_signer(&client));
+        let root = add(
+            &pool,
+            signed_1559_with_fees(&a, 0, 3_000, 100).with_validity_predicates(resting_predicates()),
+        )
+        .await;
+        let tail = add(&pool, resting_1559(&a, 1, 100)).await;
+        let bridged = add(&pool, signed_1559_with_fees(&a, 2, 3_000, 900)).await;
+        let unrelated = add(&pool, signed_1559_with_fees(&u, 0, 3_000, 50)).await;
+        let hold = RecordingHold::new(&pool, vec![root]);
+
+        // The underpriced tail ends the run at the root, and the bridged transaction, which would
+        // outbid everything, is never released.
+        let mut best = hold.parking(TAIL_UNDERPRICED_BASE_FEE);
+        assert!(best.promote(root));
+        assert_eq!(drain_committing(best.as_mut()), vec![root, unrelated]);
+
+        let mut best = hold.parking(0);
+        assert!(best.promote(root));
+        assert_eq!(drain_committing(best.as_mut()), vec![root, tail, bridged, unrelated]);
+
+        for base_fee in [TAIL_UNDERPRICED_BASE_FEE, 0] {
+            let mut best = hold.parking(base_fee);
+            assert!(best.promote(root));
+            let promoted = best.next().unwrap();
+            assert_eq!(*promoted.hash(), root);
+            best.mark_invalid(&promoted, InvalidPoolTransactionError::Underpriced);
+            assert_eq!(drain_committing(best.as_mut()), vec![unrelated], "base fee {base_fee}");
+        }
     }
 }
