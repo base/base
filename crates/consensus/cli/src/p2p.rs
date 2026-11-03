@@ -13,13 +13,13 @@ use alloy_provider::Provider;
 use backon::Retryable;
 use base_common_genesis::RollupConfig;
 use base_consensus_derive::ChainProvider;
-use base_consensus_disc::{LinkEntry, LocalNode};
+use base_consensus_disc::LocalNode;
 use base_consensus_gossip::{
     ConnectionLimitsConfig, DEFAULT_MAX_IDENTIFY_PEERSTORE_PEERS,
     DEFAULT_MAX_PENDING_OUTGOING_CONNECTIONS, DEFAULT_PENDING_DIAL_TIMEOUT, GaterConfig,
 };
 use base_consensus_node::NetworkConfig;
-use base_consensus_peers::{BootNode, BootStoreFile, PeerMonitoring, PeerScoreLevel};
+use base_consensus_peers::{BootStoreFile, PeerMonitoring, PeerScoreLevel};
 use base_consensus_providers::{AlloyChainProvider, L1RpcProvider};
 use base_retry::RetryConfig;
 use clap::Parser;
@@ -31,7 +31,7 @@ use tracing::{error, info, warn};
 use url::Url;
 
 use crate::{
-    resolve_host,
+    ConfiguredBootNodes, resolve_host,
     signer::{SignerArgs, SignerArgsParseError},
 };
 
@@ -363,9 +363,6 @@ pub enum P2PConfigError {
 }
 
 impl P2PArgs {
-    /// Prefix of an EIP-1459 ENR tree link in the bootnode list.
-    pub const ENR_TREE_PREFIX: &str = "enrtree://";
-
     /// Checks if the listen ports are available on the system.
     ///
     /// If either of the ports are `0`, this check is skipped.
@@ -653,21 +650,7 @@ impl P2PArgs {
             .unsafe_block_signer(l2_chain_id, config, l1_rpc, l1_rpc_timeout, genesis_signer)
             .await?;
 
-        let mut enr_trees = Vec::new();
-        let mut bootnodes = Vec::new();
-        for bootnode in self.bootnode_strings()? {
-            if bootnode.starts_with(Self::ENR_TREE_PREFIX) {
-                let tree = bootnode
-                    .parse::<LinkEntry>()
-                    .map_err(|e| eyre::eyre!("Failed to parse ENR tree '{bootnode}': {e}"))?;
-                enr_trees.push(tree);
-            } else {
-                let node = BootNode::parse_bootnode(&bootnode)
-                    .map_err(|e| eyre::eyre!("Failed to parse bootnode '{bootnode}': {e}"))?;
-                bootnodes.push(node);
-            }
-        }
-        let bootnodes = bootnodes.into();
+        let configured = ConfiguredBootNodes::parse(self.bootnode_strings()?)?;
 
         let bootstore =
             if self.disable_bootstore {
@@ -704,8 +687,8 @@ impl P2PArgs {
                 ..ConnectionLimitsConfig::new(self.peers_hi)
             },
             max_identify_peerstore_peers: self.identify_peerstore_size,
-            bootnodes,
-            enr_trees,
+            bootnodes: configured.bootnodes,
+            enr_trees: configured.enr_trees,
             rollup_config: config.clone(),
             gossip_signer: self.signer.config(l2_chain_id)?,
         })

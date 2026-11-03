@@ -10,7 +10,7 @@ use alloy_primitives::B256;
 use base_cli_utils::{LogConfig, RuntimeManager};
 use base_common_genesis::RollupConfig;
 use base_consensus_disc::{Discv5Builder, LocalNode};
-use base_consensus_peers::{BootNode, BootNodes, BootStoreFile, SecretKeyLoader};
+use base_consensus_peers::{BootStoreFile, SecretKeyLoader};
 use clap::Args;
 use discv5::{Config, ConfigBuilder, Enr, enr::k256};
 use eyre::Context;
@@ -18,7 +18,10 @@ use libp2p::identity::Keypair;
 use tokio::time::Duration;
 use tracing::{debug, info, warn};
 
-use crate::{ConsensusChainArgs, L2ConfigFile, LogArgs, MetricsArgs, metrics::CliMetrics};
+use crate::{
+    ConfiguredBootNodes, ConsensusChainArgs, L2ConfigFile, LogArgs, MetricsArgs,
+    metrics::CliMetrics,
+};
 
 /// Base consensus bootnode arguments.
 #[derive(Args, Clone, Debug)]
@@ -174,7 +177,10 @@ pub struct BootnodeP2PArgs {
     #[arg(long = "p2p.no-bootstore", env = "BASE_NODE_P2P_NO_BOOTSTORE")]
     pub disable_bootstore: bool,
 
-    /// An optional list of bootnode ENRs or node records to start the node with.
+    /// An optional list of bootnodes to start the node with.
+    ///
+    /// Accepts ENRs, node records and EIP-1459 ENR trees (`enrtree://<pubkey>@<domain>`). ENR
+    /// trees are synced in the background.
     #[arg(long = "p2p.bootnodes", value_delimiter = ',', env = "BASE_NODE_P2P_BOOTNODES")]
     pub bootnodes: Vec<String>,
 
@@ -230,11 +236,12 @@ impl BootnodeP2PArgs {
         let advertised = self.advertised_node(local_node_key);
         let discovery_config = self.discovery_config();
         let bootstore = self.bootstore(chain_id);
-        let bootnodes = self.bootnodes()?;
+        let configured = ConfiguredBootNodes::parse(&self.bootnodes)?;
 
         let mut builder = Discv5Builder::new(advertised, chain_id, discovery_config)
             .with_bootstore_file(bootstore)
-            .with_bootnodes(bootnodes)
+            .with_bootnodes(configured.bootnodes)
+            .with_enr_trees(configured.enr_trees)
             .with_interval(Duration::from_secs(self.discovery_interval))
             .disable_forward();
 
@@ -358,18 +365,6 @@ impl BootnodeP2PArgs {
                     .map_or(BootStoreFile::Default { chain_id }, BootStoreFile::Custom),
             )
         }
-    }
-
-    /// Parses configured bootnodes.
-    pub fn bootnodes(&self) -> eyre::Result<BootNodes> {
-        self.bootnodes
-            .iter()
-            .map(|bootnode| {
-                BootNode::parse_bootnode(bootnode)
-                    .map_err(|e| eyre::eyre!("Failed to parse bootnode '{bootnode}': {e}"))
-            })
-            .collect::<eyre::Result<Vec<BootNode>>>()
-            .map(Into::into)
     }
 }
 
@@ -526,14 +521,6 @@ mod tests {
         };
 
         assert_eq!(p2p.bootstore(8453), None);
-    }
-
-    #[test]
-    fn invalid_bootnode_errors() {
-        let p2p = p2p_args(&["--p2p.bootnodes", "enr:invalid"]);
-        let err = p2p.bootnodes().expect_err("invalid bootnode should fail");
-
-        assert!(err.to_string().contains("Failed to parse bootnode 'enr:invalid'"));
     }
 
     #[test]
