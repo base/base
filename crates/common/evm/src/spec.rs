@@ -294,7 +294,7 @@ mod tests {
             (BaseFeature::SubsecondBlocks, BaseUpgrade::Denim),
             (BaseFeature::Eip8130, BaseUpgrade::Everest),
             (BaseFeature::Keystore, BaseUpgrade::Zenith),
-            (BaseFeature::GasLimitBilling, BaseUpgrade::Zenith),
+            (BaseFeature::GasLimitBilling, BaseUpgrade::Everest),
         ];
         for upgrade in BaseUpgrade::EXECUTION_VARIANTS.into_iter().chain([
             BaseUpgrade::Delta,

@@ -1130,16 +1130,17 @@ mod tests {
     }
 
     #[test]
-    fn gas_limit_billing_activates_only_with_genesis_configured_zenith() {
-        let genesis_with_zenith = |zenith: Option<u64>| -> BaseChainSpec {
-            let zenith = zenith.map_or_else(String::new, |time| format!(r#", "zenith": {time}"#));
+    fn gas_limit_billing_activates_with_everest() {
+        let genesis_with_everest = |everest: Option<u64>| -> BaseChainSpec {
+            let everest =
+                everest.map_or_else(String::new, |time| format!(r#", "everest": {time}"#));
             let genesis = format!(
                 r#"{{
                   "config": {{
                     "bedrockBlock": 0, "regolithTime": 0, "canyonTime": 0, "ecotoneTime": 0,
                     "fjordTime": 0, "graniteTime": 0, "holoceneTime": 0, "isthmusTime": 0,
                     "jovianTime": 0,
-                    "base": {{ "v1": 0, "v2": 0, "v3": 0, "denim": 0, "everest": 0{zenith} }},
+                    "base": {{ "v1": 0, "v2": 0, "v3": 0, "denim": 0{everest} }},
                     "activationAdminAddress": "0xcb00000000000000000000000000000000000000"
                   }}
                 }}"#
@@ -1147,15 +1148,15 @@ mod tests {
             serde_json::from_str::<Genesis>(&genesis).unwrap().into()
         };
 
-        let without_zenith = genesis_with_zenith(None);
+        let without_everest = genesis_with_everest(None);
         assert!(
-            !without_zenith.is_feature_active_at_timestamp(BaseFeature::GasLimitBilling, u64::MAX)
+            !without_everest.is_feature_active_at_timestamp(BaseFeature::GasLimitBilling, u64::MAX)
         );
 
-        let with_zenith = genesis_with_zenith(Some(100));
-        assert!(!with_zenith.is_feature_active_at_timestamp(BaseFeature::GasLimitBilling, 99));
-        assert!(with_zenith.is_feature_active_at_timestamp(BaseFeature::GasLimitBilling, 100));
-        assert!(with_zenith.is_feature_activation_block(BaseFeature::GasLimitBilling, 100, 99));
+        let with_everest = genesis_with_everest(Some(100));
+        assert!(!with_everest.is_feature_active_at_timestamp(BaseFeature::GasLimitBilling, 99));
+        assert!(with_everest.is_feature_active_at_timestamp(BaseFeature::GasLimitBilling, 100));
+        assert!(with_everest.is_feature_activation_block(BaseFeature::GasLimitBilling, 100, 99));
     }
 
     #[test]
