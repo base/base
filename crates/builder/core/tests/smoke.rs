@@ -224,7 +224,7 @@ async fn chain_produces_big_tx_with_gas_limit() -> eyre::Result<()> {
     Ok(())
 }
 
-/// Gas-limit billing (`BaseFeature::GasLimitBilling`, enabled by Zenith) bills a transaction
+/// Gas-limit billing (`BaseFeature::GasLimitBilling`, enabled by Everest) bills a transaction
 /// for its declared gas limit, so the builder applies `max_gas_per_txn` to the declared limit
 /// before execution. The same over-provisioned transfer, a 21k-gas transfer declaring 100k under
 /// a 25k cap, is therefore included when the cap is checked against metered gas and permanently
@@ -240,7 +240,7 @@ async fn gas_limit_billing_applies_gas_cap_to_declared_limit_before_execution() 
     );
     assert!(
         !over_provisioned_transfer_is_included(
-            node_config_with_chain_spec(chain_spec_with_upgrade(BaseUpgrade::Zenith)),
+            node_config_with_chain_spec(chain_spec_with_upgrade(BaseUpgrade::Everest)),
             MAX_GAS_PER_TXN,
         )
         .await?,
