@@ -124,6 +124,15 @@ pub type PromoteSourceHeld<T, I> = fn(&mut I, TxHash) -> Option<Vec<Arc<ValidPoo
 pub type DiscardSourceHeld<T, I> =
     fn(&mut I, TxHash, InvalidPoolTransactionError) -> Option<Arc<ValidPoolTransaction<T>>>;
 
+/// Selection state one build lineage keeps across the pool iterators it creates; see the
+/// persistent selection view section of the crate README.
+///
+/// Staged stub: it holds no state yet, so an iterator created with a view is the one created
+/// without it. The persistent selection view replaces this stub.
+#[derive(Debug, Default)]
+#[non_exhaustive]
+pub struct SelectionView {}
+
 /// A transaction pool that can create lane-aware parkable best iterators.
 pub trait ParkableTransactionPool: TransactionPool
 where
@@ -135,6 +144,20 @@ where
         attributes: BestTransactionsAttributes,
         hold: Option<Box<dyn BestTransactionsHold<Self::Transaction>>>,
     ) -> Box<dyn ParkableBestTransactions<Self::Transaction>>;
+
+    /// Returns a parkable best iterator like
+    /// [`Self::best_transactions_with_attributes_and_parking`] for a build lineage that keeps
+    /// `view` across its iterators.
+    ///
+    /// Staged stub: the default ignores `view`.
+    fn best_transactions_with_selection_view(
+        &self,
+        attributes: BestTransactionsAttributes,
+        hold: Option<Box<dyn BestTransactionsHold<Self::Transaction>>>,
+        _view: &mut SelectionView,
+    ) -> Box<dyn ParkableBestTransactions<Self::Transaction>> {
+        self.best_transactions_with_attributes_and_parking(attributes, hold)
+    }
 }
 
 /// Lane-aware parking over an existing best-transactions iterator.

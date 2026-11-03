@@ -291,6 +291,91 @@ journal or cross-build snapshot cache. Snapshot scans, run copies and bridged-tr
 lookups remain. Eligible resting roots are still checked during creation; they skip the
 priority-ordered walk, not all per-build work. This is a constant-factor saving.
 
+##### Persistent selection view (proposed; staged stub only)
+
+This section is the target contract for removing the remaining per-build resting work. Only
+`SelectionView` and `ParkableTransactionPool::best_transactions_with_selection_view` exist, as a
+staged stub that ignores the view; everything else here is proposed. The sections above describe
+current behavior.
+
+Goal: with resting-predicate enforcement on, building again on an unchanged pool and resting
+set must not visit, copy, check, carry or drop the dormant population. A dormant root is an
+eligible root (rules above) that a hold held at an earlier creation, together with its tail and
+the standard transactions bridged behind it. Creation, draining, carry and drop cost the awake
+lanes, the lanes changed since the view last synchronized and the actual wakes, measured at
+20k, 40k and 75k resting transactions for both builders. Admission may pay an O(log n)
+persistent update per mutation.
+
+Contract:
+
+- **Ownership.** A `SelectionView` belongs to one job lineage and travels with its resting set.
+  There is no pool-wide dormancy flag. A job that starts with an empty resting set starts with
+  an empty view and asks about every eligible root, as today. Concurrent jobs keep independent
+  views and can disagree about the same root. The view stores root identities and a journal
+  position only, so it is not generic over the transaction type and lives inside
+  `RestingPredicates`. The snapshots an iterator reads come from the pool's persistent lane
+  stores and its persistent mirror of the standard runs bridged behind shared lanes, shared in
+  O(1) at creation.
+- **Identity.** Dormancy is keyed by the root's insertion identity, not its hash. Removing and
+  re-adding the same transaction creates a new identity, so the hold is asked again.
+- **Creation.** An iterator asks the hold only about eligible roots that are new to the view or
+  whose lane changed. It walks the awake roots in time proportional to their live count, never
+  to capacity retained from earlier dormant populations.
+- **Frozen snapshots.** An iterator captures an immutable snapshot of each dormant root, its
+  tail and its bridged successors. Waking a root in the same build hands back that snapshot,
+  exactly as `take_held` does today: a tail or bridged successor replaced after creation is still
+  yielded in its captured form, and the replacement waits for the next iterator. Successors are
+  never looked up live.
+- **Changes.** The pool records every lane change in a bounded journal with sequence numbers:
+  admission, replacement and removal in any store, cursor and anchor moves, canonical and
+  account updates, and replacements of bridged standard successors that leave the validity
+  cursor unchanged. Synchronizing a view wakes the dormant roots of the changed lanes and returns
+  the insertion identities that left the pool, so the builder removes their rests from the
+  resting set after the pool guards are released. The capacity starts at 16,384 entries;
+  whether that covers the admissions between two syncs at production rates is unmeasured.
+- **Wakes.** A commit that wakes a dormant root promotes it in the current iterator at once and
+  makes it awake in the view. Block-start releases do the same before creation.
+- **Expiry.** A rest keeps its transaction's whole `ValidityConditions`, captured when it rests
+  or at the first sync that sees it. With flashblock index 0 the root is expired at once when
+  either bound is below zero, from block `block.max + 1` otherwise, and never when `block.max`
+  is at least `u64::MAX`. Expiry removes the root without asking the hold.
+- **Recovery.** A view whose journal position has been overwritten, or whose resting set was
+  reset (other parent, unknown pre-block writes, reorg, abandoned or cancelled job), is
+  discarded. The next creation asks about every eligible root once, as today. Recovery never
+  compares map snapshots (`OrdMap::diff` is not used) and never keeps stale dormancy.
+- **Interruption.** A creation interrupted while synchronizing or asking leaves every root it did
+  not finish awake; the adapter decides those lazily, as today.
+- **Unchanged elsewhere.** Priority, claimant barriers, underpriced cut-offs, discard,
+  cross-store nonce order, nonce-free and 2D-nonce lanes, `off` and `shadow` modes and the Denim
+  gate behave as described above.
+- **Accounting.** `RestingStats::parked` keeps counting roots the hold was asked about and held.
+  Dormant roots skipped without a visit are reported as a separate count.
+- **Reclamation.** A large discarded view is dropped on the existing `resting-sweep` worker
+  through a bounded hand-off; when the hand-off is full the drop runs inline and is measured.
+
+```mermaid
+stateDiagram-v2
+    state "Awake: ranked, or asked at creation" as Awake
+    state "Dormant: skipped without a visit" as Dormant
+    state "Promoted from the frozen snapshot" as Promoted
+    state "Unknown: view discarded" as Unknown
+
+    [*] --> Awake: new insertion identity
+    Awake --> Dormant: hold holds the root at creation
+    Dormant --> Dormant: next build, lane unchanged
+    Dormant --> Promoted: commit wakes it in the same build
+    Promoted --> Awake: next creation
+    Dormant --> Awake: journal reports a lane change, or block-start release
+    Dormant --> [*]: removal, replacement, expiry or mining of the root
+    Awake --> Unknown: journal overflow or resting-set reset
+    Dormant --> Unknown: journal overflow or resting-set reset
+    Unknown --> Awake: next creation asks about every eligible root
+```
+
+Non-goals: live successor lookups, a pool-wide dormancy token, changes to admission or
+replacement rules, and an `imbl` upgrade. Only `imbl` 7.0.1 `get`, `insert`, `remove`, `split`
+and `range` operations are allowed; `OrdMap::diff` has a known bug in that version.
+
 ## Usage
 
 Add the dependency to your `Cargo.toml`:

@@ -2950,8 +2950,8 @@ mod tests {
     use super::*;
     use crate::{
         BaseL1BlockInfo, BaseOrdering, BasePooledTransaction, BuilderApiImpl, BuilderApiServer,
-        HOLD_INTERRUPT_INTERVAL, LimitClass, NoExtensions, ValidatedTransaction, ValidityOperator,
-        ValidityPredicate, WatchSet,
+        HOLD_INTERRUPT_INTERVAL, LimitClass, NoExtensions, SelectionView, ValidatedTransaction,
+        ValidityOperator, ValidityPredicate, WatchSet,
     };
 
     fn test_chain_id() -> u64 {
@@ -7184,6 +7184,18 @@ mod tests {
                 Some(Box::new(self.clone())),
             )
         }
+
+        fn parking_with_view(
+            &self,
+            base_fee: u64,
+            view: &mut SelectionView,
+        ) -> Box<dyn ParkableBestTransactions<BasePooledTransaction>> {
+            self.pool.best_transactions_with_selection_view(
+                BestTransactionsAttributes::new(base_fee, None),
+                Some(Box::new(self.clone())),
+                view,
+            )
+        }
     }
 
     impl BestTransactionsHold<BasePooledTransaction> for RecordingHold {
@@ -7582,19 +7594,36 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_promoted_single_root_releases_its_bridged_successor() {
+    async fn a_root_woken_after_its_tail_was_replaced_yields_the_tail_frozen_at_creation() {
         let (pool, client) = build_integration_pool();
-        let a = funded_signer(&client);
+        let [a, u] = [(); 2].map(|_| funded_signer(&client));
         let root = add(&pool, resting_1559(&a, 0, 100)).await;
-        let bridged = add(&pool, signed_1559_with_fees(&a, 1, 1_000, 100)).await;
+        let frozen_tail = add(&pool, resting_1559(&a, 1, 100)).await;
+        let trigger = add(&pool, signed_1559_with_fees(&u, 0, 1_000, 900)).await;
         let hold = RecordingHold::new(&pool, vec![root]);
         let mut best = hold.parking(0);
 
-        assert!(drain_committing(best.as_mut()).is_empty());
-        assert!(best.promote(root));
-        assert_eq!(drain_committing(best.as_mut()), vec![root, bridged]);
+        let replacement = add(
+            &pool,
+            signed_1559_with_fees(&a, 1, 1_100, 200).with_validity_predicates(resting_predicates()),
+        )
+        .await;
+        assert_store(&pool, replacement, PoolStore::Validity);
+        assert_gone(&pool, frozen_tail);
+
+        let first = best.next().unwrap();
+        assert_eq!(*first.hash(), trigger);
+        best.mark_committed(&first);
+        assert!(best.promote(root), "the commit wakes the root in the same build");
+        assert_eq!(drain_committing(best.as_mut()), vec![root, frozen_tail]);
+
+        let mut next = hold.parking(0);
+        assert!(next.promote(root));
+        assert_eq!(drain_committing(next.as_mut()), vec![trigger, root, replacement]);
     }
 
+    /// The standard successor is replaced without moving the validity lane's pending end, so
+    /// nothing on the validity side of the lane changes.
     #[tokio::test]
     async fn a_bridged_successor_replaced_after_creation_is_frozen_until_the_next_iterator() {
         let (pool, client) = build_integration_pool();
@@ -7616,5 +7645,222 @@ mod tests {
         assert!(drain_committing(next.as_mut()).is_empty());
         assert!(next.promote(root));
         assert_eq!(drain_committing(next.as_mut()), vec![root, replacement]);
+    }
+
+    #[tokio::test]
+    async fn a_promoted_single_root_releases_its_bridged_successor() {
+        let (pool, client) = build_integration_pool();
+        let a = funded_signer(&client);
+        let root = add(&pool, resting_1559(&a, 0, 100)).await;
+        let bridged = add(&pool, signed_1559_with_fees(&a, 1, 1_000, 100)).await;
+        let hold = RecordingHold::new(&pool, vec![root]);
+        let mut best = hold.parking(0);
+
+        assert!(drain_committing(best.as_mut()).is_empty());
+        assert!(best.promote(root));
+        assert_eq!(drain_committing(best.as_mut()), vec![root, bridged]);
+    }
+
+    #[tokio::test]
+    async fn concurrent_iterators_hold_only_the_roots_their_own_holds_rest() {
+        let (pool, client) = build_integration_pool();
+        let [a, b] = [(); 2].map(|_| funded_signer(&client));
+        let a0 = add(&pool, resting_1559(&a, 0, 900)).await;
+        let b0 = add(&pool, resting_1559(&b, 0, 500)).await;
+        let resting_a = RecordingHold::new(&pool, vec![a0]);
+        let resting_b = RecordingHold::new(&pool, vec![b0]);
+        let resting_none = RecordingHold::new(&pool, Vec::new());
+
+        let mut first = resting_a.parking(0);
+        let mut second = resting_b.parking(0);
+        let mut third = resting_none.parking(0);
+        assert_eq!(drain_committing(first.as_mut()), vec![b0]);
+        assert_eq!(drain_committing(second.as_mut()), vec![a0]);
+        assert_eq!(drain_committing(third.as_mut()), vec![a0, b0]);
+        assert!(first.promote(a0));
+        assert_eq!(drain_committing(first.as_mut()), vec![a0]);
+    }
+
+    #[tokio::test]
+    async fn a_promoted_root_releases_its_whole_long_tail_in_nonce_order() {
+        const LANE_LENGTH: u64 = 12;
+        let (pool, client) = build_integration_pool();
+        let [a, u] = [(); 2].map(|_| funded_signer(&client));
+        let mut lane = Vec::new();
+        for nonce in 0..LANE_LENGTH {
+            lane.push(add(&pool, resting_1559(&a, nonce, 100)).await);
+        }
+        let unrelated = add(&pool, signed_1559_with_fees(&u, 0, 1_000, 50)).await;
+        let hold = RecordingHold::new(&pool, vec![lane[0]]);
+
+        let mut best = hold.parking(0);
+        assert_eq!(hold.checked(), vec![lane[0]], "only the root is asked about");
+        assert_eq!(drain_committing(best.as_mut()), vec![unrelated]);
+        assert!(best.promote(lane[0]));
+        assert_eq!(drain_committing(best.as_mut()), lane);
+    }
+
+    /// A sender's standard lane, a resting 2D-nonce channel and a resting nonce-free transaction.
+    #[tokio::test]
+    async fn held_channel_and_nonce_free_roots_leave_the_senders_other_lanes_selectable() {
+        let channel = U256::from(7);
+        let (pool, client) = build_integration_pool();
+        let s = funded_signer(&client);
+        let standard = add(&pool, signed_1559_with_fees(&s, 0, 1_000, 50)).await;
+        let channel_root = add(&pool, validity_8130(&s, channel, 0, 1_000)).await;
+        let channel_tail = add(&pool, validity_8130(&s, channel, 1, 1_000)).await;
+        let nonce_free = add(
+            &pool,
+            signed_nonce_free_tx(&s, INTEGRATION_POOL_NOW_MS + 5_000, 1_000)
+                .with_validity_predicates(resting_predicates()),
+        )
+        .await;
+        let hold = RecordingHold::new(&pool, vec![channel_root, nonce_free]);
+
+        let mut best = hold.parking(0);
+        assert_eq!(drain_committing(best.as_mut()), vec![standard]);
+        assert!(!hold.checked().contains(&channel_tail));
+        assert!(best.promote(nonce_free));
+        assert_eq!(drain_committing(best.as_mut()), vec![nonce_free]);
+        assert!(best.promote(channel_root));
+        assert_eq!(drain_committing(best.as_mut()), vec![channel_root, channel_tail]);
+    }
+
+    #[tokio::test]
+    async fn a_hold_that_rests_nothing_matches_the_unheld_iterator() {
+        let (pool, client) = build_integration_pool();
+        let [a, b, s] = [(); 3].map(|_| funded_signer(&client));
+        add(&pool, resting_1559(&a, 0, 900)).await;
+        add(&pool, resting_1559(&a, 1, 850)).await;
+        add(&pool, signed_1559_with_fees(&a, 2, 1_000, 950)).await;
+        add(&pool, signed_1559_with_fees(&b, 0, 1_000, 300)).await;
+        add(&pool, signed_1559_with_fees(&s, 0, 1_000, 1)).await;
+        add(&pool, resting_1559(&s, 1, 700)).await;
+        add(&pool, validity_8130(&b, U256::from(3), 0, 1_000)).await;
+        let hold = RecordingHold::new(&pool, Vec::new());
+
+        let mut held = hold.parking(0);
+        let attributes = BestTransactionsAttributes::new(0, None);
+        let mut unheld = pool.best_transactions_with_attributes_and_parking(attributes, None);
+        assert_eq!(drain_committing(held.as_mut()), drain_committing(unheld.as_mut()));
+    }
+
+    #[tokio::test]
+    async fn a_held_root_stays_held_for_many_blocks_and_leaves_once_it_expires() {
+        const SHORT_EXPIRY_BLOCK: u64 = 5;
+        const BLOCKS_BUILT: u64 = 12;
+        let (pool, client) = build_integration_pool();
+        let [a, b, u] = [(); 3].map(|_| funded_signer(&client));
+        let lasting = add(&pool, resting_1559(&a, 0, 100)).await;
+        let expiring = add(
+            &pool,
+            signed_1559_with_fees(&b, 0, 1_000, 100).with_validity_predicates(vec![
+                ValidityPredicate::BlockNumber {
+                    op: ValidityOperator::LessThanOrEqual,
+                    value: U256::from(SHORT_EXPIRY_BLOCK),
+                },
+            ]),
+        )
+        .await;
+        let unrelated = add(&pool, signed_1559_with_fees(&u, 0, 1_000, 50)).await;
+        let hold = RecordingHold::new(&pool, vec![lasting, expiring]);
+
+        for block in 1..=BLOCKS_BUILT {
+            commit_block(&pool, block, Vec::new(), Vec::new());
+            let asked_before = hold.checked().len();
+            let mut best = hold.parking(0);
+            assert_eq!(drain_committing(best.as_mut()), vec![unrelated], "block {block}");
+            let asked = hold.checked()[asked_before..].contains(&expiring);
+            assert_eq!(asked, block < SHORT_EXPIRY_BLOCK, "block {block}");
+            assert_eq!(best.promote(expiring), block < SHORT_EXPIRY_BLOCK, "block {block}");
+        }
+        assert_gone(&pool, expiring);
+        let mut best = hold.parking(0);
+        assert!(best.promote(lasting));
+        assert_eq!(drain_committing(best.as_mut()), vec![lasting, unrelated]);
+    }
+
+    #[tokio::test]
+    async fn a_root_removed_and_added_again_is_asked_about_again() {
+        let (pool, client) = build_integration_pool();
+        let a = funded_signer(&client);
+        let transaction = resting_1559(&a, 0, 100);
+        let root = add(&pool, transaction.clone()).await;
+        let hold = RecordingHold::new(&pool, vec![root]);
+        assert!(hold.parking(0).next().is_none());
+
+        assert_eq!(pool.remove_transactions(vec![root]).len(), 1);
+        assert_gone(&pool, root);
+        assert!(hold.parking(0).next().is_none());
+        assert_eq!(hold.checked(), vec![root], "a removed root is not asked about");
+
+        add(&pool, transaction).await;
+        let mut best = hold.parking(0);
+        assert_eq!(hold.checked(), vec![root, root], "the re-added root is asked about again");
+        assert!(best.promote(root));
+        assert_eq!(drain_committing(best.as_mut()), vec![root]);
+    }
+
+    #[tokio::test]
+    async fn a_view_does_not_ask_again_about_roots_it_holds_while_their_lanes_are_unchanged() {
+        let (pool, client) = build_integration_pool();
+        let [a, b, u] = [(); 3].map(|_| funded_signer(&client));
+        let a0 = add(&pool, resting_1559(&a, 0, 900)).await;
+        let b0 = add(&pool, resting_1559(&b, 0, 500)).await;
+        let unrelated = add(&pool, signed_1559_with_fees(&u, 0, 1_000, 50)).await;
+        let hold = RecordingHold::new(&pool, vec![a0, b0]);
+        let mut view = SelectionView::default();
+        let mut first = hold.parking_with_view(0, &mut view);
+        assert_eq!(drain_committing(first.as_mut()), vec![unrelated]);
+        drop(first);
+        let asked = hold.checked().len();
+
+        let mut second = hold.parking_with_view(0, &mut view);
+        let asked_again = hold.checked().split_off(asked);
+        assert!(asked_again.is_empty(), "unchanged held roots were asked again: {asked_again:?}");
+        assert_eq!(drain_committing(second.as_mut()), vec![unrelated]);
+        assert!(second.promote(a0), "a root held by the view still wakes in the same build");
+        assert_eq!(drain_committing(second.as_mut()), vec![a0]);
+    }
+
+    #[tokio::test]
+    async fn a_view_asks_again_only_about_the_root_whose_lane_changed() {
+        let (pool, client) = build_integration_pool();
+        let [a, b] = [(); 2].map(|_| funded_signer(&client));
+        let a0 = add(&pool, resting_1559(&a, 0, 900)).await;
+        let b0 = add(&pool, resting_1559(&b, 0, 500)).await;
+        let hold = RecordingHold::new(&pool, vec![a0, b0]);
+        let mut view = SelectionView::default();
+        assert!(hold.parking_with_view(0, &mut view).next().is_none());
+        let asked = hold.checked().len();
+
+        let replacement = add(
+            &pool,
+            signed_1559_with_fees(&a, 0, 1_100, 1_000)
+                .with_validity_predicates(resting_predicates()),
+        )
+        .await;
+        let mut best = hold.parking_with_view(0, &mut view);
+        assert_eq!(hold.checked().split_off(asked), vec![replacement]);
+        assert_eq!(drain_committing(best.as_mut()), vec![replacement]);
+    }
+
+    #[tokio::test]
+    async fn each_view_holds_only_the_roots_its_own_hold_rested() {
+        let (pool, client) = build_integration_pool();
+        let a = funded_signer(&client);
+        let a0 = add(&pool, resting_1559(&a, 0, 900)).await;
+        let holding = RecordingHold::new(&pool, vec![a0]);
+        let fresh = RecordingHold::new(&pool, Vec::new());
+        let mut holding_view = SelectionView::default();
+        let mut fresh_view = SelectionView::default();
+
+        let mut held = holding.parking_with_view(0, &mut holding_view);
+        assert!(drain_committing(held.as_mut()).is_empty());
+        let mut unheld = fresh.parking_with_view(0, &mut fresh_view);
+        assert!(fresh.checked().contains(&a0), "a fresh view asks about every eligible root");
+        assert_eq!(drain_committing(unheld.as_mut()), vec![a0]);
+        let mut held_again = holding.parking_with_view(0, &mut holding_view);
+        assert!(drain_committing(held_again.as_mut()).is_empty());
     }
 }

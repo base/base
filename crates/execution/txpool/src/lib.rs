@@ -69,7 +69,7 @@ mod parking;
 pub use parking::{
     BestTransactionLane, BestTransactionLaneState, BestTransactionsHold, DiscardSourceHeld,
     HOLD_INTERRUPT_INTERVAL, ParkableBestTransactions, ParkableTransactionPool,
-    ParkedBestTransactions, PromoteSourceHeld,
+    ParkedBestTransactions, PromoteSourceHeld, SelectionView,
 };
 
 mod pool;
