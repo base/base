@@ -1,26 +1,6 @@
 # Gas-Limit Billing
 
-Gas-limit billing (the `GasLimitBilling` feature, gated on the genesis-only Zenith testing upgrade) charges a Base transaction for the gas it reserves (its declared `gas_limit`) instead of the gas it consumes. It exists because the builder's fixed per-flashblock time budget was being spent on high-tip transactions that revert early and pay almost nothing. This doc is the working spec for the Linear project [Gas limit billing](https://linear.app/coinbase/project/gas-limit-billing-5bcc1e43aa00/issues): the rule, what is implemented, what is verified, and what is still open. The decisions pending review live in the [BASE-1426](https://linear.app/coinbase/issue/BASE-1426) Google Doc.
-
-## Project status
-
-Status as of 2026-11-03. The code is a stack of five pull requests that merge bottom-up into `main`.
-
-| Ticket | Scope | Status |
-|---|---|---|
-| [BASE-1281](https://linear.app/coinbase/issue/BASE-1281) | Proof of concept ([#6229](https://github.com/base/base/pull/6229)) | Done |
-| [CHAIN-6234](https://linear.app/coinbase/issue/CHAIN-6234), [CHAIN-6235](https://linear.app/coinbase/issue/CHAIN-6235) | Coinbase Wallet and Rundler conversations | Done |
-| [BASE-1427](https://linear.app/coinbase/issue/BASE-1427) | Mainnet data scan: `gas_limit / gas_used`, fee multiplier, base-fee impact | Done |
-| [BASE-1426](https://linear.app/coinbase/issue/BASE-1426) | Specification and open decisions | In progress |
-| [BASE-1428](https://linear.app/coinbase/issue/BASE-1428) | `GasLimitBilling` feature in the hardfork registry ([#6334](https://github.com/base/base/pull/6334)) | In review |
-| [BASE-1431](https://linear.app/coinbase/issue/BASE-1431) | Builder: `max_gas_per_txn` on reserved gas before execution ([#6349](https://github.com/base/base/pull/6349)) | In review |
-| [BASE-1429](https://linear.app/coinbase/issue/BASE-1429) | `BaseHandler` hook: standard transactions ([#6406](https://github.com/base/base/pull/6406)) | In review |
-| [BASE-1430](https://linear.app/coinbase/issue/BASE-1430) | EIP-8130 reserved budget and estimate ([#6407](https://github.com/base/base/pull/6407)) | In review |
-| [BASE-1435](https://linear.app/coinbase/issue/BASE-1435) | Action and system tests ([#6408](https://github.com/base/base/pull/6408)) | In review |
-| [BASE-1434](https://linear.app/coinbase/issue/BASE-1434) | RPC semantics: `eth_simulateV1`, traces, EIP-8130 `disable_fee_charge` | To do, required before scheduling |
-| [BASE-1436](https://linear.app/coinbase/issue/BASE-1436) | Load-test profile and devnet demo | To do |
-| [BASE-1432](https://linear.app/coinbase/issue/BASE-1432) | Txpool: rank static EIP-8130 coinbase tips on reserved gas | To do, optional |
-| [BASE-1433](https://linear.app/coinbase/issue/BASE-1433) | Amsterdam two-dimensional block gas | Parked until #6131 lands |
+Gas-limit billing (the `GasLimitBilling` feature, gated on the genesis-only Zenith testing upgrade) charges a Base transaction for the gas it reserves (its declared `gas_limit`) instead of the gas it consumes. It exists because the builder's fixed per-flashblock time budget was being spent on high-tip transactions that revert early and pay almost nothing. This doc covers the rule, what is implemented, what is verified, and what is still open. `BASE-` and `CHAIN-` identifiers are internal ticket references; the pending decisions are being settled in the BASE-1426 specification.
 
 ## Problem
 
@@ -138,14 +118,14 @@ The PoC branch's devnet demo ([#6229](https://github.com/base/base/pull/6229), p
 
 ## Open decisions
 
-In the [BASE-1426](https://linear.app/coinbase/issue/BASE-1426) spec unless a ticket is named:
+In the BASE-1426 spec unless a ticket is named:
 
 - **Named upgrade** that carries the feature; Zenith is only the test gate.
 - **Base-fee target and elasticity** at activation: reserved gas is higher than metered gas, so the base fee steps up until limits tighten. Decide from the data scan.
 - **EIP-3529 and EIP-7702 refunds** become economically inert: accept, or reprice at the opcode level.
 - **EIP-8130 payer authentication** billed at `payer_floor` (the reserved floor-rate amount) and excluded from the estimate, so `eth_estimateGas * gasPrice` understates a sponsored total by `payer_floor * gasPrice`. Needs EIP-8130 owner sign-off.
-- **RPC** ([BASE-1434](https://linear.app/coinbase/issue/BASE-1434)): `eth_simulateV1` fee charging when `validation=false`; metered gas in traces; `Eip8130Executor::execute` ignoring `disable_fee_charge`. Must land before scheduling.
-- **Static EIP-8130 coinbase tips** ([BASE-1432](https://linear.app/coinbase/issue/BASE-1432), optional): ranked on `gas_limit`, reserved as `gas_limit + payer_floor`.
+- **RPC** (BASE-1434): `eth_simulateV1` fee charging when `validation=false`; metered gas in traces; `Eip8130Executor::execute` ignoring `disable_fee_charge`. Must land before scheduling.
+- **Static EIP-8130 coinbase tips** (BASE-1432, optional): ranked on `gas_limit`, reserved as `gas_limit + payer_floor`.
 - **Amsterdam** (EIP-8037/7778): parked until [#6131](https://github.com/base/base/pull/6131) lands; `spend_all` only spends regular gas.
 - **Ecosystem comms**: ERC-4337 `preVerificationGas`, wallet estimate buffers, explorers at 100% utilisation. Wallet and Rundler outcomes are in the spec.
 
