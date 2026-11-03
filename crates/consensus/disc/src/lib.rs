@@ -28,4 +28,4 @@ pub use metrics::Metrics;
 
 mod tree;
 pub use reth_dns_discovery::tree::LinkEntry;
-pub use tree::EnrTreeSync;
+pub use tree::{EnrTreeLookup, EnrTreeState, EnrTreeSync, EnrTreeWalk};

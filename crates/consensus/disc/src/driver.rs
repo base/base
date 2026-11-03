@@ -8,15 +8,16 @@ use base_consensus_peers::{
 };
 use derive_more::Debug;
 use discv5::{Config, Discv5, Enr, IpMode, enr::NodeId};
-use futures::StreamExt;
+use futures::{
+    StreamExt,
+    stream::{BoxStream, SelectAll},
+};
 use tokio::{
     sync::mpsc::{Sender, channel, error::TrySendError},
     time::{Duration, sleep},
 };
 
-use crate::{
-    Discv5Builder, Discv5Handler, EnrTreeSync, HandlerRequest, LinkEntry, LocalNode, Metrics,
-};
+use crate::{Discv5Builder, Discv5Handler, HandlerRequest, LocalNode, Metrics};
 
 /// Attempts to forward an ENR to the gossip service without spawning or parking on backpressure.
 fn try_forward_enr(enr_sender: &Sender<Enr>, enr: Enr) -> bool {
@@ -55,8 +56,10 @@ pub struct Discv5Driver {
     pub bootstore: Option<BootStoreFile>,
     /// Bootnodes used to bootstrap the discovery service.
     pub bootnodes: BootNodes,
-    /// EIP-1459 ENR trees synced for additional bootnodes while the driver runs.
-    pub enr_trees: Vec<LinkEntry>,
+    /// EIP-1459 ENR tree syncs ([`crate::EnrTreeSync`]) polled for additional bootnodes while the
+    /// driver runs.
+    #[debug(skip)]
+    pub enr_trees: SelectAll<BoxStream<'static, Enr>>,
     /// The chain ID of the network.
     pub chain_id: u64,
     /// The interval to discovery random nodes.
@@ -82,7 +85,7 @@ impl Discv5Driver {
     }
 
     /// Instantiates a new [`Discv5Driver`].
-    pub const fn new(
+    pub fn new(
         disc: Discv5,
         interval: Duration,
         chain_id: u64,
@@ -93,7 +96,7 @@ impl Discv5Driver {
             disc,
             chain_id,
             bootnodes,
-            enr_trees: Vec::new(),
+            enr_trees: SelectAll::new(),
             interval,
             forward: true,
             remove_interval: None,
@@ -212,8 +215,7 @@ impl Discv5Driver {
             info!(target: "discovery", count = enrs.len(), "Discv5 Started");
 
             // ENR trees are polled inside this task, so they stop when the driver stops.
-            let mut enr_trees =
-                EnrTreeSync::from_links(std::mem::take(&mut self.enr_trees), chain_id);
+            let mut enr_trees = std::mem::take(&mut self.enr_trees);
 
             // Step 3: Forward ENRs in the bootstore to the enr receiver.
             if self.forward {

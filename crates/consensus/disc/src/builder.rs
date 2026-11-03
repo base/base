@@ -5,9 +5,10 @@ use std::net::IpAddr;
 use alloy_rlp::Encodable;
 use base_consensus_peers::{BaseEnr, BootNodes, BootStoreFile};
 use discv5::{Config, Discv5, Enr, enr::k256};
+use futures::StreamExt;
 use tokio::time::Duration;
 
-use crate::{Discv5BuilderError, Discv5Driver, LinkEntry};
+use crate::{Discv5BuilderError, Discv5Driver, EnrTreeSync, LinkEntry};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 /// The local node information exposed by the discovery service to the network.
@@ -177,7 +178,10 @@ impl Discv5Builder {
                 .map_err(|e| Discv5BuilderError::Discv5CreationFailed(e.to_string()))?;
         driver.forward = self.forward;
         driver.remove_interval = self.randomize;
-        driver.enr_trees = self.enr_trees;
+        driver.enr_trees = EnrTreeSync::from_links(self.enr_trees, chain_id)
+            .into_iter()
+            .map(StreamExt::boxed)
+            .collect();
         Ok(driver)
     }
 }

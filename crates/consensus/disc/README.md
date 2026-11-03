@@ -45,17 +45,30 @@ signs the tree root. For example:
 --p2p.bootnodes enrtree://AKA3AM6LPBYEUDMVNU3BSVQJ5AD45Y7YPOHJLEF6W26QOE4VTUDPE@nodes.example.org
 ```
 
-`EnrTreeSync` wraps reth's `reth-dns-discovery` service. It verifies the root signature, walks the
-tree, and rechecks the root every 30 minutes, re-syncing when the root's subtree hashes change.
-Until the tree yields its first record, it restarts the sync every 60 seconds, logging a warning
-each time. That covers a root lookup that failed and records that did not resolve. After that, records that failed to resolve are
-retried only once the tree's root changes. It yields only
-records that pass `EnrValidation` for the node's chain ID, so the tree may contain other records.
-Yielded ENRs are added to the discv5 table, forwarded to gossip, and stored in the bootstore.
+`EnrTreeSync` walks the tree with reth's `reth-dns-discovery` tree types. The root must be signed
+by the tree's key, and every entry must match the hash it is published under. It yields only records
+that pass `EnrValidation` for the node's chain ID, so the tree may contain other records. Yielded
+ENRs are added to the discv5 table, forwarded to gossip, and stored in the bootstore.
 
-An unreachable or invalid tree never stops the node: failures are logged and the other bootnodes
-keep working. The sync has no task of its own: it is polled inside the driver task and dropped
-with it, which happens at runtime shutdown.
+The walk is bounded, so a large or hostile tree cannot grow memory or per-poll work:
+
+| Limit | Value |
+| --- | --- |
+| Links to other trees (`enrtree-link`) | not followed |
+| Lookups in flight | 1, at most 3 per second, each with a 5 second timeout |
+| Entry lookups per walk (also caps the pending queue) | 2,000 |
+| Records yielded per walk | 500 |
+| Lookups of one failed entry per walk | 3 |
+
+A walk that hits a limit stops with a warning and keeps the records it found. A failed entry is
+retried in place without restarting the walk. After a complete walk, the root is rechecked every
+30 minutes and the tree is walked again only when its ENR subtree hash changes. A root that fails
+to resolve or verify, a walk with failed entries, and a tree without valid records are retried
+with a warning after a backoff that starts at 60 seconds and doubles up to 30 minutes.
+
+An unreachable or invalid tree never stops the node: the other bootnodes keep working. The sync has
+no task of its own: it is polled inside the driver task and dropped with it, which happens at
+runtime shutdown.
 
 Publishing a tree is out of scope for this crate. Use geth's `devp2p dns` tool:
 `devp2p dns sign` builds and signs a tree from a node list, and `devp2p dns to-route53` or
