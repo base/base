@@ -51,6 +51,19 @@ pub trait ParkablePayloadTransactions:
 
     /// Excludes a predicate-parked transaction for the remainder of this iterator.
     fn discard_parked(&mut self, transaction_hash: TxHash) -> bool;
+
+    /// Skips the current transaction, identified by `sender` and `nonce`, for a block-scope
+    /// limit a later block may satisfy, such as the remaining block gas. Defaults to closing it
+    /// for this iterator: a replay-independent transaction is consumed, and any other is marked
+    /// invalid with its nonce descendants. An iterator that may be carried into later blocks
+    /// parks it instead, so the next block offers it again.
+    fn skip_retryable(&mut self, sender: Address, nonce: u64, replay_independent: bool) {
+        if replay_independent {
+            self.mark_current_committed();
+        } else {
+            self.mark_invalid(sender, nonce);
+        }
+    }
 }
 
 impl<T> ParkablePayloadTransactions for NoopPayloadTransactions<Arc<ValidPoolTransaction<T>>>

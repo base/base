@@ -116,6 +116,10 @@ harness = false
 name = "native_resting_sweep"
 harness = false
 
+[[bench]]
+name = "native_resting_walk"
+harness = false
+
 [features]
 default = [ "metrics" ]
 clap = [ "dep:clap" ]

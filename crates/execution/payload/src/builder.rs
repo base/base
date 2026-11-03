@@ -55,11 +55,12 @@ use tracing::{debug, debug_span, info, instrument, trace, warn};
 
 use crate::{
     Attributes, BasePayloadBuilderAttributes, BlockDeferrals, BuilderMetrics,
+    CARRIED_WALK_MIN_HOLDS, CarriedWalk, CarriedWalkReset, CarriedWalkStore, CarryingTransactions,
     CoinbaseTipAffordability, HoldInterrupt, InclusionTracker, MeteringProvider,
     ParkableBestPayloadTransactions, ParkablePayloadTransactions, ParkedPredicateIndex,
     PayloadPrimitives, PredicateLoadTracker, PredicateReadRecorder, RejectionCacheMetrics,
     RestingPredicateStore, SharedRestingPredicates, StateChangeEffects, ValidityEvaluationCounters,
-    ValidityEvaluationOutcome, ValidityMetrics, ValidityPredicateEvaluation,
+    ValidityEvaluationOutcome, ValidityMetrics, ValidityPredicateEvaluation, WalkWatch,
     config::BaseBuilderConfig, error::BasePayloadBuilderError, payload::BaseBuiltPayload,
 };
 
@@ -114,6 +115,8 @@ pub struct BasePayloadBuilder<
     pub config: BaseBuilderConfig,
     /// Validity transactions resting from the last block this builder finished.
     pub resting_predicates: RestingPredicateStore,
+    /// Pool iterator whose resting walk the last finished block cut, for the next block's build.
+    pub carried_walks: CarriedWalkStore,
     /// Marker for the payload attributes type.
     _pd: PhantomData<Attrs>,
 }
@@ -131,6 +134,7 @@ where
             client: self.client.clone(),
             config: self.config.clone(),
             resting_predicates: self.resting_predicates.clone(),
+            carried_walks: self.carried_walks.clone(),
             _pd: PhantomData,
         }
     }
@@ -165,6 +169,7 @@ impl<Pool, Client, Evm, Attrs> BasePayloadBuilder<Pool, Client, Evm, Attrs> {
             evm_config,
             config,
             resting_predicates: RestingPredicateStore::default(),
+            carried_walks: CarriedWalkStore::default(),
             _pd: PhantomData,
         }
     }
@@ -207,6 +212,7 @@ where
         + Send
         + Sync
         + 'a,
+        configure: impl for<'b> FnOnce(Builder<'b, Txs>) -> Builder<'b, Txs>,
     ) -> Result<BuildOutcome<BaseBuiltPayload<N>>, PayloadBuilderError>
     where
         Txs: ParkablePayloadTransactions<
@@ -234,11 +240,13 @@ where
         tracing::Span::current().record("parent_num", ctx.parent().number());
 
         let pool = self.pool.clone();
-        let builder = Builder::new(best)
-            .with_permanent_eviction(move |hashes| {
-                let _ = pool.remove_transactions(hashes);
-            })
-            .with_resting_predicates(self.resting_predicates.clone());
+        let builder = configure(
+            Builder::new(best)
+                .with_permanent_eviction(move |hashes| {
+                    let _ = pool.remove_transactions(hashes);
+                })
+                .with_resting_predicates(self.resting_predicates.clone()),
+        );
 
         let state_provider = crate::BuilderStateProvider::new(
             self.client.state_by_block_hash(ctx.parent().hash())?,
@@ -315,14 +323,18 @@ where
         &self,
         args: BuildArguments<Self::Attributes, Self::BuiltPayload>,
     ) -> Result<BuildOutcome<Self::BuiltPayload>, PayloadBuilderError> {
-        self.build_payload(args, |attrs, resting| {
-            ParkableBestPayloadTransactions::new(
-                self.pool.best_transactions_with_attributes_and_parking(
-                    attrs,
-                    resting.map(SharedRestingPredicates::iterator_hold),
-                ),
-            )
-        })
+        self.build_payload(
+            args,
+            |attrs, resting| {
+                ParkableBestPayloadTransactions::new(
+                    self.pool.best_transactions_with_attributes_and_parking(
+                        attrs,
+                        resting.map(SharedRestingPredicates::iterator_hold),
+                    ),
+                )
+            },
+            |builder| builder.with_carried_walks(self.carried_walks.clone()),
+        )
     }
 
     fn on_missing_payload(
@@ -348,9 +360,13 @@ where
             cancel: Default::default(),
             best_payload: None,
         };
-        self.build_payload(args, |_, _| {
-            NoopPayloadTransactions::<Arc<ValidPoolTransaction<Pool::Transaction>>>::default()
-        })?
+        self.build_payload(
+            args,
+            |_, _| {
+                NoopPayloadTransactions::<Arc<ValidPoolTransaction<Pool::Transaction>>>::default()
+            },
+            |builder| builder,
+        )?
         .into_payload()
         .ok_or_else(|| PayloadBuilderError::MissingPayload)
     }
@@ -394,6 +410,8 @@ pub struct Builder<'a, Txs> {
     evict_permanently_rejected: Box<dyn FnOnce(Vec<TxHash>) + 'a>,
     /// Carries resting validity transactions between builds when the carried mode is enabled.
     resting_predicates: Option<RestingPredicateStore>,
+    /// Carries a pool iterator whose resting walk was cut into the next block's build.
+    carried_walks: Option<WalkCarrier<'a, Txs>>,
 }
 
 impl<'a, Txs> Builder<'a, Txs> {
@@ -408,6 +426,7 @@ impl<'a, Txs> Builder<'a, Txs> {
             best: Box::new(best),
             evict_permanently_rejected: Box::new(|_| {}),
             resting_predicates: None,
+            carried_walks: None,
         }
     }
 
@@ -424,6 +443,33 @@ impl<'a, Txs> Builder<'a, Txs> {
         self.resting_predicates = Some(store);
         self
     }
+
+    /// Sets the store that carries a pool iterator whose resting walk was cut by its block's
+    /// finalization into the build of the next block, see [`CarriedWalkStore`].
+    pub fn with_carried_walks(mut self, store: CarriedWalkStore) -> Self
+    where
+        Txs: Send + 'static,
+    {
+        let taken = store.clone();
+        self.carried_walks = Some(WalkCarrier {
+            take: Box::new(move |parent_hash, block_number| taken.take(parent_hash, block_number)),
+            put: Box::new(move |walk| store.put(walk)),
+        });
+        self
+    }
+}
+
+/// Takes a carried walk for a build and stores the build's own cut walk, through a
+/// [`CarriedWalkStore`] captured where the iterator type is known to be `'static`, which
+/// [`Builder`] does not require of its iterator.
+#[derive(derive_more::Debug)]
+pub struct WalkCarrier<'a, Txs> {
+    /// Takes the walk carried into the block of the given number on the given parent.
+    #[debug(skip)]
+    pub take: Box<dyn FnOnce(B256, u64) -> Option<CarriedWalk<Txs>> + 'a>,
+    /// Stores this build's cut walk for the next block.
+    #[debug(skip)]
+    pub put: Box<dyn FnOnce(CarriedWalk<Txs>) + 'a>,
 }
 
 impl<Txs> Builder<'_, Txs> {
@@ -447,7 +493,7 @@ impl<Txs> Builder<'_, Txs> {
         >,
         Attrs: Attributes<Transaction = N::SignedTx>,
     {
-        let Self { best, evict_permanently_rejected, resting_predicates } = self;
+        let Self { best, evict_permanently_rejected, resting_predicates, carried_walks } = self;
         // The pool iterator's hold watches the job's cancellation through a weak reference. A
         // dropped `CancelOnDrop` clone cancels the job, so only this owner, dropped with `ctx` when
         // the build returns, keeps one.
@@ -479,9 +525,11 @@ impl<Txs> Builder<'_, Txs> {
 
         // 3. if mem pool transactions are requested we execute them
         let mut resting = None;
+        // The cut walk this build would hand to the next block's build.
+        let mut carried = None;
         if !ctx.attributes().no_tx_pool() {
             // Without flashblocks, resting transactions only carry across blocks, from Denim on.
-            resting = resting_predicates
+            let predicates = resting_predicates
                 .as_ref()
                 .filter(|_| {
                     ctx.builder_config.resting_predicate_mode.is_enabled()
@@ -501,17 +549,81 @@ impl<Txs> Builder<'_, Txs> {
                         builder.evm_mut().db_mut().transition_state.as_ref(),
                     );
                     ValidityMetrics::record_resting_carry_over(&carry_over, start.elapsed());
-                    SharedRestingPredicates::new(resting)
-                        .with_interrupt(job_interrupt(&cancel_watch))
+                    resting
                 });
-            // Only an enforcing build hands the pool iterator a hold; a shadow build evaluates
-            // resting members to count mismatches.
-            let hold = resting
-                .as_ref()
-                .filter(|_| ctx.builder_config.resting_predicate_mode.is_enforced());
-            let best_txs = best(ctx.best_transaction_attributes(builder.evm_mut().block()), hold);
-            let cancelled =
-                ctx.execute_best_transactions(&mut info, &mut builder, best_txs, resting.as_ref())?;
+            let attributes = ctx.best_transaction_attributes(builder.evm_mut().block());
+            // Only an enforcing build can carry its walk into the next block.
+            let carrier =
+                carried_walks.filter(|_| ctx.builder_config.resting_predicate_mode.is_enforced());
+            let cancelled = match (predicates, carrier) {
+                (Some(predicates), Some(carrier)) => {
+                    let block_number = ctx.parent().number().saturating_add(1);
+                    let mut walk = match (carrier.take)(ctx.parent().hash(), block_number) {
+                        Some(mut walk) => {
+                            walk.watch.watch(&cancel_watch);
+                            let released = walk.resting.adopt(predicates);
+                            walk.transactions.resume(released);
+                            ValidityMetrics::native_resting_walk_resumed_total().increment(1);
+                            walk
+                        }
+                        None => {
+                            let watch = WalkWatch::default();
+                            watch.watch(&cancel_watch);
+                            let shared = SharedRestingPredicates::new(predicates)
+                                .with_interrupt(watch.interrupt());
+                            let transactions = CarryingTransactions::new(
+                                best(attributes, Some(&shared)),
+                                Some(shared.clone()),
+                            );
+                            CarriedWalk {
+                                transactions,
+                                resting: shared,
+                                watch,
+                                first_block: block_number,
+                                block_hash: B256::ZERO,
+                                block_number,
+                            }
+                        }
+                    };
+                    let cancelled = ctx.execute_best_transactions(
+                        &mut info,
+                        &mut builder,
+                        &mut walk.transactions,
+                        Some(&walk.resting),
+                    )?;
+                    let cut = walk.watch.take_cut() | walk.transactions.stopped_after_hold();
+                    resting = Some(walk.resting.clone());
+                    // Only a cut walk is carried: an iterator that reached its end would offer the
+                    // next blocks almost none of the transactions that arrive meanwhile.
+                    if cut {
+                        if cancelled.is_none() && walk.resting.holds() >= CARRIED_WALK_MIN_HOLDS {
+                            walk.transactions.carry();
+                            carried = Some((walk, carrier.put));
+                        } else {
+                            CarriedWalkReset::Other.record();
+                        }
+                    }
+                    cancelled
+                }
+                (predicates, _) => {
+                    resting = predicates.map(|predicates| {
+                        SharedRestingPredicates::new(predicates)
+                            .with_interrupt(job_interrupt(&cancel_watch))
+                    });
+                    // Only an enforcing build hands the pool iterator a hold; a shadow build
+                    // evaluates resting members to count mismatches.
+                    let hold = resting
+                        .as_ref()
+                        .filter(|_| ctx.builder_config.resting_predicate_mode.is_enforced());
+                    let best_txs = best(attributes, hold);
+                    ctx.execute_best_transactions(
+                        &mut info,
+                        &mut builder,
+                        best_txs,
+                        resting.as_ref(),
+                    )?
+                }
+            };
             if !info.permanently_rejected_txs.is_empty() {
                 let rejected = std::mem::take(&mut info.permanently_rejected_txs);
                 let count = rejected.len();
@@ -585,6 +697,11 @@ impl<Txs> Builder<'_, Txs> {
         debug!(target: "payload_builder", id=%ctx.payload_id(), sealed_block_header = ?sealed_block.header(), "sealed built block");
         if let (Some(resting), Some(store)) = (resting, resting_predicates) {
             store.put(resting, sealed_block.hash());
+        }
+        if let Some((mut walk, put)) = carried {
+            walk.block_hash = sealed_block.hash();
+            walk.block_number = block_num;
+            put(walk);
         }
 
         let execution_outcome =
@@ -1270,12 +1387,7 @@ where
                             error = ?error,
                             "failed to read validity predicate state"
                         );
-                        Self::skip_current(
-                            &mut best_txs,
-                            tx.sender(),
-                            tx.nonce(),
-                            replay_independent,
-                        );
+                        best_txs.skip_retryable(tx.sender(), tx.nonce(), replay_independent);
                         continue;
                     }
                 }
@@ -1301,7 +1413,7 @@ where
                         false,
                     );
                 }
-                Self::skip_current(&mut best_txs, tx.sender(), tx.nonce(), replay_independent);
+                best_txs.skip_retryable(tx.sender(), tx.nonce(), replay_independent);
                 continue;
             }
 
@@ -1362,7 +1474,7 @@ where
                         false,
                     );
                 }
-                Self::skip_current(&mut best_txs, tx.sender(), tx.nonce(), replay_independent);
+                best_txs.skip_retryable(tx.sender(), tx.nonce(), replay_independent);
                 continue;
             }
 
@@ -1390,7 +1502,11 @@ where
                         admission.is_permanent(),
                     );
                 }
-                Self::skip_current(&mut best_txs, tx.sender(), tx.nonce(), replay_independent);
+                if admission.is_permanent() {
+                    Self::skip_current(&mut best_txs, tx.sender(), tx.nonce(), replay_independent);
+                } else {
+                    best_txs.skip_retryable(tx.sender(), tx.nonce(), replay_independent);
+                }
                 continue;
             }
 
@@ -1403,9 +1519,8 @@ where
                 tx.gas_limit().saturating_add(tx_payer_auth),
                 da_footprint_gas_scalar,
             ) {
-                // we can't fit this transaction into the block, so we need to mark it as
-                // invalid which also removes all dependent transaction from
-                // the iterator before we can continue
+                // The transaction does not fit this block, so it and its nonce descendants are
+                // skipped for the rest of this block. A later block may fit it.
                 if has_validity_predicates {
                     self.emit_validity_rejection(
                         tx_hash,
@@ -1415,7 +1530,7 @@ where
                         false,
                     );
                 }
-                Self::skip_current(&mut best_txs, tx.sender(), tx.nonce(), replay_independent);
+                best_txs.skip_retryable(tx.sender(), tx.nonce(), replay_independent);
                 continue;
             }
 
@@ -1496,7 +1611,16 @@ where
                                 .is_some_and(|decision| decision.is_permanent()),
                         );
                     }
-                    Self::skip_current(&mut best_txs, tx.signer(), tx.nonce(), replay_independent);
+                    if executed_decision.as_ref().is_some_and(|decision| decision.is_permanent()) {
+                        Self::skip_current(
+                            &mut best_txs,
+                            tx.signer(),
+                            tx.nonce(),
+                            replay_independent,
+                        );
+                    } else {
+                        best_txs.skip_retryable(tx.signer(), tx.nonce(), replay_independent);
+                    }
                     continue;
                 }
                 Err(BlockExecutionError::Validation(BlockValidationError::InvalidTx {
@@ -1526,12 +1650,7 @@ where
                                 false,
                             );
                         }
-                        Self::skip_current(
-                            &mut best_txs,
-                            tx.signer(),
-                            tx.nonce(),
-                            replay_independent,
-                        );
+                        best_txs.skip_retryable(tx.signer(), tx.nonce(), replay_independent);
                     }
                     continue;
                 }
@@ -1767,11 +1886,12 @@ mod tests {
         BasePayloadBuilderCtx, Builder, ExecutionInfo, RESTING_SWEEP_WAIT_LIMIT, job_interrupt,
     };
     use crate::{
-        BasePayloadBuilderAttributes, DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD, MeteringProvider,
-        NoopMeteringProvider, ParkablePayloadTransactions, ResourceMeteringConfig,
-        ResourceMeteringDimension, ResourceMeteringOperation, ResourceMeteringSchedule,
-        RestingPredicateMode, RestingPredicateStore, SharedMeteringProvider,
-        SharedRestingPredicates, config::BaseBuilderConfig, payload::EthPayloadBuilderAttributes,
+        BasePayloadBuilderAttributes, CARRIED_WALK_MIN_HOLDS, CarriedWalkStore,
+        DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD, MeteringProvider, NoopMeteringProvider,
+        ParkablePayloadTransactions, ResourceMeteringConfig, ResourceMeteringDimension,
+        ResourceMeteringOperation, ResourceMeteringSchedule, RestingPredicateMode,
+        RestingPredicateStore, SharedMeteringProvider, SharedRestingPredicates,
+        config::BaseBuilderConfig, payload::EthPayloadBuilderAttributes,
     };
 
     #[derive(Debug)]
@@ -2112,22 +2232,31 @@ mod tests {
 
         fn next(&mut self, _ctx: ()) -> Option<Self::Transaction> {
             assert!(self.current.is_none(), "current transaction was not lifecycle-managed");
-            loop {
-                let transaction = if self.promoted_first {
+            let mut held = false;
+            let next = loop {
+                let Some(transaction) = (if self.promoted_first {
                     self.ready.pop_front().or_else(|| self.queued.pop_front())
                 } else {
                     self.queued.pop_front().or_else(|| self.ready.pop_front())
-                }?;
+                }) else {
+                    break None;
+                };
                 if let Some(hold) = self.hold.as_mut()
                     && !transaction.transaction.validity_conditions().is_empty()
                     && hold.hold(&transaction)
                 {
                     self.parked.insert(*transaction.hash(), transaction);
+                    held = true;
                     continue;
                 }
                 self.current = Some(Arc::clone(&transaction));
-                return Some(transaction);
+                break Some(transaction);
+            };
+            // Ends a run of holds as the pool's parking iterator does.
+            if held && let Some(hold) = self.hold.as_mut() {
+                hold.record_duration(Duration::ZERO);
             }
+            next
         }
 
         fn mark_invalid(&mut self, sender: Address, nonce: u64) {
@@ -2520,6 +2649,259 @@ mod tests {
 
     fn pool_parent_hash() -> B256 {
         pool_payload_context(DENIM_TIMESTAMP).parent().hash()
+    }
+
+    /// Resting members a cut walk holds, all under `holds`, a predicate that holds in the test
+    /// state, so including one shows that the build evaluated it.
+    fn carried_walk_members(holds: &ValidityPredicate) -> Vec<BasePooledTransaction> {
+        (0..CARRIED_WALK_MIN_HOLDS)
+            .map(|index| {
+                pool_transaction_to(0, Address::with_last_byte(index as u8 + 1), U256::ZERO)
+                    .with_validity_predicates(vec![holds.clone()])
+            })
+            .collect()
+    }
+
+    /// A store holding a set finished as `tip` in which every `member` rests under `predicate`.
+    fn resting_store_of(
+        tip: B256,
+        members: &[BasePooledTransaction],
+        predicate: &ValidityPredicate,
+    ) -> RestingPredicateStore {
+        let store = RestingPredicateStore::default();
+        let mut resting =
+            store.take(DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD, RESTING_SWEEP_WAIT_LIMIT);
+        resting.begin_block(B256::ZERO, 0, Some(&TransitionState::default()));
+        for member in members {
+            resting.rest(*member.hash(), predicate.clone());
+        }
+        store.put(store.finish(resting), tip);
+        store
+    }
+
+    /// A Denim payload context for the child of `parent`.
+    fn child_payload_context(
+        parent: SealedHeader<Header>,
+    ) -> BasePayloadBuilderCtx<BaseEvmConfig, BaseChainSpec> {
+        let mut ctx = pool_payload_context(parent.timestamp + 1);
+        let mut attributes = ctx.config.attributes.clone();
+        attributes.payload_attributes.parent = parent.hash();
+        ctx.config = PayloadConfig::new(Arc::new(parent), attributes, ctx.config.payload_id);
+        ctx
+    }
+
+    /// Builds one enforcing block that carries walks through `walks`, returning the payload.
+    fn build_carrying_walk(
+        ctx: BasePayloadBuilderCtx<BaseEvmConfig, BaseChainSpec>,
+        provider: &StateProviderTest,
+        resting: &RestingPredicateStore,
+        walks: &CarriedWalkStore,
+        best: impl FnOnce(Option<&SharedRestingPredicates>) -> FinalizeAfterFirstTransaction
+        + Send
+        + Sync,
+    ) -> crate::BaseBuiltPayload<BasePrimitives> {
+        let mut ctx = ctx;
+        ctx.builder_config.resting_predicate_mode = RestingPredicateMode::Enforce;
+        let outcome = Builder::new(|_, resting| best(resting))
+            .with_resting_predicates(resting.clone())
+            .with_carried_walks(walks.clone())
+            .build(
+                StateProviderDatabase::new(provider.into_evm_state_provider()),
+                provider,
+                Some(state_root_handle()),
+                ctx,
+            )
+            .expect("payload must build");
+        let BuildOutcomeKind::Freeze(payload) = outcome else {
+            panic!("Denim payload must freeze, got {outcome:?}")
+        };
+        payload
+    }
+
+    fn included(payload: &crate::BaseBuiltPayload<BasePrimitives>) -> Vec<TxHash> {
+        payload.block().body().transactions.iter().map(|tx| tx.tx_hash()).collect()
+    }
+
+    /// Scenario shared by the carried-walk tests: block 1 includes `mined`, then its finalization
+    /// cuts the walk after it held the resting `members` and reached `abandoned`.
+    struct CutWalk {
+        mined: BasePooledTransaction,
+        members: Vec<BasePooledTransaction>,
+        abandoned: BasePooledTransaction,
+        resting: RestingPredicateStore,
+        walks: CarriedWalkStore,
+        block: SealedHeader<Header>,
+    }
+
+    impl CutWalk {
+        fn build() -> Self {
+            let holds = ValidityPredicate::Balance {
+                address: Address::repeat_byte(0x4e),
+                op: ValidityOperator::Equal,
+                value: U256::ZERO,
+            };
+            let mined = pool_transaction_to(0, Address::repeat_byte(0x71), U256::ZERO);
+            let members = carried_walk_members(&holds);
+            let abandoned = pool_transaction_to(0, Address::repeat_byte(0x72), U256::ZERO);
+            let resting = resting_store_of(pool_parent_hash(), &members, &holds);
+            let walks = CarriedWalkStore::default();
+
+            let ctx = pool_payload_context(DENIM_TIMESTAMP);
+            let cancel = ManuallyDrop::new(ctx.cancel.clone());
+            let mut candidates = vec![mined.clone()];
+            candidates.extend(members.iter().cloned());
+            candidates.push(abandoned.clone());
+            // A stale pool snapshot that still offers `mined` after the block mined it.
+            candidates.push(mined.clone());
+            let provider = funded_provider(
+                &candidates.iter().map(|transaction| transaction.sender()).collect::<Vec<_>>(),
+            );
+            let payload = build_carrying_walk(ctx, &provider, &resting, &walks, |resting| {
+                FinalizeAfterFirstTransaction {
+                    transactions: TestParkableTransactions::new(candidates)
+                        .with_hold(resting.map(SharedRestingPredicates::iterator_hold)),
+                    calls: 0,
+                    cancel,
+                }
+            });
+            assert_eq!(included(&payload), vec![*mined.hash()], "block 1 must stop after mined");
+
+            Self {
+                mined,
+                members,
+                abandoned,
+                resting,
+                walks,
+                block: payload.block().clone_sealed_header(),
+            }
+        }
+
+        /// The state after block 1: every sender funded, and `mined`'s sender at nonce 1.
+        fn provider_after(&self) -> StateProviderTest {
+            let mut senders = vec![self.abandoned.sender()];
+            senders.extend(self.members.iter().map(|member| member.sender()));
+            let mut provider = funded_provider(&senders);
+            provider.insert_account(
+                self.mined.sender(),
+                Account { balance: U256::MAX, nonce: 1, ..Default::default() },
+                None,
+                HashMap::default(),
+            );
+            provider
+        }
+
+        /// Builds the next block on `parent` with `resting`, panicking if it takes a fresh
+        /// iterator when `expect_carried`.
+        fn build_next(
+            &self,
+            parent: SealedHeader<Header>,
+            resting: &RestingPredicateStore,
+            expect_carried: bool,
+        ) -> crate::BaseBuiltPayload<BasePrimitives> {
+            let ctx = child_payload_context(parent);
+            let cancel = ManuallyDrop::new(ctx.cancel.clone());
+            let fresh = vec![self.abandoned.clone()];
+            build_carrying_walk(ctx, &self.provider_after(), resting, &self.walks, move |hold| {
+                assert!(!expect_carried, "the build must continue the carried iterator");
+                FinalizeAfterFirstTransaction {
+                    transactions: TestParkableTransactions::new(fresh)
+                        .with_hold(hold.map(SharedRestingPredicates::iterator_hold)),
+                    calls: 0,
+                    cancel,
+                }
+            })
+        }
+    }
+
+    fn rendered_metrics(f: impl FnOnce()) -> String {
+        let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+        let handle = recorder.handle();
+        metrics::with_local_recorder(&recorder, f);
+        handle.render()
+    }
+
+    /// The child of a block whose finalization cut the walk continues that walk: it offers the
+    /// candidate the cut build never decided on, keeps holding the resting members, and never
+    /// includes the transaction the cut block mined, even when a stale snapshot offers it again.
+    #[test]
+    fn native_builder_continues_a_walk_cut_by_finalization_in_the_next_block() {
+        let rendered = rendered_metrics(|| {
+            let walk = CutWalk::build();
+            let payload = walk.build_next(walk.block.clone(), &walk.resting, true);
+
+            assert_eq!(included(&payload), vec![*walk.abandoned.hash()]);
+        });
+
+        assert!(
+            rendered.contains("base_builder_native_resting_walk_resumed_total 1"),
+            "{rendered}"
+        );
+    }
+
+    /// Members the carried iterator held that leave the resting set at the start of the next
+    /// block are offered again and evaluated in that block.
+    #[test]
+    fn native_builder_offers_held_members_the_next_block_released() {
+        let walk = CutWalk::build();
+        let released = RestingPredicateStore::default();
+        let payload = walk.build_next(walk.block.clone(), &released, true);
+
+        let included = included(&payload);
+        for member in &walk.members {
+            assert!(included.contains(member.hash()), "released member must be evaluated");
+        }
+        assert!(included.contains(walk.abandoned.hash()));
+        assert!(!included.contains(walk.mined.hash()));
+    }
+
+    /// A candidate a carrying build skips for a block-scope limit is offered again when the walk
+    /// continues in the next block, as a fresh iterator would offer it, instead of staying invalid
+    /// for the carried iterator's lifetime.
+    #[test]
+    fn carried_walk_offers_a_candidate_skipped_for_a_block_limit_again() {
+        let skipped = pool_transaction(0);
+        let resting = SharedRestingPredicates::new(crate::RestingPredicates::new(
+            DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD,
+        ));
+        let invalid = Arc::default();
+        let mut walk = crate::CarryingTransactions::new(
+            TestParkableTransactions::recording(vec![skipped.clone()], Arc::clone(&invalid)),
+            Some(resting),
+        );
+        let mut iterator = &mut walk;
+        let candidate = iterator.next(()).expect("candidate");
+        iterator.skip_retryable(candidate.sender(), candidate.nonce(), false);
+        assert!(iterator.next(()).is_none());
+
+        walk.resume([]);
+        let mut iterator = &mut walk;
+        assert_eq!(iterator.next(()).map(|candidate| *candidate.hash()), Some(*skipped.hash()));
+        assert!(invalid.lock().unwrap().is_empty());
+    }
+
+    /// A build that is not on the block the cut build sealed, such as a sibling after a reorg,
+    /// takes a fresh iterator.
+    #[test]
+    fn native_builder_resets_a_cut_walk_off_the_sealed_block() {
+        let rendered = rendered_metrics(|| {
+            let walk = CutWalk::build();
+            let sibling = SealedHeader::seal_slow(Header {
+                number: walk.block.number,
+                gas_limit: walk.block.gas_limit,
+                timestamp: walk.block.timestamp,
+                extra_data: vec![1].into(),
+                ..Default::default()
+            });
+            let payload = walk.build_next(sibling, &walk.resting, false);
+
+            assert_eq!(included(&payload), vec![*walk.abandoned.hash()]);
+        });
+
+        assert!(
+            rendered.contains("base_builder_native_resting_walk_reset_total{reason=\"reorg\"} 1"),
+            "{rendered}"
+        );
+        assert!(!rendered.contains("base_builder_native_resting_walk_resumed_total"), "{rendered}");
     }
 
     /// The set records `gated` as resting although its predicate holds, so whether it is included

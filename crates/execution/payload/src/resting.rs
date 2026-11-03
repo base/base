@@ -423,6 +423,8 @@ struct SharedRestingState {
     /// wakes them; members the build loop parked itself are woken by its own predicate index.
     held: B256Set,
     stats: RestingStats,
+    /// Members held by this set's holds so far, never reset.
+    holds: u64,
 }
 
 impl SharedRestingPredicates {
@@ -433,6 +435,7 @@ impl SharedRestingPredicates {
                 predicates,
                 held: B256Set::default(),
                 stats: RestingStats::default(),
+                holds: 0,
             })),
             hold_runs: Arc::new(AtomicU64::new(0)),
             interrupt: None,
@@ -545,6 +548,32 @@ impl SharedRestingPredicates {
     pub fn hold_runs(&self) -> u64 {
         self.hold_runs.load(AtomicOrdering::Relaxed)
     }
+
+    /// Returns how many members this set's holds held so far, across its iterators and blocks.
+    pub fn holds(&self) -> u64 {
+        self.inner.lock().holds
+    }
+
+    /// Replaces the set with `predicates`, the resting set of a new block, keeping the members the
+    /// current iterator held, so a pool iterator carried into that block keeps parking them.
+    /// Returns the held members `predicates` no longer contains, such as those released at the
+    /// start of the block, and forgets them; the caller promotes them so the build evaluates them.
+    ///
+    /// Visits every held member, once per carried block.
+    pub fn adopt(&self, predicates: RestingPredicates) -> Vec<TxHash> {
+        let mut inner = self.inner.lock();
+        let inner = &mut *inner;
+        inner.predicates = predicates;
+        let mut released = Vec::new();
+        inner.held.retain(|transaction_hash| {
+            let member = inner.predicates.index.entry(*transaction_hash).is_some();
+            if !member {
+                released.push(*transaction_hash);
+            }
+            member
+        });
+        released
+    }
 }
 
 /// Parks members of a [`SharedRestingPredicates`] inside a pool iterator.
@@ -565,6 +594,7 @@ impl<T: BasePooledTx> BestTransactionsHold<T> for RestingHold {
         inner.held.insert(*transaction.hash());
         inner.stats.parked += 1;
         inner.stats.carried_parked += u64::from(carried);
+        inner.holds += 1;
         true
     }
 

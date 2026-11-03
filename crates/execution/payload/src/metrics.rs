@@ -74,6 +74,11 @@ base_metrics::define_metrics! {
     resting_predicate_shadow_mismatches_total: counter,
     #[describe("Of the parked resting validity transactions, those carried over from an earlier block")]
     resting_predicate_carried_parked_total: counter,
+    #[describe("Native block builds that continued the previous build's pool iterator after it walked past held resting validity transactions")]
+    native_resting_walk_resumed_total: counter,
+    #[describe("Native walks past held resting validity transactions not continued, carried walks the next build could not take and finalization-cut walks not carried, by reason: block_limit, reorg or other")]
+    #[label(reason)]
+    native_resting_walk_reset_total: counter,
     #[describe("Duration of carrying resting validity transactions into a block build, on the build path before the selection loop, in seconds")]
     resting_predicate_begin_block_duration: histogram,
     #[describe("Duration of the periodic sweep of resting validity transactions no build yielded, run off the build path, in seconds")]
