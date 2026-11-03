@@ -12,9 +12,14 @@ use base_builder_core::test_utils::ExternalNode;
 use base_builder_core::{
     BuilderConfig,
     test_utils::{
-        TransactionBuilderExt, setup_test_instance, setup_test_instance_with_builder_config,
+        TransactionBuilderExt, chain_spec_with_upgrade, default_node_config,
+        node_config_with_chain_spec, setup_test_instance, setup_test_instance_with_builder_config,
+        setup_test_instance_with_node_config,
     },
 };
+use base_common_evm::BaseUpgrade;
+use base_execution_chainspec::BaseChainSpec;
+use reth_node_builder::NodeConfig;
 use tokio::{join, task::yield_now};
 use tracing::info;
 
@@ -217,6 +222,69 @@ async fn chain_produces_big_tx_with_gas_limit() -> eyre::Result<()> {
     );
 
     Ok(())
+}
+
+/// Gas-limit billing (`BaseFeature::GasLimitBilling`, enabled by Zenith) bills a transaction
+/// for its declared gas limit, so the builder applies `max_gas_per_txn` to the declared limit
+/// before execution. The same over-provisioned transfer, a 21k-gas transfer declaring 100k under
+/// a 25k cap, is therefore included when the cap is checked against metered gas and permanently
+/// rejected without executing when it is checked against reserved gas.
+#[tokio::test]
+async fn gas_limit_billing_applies_gas_cap_to_declared_limit_before_execution() -> eyre::Result<()>
+{
+    const MAX_GAS_PER_TXN: u64 = 25_000;
+
+    assert!(
+        over_provisioned_transfer_is_included(default_node_config(), MAX_GAS_PER_TXN).await?,
+        "metered gas (21k) is under the cap, so the transfer must be included pre-feature"
+    );
+    assert!(
+        !over_provisioned_transfer_is_included(
+            node_config_with_chain_spec(chain_spec_with_upgrade(BaseUpgrade::Zenith)),
+            MAX_GAS_PER_TXN,
+        )
+        .await?,
+        "declared gas (100k) is over the cap, so the transfer must be rejected under the feature"
+    );
+    Ok(())
+}
+
+/// Declared gas limit of the over-provisioned transfer, far above the 21k a transfer meters.
+const OVER_PROVISIONED_TRANSFER_GAS_LIMIT: u64 = 100_000;
+
+/// Builds one block containing a transfer that declares `OVER_PROVISIONED_TRANSFER_GAS_LIMIT`
+/// and reports whether it was included. A rejected transfer must also have been evicted from the
+/// pool and seeded into the rejection cache, i.e. treated as permanently rejected.
+async fn over_provisioned_transfer_is_included(
+    node_config: NodeConfig<BaseChainSpec>,
+    max_gas_per_txn: u64,
+) -> eyre::Result<bool> {
+    let config = BuilderConfig::for_tests().with_max_gas_per_txn(Some(max_gas_per_txn));
+    let rbuilder = setup_test_instance_with_node_config(config, node_config).await?;
+    let driver = rbuilder.driver().await?;
+
+    let tx = driver
+        .create_transaction()
+        .random_valid_transfer()
+        .with_gas_limit(OVER_PROVISIONED_TRANSFER_GAS_LIMIT)
+        .send()
+        .await
+        .expect("Failed to send transaction");
+
+    let block = driver.build_new_block_with_current_timestamp(None).await?;
+    let included = block.transactions.hashes().any(|hash| hash == *tx.tx_hash());
+    if !included {
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        assert!(
+            rbuilder.builder_config().rejection_cache.contains_key(tx.tx_hash()),
+            "over-cap tx should be in the shared rejection cache"
+        );
+        assert!(
+            !rbuilder.pool().exists(*tx.tx_hash()),
+            "over-cap tx should be evicted from the txpool"
+        );
+    }
+    Ok(included)
 }
 
 #[tokio::test]

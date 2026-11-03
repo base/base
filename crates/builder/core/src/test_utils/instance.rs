@@ -14,6 +14,7 @@ use std::{
 use alloy_primitives::B256;
 use alloy_provider::{Identity, ProviderBuilder, RootProvider};
 use async_trait::async_trait;
+use base_common_evm::BaseUpgrade;
 use base_common_flashblocks::FlashblocksPayloadV1;
 use base_common_network::Base;
 use base_execution_chainspec::BaseChainSpec;
@@ -25,6 +26,7 @@ use base_node_runner::{
 };
 use futures::{FutureExt, StreamExt};
 use parking_lot::Mutex;
+use reth_chainspec::ForkCondition;
 use reth_node_builder::{Node, NodeBuilder, NodeConfig};
 use reth_node_core::{
     args::{DatadirArgs, NetworkArgs, RpcServerArgs},
@@ -413,23 +415,20 @@ pub fn chain_spec() -> Arc<BaseChainSpec> {
     CHAIN_SPEC.clone()
 }
 
-/// Returns a chain spec identical to the default test chain spec but with
-/// `BaseUpgrade::Azul` activated at genesis (timestamp 0).
-pub fn chain_spec_with_azul() -> Arc<BaseChainSpec> {
-    use base_common_evm::BaseUpgrade;
-    use reth_chainspec::ForkCondition;
-
+/// Returns a chain spec identical to the default test chain spec but with `upgrade`
+/// activated at genesis (timestamp 0).
+pub fn chain_spec_with_upgrade(upgrade: BaseUpgrade) -> Arc<BaseChainSpec> {
     let genesis = include_str!("./artifacts/genesis.json.tmpl");
     let genesis = serde_json::from_str(genesis).expect("invalid genesis JSON");
     let mut spec = BaseChainSpec::from_genesis(genesis);
-    spec.inner.hardforks.insert(BaseUpgrade::Azul, ForkCondition::Timestamp(0));
+    spec.inner.hardforks.insert(upgrade, ForkCondition::Timestamp(0));
     Arc::new(spec)
 }
 
 /// Returns a node config using a chain spec with `BaseUpgrade::Azul` activated
 /// at genesis.
 pub fn default_node_config_with_azul() -> NodeConfig<BaseChainSpec> {
-    node_config_with_chain_spec(chain_spec_with_azul())
+    node_config_with_chain_spec(chain_spec_with_upgrade(BaseUpgrade::Azul))
 }
 
 /// Builds a [`LocalInstance`]-style Reth node configuration for the given chain spec.
