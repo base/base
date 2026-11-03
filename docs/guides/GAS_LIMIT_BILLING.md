@@ -56,6 +56,8 @@ Execution is still metered internally; only what is settled and reported changes
 
 ## Implementation
 
+The feature was built as a stack of pull requests: [#6334](https://github.com/base/base/pull/6334) (feature flag), [#6349](https://github.com/base/base/pull/6349) (builder cap), [#6406](https://github.com/base/base/pull/6406) (standard transactions), [#6407](https://github.com/base/base/pull/6407) (EIP-8130), [#6408](https://github.com/base/base/pull/6408) (end-to-end tests). The proof of concept is [#6229](https://github.com/base/base/pull/6229).
+
 `BaseFeature::GasLimitBilling` is a semantic feature in the hardfork feature registry ([`feature.rs`](../../crates/common/genesis/src/feature.rs)), owned by `BaseUpgrade::Zenith`, the genesis-only testing gate (never scheduled on Base Sepolia or Mainnet; devnets use `just devnet up zenith`). Call sites check `spec.is_feature_enabled(BaseFeature::GasLimitBilling)`; moving the feature to a named upgrade is one registry line. Behavior is inert unless the feature is active. The hook lives in `crates/common/evm`; `evm2` ([#6268](https://github.com/base/base/pull/6268)) has no equivalent yet and must carry it over if it becomes canonical first.
 
 **Standard transactions** ([`handler.rs`](../../crates/common/evm/src/handler.rs)). One hook in `BaseHandler::refund`, after revm's refund step:
