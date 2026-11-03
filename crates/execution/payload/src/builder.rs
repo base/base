@@ -585,6 +585,7 @@ impl<Txs> Builder<'_, Txs> {
                             }
                         }
                     };
+                    let holds_before = walk.resting.holds();
                     let cancelled = ctx.execute_best_transactions(
                         &mut info,
                         &mut builder,
@@ -596,7 +597,8 @@ impl<Txs> Builder<'_, Txs> {
                     // Only a cut walk is carried: an iterator that reached its end would offer the
                     // next blocks almost none of the transactions that arrive meanwhile.
                     if cut {
-                        if cancelled.is_none() && walk.resting.holds() >= CARRIED_WALK_MIN_HOLDS {
+                        let held = walk.resting.holds() - holds_before;
+                        if cancelled.is_none() && held >= CARRIED_WALK_MIN_HOLDS {
                             walk.transactions.carry();
                             carried = Some((walk, carrier.put));
                         } else {
@@ -2852,6 +2854,72 @@ mod tests {
         }
         assert!(included.contains(walk.abandoned.hash()));
         assert!(!included.contains(walk.mined.hash()));
+    }
+
+    /// A carried walk that already passed the resting set is not carried again when the next
+    /// block's finalization cuts it right after a single hold: that build held too little to save
+    /// the following block any walking.
+    #[test]
+    fn native_builder_does_not_carry_a_walk_cut_after_few_holds_of_its_own() {
+        let holds = ValidityPredicate::Balance {
+            address: Address::repeat_byte(0x4f),
+            op: ValidityOperator::Equal,
+            value: U256::ZERO,
+        };
+        let mut members = carried_walk_members(&holds);
+        let abandoned = pool_transaction_to(0, Address::repeat_byte(0x73), U256::ZERO);
+        let straggler = pool_transaction_to(0, Address::repeat_byte(0x74), U256::ZERO)
+            .with_validity_predicates(vec![holds.clone()]);
+        let late = pool_transaction_to(0, Address::repeat_byte(0x75), U256::ZERO);
+        members.push(straggler.clone());
+        let resting = resting_store_of(pool_parent_hash(), &members, &holds);
+        let walks = CarriedWalkStore::default();
+        let mut candidates = members[..members.len() - 1].to_vec();
+        candidates.extend([abandoned, straggler, late]);
+        let provider = funded_provider(
+            &candidates.iter().map(|transaction| transaction.sender()).collect::<Vec<_>>(),
+        );
+
+        let rendered = rendered_metrics(|| {
+            // Block 1 is finalized at its first candidate, after holding the whole resting set.
+            let ctx = pool_payload_context(DENIM_TIMESTAMP);
+            ctx.cancel.request_finalization();
+            let cancel = ManuallyDrop::new(ctx.cancel.clone());
+            let block = build_carrying_walk(ctx, &provider, &resting, &walks, |hold| {
+                FinalizeAfterFirstTransaction {
+                    transactions: TestParkableTransactions::with_promoted_last(candidates)
+                        .with_hold(hold.map(SharedRestingPredicates::iterator_hold)),
+                    calls: 0,
+                    cancel,
+                }
+            });
+
+            // Block 2 continues the walk, holds only the straggler, and is finalized at `late`.
+            let ctx = child_payload_context(block.block().clone_sealed_header());
+            ctx.cancel.request_finalization();
+            let block = build_carrying_walk(ctx, &provider, &resting, &walks, |_| {
+                panic!("the build must continue the carried iterator")
+            });
+
+            assert!(
+                walks
+                    .take::<FinalizeAfterFirstTransaction>(
+                        block.block().hash(),
+                        block.block().number + 1,
+                    )
+                    .is_none(),
+                "a walk cut after one hold of its own must not be carried"
+            );
+        });
+
+        assert!(
+            rendered.contains("base_builder_native_resting_walk_resumed_total 1"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("base_builder_native_resting_walk_reset_total{reason=\"other\"} 1"),
+            "{rendered}"
+        );
     }
 
     /// A candidate a carrying build skips for a block-scope limit is offered again when the walk

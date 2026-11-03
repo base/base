@@ -245,6 +245,7 @@ fn run(
             }
         };
         watch.watch(&cancel_watch);
+        let holds_before = shared.holds();
         let start = Instant::now();
         finalize_after_budget(&ctx.cancel);
         ctx.execute_best_transactions(&mut info, &mut builder, &mut walk, Some(&shared))
@@ -257,7 +258,7 @@ fn run(
         let resting = shared.take_predicates();
         store.put(store.finish(resting), block_hash(block));
         let cut = watch.take_cut() | walk.stopped_after_hold();
-        if cut && shared.holds() >= CARRIED_WALK_MIN_HOLDS {
+        if cut && shared.holds() - holds_before >= CARRIED_WALK_MIN_HOLDS {
             carried = Some((walk, shared, watch));
         }
         drop(cancel_watch);

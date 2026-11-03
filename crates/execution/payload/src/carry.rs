@@ -39,11 +39,12 @@ use crate::{HoldInterrupt, ParkablePayloadTransactions, SharedRestingPredicates,
 /// because the start of a block released it or the unseen sweep dropped it, is offered again.
 pub const MAX_CARRIED_ITERATOR_BLOCKS: u64 = 10;
 
-/// Resting transactions a build's pool iterator must have held since it was created before it
-/// is carried into the next block.
+/// Resting transactions a build must have held itself, in the block whose finalization cut its
+/// walk, before its pool iterator is carried into the next block.
 ///
-/// An iterator that held fewer saves the next build little walking, so the next build takes a
-/// fresh iterator and sees the current pool.
+/// A build that held fewer had little resting walk left to save, for example because a carried
+/// walk already passed the resting set, so the next build takes a fresh iterator and sees the
+/// current pool.
 pub const CARRIED_WALK_MIN_HOLDS: u64 = 64;
 
 /// Why a native build did not continue a walk past held resting transactions.
@@ -58,8 +59,8 @@ pub enum CarriedWalkReset {
     /// The next build was not on the block the cut build sealed, such as after a reorg or when
     /// another payload was chosen for that height.
     Reorg,
-    /// Any other reason: the cut walk's iterator held fewer than [`CARRIED_WALK_MIN_HOLDS`]
-    /// resting transactions or its build was cancelled, or the carried walk was stored by a build
+    /// Any other reason: the cut build held fewer than [`CARRIED_WALK_MIN_HOLDS`] resting
+    /// transactions itself or was cancelled, or the carried walk was stored by a build
     /// with another iterator type.
     Other,
 }
