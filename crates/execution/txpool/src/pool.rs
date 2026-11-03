@@ -7250,10 +7250,8 @@ mod tests {
 
         // Without a hold the parking iterator matches the plain merge.
         let attributes = BestTransactionsAttributes::new(0, None);
-        let unheld: Vec<_> = pool
-            .best_transactions_with_attributes_and_parking(attributes, None)
-            .map(|transaction| *transaction.hash())
-            .collect();
+        let mut unheld = pool.best_transactions_with_attributes_and_parking(attributes, None);
+        let unheld = drain_committing(unheld.as_mut());
         let merged: Vec<_> = pool
             .best_transactions_with_attributes(attributes)
             .map(|transaction| *transaction.hash())
