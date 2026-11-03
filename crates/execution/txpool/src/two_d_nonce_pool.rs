@@ -1493,15 +1493,12 @@ where
 
     /// Ranks the snapshot's lane heads, leaving out lanes whose root is held.
     pub(crate) fn ranked(mut self) -> Self {
-        let candidates = self
-            .lanes
-            .iter()
-            .enumerate()
-            .filter(|(_, lane)| !lane.held)
-            .map(|(index, lane)| {
+        let mut candidates = Vec::with_capacity(self.lanes.len() - self.held_roots.len());
+        candidates.extend(self.lanes.iter().enumerate().filter(|(_, lane)| !lane.held).map(
+            |(index, lane)| {
                 (BestTransactionPriority::new(&self.ordering, &lane.head, self.base_fee), index)
-            })
-            .collect::<Vec<_>>();
+            },
+        ));
         self.candidates = BinaryHeap::from(candidates);
         self
     }
