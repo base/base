@@ -1,12 +1,12 @@
 # Gas-Limit Billing
 
-Gas-limit billing (the `GasLimitBilling` feature, gated on the genesis-only Zenith testing upgrade) charges a Base transaction for the gas it reserves (its declared `gas_limit`) instead of the gas it consumes. It exists because the builder's fixed per-flashblock time budget was being spent on high-tip transactions that revert early and pay almost nothing. This doc covers the rule, what is implemented, what is verified, and what is still open. `BASE-` and `CHAIN-` identifiers are internal ticket references; the pending decisions are being settled in the BASE-1426 specification.
+Gas-limit billing charges a Base transaction for the gas it reserves instead of the gas it consumes. It aligns payment with the priority a transaction receives from the builder, so high-tip transactions that terminate early cannot obtain cheap inclusion. This document defines the billing rule, its implementation boundaries, alternatives, and activation considerations.
 
 ## Problem
 
-The builder evaluates and executes candidates in priority-fee order inside a 200 ms flashblock, with a 10 ms hard budget for validity-predicate evaluation (`predicate_eval_hard_cutoff`). Ranking is by `tip` per gas, known at admission; payment is `tip * gas_used`, known after execution. An atomic-arbitrage transaction sized for a 500,000-gas execution path reverts after about 25,000 gas when the opportunity is gone, so a searcher can bid a 20x tip, sort first, consume the predicate and execution budget, and pay almost nothing. Flood the pool with these and the transactions behind them, which would have executed and paid, are deferred.
+The builder evaluates and executes candidates in priority-fee order within a fixed flashblock time budget, including a separate validity-predicate evaluation budget. Ranking is by `tip` per gas, known at admission; payment is `tip * gas_used`, known after execution. A transaction can reserve enough gas for a costly execution path but terminate early when an opportunity is unavailable. A high tip then buys priority while the small amount of consumed gas keeps payment low. A flood of these transactions consumes evaluation and execution time, deferring other transactions.
 
-Worked example at a 0.01 gwei base fee and a 1 gwei market tip:
+Hypothetical example with a 1 gwei reference tip (illustrative values, not network measurements):
 
 | | Arbitrage that executes | Reverting arb |
 |---|---|---|
@@ -17,7 +17,7 @@ Worked example at a 0.01 gwei base fee and a 1 gwei market tip:
 | Pays the sequencer, metered (`tip * gas_used`) | 0.0005 ETH | 0.0005 ETH |
 | Pays the sequencer, gas-limit billing (`tip * gas_limit`) | 0.0006 ETH | 0.04 ETH |
 
-Under gas-limit billing the reverting arb pays 80x more than today and its rank costs 67x the regular transaction's: a 20x bid costs 20x. Searchers respond by bidding a tip they will pay on the whole limit, tightening predicates so the transaction is not included unless the opportunity is there, or shrinking the limit.
+In this example, gas-limit billing makes the reverting transaction's higher tip apply to its entire reservation. Searchers can reduce that cost by lowering the tip, tightening predicates so the transaction is not included unless the opportunity is available, or shrinking the limit.
 
 What the rule does not fix: predicates that do not match are not included and pay nothing under either rule, and a tight-limit high-tip reverting transaction costs the same either way. Those are builder time-budget problems (pricing or capping predicate evaluation), out of scope here.
 
@@ -56,9 +56,7 @@ Execution is still metered internally; only what is settled and reported changes
 
 ## Implementation
 
-The feature was built as a stack of pull requests: [#6334](https://github.com/base/base/pull/6334) (feature flag), [#6349](https://github.com/base/base/pull/6349) (builder cap), [#6406](https://github.com/base/base/pull/6406) (standard transactions), [#6407](https://github.com/base/base/pull/6407) (EIP-8130), [#6408](https://github.com/base/base/pull/6408) (end-to-end tests). The proof of concept is [#6229](https://github.com/base/base/pull/6229).
-
-`BaseFeature::GasLimitBilling` is a semantic feature in the hardfork feature registry ([`feature.rs`](../../crates/common/genesis/src/feature.rs)), owned by `BaseUpgrade::Zenith`, the genesis-only testing gate (never scheduled on Base Sepolia or Mainnet; devnets use `just devnet up zenith`). Call sites check `spec.is_feature_enabled(BaseFeature::GasLimitBilling)`; moving the feature to a named upgrade is one registry line. Behavior is inert unless the feature is active. The hook lives in `crates/common/evm`; `evm2` ([#6268](https://github.com/base/base/pull/6268)) has no equivalent yet and must carry it over if it becomes canonical first.
+`BaseFeature::GasLimitBilling` is a semantic feature in the hardfork feature registry ([`feature.rs`](../../crates/common/genesis/src/feature.rs)), gated by `BaseUpgrade::Zenith`, the genesis-only testing upgrade. Call sites check `spec.is_feature_enabled(BaseFeature::GasLimitBilling)`. Behavior is unchanged unless the feature is active; network activation requires assigning it to a scheduled upgrade. The hook lives in `crates/common/evm`; any replacement execution implementation must preserve the same settlement and reporting semantics.
 
 **Standard transactions** ([`handler.rs`](../../crates/common/evm/src/handler.rs)). One hook in `BaseHandler::refund`, after revm's refund step:
 
@@ -73,7 +71,7 @@ if cfg.spec().is_feature_enabled(BaseFeature::GasLimitBilling)
 }
 ```
 
-Everything downstream (EIP-7623 floor, `reimburse_caller`, operator-fee refund, `reward_beneficiary`, `ResultGas`) then observes `gas_used == gas_limit`, so the block executor, both payload builders, flashblocks pending state and receipts agree by construction. This single hook is deliberate: the proof of concept patched each accounting path separately, missed the flashblocks builder, and only the system test caught the builder/validator receipts-root mismatch. `eth_call` and `eth_estimateGas` run with `disable_fee_charge`, so they stay metered and estimation still converges.
+Everything downstream (EIP-7623 floor, `reimburse_caller`, operator-fee refund, `reward_beneficiary`, `ResultGas`) then observes `gas_used == gas_limit`, so the block executor, both payload builders, flashblocks pending state and receipts use the same accounting. A single settlement hook avoids duplicating fee logic across execution paths, which could otherwise produce inconsistent receipts roots between builders and validators. `eth_call` and `eth_estimateGas` run with `disable_fee_charge`, so they stay metered and estimation still converges.
 
 **EIP-8130** ([`eip8130.rs`](../../crates/common/evm/src/eip8130.rs)). `Eip8130Executor::billable_gas` returns `FeeCheck::max_chargeable_gas(gas_limit, payer_floor)` under the feature: exactly what `prepay` pre-charged and what the builder and txpool reserve. The `simulate` estimate stays metered but stops folding `payer_floor` into the returned limit, since settlement adds it on top; a sponsored transaction sent at `gas_limit = estimate` settles `estimate + payer_floor` once.
 
@@ -86,58 +84,39 @@ Users pay `gas_limit * price` instead of `gas_used * price`; out-of-gas already 
 | RPC | Behavior |
 |---|---|
 | `eth_estimateGas`, `eth_call` | Unchanged (`disable_fee_charge`); the estimate is exactly what a standard transaction is billed if used as its limit. |
-| `eth_simulateV1` | Observes the rule (reth never sets `disable_fee_charge` for it): a call without `gas` is reported as consuming the block's remaining gas, so later calls get a 0 limit and the `--rpc.gascap` budget drains. Decision in BASE-1434. |
-| `debug_trace*`, `trace_*` | Top-level `gasUsed` is the limit; per-opcode costs stay metered. Exposing metered gas is part of BASE-1434. |
+| `eth_simulateV1` | With fee charging enabled, a call without `gas` is reported as consuming the block's remaining gas, leaving no gas for later calls and draining the `--rpc.gascap` budget. Simulation fee-charging semantics require an explicit decision before activation. |
+| `debug_trace*`, `trace_*` | Top-level `gasUsed` is the limit; per-opcode costs stay metered. Whether to expose a separate metered total is an activation consideration. |
 | Receipts, blocks, `eth_feeHistory` | Report reserved gas. |
 
-## Validation
+## Design invariants
 
-Every test runs on both sides of the fork (Zenith vs Everest, or Jovian for the block executor).
+All execution paths must enforce the same accounting after activation while preserving pre-activation behavior:
 
-| # | Criterion | Status |
-|---|---|---|
-| S1 | Payer debit `== value + B * effectiveGasPrice + l1Fee + operatorFee(B)`, whatever execution used | Verified: `handler.rs` and `eip8130.rs` unit tests, system test |
-| S2 | Receipt `gasUsed == B`; cumulative sum; header equals last cumulative | Verified: block executor, action test, system test |
-| S3 | Header `gasUsed` = Σ reserved gas of user txs + metered deposit gas; a tx that fits by metered gas but not declared gas is refused | Verified: block executor (deposit + three 100k transfers in a 250k block), action test, system test |
-| S4 | Tip, `BaseFeeVault`, `OperatorFeeVault` on `B`; credits equal debit minus value | Verified: unit tests with an independently computed operator fee (`gas * scalar * 100 + constant`); system test seeds the operator fee on the L1 `SystemConfig` and reads the block base fee |
-| S5 | EIP-3529, EIP-7702 refunds and the EIP-7623 floor have no effect | Verified: unit tests show the refund pre-feature, none under it |
-| S6 | `eth_estimateGas` returns metered gas (21,000 for a transfer) | Verified: unit (`disable_fee_charge`) and system test |
-| S7 | Builder and validator agree; a metered-sum header is rejected after activation | Partly: hash agreement verified (action + system). Rejection **not yet tested** |
-| S8 | EIP-8130 settles `gas_limit + payer_floor`; estimate excludes `payer_floor`; sponsored tx at `gas_limit = estimate` settles once | Verified: unit tests, sponsored system test |
-| S9 | Deposits pay nothing and keep metered gas | Verified: unit, block executor, action test |
-| S10 | Proof of a Zenith block verifies | **Not yet tested** |
-| S11 | Out-of-gas, revert and per-opcode trace gas identical across the fork | Partly: settlement verified at unit level; trace parity **not yet tested** |
-| S12 | Without Zenith the full suite passes unchanged | Verified: CI on every PR |
-| S13 | A reverting arb is billed `tip * B`, same as a success at that limit | Verified at unit level (`REVERT` after two `PUSH1`s); same-block ordering vs a regular tx **not yet tested** |
-| S14 | Over-cap reserved gas rejected before execution under Zenith, after otherwise | Verified: `is_tx_over_limits` unit tests; `crates/builder/core/tests/smoke.rs` runs the same 100k-declared / 21k-metered transfer under a 25k cap, included on the default spec and rejected, evicted and cached as permanently rejected under Zenith |
-| S15 | Reverting-arb flood exhausts the predicate budget; under Zenith each included arb pays its limit | Demo script on the PoC branch only; **not a system test** |
-
-Tests: `handler.rs`, `eip8130.rs`, `executor/block_executor.rs`, `builder/core/src/execution.rs`, `chainspec/src/spec.rs` (unit); `actions/harness/tests/zenith/gas_limit_fee_billing.rs` (real payload builder + verifier, 0.2 s); `etc/systems/tests/gas_limit_fee_billing.rs` (Docker builder + validator, Zenith at block 40, auto-discovered into the merge queue); `crates/builder/core/tests/smoke.rs` (payload builder with `max_gas_per_txn`).
-
-Not yet verified, in priority order: invalid-payload rejection (S7); proving (S10); trace parity (S11); reverting-arb ordering and flood as system tests (S13, S15); EIP-7825-cap reservation flood with base-fee rise.
-
-The PoC branch's devnet demo ([#6229](https://github.com/base/base/pull/6229), porting is BASE-1436) showed the reverting arb's sequencer tip rising 24x under Zenith (21,231 billed gas to its declared 500,000) to 82x a regular transaction's. BASE-1427 holds the mainnet `gas_limit / gas_used` distribution, fee multipliers and base-fee impact.
+- Payer debit equals `value + B * effectiveGasPrice + l1Fee + operatorFee(B)`; fee-vault and sequencer credits account for the full fee.
+- Receipt `gasUsed` equals `B` for user transactions. Header `gasUsed` equals the sum of reserved user-transaction gas and metered deposit gas, and agrees with the last receipt's cumulative gas.
+- Builders refuse transactions whose reservation exceeds the remaining block gas or the configured per-transaction cap, even when metered execution would fit. Validators reject payloads with inconsistent gas accounting.
+- EIP-3529 and EIP-7702 refunds and the EIP-7623 floor do not reduce the billed amount. Reverts and successful execution at the same reservation have the same billable gas.
+- Estimation remains metered. EIP-8130 estimates exclude `payer_floor`, which settlement adds exactly once.
+- Deposits retain metered gas and pay no L2 execution fee.
+- Opcode metering, out-of-gas behavior, and execution results remain unchanged. Proving and block validation must use the same activated rules as payload construction.
 
 ## Open decisions
 
-In the BASE-1426 spec unless a ticket is named:
+The following choices must be resolved before network activation:
 
 - **Named upgrade** that carries the feature; Zenith is only the test gate.
-- **Base-fee target and elasticity** at activation: reserved gas is higher than metered gas, so the base fee steps up until limits tighten. Decide from the data scan.
+- **Base-fee target and elasticity** at activation: reserved gas can exceed metered gas, increasing reported fullness and upward base-fee pressure. Choose whether to adjust these parameters to account for the change in demand measurement.
 - **EIP-3529 and EIP-7702 refunds** become economically inert: accept, or reprice at the opcode level.
-- **EIP-8130 payer authentication** billed at `payer_floor` (the reserved floor-rate amount) and excluded from the estimate, so `eth_estimateGas * gasPrice` understates a sponsored total by `payer_floor * gasPrice`. Needs EIP-8130 owner sign-off.
-- **RPC** (BASE-1434): `eth_simulateV1` fee charging when `validation=false`; metered gas in traces; `Eip8130Executor::execute` ignoring `disable_fee_charge`. Must land before scheduling.
-- **Static EIP-8130 coinbase tips** (BASE-1432, optional): ranked on `gas_limit`, reserved as `gas_limit + payer_floor`.
-- **Amsterdam** (EIP-8037/7778): parked until [#6131](https://github.com/base/base/pull/6131) lands; `spend_all` only spends regular gas.
-- **Ecosystem comms**: ERC-4337 `preVerificationGas`, wallet estimate buffers, explorers at 100% utilisation. Wallet and Rundler outcomes are in the spec.
+- **EIP-8130 payer authentication** billed at `payer_floor` (the reserved floor-rate amount) and excluded from the estimate, so `eth_estimateGas * gasPrice` understates a sponsored total by `payer_floor * gasPrice`. Decide how clients should expose this additional charge.
+- **RPC**: define `eth_simulateV1` fee charging when `validation=false`, metered gas reporting in traces, and whether `Eip8130Executor::execute` must honor `disable_fee_charge` consistently with standard transactions.
+- **Static EIP-8130 coinbase tips**: decide whether ranking on `gas_limit` while reserving `gas_limit + payer_floor` provides the intended priority/payment alignment.
+- **Amsterdam** (EIP-8037/7778): account for separate gas dimensions when integrating these rules; `spend_all` only spends regular gas.
+- **Client compatibility**: account for ERC-4337 `preVerificationGas`, wallet estimate buffers, and explorers displaying 100% utilisation.
 
-Risks to communicate: 2x–5x fee shock for padded limits (`--builder.max_gas_per_txn` bounds the worst case below `2^24`); estimation becomes load-bearing; searchers pay for inclusion-time uncertainty; `gasUsed` changes meaning; fewer transactions per block until limits tighten; divergence from the OP Stack fee model.
+Key risks are higher fees for padded limits, greater dependence on accurate estimation, searchers paying for inclusion-time uncertainty, a changed meaning of `gasUsed`, fewer transactions per block when reservations exceed consumption, and divergence from the OP Stack fee model. `--builder.max_gas_per_txn` bounds the reservation, but the fee also depends on the transaction's effective gas price.
 
-## Rollout
+## Activation
 
-1. Land the stack behind `GasLimitBilling` (Zenith); fill the not-yet-verified list, BASE-1434 first.
-2. Close the open decisions in the spec; publish the data-scan results.
-3. Review `gasUsed` semantics with explorer and wallet stakeholders; communicate the cost shift to searchers and wallets.
-4. Move the feature to a named upgrade per [UPGRADES.md](UPGRADES.md); Base Sepolia, then Mainnet.
+Gas-limit billing is a consensus change and must activate consistently in builders, validators, and provers. Before scheduling a named upgrade, resolve the open decisions above, ensure the design invariants hold across the activation boundary, and define client-facing fee and gas-reporting semantics. Follow [UPGRADES.md](UPGRADES.md) for network activation, with Base Sepolia preceding Mainnet.
 
 References: [EIP-1559](https://eips.ethereum.org/EIPS/eip-1559), [EIP-3529](https://eips.ethereum.org/EIPS/eip-3529), [EIP-7623](https://eips.ethereum.org/EIPS/eip-7623), [EIP-7778](https://eips.ethereum.org/EIPS/eip-7778), [EIP-7825](https://eips.ethereum.org/EIPS/eip-7825), [EIP-8130](https://eips.ethereum.org/EIPS/eip-8130); [`crates/common/evm/README.md`](../../crates/common/evm/README.md).
