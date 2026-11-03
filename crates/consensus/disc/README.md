@@ -46,13 +46,16 @@ signs the tree root. For example:
 ```
 
 `EnrTreeSync` wraps reth's `reth-dns-discovery` service. It verifies the root signature, walks the
-tree, and rechecks the root every 30 minutes, re-syncing when the sequence number changes. If the
-first root lookup fails, it retries every 60 seconds until the tree is reached. It yields only
+tree, and rechecks the root every 30 minutes, re-syncing when the sequence number changes. Until the
+tree yields its first record, it restarts the sync every 60 seconds. That covers a root lookup
+that failed and records that did not resolve. After that, records that failed to resolve are
+retried only once the tree's root changes. It yields only
 records that pass `EnrValidation` for the node's chain ID, so the tree may contain other records.
 Yielded ENRs are added to the discv5 table, forwarded to gossip, and stored in the bootstore.
 
 An unreachable or invalid tree never stops the node: failures are logged and the other bootnodes
-keep working. The sync runs inside the driver task and stops with it.
+keep working. The sync has no task of its own: it is polled inside the driver task and dropped
+with it, which happens at runtime shutdown.
 
 Publishing a tree is out of scope for this crate. Use geth's `devp2p dns` tool:
 `devp2p dns sign` builds and signs a tree from a node list, and `devp2p dns to-route53` or

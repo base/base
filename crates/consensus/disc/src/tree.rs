@@ -22,21 +22,28 @@ use tokio::time::{Instant, Interval, MissedTickBehavior};
 ///
 /// Tree traversal, root signature checks, sequence-number updates and the periodic recheck
 /// (every 30 minutes) are handled by reth's [`DnsDiscoveryService`]. That service drops a tree
-/// whose first root lookup fails, so this stream asks for the root again every retry interval
-/// until the tree yields its first record.
+/// whose first root lookup fails, and never walks a tree again while its root is unchanged. So
+/// until the tree yields its first record, this stream restarts the sync with a fresh service on
+/// every retry interval. That covers a root that failed to resolve and a root that resolved
+/// while its records did not. Once a record has arrived, records that failed to resolve are
+/// retried only after the tree's root changes, as in reth.
 ///
 /// Only records that decode as valid ENRs and pass [`EnrValidation`] for the configured chain ID
-/// are yielded. The stream never ends and owns no background task, so dropping it stops the sync.
+/// are yielded. The stream never ends and owns no background task: it stops when it is dropped
+/// (with the discovery driver task).
 #[derive(derive_more::Debug)]
 pub struct EnrTreeSync<R: Resolver = DnsResolver> {
     /// The tree being synced.
     pub link: LinkEntry,
     /// The chain ID that yielded ENRs must advertise.
     pub chain_id: u64,
+    /// The DNS resolver, kept to restart the sync.
+    #[debug(skip)]
+    pub resolver: Arc<R>,
     /// The reth DNS discovery service syncing this tree.
     #[debug(skip)]
     pub service: DnsDiscoveryService<R>,
-    /// Timer for re-requesting the root until the tree has been reached.
+    /// Timer for restarting the sync until the tree has been reached.
     pub retry: Interval,
     /// Whether the tree has yielded any record, which means its root was resolved.
     pub reached: bool,
@@ -71,11 +78,18 @@ impl EnrTreeSync {
 impl<R: Resolver> EnrTreeSync<R> {
     /// Starts syncing `link` with `resolver`.
     pub fn new(link: LinkEntry, chain_id: u64, resolver: Arc<R>, retry_interval: Duration) -> Self {
-        let mut service = DnsDiscoveryService::new(resolver, DnsDiscoveryConfig::default());
-        service.sync_tree_with_link(link.clone());
+        let service = Self::start_service(&resolver, &link);
         let mut retry = tokio::time::interval_at(Instant::now() + retry_interval, retry_interval);
         retry.set_missed_tick_behavior(MissedTickBehavior::Delay);
-        Self { link, chain_id, service, retry, reached: false }
+        Self { link, chain_id, resolver, service, retry, reached: false }
+    }
+
+    /// Creates a DNS discovery service that starts syncing `link`.
+    pub fn start_service(resolver: &Arc<R>, link: &LinkEntry) -> DnsDiscoveryService<R> {
+        let mut service =
+            DnsDiscoveryService::new(Arc::clone(resolver), DnsDiscoveryConfig::default());
+        service.sync_tree_with_link(link.clone());
+        service
     }
 }
 
@@ -87,8 +101,8 @@ impl<R: Resolver> Stream for EnrTreeSync<R> {
 
         if !this.reached {
             while this.retry.poll_tick(cx).is_ready() {
-                debug!(target: "discovery::enrtree", tree = %this.link, "Retrying ENR tree root lookup");
-                this.service.sync_tree_with_link(this.link.clone());
+                debug!(target: "discovery::enrtree", tree = %this.link, "Retrying ENR tree sync");
+                this.service = Self::start_service(&this.resolver, &this.link);
             }
         }
 
@@ -225,6 +239,31 @@ mod tests {
 
         let valid = enr(Some(CHAIN_ID));
         publish(&resolver, &key, std::slice::from_ref(&valid));
+
+        let found = collect(&mut sync, EnrTreeSync::DEFAULT_RETRY_INTERVAL * 2).await;
+        assert_eq!(found, vec![valid]);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn retries_records_when_root_resolved_without_them() {
+        let key = tree_key(0x55);
+        let resolver = Arc::new(MapResolver::default());
+        let valid = enr(Some(CHAIN_ID));
+        publish(&resolver, &key, std::slice::from_ref(&valid));
+        let leaf = format!("{}.{DOMAIN}", entry_hash(&valid.to_base64()));
+        let leaf_text = resolver.remove(&leaf).expect("leaf was published");
+
+        let mut sync = EnrTreeSync::new(
+            link(&key),
+            CHAIN_ID,
+            Arc::clone(&resolver),
+            EnrTreeSync::DEFAULT_RETRY_INTERVAL,
+        );
+
+        // The root and branch resolve, but the record does not.
+        assert!(collect(&mut sync, COLLECT_WINDOW).await.is_empty());
+
+        resolver.insert(leaf, leaf_text);
 
         let found = collect(&mut sync, EnrTreeSync::DEFAULT_RETRY_INTERVAL * 2).await;
         assert_eq!(found, vec![valid]);
