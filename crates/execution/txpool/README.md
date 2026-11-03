@@ -167,9 +167,10 @@ until the merge has yielded the transaction before it, and standard transactions
 queued right behind a validity run are released by the merge once that run has
 been yielded, so a predicate-delayed transaction does not keep its descendants out
 of the same block. The lanes that straddle stores are indexed incrementally
-(`TwoDNoncePool::lanes_ahead_of_state`, `shared_lanes_pending_end`), so building
-the iterator costs those lanes plus each store's own snapshot, not the pool sizes;
-`benches/best_transactions.rs` measures it on a large pool.
+(`TwoDNoncePool::lanes_ahead_of_state`, `shared_lanes_pending_end`), so cross-store
+bookkeeping visits those indexed lanes rather than scanning both stores. The validity
+snapshot still scans its lanes and copies references to their pending transactions;
+`benches/best_transactions.rs` measures iterator construction on a large pool.
 
 Capacity defaults to reth's pending subpool limit (`--txpool.pending-max-count`,
 `--txpool.pending-max-size`, `--txpool.max-account-slots`) and is overridable with
@@ -280,8 +281,12 @@ Asking at creation marks every held root as seen by the resting set for that blo
 roots the build never reaches within its budget. Those members stay retained instead of aging
 out in the unseen sweep, and the hold's parked counters include them. Seen marking affects
 retention only; predicate applicability, predicate expiry and pool expiry are evaluated as
-before. Snapshots, run copies, bridged-transaction lookups and scans are unchanged, so this is
-a constant-factor saving: held roots no longer pass through the merge one at a time.
+before.
+
+Each iterator still gets a fresh snapshot. There is no persistent selection view, mutation
+journal or cross-build snapshot cache. Snapshot scans, run copies and bridged-transaction
+lookups remain. Eligible resting roots are still checked during creation; they skip the
+priority-ordered walk, not all per-build work. This is a constant-factor saving.
 
 ## Usage
 
