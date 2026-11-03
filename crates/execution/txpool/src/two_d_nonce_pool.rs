@@ -1506,11 +1506,11 @@ where
         self
     }
 
-    /// Asks `hold` about every root anchored at canonical state, before
-    /// [`Self::ranked`]: roots that carry validity predicates, are not
-    /// underpriced, and are nonce-free or whose lane is absent from
-    /// `external_anchors` (see `TwoDNoncePool::lanes_ahead_of_state`). A held
-    /// root and the rest of its lane are not offered until
+    /// Asks `hold` about each root anchored at canonical state, before
+    /// [`Self::ranked`]. A root is asked about if it carries validity
+    /// predicates, is not underpriced, and is nonce-free or its lane is absent
+    /// from `external_anchors` (see `TwoDNoncePool::lanes_ahead_of_state`). A
+    /// held root and the rest of its lane are not offered until
     /// [`MergeSource::take_held`].
     ///
     /// `hold` is checked for interruption before the first root and every

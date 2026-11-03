@@ -86,8 +86,8 @@ where
 /// occupied and [`ParkableBestTransactions::promote`] returns them to priority competition.
 pub trait BestTransactionsHold<T: PoolTransaction>: Send + Sync {
     /// Returns whether `transaction` is parked instead of yielded. Called once per source candidate
-    /// that carries validity predicates and is not blocked by its lane, and possibly also for
-    /// lane roots when the iterator is created.
+    /// that carries validity predicates and is not blocked by its lane. May also be called for lane
+    /// roots when the iterator is created.
     fn hold(&mut self, transaction: &ValidPoolTransaction<T>) -> bool;
 
     /// Records the time one `next` call spent from its first hold until it found a candidate,
@@ -109,11 +109,11 @@ pub trait BestTransactionsHold<T: PoolTransaction>: Send + Sync {
 /// [`BestTransactionsHold::is_interrupted`], so the check stays off the per-transaction path.
 pub const HOLD_INTERRUPT_INTERVAL: u32 = 256;
 
-/// Hands back a root a parking adapter's source held before ranking, with the run behind it;
+/// Hands back a root that a parking adapter's source held before ranking, with the run behind it;
 /// see [`ParkedBestTransactions::with_source_held`].
 pub type PromoteSourceHeld<T, I> = fn(&mut I, TxHash) -> Option<Vec<Arc<ValidPoolTransaction<T>>>>;
 
-/// Marks a root a parking adapter's source held before ranking invalid; see
+/// Marks invalid a root that a parking adapter's source held before ranking; see
 /// [`ParkedBestTransactions::with_source_held`].
 pub type DiscardSourceHeld<T, I> =
     fn(&mut I, TxHash, InvalidPoolTransactionError) -> Option<Arc<ValidPoolTransaction<T>>>;

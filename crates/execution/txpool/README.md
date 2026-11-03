@@ -182,34 +182,39 @@ replacements that crossed a store boundary as
 
 #### Resting transaction lifecycle
 
-Builders remember transactions blocked by unsatisfied validity predicates. Previously, each
-build pulled these known-resting transactions through its ranked selection walk and parked
-them again. Now eligible roots and their blocked descendants stay out of that walk until a
-relevant change makes them candidates again. A root is the first pending transaction in a
-sender's nonce sequence; this shortcut applies to roots ready from confirmed state and to
-nonce-free transactions. Other cases retain the existing path.
+When a build finds a validity transaction's predicate unsatisfied, the builder records the
+transaction as resting until a relevant state or block change. Pulling every resting
+transaction through the best iterator's priority-ordered walk on every build, only to park it
+again, would make selection cost grow with the number of resting transactions. The iterator
+therefore leaves eligible resting transactions out of that walk until a relevant change wakes
+them.
 
-With resting-predicate enforcement enabled:
+A lane is one sender's nonce sequence, and its root is the lane's first pending transaction.
+Only roots ready from confirmed chain state, and nonce-free transactions, are eligible. A root
+left out keeps the rest of its lane out too. Every other case takes the existing path: the
+iterator offers the transaction, and the parking adapter checks whether to park it.
+
+The diagram follows an eligible transaction with resting-predicate enforcement enabled:
 
 ```mermaid
 stateDiagram-v2
-    state "Admitted transaction in pool" as Pending
-    state "VISITED: best-iterator selection" as Selection
-    state "Executable: predicates satisfied" as Executable
-    state "Known resting: SKIPPED by ranked walk" as Resting
+    state "In pool" as Pending
+    state "Checked by the best iterator" as Checked
+    state "Ready to execute" as Executable
+    state "Resting: left out of the ranked walk" as Resting
     state "Included in payload" as Included
-    state "Removed or evicted" as Removed
+    state "Removed" as Removed
 
-    [*] --> Pending: arrival or replacement transaction
+    [*] --> Pending: arrival or replacement
     Pending --> Resting: eligible known rest at iterator creation
-    Pending --> Selection: not held
+    Pending --> Checked: not held
     Pending --> Removed: removal or eviction
-    Selection --> Executable: predicates satisfied
-    Selection --> Resting: restable predicate unsatisfied
-    Selection --> Removed: expired or evicted
-    Resting --> Resting: next build, blocking condition unchanged
-    Resting --> Selection: commit changes watched state
-    Resting --> Selection: new block changes blocking condition
+    Checked --> Executable: predicates satisfied
+    Checked --> Resting: predicate unsatisfied, recorded as a rest
+    Checked --> Removed: expired or evicted
+    Resting --> Resting: next build, condition unchanged
+    Resting --> Checked: commit writes watched state
+    Resting --> Checked: new block changes the condition
     Resting --> Removed: expiry, removal, eviction or replacement
     Executable --> Included: execution accepted
     Executable --> Removed: terminal rejection
@@ -218,64 +223,65 @@ stateDiagram-v2
     Removed --> [*]
 
     note right of Resting
-        Eligible roots and their blocked descendants
-        stay out of the priority-ranked walk.
-        Snapshot construction still scans the pool.
+        Eligible roots and the rest of their lanes
+        stay out of the priority-ordered walk.
+        Iterator creation still scans the pool snapshot.
     end note
-    note left of Selection
-        A wake requests a recheck,
-        not guaranteed inclusion.
+    note left of Checked
+        A wake asks for a recheck.
+        It does not guarantee inclusion.
     end note
 ```
 
-A new block releases block-number rests for rechecking. Expiry, replacement and removal
-invalidate the old transaction rather than wake it; a replacement enters as a new transaction.
-Already-created iterators retain snapshots, so stale candidates still face normal nonce and
-validity checks.
+A wake asks for a recheck; it does not guarantee inclusion. A commit wakes the rests whose
+watched state it writes. A new block releases rests that read the block number for rechecking.
+Expiry, removal and replacement invalidate the old transaction instead of waking it; a
+replacement enters as a new transaction. An iterator that already exists keeps its snapshot,
+so a stale candidate still faces normal nonce and validity checks.
 
-Both builders use this lifecycle and can reconsider a held transaction after a commit in the
-same block. Native creates an iterator for a payload build; Flashblocks refreshes it between
-flashblocks. An unsatisfied flashblock-index predicate is not remembered as a rest, because
-the index changes without a state write; it must be checked at the new position.
+Native builds create one iterator per payload; Flashblocks refreshes its iterator between
+flashblocks. Both builders wake resting transactions after a commit in the same block. A failed
+flashblock-index predicate is not recorded as a rest, because the index changes without a state
+write; it is checked again at each new position.
 
 ##### Iterator details
 
 `ParkableTransactionPool::best_transactions_with_attributes_and_parking` takes an
-optional `BestTransactionsHold`, which payload builders pass only when resting
-predicates are enforced. With no hold the iterator matches `best_transactions`.
+optional `BestTransactionsHold`. Payload builders pass one only when resting predicates are
+enforced. Without a hold, the iterator matches `best_transactions`.
 
-With a hold, the iterator asks it about the validity pool's lane roots when it is
-created, before ranking them. This happens after the pool's read guards are released, so
-a hold callback may use the pool. A root is asked about only if all of these hold:
+With a hold, the iterator asks it about the validity pool's lane roots once, when the
+iterator is created and before ranking. The pool's read guards are released first, so a hold
+callback may use the pool. A root is asked about only if:
 
 - it carries validity predicates;
 - it is not underpriced at the iterator's base fee;
-- its lane is anchored at canonical state, meaning it is not riding another store's
-  pending run (`TwoDNoncePool::lanes_ahead_of_state`), or it is nonce-free.
+- it is nonce-free, or its lane starts at canonical state rather than behind another store's
+  pending run (`TwoDNoncePool::lanes_ahead_of_state`).
 
-Roots the hold holds never enter the iterator's priority heap. The rest of their lanes
-is not offered either. Every other candidate, including externally anchored heads, roots
-the hold declines, and roots left unasked, is held lazily by the parking adapter when the
-build reaches it. The hold's `is_interrupted` is checked before the first root and every
-`HOLD_INTERRUPT_INTERVAL` roots after that. Interruption stops the asking, and the
-remaining roots stay on the adapter path.
+A root the hold holds never enters the iterator's priority heap, and neither does the rest
+of its lane. Every other candidate reaches the parking adapter, which checks whether to hold
+it. That covers lanes behind another store's run, roots the hold declines, and roots
+left unasked. The hold's `is_interrupted` is checked before the first root and every
+`HOLD_INTERRUPT_INTERVAL` roots after that. Interruption stops the asking, and the remaining
+roots take the lazy path.
 
-`promote` on a source-held root moves the root to the ready set, behind any claimant of
-its nonce lane, and buffers the rest of its run behind it. A claimant is a member already
-yielded or parked, or the adapter's cached next candidate in that lane. The protocol
-snapshot can hold a replacement at the root's nonce. The root counts as yielded in the
-merge, so standard transactions bridged behind its run follow it after it commits. The
-adapter's cached next candidate goes back into priority competition, so newly released
-successors are ranked against it. Promotion fails for an unknown hash, a hash already
-promoted or discarded, or a root whose lane was invalidated. `discard_parked` on a
-source-held root invalidates its lane for the iterator and yields nothing behind it.
+`promote` on a root held at creation moves it to the ready set, behind any claimant of its
+lane, and buffers the rest of its run behind it. A claimant is a lane member already yielded
+or parked, or the adapter's cached next candidate in that lane; for example, the protocol
+snapshot can hold a replacement at the root's nonce. The merge counts the root as yielded, so
+standard transactions queued behind its run follow it after it commits. The adapter's cached
+next candidate goes back into priority competition, so newly released successors are ranked
+against it. Promotion fails for an unknown hash, a hash already promoted or discarded, or a
+root whose lane was invalidated. `discard_parked` on a root held at creation invalidates its
+lane for this iterator and yields nothing behind it.
 
-Asking at creation marks every held root as seen by the resting set for that block, even
-roots the build budget never reaches. Such members therefore stay retained instead of
-aging out of the unseen sweep, and the hold's parked counters include them. Seen marking
-only bounds retention. Predicate applicability, predicate expiry, and pool expiry are
-evaluated as before. The snapshots, run copies, bridges, and scans are unchanged, so this
-is a constant-factor saving: the hold no longer pulls held roots through the merge one by one.
+Asking at creation marks every held root as seen by the resting set for that block, including
+roots the build never reaches within its budget. Those members stay retained instead of aging
+out in the unseen sweep, and the hold's parked counters include them. Seen marking affects
+retention only; predicate applicability, predicate expiry and pool expiry are evaluated as
+before. Snapshots, run copies, bridged-transaction lookups and scans are unchanged, so this is
+a constant-factor saving: held roots no longer pass through the merge one at a time.
 
 ## Usage
 
