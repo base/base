@@ -339,15 +339,7 @@ impl Eip8130Signed {
     /// The sender address the transaction hash commits to: the named sender, or
     /// the address recovered (checked, EIP-2 low-`s`) from `sender_auth`.
     fn hash_sender(&self) -> Option<Address> {
-        if let Some(sender) = self.tx.sender {
-            return Some(sender);
-        }
-        let signature = Self::parse_raw_k1_signature(self.sender_auth.as_ref()).ok()?;
-        alloy_consensus::crypto::secp256k1::recover_signer(
-            &signature,
-            self.tx.sender_signature_hash(),
-        )
-        .ok()
+        self.recover_sender().ok()
     }
 
     /// `keccak256` of the EIP-2718 encoding, authentication fields included.
@@ -381,7 +373,6 @@ impl Eip8130Signed {
     /// Returns `Err(_)` when the EOA payload is malformed (wrong length or
     /// invalid signature). Callers should treat a missing sender + malformed
     /// `sender_auth` as a hard rejection.
-    #[cfg(feature = "k256")]
     pub fn recover_eoa_sender(
         &self,
     ) -> Result<Option<Address>, alloy_consensus::crypto::RecoveryError> {
@@ -395,7 +386,6 @@ impl Eip8130Signed {
     /// dispatchers where the contract guarantees no upper-half-`s` filtering;
     /// using the checked variant from those paths would silently tighten the
     /// validation contract.
-    #[cfg(feature = "k256")]
     pub fn recover_eoa_sender_unchecked(
         &self,
     ) -> Result<Option<Address>, alloy_consensus::crypto::RecoveryError> {
@@ -407,7 +397,6 @@ impl Eip8130Signed {
     /// running checked EOA ecrecover. Flattens the [`Self::recover_eoa_sender`]
     /// `Option` so call sites in the pooled and envelope `SignerRecoverable`
     /// implementations stay one-liners and cannot drift.
-    #[cfg(feature = "k256")]
     pub fn recover_sender(&self) -> Result<Address, alloy_consensus::crypto::RecoveryError> {
         if let Some(addr) = self.explicit_sender() {
             return Ok(addr);
@@ -418,7 +407,6 @@ impl Eip8130Signed {
     /// Same as [`Self::recover_sender`] but uses the unchecked recovery path,
     /// preserving the upper-half-`s`-accepting contract required by the
     /// `recover_signer_unchecked` and `recover_unchecked_with_buf` dispatchers.
-    #[cfg(feature = "k256")]
     pub fn recover_sender_unchecked(
         &self,
     ) -> Result<Address, alloy_consensus::crypto::RecoveryError> {
@@ -433,7 +421,6 @@ impl Eip8130Signed {
     /// Requires `v in {27, 28}` and EIP-2 low-`s`. This is the single checked
     /// recovery for a raw k1 blob: open-payer resolution and
     /// `RecoveredActorId::recover_k1` both go through it.
-    #[cfg(feature = "k256")]
     pub fn recover_raw_k1(
         hash: B256,
         raw: &[u8],
@@ -451,7 +438,6 @@ impl Eip8130Signed {
     /// payer means.
     ///
     /// [`RecoveryError`]: alloy_consensus::crypto::RecoveryError
-    #[cfg(feature = "k256")]
     pub fn resolved_payer(
         &self,
         resolved_sender: Address,
@@ -479,7 +465,6 @@ impl Eip8130Signed {
             .map_err(|_| alloy_consensus::crypto::RecoveryError::new())
     }
 
-    #[cfg(feature = "k256")]
     fn recover_eoa_sender_with(
         &self,
         recover: impl FnOnce(
@@ -865,12 +850,9 @@ impl Transaction for Eip8130Signed {
 
 #[cfg(test)]
 mod tests {
-    #[cfg(feature = "k256")]
     use alloy_consensus::proofs::calculate_transaction_root;
     use alloy_primitives::address;
-    #[cfg(feature = "k256")]
     use alloy_signer::SignerSync;
-    #[cfg(feature = "k256")]
     use alloy_signer_local::PrivateKeySigner;
     #[cfg(feature = "reth")]
     use reth_codecs::Compact;
@@ -983,7 +965,6 @@ mod tests {
         assert_ne!(signed.hash(), other_signed.hash());
     }
 
-    #[cfg(feature = "k256")]
     #[test]
     fn open_payer_variants_share_hash_but_not_transaction_root() {
         let sender = PrivateKeySigner::from_slice(&[1; 32]).unwrap();
@@ -1023,7 +1004,6 @@ mod tests {
         assert_eq!(included.resolved_payer(sender.address()).unwrap(), payer_b.address());
     }
 
-    #[cfg(feature = "k256")]
     #[test]
     fn sender_forms_share_hash_but_not_transaction_root() {
         let sender = PrivateKeySigner::from_slice(&[1; 32]).unwrap();
@@ -1223,7 +1203,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "k256")]
     #[test]
     fn recover_eoa_sender_returns_none_for_configured_actor() {
         let signed = sample_signed_8130(false);
@@ -1231,7 +1210,6 @@ mod tests {
         assert_eq!(signed.recover_eoa_sender().unwrap(), None);
     }
 
-    #[cfg(feature = "k256")]
     #[test]
     fn recover_eoa_sender_recovers_eoa_signer() {
         use alloy_signer::SignerSync;
@@ -1249,7 +1227,6 @@ mod tests {
         assert_eq!(signed.recover_eoa_sender().unwrap(), Some(expected));
     }
 
-    #[cfg(feature = "k256")]
     #[test]
     fn recover_eoa_sender_rejects_noncanonical_v() {
         use alloy_signer::SignerSync;
@@ -1270,7 +1247,6 @@ mod tests {
         assert!(signed.recover_eoa_sender_unchecked().is_err());
     }
 
-    #[cfg(feature = "k256")]
     #[test]
     fn recover_eoa_sender_rejects_malformed_payload() {
         let mut tx = sample_signed_8130(false).into_tx();
@@ -1280,7 +1256,6 @@ mod tests {
         assert!(signed.recover_eoa_sender().is_err());
     }
 
-    #[cfg(feature = "k256")]
     #[test]
     fn recover_eoa_sender_unchecked_accepts_high_s_signature() {
         use alloy_primitives::U256;
@@ -1318,7 +1293,6 @@ mod tests {
         assert_eq!(signed.recover_eoa_sender_unchecked().unwrap(), Some(expected));
     }
 
-    #[cfg(feature = "k256")]
     #[test]
     fn recover_eoa_sender_unchecked_returns_none_for_configured_actor() {
         let signed = sample_signed_8130(false);
