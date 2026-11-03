@@ -142,9 +142,12 @@ pub enum Eip8130StaticError {
     /// Priority fee exceeds the maximum fee.
     #[error("max priority fee per gas exceeds max fee per gas")]
     TipAboveFeeCap,
-    /// Gas limit or maximum fee is zero.
-    #[error("gas limit and max fee per gas must be non-zero")]
-    ZeroGasOrFee,
+    /// Gas limit is zero.
+    #[error("gas limit must be non-zero")]
+    ZeroGasLimit,
+    /// Maximum fee per gas is zero.
+    #[error("max fee per gas must be non-zero")]
+    ZeroMaxFee,
 }
 
 /// Why an [`Eip8130Signed`] failed the timestamp-sensitive admission rules in
@@ -267,8 +270,11 @@ impl Eip8130Signed {
         if tx.max_fee_per_gas < tx.max_priority_fee_per_gas {
             return Err(Eip8130StaticError::TipAboveFeeCap);
         }
-        if tx.gas_limit == 0 || tx.max_fee_per_gas == 0 {
-            return Err(Eip8130StaticError::ZeroGasOrFee);
+        if tx.gas_limit == 0 {
+            return Err(Eip8130StaticError::ZeroGasLimit);
+        }
+        if tx.max_fee_per_gas == 0 {
+            return Err(Eip8130StaticError::ZeroMaxFee);
         }
         Ok(())
     }
@@ -285,9 +291,8 @@ impl Eip8130Signed {
                 Err(InvalidTransactionError::ChainIdMismatch)
             }
             Err(Eip8130StaticError::TipAboveFeeCap) => Err(InvalidTransactionError::TipAboveFeeCap),
-            Err(Eip8130StaticError::ZeroGasOrFee) => {
-                Err(InvalidTransactionError::TxTypeNotSupported)
-            }
+            Err(Eip8130StaticError::ZeroGasLimit) => Err(InvalidTransactionError::GasTooLow),
+            Err(Eip8130StaticError::ZeroMaxFee) => Err(InvalidTransactionError::FeeCapTooLow),
         }
     }
 
@@ -644,7 +649,10 @@ impl Decodable2718 for Eip8130Signed {
 
 impl InMemorySize for Eip8130Signed {
     fn size(&self) -> usize {
-        InMemorySize::size(&self.tx) + self.sender_auth.len() + self.payer_auth.len()
+        size_of::<Self>() - size_of::<TxEip8130>()
+            + InMemorySize::size(&self.tx)
+            + self.sender_auth.len()
+            + self.payer_auth.len()
     }
 }
 
@@ -839,11 +847,19 @@ mod tests {
             Err(Eip8130StaticError::TipAboveFeeCap)
         );
 
-        let mut tx = signed.into_tx();
+        let mut tx = signed.clone().into_tx();
         tx.gas_limit = 0;
         assert_eq!(
             Eip8130Signed::new(tx, Bytes::new(), Bytes::new()).validate_admission_static(8453),
-            Err(Eip8130StaticError::ZeroGasOrFee)
+            Err(Eip8130StaticError::ZeroGasLimit)
+        );
+
+        let mut tx = signed.into_tx();
+        tx.max_fee_per_gas = 0;
+        tx.max_priority_fee_per_gas = 0;
+        assert_eq!(
+            Eip8130Signed::new(tx, Bytes::new(), Bytes::new()).validate_admission_static(8453),
+            Err(Eip8130StaticError::ZeroMaxFee)
         );
     }
 
@@ -1077,5 +1093,18 @@ mod tests {
         let decoded: Eip8130Signed = serde_json::from_value(value).unwrap();
         assert_eq!(*decoded.hash(), *signed.hash());
         assert_ne!(*decoded.hash(), B256::ZERO);
+    }
+
+    #[rstest]
+    #[case::self_paid(false)]
+    #[case::sponsored(true)]
+    fn in_memory_size_counts_every_cached_field(#[case] payer_present: bool) {
+        let signed = sample_signed_8130(payer_present);
+        assert!(
+            InMemorySize::size(&signed)
+                >= size_of::<Eip8130Signed>()
+                    + signed.sender_auth().len()
+                    + signed.payer_auth().len()
+        );
     }
 }
