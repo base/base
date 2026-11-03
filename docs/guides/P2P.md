@@ -246,6 +246,13 @@ if let Err(e) = disc.add_enr(enr.clone()) {
 store.add_enr(enr);
 ```
 
+Bootnode lists (`--p2p.bootnodes` or `--p2p.bootnodes-file`) may also contain EIP-1459 ENR trees
+(`enrtree://<pubkey>@<domain>`): signed node lists published as DNS TXT records. The discovery
+driver syncs each tree in the background and rechecks it every 30 minutes. It adds records that are
+valid for the chain to the discv5 table, so operators can rotate bootnodes by republishing the
+tree. An unreachable tree is logged and retried; it never stops the node. To publish a tree, use
+geth's `devp2p dns` tool.
+
 After bootstrapping, the driver enters its main loop where it does several things concurrently using
 `tokio::select!` (a Rust macro that waits on multiple asynchronous operations simultaneously and
 runs the code for whichever one completes first). It runs periodic random node queries (every 5

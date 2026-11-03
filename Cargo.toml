@@ -395,6 +395,7 @@ reth-tracing-otlp = { git = "https://github.com/base/reth", tag = "base-v2.7.0.2
 reth-testing-utils = { git = "https://github.com/base/reth", tag = "base-v2.7.0.2" }
 reth-rpc-eth-types = { git = "https://github.com/base/reth", tag = "base-v2.7.0.2" }
 reth-network-peers = { git = "https://github.com/base/reth", tag = "base-v2.7.0.2" }
+reth-dns-discovery = { git = "https://github.com/base/reth", tag = "base-v2.7.0.2" }
 reth-node-ethereum = { git = "https://github.com/base/reth", tag = "base-v2.7.0.2" }
 reth-trie-parallel = { git = "https://github.com/base/reth", tag = "base-v2.7.0.2" }
 reth-rpc-engine-api = { git = "https://github.com/base/reth", tag = "base-v2.7.0.2" }
@@ -589,6 +590,7 @@ figment = { version = "0.10.19", default-features = false }
 hex = "0.4"
 base64 = "0.22"
 bytes = "1.12.1"
+data-encoding = "2.11"
 
 # identifiers and randomness
 rand = "0.9"

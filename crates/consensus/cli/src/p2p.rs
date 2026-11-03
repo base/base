@@ -13,7 +13,7 @@ use alloy_provider::Provider;
 use backon::Retryable;
 use base_common_genesis::RollupConfig;
 use base_consensus_derive::ChainProvider;
-use base_consensus_disc::LocalNode;
+use base_consensus_disc::{LinkEntry, LocalNode};
 use base_consensus_gossip::{
     ConnectionLimitsConfig, DEFAULT_MAX_IDENTIFY_PEERSTORE_PEERS,
     DEFAULT_MAX_PENDING_OUTGOING_CONNECTIONS, DEFAULT_PENDING_DIAL_TIMEOUT, GaterConfig,
@@ -206,7 +206,10 @@ pub struct P2PNetworkArgs {
     )]
     pub pending_dial_timeout: u64,
 
-    /// An optional list of bootnode ENRs or node records to start the node with.
+    /// An optional list of bootnodes to start the node with.
+    ///
+    /// Accepts ENRs, node records and EIP-1459 ENR trees (`enrtree://<pubkey>@<domain>`). ENR
+    /// trees are synced in the background and rechecked periodically.
     #[arg(
         id = "consensus_p2p_bootnodes",
         long = "p2p.bootnodes",
@@ -215,7 +218,7 @@ pub struct P2PNetworkArgs {
     )]
     pub bootnodes: Vec<String>,
 
-    /// Path to a file containing bootnode ENRs or node records.
+    /// Path to a file containing bootnodes, in any format `--p2p.bootnodes` accepts.
     ///
     /// Entries may be separated by newlines or commas.
     #[arg(
@@ -360,6 +363,9 @@ pub enum P2PConfigError {
 }
 
 impl P2PArgs {
+    /// Prefix of an EIP-1459 ENR tree link in the bootnode list.
+    pub const ENR_TREE_PREFIX: &str = "enrtree://";
+
     /// Checks if the listen ports are available on the system.
     ///
     /// If either of the ports are `0`, this check is skipped.
@@ -647,15 +653,21 @@ impl P2PArgs {
             .unsafe_block_signer(l2_chain_id, config, l1_rpc, l1_rpc_timeout, genesis_signer)
             .await?;
 
-        let bootnodes = self
-            .bootnode_strings()?
-            .into_iter()
-            .map(|bootnode| {
-                BootNode::parse_bootnode(&bootnode)
-                    .map_err(|e| eyre::eyre!("Failed to parse bootnode '{bootnode}': {e}"))
-            })
-            .collect::<Result<Vec<BootNode>>>()?
-            .into();
+        let mut enr_trees = Vec::new();
+        let mut bootnodes = Vec::new();
+        for bootnode in self.bootnode_strings()? {
+            if bootnode.starts_with(Self::ENR_TREE_PREFIX) {
+                let tree = bootnode
+                    .parse::<LinkEntry>()
+                    .map_err(|e| eyre::eyre!("Failed to parse ENR tree '{bootnode}': {e}"))?;
+                enr_trees.push(tree);
+            } else {
+                let node = BootNode::parse_bootnode(&bootnode)
+                    .map_err(|e| eyre::eyre!("Failed to parse bootnode '{bootnode}': {e}"))?;
+                bootnodes.push(node);
+            }
+        }
+        let bootnodes = bootnodes.into();
 
         let bootstore =
             if self.disable_bootstore {
@@ -693,6 +705,7 @@ impl P2PArgs {
             },
             max_identify_peerstore_peers: self.identify_peerstore_size,
             bootnodes,
+            enr_trees,
             rollup_config: config.clone(),
             gossip_signer: self.signer.config(l2_chain_id)?,
         })

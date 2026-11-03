@@ -8,12 +8,15 @@ use base_consensus_peers::{
 };
 use derive_more::Debug;
 use discv5::{Config, Discv5, Enr, IpMode, enr::NodeId};
+use futures::StreamExt;
 use tokio::{
     sync::mpsc::{Sender, channel, error::TrySendError},
     time::{Duration, sleep},
 };
 
-use crate::{Discv5Builder, Discv5Handler, HandlerRequest, LocalNode, Metrics};
+use crate::{
+    Discv5Builder, Discv5Handler, EnrTreeSync, HandlerRequest, LinkEntry, LocalNode, Metrics,
+};
 
 /// Attempts to forward an ENR to the gossip service without spawning or parking on backpressure.
 fn try_forward_enr(enr_sender: &Sender<Enr>, enr: Enr) -> bool {
@@ -52,6 +55,8 @@ pub struct Discv5Driver {
     pub bootstore: Option<BootStoreFile>,
     /// Bootnodes used to bootstrap the discovery service.
     pub bootnodes: BootNodes,
+    /// EIP-1459 ENR trees synced for additional bootnodes while the driver runs.
+    pub enr_trees: Vec<LinkEntry>,
     /// The chain ID of the network.
     pub chain_id: u64,
     /// The interval to discovery random nodes.
@@ -88,6 +93,7 @@ impl Discv5Driver {
             disc,
             chain_id,
             bootnodes,
+            enr_trees: Vec::new(),
             interval,
             forward: true,
             remove_interval: None,
@@ -204,6 +210,10 @@ impl Discv5Driver {
 
             let enrs = self.disc.table_entries_enr();
             info!(target: "discovery", count = enrs.len(), "Discv5 Started");
+
+            // ENR trees are polled inside this task, so they stop when the driver stops.
+            let mut enr_trees =
+                EnrTreeSync::from_links(std::mem::take(&mut self.enr_trees), chain_id);
 
             // Step 3: Forward ENRs in the bootstore to the enr receiver.
             if self.forward {
@@ -339,6 +349,16 @@ impl Discv5Driver {
                                 }
                             }
                             _ => {}
+                        }
+                    }
+                    Some(enr) = enr_trees.next(), if !enr_trees.is_empty() => {
+                        debug!(target: "discovery::enrtree", enr = ?enr, "Adding ENR from ENR tree");
+                        Metrics::discovery_event("enr_tree").increment(1.0);
+                        if let Err(error) = self.disc.add_enr(enr.clone()) {
+                            debug!(target: "discovery::enrtree", error = %error, "Failed to add ENR tree record to the discovery table");
+                        }
+                        if try_forward_enr(&enr_sender, enr.clone()) {
+                            store.add_enr(enr);
                         }
                     }
                     _ = interval.tick() => {

@@ -22,10 +22,12 @@ alloy-rlp = { workspace = true, features = ["std"] }
 
 # Networking
 libp2p.workspace = true
+reth-dns-discovery.workspace = true
 discv5 = { workspace = true, features = ["libp2p"] }
 
 # Misc
 tokio.workspace = true
+futures.workspace = true
 derive_more.workspace = true
 tracing = { workspace = true, features = ["std"] }
 thiserror = { workspace = true, features = ["std"] }
@@ -37,8 +39,12 @@ metrics = { workspace = true, optional = true }
 
 [dev-dependencies]
 tempfile.workspace = true
+secp256k1.workspace = true
+data-encoding.workspace = true
 base-cli-utils.workspace = true
 base-common-chains.workspace = true
+alloy-primitives.workspace = true
+tokio = { workspace = true, features = ["macros", "rt", "test-util"] }
 
 [features]
 default = []

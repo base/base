@@ -34,6 +34,30 @@ ENRs (Ethereum Node Records) contain essential information about network peers:
 - Protocol capabilities and version
 - Chain-specific information (chain ID, etc.)
 
+## ENR Trees (EIP-1459 DNS Discovery)
+
+Besides fixed bootnodes, the driver can sync bootnodes from EIP-1459 ENR trees: lists of signed
+node records published as DNS TXT records under a domain. Pass a tree in the bootnode list as
+`enrtree://<pubkey>@<domain>`, where `<pubkey>` is the base32-encoded compressed secp256k1 key that
+signs the tree root. For example:
+
+```text
+--p2p.bootnodes enrtree://AKA3AM6LPBYEUDMVNU3BSVQJ5AD45Y7YPOHJLEF6W26QOE4VTUDPE@nodes.example.org
+```
+
+`EnrTreeSync` wraps reth's `reth-dns-discovery` service. It verifies the root signature, walks the
+tree, and rechecks the root every 30 minutes, re-syncing when the sequence number changes. If the
+first root lookup fails, it retries every 60 seconds until the tree is reached. It yields only
+records that pass `EnrValidation` for the node's chain ID, so the tree may contain other records.
+Yielded ENRs are added to the discv5 table, forwarded to gossip, and stored in the bootstore.
+
+An unreachable or invalid tree never stops the node: failures are logged and the other bootnodes
+keep working. The sync runs inside the driver task and stops with it.
+
+Publishing a tree is out of scope for this crate. Use geth's `devp2p dns` tool:
+`devp2p dns sign` builds and signs a tree from a node list, and `devp2p dns to-route53` or
+`devp2p dns to-cloudflare` deploys the TXT records.
+
 ## Persistent Storage
 
 The service maintains a persistent bootstore that caches discovered peers across
@@ -43,7 +67,7 @@ restarts, reducing bootstrap time and improving network resilience.
 
 Key configuration parameters include:
 - Discovery interval for random peer queries
-- Bootstrap node list
+- Bootstrap node list and ENR trees (`Discv5Builder::with_enr_trees`)
 - Storage location for persistent peer cache
 - Network interface and port bindings
 
