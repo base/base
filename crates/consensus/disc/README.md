@@ -46,9 +46,9 @@ signs the tree root. For example:
 ```
 
 `EnrTreeSync` wraps reth's `reth-dns-discovery` service. It verifies the root signature, walks the
-tree, and rechecks the root every 30 minutes, re-syncing when the sequence number changes. Until the
-tree yields its first record, it restarts the sync every 60 seconds. That covers a root lookup
-that failed and records that did not resolve. After that, records that failed to resolve are
+tree, and rechecks the root every 30 minutes, re-syncing when the root's subtree hashes change.
+Until the tree yields its first record, it restarts the sync every 60 seconds, logging a warning
+each time. That covers a root lookup that failed and records that did not resolve. After that, records that failed to resolve are
 retried only once the tree's root changes. It yields only
 records that pass `EnrValidation` for the node's chain ID, so the tree may contain other records.
 Yielded ENRs are added to the discv5 table, forwarded to gossip, and stored in the bootstore.

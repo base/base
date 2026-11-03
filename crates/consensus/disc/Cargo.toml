@@ -42,8 +42,8 @@ tempfile.workspace = true
 secp256k1.workspace = true
 data-encoding.workspace = true
 base-cli-utils.workspace = true
-base-common-chains.workspace = true
 alloy-primitives.workspace = true
+base-common-chains.workspace = true
 tokio = { workspace = true, features = ["macros", "rt", "test-util"] }
 
 [features]

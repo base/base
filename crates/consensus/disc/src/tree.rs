@@ -20,8 +20,8 @@ use tokio::time::{Instant, Interval, MissedTickBehavior};
 /// Syncs one EIP-1459 ENR tree (`enrtree://<pubkey>@<domain>`) and yields the consensus-layer
 /// ENRs it publishes.
 ///
-/// Tree traversal, root signature checks, sequence-number updates and the periodic recheck
-/// (every 30 minutes) are handled by reth's [`DnsDiscoveryService`]. That service drops a tree
+/// Tree traversal, root signature checks and the periodic root recheck (every 30 minutes, re-syncing
+/// when the root's subtree hashes change) are handled by reth's [`DnsDiscoveryService`]. That service drops a tree
 /// whose first root lookup fails, and never walks a tree again while its root is unchanged. So
 /// until the tree yields its first record, this stream restarts the sync with a fresh service on
 /// every retry interval. That covers a root that failed to resolve and a root that resolved
@@ -101,7 +101,7 @@ impl<R: Resolver> Stream for EnrTreeSync<R> {
 
         if !this.reached {
             while this.retry.poll_tick(cx).is_ready() {
-                debug!(target: "discovery::enrtree", tree = %this.link, "Retrying ENR tree sync");
+                warn!(target: "discovery::enrtree", tree = %this.link, "ENR tree not reached yet, retrying sync");
                 this.service = Self::start_service(&this.resolver, &this.link);
             }
         }
