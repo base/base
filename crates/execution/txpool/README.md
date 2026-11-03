@@ -284,9 +284,9 @@ Asking at creation marks every held root as seen by the resting set for that blo
 roots the build never reaches within its budget. Seen marking affects retention only; predicate
 applicability, predicate expiry and pool expiry are evaluated as before.
 
-A hold without a selection view, or a pool without a selection index, gets a fresh snapshot on
-every creation: every validity lane is copied, every eligible root asked about, and the
-standard runs bridged behind shared lanes are looked up again. The resting set's hold, which
+A creation whose hold lends no selection view gets a fresh snapshot: every validity lane is
+copied, every eligible root asked about, and the standard runs bridged behind shared lanes are
+looked up again. The resting set's hold, which
 both builders pass when enforcing, lends its view instead.
 
 ##### Persistent selection view
@@ -302,34 +302,35 @@ with its members; the hold lends it to the pool through `BestTransactionsHold::t
 and gets it back through `restore_selection_view` once the pool's guards are released. There is
 no pool-wide dormancy state: concurrent jobs keep independent views, and a job that starts with
 an empty resting set starts with an empty view and asks about every eligible root.
-`ParkableTransactionPool::best_transactions_with_selection_view` takes a view explicitly.
 
 How it works:
 
 - **Pool side.** The first creation with a view makes the validity pool keep a `SelectionIndex`:
   each root's pending run in a persistent `imbl` map, and a `SelectionJournal` naming every root
   whose run, anchor or shared flag changed. Until then the pool keeps none, so off and shadow
-  modes pay nothing for it. Lane members are a persistent `imbl::OrdMap`, so a run shares its
-  lane's members with the cursor and pending length frozen at that point, and a mutation copies
-  at most O(log n) map nodes instead of the pending run. Lane mutations reach the index through
-  `refresh_lane_indexes`, nonce-free admission and removal record their own entries, and
-  `sync_validity_lanes` journals a shared lane whose standard run changed behind an unchanged
+  modes build no index. Lane members are a persistent `imbl::OrdMap` in every mode, so a run
+  shares its lane's members with the cursor and pending length frozen at that point, and a
+  mutation copies at most O(log n) map nodes instead of the pending run. Lane mutations reach the
+  index through `refresh_lane_indexes`, nonce-free admission and removal record their own entries,
+  and `sync_validity_lanes` journals a shared lane whose standard run changed behind an unchanged
   cursor.
 - **Bridges.** A `BridgeMirror` holds the standard runs queued behind shared lanes, and an
   iterator never holds a bridged transaction the protocol pool no longer held when it was
   created. Changes made through this pool's paths reach it through the journal. Reth also
   removes transactions on its own, for example other senders' queued transactions it evicts
   while admitting one, so the mirror observes reth's all-transactions events, subscribed when the
-  first creation needs the mirror and shared by every clone. Every protocol pool call runs under
-  the admission lock and is followed by a drain of at most `BRIDGE_EVENT_DRAIN_LIMIT` events
+  first creation needs the mirror and shared by every clone.
+- **Event drains.** Every protocol pool call that changes its state runs under the
+  admission lock and is followed by a drain of at most `BRIDGE_EVENT_DRAIN_LIMIT` events
   (reth's channel capacity), polled unconstrained by the task's cooperative budget; a removal of
   a mirrored transaction marks its lane for recomputation. A drain that pops the limit may have
   missed events, and leaves the mirror unknown until the next creation rebuilds every lane,
   unless its section is accounted: canonical maintenance, account updates, removals, propagation
   reports and fee updates start with an unaccounted drain and journal every removal they make
   themselves (canonical maintenance also marks each mined transaction's lane, whatever accounts
-  changed), so their own bursts cost no rebuild and never clear an earlier unknown. Admission is
-  never accounted, on every exit after the reth call. Creation shares the mirror in constant
+  changed), so their own bursts cost no rebuild and never clear an earlier unknown. Admission
+  always drains unaccounted right after the reth call, before any exit. Creation shares the
+  mirror in constant
   time and the merge copies a lane's run out when that lane first yields a validity member. The
   mirror is used only by a pool built with `BaseTransactionPool::from_parts`; a pool built with
   `BaseTransactionPool::new`, whose caller may hold the protocol pool, and every clone of a pool
@@ -337,11 +338,9 @@ How it works:
 - **Creation.** In one interval under the admission lock the pool drains the observed events,
   takes the lane stores' read guards, shares the runs and the mirror, copies the journal entries
   the view has not seen and creates the protocol iterator. Outside every guard the view catches
-  up: a journaled dormant
-  root becomes awake, or is reported removed when its lane's root changed or left. Only awake
-  roots are snapshotted (a dense list, iterated in time proportional to its length) and asked
-  about; roots the hold holds become dormant. Without dormant roots the run map is walked
-  directly.
+  up: a journaled dormant root becomes awake, or is reported removed when its lane's root
+  changed or left. Only awake roots are snapshotted (a dense list, iterated in time proportional
+  to its length) and asked about; roots the hold holds become dormant.
 - **Frozen snapshots.** Waking a dormant root in the same build hands back its run and bridged
   successors as snapshotted at creation, exactly as for a root held at that creation: a tail or
   bridged successor replaced afterwards is still yielded in its captured form, and the
@@ -377,8 +376,8 @@ stateDiagram-v2
     Dormant --> Dormant: next creation, lane unchanged
     Dormant --> Promoted: commit wakes it in the same build
     Promoted --> Awake: member removed from the resting set
-    Dormant --> Awake: lane journaled, or block-start release
-    Dormant --> [*]: removal, replacement, expiry or mining reported
+    Dormant --> Awake: lane journaled, block-start release, or conditions expire
+    Dormant --> [*]: pool removal, replacement, mining or pool expiry reported
     Awake --> Unknown: journal overflow or resting-set reset
     Dormant --> Unknown: journal overflow or resting-set reset
     Unknown --> Awake: next creation asks about every eligible root

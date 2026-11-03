@@ -1740,21 +1740,13 @@ where
 
     /// With a non-empty `hold`, the validity pool's roots anchored at canonical state are
     /// asked about once the read guards are released, before they are ranked
-    /// (see `BestTwoDTransactions::hold_resting_roots`). With a `view` as well,
-    /// only its awake roots are snapshotted and asked about; see
-    /// [`Self::selected_best_transactions`].
+    /// (see `BestTwoDTransactions::hold_resting_roots`). A hold that lends a
+    /// selection view goes through [`Self::selected_best_transactions`] instead.
     fn merged_best_transactions(
         &self,
         attributes: BestTransactionsAttributes,
         hold: Option<&mut Box<dyn BestTransactionsHold<T>>>,
-        view: Option<&mut SelectionView>,
     ) -> MergeBestTransactions<T, O> {
-        let hold = match (hold, view) {
-            (Some(hold), Some(view)) => {
-                return self.selected_best_transactions(attributes, hold, view);
-            }
-            (hold, _) => hold,
-        };
         let base_fee = attributes.basefee;
         // The lane bookkeeping the merge relies on (anchors, shared lanes) and
         // the lane stores' iterators are snapshotted under one pair of read
@@ -1848,7 +1840,7 @@ where
             })
         };
         let Some((sidecar, runs, sync, anchors, cached, eager, protocol)) = snapshot else {
-            return self.merged_best_transactions(attributes, Some(hold), None);
+            return self.merged_best_transactions(attributes, Some(hold));
         };
         match sync {
             SelectionSync::Rebuild => view.rebuild(runs.keys().copied()),
@@ -2283,14 +2275,14 @@ where
             block_info.pending_basefee,
             block_info.pending_blob_fee.map(|fee| u64::try_from(fee).unwrap_or(u64::MAX)),
         );
-        Box::new(self.merged_best_transactions(best_transactions_attributes, None, None))
+        Box::new(self.merged_best_transactions(best_transactions_attributes, None))
     }
 
     fn best_transactions_with_attributes(
         &self,
         best_transactions_attributes: BestTransactionsAttributes,
     ) -> Box<dyn BestTransactions<Item = Arc<ValidPoolTransaction<Self::Transaction>>>> {
-        Box::new(self.merged_best_transactions(best_transactions_attributes, None, None))
+        Box::new(self.merged_best_transactions(best_transactions_attributes, None))
     }
 
     fn pending_transactions(&self) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
@@ -2717,21 +2709,13 @@ where
     ) -> Box<dyn ParkableBestTransactions<Self::Transaction>> {
         let mut view = hold.as_mut().and_then(|hold| hold.take_selection_view());
         let base_fee = attributes.basefee;
-        let merged = self.merged_best_transactions(attributes, hold.as_mut(), view.as_mut());
+        let merged = match (hold.as_mut(), view.as_mut()) {
+            (Some(hold), Some(view)) => self.selected_best_transactions(attributes, hold, view),
+            (hold, _) => self.merged_best_transactions(attributes, hold),
+        };
         if let (Some(hold), Some(view)) = (hold.as_mut(), view) {
             hold.restore_selection_view(view);
         }
-        self.parked(merged, base_fee, hold)
-    }
-
-    fn best_transactions_with_selection_view(
-        &self,
-        attributes: BestTransactionsAttributes,
-        mut hold: Option<Box<dyn BestTransactionsHold<Self::Transaction>>>,
-        view: &mut SelectionView,
-    ) -> Box<dyn ParkableBestTransactions<Self::Transaction>> {
-        let base_fee = attributes.basefee;
-        let merged = self.merged_best_transactions(attributes, hold.as_mut(), Some(view));
         self.parked(merged, base_fee, hold)
     }
 }
@@ -7533,16 +7517,21 @@ mod tests {
             )
         }
 
+        /// Creates an iterator through a hold that lends `view`, as a resting set's hold lends its
+        /// lineage's view, and puts the view the pool hands back into `view`.
         fn parking_with_view(
             &self,
             base_fee: u64,
             view: &mut SelectionView,
         ) -> Box<dyn ParkableBestTransactions<BasePooledTransaction>> {
-            self.pool.best_transactions_with_selection_view(
+            let lent = Arc::new(Mutex::new(std::mem::take(view)));
+            let hold = Self { view: Some(Arc::clone(&lent)), ..self.clone() };
+            let best = self.pool.best_transactions_with_attributes_and_parking(
                 BestTransactionsAttributes::new(base_fee, None),
-                Some(Box::new(self.clone())),
-                view,
-            )
+                Some(Box::new(hold)),
+            );
+            *view = std::mem::take(&mut *lent.lock());
+            best
         }
     }
 

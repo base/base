@@ -146,19 +146,6 @@ where
         attributes: BestTransactionsAttributes,
         hold: Option<Box<dyn BestTransactionsHold<Self::Transaction>>>,
     ) -> Box<dyn ParkableBestTransactions<Self::Transaction>>;
-
-    /// Returns a parkable best iterator like
-    /// [`Self::best_transactions_with_attributes_and_parking`] for a build lineage that keeps
-    /// `view` across its iterators, instead of the view `hold` may keep. Pools without
-    /// persistent selection ignore `view`.
-    fn best_transactions_with_selection_view(
-        &self,
-        attributes: BestTransactionsAttributes,
-        hold: Option<Box<dyn BestTransactionsHold<Self::Transaction>>>,
-        _view: &mut SelectionView,
-    ) -> Box<dyn ParkableBestTransactions<Self::Transaction>> {
-        self.best_transactions_with_attributes_and_parking(attributes, hold)
-    }
 }
 
 /// Lane-aware parking over an existing best-transactions iterator.
