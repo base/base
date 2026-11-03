@@ -194,7 +194,7 @@ base_metrics::define_metrics! {
     validity_candidate_handling_duration: histogram,
     #[describe("Flashblocks that continued the previous flashblock's pool iterator because a cancel cut its walk past held resting transactions")]
     resting_walk_resumed_total: counter,
-    #[describe("Resting walks cut by a flashblock cancel that the next flashblock did not continue, by reason: block_end, limit_rejection or few_holds")]
+    #[describe("Resting walks cut by a flashblock cancel that the next flashblock did not continue, by reason: block_end or few_holds")]
     #[label(reason)]
     resting_walk_reset_total: counter,
     #[describe("Builder transaction events successfully enqueued")]

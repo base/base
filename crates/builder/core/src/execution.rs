@@ -600,4 +600,19 @@ mod tests {
 
         assert!(info.is_tx_over_limits(&tx, &limits).is_ok());
     }
+
+    /// Only rejections intrinsic to the transaction are permanent. The flashblocks build loop
+    /// skips the others as retryable, so a later flashblock of a resumed walk offers them again.
+    #[test]
+    fn only_intrinsic_rejections_are_permanent() {
+        assert!(TxnExecutionError::MaxGasUsageExceeded.is_permanent());
+        assert!(
+            TxnExecutionError::ExecutionMeteringLimitExceeded(
+                ExecutionMeteringLimitExceeded::TransactionExecutionTime(2, 1),
+            )
+            .is_permanent()
+        );
+        assert!(!TxnExecutionError::TransactionDASizeExceeded(2, 1).is_permanent());
+        assert!(!TxnExecutionError::MeteringDataPending.is_permanent());
+    }
 }

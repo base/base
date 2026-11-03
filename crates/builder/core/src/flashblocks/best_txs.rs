@@ -42,8 +42,6 @@ pub enum RestingWalkReset {
     /// The walk was cut in the last flashblock of a block and would have been resumed, but the
     /// next block starts a fresh iterator.
     BlockEnd,
-    /// The cut flashblock skipped transactions for a limit a later flashblock may satisfy.
-    LimitRejection,
     /// The cut flashblock held fewer than [`RESTING_WALK_RESUME_MIN_HOLDS`] resting transactions.
     FewHolds,
 }
@@ -53,7 +51,6 @@ impl RestingWalkReset {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::BlockEnd => "block_end",
-            Self::LimitRejection => "limit_rejection",
             Self::FewHolds => "few_holds",
         }
     }
@@ -241,10 +238,8 @@ where
     /// it builds past the resting transactions leaves no cut walk, so the next one refreshes.
     ///
     /// A cut walk is carried into the next flashblock only if this flashblock held at least
-    /// [`RESTING_WALK_RESUME_MIN_HOLDS`] resting transactions and skipped nothing for a limit a
-    /// later flashblock may satisfy, such as its gas or DA target: the build loop invalidated
-    /// those lanes for the rest of the iterator, and only a fresh iterator offers them again.
-    /// Otherwise the reset is counted with its [`RestingWalkReset`] reason.
+    /// [`RESTING_WALK_RESUME_MIN_HOLDS`] resting transactions. Otherwise the reset is counted with
+    /// its [`RestingWalkReset`] reason.
     pub fn finish_flashblock(&mut self, diagnostics: &FlashblockDiagnostics) {
         let interrupted = self.walk_cut.swap(false, AtomicOrdering::Relaxed);
         let stopped_after_hold =
@@ -253,9 +248,7 @@ where
         if !self.resting_predicate_mode.is_enforced() || !(interrupted || stopped_after_hold) {
             return;
         }
-        if diagnostics.has_retryable_limit_rejections() {
-            RestingWalkReset::LimitRejection.record();
-        } else if self.flashblock_holds < RESTING_WALK_RESUME_MIN_HOLDS {
+        if self.flashblock_holds < RESTING_WALK_RESUME_MIN_HOLDS {
             RestingWalkReset::FewHolds.record();
         } else {
             self.carry_pending = true;
@@ -295,9 +288,10 @@ where
     /// The resumed iterator keeps every resting transaction it held and its lane state, so it
     /// neither re-walks nor yields them, and a later commit still promotes them. Resting
     /// transactions the build loop parked in this block stay parked the same way. Other
-    /// transactions the build loop parked, and a candidate the cancelled flashblock yielded but
-    /// never decided on, are promoted back at their priority position, as a fresh iterator would
-    /// offer them again.
+    /// transactions the build loop parked, including those it skipped for a limit a later
+    /// flashblock may satisfy, and a candidate the cancelled flashblock yielded but never decided
+    /// on, are promoted back at their priority position, as a fresh iterator would offer them
+    /// again.
     ///
     /// The iterator keeps the pool snapshot of the flashblock that started the walk: transactions
     /// that arrive since and rank above the walk's position are not offered until a flashblock
@@ -414,6 +408,19 @@ where
         self.inner.mark_current_committed();
         if let Some((transaction_hash, _, _)) = self.current_transaction.take() {
             self.committed_transactions.insert(transaction_hash);
+        }
+    }
+
+    /// Parks the candidate under enforce, the only mode that resumes a cut walk, so a resumed
+    /// walk offers it again as a fresh iterator would. Its lane stays occupied, so its nonce
+    /// descendants wait behind it for the rest of the flashblock.
+    fn skip_retryable(&mut self, sender: Address, nonce: u64, replay_independent: bool) {
+        if self.resting_predicate_mode.is_enforced() {
+            self.park_current();
+        } else if replay_independent {
+            self.mark_current_committed();
+        } else {
+            self.mark_invalid(sender, nonce);
         }
     }
 
@@ -1173,19 +1180,30 @@ mod tests {
         assert_eq!(*iterator.next(()).unwrap().hash(), *rested.hash());
     }
 
-    /// A cut walk whose flashblock skipped transactions for a limit a later flashblock may satisfy
-    /// is not resumed, so the next flashblock's fresh iterator offers those transactions again.
+    /// A transaction above a cut walk that the flashblock skipped for a limit a later flashblock
+    /// may satisfy, here an oversized DA payload, neither stops the walk from resuming nor stays
+    /// invalid: the resumed walk offers it again, as a fresh iterator would.
     #[test]
-    fn cut_walk_after_a_retryable_limit_rejection_refreshes() {
-        let (transactions, _ordinary) = resting_cohort(1_000, 1);
+    fn retryable_limit_skip_above_a_cut_walk_is_offered_again_on_resume() {
+        let (mut transactions, _ordinary) = resting_cohort(1_000, 1);
+        let oversized = transaction(1_000_000, 0, 20);
+        transactions.push(Arc::clone(&oversized));
         let pool = pending_pool(&transactions);
         let mut iterator = resting_iterator(&pool);
         rest_all(&mut iterator, &transactions);
         assert!(!begin(&mut iterator, &pool, cancelled()));
+        let candidate = iterator.next(()).expect("the oversized transaction ranks first");
+        assert_eq!(candidate.hash(), oversized.hash());
+        iterator.skip_retryable(candidate.sender(), candidate.nonce(), false);
         assert!(iterator.next(()).is_none());
-        finish(&mut iterator, &FlashblockDiagnostics { txs_rejected_gas: 1, ..Default::default() });
+        // The flashblock reports the DA rejection, which no longer keeps the walk from resuming.
+        finish(
+            &mut iterator,
+            &FlashblockDiagnostics { txs_rejected_da: 1, ..cancelled_diagnostics() },
+        );
 
-        assert!(!begin(&mut iterator, &pool, CancellationToken::new()));
+        assert!(begin(&mut iterator, &pool, CancellationToken::new()));
+        assert_eq!(iterator.next(()).map(|candidate| *candidate.hash()), Some(*oversized.hash()));
     }
 
     /// A cancel that lands right after a walk past only a few held transactions, here one held
@@ -1261,28 +1279,6 @@ mod tests {
             "{rendered}"
         );
         assert!(!rendered.contains("resting_walk_resumed_total"), "{rendered}");
-    }
-
-    /// A cut walk dropped because its flashblock skipped transactions for a retryable limit counts
-    /// as a limit-rejection reset, not a block-end reset when the block later ends.
-    #[test]
-    fn cut_walk_dropped_for_a_retryable_limit_rejection_is_counted() {
-        let rendered = rendered_metrics(|| {
-            let (pool, mut iterator) = cut_cohort_walk();
-            finish(
-                &mut iterator,
-                &FlashblockDiagnostics { txs_rejected_gas: 1, ..cancelled_diagnostics() },
-            );
-            assert!(!begin(&mut iterator, &pool, CancellationToken::new()));
-            iterator.finish_block();
-        });
-
-        assert!(
-            rendered
-                .contains("base_builder_resting_walk_reset_total{reason=\"limit_rejection\"} 1"),
-            "{rendered}"
-        );
-        assert!(!rendered.contains("block_end"), "{rendered}");
     }
 
     /// A walk cut behind too few holds to resume counts as a few-holds reset.
