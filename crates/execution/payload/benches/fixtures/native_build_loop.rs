@@ -125,7 +125,7 @@ pub(crate) fn parkable(
 ) -> ParkableBestPayloadTransactions<BasePooledTransaction> {
     ParkableBestPayloadTransactions::new(Box::new(
         ParkedBestTransactions::new(pool.best(), Ordering::coinbase_tip(), 0)
-            .with_hold(resting.map(SharedRestingPredicates::iterator_hold)),
+            .with_hold(resting.map(SharedRestingPredicates::native_iterator_hold)),
     ))
 }
 

@@ -244,7 +244,7 @@ fn main() {
         let shared = SharedRestingPredicates::new(resting);
         let best = ParkableBestPayloadTransactions::new(Box::new(
             ParkedBestTransactions::new(pool.best(), Ordering::coinbase_tip(), 0)
-                .with_hold(Some(shared.iterator_hold())),
+                .with_hold(Some(shared.native_iterator_hold())),
         ));
         ctx.execute_best_transactions(&mut info, &mut builder, best, Some(&shared))
             .expect("in-memory execution cannot fail");

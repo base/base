@@ -319,7 +319,7 @@ where
             ParkableBestPayloadTransactions::new(
                 self.pool.best_transactions_with_attributes_and_parking(
                     attrs,
-                    resting.map(SharedRestingPredicates::iterator_hold),
+                    resting.map(SharedRestingPredicates::native_iterator_hold),
                 ),
             )
         })
@@ -2506,7 +2506,7 @@ mod tests {
         let provider = funded_provider(&funded_senders);
         let outcome = Builder::new(|_, resting| {
             TestParkableTransactions::new(transactions)
-                .with_hold(resting.map(SharedRestingPredicates::iterator_hold))
+                .with_hold(resting.map(SharedRestingPredicates::native_iterator_hold))
         })
         .with_resting_predicates(store.clone())
         .build(
@@ -2553,6 +2553,69 @@ mod tests {
             .with_validity_predicates(vec![predicate.clone()]);
         transaction.set_ingestion_rest(IngestionRest { state_block_hash: evaluated_on, predicate });
         transaction
+    }
+
+    #[test]
+    fn native_hold_releases_flashblock_members_while_flashblocks_hold_preserves_them() {
+        let blocker = ValidityPredicate::Balance {
+            address: Address::repeat_byte(0x73),
+            op: ValidityOperator::Equal,
+            value: U256::ONE,
+        };
+        let transaction = pool_transaction_to(0, Address::repeat_byte(0x74), U256::ZERO)
+            .with_validity_predicates(vec![
+                blocker.clone(),
+                ValidityPredicate::FlashblockIndex {
+                    op: ValidityOperator::GreaterThanOrEqual,
+                    value: U256::ONE,
+                },
+            ]);
+        let candidate = pooled_candidate(transaction);
+        let shared =
+            SharedRestingPredicates::new(RestingPredicateStore::default().take(32, Duration::ZERO));
+        shared.rest(*candidate.hash(), blocker);
+
+        assert!(shared.iterator_hold().hold(&candidate));
+        assert!(!shared.native_iterator_hold().hold(&candidate));
+        assert!(shared.is_empty());
+    }
+
+    #[test]
+    fn native_builder_rejects_flashblock_predicates_before_ingestion_adoption() {
+        let event_capture = TransactionEventCapture::install();
+        let blocker = ValidityPredicate::Balance {
+            address: Address::repeat_byte(0x71),
+            op: ValidityOperator::Equal,
+            value: U256::ONE,
+        };
+        let transaction = pool_transaction_to(0, Address::repeat_byte(0x72), U256::ZERO)
+            .with_validity_predicates(vec![
+                blocker.clone(),
+                ValidityPredicate::FlashblockIndex {
+                    op: ValidityOperator::GreaterThanOrEqual,
+                    value: U256::ONE,
+                },
+            ]);
+        transaction.set_ingestion_rest(IngestionRest {
+            state_block_hash: pool_parent_hash(),
+            predicate: blocker,
+        });
+        let hash = *transaction.hash();
+
+        assert!(build_with_ingestion_rest(vec![transaction]).is_empty());
+        let decisions = event_capture
+            .events()
+            .into_iter()
+            .filter(|event| event.tx_hash == Some(hash))
+            .map(|event| (event.event_type, event.data["rejection_reason"].clone()))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            decisions,
+            [(
+                TransactionEventType::BuilderRejected,
+                "unsupported_flashblock_index_predicate".into(),
+            )]
+        );
     }
 
     /// The pool recorded `gated` as unsatisfied under a predicate that in fact holds, so whether

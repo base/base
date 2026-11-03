@@ -665,7 +665,14 @@ impl SharedRestingPredicates {
     /// because they were parked in that iterator.
     pub fn iterator_hold<T: BasePooledTx>(&self) -> Box<dyn BestTransactionsHold<T>> {
         self.inner.lock().held.clear();
-        Box::new(RestingHold { shared: self.clone() })
+        Box::new(RestingHold { shared: self.clone(), supports_flashblocks: true })
+    }
+
+    /// Returns a hold for the native builder, leaving flashblock-index predicates to its
+    /// unsupported-predicate rejection path instead of parking them.
+    pub fn native_iterator_hold<T: BasePooledTx>(&self) -> Box<dyn BestTransactionsHold<T>> {
+        self.inner.lock().held.clear();
+        Box::new(RestingHold { shared: self.clone(), supports_flashblocks: false })
     }
 
     /// Records that `predicate` was unsatisfied for `transaction_hash` at the current build
@@ -725,6 +732,7 @@ impl SharedRestingPredicates {
 #[derive(Debug)]
 struct RestingHold {
     shared: SharedRestingPredicates,
+    supports_flashblocks: bool,
 }
 
 impl<T: BasePooledTx> BestTransactionsHold<T> for RestingHold {
@@ -732,6 +740,10 @@ impl<T: BasePooledTx> BestTransactionsHold<T> for RestingHold {
         let mut inner = self.shared.inner.lock();
         let hash = *transaction.hash();
         let conditions = transaction.transaction.validity_conditions();
+        if !self.supports_flashblocks && conditions.flashblock().is_present() {
+            inner.predicates.remove(hash);
+            return false;
+        }
         if let Some(carried) = inner.predicates.hold(hash, conditions) {
             inner.held.insert(hash);
             inner.stats.parked += 1;
