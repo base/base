@@ -37,13 +37,15 @@ use tokio::{
 use tracing::debug;
 
 use crate::{
-    Admission, BasePooledTx, BaseTransactionValidator, BestTransactionsHold, FlashblockExpiry,
-    GuardLimits, GuardMetrics, InvalidationCause, InvalidationKey, LimitRejection, MempoolGuard,
-    ParkableBestTransactions, ParkableTransactionPool, ParkedBestTransactions, PoolStore,
-    PredicateContext, StateDiffInvalidation, ValidityPoolLimits, ValidityPoolMetrics,
+    Admission, BasePooledTx, BaseTransactionValidator, BestTransactionsHold, BridgeMirror,
+    BridgedRun, FlashblockExpiry, GuardLimits, GuardMetrics, InvalidationCause, InvalidationKey,
+    LimitRejection, MempoolGuard, ParkableBestTransactions, ParkableTransactionPool,
+    ParkedBestTransactions, PoolStore, PredicateContext, SelectionSync, SelectionView,
+    StateDiffInvalidation, ValidityPoolLimits, ValidityPoolMetrics,
     best::{BridgedDescendants, MergeBestTransactions},
     two_d_nonce_pool::{
-        InsertOutcome, LaneCursor, LaneId, LaneUpdate, SidecarLimits, TwoDNoncePool,
+        BestTwoDTransactions, InsertOutcome, LaneCursor, LaneId, LaneUpdate, SidecarLimits,
+        TwoDNoncePool,
     },
 };
 
@@ -168,6 +170,10 @@ pub struct BaseTransactionPool<
     /// Every transaction carrying validity predicates, in lanes keyed by
     /// `(sender, nonce key)` with the protocol nonce as key zero.
     validity: LaneStore<T>,
+    /// Standard runs bridged behind shared validity lanes, refreshed from the
+    /// validity pool's selection journal when an iterator with a
+    /// [`SelectionView`] is created. Locked after the lane stores.
+    bridges: Arc<Mutex<BridgeMirror<T>>>,
     /// Shared admission and invalidation ledger for EIP-8130 transactions.
     guard: Arc<RwLock<MempoolGuard>>,
     /// Block and flashblock deadline index for validity transactions, including
@@ -210,6 +216,7 @@ where
             ordering: self.ordering.clone(),
             sidecar: self.sidecar.clone(),
             validity: self.validity.clone(),
+            bridges: Arc::clone(&self.bridges),
             guard: Arc::clone(&self.guard),
             block_expiry: Arc::clone(&self.block_expiry),
             published_flashblock: Arc::clone(&self.published_flashblock),
@@ -258,6 +265,7 @@ where
             ordering,
             sidecar: LaneStore::new(sidecar),
             validity: LaneStore::new(validity),
+            bridges: Arc::default(),
             guard: Arc::new(RwLock::new(MempoolGuard::unlimited())),
             block_expiry: Arc::new(RwLock::new(crate::BlockExpiryIndex::new())),
             published_flashblock: Arc::new(RwLock::new(None)),
@@ -269,6 +277,7 @@ where
         TwoDNoncePool::new(config.price_bumps)
             .with_limits(limits.resolve(config))
             .with_protocol_nonce_lanes()
+            .with_selection_index()
     }
 
     /// Configures EIP-8130 admission limits. Call before sharing the pool.
@@ -585,6 +594,11 @@ where
                 next_nonce: self.standard_pending_end(lane_id, state_nonce),
             };
             if target == cursor {
+                // The standard run may have changed behind an unchanged cursor; the
+                // bridge mirror and selection views re-check the lane.
+                if shared {
+                    self.validity.pool.write().touch_selection_lane(lane_id);
+                }
                 continue;
             }
             let mut validity = self.validity.pool.write();
@@ -1619,12 +1633,21 @@ where
 
     /// With a non-empty `hold`, the validity pool's roots anchored at canonical state are
     /// asked about once the read guards are released, before they are ranked
-    /// (see `BestTwoDTransactions::hold_resting_roots`).
+    /// (see `BestTwoDTransactions::hold_resting_roots`). With a `view` as well,
+    /// only its awake roots are snapshotted and asked about; see
+    /// [`Self::selected_best_transactions`].
     fn merged_best_transactions(
         &self,
         attributes: BestTransactionsAttributes,
         hold: Option<&mut Box<dyn BestTransactionsHold<T>>>,
+        view: Option<&mut SelectionView>,
     ) -> MergeBestTransactions<T, O> {
+        let hold = match (hold, view) {
+            (Some(hold), Some(view)) => {
+                return self.selected_best_transactions(attributes, hold, view);
+            }
+            (hold, _) => hold,
+        };
         let base_fee = attributes.basefee;
         // The lane bookkeeping the merge relies on (anchors, shared lanes) and
         // the lane stores' iterators are snapshotted under one pair of read
@@ -1660,6 +1683,83 @@ where
         )
         .with_external_anchors(anchors)
         .with_bridged_descendants(bridged)
+    }
+
+    /// [`Self::merged_best_transactions`] for a build lineage keeping `view`.
+    ///
+    /// Under the read guards it shares the validity pool's pending runs and the
+    /// bridge mirror in constant time and copies out the journal entries `view`
+    /// has not seen. Outside them, `view` catches up, only its awake roots are
+    /// snapshotted and asked about, and roots `hold` holds become dormant.
+    /// Dormant roots, their runs and the standard transactions bridged behind
+    /// them are never visited; a same-build wake hands back the run as
+    /// snapshotted here.
+    fn selected_best_transactions(
+        &self,
+        attributes: BestTransactionsAttributes,
+        hold: &mut Box<dyn BestTransactionsHold<T>>,
+        view: &mut SelectionView,
+    ) -> MergeBestTransactions<T, O> {
+        let base_fee = attributes.basefee;
+        let snapshot = {
+            let sidecar = self.sidecar.pool.read();
+            let validity = self.validity.pool.read();
+            validity.selection().map(|selection| {
+                let bridges = self.bridges.lock().refresh(
+                    selection.journal(),
+                    validity.shared_lanes(),
+                    |lane_id| self.bridged_run(&sidecar, &validity, lane_id),
+                );
+                (
+                    sidecar.best_transactions(self.ordering.clone(), base_fee),
+                    selection.runs().clone(),
+                    view.plan(selection.journal()),
+                    validity.lanes_ahead_of_state().clone(),
+                    bridges,
+                )
+            })
+        };
+        let Some((sidecar, runs, sync, anchors, bridges)) = snapshot else {
+            return self.merged_best_transactions(attributes, Some(hold), None);
+        };
+        match sync {
+            SelectionSync::Rebuild => view.rebuild(runs.keys().copied()),
+            SelectionSync::Changed(changed) => {
+                view.refresh(&changed, |root| runs.get(root).map(|run| *run[0].hash()));
+            }
+        }
+        let mut validity =
+            BestTwoDTransactions::from_selection(&runs, view, self.ordering.clone(), base_fee);
+        view.record_skipped();
+        validity.hold_resting_roots(&anchors, &mut **hold);
+        for (hash, root) in validity.held_selection_roots() {
+            view.hold(root, hash);
+        }
+        let protocol = self.protocol_pool.best_transactions_with_attributes(attributes);
+        MergeBestTransactions::new(
+            Box::new(protocol),
+            Box::new(sidecar),
+            Box::new(validity.ranked()),
+            self.ordering.clone(),
+            base_fee,
+        )
+        .with_external_anchors(anchors)
+        .with_bridge_snapshot(bridges)
+    }
+
+    /// The standard run queued behind shared validity lane `lane_id`'s pending
+    /// run, as [`Self::bridged_descendants`] collects it, or `None` when empty.
+    fn bridged_run(
+        &self,
+        sidecar: &TwoDNoncePool<T>,
+        validity: &TwoDNoncePool<T>,
+        lane_id: LaneId,
+    ) -> Option<BridgedRun<T>> {
+        let end =
+            validity.lane_pending_end(&lane_id).filter(|_| validity.is_shared_lane(&lane_id))?;
+        let run: Vec<_> =
+            (end..).map_while(|nonce| self.standard_transaction(sidecar, lane_id, nonce)).collect();
+        (!run.is_empty()).then(|| BridgedRun::from(run))
     }
 
     /// For each validity lane that shares its nonce space with a standard
@@ -2055,14 +2155,14 @@ where
             block_info.pending_basefee,
             block_info.pending_blob_fee.map(|fee| u64::try_from(fee).unwrap_or(u64::MAX)),
         );
-        Box::new(self.merged_best_transactions(best_transactions_attributes, None))
+        Box::new(self.merged_best_transactions(best_transactions_attributes, None, None))
     }
 
     fn best_transactions_with_attributes(
         &self,
         best_transactions_attributes: BestTransactionsAttributes,
     ) -> Box<dyn BestTransactions<Item = Arc<ValidPoolTransaction<Self::Transaction>>>> {
-        Box::new(self.merged_best_transactions(best_transactions_attributes, None))
+        Box::new(self.merged_best_transactions(best_transactions_attributes, None, None))
     }
 
     fn pending_transactions(&self) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
@@ -2485,8 +2585,43 @@ where
         attributes: BestTransactionsAttributes,
         mut hold: Option<Box<dyn BestTransactionsHold<Self::Transaction>>>,
     ) -> Box<dyn ParkableBestTransactions<Self::Transaction>> {
+        let mut view = hold.as_mut().and_then(|hold| hold.take_selection_view());
         let base_fee = attributes.basefee;
-        let merged = self.merged_best_transactions(attributes, hold.as_mut());
+        let merged = self.merged_best_transactions(attributes, hold.as_mut(), view.as_mut());
+        if let (Some(hold), Some(view)) = (hold.as_mut(), view) {
+            hold.restore_selection_view(view);
+        }
+        self.parked(merged, base_fee, hold)
+    }
+
+    fn best_transactions_with_selection_view(
+        &self,
+        attributes: BestTransactionsAttributes,
+        mut hold: Option<Box<dyn BestTransactionsHold<Self::Transaction>>>,
+        view: &mut SelectionView,
+    ) -> Box<dyn ParkableBestTransactions<Self::Transaction>> {
+        let base_fee = attributes.basefee;
+        let merged = self.merged_best_transactions(attributes, hold.as_mut(), Some(view));
+        self.parked(merged, base_fee, hold)
+    }
+}
+
+impl<Client, S, Evm, T, O> BaseTransactionPool<Client, S, Evm, T, O>
+where
+    Client: 'static,
+    Evm: 'static,
+    BaseTransactionValidator<Client, T, Evm>: TransactionValidator<Transaction = T>,
+    T: BasePooledTx + reth_transaction_pool::EthPoolTransaction + 'static,
+    O: reth_transaction_pool::TransactionOrdering<Transaction = T> + Clone,
+    S: BlobStore + Clone,
+{
+    /// Wraps `merged` in the parking adapter the pool hands to builders.
+    fn parked(
+        &self,
+        merged: MergeBestTransactions<T, O>,
+        base_fee: u64,
+        hold: Option<Box<dyn BestTransactionsHold<T>>>,
+    ) -> Box<dyn ParkableBestTransactions<T>> {
         Box::new(
             ParkedBestTransactions::new(merged, self.ordering.clone(), base_fee)
                 .with_hold(hold)
@@ -2950,8 +3085,8 @@ mod tests {
     use super::*;
     use crate::{
         BaseL1BlockInfo, BaseOrdering, BasePooledTransaction, BuilderApiImpl, BuilderApiServer,
-        HOLD_INTERRUPT_INTERVAL, LimitClass, NoExtensions, SelectionView, ValidatedTransaction,
-        ValidityOperator, ValidityPredicate, WatchSet,
+        HOLD_INTERRUPT_INTERVAL, LimitClass, NoExtensions, SELECTION_JOURNAL_CAPACITY,
+        SelectionView, ValidatedTransaction, ValidityOperator, ValidityPredicate, WatchSet,
     };
 
     fn test_chain_id() -> u64 {
@@ -7163,12 +7298,19 @@ mod tests {
     struct RecordingHold {
         log: Arc<Mutex<HoldLog>>,
         pool: IntegrationPool,
+        /// The view a hold keeping one lends the pool, as a resting set's hold does.
+        view: Option<Arc<Mutex<SelectionView>>>,
     }
 
     impl RecordingHold {
         fn new(pool: &IntegrationPool, resting: Vec<TxHash>) -> Self {
             let log = HoldLog { resting, ..HoldLog::default() };
-            Self { log: Arc::new(Mutex::new(log)), pool: pool.clone() }
+            Self { log: Arc::new(Mutex::new(log)), pool: pool.clone(), view: None }
+        }
+
+        fn keeping_view(mut self) -> Self {
+            self.view = Some(Arc::default());
+            self
         }
 
         fn checked(&self) -> Vec<TxHash> {
@@ -7230,6 +7372,16 @@ mod tests {
         fn is_interrupted(&self) -> bool {
             let log = self.log.lock();
             log.interrupt_after.is_some_and(|after| log.checked.len() >= after)
+        }
+
+        fn take_selection_view(&mut self) -> Option<SelectionView> {
+            self.view.as_ref().map(|view| std::mem::take(&mut *view.lock()))
+        }
+
+        fn restore_selection_view(&mut self, view: SelectionView) {
+            if let Some(kept) = &self.view {
+                *kept.lock() = view;
+            }
         }
     }
 
@@ -7862,5 +8014,285 @@ mod tests {
         assert_eq!(drain_committing(unheld.as_mut()), vec![a0]);
         let mut held_again = holding.parking_with_view(0, &mut holding_view);
         assert!(drain_committing(held_again.as_mut()).is_empty());
+    }
+
+    /// Hashes `hold` was asked about since `asked` earlier checks.
+    fn asked_since(hold: &RecordingHold, asked: usize) -> Vec<TxHash> {
+        hold.checked().split_off(asked)
+    }
+
+    #[tokio::test]
+    async fn a_dormant_root_woken_in_the_same_build_yields_its_tail_frozen_at_creation() {
+        let (pool, client) = build_integration_pool();
+        let [a, u] = [(); 2].map(|_| funded_signer(&client));
+        let root = add(&pool, resting_1559(&a, 0, 100)).await;
+        let frozen_tail = add(&pool, resting_1559(&a, 1, 100)).await;
+        let trigger = add(&pool, signed_1559_with_fees(&u, 0, 1_000, 900)).await;
+        let hold = RecordingHold::new(&pool, vec![root]);
+        let mut view = SelectionView::default();
+        drop(hold.parking_with_view(0, &mut view));
+        let asked = hold.checked().len();
+
+        let mut best = hold.parking_with_view(0, &mut view);
+        assert!(asked_since(&hold, asked).is_empty(), "the dormant root is not asked about");
+        let replacement = add(
+            &pool,
+            signed_1559_with_fees(&a, 1, 1_100, 200).with_validity_predicates(resting_predicates()),
+        )
+        .await;
+        let first = best.next().unwrap();
+        assert_eq!(*first.hash(), trigger);
+        best.mark_committed(&first);
+        assert!(best.promote(root), "the commit wakes the dormant root in the same build");
+        assert_eq!(drain_committing(best.as_mut()), vec![root, frozen_tail]);
+
+        let mut next = hold.parking_with_view(0, &mut view);
+        assert_eq!(asked_since(&hold, asked), vec![root], "its lane changed, so it is asked again");
+        assert!(next.promote(root));
+        assert_eq!(drain_committing(next.as_mut()), vec![trigger, root, replacement]);
+    }
+
+    #[tokio::test]
+    async fn a_bridged_successor_replaced_behind_a_dormant_root_reaches_the_next_iterator() {
+        let (pool, client) = build_integration_pool();
+        let a = funded_signer(&client);
+        let root = add(&pool, resting_1559(&a, 0, 100)).await;
+        let bridged = add(&pool, signed_1559_with_fees(&a, 1, 1_000, 100)).await;
+        let hold = RecordingHold::new(&pool, vec![root]);
+        let mut view = SelectionView::default();
+        drop(hold.parking_with_view(0, &mut view));
+        let mut best = hold.parking_with_view(0, &mut view);
+        let asked = hold.checked().len();
+
+        let replacement = add(&pool, signed_1559_with_fees(&a, 1, 1_100, 200)).await;
+        assert!(drain_committing(best.as_mut()).is_empty());
+        assert!(best.promote(root));
+        assert_eq!(drain_committing(best.as_mut()), vec![root, bridged]);
+
+        let mut next = hold.parking_with_view(0, &mut view);
+        assert_eq!(asked_since(&hold, asked), vec![root], "the bridged replacement is journaled");
+        assert!(next.promote(root));
+        assert_eq!(drain_committing(next.as_mut()), vec![root, replacement]);
+    }
+
+    #[tokio::test]
+    async fn a_root_the_owner_wakes_is_asked_about_by_the_next_iterator() {
+        let (pool, client) = build_integration_pool();
+        let a = funded_signer(&client);
+        let root = add(&pool, resting_1559(&a, 0, 100)).await;
+        let hold = RecordingHold::new(&pool, vec![root]);
+        let mut view = SelectionView::default();
+        drop(hold.parking_with_view(0, &mut view));
+        assert_eq!(view.take_changes().dormant, vec![root]);
+
+        drop(hold.parking_with_view(0, &mut view));
+        assert_eq!(view.take_changes().skipped, 1, "creation counts the dormant root it skipped");
+        assert!(view.wake(root));
+        let asked = hold.checked().len();
+        drop(hold.parking_with_view(0, &mut view));
+        assert_eq!(asked_since(&hold, asked), vec![root]);
+    }
+
+    #[tokio::test]
+    async fn a_dormant_root_that_expires_or_is_removed_is_reported_removed() {
+        const EXPIRY_BLOCK: u64 = 5;
+        let (pool, client) = build_integration_pool();
+        let [a, b] = [(); 2].map(|_| funded_signer(&client));
+        let expiring = add(
+            &pool,
+            signed_1559_with_fees(&a, 0, 1_000, 100).with_validity_predicates(vec![
+                ValidityPredicate::BlockNumber {
+                    op: ValidityOperator::LessThanOrEqual,
+                    value: U256::from(EXPIRY_BLOCK),
+                },
+            ]),
+        )
+        .await;
+        let removed = add(&pool, resting_1559(&b, 0, 100)).await;
+        let hold = RecordingHold::new(&pool, vec![expiring, removed]);
+        let mut view = SelectionView::default();
+        drop(hold.parking_with_view(0, &mut view));
+        view.take_changes();
+
+        commit_block(&pool, EXPIRY_BLOCK, Vec::new(), Vec::new());
+        assert_gone(&pool, expiring);
+        assert_eq!(pool.remove_transactions(vec![removed]).len(), 1);
+        let asked = hold.checked().len();
+        let mut best = hold.parking_with_view(0, &mut view);
+        let mut reported = view.take_changes().removed;
+        reported.sort();
+        let mut expected = vec![expiring, removed];
+        expected.sort();
+        assert_eq!(reported, expected);
+        assert!(asked_since(&hold, asked).is_empty());
+        assert!(best.next().is_none());
+    }
+
+    #[tokio::test]
+    async fn an_overflowed_journal_rebuilds_the_view_and_asks_about_every_root_again() {
+        let (pool, client) = build_integration_pool();
+        let [a, b, u] = [(); 3].map(|_| funded_signer(&client));
+        let a0 = add(&pool, resting_1559(&a, 0, 900)).await;
+        let b0 = add(&pool, resting_1559(&b, 0, 500)).await;
+        let hold = RecordingHold::new(&pool, vec![a0, b0]);
+        let mut view = SelectionView::default();
+        drop(hold.parking_with_view(0, &mut view));
+        view.take_changes();
+        {
+            let mut validity = pool.validity.pool.write();
+            for _ in 0..=SELECTION_JOURNAL_CAPACITY {
+                validity.touch_selection_lane((u.address(), U256::ZERO));
+            }
+        }
+
+        let asked = hold.checked().len();
+        let mut best = hold.parking_with_view(0, &mut view);
+        let mut asked_again = asked_since(&hold, asked);
+        asked_again.sort();
+        let mut roots = vec![a0, b0];
+        roots.sort();
+        assert_eq!(asked_again, roots);
+        let changes = view.take_changes();
+        assert!(changes.reset);
+        assert!(best.next().is_none(), "no stale dormancy and no lost hold");
+    }
+
+    #[tokio::test]
+    async fn an_interrupted_view_creation_leaves_its_unasked_roots_awake() {
+        let (pool, client) = build_integration_pool();
+        let count = HOLD_INTERRUPT_INTERVAL as usize + 1;
+        let mut roots = Vec::with_capacity(count);
+        for _ in 0..count {
+            roots.push(add(&pool, resting_1559(&funded_signer(&client), 0, 100)).await);
+        }
+        let hold = RecordingHold::new(&pool, roots.clone());
+        let mut view = SelectionView::default();
+
+        hold.log.lock().interrupt_after = Some(1);
+        drop(hold.parking_with_view(0, &mut view));
+        let asked = hold.checked();
+        assert_eq!(asked.len(), HOLD_INTERRUPT_INTERVAL as usize);
+        hold.log.lock().interrupt_after = None;
+
+        let mut best = hold.parking_with_view(0, &mut view);
+        let unasked: Vec<_> = roots.iter().filter(|root| !asked.contains(root)).copied().collect();
+        assert_eq!(asked_since(&hold, asked.len()), unasked, "only the unasked root is asked");
+        assert!(best.next().is_none());
+        for root in &roots {
+            assert!(best.promote(*root), "every root wakes, dormant or held at this creation");
+        }
+        assert_eq!(drain_committing(best.as_mut()).len(), count);
+    }
+
+    #[tokio::test]
+    async fn dormant_channel_and_nonce_free_roots_wake_independently() {
+        let (pool, client) = build_integration_pool();
+        let s = funded_signer(&client);
+        let channel = U256::from(7);
+        let standard = add(&pool, signed_1559_with_fees(&s, 0, 1_000, 50)).await;
+        let channel_root = add(&pool, validity_8130(&s, channel, 0, 1_000)).await;
+        let channel_tail = add(&pool, validity_8130(&s, channel, 1, 1_000)).await;
+        let nonce_free = add(
+            &pool,
+            signed_nonce_free_tx(&s, INTEGRATION_POOL_NOW_MS + 5_000, 1_000)
+                .with_validity_predicates(resting_predicates()),
+        )
+        .await;
+        let hold = RecordingHold::new(&pool, vec![channel_root, nonce_free]);
+        let mut view = SelectionView::default();
+        drop(hold.parking_with_view(0, &mut view));
+        let asked = hold.checked().len();
+
+        let mut best = hold.parking_with_view(0, &mut view);
+        assert!(asked_since(&hold, asked).is_empty());
+        assert_eq!(drain_committing(best.as_mut()), vec![standard]);
+        assert!(best.promote(nonce_free));
+        assert!(!best.promote(nonce_free), "a dormant root is handed back once");
+        assert_eq!(drain_committing(best.as_mut()), vec![nonce_free]);
+        assert!(best.promote(channel_root));
+        assert_eq!(drain_committing(best.as_mut()), vec![channel_root, channel_tail]);
+    }
+
+    #[tokio::test]
+    async fn anchored_heads_are_left_to_the_adapter_with_a_view() {
+        let (pool, client) = build_integration_pool();
+        let [s, o] = [(); 2].map(|_| funded_signer(&client));
+        let s0 = add(&pool, signed_1559_with_fees(&s, 0, 1_000, 1)).await;
+        let s1 = add(&pool, resting_1559(&s, 1, 900)).await;
+        let o0 = add(&pool, signed_1559_with_fees(&o, 0, 1_000, 500)).await;
+        let hold = RecordingHold::new(&pool, vec![s1]);
+        let mut view = SelectionView::default();
+
+        for _ in 0..2 {
+            let asked = hold.checked().len();
+            let mut best = hold.parking_with_view(0, &mut view);
+            assert!(asked_since(&hold, asked).is_empty(), "a head riding another store's run");
+            assert_eq!(drain_committing(best.as_mut()), vec![o0, s0]);
+            assert_eq!(asked_since(&hold, asked), vec![s1], "the adapter asks when it is reached");
+            assert!(best.promote(s1));
+            assert_eq!(drain_committing(best.as_mut()), vec![s1]);
+        }
+        assert_eq!(view.dormant_len(), 0);
+    }
+
+    /// Pool contents with bridged runs and a channel root, at distinct priorities.
+    async fn bridged_mixed_pool(
+        pool: &IntegrationPool,
+        client: &MockEthProvider<BasePrimitives, Arc<BaseChainSpec>>,
+    ) -> [PrivateKeySigner; 3] {
+        let [a, b, c] = [(); 3].map(|_| funded_signer(client));
+        add(pool, resting_1559(&a, 0, 900)).await;
+        add(pool, signed_1559_with_fees(&a, 1, 1_000, 950)).await;
+        add(pool, signed_1559_with_fees(&b, 0, 1_000, 300)).await;
+        add(pool, resting_1559(&c, 0, 700)).await;
+        add(pool, resting_1559(&c, 1, 650)).await;
+        add(pool, signed_1559_with_fees(&c, 2, 1_000, 800)).await;
+        add(pool, validity_8130(&b, U256::from(3), 0, 1_000)).await;
+        [a, b, c]
+    }
+
+    #[tokio::test]
+    async fn a_view_resting_nothing_matches_the_unheld_iterator_as_the_pool_changes() {
+        let (pool, client) = build_integration_pool();
+        let [a, _, c] = bridged_mixed_pool(&pool, &client).await;
+        let hold = RecordingHold::new(&pool, Vec::new());
+        let mut view = SelectionView::default();
+        let attributes = BestTransactionsAttributes::new(0, None);
+        let mut matches_unheld = |step: &str| {
+            let mut selected = hold.parking_with_view(0, &mut view);
+            let mut unheld = pool.best_transactions_with_attributes_and_parking(attributes, None);
+            assert_eq!(
+                drain_committing(selected.as_mut()),
+                drain_committing(unheld.as_mut()),
+                "{step}"
+            );
+        };
+
+        matches_unheld("initial");
+        add(&pool, signed_1559_with_fees(&a, 1, 1_100, 1_050)).await;
+        matches_unheld("bridged successor replaced");
+        add(&pool, signed_1559_with_fees(&c, 3, 1_000, 600)).await;
+        matches_unheld("bridged run extended");
+        let c0 = pool.get_transaction_by_sender_and_nonce(c.address(), 0).unwrap();
+        assert_eq!(pool.remove_transactions(vec![*c0.hash()]).len(), 1);
+        matches_unheld("validity root removed");
+    }
+
+    #[tokio::test]
+    async fn a_hold_keeping_a_view_lends_it_to_creation_and_gets_it_back() {
+        let (pool, client) = build_integration_pool();
+        let [a, u] = [(); 2].map(|_| funded_signer(&client));
+        let root = add(&pool, resting_1559(&a, 0, 900)).await;
+        let unrelated = add(&pool, signed_1559_with_fees(&u, 0, 1_000, 50)).await;
+        let hold = RecordingHold::new(&pool, vec![root]).keeping_view();
+        drop(hold.parking(0));
+        assert_eq!(hold.view.as_ref().unwrap().lock().dormant_len(), 1);
+
+        let asked = hold.checked().len();
+        let mut best = hold.parking(0);
+        assert!(asked_since(&hold, asked).is_empty());
+        assert_eq!(drain_committing(best.as_mut()), vec![unrelated]);
+        assert!(best.promote(root));
+        assert_eq!(drain_committing(best.as_mut()), vec![root]);
     }
 }

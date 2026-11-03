@@ -69,7 +69,14 @@ mod parking;
 pub use parking::{
     BestTransactionLane, BestTransactionLaneState, BestTransactionsHold, DiscardSourceHeld,
     HOLD_INTERRUPT_INTERVAL, ParkableBestTransactions, ParkableTransactionPool,
-    ParkedBestTransactions, PromoteSourceHeld, SelectionView,
+    ParkedBestTransactions, PromoteSourceHeld,
+};
+
+mod selection;
+pub use selection::{
+    BridgeMirror, BridgedRun, JournalPosition, PendingRun, SELECTION_JOURNAL_CAPACITY,
+    SelectionChanges, SelectionIndex, SelectionJournal, SelectionRoot, SelectionSync,
+    SelectionView,
 };
 
 mod pool;

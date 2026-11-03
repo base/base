@@ -74,6 +74,8 @@ base_metrics::define_metrics! {
     resting_predicate_shadow_mismatches_total: counter,
     #[describe("Of the parked resting validity transactions, those carried over from an earlier block")]
     resting_predicate_carried_parked_total: counter,
+    #[describe("Dormant resting validity transactions the transaction iterators skipped at creation without asking whether to hold them; not counted as parked")]
+    resting_predicate_dormant_skipped_total: counter,
     #[describe("Duration of carrying resting validity transactions into a block build, on the build path before the selection loop, in seconds")]
     resting_predicate_begin_block_duration: histogram,
     #[describe("Duration of the periodic sweep of resting validity transactions no build yielded, run off the build path, in seconds")]

@@ -26,6 +26,7 @@ use reth_transaction_pool::{
 
 use crate::{
     BasePooledTx, BestTransactionPriority, BestTransactionsHold, HOLD_INTERRUPT_INTERVAL,
+    PendingRun, SelectionIndex, SelectionRoot, SelectionView,
     best::{HeldRun, MergeSource},
 };
 
@@ -465,6 +466,9 @@ pub(crate) struct TwoDNoncePool<T: BasePooledTx> {
     /// when the two meet. Cleared with the lane; a flag may outlive the other
     /// store's transactions, so readers verify before relying on it.
     shared_lanes: HashSet<LaneId>,
+    /// Pending runs by root and the journal of their changes, kept in step with `lanes` and
+    /// `nonce_free` when persistent selection is enabled (the validity pool).
+    selection: Option<SelectionIndex<T>>,
 }
 
 impl<T: BasePooledTx> TwoDNoncePool<T> {
@@ -482,7 +486,49 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
             lane_candidates: HashMap::default(),
             ahead_of_state: HashMap::default(),
             shared_lanes: HashSet::default(),
+            selection: None,
         }
+    }
+
+    /// Keeps a [`SelectionIndex`] of the pool's roots for persistent selection. Call before
+    /// inserting.
+    #[must_use]
+    pub(crate) fn with_selection_index(mut self) -> Self {
+        self.selection = Some(SelectionIndex::default());
+        self
+    }
+
+    /// The pool's [`SelectionIndex`], when it keeps one.
+    pub(crate) const fn selection(&self) -> Option<&SelectionIndex<T>> {
+        self.selection.as_ref()
+    }
+
+    /// Journals a change to `lane_id` the lane itself does not show, such as its bridged
+    /// standard successors.
+    pub(crate) fn touch_selection_lane(&mut self, lane_id: LaneId) {
+        if let Some(selection) = &mut self.selection {
+            selection.journal_mut().record(SelectionRoot::Lane(lane_id.0, lane_id.1));
+        }
+    }
+
+    /// Stores `lane_id`'s current pending run in the selection index.
+    fn record_selection_lane(&mut self, lane_id: LaneId) {
+        let Some(selection) = &mut self.selection else { return };
+        let run = self.lanes.get(&lane_id).and_then(|lane| {
+            let run: Vec<_> = lane.consecutive_pending_transactions().cloned().collect();
+            (!run.is_empty()).then(|| PendingRun::from(run))
+        });
+        selection.update(SelectionRoot::Lane(lane_id.0, lane_id.1), run);
+    }
+
+    /// Stores the nonce-free transaction under `replay_id`, if any, in the selection index.
+    fn record_selection_nonce_free(&mut self, replay_id: B256) {
+        let Some(selection) = &mut self.selection else { return };
+        let run = self
+            .nonce_free
+            .get(&replay_id)
+            .map(|transaction| PendingRun::from(vec![Arc::clone(transaction)]));
+        selection.update(SelectionRoot::NonceFree(replay_id), run);
     }
 
     /// Applies admission and capacity limits. Call before inserting.
@@ -595,8 +641,10 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
     /// Re-ranks `lane_id`'s tail after the lane changed. Must follow every lane
     /// mutation: the tail, and whether it is pending, depend on the whole lane.
     /// Brings every per-lane index in line with `lane_id` after it changed:
-    /// its eviction candidate, its ahead-of-state anchor and its shared flag.
+    /// its eviction candidate, its ahead-of-state anchor, its shared flag and
+    /// its selection-index run.
     fn refresh_lane_indexes(&mut self, lane_id: LaneId) {
+        self.record_selection_lane(lane_id);
         if let Some(previous) = self.lane_candidates.remove(&lane_id) {
             self.eviction_order.remove(&previous);
         }
@@ -838,6 +886,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
                 self.eviction_order.remove(&self.eviction_key(existing, true));
             }
             self.nonce_free.insert(replay_id, Arc::clone(&transaction));
+            self.record_selection_nonce_free(replay_id);
             self.usage.add(&transaction);
             self.eviction_order.insert(self.eviction_key(&transaction, true));
             self.hashes.insert(hash, Arc::clone(&transaction));
@@ -1111,14 +1160,21 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
     /// Flags `lane_id` as one another store also holds transactions in. No-op
     /// for a lane this pool does not hold.
     pub(crate) fn mark_shared_lane(&mut self, lane_id: LaneId) {
-        if self.lanes.contains_key(&lane_id) {
-            self.shared_lanes.insert(lane_id);
+        if self.lanes.contains_key(&lane_id) && self.shared_lanes.insert(lane_id) {
+            self.touch_selection_lane(lane_id);
         }
     }
 
     /// Clears the shared flag once the other store holds nothing in `lane_id`.
     pub(crate) fn unmark_shared_lane(&mut self, lane_id: &LaneId) {
-        self.shared_lanes.remove(lane_id);
+        if self.shared_lanes.remove(lane_id) {
+            self.touch_selection_lane(*lane_id);
+        }
+    }
+
+    /// The lanes flagged as shared with another store.
+    pub(crate) fn shared_lanes(&self) -> impl Iterator<Item = LaneId> + '_ {
+        self.shared_lanes.iter().copied()
     }
 
     /// Whether `lane_id` is flagged as shared with another store.
@@ -1350,6 +1406,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
             && let Some(replay_id) = transaction.transaction.eip8130_replay_id()
         {
             let transaction = self.nonce_free.remove(&replay_id)?;
+            self.record_selection_nonce_free(replay_id);
             self.hashes.remove(&hash);
             self.usage.remove(&transaction);
             self.eviction_order.remove(&self.eviction_key(&transaction, true));
@@ -1412,6 +1469,11 @@ where
     /// Lanes whose root a [`BestTransactionsHold`] held before ranking, by the
     /// root's hash, until [`MergeSource::take_held`] hands them back.
     held_roots: B256Map<usize>,
+    /// Roots a [`SelectionView`] held dormant at creation, left out of `lanes`;
+    /// [`MergeSource::take_held`] hands each back once from `dormant_runs`.
+    dormant_roots: imbl::HashMap<TxHash, SelectionRoot>,
+    /// The selection index's runs snapshotted at creation. Empty without a view.
+    dormant_runs: imbl::HashMap<SelectionRoot, PendingRun<T>>,
     /// Mirrors the pool's protocol-nonce lane mode for lane lookups.
     protocol_nonce_lanes: bool,
     ordering: O,
@@ -1485,10 +1547,67 @@ where
             candidates: BinaryHeap::new(),
             lane_indexes,
             held_roots: B256Map::default(),
+            dormant_roots: imbl::HashMap::default(),
+            dormant_runs: imbl::HashMap::default(),
             protocol_nonce_lanes,
             ordering,
             base_fee,
         }
+    }
+
+    /// Snapshots the awake roots of `view` from `runs`, a selection index's runs, without
+    /// visiting its dormant roots, which [`MergeSource::take_held`] hands back from `runs`.
+    /// Nothing is offered before [`Self::ranked`].
+    pub(crate) fn from_selection(
+        runs: &imbl::HashMap<SelectionRoot, PendingRun<T>>,
+        view: &SelectionView,
+        ordering: O,
+        base_fee: u64,
+    ) -> Self {
+        let lane = |root: &SelectionRoot, run: &PendingRun<T>| {
+            let id = match root {
+                SelectionRoot::Lane(sender, nonce_key) => (*sender, *nonce_key),
+                SelectionRoot::NonceFree(_) => (run[0].sender(), Eip8130Constants::NONCE_KEY_MAX),
+            };
+            LaneIterator::new(id, Arc::clone(&run[0]), run[1..].to_vec())
+        };
+        // Without dormant roots every root is awake, and walking the snapshot avoids a lookup
+        // per root.
+        let lanes: Vec<_> = if view.dormant_len() == 0 {
+            runs.iter().map(|(root, run)| lane(root, run)).collect()
+        } else {
+            view.awake().iter().filter_map(|root| Some(lane(root, runs.get(root)?))).collect()
+        };
+        let lane_indexes = lanes
+            .iter()
+            .enumerate()
+            .filter(|(_, lane)| !lane.tail.is_empty())
+            .map(|(index, lane)| (lane.id, index))
+            .collect();
+        Self {
+            lanes,
+            candidates: BinaryHeap::new(),
+            lane_indexes,
+            held_roots: B256Map::default(),
+            dormant_roots: view.dormant_roots(),
+            dormant_runs: runs.clone(),
+            protocol_nonce_lanes: true,
+            ordering,
+            base_fee,
+        }
+    }
+
+    /// The roots [`Self::hold_resting_roots`] held, with their root transaction hashes.
+    pub(crate) fn held_selection_roots(&self) -> impl Iterator<Item = (TxHash, SelectionRoot)> {
+        self.held_roots.iter().map(|(hash, index)| {
+            let lane = &self.lanes[*index];
+            let root = lane
+                .head
+                .transaction
+                .eip8130_replay_id()
+                .map_or(SelectionRoot::Lane(lane.id.0, lane.id.1), SelectionRoot::NonceFree);
+            (*hash, root)
+        })
     }
 
     /// Ranks the snapshot's lane heads, leaving out lanes whose root is held.
@@ -1626,9 +1745,14 @@ where
     /// Hands back a held root once, with the rest of its run; its lane offers
     /// nothing more.
     fn take_held(&mut self, transaction_hash: &TxHash) -> Option<HeldRun<T>> {
-        let lane = &mut self.lanes[self.held_roots.remove(transaction_hash)?];
-        lane.index = 1;
-        Some((Arc::clone(&lane.head), std::mem::take(&mut lane.tail)))
+        if let Some(index) = self.held_roots.remove(transaction_hash) {
+            let lane = &mut self.lanes[index];
+            lane.index = 1;
+            return Some((Arc::clone(&lane.head), std::mem::take(&mut lane.tail)));
+        }
+        let root = self.dormant_roots.remove(transaction_hash)?;
+        let run = self.dormant_runs.get(&root).filter(|run| run[0].hash() == transaction_hash)?;
+        Some((Arc::clone(&run[0]), run[1..].to_vec()))
     }
 }
 

@@ -16,7 +16,7 @@ use reth_transaction_pool::{
     noop::NoopTransactionPool,
 };
 
-use crate::{BasePooledTx, BestTransactionPriority, UnifiedTipOrdering};
+use crate::{BasePooledTx, BestTransactionPriority, SelectionView, UnifiedTipOrdering};
 
 /// A sequential transaction lane whose members must execute in nonce order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -109,6 +109,17 @@ pub trait BestTransactionsHold<T: PoolTransaction>: Send + Sync {
     fn is_interrupted(&self) -> bool {
         false
     }
+
+    /// Takes the [`SelectionView`] of the build lineage this hold belongs to, if it keeps one.
+    /// The pool hands it back through [`Self::restore_selection_view`] once the iterator is
+    /// created, with the pool's guards released.
+    fn take_selection_view(&mut self) -> Option<SelectionView> {
+        None
+    }
+
+    /// Hands back the view [`Self::take_selection_view`] took, with the changes iterator
+    /// creation recorded on it.
+    fn restore_selection_view(&mut self, _view: SelectionView) {}
 }
 
 /// Number of held transactions a parking iterator advances past between checks of
@@ -124,15 +135,6 @@ pub type PromoteSourceHeld<T, I> = fn(&mut I, TxHash) -> Option<Vec<Arc<ValidPoo
 pub type DiscardSourceHeld<T, I> =
     fn(&mut I, TxHash, InvalidPoolTransactionError) -> Option<Arc<ValidPoolTransaction<T>>>;
 
-/// Selection state one build lineage keeps across the pool iterators it creates; see the
-/// persistent selection view section of the crate README.
-///
-/// Staged stub: it holds no state yet, so an iterator created with a view is the one created
-/// without it. The persistent selection view replaces this stub.
-#[derive(Debug, Default)]
-#[non_exhaustive]
-pub struct SelectionView {}
-
 /// A transaction pool that can create lane-aware parkable best iterators.
 pub trait ParkableTransactionPool: TransactionPool
 where
@@ -147,9 +149,8 @@ where
 
     /// Returns a parkable best iterator like
     /// [`Self::best_transactions_with_attributes_and_parking`] for a build lineage that keeps
-    /// `view` across its iterators.
-    ///
-    /// Staged stub: the default ignores `view`.
+    /// `view` across its iterators, instead of the view `hold` may keep. Pools without
+    /// persistent selection ignore `view`.
     fn best_transactions_with_selection_view(
         &self,
         attributes: BestTransactionsAttributes,
