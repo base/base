@@ -633,8 +633,8 @@ mod tests {
     #[test]
     fn eth_transfer_costs_more_than_eip2780() {
         // A self-paid k1 value transfer costs more than the same transfer under
-        // EIP-2780 before its payload bytes, so an AA transaction is never
-        // cheaper than the equivalent EIP-1559 one.
+        // EIP-2780 before its payload bytes: the k1 authentication is charged
+        // on top of EIP-2780's base.
         const EIP2780_TX_BASE_COST: u64 = 12_000;
         let other = address!("0x3333333333333333333333333333333333333333");
         let tx = TxEip8130 {
