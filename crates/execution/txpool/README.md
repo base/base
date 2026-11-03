@@ -180,7 +180,65 @@ Occupancy is published as `txpool.validity.pool_transactions` and
 replacements that crossed a store boundary as
 `txpool.validity.cross_store_replaced{direction}`.
 
-#### Source-held resting roots (Denim resting-predicate hold)
+#### Resting transaction lifecycle
+
+Builders remember transactions blocked by unsatisfied validity predicates. Previously, each
+build pulled these known-resting transactions through its ranked selection walk and parked
+them again. Now eligible roots and their blocked descendants stay out of that walk until a
+relevant change makes them candidates again. A root is the first pending transaction in a
+sender's nonce sequence; this shortcut applies to roots ready from confirmed state and to
+nonce-free transactions. Other cases retain the existing path.
+
+With resting-predicate enforcement enabled:
+
+```mermaid
+stateDiagram-v2
+    state "Admitted transaction in pool" as Pending
+    state "VISITED: best-iterator selection" as Selection
+    state "Executable: predicates satisfied" as Executable
+    state "Known resting: SKIPPED by ranked walk" as Resting
+    state "Included in payload" as Included
+    state "Removed or evicted" as Removed
+
+    [*] --> Pending: arrival or replacement transaction
+    Pending --> Resting: eligible known rest at iterator creation
+    Pending --> Selection: not held
+    Pending --> Removed: removal or eviction
+    Selection --> Executable: predicates satisfied
+    Selection --> Resting: restable predicate unsatisfied
+    Selection --> Removed: expired or evicted
+    Resting --> Resting: next build, blocking condition unchanged
+    Resting --> Selection: commit changes watched state
+    Resting --> Selection: new block changes blocking condition
+    Resting --> Removed: expiry, removal, eviction or replacement
+    Executable --> Included: execution accepted
+    Executable --> Removed: terminal rejection
+    Executable --> Pending: deferred to a later build
+    Included --> [*]
+    Removed --> [*]
+
+    note right of Resting
+        Eligible roots and their blocked descendants
+        stay out of the priority-ranked walk.
+        Snapshot construction still scans the pool.
+    end note
+    note left of Selection
+        A wake requests a recheck,
+        not guaranteed inclusion.
+    end note
+```
+
+A new block releases block-number rests for rechecking. Expiry, replacement and removal
+invalidate the old transaction rather than wake it; a replacement enters as a new transaction.
+Already-created iterators retain snapshots, so stale candidates still face normal nonce and
+validity checks.
+
+Both builders use this lifecycle and can reconsider a held transaction after a commit in the
+same block. Native creates an iterator for a payload build; Flashblocks refreshes it between
+flashblocks. An unsatisfied flashblock-index predicate is not remembered as a rest, because
+the index changes without a state write; it must be checked at the new position.
+
+##### Iterator details
 
 `ParkableTransactionPool::best_transactions_with_attributes_and_parking` takes an
 optional `BestTransactionsHold`, which payload builders pass only when resting
