@@ -1139,4 +1139,64 @@ mod tests {
         let stats = shared.take_stats();
         assert_eq!((stats.parked, stats.dormant_skipped), (0, 1));
     }
+
+    /// A tail change journals the lane, or the journal overflows and the view is rebuilt: either
+    /// way creation wakes the dormant root and then holds it again, so it ends dormant.
+    #[test]
+    fn a_root_woken_by_the_journal_and_held_again_stays_dormant_past_the_unseen_window() {
+        let predicate = balance_at_least(WATCHED, 1);
+        let held = conditions(std::slice::from_ref(&predicate));
+        for rebuilt in [false, true] {
+            let resting = held_dormant(rested_in_parent(std::slice::from_ref(&predicate)));
+            let shared = SharedRestingPredicates::new(resting);
+            create_with_view(&shared, |view| {
+                if rebuilt {
+                    view.rebuild([ROOT].into_iter());
+                } else {
+                    view.refresh(&[ROOT], |_| Some(hash(0)));
+                }
+                view.hold(ROOT, hash(0));
+            });
+            let store = RestingPredicateStore::default();
+            let last_block = 3 * RESTING_UNSEEN_RETAINED_BLOCKS;
+            let resting = carry_through(&store, shared.take_predicates(), &held, 1, last_block);
+            assert!(
+                resting.member(hash(0), &held).is_some(),
+                "rebuilt {rebuilt}: the final dormancy keeps the member out of the unseen sweep"
+            );
+
+            let shared = SharedRestingPredicates::new(resting);
+            let _iterator_hold = shared.iterator_hold::<BasePooledTransaction>();
+            let mut account = Account::default();
+            account.info.balance = U256::from(3);
+            let woken = shared.wake_by_state(&EvmState::from_iter([(WATCHED, account)]));
+            assert_eq!(woken, [hash(0)], "rebuilt {rebuilt}: its state change still promotes it");
+        }
+    }
+
+    /// A member rests on a balance predicate while its full conditions also end at block 1. The
+    /// next block is built before the pool's canonical maintenance expires it, so only the resting
+    /// set can tell that it must be offered and classified expired, as an asked hold would.
+    #[test]
+    fn a_dormant_member_whose_full_conditions_expire_is_offered_at_the_next_block() {
+        let blocker = balance_at_least(WATCHED, 1);
+        let deadline = ValidityPredicate::BlockNumber {
+            op: ValidityOperator::LessThanOrEqual,
+            value: U256::ONE,
+        };
+        let full = conditions(&[blocker.clone(), deadline]);
+        let mut resting = rested_in_parent(std::slice::from_ref(&blocker));
+        assert_eq!(resting.hold(hash(0), &full), Some(false), "held while building block 1");
+        let mut resting = held_dormant(resting);
+
+        let carry_over = resting.begin_block(PARENT, 2, Some(&TransitionState::default()));
+        assert_eq!(carry_over.released_by_block_number, 0, "it rests on its balance predicate");
+        assert_eq!(resting.hold(hash(0), &full), None, "an asked hold declines the expired member");
+        assert_eq!(
+            resting.view.awake(),
+            &[ROOT],
+            "creation must ask about it instead of skipping it as dormant"
+        );
+        assert_eq!(resting.len(), 1, "the builder, not block start, removes the expired member");
+    }
 }

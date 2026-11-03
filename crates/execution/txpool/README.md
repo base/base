@@ -310,10 +310,15 @@ How it works:
   persistent `imbl` map, and a `SelectionJournal` naming every root whose run, anchor or shared
   flag changed. Lane mutations reach it through `refresh_lane_indexes`, nonce-free admission and
   removal record their own entries, and `sync_validity_lanes` journals a shared lane whose
-  standard run changed behind an unchanged cursor. Admission pays an O(log n) persistent update.
+  standard run changed behind an unchanged cursor. Contract: a mutation costs O(log n)
+  persistent updates and never copies a lane's pending run, and a pool no enforcing build has
+  asked for a view keeps no selection index, so off and shadow modes pay nothing for it.
 - **Bridges.** A `BridgeMirror` holds the standard runs queued behind shared lanes. Creation
   recomputes only the journaled lanes, shares the mirror in constant time, and the merge copies
-  a lane's run out when that lane first yields a validity member.
+  a lane's run out when that lane first yields a validity member. Contract: an iterator never
+  holds a bridged transaction the protocol pool no longer held when the iterator was created,
+  including transactions reth evicts on its own while admitting another sender's transaction;
+  every such removal reaches the journal before any later creation snapshots the mirror.
 - **Creation.** Under the read guards the pool shares the runs and the mirror and copies the
   journal entries the view has not seen. Outside them the view catches up: a journaled dormant
   root becomes awake, or is reported removed when its lane's root changed or left. Only awake
@@ -327,9 +332,12 @@ How it works:
 - **Wakes.** A commit wakes the root in the current iterator through `promote` and removes the
   rest, which also makes the root awake in the view. Block-start releases do the same.
 - **Removal and expiry.** A dormant root the pool removes, replaces or mines is journaled, and
-  the view reports it so the resting set drops its member. Expiry is the pool's own block and
-  flashblock expiry, keyed from the transaction's whole `ValidityConditions` at admission. The
-  unseen sweep does not visit dormant members.
+  the view reports it so the resting set drops its member. Contract: a dormant root whose whole
+  `ValidityConditions` are expired at the block being built is awake at that block's creation,
+  whatever predicate it rests on and whether or not the pool's canonical maintenance has expired
+  it yet, so the hold declines it and the builder classifies it expired, as for an asked root.
+  The unseen sweep does not visit dormant members; a root a creation wakes and then holds again
+  ends dormant.
 - **Recovery.** A view whose position the journal no longer covers
   (`SELECTION_JOURNAL_CAPACITY`, 16,384 entries, an unmeasured initial bound) or belongs to a
   replaced pool is rebuilt: every root is re-learned, dormant roots wake, and each eligible root
@@ -359,10 +367,16 @@ stateDiagram-v2
     Unknown --> Awake: next creation asks about every eligible root
 ```
 
-Limits: reth can evict a queued standard transaction without the pool's maintenance hooks; a
-bridged run behind a lane with no other change keeps the evicted transaction until that lane is
-journaled or the mirror rebuilds, and the build's normal nonce and validity checks still apply.
 Off and shadow modes pass no hold and keep the snapshot path.
+
+Not yet met, with failing regression tests: the bridge contract for reth's own evictions
+(`a_bridged_successor_reth_evicts_for_another_sender_leaves_only_new_iterators`), full-condition
+expiry of dormant roots
+(`a_dormant_member_whose_full_conditions_expire_is_offered_at_the_next_block`), final dormancy
+after a wake and re-hold in one creation
+(`a_root_woken_by_the_journal_and_held_again_stays_dormant_past_the_unseen_window`), and the
+admission contract, which needs a measurement rather than a unit test: today every lane mutation
+copies the lane's pending run, also in off and shadow modes.
 
 ## Usage
 

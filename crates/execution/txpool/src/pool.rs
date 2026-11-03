@@ -8294,4 +8294,65 @@ mod tests {
         assert!(best.promote(root));
         assert_eq!(drain_committing(best.as_mut()), vec![root]);
     }
+
+    /// Reth's queued capacity evicts the sender whose latest submission is oldest, so admitting
+    /// another sender's queued transaction evicts the bridged successor without touching its lane
+    /// through any of this pool's own paths.
+    #[tokio::test]
+    async fn a_bridged_successor_reth_evicts_for_another_sender_leaves_only_new_iterators() {
+        let config =
+            PoolConfig { queued_limit: SubPoolLimit::new(1, usize::MAX), ..PoolConfig::default() };
+        let (pool, client) = build_integration_pool_with_config(config);
+        let [a, b] = [(); 2].map(|_| funded_signer(&client));
+        let root = add(&pool, resting_1559(&a, 0, 100)).await;
+        let bridged = add(&pool, signed_1559_with_fees(&a, 1, 1_000, 100)).await;
+        let hold = RecordingHold::new(&pool, vec![root]);
+        let mut view = SelectionView::default();
+        let mut frozen = hold.parking_with_view(0, &mut view);
+
+        add(&pool, signed_1559_with_fees(&b, 1, 1_000, 100)).await;
+        assert!(pool.get(&bridged).is_none(), "reth evicted the bridged successor");
+
+        assert!(frozen.promote(root));
+        assert_eq!(
+            drain_committing(frozen.as_mut()),
+            vec![root, bridged],
+            "an iterator created before the eviction keeps its capture"
+        );
+        let mut next = hold.parking_with_view(0, &mut view);
+        assert!(next.promote(root));
+        assert_eq!(
+            drain_committing(next.as_mut()),
+            vec![root],
+            "an iterator created after the eviction must not release the evicted successor"
+        );
+        let mut unheld = pool.best_transactions_with_attributes_and_parking(
+            BestTransactionsAttributes::new(0, None),
+            None,
+        );
+        assert_eq!(drain_committing(unheld.as_mut()), vec![root], "the snapshot path agrees");
+    }
+
+    #[tokio::test]
+    async fn a_dormant_root_removed_and_added_again_is_asked_about_again_and_keeps_its_rest() {
+        let (pool, client) = build_integration_pool();
+        let a = funded_signer(&client);
+        let transaction = resting_1559(&a, 0, 100);
+        let root = add(&pool, transaction.clone()).await;
+        let hold = RecordingHold::new(&pool, vec![root]);
+        let mut view = SelectionView::default();
+        drop(hold.parking_with_view(0, &mut view));
+        view.take_changes();
+
+        assert_eq!(pool.remove_transactions(vec![root]).len(), 1);
+        add(&pool, transaction).await;
+        let asked = hold.checked().len();
+        let mut best = hold.parking_with_view(0, &mut view);
+        assert_eq!(asked_since(&hold, asked), vec![root], "a new insertion is asked about again");
+        let changes = view.take_changes();
+        assert!(changes.removed.is_empty(), "the same hash keeps its rest");
+        assert_eq!(changes.woken, vec![root]);
+        assert!(best.promote(root));
+        assert_eq!(drain_committing(best.as_mut()), vec![root]);
+    }
 }

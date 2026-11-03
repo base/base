@@ -31,8 +31,11 @@ the hold held at iterator creation becomes dormant: later iterators skip it with
 the unseen sweep stops visiting its member. It leaves the set when iterator creation reports
 that the pool removed, replaced, mined or expired it, applied after the pool guards are
 released. A commit or block-start release wakes it and removes the member as before; a dormant
-root whose lane changed rejoins the unseen sweep as seen in the current block. Flashblock-index
-predicates never rest.
+root whose lane changed rejoins the unseen sweep as seen in the current block, unless the same
+creation holds it again: the final state wins. A dormant member whose whole `ValidityConditions`
+expire at the block being built is woken at block start, so iterator creation asks about it and the
+builder classifies it expired; no other dormant member is visited. Flashblock-index predicates
+never rest.
 
 ```mermaid
 flowchart LR
