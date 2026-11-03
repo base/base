@@ -516,7 +516,7 @@ mod tests {
     struct StaticBestTransactions<T: BasePooledTx> {
         transactions: VecDeque<Arc<ValidPoolTransaction<T>>>,
         /// Runs held before ranking, by their root's hash.
-        held: HashMap<TxHash, (Arc<ValidPoolTransaction<T>>, Vec<Arc<ValidPoolTransaction<T>>>)>,
+        held: HashMap<TxHash, HeldRun<T>>,
     }
 
     impl<T: BasePooledTx> StaticBestTransactions<T> {
