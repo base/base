@@ -45,7 +45,7 @@ What the rule does not fix: predicates that do not match are not included and pa
 
 For every user transaction in a block where gas-limit billing is active:
 
-1. **Billable gas** `B = gas_limit` for standard transactions and `B = gas_limit + payer_auth` for EIP-8130 transactions: the quantity the pool ranks by and the builder reserves.
+1. **Billable gas** `B = gas_limit` for standard transactions and `B = gas_limit + payer_floor` for EIP-8130 transactions: the quantity the pool ranks by and the builder reserves. `payer_floor` is the payer-authentication gas (`IntrinsicGas::max_payer_auth_cost`: the `payer_auth` signature bytes priced at the EIP-7623 floor rate), metered on top of the sender's `gas_limit`; it is zero for self-paid transactions.
 2. **Settlement.** The payer pays `B * effective_gas_price` plus the L1 data fee plus the operator fee on `B`. Nothing is reimbursed; EIP-3529 refunds and the EIP-7623 floor have no effect on the fee. The sequencer receives `B * priority_fee_per_gas`, the `BaseFeeVault` `B * basefee`, the `OperatorFeeVault` the operator fee on `B`. The L1 data fee is unchanged.
 3. **Receipts and header.** Receipt `gasUsed = B`; `cumulativeGasUsed` and header `gasUsed` add `B` per user transaction, so `gasUsed * effectiveGasPrice` is still the execution fee and receipts still sum to the header.
 4. **Deposits** are unchanged: no L2 execution fee, metered `gasUsed`.
@@ -93,13 +93,13 @@ if cfg.spec().is_feature_enabled(BaseFeature::GasLimitBilling)
 
 Everything downstream (EIP-7623 floor, `reimburse_caller`, operator-fee refund, `reward_beneficiary`, `ResultGas`) then observes `gas_used == gas_limit`, so the block executor, both payload builders, flashblocks pending state and receipts agree by construction. This single hook is deliberate: the proof of concept patched each accounting path separately, missed the flashblocks builder, and only the system test caught the builder/validator receipts-root mismatch. `eth_call` and `eth_estimateGas` run with `disable_fee_charge`, so they stay metered and estimation still converges.
 
-**EIP-8130** ([`eip8130.rs`](../../crates/common/evm/src/eip8130.rs)). `Eip8130Executor::billable_gas` returns `FeeCheck::max_chargeable_gas(gas_limit, payer_auth)` under the feature: exactly what `prepay` pre-charged and what the builder and txpool reserve. The `simulate` estimate stays metered but stops folding `payer_auth` into the returned limit, since settlement adds it on top; a sponsored transaction sent at `gas_limit = estimate` settles `estimate + payer_auth` once.
+**EIP-8130** ([`eip8130.rs`](../../crates/common/evm/src/eip8130.rs)). `Eip8130Executor::billable_gas` returns `FeeCheck::max_chargeable_gas(gas_limit, payer_floor)` under the feature: exactly what `prepay` pre-charged and what the builder and txpool reserve. The `simulate` estimate stays metered but stops folding `payer_floor` into the returned limit, since settlement adds it on top; a sponsored transaction sent at `gas_limit = estimate` settles `estimate + payer_floor` once.
 
-**Builder cap** ([`execution.rs`](../../crates/builder/core/src/execution.rs)). `--builder.max_gas_per_txn` becomes a cap on declared limits: under the feature the flashblocks builder sets `ResourceLimits::max_reserved_gas_per_tx` and rejects `gas_limit + payer_auth > cap` before execution with the permanent `MaxGasUsageExceeded`. It is also the operator's lever for bounding the worst-case fee of a padded transaction.
+**Builder cap** ([`execution.rs`](../../crates/builder/core/src/execution.rs)). `--builder.max_gas_per_txn` becomes a cap on declared limits: under the feature the flashblocks builder sets `ResourceLimits::max_reserved_gas_per_tx` and rejects `gas_limit + payer_floor > cap` (`TxResources::gas_limit + TxResources::payer_auth` in the builder) before execution with the permanent `MaxGasUsageExceeded`. It is also the operator's lever for bounding the worst-case fee of a padded transaction.
 
 ## Effects
 
-Users pay `gas_limit * price` instead of `gas_used * price`; out-of-gas already paid the limit, so only the success-path discount goes away. Wallet padding becomes a visible cost. Receipts show `gasUsed == gasLimit` (`+ payer_auth` for EIP-8130), so explorers display 100% utilisation and need traces for metered gas. Header `gasUsed` becomes reserved gas, so the base fee reacts to reserved demand and blocks hold at most `block_gas_limit` of declared gas. The prover runs the same handler, so proofs follow once the feature is in the rollup config.
+Users pay `gas_limit * price` instead of `gas_used * price`; out-of-gas already paid the limit, so only the success-path discount goes away. Wallet padding becomes a visible cost. Receipts show `gasUsed == gasLimit` (`+ payer_floor` for EIP-8130), so explorers display 100% utilisation and need traces for metered gas. Header `gasUsed` becomes reserved gas, so the base fee reacts to reserved demand and blocks hold at most `block_gas_limit` of declared gas. The prover runs the same handler, so proofs follow once the feature is in the rollup config.
 
 | RPC | Behavior |
 |---|---|
@@ -121,7 +121,7 @@ Every test runs on both sides of the fork (Zenith vs Everest, or Jovian for the 
 | S5 | EIP-3529, EIP-7702 refunds and the EIP-7623 floor have no effect | Verified: unit tests show the refund pre-feature, none under it |
 | S6 | `eth_estimateGas` returns metered gas (21,000 for a transfer) | Verified: unit (`disable_fee_charge`) and system test |
 | S7 | Builder and validator agree; a metered-sum header is rejected after activation | Partly: hash agreement verified (action + system). Rejection **not yet tested** |
-| S8 | EIP-8130 settles `gas_limit + payer_auth`; estimate excludes `payer_auth`; sponsored tx at `gas_limit = estimate` settles once | Verified: unit tests, sponsored system test |
+| S8 | EIP-8130 settles `gas_limit + payer_floor`; estimate excludes `payer_floor`; sponsored tx at `gas_limit = estimate` settles once | Verified: unit tests, sponsored system test |
 | S9 | Deposits pay nothing and keep metered gas | Verified: unit, block executor, action test |
 | S10 | Proof of a Zenith block verifies | **Not yet tested** |
 | S11 | Out-of-gas, revert and per-opcode trace gas identical across the fork | Partly: settlement verified at unit level; trace parity **not yet tested** |
@@ -143,9 +143,9 @@ In the [BASE-1426](https://linear.app/coinbase/issue/BASE-1426) spec unless a ti
 - **Named upgrade** that carries the feature; Zenith is only the test gate.
 - **Base-fee target and elasticity** at activation: reserved gas is higher than metered gas, so the base fee steps up until limits tighten. Decide from the data scan.
 - **EIP-3529 and EIP-7702 refunds** become economically inert: accept, or reprice at the opcode level.
-- **EIP-8130 payer auth** billed at the reserved floor-rate amount and excluded from the estimate, so `eth_estimateGas * gasPrice` understates a sponsored total by `payer_auth * gasPrice`. Needs EIP-8130 owner sign-off.
+- **EIP-8130 payer authentication** billed at `payer_floor` (the reserved floor-rate amount) and excluded from the estimate, so `eth_estimateGas * gasPrice` understates a sponsored total by `payer_floor * gasPrice`. Needs EIP-8130 owner sign-off.
 - **RPC** ([BASE-1434](https://linear.app/coinbase/issue/BASE-1434)): `eth_simulateV1` fee charging when `validation=false`; metered gas in traces; `Eip8130Executor::execute` ignoring `disable_fee_charge`. Must land before scheduling.
-- **Static EIP-8130 coinbase tips** ([BASE-1432](https://linear.app/coinbase/issue/BASE-1432), optional): ranked on `gas_limit`, reserved as `gas_limit + payer_auth`.
+- **Static EIP-8130 coinbase tips** ([BASE-1432](https://linear.app/coinbase/issue/BASE-1432), optional): ranked on `gas_limit`, reserved as `gas_limit + payer_floor`.
 - **Amsterdam** (EIP-8037/7778): parked until [#6131](https://github.com/base/base/pull/6131) lands; `spend_all` only spends regular gas.
 - **Ecosystem comms**: ERC-4337 `preVerificationGas`, wallet estimate buffers, explorers at 100% utilisation. Wallet and Rundler outcomes are in the spec.
 
