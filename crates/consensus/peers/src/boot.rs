@@ -10,7 +10,7 @@ use discv5::{
 use serde::{Deserialize, Serialize};
 
 use super::utils::{PeerIdConversionError, PeerUtils};
-use crate::NodeRecord;
+use crate::{EnodeUrl, NodeRecord};
 
 /// Errors that can occur when parsing a bootnode.
 #[derive(Debug, thiserror::Error)]
@@ -68,6 +68,38 @@ impl BootNode {
         let record =
             NodeRecord::from_str(raw).map_err(|e| BootNodeParseError::NodeRecord(e.to_string()))?;
         Ok(Self::from_unsigned(record)?)
+    }
+}
+
+/// A configured bootnode before DNS resolution.
+///
+/// Parsing is pure: `enode://` URLs with a hostname become [`BootNodeEntry::Host`] and are
+/// resolved later by [`BootNodes::resolve`](crate::BootNodes::resolve).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum BootNodeEntry {
+    /// A bootnode that needs no resolution: an ENR or an `enode://` URL with an IP address.
+    Node(BootNode),
+    /// An `enode://` URL whose host is a DNS hostname.
+    Host(EnodeUrl),
+}
+
+impl FromStr for BootNodeEntry {
+    type Err = BootNodeParseError;
+
+    fn from_str(raw: &str) -> Result<Self, Self::Err> {
+        if raw.starts_with("enr:") {
+            return BootNode::parse_bootnode(raw).map(Self::Node);
+        }
+        let url =
+            EnodeUrl::from_str(raw).map_err(|e| BootNodeParseError::NodeRecord(e.to_string()))?;
+        match url.node_record() {
+            Some(record) => Ok(Self::Node(BootNode::from_unsigned(record)?)),
+            None => {
+                // Reject an unusable node ID now rather than after resolution.
+                PeerUtils::local_id_to_p2p_id(url.id)?;
+                Ok(Self::Host(url))
+            }
+        }
     }
 }
 
@@ -165,5 +197,31 @@ mod tests {
                 panic!("expected {expected:?}, got {actual:?}");
             }
         }
+    }
+
+    const HOSTNAME_ENODE: &str = "enode://2bd2e657bb3c8efffb8ff6db9071d9eb7be70d7c6d7d980ff80fc93b2629675c5f750bc0a5ef27cd788c2e491b8795a7e9a4a6e72178c14acc6753c0e5d77ae4@bootnode.invalid:30305";
+
+    #[test]
+    fn test_entry_keeps_hostname_unresolved() {
+        // `.invalid` never resolves (RFC 6761), so this only passes if parsing skips DNS.
+        let entry = BootNodeEntry::from_str(HOSTNAME_ENODE).expect("hostname enode should parse");
+        let BootNodeEntry::Host(url) = entry else { panic!("expected a hostname entry") };
+        assert_eq!(url.host, url::Host::Domain("bootnode.invalid".to_string()));
+    }
+
+    #[test]
+    fn test_entry_ip_enode_is_resolved_node() {
+        let raw = "enode://2bd2e657bb3c8efffb8ff6db9071d9eb7be70d7c6d7d980ff80fc93b2629675c5f750bc0a5ef27cd788c2e491b8795a7e9a4a6e72178c14acc6753c0e5d77ae4@34.65.205.244:30305";
+        let expected = BootNode::parse_bootnode(raw).unwrap();
+        assert_eq!(BootNodeEntry::from_str(raw).unwrap(), BootNodeEntry::Node(expected));
+    }
+
+    #[test]
+    fn test_entry_hostname_with_invalid_id_fails() {
+        let raw = "enode://00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000@bootnode.invalid:30303";
+        assert!(matches!(
+            BootNodeEntry::from_str(raw),
+            Err(BootNodeParseError::PeerIdConversion(_))
+        ));
     }
 }

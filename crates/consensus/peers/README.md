@@ -37,6 +37,25 @@ In short, the types are as follows:
   additional metadata. Useful when interacting with discovery v5, or when custom metadata is
   required.
 
+## Bootnode Formats and DNS Hostnames
+
+`BootNodeEntry` parses one configured bootnode without any network access:
+
+- `enr:...`: a signed ENR, used as is.
+- `enode://<id>@<ip>:<port>[?discport=<port>]`: an unsigned node record with an IP address.
+- `enode://<id>@<hostname>:<port>[?discport=<port>]`: an `EnodeUrl` whose host is a DNS hostname,
+  the consensus-layer counterpart of reth's `TrustedPeer`.
+
+`BootNodes::resolve` turns the entries into `BootNodes`. It resolves hostnames concurrently
+through a `HostResolver` (the OS resolver in production via `SystemHostResolver`), bounds each
+lookup by a timeout, and uses the first address returned, as reth does. A hostname that fails
+to resolve is skipped with a `warn!` that names the host and the error. Resolution fails only
+when bootnodes were configured, none of them is usable, and the caller has no other way to seed
+discovery, such as chain default bootnodes.
+
+Hostnames are resolved once, at startup. `NodeRecord::from_str` rejects hostnames with
+`NodeRecordParseError::UnresolvedHost` instead of performing a blocking lookup.
+
 ## Usage
 
 Add the dependency to your `Cargo.toml`:
