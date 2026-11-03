@@ -1099,8 +1099,14 @@ mod tests {
     /// `JUMPDEST PUSH1 0 JUMP`: spins until out of gas.
     const INFINITE_LOOP_CODE: Bytes = bytes!("5b600056");
 
+    /// Operator fee parameters of the fee-flow chain context. Post-Jovian the operator fee is
+    /// `gas * scalar * 100 + constant` wei, so a charge on metered gas and one on the reserved
+    /// limit differ in every test below.
+    const FEE_FLOW_OPERATOR_FEE_SCALAR: u64 = 2;
+    const FEE_FLOW_OPERATOR_FEE_CONSTANT: u64 = 50;
+
     /// Chain context shared by the fee-flow fixtures: non-zero L1 fee scalars so the L1 fee is
-    /// observable, and Isthmus operator-fee scalars so the operator fee depends on gas.
+    /// observable, and the operator-fee parameters above so the operator fee depends on gas.
     fn fee_flow_l1_block_info() -> L1BlockInfo {
         L1BlockInfo {
             l2_block: Some(U256::ZERO),
@@ -1108,8 +1114,8 @@ mod tests {
             l1_base_fee_scalar: U256::from(1_000),
             l1_blob_base_fee: Some(U256::from(1)),
             l1_blob_base_fee_scalar: Some(U256::from(1)),
-            operator_fee_scalar: Some(U256::from(2)),
-            operator_fee_constant: Some(U256::from(50)),
+            operator_fee_scalar: Some(U256::from(FEE_FLOW_OPERATOR_FEE_SCALAR)),
+            operator_fee_constant: Some(U256::from(FEE_FLOW_OPERATOR_FEE_CONSTANT)),
             ..Default::default()
         }
     }
@@ -1212,23 +1218,23 @@ mod tests {
         settle_fee_flow(upgrade, recipient_code, fee_charge_disabled, fee_flow_tx())
     }
 
-    /// The operator fee the fee-flow chain context charges for `gas` under `upgrade`.
-    fn fee_flow_operator_fee(gas: u64, upgrade: BaseUpgrade) -> U256 {
-        fee_flow_l1_block_info().operator_fee_charge(
-            &FEE_FLOW_ENVELOPE,
-            U256::from(gas),
-            BaseSpecId::new(upgrade),
-        )
+    /// The operator fee owed on `gas` under the fee-flow chain context, computed from the
+    /// post-Jovian rule rather than the node's fee code. Every fee-flow upgrade is post-Jovian.
+    fn fee_flow_operator_fee(gas: u64) -> U256 {
+        U256::from(gas)
+            * U256::from(FEE_FLOW_OPERATOR_FEE_SCALAR)
+            * U256::from(L1BlockInfo::OPERATOR_FEE_JOVIAN_MULTIPLIER)
+            + U256::from(FEE_FLOW_OPERATOR_FEE_CONSTANT)
     }
 
-    /// The settlement the fee-flow transaction produces when billed for `gas` under `upgrade`:
-    /// every per-gas fee component on `gas`, nothing refunded, and the caller debited exactly
-    /// what the recipients received plus `value` and the L1 data fee.
-    fn fee_flow_billed_for(gas: u64, upgrade: BaseUpgrade, l1_fee: U256, success: bool) -> FeeFlow {
+    /// The settlement the fee-flow transaction produces when billed for `gas`: every per-gas fee
+    /// component on `gas`, nothing refunded, and the caller debited exactly what the recipients
+    /// received plus `value` and the L1 data fee.
+    fn fee_flow_billed_for(gas: u64, l1_fee: U256, success: bool) -> FeeFlow {
         let value_transferred = if success { FEE_FLOW_VALUE } else { U256::ZERO };
         let coinbase = U256::from(FEE_FLOW_PRIORITY_FEE * u128::from(gas));
         let base_fee_vault = U256::from(u128::from(FEE_FLOW_BASE_FEE) * u128::from(gas));
-        let operator_fee_vault = fee_flow_operator_fee(gas, upgrade);
+        let operator_fee_vault = fee_flow_operator_fee(gas);
         FeeFlow {
             caller_paid: value_transferred
                 + coinbase
@@ -1260,7 +1266,7 @@ mod tests {
 
         let flow = run_fee_flow(upgrade, recipient_code, false);
         assert!(flow.l1_fee_vault > U256::ZERO, "fixture must charge an L1 fee");
-        assert_eq!(flow, fee_flow_billed_for(metered_gas, upgrade, flow.l1_fee_vault, success));
+        assert_eq!(flow, fee_flow_billed_for(metered_gas, flow.l1_fee_vault, success));
     }
 
     /// With the feature on, the caller pays for its full `gas_limit` whether or not the
@@ -1282,10 +1288,7 @@ mod tests {
         let flow = run_fee_flow(upgrade, recipient_code, false);
 
         assert_eq!(flow.l1_fee_vault, before.l1_fee_vault, "the L1 data fee must not change");
-        assert_eq!(
-            flow,
-            fee_flow_billed_for(FEE_FLOW_GAS_LIMIT, upgrade, before.l1_fee_vault, success)
-        );
+        assert_eq!(flow, fee_flow_billed_for(FEE_FLOW_GAS_LIMIT, before.l1_fee_vault, success));
         // Billing on the limit neither mints nor burns ETH: everything the caller paid beyond
         // value and the L1 fee reached a fee recipient.
         let value_transferred = if success { FEE_FLOW_VALUE } else { U256::ZERO };
@@ -1312,10 +1315,7 @@ mod tests {
         assert!(metered.gas_used < FEE_FLOW_GAS_LIMIT);
 
         let billed = settle_fee_flow(BaseUpgrade::Zenith, recipient_code, false, tx);
-        assert_eq!(
-            billed,
-            fee_flow_billed_for(FEE_FLOW_GAS_LIMIT, BaseUpgrade::Zenith, billed.l1_fee_vault, true)
-        );
+        assert_eq!(billed, fee_flow_billed_for(FEE_FLOW_GAS_LIMIT, billed.l1_fee_vault, true));
     }
 
     /// Running out of gas already bills the full limit (a halt drops EIP-3529 refunds), so the
