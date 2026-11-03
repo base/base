@@ -1,7 +1,8 @@
 //! Registration driver — core orchestration loop.
 //!
 //! Observes prover endpoints and feeds completed discovery cycles to [`SignerReconciler`].
-//! Delegates registration tasks and gated orphan cleanup to [`SignerManager`].
+//! Applies its registration task decisions through [`RegistrationTaskSet`] and delegates
+//! signer registration and gated orphan cleanup to [`SignerManager`].
 
 use std::{sync::Arc, time::Duration};
 
@@ -143,13 +144,29 @@ where
                 Ok(_) if self.config.cancel.is_cancelled() => {}
                 Ok(None) => {}
                 Ok(Some(observations)) => {
-                    // Newly spawned tasks use signers already protected by the active set.
                     let resolution = reconciler.step(observations, registration_tasks.pending());
-                    self.signer_manager.reconcile_registration_tasks(
-                        &resolution,
-                        &mut registration_tasks,
-                        &self.config.cancel,
-                    );
+                    for signer in &resolution.cancel {
+                        registration_tasks.cancel(signer);
+                    }
+                    for entry in resolution.spawn {
+                        let signer_cancel = self.config.cancel.child_token();
+                        let manager = Arc::clone(&self.signer_manager);
+                        let instance_id = entry.instance.instance_id;
+                        let task_instance_id = instance_id.clone();
+                        let task_cancel = signer_cancel.clone();
+                        let signer = entry.signer;
+                        let attestation = entry.attestation;
+                        registration_tasks.spawn(signer, instance_id, signer_cancel, async move {
+                            manager
+                                .register_signer(
+                                    &task_instance_id,
+                                    signer,
+                                    &attestation,
+                                    &task_cancel,
+                                )
+                                .await
+                        });
+                    }
 
                     if let Some(protected_signers) = &resolution.orphan_cleanup
                         && let Err(e) = self
@@ -986,5 +1003,51 @@ mod tests {
                 && registerable[0].signer == addr
         ));
         assert_eq!(*requested_readyz.lock().unwrap(), vec![endpoint_url(EP1)]);
+    }
+
+    #[cfg(feature = "metrics")]
+    #[tokio::test]
+    async fn run_spawns_registration_for_registerable_signer() {
+        let recorder = metrics_util::debugging::DebuggingRecorder::new();
+        let _guard = metrics::set_default_local_recorder(&recorder);
+        // The orphan pass's registry read cancels the driver after one cycle.
+        let cancel = CancellationToken::new();
+        let manager = SignerManager::new(
+            CountingRegistry { reads: Arc::new(AtomicUsize::new(0)), cancel: cancel.clone() },
+            CertManagerContractClient::new(Address::ZERO, endpoint_url(EP1)),
+            NoopTxManager,
+            SignerManagerConfig {
+                registry_address: TEST_REGISTRY_ADDRESS,
+                max_concurrency: DEFAULT_MAX_CONCURRENCY,
+                max_tx_retries: DEFAULT_MAX_TX_RETRIES,
+                tx_retry_delay: Duration::from_secs(DEFAULT_TX_RETRY_DELAY_SECS),
+                max_attestation_age: TEST_MAX_ATTESTATION_AGE,
+                crl_checks_enabled: false,
+            },
+        )
+        .unwrap();
+        let driver = RegistrationDriver::new(
+            vec![healthy_prover_instance(EP1)],
+            MockEnclaveEndpointClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]),
+            DriverConfig {
+                poll_interval: Duration::from_secs(30),
+                cancel,
+                max_concurrency: DEFAULT_MAX_CONCURRENCY,
+                instance_cache_ttl_cycles: INSTANCE_CACHE_TTL_CYCLES,
+            },
+            Arc::new(manager),
+        );
+
+        tokio::time::timeout(Duration::from_secs(1), driver.run())
+            .await
+            .expect("driver should stop after one cycle")
+            .unwrap();
+
+        let snapshot = recorder.snapshotter().snapshot().into_vec();
+        let spawned = snapshot
+            .iter()
+            .find(|(key, _, _, _)| key.key().name() == "base_registrar.proof_tasks_spawned")
+            .map(|(_, _, _, value)| value);
+        assert_eq!(spawned, Some(&metrics_util::debugging::DebugValue::Counter(1)));
     }
 }

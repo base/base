@@ -27,8 +27,7 @@ use tracing::{debug, info, instrument, warn};
 
 use crate::{
     AttestationPlanner, CertKind, CertPlan, P384Hints, PINNED_ROOT_CERT_HASH, ProtectedSigners,
-    RegistrarError, RegistrarMetrics, RegistrationHints, RegistrationPlan, RegistrationTaskSet,
-    Result, SignerReconciliation, crl,
+    RegistrarError, RegistrarMetrics, RegistrationHints, RegistrationPlan, Result, crl,
 };
 
 /// Default maximum number of transaction submission retries for transient
@@ -1161,48 +1160,6 @@ where
     }
 }
 
-impl<R, C, T> SignerManager<R, C, T>
-where
-    R: TEEProverRegistryClient + 'static,
-    C: CertManagerClient + 'static,
-    T: TxManager + 'static,
-{
-    /// Reconciles in-flight registration tasks against fetched prover signers.
-    pub fn reconcile_registration_tasks(
-        self: &Arc<Self>,
-        resolution: &SignerReconciliation,
-        registration_tasks: &mut RegistrationTaskSet,
-        cancel: &CancellationToken,
-    ) {
-        if cancel.is_cancelled() {
-            return;
-        }
-        for (signer, instance_id) in registration_tasks.pending() {
-            if resolution.registerable.iter().any(|entry| entry.signer == *signer)
-                || resolution.unresolved_instance_ids.contains(instance_id)
-            {
-                continue;
-            }
-            registration_tasks.cancel(signer);
-        }
-        for entry in &resolution.registerable {
-            if registration_tasks.contains(&entry.signer) {
-                continue;
-            }
-            let signer_cancel = cancel.child_token();
-            let manager = Arc::clone(self);
-            let instance_id = entry.instance.instance_id.clone();
-            let task_instance_id = instance_id.clone();
-            let attestation = entry.attestation.clone();
-            let task_cancel = signer_cancel.clone();
-            let signer = entry.signer;
-            registration_tasks.spawn(signer, instance_id, signer_cancel, async move {
-                manager.register_signer(&task_instance_id, signer, &attestation, &task_cancel).await
-            });
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     //! These hand-rolled mocks share one ordered state across contract reads and transaction
@@ -1229,9 +1186,9 @@ mod tests {
 
     use super::*;
     use crate::{
-        DEFAULT_MAX_CONCURRENCY, RegisterableSigner,
+        DEFAULT_MAX_CONCURRENCY,
         test_utils::{
-            CrlTestServer, EP1, EP2, HARDHAT_KEY_0, HARDHAT_KEY_1, TEST_REGISTRY_ADDRESS,
+            CrlTestServer, EP1, HARDHAT_KEY_0, HARDHAT_KEY_1, TEST_REGISTRY_ADDRESS,
             healthy_prover_instance, public_key_from_private, signer_from_private_key,
             stub_receipt_with_status,
         },
@@ -2388,80 +2345,6 @@ mod tests {
         assert!(!cached);
 
         assert_eq!(chain.sent().len(), 1);
-    }
-
-    fn resolution(entries: &[(&str, Address)]) -> SignerReconciliation {
-        SignerReconciliation {
-            registerable: entries
-                .iter()
-                .map(|(endpoint, signer)| RegisterableSigner {
-                    instance: healthy_prover_instance(endpoint),
-                    signer: *signer,
-                    attestation: b"synthetic-attestation".to_vec(),
-                })
-                .collect(),
-            orphan_cleanup: None,
-            unresolved_instance_ids: HashSet::new(),
-        }
-    }
-
-    fn spawn_pending(
-        tasks: &mut RegistrationTaskSet,
-        signer: Address,
-        instance_id: &str,
-    ) -> CancellationToken {
-        let cancel = CancellationToken::new();
-        let task_cancel = cancel.clone();
-        tasks.spawn(signer, instance_id.into(), cancel.clone(), async move {
-            task_cancel.cancelled().await;
-            Ok(())
-        });
-        cancel
-    }
-
-    #[tokio::test]
-    async fn reconciliation_deduplicates_preserves_unresolved_and_cancels_absent_tasks() {
-        let plan = synthetic_plan(SIGNER_A);
-        let (manager, _) = manager_with_plan(&plan);
-        let mut tasks = RegistrationTaskSet::default();
-        let pending_cancel = spawn_pending(&mut tasks, SIGNER_A, TEST_INSTANCE);
-        let unresolved = SignerReconciliation {
-            unresolved_instance_ids: HashSet::from([TEST_INSTANCE.into()]),
-            ..Default::default()
-        };
-        manager.reconcile_registration_tasks(&unresolved, &mut tasks, &CancellationToken::new());
-        assert!(!pending_cancel.is_cancelled());
-
-        manager.reconcile_registration_tasks(
-            &resolution(&[(EP1, SIGNER_A), (EP2, SIGNER_A)]),
-            &mut tasks,
-            &CancellationToken::new(),
-        );
-        assert_eq!(tasks.pending().len(), 1);
-
-        manager.reconcile_registration_tasks(
-            &SignerReconciliation::default(),
-            &mut tasks,
-            &CancellationToken::new(),
-        );
-        assert!(pending_cancel.is_cancelled());
-        tasks.drain().await;
-    }
-
-    #[tokio::test]
-    async fn reconciliation_spawns_one_task_per_distinct_signer() {
-        let plan = synthetic_plan(SIGNER_A);
-        let (manager, _) = manager_with_plan(&plan);
-        let mut tasks = RegistrationTaskSet::default();
-
-        manager.reconcile_registration_tasks(
-            &resolution(&[(EP1, SIGNER_A), (EP2, SIGNER_B)]),
-            &mut tasks,
-            &CancellationToken::new(),
-        );
-
-        assert_eq!(tasks.pending().len(), 2);
-        tasks.drain().await;
     }
 
     #[tokio::test]
