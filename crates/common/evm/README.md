@@ -29,8 +29,8 @@ let precompiles = BasePrecompiles::new_with_spec(BaseSpecId::new(BaseUpgrade::Be
 
 ## Gas-limit billing
 
-Under the `GasLimitBilling` feature (gas-limit billing, a genesis-configured Zenith testing gate
-today), the EVM charges a non-deposit transaction for its full declared `gas_limit` instead of the
+Under the `GasLimitBilling` feature (gas-limit billing, activated by the Everest upgrade), the EVM
+charges a non-deposit transaction for its full declared `gas_limit` instead of the
 gas it consumed, so a transaction's fee is fixed by public inputs before it executes and a
 high-tip transaction that reverts early costs what the execution it was sized for would have cost.
 

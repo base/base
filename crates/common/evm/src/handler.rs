@@ -561,12 +561,10 @@ mod tests {
     /// Guards the assumption behind the `eip8037_child_gas` tests below: Base never maps to an
     /// Ethereum spec at or after Amsterdam, so revm's EIP-8037 state gas stays off on every Base
     /// upgrade. Those tests mirror revm's reservoir accounting, not Base-specific behavior. When
-    /// this test fails, Glamsterdam is being wired up: re-verify them against revm. Zenith is
-    /// included because the gas-limit billing hook relies on `Gas::spend_all` leaving no
-    /// reservoir behind.
+    /// this test fails, Glamsterdam is being wired up: re-verify them against revm.
     #[test]
     fn test_eip8037_state_gas_disabled_on_all_base_upgrades() {
-        for upgrade in BaseUpgrade::EXECUTION_VARIANTS.into_iter().chain([BaseUpgrade::Zenith]) {
+        for upgrade in BaseUpgrade::EXECUTION_VARIANTS {
             let cfg = CfgEnv::new().with_spec_and_mainnet_gas_params(BaseSpecId::new(upgrade));
             assert!(!cfg.enable_amsterdam_eip8037, "EIP-8037 enabled on {upgrade:?}");
         }
@@ -1261,7 +1259,7 @@ mod tests {
         #[case] metered_gas: u64,
         #[case] success: bool,
     ) {
-        let upgrade = BaseUpgrade::Everest;
+        let upgrade = BaseUpgrade::Denim;
         assert!(!BaseSpecId::new(upgrade).is_feature_enabled(BaseFeature::GasLimitBilling));
 
         let flow = run_fee_flow(upgrade, recipient_code, false);
@@ -1281,10 +1279,10 @@ mod tests {
         #[case] recipient_code: Bytes,
         #[case] success: bool,
     ) {
-        let upgrade = BaseUpgrade::Zenith;
+        let upgrade = BaseUpgrade::Everest;
         assert!(BaseSpecId::new(upgrade).is_feature_enabled(BaseFeature::GasLimitBilling));
 
-        let before = run_fee_flow(BaseUpgrade::Everest, recipient_code.clone(), false);
+        let before = run_fee_flow(BaseUpgrade::Denim, recipient_code.clone(), false);
         let flow = run_fee_flow(upgrade, recipient_code, false);
 
         assert_eq!(flow.l1_fee_vault, before.l1_fee_vault, "the L1 data fee must not change");
@@ -1309,12 +1307,12 @@ mod tests {
         #[case] tx: BaseTransaction<TxEnv>,
     ) {
         let metered =
-            settle_fee_flow(BaseUpgrade::Everest, recipient_code.clone(), false, tx.clone());
+            settle_fee_flow(BaseUpgrade::Denim, recipient_code.clone(), false, tx.clone());
         assert!(metered.success);
         assert!(metered.final_refunded > 0, "the fixture must earn a refund pre-feature");
         assert!(metered.gas_used < FEE_FLOW_GAS_LIMIT);
 
-        let billed = settle_fee_flow(BaseUpgrade::Zenith, recipient_code, false, tx);
+        let billed = settle_fee_flow(BaseUpgrade::Everest, recipient_code, false, tx);
         assert_eq!(billed, fee_flow_billed_for(FEE_FLOW_GAS_LIMIT, billed.l1_fee_vault, true));
     }
 
@@ -1324,8 +1322,8 @@ mod tests {
     /// but not under the feature, so this case carries no authorizations.
     #[test]
     fn gas_limit_billing_out_of_gas_settlement_matches_pre_feature() {
-        let metered = run_fee_flow(BaseUpgrade::Everest, INFINITE_LOOP_CODE, false);
-        let billed = run_fee_flow(BaseUpgrade::Zenith, INFINITE_LOOP_CODE, false);
+        let metered = run_fee_flow(BaseUpgrade::Denim, INFINITE_LOOP_CODE, false);
+        let billed = run_fee_flow(BaseUpgrade::Everest, INFINITE_LOOP_CODE, false);
         assert!(!metered.success && !billed.success);
         assert_eq!(metered.gas_used, FEE_FLOW_GAS_LIMIT);
         assert_eq!(metered, billed);
@@ -1336,8 +1334,8 @@ mod tests {
     /// the metered consumption, so gas estimation keeps converging on the real requirement.
     #[test]
     fn gas_limit_billing_fee_charge_disabled_simulation_bills_nothing() {
-        let simulated = run_fee_flow(BaseUpgrade::Zenith, Bytes::new(), true);
-        assert_eq!(simulated, run_fee_flow(BaseUpgrade::Everest, Bytes::new(), true));
+        let simulated = run_fee_flow(BaseUpgrade::Everest, Bytes::new(), true);
+        assert_eq!(simulated, run_fee_flow(BaseUpgrade::Denim, Bytes::new(), true));
         assert_eq!(simulated.caller_paid, FEE_FLOW_VALUE);
         assert_eq!(simulated.coinbase, U256::ZERO);
         assert_eq!(simulated.gas_used, TRANSFER_GAS);
@@ -1347,8 +1345,8 @@ mod tests {
     /// them alone: the depositor's balance only moves by `value`, no fee recipient is paid, and
     /// the receipt reports metered gas on both sides of the feature.
     #[rstest]
-    #[case::pre_feature(BaseUpgrade::Everest)]
-    #[case::feature_on(BaseUpgrade::Zenith)]
+    #[case::pre_feature(BaseUpgrade::Denim)]
+    #[case::feature_on(BaseUpgrade::Everest)]
     fn gas_limit_billing_leaves_deposits_metered_and_unpaid(#[case] upgrade: BaseUpgrade) {
         // Deposits carry no gas price (`TxEnv::from_recovered_tx(TxDeposit)` leaves it zero).
         let deposit = BaseTransaction::builder()

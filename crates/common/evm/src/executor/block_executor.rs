@@ -1094,7 +1094,7 @@ mod tests {
         }
 
         assert_eq!(
-            fill_block_under(BaseUpgrade::Zenith),
+            fill_block_under(BaseUpgrade::Everest),
             BlockGasAccounting {
                 charged: vec![TRANSFER_GAS, GAS_LIMIT_BILLING_TX_GAS, GAS_LIMIT_BILLING_TX_GAS],
                 cumulative: vec![AFTER_DEPOSIT, AFTER_FIRST_TRANSFER, AFTER_SECOND_TRANSFER],
