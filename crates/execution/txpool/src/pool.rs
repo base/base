@@ -1617,9 +1617,13 @@ where
         AllTransactionsEvents::new(rx)
     }
 
+    /// With a `hold`, the validity pool's roots anchored at canonical state are
+    /// asked about once the read guards are released, before they are ranked
+    /// (see `BestTwoDTransactions::hold_resting_roots`).
     fn merged_best_transactions(
         &self,
         attributes: BestTransactionsAttributes,
+        hold: Option<&mut Box<dyn BestTransactionsHold<T>>>,
     ) -> MergeBestTransactions<T, O> {
         let base_fee = attributes.basefee;
         // The lane bookkeeping the merge relies on (anchors, shared lanes) and
@@ -1630,16 +1634,20 @@ where
         // and a stale one leaves a validity head waiting, never released early.
         // The bookkeeping comes from the validity pool's incremental indexes,
         // so this costs the lanes that straddle stores, not the pool sizes.
-        let (sidecar, validity, anchors, bridged) = {
+        let (sidecar, mut validity, anchors, bridged) = {
             let sidecar = self.sidecar.pool.read();
             let validity = self.validity.pool.read();
             (
                 sidecar.best_transactions(self.ordering.clone(), base_fee),
-                validity.best_transactions(self.ordering.clone(), base_fee),
+                validity.unranked_best_transactions(self.ordering.clone(), base_fee),
                 validity.lanes_ahead_of_state().clone(),
                 self.bridged_descendants(&sidecar, &validity),
             )
         };
+        if let Some(hold) = hold {
+            validity.hold_resting_roots(&anchors, &mut **hold);
+        }
+        let validity = validity.ranked();
         // Reth hands back a boxed iterator of a private type, so it is boxed
         // once more as a `MergeSource`: one allocation per build.
         let protocol = self.protocol_pool.best_transactions_with_attributes(attributes);
@@ -2047,14 +2055,14 @@ where
             block_info.pending_basefee,
             block_info.pending_blob_fee.map(|fee| u64::try_from(fee).unwrap_or(u64::MAX)),
         );
-        Box::new(self.merged_best_transactions(best_transactions_attributes))
+        Box::new(self.merged_best_transactions(best_transactions_attributes, None))
     }
 
     fn best_transactions_with_attributes(
         &self,
         best_transactions_attributes: BestTransactionsAttributes,
     ) -> Box<dyn BestTransactions<Item = Arc<ValidPoolTransaction<Self::Transaction>>>> {
-        Box::new(self.merged_best_transactions(best_transactions_attributes))
+        Box::new(self.merged_best_transactions(best_transactions_attributes, None))
     }
 
     fn pending_transactions(&self) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
@@ -2475,12 +2483,17 @@ where
     fn best_transactions_with_attributes_and_parking(
         &self,
         attributes: BestTransactionsAttributes,
-        hold: Option<Box<dyn BestTransactionsHold<Self::Transaction>>>,
+        mut hold: Option<Box<dyn BestTransactionsHold<Self::Transaction>>>,
     ) -> Box<dyn ParkableBestTransactions<Self::Transaction>> {
         let base_fee = attributes.basefee;
-        let merged = self.merged_best_transactions(attributes);
+        let merged = self.merged_best_transactions(attributes, hold.as_mut());
         Box::new(
-            ParkedBestTransactions::new(merged, self.ordering.clone(), base_fee).with_hold(hold),
+            ParkedBestTransactions::new(merged, self.ordering.clone(), base_fee)
+                .with_hold(hold)
+                .with_source_held(
+                    MergeBestTransactions::promote_held,
+                    MergeBestTransactions::discard_held,
+                ),
         )
     }
 }

@@ -24,7 +24,10 @@ use reth_transaction_pool::{
     pool::{AddedTransactionState, QueuedReason},
 };
 
-use crate::{BasePooledTx, BestTransactionPriority, best::MergeSource};
+use crate::{
+    BasePooledTx, BestTransactionPriority, BestTransactionsHold, HOLD_INTERRUPT_INTERVAL,
+    best::{HeldRun, MergeSource},
+};
 
 /// A finite channel: `(sender, nonce_key)`.
 pub(crate) type LaneId = (Address, U256);
@@ -1318,6 +1321,21 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
     where
         O: TransactionOrdering<Transaction = T>,
     {
+        self.unranked_best_transactions(ordering, base_fee).ranked()
+    }
+
+    /// Returns the snapshot [`Self::best_transactions`] ranks, for a caller
+    /// that holds some of its roots first (see
+    /// [`BestTwoDTransactions::hold_resting_roots`]) and then calls
+    /// [`BestTwoDTransactions::ranked`].
+    pub(crate) fn unranked_best_transactions<O>(
+        &self,
+        ordering: O,
+        base_fee: u64,
+    ) -> BestTwoDTransactions<T, O>
+    where
+        O: TransactionOrdering<Transaction = T>,
+    {
         BestTwoDTransactions::new(
             &self.lanes,
             &self.nonce_free,
@@ -1391,6 +1409,9 @@ where
     /// Only lanes with more than one member: invalidating or holding a lane
     /// after its single member was yielded has nothing left to act on.
     lane_indexes: HashMap<LaneId, usize>,
+    /// Lanes whose root a [`BestTransactionsHold`] held before ranking, by the
+    /// root's hash, until [`MergeSource::take_held`] hands them back.
+    held_roots: B256Map<usize>,
     /// Mirrors the pool's protocol-nonce lane mode for lane lookups.
     protocol_nonce_lanes: bool,
     ordering: O,
@@ -1433,6 +1454,7 @@ impl<T: BasePooledTx, O> BestTwoDTransactions<T, O>
 where
     O: TransactionOrdering<Transaction = T>,
 {
+    /// Snapshots the pending runs; nothing is offered before [`Self::ranked`].
     fn new(
         lanes: &HashMap<LaneId, NonceLane<T>>,
         nonce_free: &B256Map<Arc<ValidPoolTransaction<T>>>,
@@ -1458,16 +1480,68 @@ where
             let id = (transaction.sender(), Eip8130Constants::NONCE_KEY_MAX);
             LaneIterator::new(id, Arc::clone(transaction), Vec::new())
         }));
-        let candidates = BinaryHeap::from(
-            snapshot
-                .iter()
-                .enumerate()
-                .map(|(index, lane)| {
-                    (BestTransactionPriority::new(&ordering, &lane.head, base_fee), index)
-                })
-                .collect::<Vec<_>>(),
-        );
-        Self { lanes: snapshot, candidates, lane_indexes, protocol_nonce_lanes, ordering, base_fee }
+        Self {
+            lanes: snapshot,
+            candidates: BinaryHeap::new(),
+            lane_indexes,
+            held_roots: B256Map::default(),
+            protocol_nonce_lanes,
+            ordering,
+            base_fee,
+        }
+    }
+
+    /// Ranks the snapshot's lane heads, leaving out lanes whose root is held.
+    pub(crate) fn ranked(mut self) -> Self {
+        let candidates = self
+            .lanes
+            .iter()
+            .enumerate()
+            .filter(|(_, lane)| !lane.held)
+            .map(|(index, lane)| {
+                (BestTransactionPriority::new(&self.ordering, &lane.head, self.base_fee), index)
+            })
+            .collect::<Vec<_>>();
+        self.candidates = BinaryHeap::from(candidates);
+        self
+    }
+
+    /// Asks `hold` about every root anchored at canonical state, before
+    /// [`Self::ranked`]: roots that carry validity predicates, are not
+    /// underpriced, and are nonce-free or whose lane is absent from
+    /// `external_anchors` (see `TwoDNoncePool::lanes_ahead_of_state`). A held
+    /// root and the rest of its lane are not offered until
+    /// [`MergeSource::take_held`].
+    ///
+    /// `hold` is checked for interruption before the first root and every
+    /// [`HOLD_INTERRUPT_INTERVAL`] roots after that; interruption leaves the
+    /// remaining roots unasked.
+    pub(crate) fn hold_resting_roots(
+        &mut self,
+        external_anchors: &HashMap<LaneId, u64>,
+        hold: &mut dyn BestTransactionsHold<T>,
+    ) {
+        let started = Instant::now();
+        let mut asked = 0_u32;
+        for (index, lane) in self.lanes.iter_mut().enumerate() {
+            if lane.head.transaction.validity_conditions().is_empty()
+                || lane.head.effective_tip_per_gas(self.base_fee).is_none()
+                || external_anchors.contains_key(&lane.id)
+            {
+                continue;
+            }
+            if asked.is_multiple_of(HOLD_INTERRUPT_INTERVAL) && hold.is_interrupted() {
+                break;
+            }
+            asked += 1;
+            if hold.hold(&lane.head) {
+                lane.held = true;
+                self.held_roots.insert(*lane.head.hash(), index);
+            }
+        }
+        if !self.held_roots.is_empty() {
+            hold.record_duration(started.elapsed());
+        }
     }
 
     fn push_lane_head(&mut self, index: usize) {
@@ -1547,6 +1621,14 @@ where
             self.lanes[index].held = false;
             self.push_lane_head(index);
         }
+    }
+
+    /// Hands back a held root once, with the rest of its run; its lane offers
+    /// nothing more.
+    fn take_held(&mut self, transaction_hash: &TxHash) -> Option<HeldRun<T>> {
+        let lane = &mut self.lanes[self.held_roots.remove(transaction_hash)?];
+        lane.index = 1;
+        Some((Arc::clone(&lane.head), std::mem::take(&mut lane.tail)))
     }
 }
 
@@ -1736,7 +1818,8 @@ mod tests {
             false,
             BaseOrdering::coinbase_tip(),
             0,
-        );
+        )
+        .ranked();
         let snapshot_elapsed = snapshot_started.elapsed();
 
         let drain_started = Instant::now();
@@ -2224,7 +2307,8 @@ mod tests {
             false,
             BaseOrdering::coinbase_tip(),
             0,
-        );
+        )
+        .ranked();
         assert_eq!(best.next().map(|transaction| *transaction.hash()), Some(*transaction.hash()));
         assert!(best.next().is_none());
     }
