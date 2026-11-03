@@ -259,5 +259,5 @@ bench-b20-zk-proving:
     cargo bench -p base-system-tests --bench b20_zk_proving
 
 # Run basectl TUI dashboard
-basectl:
-    cargo run -p basectl --release -- monitor
+basectl *args:
+    cargo run -p basectl --release -- monitor {{args}}
