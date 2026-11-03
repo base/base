@@ -4,7 +4,10 @@
 use std::{
     collections::{HashMap, VecDeque},
     fmt,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicU8, Ordering},
+    },
 };
 
 use alloy_eips::{
@@ -170,10 +173,13 @@ pub struct BaseTransactionPool<
     /// Every transaction carrying validity predicates, in lanes keyed by
     /// `(sender, nonce key)` with the protocol nonce as key zero.
     validity: LaneStore<T>,
-    /// Standard runs bridged behind shared validity lanes, refreshed from the
-    /// validity pool's selection journal when an iterator with a
-    /// [`SelectionView`] is created. Locked after the lane stores.
+    /// Standard runs bridged behind shared validity lanes, refreshed when an
+    /// iterator with a [`SelectionView`] is created. Locked under the
+    /// admission lock and before the lane stores.
     bridges: Arc<Mutex<BridgeMirror<T>>>,
+    /// Whether creation may use `bridges` instead of recomputing every bridged
+    /// run: one of `BRIDGES_*`. Shared by every clone.
+    bridge_cache: Arc<AtomicU8>,
     /// Shared admission and invalidation ledger for EIP-8130 transactions.
     guard: Arc<RwLock<MempoolGuard>>,
     /// Block and flashblock deadline index for validity transactions, including
@@ -217,6 +223,7 @@ where
             sidecar: self.sidecar.clone(),
             validity: self.validity.clone(),
             bridges: Arc::clone(&self.bridges),
+            bridge_cache: Arc::clone(&self.bridge_cache),
             guard: Arc::clone(&self.guard),
             block_expiry: Arc::clone(&self.block_expiry),
             published_flashblock: Arc::clone(&self.published_flashblock),
@@ -245,9 +252,20 @@ where
     O: reth_transaction_pool::TransactionOrdering<Transaction = T> + Clone,
     S: BlobStore + Clone,
 {
+    /// Bridged runs are recomputed at every iterator creation, because a
+    /// caller may mutate the protocol pool without this pool seeing it.
+    const BRIDGES_UNCACHED: u8 = 0;
+    /// Bridged runs may be cached once an iterator with a view needs them.
+    const BRIDGES_IDLE: u8 = 1;
+    /// Bridged runs are cached, and protocol pool events are observed.
+    const BRIDGES_CACHED: u8 = 2;
+
     /// Creates a new wrapper around the reth protocol pool. The validity pool
     /// starts with [`ValidityPoolLimits::inherit`]; see
     /// [`Self::with_validity_pool_limits`].
+    ///
+    /// The caller may still hold clones of `protocol_pool`, so bridged runs are
+    /// recomputed at every iterator creation; [`Self::from_parts`] can cache them.
     pub fn new(
         protocol_pool: Pool<
             TransactionValidationTaskExecutor<BaseTransactionValidator<Client, T, Evm>>,
@@ -266,6 +284,7 @@ where
             sidecar: LaneStore::new(sidecar),
             validity: LaneStore::new(validity),
             bridges: Arc::default(),
+            bridge_cache: Arc::new(AtomicU8::new(Self::BRIDGES_UNCACHED)),
             guard: Arc::new(RwLock::new(MempoolGuard::unlimited())),
             block_expiry: Arc::new(RwLock::new(crate::BlockExpiryIndex::new())),
             published_flashblock: Arc::new(RwLock::new(None)),
@@ -273,11 +292,25 @@ where
         }
     }
 
+    /// Creates the reth protocol pool from its parts together with the wrapper,
+    /// so no other handle to it exists and iterators with a [`SelectionView`]
+    /// can cache bridged runs between creations. Otherwise like [`Self::new`].
+    pub fn from_parts(
+        validator: TransactionValidationTaskExecutor<BaseTransactionValidator<Client, T, Evm>>,
+        ordering: O,
+        blob_store: S,
+        config: PoolConfig,
+    ) -> Self {
+        let protocol_pool = Pool::new(validator, ordering.clone(), blob_store, config);
+        let pool = Self::new(protocol_pool, ordering);
+        pool.bridge_cache.store(Self::BRIDGES_IDLE, Ordering::Release);
+        pool
+    }
+
     fn validity_pool(config: &PoolConfig, limits: ValidityPoolLimits) -> TwoDNoncePool<T> {
         TwoDNoncePool::new(config.price_bumps)
             .with_limits(limits.resolve(config))
             .with_protocol_nonce_lanes()
-            .with_selection_index()
     }
 
     /// Configures EIP-8130 admission limits. Call before sharing the pool.
@@ -315,11 +348,60 @@ where
     }
 
     /// Returns the wrapped reth pool.
-    pub const fn protocol_pool(
+    ///
+    /// A caller can then mutate it without this pool seeing the change, so from
+    /// this call on every clone recomputes bridged runs at each iterator
+    /// creation. Iterators created before keep the runs they captured.
+    pub fn protocol_pool(
         &self,
     ) -> &Pool<TransactionValidationTaskExecutor<BaseTransactionValidator<Client, T, Evm>>, O, S>
     {
+        let _admission_guard = self.protocol_admission_lock.lock();
+        self.bridge_cache.store(Self::BRIDGES_UNCACHED, Ordering::Release);
+        self.bridges.lock().stop_observing();
         &self.protocol_pool
+    }
+
+    /// Pops the protocol pool events the bridge mirror observes. Call under the
+    /// admission lock after a protocol pool call. A drain that may have missed
+    /// an event leaves the mirror unknown, unless the caller's section is
+    /// `accounted`: it began with an unaccounted drain and journals every
+    /// removal it makes itself, so only events it can ignore can be missing.
+    fn drain_bridge_events(&self, accounted: bool) {
+        debug_assert!(self.protocol_admission_lock.is_locked(), "drained under the admission lock");
+        if self.bridge_cache.load(Ordering::Acquire) != Self::BRIDGES_CACHED {
+            return;
+        }
+        let mut bridges = self.bridges.lock();
+        if bridges.drain(|| self.protocol_pool.all_transactions_event_listener()) && !accounted {
+            bridges.note_unknown();
+        }
+    }
+
+    /// Runs `call`, a protocol pool call whose events change no membership, as
+    /// an accounted section, so a burst of its events cannot leave the bridge
+    /// mirror unknown.
+    fn accounted_protocol_call<R>(&self, call: impl FnOnce() -> R) -> R {
+        if self.bridge_cache.load(Ordering::Acquire) != Self::BRIDGES_CACHED {
+            return call();
+        }
+        let _admission_guard = self.protocol_admission_lock.lock();
+        self.drain_bridge_events(false);
+        let result = call();
+        self.drain_bridge_events(true);
+        result
+    }
+
+    /// Whether this creation may use cached bridged runs. The first creation
+    /// that may starts observing protocol pool events, so the coherent rebuild
+    /// it triggers misses none. Call under the admission lock.
+    fn bridge_cache_enabled(&self) -> bool {
+        let state = self.bridge_cache.load(Ordering::Acquire);
+        if state == Self::BRIDGES_IDLE {
+            self.bridges.lock().observe(self.protocol_pool.all_transactions_event_listener());
+            self.bridge_cache.store(Self::BRIDGES_CACHED, Ordering::Release);
+        }
+        state != Self::BRIDGES_UNCACHED
     }
 
     /// Returns the validator backing the wrapped reth pool.
@@ -573,10 +655,10 @@ where
         }
         let mut discarded = Vec::new();
         for (lane_id, nonce) in targets {
-            let (cursor, shared) = {
+            let (cursor, shared, selecting) = {
                 let validity = self.validity.pool.read();
                 let Some(cursor) = validity.lane_cursor(&lane_id) else { continue };
-                (cursor, validity.is_shared_lane(&lane_id))
+                (cursor, validity.is_shared_lane(&lane_id), validity.selection().is_some())
             };
             // Every change to a lane's standard run passes through here, so
             // this is where a shared flag is dropped once the standard store
@@ -596,7 +678,7 @@ where
             if target == cursor {
                 // The standard run may have changed behind an unchanged cursor; the
                 // bridge mirror and selection views re-check the lane.
-                if shared {
+                if shared && selecting {
                     self.validity.pool.write().touch_selection_lane(lane_id);
                 }
                 continue;
@@ -677,6 +759,7 @@ where
         if hashes.is_empty() {
             return Vec::new();
         }
+        self.drain_bridge_events(false);
         let [protocol_hashes, sidecar_hashes, validity_hashes] =
             self.partition_hashes_by_store(hashes);
         let mut removed = if protocol_hashes.is_empty() {
@@ -716,6 +799,8 @@ where
         removed.extend(validity_removed);
         self.release_from_guard(&removed);
         removed.extend(self.sync_validity_lanes(touched_lanes, false));
+        // Every removal above re-synced its lane.
+        self.drain_bridge_events(true);
         removed
     }
 
@@ -1191,7 +1276,11 @@ where
         // Capture the block-expiry bounds before `validated` is consumed below.
         let block_expiry_bound = Self::validity_block_expiry_bound(&validated);
         let flashblock_expiry_bound = Self::validity_flashblock_expiry_bound(&validated);
-        let result = match insert(validated) {
+        let inserted = insert(validated);
+        // Reth may have evicted other senders' transactions inside `insert`;
+        // reconcile them before any exit.
+        self.drain_bridge_events(false);
+        let result = match inserted {
             Ok(result) => result,
             Err(error) => {
                 if pre_admitted {
@@ -1448,6 +1537,12 @@ where
                         balance,
                         balance_epoch,
                     );
+                    drop(guard);
+                    drop(listeners);
+                    drop(pool);
+                    if store == PoolStore::Sidecar {
+                        self.sync_sidecar_lanes(lane_id, &[]);
+                    }
                     return Err(error);
                 }
                 // An incumbent from another store stays pooled there until the
@@ -1479,6 +1574,12 @@ where
                                 balance,
                                 balance_epoch,
                             );
+                            drop(guard);
+                            drop(listeners);
+                            drop(pool);
+                            if store == PoolStore::Sidecar {
+                                self.sync_sidecar_lanes(lane_id, &[]);
+                            }
                             return Err(Self::limit_rejection_error(hash, rejection));
                         }
                     }
@@ -1512,6 +1613,9 @@ where
                     drop(listeners);
                     drop(pool);
                     self.remove_block_expiry(&evicted);
+                    if store == PoolStore::Sidecar {
+                        self.sync_sidecar_lanes(lane_id, &evicted);
+                    }
                     return Err(PoolError::new(inserted_hash, PoolErrorKind::DiscardedOnInsert));
                 }
                 listeners.on_discarded(&evicted);
@@ -1552,19 +1656,7 @@ where
                     PoolStore::Protocol => {}
                 }
                 if store == PoolStore::Sidecar {
-                    // Validity lanes on the channels this insertion extended or
-                    // the eviction shortened follow the sidecar's pending run.
-                    self.sync_validity_lanes(
-                        lane_id
-                            .into_iter()
-                            .chain(
-                                evicted
-                                    .iter()
-                                    .filter_map(|evicted| Self::lane_id_of(&evicted.transaction)),
-                            )
-                            .map(|lane_id| (lane_id, None)),
-                        false,
-                    );
+                    self.sync_sidecar_lanes(lane_id, &evicted);
                 }
                 Ok(outcome.outcome)
             }
@@ -1575,6 +1667,21 @@ where
                 Err(PoolError::other(hash, error.to_string()))
             }
         }
+    }
+
+    /// Re-syncs the validity lanes on the channels a sidecar admission
+    /// extended, replaced in or shortened by eviction, whether it succeeded or not.
+    fn sync_sidecar_lanes(
+        &self,
+        lane_id: Option<LaneId>,
+        evicted: &[Arc<ValidPoolTransaction<T>>],
+    ) {
+        let evicted_lanes =
+            evicted.iter().filter_map(|evicted| Self::lane_id_of(&evicted.transaction));
+        self.sync_validity_lanes(
+            lane_id.into_iter().chain(evicted_lanes).map(|lane_id| (lane_id, None)),
+            false,
+        );
     }
 
     /// Wraps a validated lane transaction. Its sender and authority ids are
@@ -1687,9 +1794,12 @@ where
 
     /// [`Self::merged_best_transactions`] for a build lineage keeping `view`.
     ///
-    /// Under the read guards it shares the validity pool's pending runs and the
-    /// bridge mirror in constant time and copies out the journal entries `view`
-    /// has not seen. Outside them, `view` catches up, only its awake roots are
+    /// Every store is snapshotted in one interval under the admission lock: the
+    /// protocol pool events the bridge mirror observes are drained first, then
+    /// the lane stores' read guards are taken, the validity pool's pending runs
+    /// and the bridge mirror are shared in constant time, the journal entries
+    /// `view` has not seen are copied out, and the protocol iterator is
+    /// created. Outside every guard, `view` catches up, only its awake roots are
     /// snapshotted and asked about, and roots `hold` holds become dormant.
     /// Dormant roots, their runs and the standard transactions bridged behind
     /// them are never visited; a same-build wake hands back the run as
@@ -1702,30 +1812,48 @@ where
     ) -> MergeBestTransactions<T, O> {
         let base_fee = attributes.basefee;
         let snapshot = {
+            let _admission_guard = self.protocol_admission_lock.lock();
+            if self.validity.pool.read().selection().is_none() {
+                self.validity.pool.write().enable_selection();
+            }
+            let mut mirror = self.bridge_cache_enabled().then(|| self.bridges.lock());
+            if let Some(mirror) = mirror.as_mut()
+                && mirror.drain(|| self.protocol_pool.all_transactions_event_listener())
+            {
+                mirror.note_unknown();
+            }
             let sidecar = self.sidecar.pool.read();
             let validity = self.validity.pool.read();
             validity.selection().map(|selection| {
-                let bridges = self.bridges.lock().refresh(
-                    selection.journal(),
-                    validity.shared_lanes(),
-                    |lane_id| self.bridged_run(&sidecar, &validity, lane_id),
+                let (cached, eager) = mirror.as_mut().map_or_else(
+                    || (imbl::HashMap::default(), self.bridged_descendants(&sidecar, &validity)),
+                    |mirror| {
+                        let cached = mirror.refresh(
+                            selection.journal(),
+                            validity.shared_lanes(),
+                            |lane_id| self.bridged_run(&sidecar, &validity, lane_id),
+                        );
+                        (cached, BridgedDescendants::default())
+                    },
                 );
                 (
                     sidecar.best_transactions(self.ordering.clone(), base_fee),
                     selection.runs().clone(),
                     view.plan(selection.journal()),
                     validity.lanes_ahead_of_state().clone(),
-                    bridges,
+                    cached,
+                    eager,
+                    self.protocol_pool.best_transactions_with_attributes(attributes),
                 )
             })
         };
-        let Some((sidecar, runs, sync, anchors, bridges)) = snapshot else {
+        let Some((sidecar, runs, sync, anchors, cached, eager, protocol)) = snapshot else {
             return self.merged_best_transactions(attributes, Some(hold), None);
         };
         match sync {
             SelectionSync::Rebuild => view.rebuild(runs.keys().copied()),
             SelectionSync::Changed(changed) => {
-                view.refresh(&changed, |root| runs.get(root).map(|run| *run[0].hash()));
+                view.refresh(&changed, |root| runs.get(root).map(|run| *run.root().hash()));
             }
         }
         let mut validity =
@@ -1735,7 +1863,6 @@ where
         for (hash, root) in validity.held_selection_roots() {
             view.hold(root, hash);
         }
-        let protocol = self.protocol_pool.best_transactions_with_attributes(attributes);
         MergeBestTransactions::new(
             Box::new(protocol),
             Box::new(sidecar),
@@ -1744,7 +1871,8 @@ where
             base_fee,
         )
         .with_external_anchors(anchors)
-        .with_bridge_snapshot(bridges)
+        .with_bridged_descendants(eager)
+        .with_bridge_snapshot(cached)
     }
 
     /// The standard run queued behind shared validity lane `lane_id`'s pending
@@ -2274,6 +2402,7 @@ where
         sender: Address,
     ) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
         let _admission_guard = self.protocol_admission_lock.lock();
+        self.drain_bridge_events(false);
         let mut removed = self.protocol_pool.remove_transactions_by_sender(sender);
         for store in self.lane_stores() {
             let mut pool = store.pool.write();
@@ -2285,6 +2414,7 @@ where
         }
         // The sender's validity lanes went with the rest, so nothing is left to re-anchor.
         self.release_from_guard(&removed);
+        self.drain_bridge_events(true);
         removed
     }
 
@@ -2353,7 +2483,7 @@ where
         );
         drop(validity);
         drop(sidecar);
-        self.protocol_pool.on_propagated(protocol_txs)
+        self.accounted_protocol_call(|| self.protocol_pool.on_propagated(protocol_txs));
     }
 
     fn get_transactions_by_sender(
@@ -2645,7 +2775,7 @@ where
     type Block = <TransactionValidationTaskExecutor<BaseTransactionValidator<Client, T, Evm>> as TransactionValidator>::Block;
 
     fn set_block_info(&self, info: BlockInfo) {
-        self.protocol_pool.set_block_info(info)
+        self.accounted_protocol_call(|| self.protocol_pool.set_block_info(info));
     }
 
     fn on_canonical_state_change(
@@ -2662,61 +2792,73 @@ where
             .iter()
             .map(|account| (account.address, account.nonce))
             .collect();
-        // Free mined capacity atomically with admission before the heavier pool
-        // maintenance. The transaction is already canonical, so it no longer
-        // consumes an admission slot even until its pool entry is pruned below.
+        // The protocol pool call and every lane re-sync it needs run as one
+        // accounted section under the admission lock, so the bridge mirror never
+        // serves an iterator between a removal and its journal entry. The section
+        // ends before the expiry helpers, which take the lock themselves.
         {
             let _admission_guard = self.protocol_admission_lock.lock();
-            if reorg {
-                // The new branch can rebuild an earlier block or restart its flashblock indices.
-                *self.published_flashblock.write() = None;
-            }
-            let mut guard = self.guard.write();
-            for hash in &mined_transactions {
-                guard.release(hash);
-            }
-            let mut block_expiry = self.block_expiry.write();
-            for hash in &mined_transactions {
-                block_expiry.remove(hash);
-            }
-        }
-        self.protocol_pool.on_canonical_state_change(update);
-        // `protocol_pool.on_canonical_state_change` has already advanced the
-        // validator's head clock to this block.
-        let now_ms = self.validator().validator().block_timestamp_ms();
-        let mut touched_lanes = Vec::new();
-        for store in self.lane_stores() {
-            let mut pool = store.pool.write();
-            let pruned = pool.prune_mined(&mined_transactions);
-            let expired = pool.remove_expired_nonce_free(now_ms);
-            let mut listeners = store.listeners.write();
-            if !pruned.removed.is_empty() {
-                listeners.on_mined(&pruned.removed, block_hash);
-            }
-            listeners.on_lane_update(&pruned.lanes);
-            if !expired.is_empty() {
-                listeners.on_discarded(&expired);
-            }
-            // Lane-store maintenance lock order is pool -> listeners -> guard.
-            let mut guard = self.guard.write();
-            for transaction in pruned.removed.iter().chain(&pruned.lanes.discarded).chain(&expired)
+            // Free mined capacity atomically with admission before the heavier
+            // pool maintenance. The transaction is already canonical, so it no
+            // longer consumes an admission slot even until its pool entry is pruned.
             {
-                guard.release(transaction.hash());
+                if reorg {
+                    // The new branch can rebuild an earlier block or restart its flashblock indices.
+                    *self.published_flashblock.write() = None;
+                }
+                let mut guard = self.guard.write();
+                for hash in &mined_transactions {
+                    guard.release(hash);
+                }
+                let mut block_expiry = self.block_expiry.write();
+                for hash in &mined_transactions {
+                    block_expiry.remove(hash);
+                }
             }
-            // Mined lane transactions moved their channel's canonical nonce past
-            // them; a validity lane on the same channel follows that move.
-            touched_lanes.extend(pruned.removed.iter().filter_map(|transaction| {
-                Self::lane_id_of(&transaction.transaction)
-                    .map(|lane_id| (lane_id, Some(transaction.nonce().saturating_add(1))))
-            }));
-        }
-        {
+            self.drain_bridge_events(false);
+            if self.bridge_cache.load(Ordering::Acquire) == Self::BRIDGES_CACHED {
+                // A mined transaction's sender need not be among the changed accounts.
+                let mut bridges = self.bridges.lock();
+                for hash in &mined_transactions {
+                    bridges.note_removed(hash);
+                }
+            }
+            self.protocol_pool.on_canonical_state_change(update);
+            // `protocol_pool.on_canonical_state_change` has already advanced the
+            // validator's head clock to this block.
+            let now_ms = self.validator().validator().block_timestamp_ms();
+            let mut touched_lanes = Vec::new();
+            for store in self.lane_stores() {
+                let mut pool = store.pool.write();
+                let pruned = pool.prune_mined(&mined_transactions);
+                let expired = pool.remove_expired_nonce_free(now_ms);
+                let mut listeners = store.listeners.write();
+                if !pruned.removed.is_empty() {
+                    listeners.on_mined(&pruned.removed, block_hash);
+                }
+                listeners.on_lane_update(&pruned.lanes);
+                if !expired.is_empty() {
+                    listeners.on_discarded(&expired);
+                }
+                // Lane-store maintenance lock order is pool -> listeners -> guard.
+                let mut guard = self.guard.write();
+                for transaction in
+                    pruned.removed.iter().chain(&pruned.lanes.discarded).chain(&expired)
+                {
+                    guard.release(transaction.hash());
+                }
+                // Mined lane transactions moved their channel's canonical nonce past
+                // them; a validity lane on the same channel follows that move.
+                touched_lanes.extend(pruned.removed.iter().filter_map(|transaction| {
+                    Self::lane_id_of(&transaction.transaction)
+                        .map(|lane_id| (lane_id, Some(transaction.nonce().saturating_add(1))))
+                }));
+            }
             // Re-anchor protocol-nonce validity lanes to the new account nonces,
             // and re-check every lane that relied on a standard pending run the
             // protocol pool may have reshuffled on its own. On a reorg only the
             // reported account nonces may move an anchor back; the mined
             // transactions' nonces are lower bounds and stay forward-only.
-            let _admission_guard = self.protocol_admission_lock.lock();
             let account_lanes = changed_nonces
                 .into_iter()
                 .map(|(address, nonce)| ((address, U256::ZERO), Some(nonce)));
@@ -2730,6 +2872,9 @@ where
                 touched_lanes.extend(account_lanes);
                 self.sync_validity_lanes(touched_lanes, false);
             }
+            // The protocol pool removed only mined transactions and changed
+            // senders' stale ones, all journaled above.
+            self.drain_bridge_events(true);
         }
         self.expire_due_buckets(now);
         self.expire_by_block(block_number);
@@ -2744,6 +2889,7 @@ where
         // dropped reservation cannot be recreated from an older validation
         // snapshot after reth publishes the transaction.
         let _admission_guard = self.protocol_admission_lock.lock();
+        self.drain_bridge_events(false);
         for store in self.lane_stores() {
             store.pool.write().apply_balance_updates(
                 accounts.iter().map(|account| (account.address, account.balance)),
@@ -2785,8 +2931,10 @@ where
         }
         drop(guard);
         // The protocol pool re-sorted these senders' runs and took their
-        // reported nonces as-is; validity lanes behind them follow.
+        // reported nonces as-is; validity lanes behind them follow. It removes
+        // only these senders' transactions, so the section is accounted.
         self.sync_validity_lanes(validity_lanes, true);
+        self.drain_bridge_events(true);
     }
 
     fn delete_blob(&self, tx: B256) {
@@ -3084,9 +3232,10 @@ mod tests {
 
     use super::*;
     use crate::{
-        BaseL1BlockInfo, BaseOrdering, BasePooledTransaction, BuilderApiImpl, BuilderApiServer,
-        HOLD_INTERRUPT_INTERVAL, LimitClass, NoExtensions, SELECTION_JOURNAL_CAPACITY,
-        SelectionView, ValidatedTransaction, ValidityOperator, ValidityPredicate, WatchSet,
+        BRIDGE_EVENT_DRAIN_LIMIT, BaseL1BlockInfo, BaseOrdering, BasePooledTransaction,
+        BuilderApiImpl, BuilderApiServer, HOLD_INTERRUPT_INTERVAL, LimitClass, NoExtensions,
+        SELECTION_JOURNAL_CAPACITY, SelectionView, ValidatedTransaction, ValidityOperator,
+        ValidityPredicate, WatchSet,
     };
 
     fn test_chain_id() -> u64 {
@@ -3476,8 +3625,8 @@ mod tests {
                 validator
             });
         let ordering = BaseOrdering::default();
-        let pool = Pool::new(validator, ordering.clone(), blob_store, config);
-        (BaseTransactionPool::new(pool, ordering).with_guard_limits(GuardLimits::default()), client)
+        let pool = BaseTransactionPool::from_parts(validator, ordering, blob_store, config);
+        (pool.with_guard_limits(GuardLimits::default()), client)
     }
 
     fn fund(client: &MockEthProvider<BasePrimitives, Arc<BaseChainSpec>>, account: Address) {
@@ -4556,6 +4705,63 @@ mod tests {
         assert!(pool.guard.read().contains(&original_hash));
         assert!(!pool.guard.read().contains(&replacement_hash));
         assert!(matches!(replacement_events.next().await, Some(TransactionEvent::Discarded)));
+    }
+
+    #[tokio::test]
+    async fn rolled_back_sidecar_cursor_advance_drops_only_new_bridged_snapshots() {
+        let (pool, client) = build_integration_pool();
+        let signer = funded_signer(&client);
+        let channel = U256::from(1);
+        let root = add(&pool, validity_8130(&signer, channel, 0, 1_000)).await;
+        let bridged = add(&pool, self_paid_eoa_8130(&signer, channel, 1, 0, 1_000)).await;
+        let hold = RecordingHold::new(&pool, vec![root]);
+        let mut view = SelectionView::default();
+        let mut frozen = hold.parking_with_view(0, &mut view);
+        let successor = self_paid_eoa_8130(&signer, channel, 2, 0, 1_000);
+        let successor_hash = *successor.hash();
+        let balance_epoch = pool.sidecar.pool.read().balance_epoch();
+        let validated = match pool
+            .validator()
+            .validate_transaction(TransactionOrigin::Local, successor)
+            .await
+        {
+            TransactionValidationOutcome::Valid {
+                balance,
+                bytecode_hash,
+                transaction,
+                propagate,
+                authorities,
+                ..
+            } => TransactionValidationOutcome::Valid {
+                balance,
+                state_nonce: 2,
+                bytecode_hash,
+                transaction,
+                propagate,
+                authorities,
+            },
+            other => panic!("successor must validate: {other:?}"),
+        };
+        pool.validator().validator().clear_limit_class_cache();
+        let error = pool
+            .add_validated_lane_transaction(
+                PoolStore::Sidecar,
+                validated,
+                TransactionOrigin::Local,
+                balance_epoch,
+            )
+            .expect_err("stale classification must roll back the insert");
+        assert!(error.to_string().contains("classification changed during validation"));
+        assert!(pool.get(&bridged).is_none(), "cursor advancement discarded the bridge");
+        assert!(pool.get(&successor_hash).is_none(), "rollback removed the newcomer");
+        assert!(frozen.promote(root));
+        assert_eq!(drain_committing(frozen.as_mut()), vec![root, bridged]);
+        let mut next = hold.parking_with_view(0, &mut view);
+        next.promote(root);
+        assert!(
+            !drain_committing(next.as_mut()).contains(&bridged),
+            "rollback must reconcile a removed bridge before another creation"
+        );
     }
 
     #[tokio::test]
@@ -8354,5 +8560,383 @@ mod tests {
         assert_eq!(changes.woken, vec![root]);
         assert!(best.promote(root));
         assert_eq!(drain_committing(best.as_mut()), vec![root]);
+    }
+
+    fn bridge_rebuilds(pool: &IntegrationPool) -> u64 {
+        pool.bridges.lock().rebuilds()
+    }
+
+    /// Propagation reports for `count` distinct hashes: protocol pool events that change no
+    /// membership.
+    fn propagated(count: usize) -> PropagatedTransactions {
+        PropagatedTransactions(
+            (0..count as u64)
+                .map(|index| (B256::left_padding_from(&index.to_be_bytes()), Vec::new()))
+                .collect(),
+        )
+    }
+
+    /// A resting root with a bridged standard successor, a hold resting the root, and a view
+    /// whose first iterator already started caching bridges.
+    async fn cached_bridge(
+        pool: &IntegrationPool,
+        client: &MockEthProvider<BasePrimitives, Arc<BaseChainSpec>>,
+    ) -> (RecordingHold, SelectionView, TxHash, TxHash) {
+        let a = funded_signer(client);
+        let root = add(pool, resting_1559(&a, 0, 100)).await;
+        let bridged = add(pool, signed_1559_with_fees(&a, 1, 1_000, 100)).await;
+        let hold = RecordingHold::new(pool, vec![root]);
+        let mut view = SelectionView::default();
+        drop(hold.parking_with_view(0, &mut view));
+        (hold, view, root, bridged)
+    }
+
+    #[tokio::test]
+    async fn a_bridged_successor_mined_without_its_sender_changing_leaves_new_iterators() {
+        let (pool, client) = build_integration_pool();
+        let (hold, mut view, root, bridged) = cached_bridge(&pool, &client).await;
+        let mut frozen = hold.parking_with_view(0, &mut view);
+
+        commit_block(&pool, 1, Vec::new(), vec![bridged]);
+        assert!(pool.get(&bridged).is_none(), "the mined successor left the pool");
+
+        assert!(frozen.promote(root));
+        assert_eq!(drain_committing(frozen.as_mut()), vec![root, bridged]);
+        let mut next = hold.parking_with_view(0, &mut view);
+        assert!(next.promote(root));
+        assert_eq!(drain_committing(next.as_mut()), vec![root]);
+    }
+
+    #[tokio::test]
+    async fn event_bursts_inside_accounted_sections_do_not_rebuild_the_bridge_mirror() {
+        let (pool, client) = build_integration_pool();
+        let (hold, mut view, root, bridged) = cached_bridge(&pool, &client).await;
+        let rebuilds = bridge_rebuilds(&pool);
+
+        pool.on_propagated(propagated(BRIDGE_EVENT_DRAIN_LIMIT + 100));
+        commit_block(&pool, 1, Vec::new(), Vec::new());
+        pool.set_block_info(pool.block_info());
+        let mut best = hold.parking_with_view(0, &mut view);
+        assert_eq!(bridge_rebuilds(&pool), rebuilds);
+        assert!(best.promote(root));
+        assert_eq!(drain_committing(best.as_mut()), vec![root, bridged]);
+    }
+
+    /// Events emitted past the pool's own paths, as by a raw protocol pool handle, stand in for a
+    /// burst no section accounted for.
+    #[tokio::test]
+    async fn an_unaccounted_event_burst_rebuilds_the_bridge_mirror_once() {
+        let (pool, client) = build_integration_pool();
+        let (hold, mut view, root, bridged) = cached_bridge(&pool, &client).await;
+        let other = funded_signer(&client);
+        let rebuilds = bridge_rebuilds(&pool);
+
+        pool.protocol_pool.on_propagated(propagated(BRIDGE_EVENT_DRAIN_LIMIT - 1));
+        drop(hold.parking_with_view(0, &mut view));
+        assert_eq!(bridge_rebuilds(&pool), rebuilds, "a drain below capacity is complete");
+
+        pool.protocol_pool.on_propagated(propagated(BRIDGE_EVENT_DRAIN_LIMIT));
+        drop(hold.parking_with_view(0, &mut view));
+        assert_eq!(bridge_rebuilds(&pool), rebuilds + 1, "a full drain may have lost a removal");
+
+        pool.protocol_pool.on_propagated(propagated(BRIDGE_EVENT_DRAIN_LIMIT + 100));
+        commit_block(&pool, 1, Vec::new(), Vec::new());
+        drop(hold.parking_with_view(0, &mut view));
+        assert_eq!(
+            bridge_rebuilds(&pool),
+            rebuilds + 2,
+            "an accounted section never clears an earlier unknown"
+        );
+
+        pool.protocol_pool.on_propagated(propagated(BRIDGE_EVENT_DRAIN_LIMIT + 100));
+        let admitted = add(&pool, signed_1559_with_fees(&other, 0, 1_000, 10)).await;
+        drop(hold.parking_with_view(0, &mut view));
+        assert_eq!(bridge_rebuilds(&pool), rebuilds + 3, "admission reconciles earlier events");
+
+        let mut best = hold.parking_with_view(0, &mut view);
+        assert_eq!(bridge_rebuilds(&pool), rebuilds + 3, "one rebuild per unknown");
+        assert!(best.promote(root));
+        assert_eq!(drain_committing(best.as_mut()), vec![root, bridged, admitted]);
+    }
+
+    #[tokio::test]
+    async fn a_pool_built_on_a_caller_held_protocol_pool_recomputes_bridges() {
+        let (owned, client) = build_integration_pool();
+        let raw = owned.protocol_pool().clone();
+        let pool = BaseTransactionPool::new(raw.clone(), BaseOrdering::default());
+        let (hold, mut view, root, bridged) = cached_bridge(&pool, &client).await;
+        let mut frozen = hold.parking_with_view(0, &mut view);
+
+        assert_eq!(raw.remove_transactions(vec![bridged]).len(), 1);
+        assert!(frozen.promote(root));
+        assert_eq!(drain_committing(frozen.as_mut()), vec![root, bridged]);
+        let mut next = hold.parking_with_view(0, &mut view);
+        assert!(next.promote(root));
+        assert_eq!(drain_committing(next.as_mut()), vec![root]);
+        assert!(!pool.bridges.lock().is_observing());
+    }
+
+    #[tokio::test]
+    async fn taking_the_raw_protocol_pool_stops_every_clone_caching_bridges() {
+        let (pool, client) = build_integration_pool();
+        let (hold, mut view, root, bridged) = cached_bridge(&pool, &client).await;
+        let mut frozen = hold.parking_with_view(0, &mut view);
+        assert!(pool.bridges.lock().is_observing());
+
+        let clone = pool.clone();
+        assert_eq!(clone.protocol_pool().remove_transactions(vec![bridged]).len(), 1);
+        assert!(!pool.bridges.lock().is_observing());
+        assert!(frozen.promote(root));
+        assert_eq!(drain_committing(frozen.as_mut()), vec![root, bridged]);
+        let mut next = hold.parking_with_view(0, &mut view);
+        assert!(next.promote(root));
+        assert_eq!(drain_committing(next.as_mut()), vec![root]);
+    }
+
+    #[tokio::test]
+    async fn bridge_observation_starts_with_the_first_view_and_is_shared_by_clones() {
+        let (pool, client) = build_integration_pool();
+        let a = funded_signer(&client);
+        let root = add(&pool, resting_1559(&a, 0, 100)).await;
+        add(&pool, signed_1559_with_fees(&a, 1, 1_000, 100)).await;
+        let hold = RecordingHold::new(&pool, vec![root]);
+
+        drop(pool.best_transactions());
+        drop(hold.parking(0));
+        drop(pool.best_transactions_with_attributes_and_parking(
+            BestTransactionsAttributes::new(0, None),
+            None,
+        ));
+        assert!(!pool.bridges.lock().is_observing(), "no view, as in off and shadow modes");
+        assert!(pool.validity.pool.read().selection().is_none(), "nor a selection index");
+
+        let clone = pool.clone();
+        let mut view = SelectionView::default();
+        drop(RecordingHold::new(&clone, vec![root]).parking_with_view(0, &mut view));
+        assert!(pool.bridges.lock().is_observing());
+        assert!(pool.validity.pool.read().selection().is_some());
+        assert_eq!(bridge_rebuilds(&pool), 1);
+    }
+
+    #[tokio::test]
+    async fn a_view_matches_the_unheld_iterator_through_channel_bridges_reorgs_and_expiry() {
+        let (pool, client) = build_integration_pool();
+        let [a, e, s] = [(); 3].map(|_| funded_signer(&client));
+        let channel = U256::from(3);
+        add(&pool, resting_1559(&a, 0, 900)).await;
+        add(&pool, signed_1559_with_fees(&a, 1, 1_000, 950)).await;
+        add(
+            &pool,
+            signed_1559_with_fees(&e, 0, 1_000, 800).with_validity_predicates(vec![
+                ValidityPredicate::BlockNumber {
+                    op: ValidityOperator::LessThanOrEqual,
+                    value: U256::from(2),
+                },
+            ]),
+        )
+        .await;
+        add(&pool, signed_1559_with_fees(&e, 1, 1_000, 850)).await;
+        add(&pool, validity_8130(&s, channel, 0, 1_000)).await;
+        let channel_successor = add(&pool, signed_channel_tx(&s, channel, 1, 1_000)).await;
+        let hold = RecordingHold::new(&pool, Vec::new());
+        let mut view = SelectionView::default();
+        let attributes = BestTransactionsAttributes::new(0, None);
+        let mut matches_unheld = |step: &str| {
+            let mut selected = hold.parking_with_view(0, &mut view);
+            let mut unheld = pool.best_transactions_with_attributes_and_parking(attributes, None);
+            assert_eq!(
+                drain_committing(selected.as_mut()),
+                drain_committing(unheld.as_mut()),
+                "{step}"
+            );
+        };
+
+        matches_unheld("initial");
+        assert_eq!(pool.remove_transactions(vec![channel_successor]).len(), 1);
+        matches_unheld("sidecar successor removed");
+        canonical_update(&pool, 1, Vec::new(), Vec::new(), PoolUpdateKind::Reorg);
+        matches_unheld("reorg");
+        commit_block(&pool, 2, Vec::new(), Vec::new());
+        matches_unheld("expired root");
+    }
+
+    /// More standard transactions than reth's event channel holds are mined in one block, the
+    /// cached bridged successor among them, and no changed account names its sender. Repeated
+    /// creations around it never rebuild the mirror.
+    #[tokio::test]
+    async fn a_canonical_section_mining_past_the_event_channel_needs_no_bridge_rebuild() {
+        const SENDERS: usize = 66;
+        const PER_SENDER: u64 = 16;
+        const REFRESHES: usize = 10;
+        let (pool, client) = build_integration_pool();
+        let (hold, mut view, root, bridged) = cached_bridge(&pool, &client).await;
+        let mut mined = Vec::with_capacity(SENDERS * PER_SENDER as usize + 1);
+        for _ in 0..SENDERS {
+            let sender = funded_signer(&client);
+            for nonce in 0..PER_SENDER {
+                mined.push(add(&pool, signed_1559_with_fees(&sender, nonce, 1_000, 1)).await);
+            }
+        }
+        let fillers = mined.len();
+        assert!(fillers > BRIDGE_EVENT_DRAIN_LIMIT);
+        mined.push(bridged);
+        let rebuilds = bridge_rebuilds(&pool);
+        for _ in 0..REFRESHES {
+            drop(hold.parking_with_view(0, &mut view));
+        }
+        let mut frozen = hold.parking_with_view(0, &mut view);
+        assert_eq!(bridge_rebuilds(&pool), rebuilds, "ordinary refreshes reuse the mirror");
+
+        commit_block(&pool, 1, Vec::new(), mined);
+        assert!(pool.get(&bridged).is_none());
+
+        let mut next = hold.parking_with_view(0, &mut view);
+        assert_eq!(bridge_rebuilds(&pool), rebuilds, "the accounted canonical section needs none");
+        assert!(next.promote(root));
+        assert_eq!(drain_committing(next.as_mut()), vec![root]);
+        assert!(frozen.promote(root));
+        let captured = drain_committing(frozen.as_mut());
+        assert_eq!(captured[..2], [root, bridged], "the earlier capture keeps the successor");
+        assert_eq!(captured.len(), fillers + 2);
+    }
+
+    /// Each round races one creation against a gated section removing a bridged successor and a
+    /// pending marker together, by canonical mining or by removal. Whichever runs first, the
+    /// creation's cached bridge and its protocol snapshot come from the same interval.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn concurrent_creations_capture_bridges_and_protocol_transactions_together() {
+        const ROUNDS: u64 = 16;
+        let (pool, client) = build_integration_pool();
+        drop(cached_bridge(&pool, &client).await);
+        for round in 0..ROUNDS {
+            let [a, m] = [(); 2].map(|_| funded_signer(&client));
+            let root = add(&pool, resting_1559(&a, 0, 100)).await;
+            let bridged = add(&pool, signed_1559_with_fees(&a, 1, 1_000, 100)).await;
+            let marker = add(&pool, signed_1559_with_fees(&m, 0, 1_000, 50)).await;
+            let hold = RecordingHold::new(&pool, vec![root]);
+            let mut view = SelectionView::default();
+            let barrier = std::sync::Barrier::new(2);
+            let runtime = tokio::runtime::Handle::current();
+            let mut frozen = tokio::task::block_in_place(|| {
+                std::thread::scope(|scope| {
+                    scope.spawn(|| {
+                        let _runtime = runtime.enter();
+                        barrier.wait();
+                        if round % 2 == 0 {
+                            commit_block(&pool, round + 1, Vec::new(), vec![bridged, marker]);
+                        } else {
+                            assert_eq!(pool.remove_transactions(vec![bridged, marker]).len(), 2);
+                        }
+                    });
+                    barrier.wait();
+                    hold.parking_with_view(0, &mut view)
+                })
+            });
+            assert!(pool.get(&bridged).is_none() && pool.get(&marker).is_none());
+
+            assert!(frozen.promote(root));
+            let yielded = drain_committing(frozen.as_mut());
+            assert_eq!(
+                yielded.contains(&bridged),
+                yielded.contains(&marker),
+                "round {round}: the bridge and the protocol snapshot disagree"
+            );
+            let mut next = hold.parking_with_view(0, &mut view);
+            assert!(next.promote(root));
+            assert!(!drain_committing(next.as_mut()).contains(&bridged), "round {round}");
+        }
+    }
+
+    /// Reth reports the newcomer itself discarded only after its size-limited queued pool also
+    /// evicted another sender's bridged successor: the admission fails after the eviction.
+    #[tokio::test]
+    async fn a_failed_admission_still_reconciles_the_eviction_it_caused() {
+        let bridged_size = signed_1559_with_fees(&signer(), 1, 1_000, 100).size();
+        let config = PoolConfig {
+            queued_limit: SubPoolLimit::new(usize::MAX, bridged_size + 100),
+            ..PoolConfig::default()
+        };
+        let (pool, client) = build_integration_pool_with_config(config);
+        let (hold, mut view, root, bridged) = cached_bridge(&pool, &client).await;
+        let mut frozen = hold.parking_with_view(0, &mut view);
+        let b = funded_signer(&client);
+        let oversized = {
+            let tx = TxEip1559 {
+                chain_id: test_chain_id(),
+                nonce: 1,
+                gas_limit: 50_000,
+                max_fee_per_gas: 1_000,
+                max_priority_fee_per_gas: 100,
+                to: TxKind::Call(Address::repeat_byte(0xEE)),
+                value: U256::ZERO,
+                access_list: Default::default(),
+                input: Bytes::from(vec![0; bridged_size + 200]),
+            };
+            let signature = b.sign_hash_sync(&tx.signature_hash()).unwrap();
+            let envelope = BaseTxEnvelope::Eip1559(tx.into_signed(signature));
+            let recovered = envelope.clone().try_into_recovered().unwrap();
+            BasePooledTransaction::new(recovered, envelope.encode_2718_len())
+        };
+
+        assert!(matches!(add_err(&pool, oversized).await, PoolErrorKind::DiscardedOnInsert));
+        assert!(pool.get(&bridged).is_none(), "the failed admission evicted the successor first");
+        assert!(frozen.promote(root));
+        assert_eq!(drain_committing(frozen.as_mut()), vec![root, bridged]);
+        let mut next = hold.parking_with_view(0, &mut view);
+        assert!(next.promote(root));
+        assert_eq!(drain_committing(next.as_mut()), vec![root]);
+    }
+
+    /// The sidecar admits a fee-bumped replacement of a cached channel bridge, then evicts it for
+    /// exceeding its byte limit: the admission fails after the bridged successor left the pool.
+    #[tokio::test]
+    async fn a_failed_sidecar_replacement_leaves_the_cached_bridge() {
+        let channel = U256::from(5);
+        // Leave room for validation's watch-set accounting, not only encoded bytes.
+        const SIDECAR_BYTES: usize = 16 * 1024;
+        let config = PoolConfig {
+            pending_limit: SubPoolLimit::new(usize::MAX, SIDECAR_BYTES),
+            ..PoolConfig::default()
+        };
+        let (pool, client) = build_integration_pool_with_config(config);
+        let pool = pool.with_validity_pool_limits(
+            ValidityPoolLimits::inherit().with_max_size(usize::MAX).with_max_txs(usize::MAX),
+        );
+        let s = funded_signer(&client);
+        let root = add(&pool, validity_8130(&s, channel, 0, 1_000)).await;
+        let bridged = add(&pool, signed_channel_tx(&s, channel, 1, 1_000)).await;
+        let hold = RecordingHold::new(&pool, vec![root]);
+        let mut view = SelectionView::default();
+        let mut frozen = hold.parking_with_view(0, &mut view);
+        let oversized = sign_eoa_8130(
+            &s,
+            TxEip8130 {
+                chain_id: test_chain_id(),
+                sender: None,
+                nonce_key: channel,
+                nonce_sequence: 1,
+                valid_after: 0,
+                valid_before: 0,
+                max_priority_fee_per_gas: 0,
+                max_fee_per_gas: 1_200,
+                gas_limit: 1_000_000,
+                account_changes: Vec::new(),
+                calls: Vec::new(),
+                metadata: Bytes::from(vec![0; SIDECAR_BYTES]),
+                payer: None,
+            },
+        );
+
+        assert!(matches!(add_err(&pool, oversized).await, PoolErrorKind::DiscardedOnInsert));
+        assert!(pool.get(&bridged).is_none(), "the replacement removed the bridged successor");
+        assert!(frozen.promote(root));
+        assert_eq!(drain_committing(frozen.as_mut()), vec![root, bridged]);
+        let mut next = hold.parking_with_view(0, &mut view);
+        assert!(next.promote(root));
+        assert_eq!(
+            drain_committing(next.as_mut()),
+            vec![root],
+            "a new iterator must not release the removed successor"
+        );
     }
 }

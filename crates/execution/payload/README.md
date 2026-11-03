@@ -34,8 +34,11 @@ released. A commit or block-start release wakes it and removes the member as bef
 root whose lane changed rejoins the unseen sweep as seen in the current block, unless the same
 creation holds it again: the final state wins. A dormant member whose whole `ValidityConditions`
 expire at the block being built is woken at block start, so iterator creation asks about it and the
-builder classifies it expired; no other dormant member is visited. Flashblock-index predicates
-never rest.
+builder classifies it expired; no other dormant member is visited. The deadline follows the
+conditions the latest hold saw, so the same hash re-admitted with an earlier or later block bound
+is woken at its new deadline. Deadline bookkeeping is bounded by the dormant members: removing,
+re-resting or waking a member drops its entry, and a set whose members all left keeps none.
+Flashblock-index predicates never rest.
 
 ```mermaid
 flowchart LR

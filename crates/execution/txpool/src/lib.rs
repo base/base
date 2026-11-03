@@ -74,9 +74,9 @@ pub use parking::{
 
 mod selection;
 pub use selection::{
-    BridgeMirror, BridgedRun, JournalPosition, PendingRun, SELECTION_JOURNAL_CAPACITY,
-    SelectionChanges, SelectionIndex, SelectionJournal, SelectionRoot, SelectionSync,
-    SelectionView,
+    BRIDGE_EVENT_DRAIN_LIMIT, BridgeMirror, BridgedRun, JournalPosition, PendingRun,
+    SELECTION_JOURNAL_CAPACITY, SelectionChanges, SelectionIndex, SelectionJournal, SelectionRoot,
+    SelectionSync, SelectionView,
 };
 
 mod pool;

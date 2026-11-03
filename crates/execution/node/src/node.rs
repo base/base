@@ -941,16 +941,15 @@ where
         let mut final_pool_config = ctx.pool_config();
         final_pool_config.max_inflight_delegated_slot_limit = max_inflight_delegated_slots;
 
-        let transaction_pool = reth_transaction_pool::Pool::new(
+        let allowlisted_payer_count = allowlisted_payers.len();
+        let transaction_pool = BaseTransactionPool::from_parts(
             validator,
-            ordering.clone(),
+            ordering,
             blob_store,
             final_pool_config.clone(),
-        );
-        let allowlisted_payer_count = allowlisted_payers.len();
-        let transaction_pool = BaseTransactionPool::new(transaction_pool, ordering)
-            .with_guard_limits(guard_limits)
-            .with_validity_pool_limits(validity_pool_limits);
+        )
+        .with_guard_limits(guard_limits)
+        .with_validity_pool_limits(validity_pool_limits);
         spawn_maintenance_tasks(ctx, transaction_pool.clone(), &final_pool_config)?;
         let state_diff_events = BroadcastStream::new(ctx.provider().subscribe_to_canonical_state());
         ctx.task_executor().spawn_critical_task(

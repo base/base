@@ -306,21 +306,38 @@ an empty resting set starts with an empty view and asks about every eligible roo
 
 How it works:
 
-- **Pool side.** The validity pool keeps a `SelectionIndex`: each root's pending run in a
-  persistent `imbl` map, and a `SelectionJournal` naming every root whose run, anchor or shared
-  flag changed. Lane mutations reach it through `refresh_lane_indexes`, nonce-free admission and
-  removal record their own entries, and `sync_validity_lanes` journals a shared lane whose
-  standard run changed behind an unchanged cursor. Contract: a mutation costs O(log n)
-  persistent updates and never copies a lane's pending run, and a pool no enforcing build has
-  asked for a view keeps no selection index, so off and shadow modes pay nothing for it.
-- **Bridges.** A `BridgeMirror` holds the standard runs queued behind shared lanes. Creation
-  recomputes only the journaled lanes, shares the mirror in constant time, and the merge copies
-  a lane's run out when that lane first yields a validity member. Contract: an iterator never
-  holds a bridged transaction the protocol pool no longer held when the iterator was created,
-  including transactions reth evicts on its own while admitting another sender's transaction;
-  every such removal reaches the journal before any later creation snapshots the mirror.
-- **Creation.** Under the read guards the pool shares the runs and the mirror and copies the
-  journal entries the view has not seen. Outside them the view catches up: a journaled dormant
+- **Pool side.** The first creation with a view makes the validity pool keep a `SelectionIndex`:
+  each root's pending run in a persistent `imbl` map, and a `SelectionJournal` naming every root
+  whose run, anchor or shared flag changed. Until then the pool keeps none, so off and shadow
+  modes pay nothing for it. Lane members are a persistent `imbl::OrdMap`, so a run shares its
+  lane's members with the cursor and pending length frozen at that point, and a mutation copies
+  at most O(log n) map nodes instead of the pending run. Lane mutations reach the index through
+  `refresh_lane_indexes`, nonce-free admission and removal record their own entries, and
+  `sync_validity_lanes` journals a shared lane whose standard run changed behind an unchanged
+  cursor.
+- **Bridges.** A `BridgeMirror` holds the standard runs queued behind shared lanes, and an
+  iterator never holds a bridged transaction the protocol pool no longer held when it was
+  created. Changes made through this pool's paths reach it through the journal. Reth also
+  removes transactions on its own, for example other senders' queued transactions it evicts
+  while admitting one, so the mirror observes reth's all-transactions events, subscribed when the
+  first creation needs the mirror and shared by every clone. Every protocol pool call runs under
+  the admission lock and is followed by a drain of at most `BRIDGE_EVENT_DRAIN_LIMIT` events
+  (reth's channel capacity), polled unconstrained by the task's cooperative budget; a removal of
+  a mirrored transaction marks its lane for recomputation. A drain that pops the limit may have
+  missed events, and leaves the mirror unknown until the next creation rebuilds every lane,
+  unless its section is accounted: canonical maintenance, account updates, removals, propagation
+  reports and fee updates start with an unaccounted drain and journal every removal they make
+  themselves (canonical maintenance also marks each mined transaction's lane, whatever accounts
+  changed), so their own bursts cost no rebuild and never clear an earlier unknown. Admission is
+  never accounted, on every exit after the reth call. Creation shares the mirror in constant
+  time and the merge copies a lane's run out when that lane first yields a validity member. The
+  mirror is used only by a pool built with `BaseTransactionPool::from_parts`; a pool built with
+  `BaseTransactionPool::new`, whose caller may hold the protocol pool, and every clone of a pool
+  whose `protocol_pool` was taken, recompute every bridged run at each creation instead.
+- **Creation.** In one interval under the admission lock the pool drains the observed events,
+  takes the lane stores' read guards, shares the runs and the mirror, copies the journal entries
+  the view has not seen and creates the protocol iterator. Outside every guard the view catches
+  up: a journaled dormant
   root becomes awake, or is reported removed when its lane's root changed or left. Only awake
   roots are snapshotted (a dense list, iterated in time proportional to its length) and asked
   about; roots the hold holds become dormant. Without dormant roots the run map is walked
@@ -332,8 +349,8 @@ How it works:
 - **Wakes.** A commit wakes the root in the current iterator through `promote` and removes the
   rest, which also makes the root awake in the view. Block-start releases do the same.
 - **Removal and expiry.** A dormant root the pool removes, replaces or mines is journaled, and
-  the view reports it so the resting set drops its member. Contract: a dormant root whose whole
-  `ValidityConditions` are expired at the block being built is awake at that block's creation,
+  the view reports it so the resting set drops its member. A dormant root whose whole
+  `ValidityConditions` are expired at the block being built is woken at that block's start,
   whatever predicate it rests on and whether or not the pool's canonical maintenance has expired
   it yet, so the hold declines it and the builder classifies it expired, as for an asked root.
   The unseen sweep does not visit dormant members; a root a creation wakes and then holds again
@@ -369,14 +386,14 @@ stateDiagram-v2
 
 Off and shadow modes pass no hold and keep the snapshot path.
 
-Not yet met, with failing regression tests: the bridge contract for reth's own evictions
-(`a_bridged_successor_reth_evicts_for_another_sender_leaves_only_new_iterators`), full-condition
-expiry of dormant roots
-(`a_dormant_member_whose_full_conditions_expire_is_offered_at_the_next_block`), final dormancy
-after a wake and re-hold in one creation
-(`a_root_woken_by_the_journal_and_held_again_stays_dormant_past_the_unseen_window`), and the
-admission contract, which needs a measurement rather than a unit test: today every lane mutation
-copies the lane's pending run, also in off and shadow modes.
+Every admission that changes a lane store, including one that fails after its replacement or
+capacity eviction removed transactions, re-syncs the validity lanes it touched before it
+returns, so a cached bridge never outlives a sidecar successor. Cursor advancement removes
+only members below the new cursor without copying the untouched queued tail. Recomputing
+the pending run still walks its consecutive members.
+
+Not measured yet: admission and creation cost of the persistent maps, the event observer and
+the admission lock creation now takes, and how often an unknown mirror rebuilds.
 
 ## Usage
 

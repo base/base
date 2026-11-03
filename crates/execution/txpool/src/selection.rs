@@ -13,7 +13,10 @@ use alloy_primitives::{
     Address, B256, TxHash, U256,
     map::{HashMap, HashSet},
 };
-use reth_transaction_pool::{PoolTransaction, ValidPoolTransaction};
+use futures::{FutureExt, StreamExt};
+use reth_transaction_pool::{
+    AllTransactionsEvents, FullTransactionEvent, PoolTransaction, ValidPoolTransaction,
+};
 
 /// Entries a [`SelectionJournal`] retains. A reader further behind rebuilds from scratch.
 ///
@@ -31,8 +34,63 @@ pub enum SelectionRoot {
     NonceFree(B256),
 }
 
-/// A root's consecutive pending run, root first. Shared, never modified.
-pub type PendingRun<T> = Arc<[Arc<ValidPoolTransaction<T>>]>;
+/// Events a [`BridgeMirror`] pops per drain: the capacity of reth's all-transactions channel. A
+/// drain that pops this many cannot tell whether the channel dropped events.
+pub const BRIDGE_EVENT_DRAIN_LIMIT: usize = 1024;
+
+/// A root's consecutive pending run. The rest of the run is read from the lane's persistent
+/// members as they were when the run was taken, so later lane mutations never change it, and
+/// taking or cloning a run copies no member.
+#[derive(Debug)]
+pub struct PendingRun<T: PoolTransaction> {
+    root: Arc<ValidPoolTransaction<T>>,
+    members: imbl::OrdMap<u64, Arc<ValidPoolTransaction<T>>>,
+    start: u64,
+    tail_len: u64,
+}
+
+impl<T: PoolTransaction> Clone for PendingRun<T> {
+    fn clone(&self) -> Self {
+        Self {
+            root: Arc::clone(&self.root),
+            members: self.members.clone(),
+            start: self.start,
+            tail_len: self.tail_len,
+        }
+    }
+}
+
+impl<T: PoolTransaction> PendingRun<T> {
+    /// The run of `len` members of `members` starting at `start`, or `None` when it is empty.
+    pub fn of_lane(
+        members: &imbl::OrdMap<u64, Arc<ValidPoolTransaction<T>>>,
+        start: u64,
+        len: u64,
+    ) -> Option<Self> {
+        let root = Arc::clone(members.get(&start)?);
+        let tail_len = len.checked_sub(1)?;
+        Some(Self { root, members: members.clone(), start, tail_len })
+    }
+
+    /// A run of one transaction, such as a nonce-free one.
+    pub fn single(root: Arc<ValidPoolTransaction<T>>) -> Self {
+        Self { root, members: imbl::OrdMap::new(), start: 0, tail_len: 0 }
+    }
+
+    /// The run's first transaction.
+    pub const fn root(&self) -> &Arc<ValidPoolTransaction<T>> {
+        &self.root
+    }
+
+    /// The members after the root, in nonce order.
+    pub fn tail(&self) -> impl Iterator<Item = &Arc<ValidPoolTransaction<T>>> {
+        (self.tail_len > 0)
+            .then(|| self.members.range(self.start + 1..=self.start + self.tail_len))
+            .into_iter()
+            .flatten()
+            .map(|(_, transaction)| transaction)
+    }
+}
 
 /// Where a reader of a [`SelectionJournal`] stopped.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -101,6 +159,11 @@ impl<T: PoolTransaction> Default for SelectionIndex<T> {
 }
 
 impl<T: PoolTransaction> SelectionIndex<T> {
+    /// An index of `runs` with an empty journal, for a pool that starts keeping one.
+    pub fn new(runs: impl IntoIterator<Item = (SelectionRoot, PendingRun<T>)>) -> Self {
+        Self { runs: runs.into_iter().collect(), journal: SelectionJournal::default() }
+    }
+
     /// Stores `root`'s current pending run, or forgets the root when it has none, and journals it.
     pub fn update(&mut self, root: SelectionRoot, run: Option<PendingRun<T>>) {
         match run {
@@ -130,46 +193,140 @@ impl<T: PoolTransaction> SelectionIndex<T> {
 pub type BridgedRun<T> = Arc<[Arc<ValidPoolTransaction<T>>]>;
 
 /// The standard runs bridged behind shared validity lanes, kept as a persistent map that iterator
-/// creation refreshes from a [`SelectionJournal`] and shares in constant time.
+/// creation refreshes and shares in constant time.
+///
+/// Changes made through the pool's own paths arrive through a [`SelectionJournal`]. Transactions
+/// the protocol pool removes on its own, such as other senders' queued transactions it evicts
+/// while admitting one, arrive through an observed all-transactions event stream that the pool
+/// drains under its admission lock. A drain that might have missed an event leaves the mirror
+/// unknown until a full rebuild.
 #[derive(Debug)]
 pub struct BridgeMirror<T: PoolTransaction> {
+    events: Option<AllTransactionsEvents<T>>,
     position: Option<JournalPosition>,
     runs: imbl::HashMap<(Address, U256), BridgedRun<T>>,
+    /// The lane of every mirrored transaction, so a removal event names the lane to recompute.
+    lanes_by_member: HashMap<TxHash, (Address, U256)>,
+    /// Lanes events showed changed since the last refresh.
+    stale_lanes: HashSet<(Address, U256)>,
+    unknown: bool,
+    rebuilds: u64,
 }
 
 impl<T: PoolTransaction> Default for BridgeMirror<T> {
     fn default() -> Self {
-        Self { position: None, runs: imbl::HashMap::default() }
+        Self {
+            events: None,
+            position: None,
+            runs: imbl::HashMap::default(),
+            lanes_by_member: HashMap::default(),
+            stale_lanes: HashSet::default(),
+            unknown: false,
+            rebuilds: 0,
+        }
     }
 }
 
 impl<T: PoolTransaction> BridgeMirror<T> {
-    /// Recomputes the lanes journaled since the last refresh with `run_of`, or every lane in
-    /// `shared_lanes` when the journal no longer covers that, and returns a snapshot.
+    /// Starts observing `events`; the next refresh rebuilds every lane.
+    pub fn observe(&mut self, events: AllTransactionsEvents<T>) {
+        self.events = Some(events);
+        self.unknown = true;
+    }
+
+    /// Whether the mirror observes protocol pool events.
+    pub const fn is_observing(&self) -> bool {
+        self.events.is_some()
+    }
+
+    /// Stops observing protocol pool events, once the mirror is no longer used.
+    pub fn stop_observing(&mut self) {
+        self.events = None;
+    }
+
+    /// Pops observed events, at most [`BRIDGE_EVENT_DRAIN_LIMIT`], and marks the lanes of mirrored
+    /// transactions they removed stale. Returns whether it popped the limit, in which case events
+    /// may have been dropped; the backlog is then discarded by replacing the stream with
+    /// `resubscribe`.
+    pub fn drain(&mut self, resubscribe: impl FnOnce() -> AllTransactionsEvents<T>) -> bool {
+        let Some(mut events) = self.events.take() else { return false };
+        for _ in 0..BRIDGE_EVENT_DRAIN_LIMIT {
+            // An exhausted cooperative budget would make a constrained poll report queued events
+            // as pending.
+            let Some(Some(event)) = tokio::task::unconstrained(events.next()).now_or_never() else {
+                self.events = Some(events);
+                return false;
+            };
+            let removed = match &event {
+                FullTransactionEvent::Discarded(hash)
+                | FullTransactionEvent::Invalid(hash)
+                | FullTransactionEvent::Mined { tx_hash: hash, .. } => *hash,
+                FullTransactionEvent::Replaced { transaction, .. } => *transaction.hash(),
+                _ => continue,
+            };
+            self.note_removed(&removed);
+        }
+        self.events = Some(resubscribe());
+        true
+    }
+
+    /// Marks the lane of `hash` stale when it is mirrored.
+    pub fn note_removed(&mut self, hash: &TxHash) {
+        if let Some(lane) = self.lanes_by_member.get(hash) {
+            self.stale_lanes.insert(*lane);
+        }
+    }
+
+    /// Records that a removal may have been missed; the next refresh rebuilds every lane.
+    pub const fn note_unknown(&mut self) {
+        self.unknown = true;
+    }
+
+    /// Full rebuilds so far.
+    pub const fn rebuilds(&self) -> u64 {
+        self.rebuilds
+    }
+
+    /// Recomputes with `run_of` the lanes journaled or marked stale since the last refresh, or
+    /// every lane in `shared_lanes` when the journal no longer covers that or the mirror is
+    /// unknown, and returns a snapshot.
     pub fn refresh(
         &mut self,
         journal: &SelectionJournal,
         shared_lanes: impl Iterator<Item = (Address, U256)>,
         mut run_of: impl FnMut((Address, U256)) -> Option<BridgedRun<T>>,
     ) -> imbl::HashMap<(Address, U256), BridgedRun<T>> {
-        let lanes: HashSet<(Address, U256)> =
-            match self.position.and_then(|position| journal.since(position)) {
-                Some(entries) => entries
-                    .filter_map(|root| match root {
-                        SelectionRoot::Lane(sender, nonce_key) => Some((*sender, *nonce_key)),
-                        SelectionRoot::NonceFree(_) => None,
-                    })
-                    .collect(),
-                None => {
-                    self.runs.clear();
-                    shared_lanes.collect()
-                }
-            };
+        let replay =
+            self.position.filter(|_| !self.unknown).and_then(|position| journal.since(position));
+        let lanes: HashSet<(Address, U256)> = match replay {
+            Some(entries) => entries
+                .filter_map(|root| match root {
+                    SelectionRoot::Lane(sender, nonce_key) => Some((*sender, *nonce_key)),
+                    SelectionRoot::NonceFree(_) => None,
+                })
+                .chain(self.stale_lanes.drain())
+                .collect(),
+            None => {
+                self.runs.clear();
+                self.lanes_by_member.clear();
+                self.stale_lanes.clear();
+                self.unknown = false;
+                self.rebuilds += 1;
+                shared_lanes.collect()
+            }
+        };
         for lane in lanes {
-            match run_of(lane) {
-                Some(run) => self.runs.insert(lane, run),
-                None => self.runs.remove(&lane),
-            };
+            if let Some(old) = self.runs.remove(&lane) {
+                for transaction in old.iter() {
+                    self.lanes_by_member.remove(transaction.hash());
+                }
+            }
+            if let Some(run) = run_of(lane) {
+                for transaction in run.iter() {
+                    self.lanes_by_member.insert(*transaction.hash(), lane);
+                }
+                self.runs.insert(lane, run);
+            }
         }
         self.position = Some(journal.position());
         self.runs.clone()
@@ -333,7 +490,81 @@ impl SelectionView {
 
 #[cfg(test)]
 mod tests {
+    use tokio::sync::mpsc;
+
     use super::*;
+    use crate::BasePooledTransaction;
+
+    /// A mirror observing a channel holding `queued` discard events, and the channel's sender.
+    fn observing(
+        queued: usize,
+    ) -> (
+        BridgeMirror<BasePooledTransaction>,
+        mpsc::Sender<FullTransactionEvent<BasePooledTransaction>>,
+    ) {
+        let (sender, receiver) = mpsc::channel(BRIDGE_EVENT_DRAIN_LIMIT);
+        for _ in 0..queued {
+            sender.try_send(FullTransactionEvent::Discarded(TxHash::repeat_byte(1))).unwrap();
+        }
+        let mut mirror = BridgeMirror::default();
+        mirror.observe(AllTransactionsEvents::new(receiver));
+        (mirror, sender)
+    }
+
+    /// A stream that never yields, standing in for a fresh subscription.
+    fn fresh() -> AllTransactionsEvents<BasePooledTransaction> {
+        AllTransactionsEvents::new(mpsc::channel(1).1)
+    }
+
+    #[test]
+    fn a_drain_below_the_channel_capacity_is_complete() {
+        let (mut mirror, sender) = observing(BRIDGE_EVENT_DRAIN_LIMIT - 1);
+        assert!(!mirror.drain(|| panic!("a complete drain keeps its subscription")));
+        assert_eq!(sender.capacity(), BRIDGE_EVENT_DRAIN_LIMIT, "every queued event was popped");
+    }
+
+    #[test]
+    fn a_drain_that_pops_the_channel_capacity_may_have_lost_events() {
+        let (mut mirror, sender) = observing(BRIDGE_EVENT_DRAIN_LIMIT);
+        assert!(sender.try_send(FullTransactionEvent::Discarded(TxHash::ZERO)).is_err());
+        let mut resubscribed = false;
+        assert!(mirror.drain(|| {
+            resubscribed = true;
+            fresh()
+        }));
+        assert!(resubscribed, "the backlog is discarded with the old subscription");
+        assert!(!mirror.drain(|| panic!("the fresh subscription is empty")));
+    }
+
+    #[tokio::test]
+    async fn a_drain_with_an_exhausted_cooperative_budget_still_pops_queued_events() {
+        let (filler, mut budget) = mpsc::unbounded_channel::<()>();
+        while tokio::task::coop::has_budget_remaining() {
+            filler.send(()).unwrap();
+            let _ = budget.recv().now_or_never();
+        }
+        let (mut mirror, sender) = observing(300);
+        assert!(!mirror.drain(|| panic!("300 events fit the channel")));
+        assert_eq!(sender.capacity(), BRIDGE_EVENT_DRAIN_LIMIT, "no queued event reported pending");
+    }
+
+    #[test]
+    fn an_unknown_mirror_rebuilds_once_and_stays_unknown_until_then() {
+        let journal = SelectionJournal::default();
+        let (mut mirror, _sender) = observing(0);
+        let lanes = || [(Address::repeat_byte(1), U256::ZERO)].into_iter();
+        mirror.refresh(&journal, lanes(), |_| None);
+        assert_eq!(mirror.rebuilds(), 1, "observing starts with a coherent rebuild");
+        mirror.refresh(&journal, lanes(), |_| panic!("nothing changed"));
+        mirror.note_unknown();
+        let mut recomputed = 0;
+        mirror.refresh(&journal, lanes(), |_| {
+            recomputed += 1;
+            None
+        });
+        assert_eq!((mirror.rebuilds(), recomputed), (2, 1));
+        mirror.refresh(&journal, lanes(), |_| panic!("the rebuild cleared the unknown state"));
+    }
 
     fn lane(byte: u8) -> SelectionRoot {
         SelectionRoot::Lane(Address::repeat_byte(byte), U256::ZERO)
