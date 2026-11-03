@@ -251,7 +251,7 @@ bench-execution-trie-deep-history-reads:
 bench-builder-core:
     cargo bench -p base-builder-core --bench state_root
 
-# Runs the flashblocks build-loop benchmark over a mainnet-shaped block, one arm per resting-predicate workload (Enforce, Enforce+ingestion)
+# Runs the flashblocks build-loop benchmark over a mainnet-shaped block
 bench-builder-build-loop:
     cargo bench -p base-builder-core --bench build_loop -- mainnet_block
 

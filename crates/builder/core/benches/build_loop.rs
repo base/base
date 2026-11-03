@@ -2,19 +2,17 @@
 //!
 //! Drives [`BasePayloadBuilderCtx::execute_best_transactions`] over an in-memory state.
 //! Throughput is reported per considered candidate for `execute_best_transactions`; the mainnet
-//! block reports time per block, which is what its workloads change.
+//! block reports time per block.
 //!
 //! - `execute_best_transactions`: one flashblock over a production-like candidate mix:
 //!   successful transfers and contract calls, reverting calls, candidates rejected by the DA and
 //!   gas limits, and validity-gated candidates that are parked.
-//! - `mainnet_block/mode={Enforce,Enforce+ingestion}`: a whole 11-flashblock block shaped
-//!   like Base mainnet, under each resting-predicate workload. Every flashblock includes 17
-//!   transfers, rejects 10 over-limit candidates, and first considers 2,840 parked validity
-//!   transactions, all seen for the first time in this block, spread over 518 watched addresses
-//!   (median depth 2, p99 depth 46), five of which a transfer wakes. `Enforce` evaluates them in
-//!   the first flashblock and holds them back afterwards. `Enforce+ingestion` adopts the pool's
-//!   admission-time evaluation of those transactions in the pool iterator, so the build loop
-//!   never evaluates them.
+//! - `mainnet_block`: a whole 11-flashblock block shaped like Base mainnet. Every flashblock
+//!   includes 17 transfers and rejects 10 over-limit candidates. The pool holds 2,840 parked
+//!   validity transactions, all seen for the first time in this block, spread over 518 watched
+//!   addresses (median depth 2, p99 depth 46). The pool iterator adopts their admission-time
+//!   evaluation, so the build loop considers only those a transfer wakes, five buckets per
+//!   flashblock.
 //!
 //! The mainnet block reads two more knobs, so a run can stand in for a sequencer whose state
 //! reads are not free:
@@ -25,7 +23,7 @@
 //! - `BUILD_LOOP_PREDICATE_BUDGET_MS`: the builder's predicate evaluation budget per build-loop
 //!   run (default none). With a budget, outcome counts depend on machine speed, so only the
 //!   included count is checked.
-//! - `BUILD_LOOP_SUMMARY=1`: after measuring, print a per-workload table of block time, first
+//! - `BUILD_LOOP_SUMMARY=1`: after measuring, print a table row of block time, first
 //!   flashblock time, and flashblocks until every parked transaction rested, and append it to
 //!   `target/build_loop_summary.md`. `just bench-builder-build-loop-matrix` runs the read-delay
 //!   matrix with a 20 ms budget and collects every table there.
@@ -70,8 +68,8 @@ use criterion::{BatchSize, BenchmarkId, Criterion, Throughput};
 use fixture::{
     BenchKnobs, BlockProfile, BlockTotals, MAINNET_FILLER_PER_FLASHBLOCK, MAINNET_FLASHBLOCKS,
     MainnetBlock, OVERSIZED_CALLDATA_BYTES, Ordering, Pool, PoolTx, REJECTION_CACHE_TTL,
-    SENDER_BALANCE, TX_DATA_LIMIT, Workload, address, builder_context, incompressible_calldata,
-    parkable, spread_priority_fee,
+    SENDER_BALANCE, TX_DATA_LIMIT, address, builder_context, incompressible_calldata, parkable,
+    spread_priority_fee,
 };
 use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
 use reth_revm::State;
@@ -88,10 +86,8 @@ const PROFILE_ENV: &str = "BUILD_LOOP_PROFILE";
 const SUMMARY_ENV: &str = "BUILD_LOOP_SUMMARY";
 const READ_DELAY_ENV: &str = "BUILD_LOOP_READ_DELAY_US";
 const PREDICATE_BUDGET_ENV: &str = "BUILD_LOOP_PREDICATE_BUDGET_MS";
-/// Block builds per workload behind each summary row; the row reports their medians.
+/// Block builds behind each summary row; the row reports their medians.
 const SUMMARY_RUNS: usize = 21;
-/// The mainnet block's workloads, in the order they are measured and summarized.
-const WORKLOADS: [Workload; 2] = [Workload::Enforce, Workload::EnforceIngestion];
 const CANDIDATE_COUNT: usize = 4_000;
 const BLOCK_GAS_BUDGET: u64 = 1_000_000_000;
 const METRICS_UPKEEP_INTERVAL: Duration = Duration::from_secs(5);
@@ -442,10 +438,10 @@ fn knobs_label(knobs: BenchKnobs) -> String {
     label
 }
 
-/// Checks a block's outcomes against the workload's documented counts. With a predicate budget,
+/// Checks a block's outcomes against the documented counts. With a predicate budget,
 /// which candidates are evaluated depends on machine speed, so only the included transfers are
 /// fixed.
-fn check_totals(block: &MainnetBlock, knobs: BenchKnobs, workload: Workload, totals: BlockTotals) {
+fn check_totals(block: &MainnetBlock, knobs: BenchKnobs, totals: BlockTotals) {
     if knobs.predicate_budget.is_some() {
         assert_eq!(
             totals.included,
@@ -453,11 +449,7 @@ fn check_totals(block: &MainnetBlock, knobs: BenchKnobs, workload: Workload, tot
             "every filler transfer is included"
         );
     } else {
-        assert_eq!(
-            totals,
-            block.expected_totals(workload),
-            "block outcomes match the documented workload"
-        );
+        assert_eq!(totals, block.expected_totals(), "block outcomes match the documented workload");
     }
 }
 
@@ -467,44 +459,39 @@ fn mainnet_block_bench(c: &mut Criterion, profile: Profile, observability: &Obse
 
     let mut group = c.benchmark_group("build_loop");
     group.sample_size(10);
-    for workload in WORKLOADS {
-        let totals = block.build(&mut block.fresh_state(), &block.rejection_cache(), workload);
-        eprintln!(
-            "build_loop/mainnet_block[{} mode={}{}]: considered={} included={} deferred={} rejected_gas={} rejected_da={} rejected_other={}",
-            profile.label(),
-            workload.label(),
-            knobs_label(knobs),
-            totals.considered,
-            totals.included,
-            totals.deferred,
-            totals.rejected_gas,
-            totals.rejected_da,
-            totals.rejected_other,
-        );
-        check_totals(&block, knobs, workload, totals);
+    let totals = block.build(&mut block.fresh_state(), &block.rejection_cache());
+    eprintln!(
+        "build_loop/mainnet_block[{}{}]: considered={} included={} deferred={} rejected_gas={} rejected_da={} rejected_other={}",
+        profile.label(),
+        knobs_label(knobs),
+        totals.considered,
+        totals.included,
+        totals.deferred,
+        totals.rejected_gas,
+        totals.rejected_da,
+        totals.rejected_other,
+    );
+    check_totals(&block, knobs, totals);
 
-        group.bench_function(
-            BenchmarkId::new(
-                format!("mainnet_block/mode={}{}", workload.label(), knobs_label(knobs)),
-                profile.label(),
-            ),
-            |b| {
-                // `iter_batched_ref` drops the state and cache after timing stops.
-                b.iter_batched_ref(
-                    || {
-                        observability.wait_for_event_writer();
-                        (block.fresh_state(), block.rejection_cache())
-                    },
-                    |(state, rejection_cache)| {
-                        let totals = block.build(state, rejection_cache, workload);
-                        check_totals(&block, knobs, workload, totals);
-                        black_box(totals)
-                    },
-                    BatchSize::PerIteration,
-                );
-            },
-        );
-    }
+    group.throughput(Throughput::Elements(totals.considered));
+    group.bench_function(
+        BenchmarkId::new(format!("mainnet_block{}", knobs_label(knobs)), profile.label()),
+        |b| {
+            // `iter_batched_ref` drops the state and cache after timing stops.
+            b.iter_batched_ref(
+                || {
+                    observability.wait_for_event_writer();
+                    (block.fresh_state(), block.rejection_cache())
+                },
+                |(state, rejection_cache)| {
+                    let totals = block.build(state, rejection_cache);
+                    check_totals(&block, knobs, totals);
+                    black_box(totals)
+                },
+                BatchSize::PerIteration,
+            );
+        },
+    );
     group.finish();
 
     if env::var(SUMMARY_ENV).as_deref() == Ok("1") {
@@ -518,8 +505,8 @@ fn median(mut values: Vec<Duration>) -> Duration {
     values[values.len() / 2]
 }
 
-/// Prints, and appends to `target/build_loop_summary.md`, one row per workload: median block
-/// time, median first-flashblock time, and flashblocks until every parked transaction rested.
+/// Prints, and appends to `target/build_loop_summary.md`, the median block time, median
+/// first-flashblock time, and flashblocks until every parked transaction rested.
 fn print_summary(
     block: &MainnetBlock,
     knobs: BenchKnobs,
@@ -531,39 +518,34 @@ fn print_summary(
         .map_or_else(|| "none".to_string(), |b| format!("{} ms", b.as_millis()));
     let mut table = format!(
         "\n### mainnet_block, profile {}, read delay {} µs, predicate budget {budget}\n\n\
-         | workload | block (median) | flashblock 0 (median) | flashblocks to index (median) |\n\
-         |---|--:|--:|--:|\n",
+         | block (median) | flashblock 0 (median) | flashblocks to index (median) |\n\
+         |--:|--:|--:|\n",
         profile.label(),
         knobs.read_delay.as_micros(),
     );
-    for workload in WORKLOADS {
-        let profiles: Vec<BlockProfile> = (0..SUMMARY_RUNS)
-            .map(|_| {
-                observability.wait_for_event_writer();
-                let mut state = block.fresh_state();
-                block.build_profiled(&mut state, &block.rejection_cache(), workload).1
-            })
-            .collect();
-        let block_time =
-            median(profiles.iter().map(|profile| profile.flashblock_times.iter().sum()).collect());
-        let first = median(profiles.iter().map(|profile| profile.flashblock_times[0]).collect());
-        // Budgets make it vary with machine speed, so report the median like the timings.
-        let mut indexed: Vec<usize> = profiles
-            .iter()
-            .map(|profile| profile.flashblocks_to_index.unwrap_or(usize::MAX))
-            .collect();
-        indexed.sort_unstable();
-        let indexed = match indexed[indexed.len() / 2] {
-            usize::MAX => "never".to_string(),
-            count => count.to_string(),
-        };
-        table.push_str(&format!(
-            "| {} | {:.1} ms | {:.1} ms | {indexed} |\n",
-            workload.label(),
-            block_time.as_secs_f64() * 1e3,
-            first.as_secs_f64() * 1e3,
-        ));
-    }
+    let profiles: Vec<BlockProfile> = (0..SUMMARY_RUNS)
+        .map(|_| {
+            observability.wait_for_event_writer();
+            let mut state = block.fresh_state();
+            block.build_profiled(&mut state, &block.rejection_cache()).1
+        })
+        .collect();
+    let block_time =
+        median(profiles.iter().map(|profile| profile.flashblock_times.iter().sum()).collect());
+    let first = median(profiles.iter().map(|profile| profile.flashblock_times[0]).collect());
+    // Budgets make it vary with machine speed, so report the median like the timings.
+    let mut indexed: Vec<usize> =
+        profiles.iter().map(|profile| profile.flashblocks_to_index.unwrap_or(usize::MAX)).collect();
+    indexed.sort_unstable();
+    let indexed = match indexed[indexed.len() / 2] {
+        usize::MAX => "never".to_string(),
+        count => count.to_string(),
+    };
+    table.push_str(&format!(
+        "| {:.1} ms | {:.1} ms | {indexed} |\n",
+        block_time.as_secs_f64() * 1e3,
+        first.as_secs_f64() * 1e3,
+    ));
     println!("{table}");
     let path =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../target/build_loop_summary.md");

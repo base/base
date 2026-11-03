@@ -231,32 +231,6 @@ impl Database for DelayedDb {
     }
 }
 
-/// How the block treats validity transactions whose predicate is unsatisfied.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Workload {
-    /// No applicable admission-time evaluation, as when the head moved since admission: the first
-    /// flashblock evaluates every parked transaction, and the pool iterator holds them back in
-    /// later ones.
-    Enforce,
-    /// The pool iterator adopts the pool's admission-time evaluation: no flashblock evaluates a
-    /// parked transaction, and the build loop never sees one until a wake promotes it.
-    EnforceIngestion,
-}
-
-impl Workload {
-    /// Whether the pool's admission-time evaluations apply to the block being built.
-    pub(crate) const fn admission_results_apply(self) -> bool {
-        matches!(self, Self::EnforceIngestion)
-    }
-
-    pub(crate) const fn label(self) -> &'static str {
-        match self {
-            Self::Enforce => "Enforce",
-            Self::EnforceIngestion => "Enforce+ingestion",
-        }
-    }
-}
-
 /// Timings of one block build, for the summary the wall-clock bench prints.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub(crate) struct BlockProfile {
@@ -408,7 +382,7 @@ impl MainnetBlock {
 
     /// A validity transaction waiting for its bucket's watched balance to reach an unreachable
     /// value. It carries the pool's admission-time evaluation on `parent_hash`, as the pool
-    /// records it; workloads whose admission results do not apply ignore it.
+    /// records it.
     pub(crate) fn parked_tx(
         sender_id: usize,
         bucket: usize,
@@ -484,9 +458,8 @@ impl MainnetBlock {
         &self,
         state: &mut State<DelayedDb>,
         rejection_cache: &RejectionCache,
-        workload: Workload,
     ) -> BlockTotals {
-        self.build_profiled(state, rejection_cache, workload).0
+        self.build_profiled(state, rejection_cache).0
     }
 
     /// [`Self::build`], also returning the per-flashblock timings.
@@ -494,7 +467,6 @@ impl MainnetBlock {
         &self,
         state: &mut State<DelayedDb>,
         rejection_cache: &RejectionCache,
-        workload: Workload,
     ) -> (BlockTotals, BlockProfile) {
         let ctx = &self.ctx;
         let mut info = ExecutionInfo::default();
@@ -502,14 +474,11 @@ impl MainnetBlock {
         let mut totals = BlockTotals::default();
         let mut profile = BlockProfile::default();
         // As `payload.rs` sets up a block: a resting set that starts empty, so every parked
-        // transaction is seen for the first time, with the pre-block writes known. Leaving written
-        // keys untracked makes every admission result stale, so it is never adopted. Every
+        // transaction is seen for the first time, with the pre-block writes known. Every
         // flashblock's pool iterator, the first included, takes the hold of the same set.
         let mut resting =
             RestingPredicates::new(ctx.builder_config.predicate_bucket_ordered_threshold);
-        if workload.admission_results_apply() {
-            resting.track_written_keys();
-        }
+        resting.track_written_keys();
         resting.begin_block(ctx.parent().hash(), ctx.block_number(), Some(&Default::default()));
         let resting = SharedRestingPredicates::new(resting);
         let hold = || Some(resting.iterator_hold());
@@ -551,25 +520,17 @@ impl MainnetBlock {
 
     /// Outcomes the workload is designed to produce, with no predicate budget.
     ///
-    /// Without applicable admission results, only the first flashblock defers every parked
-    /// transaction; later ones defer just the transactions a wake promotes. Adopting them, no
-    /// flashblock defers a parked transaction, because the pool iterator parks them before the
-    /// build loop sees them, and the build loop defers only those a wake promotes, starting with
-    /// the first flashblock's wakes. Buckets at or above the ordered threshold wake only
-    /// transactions whose `Equal` value is reached, so a wake promotes none of theirs. The resting
-    /// index uses the same default threshold as the builder config.
-    pub(crate) fn expected_totals(&self, workload: Workload) -> BlockTotals {
+    /// The pool iterator adopts every parked transaction's admission-time evaluation, so no
+    /// flashblock defers one until a wake promotes it, starting with the first flashblock's
+    /// wakes. Buckets at or above the ordered threshold wake only transactions whose `Equal` value
+    /// is reached, so a wake promotes none of theirs. The resting index uses the same default
+    /// threshold as the builder config.
+    pub(crate) fn expected_totals(&self) -> BlockTotals {
         let ordered_threshold = self.ctx.builder_config.predicate_bucket_ordered_threshold;
-        let rewoken = |first_wake: usize| -> usize {
-            (first_wake..MAINNET_FLASHBLOCKS * MAINNET_WAKES_PER_FLASHBLOCK)
-                .map(|wake| self.bucket_depths[Self::woken_bucket(wake)])
-                .filter(|&depth| depth < ordered_threshold)
-                .sum()
-        };
-        let deferred = match workload {
-            Workload::Enforce => MAINNET_PARKED + rewoken(MAINNET_WAKES_PER_FLASHBLOCK),
-            Workload::EnforceIngestion => rewoken(0),
-        } as u64;
+        let deferred = (0..MAINNET_FLASHBLOCKS * MAINNET_WAKES_PER_FLASHBLOCK)
+            .map(|wake| self.bucket_depths[Self::woken_bucket(wake)])
+            .filter(|&depth| depth < ordered_threshold)
+            .sum::<usize>() as u64;
         let included = (MAINNET_FLASHBLOCKS * MAINNET_FILLER_PER_FLASHBLOCK) as u64;
         let rejected_gas = (MAINNET_FLASHBLOCKS * MAINNET_OVER_GAS_CANDIDATES) as u64;
         let rejected_da = (MAINNET_FLASHBLOCKS * MAINNET_OVER_DA_PER_FLASHBLOCK) as u64;
