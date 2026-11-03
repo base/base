@@ -17,18 +17,20 @@ use std::time::Duration;
 
 use alloy_consensus::{SignableTransaction, Transaction, constants::ETH_TO_WEI};
 use alloy_eips::{BlockId, BlockNumberOrTag, eip2718::Encodable2718};
-use alloy_network::{ReceiptResponse, TransactionBuilder};
+use alloy_network::{EthereumWallet, ReceiptResponse, TransactionBuilder};
 use alloy_primitives::{Address, B256, Bytes, U256};
-use alloy_provider::{Provider, RootProvider};
+use alloy_provider::{Provider, ProviderBuilder, RootProvider};
+use alloy_rpc_types_eth::TransactionRequest;
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
+use alloy_sol_types::{SolCall, sol};
 use base_common_consensus::{Call, Eip8130Constants, Eip8130Signed, Predeploys, TxEip8130};
 use base_common_eip8130::IntrinsicGas;
 use base_common_genesis::{BaseUpgrade, RollupConfig};
 use base_common_network::Base;
 use base_common_rpc_types::{BaseTransactionReceipt, BaseTransactionRequest};
 use base_system_tests::{
-    ANVIL_ACCOUNT_1, ANVIL_ACCOUNT_2, SystemTestProviderExt, SystemTestStack,
+    ANVIL_ACCOUNT_1, ANVIL_ACCOUNT_2, DEPLOYER, SystemTestProviderExt, SystemTestStack,
     SystemTestStackBuilder,
 };
 use eyre::{OptionExt, Result, WrapErr, ensure};
@@ -36,10 +38,10 @@ use tokio::time::{sleep, timeout};
 
 use crate::common::{L2_CHAIN_ID, wait_for_block};
 
-/// Zenith follows the Everest schedule of the Everest system tests (Everest at block 7) a few
-/// blocks later, so the post-Zenith chain carries every real upgrade and the first transfer has
-/// pre-Zenith runway.
-const ZENITH_ACTIVATION_BLOCK: u64 = 14;
+/// Zenith follows the Everest schedule of the Everest system tests (Everest at block 7) late
+/// enough that the post-Zenith chain carries every real upgrade and the first transfer still has
+/// pre-Zenith runway after the operator fee seeded on L1 has reached the L2 (about 15 blocks).
+const ZENITH_ACTIVATION_BLOCK: u64 = 40;
 /// A plain transfer needs 21k gas; the limit is deliberately ~5x that.
 const TRANSFER_GAS_USED: u64 = 21_000;
 const TX_GAS_LIMIT: u64 = 100_000;
@@ -52,6 +54,34 @@ const MAX_FEE_PER_GAS: u128 = 2_000_000_000;
 const MAX_PRIORITY_FEE_PER_GAS: u128 = 1_000_000;
 const RECEIPT_TIMEOUT: Duration = Duration::from_secs(60);
 const FUNDING_TIMEOUT: Duration = Duration::from_secs(15);
+/// How long the L2 may take to reflect an L1 `SystemConfig` update in its `L1Block` predeploy.
+const SYSTEM_CONFIG_PROPAGATION_TIMEOUT: Duration = Duration::from_secs(60);
+/// Operator fee parameters seeded through the L1 `SystemConfig`. The devnet genesis leaves both
+/// at zero, which would make the operator-fee term of every identity below vacuous.
+const OPERATOR_FEE_SCALAR: u32 = 1;
+const OPERATOR_FEE_CONSTANT: u64 = 50;
+/// Jovian scales the operator fee scalar by 100 (OP Stack Jovian operator fee), so the operator
+/// fee on `gas` is `gas * OPERATOR_FEE_SCALAR * 100 + OPERATOR_FEE_CONSTANT` wei.
+const OPERATOR_FEE_JOVIAN_MULTIPLIER: u64 = 100;
+
+sol! {
+    /// The L1 `SystemConfig` owner call that updates the operator fee parameters.
+    interface SystemConfig {
+        function setOperatorFeeScalars(uint32 _operatorFeeScalar, uint64 _operatorFeeConstant) external;
+    }
+    /// The L2 `L1Block` predeploy getters the sequencer fills from the L1 `SystemConfig`.
+    interface L1Block {
+        function operatorFeeScalar() external view returns (uint32);
+        function operatorFeeConstant() external view returns (uint64);
+    }
+}
+
+/// The operator fee owed on `gas` once [`OPERATOR_FEE_SCALAR`] and [`OPERATOR_FEE_CONSTANT`] are
+/// live, computed independently of the node's fee code.
+fn expected_operator_fee(gas: u64) -> U256 {
+    U256::from(gas) * U256::from(OPERATOR_FEE_SCALAR) * U256::from(OPERATOR_FEE_JOVIAN_MULTIPLIER)
+        + U256::from(OPERATOR_FEE_CONSTANT)
+}
 
 /// A running Zenith stack with its builder and validator providers.
 struct ZenithSystem {
@@ -64,7 +94,8 @@ struct ZenithSystem {
 }
 
 impl ZenithSystem {
-    /// Starts the stack with Zenith at [`ZENITH_ACTIVATION_BLOCK`] and waits past Everest.
+    /// Starts the stack with Zenith at [`ZENITH_ACTIVATION_BLOCK`], waits past Everest, and
+    /// seeds the operator fee so every fee recipient in the settlement identities is live.
     async fn start() -> Result<Self> {
         base_node_runner::test_utils::init_silenced_tracing();
         let (system, builder) = everest::start_everest_stack(
@@ -78,7 +109,59 @@ impl ZenithSystem {
         let zenith_timestamp = rollup_config
             .upgrade_activation_timestamp(BaseUpgrade::Zenith)
             .ok_or_eyre("Zenith is not scheduled in the rollup config")?;
-        Ok(Self { _system: system, builder, client, zenith_timestamp })
+        let zenith = Self { _system: system, builder, client, zenith_timestamp };
+        zenith.seed_operator_fee(rollup_config.l1_system_config_address).await?;
+        Ok(zenith)
+    }
+
+    /// Sets [`OPERATOR_FEE_SCALAR`] and [`OPERATOR_FEE_CONSTANT`] on the L1 `SystemConfig` as
+    /// its owner and waits until the L2 `L1Block` predeploy reports them, i.e. until the
+    /// sequencer has derived an L1 origin carrying the config update.
+    async fn seed_operator_fee(&self, system_config: Address) -> Result<()> {
+        let owner = PrivateKeySigner::from_bytes(&DEPLOYER.private_key)?;
+        let l1 = ProviderBuilder::new()
+            .wallet(EthereumWallet::from(owner))
+            .connect_http(self._system.l1_rpc_url().await?);
+        let update = SystemConfig::setOperatorFeeScalarsCall {
+            _operatorFeeScalar: OPERATOR_FEE_SCALAR,
+            _operatorFeeConstant: OPERATOR_FEE_CONSTANT,
+        };
+        let receipt = l1
+            .send_transaction(
+                TransactionRequest::default().to(system_config).input(update.abi_encode().into()),
+            )
+            .await
+            .wrap_err("setOperatorFeeScalars was not accepted")?
+            .get_receipt()
+            .await
+            .wrap_err("setOperatorFeeScalars was not mined")?;
+        ensure!(receipt.status(), "setOperatorFeeScalars reverted");
+
+        let l1_block_call = |call: Vec<u8>| {
+            BaseTransactionRequest::default().to(Predeploys::L1_BLOCK_INFO).input(call.into())
+        };
+        timeout(SYSTEM_CONFIG_PROPAGATION_TIMEOUT, async {
+            loop {
+                let scalar = L1Block::operatorFeeScalarCall::abi_decode_returns(
+                    &self
+                        .builder
+                        .call(l1_block_call(L1Block::operatorFeeScalarCall.abi_encode()))
+                        .await?,
+                )?;
+                let constant = L1Block::operatorFeeConstantCall::abi_decode_returns(
+                    &self
+                        .builder
+                        .call(l1_block_call(L1Block::operatorFeeConstantCall.abi_encode()))
+                        .await?,
+                )?;
+                if scalar == OPERATOR_FEE_SCALAR && constant == OPERATOR_FEE_CONSTANT {
+                    return Ok::<_, eyre::Error>(());
+                }
+                sleep(Duration::from_millis(500)).await;
+            }
+        })
+        .await
+        .wrap_err("L2 did not pick up the operator fee scalars from the L1 SystemConfig")?
     }
 
     /// Polls the builder until its latest block carries a timestamp at or past Zenith.
@@ -133,6 +216,8 @@ struct Settlement {
     block_timestamp: u64,
     gas_used: u64,
     effective_gas_price: u128,
+    /// The inclusion block's base fee, read from its header.
+    base_fee_per_gas: u128,
     l1_fee: u128,
     /// Wei the fee payer transferred as value on top of the fees (zero when it only sponsors).
     value_paid: U256,
@@ -154,10 +239,16 @@ impl Settlement {
         self.coinbase_received + self.base_fee_vault_received + self.operator_fee_vault_received
     }
 
-    /// The receipt-level fee identities that hold under both billing rules for `billed_gas`.
+    /// The receipt-level fee identities that hold under both billing rules for `billed_gas`: every
+    /// per-gas fee component is computed on `billed_gas` from independently known parameters.
     fn assert_consistent(&self, billed_gas: u64) {
         let gas = U256::from(billed_gas);
-        let base_fee = U256::from(self.effective_gas_price - MAX_PRIORITY_FEE_PER_GAS);
+        let base_fee = U256::from(self.base_fee_per_gas);
+        assert_eq!(
+            self.effective_gas_price,
+            self.base_fee_per_gas + MAX_PRIORITY_FEE_PER_GAS,
+            "the fee cap must not truncate the priority fee in this fixture"
+        );
         assert_eq!(self.gas_used, billed_gas, "receipt must report the billed gas");
         assert_eq!(
             self.coinbase_received,
@@ -168,6 +259,11 @@ impl Settlement {
             self.base_fee_vault_received,
             gas * base_fee,
             "base fee burn must be the base fee on the billed gas"
+        );
+        assert_eq!(
+            self.operator_fee_vault_received,
+            expected_operator_fee(billed_gas),
+            "operator fee must be the seeded scalar and constant applied to the billed gas"
         );
         assert_eq!(
             self.execution_fee_paid(),
@@ -425,6 +521,11 @@ async fn settle(
         block_timestamp: block.header.timestamp,
         gas_used: receipt.gas_used(),
         effective_gas_price: receipt.effective_gas_price(),
+        base_fee_per_gas: block
+            .header
+            .base_fee_per_gas
+            .ok_or_eyre("post-London block missing base fee")?
+            .into(),
         l1_fee: receipt.l1_block_info.l1_fee.ok_or_eyre("receipt missing l1Fee")?,
         value_paid,
         payer_paid,
