@@ -1,14 +1,12 @@
 name: CI
 on:
-  # A reviewer can add ci:system, ci:perf, or ci:full to request an
-  # integration/performance rerun without needing an otherwise-empty push.
+  # Expensive suites (system tests, Base Std, benchmarks) run after merge on
+  # main; see system-tests.yml, base-std-fork-tests.yml and bench-*.yml.
   pull_request:
-    types: [opened, reopened, synchronize, labeled]
+    types: [opened, reopened, synchronize]
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
-  # A label is an explicit request for an optional suite. Do not discard useful
-  # build/test work already in flight merely to service that request.
-  cancel-in-progress: ${{ github.event.action != 'labeled' }}
+  cancel-in-progress: true
 permissions:
   checks: write
   contents: read
@@ -21,7 +19,6 @@ jobs:
       diff_base: HEAD^1
       clippy_command: >-
         just check::clippy-affected-ci "${DIFF_BASE:?}"
-      run_system_tests: true
       run_sigsegv: false
       test_command: >-
         just test-affected-ci "${DIFF_BASE:?}"
