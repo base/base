@@ -32,7 +32,6 @@ jobs:
             api.github.com:443
             bun.sh:443
             github.com:443
-            nodejs.org:443
             objects.githubusercontent.com:443
             registry.npmjs.org:443
             release-assets.githubusercontent.com:443
