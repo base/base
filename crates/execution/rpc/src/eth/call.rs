@@ -144,6 +144,12 @@ where
                     // If not explicitly required, we disable nonce check <https://github.com/paradigmxyz/reth/issues/16108>
                     evm_env.cfg_env.disable_nonce_check = true;
                     evm_env.cfg_env.disable_base_fee = true;
+                    // Like `eth_call`, an unvalidated simulation bills nothing, so gas-limit
+                    // billing (`BaseFeature::GasLimitBilling`) leaves `gasUsed` metered and a
+                    // call without `gas` does not consume the block's remaining gas or the
+                    // request-wide `--rpc.gascap` budget. `validation=true` keeps fee charging
+                    // on and reports what a receipt would.
+                    evm_env.cfg_env.disable_fee_charge = true;
                     evm_env.block_env.inner_mut().basefee = 0;
                 }
 
