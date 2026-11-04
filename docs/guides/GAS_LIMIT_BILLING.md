@@ -29,7 +29,7 @@ For every user transaction in a block where gas-limit billing is active:
 2. **Settlement.** The payer pays `B * effective_gas_price` plus the L1 data fee plus the operator fee on `B`. Unused gas is not reimbursed; EIP-3529 storage-clearing refunds, EIP-7702 authorization refunds, and stateful-precompile refunds do not reduce the fee. The EIP-7623 floor does not change the fee. Refund amounts depend on execution; applying them would make the final fee unknown when the builder orders transactions, defeating the design goal. The sequencer receives `B * priority_fee_per_gas`, the `BaseFeeVault` `B * basefee`, the `OperatorFeeVault` the operator fee on `B`. The L1 data fee is unchanged.
 3. **Receipts and header.** Receipt `gasUsed = B`; `cumulativeGasUsed` and header `gasUsed` add `B` per user transaction, so `gasUsed * effectiveGasPrice` is still the execution fee and receipts still sum to the header.
 4. **Deposits** are unchanged: no L2 execution fee, metered `gasUsed`.
-5. **Unchanged:** ordering (`tip` per gas), validity rules, intrinsic gas, the EIP-7825 cap, the opcode gas schedule and out-of-gas semantics, L1 data fee, DA footprint, batching.
+5. **Unchanged:** ordering (`tip` per gas), validity rules, intrinsic gas, the EIP-7825 cap (16,777,216 gas, which already bounds `B`: `gas_limit` for standard transactions and `gas_limit + payer_floor` for EIP-8130, so `B` never exceeds the cap), the opcode gas schedule and out-of-gas semantics, L1 data fee, DA footprint, batching.
 
 Execution is still metered internally; only what is settled and reported changes. No partial rate: any fraction `p < 1` leaves the discount, and the attack, in place at scale `1/p`.
 
