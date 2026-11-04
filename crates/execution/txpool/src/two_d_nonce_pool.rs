@@ -59,6 +59,9 @@ struct NonceLane<T: BasePooledTx> {
     /// Length of the consecutive pending run from `next_nonce`. Kept in step
     /// by every mutation, so pending and queued splits never walk the lane.
     pending_len: u64,
+    /// The member at `next_nonce`, present exactly while `pending_len > 0`, so a snapshot
+    /// copies a lane's head without searching the map. Mutations behind the head leave it alone.
+    pending_head: Option<Arc<ValidPoolTransaction<T>>>,
     /// Persistent, so a selection index shares the members without copying them.
     transactions: imbl::OrdMap<u64, Arc<ValidPoolTransaction<T>>>,
 }
@@ -77,9 +80,12 @@ impl<T: BasePooledTx> NonceLane<T> {
             state_nonce: cursor.state_nonce,
             next_nonce: cursor.next_nonce,
             pending_len: 0,
+            pending_head: None,
             transactions,
         };
         lane.extend_pending_run();
+        lane.pending_head = lane.transactions.get(&lane.next_nonce).cloned();
+        lane.debug_assert_pending_head();
         lane
     }
 
@@ -102,23 +108,42 @@ impl<T: BasePooledTx> NonceLane<T> {
         nonce.checked_sub(self.next_nonce).is_some_and(|offset| offset < self.pending_len)
     }
 
+    fn debug_assert_pending_head(&self) {
+        debug_assert_eq!(self.pending_head.is_some(), self.pending_len > 0);
+        debug_assert!(
+            match (&self.pending_head, self.transactions.get(&self.next_nonce)) {
+                (Some(cached), Some(member)) => Arc::ptr_eq(cached, member),
+                (cached, member) => cached.is_none() && member.is_none(),
+            },
+            "pending head differs from the member at next_nonce"
+        );
+    }
+
     fn insert(
         &mut self,
         nonce: u64,
         transaction: Arc<ValidPoolTransaction<T>>,
     ) -> Option<Arc<ValidPoolTransaction<T>>> {
+        if nonce == self.next_nonce {
+            self.pending_head = Some(Arc::clone(&transaction));
+        }
         let replaced = self.transactions.insert(nonce, transaction);
         if self.nonce_at(self.pending_len) == Some(nonce) {
             self.extend_pending_run();
         }
+        self.debug_assert_pending_head();
         replaced
     }
 
     fn remove(&mut self, nonce: u64) -> Option<Arc<ValidPoolTransaction<T>>> {
         let removed = self.transactions.remove(&nonce)?;
+        if nonce == self.next_nonce {
+            self.pending_head = None;
+        }
         if self.is_pending(nonce) {
             self.pending_len = nonce - self.next_nonce;
         }
+        self.debug_assert_pending_head();
         Some(removed)
     }
 
@@ -135,6 +160,8 @@ impl<T: BasePooledTx> NonceLane<T> {
         self.next_nonce = next_nonce;
         self.pending_len = 0;
         self.extend_pending_run();
+        self.pending_head = self.transactions.get(&self.next_nonce).cloned();
+        self.debug_assert_pending_head();
         stale
     }
 
@@ -1540,10 +1567,11 @@ where
     ) -> Self {
         let mut snapshot = Vec::with_capacity(lanes.len() + nonce_free.len());
         snapshot.extend(lanes.iter().filter_map(|(id, lane)| {
-            let mut pending = lane.consecutive_pending_transactions();
-            let head = Arc::clone(pending.next()?);
+            let head = Arc::clone(lane.pending_head.as_ref()?);
             let mut tail = Vec::with_capacity(lane.consecutive_pending_len() - 1);
-            tail.extend(pending.cloned());
+            if lane.pending_len > 1 {
+                tail.extend(lane.consecutive_pending_transactions().skip(1).cloned());
+            }
             Some(LaneIterator::new(*id, head, tail))
         }));
         let lane_indexes = snapshot
@@ -2425,33 +2453,78 @@ mod tests {
     #[test]
     fn best_transactions_snapshot_handles_u64_max_nonce_without_wrapping() {
         let signer = signer();
-        let transaction = Arc::new(valid_pool_transaction(signed_channel_tx(
-            &signer,
-            U256::from(17),
-            u64::MAX,
-            1_000,
-        )));
         let lane_id = (signer.address(), U256::from(17));
-        let lanes: HashMap<_, _> = [(
-            lane_id,
-            NonceLane::new(
-                LaneCursor::at(u64::MAX),
-                BTreeMap::from([(u64::MAX, Arc::clone(&transaction))]),
-            ),
-        )]
-        .into_iter()
-        .collect();
+        for run_start in [u64::MAX, u64::MAX - 1] {
+            let run: BTreeMap<_, _> = (run_start..=u64::MAX)
+                .map(|nonce| {
+                    let transaction = signed_channel_tx(&signer, U256::from(17), nonce, 1_000);
+                    (nonce, Arc::new(valid_pool_transaction(transaction)))
+                })
+                .collect();
+            let run_hashes: Vec<_> = run.values().map(|transaction| *transaction.hash()).collect();
+            let lanes: HashMap<_, _> =
+                [(lane_id, NonceLane::new(LaneCursor::at(run_start), run))].into_iter().collect();
 
-        let mut best = BestTwoDTransactions::new(
-            &lanes,
-            &B256Map::default(),
-            false,
-            BaseOrdering::coinbase_tip(),
-            0,
-        )
-        .ranked();
-        assert_eq!(best.next().map(|transaction| *transaction.hash()), Some(*transaction.hash()));
-        assert!(best.next().is_none());
+            let best = BestTwoDTransactions::new(
+                &lanes,
+                &B256Map::default(),
+                false,
+                BaseOrdering::coinbase_tip(),
+                0,
+            )
+            .ranked();
+            assert_eq!(best.map(|transaction| *transaction.hash()).collect::<Vec<_>>(), run_hashes);
+        }
+    }
+
+    #[test]
+    fn snapshots_follow_the_lane_head_through_replacement_removal_and_cursor_moves() {
+        let mut pool = TwoDNoncePool::new(PriceBumpConfig::default());
+        let signer = signer();
+        let key = U256::from(51);
+        let lane = (signer.address(), key);
+        let transaction = |nonce, max_fee| {
+            valid_pool_transaction(signed_channel_tx(&signer, key, nonce, max_fee))
+        };
+        let snapshot = |pool: &TwoDNoncePool<BasePooledTransaction>| {
+            pool.best_transactions(BaseOrdering::coinbase_tip(), 0)
+                .map(|transaction| *transaction.hash())
+                .collect::<Vec<_>>()
+        };
+        let [head, second, third] = [0, 1, 2].map(|nonce| transaction(nonce, 1_000));
+        let [new_head, new_second] = [0, 1].map(|nonce| transaction(nonce, 1_250));
+        let refilled_head = transaction(0, 1_500);
+        let [head_hash, second_hash, third_hash, new_head_hash, new_second_hash, refilled_hash] =
+            [&head, &second, &third, &new_head, &new_second, &refilled_head]
+                .map(|transaction| *transaction.hash());
+
+        pool.insert_validated(head, 0).unwrap();
+        pool.insert_validated(third, 0).unwrap();
+        assert_eq!(snapshot(&pool), vec![head_hash]);
+        pool.insert_validated(second, 0).unwrap();
+        assert_eq!(snapshot(&pool), vec![head_hash, second_hash, third_hash]);
+
+        // An iterator keeps the run it snapshotted; a new one sees the replacements.
+        let frozen = pool.best_transactions(BaseOrdering::coinbase_tip(), 0);
+        pool.insert_validated(new_head, 0).unwrap();
+        pool.insert_validated(new_second, 0).unwrap();
+        assert_eq!(
+            frozen.map(|transaction| *transaction.hash()).collect::<Vec<_>>(),
+            vec![head_hash, second_hash, third_hash]
+        );
+        assert_eq!(snapshot(&pool), vec![new_head_hash, new_second_hash, third_hash]);
+
+        // Removing the head leaves a gap at the cursor; nothing behind it is promoted.
+        pool.remove_transactions(&[new_head_hash]);
+        assert!(snapshot(&pool).is_empty());
+
+        pool.set_lane_cursor(lane, LaneCursor::at(1));
+        assert_eq!(snapshot(&pool), vec![new_second_hash, third_hash]);
+        pool.set_lane_cursor(lane, LaneCursor::at(0));
+        assert!(snapshot(&pool).is_empty());
+
+        pool.insert_validated(refilled_head, 0).unwrap();
+        assert_eq!(snapshot(&pool), vec![refilled_hash, new_second_hash, third_hash]);
     }
 
     #[test]

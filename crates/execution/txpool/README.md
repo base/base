@@ -171,6 +171,12 @@ of the same block. The lanes that straddle stores are indexed incrementally
 bookkeeping visits those indexed lanes rather than scanning both stores. Without a selection
 view (see below), the validity snapshot scans its lanes and copies references to their pending
 transactions; `benches/best_transactions.rs` measures iterator construction on a large pool.
+Each lane keeps a reference to its pending head, the member at `LaneCursor::next_nonce`,
+present exactly while the lane has a pending run. Inserting or replacing that nonce sets it,
+removing it clears it without promoting a member across the gap, and moving the cursor looks
+it up again; mutations behind the head leave it alone. The snapshot copies that reference
+and searches the lane's map only for the members behind it, so a one-member run costs no
+map search.
 
 Capacity defaults to reth's pending subpool limit (`--txpool.pending-max-count`,
 `--txpool.pending-max-size`, `--txpool.max-account-slots`) and is overridable with
