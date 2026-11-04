@@ -31,17 +31,21 @@ use tokio::time::{Instant, Sleep};
 /// - Links to other trees are not followed; only the configured tree is walked.
 /// - One lookup is in flight at a time, at most one every [`EnrTreeSync::LOOKUP_INTERVAL`], each
 ///   bounded by [`EnrTreeSync::LOOKUP_TIMEOUT`].
-/// - A walk visits at most `max_entries` distinct entries and yields at most `max_records`
+/// - A walk admits at most `max_entries` distinct entries and yields at most `max_records`
 ///   records; the queue of pending entries never exceeds `max_entries`, and an entry hash that
-///   appears twice is visited once. A walk that hits a budget stops with a warning.
+///   appears twice is visited once. A walk that hits a budget stops admitting or yielding with a
+///   warning.
 /// - A failed entry lookup is retried in place, up to [`EnrTreeSync::MAX_ENTRY_ATTEMPTS`] lookups
-///   in total, without discarding the rest of the walk.
+///   in total, without discarding the rest of the walk. Retries are not limited by the entry
+///   budget, so every admitted entry gets all its attempts.
 ///
 /// After a complete walk the root is rechecked every [`EnrTreeSync::RECHECK_INTERVAL`], and the
-/// tree is walked again only when its ENR subtree hash changes. A root that fails to resolve or
-/// verify, a walk with failed entries, and a walk without valid records are retried with a
-/// warning after a backoff that starts at the retry interval and doubles up to
-/// [`EnrTreeSync::MAX_RETRY_INTERVAL`].
+/// tree is walked again only when its ENR subtree hash changes. A walk is complete only when no
+/// admitted entry failed to resolve or matched the wrong hash. A root that fails to resolve or
+/// verify, an incomplete walk, and a walk without valid records are retried with a warning after
+/// a backoff that starts at the retry interval and doubles up to
+/// [`EnrTreeSync::MAX_RETRY_INTERVAL`]. A verified root whose sequence number is lower than one
+/// already accepted is a rollback and is ignored.
 ///
 /// Only records that decode as valid ENRs and pass [`EnrValidation`] for the configured chain ID
 /// are yielded. The stream never ends and owns no background task: it stops when it is dropped
@@ -66,6 +70,9 @@ pub struct EnrTreeSync<R: Resolver = DnsResolver> {
     /// The ENR subtree hash of the last complete walk. A recheck that finds the same hash does
     /// not walk the tree again.
     pub synced_root: Option<String>,
+    /// The highest root sequence number accepted so far. A verified root with a lower sequence
+    /// number is a rollback and is ignored.
+    pub highest_seq: Option<u64>,
     /// What the sync is doing now.
     pub state: EnrTreeState,
     /// Fires when the next root lookup is due.
@@ -96,13 +103,13 @@ pub struct EnrTreeWalk {
     pub pending: VecDeque<(String, u8)>,
     /// The lookup in flight, if any.
     pub lookup: Option<EnrTreeLookup>,
-    /// Every entry hash queued so far, so a repeated hash is visited once.
+    /// Every entry hash admitted to the walk, so a repeated hash is visited once. Its size is
+    /// the distinct-entry budget in use.
     pub seen: HashSet<String>,
-    /// Distinct entries looked up so far.
-    pub entries: usize,
     /// Valid records yielded so far.
     pub records: usize,
-    /// Entries given up on after failed lookups.
+    /// Admitted entries that could not be visited: lookups that failed every attempt, or
+    /// responses that did not match their hash. Any failure leaves the walk incomplete.
     pub failed: usize,
     /// Whether entries were dropped because the walk hit a budget.
     pub truncated: bool,
@@ -183,6 +190,7 @@ impl<R: Resolver> EnrTreeSync<R> {
             retry_interval,
             backoff: retry_interval,
             synced_root: None,
+            highest_seq: None,
             state: EnrTreeState::Idle,
             timer: Box::pin(tokio::time::sleep(Duration::ZERO)),
             pacer: Box::pin(tokio::time::sleep(Duration::ZERO)),
@@ -224,9 +232,13 @@ impl<R: Resolver> EnrTreeSync<R> {
     }
 
     /// Records the outcome of a finished walk and schedules the next root lookup.
+    ///
+    /// The root is cached as synced only when no admitted entry failed. Entries can be left
+    /// pending only when the walk reached its record budget; walking again would yield the same
+    /// records, so that walk still counts as complete.
     pub fn finish_walk(&mut self, walk: EnrTreeWalk) {
         if walk.truncated || !walk.pending.is_empty() {
-            warn!(target: "discovery::enrtree", tree = %self.link, entries = walk.entries, records = walk.records, "ENR tree walk stopped at its budget");
+            warn!(target: "discovery::enrtree", tree = %self.link, entries = walk.seen.len(), records = walk.records, "ENR tree walk stopped at its budget");
         }
         if walk.records == 0 {
             self.retry_later(if walk.failed > 0 {
@@ -235,7 +247,7 @@ impl<R: Resolver> EnrTreeSync<R> {
                 "tree has no valid records"
             });
         } else if walk.failed > 0 {
-            self.retry_later("some tree entries failed to resolve");
+            self.retry_later("some tree entries failed to resolve or verify");
         } else {
             info!(target: "discovery::enrtree", tree = %self.link, records = walk.records, "Synced ENR tree");
             self.synced_root = Some(walk.root.enr_root);
@@ -250,21 +262,15 @@ impl EnrTreeWalk {
     pub fn new(root: TreeRootEntry) -> Self {
         let pending = VecDeque::from([(root.enr_root.clone(), 0)]);
         let seen = HashSet::from([root.enr_root.clone()]);
-        Self {
-            root,
-            pending,
-            lookup: None,
-            seen,
-            entries: 0,
-            records: 0,
-            failed: 0,
-            truncated: false,
-        }
+        Self { root, pending, lookup: None, seen, records: 0, failed: 0, truncated: false }
     }
 
-    /// Whether the walk has nothing left to do or has hit a budget.
-    pub fn is_done(&self, max_entries: usize, max_records: usize) -> bool {
-        self.pending.is_empty() || self.entries >= max_entries || self.records >= max_records
+    /// Whether the walk has nothing left to do or has hit its record budget.
+    ///
+    /// The distinct-entry budget limits admission only, so every admitted entry, including a
+    /// retried one, is looked up before the walk ends.
+    pub fn is_done(&self, max_records: usize) -> bool {
+        self.pending.is_empty() || self.records >= max_records
     }
 
     /// Whether `txt` is the entry published under the base32 hash label `hash`.
@@ -294,13 +300,14 @@ impl EnrTreeWalk {
             return None;
         };
         if !Self::hash_matches(&done.hash, &txt) {
-            debug!(target: "discovery::enrtree", tree = %link, hash = %done.hash, "Ignoring ENR tree entry that does not match its hash");
+            debug!(target: "discovery::enrtree", tree = %link, hash = %done.hash, "ENR tree entry does not match its hash");
+            self.failed += 1;
             return None;
         }
         match txt.parse::<DnsEntry<SecretKey>>() {
             Ok(DnsEntry::Branch(branch)) => {
                 for hash in branch.children {
-                    if self.entries + self.pending.len() >= max_entries {
+                    if self.seen.len() >= max_entries {
                         self.truncated = true;
                         break;
                     }
@@ -358,13 +365,21 @@ impl<R: Resolver> Stream for EnrTreeSync<R> {
                 EnrTreeState::Root(lookup) => {
                     let txt = ready!(lookup.as_mut().poll(cx));
                     match this.verify_root(txt) {
+                        Ok(root)
+                            if this.highest_seq.is_some_and(|seq| root.sequence_number < seq) =>
+                        {
+                            warn!(target: "discovery::enrtree", tree = %this.link, seq = root.sequence_number, highest_seq = ?this.highest_seq, "Ignoring ENR tree root with a lower sequence number than one already seen");
+                            this.schedule(EnrTreeSync::RECHECK_INTERVAL);
+                        }
                         Ok(root) if this.synced_root.as_ref() == Some(&root.enr_root) => {
                             trace!(target: "discovery::enrtree", tree = %this.link, "ENR tree is unchanged");
+                            this.highest_seq = Some(root.sequence_number);
                             this.backoff = this.retry_interval;
                             this.schedule(EnrTreeSync::RECHECK_INTERVAL);
                         }
                         Ok(root) => {
                             debug!(target: "discovery::enrtree", tree = %this.link, seq = root.sequence_number, "Walking ENR tree");
+                            this.highest_seq = Some(root.sequence_number);
                             this.state = EnrTreeState::Walk(Box::new(EnrTreeWalk::new(root)));
                         }
                         Err(reason) => this.retry_later(reason),
@@ -381,7 +396,7 @@ impl<R: Resolver> Stream for EnrTreeSync<R> {
                         }
                         continue;
                     }
-                    if walk.is_done(this.max_entries, this.max_records) {
+                    if walk.is_done(this.max_records) {
                         let EnrTreeState::Walk(walk) =
                             std::mem::replace(&mut this.state, EnrTreeState::Idle)
                         else {
@@ -393,10 +408,6 @@ impl<R: Resolver> Stream for EnrTreeSync<R> {
                     ready!(this.pacer.as_mut().poll(cx));
                     this.pacer.as_mut().reset(Instant::now() + EnrTreeSync::LOOKUP_INTERVAL);
                     let Some((hash, attempts)) = walk.pending.pop_front() else { continue };
-                    // Retries of a failed entry do not count against the entry budget.
-                    if attempts == 0 {
-                        walk.entries += 1;
-                    }
                     let lookup =
                         Self::lookup(&this.resolver, format!("{hash}.{}", this.link.domain));
                     walk.lookup = Some(EnrTreeLookup { hash, attempts, lookup });
@@ -764,5 +775,149 @@ mod tests {
             }
             self.inner.get(query)
         }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn retries_last_entry_at_default_entry_budget() {
+        let key = tree_key(0x61);
+        let resolver = Arc::new(MapResolver::default());
+        let first = enr(Some(CHAIN_ID));
+        let repaired = enr(Some(CHAIN_ID));
+        publish(&resolver, &key, &[first.clone(), repaired.clone()]);
+        let leaf = format!("{}.{DOMAIN}", entry_hash(&repaired.to_base64()));
+        let leaf_text = resolver.remove(&leaf).unwrap();
+        let mut root: TreeRootEntry = resolver.get(DOMAIN).unwrap().parse().unwrap();
+        let mut child = root.enr_root.clone();
+        // 1,997 unary branches + the two-leaf branch + two leaves = exactly 2,000 entries.
+        for _ in 0..1997 {
+            let branch = format!("enrtree-branch:{child}");
+            child = entry_hash(&branch);
+            resolver.insert(format!("{child}.{DOMAIN}"), branch);
+        }
+        root.enr_root = child;
+        root.sign(&key).unwrap();
+        resolver.insert(DOMAIN.to_string(), root.to_string());
+        let mut sync = EnrTreeSync::new(
+            link(&key),
+            CHAIN_ID,
+            Arc::clone(&resolver),
+            EnrTreeSync::DEFAULT_RETRY_INTERVAL,
+        );
+        let initial = collect(&mut sync, Duration::from_secs(750)).await;
+        assert_eq!(initial, vec![first]);
+        resolver.insert(leaf, leaf_text);
+        let after_repair = collect(&mut sync, Duration::from_secs(3600)).await;
+        assert!(
+            after_repair.contains(&repaired),
+            "last failed leaf must be retried; got {} records after repair",
+            after_repair.len()
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn retries_hash_mismatched_entry_after_dns_repair() {
+        let key = tree_key(0x62);
+        let resolver = Arc::new(MapResolver::default());
+        let first = enr(Some(CHAIN_ID));
+        let repaired = enr(Some(CHAIN_ID));
+        publish(&resolver, &key, &[first.clone(), repaired.clone()]);
+        let leaf = format!("{}.{DOMAIN}", entry_hash(&repaired.to_base64()));
+        let leaf_text = resolver.insert(leaf.clone(), first.to_base64()).unwrap();
+        let mut sync = EnrTreeSync::new(
+            link(&key),
+            CHAIN_ID,
+            Arc::clone(&resolver),
+            EnrTreeSync::DEFAULT_RETRY_INTERVAL,
+        );
+        assert_eq!(collect(&mut sync, COLLECT_WINDOW).await, vec![first]);
+        resolver.insert(leaf, leaf_text);
+        let after_repair = collect(&mut sync, Duration::from_secs(3600)).await;
+        assert!(
+            after_repair.contains(&repaired),
+            "hash-mismatched entry must not mark a partial walk fully synced"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn ignores_rolled_back_root() {
+        let key = tree_key(0x63);
+        let resolver = Arc::new(MapResolver::default());
+        let stale = enr(Some(CHAIN_ID));
+        publish(&resolver, &key, std::slice::from_ref(&stale));
+        let old_root = resolver.get(DOMAIN).unwrap();
+        let current = enr(Some(CHAIN_ID));
+        publish(&resolver, &key, std::slice::from_ref(&current));
+        let mut root: TreeRootEntry = resolver.get(DOMAIN).unwrap().parse().unwrap();
+        root.sequence_number = 2;
+        root.sign(&key).unwrap();
+        resolver.insert(DOMAIN.to_string(), root.to_string());
+        let mut sync = EnrTreeSync::new(
+            link(&key),
+            CHAIN_ID,
+            Arc::clone(&resolver),
+            EnrTreeSync::DEFAULT_RETRY_INTERVAL,
+        );
+        assert_eq!(collect(&mut sync, COLLECT_WINDOW).await, vec![current]);
+        resolver.insert(DOMAIN.to_string(), old_root);
+        assert!(
+            collect(&mut sync, Duration::from_secs(1900)).await.is_empty(),
+            "must reject sequence 1 after observing sequence 2"
+        );
+    }
+
+    /// Hand-written because an in-flight future must expose cancellation through Drop.
+    #[derive(Default)]
+    struct PendingResolver {
+        started: AtomicUsize,
+        dropped: Arc<AtomicUsize>,
+    }
+    struct LookupGuard(Arc<AtomicUsize>);
+    impl Drop for LookupGuard {
+        fn drop(&mut self) {
+            self.0.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+    impl Resolver for PendingResolver {
+        async fn lookup_txt(&self, _query: &str) -> Option<String> {
+            self.started.fetch_add(1, Ordering::Relaxed);
+            let _guard = LookupGuard(Arc::clone(&self.dropped));
+            std::future::pending().await
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn lookup_times_out_and_backs_off() {
+        let key = tree_key(0x64);
+        let resolver = Arc::new(PendingResolver::default());
+        let mut sync = EnrTreeSync::new(
+            link(&key),
+            CHAIN_ID,
+            Arc::clone(&resolver),
+            EnrTreeSync::DEFAULT_RETRY_INTERVAL,
+        );
+        assert!(collect(&mut sync, Duration::from_secs(10)).await.is_empty());
+        assert_eq!(resolver.started.load(Ordering::Relaxed), 1);
+        assert_eq!(resolver.dropped.load(Ordering::Relaxed), 1);
+        assert!(collect(&mut sync, Duration::from_secs(56)).await.is_empty());
+        assert_eq!(resolver.started.load(Ordering::Relaxed), 2);
+        drop(sync);
+        assert_eq!(resolver.dropped.load(Ordering::Relaxed), 2);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn drop_cancels_inflight_lookup() {
+        let key = tree_key(0x65);
+        let resolver = Arc::new(PendingResolver::default());
+        let mut sync = EnrTreeSync::new(
+            link(&key),
+            CHAIN_ID,
+            Arc::clone(&resolver),
+            EnrTreeSync::DEFAULT_RETRY_INTERVAL,
+        );
+        assert!(collect(&mut sync, Duration::from_secs(1)).await.is_empty());
+        assert_eq!(resolver.started.load(Ordering::Relaxed), 1);
+        assert_eq!(resolver.dropped.load(Ordering::Relaxed), 0);
+        drop(sync);
+        assert_eq!(resolver.dropped.load(Ordering::Relaxed), 1);
     }
 }

@@ -57,18 +57,22 @@ apply to each configured tree:
 | --- | --- |
 | Links to other trees (`enrtree-link`) | not followed |
 | Lookups in flight | 1, at most 3 per second, each with a 5 second timeout |
-| Distinct entries per walk (also caps the pending queue) | 2,000 |
+| Distinct entries admitted per walk (also caps the pending queue) | 2,000 |
 | Records yielded per walk | 500 |
 | Lookups of one entry per walk, including retries | 3 |
 
 A walk that hits a limit stops with a warning and keeps the records it found. Entries are visited
 breadth-first, so in a tree larger than the limit, records past the first 2,000 entries are not
 reached. A repeated entry hash is visited once. A failed entry is retried in place without
-restarting the walk. A tree that publishes its nodes only through links to other trees yields
-nothing; link each of those trees directly instead. After a complete walk, the root is rechecked every
-30 minutes and the tree is walked again only when its ENR subtree hash changes. A root that fails
-to resolve or verify, a walk with failed entries, and a tree without valid records are retried
-with a warning after a backoff that starts at 60 seconds and doubles up to 30 minutes.
+restarting the walk, and retries are not limited by the entry budget. A tree that publishes its
+nodes only through links to other trees yields nothing; link each of those trees directly instead.
+
+After a complete walk, the root is rechecked every 30 minutes and the tree is walked again only
+when its ENR subtree hash changes. A walk is complete only when every admitted entry resolved and
+matched its hash. A root that fails to resolve or verify, an incomplete walk, and a tree without
+valid records are retried with a warning after a backoff that starts at 60 seconds and doubles up
+to 30 minutes. A signed root whose sequence number is lower than one already accepted is ignored as
+a rollback.
 
 An unreachable or invalid tree never stops the node: the other bootnodes keep working. The sync has
 no task of its own: it is polled inside the driver task and dropped with it, which happens at
