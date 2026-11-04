@@ -299,17 +299,22 @@ view last caught up and the wakes, not the dormant population.
 
 The view belongs to one lineage. `RestingPredicates` owns it and carries, resets and drops it
 with its members; the hold lends it to the pool through `BestTransactionsHold::take_selection_view`
-and gets it back through `restore_selection_view` once the pool's guards are released. There is
-no pool-wide dormancy state: concurrent jobs keep independent views, and a job that starts with
-an empty resting set starts with an empty view and asks about every eligible root.
+and gets it back through `restore_selection_view` once the pool's guards are released. The pool
+borrows the view only from a hold whose `has_candidates` is true at creation: with an empty
+resting set nothing can be held, so creation takes the snapshot path, the view is neither lent
+nor changed, and it catches up (journal replay or rebuild) at the next creation with members.
+Transactions rested after such a creation are still parked by the iterator as they are
+yielded. There is no pool-wide dormancy state: concurrent jobs keep independent views, and the
+first creation that borrows a new or reset view asks about every eligible root.
 
 How it works:
 
-- **Pool side.** The first creation with a view makes the validity pool keep a `SelectionIndex`:
-  each root's pending run in a persistent `imbl` map, and a `SelectionJournal` naming every root
-  whose run, anchor or shared flag changed. Until then the pool keeps none, so off and shadow
-  modes build no index. Lane members are a persistent `imbl::OrdMap` in every mode, so a run
-  shares its lane's members with the cursor and pending length frozen at that point, and a
+- **Pool side.** The first creation that borrows a view makes the validity pool keep a
+  `SelectionIndex`: each root's pending run in a persistent `imbl` map, and a `SelectionJournal`
+  naming every root whose run, anchor or shared flag changed. Until then the pool keeps none, so
+  off and shadow modes, and enforcing builds that never rest anything, build no index. Lane
+  members are a persistent `imbl::OrdMap` in every mode, so a run shares its lane's members with
+  the cursor and pending length frozen at that point, and a
   mutation copies at most O(log n) map nodes instead of the pending run. Lane mutations reach the
   index through `refresh_lane_indexes`, nonce-free admission and removal record their own entries,
   and `sync_validity_lanes` journals a shared lane whose standard run changed behind an unchanged
@@ -383,7 +388,8 @@ stateDiagram-v2
     Unknown --> Awake: next creation asks about every eligible root
 ```
 
-Off and shadow modes pass no hold and keep the snapshot path.
+Off and shadow modes pass no hold, and an enforcing build with an empty resting set lends no
+view; both keep the snapshot path.
 
 Every admission that changes a lane store, including one that fails after its replacement or
 capacity eviction removed transactions, re-syncs the validity lanes it touched before it

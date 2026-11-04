@@ -91,7 +91,8 @@ pub trait BestTransactionsHold<T: PoolTransaction>: Send + Sync {
     fn hold(&mut self, transaction: &ValidPoolTransaction<T>) -> bool;
 
     /// Returns whether any transaction could be held now. Returning false skips the creation
-    /// scan, not later checks: transactions may start resting while the iterator is in use.
+    /// scan and selection-view lend, not later checks: transactions may start resting while
+    /// the iterator is in use.
     fn has_candidates(&self) -> bool {
         true
     }
@@ -112,7 +113,9 @@ pub trait BestTransactionsHold<T: PoolTransaction>: Send + Sync {
 
     /// Takes the [`SelectionView`] of the build lineage this hold belongs to, if it keeps one.
     /// The pool hands it back through [`Self::restore_selection_view`] once the iterator is
-    /// created, with the pool's guards released.
+    /// created, with the pool's guards released. The pool asks only when
+    /// [`Self::has_candidates`] is true at creation; otherwise it creates the snapshot iterator
+    /// and leaves the view with the hold.
     fn take_selection_view(&mut self) -> Option<SelectionView> {
         None
     }

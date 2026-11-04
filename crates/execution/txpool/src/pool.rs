@@ -1738,9 +1738,9 @@ where
         AllTransactionsEvents::new(rx)
     }
 
-    /// With a non-empty `hold`, the validity pool's roots anchored at canonical state are
+    /// With a hold reporting candidates, the validity pool's roots anchored at canonical state are
     /// asked about once the read guards are released, before they are ranked
-    /// (see `BestTwoDTransactions::hold_resting_roots`). A hold that lends a
+    /// (see `BestTwoDTransactions::hold_resting_roots`). A hold with candidates that lends a
     /// selection view goes through [`Self::selected_best_transactions`] instead.
     fn merged_best_transactions(
         &self,
@@ -2707,7 +2707,10 @@ where
         attributes: BestTransactionsAttributes,
         mut hold: Option<Box<dyn BestTransactionsHold<Self::Transaction>>>,
     ) -> Box<dyn ParkableBestTransactions<Self::Transaction>> {
-        let mut view = hold.as_mut().and_then(|hold| hold.take_selection_view());
+        let mut view = hold
+            .as_mut()
+            .filter(|hold| hold.has_candidates())
+            .and_then(|hold| hold.take_selection_view());
         let base_fee = attributes.basefee;
         let merged = match (hold.as_mut(), view.as_mut()) {
             (Some(hold), Some(view)) => self.selected_best_transactions(attributes, hold, view),
@@ -3218,8 +3221,8 @@ mod tests {
     use crate::{
         BRIDGE_EVENT_DRAIN_LIMIT, BaseL1BlockInfo, BaseOrdering, BasePooledTransaction,
         BuilderApiImpl, BuilderApiServer, HOLD_INTERRUPT_INTERVAL, LimitClass, NoExtensions,
-        SELECTION_JOURNAL_CAPACITY, SelectionView, ValidatedTransaction, ValidityOperator,
-        ValidityPredicate, WatchSet,
+        SELECTION_JOURNAL_CAPACITY, SelectionChanges, SelectionView, ValidatedTransaction,
+        ValidityOperator, ValidityPredicate, WatchSet,
     };
 
     fn test_chain_id() -> u64 {
@@ -7465,6 +7468,10 @@ mod tests {
         assert!(is_delegated_validity_rejection(&error), "{error:?}");
     }
 
+    /// A resting hash no pool transaction has: a hold resting only it reports candidates, so
+    /// creation borrows its view, yet it holds nothing.
+    const ABSENT_RESTING: TxHash = TxHash::repeat_byte(0xab);
+
     /// What a [`RecordingHold`] was asked and how it answered.
     #[derive(Default)]
     struct HoldLog {
@@ -7599,6 +7606,25 @@ mod tests {
     fn resting_1559(signer: &PrivateKeySigner, nonce: u64, tip: u128) -> BasePooledTransaction {
         signed_1559_with_fees(signer, nonce, 1_000, tip)
             .with_validity_predicates(resting_predicates())
+    }
+
+    #[tokio::test]
+    async fn an_empty_hold_lends_no_view_and_activates_no_selection_but_observes_later_rests() {
+        let (pool, client) = build_integration_pool();
+        let a = funded_signer(&client);
+        let root = add(&pool, resting_1559(&a, 0, 100)).await;
+        let hold = RecordingHold::new(&pool, vec![]).keeping_view();
+        let mut best = hold.parking(0);
+        let kept = hold.view.as_ref().expect("the hold keeps a view");
+        assert!(kept.lock().awake().is_empty(), "the view was not lent to creation");
+        assert!(pool.validity.pool.read().selection().is_none(), "no selection index");
+        assert!(!pool.bridges.lock().is_observing(), "no bridge observation");
+
+        hold.log.lock().resting.push(root);
+        assert!(drain_committing(best.as_mut()).is_empty());
+        assert_eq!(hold.checked(), vec![root]);
+        assert!(best.promote(root));
+        assert_eq!(drain_committing(best.as_mut()), vec![root]);
     }
 
     /// Yields every candidate, committing each as the build loop would, and returns their hashes.
@@ -8198,7 +8224,7 @@ mod tests {
         let a = funded_signer(&client);
         let a0 = add(&pool, resting_1559(&a, 0, 900)).await;
         let holding = RecordingHold::new(&pool, vec![a0]);
-        let fresh = RecordingHold::new(&pool, Vec::new());
+        let fresh = RecordingHold::new(&pool, vec![ABSENT_RESTING]);
         let mut holding_view = SelectionView::default();
         let mut fresh_view = SelectionView::default();
 
@@ -8351,6 +8377,59 @@ mod tests {
         assert!(best.next().is_none(), "no stale dormancy and no lost hold");
     }
 
+    /// The hold empties after its first creation, so the creations that follow lend no view while
+    /// the bridged successor is replaced and the journal overflows. The view catches up only once
+    /// the hold rests again, as a resting set whose members all woke and later rest anew.
+    #[tokio::test]
+    async fn a_view_unlent_while_its_hold_was_empty_catches_up_when_the_hold_rests_again() {
+        let (pool, client) = build_integration_pool();
+        let [a, u] = [(); 2].map(|_| funded_signer(&client));
+        let root = add(&pool, resting_1559(&a, 0, 100)).await;
+        add(&pool, signed_1559_with_fees(&a, 1, 1_000, 100)).await;
+        let unrelated = add(&pool, signed_1559_with_fees(&u, 0, 1_000, 50)).await;
+        let hold = RecordingHold::new(&pool, vec![root]);
+        let mut view = SelectionView::default();
+        let mut first = hold.parking_with_view(0, &mut view);
+        assert_eq!(drain_committing(first.as_mut()), vec![unrelated]);
+        assert_eq!(view.dormant_len(), 1);
+        view.take_changes();
+
+        hold.log.lock().resting.clear();
+        assert!(view.wake(root), "removing the member wakes its dormant root");
+        let attributes = BestTransactionsAttributes::new(0, None);
+        let mut matches_unheld = |step: &str| {
+            let mut selected = hold.parking_with_view(0, &mut view);
+            let mut unheld = pool.best_transactions_with_attributes_and_parking(attributes, None);
+            assert_eq!(
+                drain_committing(selected.as_mut()),
+                drain_committing(unheld.as_mut()),
+                "{step}"
+            );
+        };
+        matches_unheld("emptied");
+        let replacement = add(&pool, signed_1559_with_fees(&a, 1, 1_100, 1_050)).await;
+        matches_unheld("bridged successor replaced");
+        {
+            let mut validity = pool.validity.pool.write();
+            for _ in 0..=SELECTION_JOURNAL_CAPACITY {
+                validity.touch_selection_lane((u.address(), U256::ZERO));
+            }
+        }
+        matches_unheld("journal overflowed");
+        assert_eq!(view.take_changes(), SelectionChanges::default(), "no creation borrowed it");
+
+        hold.log.lock().resting.push(root);
+        let asked = hold.checked().len();
+        let mut best = hold.parking_with_view(0, &mut view);
+        assert_eq!(asked_since(&hold, asked), vec![root]);
+        let changes = view.take_changes();
+        assert!(changes.reset, "the journal dropped entries the unlent view had not seen");
+        assert_eq!(changes.dormant, vec![root]);
+        assert_eq!(drain_committing(best.as_mut()), vec![unrelated]);
+        assert!(best.promote(root));
+        assert_eq!(drain_committing(best.as_mut()), vec![root, replacement]);
+    }
+
     #[tokio::test]
     async fn an_interrupted_view_creation_leaves_its_unasked_roots_awake() {
         let (pool, client) = build_integration_pool();
@@ -8449,7 +8528,7 @@ mod tests {
     async fn a_view_resting_nothing_matches_the_unheld_iterator_as_the_pool_changes() {
         let (pool, client) = build_integration_pool();
         let [a, _, c] = bridged_mixed_pool(&pool, &client).await;
-        let hold = RecordingHold::new(&pool, Vec::new());
+        let hold = RecordingHold::new(&pool, vec![ABSENT_RESTING]);
         let mut view = SelectionView::default();
         let attributes = BestTransactionsAttributes::new(0, None);
         let mut matches_unheld = |step: &str| {
@@ -8727,7 +8806,7 @@ mod tests {
         add(&pool, signed_1559_with_fees(&e, 1, 1_000, 850)).await;
         add(&pool, validity_8130(&s, channel, 0, 1_000)).await;
         let channel_successor = add(&pool, signed_channel_tx(&s, channel, 1, 1_000)).await;
-        let hold = RecordingHold::new(&pool, Vec::new());
+        let hold = RecordingHold::new(&pool, vec![ABSENT_RESTING]);
         let mut view = SelectionView::default();
         let attributes = BestTransactionsAttributes::new(0, None);
         let mut matches_unheld = |step: &str| {
