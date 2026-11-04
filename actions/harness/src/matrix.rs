@@ -4,32 +4,7 @@ use std::{
     panic::{self, AssertUnwindSafe},
 };
 
-use base_common_genesis::UpgradeConfig;
-
-/// A function that activates a single upgrade on a [`UpgradeConfig`].
-pub type ForkSetter = fn(&mut UpgradeConfig);
-
-/// All supported upgrade stages in canonical order. Each setter activates
-/// exactly one additional fork; [`ForkMatrix::all`] applies these in sequence
-/// to produce a cumulative snapshot after each step.
-///
-/// To add a new fork: insert one entry here in the correct position. All
-/// matrix constructors update automatically.
-static FORK_PROGRESSION: &[(&str, ForkSetter)] = &[
-    ("regolith", |h| h.regolith_time = Some(0)),
-    ("canyon", |h| h.canyon_time = Some(0)),
-    ("delta", |h| h.delta_time = Some(0)),
-    ("ecotone", |h| h.ecotone_time = Some(0)),
-    ("fjord", |h| h.fjord_time = Some(0)),
-    ("granite", |h| h.granite_time = Some(0)),
-    ("holocene", |h| h.holocene_time = Some(0)),
-    ("pectra-blob-schedule", |h| h.pectra_blob_schedule_time = Some(0)),
-    ("isthmus", |h| h.isthmus_time = Some(0)),
-    ("jovian", |h| h.jovian_time = Some(0)),
-    ("azul", |h| h.base.azul = Some(0)),
-    ("beryl", |h| h.base.beryl = Some(0)),
-    ("cobalt", |h| h.base.cobalt = Some(0)),
-];
+use base_common_genesis::{BaseUpgrade, UpgradeConfig};
 
 /// Named upgrade schedules for parametrizing harness tests across protocol upgrades.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -40,15 +15,23 @@ pub struct ForkMatrix {
 impl ForkMatrix {
     /// Returns every cumulative upgrade stage supported by the harness.
     ///
-    /// Each entry activates one additional fork on top of all previous ones,
-    /// derived automatically from [`FORK_PROGRESSION`].
+    /// Derived from [`BaseUpgrade::VARIANTS`] in canonical order, so a new upgrade joins the
+    /// matrix without a harness change. Each entry activates one additional upgrade at genesis
+    /// on top of all previous ones and is named by its [`BaseUpgrade::contract_id`].
+    /// Block-activated Bedrock is the baseline and has no entry of its own.
     pub fn all() -> Self {
-        Self::build(FORK_PROGRESSION, UpgradeConfig::default())
+        Self::build(
+            BaseUpgrade::VARIANTS
+                .iter()
+                .copied()
+                .filter(|upgrade| *upgrade != BaseUpgrade::Bedrock),
+            UpgradeConfig::default(),
+        )
     }
 
     /// Returns the cumulative forks from Granite through Holocene (pre-Isthmus).
     ///
-    /// Includes the `pectra-blob-schedule` compatibility patch, which sits
+    /// Includes the `pectra_blob_schedule` compatibility patch, which sits
     /// between Holocene and Isthmus in the progression.
     pub fn pre_isthmus() -> Self {
         Self::all().retain(|_, h| h.granite_time.is_some() && h.isthmus_time.is_none())
@@ -63,18 +46,17 @@ impl ForkMatrix {
 
     /// Returns the canonical fault-proof fork progression from Granite onward.
     ///
-    /// The `pectra-blob-schedule` compatibility patch (a Base Sepolia-only quirk)
+    /// The `pectra_blob_schedule` compatibility patch (a Base Sepolia-only quirk)
     /// and Base-specific forks are excluded; this matrix covers only the upstream
     /// Base mainnet upgrade sequence.
     pub fn from_granite() -> Self {
-        static PROGRESSION: &[(&str, ForkSetter)] = &[
-            ("granite", |h| h.granite_time = Some(0)),
-            ("holocene", |h| h.holocene_time = Some(0)),
-            ("isthmus", |h| h.isthmus_time = Some(0)),
-            ("jovian", |h| h.jovian_time = Some(0)),
-        ];
         Self::build(
-            PROGRESSION,
+            [
+                BaseUpgrade::Granite,
+                BaseUpgrade::Holocene,
+                BaseUpgrade::Isthmus,
+                BaseUpgrade::Jovian,
+            ],
             UpgradeConfig {
                 regolith_time: Some(0),
                 canyon_time: Some(0),
@@ -123,14 +105,14 @@ impl ForkMatrix {
         }
     }
 
-    fn build(progression: &[(&'static str, ForkSetter)], base: UpgradeConfig) -> Self {
+    fn build(progression: impl IntoIterator<Item = BaseUpgrade>, base: UpgradeConfig) -> Self {
         let mut config = base;
         Self {
             forks: progression
-                .iter()
-                .map(|(name, apply)| {
-                    apply(&mut config);
-                    (*name, config)
+                .into_iter()
+                .map(|upgrade| {
+                    config.set_activation_timestamp(upgrade, 0);
+                    (upgrade.contract_id(), config)
                 })
                 .collect(),
         }
@@ -183,12 +165,15 @@ mod tests {
                 "fjord",
                 "granite",
                 "holocene",
-                "pectra-blob-schedule",
+                "pectra_blob_schedule",
                 "isthmus",
                 "jovian",
                 "azul",
                 "beryl",
                 "cobalt",
+                "denim",
+                "everest",
+                "zenith",
             ]
         );
     }
@@ -202,7 +187,7 @@ mod tests {
     #[test]
     fn pre_isthmus_includes_pectra_and_excludes_isthmus_and_later() {
         let names: Vec<_> = ForkMatrix::pre_isthmus().iter().map(|(name, _)| name).collect();
-        assert_eq!(names, vec!["granite", "holocene", "pectra-blob-schedule"]);
+        assert_eq!(names, vec!["granite", "holocene", "pectra_blob_schedule"]);
     }
 
     #[test]
@@ -245,7 +230,7 @@ mod tests {
                     assert!(!cfg.is_pectra_blob_schedule_active(0));
                     assert!(!cfg.is_isthmus_active(0));
                 }
-                "pectra-blob-schedule" => {
+                "pectra_blob_schedule" => {
                     assert!(cfg.is_holocene_active(0));
                     assert!(cfg.is_pectra_blob_schedule_active(0));
                     assert!(!cfg.is_isthmus_active(0));
@@ -270,10 +255,25 @@ mod tests {
                     assert!(!cfg.is_cobalt_active(0));
                 }
                 "cobalt" => {
-                    assert!(cfg.is_jovian_active(0));
-                    assert!(cfg.is_base_azul_active(0));
                     assert!(cfg.is_beryl_active(0));
                     assert!(cfg.is_cobalt_active(0));
+                    assert!(!cfg.is_denim_active(0));
+                }
+                "denim" => {
+                    assert!(cfg.is_cobalt_active(0));
+                    assert!(cfg.is_denim_active(0));
+                    assert!(!cfg.is_everest_active(0));
+                }
+                "everest" => {
+                    assert!(cfg.is_denim_active(0));
+                    assert!(cfg.is_everest_active(0));
+                    assert!(!cfg.is_zenith_active(0));
+                }
+                "zenith" => {
+                    assert!(cfg.is_jovian_active(0));
+                    assert!(cfg.is_base_azul_active(0));
+                    assert!(cfg.is_everest_active(0));
+                    assert!(cfg.is_zenith_active(0));
                 }
                 _ => unreachable!("unexpected fork {fork_name}"),
             }

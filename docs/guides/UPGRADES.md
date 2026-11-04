@@ -1,371 +1,154 @@
 # Adding a New Upgrade
 
-This guide covers every code change required to introduce a new network upgrade to this repository. Changes are split into two groups: those required for every upgrade, and those that depend on whether the upgrade changes EVM execution rules.
-
-The Azul upgrade is used as the running example throughout. Replace `Azul` / `azul` / `BASE_AZUL` with the actual upgrade name.
-
----
-
-## Architecture overview
-
-Upgrade activation flows through three layers:
-
-1. **Config layer** — `UpgradeConfig` stores an optional activation timestamp per upgrade. `RollupConfig` embeds it and exposes `is_X_active(timestamp)` helpers.
-2. **Trait layer** — `BaseUpgrade` (enum) and `BaseUpgrades` (trait) provide typed, generic activation checks used by both the consensus and execution layers.
-3. **Execution layer** — `BaseSpecId` maps the active upgrade to an EVM spec. `spec_by_timestamp_after_bedrock` and `RollupConfig::spec_id` resolve which spec to use. `BasePrecompiles` routes to the correct precompile set.
+This guide covers adding a new network upgrade (hard fork) to this repository: where the upgrade is
+defined, every place it must be added, and how it is later scheduled on a live chain. The Everest
+network upgrade, the most recently added one, is the running example. Replace `Everest` /
+`everest` with the new upgrade's name.
 
 ---
 
-## Part 1 — Required for every upgrade
-
-### 1. Add the variant to the `BaseUpgrade` enum
-
-**File:** [`crates/common/chains/src/upgrade.rs`](../../crates/common/chains/src/upgrade.rs)
-
-Inside the `upgrade!` macro, append the new variant after the current last entry:
-
-```rust
-upgrade!(
-    #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-    #[derive(Default)]
-    BaseUpgrade {
-        // ... existing variants ...
-        /// Jovian: Base network upgrade.
-        Jovian,
-        /// Azul: First Base-specific network upgrade.
-        Azul,   // <-- add here
-    }
-);
-```
-
-Then update each chain config array method from `[(Self, ForkCondition); N]` to `N+1` and append the new entry. Mainnet and sepolia use `ForkCondition::Never` until the upgrade is scheduled; the generic devnet uses `ForkCondition::ZERO_TIMESTAMP`:
-
-```rust
-pub const fn mainnet() -> [(Self, ForkCondition); 10] {
-    [
-        // ... existing entries ...
-        (Self::Azul, ForkCondition::Never),
-    ]
-}
-
-pub const fn devnet() -> [(Self, ForkCondition); 10] {
-    [
-        // ... existing entries ...
-        (Self::Azul, ForkCondition::ZERO_TIMESTAMP),
-    ]
-}
-```
-
-Update `check_base_upgrade_from_str` in the test module to include the new upgrade variant.
-
----
-
-### 2. Add the `BaseChainUpgrades` index arm
-
-**File:** [`crates/common/chains/src/chain.rs`](../../crates/common/chains/src/chain.rs)
-
-Add `Azul` to the `use BaseUpgrade::{...}` import and add a match arm to `Index<BaseUpgrade>`:
-
-```rust
-use BaseUpgrade::{
-    Azul, Bedrock, Canyon, Ecotone, Fjord, Granite, Holocene, Isthmus, Jovian, Regolith,
-};
-
-impl Index<BaseUpgrade> for BaseChainUpgrades {
-    fn index(&self, hf: BaseUpgrade) -> &Self::Output {
-        match hf {
-            // ... existing arms ...
-            Jovian  => &self.forks[Jovian.idx()].1,
-            Azul    => &self.forks[Azul.idx()].1,  // <-- add
-        }
-    }
-}
-```
-
----
-
-### 3. Add the config field and nested struct
-
-**File:** [`crates/common/genesis/src/chain/upgrade.rs`](https://github.com/base/base/blob/main/crates/common/genesis/src/chain/upgrade.rs)
-
-For standard upgrades (flat timestamp field), add directly to `UpgradeConfig`:
-
-```rust
-/// `azul_time` sets the activation time for the Base Azul network upgrade.
-#[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
-pub azul_time: Option<u64>,
-```
-
-For namespaced upgrades with the `{ "base": { "azul": <timestamp> } }` JSON shape, define a sub-struct and embed it:
-
-```rust
-/// Upgrade configuration for Base-specific upgrades.
-#[derive(Debug, Copy, Clone, Default, Hash, Eq, PartialEq)]
-#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(deny_unknown_fields))]
-pub struct BaseUpgradeConfig {
-    #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
-    pub azul: Option<u64>,
-}
-
-pub struct UpgradeConfig {
-    // ... existing fields ...
-    #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
-    pub base: Option<BaseUpgradeConfig>,
-}
-```
-
-Also update `UpgradeConfig::iter()` to include the new entry, and re-export any new public types from `crates/common/genesis/src/chain/mod.rs` and `crates/common/genesis/src/lib.rs`.
-
----
-
-### 4. Add activation methods to `RollupConfig`
-
-**File:** [`crates/common/genesis/src/rollup.rs`](https://github.com/base/base/blob/main/crates/common/genesis/src/rollup.rs)
-
-Add `is_X_active` and `is_first_X_block` after the previous upgrade's methods.
-
-There are two patterns depending on whether the new upgrade is **standalone** or **cascading**:
-
-**Standalone** (e.g. `pectra_blob_schedule`, `Azul`) — activated independently, never implied by a later upgrade being active. Use this pattern when the upgrade affects only protocol-level behavior and is not a prerequisite for the next upgrade:
-
-```rust
-/// Returns true if Base Azul is active at the given timestamp.
-pub fn is_base_azul_active(&self, timestamp: u64) -> bool {
-    self.upgrades.base.as_ref().and_then(|b| b.azul).is_some_and(|t| timestamp >= t)
-}
-
-/// Returns true if the timestamp marks the first Base Azul block.
-pub fn is_first_base_azul_block(&self, timestamp: u64) -> bool {
-    self.is_base_azul_active(timestamp)
-        && !self.is_base_azul_active(timestamp.saturating_sub(self.block_time))
-}
-```
-
-The previous terminal upgrade's `is_X_active` method is left unchanged (no cascade added).
-
-**Cascading** (e.g. `Canyon`, `Ecotone`, `Isthmus`) — the previous upgrade is considered active whenever the new one is. Update the previous terminal upgrade's method and add the new one:
-
-```rust
-/// Returns true if Jovian is active at the given timestamp.
-pub fn is_jovian_active(&self, timestamp: u64) -> bool {
-    self.upgrades.jovian_time.is_some_and(|t| timestamp >= t)
-        || self.is_next_active(timestamp)  // <-- cascade to next fork
-}
-
-/// Returns true if Next is active at the given timestamp.
-pub fn is_next_active(&self, timestamp: u64) -> bool {
-    self.upgrades.next_time.is_some_and(|t| timestamp >= t)
-}
-```
-
-Also update `upgrade_activation` in `impl BaseUpgrades for RollupConfig` to add the new arm. For **standalone** upgrades, the previous arm keeps `unwrap_or(ForkCondition::Never)`:
-
-```rust
-BaseUpgrade::Jovian => self
-    .upgrades
-    .jovian_time
-    .map(ForkCondition::Timestamp)
-    .unwrap_or(ForkCondition::Never),  // standalone: no cascade
-BaseUpgrade::Azul => self
-    .upgrades
-    .base
-    .as_ref()
-    .and_then(|b| b.azul)
-    .map(ForkCondition::Timestamp)
-    .unwrap_or(ForkCondition::Never),
-_ => ForkCondition::Never,  // required: BaseUpgrade is #[non_exhaustive]
-```
-
-For **cascading** upgrades, replace the previous arm's `unwrap_or(ForkCondition::Never)` with `.unwrap_or_else(|| self.upgrade_activation(BaseUpgrade::Next))`.
-
----
-
-### 5. Add the trait method
-
-**File:** [`crates/common/chains/src/upgrades.rs`](../../crates/common/chains/src/upgrades.rs)
-
-```rust
-/// Returns `true` if [`Azul`](BaseUpgrade::Azul) is active at given block timestamp.
-fn is_azul_active_at_timestamp(&self, timestamp: u64) -> bool {
-    self.fork_condition(BaseUpgrade::Azul).active_at_timestamp(timestamp)
-}
-```
-
----
-
-### 6. Update timestamp constants and test fixtures
-
-**Files:**
-- [`crates/common/chains/src/upgrade.rs`](../../crates/common/chains/src/upgrade.rs) (mainnet, sepolia, devnet constants)
-- [`crates/common/chains/src/lib.rs`](../../crates/common/chains/src/lib.rs)
-- [`crates/common/chains/src/test_utils.rs`](https://github.com/base/base/blob/main/crates/common/chains/src/test_utils.rs)
-
-Add named constants once an activation timestamp is confirmed:
-
-```rust
-// mainnet.rs
-/// Base Azul mainnet activation timestamp.
-pub const BASE_MAINNET_BASE_AZUL_TIMESTAMP: u64 = <timestamp>;
-
-// sepolia.rs
-/// Base Azul sepolia activation timestamp.
-pub const BASE_SEPOLIA_BASE_AZUL_TIMESTAMP: u64 = <timestamp>;
-```
-
-Re-export from `lib.rs` alongside the other timestamp constants.
-
-Update the `UpgradeConfig` literal in both registry fixture files:
-
-```rust
-upgrades: UpgradeConfig {
-    // ... existing fields ...
-    jovian_time: Some(BASE_MAINNET_JOVIAN_TIMESTAMP),
-    base: Some(BaseUpgradeConfig { azul: Some(BASE_MAINNET_BASE_AZUL_TIMESTAMP) }),
-},
-```
-
-Until an activation timestamp is confirmed, leave `base: None` and the chain arrays at `ForkCondition::Never`.
-
----
-
-### 7. Update the default rollup config
-
-**File:** [`crates/common/chains/src/test_utils.rs`](https://github.com/base/base/blob/main/crates/common/chains/src/test_utils.rs)
-
-The `default_rollup_config()` function sets all upgrades active at genesis for dev use. Add the new upgrade:
-
-```rust
-upgrades: UpgradeConfig {
-    // ... existing fields ...
-    jovian_time: Some(0),
-    base: Some(BaseUpgradeConfig { azul: Some(0) }),
-},
-```
-
----
-
-### 8. Verify the upgrade consistency tests
-
-**File:** [`crates/common/chains/tests/upgrade_consistency.rs`](https://github.com/base/base/blob/main/crates/common/chains/tests/upgrade_consistency.rs)
-
-For every entry in `BaseUpgrade::VARIANTS`, these tests assert that the derived rollup config's
-`fork_condition(fork)` matches `ChainUpgrades::mainnet().fork_condition(fork)` for mainnet and
-`ChainUpgrades::sepolia().fork_condition(fork)` for Sepolia. The rollup configs are
-`BASE_MAINNET_ROLLUP_CONFIG` and `BASE_SEPOLIA_ROLLUP_CONFIG` from
-`base_common_chains::test_utils`.
-
-The tests check every variant without skips. Both sides must agree on the activation condition,
-including `ForkCondition::Never` for an unscheduled upgrade.
-
----
-
-## Part 2 — Required when the upgrade changes EVM execution
-
-Skip this section if the upgrade only affects protocol-level behavior (batch decoding, derivation rules, system config) without introducing new EVM opcodes, precompile addresses, or gas rule changes.
-
-### 9. Add the `BaseSpecId` variant
-
-**File:** [`crates/common/evm/src/spec.rs`](https://github.com/base/base/blob/main/crates/common/evm/src/spec.rs)
-
-```rust
-pub enum BaseSpecId {
-    // ... existing variants ...
-    JOVIAN,
-    AZUL,  // <-- add
-    OSAKA,
-}
-```
-
-Extend `BaseSpecId::into_eth_spec()` only when the new Base upgrade changes the paired Ethereum EL
-upgrade. `BaseSpecId` wraps `BaseUpgrade`, so new upgrades are added to `BaseUpgrade` first:
-
-```rust
-BaseUpgrade::Isthmus | BaseUpgrade::Jovian => SpecId::PRAGUE,
-BaseUpgrade::Azul | BaseUpgrade::Beryl => SpecId::OSAKA,
-```
-
-Add the new `BaseUpgrade` variant with its canonical string name:
-
-```rust
-/// Beryl upgrade.
-Beryl,
-```
-
-`BaseSpecId` parsing and display delegate to `BaseUpgrade`.
-
----
-
-### 10. Route precompiles
-
-**File:** [`crates/common/precompiles/src/provider.rs`](../../crates/common/precompiles/src/provider.rs)
-
-If the upgrade introduces new precompiles, add a new method on `BasePrecompiles`. If it reuses the
-previous set, extend the existing arm in `new_with_spec`:
-
-```rust
-// Reuse previous precompile set
-BaseUpgrade::Azul | BaseUpgrade::Beryl => Self::azul(),
-
-// Or add a new set
-BaseUpgrade::Beryl => Self::beryl(),
-```
-
----
-
-### 11. Update spec resolution
-
-**File:** [`crates/common/chains/src/upgrade.rs`](https://github.com/base/base/blob/main/crates/common/chains/src/upgrade.rs)
-
-Add the new upgrade as the first check (newest upgrade wins):
-
-```rust
-pub fn from_timestamp(chain_spec: impl Upgrades, timestamp: u64) -> Self {
-    if chain_spec.is_beryl_active_at_timestamp(timestamp) {
-        Self::Beryl
-    } else if chain_spec.is_azul_active_at_timestamp(timestamp) {
-        Self::Azul
-    } else if chain_spec.is_jovian_active_at_timestamp(timestamp) {
-        Self::Jovian
-    } // ... remaining checks unchanged
-}
-```
-
----
-
-### 12. Update the reth upgrade schedule builder
-
-**File:** [`crates/common/chains/src/chain.rs`](https://github.com/base/base/blob/main/crates/common/chains/src/chain.rs)
-
-Append the new upgrade in `to_chain_upgrades()`. If it pairs with a new Ethereum upgrade (like Canyon→Shanghai), push both; if not, push only the Base upgrade entry:
-
-```rust
-// No paired Ethereum upgrade
-forks.push((BaseUpgrade::Jovian.boxed(), self[BaseUpgrade::Jovian]));
-forks.push((BaseUpgrade::Azul.boxed(), self[BaseUpgrade::Azul]));  // <-- add
-```
+## How upgrades are modeled
+
+- **`BaseUpgrade`** in [`crates/common/genesis/src/chain/upgrade.rs`](../../crates/common/genesis/src/chain/upgrade.rs)
+  is the single upgrade enum, declared with the `hardfork!` macro. `BaseUpgrade::VARIANTS` lists
+  every upgrade in chronological order. Two curated subsets sit beside it:
+  - `EXECUTION_VARIANTS` is the execution fork ladder that maps onto the reth and revm hardfork
+    schedule. It excludes the config-only `Delta` and `PectraBlobSchedule` upgrades and `Zenith`.
+  - `CONTRACT_VARIANTS` is the set the L1 upgrade-signal (`ProtocolVersions`) contract can
+    schedule. Its order must match the contract's registration order, so only ever append to it.
+    It excludes block-activated `Bedrock` and `Zenith`.
+- **`Zenith`** stays the last variant. It is a genesis-only gate for testing future features: it is
+  never contract-backed, never in a built-in chain schedule, and only activates through genesis
+  config. New upgrades go immediately before it.
+- **`UpgradeConfig`** stores an optional activation timestamp per upgrade. Inherited upgrades use
+  flat `<name>_time` fields; Base-specific upgrades (Azul onward) live in the nested
+  `BaseUpgradeConfig`, serialized as `{ "base": { "everest": <timestamp> } }`.
+- **`ChainConfig`** in [`crates/common/chains/src/config.rs`](../../crates/common/chains/src/config.rs)
+  holds the built-in `MAINNET`, `SEPOLIA`, `DEVNET`, and `ZERONET` schedules. A new upgrade starts as
+  `None` (never active) in all four. `DEVNET` activates the upgrades through Azul at genesis
+  (except the Sepolia-only Pectra blob schedule) and leaves Beryl through Everest at `None`. Local
+  devnets schedule newer upgrades per block through `L2_BASE_<NAME>_BLOCK` instead (see [Devnets and test tooling](#devnets-and-test-tooling)).
+- **`BaseUpgradeExt`** in [`crates/common/chains/src/upgrade.rs`](../../crates/common/chains/src/upgrade.rs)
+  maps upgrades onto revm specs (`into_eth_spec`), builds each chain's execution ladder
+  (`forks_for`, which returns `[(BaseUpgrade, ForkCondition); 14]`, one entry per
+  `EXECUTION_VARIANTS` member), and resolves the active upgrade (`from_timestamp`).
 
 ---
 
 ## Checklist
 
-### Always required
+The compiler finds the exhaustive `match` statements and struct literals that need a new arm or
+field, but it does not find the items marked **(manual)**: they fall through a wildcard arm or
+stop at the previous upgrade without any error.
 
-- [ ] `BaseUpgrade` variant added in `upgrade.rs`; all four chain arrays updated
-- [ ] `Index<BaseUpgrade>` arm added in `chain.rs`
-- [ ] Config field (flat or nested struct) added to `UpgradeConfig` in `upgrade.rs`; `iter()` updated; new types re-exported
-- [ ] `is_X_active` + `is_first_X_block` added to `RollupConfig`; `upgrade_activation` arm added; previous terminal upgrade cascades to new one (unless standalone)
-- [ ] `is_X_active_at_timestamp` added to `BaseUpgrades` trait
-- [ ] Timestamp constants added to chain config modules and re-exported from `lib.rs`
-- [ ] Registry fixtures (`test_utils/mod.rs`) updated
-- [ ] Default rollup config updated (`defaults.rs`)
-- [ ] Upgrade consistency tests pass
+### Upgrade definition
 
-### Required when EVM execution changes
+- [ ] Add the variant to `BaseUpgrade` before `Zenith`, and describe it in the enum's doc comment.
+- [ ] If it changes execution, append it to `EXECUTION_VARIANTS`, bump the array size, and add an
+  `execution_idx` arm.
+- [ ] If the L1 upgrade signal should schedule it, append it to `CONTRACT_VARIANTS`, bump the array
+  size, and add a `from_contract_fork_name` arm **(manual)**. The `ProtocolVersions` contract must
+  register the upgrade at the next registration ID.
+- [ ] Add a `contract_id` arm, the field to `BaseUpgradeConfig` and `is_empty`, the arms to
+  `UpgradeConfig::{activation, set_activation_timestamp, clear_activation_timestamp}`, and the
+  field (`None`) to `UpgradeConfig::BASE_MAINNET` and `BASE_SEPOLIA`.
 
-- [ ] `BaseSpecId` variant added with `into_eth_spec` mapping and `#[strum(serialize = "...")]` attribute
-- [ ] Precompile match arm updated (or new precompile set added)
-- [ ] `spec_by_timestamp_after_bedrock` updated (`common/evm/src/spec.rs`)
-- [ ] `RollupConfig::spec_id` updated (`common/genesis/src/rollup.rs`)
-- [ ] `to_chain_upgrades` updated (`execution/chainspec/src/upgrades.rs`)
+### Activation checks
+
+- [ ] Add `is_everest_active` / `is_first_everest_block` to the activation macro list in
+  [`crates/common/genesis/src/rollup.rs`](../../crates/common/genesis/src/rollup.rs), and add the
+  upgrade to the first-block activation log chain in the same file **(manual)**.
+- [ ] Add `is_everest_active_at_timestamp` to the `Upgrades` trait in
+  [`crates/common/chains/src/upgrades.rs`](../../crates/common/chains/src/upgrades.rs), and add the
+  variant to the timestamp arm of `impl Upgrades for RollupConfig` **(manual: it otherwise falls
+  through to `ForkCondition::Never`)**.
+
+### Chain schedules
+
+- [ ] Add `everest_timestamp: Option<u64>` to `ChainConfig`, set it to `None` in `MAINNET`,
+  `SEPOLIA`, `DEVNET`, and `ZERONET`, and map it into the `BaseUpgradeConfig` built by
+  `ChainConfig` (`config.rs`).
+- [ ] In `BaseUpgradeExt` (`crates/common/chains/src/upgrade.rs`): add the entry to `forks_for` and
+  bump its array size (and the `mainnet`/`sepolia`/`devnet`/`zeronet` signatures) **(manual)**; add
+  the new check first in `from_timestamp`, since the newest upgrade wins **(manual)**; extend
+  `into_eth_spec` only if the paired Ethereum spec changes; add the name to
+  `check_base_upgrade_from_str`.
+
+### Execution layer
+
+- [ ] Add `(BaseUpgrade::Everest.boxed(), genesis_info.base.everest)` to the genesis hardfork list
+  in [`crates/execution/chainspec/src/spec.rs`](../../crates/execution/chainspec/src/spec.rs)
+  **(manual)**.
+- [ ] Push the upgrade in `to_chain_upgrades` in
+  [`crates/execution/chainspec/src/upgrades.rs`](../../crates/execution/chainspec/src/upgrades.rs)
+  **(manual: otherwise a configured timestamp never becomes an execution-layer hardfork)**.
+- [ ] Map the upgrade in `BasePrecompiles::new_with_spec` in
+  [`crates/common/precompiles/src/provider.rs`](../../crates/common/precompiles/src/provider.rs),
+  either to the latest precompile set or to a new one **(manual: an unmapped upgrade panics at
+  runtime)**.
+- [ ] Add the field to `UpgradeInfo` in
+  [`crates/common/rpc-types/src/genesis.rs`](../../crates/common/rpc-types/src/genesis.rs), which
+  the chain spec reads genesis timestamps from **(manual)**.
+
+### Operator tooling
+
+- [ ] For contract-backed upgrades, add the metric label to `UPGRADE_METRIC_LABELS` in
+  [`crates/consensus/cli/src/metrics.rs`](../../crates/consensus/cli/src/metrics.rs).
+- [ ] Add the upgrade to `set_timestamp` and `specs_from_config` in
+  [`crates/infra/basectl/src/app/views/upgrades.rs`](../../crates/infra/basectl/src/app/views/upgrades.rs)
+  **(manual)**.
+
+### Devnets and test tooling
+
+- [ ] Add the name to `readUpgrades` in the devnet's `op-deployer`
+  (`op-deployer/cmd/op-deployer/upgrades.go` in [base/optimism](https://github.com/base/optimism)),
+  then bump the commit pinned in
+  [`etc/docker/Dockerfile.devnet`](../../etc/docker/Dockerfile.devnet). Until then the devnet
+  silently ignores `L2_BASE_EVEREST_BLOCK`.
+- [ ] Pass `L2_BASE_EVEREST_BLOCK` through
+  [`etc/docker/docker-compose.yml`](../../etc/docker/docker-compose.yml), document it in
+  [`etc/docker/devnet-env`](../../etc/docker/devnet-env), and add a `just devnet up` mode in
+  [`etc/docker/Justfile`](../../etc/docker/Justfile) if it needs one.
+- [ ] Add the name to `FORKS` and `default_forks` in
+  [`acceptance/src/config.rs`](../../acceptance/src/config.rs). A unit test fails until `FORKS`
+  lists every upgrade from Azul onward. The list is not derived from `BaseUpgrade` because a
+  scenario can only schedule an upgrade the pinned op-deployer accepts.
+- [ ] Add the timestamp to the genesis `base` map in `ActionEngineClient::build_genesis_for_rollup`
+  ([`actions/harness/src/engine.rs`](../../actions/harness/src/engine.rs)) **(manual)**, add a
+  `with_everest_at` setter to
+  [`actions/harness/src/test_rollup_config.rs`](../../actions/harness/src/test_rollup_config.rs),
+  and add a case to `each_case_is_cumulative_without_enabling_the_next_fork` in
+  [`actions/harness/src/matrix.rs`](../../actions/harness/src/matrix.rs).
+
+These places derive their upgrade list and need no change:
+
+- `ForkMatrix::all` in the action harness builds its progression from `BaseUpgrade::VARIANTS`.
+- `SetupContainer::with_base_activation_block` and
+  `SystemTestStackBuilder::with_base_activation_block` in `etc/systems` take a `BaseUpgrade` and
+  derive the `L2_BASE_<NAME>_BLOCK` variable from its contract ID.
+- [`etc/scripts/devnet/anvil-nitro-local.sh`](../../etc/scripts/devnet/anvil-nitro-local.sh) reads
+  contract-backed IDs from the `contract_upgrade_ids` binary and looks up each one under
+  `.base.<name>` or `.<name>_time` in the rollup config.
+- The upgrade consistency tests in
+  [`crates/common/chains/tests/upgrade_consistency.rs`](../../crates/common/chains/tests/upgrade_consistency.rs)
+  check every `BaseUpgrade::VARIANTS` entry, asserting that the Base Mainnet and Base Sepolia
+  rollup configs agree with `ChainUpgrades` (including `ForkCondition::Never` for unscheduled
+  upgrades).
+
+Finally, feature code gates new behavior on `is_everest_active` (consensus) or
+`is_everest_active_at_timestamp` (execution).
+
+---
+
+## Scheduling an upgrade
+
+Once an activation time is confirmed for a network, set it in both of that network's schedules:
+
+- the `<name>_timestamp` field of `MAINNET` or `SEPOLIA` in `crates/common/chains/src/config.rs`;
+- the matching field of `UpgradeConfig::BASE_MAINNET` or `BASE_SEPOLIA` in
+  `crates/common/genesis/src/chain/upgrade.rs`.
+
+Update the tests that pin the latest active upgrade, such as
+`BaseUpgrade::from_chain_and_timestamp` expectations and the chain spec tests in
+`crates/execution/chainspec/src/spec.rs`. The upgrade consistency tests fail if the two schedules
+disagree. "chore(common): schedule Mainnet Denim upgrade" (#6124) is a complete example.

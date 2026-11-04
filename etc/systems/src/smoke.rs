@@ -1,15 +1,16 @@
 //! System test stack orchestration and lifecycle management.
 
+use std::{
+    collections::BTreeMap,
+    fs::{self, OpenOptions},
+    num::NonZeroU64,
+    path::PathBuf,
+};
 #[cfg(feature = "upgrade-signal")]
 use std::{
     collections::BTreeSet,
     sync::{Mutex, OnceLock},
     time::Duration,
-};
-use std::{
-    fs::{self, OpenOptions},
-    num::NonZeroU64,
-    path::PathBuf,
 };
 
 use alloy_network::Ethereum;
@@ -19,8 +20,9 @@ use alloy_rpc_client::RpcClient;
 use alloy_rpc_types_engine::JwtSecret;
 use alloy_signer_local::PrivateKeySigner;
 use base_builder_core::RestingPredicateMode;
+use base_common_genesis::BaseUpgrade;
 #[cfg(feature = "upgrade-signal")]
-use base_common_genesis::{BaseUpgrade, RollupConfig, RuntimeUpgradeRegistry, UpgradeActivation};
+use base_common_genesis::{RollupConfig, RuntimeUpgradeRegistry, UpgradeActivation};
 use base_common_network::Base;
 use base_execution_txpool::ValiditySignatureMode;
 use base_node_runner::BaseNodeExtension;
@@ -389,12 +391,7 @@ impl SystemTestStack {
 pub struct SystemTestStackBuilder {
     devnet_config: DevnetConfig,
     isthmus_activation_block: Option<u64>,
-    base_azul_activation_block: Option<u64>,
-    base_beryl_activation_block: Option<u64>,
-    base_cobalt_activation_block: Option<u64>,
-    base_denim_activation_block: Option<u64>,
-    base_everest_activation_block: Option<u64>,
-    base_zenith_activation_block: Option<u64>,
+    base_activation_blocks: BTreeMap<BaseUpgrade, u64>,
     output_dir: Option<PathBuf>,
     tx_forwarding_config: Option<TxForwardingConfig>,
     validity_signature_mode: ValiditySignatureMode,
@@ -433,14 +430,8 @@ impl SystemTestStackBuilder {
             .try_init();
     }
 
-    const fn has_custom_fork_activation(&self) -> bool {
-        self.isthmus_activation_block.is_some()
-            || self.base_azul_activation_block.is_some()
-            || self.base_beryl_activation_block.is_some()
-            || self.base_cobalt_activation_block.is_some()
-            || self.base_denim_activation_block.is_some()
-            || self.base_everest_activation_block.is_some()
-            || self.base_zenith_activation_block.is_some()
+    fn has_custom_fork_activation(&self) -> bool {
+        self.isthmus_activation_block.is_some() || !self.base_activation_blocks.is_empty()
     }
 
     /// Creates a new `SystemTestStackBuilder` with default configuration.
@@ -478,39 +469,9 @@ impl SystemTestStackBuilder {
         self
     }
 
-    /// Sets the L2 block number at which Base Azul activates.
-    pub const fn with_base_azul_activation_block(mut self, block: u64) -> Self {
-        self.base_azul_activation_block = Some(block);
-        self
-    }
-
-    /// Sets the L2 block number at which Base Beryl activates.
-    pub const fn with_base_beryl_activation_block(mut self, block: u64) -> Self {
-        self.base_beryl_activation_block = Some(block);
-        self
-    }
-
-    /// Sets the L2 block number at which Base Cobalt activates.
-    pub const fn with_base_cobalt_activation_block(mut self, block: u64) -> Self {
-        self.base_cobalt_activation_block = Some(block);
-        self
-    }
-
-    /// Sets the L2 block number at which Base Denim activates.
-    pub const fn with_base_denim_activation_block(mut self, block: u64) -> Self {
-        self.base_denim_activation_block = Some(block);
-        self
-    }
-
-    /// Sets the L2 block number at which Base Everest activates.
-    pub const fn with_base_everest_activation_block(mut self, block: u64) -> Self {
-        self.base_everest_activation_block = Some(block);
-        self
-    }
-
-    /// Sets the L2 block number at which the genesis-only Base Zenith testing gate activates.
-    pub const fn with_base_zenith_activation_block(mut self, block: u64) -> Self {
-        self.base_zenith_activation_block = Some(block);
+    /// Sets the L2 block number at which a Base-specific upgrade (Azul or later) activates.
+    pub fn with_base_activation_block(mut self, upgrade: BaseUpgrade, block: u64) -> Self {
+        self.base_activation_blocks.insert(upgrade, block);
         self
     }
 
@@ -759,28 +720,8 @@ impl SystemTestStackBuilder {
             setup = setup.with_isthmus_activation_block(block);
         }
 
-        if let Some(block) = self.base_azul_activation_block {
-            setup = setup.with_base_azul_activation_block(block);
-        }
-
-        if let Some(block) = self.base_beryl_activation_block {
-            setup = setup.with_base_beryl_activation_block(block);
-        }
-
-        if let Some(block) = self.base_cobalt_activation_block {
-            setup = setup.with_base_cobalt_activation_block(block);
-        }
-
-        if let Some(block) = self.base_denim_activation_block {
-            setup = setup.with_base_denim_activation_block(block);
-        }
-
-        if let Some(block) = self.base_everest_activation_block {
-            setup = setup.with_base_everest_activation_block(block);
-        }
-
-        if let Some(block) = self.base_zenith_activation_block {
-            setup = setup.with_base_zenith_activation_block(block);
+        for (&upgrade, &block) in &self.base_activation_blocks {
+            setup = setup.with_base_activation_block(upgrade, block);
         }
 
         let shared_l1 = self.shared_l1.clone();
