@@ -752,7 +752,7 @@ mod tests {
 
     use alloy_primitives::{Address, b256};
     use base_common_genesis::RollupConfig;
-    use base_consensus_peers::NodeRecord;
+    use base_consensus_peers::{BootNode, NodeRecord};
     use base_consensus_providers::L1_RPC_TIMEOUT;
     use clap::Parser;
     use httpmock::{HttpMockRequest, HttpMockResponse, Method::POST, MockServer};
