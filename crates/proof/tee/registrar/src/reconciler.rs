@@ -440,31 +440,41 @@ mod tests {
         tasks.drain().await;
     }
 
-    #[test]
-    fn unavailable_attestations_block_cleanup() {
+    #[tokio::test]
+    async fn unavailable_attestations_block_cleanup() {
+        let mut tasks = RegistrationTaskSet::default();
+        spawn_pending(&mut tasks, OTHER_SIGNER, healthy_prover_instance(EP1).instance_id);
         let mut reconciler = SignerReconciler::new(2);
         let result = reconciler.step(
             vec![(
                 healthy_prover_instance(EP1),
                 InstanceObservation::AttestationsUnavailable { signers: vec![SIGNER] },
             )],
-            std::iter::empty(),
+            tasks.pending(),
         );
+        assert!(result.cancel.is_empty());
         assert!(result.orphan_cleanup.is_none());
         assert!(result.spawn.is_empty());
+        tasks.drain().await;
     }
 
-    #[test]
-    fn empty_discovery_allows_cleanup() {
-        let result = SignerReconciler::new(2).step(vec![], std::iter::empty());
+    #[tokio::test]
+    async fn empty_discovery_allows_cleanup() {
+        let mut tasks = RegistrationTaskSet::default();
+        spawn_pending(&mut tasks, OTHER_SIGNER, healthy_prover_instance(EP1).instance_id);
+        let result = SignerReconciler::new(2).step(vec![], tasks.pending());
+        assert_eq!(result.cancel, vec![OTHER_SIGNER]);
         let protected = result.orphan_cleanup.unwrap();
         assert!(!protected.contains(&SIGNER));
         assert!(result.spawn.is_empty());
+        tasks.drain().await;
     }
 
-    #[test]
-    fn missing_signers_block_cleanup_until_grace_expires() {
+    #[tokio::test]
+    async fn missing_signers_block_cleanup_until_grace_expires() {
         let mut reconciler = SignerReconciler::new(2);
+        let mut tasks = RegistrationTaskSet::default();
+        spawn_pending(&mut tasks, OTHER_SIGNER, healthy_prover_instance(EP1).instance_id);
         reconciler.step(
             vec![(
                 healthy_prover_instance(EP1),
@@ -473,36 +483,45 @@ mod tests {
             std::iter::empty(),
         );
         for _ in 0..2 {
-            let result = reconciler.step(vec![], std::iter::empty());
+            let result = reconciler.step(vec![], tasks.pending());
+            assert!(result.cancel.is_empty());
             assert!(result.orphan_cleanup.is_none());
             assert!(result.spawn.is_empty());
         }
-        let expired = reconciler.step(vec![], std::iter::empty());
+        let expired = reconciler.step(vec![], tasks.pending());
+        assert_eq!(expired.cancel, vec![OTHER_SIGNER]);
         assert!(!expired.orphan_cleanup.unwrap().contains(&SIGNER));
+        tasks.drain().await;
     }
 
-    #[test]
-    fn initially_unreachable_defers_exactly_one_grace_period() {
+    #[tokio::test]
+    async fn initially_unreachable_defers_exactly_one_grace_period() {
         let mut reconciler = SignerReconciler::new(2);
         let instance = healthy_prover_instance(EP1);
+        let mut tasks = RegistrationTaskSet::default();
+        spawn_pending(&mut tasks, OTHER_SIGNER, instance.instance_id.clone());
         for cycle in 1..=5 {
-            let result = reconciler.step(
-                vec![(instance.clone(), InstanceObservation::Unreachable)],
-                std::iter::empty(),
-            );
+            let result = reconciler
+                .step(vec![(instance.clone(), InstanceObservation::Unreachable)], tasks.pending());
             assert!(result.spawn.is_empty());
             if cycle <= 2 {
+                assert!(result.cancel.is_empty());
                 assert!(result.orphan_cleanup.is_none());
             } else {
+                assert_eq!(result.cancel, vec![OTHER_SIGNER]);
                 assert!(!result.orphan_cleanup.unwrap().contains(&SIGNER));
             }
         }
+        tasks.drain().await;
     }
 
-    #[test]
-    fn discovered_failure_blocks_cleanup_without_aging_cache() {
+    #[tokio::test]
+    async fn discovered_failure_blocks_cleanup_without_aging_cache() {
         let mut reconciler = SignerReconciler::new(2);
         let instance = healthy_prover_instance(EP1);
+        let mut tasks = RegistrationTaskSet::default();
+        spawn_pending(&mut tasks, SIGNER, instance.instance_id.clone());
+        spawn_pending(&mut tasks, ABSENT_SIGNER, healthy_prover_instance(EP2).instance_id);
         reconciler.step(
             vec![(
                 instance.clone(),
@@ -528,11 +547,13 @@ mod tests {
                         },
                     ),
                 ],
-                std::iter::empty(),
+                tasks.pending(),
             );
+            assert_eq!(result.cancel, vec![ABSENT_SIGNER]);
             assert!(result.orphan_cleanup.is_none());
             assert_eq!(result.spawn.len(), 1);
         }
+        tasks.drain().await;
         let result = reconciler.step(
             vec![
                 (instance.clone(), InstanceObservation::Unreachable),
@@ -549,10 +570,12 @@ mod tests {
         assert!(!expired.orphan_cleanup.unwrap().contains(&SIGNER));
     }
 
-    #[test]
-    fn cached_unreachable_signers_remain_protected_without_blocking_cleanup() {
+    #[tokio::test]
+    async fn cached_unreachable_signers_remain_protected_without_blocking_cleanup() {
         let mut reconciler = SignerReconciler::new(2);
         let instance = healthy_prover_instance(EP1);
+        let mut tasks = RegistrationTaskSet::default();
+        spawn_pending(&mut tasks, OTHER_SIGNER, instance.instance_id.clone());
         reconciler.step(
             vec![(
                 instance.clone(),
@@ -561,20 +584,19 @@ mod tests {
             std::iter::empty(),
         );
         for _ in 0..2 {
-            let result = reconciler.step(
-                vec![(instance.clone(), InstanceObservation::Unreachable)],
-                std::iter::empty(),
-            );
+            let result = reconciler
+                .step(vec![(instance.clone(), InstanceObservation::Unreachable)], tasks.pending());
+            assert_eq!(result.cancel, vec![OTHER_SIGNER]);
             assert!(result.spawn.is_empty());
             assert!(result.orphan_cleanup.unwrap().contains(&SIGNER));
         }
         for _ in 0..2 {
-            let expired = reconciler.step(
-                vec![(instance.clone(), InstanceObservation::Unreachable)],
-                std::iter::empty(),
-            );
+            let expired = reconciler
+                .step(vec![(instance.clone(), InstanceObservation::Unreachable)], tasks.pending());
+            assert_eq!(expired.cancel, vec![OTHER_SIGNER]);
             assert!(!expired.orphan_cleanup.unwrap().contains(&SIGNER));
         }
+        tasks.drain().await;
     }
 
     #[test]
@@ -598,21 +620,25 @@ mod tests {
         );
     }
 
-    #[test]
-    fn draining_instances_protect_all_signers_without_registration() {
+    #[tokio::test]
+    async fn draining_instances_protect_all_signers_without_registration() {
+        let mut tasks = RegistrationTaskSet::default();
+        spawn_pending(&mut tasks, ABSENT_SIGNER, healthy_prover_instance(EP1).instance_id);
         let signers = vec![SIGNER, Address::repeat_byte(2)];
         let result = SignerReconciler::new(2).step(
             vec![(
                 crate::test_utils::prover_instance(EP1, crate::InstanceHealthStatus::Draining),
                 InstanceObservation::Resolved { signers: signers.clone(), registerable: vec![] },
             )],
-            std::iter::empty(),
+            tasks.pending(),
         );
+        assert_eq!(result.cancel, vec![ABSENT_SIGNER]);
         assert!(result.spawn.is_empty());
         let protected = result.orphan_cleanup.unwrap();
         for signer in signers {
             assert!(protected.contains(&signer));
         }
+        tasks.drain().await;
     }
 
     #[cfg(feature = "metrics")]

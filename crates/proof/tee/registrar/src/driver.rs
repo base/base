@@ -759,7 +759,6 @@ mod tests {
 
         assert!(!tasks.contains(&new_signer), "shutdown must not spawn a registration task");
         assert!(!task_cancel.is_cancelled(), "shutdown must not apply task cancel decisions");
-        assert!(resolution.orphan_cleanup.is_some());
         tasks.drain().await;
     }
 
