@@ -50,7 +50,7 @@ async fn preparation_preserves_terminal_reverts(#[case] structured: bool) {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let endpoint = format!("http://{}", listener.local_addr().unwrap());
         let calls = Arc::new(Mutex::new(Vec::<String>::new()));
-        let server_calls = calls.clone();
+        let server_calls = Arc::clone(&calls);
         let server = tokio::spawn(async move {
             loop {
                 let (mut socket, _) = listener.accept().await.unwrap();
