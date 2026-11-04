@@ -1,7 +1,8 @@
 //! Registration driver — core orchestration loop.
 //!
 //! Observes prover endpoints and feeds completed discovery cycles to [`SignerReconciler`].
-//! Delegates registration tasks and gated orphan cleanup to [`SignerManager`].
+//! Applies its registration task decisions through [`RegistrationTaskSet`] and delegates
+//! signer registration and gated orphan cleanup to [`SignerManager`].
 
 use std::{sync::Arc, time::Duration};
 
@@ -143,12 +144,11 @@ where
                 Ok(_) if self.config.cancel.is_cancelled() => {}
                 Ok(None) => {}
                 Ok(Some(observations)) => {
-                    // Newly spawned tasks use signers already protected by the active set.
                     let resolution = reconciler.step(observations, registration_tasks.pending());
-                    self.signer_manager.reconcile_registration_tasks(
-                        &resolution,
+                    self.apply_task_decisions(
                         &mut registration_tasks,
-                        &self.config.cancel,
+                        &resolution.cancel,
+                        resolution.spawn,
                     );
 
                     if let Some(protected_signers) = &resolution.orphan_cleanup
@@ -187,6 +187,39 @@ where
         info!("registration driver stopped");
         Ok(())
     }
+
+    /// Applies task cancellations and spawns unless shutdown has started.
+    pub fn apply_task_decisions(
+        &self,
+        registration_tasks: &mut RegistrationTaskSet,
+        cancel: &[Address],
+        spawn: Vec<RegisterableSigner>,
+    ) where
+        R: TEEProverRegistryClient + 'static,
+        C: CertManagerClient + 'static,
+        T: 'static,
+    {
+        if self.config.cancel.is_cancelled() {
+            return;
+        }
+
+        for signer in cancel {
+            registration_tasks.cancel(signer);
+        }
+        for entry in spawn {
+            let signer_cancel = self.config.cancel.child_token();
+            let manager = Arc::clone(&self.signer_manager);
+            let instance_id = entry.instance.instance_id;
+            let task_instance_id = instance_id.clone();
+            let task_cancel = signer_cancel.clone();
+            let signer = entry.signer;
+            let attestation = entry.attestation;
+            registration_tasks.spawn(signer, instance_id, signer_cancel, async move {
+                manager.register_signer(&task_instance_id, signer, &attestation, &task_cancel).await
+            });
+        }
+    }
+
     /// Resolves signer keys and attestations without cache grace, omitting cancelled instances.
     async fn resolve_instance(
         &self,
@@ -674,6 +707,155 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn task_decisions_cancel_pending_registration() {
+        let driver = task_driver(CancellationToken::new(), endpoint_url(EP1));
+        let mut tasks = RegistrationTaskSet::default();
+        let signer = Address::repeat_byte(1);
+        let task_cancel = CancellationToken::new();
+        let wait_cancel = task_cancel.clone();
+        let (finished, completion) = tokio::sync::oneshot::channel();
+        tasks.spawn(signer, "old".into(), task_cancel.clone(), async move {
+            wait_cancel.cancelled().await;
+            finished.send(()).unwrap();
+            Ok(())
+        });
+
+        driver.apply_task_decisions(&mut tasks, &[signer], vec![]);
+
+        assert!(task_cancel.is_cancelled(), "cancel decision must cancel the pending task token");
+        tokio::time::timeout(Duration::from_secs(1), completion)
+            .await
+            .expect("pending task must observe the cancel decision before drain")
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn task_decisions_spawn_registration_with_shutdown_child_token() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let cancel = CancellationToken::new();
+        let driver =
+            task_driver(cancel.clone(), endpoint_url(&listener.local_addr().unwrap().to_string()));
+        let raw = hex::decode(include_str!("testdata/nitro_attestation.hex").trim()).unwrap();
+        let cose = crate::NitroCose::parse_sign1(&raw).unwrap();
+        let signer = crate::AttestationPlanner::prepare_registration_plan(&raw).unwrap().signer;
+        let mut payload: ciborium::Value =
+            ciborium::de::from_reader(cose.payload.as_slice()).unwrap();
+        for (key, value) in payload.as_map_mut().unwrap() {
+            if key.as_text() == Some("nonce") {
+                *value = ciborium::Value::Bytes(
+                    driver.signer_manager.attestation_nonce(signer).to_vec(),
+                );
+            }
+        }
+        let mut encoded_payload = Vec::new();
+        ciborium::ser::into_writer(&payload, &mut encoded_payload).unwrap();
+        let envelope = ciborium::Value::Array(vec![
+            ciborium::Value::Bytes(vec![0xa1, 0x01, 0x38, 0x22]),
+            ciborium::Value::Map(vec![]),
+            ciborium::Value::Bytes(encoded_payload),
+            ciborium::Value::Bytes(cose.signature),
+        ]);
+        let mut attestation = Vec::new();
+        ciborium::ser::into_writer(&envelope, &mut attestation).unwrap();
+        let mut tasks = RegistrationTaskSet::default();
+
+        driver.apply_task_decisions(
+            &mut tasks,
+            &[],
+            vec![RegisterableSigner {
+                instance: healthy_prover_instance(EP1),
+                signer,
+                attestation,
+            }],
+        );
+
+        // The unsigned nonce edit is sufficient to reach the first revocation read.
+        // Keep that RPC unanswered so only shutdown can complete registration.
+        let (_connection, _) = tokio::time::timeout(Duration::from_secs(1), listener.accept())
+            .await
+            .expect("spawned registration must make a contract read")
+            .unwrap();
+        cancel.cancel();
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while tasks.contains(&signer) {
+                tasks.reap_finished_tasks();
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("spawned registration must finish on driver shutdown before drain");
+    }
+
+    fn task_driver(
+        cancel: CancellationToken,
+        cert_manager_url: Url,
+    ) -> RegistrationDriver<
+        Vec<ProverInstance>,
+        MockEnclaveEndpointClient,
+        CountingRegistry,
+        CertManagerContractClient,
+        NoopTxManager,
+    > {
+        let fixture = cycle_driver(vec![], MockEnclaveEndpointClient::default(), cancel.clone());
+        let manager = SignerManager::new(
+            CountingRegistry { reads: Arc::new(AtomicUsize::new(0)), cancel },
+            CertManagerContractClient::new(Address::ZERO, cert_manager_url),
+            NoopTxManager,
+            SignerManagerConfig {
+                registry_address: TEST_REGISTRY_ADDRESS,
+                max_concurrency: DEFAULT_MAX_CONCURRENCY,
+                max_tx_retries: DEFAULT_MAX_TX_RETRIES,
+                tx_retry_delay: Duration::from_secs(DEFAULT_TX_RETRY_DELAY_SECS),
+                max_attestation_age: Duration::MAX,
+                crl_checks_enabled: false,
+            },
+        )
+        .unwrap();
+        RegistrationDriver::new(
+            fixture.discovery,
+            fixture.signer_client,
+            fixture.config,
+            Arc::new(manager),
+        )
+    }
+
+    #[tokio::test]
+    async fn cancellation_after_reconciliation_skips_task_decisions() {
+        let cancel = CancellationToken::new();
+        let driver = task_driver(cancel.clone(), endpoint_url(EP1));
+        let mut tasks = RegistrationTaskSet::default();
+        let old_signer = Address::repeat_byte(1);
+        let new_signer = Address::repeat_byte(2);
+        // Independent of shutdown so applying the cancel decision remains observable.
+        let task_cancel = CancellationToken::new();
+        let wait_cancel = task_cancel.clone();
+        tasks.spawn(old_signer, "old".into(), task_cancel.clone(), async move {
+            wait_cancel.cancelled().await;
+            Ok(())
+        });
+        let instance = healthy_prover_instance(EP1);
+        let observation = InstanceObservation::Resolved {
+            signers: vec![new_signer],
+            registerable: vec![RegisterableSigner {
+                instance: instance.clone(),
+                signer: new_signer,
+                attestation: b"mock-attestation".to_vec(),
+            }],
+        };
+        let resolution = SignerReconciler::new(INSTANCE_CACHE_TTL_CYCLES)
+            .step(vec![(instance, observation)], tasks.pending());
+        assert_eq!(resolution.cancel, vec![old_signer]);
+        assert_eq!(resolution.spawn.len(), 1);
+        cancel.cancel();
+
+        driver.apply_task_decisions(&mut tasks, &resolution.cancel, resolution.spawn);
+
+        assert!(!tasks.contains(&new_signer), "shutdown must not spawn a registration task");
+        assert!(!task_cancel.is_cancelled(), "shutdown must not apply task cancel decisions");
+        tasks.drain().await;
+    }
+
+    #[tokio::test]
     async fn discover_and_resolve_propagates_discovery_error_without_endpoint_io() {
         let driver = cycle_driver(
             FailingDiscovery,
@@ -986,5 +1168,51 @@ mod tests {
                 && registerable[0].signer == addr
         ));
         assert_eq!(*requested_readyz.lock().unwrap(), vec![endpoint_url(EP1)]);
+    }
+
+    #[cfg(feature = "metrics")]
+    #[tokio::test]
+    async fn run_spawns_registration_for_registerable_signer() {
+        let recorder = metrics_util::debugging::DebuggingRecorder::new();
+        let _guard = metrics::set_default_local_recorder(&recorder);
+        // The orphan pass's registry read cancels the driver after one cycle.
+        let cancel = CancellationToken::new();
+        let manager = SignerManager::new(
+            CountingRegistry { reads: Arc::new(AtomicUsize::new(0)), cancel: cancel.clone() },
+            CertManagerContractClient::new(Address::ZERO, endpoint_url(EP1)),
+            NoopTxManager,
+            SignerManagerConfig {
+                registry_address: TEST_REGISTRY_ADDRESS,
+                max_concurrency: DEFAULT_MAX_CONCURRENCY,
+                max_tx_retries: DEFAULT_MAX_TX_RETRIES,
+                tx_retry_delay: Duration::from_secs(DEFAULT_TX_RETRY_DELAY_SECS),
+                max_attestation_age: TEST_MAX_ATTESTATION_AGE,
+                crl_checks_enabled: false,
+            },
+        )
+        .unwrap();
+        let driver = RegistrationDriver::new(
+            vec![healthy_prover_instance(EP1)],
+            MockEnclaveEndpointClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]),
+            DriverConfig {
+                poll_interval: Duration::from_secs(30),
+                cancel,
+                max_concurrency: DEFAULT_MAX_CONCURRENCY,
+                instance_cache_ttl_cycles: INSTANCE_CACHE_TTL_CYCLES,
+            },
+            Arc::new(manager),
+        );
+
+        tokio::time::timeout(Duration::from_secs(1), driver.run())
+            .await
+            .expect("driver should stop after one cycle")
+            .unwrap();
+
+        let snapshot = recorder.snapshotter().snapshot().into_vec();
+        let spawned = snapshot
+            .iter()
+            .find(|(key, _, _, _)| key.key().name() == "base_registrar.proof_tasks_spawned")
+            .map(|(_, _, _, value)| value);
+        assert_eq!(spawned, Some(&metrics_util::debugging::DebugValue::Counter(1)));
     }
 }

@@ -33,8 +33,8 @@ including cancelled tasks until they are reaped.
 - **`planner`** — [`AttestationPlanner`] for CertManager-oriented registration plans.
 - **`hints`** — [`P384Hints`] Agora / `nitro-validator` inverse-transcript generator.
 - **`prover`** — [`ProverClient`] JSON-RPC client for polling prover readiness and signer endpoints.
-- **`reconciler`** — [`SignerReconciler`] unavailable-instance grace cache and [`ProtectedSigners`] set for orphan cleanup.
-- **`signer_manager`** — [`SignerManager`] registration task reconciliation, transaction execution, and orphan cleanup.
+- **`reconciler`** — [`SignerReconciler`] unavailable-instance grace cache, registration task cancel and spawn decisions, and [`ProtectedSigners`] set for orphan cleanup.
+- **`signer_manager`** — [`SignerManager`] signer registration, transaction execution, and orphan cleanup.
 - **`registration_tasks`** — [`RegistrationTaskSet`] bookkeeping and completion handling for registration tasks.
 - **`traits`** — [`InstanceDiscovery`] and [`EnclaveEndpointClient`] abstractions.
 - **`types`** — Core domain types: [`ProverInstance`], [`RegistrationPlan`], [`RegistrationHints`].
