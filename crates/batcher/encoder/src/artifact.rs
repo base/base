@@ -115,11 +115,6 @@ impl DaArtifacts {
         id
     }
 
-    /// Returns whether any artifact is available for a new submission.
-    pub fn has_ready(&self) -> bool {
-        self.artifacts.iter().any(|artifact| artifact.state == ArtifactState::Ready)
-    }
-
     /// Returns the number of ready blob artifacts.
     pub fn ready_blob_count(&self) -> usize {
         self.ready()
@@ -134,8 +129,15 @@ impl DaArtifacts {
 
     /// Leases the next ready artifacts as one transaction-sized submission.
     ///
-    /// Consecutive ready blobs are packed into one transaction, up to
-    /// `max_blobs`. A calldata artifact is always leased on its own.
+    /// A calldata artifact is always leased on its own. Consecutive ready blobs
+    /// are packed into one transaction up to and including the first one that
+    /// holds a channel's last frame, and at most `max_blobs`. The safe head
+    /// moves only once a channel's last frame is on L1, so sending its earlier
+    /// blobs ahead in their own transactions gains nothing. Until one of these
+    /// bounds is reached, or a calldata artifact in any state ends the run,
+    /// nothing is leased. A calldata artifact stays in the ledger until its
+    /// channel is safe, which needs the blobs before it, so a requeued run keeps
+    /// the same cut.
     pub fn lease(
         &mut self,
         submission_id: SubmissionId,
@@ -144,10 +146,10 @@ impl DaArtifacts {
         let first_ready =
             self.artifacts.iter().position(|artifact| artifact.state == ArtifactState::Ready)?;
 
-        Some(match self.artifacts[first_ready].payload {
+        match self.artifacts[first_ready].payload {
             DaArtifactPayload::Blob(_) => self.lease_blobs(first_ready, max_blobs, submission_id),
-            DaArtifactPayload::Calldata(_) => self.lease_calldata(first_ready, submission_id),
-        })
+            DaArtifactPayload::Calldata(_) => Some(self.lease_calldata(first_ready, submission_id)),
+        }
     }
 
     /// Returns whether every listed artifact is still leased to a submission.
@@ -231,23 +233,35 @@ impl DaArtifacts {
         self.artifacts.iter_mut().filter(|artifact| artifact_ids.contains(&artifact.id))
     }
 
-    /// Leases consecutive ready blobs as one transaction.
+    /// Leases consecutive ready blobs as one transaction, once the run is complete.
     fn lease_blobs(
         &mut self,
         first_ready: usize,
         maximum: usize,
         submission_id: SubmissionId,
-    ) -> (BatchSubmission, Vec<ArtifactId>) {
-        let indexes: Vec<_> = self
-            .artifacts
-            .iter()
-            .enumerate()
-            .skip(first_ready)
-            .filter(|(_, artifact)| artifact.state == ArtifactState::Ready)
-            .take_while(|(_, artifact)| matches!(artifact.payload, DaArtifactPayload::Blob(_)))
-            .take(maximum)
-            .map(|(index, _)| index)
-            .collect();
+    ) -> Option<(BatchSubmission, Vec<ArtifactId>)> {
+        let mut artifacts = self.artifacts.iter().enumerate().skip(first_ready);
+        let mut indexes = Vec::new();
+        let complete = loop {
+            let Some((index, artifact)) = artifacts.next() else {
+                break false;
+            };
+            // No later blob may join the run ahead of a calldata frame, whatever its state, so
+            // a requeued run keeps the same cut.
+            let DaArtifactPayload::Blob(payload) = &artifact.payload else {
+                break true;
+            };
+            if artifact.state != ArtifactState::Ready {
+                continue;
+            }
+            indexes.push(index);
+            if indexes.len() == maximum || payload.frames().iter().any(|frame| frame.is_last) {
+                break true;
+            }
+        };
+        if !complete {
+            return None;
+        }
 
         let payloads = indexes
             .iter()
@@ -264,7 +278,7 @@ impl DaArtifacts {
             self.artifacts[index].state = ArtifactState::Pending;
         }
 
-        (BatchSubmission::blobs(submission_id, payloads), artifact_ids)
+        Some((BatchSubmission::blobs(submission_id, payloads), artifact_ids))
     }
 
     /// Leases one ready calldata frame as one transaction.
@@ -301,9 +315,95 @@ mod tests {
     const FIRST: ChannelId = [1; 16];
     const SECOND: ChannelId = [2; 16];
 
-    fn blob() -> DaArtifactPayload {
-        let frame = Frame { id: FIRST, number: 0, data: Vec::new(), is_last: true };
-        DaArtifactPayload::Blob(BlobPayload::new(vec![Arc::new(frame)]))
+    const MAX_BLOBS: usize = 6;
+
+    fn frame(id: ChannelId, is_last: bool) -> Arc<Frame> {
+        Arc::new(Frame { id, number: 0, data: Vec::new(), is_last })
+    }
+
+    /// A blob carrying one frame of channel `id`.
+    fn blob(id: ChannelId, is_last: bool) -> DaArtifactPayload {
+        DaArtifactPayload::Blob(BlobPayload::new(vec![frame(id, is_last)]))
+    }
+
+    /// The artifacts the next lease takes, if any.
+    fn lease(artifacts: &mut DaArtifacts) -> Option<Vec<ArtifactId>> {
+        artifacts.lease(SubmissionId(0), MAX_BLOBS).map(|(_, artifact_ids)| artifact_ids)
+    }
+
+    /// A transaction ends at the first blob holding a channel's last frame, so the blobs after
+    /// it, from a channel still open, wait.
+    #[test]
+    fn a_transaction_ends_at_a_channel_end() {
+        let mut artifacts = DaArtifacts::new();
+        let first = artifacts.push(blob(FIRST, false), vec![FIRST]);
+        let end = artifacts.push(blob(FIRST, true), vec![FIRST, SECOND]);
+        artifacts.push(blob(SECOND, false), vec![SECOND]);
+
+        assert_eq!(lease(&mut artifacts), Some(vec![first, end]));
+        assert_eq!(lease(&mut artifacts), None);
+    }
+
+    /// Blobs without a channel end are leased only once they fill a transaction.
+    #[test]
+    fn blobs_without_a_channel_end_wait_for_a_full_transaction() {
+        let mut artifacts = DaArtifacts::new();
+        let mut ids: Vec<_> =
+            (1..MAX_BLOBS).map(|_| artifacts.push(blob(FIRST, false), vec![FIRST])).collect();
+        assert_eq!(lease(&mut artifacts), None);
+
+        ids.push(artifacts.push(blob(FIRST, false), vec![FIRST]));
+
+        assert_eq!(lease(&mut artifacts), Some(ids));
+    }
+
+    /// A requeued transaction is leased again as it was, without the newer blobs after it.
+    #[test]
+    fn a_requeued_transaction_follows_the_same_rule() {
+        let mut artifacts = DaArtifacts::new();
+        artifacts.push(blob(FIRST, false), vec![FIRST]);
+        artifacts.push(blob(FIRST, true), vec![FIRST]);
+        let leased = lease(&mut artifacts).expect("the channel's blobs");
+        artifacts.push(blob(SECOND, false), vec![SECOND]);
+
+        artifacts.requeue(&leased);
+
+        assert_eq!(lease(&mut artifacts), Some(leased));
+        assert_eq!(lease(&mut artifacts), None);
+    }
+
+    /// A calldata frame ends the blob run before it, since no later blob may land ahead of it, so
+    /// those blobs go out without a channel end.
+    #[test]
+    fn calldata_ends_the_blob_run_before_it() {
+        let mut artifacts = DaArtifacts::new();
+        let blob = artifacts.push(blob(FIRST, false), vec![FIRST]);
+        let calldata = artifacts.push(DaArtifactPayload::Calldata(frame(FIRST, true)), vec![FIRST]);
+
+        assert_eq!(lease(&mut artifacts), Some(vec![blob]));
+        assert_eq!(lease(&mut artifacts), Some(vec![calldata]));
+    }
+
+    /// A blob run cut by calldata keeps its cut once the calldata is leased or confirmed, so the
+    /// requeued blobs go out again as the same transaction instead of waiting for more output.
+    #[test]
+    fn a_run_cut_by_calldata_keeps_its_cut_when_requeued() {
+        for confirm_calldata in [false, true] {
+            let mut artifacts = DaArtifacts::new();
+            artifacts.push(blob(FIRST, false), vec![FIRST]);
+            artifacts.push(DaArtifactPayload::Calldata(frame(FIRST, true)), vec![FIRST]);
+            let blobs = lease(&mut artifacts).expect("the blobs before the calldata");
+            let calldata = lease(&mut artifacts).expect("the calldata");
+            artifacts.push(blob(SECOND, false), vec![SECOND]);
+            if confirm_calldata {
+                artifacts.confirm(&calldata);
+            }
+
+            artifacts.requeue(&blobs);
+
+            assert_eq!(lease(&mut artifacts), Some(blobs));
+            assert_eq!(lease(&mut artifacts), None);
+        }
     }
 
     /// Pruning a channel removes it from every artifact and drops the artifacts left with no
@@ -312,8 +412,8 @@ mod tests {
     #[test]
     fn prune_channels_drops_artifacts_left_without_a_channel() {
         let mut artifacts = DaArtifacts::new();
-        artifacts.push(blob(), vec![FIRST, SECOND]);
-        artifacts.push(blob(), vec![FIRST]);
+        artifacts.push(blob(FIRST, true), vec![FIRST, SECOND]);
+        artifacts.push(blob(FIRST, true), vec![FIRST]);
 
         artifacts.prune_channels(&[FIRST]);
 

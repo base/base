@@ -109,7 +109,10 @@ impl DaEgress {
         !channel.is_open() && available == 0 && !terminal_pending
     }
 
-    /// Builds and leases one transaction-sized submission.
+    /// Leases one transaction-sized submission, building artifacts from `channels` only when
+    /// the ready ones cannot be leased yet.
+    ///
+    /// Retries are older than any artifact built here, so they go out first.
     pub fn next_submission(
         &mut self,
         channels: &mut VecDeque<Channel>,
@@ -118,17 +121,17 @@ impl DaEgress {
         max_blobs_per_tx: usize,
         id: SubmissionId,
     ) -> Option<BatchSubmission> {
-        if !self.artifacts.has_ready() {
-            self.build_ready_artifacts(channels, da_type, l1_head, max_blobs_per_tx);
-        }
-
-        let (submission, artifact_ids) = self.artifacts.lease(id, max_blobs_per_tx)?;
+        let (submission, artifact_ids) =
+            self.artifacts.lease(id, max_blobs_per_tx).or_else(|| {
+                self.build_ready_artifacts(channels, da_type, l1_head, max_blobs_per_tx);
+                self.artifacts.lease(id, max_blobs_per_tx)
+            })?;
         self.pending.insert(id, artifact_ids);
 
         Some(submission)
     }
 
-    /// Materializes ready artifacts only when no retry is already waiting.
+    /// Materializes ready artifacts, up to one transaction of blobs or one calldata frame.
     fn build_ready_artifacts(
         &mut self,
         channels: &mut VecDeque<Channel>,
@@ -485,6 +488,51 @@ mod tests {
             .expect("blob submission");
 
         assert_eq!(submission.blob_count(), 2);
+    }
+
+    /// The blobs of an open channel go out once they fill a transaction. The rest wait, ready but
+    /// not leased, while later output is still framed into blobs: the output the close flushes
+    /// fills more transactions, and the last blobs go out with the channel's last frame once its
+    /// short tail is released at the deadline.
+    #[test]
+    fn an_open_channel_fills_transactions_until_its_tail_is_released() {
+        let max_blobs = 6;
+        let channel = open_channel_with_output(FIRST, (max_blobs + 1) * DaEgress::BLOB_CAPACITY);
+        let mut channels = VecDeque::from([channel]);
+        let mut egress = DaEgress::new();
+
+        let full = egress
+            .next_submission(&mut channels, DaType::Blob, 0, max_blobs, SubmissionId(0))
+            .expect("a full transaction");
+        assert_eq!(full.blob_count(), max_blobs);
+        assert!(frames(&full).iter().all(|&(id, is_last)| id == FIRST && !is_last));
+
+        assert!(
+            egress
+                .next_submission(&mut channels, DaType::Blob, 0, max_blobs, SubmissionId(1))
+                .is_none()
+        );
+        let waiting = egress.artifacts().ready_blob_count();
+        assert!((1..max_blobs).contains(&waiting), "{waiting} blobs wait");
+
+        channels[0].close().unwrap();
+        let mut id = 1;
+        while let Some(full) =
+            egress.next_submission(&mut channels, DaType::Blob, 9, max_blobs, SubmissionId(id))
+        {
+            assert_eq!(full.blob_count(), max_blobs);
+            assert!(frames(&full).iter().all(|&(_, is_last)| !is_last), "the tail waits");
+            id += 1;
+        }
+        let waiting = egress.artifacts().ready_blob_count();
+        let tail = egress
+            .next_submission(&mut channels, DaType::Blob, 10, max_blobs, SubmissionId(id))
+            .expect("the waiting blobs and the tail at the deadline");
+
+        assert_eq!(tail.blob_count(), waiting + 1);
+        assert_eq!(frames(&tail).last(), Some(&(FIRST, true)));
+        assert!(channels[0].framing_complete());
+        assert_eq!(egress.artifacts().ready_blob_count(), 0);
     }
 
     /// Confirming a submission reports the channels it carried and ends its lease, so a second
