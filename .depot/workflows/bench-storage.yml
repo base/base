@@ -1,7 +1,20 @@
 name: Storage provider benchmarks (advisory)
 
+# Runs after merge on pushes to main that touch the storage provider, comparing
+# against the previous main commit. On PRs it runs only with the ci:perf or
+# ci:full label.
 on:
+  push:
+    branches: [main]
+    paths:
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "crates/execution/node/**"
+      - "etc/scripts/ci/bench_compare.py"
+      - "etc/scripts/ci/run_storage_bench.sh"
+      - ".depot/workflows/bench-storage.yml"
   pull_request:
+    types: [opened, reopened, synchronize, labeled]
     paths:
       - "Cargo.lock"
       - "Cargo.toml"
@@ -26,13 +39,16 @@ permissions:
 jobs:
   historical-reads:
     name: Historical state reads
-    if: >
-      github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
+    if: >-
+      github.event_name != 'pull_request' || (
+      github.event.pull_request.head.repo.full_name == github.repository && (
+      contains(github.event.pull_request.labels.*.name, 'ci:perf') ||
+      contains(github.event.pull_request.labels.*.name, 'ci:full')))
     runs-on: depot-ubuntu-24.04-8
     timeout-minutes: 90
     env:
       HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-      BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
+      BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before || '' }}
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
