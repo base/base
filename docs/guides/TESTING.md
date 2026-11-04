@@ -106,11 +106,11 @@ just devnet tests
 which runs `cargo nextest run -p base-system-tests` after building test contracts. See
 [`etc/systems/README.md`](../../etc/systems/README.md) for the crate itself.
 
-System tests require Docker and do **not** run on pull requests or the merge queue (see
-[CI Pipeline](#ci-pipeline) below) because of their cost. They run after merge on every push to
-`main` (`system-tests.yml`), and a failure there is fixed in a follow-up PR. Add the `ci:system`
-or `ci:full` label to run them on a pull request before merge, then push a commit (or close and
-reopen the PR); labels are not picked up when added.
+System tests require Docker and do **not** run on pull requests (see
+[CI Pipeline](#ci-pipeline) below) because of their cost. They run on every merge-queue entry
+(`system-tests.yml`) instead. Add the `ci:system` or `ci:full` label to run them on a pull request
+before it is queued, then push a commit (or close and reopen the PR); labels are not picked up when
+added.
 
 
 ### Fuzz Tests
@@ -155,16 +155,17 @@ CI runs a different subset of checks depending on where a change is in its lifec
 | Pull request | `pull_request` | `ci-pr.yml` → `ci-core.yml` | Build/clippy/test scoped to **affected crates only** vs. base branch |
 | Pull request | `pull_request` | `no-std.yml`, `zepter.yml`, `lychee.yml`, `action-tests.yml` | Full workspace (these checks are already fast) |
 | Merge queue | `merge_group` | `ci-merge-queue.yml` → `ci-core.yml` | **Full** workspace build/clippy/test |
-| Push to `main` | `push` | `system-tests.yml`, `base-std-fork-tests.yml`, `bench-iai.yml`, `bench-storage.yml` | System tests, Base Std fork tests, and benchmarks against the previous `main` commit; failures are fixed after merge |
+| Merge queue | `merge_group` | `system-tests.yml`, `base-std-fork-tests.yml` | System tests on every entry; Base Std fork tests when an entry touches their inputs |
+| Push to `main` | `push` | `bench-iai.yml`, `bench-storage.yml` | Benchmarks against the previous `main` commit; regressions are fixed after merge |
 | Nightly | `schedule` (07:00 UTC) | `fuzz-nightly.yml` | Sharded sync-parity fuzzing |
 | Nightly | `schedule` (13:00 UTC) | `udeps-report.yml` | Unused-dependency report, files a GitHub issue on findings |
 | Release | manual / push to `releases/v*` | see [RELEASE.md](RELEASE.md) | Release builds, RC tags, Docker images |
 
 The affected-crates scoping on pull requests (via `etc/scripts/local/affected-crates.py`) is why
 `just pr` locally mirrors PR CI, while `just ci` mirrors what the merge queue ultimately requires —
-every affected crate, workspace-wide, before a change reaches `main`. System tests, Base Std fork
-tests, and benchmarks run only after merge, on `main`, to keep CI cost down; a failure there is
-fixed in a follow-up PR. Add `ci:system`, `ci:base-std`, `ci:perf`, or `ci:full` to a pull request
+every affected crate, workspace-wide, before a change reaches `main`. System tests and Base Std
+fork tests run in the merge queue rather than on every PR push, and benchmarks run only after merge,
+on `main`, where a regression is fixed in a follow-up PR. Add `ci:system`, `ci:base-std`, `ci:perf`, or `ci:full` to a pull request
 to run the matching suite before merge. The label takes effect on the next push or reopen, not when
 it is added.
 

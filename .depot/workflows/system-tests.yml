@@ -1,19 +1,18 @@
 name: System Tests
 
-# System tests run after merge, on every push to main. A failure there is
-# picked up and fixed after the fact instead of blocking each PR and merge-queue
-# run. A reviewer can add ci:system or ci:full to run them on a PR before merge.
+# System tests run in the merge queue instead of on every PR push, so a failure
+# blocks the merge without each PR paying for a run. On PRs the job is skipped
+# (a skipped job satisfies a required check) unless a reviewer adds ci:system or
+# ci:full.
 # Labels are read on the next push or reopen, not when added, so that an
 # unrelated label never posts a skipped check over a real result.
 on:
-  push:
-    branches: [main]
+  merge_group:
   pull_request:
     types: [opened, reopened, synchronize]
   workflow_dispatch:
 concurrency:
-  # Each main commit gets its own run so a failure points at one merge. PR runs
-  # are replaced by newer pushes.
+  # Each merge-queue entry gets its own run. PR runs are replaced by newer pushes.
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 env:

@@ -6,30 +6,19 @@
 # - Changed GitHub runs-on labels to their Depot equivalents
 
 name: Base Std Interface Tests
-# Runs after merge on pushes to main that touch the two crates patched into
-# base-anvil (or the workspace/toolchain inputs that can change that build).
-# A failure on main is fixed after the fact. A reviewer can add ci:base-std or
-# ci:full to run it on a PR before merge.
+# Runs in the merge queue when an entry touches the two crates patched into
+# base-anvil (or the workspace/toolchain inputs that can change that build). On
+# PRs the jobs are skipped (a skipped job satisfies a required check) unless a
+# reviewer adds ci:base-std or ci:full.
 # Labels are read on the next push or reopen, not when added, so that an
 # unrelated label never posts a skipped check over a real result.
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'Cargo.toml'
-      - 'Cargo.lock'
-      - '.cargo/**'
-      - 'rust-toolchain.toml'
-      - 'crates/common/chains/**'
-      - 'crates/common/precompiles/**'
-      - '.depot/actions/setup/**'
-      - '.depot/workflows/base-std-fork-tests.yml'
-      - 'etc/scripts/ci/base_std_mock_only_skips.py'
+  merge_group:
   pull_request:
     types: [opened, reopened, synchronize]
   workflow_dispatch:
 concurrency:
-  # Each main commit gets its own run; PR runs are replaced by newer pushes.
+  # Each merge-queue entry gets its own run; PR runs are replaced by newer pushes.
   group: ${{ github.workflow }}-${{ github.head_ref || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 env:
@@ -39,12 +28,44 @@ permissions:
   contents: read
   pull-requests: write
 jobs:
+  changes:
+    name: Detect Base Std Interface Changes
+    if: github.event_name == 'merge_group'
+    runs-on: depot-ubuntu-latest
+    outputs:
+      base-std: ${{ steps.filter.outputs.base-std }}
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
+      # Each merge-queue entry is one commit on top of the previous entry (or
+      # main), so HEAD^1..HEAD is exactly this entry's change. These are the two
+      # base/base crates patched into base-anvil below, plus workspace/toolchain
+      # inputs that can alter that build.
+      - name: Check for Base Std inputs
+        id: filter
+        shell: bash
+        run: |
+          if git diff --name-only HEAD^1 HEAD | grep -qE \
+            '^(Cargo\.toml|Cargo\.lock|\.cargo/|rust-toolchain\.toml|crates/common/chains/|crates/common/precompiles/|\.depot/actions/setup/|\.depot/workflows/base-std-fork-tests\.yml|etc/scripts/ci/base_std_mock_only_skips\.py)'; then
+            echo "base-std=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "base-std=false" >> "$GITHUB_OUTPUT"
+          fi
   fork-tests:
     name: Base Std Interface Tests (${{ matrix.fork }})
+    needs: changes
     if: >-
-      github.event_name != 'pull_request' ||
+      !cancelled() && (
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'merge_group' && needs.changes.outputs.base-std == 'true') ||
+      (github.event_name == 'pull_request' && (
       contains(github.event.pull_request.labels.*.name, 'ci:base-std') ||
-      contains(github.event.pull_request.labels.*.name, 'ci:full')
+      contains(github.event.pull_request.labels.*.name, 'ci:full'))))
     runs-on: depot-ubuntu-24.04-8
     timeout-minutes: 120
     strategy:
@@ -220,13 +241,16 @@ jobs:
           fi
   aggregate:
     name: Base Std Interface Tests
-    # Skipped with the matrix on PRs that did not opt in with a label.
+    # Skipped with the matrix on PRs that did not opt in with a label and on
+    # merge-queue entries that do not touch Base Std inputs.
     if: >-
-      always() && (
-      github.event_name != 'pull_request' ||
+      !cancelled() && (
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'merge_group' && needs.changes.outputs.base-std == 'true') ||
+      (github.event_name == 'pull_request' && (
       contains(github.event.pull_request.labels.*.name, 'ci:base-std') ||
-      contains(github.event.pull_request.labels.*.name, 'ci:full'))
-    needs: [fork-tests]
+      contains(github.event.pull_request.labels.*.name, 'ci:full'))))
+    needs: [changes, fork-tests]
     runs-on: depot-ubuntu-latest # was: ubuntu-latest. Mapped standard GitHub runner to Depot equivalent.
     steps:
       - name: Harden the runner (Audit all outbound calls)
