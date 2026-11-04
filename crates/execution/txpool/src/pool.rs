@@ -2719,26 +2719,6 @@ where
         if let (Some(hold), Some(view)) = (hold.as_mut(), view) {
             hold.restore_selection_view(view);
         }
-        self.parked(merged, base_fee, hold)
-    }
-}
-
-impl<Client, S, Evm, T, O> BaseTransactionPool<Client, S, Evm, T, O>
-where
-    Client: 'static,
-    Evm: 'static,
-    BaseTransactionValidator<Client, T, Evm>: TransactionValidator<Transaction = T>,
-    T: BasePooledTx + reth_transaction_pool::EthPoolTransaction + 'static,
-    O: reth_transaction_pool::TransactionOrdering<Transaction = T> + Clone,
-    S: BlobStore + Clone,
-{
-    /// Wraps `merged` in the parking adapter the pool hands to builders.
-    fn parked(
-        &self,
-        merged: MergeBestTransactions<T, O>,
-        base_fee: u64,
-        hold: Option<Box<dyn BestTransactionsHold<T>>>,
-    ) -> Box<dyn ParkableBestTransactions<T>> {
         Box::new(
             ParkedBestTransactions::new(merged, self.ordering.clone(), base_fee)
                 .with_hold(hold)
