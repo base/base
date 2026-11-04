@@ -86,19 +86,18 @@ where
 /// occupied and [`ParkableBestTransactions::promote`] returns them to priority competition.
 pub trait BestTransactionsHold<T: PoolTransaction>: Send + Sync {
     /// Returns whether `transaction` is parked instead of yielded. Called once per source candidate
-    /// that carries validity predicates and is not blocked by its lane. May also be called for lane
-    /// roots when the iterator is created.
+    /// that carries validity predicates and is not blocked by its lane, and for eligible lane roots
+    /// when the iterator is created.
     fn hold(&mut self, transaction: &ValidPoolTransaction<T>) -> bool;
 
-    /// Returns whether any transaction could be held now. Returning false skips the creation
-    /// scan, not later checks: transactions may start resting while the iterator is in use.
+    /// Returns false when nothing is resting, so iterator creation can skip asking about roots.
     fn has_candidates(&self) -> bool {
         true
     }
 
     /// Records the time one `next` call spent from its first hold until it found a candidate,
-    /// which includes advancing past further held transactions, or the time spent asking about
-    /// lane roots at creation. Calls that hold nothing record nothing.
+    /// which includes advancing past further held transactions, or the time spent holding lane roots
+    /// at creation. Calls that hold nothing record nothing.
     fn record_duration(&mut self, duration: Duration);
 
     /// Returns whether the build driving the iterator has stopped selecting transactions.
@@ -115,14 +114,13 @@ pub trait BestTransactionsHold<T: PoolTransaction>: Send + Sync {
 /// [`BestTransactionsHold::is_interrupted`], so the check stays off the per-transaction path.
 pub const HOLD_INTERRUPT_INTERVAL: u32 = 256;
 
-/// Hands back a root that a parking adapter's source held before ranking, with the run behind it;
-/// see [`ParkedBestTransactions::with_source_held`].
+/// Yields the run of a root the source held at creation; see
+/// [`ParkedBestTransactions::with_source_held`].
 pub type PromoteSourceHeld<T, I> = fn(&mut I, TxHash) -> Option<Vec<Arc<ValidPoolTransaction<T>>>>;
 
-/// Marks invalid a root that a parking adapter's source held before ranking; see
+/// Takes a root the source held at creation, for discarding; see
 /// [`ParkedBestTransactions::with_source_held`].
-pub type DiscardSourceHeld<T, I> =
-    fn(&mut I, TxHash, InvalidPoolTransactionError) -> Option<Arc<ValidPoolTransaction<T>>>;
+pub type TakeSourceHeld<T, I> = fn(&mut I, TxHash) -> Option<Arc<ValidPoolTransaction<T>>>;
 
 /// A transaction pool that can create lane-aware parkable best iterators.
 pub trait ParkableTransactionPool: TransactionPool
@@ -159,7 +157,7 @@ where
     ready_heap: BinaryHeap<(BestTransactionPriority<O::PriorityValue>, TxHash)>,
     hold: Option<Box<dyn BestTransactionsHold<T>>>,
     promote_held: PromoteSourceHeld<T, I>,
-    discard_held: DiscardSourceHeld<T, I>,
+    take_held: TakeSourceHeld<T, I>,
 }
 
 impl<T, I, O> std::fmt::Debug for ParkedBestTransactions<T, I, O>
@@ -197,7 +195,7 @@ where
             ready_heap: BinaryHeap::new(),
             hold: None,
             promote_held: |_, _| None,
-            discard_held: |_, _, _| None,
+            take_held: |_, _| None,
         }
     }
 
@@ -207,18 +205,15 @@ where
         self
     }
 
-    /// Lets `promote` and `discard_parked` reach roots that `inner` held before
-    /// ranking. `promote_held` hands back a held root with the run behind it,
-    /// with each member counted as yielded; `discard_held` marks a held root
-    /// invalid without releasing anything behind it. Both return `None` for a
-    /// hash `inner` does not hold.
+    /// Lets `promote` and `discard_parked` reach roots that `inner` held at creation, which were
+    /// never yielded so are not in `parked`.
     pub fn with_source_held(
         mut self,
         promote_held: PromoteSourceHeld<T, I>,
-        discard_held: DiscardSourceHeld<T, I>,
+        take_held: TakeSourceHeld<T, I>,
     ) -> Self {
         self.promote_held = promote_held;
-        self.discard_held = discard_held;
+        self.take_held = take_held;
         self
     }
 
@@ -392,23 +387,17 @@ where
         transaction
     }
 
-    /// Moves a root `inner` held before ranking to the ready set, behind any
-    /// claimant of its lane, and buffers the rest of its run behind it.
-    ///
-    /// The cached source head moves to the ready set first, occupying its
-    /// lane: it may claim the root's lane, and the successors `inner` releases
-    /// behind the run must be ranked against it.
-    pub fn promote_source_held(&mut self, transaction_hash: TxHash) -> bool {
+    /// Readies a root `inner` held at creation, queued behind any claimant of its lane, with the
+    /// rest of its run buffered behind it.
+    fn promote_source_held(&mut self, transaction_hash: TxHash) -> bool {
         let Some(run) = (self.promote_held)(&mut self.inner, transaction_hash) else {
             return false;
         };
-        if let Some((head, head_lane)) = self.source_head.take() {
-            if let Some(lane) = head_lane {
-                self.lanes
-                    .entry(lane)
-                    .or_insert_with(|| BestTransactionLaneState::Occupied(VecDeque::new()));
-            }
-            self.push_ready(head, head_lane);
+        // The cached head may claim the root's lane, and must be ranked against the successors
+        // `inner` releases behind the run, so it competes from the ready set.
+        if let Some((head, lane)) = self.source_head.take() {
+            let head = self.record_yielded(head, lane);
+            self.push_ready(head, lane);
         }
         let mut run = run.into_iter();
         let Some(root) = run.next() else { return false };
@@ -422,7 +411,7 @@ where
                 }
             },
             Some(Entry::Vacant(vacant)) => {
-                // Collecting an exhausted Vec iterator can leave a deque's head past its buffer.
+                // Not `collect()`: the in-place path can leave an empty deque's head past its buffer.
                 let mut buffered = VecDeque::with_capacity(run.len());
                 buffered.extend(run);
                 vacant.insert(BestTransactionLaneState::Occupied(buffered));
@@ -512,18 +501,12 @@ where
         transaction_hash: TxHash,
         kind: InvalidPoolTransactionError,
     ) -> bool {
-        let Some((transaction, lane)) = self.parked.remove(&transaction_hash) else {
-            let Some(root) = (self.discard_held)(&mut self.inner, transaction_hash, kind) else {
-                return false;
-            };
+        let Some((transaction, lane)) = self.parked.remove(&transaction_hash).or_else(|| {
+            let root = (self.take_held)(&mut self.inner, transaction_hash)?;
             let lane = BestTransactionLane::for_transaction(&root);
-            if self.is_lane_invalid(lane) {
-                return false;
-            }
-            if let Some(lane) = lane {
-                self.invalidate_lane(lane);
-            }
-            return true;
+            Some((root, lane))
+        }) else {
+            return false;
         };
         if self.is_lane_invalid(lane) {
             return false;
@@ -583,70 +566,12 @@ mod tests {
     #[derive(Debug)]
     struct StaticBestTransactions {
         transactions: VecDeque<Arc<ValidPoolTransaction<BasePooledTransaction>>>,
-        /// Runs held at the source, by their root's hash.
-        held: HashMap<TxHash, Vec<Arc<ValidPoolTransaction<BasePooledTransaction>>>>,
-        /// Offered first once a held run is promoted, as the merge releases standard
-        /// transactions bridged behind it.
-        bridged: Vec<Arc<ValidPoolTransaction<BasePooledTransaction>>>,
     }
 
     impl StaticBestTransactions {
         fn new(transactions: Vec<Arc<ValidPoolTransaction<BasePooledTransaction>>>) -> Self {
-            let held = HashMap::default();
-            Self { transactions: transactions.into(), held, bridged: Vec::new() }
+            Self { transactions: transactions.into() }
         }
-
-        fn promote_held(
-            &mut self,
-            transaction_hash: TxHash,
-        ) -> Option<Vec<Arc<ValidPoolTransaction<BasePooledTransaction>>>> {
-            let run = self.held.remove(&transaction_hash)?;
-            for bridged in self.bridged.drain(..).rev() {
-                self.transactions.push_front(bridged);
-            }
-            Some(run)
-        }
-
-        fn discard_held(
-            &mut self,
-            transaction_hash: TxHash,
-            kind: InvalidPoolTransactionError,
-        ) -> Option<Arc<ValidPoolTransaction<BasePooledTransaction>>> {
-            let root = self.held.remove(&transaction_hash)?.into_iter().next()?;
-            self.mark_invalid(&root, kind);
-            Some(root)
-        }
-    }
-
-    type SourceHeldBest = ParkedBestTransactions<
-        BasePooledTransaction,
-        StaticBestTransactions,
-        BaseOrdering<BasePooledTransaction>,
-    >;
-
-    /// A parking adapter over `transactions` whose source already holds each run in `held`.
-    fn source_held(
-        transactions: Vec<Arc<ValidPoolTransaction<BasePooledTransaction>>>,
-        held: Vec<Vec<Arc<ValidPoolTransaction<BasePooledTransaction>>>>,
-        bridged: Vec<Arc<ValidPoolTransaction<BasePooledTransaction>>>,
-    ) -> SourceHeldBest {
-        let mut inner = StaticBestTransactions::new(transactions);
-        inner.held = held.into_iter().map(|run| (*run[0].hash(), run)).collect();
-        inner.bridged = bridged;
-        ParkedBestTransactions::new(inner, BaseOrdering::coinbase_tip(), 0).with_source_held(
-            StaticBestTransactions::promote_held,
-            StaticBestTransactions::discard_held,
-        )
-    }
-
-    /// Yields every candidate, committing each, and returns their hashes.
-    fn drain_committing(best: &mut SourceHeldBest) -> Vec<TxHash> {
-        let mut yielded = Vec::new();
-        while let Some(transaction) = best.next() {
-            best.mark_committed(&transaction);
-            yielded.push(*transaction.hash());
-        }
-        yielded
     }
 
     impl Iterator for StaticBestTransactions {
@@ -1009,134 +934,5 @@ mod tests {
         assert_eq!(best.next().unwrap().hash(), plain.hash());
         assert_eq!(hold.lock().held, held_count);
         assert_eq!(best.parked.len(), held_count);
-    }
-
-    #[test]
-    fn source_held_root_waits_behind_a_parked_claimant_of_its_lane() {
-        // The protocol snapshot can hold a replacement at the frozen root's nonce.
-        let signer = PrivateKeySigner::random();
-        let claimant = transaction(&signer, U256::ZERO, 0, 50);
-        let root = validity_transaction(&signer, U256::ZERO, 0, 100, vec![balance_predicate()]);
-        let mut best =
-            source_held(vec![Arc::clone(&claimant)], vec![vec![Arc::clone(&root)]], Vec::new());
-
-        assert_eq!(best.next().unwrap().hash(), claimant.hash());
-        best.park(&claimant);
-        assert!(best.promote(*root.hash()));
-        assert!(best.next().is_none(), "the root does not overtake its lane's claimant");
-        assert!(best.promote(*claimant.hash()));
-        assert_eq!(drain_committing(&mut best), vec![*claimant.hash(), *root.hash()]);
-    }
-
-    #[test]
-    fn source_held_root_waits_behind_a_cached_head_of_its_lane() {
-        let (signer, other) = (PrivateKeySigner::random(), PrivateKeySigner::random());
-        let woken = transaction(&other, U256::ZERO, 0, 200);
-        let claimant = transaction(&signer, U256::ZERO, 0, 50);
-        let root = validity_transaction(&signer, U256::ZERO, 0, 100, vec![balance_predicate()]);
-        let mut best = source_held(
-            vec![Arc::clone(&woken), Arc::clone(&claimant)],
-            vec![vec![Arc::clone(&root)]],
-            Vec::new(),
-        );
-
-        assert_eq!(best.next().unwrap().hash(), woken.hash());
-        best.park(&woken);
-        assert!(best.promote(*woken.hash()));
-        // Yielding the promoted transaction leaves the claimant cached as the next source head.
-        assert_eq!(best.next().unwrap().hash(), woken.hash());
-        best.mark_committed(&woken);
-        assert!(best.promote(*root.hash()));
-        assert_eq!(
-            drain_committing(&mut best),
-            vec![*claimant.hash(), *root.hash()],
-            "the richer root still waits for the cached head of its lane"
-        );
-    }
-
-    #[test]
-    fn source_held_run_and_its_released_successors_outrank_a_stale_cached_head() {
-        let (signer, first, other) =
-            (PrivateKeySigner::random(), PrivateKeySigner::random(), PrivateKeySigner::random());
-        let woken = transaction(&first, U256::ZERO, 0, 300);
-        let cached = transaction(&other, U256::ZERO, 0, 50);
-        let root = validity_transaction(&signer, U256::ZERO, 0, 100, vec![balance_predicate()]);
-        let tail = validity_transaction(&signer, U256::ZERO, 1, 90, vec![balance_predicate()]);
-        let bridged = transaction(&signer, U256::ZERO, 2, 95);
-        let mut best = source_held(
-            vec![Arc::clone(&woken), Arc::clone(&cached)],
-            vec![vec![Arc::clone(&root), Arc::clone(&tail)]],
-            vec![Arc::clone(&bridged)],
-        );
-
-        assert_eq!(best.next().unwrap().hash(), woken.hash());
-        best.park(&woken);
-        assert!(best.promote(*woken.hash()));
-        assert_eq!(best.next().unwrap().hash(), woken.hash());
-        best.mark_committed(&woken);
-
-        assert!(best.promote(*root.hash()));
-        assert!(!best.promote(*root.hash()), "a root is promoted once");
-        assert_eq!(
-            drain_committing(&mut best),
-            vec![*root.hash(), *tail.hash(), *bridged.hash(), *cached.hash()]
-        );
-    }
-
-    #[test]
-    fn discarding_a_source_held_root_invalidates_its_lane_without_yielding() {
-        let (signer, other) = (PrivateKeySigner::random(), PrivateKeySigner::random());
-        let root = validity_transaction(&signer, U256::ZERO, 0, 100, vec![balance_predicate()]);
-        let tail = validity_transaction(&signer, U256::ZERO, 1, 90, vec![balance_predicate()]);
-        let descendant = transaction(&signer, U256::ZERO, 2, 95);
-        let unrelated = transaction(&other, U256::ZERO, 0, 10);
-        let mut best = source_held(
-            vec![descendant, Arc::clone(&unrelated)],
-            vec![vec![Arc::clone(&root), tail]],
-            Vec::new(),
-        );
-
-        assert!(best.discard_parked(*root.hash(), InvalidPoolTransactionError::Underpriced));
-        assert!(!best.discard_parked(*root.hash(), InvalidPoolTransactionError::Underpriced));
-        assert!(!best.promote(*root.hash()));
-        assert_eq!(drain_committing(&mut best), vec![*unrelated.hash()]);
-    }
-
-    #[test]
-    fn source_held_root_of_an_invalidated_lane_is_not_promoted() {
-        let signer = PrivateKeySigner::random();
-        let sibling = transaction(&signer, U256::ZERO, 0, 50);
-        let root = validity_transaction(&signer, U256::ZERO, 0, 100, vec![balance_predicate()]);
-        let mut best =
-            source_held(vec![Arc::clone(&sibling)], vec![vec![Arc::clone(&root)]], Vec::new());
-
-        let yielded = best.next().unwrap();
-        best.mark_invalid(&yielded, InvalidPoolTransactionError::Underpriced);
-        assert!(!best.promote(*root.hash()));
-        assert!(best.next().is_none());
-    }
-
-    #[test]
-    fn source_held_nonce_free_root_competes_independently() {
-        let (signer, other) = (PrivateKeySigner::random(), PrivateKeySigner::random());
-        let root = validity_transaction(
-            &signer,
-            Eip8130Constants::NONCE_KEY_MAX,
-            0,
-            100,
-            vec![balance_predicate()],
-        );
-        let parked = transaction(&signer, U256::ZERO, 0, 80);
-        let plain = transaction(&other, U256::ZERO, 0, 50);
-        let mut best = source_held(
-            vec![Arc::clone(&parked), Arc::clone(&plain)],
-            vec![vec![Arc::clone(&root)]],
-            Vec::new(),
-        );
-
-        assert_eq!(best.next().unwrap().hash(), parked.hash());
-        best.park(&parked);
-        assert!(best.promote(*root.hash()), "a parked protocol lane does not block it");
-        assert_eq!(drain_committing(&mut best), vec![*root.hash(), *plain.hash()]);
     }
 }

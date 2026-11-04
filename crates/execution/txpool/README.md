@@ -181,115 +181,41 @@ Occupancy is published as `txpool.validity.pool_transactions` and
 replacements that crossed a store boundary as
 `txpool.validity.cross_store_replaced{direction}`.
 
-#### Resting transaction lifecycle
+#### Resting transactions
 
-When a build finds a validity transaction's predicate unsatisfied, the builder records the
-transaction as resting until a relevant state or block change. Pulling every resting
-transaction through the best iterator's priority-ordered walk on every build, only to park it
-again, would make selection cost grow with the number of resting transactions. The iterator
-therefore leaves eligible resting transactions out of that walk until a relevant change wakes
-them.
+A validity transaction whose predicate failed in a build rests until a commit writes the state
+it watches or a new block changes its condition; a wake asks for a recheck, not inclusion.
+Expiry, removal and replacement drop a rest instead of waking it.
 
-A lane is one sender's nonce sequence, and its root is the lane's first pending transaction.
-Only roots ready from confirmed chain state, and nonce-free transactions, are eligible. A root
-left out keeps the rest of its lane out too. Every other case takes the existing path: the
-iterator offers the transaction, and the parking adapter checks whether to park it.
-
-The diagram follows an eligible transaction with resting-predicate enforcement enabled:
+Pulling every resting transaction through the priority walk each build, only to park it again,
+would make selection cost grow with the resting set. So when
+`best_transactions_with_attributes_and_parking` gets a `BestTransactionsHold` that reports
+resting transactions, it asks the hold about the validity pool's lane roots once, after
+releasing the pool's locks and before ranking. A root (a lane's first pending transaction) is
+asked only if it has validity predicates, is priced at the base fee, and is nonce-free or starts
+at canonical state rather than behind another store's run (`lanes_ahead_of_state`). A held root
+and the rest of its lane never enter the heap. Everything else, including roots left unasked
+when the build is interrupted, takes the existing path: the parking adapter checks each
+candidate it reaches.
 
 ```mermaid
 stateDiagram-v2
-    state "In pool" as Pending
-    state "Checked by the best iterator" as Checked
-    state "Ready to execute" as Executable
-    state "Resting: left out of the ranked walk" as Resting
-    state "Included in payload" as Included
-    state "Removed" as Removed
-
-    [*] --> Pending: arrival or replacement
-    Pending --> Resting: eligible known rest at iterator creation
-    Pending --> Checked: not held
-    Pending --> Removed: removal or eviction
-    Checked --> Executable: predicates satisfied
-    Checked --> Resting: predicate unsatisfied, recorded as a rest
-    Checked --> Removed: expired or evicted
-    Resting --> Resting: next build, condition unchanged
-    Resting --> Checked: commit writes watched state
-    Resting --> Checked: new block changes the condition
-    Resting --> Removed: expiry, removal, eviction or replacement
-    Executable --> Included: execution accepted
-    Executable --> Removed: terminal rejection
-    Executable --> Pending: deferred to a later build
-    Included --> [*]
-    Removed --> [*]
-
-    note right of Resting
-        Eligible roots and the rest of their lanes
-        stay out of the priority-ordered walk.
-        Iterator creation still scans the pool snapshot.
-    end note
-    note left of Checked
-        A wake asks for a recheck.
-        It does not guarantee inclusion.
-    end note
+    state "Checked by the iterator" as Checked
+    state "Resting: out of the priority walk" as Resting
+    [*] --> Resting: known rest at iterator creation
+    [*] --> Checked: not held
+    Checked --> Resting: predicate unsatisfied
+    Checked --> Included: predicates satisfied, execution accepted
+    Resting --> Checked: woken by a commit or a new block
+    Resting --> Removed: expiry, removal or replacement
 ```
 
-A wake asks for a recheck; it does not guarantee inclusion. A commit wakes the rests whose
-watched state it writes. A new block releases rests that read the block number for rechecking.
-Expiry, removal and replacement invalidate the old transaction instead of waking it; a
-replacement enters as a new transaction. An iterator that already exists keeps its snapshot,
-so a stale candidate still faces normal nonce and validity checks.
-
-Native builds create one iterator per payload; Flashblocks refreshes its iterator between
-flashblocks. Both builders wake resting transactions after a commit in the same block. A failed
-flashblock-index predicate is not recorded as a rest, because the index changes without a state
-write; it is checked again at each new position.
-
-##### Iterator details
-
-`ParkableTransactionPool::best_transactions_with_attributes_and_parking` takes an
-optional `BestTransactionsHold`. Payload builders pass one only when resting predicates are
-enforced. Without a hold, the iterator matches `best_transactions`.
-If the hold reports no resting transactions, creation skips the root checks. The parking
-adapter still checks each candidate it reaches, so a transaction that starts resting after
-creation is held normally.
-
-With a hold, the iterator asks it about the validity pool's lane roots once, when the
-iterator is created and before ranking. The pool's read guards are released first, so a hold
-callback may use the pool. A root is asked about only if:
-
-- it carries validity predicates;
-- it is not underpriced at the iterator's base fee;
-- it is nonce-free, or its lane starts at canonical state rather than behind another store's
-  pending run (`TwoDNoncePool::lanes_ahead_of_state`).
-
-A root the hold holds never enters the iterator's priority heap, and neither does the rest
-of its lane. Every other candidate reaches the parking adapter, which checks whether to hold
-it. That covers lanes behind another store's run, roots the hold declines, and roots
-left unasked. The hold's `is_interrupted` is checked before the first root and every
-`HOLD_INTERRUPT_INTERVAL` roots after that. Interruption stops the asking, and the remaining
-roots take the lazy path.
-
-`promote` on a root held at creation moves it to the ready set, behind any claimant of its
-lane, and buffers the rest of its run behind it. A claimant is a lane member already yielded
-or parked, or the adapter's cached next candidate in that lane; for example, the protocol
-snapshot can hold a replacement at the root's nonce. The merge counts the root as yielded, so
-standard transactions queued behind its run follow it after it commits. The adapter's cached
-next candidate goes back into priority competition, so newly released successors are ranked
-against it. Promotion fails for an unknown hash, a hash already promoted or discarded, or a
-root whose lane was invalidated. `discard_parked` on a root held at creation invalidates its
-lane for this iterator and yields nothing behind it.
-
-Asking at creation marks every held root as seen by the resting set for that block, including
-roots the build never reaches within its budget. Those members stay retained instead of aging
-out in the unseen sweep, and the hold's parked counters include them. Seen marking affects
-retention only; predicate applicability, predicate expiry and pool expiry are evaluated as
-before.
-
-Each iterator still gets a fresh snapshot. There is no persistent selection view, mutation
-journal or cross-build snapshot cache. Snapshot scans, run copies and bridged-transaction
-lookups remain. Eligible resting roots are still checked during creation; they skip the
-priority-ordered walk, not all per-build work. This is a constant-factor saving.
+`promote` readies a root held at creation behind any claimant of its lane (a member already
+yielded or parked, or the adapter's cached next candidate), with the rest of its run buffered
+behind it and bridged standard successors released after it commits. `discard_parked`
+invalidates its lane. Each iterator still snapshots the pool, so this saves the walk, not the
+snapshot. Asking at creation marks held roots as seen for that block, so they stay retained
+rather than aging out.
 
 ## Usage
 
