@@ -227,10 +227,13 @@ impl Eip8130Executor {
     /// via a checkpoint so the transaction is not included.
     ///
     /// Honors `cfg.disable_fee_charge` exactly like the standard handler does for
-    /// other transaction types: the signature, balance, and nonce checks still
-    /// run and the sender's protocol nonce is still bumped, but the payer is
-    /// neither pre-charged nor settled (no fee reaches the payer, the vaults, or
-    /// the beneficiary) and the result reports the **metered** gas
+    /// other transaction types. Signature verification, nonce validation and the
+    /// fee-cap sanity check still run and the sender's protocol nonce is still
+    /// bumped, but the payer's balance is not checked against the worst-case fee
+    /// (revm's `calculate_caller_fee` returns before `ensure_enough_balance` under
+    /// the flag), the payer is neither pre-charged nor settled (no fee reaches the
+    /// payer, the vaults, or the beneficiary), and the result reports the
+    /// **metered** gas net of the EIP-3529-capped refund
     /// ([`Self::metered_gas_used`]) rather than the gas-limit-billing reservation.
     pub fn execute<DB, I, P>(
         evm: &mut BaseEvm<DB, I, P>,
@@ -1073,7 +1076,8 @@ impl Eip8130Executor {
     /// gas, fee-cap check, account-change apply) over a gas-free
     /// journal view and publishes the transaction context, returning the resolved
     /// [`Eip8130Outcome`]. Storage writes land on the journal directly; the
-    /// caller discards the transaction on error.
+    /// caller discards the transaction on error. The payer's balance check is
+    /// skipped when fee charging is disabled, since nothing will be charged.
     fn authorize_and_apply<DB>(
         ctx: &mut BaseContext<DB>,
         signed: &base_common_consensus::Eip8130Signed,
@@ -1099,6 +1103,10 @@ impl Eip8130Executor {
         let max_fee = tx.max_fee_per_gas;
         let max_priority = tx.max_priority_fee_per_gas;
         let tx_gas_limit_cap = ctx.cfg().tx_gas_limit_cap();
+        // Nothing is charged under `disable_fee_charge` (`eth_call`,
+        // `eth_estimateGas`, unvalidated `eth_simulateV1`), so the payer's ability
+        // to afford the worst-case fee is not checked either.
+        let fee_charge_disabled = ctx.cfg().is_fee_charge_disabled();
         // Validity bounds are normalized to Unix milliseconds (seconds bounds are
         // scaled by 1000 per EIP-8130 Timestamp Normalization); `0` stays `0`
         // (disabled). The nonce-free replay ring records this normalized upper
@@ -1244,19 +1252,28 @@ impl Eip8130Executor {
                 ));
             }
 
-            // 5. Fee caps and payer balance.
+            // 5. Fee caps and, when fees will be charged, the payer's balance. A
+            //    fee-free execution reads nothing from the payer here, matching
+            //    `simulate_resolve`, so the payer's warmth is the same on both paths.
             FeeCheck::validate_fees(max_fee, max_priority, base_fee)
                 .map_err(BaseTransactionError::eip8130)?;
-            let payer_balance = sctx
-                .with_account_info(payer, |info| Ok(info.balance))
-                .map_err(BaseTransactionError::eip8130)?;
-            FeeCheck::validate_balance(payer_balance, gas_limit, intrinsic.payer_floor, max_fee)
+            if !fee_charge_disabled {
+                let payer_balance = sctx
+                    .with_account_info(payer, |info| Ok(info.balance))
+                    .map_err(BaseTransactionError::eip8130)?;
+                FeeCheck::validate_balance(
+                    payer_balance,
+                    gas_limit,
+                    intrinsic.payer_floor,
+                    max_fee,
+                )
                 .map_err(|error| match error {
                     FeeError::InsufficientBalance { balance, required } => {
                         Self::payer_cannot_pay(balance, required)
                     }
                     error => BaseTransactionError::eip8130(error),
                 })?;
+            }
 
             // 6. Publish the transaction context (sender / payer / actor id) so it
             //    is readable by the `TxContext` precompile during `calls`.
@@ -3219,6 +3236,60 @@ mod tests {
         assert_eq!(billed.gas_used, gas_limit + intrinsic.payer_floor);
         assert_eq!(billed.paid, billed.received());
         assert!(billed.paid > U256::ZERO);
+    }
+
+    /// With fee charging disabled nothing is charged, so a payer who cannot afford
+    /// the worst-case fee is not rejected: the standard handler skips
+    /// `ensure_enough_balance` under the flag, and so must the EIP-8130 path. With
+    /// fees on the same transaction is rejected as unable to pay.
+    #[test]
+    fn fee_charge_disabled_execution_skips_the_payer_balance_check() {
+        let key = signing_key(0x7e);
+        let sender = eoa_address(&key);
+        let target = address!("0x00000000000000000000000000000000000000cc");
+        let contracts = [(target, bytes!("00"))];
+        let value = U256::from(5);
+
+        let tx = TxEip8130 {
+            calls: vec![vec![Call { to: target, value, data: Bytes::new() }]],
+            ..base_tx()
+        };
+        let signed = eoa_signed(tx, &key);
+        let worst_case_fee =
+            U256::from(signed.tx().gas_limit) * U256::from(signed.tx().max_fee_per_gas);
+        assert!(value < worst_case_fee, "fixture must not afford the worst-case fee");
+
+        // The sender holds only the call's `value`.
+        let evm = |disable_fee_charge: bool| {
+            let mut evm = evm_with_accounts(value, sender, &contracts);
+            evm.ctx_mut().cfg.disable_fee_charge = disable_fee_charge;
+            evm
+        };
+
+        let err = evm(false).transact_raw(into_base_tx(&signed)).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                EVMError::Transaction(BaseTransactionError::Base(
+                    InvalidTransaction::LackOfFundForMaxFee { .. }
+                ))
+            ),
+            "fees on: an underfunded payer is rejected, got {err:?}"
+        );
+
+        let metered = metered_call(&mut evm(true), &signed, sender).tx_gas_used();
+        let mut fee_free = evm(true);
+        let outcome = fee_free.transact_raw(into_base_tx(&signed)).expect("fee-free execution");
+        assert!(outcome.result.is_success(), "expected success, got {:?}", outcome.result);
+        assert_eq!(outcome.result.tx_gas_used(), metered, "must report metered gas");
+        let balance = |address: Address| {
+            outcome.state.get(&address).map(|acc| acc.info.balance).unwrap_or_default()
+        };
+        assert_eq!(balance(sender), U256::ZERO, "only the call's value leaves the sender");
+        assert_eq!(balance(target), value, "the call's value is delivered");
+        assert_eq!(balance(BENEFICIARY), U256::ZERO, "no fee reaches the beneficiary");
+        assert_eq!(balance(Predeploys::BASE_FEE_VAULT), U256::ZERO);
+        assert_eq!(outcome.state.get(&sender).map(|acc| acc.info.nonce), Some(1));
     }
 
     /// Builds an EVM with `balance` funded to `sender`, deploying `code` at
