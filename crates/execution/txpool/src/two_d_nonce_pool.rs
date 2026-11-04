@@ -1421,10 +1421,8 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
         self.unranked_best_transactions(ordering, base_fee).ranked()
     }
 
-    /// Returns the snapshot [`Self::best_transactions`] ranks, for a caller
-    /// that holds some of its roots first (see
-    /// [`BestTwoDTransactions::hold_resting_roots`]) and then calls
-    /// [`BestTwoDTransactions::ranked`].
+    /// [`Self::best_transactions`] before [`BestTwoDTransactions::ranked`], so
+    /// resting roots can be held first.
     pub(crate) fn unranked_best_transactions<O>(
         &self,
         ordering: O,
@@ -1507,8 +1505,7 @@ where
     /// Only lanes with more than one member: invalidating or holding a lane
     /// after its single member was yielded has nothing left to act on.
     lane_indexes: HashMap<LaneId, usize>,
-    /// Lanes whose root a [`BestTransactionsHold`] held before ranking, by the
-    /// root's hash, until [`MergeSource::take_held`] hands them back.
+    /// Lane index by root hash, for roots held at creation and not yet taken.
     held_roots: B256Map<usize>,
     /// Roots a [`SelectionView`] held dormant at creation, left out of `lanes`;
     /// [`MergeSource::take_held`] hands each back once from `dormant_runs`.
@@ -1557,7 +1554,7 @@ impl<T: BasePooledTx, O> BestTwoDTransactions<T, O>
 where
     O: TransactionOrdering<Transaction = T>,
 {
-    /// Snapshots the pending runs; nothing is offered before [`Self::ranked`].
+    /// Snapshots the pending runs, unranked until [`Self::ranked`].
     fn new(
         lanes: &HashMap<LaneId, NonceLane<T>>,
         nonce_free: &B256Map<Arc<ValidPoolTransaction<T>>>,
@@ -1656,26 +1653,23 @@ where
 
     /// Ranks the snapshot's lane heads, leaving out lanes whose root is held.
     pub(crate) fn ranked(mut self) -> Self {
-        let mut candidates = Vec::with_capacity(self.lanes.len() - self.held_roots.len());
-        candidates.extend(self.lanes.iter().enumerate().filter(|(_, lane)| !lane.held).map(
-            |(index, lane)| {
+        self.candidates = self
+            .lanes
+            .iter()
+            .enumerate()
+            .filter(|(_, lane)| !lane.held)
+            .map(|(index, lane)| {
                 (BestTransactionPriority::new(&self.ordering, &lane.head, self.base_fee), index)
-            },
-        ));
-        self.candidates = BinaryHeap::from(candidates);
+            })
+            .collect();
         self
     }
 
-    /// Unless the hold reports no candidates, asks about each root anchored at canonical state before
-    /// [`Self::ranked`]. A root is asked about if it carries validity
-    /// predicates, is not underpriced, and is nonce-free or its lane is absent
-    /// from `external_anchors` (see `TwoDNoncePool::lanes_ahead_of_state`). A
-    /// held root and the rest of its lane are not offered until
-    /// [`MergeSource::take_held`].
-    ///
-    /// `hold` is checked for interruption before the first root and every
-    /// [`HOLD_INTERRUPT_INTERVAL`] roots after that; interruption leaves the
-    /// remaining roots unasked.
+    /// Keeps lanes whose root `hold` holds out of ranking until
+    /// [`MergeSource::take_held`]. Only priced roots with validity predicates
+    /// that start at canonical state (not in `external_anchors`) are asked;
+    /// the rest, and roots left unasked by an interrupt, are held lazily by
+    /// the parking adapter.
     pub(crate) fn hold_resting_roots(
         &mut self,
         external_anchors: &HashMap<LaneId, u64>,
@@ -1786,8 +1780,6 @@ where
         }
     }
 
-    /// Hands back a held root once, with the rest of its run; its lane offers
-    /// nothing more.
     fn take_held(&mut self, transaction_hash: &TxHash) -> Option<HeldRun<T>> {
         if let Some(index) = self.held_roots.remove(transaction_hash) {
             let lane = &mut self.lanes[index];
