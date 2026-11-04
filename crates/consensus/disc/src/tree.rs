@@ -59,7 +59,7 @@ pub struct EnrTreeSync<R: Resolver = DnsResolver> {
     /// The DNS resolver.
     #[debug(skip)]
     pub resolver: Arc<R>,
-    /// Maximum distinct entries visited in one walk.
+    /// Maximum distinct entries admitted to one walk.
     pub max_entries: usize,
     /// Maximum records yielded by one walk.
     pub max_records: usize,
@@ -138,7 +138,7 @@ impl EnrTreeSync {
     pub const LOOKUP_INTERVAL: Duration = Duration::from_millis(333);
     /// Timeout of one DNS lookup.
     pub const LOOKUP_TIMEOUT: Duration = Duration::from_secs(5);
-    /// Default maximum distinct entries visited in one walk.
+    /// Default maximum distinct entries admitted to one walk.
     pub const MAX_ENTRIES: usize = 2_000;
     /// Default maximum records yielded by one walk.
     pub const MAX_RECORDS: usize = 500;
@@ -234,15 +234,15 @@ impl<R: Resolver> EnrTreeSync<R> {
     /// Records the outcome of a finished walk and schedules the next root lookup.
     ///
     /// The root is cached as synced only when no admitted entry failed. Entries can be left
-    /// pending only when the walk reached its record budget; walking again would yield the same
-    /// records, so that walk still counts as complete.
+    /// pending only when the walk reached its record budget; walking again could not yield more
+    /// records than that budget, so that walk still counts as complete.
     pub fn finish_walk(&mut self, walk: EnrTreeWalk) {
         if walk.truncated || !walk.pending.is_empty() {
             warn!(target: "discovery::enrtree", tree = %self.link, entries = walk.seen.len(), records = walk.records, "ENR tree walk stopped at its budget");
         }
         if walk.records == 0 {
             self.retry_later(if walk.failed > 0 {
-                "tree entries failed to resolve"
+                "tree entries failed to resolve or verify"
             } else {
                 "tree has no valid records"
             });
@@ -865,7 +865,8 @@ mod tests {
         );
     }
 
-    /// Hand-written because an in-flight future must expose cancellation through Drop.
+    /// Never answers, and counts lookups started and dropped. Hand-rolled because reth's
+    /// `Resolver` trait returns `impl Future`, which `mockall` cannot automock.
     #[derive(Default)]
     struct PendingResolver {
         started: AtomicUsize,
@@ -886,7 +887,7 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn lookup_times_out_and_backs_off() {
+    async fn lookup_times_out_and_retries() {
         let key = tree_key(0x64);
         let resolver = Arc::new(PendingResolver::default());
         let mut sync = EnrTreeSync::new(
