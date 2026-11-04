@@ -9,7 +9,8 @@ name: Benchmarks (iai · deterministic)
 # instruction count fails the job if it rises 3% or more over the base commit,
 # or if it stops producing a result. It runs after merge on every push to main,
 # comparing against the previous main commit, so a regression is fixed after the
-# fact. On PRs it runs only with the ci:perf or ci:full label. The gate itself
+# fact. On PRs it runs only with the ci:perf or ci:full label, read on the next
+# push or reopen. The gate itself
 # runs only when a path that can move its numbers changed (see the prepare step).
 # Its counts vary by about 0.04% run-to-run (randomly seeded hashing), far below
 # the 3% gate. The bench
@@ -18,13 +19,12 @@ on:
   push:
     branches: [main]
   pull_request:
-    types: [opened, reopened, synchronize, labeled]
+    types: [opened, reopened, synchronize]
   workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
-  # Adding a label must not cancel a run already in flight.
-  cancel-in-progress: ${{ github.event.action != 'labeled' }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
@@ -37,15 +37,10 @@ permissions:
 jobs:
   bench-iai:
     name: Benchmarks (iai · deterministic)
-    # On a labeled event, run only when the opt-in label itself was added, so an
-    # unrelated label does not queue a duplicate run.
     if: >-
-      github.event_name != 'pull_request' || (
-      (github.event.action != 'labeled' ||
-      github.event.label.name == 'ci:perf' ||
-      github.event.label.name == 'ci:full') && (
+      github.event_name != 'pull_request' ||
       contains(github.event.pull_request.labels.*.name, 'ci:perf') ||
-      contains(github.event.pull_request.labels.*.name, 'ci:full')))
+      contains(github.event.pull_request.labels.*.name, 'ci:full')
     runs-on: depot-ubuntu-24.04-8
     timeout-minutes: 60
     env:

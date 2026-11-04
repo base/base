@@ -109,7 +109,8 @@ which runs `cargo nextest run -p base-system-tests` after building test contract
 System tests require Docker and do **not** run on pull requests or the merge queue (see
 [CI Pipeline](#ci-pipeline) below) because of their cost. They run after merge on every push to
 `main` (`system-tests.yml`), and a failure there is fixed in a follow-up PR. Add the `ci:system`
-or `ci:full` label to run them on a pull request before merge.
+or `ci:full` label to run them on a pull request before merge, then push a commit (or close and
+reopen the PR); labels are not picked up when added.
 
 
 ### Fuzz Tests
@@ -164,7 +165,8 @@ The affected-crates scoping on pull requests (via `etc/scripts/local/affected-cr
 every affected crate, workspace-wide, before a change reaches `main`. System tests, Base Std fork
 tests, and benchmarks run only after merge, on `main`, to keep CI cost down; a failure there is
 fixed in a follow-up PR. Add `ci:system`, `ci:base-std`, `ci:perf`, or `ci:full` to a pull request
-to run the matching suite before merge.
+to run the matching suite before merge. The label takes effect on the next push or reopen, not when
+it is added.
 
 `action-tests.yml`, despite the name, is unrelated to testing GitHub Actions workflows — it runs
 the [action tests](#action-tests) described above (`just actions::lint-ci` and

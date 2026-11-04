@@ -3,6 +3,8 @@ name: Storage provider benchmarks (advisory)
 # Runs after merge on pushes to main that touch the storage provider, comparing
 # against the previous main commit. On PRs it runs only with the ci:perf or
 # ci:full label.
+# Labels are read on the next push or reopen, not when added, so that an
+# unrelated label never posts a skipped check over a real result.
 on:
   push:
     branches: [main]
@@ -14,7 +16,7 @@ on:
       - "etc/scripts/ci/run_storage_bench.sh"
       - ".depot/workflows/bench-storage.yml"
   pull_request:
-    types: [opened, reopened, synchronize, labeled]
+    types: [opened, reopened, synchronize]
     paths:
       - "Cargo.lock"
       - "Cargo.toml"
@@ -26,8 +28,7 @@ on:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
-  # Adding a label must not cancel a run already in flight.
-  cancel-in-progress: ${{ github.event.action != 'labeled' }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
@@ -40,14 +41,9 @@ permissions:
 jobs:
   historical-reads:
     name: Historical state reads
-    # On a labeled event, run only when the opt-in label itself was added, so an
-    # unrelated label does not queue a duplicate run.
     if: >-
       github.event_name != 'pull_request' || (
-      github.event.pull_request.head.repo.full_name == github.repository &&
-      (github.event.action != 'labeled' ||
-      github.event.label.name == 'ci:perf' ||
-      github.event.label.name == 'ci:full') && (
+      github.event.pull_request.head.repo.full_name == github.repository && (
       contains(github.event.pull_request.labels.*.name, 'ci:perf') ||
       contains(github.event.pull_request.labels.*.name, 'ci:full')))
     runs-on: depot-ubuntu-24.04-8
