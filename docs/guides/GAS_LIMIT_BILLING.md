@@ -95,7 +95,7 @@ Users pay `gas_limit * price` instead of `gas_used * price`; out-of-gas already 
 All execution paths must enforce the same accounting after activation while preserving pre-activation behavior:
 
 - The payer's fee debit equals `B * effectiveGasPrice + l1Fee + operatorFee(B)`; fee-vault and sequencer credits account for the full fee. Value transfers are separate: only committed transfers debit the sender, which may differ from the fee payer for sponsored EIP-8130 transactions.
-- Receipt `gasUsed` equals the gas limit (`B`). Header `gasUsed` equals the sum of the receipts' `gasUsed` and agrees with the last receipt's `cumulativeGasUsed`.
+- Receipt `gasUsed` equals the gas limit (`B`) for every billed transaction. Header `gasUsed` equals the sum of the receipts' `gasUsed` and agrees with the last receipt's `cumulativeGasUsed`.
 - Builders refuse transactions whose reservation exceeds the remaining block gas or the configured per-transaction cap, even when metered execution would fit. Validators reject payloads with inconsistent gas accounting.
 - EIP-3529 and EIP-7702 refunds and the EIP-7623 floor do not reduce the billed amount. Reverts and successful execution at the same reservation have the same billable gas.
 - Estimation remains metered. EIP-8130 estimates exclude `payer_floor`, which settlement adds exactly once.
