@@ -15,6 +15,11 @@ base_metrics::define_metrics! {
     #[label(name)]
     #[label(name = "outcome")]
     tx_send_latency_ms: histogram,
+    #[describe(
+        "Time in milliseconds from the start of a send until the L1 block that includes the confirmed transaction"
+    )]
+    #[label(name)]
+    tx_inclusion_latency_ms: histogram,
     #[describe("Current nonce value")]
     #[label(name)]
     current_nonce: gauge,
@@ -76,6 +81,13 @@ pub trait TxMetrics: Send + Sync + Debug + 'static {
     /// Record the send-loop latency in milliseconds, split by how the send ended.
     fn record_send_latency(&self, latency_ms: u64, outcome: SendOutcome);
 
+    /// Record the time in milliseconds from the start of a confirmed send until
+    /// the timestamp of the L1 block that includes the transaction.
+    ///
+    /// It starts at the same moment as the send latency, so the confirmed send
+    /// latency minus this one is the time spent waiting for confirmations.
+    fn record_inclusion_latency(&self, latency_ms: u64);
+
     /// Record the current nonce.
     fn record_current_nonce(&self, nonce: u64);
 
@@ -119,6 +131,7 @@ impl TxMetrics for NoopTxMetrics {
     fn record_tx_max_fee(&self, _fee_gwei: f64) {}
     fn record_gas_bump(&self) {}
     fn record_send_latency(&self, _latency_ms: u64, _outcome: SendOutcome) {}
+    fn record_inclusion_latency(&self, _latency_ms: u64) {}
     fn record_current_nonce(&self, _nonce: u64) {}
     fn record_publish_error(&self) {}
     fn record_basefee(&self, _basefee_gwei: f64) {}
@@ -178,6 +191,10 @@ impl TxMetrics for BaseTxMetrics {
         TxManagerMetrics::tx_send_latency_ms(self.name, outcome.as_str()).record(latency_ms as f64);
     }
 
+    fn record_inclusion_latency(&self, latency_ms: u64) {
+        TxManagerMetrics::tx_inclusion_latency_ms(self.name).record(latency_ms as f64);
+    }
+
     fn record_current_nonce(&self, nonce: u64) {
         TxManagerMetrics::current_nonce(self.name).set(nonce as f64);
     }
@@ -221,6 +238,7 @@ mod tests {
         m.record_tx_max_fee(1.5);
         m.record_gas_bump();
         m.record_send_latency(120, SendOutcome::Failed);
+        m.record_inclusion_latency(80);
         m.record_current_nonce(42);
         m.record_publish_error();
         m.record_basefee(30.123);

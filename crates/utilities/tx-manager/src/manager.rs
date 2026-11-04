@@ -989,6 +989,8 @@ where
         }
 
         let start = self.runtime.now();
+        // Inclusion is measured against an L1 block timestamp, which is wall-clock time.
+        let start_unix_ms = self.runtime.wall_clock_unix_millis();
 
         // Wrap the event loop in a send timeout if configured.
         let result = if self.config.tx_send_timeout.is_zero() {
@@ -1012,9 +1014,10 @@ where
         let latency_ms =
             u64::try_from(self.runtime.now().saturating_sub(start).as_millis()).unwrap_or(u64::MAX);
 
-        if result.is_ok() {
+        if let Ok(receipt) = &result {
             self.metrics.record_send_latency(latency_ms, SendOutcome::Confirmed);
             self.metrics.record_tx_confirmed();
+            self.spawn_record_inclusion_latency(receipt, start_unix_ms);
         } else {
             self.metrics.record_send_latency(latency_ms, SendOutcome::Failed);
             self.metrics.record_tx_failed();
@@ -1040,6 +1043,43 @@ where
         }
 
         result
+    }
+
+    /// Spawns a task that records the time from `start_unix_ms` until the timestamp of the
+    /// L1 block that includes the confirmed transaction.
+    ///
+    /// Reading the block takes one more RPC call, so it runs in its own task and never
+    /// delays the send. If the read fails, the metric is skipped for this transaction.
+    fn spawn_record_inclusion_latency(&self, receipt: &TransactionReceipt, start_unix_ms: u64) {
+        let tx_hash = receipt.transaction_hash;
+        // A confirmed receipt always has a block hash: `query_receipt` checks it.
+        let Some(block_hash) = receipt.block_hash else { return };
+        let manager = self.clone();
+        self.runtime.spawn(async move {
+            let block = RuntimeTimeout::run(
+                &manager.runtime,
+                manager.config.network_timeout,
+                manager.provider.get_block_by_hash(block_hash),
+            )
+            .await;
+            match block {
+                Ok(Ok(Some(block))) => {
+                    let included_unix_ms = block.header.timestamp.saturating_mul(1_000);
+                    manager
+                        .metrics
+                        .record_inclusion_latency(included_unix_ms.saturating_sub(start_unix_ms));
+                }
+                Ok(Ok(None)) => {
+                    debug!(%tx_hash, %block_hash, "block of confirmed tx not found, skipping inclusion latency");
+                }
+                Ok(Err(error)) => {
+                    debug!(%tx_hash, %block_hash, %error, "failed to read block of confirmed tx, skipping inclusion latency");
+                }
+                Err(_) => {
+                    debug!(%tx_hash, %block_hash, "reading block of confirmed tx timed out, skipping inclusion latency");
+                }
+            }
+        });
     }
 
     fn should_reset_nonce_on_send_error<T>(
@@ -1769,7 +1809,7 @@ mod tests {
     //! cannot construct, to reject confirmation under an RPC-supplied hash.
 
     use std::{
-        sync::{Arc, atomic::AtomicBool},
+        sync::{Arc, Mutex, atomic::AtomicBool},
         time::Duration,
     };
 
@@ -1799,8 +1839,8 @@ mod tests {
 
     use super::{PreparedTx, SimpleTxManager, TxEnvelope};
     use crate::{
-        BlobTxBuilder, GasPriceCaps, NonceManager, NoopTxMetrics, SendState, TxCandidate,
-        TxManager, TxManagerConfig, TxManagerError,
+        BlobTxBuilder, GasPriceCaps, NonceManager, NoopTxMetrics, SendOutcome, SendState,
+        TxCandidate, TxManager, TxManagerConfig, TxManagerError, TxMetrics,
     };
 
     async fn setup() -> (SimpleTxManager<RootProvider>, alloy_node_bindings::AnvilInstance) {
@@ -2452,6 +2492,96 @@ mod tests {
                 ctx.sleep(Duration::from_nanos(1)).await;
             }
         });
+    }
+
+    /// Records inclusion latencies and ignores every other metric.
+    #[derive(Debug, Default)]
+    struct InclusionLatencies(Mutex<Vec<u64>>);
+
+    impl TxMetrics for InclusionLatencies {
+        fn record_tx_max_fee(&self, _fee_gwei: f64) {}
+        fn record_gas_bump(&self) {}
+        fn record_send_latency(&self, _latency_ms: u64, _outcome: SendOutcome) {}
+        fn record_inclusion_latency(&self, latency_ms: u64) {
+            self.0.lock().unwrap().push(latency_ms);
+        }
+        fn record_current_nonce(&self, _nonce: u64) {}
+        fn record_publish_error(&self) {}
+        fn record_basefee(&self, _basefee_gwei: f64) {}
+        fn record_tipcap(&self, _tipcap_gwei: f64) {}
+        fn record_blob_fee_cap(&self, _blob_fee_cap_gwei: f64) {}
+        fn record_rpc_error(&self) {}
+        fn record_tx_confirmed(&self) {}
+        fn record_tx_failed(&self) {}
+    }
+
+    /// Sends a transaction that confirms on the first receipt poll, 300 ms after the
+    /// runtime started, then answers the read of the block that includes it with
+    /// `block_response`. Returns the recorded inclusion latencies.
+    fn inclusion_latencies_for_confirmed_send(block_response: fn(&Asserter, &Block)) -> Vec<u64> {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let tx_hash = B256::with_last_byte(1);
+            let (receipt, mut block) = mined_receipt(tx_hash, 10);
+            block.header.inner.timestamp = 1_700_000_020;
+            let mut latest: Block = Block::default();
+            latest.header.base_fee_per_gas = Some(1_000_000_000);
+            let asserter = Asserter::new();
+            asserter.push_success(&1u64);
+            asserter.push_success(&1_000_000_000u128);
+            asserter.push_success(&Some(&latest));
+            asserter.push_success(&21_000u64);
+            asserter.push_success(&0u64);
+            asserter.push_success(&tx_hash);
+            asserter.push_success(&10u64);
+            asserter.push_success(&Some(&receipt));
+            asserter.push_success(&Some(&block));
+            block_response(&asserter, &block);
+            let metrics = Arc::new(InclusionLatencies::default());
+            let manager = SimpleTxManager::from_wallet_with_runtime(
+                ctx.clone(),
+                ProviderBuilder::new().connect_mocked_client(asserter.clone()),
+                EthereumWallet::from(PrivateKeySigner::random()),
+                TxManagerConfig { num_confirmations: 1, ..TxManagerConfig::default() },
+                1,
+                Arc::clone(&metrics) as Arc<dyn TxMetrics>,
+            )
+            .await
+            .expect("should construct manager");
+            ctx.sleep(Duration::from_millis(300)).await;
+
+            let confirmed = manager
+                .send(TxCandidate { to: Some(Address::with_last_byte(0x42)), ..Default::default() })
+                .await
+                .expect("the send should confirm");
+            ctx.sleep(Duration::from_millis(1)).await;
+
+            assert_eq!(confirmed.transaction_hash, tx_hash);
+            assert!(asserter.read_q().is_empty(), "the block should have been read");
+            metrics.0.lock().unwrap().clone()
+        })
+    }
+
+    /// The inclusion latency runs from the start of the send, in milliseconds of wall-clock
+    /// time, to the timestamp of the block that includes the transaction.
+    #[test]
+    fn confirmed_send_records_inclusion_latency_from_block_timestamp() {
+        let latencies = inclusion_latencies_for_confirmed_send(|asserter, block| {
+            asserter.push_success(&Some(block));
+        });
+
+        // The send starts at 1_700_000_000.300 s and the block's timestamp is 1_700_000_020 s.
+        assert_eq!(latencies, vec![19_700]);
+    }
+
+    /// A block that cannot be read records no inclusion latency and leaves the send
+    /// confirmed.
+    #[rstest]
+    #[case::rpc_error(|asserter: &Asserter, _: &Block| asserter.push_failure_msg("unavailable"))]
+    #[case::block_not_found(|asserter: &Asserter, _: &Block| asserter.push_success(&Option::<Block>::None))]
+    fn unreadable_block_records_no_inclusion_latency(
+        #[case] block_response: fn(&Asserter, &Block),
+    ) {
+        assert!(inclusion_latencies_for_confirmed_send(block_response).is_empty());
     }
 
     // ── should_reset_nonce_on_send_error ───────────────────────────────
