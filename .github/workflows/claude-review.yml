@@ -32,6 +32,7 @@ jobs:
             api.github.com:443
             bun.sh:443
             github.com:443
+            nodejs.org:443
             objects.githubusercontent.com:443
             registry.npmjs.org:443
             release-assets.githubusercontent.com:443
@@ -53,6 +54,11 @@ jobs:
           latest_comment_id="$(gh api --paginate --slurp "repos/$GH_REPO/issues/$PR_NUMBER/comments" |
             jq '[.[][] | .id] | max // 0')"
           echo "latest_comment_id=$latest_comment_id" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
 
       # The action's claude.ai installer is blocked by the runner's egress policy.
       - name: Install Claude Code from npm
