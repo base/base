@@ -155,7 +155,6 @@ CI runs a different subset of checks depending on where a change is in its lifec
 | Pull request | `pull_request` | `no-std.yml`, `zepter.yml`, `lychee.yml`, `action-tests.yml` | Full workspace (these checks are already fast) |
 | Merge queue | `merge_group` | `ci-merge-queue.yml` → `ci-core.yml` | **Full** workspace build/clippy/test |
 | Push to `main` | `push` | `system-tests.yml`, `base-std-fork-tests.yml`, `bench-iai.yml`, `bench-storage.yml` | System tests, Base Std fork tests, and benchmarks against the previous `main` commit; failures are fixed after merge |
-| Push to `main` | `push` | `ci-main-cache.yml` | Warms the shared Rust build cache |
 | Nightly | `schedule` (07:00 UTC) | `fuzz-nightly.yml` | Sharded sync-parity fuzzing |
 | Nightly | `schedule` (13:00 UTC) | `udeps-report.yml` | Unused-dependency report, files a GitHub issue on findings |
 | Release | manual / push to `releases/v*` | see [RELEASE.md](RELEASE.md) | Release builds, RC tags, Docker images |
