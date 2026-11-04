@@ -164,7 +164,7 @@ digest = "de7352c3a8"
 
 ["crates/batcher/encoder/README.md"]
 summary = "base-batcher-encoder: synchronous, no-I/O encoder from L2 blocks to L1 submissions. Covers channel closing rules, blob framing, metric labels, and BatchEncoder usage."
-digest = "e8624eb69c"
+digest = "fb6b135435"
 
 ["crates/batcher/service/README.md"]
 summary = "base-batcher-service: BatcherConfig and BatcherService, which wire the encoder, block source, tx manager, and driver into a running batcher process."
