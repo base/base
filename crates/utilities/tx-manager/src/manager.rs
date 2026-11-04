@@ -111,6 +111,19 @@ impl PreparedTx {
     }
 }
 
+/// A receipt confirmed to the required depth, with the timestamp of the canonical
+/// block that includes it.
+///
+/// The receipt poller already reads that block to check the receipt is canonical, so
+/// the send loop gets the inclusion time without another RPC call.
+#[derive(Debug)]
+struct ConfirmedTx {
+    /// The confirmed receipt.
+    receipt: TransactionReceipt,
+    /// Unix timestamp, in seconds, of the block that includes the transaction.
+    block_timestamp: u64,
+}
+
 /// Mutable fee-bump state tracked across iterations in the send loop.
 ///
 /// Groups the values that [`SimpleTxManager::try_fee_bump`] updates on each
@@ -1014,10 +1027,12 @@ where
         let latency_ms =
             u64::try_from(self.runtime.now().saturating_sub(start).as_millis()).unwrap_or(u64::MAX);
 
-        if let Ok(receipt) = &result {
+        if let Ok(confirmed) = &result {
             self.metrics.record_send_latency(latency_ms, SendOutcome::Confirmed);
+            // Recorded with the send latency, so both series cover the same sends.
+            let included_unix_ms = confirmed.block_timestamp.saturating_mul(1_000);
+            self.metrics.record_inclusion_latency(included_unix_ms.saturating_sub(start_unix_ms));
             self.metrics.record_tx_confirmed();
-            self.spawn_record_inclusion_latency(receipt, start_unix_ms);
         } else {
             self.metrics.record_send_latency(latency_ms, SendOutcome::Failed);
             self.metrics.record_tx_failed();
@@ -1042,44 +1057,7 @@ where
             self.nonce_manager.return_reserved_nonce(n).await;
         }
 
-        result
-    }
-
-    /// Spawns a task that records the time from `start_unix_ms` until the timestamp of the
-    /// L1 block that includes the confirmed transaction.
-    ///
-    /// Reading the block takes one more RPC call, so it runs in its own task and never
-    /// delays the send. If the read fails, the metric is skipped for this transaction.
-    fn spawn_record_inclusion_latency(&self, receipt: &TransactionReceipt, start_unix_ms: u64) {
-        let tx_hash = receipt.transaction_hash;
-        // A confirmed receipt always has a block hash: `query_receipt` checks it.
-        let Some(block_hash) = receipt.block_hash else { return };
-        let manager = self.clone();
-        self.runtime.spawn(async move {
-            let block = RuntimeTimeout::run(
-                &manager.runtime,
-                manager.config.network_timeout,
-                manager.provider.get_block_by_hash(block_hash),
-            )
-            .await;
-            match block {
-                Ok(Ok(Some(block))) => {
-                    let included_unix_ms = block.header.timestamp.saturating_mul(1_000);
-                    manager
-                        .metrics
-                        .record_inclusion_latency(included_unix_ms.saturating_sub(start_unix_ms));
-                }
-                Ok(Ok(None)) => {
-                    debug!(%tx_hash, %block_hash, "block of confirmed tx not found, skipping inclusion latency");
-                }
-                Ok(Err(error)) => {
-                    debug!(%tx_hash, %block_hash, %error, "failed to read block of confirmed tx, skipping inclusion latency");
-                }
-                Err(_) => {
-                    debug!(%tx_hash, %block_hash, "reading block of confirmed tx timed out, skipping inclusion latency");
-                }
-            }
-        });
+        result.map(|confirmed| confirmed.receipt)
     }
 
     fn should_reset_nonce_on_send_error<T>(
@@ -1136,7 +1114,7 @@ where
         candidate: &TxCandidate,
         send_state: &Arc<SendState>,
         nonce_override: Option<u64>,
-    ) -> SendResponse {
+    ) -> TxManagerResult<ConfirmedTx> {
         // Initial transaction preparation. prepare() is NOT cancellation-safe,
         // so it runs to completion before entering the select loop.
         // The returned PreparedTx carries the actual on-wire fees, eliminating
@@ -1149,7 +1127,7 @@ where
 
         // Receipt delivery channel — mpsc because fee bumps may spawn
         // new wait tasks with different tx hashes.
-        let (receipt_tx, mut receipt_rx) = mpsc::channel::<TransactionReceipt>(1);
+        let (receipt_tx, mut receipt_rx) = mpsc::channel::<ConfirmedTx>(1);
 
         // Spawn background receipt polling for the initial tx hash.
         self.spawn_wait_for_tx(Arc::clone(send_state), bump.tx_hash, receipt_tx.clone());
@@ -1171,14 +1149,14 @@ where
 
             // If a receipt is already waiting, return it immediately
             // instead of performing a wasted fee bump.
-            if let Ok(receipt) = receipt_rx.try_recv() {
+            if let Ok(confirmed) = receipt_rx.try_recv() {
                 info!(
-                    tx_hash = %receipt.transaction_hash,
-                    block = ?receipt.block_number,
-                    status = %receipt.inner.status(),
+                    tx_hash = %confirmed.receipt.transaction_hash,
+                    block = ?confirmed.receipt.block_number,
+                    status = %confirmed.receipt.inner.status(),
                     "transaction receipt received",
                 );
-                return Ok(receipt);
+                return Ok(confirmed);
             }
 
             // Preparation is not cancellation-safe, so fee bump work must run
@@ -1187,14 +1165,14 @@ where
                 biased;
                 result = receipt_rx.recv() => {
                     match result {
-                        Some(receipt) => {
+                        Some(confirmed) => {
                             info!(
-                                tx_hash = %receipt.transaction_hash,
-                                block = ?receipt.block_number,
-                                status = %receipt.inner.status(),
+                                tx_hash = %confirmed.receipt.transaction_hash,
+                                block = ?confirmed.receipt.block_number,
+                                status = %confirmed.receipt.inner.status(),
                                 "transaction receipt received",
                             );
-                            return Ok(receipt);
+                            return Ok(confirmed);
                         }
                         None => {
                             // All senders dropped — should not happen in normal flow.
@@ -1220,7 +1198,7 @@ where
         &self,
         candidate: &TxCandidate,
         send_state: &Arc<SendState>,
-        receipt_tx: &mpsc::Sender<TransactionReceipt>,
+        receipt_tx: &mpsc::Sender<ConfirmedTx>,
         state: &mut BumpState,
     ) {
         // If a receipt-polling task has already detected a published version
@@ -1262,7 +1240,7 @@ where
         &self,
         candidate: &TxCandidate,
         send_state: &Arc<SendState>,
-        receipt_tx: &mpsc::Sender<TransactionReceipt>,
+        receipt_tx: &mpsc::Sender<ConfirmedTx>,
         old: &BumpState,
     ) -> TxManagerResult<BumpState> {
         let bumped =
@@ -1526,20 +1504,20 @@ where
         &self,
         send_state: Arc<SendState>,
         tx_hash: B256,
-        receipt_tx: mpsc::Sender<TransactionReceipt>,
+        receipt_tx: mpsc::Sender<ConfirmedTx>,
     ) {
         let manager = self.clone();
         self.runtime.spawn(async move {
             debug!(tx_hash = %tx_hash, "starting receipt polling");
 
             // Stop polling once the receiver is dropped. Nobody can consume the receipt then.
-            let receipt = tokio::select! {
+            let confirmed = tokio::select! {
                 biased;
                 () = receipt_tx.closed() => None,
-                receipt = Self::wait_mined_using_runtime(&manager.runtime, &send_state, &manager.provider, tx_hash, &manager.config, &manager.closed) => receipt,
+                confirmed = Self::wait_mined_using_runtime(&manager.runtime, &send_state, &manager.provider, tx_hash, &manager.config, &manager.closed) => confirmed,
             };
-            if let Some(receipt) = receipt {
-                let _ = receipt_tx.send(receipt).await;
+            if let Some(confirmed) = confirmed {
+                let _ = receipt_tx.send(confirmed).await;
             }
 
             debug!(tx_hash = %tx_hash, "receipt polling ended");
@@ -1568,6 +1546,7 @@ where
             closed,
         )
         .await
+        .map(|confirmed| confirmed.receipt)
     }
 
     /// Runtime-backed implementation of [`wait_mined`](Self::wait_mined).
@@ -1578,7 +1557,7 @@ where
         tx_hash: B256,
         config: &TxManagerConfig,
         closed: &AtomicBool,
-    ) -> Option<TransactionReceipt>
+    ) -> Option<ConfirmedTx>
     where
         Rt: Runtime,
     {
@@ -1603,7 +1582,7 @@ where
             )
             .await
             {
-                Ok(Some(receipt)) => return Some(receipt),
+                Ok(Some(confirmed)) => return Some(confirmed),
                 Ok(None) => {
                     // Not yet confirmed — continue polling.
                 }
@@ -1649,6 +1628,7 @@ where
             network_timeout,
         )
         .await
+        .map(|confirmed| confirmed.map(|confirmed| confirmed.receipt))
     }
 
     /// Runtime-backed implementation of [`query_receipt`](Self::query_receipt).
@@ -1659,7 +1639,7 @@ where
         tx_hash: B256,
         num_confirmations: u64,
         network_timeout: Duration,
-    ) -> TxManagerResult<Option<TransactionReceipt>>
+    ) -> TxManagerResult<Option<ConfirmedTx>>
     where
         Rt: Runtime,
     {
@@ -1721,10 +1701,8 @@ where
         .map_err(|_| TxManagerError::Rpc("get_block_by_number timed out".into()))?
         .map_err(|e| RpcErrorClassifier::classify_rpc_error(&e))?;
 
-        let is_canonical =
-            canonical_block.as_ref().is_some_and(|block| block.header.hash == receipt_block_hash);
-
-        if !is_canonical {
+        let Some(block) = canonical_block.filter(|block| block.header.hash == receipt_block_hash)
+        else {
             send_state.tx_not_mined(tx_hash);
             debug!(
                 tx_hash = %tx_hash,
@@ -1733,7 +1711,7 @@ where
                 "receipt block hash does not match canonical chain",
             );
             return Ok(None);
-        }
+        };
 
         // Receipt is on the canonical chain — record as mined.
         send_state.tx_mined(tx_hash);
@@ -1747,7 +1725,7 @@ where
                 num_confirmations = %num_confirmations,
                 "transaction confirmed to required depth",
             );
-            Ok(Some(receipt))
+            Ok(Some(ConfirmedTx { receipt, block_timestamp: block.header.timestamp }))
         } else {
             debug!(
                 tx_hash = %tx_hash,
@@ -2335,7 +2313,10 @@ mod tests {
             )
             .await;
 
-            assert_eq!(confirmed.map(|receipt| receipt.transaction_hash), Some(tx_hash));
+            assert_eq!(
+                confirmed.map(|confirmed| confirmed.receipt.transaction_hash),
+                Some(tx_hash)
+            );
             assert_eq!(ctx.now(), Duration::from_secs(4));
         });
     }
@@ -2494,16 +2475,21 @@ mod tests {
         });
     }
 
-    /// Records inclusion latencies and ignores every other metric.
+    /// Records send and inclusion latencies and ignores every other metric.
     #[derive(Debug, Default)]
-    struct InclusionLatencies(Mutex<Vec<u64>>);
+    struct LatencyMetrics {
+        send: Mutex<Vec<(u64, SendOutcome)>>,
+        inclusion: Mutex<Vec<u64>>,
+    }
 
-    impl TxMetrics for InclusionLatencies {
+    impl TxMetrics for LatencyMetrics {
         fn record_tx_max_fee(&self, _fee_gwei: f64) {}
         fn record_gas_bump(&self) {}
-        fn record_send_latency(&self, _latency_ms: u64, _outcome: SendOutcome) {}
+        fn record_send_latency(&self, latency_ms: u64, outcome: SendOutcome) {
+            self.send.lock().unwrap().push((latency_ms, outcome));
+        }
         fn record_inclusion_latency(&self, latency_ms: u64) {
-            self.0.lock().unwrap().push(latency_ms);
+            self.inclusion.lock().unwrap().push(latency_ms);
         }
         fn record_current_nonce(&self, _nonce: u64) {}
         fn record_publish_error(&self) {}
@@ -2515,10 +2501,12 @@ mod tests {
         fn record_tx_failed(&self) {}
     }
 
-    /// Sends a transaction that confirms on the first receipt poll, 300 ms after the
-    /// runtime started, then answers the read of the block that includes it with
-    /// `block_response`. Returns the recorded inclusion latencies.
-    fn inclusion_latencies_for_confirmed_send(block_response: fn(&Asserter, &Block)) -> Vec<u64> {
+    /// A confirmed send records its inclusion latency together with its send latency,
+    /// from the timestamp of the canonical block the receipt poller already read: the
+    /// latency runs from the start of the send, in milliseconds of wall-clock time, to
+    /// that timestamp, and no other block is read.
+    #[test]
+    fn confirmed_send_records_inclusion_latency_with_send_latency() {
         Runner::start(Config::seeded(0), |ctx| async move {
             let tx_hash = B256::with_last_byte(1);
             let (receipt, mut block) = mined_receipt(tx_hash, 10);
@@ -2535,8 +2523,7 @@ mod tests {
             asserter.push_success(&10u64);
             asserter.push_success(&Some(&receipt));
             asserter.push_success(&Some(&block));
-            block_response(&asserter, &block);
-            let metrics = Arc::new(InclusionLatencies::default());
+            let metrics = Arc::new(LatencyMetrics::default());
             let manager = SimpleTxManager::from_wallet_with_runtime(
                 ctx.clone(),
                 ProviderBuilder::new().connect_mocked_client(asserter.clone()),
@@ -2553,35 +2540,13 @@ mod tests {
                 .send(TxCandidate { to: Some(Address::with_last_byte(0x42)), ..Default::default() })
                 .await
                 .expect("the send should confirm");
-            ctx.sleep(Duration::from_millis(1)).await;
 
             assert_eq!(confirmed.transaction_hash, tx_hash);
-            assert!(asserter.read_q().is_empty(), "the block should have been read");
-            metrics.0.lock().unwrap().clone()
-        })
-    }
-
-    /// The inclusion latency runs from the start of the send, in milliseconds of wall-clock
-    /// time, to the timestamp of the block that includes the transaction.
-    #[test]
-    fn confirmed_send_records_inclusion_latency_from_block_timestamp() {
-        let latencies = inclusion_latencies_for_confirmed_send(|asserter, block| {
-            asserter.push_success(&Some(block));
+            assert!(asserter.read_q().is_empty(), "every mocked response should be used");
+            assert_eq!(*metrics.send.lock().unwrap(), vec![(0, SendOutcome::Confirmed)]);
+            // The send starts at 1_700_000_000.300 s and the block's timestamp is 1_700_000_020 s.
+            assert_eq!(*metrics.inclusion.lock().unwrap(), vec![19_700]);
         });
-
-        // The send starts at 1_700_000_000.300 s and the block's timestamp is 1_700_000_020 s.
-        assert_eq!(latencies, vec![19_700]);
-    }
-
-    /// A block that cannot be read records no inclusion latency and leaves the send
-    /// confirmed.
-    #[rstest]
-    #[case::rpc_error(|asserter: &Asserter, _: &Block| asserter.push_failure_msg("unavailable"))]
-    #[case::block_not_found(|asserter: &Asserter, _: &Block| asserter.push_success(&Option::<Block>::None))]
-    fn unreadable_block_records_no_inclusion_latency(
-        #[case] block_response: fn(&Asserter, &Block),
-    ) {
-        assert!(inclusion_latencies_for_confirmed_send(block_response).is_empty());
     }
 
     // ── should_reset_nonce_on_send_error ───────────────────────────────

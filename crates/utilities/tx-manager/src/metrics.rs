@@ -84,8 +84,9 @@ pub trait TxMetrics: Send + Sync + Debug + 'static {
     /// Record the time in milliseconds from the start of a confirmed send until
     /// the timestamp of the L1 block that includes the transaction.
     ///
-    /// It starts at the same moment as the send latency, so the confirmed send
-    /// latency minus this one is the time spent waiting for confirmations.
+    /// It is recorded together with the confirmed send latency of the same send and
+    /// starts at the same moment, so the confirmed send latency minus this one is the
+    /// time spent waiting for confirmations.
     fn record_inclusion_latency(&self, latency_ms: u64);
 
     /// Record the current nonce.
