@@ -63,9 +63,13 @@ used. The `eth_estimateGas` estimate (`Eip8130Executor::simulate`) stays metered
 declares: a sponsored transaction submitted at `gas_limit = estimate` settles `estimate + payer_floor`
 once. EIP-8130 is only valid from Everest, which also activates the feature, so EIP-8130
 transactions are always billed this way. With `disable_fee_charge` set, `Eip8130Executor::execute`
-behaves like the standard handler: signatures, the payer's balance and the nonce are still checked
-and the sender's nonce is still consumed, but nothing is pre-charged or settled and the result
-reports the metered gas, so `eth_call` and unvalidated `eth_simulateV1` stay metered for EIP-8130 too.
+behaves exactly like the standard handler: signatures are still verified, the nonce is still
+validated and the sender's nonce consumed, and the fee caps are still sanity-checked, but the
+payer's balance is not checked, nothing is pre-charged and no settlement transfer runs, and the
+result reports the metered gas net of the EIP-3529-capped refund. RPC requests for EIP-8130
+(`eth_call`, `eth_estimateGas`, `eth_simulateV1`) route through `Eip8130Executor::simulate`, which
+never settles fees; honoring the flag in `execute` makes a fee-charge-disabled execution of a
+*signed* EIP-8130 transaction behave the same way, so the two entry points cannot diverge.
 
 ## License
 
