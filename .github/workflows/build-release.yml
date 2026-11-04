@@ -67,7 +67,7 @@ jobs:
         if: matrix.target.os == 'linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libclang-dev pkg-config protobuf-compiler
+          sudo apt-get install -y libclang-dev libprotobuf-dev pkg-config protobuf-compiler
 
       - name: Install system dependencies (macOS)
         if: matrix.target.os == 'macos' && matrix.binary == 'basectl'
