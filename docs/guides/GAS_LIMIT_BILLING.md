@@ -25,7 +25,7 @@ What the rule does not fix: predicates that do not match are not included and pa
 
 For every user transaction in a block where gas-limit billing is active:
 
-1. **Billable gas** `B = gas_limit` for standard transactions and `B = gas_limit + payer_floor` for EIP-8130 transactions: the quantity the pool ranks by and the builder reserves. `payer_floor` is the payer-authentication gas (`IntrinsicGas::max_payer_auth_cost`: the `payer_auth` signature bytes priced at the EIP-7623 floor rate), metered on top of the sender's `gas_limit`; it is zero for self-paid transactions.
+1. **Billable gas** `B = gas_limit` for standard transactions and `B = gas_limit + payer_floor` for EIP-8130 transactions: the quantity billed and reserved by the builder. This reservation is distinct from the pool's ranking denominator; static EIP-8130 coinbase-tip ordering continues to use `gas_limit`, not `B`. `payer_floor` is the payer-authentication gas (`IntrinsicGas::max_payer_auth_cost`: the `payer_auth` signature bytes priced at the EIP-7623 floor rate), metered on top of the sender's `gas_limit`; it is zero for self-paid transactions.
 2. **Settlement.** The payer pays `B * effective_gas_price` plus the L1 data fee plus the operator fee on `B`. Unused gas is not reimbursed; EIP-3529 storage-clearing refunds, EIP-7702 authorization refunds, and stateful-precompile refunds do not reduce the fee. The EIP-7623 floor does not change the fee. Refund amounts depend on execution; applying them would make the final fee unknown when the builder orders transactions, defeating the design goal. The sequencer receives `B * priority_fee_per_gas`, the `BaseFeeVault` `B * basefee`, the `OperatorFeeVault` the operator fee on `B`. The L1 data fee is unchanged.
 3. **Receipts and header.** Receipt `gasUsed = B`; `cumulativeGasUsed` and header `gasUsed` add `B` per user transaction, so `gasUsed * effectiveGasPrice` is still the execution fee and receipts still sum to the header.
 4. **Deposits** are unchanged: no L2 execution fee, metered `gasUsed`.
@@ -56,7 +56,7 @@ Execution is still metered internally; only what is settled and reported changes
 
 ## Implementation
 
-`BaseFeature::GasLimitBilling` is a semantic feature in the hardfork feature registry ([`feature.rs`](../../crates/common/genesis/src/feature.rs)). For network activation, the registry must gate the feature on `BaseUpgrade::Everest`; Zenith is the genesis-only development-testing gate. Call sites check `spec.is_feature_enabled(BaseFeature::GasLimitBilling)`. Behavior is unchanged unless the feature is active. The hook lives in `crates/common/evm`; any replacement execution implementation must preserve the same settlement and reporting semantics.
+`BaseFeature::GasLimitBilling` is a semantic feature in the hardfork feature registry ([`feature.rs`](../../crates/common/genesis/src/feature.rs)). The intended network activation gate is `BaseUpgrade::Everest`; the current registry assigns the feature to Zenith, the genesis-only development-testing gate. Network activation requires assigning it to Everest. Call sites check `spec.is_feature_enabled(BaseFeature::GasLimitBilling)`. Behavior is unchanged unless the feature is active. The hook lives in `crates/common/evm`; any replacement execution implementation must preserve the same settlement and reporting semantics.
 
 **Standard transactions** ([`handler.rs`](../../crates/common/evm/src/handler.rs)). One hook in `BaseHandler::refund`, after revm's refund step:
 
@@ -100,11 +100,16 @@ All execution paths must enforce the same accounting after activation while pres
 - Deposits retain metered gas and pay no L2 execution fee.
 - Opcode metering, out-of-gas behavior, and execution results remain unchanged. Proving and block validation must use the same activated rules as payload construction.
 
-## Design decisions
+## Design requirements
 
 - **Upgrade gate:** activate gas-limit billing with Everest.
-- **Base-fee target and elasticity:** keep both unchanged. Reserved gas can increase reported fullness and upward base-fee pressure while clients adjust their limits; changing the fee-market parameters is a separate decision.
 - **Refunds:** remove the fee effect of EIP-3529 storage-clearing, EIP-7702 authorization, and stateful-precompile refunds. Keep opcode and precompile prices unchanged; any repricing is separate work. This keeps the fee computable before execution.
+
+## Proposed design choices
+
+The following policies are proposed for this design and remain subject to finalization:
+
+- **Base-fee target and elasticity:** keep both unchanged. Reserved gas can increase reported fullness and upward base-fee pressure while clients adjust their limits; changing the fee-market parameters is a separate decision.
 - **EIP-8130 payer authentication:** bill `gas_limit + payer_floor`, matching the builder's reservation. The estimate excludes `payer_floor`, so clients must account for it separately when presenting a sponsored transaction's total fee.
 - **Static EIP-8130 coinbase tips:** keep pool ordering by tip divided by `gas_limit`, without changing the pool. This can rank sponsored transactions higher than their revenue per unit of reserved space because the reservation also includes `payer_floor`.
 - **Client compatibility:** ERC-4337 bundlers adjust `preVerificationGas` to recover sponsorship costs under gas-limit billing, rather than requiring a new Entrypoint deployment. Wallets, tooling, explorers, and searchers must account for paid estimate padding and reserved-gas reporting.
@@ -121,6 +126,6 @@ Key risks are higher fees for padded limits, greater dependence on accurate esti
 
 ## Activation
 
-Gas-limit billing is a consensus change gated by Everest and must activate consistently in builders, validators, and provers. Before network activation, resolve the remaining open decisions above, ensure the design invariants hold across the activation boundary, and define client-facing fee and gas-reporting semantics. Follow [UPGRADES.md](UPGRADES.md) for network activation, with Base Sepolia preceding Mainnet.
+Gas-limit billing is a consensus change intended to activate with Everest and must activate consistently in builders, validators, and provers. Before network activation, finalize the proposed policies and resolve the remaining open decisions above, ensure the design invariants hold across the activation boundary, and define client-facing fee and gas-reporting semantics. Follow [UPGRADES.md](UPGRADES.md) for network activation, with Base Sepolia preceding Mainnet.
 
 References: [EIP-1559](https://eips.ethereum.org/EIPS/eip-1559), [EIP-3529](https://eips.ethereum.org/EIPS/eip-3529), [EIP-7623](https://eips.ethereum.org/EIPS/eip-7623), [EIP-7778](https://eips.ethereum.org/EIPS/eip-7778), [EIP-7825](https://eips.ethereum.org/EIPS/eip-7825), [EIP-8130](https://eips.ethereum.org/EIPS/eip-8130); [`crates/common/evm/README.md`](../../crates/common/evm/README.md).
