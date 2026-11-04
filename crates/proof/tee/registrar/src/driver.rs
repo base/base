@@ -707,29 +707,122 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn cancellation_after_reconciliation_skips_task_decisions() {
+    async fn task_decisions_cancel_pending_registration() {
+        let driver = task_driver(CancellationToken::new(), endpoint_url(EP1));
+        let mut tasks = RegistrationTaskSet::default();
+        let signer = Address::repeat_byte(1);
+        let task_cancel = CancellationToken::new();
+        let wait_cancel = task_cancel.clone();
+        let (finished, completion) = tokio::sync::oneshot::channel();
+        tasks.spawn(signer, "old".into(), task_cancel.clone(), async move {
+            wait_cancel.cancelled().await;
+            finished.send(()).unwrap();
+            Ok(())
+        });
+
+        driver.apply_task_decisions(&mut tasks, &[signer], vec![]);
+
+        assert!(task_cancel.is_cancelled(), "cancel decision must cancel the pending task token");
+        tokio::time::timeout(Duration::from_secs(1), completion)
+            .await
+            .expect("pending task must observe the cancel decision before drain")
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn task_decisions_spawn_registration_with_shutdown_child_token() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let cancel = CancellationToken::new();
+        let driver =
+            task_driver(cancel.clone(), endpoint_url(&listener.local_addr().unwrap().to_string()));
+        let raw = hex::decode(include_str!("testdata/nitro_attestation.hex").trim()).unwrap();
+        let cose = crate::NitroCose::parse_sign1(&raw).unwrap();
+        let signer = crate::AttestationPlanner::prepare_registration_plan(&raw).unwrap().signer;
+        let mut payload: ciborium::Value =
+            ciborium::de::from_reader(cose.payload.as_slice()).unwrap();
+        for (key, value) in payload.as_map_mut().unwrap() {
+            if key.as_text() == Some("nonce") {
+                *value = ciborium::Value::Bytes(
+                    driver.signer_manager.attestation_nonce(signer).to_vec(),
+                );
+            }
+        }
+        let mut encoded_payload = Vec::new();
+        ciborium::ser::into_writer(&payload, &mut encoded_payload).unwrap();
+        let envelope = ciborium::Value::Array(vec![
+            ciborium::Value::Bytes(vec![0xa1, 0x01, 0x38, 0x22]),
+            ciborium::Value::Map(vec![]),
+            ciborium::Value::Bytes(encoded_payload),
+            ciborium::Value::Bytes(cose.signature),
+        ]);
+        let mut attestation = Vec::new();
+        ciborium::ser::into_writer(&envelope, &mut attestation).unwrap();
+        let mut tasks = RegistrationTaskSet::default();
+
+        driver.apply_task_decisions(
+            &mut tasks,
+            &[],
+            vec![RegisterableSigner {
+                instance: healthy_prover_instance(EP1),
+                signer,
+                attestation,
+            }],
+        );
+
+        // The unsigned nonce edit is sufficient to reach the first revocation read.
+        // Keep that RPC unanswered so only shutdown can complete registration.
+        let (_connection, _) = tokio::time::timeout(Duration::from_secs(1), listener.accept())
+            .await
+            .expect("spawned registration must make a contract read")
+            .unwrap();
+        cancel.cancel();
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while tasks.contains(&signer) {
+                tasks.reap_finished_tasks();
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("spawned registration must finish on driver shutdown before drain");
+    }
+
+    fn task_driver(
+        cancel: CancellationToken,
+        cert_manager_url: Url,
+    ) -> RegistrationDriver<
+        Vec<ProverInstance>,
+        MockEnclaveEndpointClient,
+        CountingRegistry,
+        CertManagerContractClient,
+        NoopTxManager,
+    > {
         let fixture = cycle_driver(vec![], MockEnclaveEndpointClient::default(), cancel.clone());
         let manager = SignerManager::new(
-            CountingRegistry { reads: Arc::new(AtomicUsize::new(0)), cancel: cancel.clone() },
-            CertManagerContractClient::new(Address::ZERO, endpoint_url(EP1)),
+            CountingRegistry { reads: Arc::new(AtomicUsize::new(0)), cancel },
+            CertManagerContractClient::new(Address::ZERO, cert_manager_url),
             NoopTxManager,
             SignerManagerConfig {
                 registry_address: TEST_REGISTRY_ADDRESS,
                 max_concurrency: DEFAULT_MAX_CONCURRENCY,
                 max_tx_retries: DEFAULT_MAX_TX_RETRIES,
                 tx_retry_delay: Duration::from_secs(DEFAULT_TX_RETRY_DELAY_SECS),
-                max_attestation_age: TEST_MAX_ATTESTATION_AGE,
+                max_attestation_age: Duration::MAX,
                 crl_checks_enabled: false,
             },
         )
         .unwrap();
-        let driver = RegistrationDriver::new(
+        RegistrationDriver::new(
             fixture.discovery,
             fixture.signer_client,
             fixture.config,
             Arc::new(manager),
-        );
+        )
+    }
+
+    #[tokio::test]
+    async fn cancellation_after_reconciliation_skips_task_decisions() {
+        let cancel = CancellationToken::new();
+        let driver = task_driver(cancel.clone(), endpoint_url(EP1));
         let mut tasks = RegistrationTaskSet::default();
         let old_signer = Address::repeat_byte(1);
         let new_signer = Address::repeat_byte(2);
