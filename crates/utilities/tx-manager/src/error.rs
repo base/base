@@ -267,6 +267,9 @@ impl RpcErrorClassifier {
     /// once and checked against known geth error substrings in a fixed
     /// order. The first match wins.
     ///
+    /// Explicit execution reverts take precedence over provider keywords in
+    /// contract-controlled revert reasons.
+    ///
     /// **Ordering is critical**: `"replacement transaction underpriced"` is
     /// matched before `"transaction underpriced"` because the latter is a
     /// substring of the former.
@@ -287,6 +290,19 @@ impl RpcErrorClassifier {
 
         let lowered = payload.message.to_ascii_lowercase();
 
+        // Revert reasons are contract-controlled and may contain provider keywords.
+        if let Some(pos) = lowered.find("execution reverted") {
+            if let Some(data) = payload.as_revert_data() {
+                let reason = alloy_sol_types::decode_revert_reason(&data);
+                return TxManagerError::ExecutionReverted { reason, data: Some(data) };
+            }
+            // `to_ascii_lowercase()` is byte-offset-preserving, so
+            // offsets from `lowered` are safe to index `payload.message`.
+            let after = &payload.message[pos + "execution reverted".len()..];
+            let after = after.trim_start_matches(':').trim();
+            let reason = if after.is_empty() { None } else { Some(after.to_string()) };
+            return TxManagerError::ExecutionReverted { reason, data: None };
+        }
         if lowered.contains("replacement transaction underpriced") {
             return TxManagerError::ReplacementUnderpriced;
         }
@@ -304,18 +320,6 @@ impl RpcErrorClassifier {
         }
         if lowered.contains("intrinsic gas too low") {
             return TxManagerError::IntrinsicGasTooLow;
-        }
-        if let Some(pos) = lowered.find("execution reverted") {
-            if let Some(data) = payload.as_revert_data() {
-                let reason = alloy_sol_types::decode_revert_reason(&data);
-                return TxManagerError::ExecutionReverted { reason, data: Some(data) };
-            }
-            // `to_ascii_lowercase()` is byte-offset-preserving, so
-            // offsets from `lowered` are safe to index `payload.message`.
-            let after = &payload.message[pos + "execution reverted".len()..];
-            let after = after.trim_start_matches(':').trim();
-            let reason = if after.is_empty() { None } else { Some(after.to_string()) };
-            return TxManagerError::ExecutionReverted { reason, data: None };
         }
         if lowered.contains("fee too low") {
             return TxManagerError::FeeTooLow;
