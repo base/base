@@ -46,8 +46,9 @@ pub struct EncoderConfig {
 
     /// Maximum blobs packed into one L1 transaction.
     ///
-    /// This controls transaction packing and does not close channels. It cannot
-    /// exceed [`Self::MAX_BLOBS_PER_TX`].
+    /// This controls transaction packing and does not close channels: blobs
+    /// that do not hold a channel's last frame wait until this many are ready.
+    /// It cannot exceed [`Self::MAX_BLOBS_PER_TX`].
     ///
     /// Default: 6.
     pub max_blobs_per_tx: usize,
