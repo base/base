@@ -76,7 +76,8 @@ async fn preparation_preserves_terminal_reverts(#[case] structured: bool) {
                     "eth_chainId" => response["result"] = json!("0x1"),
                     "eth_maxPriorityFeePerGas" => response["result"] = json!("0x3b9aca00"),
                     "eth_getBlockByNumber" => {
-                        let mut block = serde_json::to_value(Block::default()).unwrap();
+                        let block: Block = Block::default();
+                        let mut block = serde_json::to_value(block).unwrap();
                         block["baseFeePerGas"] = json!("0x3b9aca00");
                         response["result"] = block;
                     }
