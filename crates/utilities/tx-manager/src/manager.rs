@@ -903,8 +903,10 @@ where
 
         match sign_result {
             Ok(envelope) => {
-                // Consume the nonce (drop guard if present).
-                drop(guard);
+                // Preserve signed nonces across resets caused by sibling sends.
+                if let Some(guard) = guard {
+                    guard.consume_reserved()?;
+                }
 
                 // Record max possible fee metric in gwei. Intentionally recorded on every
                 // attempt (initial + fee bumps) to track fee escalation across retries.

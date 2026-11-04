@@ -27,12 +27,12 @@ pub struct NonceState {
     /// snapshot value) would require 2^64 calls to `reset()`, which
     /// is infeasible in practice.
     pub generation: u64,
-    /// Tracks the highest nonce consumed by [`NonceManager::reserve_nonce`].
+    /// Tracks the next nonce after signed transactions and async reservations.
     ///
     /// After a [`NonceManager::reset`], the nonce cache is cleared and
     /// re-fetched from the chain. The high-water mark ensures that nonce
     /// allocation never re-issues a nonce that was previously reserved by a
-    /// concurrent `send_async()` task. The effective starting nonce after
+    /// concurrent send or consumed after successful signing. The effective starting nonce after
     /// reset is `max(chain_nonce, reserved_high_water)`.
     pub reserved_high_water: u64,
     /// Nonces that were reserved via [`NonceManager::reserve_nonce`] but
@@ -123,8 +123,8 @@ where
     /// rolled back.
     ///
     /// Returns a [`NonceGuard`] that holds the mutex lock for the duration
-    /// of transaction signing. Drop the guard on success, or call
-    /// [`NonceGuard::rollback`] on failure to restore the nonce.
+    /// of transaction signing. Call [`NonceGuard::consume_reserved`] on success
+    /// to protect the nonce across resets, or [`NonceGuard::rollback`] on failure.
     ///
     /// # Errors
     ///
@@ -226,21 +226,16 @@ where
         // BTreeSet::pop_first gives the smallest gap, filling holes
         // left-to-right so the chain can make forward progress.
         //
-        // `reserved_high_water` is NOT updated here because the two call
-        // paths handle it differently:
-        // • `reserve_nonce` path (`send_async`): the caller's
-        //   `consume_reserved()` updates `reserved_high_water`, covering
-        //   recycled nonces.
-        // • `next_nonce` guard path (`send`): the mutex is held for the
-        //   entire signing duration, so concurrent collision is impossible
-        //   and `reserved_high_water` is irrelevant.
+        // Callers update `reserved_high_water` with `consume_reserved()`:
+        // `reserve_nonce` commits immediately for async sends, while ordinary
+        // sends commit after successful signing. This also covers recycled nonces.
         if let Some(returned) = guard.returned_nonces.pop_first() {
             debug!(nonce = returned, "reissuing returned nonce");
             return Ok(NonceGuard { guard: Some(guard), nonce: returned, recycled: true });
         }
 
         // Ensure the nonce is at least as high as the high-water mark set
-        // by previous reserve_nonce() calls. After a reset(), the chain
+        // by previous reservations or successful signing. After a reset(), the chain
         // may return a nonce below reserved values; skipping past them
         // prevents duplicate nonce assignment.
         let effective = nonce.max(guard.reserved_high_water);
@@ -286,9 +281,9 @@ where
     ///
     /// Unless [`with_pending_tag`](Self::with_pending_tag) was set, the
     /// fresh fetch uses the `latest` block tag, so pending-but-unconfirmed
-    /// transactions are not counted. Callers should avoid calling `reset()`
-    /// while transactions are still in-flight, as the freshly fetched nonce
-    /// may conflict with pending transactions in the mempool.
+    /// transactions are not counted. Nonces committed with
+    /// [`NonceGuard::consume_reserved`] remain protected by the high-water mark.
+    /// Pending transactions signed outside this manager are not protected.
     pub async fn reset(&self) {
         let mut guard = self.inner.lock().await;
         guard.nonce = None;
@@ -320,8 +315,9 @@ where
 /// RAII guard holding a reserved nonce and the nonce mutex lock.
 ///
 /// The lock is held for the duration of transaction signing to prevent
-/// concurrent nonce conflicts. Drop the guard after successful signing
-/// to release the lock, or call [`rollback`](Self::rollback) on failure
+/// concurrent nonce conflicts. Call [`consume_reserved`](Self::consume_reserved)
+/// after successful signing to protect the nonce across cache resets and release
+/// the lock, or call [`rollback`](Self::rollback) on failure
 /// to restore the nonce for reuse.
 #[derive(Debug)]
 pub struct NonceGuard {

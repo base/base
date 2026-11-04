@@ -42,8 +42,9 @@ confirmation.
 ### Nonce management
 
 - **`NonceManager`** — lazy-initialized nonce cache with mutex-guarded allocation.
-- **`NonceGuard`** — RAII guard holding a reserved nonce; drop consumes it, or
-  call `rollback()` on failure to return it for reuse.
+- **`NonceGuard`** — guard holding a reserved nonce. Call `consume_reserved()` after
+  signing to protect it across cache resets, or `rollback()` on failure to return it
+  for reuse. Dropping the guard only releases the allocation lock.
 - **`NonceState`** — snapshot of the current nonce state.
 
 ### Send state
