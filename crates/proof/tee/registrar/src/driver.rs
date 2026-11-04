@@ -145,28 +145,11 @@ where
                 Ok(None) => {}
                 Ok(Some(observations)) => {
                     let resolution = reconciler.step(observations, registration_tasks.pending());
-                    for signer in &resolution.cancel {
-                        registration_tasks.cancel(signer);
-                    }
-                    for entry in resolution.spawn {
-                        let signer_cancel = self.config.cancel.child_token();
-                        let manager = Arc::clone(&self.signer_manager);
-                        let instance_id = entry.instance.instance_id;
-                        let task_instance_id = instance_id.clone();
-                        let task_cancel = signer_cancel.clone();
-                        let signer = entry.signer;
-                        let attestation = entry.attestation;
-                        registration_tasks.spawn(signer, instance_id, signer_cancel, async move {
-                            manager
-                                .register_signer(
-                                    &task_instance_id,
-                                    signer,
-                                    &attestation,
-                                    &task_cancel,
-                                )
-                                .await
-                        });
-                    }
+                    self.apply_task_decisions(
+                        &mut registration_tasks,
+                        &resolution.cancel,
+                        resolution.spawn,
+                    );
 
                     if let Some(protected_signers) = &resolution.orphan_cleanup
                         && let Err(e) = self
@@ -204,6 +187,39 @@ where
         info!("registration driver stopped");
         Ok(())
     }
+
+    /// Applies task cancellations and spawns unless shutdown has started.
+    pub fn apply_task_decisions(
+        &self,
+        registration_tasks: &mut RegistrationTaskSet,
+        cancel: &[Address],
+        spawn: Vec<RegisterableSigner>,
+    ) where
+        R: TEEProverRegistryClient + 'static,
+        C: CertManagerClient + 'static,
+        T: 'static,
+    {
+        if self.config.cancel.is_cancelled() {
+            return;
+        }
+
+        for signer in cancel {
+            registration_tasks.cancel(signer);
+        }
+        for entry in spawn {
+            let signer_cancel = self.config.cancel.child_token();
+            let manager = Arc::clone(&self.signer_manager);
+            let instance_id = entry.instance.instance_id;
+            let task_instance_id = instance_id.clone();
+            let task_cancel = signer_cancel.clone();
+            let signer = entry.signer;
+            let attestation = entry.attestation;
+            registration_tasks.spawn(signer, instance_id, signer_cancel, async move {
+                manager.register_signer(&task_instance_id, signer, &attestation, &task_cancel).await
+            });
+        }
+    }
+
     /// Resolves signer keys and attestations without cache grace, omitting cancelled instances.
     async fn resolve_instance(
         &self,
@@ -688,6 +704,63 @@ mod tests {
             }
             assert_eq!(reads.load(Ordering::SeqCst), expected_reads, "{cycle:?}");
         }
+    }
+
+    #[tokio::test]
+    async fn cancellation_after_reconciliation_skips_task_decisions() {
+        let cancel = CancellationToken::new();
+        let fixture = cycle_driver(vec![], MockEnclaveEndpointClient::default(), cancel.clone());
+        let manager = SignerManager::new(
+            CountingRegistry { reads: Arc::new(AtomicUsize::new(0)), cancel: cancel.clone() },
+            CertManagerContractClient::new(Address::ZERO, endpoint_url(EP1)),
+            NoopTxManager,
+            SignerManagerConfig {
+                registry_address: TEST_REGISTRY_ADDRESS,
+                max_concurrency: DEFAULT_MAX_CONCURRENCY,
+                max_tx_retries: DEFAULT_MAX_TX_RETRIES,
+                tx_retry_delay: Duration::from_secs(DEFAULT_TX_RETRY_DELAY_SECS),
+                max_attestation_age: TEST_MAX_ATTESTATION_AGE,
+                crl_checks_enabled: false,
+            },
+        )
+        .unwrap();
+        let driver = RegistrationDriver::new(
+            fixture.discovery,
+            fixture.signer_client,
+            fixture.config,
+            Arc::new(manager),
+        );
+        let mut tasks = RegistrationTaskSet::default();
+        let old_signer = Address::repeat_byte(1);
+        let new_signer = Address::repeat_byte(2);
+        // Independent of shutdown so applying the cancel decision remains observable.
+        let task_cancel = CancellationToken::new();
+        let wait_cancel = task_cancel.clone();
+        tasks.spawn(old_signer, "old".into(), task_cancel.clone(), async move {
+            wait_cancel.cancelled().await;
+            Ok(())
+        });
+        let instance = healthy_prover_instance(EP1);
+        let observation = InstanceObservation::Resolved {
+            signers: vec![new_signer],
+            registerable: vec![RegisterableSigner {
+                instance: instance.clone(),
+                signer: new_signer,
+                attestation: b"mock-attestation".to_vec(),
+            }],
+        };
+        let resolution = SignerReconciler::new(INSTANCE_CACHE_TTL_CYCLES)
+            .step(vec![(instance, observation)], tasks.pending());
+        assert_eq!(resolution.cancel, vec![old_signer]);
+        assert_eq!(resolution.spawn.len(), 1);
+        cancel.cancel();
+
+        driver.apply_task_decisions(&mut tasks, &resolution.cancel, resolution.spawn);
+
+        assert!(!tasks.contains(&new_signer), "shutdown must not spawn a registration task");
+        assert!(!task_cancel.is_cancelled(), "shutdown must not apply task cancel decisions");
+        assert!(resolution.orphan_cleanup.is_some());
+        tasks.drain().await;
     }
 
     #[tokio::test]
