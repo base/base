@@ -3140,8 +3140,11 @@ mod tests {
     /// unvalidated `eth_simulateV1` run, a self-paid transaction under gas-limit
     /// billing still consumes its nonce and moves its `value`, but pays no fee
     /// (nothing reaches the vaults or the coinbase) and reports the gas it
-    /// metered, agreeing with the `eth_call` simulation path, rather than the
-    /// reserved budget the same transaction is billed when fees are charged.
+    /// metered rather than the reserved budget the same transaction is billed
+    /// when fees are charged. The figure equals the `Call`-mode simulation's only
+    /// because this fixture earns no refund: fee-free `execute` is net of the
+    /// capped refund like standard `eth_call`, while `simulate` in `Call` mode is
+    /// gross (see `fee_charge_disabled_execution_nets_the_capped_refund`).
     #[test]
     fn fee_charge_disabled_execution_meters_gas_and_moves_no_fees() {
         let key = signing_key(0x7a);
@@ -3236,6 +3239,81 @@ mod tests {
         assert_eq!(billed.gas_used, gas_limit + intrinsic.payer_floor);
         assert_eq!(billed.paid, billed.received());
         assert!(billed.paid > U256::ZERO);
+    }
+
+    /// A fee-free execution whose call earns an EIP-3529 refund reports the gas
+    /// net of the capped refund, as standard `eth_call` does, below the gross
+    /// spend the `Call`-mode simulation reports (the pool the call needs) by
+    /// exactly that refund; with fees on the reserved limit is billed regardless.
+    #[test]
+    fn fee_charge_disabled_execution_nets_the_capped_refund() {
+        let key = signing_key(0x7d);
+        let sender = eoa_address(&key);
+        let target = address!("0x00000000000000000000000000000000000000cb");
+        // `JUMPDEST * WARMTH_PROBE_PAD_GAS` keeps the net spend above the EIP-7623
+        // floor, then `PUSH1 1 PUSH1 0 SSTORE` (slot 0: 0 -> 1) and
+        // `PUSH1 0 PUSH1 0 SSTORE` (slot 0: 1 -> 0) `STOP`.
+        let mut code = vec![0x5bu8; WARMTH_PROBE_PAD_GAS as usize];
+        code.extend_from_slice(&[0x60, 0x01, 0x60, 0x00, 0x55, 0x60, 0x00, 0x60, 0x00, 0x55, 0x00]);
+        let contracts = [(target, Bytes::from(code))];
+
+        // EIP-2929/EIP-3529 schedule, by hand. The first SSTORE pays the cold slot
+        // access plus SSTORE_SET (original 0, writing non-zero); the second finds a
+        // dirty slot and pays the warm SLOAD rate, and restoring the original zero
+        // refunds SSTORE_SET minus that warm rate. The CALL itself pays the cold
+        // account access of `target`.
+        const PUSH1_GAS: u64 = 3;
+        const COLD_SLOAD_COST: u64 = 2_100;
+        const SSTORE_SET: u64 = 20_000;
+        const CALL_GAS_SPENT: u64 = COLD_ACCOUNT_ACCESS_COST
+            + WARMTH_PROBE_PAD_GAS
+            + 4 * PUSH1_GAS
+            + COLD_SLOAD_COST
+            + SSTORE_SET
+            + WARM_STORAGE_READ_COST;
+        const RESTORE_ZERO_REFUND: u64 = SSTORE_SET - WARM_STORAGE_READ_COST;
+        const EIP3529_REFUND_QUOTIENT: u64 = 5;
+
+        let tx = TxEip8130 {
+            calls: vec![vec![Call { to: target, value: U256::ZERO, data: Bytes::new() }]],
+            ..base_tx()
+        };
+        let gas_limit = tx.gas_limit;
+        let signed = eoa_signed(tx, &key);
+        let envelope = BaseTxEnvelope::Eip8130(signed.clone());
+        let encoded: Bytes = alloy_eips::eip2718::Encodable2718::encoded_2718(&envelope).into();
+        let intrinsic =
+            IntrinsicGas::compute(&signed, &encoded, &IntrinsicGasInput::new(sender, true))
+                .expect("intrinsic gas");
+        let gross = intrinsic.sender_intrinsic() + CALL_GAS_SPENT;
+        let capped_refund = RESTORE_ZERO_REFUND.min(gross / EIP3529_REFUND_QUOTIENT);
+        let net = gross - capped_refund;
+        assert!(capped_refund > 0, "fixture must earn a refund");
+        assert!(net > intrinsic.sender_floor(), "the EIP-7623 floor must not mask the refund");
+
+        let metered = metered_call(
+            &mut settlement_evm(BaseUpgrade::Everest, sender, &contracts),
+            &signed,
+            sender,
+        );
+        assert!(metered.is_success(), "expected success, got {metered:?}");
+        assert_eq!(metered.tx_gas_used(), gross, "`Call`-mode simulation is gross of refund");
+
+        let mut fee_free = settlement_evm(BaseUpgrade::Everest, sender, &contracts);
+        fee_free.ctx_mut().cfg.disable_fee_charge = true;
+        let unbilled = settle_on(&mut fee_free, &signed, sender);
+        assert!(unbilled.success);
+        assert_eq!(unbilled.gas_used, net, "must report metered gas net of the capped refund");
+        assert_eq!(metered.tx_gas_used() - unbilled.gas_used, capped_refund);
+        assert_eq!(unbilled.paid, U256::ZERO, "nothing may leave the sender");
+        assert_eq!(unbilled.received(), U256::ZERO, "no fee may reach any recipient");
+        assert_eq!(unbilled.nonce(sender), 1, "the protocol nonce is still consumed");
+        let slot = unbilled.state.get(&target).and_then(|acc| acc.storage.get(&U256::ZERO));
+        assert_eq!(slot.map(|s| s.present_value), Some(U256::ZERO), "slot 0 is restored");
+
+        let billed = settle(BaseUpgrade::Everest, &signed, sender, &contracts);
+        assert!(billed.success);
+        assert_eq!(billed.gas_used, gas_limit, "fees on: the reserved budget is billed");
     }
 
     /// With fee charging disabled nothing is charged, so a payer who cannot afford
