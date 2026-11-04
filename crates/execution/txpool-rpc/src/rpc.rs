@@ -201,17 +201,14 @@ where
     /// Returns the latest committed header's `(number, timestamp)`, or `None` when no canonical
     /// head exists (e.g. before genesis is committed).
     fn latest_block_number_and_timestamp(&self) -> RpcResult<Option<(u64, u64)>> {
-        let Some(header) = self.provider.latest_header().map_err(|error| {
+        let header = self.provider.latest_header().map_err(|error| {
             ErrorObjectOwned::owned(
                 ErrorCode::InternalError.code(),
                 format!("failed to resolve latest header: {error}"),
                 None::<()>,
             )
-        })?
-        else {
-            return Ok(None);
-        };
-        Ok(Some((header.number(), header.timestamp())))
+        })?;
+        Ok(header.map(|header| (header.number(), header.timestamp())))
     }
 
     /// Returns whether the block being built uses Denim's native 200ms cadence.
