@@ -1,17 +1,15 @@
-//! System tests for gas-limit fee billing, the Zenith-gated rule that charges a transaction
-//! for its reserved gas (`gas_limit`, or `gas_limit + payer_auth` for EIP-8130) instead of the
-//! gas it consumed.
+//! System tests for gas-limit fee billing, the Everest rule that charges a transaction for its
+//! reserved gas (`gas_limit`, or `gas_limit + payer_auth` for EIP-8130) instead of the gas it
+//! consumed.
 //!
-//! The same over-provisioned transfer is sent before and after the Zenith activation on a real
-//! builder + validator stack. Before Zenith the receipt and the sender's balance reflect the
+//! The same over-provisioned transfer is sent before and after the Everest activation on a real
+//! builder + validator stack. Before Everest the receipt and the sender's balance reflect the
 //! 21k gas a transfer uses; after it they reflect the 100k gas limit, every fee recipient is paid
 //! on the limit, `eth_estimateGas` still reports the metered requirement, and the validator agrees
 //! with the builder on every block. A sponsored EIP-8130 transaction is then billed to its payer
 //! for the reserved `gas_limit + payer_auth` budget.
 
 mod common;
-#[path = "common/everest.rs"]
-mod everest;
 
 use std::time::Duration;
 
@@ -36,12 +34,17 @@ use base_system_tests::{
 use eyre::{OptionExt, Result, WrapErr, ensure};
 use tokio::time::{sleep, timeout};
 
-use crate::common::{L2_CHAIN_ID, wait_for_block};
+use crate::common::{
+    BASE_AZUL_ACTIVATION_BLOCK, BASE_BERYL_ACTIVATION_BLOCK, L1_CHAIN_ID, L2_CHAIN_ID,
+    wait_for_block,
+};
 
-/// Zenith follows the Everest schedule of the Everest system tests (Everest at block 7) late
-/// enough that the post-Zenith chain carries every real upgrade and the first transfer still has
-/// pre-Zenith runway after the operator fee seeded on L1 has reached the L2 (about 15 blocks).
-const ZENITH_ACTIVATION_BLOCK: u64 = 40;
+/// Cobalt activates where the other Everest system tests schedule it (`common/everest.rs`).
+const COBALT_ACTIVATION_BLOCK: u64 = 5;
+/// Everest, and with it gas-limit billing, activates late enough that the first transfer still has
+/// pre-Everest runway after the operator fee seeded on L1 has reached the L2 (about 15 blocks).
+/// The other Everest system tests activate it at block 7 (see `common/everest.rs`).
+const EVEREST_ACTIVATION_BLOCK: u64 = 40;
 /// A plain transfer needs 21k gas; the limit is deliberately ~5x that.
 const TRANSFER_GAS_USED: u64 = 21_000;
 const TX_GAS_LIMIT: u64 = 100_000;
@@ -83,35 +86,41 @@ fn expected_operator_fee(gas: u64) -> U256 {
         + U256::from(OPERATOR_FEE_CONSTANT)
 }
 
-/// A running Zenith stack with its builder and validator providers.
-struct ZenithSystem {
+/// A running stack crossing Everest, with its builder and validator providers.
+struct EverestSystem {
     /// Keeps the containers alive for the duration of the test.
     _system: SystemTestStack,
     builder: RootProvider<Base>,
     client: RootProvider<Base>,
-    /// L2 timestamp at which Zenith, and with it gas-limit billing, activates.
-    zenith_timestamp: u64,
+    /// L2 timestamp at which Everest, and with it gas-limit billing, activates.
+    everest_timestamp: u64,
 }
 
-impl ZenithSystem {
-    /// Starts the stack with Zenith at [`ZENITH_ACTIVATION_BLOCK`], waits past Everest, and
+impl EverestSystem {
+    /// Starts the stack with Everest at [`EVEREST_ACTIVATION_BLOCK`], waits past Cobalt, and
     /// seeds the operator fee so every fee recipient in the settlement identities is live.
     async fn start() -> Result<Self> {
         base_node_runner::test_utils::init_silenced_tracing();
-        let (system, builder) = everest::start_everest_stack(
-            SystemTestStackBuilder::new()
-                .with_base_zenith_activation_block(ZENITH_ACTIVATION_BLOCK),
-        )
-        .await?;
+        let system = SystemTestStackBuilder::new()
+            .with_l1_chain_id(L1_CHAIN_ID)
+            .with_l2_chain_id(L2_CHAIN_ID)
+            .with_base_azul_activation_block(BASE_AZUL_ACTIVATION_BLOCK)
+            .with_base_beryl_activation_block(BASE_BERYL_ACTIVATION_BLOCK)
+            .with_base_cobalt_activation_block(COBALT_ACTIVATION_BLOCK)
+            .with_base_everest_activation_block(EVEREST_ACTIVATION_BLOCK)
+            .build()
+            .await?;
+        let builder = system.l2_builder_provider()?;
+        wait_for_block(&builder, COBALT_ACTIVATION_BLOCK + 1).await?;
         let client = system.l2_client_provider()?;
         let rollup_config: RollupConfig =
             serde_json::from_slice(&std::fs::read(system.l2_deployment().rollup_config_path())?)?;
-        let zenith_timestamp = rollup_config
-            .upgrade_activation_timestamp(BaseUpgrade::Zenith)
-            .ok_or_eyre("Zenith is not scheduled in the rollup config")?;
-        let zenith = Self { _system: system, builder, client, zenith_timestamp };
-        zenith.seed_operator_fee(rollup_config.l1_system_config_address).await?;
-        Ok(zenith)
+        let everest_timestamp = rollup_config
+            .upgrade_activation_timestamp(BaseUpgrade::Everest)
+            .ok_or_eyre("Everest is not scheduled in the rollup config")?;
+        let everest = Self { _system: system, builder, client, everest_timestamp };
+        everest.seed_operator_fee(rollup_config.l1_system_config_address).await?;
+        Ok(everest)
     }
 
     /// Sets [`OPERATOR_FEE_SCALAR`] and [`OPERATOR_FEE_CONSTANT`] on the L1 `SystemConfig` as
@@ -164,8 +173,8 @@ impl ZenithSystem {
         .wrap_err("L2 did not pick up the operator fee scalars from the L1 SystemConfig")?
     }
 
-    /// Polls the builder until its latest block carries a timestamp at or past Zenith.
-    async fn wait_for_zenith(&self) -> Result<()> {
+    /// Polls the builder until its latest block carries a timestamp at or past Everest.
+    async fn wait_for_everest(&self) -> Result<()> {
         timeout(Duration::from_secs(90), async {
             loop {
                 let block = self
@@ -173,14 +182,14 @@ impl ZenithSystem {
                     .get_block_by_number(BlockNumberOrTag::Latest)
                     .await?
                     .ok_or_eyre("latest block missing")?;
-                if block.header.timestamp >= self.zenith_timestamp {
+                if block.header.timestamp >= self.everest_timestamp {
                     return Ok::<_, eyre::Error>(());
                 }
                 sleep(Duration::from_millis(200)).await;
             }
         })
         .await
-        .wrap_err_with(|| format!("timed out waiting for Zenith at {}", self.zenith_timestamp))?
+        .wrap_err_with(|| format!("timed out waiting for Everest at {}", self.everest_timestamp))?
     }
 
     /// Asserts the validator re-derived `block_numbers` to the same hashes as the builder.
@@ -281,32 +290,32 @@ impl Settlement {
     }
 }
 
-/// Before Zenith an over-provisioned transfer is billed for the 21k gas it used; from Zenith the
-/// identical transfer is billed for its 100k limit, the block accounts for that gas, estimation
-/// stays metered, and the validator re-derives the builder's blocks.
+/// Before Everest an over-provisioned transfer is billed for the 21k gas it used; from Everest
+/// the identical transfer is billed for its 100k limit, the block accounts for that gas,
+/// estimation stays metered, and the validator re-derives the builder's blocks.
 #[tokio::test]
-async fn zenith_bills_transactions_for_their_gas_limit() -> Result<()> {
-    let system = ZenithSystem::start().await?;
+async fn everest_bills_transactions_for_their_gas_limit() -> Result<()> {
+    let system = EverestSystem::start().await?;
     let builder = &system.builder;
     let signer = PrivateKeySigner::from_bytes(&ANVIL_ACCOUNT_1.private_key)?;
 
-    // Before Zenith: the transfer is charged for the 21k gas it used and the rest of its
+    // Before Everest: the transfer is charged for the 21k gas it used and the rest of its
     // limit is reimbursed.
-    let before = send_transfer(builder, &signer).await.wrap_err("pre-Zenith transfer")?;
+    let before = send_transfer(builder, &signer).await.wrap_err("pre-Everest transfer")?;
     ensure!(
-        before.block_timestamp < system.zenith_timestamp,
-        "pre-Zenith transfer landed at block {} after the Zenith activation",
+        before.block_timestamp < system.everest_timestamp,
+        "pre-Everest transfer landed at block {} after the Everest activation",
         before.block_number
     );
     before.assert_consistent(TRANSFER_GAS_USED);
 
-    // After Zenith: the identical transfer is charged for its full 100k gas limit. The receipt,
+    // After Everest: the identical transfer is charged for its full 100k gas limit. The receipt,
     // the block and every fee recipient agree on that quantity.
-    system.wait_for_zenith().await?;
-    let after = send_transfer(builder, &signer).await.wrap_err("post-Zenith transfer")?;
+    system.wait_for_everest().await?;
+    let after = send_transfer(builder, &signer).await.wrap_err("post-Everest transfer")?;
     ensure!(
-        after.block_timestamp >= system.zenith_timestamp,
-        "post-Zenith transfer landed at block {} before the Zenith activation",
+        after.block_timestamp >= system.everest_timestamp,
+        "post-Everest transfer landed at block {} before the Everest activation",
         after.block_number
     );
     after.assert_consistent(TX_GAS_LIMIT);
@@ -329,7 +338,7 @@ async fn zenith_bills_transactions_for_their_gas_limit() -> Result<()> {
         .await?;
     assert_eq!(estimate, TRANSFER_GAS_USED, "eth_estimateGas must keep reporting the metered need");
 
-    // The validator re-executes and must accept the builder's post-Zenith blocks: the fee
+    // The validator re-executes and must accept the builder's post-Everest blocks: the fee
     // settlement and block gas accounting are consensus rules, so both nodes must agree.
     let last_block = after.block_number + 2;
     wait_for_block(builder, last_block).await?;
@@ -338,22 +347,22 @@ async fn zenith_bills_transactions_for_their_gas_limit() -> Result<()> {
         .client
         .get_transaction_receipt(after.tx_hash)
         .await?
-        .ok_or_eyre("validator has no receipt for the post-Zenith transfer")?;
+        .ok_or_eyre("validator has no receipt for the post-Everest transfer")?;
     assert_eq!(client_receipt.gas_used(), TX_GAS_LIMIT);
 
     Ok(())
 }
 
-/// From Zenith a sponsored EIP-8130 transaction bills its payer for the reserved budget,
+/// From Everest a sponsored EIP-8130 transaction bills its payer for the reserved budget,
 /// `gas_limit + payer_auth`, the sender pays nothing, and the validator agrees with the builder.
 #[tokio::test]
-async fn zenith_bills_sponsored_eip8130_for_its_reserved_budget() -> Result<()> {
-    let system = ZenithSystem::start().await?;
+async fn everest_bills_sponsored_eip8130_for_its_reserved_budget() -> Result<()> {
+    let system = EverestSystem::start().await?;
     let builder = &system.builder;
     let sender = PrivateKeySigner::from_bytes(&ANVIL_ACCOUNT_1.private_key)?;
     let payer = PrivateKeySigner::from_bytes(&ANVIL_ACCOUNT_2.private_key)?;
     builder.wait_for_balance(payer.address(), FUNDING_TIMEOUT).await?;
-    system.wait_for_zenith().await?;
+    system.wait_for_everest().await?;
 
     let nonce_sequence = builder.get_transaction_count(sender.address()).await?;
     let signed = sponsored_eip8130(&sender, &payer, nonce_sequence)?;
@@ -365,8 +374,8 @@ async fn zenith_bills_sponsored_eip8130_for_its_reserved_budget() -> Result<()> 
     let (settlement, receipt) =
         settle(builder, &raw, payer.address(), U256::ZERO).await.wrap_err("sponsored EIP-8130")?;
     ensure!(
-        settlement.block_timestamp >= system.zenith_timestamp,
-        "sponsored transaction landed at block {} before the Zenith activation",
+        settlement.block_timestamp >= system.everest_timestamp,
+        "sponsored transaction landed at block {} before the Everest activation",
         settlement.block_number
     );
     assert!(receipt.status(), "sponsored EIP-8130 transaction must succeed");
@@ -410,7 +419,7 @@ async fn assert_block_gas_matches_receipts(
     assert_eq!(block.header.gas_used, summed, "header gas_used must be the sum of receipts");
     assert!(
         receipts.iter().any(|receipt| receipt.gas_used() == billed_gas),
-        "the post-Zenith block must carry a receipt billed at {billed_gas} gas"
+        "the post-Everest block must carry a receipt billed at {billed_gas} gas"
     );
     assert!(block.header.gas_used >= billed_gas);
     Ok(())

@@ -23,7 +23,8 @@ pub(crate) struct EverestTestEnv {
     batcher_cfg: BatcherConfig,
     node: TestRollupNode<VerifierPipeline>,
     chain: SharedL1Chain,
-    chain_id: u64,
+    /// Chain id of the L2 these blocks are built for.
+    pub(crate) chain_id: u64,
 }
 
 impl EverestTestEnv {
@@ -91,21 +92,28 @@ impl EverestTestEnv {
         );
     }
 
-    /// Returns the receipt for a non-deposit transaction in `block`.
-    pub(crate) fn user_tx_receipt(&self, block: &BaseBlock, user_tx_index: usize) -> BaseReceipt {
+    /// Receipts of `block`, split into the leading deposits and the user transactions.
+    pub(crate) fn receipts(&self, block: &BaseBlock) -> (Vec<BaseReceipt>, Vec<BaseReceipt>) {
         let deposit_count = block
             .body
             .transactions
             .iter()
             .take_while(|tx| matches!(tx, BaseTxEnvelope::Deposit(_)))
             .count();
-        let receipts = self
+        let mut receipts = self
             .sequencer
             .receipts_at(block.header.number)
             .unwrap_or_else(|| panic!("receipts must exist for L2 block {}", block.header.number));
-        receipts
+        let user = receipts.split_off(deposit_count);
+        (receipts, user)
+    }
+
+    /// Returns the receipt for a non-deposit transaction in `block`.
+    pub(crate) fn user_tx_receipt(&self, block: &BaseBlock, user_tx_index: usize) -> BaseReceipt {
+        self.receipts(block)
+            .1
             .into_iter()
-            .nth(deposit_count + user_tx_index)
+            .nth(user_tx_index)
             .unwrap_or_else(|| panic!("user tx receipt {user_tx_index} must exist"))
     }
 

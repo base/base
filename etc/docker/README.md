@@ -199,18 +199,18 @@ block 22 and Denim at block 25. Builder selection and block cadence change at
 Denim. Native payload building supports balance,
 storage, and block-number predicates; `flashblock_index` predicates are rejected.
 
-Everest enables EIP-8130 account-abstraction transactions. Everest mode additionally
-activates Everest at block 100:
+Everest enables EIP-8130 account-abstraction transactions and gas-limit fee billing, which bills
+every non-deposit transaction for its reserved gas (see `crates/common/evm/README.md`): receipts
+report `gasUsed` equal to the gas limit, or to `gas_limit + payer_auth` for EIP-8130, while
+`eth_estimateGas` keeps returning the metered need. Everest mode additionally activates Everest at
+block 100:
 
 ```bash
 just devnet up everest
 ```
 
 Zenith is the permanently unscheduled, genesis-only gate for future hardfork feature testing.
-Zenith mode additionally activates Everest and Zenith at block 100. From Zenith the devnet bills
-every non-deposit transaction for its reserved gas (gas-limit fee billing, see
-`crates/common/evm/README.md`): receipts report `gasUsed` equal to the gas limit, or to
-`gas_limit + payer_auth` for EIP-8130, while `eth_estimateGas` keeps returning the metered need:
+Zenith mode additionally activates Everest and Zenith at block 100:
 
 ```bash
 just devnet up zenith
