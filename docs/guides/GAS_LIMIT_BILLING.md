@@ -56,7 +56,7 @@ Execution is still metered internally; only what is settled and reported changes
 
 ## Implementation
 
-`BaseFeature::GasLimitBilling` is a semantic feature in the hardfork feature registry ([`feature.rs`](../../crates/common/genesis/src/feature.rs)). The intended network activation gate is `BaseUpgrade::Everest`; the current registry assigns the feature to Zenith, the genesis-only development-testing gate. Network activation requires assigning it to Everest. Call sites check `spec.is_feature_enabled(BaseFeature::GasLimitBilling)`. Behavior is unchanged unless the feature is active. The hook lives in `crates/common/evm`; any replacement execution implementation must preserve the same settlement and reporting semantics.
+`BaseFeature::GasLimitBilling` is a semantic feature in the hardfork feature registry ([`feature.rs`](../../crates/common/genesis/src/feature.rs)), registered under `BaseUpgrade::Everest`. Call sites check `spec.is_feature_enabled(BaseFeature::GasLimitBilling)`. Behavior is unchanged unless the feature is active. The hook lives in `crates/common/evm`; any replacement execution implementation must preserve the same settlement and reporting semantics.
 
 **Standard transactions** ([`handler.rs`](../../crates/common/evm/src/handler.rs)). One hook in `BaseHandler::refund`, after revm's refund step:
 
@@ -79,14 +79,16 @@ Everything downstream (EIP-7623 floor, `reimburse_caller`, operator-fee refund, 
 
 ## Effects
 
-Users pay `gas_limit * price` instead of `gas_used * price`; out-of-gas already paid the limit, so only the success-path discount goes away. Wallet padding becomes a visible cost. Receipts show `gasUsed == gasLimit` (`+ payer_floor` for EIP-8130), so explorers display 100% utilisation and need traces for metered gas. Header `gasUsed` becomes reserved gas, so the base fee reacts to reserved demand and blocks hold at most `block_gas_limit` of declared gas. The prover runs the same handler, so proofs follow once the feature is in the rollup config.
+Users pay `gas_limit * price` instead of `gas_used * price`; out-of-gas already paid the limit, so only the success-path discount goes away. Wallet padding becomes a visible cost. Receipts show `gasUsed == gasLimit` (`+ payer_floor` for EIP-8130), so explorers display 100% utilisation and receipts no longer tell a sender how much of its limit was needed. Header `gasUsed` becomes reserved gas, so the base fee reacts to reserved demand and blocks hold at most `block_gas_limit` of declared gas. The prover runs the same handler, so proofs follow once the feature is in the rollup config.
 
 | RPC | Behavior |
 |---|---|
 | `eth_estimateGas`, `eth_call` | Unchanged (`disable_fee_charge`); the estimate is exactly what a standard transaction is billed if used as its limit. |
 | `eth_simulateV1` | With fee charging enabled, a call without `gas` is reported as consuming the block's remaining gas, leaving no gas for later calls and draining the `--rpc.gascap` budget. Simulation fee-charging semantics require an explicit decision before activation. |
-| `debug_trace*`, `trace_*` | Top-level `gasUsed` is the limit; per-opcode costs stay metered. Whether to expose a separate metered total is an activation consideration. |
+| `debug_trace*`, `trace_*` | Top-level `gasUsed` is the limit; per-opcode costs stay metered. Summing per-opcode costs does not reproduce metered gas (intrinsic gas, refunds, and the EIP-7623 floor are not opcode costs). Whether to expose a separate metered total is an activation consideration. |
 | Receipts, blocks, `eth_feeHistory` | Report reserved gas. |
+
+**Recovering metered gas.** Fee-charge-disabled execution stays metered, so re-running an included transaction with `eth_call` or `eth_estimateGas` against the parent block's state reports the gas it needed; the result is exact when no earlier transaction in the same block changed state the transaction reads. This is how a sender sizes its next limit after an over-estimate. Separately, the builder's per-transaction events ([`transaction_events.rs`](../../crates/builder/core/src/transaction_events.rs)) are to carry the metered gas of every included user transaction alongside the billed gas, so before/after analysis does not require re-simulation. Those events are internal telemetry: no receipt, header, state root, or RPC response changes.
 
 ## Design invariants
 
@@ -106,9 +108,9 @@ All execution paths must enforce the same accounting after activation while pres
 - **Refunds:** remove the fee effect of EIP-3529 storage-clearing, EIP-7702 authorization, and stateful-precompile refunds. Keep opcode and precompile prices unchanged; any repricing is separate work. This keeps the fee computable before execution.
 - **Gas estimation:** under gas-limit billing, `eth_estimateGas` returns the sender's estimated `gas_limit`, excluding `payer_floor`, so the result can be used directly as the transaction's gas limit. Settlement adds `payer_floor` exactly once. Clients calculating the total fee must include payer authentication separately, along with the L1 data fee and operator fee; the gas estimate is not a total fee quote.
 
-## Proposed design choices
+## Design decisions
 
-The following policies are proposed for this design and remain subject to finalization:
+The following policies were settled in design review:
 
 - **Base-fee target and elasticity:** keep both unchanged. Reserved gas can increase reported fullness and upward base-fee pressure while clients adjust their limits; changing the fee-market parameters is a separate decision.
 - **EIP-8130 payer authentication:** bill `gas_limit + payer_floor`, matching the builder's reservation.
@@ -125,7 +127,7 @@ Key risks are higher fees for padded limits, greater dependence on accurate esti
 
 ## Activation
 
-Gas-limit billing is a consensus change intended to activate with Everest and must activate consistently in builders, validators, and provers. Before network activation, finalize the proposed policies and resolve the remaining open decisions above, ensure the design invariants hold across the activation boundary, and define client-facing fee and gas-reporting semantics. Follow [UPGRADES.md](UPGRADES.md) for network activation, with Base Sepolia preceding Mainnet.
+Gas-limit billing is a consensus change that activates with Everest and must activate consistently in builders, validators, and provers. Before network activation, resolve the open decisions above, ensure the design invariants hold across the activation boundary, and define client-facing fee and gas-reporting semantics. Follow [UPGRADES.md](UPGRADES.md) for network activation, with Base Sepolia preceding Mainnet.
 
 Amsterdam's separate gas pricing is outside the scope of Everest activation: Base will adopt Amsterdam after Everest, so compatibility with those gas dimensions can be addressed separately.
 
