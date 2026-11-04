@@ -117,11 +117,11 @@ impl PreparedTx {
 /// The receipt poller already reads that block to check the receipt is canonical, so
 /// the send loop gets the inclusion time without another RPC call.
 #[derive(Debug)]
-struct ConfirmedTx {
+pub struct ConfirmedTx {
     /// The confirmed receipt.
-    receipt: TransactionReceipt,
+    pub receipt: TransactionReceipt,
     /// Unix timestamp, in seconds, of the block that includes the transaction.
-    block_timestamp: u64,
+    pub block_timestamp: u64,
 }
 
 /// Mutable fee-bump state tracked across iterations in the send loop.
