@@ -120,7 +120,6 @@ The following choices must be resolved before network activation:
 
 - **Sponsored fee presentation:** define how clients expose `payer_floor * gasPrice` in addition to `eth_estimateGas * gasPrice`. The billing rule is fixed; the client-facing representation remains to be specified.
 - **RPC**: define `eth_simulateV1` fee charging when `validation=false`, metered gas reporting in traces, and whether `Eip8130Executor::execute` must honor `disable_fee_charge` consistently with standard transactions.
-- **Amsterdam** (EIP-8037/7778): account for separate gas dimensions when integrating these rules; `spend_all` only spends regular gas.
 
 Key risks are higher fees for padded limits, greater dependence on accurate estimation, searchers paying for inclusion-time uncertainty, a changed meaning of `gasUsed`, fewer transactions per block when reservations exceed consumption, and divergence from the OP Stack fee model. `--builder.max_gas_per_txn` bounds the reservation, but the fee also depends on the transaction's effective gas price.
 
@@ -128,4 +127,6 @@ Key risks are higher fees for padded limits, greater dependence on accurate esti
 
 Gas-limit billing is a consensus change intended to activate with Everest and must activate consistently in builders, validators, and provers. Before network activation, finalize the proposed policies and resolve the remaining open decisions above, ensure the design invariants hold across the activation boundary, and define client-facing fee and gas-reporting semantics. Follow [UPGRADES.md](UPGRADES.md) for network activation, with Base Sepolia preceding Mainnet.
 
-References: [EIP-1559](https://eips.ethereum.org/EIPS/eip-1559), [EIP-3529](https://eips.ethereum.org/EIPS/eip-3529), [EIP-7623](https://eips.ethereum.org/EIPS/eip-7623), [EIP-7778](https://eips.ethereum.org/EIPS/eip-7778), [EIP-7825](https://eips.ethereum.org/EIPS/eip-7825), [EIP-8130](https://eips.ethereum.org/EIPS/eip-8130); [`crates/common/evm/README.md`](../../crates/common/evm/README.md).
+Amsterdam's separate gas pricing is outside the scope of Everest activation: Base will adopt Amsterdam after Everest, so compatibility with those gas dimensions can be addressed separately.
+
+References: [EIP-1559](https://eips.ethereum.org/EIPS/eip-1559), [EIP-3529](https://eips.ethereum.org/EIPS/eip-3529), [EIP-7623](https://eips.ethereum.org/EIPS/eip-7623), [EIP-7825](https://eips.ethereum.org/EIPS/eip-7825), [EIP-8130](https://eips.ethereum.org/EIPS/eip-8130); [`crates/common/evm/README.md`](../../crates/common/evm/README.md).
