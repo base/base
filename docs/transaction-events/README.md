@@ -133,9 +133,10 @@ just devnet tx-observability-smoke
 ```
 
 The smoke test sends one transaction through proxyd, waits for Vector to ship
-JSONL events from proxyd, txpool tracing, and builder producers, and
-verifies `audit-archiver` can read the persisted events back from Postgres by
-transaction hash.
+JSONL events from proxyd and txpool tracing, and verifies `audit-archiver` can
+read the persisted events back from Postgres by transaction hash. It does not
+require builder events: after Denim the builder emits `BUILDER_*` events only for
+validity-gated transactions.
 
 For local Vector health, alert or inspect `component_discarded_events_total`.
 `parse_transaction_events` drops malformed JSONL lines, and

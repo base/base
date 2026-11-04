@@ -1,7 +1,8 @@
 #!/bin/bash
-# Simulates a sequencer failover: stops the active sequencer on the current
-# raft leader's unified sequencer node via admin_stopSequencer, then transfers raft leadership
-# via op-conductor, and waits to confirm the new leader.
+# Simulates a sequencer failover: transfers raft leadership away from the
+# current leader via op-conductor and waits to confirm the new leader. The old
+# leader's conductor stops its own sequencer when it loses leadership; this
+# script does not call admin_stopSequencer.
 #
 # Usage:
 #   transfer-leader.sh          # transfer to any available node

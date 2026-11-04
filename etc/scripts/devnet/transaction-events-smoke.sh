@@ -37,6 +37,11 @@ for attempt in $(seq 1 60); do
 
   count="$(jq -r 'if (.result | type) == "array" then (.result | length) else 0 end' <<<"$response" 2>/dev/null || echo 0)"
   if [ "$count" -gt 0 ]; then
+    # No base-builder event is required: the devnet activates Denim at block 25,
+    # after which the native payload builder emits BUILDER_* events only for
+    # validity-gated transactions and the Flashblocks builder, which emitted
+    # BUILDER_ACCEPTED and BUILDER_INCLUDED, no longer builds from the pool.
+    # This plain transfer gets no builder event.
     if jq -e '
       def has_event($producer; $event_types):
         any(.result[]; .schema_version == "transaction-event/v1"
@@ -48,10 +53,6 @@ for attempt in $(seq 1 60); do
         "TXPOOL_PENDING",
         "TXPOOL_QUEUED"
       ])
-      and has_event("base-builder"; [
-        "BUILDER_ACCEPTED",
-        "BUILDER_INCLUDED"
-      ])
     ' <<<"$response" >/dev/null; then
       echo "Observed ${count} persisted transaction event(s) for ${tx_hash}"
       jq '.result[] | {event_time, producer, event_type, tx_hash, data}' <<<"$response"
@@ -60,7 +61,7 @@ for attempt in $(seq 1 60); do
   fi
 
   if [ "$attempt" = 60 ]; then
-    echo "Timed out waiting for proxyd, txpool, and builder transaction events for ${tx_hash}" >&2
+    echo "Timed out waiting for proxyd and txpool transaction events for ${tx_hash}" >&2
     if [ -n "$last_response" ]; then
       echo "$last_response" | jq . >&2 || echo "$last_response" >&2
     fi
