@@ -261,10 +261,8 @@ impl<Pool: TransactionPool + 'static> TransactionStatusApiServer
 {
     async fn transaction_status(&self, tx_hash: TxHash) -> RpcResult<TransactionStatusResponse> {
         let Some(ref sequencer_client) = self.sequencer_client else {
-            return Ok(match self.pool.get(&tx_hash) {
-                Some(_) => TransactionStatusResponse { status: Status::Known },
-                None => TransactionStatusResponse { status: Status::Unknown },
-            });
+            let status = if self.pool.contains(&tx_hash) { Status::Known } else { Status::Unknown };
+            return Ok(TransactionStatusResponse { status });
         };
 
         sequencer_client
