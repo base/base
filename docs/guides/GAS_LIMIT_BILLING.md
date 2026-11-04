@@ -104,13 +104,14 @@ All execution paths must enforce the same accounting after activation while pres
 
 - **Upgrade gate:** activate gas-limit billing with Everest.
 - **Refunds:** remove the fee effect of EIP-3529 storage-clearing, EIP-7702 authorization, and stateful-precompile refunds. Keep opcode and precompile prices unchanged; any repricing is separate work. This keeps the fee computable before execution.
+- **Gas estimation:** under gas-limit billing, `eth_estimateGas` returns the sender's estimated `gas_limit`, excluding `payer_floor`, so the result can be used directly as the transaction's gas limit. Settlement adds `payer_floor` exactly once. Clients calculating the total fee must include payer authentication separately, along with the L1 data fee and operator fee; the gas estimate is not a total fee quote.
 
 ## Proposed design choices
 
 The following policies are proposed for this design and remain subject to finalization:
 
 - **Base-fee target and elasticity:** keep both unchanged. Reserved gas can increase reported fullness and upward base-fee pressure while clients adjust their limits; changing the fee-market parameters is a separate decision.
-- **EIP-8130 payer authentication:** bill `gas_limit + payer_floor`, matching the builder's reservation. The estimate excludes `payer_floor`, so clients must account for it separately when presenting a sponsored transaction's total fee.
+- **EIP-8130 payer authentication:** bill `gas_limit + payer_floor`, matching the builder's reservation.
 - **Static EIP-8130 coinbase tips:** keep pool ordering by tip divided by `gas_limit`, without changing the pool. This can rank sponsored transactions higher than their revenue per unit of reserved space because the reservation also includes `payer_floor`.
 - **Client compatibility:** ERC-4337 bundlers adjust `preVerificationGas` to recover sponsorship costs under gas-limit billing, rather than requiring a new Entrypoint deployment. Wallets, tooling, explorers, and searchers must account for paid estimate padding and reserved-gas reporting.
 
@@ -118,7 +119,6 @@ The following policies are proposed for this design and remain subject to finali
 
 The following choices must be resolved before network activation:
 
-- **Sponsored fee presentation:** define how clients expose `payer_floor * gasPrice` in addition to `eth_estimateGas * gasPrice`. The billing rule is fixed; the client-facing representation remains to be specified.
 - **RPC**: define `eth_simulateV1` fee charging when `validation=false`, metered gas reporting in traces, and whether `Eip8130Executor::execute` must honor `disable_fee_charge` consistently with standard transactions.
 
 Key risks are higher fees for padded limits, greater dependence on accurate estimation, searchers paying for inclusion-time uncertainty, a changed meaning of `gasUsed`, fewer transactions per block when reservations exceed consumption, and divergence from the OP Stack fee model. `--builder.max_gas_per_txn` bounds the reservation, but the fee also depends on the transaction's effective gas price.
