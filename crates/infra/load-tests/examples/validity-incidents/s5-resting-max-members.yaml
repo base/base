@@ -1,0 +1,21 @@
+# S5: largest resting set the pools allow. Each transaction carries only the never-reached
+# L1Block.sequenceNumber gate plus the automatic expiry (~0.5 KB on the wire), so the 20 MiB
+# mempool validity budget holds ~40k transactions per node instead of ~7k. Measures how the
+# native builder's resting-hold walk scales with members, independent of predicate count.
+submission_rpcs: ["__SEPOLIA_RPC__"]
+query_rpc: "__SEPOLIA_RPC__"
+chain_id: 84532
+seed: 4242
+sender_count: 60000
+skip_funding: true                # reuses the S1 senders
+lifetime_blocks: 75
+max_requotes_per_window: 2
+gas_limit: 30000
+workers: 128
+batch_size: 50
+stages:
+  - {duration: 2m, active_senders: 20000, requote_interval: 500ms}
+  - {duration: 3m, active_senders: 40000, requote_interval: 500ms}
+  - {duration: 3m, active_senders: 60000, requote_interval: 500ms}
+predicates:
+  - {type: storage, address: "0x4200000000000000000000000000000000000015", slot: {kind: fixed, value: "0x3"}, mask: "0xffffffffffffffff", op: "=", value: "0xfffffffffffffff0"}

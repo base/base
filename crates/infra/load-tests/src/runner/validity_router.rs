@@ -99,15 +99,17 @@ impl ValidityRouter {
         to: Option<Address>,
     ) -> Vec<ValidityPredicate> {
         match cohort {
-            SubmitCohort::ValidityPass | SubmitCohort::ValidityPassPriorityLead => {
-                self.predicates.iter().map(|t| Self::resolve(t, current_block, from, to)).collect()
-            }
+            SubmitCohort::ValidityPass | SubmitCohort::ValidityPassPriorityLead => self
+                .predicates
+                .iter()
+                .map(|t| Self::resolve_template(t, current_block, from, to))
+                .collect(),
             SubmitCohort::Plain => Vec::new(),
         }
     }
 
     /// Resolves a single template into a concrete predicate.
-    fn resolve(
+    pub fn resolve_template(
         template: &ValidityPredicateTemplate,
         current_block: u64,
         from: Address,

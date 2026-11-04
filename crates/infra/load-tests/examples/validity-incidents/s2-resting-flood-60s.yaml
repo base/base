@@ -1,0 +1,21 @@
+# S2: resting set at the sequencer's validity-pool cap, under the pre-mitigation 60s lifetime
+# (Nov 2 conditions, and the proposed revert to 60s). Gate-only transactions (~0.5 KB) keep
+# the mempool's 20 MiB validity budget from binding first, and one requote per window keeps
+# submissions (~1,400/s) under what Sepolia's two 8-CPU mempool nodes can ingest.
+# Resting set ~= adds/s x 60s: 42,000 senders -> ~700 adds/s -> ~42k, above the 40k cap.
+submission_rpcs: ["__SEPOLIA_RPC__"]
+query_rpc: "__SEPOLIA_RPC__"
+chain_id: 84532
+seed: 4242
+sender_count: 60000
+skip_funding: true                # reuses the S1 senders
+lifetime_blocks: 300              # 60s, the default and the Sepolia mempool setting
+max_requotes_per_window: 1
+gas_limit: 30000
+workers: 128
+batch_size: 50
+stages:
+  - {duration: 2m, active_senders: 21000, requote_interval: 1s}  # ~350 adds/s, ~21k resting
+  - {duration: 4m, active_senders: 42000, requote_interval: 1s}  # ~700 adds/s, ~42k resting
+predicates:
+  - {type: storage, address: "0x4200000000000000000000000000000000000015", slot: {kind: fixed, value: "0x3"}, mask: "0xffffffffffffffff", op: "=", value: "0xfffffffffffffff0"}

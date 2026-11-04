@@ -10,6 +10,12 @@ pub use config::{
     ValidityPredicateConfig, ValiditySigningMode, WeightedTxType, WorkloadConfig,
 };
 
+mod flood;
+pub use flood::{
+    FloodStage, FloodSummary, PRODUCTION_MAX_VALIDITY_PREDICATES, ValidityFlood,
+    ValidityFloodConfig,
+};
+
 mod executor;
 pub use executor::{
     LoadTestCleanupSummary, LoadTestDisplayConfig, LoadTestExecutor, LoadTestRunHooks,

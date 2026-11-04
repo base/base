@@ -11,13 +11,14 @@ use base_cli_utils::RuntimeManager;
 use base_load_tests::{
     AccountPool, DEFAULT_MAX_GAS_PRICE, FundedAccount, LoadRunner, LoadTestDisplay,
     LoadTestDisplayConfig, LoadTestRunHooks, LoadTestRunOptions, MetricsSummary, QueryProvider,
-    ReceiptCoverage, Result as LoadResult, RpcProviders, RpcResultExt, TestConfig,
-    create_wallet_provider,
+    ReceiptCoverage, Result as LoadResult, RpcProviders, RpcResultExt, TestConfig, ValidityFlood,
+    ValidityFloodConfig, create_wallet_provider,
 };
 use clap::{ArgGroup, Args, Parser, Subcommand};
 use eyre::{Result, bail};
 use futures::stream::{self, StreamExt};
 use indicatif::{ProgressBar, ProgressStyle};
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
 /// Accounts to derive and check per batch during rescue.
@@ -36,7 +37,8 @@ const DEFAULT_RESCUE_SCAN_COUNT: usize = 1000;
     version = env!("CARGO_PKG_VERSION"),
     about = "Base load tester",
     long_about = None,
-    args_conflicts_with_subcommands = true
+    args_conflicts_with_subcommands = true,
+    subcommand_negates_reqs = true
 )]
 pub(crate) struct Cli {
     /// Load test arguments.
@@ -53,7 +55,8 @@ impl Cli {
     pub(crate) fn run(self) -> Result<()> {
         RuntimeManager::new().tokio_runtime()?.block_on(async move {
             match self.command {
-                Some(Command::Rescue(args)) => run_rescue(args).await,
+                Some(Command::Rescue(args)) => run_rescue(*args).await,
+                Some(Command::ValidityFlood(args)) => run_validity_flood(args).await,
                 None => run_load_test(self.load).await,
             }
         })
@@ -93,20 +96,54 @@ struct LoadArgs {
     block_gas_limit: Option<NonZeroU64>,
 
     /// Load test YAML configuration.
-    #[arg(value_name = "CONFIG")]
-    config: PathBuf,
+    #[arg(value_name = "CONFIG", required = true)]
+    config: Option<PathBuf>,
 }
 
 /// Load tester subcommands.
 #[derive(Subcommand, Clone, Debug)]
 enum Command {
     /// Rescue stranded funds from load test accounts.
-    Rescue(RescueArgs),
+    Rescue(Box<RescueArgs>),
+    /// Flood an endpoint with resting validity transactions and same-nonce re-quotes.
+    ValidityFlood(ValidityFloodArgs),
+}
+
+/// Validity flood arguments.
+#[derive(Args, Clone, Debug)]
+struct ValidityFloodArgs {
+    /// Flood YAML configuration.
+    #[arg(value_name = "CONFIG")]
+    flood_config: PathBuf,
+
+    /// Write the final summary as JSON to this path.
+    #[arg(long)]
+    output: Option<PathBuf>,
+}
+
+async fn run_validity_flood(args: ValidityFloodArgs) -> Result<()> {
+    let _progress = LoadTestDisplay::init_tracing()?;
+    let config = ValidityFloodConfig::load(&args.flood_config)?;
+    let funder = TestConfig::funder_key()?;
+    let shutdown = CancellationToken::new();
+    let signal = shutdown.clone();
+    tokio::spawn(async move {
+        if tokio::signal::ctrl_c().await.is_ok() {
+            signal.cancel();
+        }
+    });
+    let summary = ValidityFlood::run(config, funder, shutdown).await?;
+    let json = serde_json::to_string_pretty(&summary)?;
+    println!("{json}");
+    if let Some(path) = args.output {
+        std::fs::write(&path, &json)?;
+    }
+    Ok(())
 }
 
 async fn run_load_test(args: LoadArgs) -> Result<()> {
     let multi_progress = LoadTestDisplay::init_tracing()?;
-    let config_path = args.config;
+    let Some(config_path) = args.config else { bail!("a load test config is required") };
 
     if !config_path.exists() {
         bail!("config file not found: {}", config_path.display());

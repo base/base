@@ -1,0 +1,41 @@
+# S3: wake-up storm. Every transaction also carries block_number >= next multiple of 25,
+# so everything submitted in the previous 5s becomes includable in one 200ms block.
+# Herd gas ~= active_senders x 21,000: 6,000 senders ~= 126M gas, about one Sepolia block
+# (120M) and three mainnet Denim blocks (40M). These transactions land and pay fees.
+submission_rpcs: ["__SEPOLIA_RPC__"]
+query_rpc: "__SEPOLIA_RPC__"
+chain_id: 84532
+seed: 4343
+sender_count: 12000
+funding_amount: "20000000000000"  # 0.00002 ETH: ~60 landings at 0.015 gwei
+lifetime_blocks: 75
+release_every_blocks: 25
+max_requotes_per_window: 0
+priority_fee: 10000000            # 0.01 gwei: outbids the plain traffic so the herd goes first
+gas_limit: 30000
+workers: 64
+batch_size: 50
+stages:
+  - {duration: 2m, active_senders: 2000,  requote_interval: 500ms}
+  - {duration: 2m, active_senders: 6000,  requote_interval: 500ms}
+  - {duration: 2m, active_senders: 12000, requote_interval: 500ms}
+# 14 always-true reads across six accounts, then a gate on L1Block.sequenceNumber
+# (slot 3, low 64 bits). The system deposit writes that slot every block, so each
+# parked transaction is woken and all 15 reads re-run every block. The gate value
+# is never reached. The block-number expiry is appended automatically (16 total,
+# the production cap).
+predicates:
+  - {type: storage, address: "0x4200000000000000000000000000000000000015", slot: {kind: fixed, value: "0x0"}, op: ">=", value: "0x0"}
+  - {type: storage, address: "0x4200000000000000000000000000000000000015", slot: {kind: fixed, value: "0x1"}, op: ">=", value: "0x0"}
+  - {type: storage, address: "0x4200000000000000000000000000000000000015", slot: {kind: fixed, value: "0x2"}, op: ">=", value: "0x0"}
+  - {type: storage, address: "0x4200000000000000000000000000000000000015", slot: {kind: fixed, value: "0x4"}, op: ">=", value: "0x0"}
+  - {type: storage, address: "0x4200000000000000000000000000000000000015", slot: {kind: fixed, value: "0x5"}, op: ">=", value: "0x0"}
+  - {type: storage, address: "0x4200000000000000000000000000000000000015", slot: {kind: fixed, value: "0x6"}, op: ">=", value: "0x0"}
+  - {type: storage, address: "0x4200000000000000000000000000000000000006", slot: {kind: fixed, value: "0x0"}, op: ">=", value: "0x0"}
+  - {type: storage, address: "0x4200000000000000000000000000000000000006", slot: {kind: fixed, value: "0x1"}, op: ">=", value: "0x0"}
+  - {type: storage, address: "0x4200000000000000000000000000000000000006", slot: {kind: mapping, mapping_slot: "0x3", key: sender}, op: ">=", value: "0x0"}
+  - {type: storage, address: "0x4200000000000000000000000000000000000016", slot: {kind: fixed, value: "0x0"}, op: ">=", value: "0x0"}
+  - {type: storage, address: "0x420000000000000000000000000000000000000F", slot: {kind: fixed, value: "0x0"}, op: ">=", value: "0x0"}
+  - {type: balance, address: "0x4200000000000000000000000000000000000011", op: ">=", value: "0"}
+  - {type: balance, address: sender, op: ">=", value: "0"}
+  - {type: nonce, address: sender, op: ">=", value: "0"}

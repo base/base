@@ -1,0 +1,18 @@
+# Plain user traffic measured alongside each flood: 20M gas/s of transfers (~950 tx/s),
+# about mainnet's current user load. Reports inclusion latency, landed gas/s, and failures.
+transaction_submission_rpcs: ["__SEPOLIA_RPC__"]
+query_rpc: "__SEPOLIA_RPC__"
+txpool_nodes: []
+chain_id: 84532
+sender_count: 200
+sender_offset: 0
+seed: 777001
+target_gps: 20000000
+block_time: "200ms"
+in_flight_per_sender: 16
+batch_size: 50
+duration: "12m"
+funding_amount: "3000000000000000"   # 0.003 ETH per sender, drained after the run
+transactions:
+  - weight: 100
+    type: transfer
