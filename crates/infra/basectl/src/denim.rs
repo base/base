@@ -380,10 +380,12 @@ impl DenimChecker {
             .iter()
             .find(|check| check.name == "cadence_200ms")
             .is_some_and(|check| check.status == DenimCheckStatus::Pass);
-        report.cursor = (cadence_complete && cadence_passed).then_some(DenimCheckCursor {
-            block_number: report.block_number,
-            block_hash: report.block_hash,
-        });
+        // After a timeout, re-anchor at this snapshot: walking from the old cursor
+        // again would cover even more blocks and time out on every later run.
+        let cadence_timed_out = cadence_done.is_err();
+        report.cursor = (cadence_timed_out || (cadence_complete && cadence_passed)).then_some(
+            DenimCheckCursor { block_number: report.block_number, block_hash: report.block_hash },
+        );
         Ok(report)
     }
 }
