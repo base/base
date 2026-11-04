@@ -38,7 +38,7 @@ Execution is still metered internally; only what is settled and reported changes
 | Ranking key | `tip` per gas | `tip` per gas (unchanged) |
 | Sequencer revenue | `tip * gas_used`, known after execution | `tip * gas_limit`, known at admission |
 | Cost of outranking a transaction | `tip` on the gas you end up using | `tip` on every unit you declared |
-| Block fullness | metered sum; declared gas can exceed the block limit | reserved sum; at most `block_gas_limit` of declared gas |
+| Block fullness (header `gasUsed`) | metered sum; declared gas in a block can exceed `block_gas_limit` | reserved sum; at most `block_gas_limit` of declared gas |
 
 ## Alternatives considered
 
@@ -56,7 +56,7 @@ Execution is still metered internally; only what is settled and reported changes
 
 ## Implementation
 
-`BaseFeature::GasLimitBilling` is a semantic feature in the hardfork feature registry ([`feature.rs`](../../crates/common/genesis/src/feature.rs)), registered under `BaseUpgrade::Everest`. Call sites check `spec.is_feature_enabled(BaseFeature::GasLimitBilling)`. Behavior is unchanged unless the feature is active. The hook lives in `crates/common/evm`; any replacement execution implementation must preserve the same settlement and reporting semantics.
+`BaseFeature::GasLimitBilling` is a semantic feature in the hardfork feature registry ([`feature.rs`](../../crates/common/genesis/src/feature.rs)), registered under `BaseUpgrade::Everest`. Call sites check `spec.is_feature_enabled(BaseFeature::GasLimitBilling)`. Behavior is unchanged unless the feature is active. Everest executes on the revm-based [`crates/common/evm`](../../crates/common/evm/README.md), where the hook lives. The EVM2 port ([`crates/common/evm2`](../../crates/common/evm2/README.md)) lands after Everest and must reproduce the same settlement and reporting semantics when it becomes the executor.
 
 **Standard transactions** ([`handler.rs`](../../crates/common/evm/src/handler.rs)). One hook in `BaseHandler::refund`, after revm's refund step:
 
@@ -95,7 +95,7 @@ Users pay `gas_limit * price` instead of `gas_used * price`; out-of-gas already 
 All execution paths must enforce the same accounting after activation while preserving pre-activation behavior:
 
 - The payer's fee debit equals `B * effectiveGasPrice + l1Fee + operatorFee(B)`; fee-vault and sequencer credits account for the full fee. Value transfers are separate: only committed transfers debit the sender, which may differ from the fee payer for sponsored EIP-8130 transactions.
-- Receipt `gasUsed` equals `B` for user transactions. Header `gasUsed` equals the sum of reserved user-transaction gas and metered deposit gas, and agrees with the last receipt's cumulative gas.
+- Receipt `gasUsed` equals the gas limit (`B`). Header `gasUsed` equals the sum of the receipts' `gasUsed` and agrees with the last receipt's `cumulativeGasUsed`.
 - Builders refuse transactions whose reservation exceeds the remaining block gas or the configured per-transaction cap, even when metered execution would fit. Validators reject payloads with inconsistent gas accounting.
 - EIP-3529 and EIP-7702 refunds and the EIP-7623 floor do not reduce the billed amount. Reverts and successful execution at the same reservation have the same billable gas.
 - Estimation remains metered. EIP-8130 estimates exclude `payer_floor`, which settlement adds exactly once.
