@@ -1,7 +1,7 @@
 //! EIP-1459 ENR tree discovery.
 
 use std::{
-    collections::VecDeque,
+    collections::{HashSet, VecDeque},
     future::Future,
     pin::Pin,
     sync::Arc,
@@ -31,11 +31,11 @@ use tokio::time::{Instant, Sleep};
 /// - Links to other trees are not followed; only the configured tree is walked.
 /// - One lookup is in flight at a time, at most one every [`EnrTreeSync::LOOKUP_INTERVAL`], each
 ///   bounded by [`EnrTreeSync::LOOKUP_TIMEOUT`].
-/// - A walk makes at most `max_lookups` entry lookups and yields at most `max_records` records;
-///   the queue of pending entries never exceeds `max_lookups`. A walk that hits a budget stops
-///   with a warning.
-/// - A failed entry lookup is retried in place, up to [`EnrTreeSync::MAX_ENTRY_ATTEMPTS`] times,
-///   without discarding the rest of the walk.
+/// - A walk visits at most `max_entries` distinct entries and yields at most `max_records`
+///   records; the queue of pending entries never exceeds `max_entries`, and an entry hash that
+///   appears twice is visited once. A walk that hits a budget stops with a warning.
+/// - A failed entry lookup is retried in place, up to [`EnrTreeSync::MAX_ENTRY_ATTEMPTS`] lookups
+///   in total, without discarding the rest of the walk.
 ///
 /// After a complete walk the root is rechecked every [`EnrTreeSync::RECHECK_INTERVAL`], and the
 /// tree is walked again only when its ENR subtree hash changes. A root that fails to resolve or
@@ -55,8 +55,8 @@ pub struct EnrTreeSync<R: Resolver = DnsResolver> {
     /// The DNS resolver.
     #[debug(skip)]
     pub resolver: Arc<R>,
-    /// Maximum entry lookups in one walk.
-    pub max_lookups: usize,
+    /// Maximum distinct entries visited in one walk.
+    pub max_entries: usize,
     /// Maximum records yielded by one walk.
     pub max_records: usize,
     /// First delay before retrying a failed or incomplete sync.
@@ -84,7 +84,7 @@ pub enum EnrTreeState {
     /// Looking up the root.
     Root(#[debug(skip)] BoxFuture<'static, Option<String>>),
     /// Walking the ENR subtree under a verified root.
-    Walk(EnrTreeWalk),
+    Walk(Box<EnrTreeWalk>),
 }
 
 /// One bounded walk of the ENR subtree under a verified root.
@@ -96,8 +96,10 @@ pub struct EnrTreeWalk {
     pub pending: VecDeque<(String, u8)>,
     /// The lookup in flight, if any.
     pub lookup: Option<EnrTreeLookup>,
-    /// Entry lookups started so far.
-    pub lookups: usize,
+    /// Every entry hash queued so far, so a repeated hash is visited once.
+    pub seen: HashSet<String>,
+    /// Distinct entries looked up so far.
+    pub entries: usize,
     /// Valid records yielded so far.
     pub records: usize,
     /// Entries given up on after failed lookups.
@@ -129,8 +131,8 @@ impl EnrTreeSync {
     pub const LOOKUP_INTERVAL: Duration = Duration::from_millis(333);
     /// Timeout of one DNS lookup.
     pub const LOOKUP_TIMEOUT: Duration = Duration::from_secs(5);
-    /// Default maximum entry lookups in one walk.
-    pub const MAX_LOOKUPS: usize = 2_000;
+    /// Default maximum distinct entries visited in one walk.
+    pub const MAX_ENTRIES: usize = 2_000;
     /// Default maximum records yielded by one walk.
     pub const MAX_RECORDS: usize = 500;
     /// Lookups of one entry before it is given up on for the current walk.
@@ -167,12 +169,16 @@ impl EnrTreeSync {
 
 impl<R: Resolver> EnrTreeSync<R> {
     /// Starts syncing `link` with `resolver`. The first root lookup happens on the first poll.
+    ///
+    /// `retry_interval` is raised to at least [`EnrTreeSync::LOOKUP_INTERVAL`] so a failing tree
+    /// cannot be retried in a tight loop.
     pub fn new(link: LinkEntry, chain_id: u64, resolver: Arc<R>, retry_interval: Duration) -> Self {
+        let retry_interval = retry_interval.max(EnrTreeSync::LOOKUP_INTERVAL);
         Self {
             link,
             chain_id,
             resolver,
-            max_lookups: EnrTreeSync::MAX_LOOKUPS,
+            max_entries: EnrTreeSync::MAX_ENTRIES,
             max_records: EnrTreeSync::MAX_RECORDS,
             retry_interval,
             backoff: retry_interval,
@@ -219,8 +225,8 @@ impl<R: Resolver> EnrTreeSync<R> {
 
     /// Records the outcome of a finished walk and schedules the next root lookup.
     pub fn finish_walk(&mut self, walk: EnrTreeWalk) {
-        if walk.truncated {
-            warn!(target: "discovery::enrtree", tree = %self.link, lookups = walk.lookups, records = walk.records, "ENR tree walk stopped at its budget");
+        if walk.truncated || !walk.pending.is_empty() {
+            warn!(target: "discovery::enrtree", tree = %self.link, entries = walk.entries, records = walk.records, "ENR tree walk stopped at its budget");
         }
         if walk.records == 0 {
             self.retry_later(if walk.failed > 0 {
@@ -243,16 +249,22 @@ impl EnrTreeWalk {
     /// Starts a walk at the root's ENR subtree.
     pub fn new(root: TreeRootEntry) -> Self {
         let pending = VecDeque::from([(root.enr_root.clone(), 0)]);
-        Self { root, pending, lookup: None, lookups: 0, records: 0, failed: 0, truncated: false }
+        let seen = HashSet::from([root.enr_root.clone()]);
+        Self {
+            root,
+            pending,
+            lookup: None,
+            seen,
+            entries: 0,
+            records: 0,
+            failed: 0,
+            truncated: false,
+        }
     }
 
     /// Whether the walk has nothing left to do or has hit a budget.
-    pub fn is_done(&mut self, max_lookups: usize, max_records: usize) -> bool {
-        if self.lookups >= max_lookups || self.records >= max_records {
-            self.truncated |= !self.pending.is_empty();
-            return true;
-        }
-        self.pending.is_empty()
+    pub fn is_done(&self, max_entries: usize, max_records: usize) -> bool {
+        self.pending.is_empty() || self.entries >= max_entries || self.records >= max_records
     }
 
     /// Whether `txt` is the entry published under the base32 hash label `hash`.
@@ -268,7 +280,7 @@ impl EnrTreeWalk {
         &mut self,
         link: &LinkEntry,
         chain_id: u64,
-        max_lookups: usize,
+        max_entries: usize,
         done: EnrTreeLookup,
         txt: Option<String>,
     ) -> Option<Enr> {
@@ -287,11 +299,15 @@ impl EnrTreeWalk {
         }
         match txt.parse::<DnsEntry<SecretKey>>() {
             Ok(DnsEntry::Branch(branch)) => {
-                let room = max_lookups.saturating_sub(self.lookups + self.pending.len());
-                if branch.children.len() > room {
-                    self.truncated = true;
+                for hash in branch.children {
+                    if self.entries + self.pending.len() >= max_entries {
+                        self.truncated = true;
+                        break;
+                    }
+                    if self.seen.insert(hash.clone()) {
+                        self.pending.push_back((hash, 0));
+                    }
                 }
-                self.pending.extend(branch.children.into_iter().take(room).map(|hash| (hash, 0)));
                 None
             }
             Ok(DnsEntry::Node(node)) => {
@@ -344,11 +360,12 @@ impl<R: Resolver> Stream for EnrTreeSync<R> {
                     match this.verify_root(txt) {
                         Ok(root) if this.synced_root.as_ref() == Some(&root.enr_root) => {
                             trace!(target: "discovery::enrtree", tree = %this.link, "ENR tree is unchanged");
+                            this.backoff = this.retry_interval;
                             this.schedule(EnrTreeSync::RECHECK_INTERVAL);
                         }
                         Ok(root) => {
                             debug!(target: "discovery::enrtree", tree = %this.link, seq = root.sequence_number, "Walking ENR tree");
-                            this.state = EnrTreeState::Walk(EnrTreeWalk::new(root));
+                            this.state = EnrTreeState::Walk(Box::new(EnrTreeWalk::new(root)));
                         }
                         Err(reason) => this.retry_later(reason),
                     }
@@ -358,25 +375,28 @@ impl<R: Resolver> Stream for EnrTreeSync<R> {
                         let txt = ready!(inflight.lookup.as_mut().poll(cx));
                         let Some(done) = walk.lookup.take() else { continue };
                         if let Some(enr) =
-                            walk.handle(&this.link, this.chain_id, this.max_lookups, done, txt)
+                            walk.handle(&this.link, this.chain_id, this.max_entries, done, txt)
                         {
                             return Poll::Ready(Some(enr));
                         }
                         continue;
                     }
-                    if walk.is_done(this.max_lookups, this.max_records) {
+                    if walk.is_done(this.max_entries, this.max_records) {
                         let EnrTreeState::Walk(walk) =
                             std::mem::replace(&mut this.state, EnrTreeState::Idle)
                         else {
                             continue;
                         };
-                        this.finish_walk(walk);
+                        this.finish_walk(*walk);
                         continue;
                     }
                     ready!(this.pacer.as_mut().poll(cx));
                     this.pacer.as_mut().reset(Instant::now() + EnrTreeSync::LOOKUP_INTERVAL);
                     let Some((hash, attempts)) = walk.pending.pop_front() else { continue };
-                    walk.lookups += 1;
+                    // Retries of a failed entry do not count against the entry budget.
+                    if attempts == 0 {
+                        walk.entries += 1;
+                    }
                     let lookup =
                         Self::lookup(&this.resolver, format!("{hash}.{}", this.link.domain));
                     walk.lookup = Some(EnrTreeLookup { hash, attempts, lookup });
@@ -559,7 +579,7 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn walk_stops_at_lookup_budget() {
+    async fn walk_stops_at_entry_budget() {
         let key = tree_key(0x99);
         let resolver = Arc::new(CountingResolver::default());
         let enrs: Vec<Enr> = (0..10).map(|_| enr(Some(CHAIN_ID))).collect();
@@ -571,9 +591,9 @@ mod tests {
             Arc::clone(&resolver),
             EnrTreeSync::DEFAULT_RETRY_INTERVAL,
         );
-        sync.max_lookups = 4;
+        sync.max_entries = 4;
 
-        // One lookup for the branch leaves room for three of the ten leaves.
+        // The branch leaves room for three of the ten leaves.
         assert_eq!(collect(&mut sync, COLLECT_WINDOW).await.len(), 3);
         // The root plus four entry lookups.
         assert_eq!(resolver.lookups.load(Ordering::Relaxed), 5);
@@ -594,6 +614,46 @@ mod tests {
         assert!(collect(&mut sync, Duration::from_secs(2 * 60 * 60)).await.is_empty());
         // Lookups at 0, 1, 3, 7, 15, 31, 61 and 91 minutes: the delay doubles up to 30 minutes.
         assert_eq!(resolver.root_lookups.load(Ordering::Relaxed), 8);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn tree_without_valid_records_is_retried_with_backoff() {
+        let key = tree_key(0xbb);
+        let resolver = Arc::new(CountingResolver::default());
+        publish(&resolver.inner, &key, &[enr(Some(1)), enr(None)]);
+
+        let mut sync = EnrTreeSync::new(
+            link(&key),
+            CHAIN_ID,
+            Arc::clone(&resolver),
+            EnrTreeSync::DEFAULT_RETRY_INTERVAL,
+        );
+
+        assert!(collect(&mut sync, Duration::from_secs(2 * 60 * 60)).await.is_empty());
+        assert_eq!(resolver.root_lookups.load(Ordering::Relaxed), 8);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn repeated_entry_hashes_are_visited_once() {
+        let key = tree_key(0xcc);
+        let resolver = Arc::new(MapResolver::default());
+        let valid = enr(Some(CHAIN_ID));
+        let text = valid.to_base64();
+        let leaf = entry_hash(&text);
+        resolver.insert(format!("{leaf}.{DOMAIN}"), text);
+        let branch = format!("enrtree-branch:{leaf},{leaf},{leaf}");
+        resolver.insert(format!("{}.{DOMAIN}", entry_hash(&branch)), branch.clone());
+        let mut root: TreeRootEntry = "enrtree-root:v1 e=QFT4PBCRX4XQCV3VUYJ6BTCEPU l=JGUFMSAGI7KZYB3P7IZW4S5Y3A seq=1 sig=3FmXuVwpa8Y7OstZTx9PIb1mt8FrW7VpDOFv4AaGCsZ2EIHmhraWhe4NxYhQDlw5MjeFXYMbJjsPeKlHzmJREQE"
+            .parse()
+            .expect("sample root parses");
+        root.enr_root = entry_hash(&branch);
+        root.sign(&key).expect("root signs");
+        resolver.insert(DOMAIN.to_string(), root.to_string());
+
+        let mut sync =
+            EnrTreeSync::new(link(&key), CHAIN_ID, resolver, EnrTreeSync::DEFAULT_RETRY_INTERVAL);
+
+        assert_eq!(collect(&mut sync, COLLECT_WINDOW).await, vec![valid]);
     }
 
     #[tokio::test(start_paused = true)]
@@ -637,19 +697,12 @@ mod tests {
         root.enr_root = child;
         root.sign(&key).unwrap();
         resolver.insert(DOMAIN.to_string(), root.to_string());
-        let mut control =
-            EnrTreeSync::new(link(&key), CHAIN_ID, Arc::clone(&resolver), Duration::from_secs(300));
-        let control_records = collect(&mut control, Duration::from_secs(240)).await;
-        assert_eq!(control_records, vec![valid.clone()], "control must traverse the signed tree");
-        let mut production =
+        let mut sync =
             EnrTreeSync::new(link(&key), CHAIN_ID, resolver, EnrTreeSync::DEFAULT_RETRY_INTERVAL);
-        let production_records = collect(&mut production, Duration::from_secs(240)).await;
-        eprintln!(
-            "healthy 200-branch tree: control={}, production={}",
-            control_records.len(),
-            production_records.len()
-        );
-        assert_eq!(production_records, vec![valid], "healthy walks must not be restarted forever");
+
+        // 201 paced lookups take about 67 seconds, longer than the retry interval.
+        let records = collect(&mut sync, Duration::from_secs(240)).await;
+        assert_eq!(records, vec![valid], "a walk longer than the retry interval completes");
     }
 
     #[tokio::test(start_paused = true)]
@@ -686,7 +739,6 @@ mod tests {
         );
         let records = collect(&mut sync, Duration::from_secs(1000)).await;
         let roots = resolver.roots.lock().unwrap().clone();
-        eprintln!("one seed yielded {} records from {} tree roots", records.len(), roots.len());
 
         // Links to other trees are not followed: only the configured tree is walked.
         assert_eq!(roots, HashSet::from(["nodes0.example.org".to_string()]));

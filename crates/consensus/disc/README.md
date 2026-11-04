@@ -50,18 +50,22 @@ by the tree's key, and every entry must match the hash it is published under. It
 that pass `EnrValidation` for the node's chain ID, so the tree may contain other records. Yielded
 ENRs are added to the discv5 table, forwarded to gossip, and stored in the bootstore.
 
-The walk is bounded, so a large or hostile tree cannot grow memory or per-poll work:
+The walk is bounded, so a large or hostile tree cannot grow memory or per-poll work. The limits
+apply to each configured tree:
 
 | Limit | Value |
 | --- | --- |
 | Links to other trees (`enrtree-link`) | not followed |
 | Lookups in flight | 1, at most 3 per second, each with a 5 second timeout |
-| Entry lookups per walk (also caps the pending queue) | 2,000 |
+| Distinct entries per walk (also caps the pending queue) | 2,000 |
 | Records yielded per walk | 500 |
-| Lookups of one failed entry per walk | 3 |
+| Lookups of one entry per walk, including retries | 3 |
 
-A walk that hits a limit stops with a warning and keeps the records it found. A failed entry is
-retried in place without restarting the walk. After a complete walk, the root is rechecked every
+A walk that hits a limit stops with a warning and keeps the records it found. Entries are visited
+breadth-first, so in a tree larger than the limit, records past the first 2,000 entries are not
+reached. A repeated entry hash is visited once. A failed entry is retried in place without
+restarting the walk. A tree that publishes its nodes only through links to other trees yields
+nothing; link each of those trees directly instead. After a complete walk, the root is rechecked every
 30 minutes and the tree is walked again only when its ENR subtree hash changes. A root that fails
 to resolve or verify, a walk with failed entries, and a tree without valid records are retried
 with a warning after a backoff that starts at 60 seconds and doubles up to 30 minutes.
