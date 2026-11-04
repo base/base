@@ -16,7 +16,10 @@ impl ConfiguredBootNodes {
     /// Prefix of an EIP-1459 ENR tree link in the bootnode list.
     pub const ENR_TREE_PREFIX: &str = "enrtree://";
 
-    /// Parses bootnode strings without any network access. A malformed entry is an error.
+    /// Parses bootnode strings. A malformed entry is an error.
+    ///
+    /// `enrtree://` entries are parsed without network access. Other entries go through
+    /// [`BootNode::parse_bootnode`], which may resolve a hostname with a blocking DNS lookup.
     pub fn parse<S: AsRef<str>>(raw: impl IntoIterator<Item = S>) -> eyre::Result<Self> {
         let mut configured = Self::default();
         for bootnode in raw {
