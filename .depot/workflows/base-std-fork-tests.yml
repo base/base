@@ -40,10 +40,15 @@ permissions:
 jobs:
   fork-tests:
     name: Base Std Interface Tests (${{ matrix.fork }})
+    # On a labeled event, run only when the opt-in label itself was added, so an
+    # unrelated label does not queue a duplicate run.
     if: >-
-      github.event_name != 'pull_request' ||
+      github.event_name != 'pull_request' || (
+      (github.event.action != 'labeled' ||
+      github.event.label.name == 'ci:base-std' ||
+      github.event.label.name == 'ci:full') && (
       contains(github.event.pull_request.labels.*.name, 'ci:base-std') ||
-      contains(github.event.pull_request.labels.*.name, 'ci:full')
+      contains(github.event.pull_request.labels.*.name, 'ci:full')))
     runs-on: depot-ubuntu-24.04-8
     timeout-minutes: 120
     strategy:
@@ -222,9 +227,12 @@ jobs:
     # Skipped with the matrix on PRs that did not opt in with a label.
     if: >-
       always() && (
-      github.event_name != 'pull_request' ||
+      github.event_name != 'pull_request' || (
+      (github.event.action != 'labeled' ||
+      github.event.label.name == 'ci:base-std' ||
+      github.event.label.name == 'ci:full') && (
       contains(github.event.pull_request.labels.*.name, 'ci:base-std') ||
-      contains(github.event.pull_request.labels.*.name, 'ci:full'))
+      contains(github.event.pull_request.labels.*.name, 'ci:full'))))
     needs: [fork-tests]
     runs-on: depot-ubuntu-latest # was: ubuntu-latest. Mapped standard GitHub runner to Depot equivalent.
     steps:

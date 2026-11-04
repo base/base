@@ -23,10 +23,15 @@ permissions:
 jobs:
   system-tests:
     name: System Tests
+    # On a labeled event, run only when the opt-in label itself was added, so an
+    # unrelated label does not queue a duplicate run.
     if: >-
-      github.event_name != 'pull_request' ||
+      github.event_name != 'pull_request' || (
+      (github.event.action != 'labeled' ||
+      github.event.label.name == 'ci:system' ||
+      github.event.label.name == 'ci:full') && (
       contains(github.event.pull_request.labels.*.name, 'ci:system') ||
-      contains(github.event.pull_request.labels.*.name, 'ci:full')
+      contains(github.event.pull_request.labels.*.name, 'ci:full')))
     runs-on: depot-ubuntu-24.04-16
     timeout-minutes: 90
     steps:

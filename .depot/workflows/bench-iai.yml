@@ -23,7 +23,8 @@ on:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
-  cancel-in-progress: true
+  # Adding a label must not cancel a run already in flight.
+  cancel-in-progress: ${{ github.event.action != 'labeled' }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -36,10 +37,15 @@ permissions:
 jobs:
   bench-iai:
     name: Benchmarks (iai · deterministic)
+    # On a labeled event, run only when the opt-in label itself was added, so an
+    # unrelated label does not queue a duplicate run.
     if: >-
-      github.event_name != 'pull_request' ||
+      github.event_name != 'pull_request' || (
+      (github.event.action != 'labeled' ||
+      github.event.label.name == 'ci:perf' ||
+      github.event.label.name == 'ci:full') && (
       contains(github.event.pull_request.labels.*.name, 'ci:perf') ||
-      contains(github.event.pull_request.labels.*.name, 'ci:full')
+      contains(github.event.pull_request.labels.*.name, 'ci:full')))
     runs-on: depot-ubuntu-24.04-8
     timeout-minutes: 60
     env:
