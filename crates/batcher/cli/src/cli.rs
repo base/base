@@ -166,6 +166,29 @@ pub struct BatcherArgs {
     )]
     pub publish_retry_delay: Duration,
 
+    /// Minimum L1 priority fee per gas (in gwei). Accepts decimal strings (e.g. `0.01`).
+    ///
+    /// Used in place of the tip the L1 node suggests when that one is lower.
+    #[arg(
+        long = "min-tip-cap",
+        default_value = "0",
+        env = "BASE_BATCHER_MIN_TIP_CAP",
+        value_parser = base_tx_manager::GweiParser::parse_value
+    )]
+    pub min_tip_cap: u128,
+
+    /// Minimum L1 base fee (in gwei) the fee cap is computed from. Accepts decimal strings
+    /// (e.g. `0.25`).
+    ///
+    /// Used in place of the base fee of the latest L1 block when that one is lower.
+    #[arg(
+        long = "min-basefee",
+        default_value = "0",
+        env = "BASE_BATCHER_MIN_BASEFEE",
+        value_parser = base_tx_manager::GweiParser::parse_value
+    )]
+    pub min_basefee: u128,
+
     /// DA backlog in estimated compressed bytes from which the batcher throttles, lowering the
     /// DA limits it pushes to the `--sequencer-urls` endpoints.
     #[arg(
@@ -379,6 +402,8 @@ impl BatcherArgs {
             resubmission_timeout: Duration::from_secs(self.resubmission_timeout_secs),
             publish_max_retries: self.publish_max_retries,
             publish_retry_delay: self.publish_retry_delay,
+            min_tip_cap: self.min_tip_cap,
+            min_basefee: self.min_basefee,
             throttle: if self.no_throttle {
                 None
             } else {
@@ -548,6 +573,8 @@ mod tests {
         assert!(!config.stopped);
         assert!(!config.wait_node_sync);
         assert_eq!(config.network_timeout, Duration::from_secs(10));
+        assert_eq!(config.min_tip_cap, 0);
+        assert_eq!(config.min_basefee, 0);
         assert_eq!(config.throttle_strategy, ThrottleStrategy::Quadratic);
 
         assert_eq!(config.encoder_config.da_type, base_batcher_encoder::DaType::Blob);
@@ -608,6 +635,10 @@ mod tests {
             "7",
             "--publish-retry-delay",
             "3s",
+            "--min-tip-cap",
+            "0.01",
+            "--min-basefee",
+            "1.5",
             "--max-channel-duration",
             "10",
             "--sub-safety-margin",
@@ -657,6 +688,8 @@ mod tests {
         assert_eq!(config.encoder_config.brotli_level, base_batcher_encoder::BrotliLevel::Brotli5);
         assert_eq!(config.publish_max_retries, 7);
         assert_eq!(config.publish_retry_delay, Duration::from_secs(3));
+        assert_eq!(config.min_tip_cap, 10_000_000);
+        assert_eq!(config.min_basefee, 1_500_000_000);
         assert_eq!(config.encoder_config.max_channel_duration, 10);
         assert_eq!(config.encoder_config.sub_safety_margin, 4);
         assert_eq!(config.max_pending_transactions, 4);
