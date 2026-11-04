@@ -270,20 +270,17 @@ impl<Pool: TransactionPool + 'static> TransactionStatusApiServer
             });
         };
 
-        match sequencer_client
+        sequencer_client
             .request::<TransactionStatusResponse, _>("base_transactionStatus", rpc_params![tx_hash])
             .await
-        {
-            Ok(result) => Ok(result),
-            Err(e) => {
+            .map_err(|e| {
                 warn!(tx_hash = %tx_hash, error = %e, "failed to fetch transaction status");
-                Err(ErrorObjectOwned::owned(
+                ErrorObjectOwned::owned(
                     ErrorCode::InternalError.code(),
                     format!("failed to fetch transaction status: {e}"),
                     None::<()>,
-                ))
-            }
-        }
+                )
+            })
     }
 }
 
