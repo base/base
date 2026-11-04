@@ -32,7 +32,6 @@ jobs:
       pull-requests: read
     outputs:
       docker: ${{ steps.filter.outputs.docker }}
-      proof-mpt-bench: ${{ steps.filter.outputs.proof-mpt-bench }}
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
@@ -55,18 +54,6 @@ jobs:
               - '.env.mainnet'
               - '.env.sepolia'
               - '.dockerignore'
-            # This benchmark only exercises the MPT implementation. Keep it in
-            # merge-queue CI, but do not spend a runner on unrelated PRs.
-            proof-mpt-bench:
-              - 'Cargo.toml'
-              - 'Cargo.lock'
-              - '.cargo/**'
-              - 'rust-toolchain.toml'
-              - 'crates/proof/mpt/**'
-              - 'crates/proof/primitives/**'
-              - 'crates/execution/trie/**'
-              - 'etc/scripts/ci/**'
-              - '.depot/workflows/ci-core.yml'
   metadata-checks:
     name: Metadata Checks
     runs-on: depot-ubuntu-latest # was: ubuntu-latest. Mapped standard GitHub runner to Depot equivalent.
@@ -109,24 +96,14 @@ jobs:
       - run: just check::format
   rust:
     name: Rust
-    needs: changes
-    # `changes` is only needed for the RUN_BENCH decision. Clippy and the tests
-    # must not depend on change detection succeeding, so run even if `changes`
-    # fails; the benchmark step then skips because its output is unavailable.
-    if: ${{ !cancelled() }}
-    # One sandbox so that Clippy, the tests and the benchmark share a single
-    # `target/` and toolchain/tool setup instead of each compiling the workspace
-    # from scratch. System tests are wall-clock bound by Docker rather than CPU,
-    # so they run in a parallel job instead of extending this one.
-    runs-on: depot-ubuntu-24.04-32
+    # One sandbox so that Clippy and the tests share a single `target/` and
+    # toolchain/tool setup instead of each compiling the workspace from scratch.
+    # An 8-vCPU runner is slower per run than a larger one but uses fewer
+    # runner-weighted minutes for the same work.
+    runs-on: depot-ubuntu-24.04-8
     timeout-minutes: 120
     env:
       DIFF_BASE: ${{ inputs.diff_base }}
-      RUN_BENCH: >-
-        ${{ github.event_name != 'pull_request' ||
-        needs.changes.outputs.proof-mpt-bench == 'true' ||
-        contains(github.event.pull_request.labels.*.name, 'ci:perf') ||
-        contains(github.event.pull_request.labels.*.name, 'ci:full') }}
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
@@ -169,9 +146,6 @@ jobs:
         with:
           check_name: Test Results
           report_paths: target/nextest/ci/test-results.xml
-      - name: Run benchmarks
-        if: ${{ !cancelled() && env.RUN_BENCH == 'true' }}
-        run: cargo bench --locked -p base-proof-mpt --bench trie_node -- --test
   docker:
     name: Docker
     runs-on: depot-ubuntu-latest # was: ubuntu-latest. Mapped standard GitHub runner to Depot equivalent.
