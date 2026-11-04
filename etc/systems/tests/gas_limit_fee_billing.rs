@@ -227,6 +227,7 @@ struct Settlement {
     effective_gas_price: u128,
     /// The inclusion block's base fee, read from its header.
     base_fee_per_gas: u128,
+    /// The L1 data fee the receipt reports.
     l1_fee: u128,
     /// Wei the fee payer transferred as value on top of the fees (zero when it only sponsors).
     value_paid: U256,
@@ -235,11 +236,14 @@ struct Settlement {
     coinbase_received: U256,
     base_fee_vault_received: U256,
     operator_fee_vault_received: U256,
+    l1_fee_vault_received: U256,
 }
 
 impl Settlement {
     /// Everything the payer paid beyond the value and the L1 data fee, which must have landed
     /// at the three execution-fee recipients: billing on the limit neither mints nor burns ETH.
+    /// The L1 data fee itself is checked against the `L1FeeVault` credit in
+    /// [`Self::assert_consistent`].
     fn execution_fee_paid(&self) -> U256 {
         self.payer_paid - self.value_paid - U256::from(self.l1_fee)
     }
@@ -273,6 +277,11 @@ impl Settlement {
             self.operator_fee_vault_received,
             expected_operator_fee(billed_gas),
             "operator fee must be the seeded scalar and constant applied to the billed gas"
+        );
+        assert_eq!(
+            self.l1_fee_vault_received,
+            U256::from(self.l1_fee),
+            "the L1 data fee the receipt reports must reach the L1FeeVault"
         );
         assert_eq!(
             self.execution_fee_paid(),
@@ -541,6 +550,7 @@ async fn settle(
         coinbase_received: credited(block.header.beneficiary).await?,
         base_fee_vault_received: credited(Predeploys::BASE_FEE_VAULT).await?,
         operator_fee_vault_received: credited(Predeploys::OPERATOR_FEE_VAULT).await?,
+        l1_fee_vault_received: credited(Predeploys::L1_FEE_VAULT).await?,
     };
     Ok((settlement, receipt))
 }
