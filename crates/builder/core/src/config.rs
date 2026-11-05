@@ -16,11 +16,6 @@ use crate::{
 /// Configuration values for the Base block builder.
 #[derive(Clone)]
 pub struct BuilderConfig {
-    /// The interval at which blocks are added to the chain.
-    /// This is also the frequency at which the builder will be receiving FCU requests from the
-    /// sequencer.
-    pub block_time: Duration,
-
     /// Data Availability configuration for the payload builder.
     /// Defines constraints for the maximum size of data availability transactions.
     pub da_config: BaseDAConfig,
@@ -95,7 +90,6 @@ impl BuilderConfig {
 impl core::fmt::Debug for BuilderConfig {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("Config")
-            .field("block_time", &self.block_time)
             .field("da_config", &self.da_config)
             .field("gas_limit_config", &self.gas_limit_config)
             .field("predicate_eval_hard_cutoff", &self.predicate_eval_hard_cutoff)
@@ -114,7 +108,6 @@ impl Default for BuilderConfig {
     fn default() -> Self {
         let metering_provider: SharedMeteringProvider = Arc::new(NoopMeteringProvider);
         Self {
-            block_time: Duration::from_secs(2),
             da_config: BaseDAConfig::default(),
             gas_limit_config: GasLimitConfig::default(),
             predicate_eval_hard_cutoff: Duration::from_millis(10),
@@ -136,14 +129,7 @@ impl Default for BuilderConfig {
 impl BuilderConfig {
     /// Creates a new [`BuilderConfig`] suitable for testing.
     pub fn for_tests() -> Self {
-        Self { block_time: Duration::from_secs(1), ..Self::default() }
-    }
-
-    /// Sets the block time in milliseconds.
-    #[must_use]
-    pub const fn with_block_time_ms(mut self, ms: u64) -> Self {
-        self.block_time = Duration::from_millis(ms);
-        self
+        Self::default()
     }
 
     /// Toggles the EIP-8130 manifest precheck.

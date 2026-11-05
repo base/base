@@ -70,8 +70,6 @@ pub struct InProcessBuilderConfig {
     /// Lets downstream consumers layer their own [`BaseNodeExtension`] onto the standard
     /// in-process builder wiring without forking this crate.
     pub extra_extensions: Vec<Box<dyn BaseNodeExtension>>,
-    /// Interval used by the payload builder.
-    pub block_time: Duration,
     /// Optional canonical block persistence threshold.
     pub persistence_threshold: Option<u64>,
     /// Optional number of unpersisted blocks allowed before Engine API intake is stalled.
@@ -156,7 +154,6 @@ impl InProcessBuilder {
             config.metrics_port.unwrap_or_else(|| ports.claim()),
         );
         let builder_config = BuilderConfig {
-            block_time: config.block_time,
             resting_predicate_mode: config.resting_predicate_mode,
             ..Default::default()
         };

@@ -12,7 +12,8 @@
 # The gated bench (see bench-iai.yml --gate) is different: its cargo status is
 # this script's exit status, and a commit without it prints iai_compare.py's
 # GATED_ABSENT line, so the gate can tell "not on this commit" from "failed".
-# RUN_GATE=false (set by bench-iai.yml when no relevant path changed) skips it.
+# RUN_GATE=false (set by bench-iai.yml when no relevant path changed) runs it as
+# an advisory bench instead.
 set -uo pipefail
 
 run() {
@@ -29,7 +30,6 @@ run cargo bench -p base-protocol --bench batch_transaction_iai
 run cargo bench -p base-consensus-derive --bench batch_queue_iai --features test-utils
 run cargo bench -p base-execution-payload-builder --bench native_candidate_scan_iai
 run cargo bench -p base-execution-payload-builder --bench validity_conditions_iai
-run cargo bench -p base-execution-payload-builder --bench native_build_loop_iai
 run cargo bench -p base-execution-evm --bench block_execution_iai
 run cargo bench -p base-execution-evm --bench block_assembly_iai
 run cargo bench -p base-execution-txpool --bench builder_insert_iai
@@ -37,9 +37,10 @@ run cargo bench -p base-execution-txpool --bench pool_validation_iai
 
 gated_status=0
 if [ "${RUN_GATE:-true}" != true ]; then
-  echo "iai-subset: gated bench skipped (RUN_GATE=$RUN_GATE)"
-elif [ -f crates/builder/core/benches/build_loop_iai.rs ]; then
-  run cargo bench -p base-builder-core --bench build_loop_iai || gated_status=$?
+  echo "iai-subset: gate off (RUN_GATE=$RUN_GATE); gated bench runs as advisory"
+  run cargo bench -p base-execution-payload-builder --bench native_build_loop_iai
+elif [ -f crates/execution/payload/benches/native_build_loop_iai.rs ]; then
+  run cargo bench -p base-execution-payload-builder --bench native_build_loop_iai || gated_status=$?
 else
   echo "iai-subset: gated bench absent on this commit"
 fi

@@ -13,10 +13,7 @@
 //! builder over the Engine API — while the verifier still re-executes the derived blocks, keeping
 //! block hashes and state roots aligned with `rollup_config.genesis.l2.hash`.
 
-use std::{
-    sync::{Arc, Mutex},
-    time::Duration,
-};
+use std::sync::{Arc, Mutex};
 
 use alloy_consensus::transaction::SignerRecoverable;
 use alloy_eips::{eip2718::Encodable2718, eip7685::Requests};
@@ -58,8 +55,6 @@ pub struct BuilderBackedEngineClient {
     instance: Mutex<LocalInstance>,
     /// The authenticated Engine API IPC socket path, used to build engine clients on demand.
     auth_ipc: String,
-    /// How long to let the payload job build from the pool before sealing a block.
-    block_time: Duration,
     rollup_config: Arc<RollupConfig>,
     /// The current unsafe head, advanced as payloads are inserted. Initialized to genesis.
     head: Mutex<L2BlockInfo>,
@@ -87,7 +82,6 @@ impl BuilderBackedEngineClient {
             .await?;
 
         let auth_ipc = instance.auth_ipc().to_string();
-        let block_time = instance.builder_config().block_time;
 
         // The caller supplies the genesis head, anchored to the real L1 genesis origin, so the
         // sequencer's origin selector can resolve it (the rollup config's `genesis.l1` is often
@@ -95,7 +89,6 @@ impl BuilderBackedEngineClient {
         Ok(Self {
             instance: Mutex::new(instance),
             auth_ipc,
-            block_time,
             rollup_config,
             head: Mutex::new(genesis_head),
             block_registry: SharedBlockHashRegistry::new(),
@@ -185,7 +178,7 @@ impl SequencerEngineClient for BuilderBackedEngineClient {
     ) -> EngineClientResult<BaseExecutionPayloadEnvelope> {
         // Give the payload job a full block time to assemble the block from the pool before resolving
         // it, matching the production sequencer's start-of-slot to end-of-slot cadence.
-        tokio::time::sleep(self.block_time).await;
+        tokio::time::sleep(ChainDriver::<Ipc>::BLOCK_TIME).await;
         let timestamp = attributes.attributes.payload_attributes.timestamp;
         // Base Azul requires `engine_getPayloadV5` (still imported via `newPayloadV4` in
         // `insert_unsafe_payload`); earlier upgrades use V4. Both envelopes carry the same

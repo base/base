@@ -295,7 +295,6 @@ services:
       - --p2p-secret-key-hex=${BUILDER_P2P_KEY}
       - --bootnodes=${L2_EL_BOOTNODE_ENODE}
       - --rollup.discovery.v4
-      - --rollup.chain-block-time=2000
       - --metrics=0.0.0.0:${L2_BUILDER_METRICS_PORT}
       - --builder.enable-resource-metering
       - --txpool.nolocals

@@ -62,7 +62,6 @@ async fn standalone_sequencer_paces_historical_denim_activation() -> Result<()> 
         validity_signature_mode: ValiditySignatureMode::Off,
         resting_predicate_mode: RestingPredicateMode::Off,
         extra_extensions: Vec::new(),
-        block_time: Duration::from_millis(200),
         persistence_threshold: None,
         persistence_backpressure_threshold: None,
         txpool_max_transactions: None,

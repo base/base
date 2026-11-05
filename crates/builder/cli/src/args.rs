@@ -103,10 +103,6 @@ pub struct Args {
     #[command(flatten)]
     pub rollup_args: RollupArgs,
 
-    /// chain block time in milliseconds
-    #[arg(long = "rollup.chain-block-time", default_value = "1000", env = "CHAIN_BLOCK_TIME")]
-    pub chain_block_time: u64,
-
     /// Enables builder resource metering: the shared metering store (`MeteringStore`) and
     /// native payload resource-metering schedule evaluation
     /// (`--payload.resource-metering-schedule`).
@@ -226,7 +222,6 @@ impl Default for Args {
     fn default() -> Self {
         Self {
             rollup_args: RollupArgs::default(),
-            chain_block_time: 1000,
             enable_resource_metering: false,
             resource_metering_schedule: None,
             validity_max_predicates: DEFAULT_MAX_VALIDITY_PREDICATES,
@@ -288,7 +283,6 @@ impl Args {
 
         Ok(BuilderConfig {
             state_provider_metrics: false,
-            block_time: Duration::from_millis(self.chain_block_time),
             da_config: Default::default(),
             gas_limit_config: Default::default(),
             predicate_eval_hard_cutoff: Duration::from_millis(self.predicate_eval_hard_cutoff_ms),
@@ -337,7 +331,6 @@ mod tests {
         let args = Args::default();
         assert_eq!(args.validity_max_predicates, DEFAULT_MAX_VALIDITY_PREDICATES);
         let config = convert(args);
-        assert_eq!(config.block_time, Duration::from_millis(1000));
         assert!(config.manifest_precheck_enabled);
     }
 
@@ -399,16 +392,6 @@ mod tests {
         let parsed =
             CommandParser::parse_from(["test", "--builder.eip8130-manifest-precheck=false"]);
         assert!(!parsed.args.manifest_precheck_enabled);
-    }
-
-    #[rstest]
-    #[case::block_time_1s(1000, 1000)]
-    #[case::block_time_2s(2000, 2000)]
-    #[case::block_time_250ms(250, 250)]
-    fn chain_block_time_maps_to_block_time(#[case] input_ms: u64, #[case] expected_ms: u64) {
-        let args = Args { chain_block_time: input_ms, ..Default::default() };
-        let config = convert(args);
-        assert_eq!(config.block_time, Duration::from_millis(expected_ms));
     }
 
     #[test]

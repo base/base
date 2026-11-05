@@ -9,7 +9,7 @@ use std::collections::HashSet;
 use alloy_primitives::TxHash;
 #[cfg(target_os = "linux")]
 use base_builder_core::test_utils::ExternalNode;
-use base_builder_core::test_utils::{TransactionBuilderExt, setup_test_instance};
+use base_builder_core::test_utils::{ChainDriver, Ipc, TransactionBuilderExt, setup_test_instance};
 use tokio::{join, task::yield_now};
 use tracing::info;
 
@@ -115,7 +115,7 @@ async fn produces_blocks_under_load_within_deadline() -> eyre::Result<()> {
                 // Ensure that the builder can still produce blocks under
                 // heavy load of incoming transactions.
                 let block = tokio::time::timeout(
-                    rbuilder.builder_config().block_time + Duration::from_millis(1500),
+                    ChainDriver::<Ipc>::BLOCK_TIME + Duration::from_millis(1500),
                     driver.build_new_block_with_current_timestamp(None),
                 )
                 .await

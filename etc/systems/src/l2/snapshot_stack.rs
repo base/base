@@ -91,7 +91,6 @@ impl SnapshotL2Stack {
             auth_port: container.and_then(|value| value.builder_auth_port),
             p2p_port: container.and_then(|value| value.builder_p2p_port),
             metrics_port: None,
-            block_time: block_interval.duration(),
             extra_extensions: Vec::new(),
             validity_signature_mode: ValiditySignatureMode::Off,
             persistence_threshold: Some(0),

@@ -110,7 +110,6 @@ async fn standalone_dev_chain_persists_and_restores_schedule() -> Result<()> {
         validity_signature_mode: ValiditySignatureMode::Off,
         resting_predicate_mode: RestingPredicateMode::Off,
         extra_extensions: vec![Box::new(ImpersonationRpcExtension(queue.clone()))],
-        block_time: Duration::from_millis(200),
         persistence_threshold: Some(0),
         persistence_backpressure_threshold: None,
         txpool_max_transactions: None,

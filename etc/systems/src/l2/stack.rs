@@ -231,7 +231,6 @@ impl L2Stack {
             validity_signature_mode: config.validity_signature_mode,
             extra_extensions: config.extra_builder_extensions,
             resting_predicate_mode: config.resting_predicate_mode,
-            block_time: Duration::from_secs(rollup_config.block_time),
             persistence_threshold: None,
             persistence_backpressure_threshold: None,
             txpool_max_transactions: None,
