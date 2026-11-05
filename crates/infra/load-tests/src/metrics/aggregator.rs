@@ -90,7 +90,11 @@ impl<'a> MetricsAggregator<'a> {
             return Vec::new();
         }
 
-        let labels = [SubmitCohortLabel::Plain, SubmitCohortLabel::ValidityPass];
+        let labels = [
+            SubmitCohortLabel::Plain,
+            SubmitCohortLabel::ValidityPass,
+            SubmitCohortLabel::ValidityPassPriorityLead,
+        ];
         labels
             .into_iter()
             .filter_map(|cohort| {
@@ -102,6 +106,10 @@ impl<'a> MetricsAggregator<'a> {
                 let confirmed = members.len() as u64;
                 let reverted = members.iter().filter(|t| t.reverted).count() as u64;
                 let total_gas: u64 = members.iter().map(|t| t.gas_used).sum();
+                let total_gas_limit: u64 = members.iter().map(|t| t.gas_limit).sum();
+                let total_fee_wei: u128 = members.iter().map(|t| t.cost_wei()).sum();
+                let total_priority_fee_wei: u128 =
+                    members.iter().map(|t| t.priority_fee_wei()).sum();
                 let mut latencies: Vec<Duration> =
                     members.iter().filter_map(|t| t.block_latency).collect();
                 Some(CohortMetrics {
@@ -109,6 +117,9 @@ impl<'a> MetricsAggregator<'a> {
                     confirmed,
                     reverted,
                     total_gas,
+                    total_gas_limit,
+                    total_fee_wei,
+                    total_priority_fee_wei,
                     block_latency: Self::compute_duration_metrics(&mut latencies),
                 })
             })
@@ -424,6 +435,27 @@ mod tests {
         transaction
     }
 
+    /// A receipt-enriched transaction with a declared limit, effective price, and outcome.
+    fn priced_transaction(
+        gas_used: u64,
+        gas_limit: u64,
+        gas_price: u128,
+        reverted: bool,
+        cohort: SubmitCohortLabel,
+    ) -> TransactionMetrics {
+        let mut transaction = cohort_transaction(5, gas_used, cohort);
+        transaction.gas_limit = gas_limit;
+        transaction.gas_price = gas_price;
+        // Regular transactions tip a tenth of the price; reverting arbs tip twenty times that, which the
+        // effective price caps.
+        transaction.priority_fee = match cohort {
+            SubmitCohortLabel::ValidityPassPriorityLead => gas_price / 10 * 20,
+            SubmitCohortLabel::Plain | SubmitCohortLabel::ValidityPass => gas_price / 10,
+        };
+        transaction.reverted = reverted;
+        transaction
+    }
+
     #[test]
     fn submit_offset_histogram_buckets_by_lower_bound() {
         let offsets = [-181, -180, -171, -1, 0, 9, 10];
@@ -466,5 +498,80 @@ mod tests {
         assert_eq!(by_cohort[1].cohort, SubmitCohortLabel::ValidityPass);
         assert_eq!(by_cohort[1].confirmed, 2);
         assert_eq!(by_cohort[1].total_gas, 500);
+    }
+
+    #[test]
+    fn by_cohort_reports_lead_cohort_payment_against_declared_limit() {
+        // Two regular validity transactions that execute, and three reverting arbs that each
+        // reserve 2M gas, use 25k, and pay a 20x tip (metered billing: fee follows gas_used).
+        let transactions = [
+            priced_transaction(100_000, 100_000, 10, false, SubmitCohortLabel::ValidityPass),
+            priced_transaction(100_000, 100_000, 10, false, SubmitCohortLabel::ValidityPass),
+            priced_transaction(
+                25_000,
+                2_000_000,
+                200,
+                true,
+                SubmitCohortLabel::ValidityPassPriorityLead,
+            ),
+            priced_transaction(
+                25_000,
+                2_000_000,
+                200,
+                true,
+                SubmitCohortLabel::ValidityPassPriorityLead,
+            ),
+            priced_transaction(
+                25_000,
+                2_000_000,
+                200,
+                false,
+                SubmitCohortLabel::ValidityPassPriorityLead,
+            ),
+        ];
+
+        let by_cohort = MetricsAggregator::compute_by_cohort(&transactions);
+
+        assert_eq!(by_cohort.len(), 2, "plain cohort is absent, so only two entries");
+        let regular = &by_cohort[0];
+        assert_eq!(regular.cohort, SubmitCohortLabel::ValidityPass);
+        assert_eq!(regular.confirmed, 2);
+        assert_eq!(regular.reverted, 0);
+        assert_eq!(regular.total_gas, 200_000);
+        assert_eq!(regular.total_gas_limit, 200_000);
+        assert_eq!(regular.total_fee_wei, 2_000_000);
+        assert_eq!(regular.total_priority_fee_wei, 200_000, "tip is a tenth of the price");
+
+        let arbs = &by_cohort[1];
+        assert_eq!(arbs.cohort, SubmitCohortLabel::ValidityPassPriorityLead);
+        assert_eq!(arbs.confirmed, 3);
+        assert_eq!(arbs.reverted, 2);
+        assert_eq!(arbs.total_gas, 75_000);
+        assert_eq!(arbs.total_gas_limit, 6_000_000);
+        assert_eq!(arbs.total_fee_wei, 15_000_000);
+        assert_eq!(
+            arbs.total_priority_fee_wei, 15_000_000,
+            "a tip above the effective price is capped at the price"
+        );
+    }
+
+    #[test]
+    fn cohort_label_serializes_as_snake_case() {
+        assert_eq!(
+            serde_json::to_string(&SubmitCohortLabel::ValidityPassPriorityLead).unwrap(),
+            "\"validity_pass_priority_lead\""
+        );
+        let metrics = CohortMetrics {
+            cohort: SubmitCohortLabel::ValidityPassPriorityLead,
+            total_gas_limit: 6_000_000,
+            total_fee_wei: u128::from(u64::MAX) + 1,
+            ..CohortMetrics::default()
+        };
+        // `MetricsSummary::to_json` goes through the string serializer, which carries u128 fees
+        // above u64::MAX intact.
+        let json = serde_json::to_string(&metrics).unwrap();
+        assert!(json.contains("\"cohort\":\"validity_pass_priority_lead\""), "{json}");
+        assert!(json.contains("\"total_gas_limit\":6000000"), "{json}");
+        assert!(json.contains("\"total_fee_wei\":18446744073709551616"), "{json}");
     }
 }

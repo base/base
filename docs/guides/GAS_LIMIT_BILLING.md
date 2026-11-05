@@ -131,6 +131,8 @@ Key risks are higher fees for padded limits, greater dependence on accurate esti
 
 Gas-limit billing is a consensus change that activates with Everest and must activate consistently in builders, validators, and provers. Before network activation, ensure the design invariants hold across the activation boundary and communicate the client-facing fee and gas-reporting semantics above. Follow [UPGRADES.md](UPGRADES.md) for network activation, with Base Sepolia preceding Mainnet.
 
+The local devnet reproduces the before/after comparison: `just load-test gas-limit-billing` drives a high-tip reverting-arb cohort against regular validity traffic, `etc/scripts/devnet/gas-limit-billing-demo.sh` runs it on both sides of a late Everest block and compares per-cohort fees, latency, and the builder's predicate-budget deferrals, and `etc/scripts/devnet/gas-limit-billing-settlement-check.sh` checks that padded transfers settle at their declared limit (see the [load-tests README](../../crates/infra/load-tests/README.md#gas-limit-billing-demo)).
+
 Amsterdam's separate gas pricing is outside the scope of Everest activation: Base will adopt Amsterdam after Everest, so compatibility with those gas dimensions can be addressed separately.
 
 References: [EIP-1559](https://eips.ethereum.org/EIPS/eip-1559), [EIP-3529](https://eips.ethereum.org/EIPS/eip-3529), [EIP-7623](https://eips.ethereum.org/EIPS/eip-7623), [EIP-7825](https://eips.ethereum.org/EIPS/eip-7825), [EIP-8130](https://eips.ethereum.org/EIPS/eip-8130); [`crates/common/evm/README.md`](../../crates/common/evm/README.md).

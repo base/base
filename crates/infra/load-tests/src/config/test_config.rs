@@ -18,8 +18,8 @@ use crate::{
     runner::{TxConfig, TxType},
     utils::{BaselineError, Result},
     workload::{
-        AaBundlePayload, MAX_TOKEN_MOVE_TRANSFERS_PER_TX, RealTokenSetup, StoragePayload,
-        UniswapV3Hop,
+        AaBundlePayload, DEFAULT_REVERT_ARB_GAS_LIMIT, MAX_TOKEN_MOVE_TRANSFERS_PER_TX,
+        RealTokenSetup, StoragePayload, UniswapV3Hop,
     },
 };
 
@@ -332,6 +332,18 @@ pub enum TxTypeConfig {
         padding_bytes: u32,
     },
 
+    /// Call to `contract` with a selector no test contract implements, so it reverts at
+    /// dispatch after ~21-25k gas while reserving `gas_limit`. Models a searcher reverting arb whose
+    /// opportunity is gone; pair it with `validity.priority_lead_payload` for the gas-limit
+    /// billing demo.
+    RevertArb {
+        /// Contract whose selector dispatch rejects the call (for example `DoubleCounter`).
+        contract: Address,
+        /// Declared gas limit carried by every reverting arb.
+        #[serde(default = "default_revert_arb_gas_limit")]
+        gas_limit: u64,
+    },
+
     /// Precompile call.
     Precompile {
         /// Target precompile configuration.
@@ -454,6 +466,14 @@ const fn default_storage_new_slot_ratio() -> f64 {
 const fn default_aa_ops_per_bundle() -> u32 {
     12
 }
+
+const fn default_revert_arb_gas_limit() -> u64 {
+    DEFAULT_REVERT_ARB_GAS_LIMIT
+}
+
+/// Lower bound on a revert arb's declared gas limit: the intrinsic cost of a call carrying a
+/// four-byte selector, below which the reverting arb cannot even be included.
+const MIN_REVERT_ARB_GAS_LIMIT: u64 = 21_064;
 
 /// Upper bound on `slots_per_tx` so the payload's gas limit
 /// (`slots_per_tx * 23_000 + 30_000`) stays under the ~30M per-tx block cap.
@@ -788,11 +808,24 @@ impl TestConfig {
             validity_priority_lead_ratio: self.validity.priority_lead_ratio,
             validity_priority_lead_multiplier: self.validity.priority_lead_multiplier,
             validity_priority_fee_divisor: self.validity.priority_fee_divisor,
+            validity_priority_lead_payload: self
+                .validity
+                .priority_lead_payload
+                .as_ref()
+                .map(|payload| self.convert_tx_type_config(payload))
+                .transpose()?,
         })
     }
 
     fn convert_tx_type(&self, weighted: &WeightedTxType) -> Result<TxConfig> {
-        let tx_type = match &weighted.tx_type {
+        Ok(TxConfig {
+            weight: weighted.weight,
+            tx_type: self.convert_tx_type_config(&weighted.tx_type)?,
+        })
+    }
+
+    fn convert_tx_type_config(&self, tx_type: &TxTypeConfig) -> Result<TxType> {
+        let tx_type = match tx_type {
             TxTypeConfig::Transfer => TxType::Transfer,
             TxTypeConfig::Eip8430Transfer => TxType::Eip8430Transfer,
             TxTypeConfig::X402 => {
@@ -856,6 +889,14 @@ impl TestConfig {
                     )));
                 }
                 TxType::AaBundle { ops_per_bundle: *ops_per_bundle, padding_bytes: *padding_bytes }
+            }
+            TxTypeConfig::RevertArb { contract, gas_limit } => {
+                if *gas_limit < MIN_REVERT_ARB_GAS_LIMIT {
+                    return Err(BaselineError::Config(format!(
+                        "revert_arb gas_limit must be >= {MIN_REVERT_ARB_GAS_LIMIT}"
+                    )));
+                }
+                TxType::RevertArb { contract: *contract, gas_limit: *gas_limit }
             }
             TxTypeConfig::Precompile { target, iterations } => {
                 let looper_contract = if *iterations > 1 {
@@ -982,7 +1023,7 @@ impl TestConfig {
                 TxType::UniswapV3Liquidity(payload.clone())
             }
         };
-        Ok(TxConfig { weight: weighted.weight, tx_type })
+        Ok(tx_type)
     }
 }
 
@@ -1020,6 +1061,8 @@ where
 
 #[cfg(test)]
 mod tests {
+    use alloy_primitives::address;
+
     use super::*;
 
     /// Minimal valid config with the primary RPC set, plus `extra`.
@@ -1735,6 +1778,93 @@ validity:
         assert_eq!(config.to_summary().validity_priority_fee_divisor, 3);
         assert_eq!(config.to_summary().validity_priority_lead_ratio, 0.2);
         assert_eq!(config.to_summary().validity_priority_lead_multiplier, 4);
+    }
+
+    #[test]
+    fn revert_arb_lead_payload_round_trips_to_runtime() {
+        let yaml = r#"
+transaction_submission_rpcs: http://localhost:7545
+transactions:
+  - weight: 100
+    type: double_counter
+    contract: "0x1111111111111111111111111111111111111111"
+validity:
+  ratio: 1.0
+  priority_lead_ratio: 0.3
+  priority_lead_multiplier: 20
+  priority_lead_payload:
+    type: revert_arb
+    contract: "0x1111111111111111111111111111111111111111"
+    gas_limit: 2000000
+  predicates:
+    - type: block_number
+      op: "<="
+      offset: "25"
+"#;
+        let config = TestConfig::from_yaml(yaml).unwrap();
+        let contract = address!("1111111111111111111111111111111111111111");
+        assert!(matches!(
+            config.validity.priority_lead_payload,
+            Some(TxTypeConfig::RevertArb { contract: c, gas_limit: 2_000_000 }) if c == contract
+        ));
+
+        let load = config.to_load_config(Some(1337)).unwrap();
+        load.validate().unwrap();
+        assert!(matches!(
+            load.validity_priority_lead_payload,
+            Some(TxType::RevertArb { contract: c, gas_limit: 2_000_000 }) if c == contract
+        ));
+        assert!(
+            matches!(load.transactions[0].tx_type, TxType::DoubleCounter { .. }),
+            "the weighted mix stays on the regular payload"
+        );
+    }
+
+    #[test]
+    fn revert_arb_gas_limit_defaults_and_rejects_sub_intrinsic_values() {
+        let yaml = config_yaml(
+            r#"
+transactions:
+  - weight: 100
+    type: revert_arb
+    contract: "0x1111111111111111111111111111111111111111"
+"#,
+        );
+        let load = TestConfig::from_yaml(&yaml).unwrap().to_load_config(Some(1337)).unwrap();
+        assert!(matches!(
+            load.transactions[0].tx_type,
+            TxType::RevertArb { gas_limit: DEFAULT_REVERT_ARB_GAS_LIMIT, .. }
+        ));
+
+        let yaml = config_yaml(
+            r#"
+transactions:
+  - weight: 100
+    type: revert_arb
+    contract: "0x1111111111111111111111111111111111111111"
+    gas_limit: 21000
+"#,
+        );
+        let error = TestConfig::from_yaml(&yaml).unwrap().to_load_config(Some(1337)).unwrap_err();
+        assert!(error.to_string().contains("revert_arb gas_limit must be >="), "{error}");
+    }
+
+    #[test]
+    fn priority_lead_payload_requires_a_lead_cohort() {
+        let yaml = config_yaml(
+            r#"
+validity:
+  ratio: 1.0
+  priority_lead_payload:
+    type: transfer
+  predicates:
+    - type: block_number
+      op: "<="
+      offset: "25"
+"#,
+        );
+        let error = TestConfig::from_yaml(&yaml).unwrap_err();
+        assert!(error.to_string().contains("priority_lead_payload"), "{error}");
     }
 
     #[test]

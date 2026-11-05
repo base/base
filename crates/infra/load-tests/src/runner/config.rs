@@ -191,6 +191,13 @@ pub enum TxType {
         /// Random calldata bytes appended to each bundle.
         padding_bytes: u32,
     },
+    /// Call with an unimplemented selector that reverts at dispatch while reserving `gas_limit`.
+    RevertArb {
+        /// Contract whose selector dispatch rejects the call.
+        contract: Address,
+        /// Declared gas limit carried by every reverting arb.
+        gas_limit: u64,
+    },
     /// Precompile call.
     Precompile {
         /// Target precompile.
@@ -340,6 +347,9 @@ pub struct LoadConfig {
     pub validity_priority_lead_multiplier: u128,
     /// Priority-tip divisor for validity-cohort measured transactions.
     pub validity_priority_fee_divisor: u128,
+    /// Payload generated for every priority-lead validity transaction instead of the weighted
+    /// `transactions` mix. `None` keeps the lead cohort on the shared mix.
+    pub validity_priority_lead_payload: Option<TxType>,
 }
 
 impl LoadConfig {
@@ -377,6 +387,7 @@ impl LoadConfig {
             validity_priority_lead_ratio: 0.0,
             validity_priority_lead_multiplier: 1,
             validity_priority_fee_divisor: 1,
+            validity_priority_lead_payload: None,
         }
     }
 
@@ -491,6 +502,14 @@ impl LoadConfig {
         }
         if self.validity_priority_fee_divisor < 1 {
             return Err(BaselineError::Config("validity_priority_fee_divisor must be >= 1".into()));
+        }
+        if self.validity_priority_lead_payload.is_some()
+            && (self.validity_ratio <= 0.0 || self.validity_priority_lead_ratio <= 0.0)
+        {
+            return Err(BaselineError::Config(
+                "validity_priority_lead_payload requires validity_ratio > 0 and validity_priority_lead_ratio > 0"
+                    .into(),
+            ));
         }
         if self.validity_predicates.len() > base_execution_txpool::DEFAULT_MAX_VALIDITY_PREDICATES {
             return Err(BaselineError::Config(format!(
@@ -614,6 +633,24 @@ mod tests {
         let mut config = LoadConfig::devnet();
         config.measurement_blocks = Some(0);
         assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn validate_rejects_lead_payload_without_lead_cohort() {
+        let arb = TxType::RevertArb { contract: Address::repeat_byte(0x11), gas_limit: 1 };
+        let mut config = LoadConfig::devnet();
+        config.validity_priority_lead_payload = Some(arb);
+        assert!(config.validate().is_err(), "no validity senders means no lead cohort");
+
+        config.validity_ratio = 1.0;
+        config.validity_predicates = vec![ValidityPredicateTemplate::BlockNumber {
+            op: ValidityOperator::GreaterThanOrEqual,
+            bound: BlockNumberBound::Absolute(U256::ZERO),
+        }];
+        assert!(config.validate().is_err(), "lead ratio of zero still has no lead cohort");
+
+        config.validity_priority_lead_ratio = 0.5;
+        assert!(config.validate().is_ok());
     }
 
     #[test]
