@@ -158,7 +158,7 @@ pub async fn run_validator_poller(
         .filter_map(|node| {
             let cl_client = ConsensusClient::connect(&node.cl_rpc)
                 .inspect_err(|e| {
-                    warn!(error = %e, node = %node.name, "failed to build validator CL HTTP client");
+                    warn!(error = ?e, node = %node.name, "failed to build validator CL HTTP client");
                 })
                 .ok()?
                 .with_timeout(RPC_TIMEOUT);
@@ -474,11 +474,7 @@ pub async fn run_rollup_config_poller(
     let client = match ConsensusClient::connect(&consensus_rpc) {
         Ok(client) => client.with_timeout(ROLLUP_CONFIG_POLL_INTERVAL),
         Err(error) => {
-            warn!(
-                error = %error,
-                consensus_rpc = %consensus_rpc,
-                "failed to create consensus RPC client for rollup config polling"
-            );
+            warn!(error = ?error, "failed to create consensus RPC client for rollup config polling");
             let _ = toast_tx.try_send(Toast::warning("Rollup config poller connection failed"));
             return;
         }
@@ -493,11 +489,7 @@ pub async fn run_rollup_config_poller(
         let config = match client.rollup_config().await {
             Ok(config) => config,
             Err(error) => {
-                warn!(
-                    error = %error,
-                    consensus_rpc = %consensus_rpc,
-                    "failed to poll live rollup config"
-                );
+                warn!(error = ?error, "failed to poll live rollup config");
                 continue;
             }
         };

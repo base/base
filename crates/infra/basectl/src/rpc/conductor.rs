@@ -902,7 +902,7 @@ fn build_conductor_clients(
                 .ok()?;
             let cl_client = ConsensusClient::connect(&node.cl_rpc)
                 .inspect_err(|e| {
-                    warn!(error = %e, node = %node.name, "failed to build CL HTTP client");
+                    warn!(error = ?e, node = %node.name, "failed to build CL HTTP client");
                 })
                 .ok()?
                 .with_timeout(timeout);

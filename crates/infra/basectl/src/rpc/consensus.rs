@@ -66,8 +66,8 @@ impl ConsensusClient {
 
     /// Sets the request timeout, capped at [`Self::STOP_SEQUENCER_TIMEOUT`].
     #[must_use]
-    pub const fn with_timeout(mut self, timeout: Duration) -> Self {
-        self.timeout = timeout;
+    pub fn with_timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = timeout.min(Self::STOP_SEQUENCER_TIMEOUT);
         self
     }
 
