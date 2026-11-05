@@ -697,9 +697,10 @@ mod tests {
                 | BaseFeature::ExtendedSequencerDrift
                 | BaseFeature::OneShotPayloadBuilding
                 | BaseFeature::SingularBatchesOnly => BaseUpgrade::Denim,
-                BaseFeature::Eip8130 | BaseFeature::Eip8430 | BaseFeature::NativeNonceManager => {
-                    BaseUpgrade::Everest
-                }
+                BaseFeature::Eip8130
+                | BaseFeature::Eip8430
+                | BaseFeature::NativeNonceManager
+                | BaseFeature::GasLimitBilling => BaseUpgrade::Everest,
                 BaseFeature::Keystore => BaseUpgrade::Zenith,
             };
             assert_eq!(feature.activation_upgrade(), upgrade, "{feature:?}");
