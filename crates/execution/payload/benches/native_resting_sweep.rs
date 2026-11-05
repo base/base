@@ -47,7 +47,7 @@ use base_execution_payload_builder::{
     config::BaseBuilderConfig,
     payload::EthPayloadBuilderAttributes,
 };
-use base_execution_txpool::{BuiltState, ParkableTransactionPool, ValidityDormancyMode};
+use base_execution_txpool::{BuilderReport, ParkableTransactionPool, ValidityDormancyMode};
 use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
 use production_pool::{Accounts, ProductionPool, TRANSFER_GAS};
 use resting_matrix::{
@@ -242,7 +242,7 @@ fn run_case(
         let members = resting.as_ref().map_or(0, |resting| resting.len());
 
         let start = Instant::now();
-        pool.pool.report_built_state(block, BuiltState::Transitions(&pre_block_changes));
+        pool.pool.report_built_state(block, BuilderReport::PreSelection(&pre_block_changes));
         let mut report_time = start.elapsed();
         // The gauge is process-wide; only a dormancy-enforcing pool set it during this case.
         let dormant = if mode.dormancy() == ValidityDormancyMode::Enforce {
@@ -304,10 +304,11 @@ fn run_case(
 
         drop(builder);
         state.merge_transitions(BundleRetention::Reverts);
-        let bundle = state.take_bundle();
+        let bundle = Arc::new(state.take_bundle());
         let start = Instant::now();
-        pool.pool.report_built_state(block, BuiltState::Bundle(&bundle));
+        pool.pool.report_built_state(block, BuilderReport::Sealed(Arc::clone(&bundle) as _));
         report_time += start.elapsed();
+        let bundle = Arc::unwrap_or_clone(bundle);
 
         mined = (ordinary, ordinary_senders, bundle);
         for lane in woken {
