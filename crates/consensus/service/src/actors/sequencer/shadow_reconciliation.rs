@@ -1,8 +1,12 @@
 //! Request routing and buffered canonical inputs for shadow reconciliation.
 
-use std::collections::{BTreeMap, VecDeque};
+use std::{
+    collections::{BTreeMap, VecDeque},
+    time::Duration,
+};
 
 use alloy_primitives::B256;
+use base_common_genesis::{DenimTimestampSchedule, RollupConfig};
 use base_common_rpc_types_engine::BaseExecutionPayloadEnvelope;
 use base_consensus_engine::ConsolidateInput;
 use base_protocol::L2BlockInfo;
@@ -62,17 +66,67 @@ pub enum SequencerEngineState {
 }
 
 /// Rolling canonical unsafe payloads retained while safe derivation catches up.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct CanonicalUnsafeCatchup {
+    max_payloads: usize,
     payloads: BTreeMap<u64, BaseExecutionPayloadEnvelope>,
     observations: BTreeMap<u64, B256>,
     highest_observed: Option<(u64, B256)>,
     faulted: bool,
 }
 
+impl Default for CanonicalUnsafeCatchup {
+    fn default() -> Self {
+        Self::new(Self::MAX_PAYLOADS)
+    }
+}
+
 impl CanonicalUnsafeCatchup {
-    /// Maximum recent canonical unsafe payloads retained during catch-up.
-    pub const MAX_PAYLOADS: usize = SequencerConfig::MAX_SHADOW_BLOCKS_PER_CYCLE as usize;
+    /// Wall-clock span of recent canonical gossip retained during catch-up.
+    ///
+    /// A restarted follower only connects to the buffer once derived safe blocks reach the oldest
+    /// retained payload, so the window must exceed the unsafe-to-safe derivation latency (batch
+    /// submission, L1 inclusion, and derivation) with ample margin, independent of block time.
+    pub const CATCHUP_WINDOW: Duration = Duration::from_secs(600);
+
+    /// Payloads retained during catch-up at the fastest supported block cadence.
+    pub const MAX_PAYLOADS: usize = (Self::CATCHUP_WINDOW.as_millis()
+        / DenimTimestampSchedule::DENIM_BLOCK_INTERVAL_MILLIS as u128)
+        as usize;
+
+    /// Most buffered payloads applied to the engine before it serves other requests.
+    pub const MAX_APPLY_BATCH: usize = SequencerConfig::MAX_SHADOW_BLOCKS_PER_CYCLE as usize;
+
+    /// Creates a catch-up buffer retaining at most `max_payloads` recent payloads.
+    pub const fn new(max_payloads: usize) -> Self {
+        Self {
+            max_payloads,
+            payloads: BTreeMap::new(),
+            observations: BTreeMap::new(),
+            highest_observed: None,
+            faulted: false,
+        }
+    }
+
+    /// Returns the number of payloads that span [`Self::CATCHUP_WINDOW`] at `rollup`'s block time.
+    ///
+    /// A chain with Denim scheduled is sized for the Denim cadence so the window also holds
+    /// through the transition from whole-second blocks.
+    pub fn max_payloads_for(rollup: &RollupConfig) -> usize {
+        let legacy_interval_millis = rollup.block_time.saturating_mul(1_000);
+        let interval_millis =
+            if legacy_interval_millis == 0 || rollup.denim_timestamp_schedule().is_some() {
+                DenimTimestampSchedule::DENIM_BLOCK_INTERVAL_MILLIS
+            } else {
+                legacy_interval_millis
+            };
+        ((Self::CATCHUP_WINDOW.as_millis() / u128::from(interval_millis)) as usize).max(1)
+    }
+
+    /// Returns the maximum number of payloads retained.
+    pub const fn max_payloads(&self) -> usize {
+        self.max_payloads
+    }
 
     /// Retains an authenticated canonical payload in the rolling recent window.
     pub fn buffer_payload(&mut self, envelope: BaseExecutionPayloadEnvelope) {
@@ -92,25 +146,31 @@ impl CanonicalUnsafeCatchup {
             self.highest_observed = Some((number, hash));
         }
         self.payloads.insert(number, envelope);
-        while self.payloads.len() > Self::MAX_PAYLOADS {
+        while self.payloads.len() > self.max_payloads {
             self.payloads.pop_first();
         }
-        while self.observations.len() > Self::MAX_PAYLOADS {
+        while self.observations.len() > self.max_payloads {
             self.observations.pop_first();
         }
     }
 
-    /// Returns the contiguous canonical suffix that can extend `anchor` now.
+    /// Returns at most `limit` payloads of the contiguous canonical suffix that can extend
+    /// `anchor` now.
+    ///
+    /// Bounding the batch keeps the engine loop responsive and the cloned working set small while
+    /// a long run is applied; the remainder is returned by later calls as the anchor advances.
     pub fn contiguous_payloads(
         &mut self,
         anchor: L2BlockInfo,
+        limit: usize,
     ) -> Vec<BaseExecutionPayloadEnvelope> {
         self.payloads.retain(|number, _| *number > anchor.block_info.number);
 
         let mut number = anchor.block_info.number.saturating_add(1);
         let mut parent = anchor.block_info.hash;
         let mut payloads = Vec::new();
-        while let Some(payload) = self.payloads.get(&number) {
+        while payloads.len() < limit {
+            let Some(payload) = self.payloads.get(&number) else { break };
             if payload.execution_payload.parent_hash() != parent {
                 break;
             }
@@ -365,12 +425,14 @@ impl ShadowReconciliationGate {
 mod tests {
     use alloy_primitives::{Address, B256, Bloom, U256};
     use alloy_rpc_types_engine::ExecutionPayloadV1;
+    use base_common_genesis::{BaseUpgradeConfig, RollupConfig, UpgradeConfig};
     use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
     use base_consensus_engine::{ConsolidateInput, test_utils::TestAttributesBuilder};
     use base_protocol::{BlockInfo, L2BlockInfo};
+    use rstest::rstest;
 
     use super::{CanonicalUnsafeCatchup, ShadowReconciliationGate};
-    use crate::EngineClientError;
+    use crate::{EngineClientError, SequencerConfig};
 
     fn head(number: u64, hash: B256) -> L2BlockInfo {
         L2BlockInfo {
@@ -408,7 +470,7 @@ mod tests {
         catchup.buffer_payload(payload(12, B256::with_last_byte(11), B256::with_last_byte(12)));
         catchup.buffer_payload(payload(11, safe.block_info.hash, B256::with_last_byte(11)));
 
-        let payloads = catchup.contiguous_payloads(safe);
+        let payloads = catchup.contiguous_payloads(safe, usize::MAX);
         assert_eq!(payloads.len(), 2);
         assert_eq!(payloads[0].execution_payload.block_number(), 11);
         assert_eq!(payloads[1].execution_payload.block_number(), 12);
@@ -434,7 +496,118 @@ mod tests {
         assert_eq!(catchup.observations.len(), CanonicalUnsafeCatchup::MAX_PAYLOADS);
         assert_eq!(catchup.observations.first_key_value().map(|(number, _)| *number), Some(3));
         let anchor = head(2, B256::from(U256::from(2)));
-        assert_eq!(catchup.contiguous_payloads(anchor).len(), CanonicalUnsafeCatchup::MAX_PAYLOADS);
+        assert_eq!(
+            catchup.contiguous_payloads(anchor, usize::MAX).len(),
+            CanonicalUnsafeCatchup::MAX_PAYLOADS
+        );
+    }
+
+    #[test]
+    fn catchup_connects_when_derivation_lags_beyond_the_shadow_cycle_limit() {
+        // Derivation leaves the safe head more than the shadow cycle limit behind the latest
+        // gossip, which is what happens to a restarted follower when blocks are fast.
+        let lag = SequencerConfig::MAX_SHADOW_BLOCKS_PER_CYCLE + 14;
+        let anchor_number = 50;
+        let tip = anchor_number + lag;
+        let mut catchup = CanonicalUnsafeCatchup::default();
+        let mut parent = B256::from(U256::from(anchor_number));
+        for number in anchor_number + 1..=tip {
+            let hash = B256::from(U256::from(number));
+            catchup.buffer_payload(payload(number, parent, hash));
+            parent = hash;
+        }
+        let anchor = head(anchor_number, B256::from(U256::from(anchor_number)));
+        assert!(!catchup.is_complete(anchor, anchor));
+
+        let suffix = catchup.contiguous_payloads(anchor, usize::MAX);
+
+        assert_eq!(suffix.len() as u64, lag);
+        let applied = head(tip, B256::from(U256::from(tip)));
+        catchup.commit(applied);
+        assert!(catchup.is_complete(applied, applied));
+    }
+
+    #[rstest]
+    #[case::denim_default(RollupConfig::default(), 3_000)]
+    #[case::legacy_block_time(rollup_config(2, None), 300)]
+    #[case::denim_scheduled(rollup_config(2, Some(1_000)), 3_000)]
+    #[case::block_time_longer_than_window(rollup_config(601, None), 1)]
+    fn catchup_window_spans_the_same_time_at_any_block_time(
+        #[case] rollup: RollupConfig,
+        #[case] expected: usize,
+    ) {
+        assert_eq!(CanonicalUnsafeCatchup::max_payloads_for(&rollup), expected);
+    }
+
+    #[test]
+    fn full_window_is_applied_in_bounded_batches() {
+        let total = CanonicalUnsafeCatchup::MAX_PAYLOADS as u64;
+        let mut catchup = CanonicalUnsafeCatchup::default();
+        let mut parent = B256::ZERO;
+        for number in 1..=total {
+            let hash = B256::from(U256::from(number));
+            catchup.buffer_payload(payload(number, parent, hash));
+            parent = hash;
+        }
+
+        let mut anchor = head(0, B256::ZERO);
+        let mut applied = 0;
+        while !catchup.is_complete(anchor, anchor) {
+            let batch =
+                catchup.contiguous_payloads(anchor, CanonicalUnsafeCatchup::MAX_APPLY_BATCH);
+            assert!(!batch.is_empty() && batch.len() <= CanonicalUnsafeCatchup::MAX_APPLY_BATCH);
+            applied += batch.len() as u64;
+            let last = batch.last().unwrap().execution_payload.block_number();
+            anchor = head(last, B256::from(U256::from(last)));
+            catchup.commit(anchor);
+        }
+
+        assert_eq!(applied, total);
+    }
+
+    #[test]
+    fn failed_batch_resumes_after_applied_prefix() {
+        let mut catchup = CanonicalUnsafeCatchup::new(10);
+        let mut parent = B256::ZERO;
+        for number in 1..=10 {
+            let hash = B256::from(U256::from(number));
+            catchup.buffer_payload(payload(number, parent, hash));
+            parent = hash;
+        }
+
+        // The engine applied block 4 before failing without a commit; the retry starts after it.
+        let anchor = head(4, B256::from(U256::from(4)));
+        let retry = catchup.contiguous_payloads(anchor, 3);
+
+        let numbers: Vec<_> =
+            retry.iter().map(|payload| payload.execution_payload.block_number()).collect();
+        assert_eq!(numbers, vec![5, 6, 7]);
+    }
+
+    #[test]
+    fn catchup_retains_only_its_configured_capacity() {
+        let mut catchup = CanonicalUnsafeCatchup::new(4);
+        let mut parent = B256::ZERO;
+        for number in 1..=6 {
+            let hash = B256::from(U256::from(number));
+            catchup.buffer_payload(payload(number, parent, hash));
+            parent = hash;
+        }
+
+        assert_eq!(catchup.max_payloads(), 4);
+        assert_eq!(catchup.payloads.keys().copied().collect::<Vec<_>>(), vec![3, 4, 5, 6]);
+        assert_eq!(catchup.observations.len(), 4);
+    }
+
+    fn rollup_config(block_time: u64, denim: Option<u64>) -> RollupConfig {
+        RollupConfig {
+            block_time,
+            upgrades: UpgradeConfig {
+                base: BaseUpgradeConfig { denim, ..Default::default() },
+                ..Default::default()
+            },
+            ..Default::default()
+        }
     }
 
     #[test]
@@ -458,7 +631,7 @@ mod tests {
         let mut catchup = CanonicalUnsafeCatchup::default();
         catchup.buffer_payload(payload(11, B256::with_last_byte(10), B256::with_last_byte(11)));
         let safe = head(12, B256::with_last_byte(12));
-        assert!(catchup.contiguous_payloads(safe).is_empty());
+        assert!(catchup.contiguous_payloads(safe, usize::MAX).is_empty());
 
         assert!(catchup.is_complete(safe, safe));
     }
@@ -468,7 +641,7 @@ mod tests {
         let mut catchup = CanonicalUnsafeCatchup::default();
         catchup.buffer_payload(payload(11, B256::with_last_byte(10), B256::with_last_byte(11)));
         let private = head(12, B256::with_last_byte(99));
-        assert!(catchup.contiguous_payloads(private).is_empty());
+        assert!(catchup.contiguous_payloads(private, usize::MAX).is_empty());
 
         assert!(!catchup.is_complete(private, head(10, B256::with_last_byte(10))));
     }
