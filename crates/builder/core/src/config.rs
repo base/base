@@ -16,6 +16,13 @@ use crate::{
     ResourceMeteringConfig, RestingPredicateMode, SharedMeteringProvider,
 };
 
+/// Default number of resting validity transactions one flashblock's transaction iterator looks up
+/// and parks before it parks further validity transactions without a lookup.
+///
+/// Sized after the 10 ms default validity-predicate evaluation cutoff: 10,000 holds measured about
+/// 2 to 3 ms on a local release build.
+pub const DEFAULT_RESTING_HOLD_CAP: u64 = 10_000;
+
 /// Configuration values for the flashblocks builder.
 #[derive(Clone)]
 pub struct BuilderConfig {
@@ -77,6 +84,11 @@ pub struct BuilderConfig {
     /// resting set carries across flashblocks and across blocks this builder finishes in sequence.
     pub resting_predicate_mode: RestingPredicateMode,
 
+    /// Resting validity transactions one flashblock's transaction iterator looks up and parks
+    /// before it parks every further validity transaction without a lookup, bounding the work of
+    /// walking past a large resting set. Zero removes the cap.
+    pub resting_hold_cap: u64,
+
     /// Resource metering provider
     pub metering_provider: SharedMeteringProvider,
     /// Resource-unit metering used to throttle transactions in the native
@@ -129,6 +141,7 @@ impl core::fmt::Debug for BuilderConfig {
             .field("predicate_eval_hard_cutoff", &self.predicate_eval_hard_cutoff)
             .field("predicate_bucket_ordered_threshold", &self.predicate_bucket_ordered_threshold)
             .field("resting_predicate_mode", &self.resting_predicate_mode)
+            .field("resting_hold_cap", &self.resting_hold_cap)
             .field("metering_provider", &self.metering_provider)
             .field("resource_metering", &self.resource_metering)
             .field("rejection_cache_size", &self.rejection_cache.entry_count())
@@ -158,6 +171,7 @@ impl Default for BuilderConfig {
             predicate_eval_hard_cutoff: Duration::from_millis(10),
             predicate_bucket_ordered_threshold: DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD,
             resting_predicate_mode: RestingPredicateMode::Off,
+            resting_hold_cap: DEFAULT_RESTING_HOLD_CAP,
             metering_provider: Arc::clone(&metering_provider),
             resource_metering: ResourceMeteringConfig {
                 provider: metering_provider,
@@ -252,6 +266,13 @@ impl BuilderConfig {
     #[must_use]
     pub const fn with_resting_predicate_mode(mut self, mode: RestingPredicateMode) -> Self {
         self.resting_predicate_mode = mode;
+        self
+    }
+
+    /// Sets the resting hold cap per flashblock iterator; zero removes the cap.
+    #[must_use]
+    pub const fn with_resting_hold_cap(mut self, cap: u64) -> Self {
+        self.resting_hold_cap = cap;
         self
     }
 }

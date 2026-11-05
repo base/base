@@ -274,8 +274,11 @@ mod tests {
 
     use alloy_consensus::{SignableTransaction, TxEip1559};
     use alloy_eips::eip2718::Encodable2718;
-    use alloy_primitives::{Address, B256, Signature, TxHash, TxKind, U256};
-    use base_common_consensus::{BaseTransactionSigned, BaseTxEnvelope};
+    use alloy_primitives::{Address, B256, Bytes, Signature, TxHash, TxKind, U256};
+    use base_common_consensus::{
+        BasePooledTransaction as ConsensusPooledTransaction, BaseTransactionSigned, BaseTxEnvelope,
+        Eip8130Constants, Eip8130Signed, TxEip8130,
+    };
     use base_execution_txpool::{
         BaseOrdering, BasePooledTransaction, HOLD_INTERRUPT_INTERVAL, ParkedBestTransactions,
         ValidityOperator, ValidityPredicate,
@@ -292,8 +295,9 @@ mod tests {
 
     use super::*;
     use crate::{
-        BestFlashblocksTxs, ParkableBestPayloadTransactions, ParkablePayloadTransactions,
-        RejectionCache, RestingPayloadTransactions, RestingPredicateMode, RestingStats,
+        BestFlashblocksTxs, DEFAULT_RESTING_HOLD_CAP, ParkableBestPayloadTransactions,
+        ParkablePayloadTransactions, RejectionCache, RestingPayloadTransactions,
+        RestingPredicateMode, RestingStats,
     };
 
     type Ordering = BaseOrdering<BasePooledTransaction>;
@@ -741,6 +745,224 @@ mod tests {
         iterator.park_current();
         let predicate = transaction.transaction.validity_predicates().next().unwrap();
         iterator.rest(*transaction.hash(), predicate);
+    }
+
+    /// Returns an enforcing iterator over `pool` whose holds look up and park at most `cap`
+    /// resting members.
+    fn capped_resting_iterator(
+        pool: &PendingPool<Ordering>,
+        cap: u64,
+    ) -> BestFlashblocksTxs<BasePooledTransaction, Parkable> {
+        resting_iterator(pool).with_resting_predicates(
+            SharedRestingPredicates::new(RestingPredicates::new(
+                DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD,
+            ))
+            .with_hold_cap(cap),
+        )
+    }
+
+    /// Fills a pool with `resting` validity transactions from distinct senders that outrank
+    /// `ordinary` plain transactions from further senders, and returns the ordinary hashes.
+    fn resting_cohort(
+        resting: u64,
+        ordinary: u64,
+    ) -> (Vec<Arc<ValidPoolTransaction<BasePooledTransaction>>>, Vec<TxHash>) {
+        let mut transactions: Vec<_> = (0..resting)
+            .map(|sender| validity_transaction(sender, 0, 10, vec![balance_at_least(WATCHED, 1)]))
+            .collect();
+        let ordinary_hashes = (resting..resting + ordinary)
+            .map(|sender| {
+                let plain = transaction(sender, 0, 1);
+                let hash = *plain.hash();
+                transactions.push(plain);
+                hash
+            })
+            .collect();
+        (transactions, ordinary_hashes)
+    }
+
+    fn rest_all(
+        iterator: &mut BestFlashblocksTxs<BasePooledTransaction, Parkable>,
+        transactions: &[Arc<ValidPoolTransaction<BasePooledTransaction>>],
+    ) {
+        for transaction in transactions {
+            if let Some(predicate) = transaction.transaction.validity_predicates().next() {
+                iterator.rest(*transaction.hash(), predicate);
+            }
+        }
+    }
+
+    /// A 50k resting cohort outranking every ordinary transaction must not make each flashblock
+    /// look up and park the whole cohort before it reaches them.
+    #[test]
+    fn large_resting_cohort_reaches_ordinary_transactions_within_the_hold_cap() {
+        const RESTING: u64 = 50_000;
+        let (transactions, ordinary) = resting_cohort(RESTING, 2);
+        let pool = pending_pool(&transactions);
+        let mut iterator = capped_resting_iterator(&pool, DEFAULT_RESTING_HOLD_CAP);
+        rest_all(&mut iterator, &transactions);
+
+        // Each flashblock includes the next ordinary transaction.
+        for expected in &ordinary {
+            refresh(&mut iterator, &pool);
+            let first = iterator.next(()).unwrap();
+            assert_eq!(first.hash(), expected);
+            iterator.mark_current_committed();
+            let stats = iterator.take_resting_stats();
+            assert_eq!(stats.parked, DEFAULT_RESTING_HOLD_CAP);
+            assert_eq!(stats.hold_cap_hits, 1);
+            assert_eq!(stats.hold_cap_excluded, RESTING - DEFAULT_RESTING_HOLD_CAP);
+        }
+    }
+
+    /// Past the cap, resting transactions and their nonce descendants are still never yielded,
+    /// even when every yielded transaction is included.
+    #[test]
+    fn resting_transactions_past_the_hold_cap_are_never_yielded() {
+        const RESTING: u64 = 1_000;
+        const CAP: u64 = 100;
+        let (mut transactions, ordinary) = resting_cohort(RESTING, 3);
+        let resting: B256Set = transactions[..RESTING as usize]
+            .iter()
+            .map(|transaction| *transaction.hash())
+            .collect();
+        // High-tip plain descendants of the lowest-priority resting senders.
+        let descendants: B256Set = (RESTING - 3..RESTING)
+            .map(|sender| {
+                let child = transaction(sender, 1, 1_000);
+                let hash = *child.hash();
+                transactions.push(child);
+                hash
+            })
+            .collect();
+        let pool = pending_pool(&transactions);
+        let mut iterator = capped_resting_iterator(&pool, CAP);
+        rest_all(&mut iterator, &transactions);
+
+        refresh(&mut iterator, &pool);
+        let mut yielded = Vec::new();
+        while let Some(transaction) = iterator.next(()) {
+            yielded.push(*transaction.hash());
+            iterator.mark_current_committed();
+        }
+
+        assert!(yielded.iter().all(|hash| !resting.contains(hash) && !descendants.contains(hash)));
+        assert_eq!(yielded, ordinary);
+        let stats = iterator.take_resting_stats();
+        assert_eq!((stats.parked, stats.hold_cap_excluded), (CAP, RESTING - CAP));
+    }
+
+    /// A source that, like the reth pool iterator, excludes every later transaction of a sender
+    /// it is told is invalid.
+    #[derive(Debug)]
+    struct SenderInvalidatingSource {
+        transactions: std::collections::VecDeque<Arc<ValidPoolTransaction<BasePooledTransaction>>>,
+    }
+
+    impl Iterator for SenderInvalidatingSource {
+        type Item = Arc<ValidPoolTransaction<BasePooledTransaction>>;
+
+        fn next(&mut self) -> Option<Self::Item> {
+            self.transactions.pop_front()
+        }
+    }
+
+    impl reth_transaction_pool::BestTransactions for SenderInvalidatingSource {
+        fn mark_invalid(
+            &mut self,
+            transaction: &Self::Item,
+            _kind: reth_transaction_pool::error::InvalidPoolTransactionError,
+        ) {
+            let sender = transaction.sender();
+            self.transactions.retain(|candidate| candidate.sender() != sender);
+        }
+
+        fn no_updates(&mut self) {}
+
+        fn set_skip_blobs(&mut self, _skip_blobs: bool) {}
+    }
+
+    fn nonce_free_transaction(
+        nonce_sequence: u64,
+        priority_fee: u128,
+        predicates: Vec<ValidityPredicate>,
+    ) -> Arc<ValidPoolTransaction<BasePooledTransaction>> {
+        let tx = TxEip8130 {
+            chain_id: 1,
+            sender: None,
+            nonce_key: Eip8130Constants::NONCE_KEY_MAX,
+            nonce_sequence,
+            valid_after: 0,
+            valid_before: 1_000,
+            max_priority_fee_per_gas: priority_fee,
+            max_fee_per_gas: priority_fee + 100,
+            gas_limit: 50_000,
+            account_changes: Vec::new(),
+            calls: Vec::new(),
+            // Distinguishes otherwise identical transactions.
+            metadata: Bytes::from(nonce_sequence.to_be_bytes().to_vec()),
+            payer: None,
+        };
+        let pooled = ConsensusPooledTransaction::Eip8130(Eip8130Signed::new(
+            tx,
+            Bytes::from_static(&[1; 65]),
+            Bytes::new(),
+        ));
+        let encoded_length = pooled.encode_2718_len();
+        let transaction = BasePooledTransaction::new(
+            Recovered::new_unchecked(pooled.into(), WATCHED),
+            encoded_length,
+        )
+        .with_validity_predicates(predicates);
+        assert!(transaction.is_eip8130_nonce_free(), "test transaction must be nonce-free");
+        Arc::new(ValidPoolTransaction {
+            transaction_id: TransactionId::new(0u64.into(), nonce_sequence),
+            transaction,
+            propagate: true,
+            timestamp: std::time::Instant::now(),
+            origin: TransactionOrigin::External,
+            authority_ids: None,
+        })
+    }
+
+    /// Holding back nonce-free EIP-8130 transactions, including past the cap, must not exclude
+    /// the sender's other independent transactions, as invalidating the sender would.
+    #[test]
+    fn holding_nonce_free_transactions_keeps_the_sender_eligible() {
+        let resting: Vec<_> = (0..4)
+            .map(|sequence| {
+                nonce_free_transaction(sequence, 10, vec![balance_at_least(WATCHED, 1)])
+            })
+            .collect();
+        let independent = nonce_free_transaction(99, 1, Vec::new());
+        let source = |hold| {
+            let mut transactions: std::collections::VecDeque<_> = resting.iter().cloned().collect();
+            transactions.push_back(Arc::clone(&independent));
+            ParkableBestPayloadTransactions::new(Box::new(
+                ParkedBestTransactions::new(
+                    SenderInvalidatingSource { transactions },
+                    Ordering::coinbase_tip(),
+                    0,
+                )
+                .with_hold(hold),
+            ))
+        };
+        let mut iterator = BestFlashblocksTxs::new(source(None), test_rejection_cache())
+            .with_resting_predicate_mode(RestingPredicateMode::Enforce)
+            .with_resting_predicates(
+                SharedRestingPredicates::new(RestingPredicates::new(
+                    DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD,
+                ))
+                .with_hold_cap(1),
+            );
+        rest_all(&mut iterator, &resting);
+
+        iterator.refresh_iterator(source(iterator.iterator_hold(&CancellationToken::new())));
+        assert_eq!(*iterator.next(()).unwrap().hash(), *independent.hash());
+        iterator.mark_current_committed();
+        assert!(iterator.next(()).is_none());
+        let stats = iterator.take_resting_stats();
+        assert_eq!((stats.parked, stats.hold_cap_hits, stats.hold_cap_excluded), (1, 1, 3));
     }
 
     #[test]

@@ -1546,6 +1546,14 @@ impl BasePayloadBuilderCtx {
             ValidityMetrics::resting_predicate_carried_parked_total()
                 .increment(resting_stats.carried_parked);
         }
+        if resting_stats.hold_cap_hits > 0 {
+            ValidityMetrics::resting_predicate_hold_cap_hits_total()
+                .increment(resting_stats.hold_cap_hits);
+        }
+        if resting_stats.hold_cap_excluded > 0 {
+            ValidityMetrics::resting_predicate_hold_cap_excluded_total()
+                .increment(resting_stats.hold_cap_excluded);
+        }
         let validity_handling = validity_handling + resting_stats.duration;
         if !validity_handling.is_zero() {
             BuilderMetrics::validity_candidate_handling_duration().record(validity_handling);

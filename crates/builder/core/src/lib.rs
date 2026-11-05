@@ -8,7 +8,7 @@
 #![cfg_attr(not(test), allow(unused_crate_dependencies))]
 
 mod config;
-pub use config::BuilderConfig;
+pub use config::{BuilderConfig, DEFAULT_RESTING_HOLD_CAP};
 
 mod metrics;
 pub use metrics::{BUILDER_EVENT_METRICS, BuilderEventMetrics, BuilderMetrics, CounterHandle};
