@@ -279,6 +279,22 @@ window or an expired position predicate. `BUILDER_ACCEPTED` and
 accept/include by `tx_hash` within the same `payload_id`. A
 parking-capacity miss stays `BUILDER_REJECTED` with
 `validity_predicate_not_satisfied`.
+`BUILDER_ACCEPTED` carries three gas figures for the transaction it executed:
+`data.tx_gas_limit` is the declared limit; `data.gas_used` is the gas the
+transaction was billed and its receipt reports; `data.metered_gas_used` is the
+gas it actually consumed, defined as the gas it would have been billed without
+gas-limit billing (gas spent less the EIP-3529-capped refund, raised to the
+EIP-7623 floor; for EIP-8130, sender gas plus payer authentication with the
+floor applied to the total). Before the gas-limit billing feature (Everest)
+`metered_gas_used == gas_used`; after it, `gas_used` is `tx_gas_limit` for
+standard transactions and `tx_gas_limit + payer_auth_gas_reserved` for EIP-8130, where
+`data.payer_auth_gas_reserved` (`null` for every other transaction type) is the
+payer-authentication gas reserved on top of the sender's limit. The column is
+continuous across the activation, so `tx_gas_limit / metered_gas_used` measures
+how limits relate to consumption on both sides of it. The builder reads the
+metered value from the EVM right after execution; if the EVM published none,
+both metered fields are `null` rather than guessed. No receipt, header, state
+root, or RPC response changes.
 `BUILDER_INCLUDED` is emitted when the builder finalizes the payload it can
 serve via `engine_getPayload` and includes
 `data.inclusion_signal = "builder_finalized_payload"`. The payload loop emits
@@ -474,6 +490,35 @@ with `validity_predicate_not_satisfied` instead:
     "parent_hash": "0x5555555555555555555555555555555555555555555555555555555555555555",
     "expire_reason": "validity_predicate_expired",
     "expire_detail": "a validity predicate can no longer be satisfied at or after the current block"
+  }
+}
+```
+
+Accepted under gas-limit billing. `gas_used` is the billed gas (here the
+declared `tx_gas_limit`) and `metered_gas_used` the gas the transfer consumed;
+`payer_auth_gas_reserved` is non-null only for EIP-8130 transactions:
+
+```json
+{
+  "schema_version": "transaction-event/v1",
+  "event_id": "0x7f90...",
+  "event_time": "2026-06-02T00:00:00.600000000Z",
+  "producer": "base-builder",
+  "event_type": "BUILDER_ACCEPTED",
+  "network": "base-mainnet",
+  "tx_hash": "0x3333333333333333333333333333333333333333333333333333333333333333",
+  "block_hash": null,
+  "block_number": 123,
+  "payload_id": "0x0102030405060708",
+  "request_id": null,
+  "data": {
+    "builder_mode": "native",
+    "source_queue": "txpool_best",
+    "parent_hash": "0x5555555555555555555555555555555555555555555555555555555555555555",
+    "tx_gas_limit": 100000,
+    "gas_used": 100000,
+    "metered_gas_used": 21000,
+    "payer_auth_gas_reserved": null
   }
 }
 ```
