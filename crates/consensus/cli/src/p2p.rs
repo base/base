@@ -19,7 +19,10 @@ use base_consensus_gossip::{
     DEFAULT_MAX_PENDING_OUTGOING_CONNECTIONS, DEFAULT_PENDING_DIAL_TIMEOUT, GaterConfig,
 };
 use base_consensus_node::NetworkConfig;
-use base_consensus_peers::{BootNode, BootStoreFile, PeerMonitoring, PeerScoreLevel};
+use base_consensus_peers::{
+    BootNodeEntry, BootNodeResolveError, BootNodes, BootStoreFile, PeerMonitoring, PeerScoreLevel,
+    SystemHostResolver,
+};
 use base_consensus_providers::{AlloyChainProvider, L1RpcProvider};
 use base_retry::RetryConfig;
 use clap::Parser;
@@ -206,7 +209,11 @@ pub struct P2PNetworkArgs {
     )]
     pub pending_dial_timeout: u64,
 
-    /// An optional list of bootnode ENRs or node records to start the node with.
+    /// An optional list of bootnodes to start the node with.
+    ///
+    /// Accepts ENRs (`enr:...`) and enode URLs (`enode://<id>@<host>:<port>[?discport=<port>]`).
+    /// An enode host may be an IP address or a DNS hostname. Hostnames are resolved once at
+    /// startup; a hostname that does not resolve is skipped with a warning.
     #[arg(
         id = "consensus_p2p_bootnodes",
         long = "p2p.bootnodes",
@@ -354,6 +361,9 @@ pub enum P2PConfigError {
     /// Error from signer args parsing.
     #[error(transparent)]
     SignerArgs(#[from] SignerArgsParseError),
+    /// No configured bootnode was usable.
+    #[error(transparent)]
+    BootNodes(#[from] BootNodeResolveError),
     /// Error from eyre.
     #[error(transparent)]
     Eyre(#[from] eyre::Error),
@@ -647,15 +657,23 @@ impl P2PArgs {
             .unsafe_block_signer(l2_chain_id, config, l1_rpc, l1_rpc_timeout, genesis_signer)
             .await?;
 
-        let bootnodes = self
+        let bootnode_entries = self
             .bootnode_strings()?
             .into_iter()
             .map(|bootnode| {
-                BootNode::parse_bootnode(&bootnode)
+                bootnode
+                    .parse::<BootNodeEntry>()
                     .map_err(|e| eyre::eyre!("Failed to parse bootnode '{bootnode}': {e}"))
             })
-            .collect::<Result<Vec<BootNode>>>()?
-            .into();
+            .collect::<Result<Vec<_>>>()?;
+        let has_fallback = !BootNodes::from_chain_id(l2_chain_id).is_empty();
+        let bootnodes = BootNodes::resolve(
+            bootnode_entries,
+            &SystemHostResolver,
+            BootNodes::DEFAULT_RESOLVE_TIMEOUT,
+            has_fallback,
+        )
+        .await?;
 
         let bootstore =
             if self.disable_bootstore {
@@ -756,7 +774,7 @@ mod tests {
 
     use alloy_primitives::{Address, b256};
     use base_common_genesis::RollupConfig;
-    use base_consensus_peers::NodeRecord;
+    use base_consensus_peers::{BootNode, NodeRecord};
     use base_consensus_providers::L1_RPC_TIMEOUT;
     use clap::Parser;
     use httpmock::{HttpMockRequest, HttpMockResponse, Method::POST, MockServer};

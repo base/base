@@ -221,6 +221,13 @@ hardcoded into the client. The bootnode responds to FINDNODE requests, giving th
 set of peers. From there, the new node performs several random lookups to fill its routing table,
 and within minutes it has a healthy set of diverse peers.
 
+Operators can add bootnodes with `--p2p.bootnodes` (or `--p2p.bootnodes-file`). Each entry is an
+ENR (`enr:...`) or an enode URL (`enode://<id>@<host>:<port>[?discport=<port>]`). The enode host
+may be a DNS hostname: base-consensus resolves it once at startup, like reth does for its
+`--bootnodes`. A hostname that fails to resolve is skipped with a warning, so one bad DNS record
+doesn't stop the node. Startup fails only if every configured bootnode fails and the chain has
+no default bootnodes.
+
 The [`Discv5Driver`](https://github.com/base/base/blob/main/crates/consensus/disc/src/driver.rs)
 orchestrates the discovery process. When it starts, it goes through a clear sequence. First, it
 initializes the discv5 UDP service with exponential backoff retries (waiting progressively longer

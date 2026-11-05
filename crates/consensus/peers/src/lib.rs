@@ -14,7 +14,7 @@ mod id;
 pub use id::PeerId;
 
 mod nodes;
-pub use nodes::BootNodes;
+pub use nodes::{BootNodeResolveError, BootNodes};
 
 mod store;
 pub use store::{BootStore, BootStoreFile};
@@ -26,7 +26,15 @@ mod enr;
 pub use enr::{BaseEnr, BaseEnrError, EnrValidation};
 
 mod boot;
-pub use boot::{BootNode, BootNodeParseError};
+pub use boot::{BootNode, BootNodeEntry, BootNodeParseError};
+
+mod enode;
+pub use enode::EnodeUrl;
+
+mod resolver;
+#[cfg(test)]
+pub use resolver::MockHostResolver;
+pub use resolver::{HostResolveError, HostResolver, SystemHostResolver};
 
 mod record;
 pub use record::{NodeRecord, NodeRecordParseError};

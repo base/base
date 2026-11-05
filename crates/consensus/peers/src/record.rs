@@ -13,9 +13,9 @@ use core::{
 };
 use std::net::ToSocketAddrs;
 
-use url::{Host, Url};
+use url::Host;
 
-use crate::PeerId;
+use crate::{EnodeUrl, PeerId};
 
 /// Represents an ENR in discovery.
 ///
@@ -90,43 +90,28 @@ pub enum NodeRecordParseError {
 impl FromStr for NodeRecord {
     type Err = NodeRecordParseError;
 
+    /// Parses an `enode://` URL.
+    ///
+    /// A hostname is resolved with a blocking system lookup, and a lookup failure is a parse
+    /// error. Bootnode startup instead parses [`EnodeUrl`]s and resolves them asynchronously,
+    /// skipping failures (see [`BootNodes::resolve`](crate::BootNodes::resolve)).
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let url = Url::parse(s).map_err(|e| NodeRecordParseError::InvalidUrl(e.to_string()))?;
-
-        let port = url
-            .port()
-            .ok_or_else(|| NodeRecordParseError::InvalidUrl("no port specified".to_string()))?;
-
-        let address = match url.host() {
-            Some(Host::Ipv4(ip)) => IpAddr::V4(ip),
-            Some(Host::Ipv6(ip)) => IpAddr::V6(ip),
-            Some(Host::Domain(dns)) => format!("{dns}:{port}")
-                .to_socket_addrs()
-                .map_err(|e| NodeRecordParseError::InvalidUrl(e.to_string()))?
-                .next()
-                .map(|addr| addr.ip())
-                .ok_or_else(|| {
-                    NodeRecordParseError::InvalidUrl(format!("no IP found for host: {url:?}"))
-                })?,
-
-            _ => return Err(NodeRecordParseError::InvalidUrl(format!("invalid host: {url:?}"))),
+        let url = EnodeUrl::from_str(s)?;
+        if let Some(record) = url.node_record() {
+            return Ok(record);
+        }
+        let Host::Domain(domain) = &url.host else {
+            return Err(NodeRecordParseError::InvalidUrl(format!("invalid host: {}", url.host)));
         };
-
-        let udp_port = if let Some(discovery_port) = url
-            .query_pairs()
-            .find_map(|(maybe_disc, port)| (maybe_disc.as_ref() == "discport").then_some(port))
-        {
-            discovery_port.parse::<u16>().map_err(NodeRecordParseError::Discport)?
-        } else {
-            port
-        };
-
-        let id = url
-            .username()
-            .parse::<PeerId>()
-            .map_err(|e| NodeRecordParseError::InvalidId(e.to_string()))?;
-
-        Ok(Self { address, id, tcp_port: port, udp_port })
+        let address = (domain.as_str(), url.tcp_port)
+            .to_socket_addrs()
+            .map_err(|e| NodeRecordParseError::InvalidUrl(e.to_string()))?
+            .next()
+            .map(|addr| addr.ip())
+            .ok_or_else(|| {
+                NodeRecordParseError::InvalidUrl(format!("no IP found for host: {domain}"))
+            })?;
+        Ok(url.with_address(address))
     }
 }
 

@@ -34,6 +34,9 @@ secp256k1.workspace = true
 # Misc
 url.workspace = true
 dirs.workspace = true
+futures.workspace = true
+async-trait.workspace = true
+tokio = { workspace = true, features = ["net", "time"] }
 serde = { workspace = true, features = ["std"] }
 tracing = { workspace = true, features = ["std"] }
 thiserror = { workspace = true, features = ["std"] }
@@ -47,7 +50,9 @@ arbitrary = { workspace = true, features = ["derive"], optional = true }
 [dev-dependencies]
 rstest.workspace = true
 arbtest.workspace = true
+mockall.workspace = true
 multihash.workspace = true
+tokio = { workspace = true, features = ["macros", "rt", "test-util"] }
 
 arbitrary = { workspace = true, features = ["derive"] }
 alloy-primitives = { workspace = true, features = ["arbitrary"] }
