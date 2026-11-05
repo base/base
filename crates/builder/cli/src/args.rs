@@ -192,6 +192,22 @@ pub struct Args {
     )]
     pub manifest_precheck_enabled: bool,
 
+    /// Deprecated and ignored. Kept so older deployment configurations remain accepted.
+    #[arg(long = "flashblocks.port", env = "FLASHBLOCKS_WS_PORT", hide = true)]
+    pub flashblocks_port: Option<u16>,
+
+    /// Deprecated and ignored. Kept so older deployment configurations remain accepted.
+    #[arg(long = "flashblocks.addr", env = "FLASHBLOCKS_WS_ADDR", hide = true)]
+    pub flashblocks_addr: Option<String>,
+
+    /// Deprecated and ignored. Kept so older deployment configurations remain accepted.
+    #[arg(long = "flashblocks.block-time", env = "FLASHBLOCK_BLOCK_TIME", hide = true)]
+    pub flashblocks_block_time: Option<u64>,
+
+    /// Deprecated and ignored. Kept so older deployment configurations remain accepted.
+    #[arg(long = "flashblocks.leeway-time", env = "FLASHBLOCK_LEEWAY_TIME", hide = true)]
+    pub flashblocks_leeway_time: Option<u64>,
+
     /// Transaction event journal configuration
     #[command(flatten)]
     pub transaction_events: TransactionEventsArgs,
@@ -234,6 +250,10 @@ impl Default for Args {
             rejection_cache_max_capacity: 100_000,
             rejection_cache_ttl_secs: 1800,
             manifest_precheck_enabled: true,
+            flashblocks_port: None,
+            flashblocks_addr: None,
+            flashblocks_block_time: None,
+            flashblocks_leeway_time: None,
             transaction_events: TransactionEventsArgs::default(),
             shadow_indexer: ShadowIndexerArgs::default(),
         }
@@ -385,6 +405,22 @@ mod tests {
     fn manifest_precheck_flag_maps_to_config(#[case] enabled: bool) {
         let args = Args { manifest_precheck_enabled: enabled, ..Default::default() };
         assert_eq!(convert(args).manifest_precheck_enabled, enabled);
+    }
+
+    #[test]
+    fn accepts_deprecated_flashblocks_flags() {
+        CommandParser::try_parse_from([
+            "builder",
+            "--flashblocks.port",
+            "1111",
+            "--flashblocks.addr",
+            "0.0.0.0",
+            "--flashblocks.block-time",
+            "200",
+            "--flashblocks.leeway-time",
+            "75",
+        ])
+        .expect("deprecated flashblocks flags should still parse");
     }
 
     #[test]
