@@ -62,10 +62,6 @@ impl DaEgress {
             }
         }
 
-        if frames.is_empty() {
-            return None;
-        }
-
         let saturated = remaining < Frame::ENCODED_OVERHEAD + 1;
         if saturated || release_due { Some(frames) } else { None }
     }
