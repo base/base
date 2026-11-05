@@ -202,6 +202,11 @@ impl CancelState {
     }
 }
 
+/// Unix time, in seconds, at virtual time zero, so that tests get deterministic
+/// Unix timestamps. The value is arbitrary; `1_700_000_000` (≈ 2023-11-14) is a
+/// convenient recent timestamp.
+const WALL_CLOCK_EPOCH_SECS: u64 = 1_700_000_000;
+
 impl Clock for Context {
     fn now(&self) -> Duration {
         self.executor.upgrade().map_or(Duration::ZERO, |e| *e.time.lock().unwrap())
@@ -224,12 +229,12 @@ impl Clock for Context {
     }
 
     fn wall_clock_unix_secs(&self) -> u64 {
-        // Anchor virtual time at a fixed epoch so that tests get
-        // deterministic Unix timestamps. The specific epoch value
-        // is arbitrary; 1_700_000_000 (≈ 2023-11-14) is a convenient
-        // recent timestamp.
-        const EPOCH: u64 = 1_700_000_000;
-        EPOCH + self.now().as_secs()
+        WALL_CLOCK_EPOCH_SECS + self.now().as_secs()
+    }
+
+    fn wall_clock_unix_millis(&self) -> u64 {
+        let virtual_millis = u64::try_from(self.now().as_millis()).unwrap_or(u64::MAX);
+        (WALL_CLOCK_EPOCH_SECS * 1_000).saturating_add(virtual_millis)
     }
 }
 
@@ -349,6 +354,15 @@ mod tests {
             assert_eq!(ctx.now(), Duration::from_secs(3));
             ctx.sleep(Duration::from_millis(500)).await;
             assert_eq!(ctx.now(), Duration::from_millis(3_500));
+        });
+    }
+
+    #[test]
+    fn wall_clock_follows_virtual_time() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            ctx.sleep(Duration::from_millis(3_500)).await;
+            assert_eq!(ctx.wall_clock_unix_secs(), 1_700_000_003);
+            assert_eq!(ctx.wall_clock_unix_millis(), 1_700_000_003_500);
         });
     }
 

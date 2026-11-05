@@ -6524,6 +6524,7 @@ dependencies = [
  "futures",
  "humantime",
  "metrics",
+ "mockall",
  "proptest",
  "rayon",
  "rstest",

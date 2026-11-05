@@ -34,7 +34,7 @@ mod nonce;
 pub use nonce::{NonceGuard, NonceManager, NonceState};
 
 mod manager;
-pub use manager::{PreparedTx, SimpleTxManager};
+pub use manager::{ConfirmedTx, PreparedTx, SimpleTxManager};
 
 mod queue;
 pub use queue::{SendResult, TxQueue};

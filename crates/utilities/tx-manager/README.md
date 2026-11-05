@@ -22,6 +22,8 @@ confirmation.
   that were applied.
 - **`TxQueue`** — bounded async send queue with semaphore-based backpressure.
 - **`SendResult`** — pairs a caller-supplied ID with a transaction send outcome.
+- **`ConfirmedTx`** — receipt confirmed to the required depth, with the timestamp of the
+  block that includes it.
 
 ### Fee calculation
 
