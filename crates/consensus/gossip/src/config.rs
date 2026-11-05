@@ -22,7 +22,7 @@ pub const MAX_GOSSIP_SIZE: usize = 10 * (1 << 20);
 pub const MIN_GOSSIP_SIZE: usize = 66;
 
 /// The maximum outbound queue.
-pub const MAX_OUTBOUND_QUEUE: usize = 256;
+pub const MAX_OUTBOUND_QUEUE: usize = 2560;
 
 /// The maximum validate queue.
 pub const MAX_VALIDATE_QUEUE: usize = 256;
