@@ -159,8 +159,8 @@ impl StateProofProvider for MessagePasserStorage {
 
     fn multiproof_v2(
         &self,
-        _: TrieInput,
         _: MultiProofTargetsV2,
+        _: bool,
     ) -> ProviderResult<DecodedMultiProofV2> {
         unreachable!("block assembly reads no proofs")
     }
