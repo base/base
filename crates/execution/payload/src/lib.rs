@@ -42,6 +42,12 @@ pub use metrics::{
     BuilderMetrics, ValidityEvaluationCounters, ValidityEvaluationOutcome, ValidityMetrics,
 };
 
+mod carry;
+pub use carry::{
+    CARRIED_WALK_MIN_HOLDS, CarriedWalk, CarriedWalkReset, CarriedWalkStore, CarryingTransactions,
+    MAX_CARRIED_ITERATOR_BLOCKS, WalkWatch,
+};
+
 mod deferrals;
 pub use deferrals::{BlockDeferrals, DeferralJournal};
 

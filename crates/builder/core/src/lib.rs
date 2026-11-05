@@ -41,9 +41,10 @@ pub use flashblocks::{
     FlashblockSelectionOutcome, FlashblocksExtraCtx, FlashblocksServiceBuilder, InclusionFlow,
     InclusionTracker, ParkableBestPayloadTransactions, ParkablePayloadTransactions,
     ParkedPredicateIndex, PayloadBuilder, PayloadHandler, PayloadJobDeadline,
-    PayloadTransactionInvalidated, PredicateLoadTracker, PredicateReadRecorder, ResolvePayload,
-    RestingPayloadTransactions, RestingStats, StateChangeEffects, ValidityPredicateEvaluation,
-    ValidityPredicateKey, flashblock_hold,
+    PayloadTransactionInvalidated, PredicateLoadTracker, PredicateReadRecorder,
+    RESTING_WALK_RESUME_MIN_HOLDS, ResolvePayload, RestingPayloadTransactions, RestingStats,
+    RestingWalkReset, StateChangeEffects, ValidityPredicateEvaluation, ValidityPredicateKey,
+    flashblock_hold,
 };
 
 mod extension;

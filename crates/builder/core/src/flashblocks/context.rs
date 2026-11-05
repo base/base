@@ -1058,6 +1058,7 @@ impl BasePayloadBuilderCtx {
                 let tx_age_ms = now_ms.saturating_sub(tx_received_at_ms);
                 if tx_age_ms < wait_duration.as_millis() {
                     let err = TxnExecutionError::MeteringDataPending;
+                    diag.record_rejection(&err);
                     let tx_resources = TxResources {
                         da_size: tx_da_size,
                         gas_limit: tx.gas_limit(),
@@ -1083,7 +1084,7 @@ impl BasePayloadBuilderCtx {
                     log_txn(Err(err));
                     BuilderMetrics::metering_data_pending_skip().increment(1);
                     self.builder_config.metering_provider.skip(&tx_hash);
-                    Self::skip_current(best_txs, tx.signer(), tx.nonce(), replay_independent);
+                    best_txs.skip_retryable(tx.signer(), tx.nonce(), replay_independent);
                     continue;
                 }
             }
@@ -1158,7 +1159,8 @@ impl BasePayloadBuilderCtx {
 
                     let priority_fee = tx.effective_tip_per_gas(base_fee).unwrap_or(0) as f64;
                     record_rejected_tx_priority_fee(&err, priority_fee);
-                    if err.is_permanent() {
+                    let permanent = err.is_permanent();
+                    if permanent {
                         diag.permanently_rejected_txs.push(tx_hash);
                     }
 
@@ -1176,8 +1178,14 @@ impl BasePayloadBuilderCtx {
                             )
                         },
                     );
+                    // A later flashblock may satisfy a limit that is not permanent, such as the
+                    // gas or DA left in this flashblock, so a resumed walk offers it again.
                     log_txn(Err(err));
-                    Self::skip_current(best_txs, tx.signer(), tx.nonce(), replay_independent);
+                    if permanent {
+                        Self::skip_current(best_txs, tx.signer(), tx.nonce(), replay_independent);
+                    } else {
+                        best_txs.skip_retryable(tx.signer(), tx.nonce(), replay_independent);
+                    }
                     continue;
                 }
             }
@@ -1763,6 +1771,7 @@ mod tests {
         over_limit_remaining: usize,
         current_is_over_limit: bool,
         over_limit_rejections: usize,
+        retryable_skips: usize,
         cancel: CancellationToken,
     }
 
@@ -1775,6 +1784,7 @@ mod tests {
                 over_limit_remaining: over_limit,
                 current_is_over_limit: false,
                 over_limit_rejections: 0,
+                retryable_skips: 0,
                 cancel,
             }
         }
@@ -1820,6 +1830,12 @@ mod tests {
 
         fn discard_parked(&mut self, _transaction_hash: TxHash) -> bool {
             false
+        }
+
+        /// Counts the skip, then closes the candidate as the default does.
+        fn skip_retryable(&mut self, sender: Address, nonce: u64, _replay_independent: bool) {
+            self.retryable_skips += 1;
+            self.mark_invalid(sender, nonce);
         }
     }
 
@@ -1894,6 +1910,8 @@ mod tests {
         assert_eq!(diagnostics.txs_considered, 1);
         assert_eq!(diagnostics.txs_rejected_gas, 1);
         assert_eq!(best_txs.over_limit_rejections, 1);
+        // The remaining gas is a limit a later flashblock may satisfy.
+        assert_eq!(best_txs.retryable_skips, 1);
     }
 
     #[test]
@@ -1959,6 +1977,47 @@ mod tests {
             rendered.contains("base_builder_payload_num_tx_considered_count 1"),
             "cancelled build must record payload builder metrics:\n{rendered}"
         );
+    }
+
+    /// Reports metering enabled with no data for any transaction.
+    #[derive(Debug)]
+    struct PendingMetering;
+
+    impl base_execution_payload_builder::MeteringProvider for PendingMetering {
+        fn get(&self, _tx_hash: &TxHash) -> Option<Arc<base_bundles::MeterBundleResponse>> {
+            None
+        }
+
+        fn is_enabled(&self) -> bool {
+            true
+        }
+    }
+
+    /// A transaction skipped because its metering data has not arrived is counted with the
+    /// flashblock's rejections and skipped as retryable, since its data may arrive by a later
+    /// flashblock.
+    #[test]
+    fn metering_pending_skip_is_counted() {
+        let mut ctx = test_builder_context();
+        ctx.builder_config.metering_provider = Arc::new(PendingMetering);
+        ctx.builder_config.metering_wait_duration = Some(Duration::from_secs(60));
+        let mut best_txs = LimitRejectionTransactions::new(1, 0, ctx.cancel.clone());
+        let db = StateProviderDatabase::new(NoopProvider::default().into_evm_state_provider());
+        let mut state = State::builder().with_database(db).with_bundle_update().build();
+        let mut info = ExecutionInfo::default();
+
+        let diagnostics = ctx
+            .execute_best_transactions(
+                &mut info,
+                &mut BlockDeferrals::default(),
+                &mut state,
+                &mut best_txs,
+                &ResourceLimits::default(),
+            )
+            .expect("selection should succeed");
+
+        assert_eq!(diagnostics.txs_rejected_metering_data_pending, 1);
+        assert_eq!(best_txs.retryable_skips, 1);
     }
 
     #[test]

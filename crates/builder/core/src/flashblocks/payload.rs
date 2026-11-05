@@ -691,15 +691,17 @@ where
 
         let best_txs_start_time = Instant::now();
         let best_txs_attributes = ctx.best_transaction_attributes();
-        best_txs.refresh_iterator(ParkableBestPayloadTransactions::new(
-            self.pool.best_transactions_with_attributes_and_parking(
-                best_txs_attributes,
-                best_txs.iterator_hold(&ctx.cancel),
-            ),
-        ));
-        let transaction_pool_fetch_time = best_txs_start_time.elapsed();
-        BuilderMetrics::transaction_pool_fetch_duration().record(transaction_pool_fetch_time);
-        BuilderMetrics::transaction_pool_fetch_gauge().set(transaction_pool_fetch_time);
+        let resumed = best_txs.begin_flashblock(ctx.cancel.clone(), |hold| {
+            ParkableBestPayloadTransactions::new(
+                self.pool.best_transactions_with_attributes_and_parking(best_txs_attributes, hold),
+            )
+        });
+        // A resumed walk fetches nothing from the pool.
+        if !resumed {
+            let transaction_pool_fetch_time = best_txs_start_time.elapsed();
+            BuilderMetrics::transaction_pool_fetch_duration().record(transaction_pool_fetch_time);
+            BuilderMetrics::transaction_pool_fetch_gauge().set(transaction_pool_fetch_time);
+        }
 
         let tx_execution_start_time = Instant::now();
         let limits = ResourceLimits {
@@ -714,6 +716,7 @@ where
         let diag = ctx
             .execute_best_transactions(info, deferrals, state, best_txs, &limits)
             .wrap_err("failed to execute best transactions")?;
+        best_txs.finish_flashblock(&diag);
 
         // Extract last transactions
         let new_transactions = info.executed_transactions[info.extra.last_flashblock_index..]
@@ -1044,6 +1047,7 @@ where
     where
         DB: Database<Error = ProviderError>,
     {
+        best_txs.finish_block();
         // Start the end-of-block sweep before the state root so the two overlap. The set is only
         // stored once the block is sealed, so a block that fails to seal does not hand it on.
         let resting = self

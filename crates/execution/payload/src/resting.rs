@@ -2,7 +2,11 @@
 
 use std::{
     collections::BTreeMap,
-    sync::{Arc, mpsc},
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering as AtomicOrdering},
+        mpsc,
+    },
     time::{Duration, Instant},
 };
 
@@ -396,6 +400,9 @@ pub type HoldInterrupt = Arc<dyn Fn() -> bool + Send + Sync>;
 #[derive(Clone)]
 pub struct SharedRestingPredicates {
     inner: Arc<Mutex<SharedRestingState>>,
+    /// Iterator `next` calls that held at least one member, read without the lock on the
+    /// candidate path.
+    hold_runs: Arc<AtomicU64>,
     /// Interrupts the walks of the iterators this handle's holds park members in.
     interrupt: Option<HoldInterrupt>,
 }
@@ -416,6 +423,8 @@ struct SharedRestingState {
     /// wakes them; members the build loop parked itself are woken by its own predicate index.
     held: B256Set,
     stats: RestingStats,
+    /// Members held by this set's holds so far, never reset.
+    holds: u64,
 }
 
 impl SharedRestingPredicates {
@@ -426,7 +435,9 @@ impl SharedRestingPredicates {
                 predicates,
                 held: B256Set::default(),
                 stats: RestingStats::default(),
+                holds: 0,
             })),
+            hold_runs: Arc::new(AtomicU64::new(0)),
             interrupt: None,
         }
     }
@@ -506,6 +517,63 @@ impl SharedRestingPredicates {
     pub fn is_empty(&self) -> bool {
         self.inner.lock().predicates.is_empty()
     }
+
+    /// Adds the transactions the build loop parked in the current pool iterator that rested in the
+    /// current block to the iterator's held members, so that a commit waking one promotes it once
+    /// the build loop's own predicate index is gone. Removes them from `parked`, leaving those the
+    /// caller must promote, and takes the lock once.
+    ///
+    /// A member carried from an earlier block is not held: whether it still applies depends on
+    /// its transaction's conditions, which may have expired since, so the build loop evaluates it.
+    pub fn hold_rested_members(&self, parked: &mut B256Set) {
+        let mut inner = self.inner.lock();
+        let inner = &mut *inner;
+        let block_number = inner.predicates.block_number;
+        parked.retain(|transaction_hash| {
+            let member = inner
+                .predicates
+                .index
+                .entry(*transaction_hash)
+                .is_some_and(|(member, _)| member.rested_block == block_number);
+            if member {
+                inner.held.insert(*transaction_hash);
+            }
+            !member
+        });
+    }
+
+    /// Returns how many pool iterator `next` calls held at least one member so far, across the
+    /// iterators of this set. A change between two yields means the iterator walked held members
+    /// to reach the later one.
+    pub fn hold_runs(&self) -> u64 {
+        self.hold_runs.load(AtomicOrdering::Relaxed)
+    }
+
+    /// Returns how many members this set's holds held so far, across its iterators and blocks.
+    pub fn holds(&self) -> u64 {
+        self.inner.lock().holds
+    }
+
+    /// Replaces the set with `predicates`, the resting set of a new block, keeping the members the
+    /// current iterator held, so a pool iterator carried into that block keeps parking them.
+    /// Returns the held members `predicates` no longer contains, such as those released at the
+    /// start of the block, and forgets them; the caller promotes them so the build evaluates them.
+    ///
+    /// Visits every held member, once per carried block.
+    pub fn adopt(&self, predicates: RestingPredicates) -> Vec<TxHash> {
+        let mut inner = self.inner.lock();
+        let inner = &mut *inner;
+        inner.predicates = predicates;
+        let mut released = Vec::new();
+        inner.held.retain(|transaction_hash| {
+            let member = inner.predicates.index.entry(*transaction_hash).is_some();
+            if !member {
+                released.push(*transaction_hash);
+            }
+            member
+        });
+        released
+    }
 }
 
 /// Parks members of a [`SharedRestingPredicates`] inside a pool iterator.
@@ -526,11 +594,13 @@ impl<T: BasePooledTx> BestTransactionsHold<T> for RestingHold {
         inner.held.insert(*transaction.hash());
         inner.stats.parked += 1;
         inner.stats.carried_parked += u64::from(carried);
+        inner.holds += 1;
         true
     }
 
     fn record_duration(&mut self, duration: Duration) {
         self.shared.inner.lock().stats.duration += duration;
+        self.shared.hold_runs.fetch_add(1, AtomicOrdering::Relaxed);
     }
 
     fn is_interrupted(&self) -> bool {
@@ -699,6 +769,34 @@ mod tests {
         }
         resting.end_block(PARENT);
         resting
+    }
+
+    /// Whether a member carried from an earlier block still applies depends on its transaction's
+    /// conditions, which may have expired, so the build loop decides rather than the hold.
+    #[test]
+    fn carried_member_is_not_held_without_its_conditions() {
+        let mut resting = rested_in_parent(&[balance_at_least(WATCHED, 1)]);
+        resting.begin_block(PARENT, 2, Some(&TransitionState::default()));
+        let shared = SharedRestingPredicates::new(resting);
+        let mut parked = B256Set::from_iter([hash(0)]);
+
+        shared.hold_rested_members(&mut parked);
+
+        assert!(parked.contains(&hash(0)));
+    }
+
+    #[test]
+    fn member_rested_in_the_current_block_is_held() {
+        let mut resting = RestingPredicates::new(32);
+        resting.begin_block(B256::ZERO, 1, Some(&TransitionState::default()));
+        let shared = SharedRestingPredicates::new(resting);
+        shared.rest(hash(0), balance_at_least(WATCHED, 1));
+
+        let mut parked = B256Set::from_iter([hash(0), hash(1)]);
+
+        shared.hold_rested_members(&mut parked);
+
+        assert_eq!(parked, B256Set::from_iter([hash(1)]));
     }
 
     #[test]

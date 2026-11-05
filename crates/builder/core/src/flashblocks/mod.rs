@@ -7,7 +7,9 @@ pub use base_execution_payload_builder::{
     PayloadTransactionInvalidated, PredicateLoadTracker, PredicateReadRecorder, RestingStats,
     StateChangeEffects, ValidityPredicateEvaluation, ValidityPredicateKey,
 };
-pub use best_txs::{BestFlashblocksTxs, flashblock_hold};
+pub use best_txs::{
+    BestFlashblocksTxs, RESTING_WALK_RESUME_MIN_HOLDS, RestingWalkReset, flashblock_hold,
+};
 
 mod deadline;
 pub use deadline::PayloadJobDeadline;
