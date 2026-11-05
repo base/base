@@ -205,7 +205,6 @@ benches:
     @just bench-node-runner
     @just bench-execution-trie-witness-reads
     @just bench-execution-trie-deep-history-reads
-    @just bench-builder-core
 
 # Runs MPT trie node benchmarks
 bench-proof-mpt:
@@ -234,10 +233,6 @@ bench-execution-trie-witness-reads:
 # Runs execution trie deep history read benchmarks
 bench-execution-trie-deep-history-reads:
     cargo bench -p base-execution-trie --bench deep_history_reads
-
-# Runs builder core state root benchmarks
-bench-builder-core:
-    cargo bench -p base-builder-core --bench state_root
 
 # Runs the B-20 ZK proving system benchmark (requires a live local L2/rollup/prover-service stack)
 bench-b20-zk-proving:
