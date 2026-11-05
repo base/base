@@ -400,17 +400,20 @@ impl LoadConfig {
 
     /// Validates the configuration, returning an error if invalid.
     pub fn validate(&self) -> Result<()> {
+        let is_native = |tx_type: &TxType| {
+            matches!(tx_type, TxType::Eip8430Transfer | TxType::UniswapV3 { native: true, .. })
+        };
         if self.validity_ratio > 0.0
-            && self.transactions.iter().any(|tx| {
-                tx.weight > 0
-                    && matches!(
-                        tx.tx_type,
-                        TxType::Eip8430Transfer | TxType::UniswapV3 { native: true, .. }
-                    )
-            })
+            && self.transactions.iter().any(|tx| tx.weight > 0 && is_native(&tx.tx_type))
         {
             return Err(BaselineError::Config(
                 "native EIP-8430 workloads cannot be combined with validity submission".into(),
+            ));
+        }
+        // The lead cohort always submits through the validity path.
+        if self.validity_priority_lead_payload.as_ref().is_some_and(is_native) {
+            return Err(BaselineError::Config(
+                "validity_priority_lead_payload cannot be a native EIP-8430 workload".into(),
             ));
         }
         for tx in self.transactions.iter().filter(|tx| tx.weight > 0) {
@@ -651,6 +654,9 @@ mod tests {
 
         config.validity_priority_lead_ratio = 0.5;
         assert!(config.validate().is_ok());
+
+        config.validity_priority_lead_payload = Some(TxType::Eip8430Transfer);
+        assert!(config.validate().is_err(), "native envelopes cannot carry validity predicates");
     }
 
     #[test]

@@ -53,7 +53,8 @@ pub struct ValidityConfig {
     /// mix, so the lead cohort can send a different transaction shape (for example
     /// `revert_arb`) at a higher tip than the bulk. Requires `priority_lead_ratio > 0`.
     /// Chain preparation never runs for this slot, so payloads that depend on it (B-20, swaps,
-    /// x402, token moves, AA bundles, `storage` without an explicit contract) are rejected.
+    /// x402, token moves, AA bundles, `storage` without an explicit contract) are rejected, as is
+    /// `eip8430_transfer`, whose native envelope cannot carry validity predicates.
     pub priority_lead_payload: Option<TxTypeConfig>,
 
     /// Predicate templates attached to each validity-bearing transaction.
@@ -265,6 +266,12 @@ impl ValidityConfig {
             if payload.requires_chain_preparation() {
                 return Err(BaselineError::Config(
                     "validity.priority_lead_payload must not need chain preparation (b20, swaps, x402, token_move, aa_bundle, storage without a contract): the lead cohort is never prepared"
+                        .into(),
+                ));
+            }
+            if matches!(payload, TxTypeConfig::Eip8430Transfer) {
+                return Err(BaselineError::Config(
+                    "validity.priority_lead_payload cannot be eip8430_transfer: native EIP-8430 envelopes do not carry validity predicates"
                         .into(),
                 ));
             }
@@ -671,6 +678,10 @@ mod tests {
             new_slot_ratio: 1.0,
         });
         assert!(config.validate().is_ok(), "an explicit contract needs no deployment");
+
+        config.priority_lead_payload = Some(TxTypeConfig::Eip8430Transfer);
+        let err = config.validate().unwrap_err();
+        assert!(err.to_string().contains("cannot be eip8430_transfer"), "{err}");
     }
 
     #[test]
