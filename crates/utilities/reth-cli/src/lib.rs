@@ -10,6 +10,9 @@
 mod version;
 pub use version::Version;
 
+mod engine;
+pub use engine::Engine;
+
 mod snapshots;
 pub use snapshots::Snapshots;
 
