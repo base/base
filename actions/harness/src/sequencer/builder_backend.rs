@@ -1,4 +1,4 @@
-//! Sequencer engine backend that produces blocks with the production Flashblocks builder.
+//! Sequencer engine backend that produces blocks with the production Base payload builder.
 //!
 //! [`ActionEngineClient`](crate::ActionEngineClient) assembles blocks with reth's execution-side
 //! `BasePayloadBuilder` and a `NoopTransactionPool`, forcing `no_tx_pool = true` — so it never
@@ -7,7 +7,7 @@
 //!
 //! [`BuilderBackedEngineClient`] instead launches an in-process
 //! [`LocalInstance`](base_builder_core::test_utils::LocalInstance) running the production
-//! [`FlashblocksServiceBuilder`](base_builder_core::FlashblocksServiceBuilder) with a real
+//! [`NativePayloadServiceBuilder`](base_builder_core::NativePayloadServiceBuilder) with a real
 //! transaction pool, against the harness's rollup-config-derived genesis. It implements the
 //! production [`SequencerEngineClient`] seam, so the harness's real `SequencerActor` drives the real
 //! builder over the Engine API — while the verifier still re-executes the derived blocks, keeping
@@ -47,7 +47,7 @@ use base_protocol::{AttributesWithParent, L2BlockInfo};
 use super::ExecutionPayloadConverter;
 use crate::{ActionEngineClient, SequencerEngineBackend, SharedBlockHashRegistry};
 
-/// A sequencer engine backend backed by the production Flashblocks builder running in-process.
+/// A sequencer engine backend backed by the production Base payload builder running in-process.
 ///
 /// Built against the same genesis [`ActionEngineClient`] derives from the rollup config, so blocks
 /// it produces are byte-for-byte compatible with the harness's verifier nodes and batcher.
@@ -58,7 +58,7 @@ pub struct BuilderBackedEngineClient {
     instance: Mutex<LocalInstance>,
     /// The authenticated Engine API IPC socket path, used to build engine clients on demand.
     auth_ipc: String,
-    /// How long to let the flashblocks build loop run before sealing a block.
+    /// How long to let the payload job build from the pool before sealing a block.
     block_time: Duration,
     rollup_config: Arc<RollupConfig>,
     /// The current unsafe head, advanced as payloads are inserted. Initialized to genesis.
@@ -71,7 +71,7 @@ pub struct BuilderBackedEngineClient {
 impl BuilderBackedEngineClient {
     /// Launch an in-process builder node against the genesis derived from `rollup_config`.
     ///
-    /// The node runs the production flashblocks payload service and a real transaction pool over an
+    /// The node runs the production native payload service and a real transaction pool over an
     /// IPC engine endpoint (no HTTP/WS/P2P), keeping it close to the action harness's in-process,
     /// socket-light ethos while still exercising the real builder.
     pub async fn new(
@@ -126,7 +126,7 @@ impl BuilderBackedEngineClient {
     }
 }
 
-/// Drives the production Flashblocks builder over the Engine API on behalf of the harness's
+/// Drives the production Base payload builder over the Engine API on behalf of the harness's
 /// production `SequencerActor`, mapping each [`SequencerEngineClient`] call onto a real engine
 /// round-trip: `forkchoiceUpdated`-with-attributes to start a build, `getPayload` to seal it, and
 /// `newPayload` + canonical `forkchoiceUpdated` to import it.
@@ -183,7 +183,7 @@ impl SequencerEngineClient for BuilderBackedEngineClient {
         payload_id: PayloadId,
         attributes: AttributesWithParent,
     ) -> EngineClientResult<BaseExecutionPayloadEnvelope> {
-        // Give the flashblocks build loop a full block time to assemble the block before resolving
+        // Give the payload job a full block time to assemble the block from the pool before resolving
         // it, matching the production sequencer's start-of-slot to end-of-slot cadence.
         tokio::time::sleep(self.block_time).await;
         let timestamp = attributes.attributes.payload_attributes.timestamp;
@@ -373,7 +373,7 @@ mod tests {
             "builder node genesis hash must match the harness-derived genesis",
         );
 
-        // The real Flashblocks builder must produce a first block that builds on that genesis.
+        // The real payload builder must produce a first block that builds on that genesis.
         let block = driver.build_new_block().await?;
         assert_eq!(block.header.number, 1, "first built block must be block 1");
         assert_eq!(

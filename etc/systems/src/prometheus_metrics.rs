@@ -16,8 +16,6 @@ use url::Url;
 
 /// Prometheus metrics rendered by the snapshot benchmark visualizer.
 const VISUALIZER_METRICS: &[&str] = &[
-    "reth_base_builder_flashblock_build_duration_avg",
-    "reth_base_builder_flashblock_count",
     "reth_base_builder_native_payload_build_duration_avg",
     "reth_base_builder_native_payload_execution_duration_avg",
     "reth_base_builder_native_payload_state_root_duration_avg",
@@ -68,8 +66,6 @@ const VISUALIZER_METRICS: &[&str] = &[
     "reth_consensus_engine_persistence_save_blocks_batch_size_avg",
     "reth_consensus_engine_persistence_save_blocks_duration_seconds_avg",
     "reth_db_freelist",
-    "reth_op_rbuilder_flashblock_build_duration",
-    "reth_op_rbuilder_flashblock_count",
     "reth_op_rbuilder_payload_tx_simulation_duration",
     "reth_op_rbuilder_sequencer_tx_duration",
     "reth_op_rbuilder_state_root_calculation_duration",
@@ -365,7 +361,7 @@ impl PrometheusBlockCollector {
     /// Returns whether a flattened metric is rendered by the benchmark visualizer.
     ///
     /// This intentionally uses exact metric names rather than broad metric-family prefixes. The
-    /// latter pull in one sample for every flashblock, gas bucket, and label combination, even
+    /// latter pull in one sample for every gas bucket and label combination, even
     /// though the report UI cannot display them. Keep this list in sync with the metrics rendered
     /// by `base/benchmark`'s `ChartGrid`, including its compatibility aliases.
     pub fn is_visualizer_metric(name: &str) -> bool {
@@ -453,10 +449,10 @@ build_duration_count{stage="execution"} 4
             "reth_tree_root_sparse_trie_final_update_duration_histogram"
         ));
         assert!(PrometheusBlockCollector::is_visualizer_metric(
-            "reth_op_rbuilder_flashblock_count"
+            "reth_op_rbuilder_total_block_built_duration"
         ));
         assert!(!PrometheusBlockCollector::is_visualizer_metric(
-            "reth_base_builder_flashblock_gas_headroom_flashblock_index_1_avg"
+            "reth_base_builder_tx_gas_used_per_block_flow_standard_sum"
         ));
         assert!(!PrometheusBlockCollector::is_visualizer_metric(
             "reth_consensus_engine_beacon_new_payload_thread_user_cpu_seconds_avg"

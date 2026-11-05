@@ -22,7 +22,7 @@ async fn jovian_block_parameters_set() -> eyre::Result<()> {
 
     assert!(block.header.blob_gas_used.is_some());
 
-    // Two user transactions (no deposit in blob_gas, deposits are L1 data), all minimum size (flashblocks mode)
+    // Two user transactions (no deposit in blob_gas, deposits are L1 data), all minimum size
     // Each tx contributes ~40,000 to blob_gas_used
     assert_eq!(block.header.blob_gas_used.unwrap(), 80_000);
 
@@ -42,7 +42,7 @@ async fn jovian_no_tx_pool_sync() -> eyre::Result<()> {
     let block =
         driver.build_new_block_with_txs_timestamp(vec![], Some(true), None, None, Some(0)).await?;
 
-    // Deposit transaction only (flashblocks mode)
+    // Deposit transaction only
     assert_eq!(block.transactions.len(), 1);
     assert_eq!(block.header.blob_gas_used, Some(0));
 
@@ -57,7 +57,7 @@ async fn jovian_no_tx_pool_sync() -> eyre::Result<()> {
         )
         .await?;
 
-    // Deposit transaction + user transaction (flashblocks mode)
+    // Deposit transaction + user transaction
     assert_eq!(block.transactions.len(), 2);
     assert_eq!(block.header.blob_gas_used, Some(40_000));
 

@@ -1,22 +1,23 @@
 #![allow(missing_docs)]
 
-use alloy_consensus::Transaction;
+use alloy_consensus::Transaction as _;
 use alloy_eips::eip2718::Encodable2718;
 use alloy_network::TransactionResponse;
 use alloy_primitives::{Address, U256};
 use alloy_provider::Provider;
+use alloy_rpc_types_eth::Block;
 use base_builder_core::{
     BuilderApiExtension, BuilderApiExtensionConfig, BuilderConfig, DEFAULT_MAX_VALIDITY_PREDICATES,
     RestingPredicateMode,
     test_utils::{ChainDriverExt, LocalInstanceBuilder, ONE_ETH, setup_test_instance},
 };
+use base_common_rpc_types::Transaction;
 use base_execution_txpool::{
     TransactionValidity, ValidatedTransaction, ValidityOperator, ValidityPredicate,
 };
 use futures::{StreamExt, future::join_all, stream};
 
-/// This test ensures that the transactions are ordered by fee priority within each flashblock.
-/// We expect breaks in global ordering that align with flashblock boundaries.
+/// This test ensures that pooled transactions are included in fee-priority order.
 #[tokio::test]
 async fn fee_priority_ordering() -> eyre::Result<()> {
     let rbuilder = setup_test_instance().await?;
@@ -62,10 +63,7 @@ async fn fee_priority_ordering() -> eyre::Result<()> {
         "not all transactions included in the block"
     );
 
-    let config = rbuilder.builder_config();
-    let flashblocks_per_block = config.flashblocks_per_block();
-
-    // verify user transactions are fee-ordered within each flashblock boundary
+    // verify user transactions are fee-ordered within the block
     let tips_in_block_order = driver
         .latest_full()
         .await?
@@ -82,10 +80,7 @@ async fn fee_priority_ordering() -> eyre::Result<()> {
 
     let breaks = tips_in_block_order.windows(2).filter(|pair| pair[0] < pair[1]).count();
 
-    assert!(
-        (breaks as u64) <= flashblocks_per_block,
-        "Observed more ordering resets than flashblocks_per_block (breaks={breaks}, flashblocks_per_block={flashblocks_per_block})"
-    );
+    assert_eq!(breaks, 0, "user transactions must be fee-ordered within the block");
 
     Ok(())
 }
@@ -236,10 +231,11 @@ async fn nonce_predicate_promotes_after_watched_sender_executes() -> eyre::Resul
     Ok(())
 }
 
-/// Once a flashblock's validity-predicate evaluation time budget is exhausted, further
+/// Once a payload build's validity-predicate evaluation time budget is exhausted, further
 /// validity-gated transactions are deferred without evaluation rather than checked, even when
 /// their predicate is already satisfied. An ordinary transaction is unaffected by the cutoff, so
-/// it can be included in the same flashblock ahead of a higher-priority deferred transaction.
+/// it is included in the same block while the higher-priority deferred transaction waits for the
+/// next build, whose budget starts fresh.
 #[tokio::test]
 async fn predicate_eval_hard_cutoff_defers_without_evaluating() -> eyre::Result<()> {
     let instance =
@@ -317,21 +313,26 @@ async fn predicate_eval_hard_cutoff_defers_without_evaluating() -> eyre::Result<
         .await?
         .tx_hash();
 
-    let block = driver.build_new_block().await?;
     let tracked = [first_hash, deferred_hash, ordinary_hash];
-    let actual = block
-        .transactions
-        .into_transactions()
-        .filter_map(|transaction| {
-            tracked.contains(&transaction.tx_hash()).then(|| transaction.tx_hash())
-        })
-        .collect::<Vec<_>>();
+    let included = |block: Block<Transaction>| {
+        block
+            .transactions
+            .into_transactions()
+            .filter_map(|transaction| {
+                tracked.contains(&transaction.tx_hash()).then(|| transaction.tx_hash())
+            })
+            .collect::<Vec<_>>()
+    };
 
     // `first` is evaluated within budget and included immediately at its natural priority
     // position. `deferred` has higher priority than `ordinary` but is skipped by the exhausted
-    // budget, so `ordinary` (unaffected by the cutoff) is included ahead of it; `deferred` is
-    // still included overall, just in a later flashblock once the budget resets.
-    assert_eq!(actual, [first_hash, ordinary_hash, deferred_hash]);
+    // budget, so only `ordinary` (unaffected by the cutoff) joins it in this block.
+    let block = driver.build_new_block().await?;
+    assert_eq!(included(block), [first_hash, ordinary_hash]);
+
+    // The next build starts with a fresh budget and includes the deferred transaction.
+    let block = driver.build_new_block().await?;
+    assert_eq!(included(block), [deferred_hash]);
 
     Ok(())
 }

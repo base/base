@@ -162,7 +162,6 @@ base-common-signer = { path = "crates/common/signer" }
 base-common-chains = { path = "crates/common/chains" }
 base-common-network = { path = "crates/common/network" }
 base-common-rpc-types = { path = "crates/common/rpc-types" }
-base-common-flashblocks = { path = "crates/common/flashblocks" }
 base-precompile-macros = { path = "crates/common/precompile-macros" }
 base-common-evm = { path = "crates/common/evm", default-features = false }
 base-common-flz = { path = "crates/common/flz", default-features = false }
@@ -179,9 +178,7 @@ base-observability-events = { path = "crates/common/observability-events", defau
 # Builder
 base-builder-cli = { path = "crates/builder/cli" }
 base-builder-core = { path = "crates/builder/core" }
-base-builder-publish = { path = "crates/builder/publish" }
 base-builder-metering = { path = "crates/builder/metering" }
-base-builder-multiplex = { path = "crates/builder/multiplex" }
 
 # Consensus
 base-consensus-cli = { path = "crates/consensus/cli" }
@@ -208,7 +205,6 @@ base-node-runner = { path = "crates/execution/runner" }
 base-execution-exex = { path = "crates/execution/exex" }
 base-execution-trie = { path = "crates/execution/trie" }
 base-txpool-rpc = { path = "crates/execution/txpool-rpc" }
-base-flashblocks = { path = "crates/execution/flashblocks" }
 base-execution-txpool = { path = "crates/execution/txpool" }
 base-proofs-extension = { path = "crates/execution/proofs" }
 base-tx-forwarding = { path = "crates/execution/tx-forwarding" }
@@ -217,7 +213,6 @@ base-execution-chainspec = { path = "crates/execution/chainspec" }
 base-execution-consensus = { path = "crates/execution/consensus" }
 base-txpool-tracing = { path = "crates/execution/txpool-tracing" }
 base-execution-payload-builder = { path = "crates/execution/payload" }
-base-flashblocks-node = { path = "crates/execution/flashblocks-node" }
 base-execution-payer-rpc = { path = "crates/execution/payer-rpc" }
 base-execution-eip8130-rpc = { path = "crates/execution/eip8130-rpc" }
 base-shadow-indexer-db = { path = "crates/execution/shadow-indexer-db" }
@@ -235,7 +230,6 @@ base-snark-e2e = { path = "crates/infra/snark-e2e" }
 base-load-tests = { path = "crates/infra/load-tests" }
 base-withdrawer = { path = "crates/infra/withdrawer" }
 base-snapshotter = { path = "crates/infra/snapshotter" }
-websocket-proxy = { path = "crates/infra/websocket-proxy" }
 base-telemetry-service = { path = "crates/infra/telemetry" }
 base-zk-benchmarks = { path = "crates/infra/zk-benchmarks" }
 base-shadow-metrics = { path = "crates/infra/shadow-metrics" }

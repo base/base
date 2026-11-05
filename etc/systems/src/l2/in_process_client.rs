@@ -9,8 +9,6 @@ use base_execution_cli::{
     ExecutionUpgradeSignal, ExecutionUpgradeSignalConfig, ExecutionUpgradeSignalRuntimeExtension,
 };
 use base_execution_txpool::ValiditySignatureMode;
-use base_flashblocks::FlashblocksConfig;
-use base_flashblocks_node::FlashblocksExtension;
 use base_node_core::args::RollupArgs;
 use base_node_runner::{BaseNode, BaseNodeExtension, FromExtensionConfig, NodeHooks};
 use base_tx_forwarding::{TxForwardingConfig, TxForwardingExtension};
@@ -36,8 +34,6 @@ use url::Url;
 use super::InProcessNodeRuntime;
 use crate::PortPool;
 
-type BuiltExtensions = (Vec<Box<dyn BaseNodeExtension>>, Option<FlashblocksConfig>);
-
 /// Source for the chain spec used to start an in-process client node.
 #[derive(Debug, Clone)]
 pub enum ChainSpecSource {
@@ -60,8 +56,6 @@ pub struct InProcessClientConfig {
     pub jwt_secret: JwtSecret,
     /// Builder HTTP RPC URL for rollup.sequencer.
     pub builder_rpc_url: String,
-    /// Optional builder Flashblocks WebSocket URL.
-    pub builder_flashblocks_url: Option<String>,
     /// Builder P2P enode for trusted-peers.
     pub builder_p2p_enode: String,
     /// Optional fixed HTTP RPC port (uses random if None).
@@ -268,12 +262,8 @@ impl InProcessClient {
             .with_add_ons(base_node.add_ons())
             .on_component_initialized(move |_ctx| Ok(()));
 
-        let (mut extensions, flashblocks_config) = Self::build_extensions(&config)?;
+        let mut extensions = Self::build_extensions(&config);
         extensions.extend(config.extra_extensions);
-        // Flashblocks extension must be installed last: it uses `replace_configured`, which
-        // overwrites RPC methods (e.g. `eth_getTransactionCount`, `eth_subscribe`) that
-        // built-in and caller-supplied extensions alike may register.
-        extensions.push(Box::new(FlashblocksExtension::new(flashblocks_config)));
         let NodeHandle { node: node_handle, node_exit_future } = extensions
             .into_iter()
             .fold(NodeHooks::new(), |b, ext| ext.apply(b))
@@ -399,24 +389,9 @@ impl InProcessClient {
         init_db(path, args).wrap_err("Failed to create test database")
     }
 
-    /// Builds the client node's built-in extensions, excluding [`FlashblocksExtension`].
-    ///
-    /// [`FlashblocksExtension`] must be installed last (see [`Self::start`]), since it uses
-    /// `replace_configured` to overwrite RPC methods that other extensions may register.
-    fn build_extensions(config: &InProcessClientConfig) -> Result<BuiltExtensions> {
+    /// Builds the client node's built-in extensions.
+    fn build_extensions(config: &InProcessClientConfig) -> Vec<Box<dyn BaseNodeExtension>> {
         let mut extensions: Vec<Box<dyn BaseNodeExtension>> = Vec::new();
-
-        // Optional builder Flashblocks subscription, also used by the txpool extension.
-        let flashblocks_config = config
-            .builder_flashblocks_url
-            .as_ref()
-            .map(|value| {
-                value
-                    .parse::<Url>()
-                    .map(|url| FlashblocksConfig::new(url, 3))
-                    .map_err(|e| eyre!("Failed to parse flashblocks URL: {}", e))
-            })
-            .transpose()?;
 
         // TxPool RPC extension (management + status APIs)
         let txpool_rpc_config =
@@ -428,7 +403,6 @@ impl InProcessClient {
             tracing_enabled: false,
             tracing_logs_enabled: false,
             transaction_event_node_role: None,
-            flashblocks_config: flashblocks_config.clone(),
         };
         extensions.push(Box::new(TxPoolExtension::new(txpool_config)));
 
@@ -452,7 +426,7 @@ impl InProcessClient {
             )));
         }
 
-        Ok((extensions, flashblocks_config))
+        extensions
     }
 }
 

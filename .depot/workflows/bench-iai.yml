@@ -138,7 +138,6 @@ jobs:
               crates/common/consensus/
               crates/common/eip8130/
               crates/common/evm/
-              crates/common/flashblocks/
               crates/common/flz/
               crates/common/genesis/
               crates/common/l1-fees/

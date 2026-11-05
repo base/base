@@ -43,7 +43,7 @@ pub use metrics::{
 };
 
 mod deferrals;
-pub use deferrals::{BlockDeferrals, DeferralJournal};
+pub use deferrals::BlockDeferrals;
 
 mod resting;
 pub use resting::{

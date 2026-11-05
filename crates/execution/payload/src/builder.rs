@@ -1001,8 +1001,7 @@ where
     /// [`ExecutionInfo::permanently_rejected_txs`] for the payload job to remove from the
     /// pool and insert into [`crate::config::BaseBuilderConfig::rejection_cache`] after this scan.
     /// Later jobs sharing that cache skip the hash even if the pool has it again.
-    /// Nonce-lane descendants are skipped for this scan via `mark_invalid`;
-    /// skipping those descendants across later jobs is Flashblocks-only.
+    /// Nonce-lane descendants are skipped for this scan via `mark_invalid`.
     /// Block-scope excludes only skip the current iterator.
     ///
     /// Returns `Ok(Some(()))` if the job was cancelled.

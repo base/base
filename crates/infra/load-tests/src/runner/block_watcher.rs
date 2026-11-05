@@ -312,7 +312,7 @@ impl BlockWatcher {
             };
             if self
                 .pulse_tx
-                .send(InclusionPulse::canonical(block_pulse, block_match.released_gas))
+                .send(InclusionPulse::canonical(block_pulse, block_match.included_gas))
                 .await
                 .is_err()
             {

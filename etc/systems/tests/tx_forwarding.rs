@@ -78,7 +78,6 @@ async fn start_validity_system() -> Result<SystemTestStack> {
         .with_tx_forwarding(
             TxForwardingConfig::new(vec![]).with_resend_after_ms(2000).with_max_batch_size(100),
         )
-        .with_payload_builder_cutover()
         .build()
         .await?;
 
@@ -161,7 +160,6 @@ async fn signed_validity_forwarding_is_included_by_an_enforcing_builder() -> Res
         .with_base_everest_activation_block(EVEREST_ACTIVATION_BLOCK)
         .with_tx_forwarding(TxForwardingConfig::new(vec![]).with_resend_after_ms(2000))
         .with_validity_signature_mode(ValiditySignatureMode::Required)
-        .with_payload_builder_cutover()
         .build()
         .await?;
     let builder = system.l2_builder_provider()?;
