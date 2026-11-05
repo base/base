@@ -59,6 +59,9 @@ pub struct TransactionMetrics {
     /// Priority fee per gas the transaction was signed with, in wei.
     #[serde(default)]
     pub priority_fee: u128,
+    /// Base fee per gas of the block that included the transaction, in wei.
+    #[serde(default)]
+    pub base_fee: u128,
     /// Gas price in wei.
     pub gas_price: u128,
     /// Block number where transaction was included.
@@ -92,6 +95,7 @@ impl TransactionMetrics {
             gas_used,
             gas_limit: 0,
             priority_fee: 0,
+            base_fee: 0,
             gas_price,
             block_number,
             reverted: false,
@@ -106,10 +110,11 @@ impl TransactionMetrics {
         self.gas_used as u128 * self.gas_price
     }
 
-    /// Returns the priority fee paid to the sequencer in wei: the signed tip per gas, capped at
-    /// the effective gas price, times the billed gas.
+    /// Returns the priority fee paid to the sequencer in wei: the effective tip per gas
+    /// (`effective_gas_price - base_fee`, which is the signed tip unless the fee cap bound it)
+    /// times the billed gas.
     pub fn priority_fee_wei(&self) -> u128 {
-        self.gas_used as u128 * self.priority_fee.min(self.gas_price)
+        self.gas_used as u128 * self.priority_fee.min(self.gas_price.saturating_sub(self.base_fee))
     }
 }
 
@@ -149,7 +154,7 @@ pub struct CohortMetrics {
     #[serde(default)]
     pub total_fee_wei: u128,
     /// Total priority fee paid to the sequencer by confirmed transactions in this cohort, in wei
-    /// (`gas_used * priority_fee_per_gas` summed over the cohort).
+    /// (`gas_used * (effective_gas_price - base_fee)` summed over the cohort).
     #[serde(default)]
     pub total_priority_fee_wei: u128,
     /// Block landing latency for this cohort's confirmed transactions.
@@ -469,5 +474,24 @@ mod tests {
         let metrics: TransactionMetrics = serde_json::from_str(json).unwrap();
         assert_eq!(metrics.gas_limit, 0);
         assert_eq!(metrics.cost_wei(), 147_000);
+    }
+
+    #[test]
+    fn priority_fee_is_the_effective_price_above_the_base_fee() {
+        let mut metrics = TransactionMetrics::new(TxHash::ZERO, None, 21_000, 30, Some(1));
+        metrics.base_fee = 25;
+
+        metrics.priority_fee = 5;
+        assert_eq!(metrics.priority_fee_wei(), 21_000 * 5, "signed tip fits under the fee cap");
+
+        metrics.priority_fee = 20;
+        assert_eq!(
+            metrics.priority_fee_wei(),
+            21_000 * 5,
+            "fee cap bound: tip is price - base fee"
+        );
+
+        metrics.base_fee = 30;
+        assert_eq!(metrics.priority_fee_wei(), 0, "a price at the base fee carries no tip");
     }
 }

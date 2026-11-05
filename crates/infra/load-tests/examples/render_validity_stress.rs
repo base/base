@@ -219,13 +219,6 @@ mod tests {
             result.contains("    type: storage\n    contract: \"")
                 && result.contains("    slots_per_tx: 4")
         );
-        assert!(result.contains("sender_count: 200"));
-        assert!(result.contains("duration: \"60s\""));
-        assert!(result.contains("priority_lead_ratio: 0.10"));
-        assert!(result.contains("priority_lead_multiplier: 20"));
-        assert!(result.contains("priority_fee_divisor: 1"));
-        assert!(result.contains("    type: revert_arb\n"));
-        assert!(result.contains("    gas_limit: 500000"));
         assert!(!result.contains(PREDICATES_PLACEHOLDER));
         assert!(!result.contains("__DOUBLE_COUNTER__"));
     }

@@ -2986,6 +2986,7 @@ mod tests {
                             number: 11,
                             observed_at: first_observed_at,
                             timestamp_ms: None,
+                            base_fee: 0,
                         },
                         Vec::new(),
                     );
@@ -3013,6 +3014,7 @@ mod tests {
                             number: 12,
                             observed_at: second_observed_at,
                             timestamp_ms: None,
+                            base_fee: 0,
                         },
                         Vec::new(),
                     );

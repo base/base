@@ -601,7 +601,7 @@ traffic can be compared against validity traffic when the workload is enabled. E
 carries `confirmed`, `reverted`, `total_gas` (receipt `gas_used`: metered before Everest, the
 billed limit under gas-limit billing), `total_gas_limit` (declared limits), `total_fee_wei`
 (`gas_used * effective_gas_price` summed from receipts), `total_priority_fee_wei`
-(`gas_used * signed priority fee`, the tip the sequencer received), and block latency
+(`gas_used * (effective_gas_price - block base fee)`, the tip the sequencer received), and block latency
 percentiles. The CLI prints the same breakdown as one `By cohort:` line per cohort, with the fee
 and tip in ETH.
 

@@ -52,7 +52,8 @@ pub struct ValidityConfig {
     /// Payload generated for every priority-lead sender instead of the weighted `transactions`
     /// mix, so the lead cohort can send a different transaction shape (for example
     /// `revert_arb`) at a higher tip than the bulk. Requires `priority_lead_ratio > 0`.
-    /// Payloads that need chain preparation (B-20, swaps) are not prepared for this slot.
+    /// Chain preparation never runs for this slot, so payloads that depend on it (B-20, swaps,
+    /// x402, token moves, AA bundles, `storage` without an explicit contract) are rejected.
     pub priority_lead_payload: Option<TxTypeConfig>,
 
     /// Predicate templates attached to each validity-bearing transaction.
@@ -254,13 +255,19 @@ impl ValidityConfig {
                 "validity.predicates must be non-empty when validity.ratio > 0".into(),
             ));
         }
-        if self.priority_lead_payload.is_some()
-            && (self.ratio <= 0.0 || self.priority_lead_ratio <= 0.0)
-        {
-            return Err(BaselineError::Config(
-                "validity.priority_lead_payload requires validity.ratio > 0 and validity.priority_lead_ratio > 0"
-                    .into(),
-            ));
+        if let Some(payload) = &self.priority_lead_payload {
+            if self.ratio <= 0.0 || self.priority_lead_ratio <= 0.0 {
+                return Err(BaselineError::Config(
+                    "validity.priority_lead_payload requires validity.ratio > 0 and validity.priority_lead_ratio > 0"
+                        .into(),
+                ));
+            }
+            if payload.requires_chain_preparation() {
+                return Err(BaselineError::Config(
+                    "validity.priority_lead_payload must not need chain preparation (b20, swaps, x402, token_move, aa_bundle, storage without a contract): the lead cohort is never prepared"
+                        .into(),
+                ));
+            }
         }
         // Surface parse errors (operators, addresses, values) eagerly.
         for predicate in &self.predicates {
@@ -358,6 +365,8 @@ pub(super) fn parse_operator(s: &str) -> Result<ValidityOperator> {
 
 #[cfg(test)]
 mod tests {
+    use alloy_primitives::Address;
+
     use super::*;
 
     #[test]
@@ -630,6 +639,38 @@ mod tests {
 
         config.priority_lead_ratio = 0.25;
         assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_lead_payload_that_needs_chain_preparation() {
+        let predicate = ValidityPredicateConfig::Balance {
+            address: PredicateAddressConfig::Sender,
+            op: ">=".into(),
+            value: U256::ZERO,
+        };
+        let mut config = ValidityConfig {
+            ratio: 1.0,
+            priority_lead_ratio: 0.25,
+            predicates: vec![predicate],
+            ..Default::default()
+        };
+        for payload in [
+            TxTypeConfig::B20,
+            TxTypeConfig::X402,
+            TxTypeConfig::AaBundle { ops_per_bundle: 1, padding_bytes: 0 },
+            TxTypeConfig::Storage { contract: None, slots_per_tx: 4, new_slot_ratio: 1.0 },
+        ] {
+            config.priority_lead_payload = Some(payload);
+            let err = config.validate().unwrap_err();
+            assert!(err.to_string().contains("must not need chain preparation"), "{err}");
+        }
+
+        config.priority_lead_payload = Some(TxTypeConfig::Storage {
+            contract: Some(Address::repeat_byte(0x11)),
+            slots_per_tx: 4,
+            new_slot_ratio: 1.0,
+        });
+        assert!(config.validate().is_ok(), "an explicit contract needs no deployment");
     }
 
     #[test]

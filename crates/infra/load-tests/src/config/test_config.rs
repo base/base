@@ -467,6 +467,34 @@ const fn default_aa_ops_per_bundle() -> u32 {
     12
 }
 
+impl TxTypeConfig {
+    /// Returns true when the payload only works after [`Payload::prepare`] ran for it
+    /// (deployments, token acquisition, run salts, signed-op contexts), so it cannot be used
+    /// where preparation is skipped.
+    ///
+    /// [`Payload::prepare`]: crate::workload::Payload::prepare
+    pub const fn requires_chain_preparation(&self) -> bool {
+        match self {
+            Self::X402
+            | Self::TokenMove { .. }
+            | Self::AaBundle { .. }
+            | Self::UniswapV3 { .. }
+            | Self::B20
+            | Self::AerodromeCl { .. }
+            | Self::UniswapV3Liquidity(_) => true,
+            Self::Storage { contract, .. } => contract.is_none(),
+            Self::Transfer
+            | Self::Eip8430Transfer
+            | Self::Calldata { .. }
+            | Self::Erc20 { .. }
+            | Self::DoubleCounter { .. }
+            | Self::RevertArb { .. }
+            | Self::Precompile { .. }
+            | Self::Osaka { .. } => false,
+        }
+    }
+}
+
 const fn default_revert_arb_gas_limit() -> u64 {
     DEFAULT_REVERT_ARB_GAS_LIMIT
 }

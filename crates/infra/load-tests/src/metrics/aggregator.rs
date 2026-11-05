@@ -435,7 +435,9 @@ mod tests {
         transaction
     }
 
-    /// A receipt-enriched transaction with a declared limit, effective price, and outcome.
+    /// A receipt-enriched transaction with a declared limit, effective price, and outcome,
+    /// included in a block whose base fee is 9 wei per gas. Regular transactions sign a 1 wei
+    /// tip; reverting arbs sign a 20 wei tip, which the effective price caps.
     fn priced_transaction(
         gas_used: u64,
         gas_limit: u64,
@@ -446,11 +448,10 @@ mod tests {
         let mut transaction = cohort_transaction(5, gas_used, cohort);
         transaction.gas_limit = gas_limit;
         transaction.gas_price = gas_price;
-        // Regular transactions tip a tenth of the price; reverting arbs tip twenty times that, which the
-        // effective price caps.
+        transaction.base_fee = 9;
         transaction.priority_fee = match cohort {
-            SubmitCohortLabel::ValidityPassPriorityLead => gas_price / 10 * 20,
-            SubmitCohortLabel::Plain | SubmitCohortLabel::ValidityPass => gas_price / 10,
+            SubmitCohortLabel::ValidityPassPriorityLead => 20,
+            SubmitCohortLabel::Plain | SubmitCohortLabel::ValidityPass => 1,
         };
         transaction.reverted = reverted;
         transaction
@@ -502,29 +503,31 @@ mod tests {
 
     #[test]
     fn by_cohort_reports_lead_cohort_payment_against_declared_limit() {
-        // Two regular validity transactions that execute, and three reverting arbs that each
-        // reserve 2M gas, use 25k, and pay a 20x tip (metered billing: fee follows gas_used).
+        // Two regular validity transactions that execute at base fee + 1 wei tip, and three
+        // reverting arbs that each reserve 2M gas, use 25k, and sign a 20 wei tip (metered
+        // billing: fee follows gas_used). Two arbs land at the full 29 wei price; the third's fee
+        // cap bound at 24 wei, so it paid a 15 wei tip, not the 20 it signed.
         let transactions = [
             priced_transaction(100_000, 100_000, 10, false, SubmitCohortLabel::ValidityPass),
             priced_transaction(100_000, 100_000, 10, false, SubmitCohortLabel::ValidityPass),
             priced_transaction(
                 25_000,
                 2_000_000,
-                200,
+                29,
                 true,
                 SubmitCohortLabel::ValidityPassPriorityLead,
             ),
             priced_transaction(
                 25_000,
                 2_000_000,
-                200,
+                29,
                 true,
                 SubmitCohortLabel::ValidityPassPriorityLead,
             ),
             priced_transaction(
                 25_000,
                 2_000_000,
-                200,
+                24,
                 false,
                 SubmitCohortLabel::ValidityPassPriorityLead,
             ),
@@ -540,7 +543,7 @@ mod tests {
         assert_eq!(regular.total_gas, 200_000);
         assert_eq!(regular.total_gas_limit, 200_000);
         assert_eq!(regular.total_fee_wei, 2_000_000);
-        assert_eq!(regular.total_priority_fee_wei, 200_000, "tip is a tenth of the price");
+        assert_eq!(regular.total_priority_fee_wei, 200_000, "1 wei tip above the 9 wei base fee");
 
         let arbs = &by_cohort[1];
         assert_eq!(arbs.cohort, SubmitCohortLabel::ValidityPassPriorityLead);
@@ -548,10 +551,11 @@ mod tests {
         assert_eq!(arbs.reverted, 2);
         assert_eq!(arbs.total_gas, 75_000);
         assert_eq!(arbs.total_gas_limit, 6_000_000);
-        assert_eq!(arbs.total_fee_wei, 15_000_000);
+        assert_eq!(arbs.total_fee_wei, 25_000 * (29 + 29 + 24));
         assert_eq!(
-            arbs.total_priority_fee_wei, 15_000_000,
-            "a tip above the effective price is capped at the price"
+            arbs.total_priority_fee_wei,
+            25_000 * (20 + 20 + 15),
+            "the tip is the effective price above the base fee, not the signed tip"
         );
     }
 

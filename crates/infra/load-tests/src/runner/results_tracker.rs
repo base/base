@@ -45,6 +45,9 @@ pub struct BlockObservation {
     /// Block header millisecond timestamp, when the observer read one. `None` for headers
     /// with only second-resolution timestamps.
     pub timestamp_ms: Option<u64>,
+    /// Block base fee in wei, so a landed transaction's tip can be read off its receipt's
+    /// effective gas price.
+    pub base_fee: u128,
 }
 
 /// Load-test transactions matched while scanning one canonical block.
@@ -493,6 +496,7 @@ impl ResultsTrackerInner {
         metrics.cohort = pending.cohort.to_metric_label();
         metrics.gas_limit = pending.gas_limit;
         metrics.priority_fee = pending.priority_fee;
+        metrics.base_fee = block.base_fee;
         metrics.confirmed_at = Some(block.observed_at);
         metrics.submit_offset_ms = block
             .timestamp_ms
@@ -537,7 +541,7 @@ mod tests {
     }
 
     fn block_at(number: u64, observed_at: Instant) -> BlockObservation {
-        BlockObservation { number, observed_at, timestamp_ms: None }
+        BlockObservation { number, observed_at, timestamp_ms: None, base_fee: 0 }
     }
 
     fn sent(tx_hash: TxHash, from: Address, measured: bool) -> SentTransaction {
@@ -587,6 +591,7 @@ mod tests {
             number: 7,
             observed_at: Instant::now(),
             timestamp_ms: Some(block_timestamp_ms),
+            base_fee: 0,
         };
         tracker.on_new_block_hashes(block, vec![tx_hash]);
 
@@ -615,6 +620,7 @@ mod tests {
             number: 7,
             observed_at: Instant::now(),
             timestamp_ms: Some(block_timestamp_ms),
+            base_fee: 0,
         };
         tracker.on_new_block_hashes(block, vec![tx_hash]);
 

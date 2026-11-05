@@ -32,8 +32,10 @@
 # evaluations per block) is what lets a 200-sender flood exhaust the budget on a laptop; at the
 # production default (10 ms) use `just load-test validity-stress` scale instead.
 #
+# The load profile and the contract deployments target the local devnet's builder RPC
+# (`just load-test gas-limit-billing` hard-codes localhost:7545), so this script does too.
+#
 # Environment overrides:
-#   RPC             builder RPC                     (default $L2_BUILDER_RPC_URL from common.sh)
 #   PROMETHEUS_URL  devnet Prometheus               (default http://localhost:9090)
 #   EVEREST_BLOCK   activation block                (default $L2_BASE_EVEREST_BLOCK or 3000)
 #   OUT_DIR         where phase summaries are kept  (default: a fresh mktemp dir)
@@ -47,7 +49,7 @@ set -euo pipefail
 
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 
-RPC="${RPC:-$L2_BUILDER_RPC_URL}"
+RPC="$L2_BUILDER_RPC_URL"
 PROMETHEUS_URL="${PROMETHEUS_URL:-http://localhost:9090}"
 EVEREST_BLOCK="${EVEREST_BLOCK:-${L2_BASE_EVEREST_BLOCK:-3000}}"
 OUT_DIR="${OUT_DIR:-$(mktemp -d "${TMPDIR:-/tmp}/gas-limit-billing-demo.XXXXXX")}"
@@ -237,21 +239,30 @@ for phase in phases:
     if p and h:
         print(f"{phase}: inclusion latency p50 reverting arbs {dur(p['block_latency']['p50']):.2f}s vs regular {dur(h['block_latency']['p50']):.2f}s; p95 {dur(p['block_latency']['p95']):.2f}s vs {dur(h['block_latency']['p95']):.2f}s (reverting arbs are evaluated first; regular candidates wait for budget)")
 
-# Checks on the gas-limit-priced phase.
+# Both phases: every reverting arb must revert and every regular transaction must succeed,
+# otherwise the cohorts are not the shapes the comparison describes.
+for phase in phases:
+    p, h = rows.get((phase, ARB)), rows.get((phase, REGULAR))
+    if p and p["reverted"] != p["confirmed"]:
+        failures.append(f"{phase} reverting arbs: {p['reverted']} of {p['confirmed']} reverted; every reverting arb must revert")
+    if h and h["reverted"] != 0:
+        failures.append(f"{phase} regular: {h['reverted']} of {h['confirmed']} reverted; regular transactions must execute")
+
+# Checks on the billed phase.
 z_arb, z_regular = rows.get(("billed", ARB)), rows.get(("billed", REGULAR))
 if z_arb and z_regular:
     for label, c in ((ARB, z_arb), (REGULAR, z_regular)):
-        if c.get("total_gas_limit") and c["total_gas"] != c["total_gas_limit"]:
+        if not c.get("total_gas_limit"):
+            failures.append(f"billed {label}: no declared gas limits recorded")
+        elif c["total_gas"] != c["total_gas_limit"]:
             failures.append(f"billed {label}: receipts report {c['total_gas']} gas but {c['total_gas_limit']} was declared; gas-limit billing should bill the limit")
-    if z_arb["reverted"] == 0:
-        failures.append("billed reverting arbs: none reverted; the reverting arb payload must revert")
     ratio = tip_per_tx(z_arb) / tip_per_tx(z_regular) if tip_per_tx(z_regular) else float("inf")
     arb_limit = z_arb["total_gas_limit"] / z_arb["confirmed"]
     regular_limit = z_regular["total_gas_limit"] / z_regular["confirmed"]
     expected = 20 * arb_limit / regular_limit if regular_limit else 0
     print(f"billed: a reverting arb pays the sequencer {ratio:.1f}x the tip a regular transaction pays (expected ~ 20 * {arb_limit:,.0f} / {regular_limit:,.0f} = {expected:.0f}x); total fee incl. base fee {fee_per_tx(z_arb) / fee_per_tx(z_regular):.1f}x")
-    if ratio < expected / 2:
-        failures.append(f"billed: reverting-arb/regular tip ratio {ratio:.1f}x is below half the expected {expected:.0f}x")
+    if not expected / 2 <= ratio <= expected * 2:
+        failures.append(f"billed: reverting-arb/regular tip ratio {ratio:.1f}x is not within 2x of the expected {expected:.0f}x")
 
 e_arb, e_regular = rows.get(("metered", ARB)), rows.get(("metered", REGULAR))
 if e_arb and z_arb:
