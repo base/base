@@ -1,10 +1,13 @@
 //! Build-time check that a declared EIP-8130 coinbase tip is payable.
 
 use alloy_primitives::{Address, U256};
-use base_common_evm::{BaseSpecId, L1BlockInfo};
+use base_common_chains::BaseUpgrade;
+use base_common_consensus::Predeploys;
+use base_common_evm2::L1Block;
+use base_common_l1_fees::L1FeeParams;
 use base_execution_eip8130::FeeCheck;
 use base_execution_txpool::BasePooledTx;
-use revm::Database;
+use evm2::evm::DynDatabase;
 use tracing::warn;
 
 /// Whether a statically decoded coinbase tip can be paid after the payer's
@@ -12,46 +15,47 @@ use tracing::warn;
 /// built.
 #[derive(Debug, Clone)]
 pub struct CoinbaseTipAffordability {
-    l1_block_info: L1BlockInfo,
-    spec: BaseSpecId,
+    l1_fee_params: L1FeeParams,
+    upgrade: BaseUpgrade,
     base_fee: u128,
 }
 
 impl CoinbaseTipAffordability {
-    /// Creates a check pricing prepay with `l1_block_info` under `spec` at
+    /// Creates a check pricing prepay with `l1_fee_params` under `upgrade` at
     /// `base_fee`.
-    pub const fn new(l1_block_info: L1BlockInfo, spec: BaseSpecId, base_fee: u128) -> Self {
-        Self { l1_block_info, spec, base_fee }
+    pub const fn new(l1_fee_params: L1FeeParams, upgrade: BaseUpgrade, base_fee: u128) -> Self {
+        Self { l1_fee_params, upgrade, base_fee }
     }
 
-    /// Creates a check from the L1 block info in `db` for `block_number`.
+    /// Creates a check from the `L1Block` predeploy state in `db`.
     ///
     /// Must run after the block's L1 attributes deposit has executed. A failed
     /// read prices the L1 and operator fees at zero, so a transient DB error
     /// does not drop otherwise-valid candidates.
-    pub fn load<DB: Database>(
-        db: &mut DB,
-        block_number: u64,
-        spec: BaseSpecId,
+    pub fn load(
+        db: &mut (impl DynDatabase + ?Sized),
+        upgrade: BaseUpgrade,
         base_fee: u128,
     ) -> Self {
-        let l1_block_info = L1BlockInfo::try_fetch(db, U256::from(block_number), spec)
-            .unwrap_or_else(|error| {
-                warn!(
-                    target: "payload_builder",
-                    error = %error,
-                    "failed to load L1 block info for coinbase tip affordability"
-                );
-                L1BlockInfo::default()
-            });
-        Self::new(l1_block_info, spec, base_fee)
+        let l1_fee_params = L1Block::read_fee_params(upgrade, |slot| {
+            db.get_storage(&Predeploys::L1_BLOCK_INFO, &slot)
+        })
+        .unwrap_or_else(|error| {
+            warn!(
+                target: "payload_builder",
+                error = %error,
+                "failed to load L1 block info for coinbase tip affordability"
+            );
+            L1FeeParams::default()
+        });
+        Self::new(l1_fee_params, upgrade, base_fee)
     }
 
     /// Returns what execution debits the payer before the calls run: the
     /// chargeable gas at the effective gas price plus the L1 data fee and the
     /// operator fee.
     pub fn prepay(
-        &mut self,
+        &self,
         encoded: &[u8],
         gas_limit: u64,
         payer_auth: u64,
@@ -60,10 +64,9 @@ impl CoinbaseTipAffordability {
     ) -> U256 {
         let gas_price = FeeCheck::effective_gas_price(max_fee, max_priority_fee, self.base_fee);
         let max_gas = FeeCheck::max_chargeable_gas(gas_limit, payer_auth);
-        self.l1_block_info.clear_tx_l1_cost();
-        let l1_cost = self.l1_block_info.calculate_tx_l1_cost(encoded, self.spec);
+        let l1_cost = self.l1_fee_params.calculate_tx_l1_cost(encoded, self.upgrade);
         let operator_cost =
-            self.l1_block_info.operator_fee_charge(encoded, U256::from(max_gas), self.spec);
+            self.l1_fee_params.operator_fee_charge(encoded, U256::from(max_gas), self.upgrade);
         FeeCheck::max_fee_charge(gas_limit, payer_auth, gas_price)
             .saturating_add(l1_cost)
             .saturating_add(operator_cost)
@@ -74,21 +77,21 @@ impl CoinbaseTipAffordability {
     ///
     /// A failed account read is treated as affordable so a transient DB error
     /// does not drop an otherwise-valid candidate.
-    pub fn unaffordable_tip<DB: Database>(
+    pub fn unaffordable_tip(
         sender: Address,
         payer: Address,
         prepay: U256,
         tip: U256,
-        db: &mut DB,
+        db: &mut (impl DynDatabase + ?Sized),
     ) -> bool {
-        let Ok(payer_info) = db.basic(payer) else {
+        let Ok(payer_info) = db.get_account(&payer) else {
             return false;
         };
         let payer_balance = payer_info.map_or(U256::ZERO, |info| info.balance);
         let sender_balance = if payer == sender {
             payer_balance
         } else {
-            let Ok(sender_info) = db.basic(sender) else {
+            let Ok(sender_info) = db.get_account(&sender) else {
                 return false;
             };
             sender_info.map_or(U256::ZERO, |info| info.balance)
@@ -101,11 +104,12 @@ impl CoinbaseTipAffordability {
     /// the sender and gas payer cannot cover together with the prepay.
     ///
     /// Transactions without a statically decoded tip are treated as affordable.
-    pub fn unaffordable<T, DB>(&mut self, tx: &T, payer_auth: u64, db: &mut DB) -> bool
-    where
-        T: BasePooledTx,
-        DB: Database,
-    {
+    pub fn unaffordable<T: BasePooledTx>(
+        &self,
+        tx: &T,
+        payer_auth: u64,
+        db: &mut (impl DynDatabase + ?Sized),
+    ) -> bool {
         let Some(signed) = tx.as_eip8130() else {
             return false;
         };
@@ -146,13 +150,13 @@ mod tests {
     use base_common_consensus::{
         BaseTxEnvelope, Call, Eip8130Constants, Eip8130Signed, Predeploys, TxEip8130,
     };
-    use base_common_evm::{BaseSpecId, L1BlockInfo};
+    use base_common_l1_fees::L1FeeParams;
     use base_execution_txpool::{BasePooledTransaction, BasePooledTx, LimitClass};
-    use revm::{
-        Database,
-        database::InMemoryDB,
-        database_interface::DBErrorMarker,
-        state::{AccountInfo, Bytecode},
+    use evm2::{
+        DatabaseError,
+        bytecode::Bytecode,
+        evm::{AccountInfo, DbResult, DynDatabase, InMemoryDB},
+        interpreter::Word,
     };
 
     use super::CoinbaseTipAffordability;
@@ -171,44 +175,39 @@ mod tests {
     #[error("test database read failed")]
     struct ReadError;
 
-    impl DBErrorMarker for ReadError {}
-
     #[derive(Debug, Default)]
     struct FailingDatabase;
 
-    impl Database for FailingDatabase {
-        type Error = ReadError;
+    impl FailingDatabase {
+        fn error() -> DatabaseError {
+            DatabaseError::new(ReadError, false)
+        }
+    }
 
-        fn basic(&mut self, _address: Address) -> Result<Option<AccountInfo>, Self::Error> {
-            Err(ReadError)
+    impl DynDatabase for FailingDatabase {
+        fn get_account(&mut self, _address: &Address) -> DbResult<Option<AccountInfo>> {
+            Err(Self::error())
         }
 
-        fn code_by_hash(&mut self, _code_hash: B256) -> Result<Bytecode, Self::Error> {
-            Err(ReadError)
+        fn get_code_by_hash(&mut self, _code_hash: &B256) -> DbResult<Bytecode> {
+            Err(Self::error())
         }
 
-        fn storage(&mut self, _address: Address, _index: U256) -> Result<U256, Self::Error> {
-            Err(ReadError)
+        fn get_storage(&mut self, _address: &Address, _key: &Word) -> DbResult<Word> {
+            Err(Self::error())
         }
 
-        fn block_hash(&mut self, _number: u64) -> Result<B256, Self::Error> {
-            Err(ReadError)
+        fn get_block_hash(&mut self, _number: &Word) -> DbResult<B256> {
+            Err(Self::error())
         }
     }
 
     fn without_l1_fees() -> CoinbaseTipAffordability {
-        CoinbaseTipAffordability::new(
-            L1BlockInfo::default(),
-            BaseSpecId::new(BaseUpgrade::Isthmus),
-            BASE_FEE,
-        )
+        CoinbaseTipAffordability::new(L1FeeParams::default(), BaseUpgrade::Isthmus, BASE_FEE)
     }
 
-    fn fund(db: &mut InMemoryDB, address: Address, balance: u64) {
-        db.insert_account_info(
-            address,
-            AccountInfo { balance: U256::from(balance), ..Default::default() },
-        );
+    fn fund(db: &mut InMemoryDB, address: Address, balance: U256) {
+        db.insert_account_info(&address, AccountInfo::default().with_balance(balance));
     }
 
     #[test]
@@ -223,7 +222,7 @@ mod tests {
     fn funded_self_pay_covers_gas_plus_tip() {
         let mut db = InMemoryDB::default();
         // gas = 21_000 * 2 = 42_000; tip = 1_000.
-        fund(&mut db, SENDER, 43_000);
+        fund(&mut db, SENDER, U256::from(43_000u64));
         assert!(!CoinbaseTipAffordability::unaffordable_tip(
             SENDER, SENDER, GAS_CHARGE, TIP, &mut db
         ));
@@ -232,7 +231,7 @@ mod tests {
     #[test]
     fn self_pay_short_one_wei_is_unaffordable() {
         let mut db = InMemoryDB::default();
-        fund(&mut db, SENDER, 42_999);
+        fund(&mut db, SENDER, U256::from(42_999u64));
         assert!(CoinbaseTipAffordability::unaffordable_tip(
             SENDER, SENDER, GAS_CHARGE, TIP, &mut db
         ));
@@ -241,8 +240,8 @@ mod tests {
     #[test]
     fn sponsored_tip_needs_sender_balance() {
         let mut db = InMemoryDB::default();
-        fund(&mut db, PAYER, 42_000);
-        fund(&mut db, SENDER, 999);
+        fund(&mut db, PAYER, U256::from(42_000u64));
+        fund(&mut db, SENDER, U256::from(999u64));
         assert!(CoinbaseTipAffordability::unaffordable_tip(
             SENDER, PAYER, GAS_CHARGE, TIP, &mut db
         ));
@@ -251,8 +250,8 @@ mod tests {
     #[test]
     fn sponsored_gas_and_tip_are_affordable_when_split() {
         let mut db = InMemoryDB::default();
-        fund(&mut db, PAYER, 42_000);
-        fund(&mut db, SENDER, 1_000);
+        fund(&mut db, PAYER, U256::from(42_000u64));
+        fund(&mut db, SENDER, U256::from(1_000u64));
         assert!(!CoinbaseTipAffordability::unaffordable_tip(
             SENDER, PAYER, GAS_CHARGE, TIP, &mut db
         ));
@@ -287,8 +286,8 @@ mod tests {
     #[test]
     fn open_payer_uses_the_admission_resolved_payer() {
         let mut db = InMemoryDB::default();
-        fund(&mut db, PAYER, 42_000);
-        fund(&mut db, SENDER, 1_000);
+        fund(&mut db, PAYER, U256::from(42_000u64));
+        fund(&mut db, SENDER, U256::from(1_000u64));
         let tx = unrecoverable_open_payer_tip();
         assert!(
             without_l1_fees().unaffordable(&tx, 0, &mut db),
@@ -317,7 +316,7 @@ mod tests {
     #[test]
     fn policy_gated_sender_tip_is_not_priced() {
         let mut db = InMemoryDB::default();
-        fund(&mut db, SENDER, 1_000);
+        fund(&mut db, SENDER, U256::from(1_000u64));
         let tx = unrecoverable_open_payer_tip();
         tx.set_limit_class(LimitClass {
             sender: SENDER,
@@ -354,8 +353,8 @@ mod tests {
     }
 
     /// Non-zero L1 data and operator fee parameters.
-    fn l1_block_info_with_fees() -> L1BlockInfo {
-        L1BlockInfo {
+    fn l1_fee_params_with_fees() -> L1FeeParams {
+        L1FeeParams {
             l1_base_fee: U256::from(1_000_000_000u64),
             l1_base_fee_scalar: U256::from(1_000_000u64),
             l1_blob_base_fee: Some(U256::from(1u64)),
@@ -396,31 +395,27 @@ mod tests {
     /// pay the tip, and the builder must skip the transaction.
     #[test]
     fn self_pay_must_cover_l1_and_operator_fees_before_the_tip() {
-        let spec = BaseSpecId::new(BaseUpgrade::Isthmus);
+        let upgrade = BaseUpgrade::Isthmus;
         let tx = self_paid_tip(BASE_FEE, BASE_FEE);
         let encoded = tx.encoded_2718();
-        let mut l1_block_info = l1_block_info_with_fees();
-        let l1_fee = l1_block_info.calculate_tx_l1_cost(encoded, spec);
-        let operator_fee = l1_block_info.operator_fee_charge(encoded, U256::from(GAS_LIMIT), spec);
+        let params = l1_fee_params_with_fees();
+        let l1_fee = params.calculate_tx_l1_cost(encoded, upgrade);
+        let operator_fee = params.operator_fee_charge(encoded, U256::from(GAS_LIMIT), upgrade);
         assert!(!l1_fee.is_zero() && !operator_fee.is_zero(), "fixture must charge both fees");
-        let mut affordability =
-            CoinbaseTipAffordability::new(l1_block_info_with_fees(), spec, BASE_FEE);
+        let affordability = CoinbaseTipAffordability::new(params, upgrade, BASE_FEE);
 
         let mut db = InMemoryDB::default();
         let gas_plus_tip = GAS_CHARGE + TIP;
-        db.insert_account_info(SENDER, AccountInfo { balance: gas_plus_tip, ..Default::default() });
+        fund(&mut db, SENDER, gas_plus_tip);
         assert!(
             affordability.unaffordable(&tx, 0, &mut db),
             "gas plus the tip leaves nothing for the L1 and operator fees"
         );
 
         let full = gas_plus_tip + l1_fee + operator_fee;
-        db.insert_account_info(SENDER, AccountInfo { balance: full, ..Default::default() });
+        fund(&mut db, SENDER, full);
         assert!(!affordability.unaffordable(&tx, 0, &mut db));
-        db.insert_account_info(
-            SENDER,
-            AccountInfo { balance: full - U256::from(1u64), ..Default::default() },
-        );
+        fund(&mut db, SENDER, full - U256::from(1u64));
         assert!(affordability.unaffordable(&tx, 0, &mut db));
     }
 
@@ -432,12 +427,9 @@ mod tests {
         let tx = self_paid_tip(10, 1);
         let mut db = InMemoryDB::default();
         let balance = U256::from(GAS_LIMIT * 3) + TIP;
-        db.insert_account_info(SENDER, AccountInfo { balance, ..Default::default() });
+        fund(&mut db, SENDER, balance);
         assert!(!without_l1_fees().unaffordable(&tx, 0, &mut db));
-        db.insert_account_info(
-            SENDER,
-            AccountInfo { balance: balance - U256::from(1u64), ..Default::default() },
-        );
+        fund(&mut db, SENDER, balance - U256::from(1u64));
         assert!(without_l1_fees().unaffordable(&tx, 0, &mut db));
     }
 }

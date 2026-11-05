@@ -25,12 +25,12 @@ use base_observability_events::{
     GlobalTransactionEventWriter, TransactionEventProducer, TransactionEventWriterConfig,
 };
 use criterion::{Criterion, criterion_group, criterion_main};
+use evm2::evm::InMemoryDB;
 use fixture::{
     Ctx, FILLER_PER_BLOCK, Pool, parkable, payload_context, populated_rejection_cache, resting_pool,
 };
 use reth_evm::execute::{BlockBuilder, BlockExecutor};
-use reth_revm::db::State;
-use revm::database::{InMemoryDB, TransitionState};
+
 
 /// Consecutive blocks built per iteration.
 const BLOCKS: u64 = 10;
@@ -47,9 +47,7 @@ fn run_block(
     db: &InMemoryDB,
     resting: Option<&SharedRestingPredicates>,
 ) -> usize {
-    let mut state = State::builder().with_database(db.clone()).with_bundle_update().build();
-    state.load_cache_account(Predeploys::L1_BLOCK_INFO).expect("in-memory load cannot fail");
-    let mut builder = ctx.block_builder(&mut state).expect("block builder");
+    let mut builder = ctx.block_builder(db.clone()).expect("block builder");
     let mut info = ExecutionInfo::default();
     black_box(
         ctx.execute_best_transactions(&mut info, &mut builder, parkable(pool, resting), resting)
@@ -64,7 +62,7 @@ fn run_blocks(ctx: &Ctx, pool: &Pool, db: &InMemoryDB, mode: RestingPredicateMod
     let mut parent = B256::ZERO;
     for block in 1..=BLOCKS {
         // The production builder passes the pre-block writes; this loop makes none.
-        resting.begin_block(parent, block, Some(&TransitionState::default()));
+        resting.begin_block(parent, block, Some(&[]));
         let shared = SharedRestingPredicates::new(resting);
         let included = run_block(ctx, pool, db, mode.is_enabled().then_some(&shared));
         assert_eq!(included, FILLER_PER_BLOCK);

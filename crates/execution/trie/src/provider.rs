@@ -2,16 +2,13 @@
 
 use std::fmt::Debug;
 
-use alloy_primitives::keccak256;
+use alloy_primitives::{Address, B256, BlockNumber, Bytes, StorageValue, keccak256};
 use parking_lot::{MappedMutexGuard, Mutex, MutexGuard};
+use reth_evm::BundleState;
 use reth_primitives_traits::{Account, Bytecode};
 use reth_provider::{
     AccountReader, BlockHashReader, BytecodeReader, HashedPostStateProvider, ProviderError,
     ProviderResult, StateProofProvider, StateProvider, StateRootProvider, StorageRootProvider,
-};
-use reth_revm::{
-    db::BundleState,
-    primitives::{Address, B256, Bytes, StorageValue, alloy_primitives::BlockNumber},
 };
 use reth_trie::{
     StateRoot, StorageRoot,
@@ -232,11 +229,11 @@ impl<'a, Storage: BaseProofsStore + Clone> StateProofProvider
 
     fn multiproof_v2(
         &self,
-        input: TrieInput,
         targets: MultiProofTargetsV2,
+        _requires_masks: bool,
     ) -> ProviderResult<DecodedMultiProofV2> {
-        Proof::overlay_multiproof_v2(self.storage, self.block_number, input, targets)
-            .map_err(ProviderError::from)
+        // The stored trie at `block_number` matches its hashed state, so masks are exact.
+        Proof::multiproof_v2(self.storage, self.block_number, targets).map_err(ProviderError::from)
     }
 }
 

@@ -7,14 +7,14 @@
 //! deduplicated (distinct locations).
 //!
 //! It deliberately does **not** classify reads as cache hits vs disk misses.
-//! The read flows through several cache tiers (the per-build revm `State` cache,
+//! The read flows through several cache tiers (the per-build EVM state overlay,
 //! reth's cross-block execution cache, then MDBX), and the only tier that
 //! cleanly represents "went to disk" is the execution-cache miss — which is not
 //! observable from here and is already measured, un-scoped, by reth's
 //! `sync.caching` metrics. The footprint counted here is the signal that a
 //! predicate-state prewarmer must cover and that an abusive submitter inflates.
 //!
-//! [`PredicateReadRecorder`] wraps the builder's [`Database`] during a predicate
+//! [`PredicateReadRecorder`] wraps the builder's [`DynDatabase`] during a predicate
 //! evaluation and records each read into a [`PredicateLoadTracker`] that
 //! accumulates across the whole block build. Because reads flow through the
 //! wrapper as the evaluator issues them, short-circuit evaluation is respected:
@@ -24,9 +24,11 @@ use alloy_primitives::{
     Address, B256, U256,
     map::{AddressSet, HashSet},
 };
-use revm::{
-    Database,
-    state::{AccountInfo, Bytecode},
+use evm2::{
+    DatabaseError,
+    bytecode::Bytecode,
+    evm::{AccountInfo, Database, DynDatabase},
+    interpreter::Word,
 };
 
 /// Per-block accumulator for validity-predicate state loads.
@@ -89,46 +91,50 @@ impl PredicateLoadTracker {
     }
 }
 
-/// A [`Database`] wrapper that records validity-predicate state reads.
+/// A [`Database`] view of the builder's state that records validity-predicate reads.
 ///
-/// Wraps the builder's [`Database`] for the duration of a predicate evaluation and
-/// records each [`Database::basic`] (account) and [`Database::storage`] (slot)
+/// Wraps the builder's [`DynDatabase`] for the duration of a predicate evaluation and
+/// records each [`Database::get_account`] (account) and [`Database::get_storage`] (slot)
 /// call into the shared [`PredicateLoadTracker`] before delegating. It does not
 /// inspect any cache — it only counts which locations predicate evaluation
 /// reads, respecting short-circuit evaluation because reads flow through it as
 /// they are issued.
 #[derive(Debug)]
-pub struct PredicateReadRecorder<'a, DB> {
+pub struct PredicateReadRecorder<'a, DB: ?Sized> {
     database: &'a mut DB,
     tracker: &'a mut PredicateLoadTracker,
 }
 
-impl<'a, DB> PredicateReadRecorder<'a, DB> {
+impl<'a, DB: ?Sized> PredicateReadRecorder<'a, DB> {
     /// Wraps `database`, recording reads into `tracker`.
     pub const fn new(database: &'a mut DB, tracker: &'a mut PredicateLoadTracker) -> Self {
         Self { database, tracker }
     }
 }
 
-impl<DB: Database> Database for PredicateReadRecorder<'_, DB> {
-    type Error = DB::Error;
+impl<DB: DynDatabase + ?Sized> Database for PredicateReadRecorder<'_, DB> {
+    type Error = DatabaseError;
 
-    fn basic(&mut self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
-        self.tracker.record_account(address);
-        self.database.basic(address)
+    fn is_fatal(error: &Self::Error) -> bool {
+        error.is_fatal()
     }
 
-    fn code_by_hash(&mut self, code_hash: B256) -> Result<Bytecode, Self::Error> {
-        self.database.code_by_hash(code_hash)
+    fn get_account(&mut self, address: &Address) -> Result<Option<AccountInfo>, Self::Error> {
+        self.tracker.record_account(*address);
+        self.database.get_account(address)
     }
 
-    fn storage(&mut self, address: Address, index: U256) -> Result<U256, Self::Error> {
-        self.tracker.record_slot(address, index);
-        self.database.storage(address, index)
+    fn get_code_by_hash(&mut self, code_hash: &B256) -> Result<Bytecode, Self::Error> {
+        self.database.get_code_by_hash(code_hash)
     }
 
-    fn block_hash(&mut self, number: u64) -> Result<B256, Self::Error> {
-        self.database.block_hash(number)
+    fn get_storage(&mut self, address: &Address, key: &Word) -> Result<Word, Self::Error> {
+        self.tracker.record_slot(*address, *key);
+        self.database.get_storage(address, key)
+    }
+
+    fn get_block_hash(&mut self, number: &Word) -> Result<B256, Self::Error> {
+        self.database.get_block_hash(number)
     }
 }
 
@@ -138,8 +144,7 @@ mod tests {
     use base_execution_txpool::{
         PredicateContext, ValidityConditions, ValidityOperator, ValidityPredicate,
     };
-    use reth_revm::State;
-    use revm::{database::InMemoryDB, state::AccountInfo};
+    use evm2::evm::{AccountInfo, InMemoryDB};
 
     use super::{PredicateLoadTracker, PredicateReadRecorder};
     use crate::ValidityPredicateKey;
@@ -148,19 +153,18 @@ mod tests {
         PredicateContext { block_number: 1, flashblock_index: 0 }
     }
 
-    /// Builds a `State` over an in-memory database seeded with one account that
-    /// has a balance and a single storage slot.
-    fn seeded_state() -> (State<InMemoryDB>, Address, U256) {
+    /// Builds an in-memory database seeded with one account that has a balance and a single
+    /// storage slot.
+    fn seeded_state() -> (InMemoryDB, Address, U256) {
         let address = Address::with_last_byte(0x11);
         let slot = U256::from(7);
         let mut db = InMemoryDB::default();
         db.insert_account_info(
-            address,
-            AccountInfo { balance: U256::from(10), nonce: 2, ..Default::default() },
+            &address,
+            AccountInfo::default().with_balance(U256::from(10)).with_nonce(2),
         );
-        db.insert_account_storage(address, slot, U256::from(3)).unwrap();
-        let state = State::builder().with_database(db).with_bundle_update().build();
-        (state, address, slot)
+        db.insert_account_storage(&address, &slot, &U256::from(3));
+        (db, address, slot)
     }
 
     #[test]

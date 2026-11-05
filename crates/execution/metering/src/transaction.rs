@@ -1,7 +1,8 @@
 use alloy_consensus::{Transaction, transaction::Recovered};
 use alloy_eips::Encodable2718;
 use alloy_primitives::U256;
-use base_common_evm::{BaseSpecId, L1BlockInfo};
+use base_common_chains::BaseUpgrade;
+use base_common_l1_fees::L1FeeParams;
 use derive_more::Display;
 use reth_primitives_traits::Account;
 
@@ -27,8 +28,8 @@ pub enum TxValidationError {
 pub fn validate_tx<T: Transaction + Encodable2718>(
     account: Account,
     txn: &Recovered<T>,
-    l1_block_info: &mut L1BlockInfo,
-    spec: BaseSpecId,
+    l1_fee_params: &L1FeeParams,
+    upgrade: BaseUpgrade,
 ) -> Result<(), TxValidationError> {
     let data = txn.encoded_2718();
 
@@ -43,7 +44,7 @@ pub fn validate_tx<T: Transaction + Encodable2718>(
 
     // Base-specific checks to see whether the sender can cover the L1 gas cost.
     // Reference: https://github.com/paradigmxyz/reth/blob/6aa73f14808491aae77fc7c6eb4f0aa63bef7e6e/crates/optimism/txpool/src/validator.rs#L219
-    let l1_cost_addition = l1_block_info.calculate_tx_l1_cost(&data, spec);
+    let l1_cost_addition = l1_fee_params.calculate_tx_l1_cost(&data, upgrade);
     let l1_cost = txn_cost.saturating_add(l1_cost_addition);
     if l1_cost > account.balance {
         return Err(TxValidationError::InsufficientFundsForL1Gas(l1_cost, account.balance));
@@ -60,7 +61,6 @@ mod tests {
     use alloy_network::TxSignerSync;
     use alloy_primitives::{Address, U256, bytes};
     use base_common_consensus::BaseTxEnvelope;
-    use base_common_evm::BaseUpgrade;
     use base_test_utils::Account as BaseAccount;
 
     use super::*;
@@ -69,12 +69,17 @@ mod tests {
         Account { balance, nonce, bytecode_hash: None }
     }
 
-    fn create_l1_block_info() -> L1BlockInfo {
-        L1BlockInfo::default()
-    }
+    const TEST_UPGRADE: BaseUpgrade = BaseUpgrade::LATEST;
 
-    fn test_spec() -> BaseSpecId {
-        BaseSpecId::new(BaseUpgrade::LATEST)
+    /// L1 fee parameters that charge a non-zero L1 data fee.
+    fn charging_l1_fee_params() -> L1FeeParams {
+        L1FeeParams {
+            l1_base_fee: U256::from(1_000_000_000u64),
+            l1_base_fee_scalar: U256::from(1_000_000u64),
+            l1_blob_base_fee: Some(U256::from(1u64)),
+            l1_blob_base_fee_scalar: Some(U256::from(1u64)),
+            ..Default::default()
+        }
     }
 
     #[test]
@@ -94,8 +99,6 @@ mod tests {
 
         let account_balance = U256::from(1000000u128);
         let account = create_account(0, account_balance);
-        let mut l1_block_info = create_l1_block_info();
-
         let max_fee = tx.max_fee_per_gas().saturating_mul(tx.gas_limit() as u128);
         let txn_cost = tx.value().saturating_add(U256::from(max_fee));
 
@@ -103,7 +106,7 @@ mod tests {
         let envelope = BaseTxEnvelope::Eip1559(tx.into_signed(signature));
         let recovered_tx = envelope.try_into_recovered().unwrap();
         assert_eq!(
-            validate_tx(account, &recovered_tx, &mut l1_block_info, test_spec()),
+            validate_tx(account, &recovered_tx, &L1FeeParams::default(), TEST_UPGRADE),
             Err(TxValidationError::InsufficientFundsForTransfer(txn_cost, account_balance))
         );
     }
@@ -123,23 +126,25 @@ mod tests {
             input: bytes!(""),
         };
 
-        // fund the account with enough funds to cover the txn cost but not enough to cover the l1 cost
-        let account_balance = U256::from(4201000000u128);
-        let account = create_account(0, account_balance);
-        let mut l1_block_info = create_l1_block_info();
-        l1_block_info.tx_l1_cost = Some(U256::from(1000000u128));
-
         let max_fee = tx.max_fee_per_gas().saturating_mul(tx.gas_limit() as u128);
         let txn_cost = tx.value().saturating_add(U256::from(max_fee));
-        let l1_cost_addition = l1_block_info.calculate_tx_l1_cost(tx.input(), test_spec());
-        let l1_cost = txn_cost.saturating_add(l1_cost_addition);
 
         let signature = signer.sign_transaction_sync(&mut tx).unwrap();
         let envelope = BaseTxEnvelope::Eip1559(tx.into_signed(signature));
         let recovered_tx = envelope.try_into_recovered().unwrap();
 
+        let l1_fee_params = charging_l1_fee_params();
+        let l1_cost_addition =
+            l1_fee_params.calculate_tx_l1_cost(&recovered_tx.encoded_2718(), TEST_UPGRADE);
+        assert!(!l1_cost_addition.is_zero(), "fixture must charge an L1 data fee");
+        let l1_cost = txn_cost.saturating_add(l1_cost_addition);
+
+        // fund the account with enough funds to cover the txn cost but not enough to cover the l1 cost
+        let account_balance = l1_cost - U256::from(1u64);
+        let account = create_account(0, account_balance);
+
         assert_eq!(
-            validate_tx(account, &recovered_tx, &mut l1_block_info, test_spec()),
+            validate_tx(account, &recovered_tx, &l1_fee_params, TEST_UPGRADE),
             Err(TxValidationError::InsufficientFundsForL1Gas(l1_cost, account_balance))
         );
     }
@@ -161,12 +166,13 @@ mod tests {
 
         let account_balance = U256::from(1000000000000000000u128);
         let account = create_account(0, account_balance);
-        let mut l1_block_info = create_l1_block_info();
-
         let signature = signer.sign_transaction_sync(&mut tx).unwrap();
         let envelope = BaseTxEnvelope::Eip1559(tx.into_signed(signature));
         let recovered_tx = envelope.try_into_recovered().unwrap();
 
-        assert_eq!(validate_tx(account, &recovered_tx, &mut l1_block_info, test_spec()), Ok(()));
+        assert_eq!(
+            validate_tx(account, &recovered_tx, &charging_l1_fee_params(), TEST_UPGRADE),
+            Ok(())
+        );
     }
 }

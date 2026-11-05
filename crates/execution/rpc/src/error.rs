@@ -7,18 +7,19 @@ use alloy_primitives::Bytes;
 use alloy_rpc_types_eth::{BlockError, error::EthRpcErrorCode};
 use alloy_transport::{RpcError, TransportErrorKind};
 use base_common_consensus::Eip8130CommittedPhasesError;
-use base_common_evm::{BaseHaltReason, BaseTransactionError};
 use base_common_rpc_types::BaseTxEnvError;
+use base_execution_eip8130::Eip8130Error;
 use base_execution_evm::BaseBlockExecutionError;
+use evm2::{interpreter::InstrStop, registry::HandlerError};
 use jsonrpsee_types::error::INTERNAL_ERROR_CODE;
-use reth_evm::execute::ProviderError;
+use reth_errors::ProviderError;
+use reth_evm::execute::{BlockExecutionError, BlockValidationError};
 use reth_rpc_eth_api::{AsEthApiError, EthTxEnvError, TransactionConversionError};
 use reth_rpc_eth_types::{
     EthApiError,
     error::api::{FromEvmHalt, FromRevert},
 };
 use reth_rpc_server_types::result::{internal_rpc_err, rpc_err};
-use revm::context_interface::result::{EVMError, InvalidTransaction};
 
 /// Base-specific errors, that extend [`EthApiError`].
 #[derive(Debug, thiserror::Error)]
@@ -35,7 +36,7 @@ pub enum BaseEthApiError {
     /// Thrown when calculating L1 gas used
     #[error("failed to calculate l1 gas used")]
     L1BlockGasError,
-    /// Wrapper for [`revm_primitives::InvalidTransaction`](InvalidTransaction).
+    /// A Base-specific invalid transaction.
     #[error(transparent)]
     InvalidTransaction(#[from] BaseInvalidTransactionError),
     /// Sequencer client error.
@@ -73,15 +74,6 @@ impl From<BaseEthApiError> for jsonrpsee_types::error::ErrorObject<'static> {
 /// Base-specific invalid transaction errors
 #[derive(thiserror::Error, Debug)]
 pub enum BaseInvalidTransactionError {
-    /// A deposit transaction was submitted as a system transaction post-regolith.
-    #[error("no system transactions allowed after regolith")]
-    DepositSystemTxPostRegolith,
-    /// A deposit transaction halted post-regolith
-    #[error("deposit transaction halted after regolith")]
-    HaltedDepositPostRegolith,
-    /// The encoded transaction was missing during evm execution.
-    #[error("missing enveloped transaction bytes")]
-    MissingEnvelopedTx,
     /// An EIP-8130 (account-abstraction) transaction was submitted via
     /// `eth_sendRawTransaction` before the Everest fork was active.
     ///
@@ -101,10 +93,7 @@ pub enum BaseInvalidTransactionError {
 impl From<BaseInvalidTransactionError> for jsonrpsee_types::error::ErrorObject<'static> {
     fn from(err: BaseInvalidTransactionError) -> Self {
         match err {
-            BaseInvalidTransactionError::DepositSystemTxPostRegolith
-            | BaseInvalidTransactionError::HaltedDepositPostRegolith
-            | BaseInvalidTransactionError::MissingEnvelopedTx
-            | BaseInvalidTransactionError::Eip8130NotAccepted
+            BaseInvalidTransactionError::Eip8130NotAccepted
             | BaseInvalidTransactionError::Eip8130Rejected(_) => {
                 rpc_err(EthRpcErrorCode::TransactionRejected.code(), err.to_string(), None)
             }
@@ -112,18 +101,12 @@ impl From<BaseInvalidTransactionError> for jsonrpsee_types::error::ErrorObject<'
     }
 }
 
-impl TryFrom<BaseTransactionError> for BaseInvalidTransactionError {
-    type Error = InvalidTransaction;
-
-    fn try_from(err: BaseTransactionError) -> Result<Self, Self::Error> {
-        match err {
-            BaseTransactionError::DepositSystemTxPostRegolith => {
-                Ok(Self::DepositSystemTxPostRegolith)
-            }
-            BaseTransactionError::HaltedDepositPostRegolith => Ok(Self::HaltedDepositPostRegolith),
-            BaseTransactionError::MissingEnvelopedTx => Ok(Self::MissingEnvelopedTx),
-            BaseTransactionError::Eip8130(reason) => Ok(Self::Eip8130Rejected(reason)),
-            BaseTransactionError::Base(err) => Err(err),
+impl BaseInvalidTransactionError {
+    /// Returns the Base-specific rejection an EVM handler error carries, if any.
+    pub fn from_handler_error(error: &HandlerError) -> Option<Self> {
+        match error.external_ref::<Eip8130Error>()? {
+            Eip8130Error::Invalid(reason) => Some(Self::Eip8130Rejected(reason.clone())),
+            Eip8130Error::PayerCannotPay { .. } => None,
         }
     }
 }
@@ -153,32 +136,27 @@ impl From<SequencerClientError> for jsonrpsee_types::error::ErrorObject<'static>
     }
 }
 
-impl<T> From<EVMError<T, BaseTransactionError>> for BaseEthApiError
-where
-    T: Into<EthApiError>,
-{
-    fn from(error: EVMError<T, BaseTransactionError>) -> Self {
-        match error {
-            EVMError::Transaction(err) => match err.try_into() {
-                Ok(err) => Self::InvalidTransaction(err),
-                Err(err) => Self::Eth(EthApiError::InvalidTransaction(err.into())),
-            },
-            EVMError::Database(err) => Self::Eth(err.into()),
-            EVMError::Header(err) => Self::Eth(err.into()),
-            EVMError::Custom(err) => Self::Eth(EthApiError::EvmCustom(err)),
-            EVMError::CustomAny(err) => Self::Eth(EthApiError::EvmCustom(err.to_string())),
-        }
+/// Execution errors keep their Base-specific transaction rejections; the rest map as on
+/// Ethereum.
+impl From<BlockExecutionError> for BaseEthApiError {
+    fn from(error: BlockExecutionError) -> Self {
+        let handler_error = match &error {
+            BlockExecutionError::Validation(BlockValidationError::Other(error)) => {
+                error.downcast_ref::<HandlerError>()
+            }
+            BlockExecutionError::Validation(BlockValidationError::InvalidTx { error, .. }) => {
+                error.as_any().downcast_ref::<HandlerError>()
+            }
+            _ => None,
+        };
+        let rejection = handler_error.and_then(BaseInvalidTransactionError::from_handler_error);
+        rejection.map_or_else(|| Self::Eth(error.into()), Self::InvalidTransaction)
     }
 }
 
-impl FromEvmHalt<BaseHaltReason> for BaseEthApiError {
-    fn from_evm_halt(halt: BaseHaltReason, gas_limit: u64) -> Self {
-        match halt {
-            BaseHaltReason::FailedDeposit => {
-                BaseInvalidTransactionError::HaltedDepositPostRegolith.into()
-            }
-            BaseHaltReason::Base(halt) => EthApiError::from_evm_halt(halt, gas_limit).into(),
-        }
+impl FromEvmHalt<InstrStop> for BaseEthApiError {
+    fn from_evm_halt(halt: InstrStop, gas_limit: u64) -> Self {
+        EthApiError::from_evm_halt(halt, gas_limit).into()
     }
 }
 
@@ -226,5 +204,37 @@ impl From<BlockError> for BaseEthApiError {
 impl From<Infallible> for BaseEthApiError {
     fn from(value: Infallible) -> Self {
         match value {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use reth_evm::execute::map_handler_error;
+
+    use super::*;
+
+    #[test]
+    fn eip8130_rejections_keep_their_reason_as_a_rejected_transaction() {
+        let error = map_handler_error(HandlerError::external(Eip8130Error::invalid(
+            "payer authorization expired",
+        )));
+
+        let error = BaseEthApiError::from(error);
+
+        assert!(matches!(
+            &error,
+            BaseEthApiError::InvalidTransaction(BaseInvalidTransactionError::Eip8130Rejected(reason))
+                if reason == "payer authorization expired"
+        ));
+        let error = jsonrpsee_types::error::ErrorObject::from(error);
+        assert_eq!(error.code(), EthRpcErrorCode::TransactionRejected.code());
+        assert_eq!(error.message(), "EIP-8130 transaction rejected: payer authorization expired");
+    }
+
+    #[test]
+    fn other_handler_errors_map_as_on_ethereum() {
+        let error = map_handler_error(HandlerError::InvalidNonce { expected: 2, got: 1 });
+
+        assert!(matches!(BaseEthApiError::from(error), BaseEthApiError::Eth(_)));
     }
 }

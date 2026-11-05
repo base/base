@@ -12,7 +12,7 @@
 use alloy_consensus::{TxEip1559, transaction::Recovered};
 use alloy_primitives::{Address, Bytes, TxKind, U256};
 use base_common_consensus::Predeploys;
-use base_common_evm2::{BaseEvmTypes, BaseSpecId, BaseTxEnvelope};
+use base_common_evm2::{BaseEvmExt, BaseEvmTypes, BaseSpecId, BaseTxEnvelope, L1Block};
 use base_common_genesis::BaseUpgrade;
 use base_common_l1_fees::L1FeeParams;
 use evm2::{Evm, Precompiles, env::BlockEnv, ethereum::TxEnvelope, evm::InMemoryDB};
@@ -78,6 +78,7 @@ fn build_evm2(upgrade: BaseUpgrade, balance: U256) -> Evm<'static, BaseEvmTypes>
         ..Default::default()
     };
     Evm::new(spec, block, BaseEvmTypes::tx_registry(), db, Precompiles::base(spec.into()))
+        .with_ext(preloaded_l1_fee_params())
 }
 
 fn balance(evm: &mut Evm<'static, BaseEvmTypes>, addr: Address) -> U256 {
@@ -91,6 +92,13 @@ fn balance(evm: &mut Evm<'static, BaseEvmTypes>, addr: Address) -> U256 {
 /// Isthmus and later collect the operator fee; earlier forks do not.
 const fn operator_fee_active(upgrade: BaseUpgrade) -> bool {
     (upgrade as u8) >= (BaseUpgrade::Isthmus as u8)
+}
+
+/// Marks the block environment's L1 fee parameters as already loaded for block 0, like the revm
+/// reference's preloaded `L1BlockInfo { l2_block: Some(0), .. }`, so execution prices fees from
+/// them instead of reading the (empty) `L1Block` predeploy.
+fn preloaded_l1_fee_params() -> BaseEvmExt {
+    BaseEvmExt { l1_fee_params_block: Some(U256::ZERO), ..Default::default() }
 }
 
 #[test]
@@ -203,4 +211,40 @@ fn underfunded_caller_is_rejected_not_wrapped() {
         balance_before,
         "a rejected tx must leave the caller balance untouched",
     );
+}
+
+#[test]
+fn l1_fee_is_priced_from_the_l1_block_predeploy() {
+    let base_fee_scalar = U256::from(L1_BASE_FEE_SCALAR) << 96;
+    let mut db = InMemoryDB::default();
+    let initial = U256::from(10u128.pow(18));
+    db.insert_account_info(&SENDER, evm2::AccountInfo { balance: initial, ..Default::default() });
+    db.insert_account_info(&Predeploys::L1_BLOCK_INFO, evm2::AccountInfo::default());
+    for (slot, value) in [
+        (L1Block::L1_BASE_FEE_SLOT, U256::from(L1_BASE_FEE)),
+        (L1Block::ECOTONE_L1_FEE_SCALARS_SLOT, base_fee_scalar),
+    ] {
+        db.insert_account_storage(&Predeploys::L1_BLOCK_INFO, &slot, &value);
+    }
+    let spec = BaseSpecId::new(BaseUpgrade::Ecotone);
+    let block = BlockEnv::<BaseEvmTypes> {
+        beneficiary: COINBASE,
+        basefee: U256::from(BASEFEE),
+        ..Default::default()
+    };
+    let mut evm =
+        Evm::new(spec, block, BaseEvmTypes::tx_registry(), db, Precompiles::base(spec.into()));
+
+    let _ = evm.transact(&Recovered::new_unchecked(eip1559_envelope(), SENDER)).unwrap().commit();
+
+    let params = L1FeeParams {
+        l1_base_fee: U256::from(L1_BASE_FEE),
+        l1_base_fee_scalar: U256::from(L1_BASE_FEE_SCALAR),
+        l1_blob_base_fee: Some(U256::ZERO),
+        l1_blob_base_fee_scalar: Some(U256::ZERO),
+        ..Default::default()
+    };
+    let expected = params.calculate_tx_l1_cost(&enveloped(), BaseUpgrade::Ecotone);
+    assert!(expected > U256::ZERO);
+    assert_eq!(balance(&mut evm, Predeploys::L1_FEE_VAULT), expected);
 }
