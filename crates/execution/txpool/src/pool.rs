@@ -4,7 +4,10 @@
 use std::{
     collections::{HashMap, VecDeque},
     fmt,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicU8, Ordering},
+    },
 };
 
 use alloy_eips::{
@@ -37,13 +40,15 @@ use tokio::{
 use tracing::debug;
 
 use crate::{
-    Admission, BasePooledTx, BaseTransactionValidator, BestTransactionsHold, FlashblockExpiry,
-    GuardLimits, GuardMetrics, InvalidationCause, InvalidationKey, LimitRejection, MempoolGuard,
-    ParkableBestTransactions, ParkableTransactionPool, ParkedBestTransactions, PoolStore,
-    PredicateContext, StateDiffInvalidation, ValidityPoolLimits, ValidityPoolMetrics,
+    Admission, BasePooledTx, BaseTransactionValidator, BestTransactionsHold, BridgeMirror,
+    BridgedRun, FlashblockExpiry, GuardLimits, GuardMetrics, InvalidationCause, InvalidationKey,
+    LimitRejection, MempoolGuard, ParkableBestTransactions, ParkableTransactionPool,
+    ParkedBestTransactions, PoolStore, PredicateContext, SelectionSync, SelectionView,
+    StateDiffInvalidation, ValidityPoolLimits, ValidityPoolMetrics,
     best::{BridgedDescendants, MergeBestTransactions},
     two_d_nonce_pool::{
-        InsertOutcome, LaneCursor, LaneId, LaneUpdate, SidecarLimits, TwoDNoncePool,
+        BestTwoDTransactions, InsertOutcome, LaneCursor, LaneId, LaneUpdate, SidecarLimits,
+        TwoDNoncePool,
     },
 };
 
@@ -168,6 +173,13 @@ pub struct BaseTransactionPool<
     /// Every transaction carrying validity predicates, in lanes keyed by
     /// `(sender, nonce key)` with the protocol nonce as key zero.
     validity: LaneStore<T>,
+    /// Standard runs bridged behind shared validity lanes, refreshed when an
+    /// iterator with a [`SelectionView`] is created. Locked under the
+    /// admission lock and before the lane stores.
+    bridges: Arc<Mutex<BridgeMirror<T>>>,
+    /// Whether creation may use `bridges` instead of recomputing every bridged
+    /// run: one of `BRIDGES_*`. Shared by every clone.
+    bridge_cache: Arc<AtomicU8>,
     /// Shared admission and invalidation ledger for EIP-8130 transactions.
     guard: Arc<RwLock<MempoolGuard>>,
     /// Block and flashblock deadline index for validity transactions, including
@@ -210,6 +222,8 @@ where
             ordering: self.ordering.clone(),
             sidecar: self.sidecar.clone(),
             validity: self.validity.clone(),
+            bridges: Arc::clone(&self.bridges),
+            bridge_cache: Arc::clone(&self.bridge_cache),
             guard: Arc::clone(&self.guard),
             block_expiry: Arc::clone(&self.block_expiry),
             published_flashblock: Arc::clone(&self.published_flashblock),
@@ -238,9 +252,20 @@ where
     O: reth_transaction_pool::TransactionOrdering<Transaction = T> + Clone,
     S: BlobStore + Clone,
 {
+    /// Bridged runs are recomputed at every iterator creation, because a
+    /// caller may mutate the protocol pool without this pool seeing it.
+    const BRIDGES_UNCACHED: u8 = 0;
+    /// Bridged runs may be cached once an iterator with a view needs them.
+    const BRIDGES_IDLE: u8 = 1;
+    /// Bridged runs are cached, and protocol pool events are observed.
+    const BRIDGES_CACHED: u8 = 2;
+
     /// Creates a new wrapper around the reth protocol pool. The validity pool
     /// starts with [`ValidityPoolLimits::inherit`]; see
     /// [`Self::with_validity_pool_limits`].
+    ///
+    /// The caller may still hold clones of `protocol_pool`, so bridged runs are
+    /// recomputed at every iterator creation; [`Self::from_parts`] can cache them.
     pub fn new(
         protocol_pool: Pool<
             TransactionValidationTaskExecutor<BaseTransactionValidator<Client, T, Evm>>,
@@ -258,11 +283,28 @@ where
             ordering,
             sidecar: LaneStore::new(sidecar),
             validity: LaneStore::new(validity),
+            bridges: Arc::default(),
+            bridge_cache: Arc::new(AtomicU8::new(Self::BRIDGES_UNCACHED)),
             guard: Arc::new(RwLock::new(MempoolGuard::unlimited())),
             block_expiry: Arc::new(RwLock::new(crate::BlockExpiryIndex::new())),
             published_flashblock: Arc::new(RwLock::new(None)),
             protocol_admission_lock: Arc::new(Mutex::new(())),
         }
+    }
+
+    /// Creates the reth protocol pool from its parts together with the wrapper,
+    /// so no other handle to it exists and iterators with a [`SelectionView`]
+    /// can cache bridged runs between creations. Otherwise like [`Self::new`].
+    pub fn from_parts(
+        validator: TransactionValidationTaskExecutor<BaseTransactionValidator<Client, T, Evm>>,
+        ordering: O,
+        blob_store: S,
+        config: PoolConfig,
+    ) -> Self {
+        let protocol_pool = Pool::new(validator, ordering.clone(), blob_store, config);
+        let pool = Self::new(protocol_pool, ordering);
+        pool.bridge_cache.store(Self::BRIDGES_IDLE, Ordering::Release);
+        pool
     }
 
     fn validity_pool(config: &PoolConfig, limits: ValidityPoolLimits) -> TwoDNoncePool<T> {
@@ -306,11 +348,60 @@ where
     }
 
     /// Returns the wrapped reth pool.
-    pub const fn protocol_pool(
+    ///
+    /// A caller can then mutate it without this pool seeing the change, so from
+    /// this call on every clone recomputes bridged runs at each iterator
+    /// creation. Iterators created before keep the runs they captured.
+    pub fn protocol_pool(
         &self,
     ) -> &Pool<TransactionValidationTaskExecutor<BaseTransactionValidator<Client, T, Evm>>, O, S>
     {
+        let _admission_guard = self.protocol_admission_lock.lock();
+        self.bridge_cache.store(Self::BRIDGES_UNCACHED, Ordering::Release);
+        self.bridges.lock().stop_observing();
         &self.protocol_pool
+    }
+
+    /// Pops the protocol pool events the bridge mirror observes. Call under the
+    /// admission lock after a protocol pool call. A drain that may have missed
+    /// an event leaves the mirror unknown, unless the caller's section is
+    /// `accounted`: it began with an unaccounted drain and journals every
+    /// removal it makes itself, so only events it can ignore can be missing.
+    fn drain_bridge_events(&self, accounted: bool) {
+        debug_assert!(self.protocol_admission_lock.is_locked(), "drained under the admission lock");
+        if self.bridge_cache.load(Ordering::Acquire) != Self::BRIDGES_CACHED {
+            return;
+        }
+        let mut bridges = self.bridges.lock();
+        if bridges.drain(|| self.protocol_pool.all_transactions_event_listener()) && !accounted {
+            bridges.note_unknown();
+        }
+    }
+
+    /// Runs `call`, a protocol pool call whose events change no membership, as
+    /// an accounted section, so a burst of its events cannot leave the bridge
+    /// mirror unknown.
+    fn accounted_protocol_call<R>(&self, call: impl FnOnce() -> R) -> R {
+        if self.bridge_cache.load(Ordering::Acquire) != Self::BRIDGES_CACHED {
+            return call();
+        }
+        let _admission_guard = self.protocol_admission_lock.lock();
+        self.drain_bridge_events(false);
+        let result = call();
+        self.drain_bridge_events(true);
+        result
+    }
+
+    /// Whether this creation may use cached bridged runs. The first creation
+    /// that may starts observing protocol pool events, so the coherent rebuild
+    /// it triggers misses none. Call under the admission lock.
+    fn bridge_cache_enabled(&self) -> bool {
+        let state = self.bridge_cache.load(Ordering::Acquire);
+        if state == Self::BRIDGES_IDLE {
+            self.bridges.lock().observe(self.protocol_pool.all_transactions_event_listener());
+            self.bridge_cache.store(Self::BRIDGES_CACHED, Ordering::Release);
+        }
+        state != Self::BRIDGES_UNCACHED
     }
 
     /// Returns the validator backing the wrapped reth pool.
@@ -564,10 +655,10 @@ where
         }
         let mut discarded = Vec::new();
         for (lane_id, nonce) in targets {
-            let (cursor, shared) = {
+            let (cursor, shared, selecting) = {
                 let validity = self.validity.pool.read();
                 let Some(cursor) = validity.lane_cursor(&lane_id) else { continue };
-                (cursor, validity.is_shared_lane(&lane_id))
+                (cursor, validity.is_shared_lane(&lane_id), validity.selection().is_some())
             };
             // Every change to a lane's standard run passes through here, so
             // this is where a shared flag is dropped once the standard store
@@ -585,6 +676,11 @@ where
                 next_nonce: self.standard_pending_end(lane_id, state_nonce),
             };
             if target == cursor {
+                // The standard run may have changed behind an unchanged cursor; the
+                // bridge mirror and selection views re-check the lane.
+                if shared && selecting {
+                    self.validity.pool.write().touch_selection_lane(lane_id);
+                }
                 continue;
             }
             let mut validity = self.validity.pool.write();
@@ -663,6 +759,7 @@ where
         if hashes.is_empty() {
             return Vec::new();
         }
+        self.drain_bridge_events(false);
         let [protocol_hashes, sidecar_hashes, validity_hashes] =
             self.partition_hashes_by_store(hashes);
         let mut removed = if protocol_hashes.is_empty() {
@@ -702,6 +799,8 @@ where
         removed.extend(validity_removed);
         self.release_from_guard(&removed);
         removed.extend(self.sync_validity_lanes(touched_lanes, false));
+        // Every removal above re-synced its lane.
+        self.drain_bridge_events(true);
         removed
     }
 
@@ -1177,7 +1276,11 @@ where
         // Capture the block-expiry bounds before `validated` is consumed below.
         let block_expiry_bound = Self::validity_block_expiry_bound(&validated);
         let flashblock_expiry_bound = Self::validity_flashblock_expiry_bound(&validated);
-        let result = match insert(validated) {
+        let inserted = insert(validated);
+        // Reth may have evicted other senders' transactions inside `insert`;
+        // reconcile them before any exit.
+        self.drain_bridge_events(false);
+        let result = match inserted {
             Ok(result) => result,
             Err(error) => {
                 if pre_admitted {
@@ -1434,6 +1537,12 @@ where
                         balance,
                         balance_epoch,
                     );
+                    drop(guard);
+                    drop(listeners);
+                    drop(pool);
+                    if store == PoolStore::Sidecar {
+                        self.sync_sidecar_lanes(lane_id, &[]);
+                    }
                     return Err(error);
                 }
                 // An incumbent from another store stays pooled there until the
@@ -1465,6 +1574,12 @@ where
                                 balance,
                                 balance_epoch,
                             );
+                            drop(guard);
+                            drop(listeners);
+                            drop(pool);
+                            if store == PoolStore::Sidecar {
+                                self.sync_sidecar_lanes(lane_id, &[]);
+                            }
                             return Err(Self::limit_rejection_error(hash, rejection));
                         }
                     }
@@ -1498,6 +1613,9 @@ where
                     drop(listeners);
                     drop(pool);
                     self.remove_block_expiry(&evicted);
+                    if store == PoolStore::Sidecar {
+                        self.sync_sidecar_lanes(lane_id, &evicted);
+                    }
                     return Err(PoolError::new(inserted_hash, PoolErrorKind::DiscardedOnInsert));
                 }
                 listeners.on_discarded(&evicted);
@@ -1538,19 +1656,7 @@ where
                     PoolStore::Protocol => {}
                 }
                 if store == PoolStore::Sidecar {
-                    // Validity lanes on the channels this insertion extended or
-                    // the eviction shortened follow the sidecar's pending run.
-                    self.sync_validity_lanes(
-                        lane_id
-                            .into_iter()
-                            .chain(
-                                evicted
-                                    .iter()
-                                    .filter_map(|evicted| Self::lane_id_of(&evicted.transaction)),
-                            )
-                            .map(|lane_id| (lane_id, None)),
-                        false,
-                    );
+                    self.sync_sidecar_lanes(lane_id, &evicted);
                 }
                 Ok(outcome.outcome)
             }
@@ -1561,6 +1667,21 @@ where
                 Err(PoolError::other(hash, error.to_string()))
             }
         }
+    }
+
+    /// Re-syncs the validity lanes on the channels a sidecar admission
+    /// extended, replaced in or shortened by eviction, whether it succeeded or not.
+    fn sync_sidecar_lanes(
+        &self,
+        lane_id: Option<LaneId>,
+        evicted: &[Arc<ValidPoolTransaction<T>>],
+    ) {
+        let evicted_lanes =
+            evicted.iter().filter_map(|evicted| Self::lane_id_of(&evicted.transaction));
+        self.sync_validity_lanes(
+            lane_id.into_iter().chain(evicted_lanes).map(|lane_id| (lane_id, None)),
+            false,
+        );
     }
 
     /// Wraps a validated lane transaction. Its sender and authority ids are
@@ -1617,8 +1738,10 @@ where
         AllTransactionsEvents::new(rx)
     }
 
-    /// `hold` is asked about resting roots after the read guards are released, so it may call
-    /// back into the pool.
+    /// With a hold reporting candidates, the validity pool's roots anchored at canonical state are
+    /// asked about once the read guards are released, before they are ranked
+    /// (see `BestTwoDTransactions::hold_resting_roots`). A hold with candidates that lends a
+    /// selection view goes through [`Self::selected_best_transactions`] instead.
     fn merged_best_transactions(
         &self,
         attributes: BestTransactionsAttributes,
@@ -1659,6 +1782,104 @@ where
         )
         .with_external_anchors(anchors)
         .with_bridged_descendants(bridged)
+    }
+
+    /// [`Self::merged_best_transactions`] for a build lineage keeping `view`.
+    ///
+    /// Every store is snapshotted in one interval under the admission lock: the
+    /// protocol pool events the bridge mirror observes are drained first, then
+    /// the lane stores' read guards are taken, the validity pool's pending runs
+    /// and the bridge mirror are shared in constant time, the journal entries
+    /// `view` has not seen are copied out, and the protocol iterator is
+    /// created. Outside every guard, `view` catches up, only its awake roots are
+    /// snapshotted and asked about, and roots `hold` holds become dormant.
+    /// Dormant roots, their runs and the standard transactions bridged behind
+    /// them are never visited; a same-build wake hands back the run as
+    /// snapshotted here.
+    fn selected_best_transactions(
+        &self,
+        attributes: BestTransactionsAttributes,
+        hold: &mut Box<dyn BestTransactionsHold<T>>,
+        view: &mut SelectionView,
+    ) -> MergeBestTransactions<T, O> {
+        let base_fee = attributes.basefee;
+        let snapshot = {
+            let _admission_guard = self.protocol_admission_lock.lock();
+            if self.validity.pool.read().selection().is_none() {
+                self.validity.pool.write().enable_selection();
+            }
+            let mut mirror = self.bridge_cache_enabled().then(|| self.bridges.lock());
+            if let Some(mirror) = mirror.as_mut()
+                && mirror.drain(|| self.protocol_pool.all_transactions_event_listener())
+            {
+                mirror.note_unknown();
+            }
+            let sidecar = self.sidecar.pool.read();
+            let validity = self.validity.pool.read();
+            validity.selection().map(|selection| {
+                let (cached, eager) = mirror.as_mut().map_or_else(
+                    || (imbl::HashMap::default(), self.bridged_descendants(&sidecar, &validity)),
+                    |mirror| {
+                        let cached = mirror.refresh(
+                            selection.journal(),
+                            validity.shared_lanes(),
+                            |lane_id| self.bridged_run(&sidecar, &validity, lane_id),
+                        );
+                        (cached, BridgedDescendants::default())
+                    },
+                );
+                (
+                    sidecar.best_transactions(self.ordering.clone(), base_fee),
+                    selection.runs().clone(),
+                    view.plan(selection.journal()),
+                    validity.lanes_ahead_of_state().clone(),
+                    cached,
+                    eager,
+                    self.protocol_pool.best_transactions_with_attributes(attributes),
+                )
+            })
+        };
+        let Some((sidecar, runs, sync, anchors, cached, eager, protocol)) = snapshot else {
+            return self.merged_best_transactions(attributes, Some(hold));
+        };
+        match sync {
+            SelectionSync::Rebuild => view.rebuild(runs.keys().copied()),
+            SelectionSync::Changed(changed) => {
+                view.refresh(&changed, |root| runs.get(root).map(|run| *run.root().hash()));
+            }
+        }
+        let mut validity =
+            BestTwoDTransactions::from_selection(&runs, view, self.ordering.clone(), base_fee);
+        view.record_skipped();
+        validity.hold_resting_roots(&anchors, &mut **hold);
+        for (hash, root) in validity.held_selection_roots() {
+            view.hold(root, hash);
+        }
+        MergeBestTransactions::new(
+            Box::new(protocol),
+            Box::new(sidecar),
+            Box::new(validity.ranked()),
+            self.ordering.clone(),
+            base_fee,
+        )
+        .with_external_anchors(anchors)
+        .with_bridged_descendants(eager)
+        .with_bridge_snapshot(cached)
+    }
+
+    /// The standard run queued behind shared validity lane `lane_id`'s pending
+    /// run, as [`Self::bridged_descendants`] collects it, or `None` when empty.
+    fn bridged_run(
+        &self,
+        sidecar: &TwoDNoncePool<T>,
+        validity: &TwoDNoncePool<T>,
+        lane_id: LaneId,
+    ) -> Option<BridgedRun<T>> {
+        let end =
+            validity.lane_pending_end(&lane_id).filter(|_| validity.is_shared_lane(&lane_id))?;
+        let run: Vec<_> =
+            (end..).map_while(|nonce| self.standard_transaction(sidecar, lane_id, nonce)).collect();
+        (!run.is_empty()).then(|| BridgedRun::from(run))
     }
 
     /// For each validity lane that shares its nonce space with a standard
@@ -2173,6 +2394,7 @@ where
         sender: Address,
     ) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
         let _admission_guard = self.protocol_admission_lock.lock();
+        self.drain_bridge_events(false);
         let mut removed = self.protocol_pool.remove_transactions_by_sender(sender);
         for store in self.lane_stores() {
             let mut pool = store.pool.write();
@@ -2184,6 +2406,7 @@ where
         }
         // The sender's validity lanes went with the rest, so nothing is left to re-anchor.
         self.release_from_guard(&removed);
+        self.drain_bridge_events(true);
         removed
     }
 
@@ -2252,7 +2475,7 @@ where
         );
         drop(validity);
         drop(sidecar);
-        self.protocol_pool.on_propagated(protocol_txs)
+        self.accounted_protocol_call(|| self.protocol_pool.on_propagated(protocol_txs));
     }
 
     fn get_transactions_by_sender(
@@ -2484,8 +2707,18 @@ where
         attributes: BestTransactionsAttributes,
         mut hold: Option<Box<dyn BestTransactionsHold<Self::Transaction>>>,
     ) -> Box<dyn ParkableBestTransactions<Self::Transaction>> {
+        let mut view = hold
+            .as_mut()
+            .filter(|hold| hold.has_candidates())
+            .and_then(|hold| hold.take_selection_view());
         let base_fee = attributes.basefee;
-        let merged = self.merged_best_transactions(attributes, hold.as_mut());
+        let merged = match (hold.as_mut(), view.as_mut()) {
+            (Some(hold), Some(view)) => self.selected_best_transactions(attributes, hold, view),
+            (hold, _) => self.merged_best_transactions(attributes, hold),
+        };
+        if let (Some(hold), Some(view)) = (hold.as_mut(), view) {
+            hold.restore_selection_view(view);
+        }
         Box::new(
             ParkedBestTransactions::new(merged, self.ordering.clone(), base_fee)
                 .with_hold(hold)
@@ -2509,7 +2742,7 @@ where
     type Block = <TransactionValidationTaskExecutor<BaseTransactionValidator<Client, T, Evm>> as TransactionValidator>::Block;
 
     fn set_block_info(&self, info: BlockInfo) {
-        self.protocol_pool.set_block_info(info)
+        self.accounted_protocol_call(|| self.protocol_pool.set_block_info(info));
     }
 
     fn on_canonical_state_change(
@@ -2526,61 +2759,73 @@ where
             .iter()
             .map(|account| (account.address, account.nonce))
             .collect();
-        // Free mined capacity atomically with admission before the heavier pool
-        // maintenance. The transaction is already canonical, so it no longer
-        // consumes an admission slot even until its pool entry is pruned below.
+        // The protocol pool call and every lane re-sync it needs run as one
+        // accounted section under the admission lock, so the bridge mirror never
+        // serves an iterator between a removal and its journal entry. The section
+        // ends before the expiry helpers, which take the lock themselves.
         {
             let _admission_guard = self.protocol_admission_lock.lock();
-            if reorg {
-                // The new branch can rebuild an earlier block or restart its flashblock indices.
-                *self.published_flashblock.write() = None;
-            }
-            let mut guard = self.guard.write();
-            for hash in &mined_transactions {
-                guard.release(hash);
-            }
-            let mut block_expiry = self.block_expiry.write();
-            for hash in &mined_transactions {
-                block_expiry.remove(hash);
-            }
-        }
-        self.protocol_pool.on_canonical_state_change(update);
-        // `protocol_pool.on_canonical_state_change` has already advanced the
-        // validator's head clock to this block.
-        let now_ms = self.validator().validator().block_timestamp_ms();
-        let mut touched_lanes = Vec::new();
-        for store in self.lane_stores() {
-            let mut pool = store.pool.write();
-            let pruned = pool.prune_mined(&mined_transactions);
-            let expired = pool.remove_expired_nonce_free(now_ms);
-            let mut listeners = store.listeners.write();
-            if !pruned.removed.is_empty() {
-                listeners.on_mined(&pruned.removed, block_hash);
-            }
-            listeners.on_lane_update(&pruned.lanes);
-            if !expired.is_empty() {
-                listeners.on_discarded(&expired);
-            }
-            // Lane-store maintenance lock order is pool -> listeners -> guard.
-            let mut guard = self.guard.write();
-            for transaction in pruned.removed.iter().chain(&pruned.lanes.discarded).chain(&expired)
+            // Free mined capacity atomically with admission before the heavier
+            // pool maintenance. The transaction is already canonical, so it no
+            // longer consumes an admission slot even until its pool entry is pruned.
             {
-                guard.release(transaction.hash());
+                if reorg {
+                    // The new branch can rebuild an earlier block or restart its flashblock indices.
+                    *self.published_flashblock.write() = None;
+                }
+                let mut guard = self.guard.write();
+                for hash in &mined_transactions {
+                    guard.release(hash);
+                }
+                let mut block_expiry = self.block_expiry.write();
+                for hash in &mined_transactions {
+                    block_expiry.remove(hash);
+                }
             }
-            // Mined lane transactions moved their channel's canonical nonce past
-            // them; a validity lane on the same channel follows that move.
-            touched_lanes.extend(pruned.removed.iter().filter_map(|transaction| {
-                Self::lane_id_of(&transaction.transaction)
-                    .map(|lane_id| (lane_id, Some(transaction.nonce().saturating_add(1))))
-            }));
-        }
-        {
+            self.drain_bridge_events(false);
+            if self.bridge_cache.load(Ordering::Acquire) == Self::BRIDGES_CACHED {
+                // A mined transaction's sender need not be among the changed accounts.
+                let mut bridges = self.bridges.lock();
+                for hash in &mined_transactions {
+                    bridges.note_removed(hash);
+                }
+            }
+            self.protocol_pool.on_canonical_state_change(update);
+            // `protocol_pool.on_canonical_state_change` has already advanced the
+            // validator's head clock to this block.
+            let now_ms = self.validator().validator().block_timestamp_ms();
+            let mut touched_lanes = Vec::new();
+            for store in self.lane_stores() {
+                let mut pool = store.pool.write();
+                let pruned = pool.prune_mined(&mined_transactions);
+                let expired = pool.remove_expired_nonce_free(now_ms);
+                let mut listeners = store.listeners.write();
+                if !pruned.removed.is_empty() {
+                    listeners.on_mined(&pruned.removed, block_hash);
+                }
+                listeners.on_lane_update(&pruned.lanes);
+                if !expired.is_empty() {
+                    listeners.on_discarded(&expired);
+                }
+                // Lane-store maintenance lock order is pool -> listeners -> guard.
+                let mut guard = self.guard.write();
+                for transaction in
+                    pruned.removed.iter().chain(&pruned.lanes.discarded).chain(&expired)
+                {
+                    guard.release(transaction.hash());
+                }
+                // Mined lane transactions moved their channel's canonical nonce past
+                // them; a validity lane on the same channel follows that move.
+                touched_lanes.extend(pruned.removed.iter().filter_map(|transaction| {
+                    Self::lane_id_of(&transaction.transaction)
+                        .map(|lane_id| (lane_id, Some(transaction.nonce().saturating_add(1))))
+                }));
+            }
             // Re-anchor protocol-nonce validity lanes to the new account nonces,
             // and re-check every lane that relied on a standard pending run the
             // protocol pool may have reshuffled on its own. On a reorg only the
             // reported account nonces may move an anchor back; the mined
             // transactions' nonces are lower bounds and stay forward-only.
-            let _admission_guard = self.protocol_admission_lock.lock();
             let account_lanes = changed_nonces
                 .into_iter()
                 .map(|(address, nonce)| ((address, U256::ZERO), Some(nonce)));
@@ -2594,6 +2839,9 @@ where
                 touched_lanes.extend(account_lanes);
                 self.sync_validity_lanes(touched_lanes, false);
             }
+            // The protocol pool removed only mined transactions and changed
+            // senders' stale ones, all journaled above.
+            self.drain_bridge_events(true);
         }
         self.expire_due_buckets(now);
         self.expire_by_block(block_number);
@@ -2608,6 +2856,7 @@ where
         // dropped reservation cannot be recreated from an older validation
         // snapshot after reth publishes the transaction.
         let _admission_guard = self.protocol_admission_lock.lock();
+        self.drain_bridge_events(false);
         for store in self.lane_stores() {
             store.pool.write().apply_balance_updates(
                 accounts.iter().map(|account| (account.address, account.balance)),
@@ -2649,8 +2898,10 @@ where
         }
         drop(guard);
         // The protocol pool re-sorted these senders' runs and took their
-        // reported nonces as-is; validity lanes behind them follow.
+        // reported nonces as-is; validity lanes behind them follow. It removes
+        // only these senders' transactions, so the section is accounted.
         self.sync_validity_lanes(validity_lanes, true);
+        self.drain_bridge_events(true);
     }
 
     fn delete_blob(&self, tx: B256) {
@@ -2948,9 +3199,10 @@ mod tests {
 
     use super::*;
     use crate::{
-        BaseL1BlockInfo, BaseOrdering, BasePooledTransaction, BuilderApiImpl, BuilderApiServer,
-        HOLD_INTERRUPT_INTERVAL, LimitClass, NoExtensions, ValidatedTransaction, ValidityOperator,
-        ValidityPredicate, WatchSet,
+        BRIDGE_EVENT_DRAIN_LIMIT, BaseL1BlockInfo, BaseOrdering, BasePooledTransaction,
+        BuilderApiImpl, BuilderApiServer, HOLD_INTERRUPT_INTERVAL, LimitClass, NoExtensions,
+        SELECTION_JOURNAL_CAPACITY, SelectionChanges, SelectionView, ValidatedTransaction,
+        ValidityOperator, ValidityPredicate, WatchSet,
     };
 
     fn test_chain_id() -> u64 {
@@ -3340,8 +3592,8 @@ mod tests {
                 validator
             });
         let ordering = BaseOrdering::default();
-        let pool = Pool::new(validator, ordering.clone(), blob_store, config);
-        (BaseTransactionPool::new(pool, ordering).with_guard_limits(GuardLimits::default()), client)
+        let pool = BaseTransactionPool::from_parts(validator, ordering, blob_store, config);
+        (pool.with_guard_limits(GuardLimits::default()), client)
     }
 
     fn fund(client: &MockEthProvider<BasePrimitives, Arc<BaseChainSpec>>, account: Address) {
@@ -4420,6 +4672,63 @@ mod tests {
         assert!(pool.guard.read().contains(&original_hash));
         assert!(!pool.guard.read().contains(&replacement_hash));
         assert!(matches!(replacement_events.next().await, Some(TransactionEvent::Discarded)));
+    }
+
+    #[tokio::test]
+    async fn rolled_back_sidecar_cursor_advance_drops_only_new_bridged_snapshots() {
+        let (pool, client) = build_integration_pool();
+        let signer = funded_signer(&client);
+        let channel = U256::from(1);
+        let root = add(&pool, validity_8130(&signer, channel, 0, 1_000)).await;
+        let bridged = add(&pool, self_paid_eoa_8130(&signer, channel, 1, 0, 1_000)).await;
+        let hold = RecordingHold::new(&pool, vec![root]);
+        let mut view = SelectionView::default();
+        let mut frozen = hold.parking_with_view(0, &mut view);
+        let successor = self_paid_eoa_8130(&signer, channel, 2, 0, 1_000);
+        let successor_hash = *successor.hash();
+        let balance_epoch = pool.sidecar.pool.read().balance_epoch();
+        let validated = match pool
+            .validator()
+            .validate_transaction(TransactionOrigin::Local, successor)
+            .await
+        {
+            TransactionValidationOutcome::Valid {
+                balance,
+                bytecode_hash,
+                transaction,
+                propagate,
+                authorities,
+                ..
+            } => TransactionValidationOutcome::Valid {
+                balance,
+                state_nonce: 2,
+                bytecode_hash,
+                transaction,
+                propagate,
+                authorities,
+            },
+            other => panic!("successor must validate: {other:?}"),
+        };
+        pool.validator().validator().clear_limit_class_cache();
+        let error = pool
+            .add_validated_lane_transaction(
+                PoolStore::Sidecar,
+                validated,
+                TransactionOrigin::Local,
+                balance_epoch,
+            )
+            .expect_err("stale classification must roll back the insert");
+        assert!(error.to_string().contains("classification changed during validation"));
+        assert!(pool.get(&bridged).is_none(), "cursor advancement discarded the bridge");
+        assert!(pool.get(&successor_hash).is_none(), "rollback removed the newcomer");
+        assert!(frozen.promote(root));
+        assert_eq!(drain_committing(frozen.as_mut()), vec![root, bridged]);
+        let mut next = hold.parking_with_view(0, &mut view);
+        next.promote(root);
+        assert!(
+            !drain_committing(next.as_mut()).contains(&bridged),
+            "rollback must reconcile a removed bridge before another creation"
+        );
     }
 
     #[tokio::test]
@@ -7139,6 +7448,10 @@ mod tests {
         assert!(is_delegated_validity_rejection(&error), "{error:?}");
     }
 
+    /// A resting hash no pool transaction has: a hold resting only it reports candidates, so
+    /// creation borrows its view, yet it holds nothing.
+    const ABSENT_RESTING: TxHash = TxHash::repeat_byte(0xab);
+
     /// What a [`RecordingHold`] was asked and how it answered.
     #[derive(Default)]
     struct HoldLog {
@@ -7159,12 +7472,19 @@ mod tests {
     struct RecordingHold {
         log: Arc<Mutex<HoldLog>>,
         pool: IntegrationPool,
+        /// The view a hold keeping one lends the pool, as a resting set's hold does.
+        view: Option<Arc<Mutex<SelectionView>>>,
     }
 
     impl RecordingHold {
         fn new(pool: &IntegrationPool, resting: Vec<TxHash>) -> Self {
             let log = HoldLog { resting, ..HoldLog::default() };
-            Self { log: Arc::new(Mutex::new(log)), pool: pool.clone() }
+            Self { log: Arc::new(Mutex::new(log)), pool: pool.clone(), view: None }
+        }
+
+        fn keeping_view(mut self) -> Self {
+            self.view = Some(Arc::default());
+            self
         }
 
         fn checked(&self) -> Vec<TxHash> {
@@ -7179,6 +7499,23 @@ mod tests {
                 BestTransactionsAttributes::new(base_fee, None),
                 Some(Box::new(self.clone())),
             )
+        }
+
+        /// Creates an iterator through a hold that lends `view`, as a resting set's hold lends its
+        /// lineage's view, and puts the view the pool hands back into `view`.
+        fn parking_with_view(
+            &self,
+            base_fee: u64,
+            view: &mut SelectionView,
+        ) -> Box<dyn ParkableBestTransactions<BasePooledTransaction>> {
+            let lent = Arc::new(Mutex::new(std::mem::take(view)));
+            let hold = Self { view: Some(Arc::clone(&lent)), ..self.clone() };
+            let best = self.pool.best_transactions_with_attributes_and_parking(
+                BestTransactionsAttributes::new(base_fee, None),
+                Some(Box::new(hold)),
+            );
+            *view = std::mem::take(&mut *lent.lock());
+            best
         }
     }
 
@@ -7215,11 +7552,40 @@ mod tests {
             let log = self.log.lock();
             log.interrupt_after.is_some_and(|after| log.checked.len() >= after)
         }
+
+        fn take_selection_view(&mut self) -> Option<SelectionView> {
+            self.view.as_ref().map(|view| std::mem::take(&mut *view.lock()))
+        }
+
+        fn restore_selection_view(&mut self, view: SelectionView) {
+            if let Some(kept) = &self.view {
+                *kept.lock() = view;
+            }
+        }
     }
 
     fn resting_1559(signer: &PrivateKeySigner, nonce: u64, tip: u128) -> BasePooledTransaction {
         signed_1559_with_fees(signer, nonce, 1_000, tip)
             .with_validity_predicates(resting_predicates())
+    }
+
+    #[tokio::test]
+    async fn an_empty_hold_lends_no_view_and_activates_no_selection_but_observes_later_rests() {
+        let (pool, client) = build_integration_pool();
+        let a = funded_signer(&client);
+        let root = add(&pool, resting_1559(&a, 0, 100)).await;
+        let hold = RecordingHold::new(&pool, vec![]).keeping_view();
+        let mut best = hold.parking(0);
+        let kept = hold.view.as_ref().expect("the hold keeps a view");
+        assert!(kept.lock().awake().is_empty(), "the view was not lent to creation");
+        assert!(pool.validity.pool.read().selection().is_none(), "no selection index");
+        assert!(!pool.bridges.lock().is_observing(), "no bridge observation");
+
+        hold.log.lock().resting.push(root);
+        assert!(drain_committing(best.as_mut()).is_empty());
+        assert_eq!(hold.checked(), vec![root]);
+        assert!(best.promote(root));
+        assert_eq!(drain_committing(best.as_mut()), vec![root]);
     }
 
     /// Yields every candidate, committing each as the build loop would, and returns their hashes.
@@ -7449,7 +7815,73 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn an_iterator_keeps_the_bridged_successor_it_snapshotted() {
+    async fn a_promoted_root_releases_only_its_priced_run_and_nothing_once_rejected() {
+        const TAIL_UNDERPRICED_BASE_FEE: u64 = 2_000;
+        let (pool, client) = build_integration_pool();
+        let [a, u] = [(); 2].map(|_| funded_signer(&client));
+        let root = add(
+            &pool,
+            signed_1559_with_fees(&a, 0, 3_000, 100).with_validity_predicates(resting_predicates()),
+        )
+        .await;
+        let tail = add(&pool, resting_1559(&a, 1, 100)).await;
+        let bridged = add(&pool, signed_1559_with_fees(&a, 2, 3_000, 900)).await;
+        let unrelated = add(&pool, signed_1559_with_fees(&u, 0, 3_000, 50)).await;
+        let hold = RecordingHold::new(&pool, vec![root]);
+
+        // The underpriced tail ends the run at the root, and the bridged transaction, which would
+        // outbid everything, is never released.
+        let mut best = hold.parking(TAIL_UNDERPRICED_BASE_FEE);
+        assert!(best.promote(root));
+        assert_eq!(drain_committing(best.as_mut()), vec![root, unrelated]);
+
+        let mut best = hold.parking(0);
+        assert!(best.promote(root));
+        assert_eq!(drain_committing(best.as_mut()), vec![root, tail, bridged, unrelated]);
+
+        for base_fee in [TAIL_UNDERPRICED_BASE_FEE, 0] {
+            let mut best = hold.parking(base_fee);
+            assert!(best.promote(root));
+            let promoted = best.next().unwrap();
+            assert_eq!(*promoted.hash(), root);
+            best.mark_invalid(&promoted, InvalidPoolTransactionError::Underpriced);
+            assert_eq!(drain_committing(best.as_mut()), vec![unrelated], "base fee {base_fee}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_root_woken_after_its_tail_was_replaced_yields_the_tail_frozen_at_creation() {
+        let (pool, client) = build_integration_pool();
+        let [a, u] = [(); 2].map(|_| funded_signer(&client));
+        let root = add(&pool, resting_1559(&a, 0, 100)).await;
+        let frozen_tail = add(&pool, resting_1559(&a, 1, 100)).await;
+        let trigger = add(&pool, signed_1559_with_fees(&u, 0, 1_000, 900)).await;
+        let hold = RecordingHold::new(&pool, vec![root]);
+        let mut best = hold.parking(0);
+
+        let replacement = add(
+            &pool,
+            signed_1559_with_fees(&a, 1, 1_100, 200).with_validity_predicates(resting_predicates()),
+        )
+        .await;
+        assert_store(&pool, replacement, PoolStore::Validity);
+        assert_gone(&pool, frozen_tail);
+
+        let first = best.next().unwrap();
+        assert_eq!(*first.hash(), trigger);
+        best.mark_committed(&first);
+        assert!(best.promote(root), "the commit wakes the root in the same build");
+        assert_eq!(drain_committing(best.as_mut()), vec![root, frozen_tail]);
+
+        let mut next = hold.parking(0);
+        assert!(next.promote(root));
+        assert_eq!(drain_committing(next.as_mut()), vec![trigger, root, replacement]);
+    }
+
+    /// The standard successor is replaced without moving the validity lane's pending end, so
+    /// nothing on the validity side of the lane changes.
+    #[tokio::test]
+    async fn a_bridged_successor_replaced_after_creation_is_frozen_until_the_next_iterator() {
         let (pool, client) = build_integration_pool();
         let a = funded_signer(&client);
         let root = add(&pool, resting_1559(&a, 0, 100)).await;
@@ -7469,6 +7901,994 @@ mod tests {
         assert!(drain_committing(next.as_mut()).is_empty());
         assert!(next.promote(root));
         assert_eq!(drain_committing(next.as_mut()), vec![root, replacement]);
+    }
+
+    #[tokio::test]
+    async fn a_promoted_single_root_releases_its_bridged_successor() {
+        let (pool, client) = build_integration_pool();
+        let a = funded_signer(&client);
+        let root = add(&pool, resting_1559(&a, 0, 100)).await;
+        let bridged = add(&pool, signed_1559_with_fees(&a, 1, 1_000, 100)).await;
+        let hold = RecordingHold::new(&pool, vec![root]);
+        let mut best = hold.parking(0);
+
+        assert!(drain_committing(best.as_mut()).is_empty());
+        assert!(best.promote(root));
+        assert_eq!(drain_committing(best.as_mut()), vec![root, bridged]);
+    }
+
+    #[tokio::test]
+    async fn concurrent_iterators_hold_only_the_roots_their_own_holds_rest() {
+        let (pool, client) = build_integration_pool();
+        let [a, b] = [(); 2].map(|_| funded_signer(&client));
+        let a0 = add(&pool, resting_1559(&a, 0, 900)).await;
+        let b0 = add(&pool, resting_1559(&b, 0, 500)).await;
+        let resting_a = RecordingHold::new(&pool, vec![a0]);
+        let resting_b = RecordingHold::new(&pool, vec![b0]);
+        let resting_none = RecordingHold::new(&pool, Vec::new());
+
+        let mut first = resting_a.parking(0);
+        let mut second = resting_b.parking(0);
+        let mut third = resting_none.parking(0);
+        assert_eq!(drain_committing(first.as_mut()), vec![b0]);
+        assert_eq!(drain_committing(second.as_mut()), vec![a0]);
+        assert_eq!(drain_committing(third.as_mut()), vec![a0, b0]);
+        assert!(first.promote(a0));
+        assert_eq!(drain_committing(first.as_mut()), vec![a0]);
+    }
+
+    #[tokio::test]
+    async fn a_promoted_root_releases_its_whole_long_tail_in_nonce_order() {
+        const LANE_LENGTH: u64 = 12;
+        let (pool, client) = build_integration_pool();
+        let [a, u] = [(); 2].map(|_| funded_signer(&client));
+        let mut lane = Vec::new();
+        for nonce in 0..LANE_LENGTH {
+            lane.push(add(&pool, resting_1559(&a, nonce, 100)).await);
+        }
+        let unrelated = add(&pool, signed_1559_with_fees(&u, 0, 1_000, 50)).await;
+        let hold = RecordingHold::new(&pool, vec![lane[0]]);
+
+        let mut best = hold.parking(0);
+        assert_eq!(hold.checked(), vec![lane[0]], "only the root is asked about");
+        assert_eq!(drain_committing(best.as_mut()), vec![unrelated]);
+        assert!(best.promote(lane[0]));
+        assert_eq!(drain_committing(best.as_mut()), lane);
+    }
+
+    /// A sender's standard lane, a resting 2D-nonce channel and a resting nonce-free transaction.
+    #[tokio::test]
+    async fn held_channel_and_nonce_free_roots_leave_the_senders_other_lanes_selectable() {
+        let channel = U256::from(7);
+        let (pool, client) = build_integration_pool();
+        let s = funded_signer(&client);
+        let standard = add(&pool, signed_1559_with_fees(&s, 0, 1_000, 50)).await;
+        let channel_root = add(&pool, validity_8130(&s, channel, 0, 1_000)).await;
+        let channel_tail = add(&pool, validity_8130(&s, channel, 1, 1_000)).await;
+        let nonce_free = add(
+            &pool,
+            signed_nonce_free_tx(&s, INTEGRATION_POOL_NOW_MS + 5_000, 1_000)
+                .with_validity_predicates(resting_predicates()),
+        )
+        .await;
+        let hold = RecordingHold::new(&pool, vec![channel_root, nonce_free]);
+
+        let mut best = hold.parking(0);
+        assert_eq!(drain_committing(best.as_mut()), vec![standard]);
+        assert!(!hold.checked().contains(&channel_tail));
+        assert!(best.promote(nonce_free));
+        assert_eq!(drain_committing(best.as_mut()), vec![nonce_free]);
+        assert!(best.promote(channel_root));
+        assert_eq!(drain_committing(best.as_mut()), vec![channel_root, channel_tail]);
+    }
+
+    #[tokio::test]
+    async fn a_hold_that_rests_nothing_matches_the_unheld_iterator() {
+        let (pool, client) = build_integration_pool();
+        let [a, b, s] = [(); 3].map(|_| funded_signer(&client));
+        add(&pool, resting_1559(&a, 0, 900)).await;
+        add(&pool, resting_1559(&a, 1, 850)).await;
+        add(&pool, signed_1559_with_fees(&a, 2, 1_000, 950)).await;
+        add(&pool, signed_1559_with_fees(&b, 0, 1_000, 300)).await;
+        add(&pool, signed_1559_with_fees(&s, 0, 1_000, 1)).await;
+        add(&pool, resting_1559(&s, 1, 700)).await;
+        add(&pool, validity_8130(&b, U256::from(3), 0, 1_000)).await;
+        let hold = RecordingHold::new(&pool, Vec::new());
+
+        let mut held = hold.parking(0);
+        let attributes = BestTransactionsAttributes::new(0, None);
+        let mut unheld = pool.best_transactions_with_attributes_and_parking(attributes, None);
+        assert_eq!(drain_committing(held.as_mut()), drain_committing(unheld.as_mut()));
+    }
+
+    #[tokio::test]
+    async fn a_held_root_stays_held_for_many_blocks_and_leaves_once_it_expires() {
+        const SHORT_EXPIRY_BLOCK: u64 = 5;
+        const BLOCKS_BUILT: u64 = 12;
+        let (pool, client) = build_integration_pool();
+        let [a, b, u] = [(); 3].map(|_| funded_signer(&client));
+        let lasting = add(&pool, resting_1559(&a, 0, 100)).await;
+        let expiring = add(
+            &pool,
+            signed_1559_with_fees(&b, 0, 1_000, 100).with_validity_predicates(vec![
+                ValidityPredicate::BlockNumber {
+                    op: ValidityOperator::LessThanOrEqual,
+                    value: U256::from(SHORT_EXPIRY_BLOCK),
+                },
+            ]),
+        )
+        .await;
+        let unrelated = add(&pool, signed_1559_with_fees(&u, 0, 1_000, 50)).await;
+        let hold = RecordingHold::new(&pool, vec![lasting, expiring]);
+
+        for block in 1..=BLOCKS_BUILT {
+            commit_block(&pool, block, Vec::new(), Vec::new());
+            let asked_before = hold.checked().len();
+            let mut best = hold.parking(0);
+            assert_eq!(drain_committing(best.as_mut()), vec![unrelated], "block {block}");
+            let asked = hold.checked()[asked_before..].contains(&expiring);
+            assert_eq!(asked, block < SHORT_EXPIRY_BLOCK, "block {block}");
+            assert_eq!(best.promote(expiring), block < SHORT_EXPIRY_BLOCK, "block {block}");
+        }
+        assert_gone(&pool, expiring);
+        let mut best = hold.parking(0);
+        assert!(best.promote(lasting));
+        assert_eq!(drain_committing(best.as_mut()), vec![lasting, unrelated]);
+    }
+
+    #[tokio::test]
+    async fn a_root_removed_and_added_again_is_asked_about_again() {
+        let (pool, client) = build_integration_pool();
+        let a = funded_signer(&client);
+        let transaction = resting_1559(&a, 0, 100);
+        let root = add(&pool, transaction.clone()).await;
+        let hold = RecordingHold::new(&pool, vec![root]);
+        assert!(hold.parking(0).next().is_none());
+
+        assert_eq!(pool.remove_transactions(vec![root]).len(), 1);
+        assert_gone(&pool, root);
+        assert!(hold.parking(0).next().is_none());
+        assert_eq!(hold.checked(), vec![root], "a removed root is not asked about");
+
+        add(&pool, transaction).await;
+        let mut best = hold.parking(0);
+        assert_eq!(hold.checked(), vec![root, root], "the re-added root is asked about again");
+        assert!(best.promote(root));
+        assert_eq!(drain_committing(best.as_mut()), vec![root]);
+    }
+
+    #[tokio::test]
+    async fn a_view_does_not_ask_again_about_roots_it_holds_while_their_lanes_are_unchanged() {
+        let (pool, client) = build_integration_pool();
+        let [a, b, u] = [(); 3].map(|_| funded_signer(&client));
+        let a0 = add(&pool, resting_1559(&a, 0, 900)).await;
+        let b0 = add(&pool, resting_1559(&b, 0, 500)).await;
+        let unrelated = add(&pool, signed_1559_with_fees(&u, 0, 1_000, 50)).await;
+        let hold = RecordingHold::new(&pool, vec![a0, b0]);
+        let mut view = SelectionView::default();
+        let mut first = hold.parking_with_view(0, &mut view);
+        assert_eq!(drain_committing(first.as_mut()), vec![unrelated]);
+        drop(first);
+        let asked = hold.checked().len();
+
+        let mut second = hold.parking_with_view(0, &mut view);
+        let asked_again = hold.checked().split_off(asked);
+        assert!(asked_again.is_empty(), "unchanged held roots were asked again: {asked_again:?}");
+        assert_eq!(drain_committing(second.as_mut()), vec![unrelated]);
+        assert!(second.promote(a0), "a root held by the view still wakes in the same build");
+        assert_eq!(drain_committing(second.as_mut()), vec![a0]);
+    }
+
+    #[tokio::test]
+    async fn a_view_asks_again_only_about_the_root_whose_lane_changed() {
+        let (pool, client) = build_integration_pool();
+        let [a, b] = [(); 2].map(|_| funded_signer(&client));
+        let a0 = add(&pool, resting_1559(&a, 0, 900)).await;
+        let b0 = add(&pool, resting_1559(&b, 0, 500)).await;
+        let hold = RecordingHold::new(&pool, vec![a0, b0]);
+        let mut view = SelectionView::default();
+        assert!(hold.parking_with_view(0, &mut view).next().is_none());
+        let asked = hold.checked().len();
+
+        let replacement = add(
+            &pool,
+            signed_1559_with_fees(&a, 0, 1_100, 1_000)
+                .with_validity_predicates(resting_predicates()),
+        )
+        .await;
+        let mut best = hold.parking_with_view(0, &mut view);
+        assert_eq!(hold.checked().split_off(asked), vec![replacement]);
+        assert_eq!(drain_committing(best.as_mut()), vec![replacement]);
+    }
+
+    #[tokio::test]
+    async fn each_view_holds_only_the_roots_its_own_hold_rested() {
+        let (pool, client) = build_integration_pool();
+        let a = funded_signer(&client);
+        let a0 = add(&pool, resting_1559(&a, 0, 900)).await;
+        let holding = RecordingHold::new(&pool, vec![a0]);
+        let fresh = RecordingHold::new(&pool, vec![ABSENT_RESTING]);
+        let mut holding_view = SelectionView::default();
+        let mut fresh_view = SelectionView::default();
+
+        let mut held = holding.parking_with_view(0, &mut holding_view);
+        assert!(drain_committing(held.as_mut()).is_empty());
+        let mut unheld = fresh.parking_with_view(0, &mut fresh_view);
+        assert_eq!(drain_committing(unheld.as_mut()), vec![a0]);
+        let mut held_again = holding.parking_with_view(0, &mut holding_view);
+        assert!(drain_committing(held_again.as_mut()).is_empty());
+    }
+
+    /// Hashes `hold` was asked about since `asked` earlier checks.
+    fn asked_since(hold: &RecordingHold, asked: usize) -> Vec<TxHash> {
+        hold.checked().split_off(asked)
+    }
+
+    #[tokio::test]
+    async fn a_dormant_root_woken_in_the_same_build_yields_its_tail_frozen_at_creation() {
+        let (pool, client) = build_integration_pool();
+        let [a, u] = [(); 2].map(|_| funded_signer(&client));
+        let root = add(&pool, resting_1559(&a, 0, 100)).await;
+        let frozen_tail = add(&pool, resting_1559(&a, 1, 100)).await;
+        let trigger = add(&pool, signed_1559_with_fees(&u, 0, 1_000, 900)).await;
+        let hold = RecordingHold::new(&pool, vec![root]);
+        let mut view = SelectionView::default();
+        drop(hold.parking_with_view(0, &mut view));
+        let asked = hold.checked().len();
+
+        let mut best = hold.parking_with_view(0, &mut view);
+        assert!(asked_since(&hold, asked).is_empty(), "the dormant root is not asked about");
+        let replacement = add(
+            &pool,
+            signed_1559_with_fees(&a, 1, 1_100, 200).with_validity_predicates(resting_predicates()),
+        )
+        .await;
+        let first = best.next().unwrap();
+        assert_eq!(*first.hash(), trigger);
+        best.mark_committed(&first);
+        assert!(best.promote(root), "the commit wakes the dormant root in the same build");
+        assert_eq!(drain_committing(best.as_mut()), vec![root, frozen_tail]);
+
+        let mut next = hold.parking_with_view(0, &mut view);
+        assert_eq!(asked_since(&hold, asked), vec![root], "its lane changed, so it is asked again");
+        assert!(next.promote(root));
+        assert_eq!(drain_committing(next.as_mut()), vec![trigger, root, replacement]);
+    }
+
+    #[tokio::test]
+    async fn a_bridged_successor_replaced_behind_a_dormant_root_reaches_the_next_iterator() {
+        let (pool, client) = build_integration_pool();
+        let a = funded_signer(&client);
+        let root = add(&pool, resting_1559(&a, 0, 100)).await;
+        let bridged = add(&pool, signed_1559_with_fees(&a, 1, 1_000, 100)).await;
+        let hold = RecordingHold::new(&pool, vec![root]);
+        let mut view = SelectionView::default();
+        drop(hold.parking_with_view(0, &mut view));
+        let mut best = hold.parking_with_view(0, &mut view);
+        let asked = hold.checked().len();
+
+        let replacement = add(&pool, signed_1559_with_fees(&a, 1, 1_100, 200)).await;
+        assert!(drain_committing(best.as_mut()).is_empty());
+        assert!(best.promote(root));
+        assert_eq!(drain_committing(best.as_mut()), vec![root, bridged]);
+
+        let mut next = hold.parking_with_view(0, &mut view);
+        assert_eq!(asked_since(&hold, asked), vec![root], "the bridged replacement is journaled");
+        assert!(next.promote(root));
+        assert_eq!(drain_committing(next.as_mut()), vec![root, replacement]);
+    }
+
+    #[tokio::test]
+    async fn a_root_the_owner_wakes_is_asked_about_by_the_next_iterator() {
+        let (pool, client) = build_integration_pool();
+        let a = funded_signer(&client);
+        let root = add(&pool, resting_1559(&a, 0, 100)).await;
+        let hold = RecordingHold::new(&pool, vec![root]);
+        let mut view = SelectionView::default();
+        drop(hold.parking_with_view(0, &mut view));
+        assert_eq!(view.take_changes().dormant, vec![root]);
+
+        drop(hold.parking_with_view(0, &mut view));
+        assert_eq!(view.take_changes().skipped, 1, "creation counts the dormant root it skipped");
+        assert!(view.wake(root));
+        let asked = hold.checked().len();
+        drop(hold.parking_with_view(0, &mut view));
+        assert_eq!(asked_since(&hold, asked), vec![root]);
+    }
+
+    #[tokio::test]
+    async fn a_dormant_root_that_expires_or_is_removed_is_reported_removed() {
+        const EXPIRY_BLOCK: u64 = 5;
+        let (pool, client) = build_integration_pool();
+        let [a, b] = [(); 2].map(|_| funded_signer(&client));
+        let expiring = add(
+            &pool,
+            signed_1559_with_fees(&a, 0, 1_000, 100).with_validity_predicates(vec![
+                ValidityPredicate::BlockNumber {
+                    op: ValidityOperator::LessThanOrEqual,
+                    value: U256::from(EXPIRY_BLOCK),
+                },
+            ]),
+        )
+        .await;
+        let removed = add(&pool, resting_1559(&b, 0, 100)).await;
+        let hold = RecordingHold::new(&pool, vec![expiring, removed]);
+        let mut view = SelectionView::default();
+        drop(hold.parking_with_view(0, &mut view));
+        view.take_changes();
+
+        commit_block(&pool, EXPIRY_BLOCK, Vec::new(), Vec::new());
+        assert_gone(&pool, expiring);
+        assert_eq!(pool.remove_transactions(vec![removed]).len(), 1);
+        let asked = hold.checked().len();
+        let mut best = hold.parking_with_view(0, &mut view);
+        let mut reported = view.take_changes().removed;
+        reported.sort();
+        let mut expected = vec![expiring, removed];
+        expected.sort();
+        assert_eq!(reported, expected);
+        assert!(asked_since(&hold, asked).is_empty());
+        assert!(best.next().is_none());
+    }
+
+    #[tokio::test]
+    async fn an_overflowed_journal_rebuilds_the_view_and_asks_about_every_root_again() {
+        let (pool, client) = build_integration_pool();
+        let [a, b, u] = [(); 3].map(|_| funded_signer(&client));
+        let a0 = add(&pool, resting_1559(&a, 0, 900)).await;
+        let b0 = add(&pool, resting_1559(&b, 0, 500)).await;
+        let hold = RecordingHold::new(&pool, vec![a0, b0]);
+        let mut view = SelectionView::default();
+        drop(hold.parking_with_view(0, &mut view));
+        view.take_changes();
+        {
+            let mut validity = pool.validity.pool.write();
+            for _ in 0..=SELECTION_JOURNAL_CAPACITY {
+                validity.touch_selection_lane((u.address(), U256::ZERO));
+            }
+        }
+
+        let asked = hold.checked().len();
+        let mut best = hold.parking_with_view(0, &mut view);
+        let mut asked_again = asked_since(&hold, asked);
+        asked_again.sort();
+        let mut roots = vec![a0, b0];
+        roots.sort();
+        assert_eq!(asked_again, roots);
+        let changes = view.take_changes();
+        assert!(changes.reset);
+        assert!(best.next().is_none(), "no stale dormancy and no lost hold");
+    }
+
+    /// The hold empties after its first creation, so the creations that follow lend no view while
+    /// the bridged successor is replaced and the journal overflows. The view catches up only once
+    /// the hold rests again, as a resting set whose members all woke and later rest anew.
+    #[tokio::test]
+    async fn a_view_unlent_while_its_hold_was_empty_catches_up_when_the_hold_rests_again() {
+        let (pool, client) = build_integration_pool();
+        let [a, u] = [(); 2].map(|_| funded_signer(&client));
+        let root = add(&pool, resting_1559(&a, 0, 100)).await;
+        add(&pool, signed_1559_with_fees(&a, 1, 1_000, 100)).await;
+        let unrelated = add(&pool, signed_1559_with_fees(&u, 0, 1_000, 50)).await;
+        let hold = RecordingHold::new(&pool, vec![root]);
+        let mut view = SelectionView::default();
+        let mut first = hold.parking_with_view(0, &mut view);
+        assert_eq!(drain_committing(first.as_mut()), vec![unrelated]);
+        assert_eq!(view.dormant_len(), 1);
+        view.take_changes();
+
+        hold.log.lock().resting.clear();
+        assert!(view.wake(root), "removing the member wakes its dormant root");
+        let attributes = BestTransactionsAttributes::new(0, None);
+        let mut matches_unheld = |step: &str| {
+            let mut selected = hold.parking_with_view(0, &mut view);
+            let mut unheld = pool.best_transactions_with_attributes_and_parking(attributes, None);
+            assert_eq!(
+                drain_committing(selected.as_mut()),
+                drain_committing(unheld.as_mut()),
+                "{step}"
+            );
+        };
+        matches_unheld("emptied");
+        let replacement = add(&pool, signed_1559_with_fees(&a, 1, 1_100, 1_050)).await;
+        matches_unheld("bridged successor replaced");
+        {
+            let mut validity = pool.validity.pool.write();
+            for _ in 0..=SELECTION_JOURNAL_CAPACITY {
+                validity.touch_selection_lane((u.address(), U256::ZERO));
+            }
+        }
+        matches_unheld("journal overflowed");
+        assert_eq!(view.take_changes(), SelectionChanges::default(), "no creation borrowed it");
+
+        hold.log.lock().resting.push(root);
+        let asked = hold.checked().len();
+        let mut best = hold.parking_with_view(0, &mut view);
+        assert_eq!(asked_since(&hold, asked), vec![root]);
+        let changes = view.take_changes();
+        assert!(changes.reset, "the journal dropped entries the unlent view had not seen");
+        assert_eq!(changes.dormant, vec![root]);
+        assert_eq!(drain_committing(best.as_mut()), vec![unrelated]);
+        assert!(best.promote(root));
+        assert_eq!(drain_committing(best.as_mut()), vec![root, replacement]);
+    }
+
+    #[tokio::test]
+    async fn an_interrupted_view_creation_leaves_its_unasked_roots_awake() {
+        let (pool, client) = build_integration_pool();
+        let count = HOLD_INTERRUPT_INTERVAL as usize + 1;
+        let mut roots = Vec::with_capacity(count);
+        for _ in 0..count {
+            roots.push(add(&pool, resting_1559(&funded_signer(&client), 0, 100)).await);
+        }
+        let hold = RecordingHold::new(&pool, roots.clone());
+        let mut view = SelectionView::default();
+
+        hold.log.lock().interrupt_after = Some(1);
+        drop(hold.parking_with_view(0, &mut view));
+        let asked = hold.checked();
+        assert_eq!(asked.len(), HOLD_INTERRUPT_INTERVAL as usize);
+        hold.log.lock().interrupt_after = None;
+
+        let mut best = hold.parking_with_view(0, &mut view);
+        let unasked: Vec<_> = roots.iter().filter(|root| !asked.contains(root)).copied().collect();
+        assert_eq!(asked_since(&hold, asked.len()), unasked, "only the unasked root is asked");
+        assert!(best.next().is_none());
+        for root in &roots {
+            assert!(best.promote(*root), "every root wakes, dormant or held at this creation");
+        }
+        assert_eq!(drain_committing(best.as_mut()).len(), count);
+    }
+
+    #[tokio::test]
+    async fn dormant_channel_and_nonce_free_roots_wake_independently() {
+        let (pool, client) = build_integration_pool();
+        let s = funded_signer(&client);
+        let channel = U256::from(7);
+        let standard = add(&pool, signed_1559_with_fees(&s, 0, 1_000, 50)).await;
+        let channel_root = add(&pool, validity_8130(&s, channel, 0, 1_000)).await;
+        let channel_tail = add(&pool, validity_8130(&s, channel, 1, 1_000)).await;
+        let nonce_free = add(
+            &pool,
+            signed_nonce_free_tx(&s, INTEGRATION_POOL_NOW_MS + 5_000, 1_000)
+                .with_validity_predicates(resting_predicates()),
+        )
+        .await;
+        let hold = RecordingHold::new(&pool, vec![channel_root, nonce_free]);
+        let mut view = SelectionView::default();
+        drop(hold.parking_with_view(0, &mut view));
+        let asked = hold.checked().len();
+
+        let mut best = hold.parking_with_view(0, &mut view);
+        assert!(asked_since(&hold, asked).is_empty());
+        assert_eq!(drain_committing(best.as_mut()), vec![standard]);
+        assert!(best.promote(nonce_free));
+        assert!(!best.promote(nonce_free), "a dormant root is handed back once");
+        assert_eq!(drain_committing(best.as_mut()), vec![nonce_free]);
+        assert!(best.promote(channel_root));
+        assert_eq!(drain_committing(best.as_mut()), vec![channel_root, channel_tail]);
+    }
+
+    #[tokio::test]
+    async fn anchored_heads_are_left_to_the_adapter_with_a_view() {
+        let (pool, client) = build_integration_pool();
+        let [s, o] = [(); 2].map(|_| funded_signer(&client));
+        let s0 = add(&pool, signed_1559_with_fees(&s, 0, 1_000, 1)).await;
+        let s1 = add(&pool, resting_1559(&s, 1, 900)).await;
+        let o0 = add(&pool, signed_1559_with_fees(&o, 0, 1_000, 500)).await;
+        let hold = RecordingHold::new(&pool, vec![s1]);
+        let mut view = SelectionView::default();
+
+        for _ in 0..2 {
+            let asked = hold.checked().len();
+            let mut best = hold.parking_with_view(0, &mut view);
+            assert!(asked_since(&hold, asked).is_empty(), "a head riding another store's run");
+            assert_eq!(drain_committing(best.as_mut()), vec![o0, s0]);
+            assert_eq!(asked_since(&hold, asked), vec![s1], "the adapter asks when it is reached");
+            assert!(best.promote(s1));
+            assert_eq!(drain_committing(best.as_mut()), vec![s1]);
+        }
+        assert_eq!(view.dormant_len(), 0);
+    }
+
+    /// Pool contents with bridged runs and a channel root, at distinct priorities.
+    async fn bridged_mixed_pool(
+        pool: &IntegrationPool,
+        client: &MockEthProvider<BasePrimitives, Arc<BaseChainSpec>>,
+    ) -> [PrivateKeySigner; 3] {
+        let [a, b, c] = [(); 3].map(|_| funded_signer(client));
+        add(pool, resting_1559(&a, 0, 900)).await;
+        add(pool, signed_1559_with_fees(&a, 1, 1_000, 950)).await;
+        add(pool, signed_1559_with_fees(&b, 0, 1_000, 300)).await;
+        add(pool, resting_1559(&c, 0, 700)).await;
+        add(pool, resting_1559(&c, 1, 650)).await;
+        add(pool, signed_1559_with_fees(&c, 2, 1_000, 800)).await;
+        add(pool, validity_8130(&b, U256::from(3), 0, 1_000)).await;
+        [a, b, c]
+    }
+
+    #[tokio::test]
+    async fn a_view_resting_nothing_matches_the_unheld_iterator_as_the_pool_changes() {
+        let (pool, client) = build_integration_pool();
+        let [a, _, c] = bridged_mixed_pool(&pool, &client).await;
+        let hold = RecordingHold::new(&pool, vec![ABSENT_RESTING]);
+        let mut view = SelectionView::default();
+        let attributes = BestTransactionsAttributes::new(0, None);
+        let mut matches_unheld = |step: &str| {
+            let mut selected = hold.parking_with_view(0, &mut view);
+            let mut unheld = pool.best_transactions_with_attributes_and_parking(attributes, None);
+            assert_eq!(
+                drain_committing(selected.as_mut()),
+                drain_committing(unheld.as_mut()),
+                "{step}"
+            );
+        };
+
+        matches_unheld("initial");
+        add(&pool, signed_1559_with_fees(&a, 1, 1_100, 1_050)).await;
+        matches_unheld("bridged successor replaced");
+        add(&pool, signed_1559_with_fees(&c, 3, 1_000, 600)).await;
+        matches_unheld("bridged run extended");
+        let c0 = pool.get_transaction_by_sender_and_nonce(c.address(), 0).unwrap();
+        assert_eq!(pool.remove_transactions(vec![*c0.hash()]).len(), 1);
+        matches_unheld("validity root removed");
+    }
+
+    #[tokio::test]
+    async fn a_hold_keeping_a_view_lends_it_to_creation_and_gets_it_back() {
+        let (pool, client) = build_integration_pool();
+        let [a, u] = [(); 2].map(|_| funded_signer(&client));
+        let root = add(&pool, resting_1559(&a, 0, 900)).await;
+        let unrelated = add(&pool, signed_1559_with_fees(&u, 0, 1_000, 50)).await;
+        let hold = RecordingHold::new(&pool, vec![root]).keeping_view();
+        drop(hold.parking(0));
+        assert_eq!(hold.view.as_ref().unwrap().lock().dormant_len(), 1);
+
+        let asked = hold.checked().len();
+        let mut best = hold.parking(0);
+        assert!(asked_since(&hold, asked).is_empty());
+        assert_eq!(drain_committing(best.as_mut()), vec![unrelated]);
+        assert!(best.promote(root));
+        assert_eq!(drain_committing(best.as_mut()), vec![root]);
+    }
+
+    /// Reth's queued capacity evicts the sender whose latest submission is oldest, so admitting
+    /// another sender's queued transaction evicts the bridged successor without touching its lane
+    /// through any of this pool's own paths.
+    #[tokio::test]
+    async fn a_bridged_successor_reth_evicts_for_another_sender_leaves_only_new_iterators() {
+        let config =
+            PoolConfig { queued_limit: SubPoolLimit::new(1, usize::MAX), ..PoolConfig::default() };
+        let (pool, client) = build_integration_pool_with_config(config);
+        let [a, b] = [(); 2].map(|_| funded_signer(&client));
+        let root = add(&pool, resting_1559(&a, 0, 100)).await;
+        let bridged = add(&pool, signed_1559_with_fees(&a, 1, 1_000, 100)).await;
+        let hold = RecordingHold::new(&pool, vec![root]);
+        let mut view = SelectionView::default();
+        let mut frozen = hold.parking_with_view(0, &mut view);
+
+        add(&pool, signed_1559_with_fees(&b, 1, 1_000, 100)).await;
+        assert!(pool.get(&bridged).is_none(), "reth evicted the bridged successor");
+
+        assert!(frozen.promote(root));
+        assert_eq!(
+            drain_committing(frozen.as_mut()),
+            vec![root, bridged],
+            "an iterator created before the eviction keeps its capture"
+        );
+        let mut next = hold.parking_with_view(0, &mut view);
+        assert!(next.promote(root));
+        assert_eq!(
+            drain_committing(next.as_mut()),
+            vec![root],
+            "an iterator created after the eviction must not release the evicted successor"
+        );
+        let mut unheld = pool.best_transactions_with_attributes_and_parking(
+            BestTransactionsAttributes::new(0, None),
+            None,
+        );
+        assert_eq!(drain_committing(unheld.as_mut()), vec![root], "the snapshot path agrees");
+    }
+
+    #[tokio::test]
+    async fn a_dormant_root_removed_and_added_again_is_asked_about_again_and_keeps_its_rest() {
+        let (pool, client) = build_integration_pool();
+        let a = funded_signer(&client);
+        let transaction = resting_1559(&a, 0, 100);
+        let root = add(&pool, transaction.clone()).await;
+        let hold = RecordingHold::new(&pool, vec![root]);
+        let mut view = SelectionView::default();
+        drop(hold.parking_with_view(0, &mut view));
+        view.take_changes();
+
+        assert_eq!(pool.remove_transactions(vec![root]).len(), 1);
+        add(&pool, transaction).await;
+        let asked = hold.checked().len();
+        let mut best = hold.parking_with_view(0, &mut view);
+        assert_eq!(asked_since(&hold, asked), vec![root], "a new insertion is asked about again");
+        let changes = view.take_changes();
+        assert!(changes.removed.is_empty(), "the same hash keeps its rest");
+        assert_eq!(changes.woken, vec![root]);
+        assert!(best.promote(root));
+        assert_eq!(drain_committing(best.as_mut()), vec![root]);
+    }
+
+    fn bridge_rebuilds(pool: &IntegrationPool) -> u64 {
+        pool.bridges.lock().rebuilds()
+    }
+
+    /// Propagation reports for `count` distinct hashes: protocol pool events that change no
+    /// membership.
+    fn propagated(count: usize) -> PropagatedTransactions {
+        PropagatedTransactions(
+            (0..count as u64)
+                .map(|index| (B256::left_padding_from(&index.to_be_bytes()), Vec::new()))
+                .collect(),
+        )
+    }
+
+    /// A resting root with a bridged standard successor, a hold resting the root, and a view
+    /// whose first iterator already started caching bridges.
+    async fn cached_bridge(
+        pool: &IntegrationPool,
+        client: &MockEthProvider<BasePrimitives, Arc<BaseChainSpec>>,
+    ) -> (RecordingHold, SelectionView, TxHash, TxHash) {
+        let a = funded_signer(client);
+        let root = add(pool, resting_1559(&a, 0, 100)).await;
+        let bridged = add(pool, signed_1559_with_fees(&a, 1, 1_000, 100)).await;
+        let hold = RecordingHold::new(pool, vec![root]);
+        let mut view = SelectionView::default();
+        drop(hold.parking_with_view(0, &mut view));
+        (hold, view, root, bridged)
+    }
+
+    #[tokio::test]
+    async fn a_bridged_successor_mined_without_its_sender_changing_leaves_new_iterators() {
+        let (pool, client) = build_integration_pool();
+        let (hold, mut view, root, bridged) = cached_bridge(&pool, &client).await;
+        let mut frozen = hold.parking_with_view(0, &mut view);
+
+        commit_block(&pool, 1, Vec::new(), vec![bridged]);
+        assert!(pool.get(&bridged).is_none(), "the mined successor left the pool");
+
+        assert!(frozen.promote(root));
+        assert_eq!(drain_committing(frozen.as_mut()), vec![root, bridged]);
+        let mut next = hold.parking_with_view(0, &mut view);
+        assert!(next.promote(root));
+        assert_eq!(drain_committing(next.as_mut()), vec![root]);
+    }
+
+    #[tokio::test]
+    async fn event_bursts_inside_accounted_sections_do_not_rebuild_the_bridge_mirror() {
+        let (pool, client) = build_integration_pool();
+        let (hold, mut view, root, bridged) = cached_bridge(&pool, &client).await;
+        let rebuilds = bridge_rebuilds(&pool);
+
+        pool.on_propagated(propagated(BRIDGE_EVENT_DRAIN_LIMIT + 100));
+        commit_block(&pool, 1, Vec::new(), Vec::new());
+        pool.set_block_info(pool.block_info());
+        let mut best = hold.parking_with_view(0, &mut view);
+        assert_eq!(bridge_rebuilds(&pool), rebuilds);
+        assert!(best.promote(root));
+        assert_eq!(drain_committing(best.as_mut()), vec![root, bridged]);
+    }
+
+    /// Events emitted past the pool's own paths, as by a raw protocol pool handle, stand in for a
+    /// burst no section accounted for.
+    #[tokio::test]
+    async fn an_unaccounted_event_burst_rebuilds_the_bridge_mirror_once() {
+        let (pool, client) = build_integration_pool();
+        let (hold, mut view, root, bridged) = cached_bridge(&pool, &client).await;
+        let other = funded_signer(&client);
+        let rebuilds = bridge_rebuilds(&pool);
+
+        pool.protocol_pool.on_propagated(propagated(BRIDGE_EVENT_DRAIN_LIMIT - 1));
+        drop(hold.parking_with_view(0, &mut view));
+        assert_eq!(bridge_rebuilds(&pool), rebuilds, "a drain below capacity is complete");
+
+        pool.protocol_pool.on_propagated(propagated(BRIDGE_EVENT_DRAIN_LIMIT));
+        drop(hold.parking_with_view(0, &mut view));
+        assert_eq!(bridge_rebuilds(&pool), rebuilds + 1, "a full drain may have lost a removal");
+
+        pool.protocol_pool.on_propagated(propagated(BRIDGE_EVENT_DRAIN_LIMIT + 100));
+        commit_block(&pool, 1, Vec::new(), Vec::new());
+        drop(hold.parking_with_view(0, &mut view));
+        assert_eq!(
+            bridge_rebuilds(&pool),
+            rebuilds + 2,
+            "an accounted section never clears an earlier unknown"
+        );
+
+        pool.protocol_pool.on_propagated(propagated(BRIDGE_EVENT_DRAIN_LIMIT + 100));
+        let admitted = add(&pool, signed_1559_with_fees(&other, 0, 1_000, 10)).await;
+        drop(hold.parking_with_view(0, &mut view));
+        assert_eq!(bridge_rebuilds(&pool), rebuilds + 3, "admission reconciles earlier events");
+
+        let mut best = hold.parking_with_view(0, &mut view);
+        assert_eq!(bridge_rebuilds(&pool), rebuilds + 3, "one rebuild per unknown");
+        assert!(best.promote(root));
+        assert_eq!(drain_committing(best.as_mut()), vec![root, bridged, admitted]);
+    }
+
+    #[tokio::test]
+    async fn a_pool_built_on_a_caller_held_protocol_pool_recomputes_bridges() {
+        let (owned, client) = build_integration_pool();
+        let raw = owned.protocol_pool().clone();
+        let pool = BaseTransactionPool::new(raw.clone(), BaseOrdering::default());
+        let (hold, mut view, root, bridged) = cached_bridge(&pool, &client).await;
+        let mut frozen = hold.parking_with_view(0, &mut view);
+
+        assert_eq!(raw.remove_transactions(vec![bridged]).len(), 1);
+        assert!(frozen.promote(root));
+        assert_eq!(drain_committing(frozen.as_mut()), vec![root, bridged]);
+        let mut next = hold.parking_with_view(0, &mut view);
+        assert!(next.promote(root));
+        assert_eq!(drain_committing(next.as_mut()), vec![root]);
+        assert!(!pool.bridges.lock().is_observing());
+    }
+
+    #[tokio::test]
+    async fn taking_the_raw_protocol_pool_stops_every_clone_caching_bridges() {
+        let (pool, client) = build_integration_pool();
+        let (hold, mut view, root, bridged) = cached_bridge(&pool, &client).await;
+        let mut frozen = hold.parking_with_view(0, &mut view);
+        assert!(pool.bridges.lock().is_observing());
+
+        let clone = pool.clone();
+        assert_eq!(clone.protocol_pool().remove_transactions(vec![bridged]).len(), 1);
+        assert!(!pool.bridges.lock().is_observing());
+        assert!(frozen.promote(root));
+        assert_eq!(drain_committing(frozen.as_mut()), vec![root, bridged]);
+        let mut next = hold.parking_with_view(0, &mut view);
+        assert!(next.promote(root));
+        assert_eq!(drain_committing(next.as_mut()), vec![root]);
+    }
+
+    #[tokio::test]
+    async fn bridge_observation_starts_with_the_first_view_and_is_shared_by_clones() {
+        let (pool, client) = build_integration_pool();
+        let a = funded_signer(&client);
+        let root = add(&pool, resting_1559(&a, 0, 100)).await;
+        add(&pool, signed_1559_with_fees(&a, 1, 1_000, 100)).await;
+        let hold = RecordingHold::new(&pool, vec![root]);
+
+        drop(pool.best_transactions());
+        drop(hold.parking(0));
+        drop(pool.best_transactions_with_attributes_and_parking(
+            BestTransactionsAttributes::new(0, None),
+            None,
+        ));
+        assert!(!pool.bridges.lock().is_observing(), "no view, as in off and shadow modes");
+        assert!(pool.validity.pool.read().selection().is_none(), "nor a selection index");
+
+        let clone = pool.clone();
+        let mut view = SelectionView::default();
+        drop(RecordingHold::new(&clone, vec![root]).parking_with_view(0, &mut view));
+        assert!(pool.bridges.lock().is_observing());
+        assert!(pool.validity.pool.read().selection().is_some());
+        assert_eq!(bridge_rebuilds(&pool), 1);
+    }
+
+    #[tokio::test]
+    async fn a_view_matches_the_unheld_iterator_through_channel_bridges_reorgs_and_expiry() {
+        let (pool, client) = build_integration_pool();
+        let [a, e, s] = [(); 3].map(|_| funded_signer(&client));
+        let channel = U256::from(3);
+        add(&pool, resting_1559(&a, 0, 900)).await;
+        add(&pool, signed_1559_with_fees(&a, 1, 1_000, 950)).await;
+        add(
+            &pool,
+            signed_1559_with_fees(&e, 0, 1_000, 800).with_validity_predicates(vec![
+                ValidityPredicate::BlockNumber {
+                    op: ValidityOperator::LessThanOrEqual,
+                    value: U256::from(2),
+                },
+            ]),
+        )
+        .await;
+        add(&pool, signed_1559_with_fees(&e, 1, 1_000, 850)).await;
+        add(&pool, validity_8130(&s, channel, 0, 1_000)).await;
+        let channel_successor = add(&pool, signed_channel_tx(&s, channel, 1, 1_000)).await;
+        let hold = RecordingHold::new(&pool, vec![ABSENT_RESTING]);
+        let mut view = SelectionView::default();
+        let attributes = BestTransactionsAttributes::new(0, None);
+        let mut matches_unheld = |step: &str| {
+            let mut selected = hold.parking_with_view(0, &mut view);
+            let mut unheld = pool.best_transactions_with_attributes_and_parking(attributes, None);
+            assert_eq!(
+                drain_committing(selected.as_mut()),
+                drain_committing(unheld.as_mut()),
+                "{step}"
+            );
+        };
+
+        matches_unheld("initial");
+        assert_eq!(pool.remove_transactions(vec![channel_successor]).len(), 1);
+        matches_unheld("sidecar successor removed");
+        canonical_update(&pool, 1, Vec::new(), Vec::new(), PoolUpdateKind::Reorg);
+        matches_unheld("reorg");
+        commit_block(&pool, 2, Vec::new(), Vec::new());
+        matches_unheld("expired root");
+    }
+
+    /// More standard transactions than reth's event channel holds are mined in one block, the
+    /// cached bridged successor among them, and no changed account names its sender. Repeated
+    /// creations around it never rebuild the mirror.
+    #[tokio::test]
+    async fn a_canonical_section_mining_past_the_event_channel_needs_no_bridge_rebuild() {
+        const SENDERS: usize = 66;
+        const PER_SENDER: u64 = 16;
+        const REFRESHES: usize = 10;
+        let (pool, client) = build_integration_pool();
+        let (hold, mut view, root, bridged) = cached_bridge(&pool, &client).await;
+        let mut mined = Vec::with_capacity(SENDERS * PER_SENDER as usize + 1);
+        for _ in 0..SENDERS {
+            let sender = funded_signer(&client);
+            for nonce in 0..PER_SENDER {
+                mined.push(add(&pool, signed_1559_with_fees(&sender, nonce, 1_000, 1)).await);
+            }
+        }
+        let fillers = mined.len();
+        assert!(fillers > BRIDGE_EVENT_DRAIN_LIMIT);
+        mined.push(bridged);
+        let rebuilds = bridge_rebuilds(&pool);
+        for _ in 0..REFRESHES {
+            drop(hold.parking_with_view(0, &mut view));
+        }
+        let mut frozen = hold.parking_with_view(0, &mut view);
+        assert_eq!(bridge_rebuilds(&pool), rebuilds, "ordinary refreshes reuse the mirror");
+
+        commit_block(&pool, 1, Vec::new(), mined);
+        assert!(pool.get(&bridged).is_none());
+
+        let mut next = hold.parking_with_view(0, &mut view);
+        assert_eq!(bridge_rebuilds(&pool), rebuilds, "the accounted canonical section needs none");
+        assert!(next.promote(root));
+        assert_eq!(drain_committing(next.as_mut()), vec![root]);
+        assert!(frozen.promote(root));
+        let captured = drain_committing(frozen.as_mut());
+        assert_eq!(captured[..2], [root, bridged], "the earlier capture keeps the successor");
+        assert_eq!(captured.len(), fillers + 2);
+    }
+
+    /// Each round races one creation against a gated section removing a bridged successor and a
+    /// pending marker together, by canonical mining or by removal. Whichever runs first, the
+    /// creation's cached bridge and its protocol snapshot come from the same interval.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn concurrent_creations_capture_bridges_and_protocol_transactions_together() {
+        const ROUNDS: u64 = 16;
+        let (pool, client) = build_integration_pool();
+        drop(cached_bridge(&pool, &client).await);
+        for round in 0..ROUNDS {
+            let [a, m] = [(); 2].map(|_| funded_signer(&client));
+            let root = add(&pool, resting_1559(&a, 0, 100)).await;
+            let bridged = add(&pool, signed_1559_with_fees(&a, 1, 1_000, 100)).await;
+            let marker = add(&pool, signed_1559_with_fees(&m, 0, 1_000, 50)).await;
+            let hold = RecordingHold::new(&pool, vec![root]);
+            let mut view = SelectionView::default();
+            let barrier = std::sync::Barrier::new(2);
+            let runtime = tokio::runtime::Handle::current();
+            let mut frozen = tokio::task::block_in_place(|| {
+                std::thread::scope(|scope| {
+                    scope.spawn(|| {
+                        let _runtime = runtime.enter();
+                        barrier.wait();
+                        if round % 2 == 0 {
+                            commit_block(&pool, round + 1, Vec::new(), vec![bridged, marker]);
+                        } else {
+                            assert_eq!(pool.remove_transactions(vec![bridged, marker]).len(), 2);
+                        }
+                    });
+                    barrier.wait();
+                    hold.parking_with_view(0, &mut view)
+                })
+            });
+            assert!(pool.get(&bridged).is_none() && pool.get(&marker).is_none());
+
+            assert!(frozen.promote(root));
+            let yielded = drain_committing(frozen.as_mut());
+            assert_eq!(
+                yielded.contains(&bridged),
+                yielded.contains(&marker),
+                "round {round}: the bridge and the protocol snapshot disagree"
+            );
+            let mut next = hold.parking_with_view(0, &mut view);
+            assert!(next.promote(root));
+            assert!(!drain_committing(next.as_mut()).contains(&bridged), "round {round}");
+        }
+    }
+
+    /// Reth reports the newcomer itself discarded only after its size-limited queued pool also
+    /// evicted another sender's bridged successor: the admission fails after the eviction.
+    #[tokio::test]
+    async fn a_failed_admission_still_reconciles_the_eviction_it_caused() {
+        let bridged_size = signed_1559_with_fees(&signer(), 1, 1_000, 100).size();
+        let config = PoolConfig {
+            queued_limit: SubPoolLimit::new(usize::MAX, bridged_size + 100),
+            ..PoolConfig::default()
+        };
+        let (pool, client) = build_integration_pool_with_config(config);
+        let (hold, mut view, root, bridged) = cached_bridge(&pool, &client).await;
+        let mut frozen = hold.parking_with_view(0, &mut view);
+        let b = funded_signer(&client);
+        let oversized = {
+            let tx = TxEip1559 {
+                chain_id: test_chain_id(),
+                nonce: 1,
+                gas_limit: 50_000,
+                max_fee_per_gas: 1_000,
+                max_priority_fee_per_gas: 100,
+                to: TxKind::Call(Address::repeat_byte(0xEE)),
+                value: U256::ZERO,
+                access_list: Default::default(),
+                input: Bytes::from(vec![0; bridged_size + 200]),
+            };
+            let signature = b.sign_hash_sync(&tx.signature_hash()).unwrap();
+            let envelope = BaseTxEnvelope::Eip1559(tx.into_signed(signature));
+            let recovered = envelope.clone().try_into_recovered().unwrap();
+            BasePooledTransaction::new(recovered, envelope.encode_2718_len())
+        };
+
+        assert!(matches!(add_err(&pool, oversized).await, PoolErrorKind::DiscardedOnInsert));
+        assert!(pool.get(&bridged).is_none(), "the failed admission evicted the successor first");
+        assert!(frozen.promote(root));
+        assert_eq!(drain_committing(frozen.as_mut()), vec![root, bridged]);
+        let mut next = hold.parking_with_view(0, &mut view);
+        assert!(next.promote(root));
+        assert_eq!(drain_committing(next.as_mut()), vec![root]);
+    }
+
+    /// The sidecar admits a fee-bumped replacement of a cached channel bridge, then evicts it for
+    /// exceeding its byte limit: the admission fails after the bridged successor left the pool.
+    #[tokio::test]
+    async fn a_failed_sidecar_replacement_leaves_the_cached_bridge() {
+        let channel = U256::from(5);
+        // Leave room for validation's watch-set accounting, not only encoded bytes.
+        const SIDECAR_BYTES: usize = 16 * 1024;
+        let config = PoolConfig {
+            pending_limit: SubPoolLimit::new(usize::MAX, SIDECAR_BYTES),
+            ..PoolConfig::default()
+        };
+        let (pool, client) = build_integration_pool_with_config(config);
+        let pool = pool.with_validity_pool_limits(
+            ValidityPoolLimits::inherit().with_max_size(usize::MAX).with_max_txs(usize::MAX),
+        );
+        let s = funded_signer(&client);
+        let root = add(&pool, validity_8130(&s, channel, 0, 1_000)).await;
+        let bridged = add(&pool, signed_channel_tx(&s, channel, 1, 1_000)).await;
+        let hold = RecordingHold::new(&pool, vec![root]);
+        let mut view = SelectionView::default();
+        let mut frozen = hold.parking_with_view(0, &mut view);
+        let oversized = sign_eoa_8130(
+            &s,
+            TxEip8130 {
+                chain_id: test_chain_id(),
+                sender: None,
+                nonce_key: channel,
+                nonce_sequence: 1,
+                valid_after: 0,
+                valid_before: 0,
+                max_priority_fee_per_gas: 0,
+                max_fee_per_gas: 1_200,
+                gas_limit: 1_000_000,
+                account_changes: Vec::new(),
+                calls: Vec::new(),
+                metadata: Bytes::from(vec![0; SIDECAR_BYTES]),
+                payer: None,
+            },
+        );
+
+        assert!(matches!(add_err(&pool, oversized).await, PoolErrorKind::DiscardedOnInsert));
+        assert!(pool.get(&bridged).is_none(), "the replacement removed the bridged successor");
+        assert!(frozen.promote(root));
+        assert_eq!(drain_committing(frozen.as_mut()), vec![root, bridged]);
+        let mut next = hold.parking_with_view(0, &mut view);
+        assert!(next.promote(root));
+        assert_eq!(
+            drain_committing(next.as_mut()),
+            vec![root],
+            "a new iterator must not release the removed successor"
+        );
     }
 
     /// A resting root with a resting successor, a standard transaction bridged behind them and an

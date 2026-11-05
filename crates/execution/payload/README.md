@@ -11,6 +11,48 @@ verifies
 built payloads against consensus rules. Also provides data availability configuration via
 `BaseDAConfig` for fee calculation.
 
+### Resting validity transactions across builds
+
+With `RestingPredicateMode::Enforce`, a validity transaction whose predicate a build found
+unsatisfied rests in `RestingPredicates` until a commit, pre-block write or new block can change
+it. `RestingPredicateStore` hands the set from one finished block to the next job, for the
+native builder after Denim and for Flashblocks. A failed, cancelled or abandoned job never puts
+the set back, so the next job starts empty. A set finished on another parent, or carried without
+known pre-block writes, is emptied. `Off` tracks nothing and `Shadow` evaluates every
+transaction. Flashblock-index predicates never rest.
+
+A member the pool iterators do not hold dormant stays in the set only while builds keep yielding
+or holding it: the unseen sweep drops members no build saw for `RESTING_UNSEEN_RETAINED_BLOCKS`
+blocks.
+
+`RestingPredicates` also owns the lineage's `SelectionView` (see the `base-execution-txpool`
+README), so `take`, `put`, a reset and an abandoned job treat the view like the members.
+
+A root the hold rests while an iterator is created becomes dormant: later iterators skip it
+without asking, and the unseen sweep stops visiting its member. It leaves the set when iterator
+creation reports that the pool removed, replaced, mined or expired it, applied after the pool
+guards are released. A commit or block-start release wakes it and removes the member. A dormant
+root whose lane changed rejoins the unseen sweep as seen in the current block; if the same
+creation holds it again, it stays dormant.
+
+A dormant member whose whole `ValidityConditions` expire at the block being built is woken at
+block start, so iterator creation asks about it and the builder classifies it expired; no other
+dormant member is visited. The deadline follows the conditions the latest hold saw, so the same
+hash re-admitted with an earlier or later block bound is woken at its new deadline. Each dormant
+member has at most one deadline entry: removing, re-resting or waking a member drops it, and a
+set whose members all left keeps none.
+
+```mermaid
+flowchart LR
+    Take["job takes set and view"] --> Begin{"begin_block: follows the finished parent<br/>with known pre-block writes?"}
+    Begin -- no --> Reset["empty set, discard view"]
+    Begin -- yes --> Release["release state and block-number wakes,<br/>wake expiring dormant roots"]
+    Reset --> Build["iterator creation lends the view;<br/>selection loop rests, holds and wakes"]
+    Release --> Build
+    Build -- finished --> Put["put set and view for the next job"]
+    Build -- failed, cancelled or abandoned --> Drop["drop the set and view"]
+```
+
 ## Usage
 
 Add the dependency to your `Cargo.toml`:

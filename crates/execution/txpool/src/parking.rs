@@ -16,7 +16,7 @@ use reth_transaction_pool::{
     noop::NoopTransactionPool,
 };
 
-use crate::{BasePooledTx, BestTransactionPriority, UnifiedTipOrdering};
+use crate::{BasePooledTx, BestTransactionPriority, SelectionView, UnifiedTipOrdering};
 
 /// A sequential transaction lane whose members must execute in nonce order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -90,7 +90,9 @@ pub trait BestTransactionsHold<T: PoolTransaction>: Send + Sync {
     /// when the iterator is created.
     fn hold(&mut self, transaction: &ValidPoolTransaction<T>) -> bool;
 
-    /// Returns false when nothing is resting, so iterator creation can skip asking about roots.
+    /// Returns whether any transaction could be held now. Returning false skips the creation
+    /// scan and selection-view lend, not later checks: transactions may start resting while
+    /// the iterator is in use.
     fn has_candidates(&self) -> bool {
         true
     }
@@ -108,6 +110,19 @@ pub trait BestTransactionsHold<T: PoolTransaction>: Send + Sync {
     fn is_interrupted(&self) -> bool {
         false
     }
+
+    /// Takes the [`SelectionView`] of the build lineage this hold belongs to, if it keeps one.
+    /// The pool hands it back through [`Self::restore_selection_view`] once the iterator is
+    /// created, with the pool's guards released. The pool asks only when
+    /// [`Self::has_candidates`] is true at creation; otherwise it creates the snapshot iterator
+    /// and leaves the view with the hold.
+    fn take_selection_view(&mut self) -> Option<SelectionView> {
+        None
+    }
+
+    /// Hands back the view [`Self::take_selection_view`] took, with the changes iterator
+    /// creation recorded on it.
+    fn restore_selection_view(&mut self, _view: SelectionView) {}
 }
 
 /// Number of held transactions a parking iterator advances past between checks of

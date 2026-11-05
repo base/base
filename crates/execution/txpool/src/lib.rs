@@ -72,6 +72,13 @@ pub use parking::{
     TakeSourceHeld,
 };
 
+mod selection;
+pub use selection::{
+    BRIDGE_EVENT_DRAIN_LIMIT, BridgeMirror, BridgedRun, JournalPosition, PendingRun,
+    SELECTION_JOURNAL_CAPACITY, SelectionChanges, SelectionIndex, SelectionJournal, SelectionRoot,
+    SelectionSync, SelectionView,
+};
+
 mod pool;
 pub use pool::{AccountStateDiff, BaseTransactionPool};
 

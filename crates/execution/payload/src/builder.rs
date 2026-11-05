@@ -1682,13 +1682,17 @@ where
             predicate_bucket_wakeups,
             &predicate_index,
         );
-        if let Some(stats) = resting.map(SharedRestingPredicates::take_stats)
-            && stats.parked > 0
-        {
-            ValidityMetrics::resting_predicate_parked_total().increment(stats.parked);
-            ValidityMetrics::resting_predicate_carried_parked_total()
-                .increment(stats.carried_parked);
-            ValidityMetrics::record_resting_hold_duration(stats.duration);
+        if let Some(stats) = resting.map(SharedRestingPredicates::take_stats) {
+            if stats.parked > 0 {
+                ValidityMetrics::resting_predicate_parked_total().increment(stats.parked);
+                ValidityMetrics::resting_predicate_carried_parked_total()
+                    .increment(stats.carried_parked);
+                ValidityMetrics::record_resting_hold_duration(stats.duration);
+            }
+            if stats.dormant_skipped > 0 {
+                ValidityMetrics::resting_predicate_dormant_skipped_total()
+                    .increment(stats.dormant_skipped);
+            }
         }
         if carried_shadow_mismatches > 0 {
             ValidityMetrics::resting_predicate_shadow_mismatches_total()

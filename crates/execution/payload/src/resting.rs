@@ -8,7 +8,8 @@ use std::{
 
 use alloy_primitives::{B256, TxHash, map::B256Set};
 use base_execution_txpool::{
-    BasePooledTx, BestTransactionsHold, PredicateContext, ValidityConditions, ValidityPredicate,
+    BasePooledTx, BestTransactionsHold, PredicateContext, SelectionView, ValidityConditions,
+    ValidityPredicate,
 };
 use parking_lot::Mutex;
 use reth_tasks::Runtime;
@@ -26,6 +27,10 @@ use crate::{ParkedPredicateIndex, ValidityMetrics, ValidityPredicateKey};
 /// activates. The sweep that drops it only visits the members filed that many blocks ago, and runs
 /// off the build path; see [`RestingPredicateStore::finish`].
 pub const RESTING_UNSEEN_RETAINED_BLOCKS: u64 = 10;
+
+/// `filed_block` of a member dormant in the selection view. It is listed in no generation, so the
+/// unseen sweep never visits it; the pool reports its removal instead.
+const DORMANT: u64 = u64::MAX;
 
 /// Mode for holding back validity transactions that rest under an unchanged predicate.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -66,6 +71,11 @@ pub struct RestingMember {
     /// Block whose generation lists the member, so the sweep visits it once that block is
     /// [`RESTING_UNSEEN_RETAINED_BLOCKS`] old.
     filed_block: u64,
+    /// First block at which the transaction's whole validity conditions are expired, as the last
+    /// hold saw them.
+    expires_at: Option<u64>,
+    /// The deadline the member is listed under while dormant.
+    listed_deadline: Option<u64>,
 }
 
 /// What [`RestingPredicates::begin_block`] did to the set.
@@ -104,6 +114,13 @@ pub struct RestingPredicates {
     /// sweep only visits members old enough to drop. Entries for members that were removed or
     /// re-filed since are stale and skipped.
     generations: BTreeMap<u64, Vec<TxHash>>,
+    /// Dormant members by the block at which their whole validity conditions expire, so block start
+    /// wakes them for the builder to classify without visiting other dormant members. Holds exactly
+    /// the dormant members with a deadline: leaving dormancy or the set drops the entry.
+    deadlines: BTreeMap<u64, B256Set>,
+    /// The pool iterators' persistent selection state for this lineage, carried, reset and
+    /// dropped with the members.
+    view: SelectionView,
 }
 
 impl RestingPredicates {
@@ -115,6 +132,8 @@ impl RestingPredicates {
             block_number: 0,
             tip: None,
             generations: BTreeMap::new(),
+            deadlines: BTreeMap::new(),
+            view: SelectionView::default(),
         }
     }
 
@@ -138,15 +157,19 @@ impl RestingPredicates {
                 carry_over.reset = !self.index.is_empty();
                 self.index = ParkedPredicateIndex::new(self.ordered_threshold);
                 self.generations.clear();
+                self.deadlines.clear();
+                self.view = SelectionView::default();
             }
             Some(changes) => {
                 for hash in self.index.affected_by_transitions(changes).affected_transactions {
-                    carry_over.released_by_state += usize::from(self.index.remove(hash).is_some());
+                    self.view.wake(hash);
+                    carry_over.released_by_state += usize::from(self.remove_member(hash));
                 }
                 for hash in self.index.transactions_blocked_by(ValidityPredicateKey::BlockNumber) {
-                    carry_over.released_by_block_number +=
-                        usize::from(self.index.remove(hash).is_some());
+                    self.view.wake(hash);
+                    carry_over.released_by_block_number += usize::from(self.remove_member(hash));
                 }
+                self.wake_expired_dormant(block_number);
             }
         }
         self.block_number = block_number;
@@ -208,7 +231,7 @@ impl RestingPredicates {
                     member.filed_block = member.seen_block;
                     self.generations.entry(member.seen_block).or_default().push(hash);
                 } else {
-                    self.index.remove(hash);
+                    self.remove_member(hash);
                     released += 1;
                 }
             }
@@ -230,14 +253,17 @@ impl RestingPredicates {
         }
         // A member resting again in the block that filed it is already listed in that block's
         // generation; listing it twice would only give the sweep a stale entry to skip.
-        let filed = self
-            .index
-            .entry(transaction_hash)
-            .is_some_and(|(member, _)| member.filed_block == self.block_number);
+        let previous = self.index.entry(transaction_hash).map(|(member, _)| *member);
+        let filed = previous.is_some_and(|member| member.filed_block == self.block_number);
+        if let Some(deadline) = previous.and_then(|member| member.listed_deadline) {
+            self.unlist_deadline(transaction_hash, deadline);
+        }
         let member = RestingMember {
             rested_block: self.block_number,
             seen_block: self.block_number,
             filed_block: self.block_number,
+            expires_at: None,
+            listed_deadline: None,
         };
         self.index.park(transaction_hash, member, predicate);
         if !filed {
@@ -245,9 +271,101 @@ impl RestingPredicates {
         }
     }
 
-    /// Removes a member, returning whether it was present.
+    /// Removes a member, returning whether it was present. A dormant root is woken, so the next
+    /// pool iterator offers it again.
     pub fn remove(&mut self, transaction_hash: TxHash) -> bool {
-        !self.index.is_empty() && self.index.remove(transaction_hash).is_some()
+        let removed = !self.index.is_empty() && self.remove_member(transaction_hash);
+        // Every dormant root is a member, so only a removed member can be dormant.
+        if removed {
+            self.view.wake(transaction_hash);
+        }
+        removed
+    }
+
+    /// Applies what pool iterator creation recorded on the view: dormant members leave the unseen
+    /// sweep, woken ones rejoin it as seen in this block, and members the pool removed or replaced
+    /// leave the set. Returns how many dormant roots creation skipped.
+    ///
+    /// A root can be woken and held again by the same creation; holds come after wakes, so its
+    /// final state is dormant.
+    fn apply_selection_changes(&mut self) -> u64 {
+        let changes = self.view.take_changes();
+        for hash in changes.removed {
+            self.remove_member(hash);
+        }
+        for hash in changes.woken {
+            self.rejoin_unseen_sweep(hash, self.block_number);
+        }
+        for hash in changes.dormant {
+            let Some(member) = self.index.transaction_mut(hash) else { continue };
+            member.filed_block = DORMANT;
+            let (listed, expires_at) = (member.listed_deadline, member.expires_at);
+            member.listed_deadline = expires_at;
+            if listed != expires_at {
+                if let Some(deadline) = listed {
+                    self.unlist_deadline(hash, deadline);
+                }
+                if let Some(deadline) = expires_at {
+                    self.deadlines.entry(deadline).or_default().insert(hash);
+                }
+            }
+        }
+        changes.skipped
+    }
+
+    /// Removes a member and its deadline entry, returning whether it was present.
+    fn remove_member(&mut self, hash: TxHash) -> bool {
+        let Some(member) = self.index.remove(hash) else { return false };
+        if let Some(deadline) = member.listed_deadline {
+            self.unlist_deadline(hash, deadline);
+        }
+        true
+    }
+
+    /// Drops `hash` from the deadline bucket it is listed in.
+    fn unlist_deadline(&mut self, hash: TxHash, deadline: u64) {
+        if let Some(bucket) = self.deadlines.get_mut(&deadline) {
+            bucket.remove(&hash);
+            if bucket.is_empty() {
+                self.deadlines.remove(&deadline);
+            }
+        }
+    }
+
+    /// Lists a dormant member in `block`'s generation again, as seen in it, so the unseen sweep
+    /// covers it once more.
+    fn rejoin_unseen_sweep(&mut self, hash: TxHash, block: u64) {
+        let Some(member) = self.index.transaction_mut(hash) else { return };
+        if member.filed_block != DORMANT {
+            return;
+        }
+        member.seen_block = block;
+        member.filed_block = block;
+        let listed = member.listed_deadline.take();
+        self.generations.entry(block).or_default().push(hash);
+        if let Some(deadline) = listed {
+            self.unlist_deadline(hash, deadline);
+        }
+    }
+
+    /// Wakes the dormant members whose whole validity conditions are expired at `block_number`, so
+    /// iterator creation asks about them and the builder classifies them expired, as for a root
+    /// the hold was asked about. Visits only the members due.
+    fn wake_expired_dormant(&mut self, block_number: u64) {
+        while let Some(due) = self.deadlines.first_entry()
+            && *due.key() <= block_number
+        {
+            let (deadline, hashes) = due.remove_entry();
+            for hash in hashes {
+                let Some(member) = self.index.transaction_mut(hash) else { continue };
+                if member.listed_deadline != Some(deadline) {
+                    continue;
+                }
+                member.listed_deadline = None;
+                self.view.wake(hash);
+                self.rejoin_unseen_sweep(hash, block_number);
+            }
+        }
     }
 
     /// Returns the member for a transaction with `conditions`.
@@ -284,6 +402,7 @@ impl RestingPredicates {
             return None;
         }
         let carried = member.rested_block < block_number;
+        member.expires_at = conditions.block().expiry_bound().and_then(|max| max.checked_add(1));
         // Members that rested in this block were already seen in it.
         if carried {
             member.seen_block = block_number;
@@ -332,7 +451,7 @@ pub struct FinishingRestingPredicates(Finishing);
 
 #[derive(Debug)]
 enum Finishing {
-    Ready(RestingPredicates),
+    Ready(Box<RestingPredicates>),
     Sweeping(mpsc::Receiver<RestingPredicates>),
 }
 
@@ -344,7 +463,7 @@ impl FinishingRestingPredicates {
     /// because it delays the build that takes the set.
     pub fn wait(self, limit: Duration) -> Option<RestingPredicates> {
         match self.0 {
-            Finishing::Ready(resting) => Some(resting),
+            Finishing::Ready(resting) => Some(*resting),
             Finishing::Sweeping(receiver) => match receiver.try_recv() {
                 Ok(resting) => {
                     ValidityMetrics::record_resting_sweep_wait(Duration::ZERO);
@@ -380,6 +499,9 @@ pub struct RestingStats {
     /// Time the pool iterators spent advancing past held transactions, from the first hold of
     /// each `next` call until it found a candidate.
     pub duration: Duration,
+    /// Dormant resting roots the pool iterators skipped at creation without asking the hold.
+    /// They are not counted in [`Self::parked`].
+    pub dormant_skipped: u64,
 }
 
 /// Reports whether the build driving a pool iterator has stopped selecting transactions.
@@ -468,8 +590,8 @@ impl SharedRestingPredicates {
     }
 
     /// Removes the members whose predicate may have changed in `state`, one committed
-    /// transaction's changes, and returns those the current iterator held so the caller can
-    /// promote them.
+    /// transaction's changes, and returns those the current iterator held, at creation or as
+    /// dormant roots it skipped, so the caller can promote them.
     pub fn wake_by_state(&self, state: &EvmState) -> Vec<TxHash> {
         let mut inner = self.inner.lock();
         if inner.predicates.is_empty() {
@@ -477,8 +599,9 @@ impl SharedRestingPredicates {
         }
         let mut held = Vec::new();
         for transaction_hash in inner.predicates.woken_by_state(state) {
+            let dormant = inner.predicates.view.wake(transaction_hash);
             inner.predicates.remove(transaction_hash);
-            if inner.held.remove(&transaction_hash) {
+            if inner.held.remove(&transaction_hash) || dormant {
                 held.push(transaction_hash);
             }
         }
@@ -540,6 +663,16 @@ impl<T: BasePooledTx> BestTransactionsHold<T> for RestingHold {
     fn is_interrupted(&self) -> bool {
         self.shared.interrupt.as_ref().is_some_and(|interrupt| interrupt())
     }
+
+    fn take_selection_view(&mut self) -> Option<SelectionView> {
+        Some(std::mem::take(&mut self.shared.inner.lock().predicates.view))
+    }
+
+    fn restore_selection_view(&mut self, view: SelectionView) {
+        let mut inner = self.shared.inner.lock();
+        inner.predicates.view = view;
+        inner.stats.dormant_skipped += inner.predicates.apply_selection_changes();
+    }
 }
 
 /// Holds one builder's [`RestingPredicates`] between payload jobs.
@@ -589,14 +722,15 @@ impl RestingPredicateStore {
         if resting.is_empty() {
             // Every listed member was removed, so every generation entry is stale.
             resting.generations.clear();
-            return FinishingRestingPredicates(Finishing::Ready(resting));
+            resting.deadlines.clear();
+            return FinishingRestingPredicates(Finishing::Ready(Box::new(resting)));
         }
         if !resting.sweep_due() {
-            return FinishingRestingPredicates(Finishing::Ready(resting));
+            return FinishingRestingPredicates(Finishing::Ready(Box::new(resting)));
         }
         let Some(executor) = &self.executor else {
             resting.sweep_unseen();
-            return FinishingRestingPredicates(Finishing::Ready(resting));
+            return FinishingRestingPredicates(Finishing::Ready(Box::new(resting)));
         };
         let (sender, receiver) = mpsc::sync_channel(1);
         // A persistent named worker, like `Runtime::spawn_drop`, avoids creating a thread per
@@ -619,7 +753,7 @@ impl RestingPredicateStore {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, U256};
-    use base_execution_txpool::{BasePooledTransaction, ValidityOperator};
+    use base_execution_txpool::{BasePooledTransaction, SelectionRoot, ValidityOperator};
     use revm::{
         database::{AccountStatus, TransitionAccount, TransitionState, states::StorageSlot},
         state::{Account, AccountInfo},
@@ -985,5 +1119,292 @@ mod tests {
 
         assert_eq!(store.take(32, WAIT).len(), 1);
         assert!(store.take(32, WAIT).is_empty(), "a taken set leaves the store empty");
+    }
+
+    /// The lane whose root is the member `hash(0)` in these tests.
+    const ROOT: SelectionRoot = SelectionRoot::Lane(Address::repeat_byte(0x11), U256::ZERO);
+
+    /// Lends `shared`'s view to `create`, as the pool does while creating an iterator.
+    fn create_with_view(shared: &SharedRestingPredicates, create: impl FnOnce(&mut SelectionView)) {
+        let mut hold = shared.iterator_hold::<BasePooledTransaction>();
+        let mut view = hold.take_selection_view().expect("a resting set lends its view");
+        create(&mut view);
+        hold.restore_selection_view(view);
+    }
+
+    /// `resting` after an iterator creation held [`ROOT`] dormant.
+    fn held_dormant(resting: RestingPredicates) -> RestingPredicates {
+        let shared = SharedRestingPredicates::new(resting);
+        create_with_view(&shared, |view| {
+            view.rebuild([ROOT].into_iter());
+            view.hold(ROOT, hash(0));
+        });
+        shared.take_predicates()
+    }
+
+    #[test]
+    fn a_dormant_member_outlives_the_unseen_window_until_the_pool_removes_it() {
+        let predicate = balance_at_least(WATCHED, 1);
+        let held = conditions(std::slice::from_ref(&predicate));
+        let store = RestingPredicateStore::default();
+        let resting = held_dormant(rested_in_parent(std::slice::from_ref(&predicate)));
+
+        let resting = carry_through(&store, resting, &held, 1, 3 * RESTING_UNSEEN_RETAINED_BLOCKS);
+        assert!(resting.member(hash(0), &held).is_some(), "no build saw it, yet it stays");
+
+        let shared = SharedRestingPredicates::new(resting);
+        create_with_view(&shared, |view| view.refresh(&[ROOT], |_| None));
+        assert!(shared.is_empty(), "the pool reported the root removed");
+    }
+
+    #[test]
+    fn a_woken_dormant_member_rejoins_the_unseen_window() {
+        let predicate = balance_at_least(WATCHED, 1);
+        let held = conditions(std::slice::from_ref(&predicate));
+        let store = RestingPredicateStore::default();
+        let shared = SharedRestingPredicates::new(held_dormant(rested_in_parent(&[predicate])));
+        create_with_view(&shared, |view| view.refresh(&[ROOT], |_| Some(hash(0))));
+
+        let resting = shared.take_predicates();
+        let window = RESTING_UNSEEN_RETAINED_BLOCKS;
+        assert!(carry_through(&store, resting, &held, 1, 1 + window).is_empty());
+    }
+
+    #[test]
+    fn a_released_member_is_awake_in_the_view() {
+        let not_yet = ValidityPredicate::BlockNumber {
+            op: ValidityOperator::GreaterThanOrEqual,
+            value: U256::from(5),
+        };
+        let mut resting = held_dormant(rested_in_parent(&[not_yet]));
+        assert_eq!(resting.view.dormant_len(), 1);
+
+        resting.begin_block(PARENT, 2, Some(&TransitionState::default()));
+        assert_eq!(resting.view.dormant_len(), 0);
+        assert_eq!(resting.view.awake(), &[ROOT]);
+    }
+
+    #[test]
+    fn a_reset_set_discards_its_view() {
+        let predicate = balance_at_least(WATCHED, 1);
+        let mut resting = held_dormant(rested_in_parent(&[predicate]));
+
+        assert!(resting.begin_block(B256::repeat_byte(0x99), 2, None).reset);
+        assert_eq!(resting.view.dormant_len(), 0);
+        assert!(resting.view.awake().is_empty());
+    }
+
+    #[test]
+    fn a_commit_hands_back_a_dormant_member_for_promotion() {
+        let predicate = balance_at_least(WATCHED, 1);
+        let shared = SharedRestingPredicates::new(held_dormant(rested_in_parent(&[predicate])));
+        let _iterator_hold = shared.iterator_hold::<BasePooledTransaction>();
+        let mut account = Account::default();
+        account.info.balance = U256::from(3);
+
+        let woken = shared.wake_by_state(&EvmState::from_iter([(WATCHED, account)]));
+        assert_eq!(woken, [hash(0)], "the iterator skipped it as dormant and can promote it");
+        assert!(shared.is_empty());
+    }
+
+    #[test]
+    fn dormant_roots_skipped_at_creation_are_counted_apart_from_parked_ones() {
+        let predicate = balance_at_least(WATCHED, 1);
+        let shared = SharedRestingPredicates::new(held_dormant(rested_in_parent(&[predicate])));
+        shared.take_stats();
+        create_with_view(&shared, SelectionView::record_skipped);
+        let stats = shared.take_stats();
+        assert_eq!((stats.parked, stats.dormant_skipped), (0, 1));
+    }
+
+    /// A tail change journals the lane, or the journal overflows and the view is rebuilt: either
+    /// way creation wakes the dormant root and then holds it again, so it ends dormant.
+    #[test]
+    fn a_root_woken_by_the_journal_and_held_again_stays_dormant_past_the_unseen_window() {
+        let predicate = balance_at_least(WATCHED, 1);
+        let held = conditions(std::slice::from_ref(&predicate));
+        for rebuilt in [false, true] {
+            let resting = held_dormant(rested_in_parent(std::slice::from_ref(&predicate)));
+            let shared = SharedRestingPredicates::new(resting);
+            create_with_view(&shared, |view| {
+                if rebuilt {
+                    view.rebuild([ROOT].into_iter());
+                } else {
+                    view.refresh(&[ROOT], |_| Some(hash(0)));
+                }
+                view.hold(ROOT, hash(0));
+            });
+            let store = RestingPredicateStore::default();
+            let last_block = 3 * RESTING_UNSEEN_RETAINED_BLOCKS;
+            let resting = carry_through(&store, shared.take_predicates(), &held, 1, last_block);
+            assert!(
+                resting.member(hash(0), &held).is_some(),
+                "rebuilt {rebuilt}: the final dormancy keeps the member out of the unseen sweep"
+            );
+
+            let shared = SharedRestingPredicates::new(resting);
+            let _iterator_hold = shared.iterator_hold::<BasePooledTransaction>();
+            let mut account = Account::default();
+            account.info.balance = U256::from(3);
+            let woken = shared.wake_by_state(&EvmState::from_iter([(WATCHED, account)]));
+            assert_eq!(woken, [hash(0)], "rebuilt {rebuilt}: its state change still promotes it");
+        }
+    }
+
+    /// A member rests on a balance predicate while its full conditions also end at block 1. The
+    /// next block is built before the pool's canonical maintenance expires it, so only the resting
+    /// set can tell that it must be offered and classified expired, as an asked hold would.
+    #[test]
+    fn a_dormant_member_whose_full_conditions_expire_is_offered_at_the_next_block() {
+        let blocker = balance_at_least(WATCHED, 1);
+        let deadline = ValidityPredicate::BlockNumber {
+            op: ValidityOperator::LessThanOrEqual,
+            value: U256::ONE,
+        };
+        let full = conditions(&[blocker.clone(), deadline]);
+        let mut resting = rested_in_parent(std::slice::from_ref(&blocker));
+        assert_eq!(resting.hold(hash(0), &full), Some(false), "held while building block 1");
+        let mut resting = held_dormant(resting);
+
+        let carry_over = resting.begin_block(PARENT, 2, Some(&TransitionState::default()));
+        assert_eq!(carry_over.released_by_block_number, 0, "it rests on its balance predicate");
+        assert_eq!(resting.hold(hash(0), &full), None, "an asked hold declines the expired member");
+        assert_eq!(
+            resting.view.awake(),
+            &[ROOT],
+            "creation must ask about it instead of skipping it as dormant"
+        );
+        assert_eq!(resting.len(), 1, "the builder, not block start, removes the expired member");
+    }
+
+    #[test]
+    fn re_holding_a_dormant_member_lists_its_deadline_once() {
+        let blocker = balance_at_least(WATCHED, 1);
+        let deadline = ValidityPredicate::BlockNumber {
+            op: ValidityOperator::LessThanOrEqual,
+            value: U256::from(50),
+        };
+        let full = conditions(&[blocker.clone(), deadline]);
+        let mut resting = rested_in_parent(std::slice::from_ref(&blocker));
+        assert_eq!(resting.hold(hash(0), &full), Some(false));
+        let shared = SharedRestingPredicates::new(held_dormant(resting));
+        for _ in 0..3 {
+            create_with_view(&shared, |view| {
+                view.refresh(&[ROOT], |_| Some(hash(0)));
+                view.hold(ROOT, hash(0));
+            });
+        }
+        let resting = shared.take_predicates();
+        assert_eq!(resting.deadlines.values().map(|bucket| bucket.len()).sum::<usize>(), 1);
+        assert_eq!(resting.deadlines.keys().copied().collect::<Vec<_>>(), [51]);
+    }
+
+    #[test]
+    fn a_dormant_member_without_a_block_bound_lists_no_deadline() {
+        let blocker = balance_at_least(WATCHED, 1);
+        let full = conditions(std::slice::from_ref(&blocker));
+        let mut resting = rested_in_parent(std::slice::from_ref(&blocker));
+        assert_eq!(resting.hold(hash(0), &full), Some(false));
+        let resting = held_dormant(resting);
+        assert!(resting.deadlines.is_empty());
+    }
+
+    /// A dormant member with a distant deadline is woken by its state, removed and rests again,
+    /// over and over, as a busy lineage does. Only one member is ever dormant, so the deadlines it
+    /// leaves behind must not pile up until that distant block.
+    #[test]
+    fn deadlines_stay_bounded_by_dormant_members_under_removal_and_re_rest_churn() {
+        const CYCLES: usize = 64;
+        let blocker = balance_at_least(WATCHED, 1);
+        let distant = ValidityPredicate::BlockNumber {
+            op: ValidityOperator::LessThanOrEqual,
+            value: U256::from(1_000_000),
+        };
+        let full = conditions(&[blocker.clone(), distant]);
+        let mut resting = rested_in_parent(std::slice::from_ref(&blocker));
+        for _ in 0..CYCLES {
+            assert_eq!(resting.hold(hash(0), &full), Some(false));
+            resting = held_dormant(resting);
+            assert!(resting.remove(hash(0)), "a state change wakes and removes it");
+            resting.rest(hash(0), blocker.clone());
+        }
+        let listed: usize = resting.deadlines.values().map(|bucket| bucket.len()).sum();
+        assert!(listed <= 1, "{listed} deadline entries retained for at most one dormant member");
+    }
+
+    fn block_bound(max: u64) -> ValidityPredicate {
+        ValidityPredicate::BlockNumber {
+            op: ValidityOperator::LessThanOrEqual,
+            value: U256::from(max),
+        }
+    }
+
+    /// Builds blocks `first..=last` on `resting` without pool maintenance, returning at each block
+    /// whether the root was awake in the view after block start.
+    fn awake_by_block(resting: &mut RestingPredicates, first: u64, last: u64) -> Vec<(u64, bool)> {
+        (first..=last)
+            .map(|block| {
+                let parent = B256::left_padding_from(&block.to_be_bytes());
+                resting.end_block(parent);
+                resting.begin_block(parent, block, Some(&TransitionState::default()));
+                (block, resting.view.awake().contains(&ROOT))
+            })
+            .collect()
+    }
+
+    /// `hash(0)` dormant after resting on `blocker` in block 1 with a block bound of `first`, then
+    /// re-admitted under the same hash with a bound of `second`: its lane is journaled, so the next
+    /// creation wakes it, the hold sees the new conditions and holds it again.
+    fn re_admitted_with_another_bound(
+        blocker: &ValidityPredicate,
+        first: u64,
+        second: u64,
+    ) -> RestingPredicates {
+        let mut resting = rested_in_parent(std::slice::from_ref(blocker));
+        let before = conditions(&[blocker.clone(), block_bound(first)]);
+        assert_eq!(resting.hold(hash(0), &before), Some(false));
+        let mut resting = held_dormant(resting);
+        let after = conditions(&[blocker.clone(), block_bound(second)]);
+        assert_eq!(resting.hold(hash(0), &after), Some(false));
+        let shared = SharedRestingPredicates::new(resting);
+        create_with_view(&shared, |view| {
+            view.refresh(&[ROOT], |_| Some(hash(0)));
+            view.hold(ROOT, hash(0));
+        });
+        shared.take_predicates()
+    }
+
+    #[test]
+    fn a_re_admitted_member_with_an_earlier_bound_is_offered_at_its_new_deadline() {
+        let blocker = balance_at_least(WATCHED, 1);
+        let mut resting = re_admitted_with_another_bound(&blocker, 50, 2);
+        assert_eq!(awake_by_block(&mut resting, 2, 3), [(2, false), (3, true)]);
+    }
+
+    #[test]
+    fn a_re_admitted_member_with_a_later_bound_is_offered_at_its_new_deadline() {
+        let blocker = balance_at_least(WATCHED, 1);
+        let mut resting = re_admitted_with_another_bound(&blocker, 2, 50);
+        // Waking early only asks the hold again; the root must be awake by its new deadline.
+        let awake = awake_by_block(&mut resting, 2, 51);
+        assert_eq!(
+            awake.last(),
+            Some(&(51, true)),
+            "the old deadline must not consume the new one"
+        );
+    }
+
+    #[test]
+    fn finishing_a_set_whose_members_all_left_releases_their_deadlines() {
+        let blocker = balance_at_least(WATCHED, 1);
+        let full = conditions(&[blocker.clone(), block_bound(1_000_000)]);
+        let mut resting = rested_in_parent(std::slice::from_ref(&blocker));
+        assert_eq!(resting.hold(hash(0), &full), Some(false));
+        let mut resting = held_dormant(resting);
+        assert!(resting.remove(hash(0)));
+
+        let store = RestingPredicateStore::default();
+        store.put(store.finish(resting), PARENT);
+        assert!(store.take(32, WAIT).deadlines.is_empty());
     }
 }

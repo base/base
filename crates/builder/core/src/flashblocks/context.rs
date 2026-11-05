@@ -1546,6 +1546,10 @@ impl BasePayloadBuilderCtx {
             ValidityMetrics::resting_predicate_carried_parked_total()
                 .increment(resting_stats.carried_parked);
         }
+        if resting_stats.dormant_skipped > 0 {
+            ValidityMetrics::resting_predicate_dormant_skipped_total()
+                .increment(resting_stats.dormant_skipped);
+        }
         let validity_handling = validity_handling + resting_stats.duration;
         if !validity_handling.is_zero() {
             BuilderMetrics::validity_candidate_handling_duration().record(validity_handling);

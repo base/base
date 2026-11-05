@@ -15,7 +15,9 @@ use reth_transaction_pool::{
     BestTransactions, TransactionOrdering, ValidPoolTransaction, error::InvalidPoolTransactionError,
 };
 
-use crate::{BasePooledTx, BestTransactionPriority, PoolStore, two_d_nonce_pool::LaneId};
+use crate::{
+    BasePooledTx, BestTransactionPriority, BridgedRun, PoolStore, two_d_nonce_pool::LaneId,
+};
 
 /// A store's best-transactions iterator as the merge drives it.
 ///
@@ -198,6 +200,11 @@ where
     deferred: HeldLanes<T, O::PriorityValue>,
     /// Queued standard transactions behind validity runs; see [`BridgedDescendants`].
     bridged: HeldLanes<T, O::PriorityValue>,
+    /// Bridged runs snapshotted at creation and moved into `bridged` when their
+    /// lane first yields a validity member; see [`Self::with_bridge_snapshot`].
+    bridge_snapshot: imbl::HashMap<LaneId, BridgedRun<T>>,
+    /// Lanes whose snapshotted bridged run was moved into `bridged`.
+    bridges_taken: HashSet<LaneId>,
     /// The latest nonce yielded in each lane that straddles stores. A lane
     /// yields in nonce order, so this one slot says which successor is next;
     /// the entry goes when a member of the lane is marked invalid.
@@ -227,6 +234,8 @@ where
             external_anchors: HashMap::default(),
             deferred: HeldLanes::default(),
             bridged: HeldLanes::default(),
+            bridge_snapshot: imbl::HashMap::default(),
+            bridges_taken: HashSet::default(),
             yielded: HashMap::default(),
             invalid_lanes: HashSet::default(),
         }
@@ -245,6 +254,28 @@ where
     pub(crate) fn with_bridged_descendants(mut self, bridged: BridgedDescendants<T>) -> Self {
         self.bridged = HeldLanes::from_lanes(bridged);
         self
+    }
+
+    /// Registers the same transactions as [`Self::with_bridged_descendants`] from a persistent
+    /// snapshot, without visiting it: a lane's run is copied out when the lane first yields a
+    /// validity member, so lanes whose roots stay held cost nothing.
+    pub(crate) fn with_bridge_snapshot(
+        mut self,
+        snapshot: imbl::HashMap<LaneId, BridgedRun<T>>,
+    ) -> Self {
+        self.bridge_snapshot = snapshot;
+        self
+    }
+
+    /// Moves `lane_id`'s snapshotted bridged run into `bridged`, once, unless the lane is invalid.
+    fn take_bridge(&mut self, lane_id: LaneId) {
+        let Some(run) = self.bridge_snapshot.get(&lane_id) else { return };
+        if self.invalid_lanes.contains(&lane_id) || !self.bridges_taken.insert(lane_id) {
+            return;
+        }
+        for transaction in run.iter() {
+            self.bridged.push(lane_id, Arc::clone(transaction));
+        }
     }
 
     /// The nonce slot `transaction` occupies, with the protocol nonce as key
@@ -321,6 +352,11 @@ where
 
     fn record_yielded(&mut self, transaction: &ValidPoolTransaction<T>) {
         let Some((lane_id, nonce)) = Self::slot(transaction) else { return };
+        if !self.bridge_snapshot.is_empty()
+            && PoolStore::of(&transaction.transaction) == PoolStore::Validity
+        {
+            self.take_bridge(lane_id);
+        }
         if self.straddles(&lane_id) {
             self.yielded.insert(lane_id, nonce);
         }

@@ -26,6 +26,7 @@ use reth_transaction_pool::{
 
 use crate::{
     BasePooledTx, BestTransactionPriority, BestTransactionsHold, HOLD_INTERRUPT_INTERVAL,
+    PendingRun, SelectionIndex, SelectionRoot, SelectionView,
     best::{HeldRun, MergeSource},
 };
 
@@ -58,7 +59,11 @@ struct NonceLane<T: BasePooledTx> {
     /// Length of the consecutive pending run from `next_nonce`. Kept in step
     /// by every mutation, so pending and queued splits never walk the lane.
     pending_len: u64,
-    transactions: BTreeMap<u64, Arc<ValidPoolTransaction<T>>>,
+    /// The member at `next_nonce`, present exactly while `pending_len > 0`, so a snapshot
+    /// copies a lane's head without searching the map. Mutations behind the head leave it alone.
+    pending_head: Option<Arc<ValidPoolTransaction<T>>>,
+    /// Persistent, so a selection index shares the members without copying them.
+    transactions: imbl::OrdMap<u64, Arc<ValidPoolTransaction<T>>>,
 }
 
 impl<T: BasePooledTx> NonceLane<T> {
@@ -70,14 +75,17 @@ impl<T: BasePooledTx> NonceLane<T> {
         cursor: LaneCursor,
         mut transactions: BTreeMap<u64, Arc<ValidPoolTransaction<T>>>,
     ) -> Self {
-        let transactions = transactions.split_off(&cursor.next_nonce);
+        let transactions = transactions.split_off(&cursor.next_nonce).into_iter().collect();
         let mut lane = Self {
             state_nonce: cursor.state_nonce,
             next_nonce: cursor.next_nonce,
             pending_len: 0,
+            pending_head: None,
             transactions,
         };
         lane.extend_pending_run();
+        lane.pending_head = lane.transactions.get(&lane.next_nonce).cloned();
+        lane.debug_assert_pending_head();
         lane
     }
 
@@ -100,33 +108,60 @@ impl<T: BasePooledTx> NonceLane<T> {
         nonce.checked_sub(self.next_nonce).is_some_and(|offset| offset < self.pending_len)
     }
 
+    fn debug_assert_pending_head(&self) {
+        debug_assert_eq!(self.pending_head.is_some(), self.pending_len > 0);
+        debug_assert!(
+            match (&self.pending_head, self.transactions.get(&self.next_nonce)) {
+                (Some(cached), Some(member)) => Arc::ptr_eq(cached, member),
+                (cached, member) => cached.is_none() && member.is_none(),
+            },
+            "pending head differs from the member at next_nonce"
+        );
+    }
+
     fn insert(
         &mut self,
         nonce: u64,
         transaction: Arc<ValidPoolTransaction<T>>,
     ) -> Option<Arc<ValidPoolTransaction<T>>> {
+        if nonce == self.next_nonce {
+            self.pending_head = Some(Arc::clone(&transaction));
+        }
         let replaced = self.transactions.insert(nonce, transaction);
         if self.nonce_at(self.pending_len) == Some(nonce) {
             self.extend_pending_run();
         }
+        self.debug_assert_pending_head();
         replaced
     }
 
     fn remove(&mut self, nonce: u64) -> Option<Arc<ValidPoolTransaction<T>>> {
         let removed = self.transactions.remove(&nonce)?;
+        if nonce == self.next_nonce {
+            self.pending_head = None;
+        }
         if self.is_pending(nonce) {
             self.pending_len = nonce - self.next_nonce;
         }
+        self.debug_assert_pending_head();
         Some(removed)
     }
 
     /// Moves the executable cursor, returning the members left below it.
-    fn set_next_nonce(&mut self, next_nonce: u64) -> BTreeMap<u64, Arc<ValidPoolTransaction<T>>> {
-        let retained = self.transactions.split_off(&next_nonce);
-        let stale = std::mem::replace(&mut self.transactions, retained);
+    ///
+    /// Only the members passed are touched, so the persistent map keeps sharing the rest.
+    fn set_next_nonce(&mut self, next_nonce: u64) -> Vec<Arc<ValidPoolTransaction<T>>> {
+        let mut stale = Vec::new();
+        while let Some(nonce) =
+            self.transactions.get_min().map(|(nonce, _)| *nonce).filter(|nonce| *nonce < next_nonce)
+        {
+            stale.extend(self.transactions.remove(&nonce));
+        }
         self.next_nonce = next_nonce;
         self.pending_len = 0;
         self.extend_pending_run();
+        self.pending_head = self.transactions.get(&self.next_nonce).cloned();
+        self.debug_assert_pending_head();
         stale
     }
 
@@ -172,7 +207,7 @@ impl<T: BasePooledTx> NonceLane<T> {
 
     /// Whether every live member is in the pending run.
     fn is_fully_pending(&self) -> bool {
-        self.transactions.last_key_value().is_none_or(|(nonce, _)| self.is_pending(*nonce))
+        self.transactions.get_max().is_none_or(|(nonce, _)| self.is_pending(*nonce))
     }
 
     /// The nonce right after the lane's consecutive pending run, or `None`
@@ -465,6 +500,9 @@ pub(crate) struct TwoDNoncePool<T: BasePooledTx> {
     /// when the two meet. Cleared with the lane; a flag may outlive the other
     /// store's transactions, so readers verify before relying on it.
     shared_lanes: HashSet<LaneId>,
+    /// Pending runs by root and the journal of their changes, kept in step with `lanes` and
+    /// `nonce_free` when persistent selection is enabled (the validity pool).
+    selection: Option<SelectionIndex<T>>,
 }
 
 impl<T: BasePooledTx> TwoDNoncePool<T> {
@@ -482,7 +520,56 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
             lane_candidates: HashMap::default(),
             ahead_of_state: HashMap::default(),
             shared_lanes: HashSet::default(),
+            selection: None,
         }
+    }
+
+    /// Starts keeping a [`SelectionIndex`] of the pool's roots, built from the current lanes, if
+    /// it does not keep one yet. Pools no persistent selection uses never pay for the index.
+    pub(crate) fn enable_selection(&mut self) {
+        if self.selection.is_some() {
+            return;
+        }
+        let lanes = self.lanes.iter().filter_map(|(id, lane)| {
+            let run = PendingRun::of_lane(&lane.transactions, lane.next_nonce, lane.pending_len)?;
+            Some((SelectionRoot::Lane(id.0, id.1), run))
+        });
+        let nonce_free = self.nonce_free.iter().map(|(replay_id, transaction)| {
+            (SelectionRoot::NonceFree(*replay_id), PendingRun::single(Arc::clone(transaction)))
+        });
+        self.selection = Some(SelectionIndex::new(lanes.chain(nonce_free)));
+    }
+
+    /// The pool's [`SelectionIndex`], when it keeps one.
+    pub(crate) const fn selection(&self) -> Option<&SelectionIndex<T>> {
+        self.selection.as_ref()
+    }
+
+    /// Journals a change to `lane_id` the lane itself does not show, such as its bridged
+    /// standard successors.
+    pub(crate) fn touch_selection_lane(&mut self, lane_id: LaneId) {
+        if let Some(selection) = &mut self.selection {
+            selection.journal_mut().record(SelectionRoot::Lane(lane_id.0, lane_id.1));
+        }
+    }
+
+    /// Stores `lane_id`'s current pending run in the selection index.
+    fn record_selection_lane(&mut self, lane_id: LaneId) {
+        let Some(selection) = &mut self.selection else { return };
+        let run = self.lanes.get(&lane_id).and_then(|lane| {
+            PendingRun::of_lane(&lane.transactions, lane.next_nonce, lane.pending_len)
+        });
+        selection.update(SelectionRoot::Lane(lane_id.0, lane_id.1), run);
+    }
+
+    /// Stores the nonce-free transaction under `replay_id`, if any, in the selection index.
+    fn record_selection_nonce_free(&mut self, replay_id: B256) {
+        let Some(selection) = &mut self.selection else { return };
+        let run = self
+            .nonce_free
+            .get(&replay_id)
+            .map(|transaction| PendingRun::single(Arc::clone(transaction)));
+        selection.update(SelectionRoot::NonceFree(replay_id), run);
     }
 
     /// Applies admission and capacity limits. Call before inserting.
@@ -595,8 +682,10 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
     /// Re-ranks `lane_id`'s tail after the lane changed. Must follow every lane
     /// mutation: the tail, and whether it is pending, depend on the whole lane.
     /// Brings every per-lane index in line with `lane_id` after it changed:
-    /// its eviction candidate, its ahead-of-state anchor and its shared flag.
+    /// its eviction candidate, its ahead-of-state anchor, its shared flag and
+    /// its selection-index run.
     fn refresh_lane_indexes(&mut self, lane_id: LaneId) {
+        self.record_selection_lane(lane_id);
         if let Some(previous) = self.lane_candidates.remove(&lane_id) {
             self.eviction_order.remove(&previous);
         }
@@ -610,7 +699,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
         } else {
             self.ahead_of_state.remove(&lane_id);
         }
-        if let Some((_, tail)) = lane.transactions.last_key_value() {
+        if let Some((_, tail)) = lane.transactions.get_max() {
             let key = self.eviction_key(tail, lane.is_fully_pending());
             self.eviction_order.insert(key);
             self.lane_candidates.insert(lane_id, key);
@@ -838,6 +927,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
                 self.eviction_order.remove(&self.eviction_key(existing, true));
             }
             self.nonce_free.insert(replay_id, Arc::clone(&transaction));
+            self.record_selection_nonce_free(replay_id);
             self.usage.add(&transaction);
             self.eviction_order.insert(self.eviction_key(&transaction, true));
             self.hashes.insert(hash, Arc::clone(&transaction));
@@ -991,7 +1081,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
             nonce.checked_sub(old_next_nonce).is_some_and(|offset| offset < old_pending_len)
         };
         let stale = lane.set_next_nonce(cursor.next_nonce);
-        for transaction in stale.into_values() {
+        for transaction in stale {
             self.hashes.remove(transaction.hash());
             self.usage.remove(&transaction);
             update.discarded.push(transaction);
@@ -1111,14 +1201,21 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
     /// Flags `lane_id` as one another store also holds transactions in. No-op
     /// for a lane this pool does not hold.
     pub(crate) fn mark_shared_lane(&mut self, lane_id: LaneId) {
-        if self.lanes.contains_key(&lane_id) {
-            self.shared_lanes.insert(lane_id);
+        if self.lanes.contains_key(&lane_id) && self.shared_lanes.insert(lane_id) {
+            self.touch_selection_lane(lane_id);
         }
     }
 
     /// Clears the shared flag once the other store holds nothing in `lane_id`.
     pub(crate) fn unmark_shared_lane(&mut self, lane_id: &LaneId) {
-        self.shared_lanes.remove(lane_id);
+        if self.shared_lanes.remove(lane_id) {
+            self.touch_selection_lane(*lane_id);
+        }
+    }
+
+    /// The lanes flagged as shared with another store.
+    pub(crate) fn shared_lanes(&self) -> impl Iterator<Item = LaneId> + '_ {
+        self.shared_lanes.iter().copied()
     }
 
     /// Whether `lane_id` is flagged as shared with another store.
@@ -1348,6 +1445,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
             && let Some(replay_id) = transaction.transaction.eip8130_replay_id()
         {
             let transaction = self.nonce_free.remove(&replay_id)?;
+            self.record_selection_nonce_free(replay_id);
             self.hashes.remove(&hash);
             self.usage.remove(&transaction);
             self.eviction_order.remove(&self.eviction_key(&transaction, true));
@@ -1409,6 +1507,11 @@ where
     lane_indexes: HashMap<LaneId, usize>,
     /// Lane index by root hash, for roots held at creation and not yet taken.
     held_roots: B256Map<usize>,
+    /// Roots a [`SelectionView`] held dormant at creation, left out of `lanes`;
+    /// [`MergeSource::take_held`] hands each back once from `dormant_runs`.
+    dormant_roots: imbl::HashMap<TxHash, SelectionRoot>,
+    /// The selection index's runs snapshotted at creation. Empty without a view.
+    dormant_runs: imbl::HashMap<SelectionRoot, PendingRun<T>>,
     /// Mirrors the pool's protocol-nonce lane mode for lane lookups.
     protocol_nonce_lanes: bool,
     ordering: O,
@@ -1461,10 +1564,11 @@ where
     ) -> Self {
         let mut snapshot = Vec::with_capacity(lanes.len() + nonce_free.len());
         snapshot.extend(lanes.iter().filter_map(|(id, lane)| {
-            let mut pending = lane.consecutive_pending_transactions();
-            let head = Arc::clone(pending.next()?);
+            let head = Arc::clone(lane.pending_head.as_ref()?);
             let mut tail = Vec::with_capacity(lane.consecutive_pending_len() - 1);
-            tail.extend(pending.cloned());
+            if lane.pending_len > 1 {
+                tail.extend(lane.consecutive_pending_transactions().skip(1).cloned());
+            }
             Some(LaneIterator::new(*id, head, tail))
         }));
         let lane_indexes = snapshot
@@ -1482,10 +1586,69 @@ where
             candidates: BinaryHeap::new(),
             lane_indexes,
             held_roots: B256Map::default(),
+            dormant_roots: imbl::HashMap::default(),
+            dormant_runs: imbl::HashMap::default(),
             protocol_nonce_lanes,
             ordering,
             base_fee,
         }
+    }
+
+    /// Snapshots the awake roots of `view` from `runs`, a selection index's runs, without
+    /// visiting its dormant roots, which [`MergeSource::take_held`] hands back from `runs`.
+    /// Nothing is offered before [`Self::ranked`].
+    pub(crate) fn from_selection(
+        runs: &imbl::HashMap<SelectionRoot, PendingRun<T>>,
+        view: &SelectionView,
+        ordering: O,
+        base_fee: u64,
+    ) -> Self {
+        let lane = |root: &SelectionRoot, run: &PendingRun<T>| {
+            let id = match root {
+                SelectionRoot::Lane(sender, nonce_key) => (*sender, *nonce_key),
+                SelectionRoot::NonceFree(_) => {
+                    (run.root().sender(), Eip8130Constants::NONCE_KEY_MAX)
+                }
+            };
+            LaneIterator::new(id, Arc::clone(run.root()), run.tail().cloned().collect())
+        };
+        // Without dormant roots every root is awake, and walking the snapshot avoids a lookup
+        // per root.
+        let lanes: Vec<_> = if view.dormant_len() == 0 {
+            runs.iter().map(|(root, run)| lane(root, run)).collect()
+        } else {
+            view.awake().iter().filter_map(|root| Some(lane(root, runs.get(root)?))).collect()
+        };
+        let lane_indexes = lanes
+            .iter()
+            .enumerate()
+            .filter(|(_, lane)| !lane.tail.is_empty())
+            .map(|(index, lane)| (lane.id, index))
+            .collect();
+        Self {
+            lanes,
+            candidates: BinaryHeap::new(),
+            lane_indexes,
+            held_roots: B256Map::default(),
+            dormant_roots: view.dormant_roots(),
+            dormant_runs: runs.clone(),
+            protocol_nonce_lanes: true,
+            ordering,
+            base_fee,
+        }
+    }
+
+    /// The roots [`Self::hold_resting_roots`] held, with their root transaction hashes.
+    pub(crate) fn held_selection_roots(&self) -> impl Iterator<Item = (TxHash, SelectionRoot)> {
+        self.held_roots.iter().map(|(hash, index)| {
+            let lane = &self.lanes[*index];
+            let root = lane
+                .head
+                .transaction
+                .eip8130_replay_id()
+                .map_or(SelectionRoot::Lane(lane.id.0, lane.id.1), SelectionRoot::NonceFree);
+            (*hash, root)
+        })
     }
 
     /// Ranks the snapshot's lane heads, leaving out lanes whose root is held.
@@ -1618,9 +1781,15 @@ where
     }
 
     fn take_held(&mut self, transaction_hash: &TxHash) -> Option<HeldRun<T>> {
-        let lane = &mut self.lanes[self.held_roots.remove(transaction_hash)?];
-        lane.index = 1;
-        Some((Arc::clone(&lane.head), std::mem::take(&mut lane.tail)))
+        if let Some(index) = self.held_roots.remove(transaction_hash) {
+            let lane = &mut self.lanes[index];
+            lane.index = 1;
+            return Some((Arc::clone(&lane.head), std::mem::take(&mut lane.tail)));
+        }
+        let root = self.dormant_roots.remove(transaction_hash)?;
+        let run =
+            self.dormant_runs.get(&root).filter(|run| run.root().hash() == transaction_hash)?;
+        Some((Arc::clone(run.root()), run.tail().cloned().collect()))
     }
 }
 
@@ -2276,33 +2445,78 @@ mod tests {
     #[test]
     fn best_transactions_snapshot_handles_u64_max_nonce_without_wrapping() {
         let signer = signer();
-        let transaction = Arc::new(valid_pool_transaction(signed_channel_tx(
-            &signer,
-            U256::from(17),
-            u64::MAX,
-            1_000,
-        )));
         let lane_id = (signer.address(), U256::from(17));
-        let lanes: HashMap<_, _> = [(
-            lane_id,
-            NonceLane::new(
-                LaneCursor::at(u64::MAX),
-                BTreeMap::from([(u64::MAX, Arc::clone(&transaction))]),
-            ),
-        )]
-        .into_iter()
-        .collect();
+        for run_start in [u64::MAX, u64::MAX - 1] {
+            let run: BTreeMap<_, _> = (run_start..=u64::MAX)
+                .map(|nonce| {
+                    let transaction = signed_channel_tx(&signer, U256::from(17), nonce, 1_000);
+                    (nonce, Arc::new(valid_pool_transaction(transaction)))
+                })
+                .collect();
+            let run_hashes: Vec<_> = run.values().map(|transaction| *transaction.hash()).collect();
+            let lanes: HashMap<_, _> =
+                [(lane_id, NonceLane::new(LaneCursor::at(run_start), run))].into_iter().collect();
 
-        let mut best = BestTwoDTransactions::new(
-            &lanes,
-            &B256Map::default(),
-            false,
-            BaseOrdering::coinbase_tip(),
-            0,
-        )
-        .ranked();
-        assert_eq!(best.next().map(|transaction| *transaction.hash()), Some(*transaction.hash()));
-        assert!(best.next().is_none());
+            let best = BestTwoDTransactions::new(
+                &lanes,
+                &B256Map::default(),
+                false,
+                BaseOrdering::coinbase_tip(),
+                0,
+            )
+            .ranked();
+            assert_eq!(best.map(|transaction| *transaction.hash()).collect::<Vec<_>>(), run_hashes);
+        }
+    }
+
+    #[test]
+    fn snapshots_follow_the_lane_head_through_replacement_removal_and_cursor_moves() {
+        let mut pool = TwoDNoncePool::new(PriceBumpConfig::default());
+        let signer = signer();
+        let key = U256::from(51);
+        let lane = (signer.address(), key);
+        let transaction = |nonce, max_fee| {
+            valid_pool_transaction(signed_channel_tx(&signer, key, nonce, max_fee))
+        };
+        let snapshot = |pool: &TwoDNoncePool<BasePooledTransaction>| {
+            pool.best_transactions(BaseOrdering::coinbase_tip(), 0)
+                .map(|transaction| *transaction.hash())
+                .collect::<Vec<_>>()
+        };
+        let [head, second, third] = [0, 1, 2].map(|nonce| transaction(nonce, 1_000));
+        let [new_head, new_second] = [0, 1].map(|nonce| transaction(nonce, 1_250));
+        let refilled_head = transaction(0, 1_500);
+        let [head_hash, second_hash, third_hash, new_head_hash, new_second_hash, refilled_hash] =
+            [&head, &second, &third, &new_head, &new_second, &refilled_head]
+                .map(|transaction| *transaction.hash());
+
+        pool.insert_validated(head, 0).unwrap();
+        pool.insert_validated(third, 0).unwrap();
+        assert_eq!(snapshot(&pool), vec![head_hash]);
+        pool.insert_validated(second, 0).unwrap();
+        assert_eq!(snapshot(&pool), vec![head_hash, second_hash, third_hash]);
+
+        // An iterator keeps the run it snapshotted; a new one sees the replacements.
+        let frozen = pool.best_transactions(BaseOrdering::coinbase_tip(), 0);
+        pool.insert_validated(new_head, 0).unwrap();
+        pool.insert_validated(new_second, 0).unwrap();
+        assert_eq!(
+            frozen.map(|transaction| *transaction.hash()).collect::<Vec<_>>(),
+            vec![head_hash, second_hash, third_hash]
+        );
+        assert_eq!(snapshot(&pool), vec![new_head_hash, new_second_hash, third_hash]);
+
+        // Removing the head leaves a gap at the cursor; nothing behind it is promoted.
+        pool.remove_transactions(&[new_head_hash]);
+        assert!(snapshot(&pool).is_empty());
+
+        pool.set_lane_cursor(lane, LaneCursor::at(1));
+        assert_eq!(snapshot(&pool), vec![new_second_hash, third_hash]);
+        pool.set_lane_cursor(lane, LaneCursor::at(0));
+        assert!(snapshot(&pool).is_empty());
+
+        pool.insert_validated(refilled_head, 0).unwrap();
+        assert_eq!(snapshot(&pool), vec![refilled_hash, new_second_hash, third_hash]);
     }
 
     #[test]
