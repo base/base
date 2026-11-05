@@ -34,6 +34,55 @@ ENRs (Ethereum Node Records) contain essential information about network peers:
 - Protocol capabilities and version
 - Chain-specific information (chain ID, etc.)
 
+## ENR Trees (EIP-1459 DNS Discovery)
+
+Besides fixed bootnodes, the driver can sync bootnodes from EIP-1459 ENR trees: lists of signed
+node records published as DNS TXT records under a domain. Pass a tree in the bootnode list as
+`enrtree://<pubkey>@<domain>`, where `<pubkey>` is the base32-encoded compressed secp256k1 key that
+signs the tree root. For example:
+
+```text
+--p2p.bootnodes enrtree://AKA3AM6LPBYEUDMVNU3BSVQJ5AD45Y7YPOHJLEF6W26QOE4VTUDPE@nodes.example.org
+```
+
+`EnrTreeSync` walks the tree with reth's `reth-dns-discovery` tree types. The root must be signed
+by the tree's key, and every entry must match the hash it is published under. It yields only records
+that pass `EnrValidation` for the node's chain ID, so the tree may contain other records. Yielded
+ENRs are added to the discv5 table, forwarded to gossip, and stored in the bootstore.
+
+The walk is bounded, so a large or hostile tree cannot grow memory or per-poll work. The limits
+apply to each configured tree:
+
+| Limit | Value |
+| --- | --- |
+| Links to other trees (`enrtree-link`) | not followed |
+| Lookups in flight | 1, at most 3 per second, each with a 5 second timeout |
+| Distinct entries admitted per walk (also caps the pending queue) | 2,000 |
+| Records yielded per walk | 500 |
+| Lookups of one entry per walk, including retries | 3 |
+
+A walk that hits a limit stops admitting entries or yielding records, with a warning, and keeps the
+records it found. Entries are visited breadth-first, so in a tree larger than the limit, records
+past the first 2,000 entries are not reached. A repeated entry hash is visited once. A failed entry
+is retried in place without restarting the walk, and retries are not limited by the entry budget. A
+tree that publishes its nodes only through links to other trees yields nothing; link each of those
+trees directly instead.
+
+After a complete walk, the root is rechecked every 30 minutes and the tree is walked again only when
+its ENR subtree hash changes. A walk is complete only when no admitted entry failed to resolve or
+matched the wrong hash; a walk that reaches the record budget also counts as complete. A root that
+fails to resolve or verify, an incomplete walk, and a tree without valid records are retried with a
+warning after a backoff that starts at 60 seconds and doubles up to 30 minutes. A signed root whose
+sequence number is lower than one already accepted is ignored as a rollback.
+
+An unreachable or invalid tree never stops the node: the other bootnodes keep working. The sync has
+no task of its own: it is polled inside the driver task and dropped with it, which happens at
+runtime shutdown.
+
+Publishing a tree is out of scope for this crate. Use geth's `devp2p dns` tool:
+`devp2p dns sign` builds and signs a tree from a node list, and `devp2p dns to-route53` or
+`devp2p dns to-cloudflare` deploys the TXT records.
+
 ## Persistent Storage
 
 The service maintains a persistent bootstore that caches discovered peers across
@@ -43,7 +92,7 @@ restarts, reducing bootstrap time and improving network resilience.
 
 Key configuration parameters include:
 - Discovery interval for random peer queries
-- Bootstrap node list
+- Bootstrap node list and ENR trees (`Discv5Builder::with_enr_trees`)
 - Storage location for persistent peer cache
 - Network interface and port bindings
 

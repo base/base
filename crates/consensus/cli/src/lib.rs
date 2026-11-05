@@ -13,6 +13,9 @@ pub use app::{ConsensusCli, ConsensusCommands, LogArgs, MetricsArgs};
 mod bootnode;
 pub use bootnode::{Bootnode, BootnodeEnr, BootnodeP2PArgs, resolve_host};
 
+mod bootnodes;
+pub use bootnodes::ConfiguredBootNodes;
+
 mod chain;
 pub use chain::{ConsensusChainArgs, GlobalConsensusChainArgs};
 

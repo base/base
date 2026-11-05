@@ -25,3 +25,7 @@ pub use handler::{Discv5Handler, HandlerRequest};
 
 mod metrics;
 pub use metrics::Metrics;
+
+mod tree;
+pub use reth_dns_discovery::tree::LinkEntry;
+pub use tree::{EnrTreeLookup, EnrTreeState, EnrTreeSync, EnrTreeWalk};

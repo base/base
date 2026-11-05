@@ -5,9 +5,10 @@ use std::net::IpAddr;
 use alloy_rlp::Encodable;
 use base_consensus_peers::{BaseEnr, BootNodes, BootStoreFile};
 use discv5::{Config, Discv5, Enr, enr::k256};
+use futures::StreamExt;
 use tokio::time::Duration;
 
-use crate::{Discv5BuilderError, Discv5Driver};
+use crate::{Discv5BuilderError, Discv5Driver, EnrTreeSync, LinkEntry};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 /// The local node information exposed by the discovery service to the network.
@@ -88,6 +89,8 @@ pub struct Discv5Builder {
     bootstore: Option<BootStoreFile>,
     /// Additional bootnodes to manually add to the initial bootstore
     bootnodes: BootNodes,
+    /// EIP-1459 ENR trees to sync bootnodes from.
+    enr_trees: Vec<LinkEntry>,
     /// Whether or not to forward the initial set of valid ENRs to the gossip layer.
     forward: bool,
 }
@@ -103,6 +106,7 @@ impl Discv5Builder {
             randomize: None,
             bootstore: None,
             bootnodes: BootNodes::default(),
+            enr_trees: Vec::new(),
             forward: true,
         }
     }
@@ -116,6 +120,12 @@ impl Discv5Builder {
     /// Sets the initial bootnodes to add to the bootstore.
     pub fn with_bootnodes(mut self, bootnodes: BootNodes) -> Self {
         self.bootnodes = bootnodes;
+        self
+    }
+
+    /// Sets the EIP-1459 ENR trees to sync bootnodes from.
+    pub fn with_enr_trees(mut self, enr_trees: Vec<LinkEntry>) -> Self {
+        self.enr_trees = enr_trees;
         self
     }
 
@@ -168,6 +178,10 @@ impl Discv5Builder {
                 .map_err(|e| Discv5BuilderError::Discv5CreationFailed(e.to_string()))?;
         driver.forward = self.forward;
         driver.remove_interval = self.randomize;
+        driver.enr_trees = EnrTreeSync::from_links(self.enr_trees, chain_id)
+            .into_iter()
+            .map(StreamExt::boxed)
+            .collect();
         Ok(driver)
     }
 }

@@ -8,6 +8,10 @@ use base_consensus_peers::{
 };
 use derive_more::Debug;
 use discv5::{Config, Discv5, Enr, IpMode, enr::NodeId};
+use futures::{
+    StreamExt,
+    stream::{BoxStream, SelectAll},
+};
 use tokio::{
     sync::mpsc::{Sender, channel, error::TrySendError},
     time::{Duration, sleep},
@@ -52,6 +56,10 @@ pub struct Discv5Driver {
     pub bootstore: Option<BootStoreFile>,
     /// Bootnodes used to bootstrap the discovery service.
     pub bootnodes: BootNodes,
+    /// EIP-1459 ENR tree syncs ([`crate::EnrTreeSync`]) polled for additional bootnodes while the
+    /// driver runs.
+    #[debug(skip)]
+    pub enr_trees: SelectAll<BoxStream<'static, Enr>>,
     /// The chain ID of the network.
     pub chain_id: u64,
     /// The interval to discovery random nodes.
@@ -77,7 +85,7 @@ impl Discv5Driver {
     }
 
     /// Instantiates a new [`Discv5Driver`].
-    pub const fn new(
+    pub fn new(
         disc: Discv5,
         interval: Duration,
         chain_id: u64,
@@ -88,6 +96,7 @@ impl Discv5Driver {
             disc,
             chain_id,
             bootnodes,
+            enr_trees: SelectAll::new(),
             interval,
             forward: true,
             remove_interval: None,
@@ -204,6 +213,9 @@ impl Discv5Driver {
 
             let enrs = self.disc.table_entries_enr();
             info!(target: "discovery", count = enrs.len(), "Discv5 Started");
+
+            // ENR trees are polled inside this task, so they stop when the driver stops.
+            let mut enr_trees = std::mem::take(&mut self.enr_trees);
 
             // Step 3: Forward ENRs in the bootstore to the enr receiver.
             if self.forward {
@@ -341,6 +353,16 @@ impl Discv5Driver {
                             _ => {}
                         }
                     }
+                    Some(enr) = enr_trees.next(), if !enr_trees.is_empty() => {
+                        debug!(target: "discovery::enrtree", enr = ?enr, "Adding ENR from ENR tree");
+                        Metrics::discovery_event("enr_tree").increment(1.0);
+                        if let Err(error) = self.disc.add_enr(enr.clone()) {
+                            debug!(target: "discovery::enrtree", error = %error, "Failed to add ENR tree record to the discovery table");
+                        }
+                        if try_forward_enr(&enr_sender, enr.clone()) {
+                            store.add_enr(enr);
+                        }
+                    }
                     _ = interval.tick() => {
                         let id = NodeId::random();
                         trace!(target: "discovery", node_id = %id, "Finding random node");
@@ -399,20 +421,30 @@ impl Discv5Driver {
 mod tests {
     use std::{
         net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
+        sync::Arc,
         time::Instant,
     };
 
+    use alloy_primitives::keccak256;
+    use alloy_rlp::Encodable;
     use base_common_chains::ChainConfig;
+    use base_consensus_peers::{BaseEnr, BootStore};
+    use data_encoding::BASE32_NOPAD;
     use discv5::{
         ConfigBuilder,
         enr::{CombinedKey, CombinedPublicKey},
         handler::NodeContact,
     };
+    use reth_dns_discovery::{
+        MapResolver,
+        tree::{LinkEntry, TreeRootEntry},
+    };
+    use secp256k1::{PublicKey, Secp256k1, SecretKey};
     use tempfile::tempdir;
     use tokio::{net::UdpSocket, sync::mpsc};
 
     use super::*;
-    use crate::LocalNode;
+    use crate::{EnrTreeSync, LocalNode};
 
     fn test_enr() -> Enr {
         let key = CombinedKey::generate_secp256k1();
@@ -443,6 +475,80 @@ mod tests {
         drop(rx);
 
         assert!(!try_forward_enr(&tx, test_enr()));
+    }
+
+    #[tokio::test]
+    async fn enr_tree_records_reach_table_receiver_and_bootstore() {
+        // A chain without default bootnodes, so the tree is the only discovery source.
+        const CHAIN_ID: u64 = 4_242_424_242;
+        const DOMAIN: &str = "nodes.example.org";
+        assert!(BootNodes::from_chain_id(CHAIN_ID).is_empty());
+
+        let mut builder = Enr::builder();
+        builder.ip4(Ipv4Addr::new(203, 0, 113, 9)).udp4(9222).tcp4(9222);
+        let mut opstack = Vec::new();
+        BaseEnr::from_chain_id(CHAIN_ID).encode(&mut opstack);
+        builder.add_value_rlp(BaseEnr::OPSTACK_ENR_KEY, opstack.into());
+        let tree_enr = builder.build(&CombinedKey::generate_secp256k1()).expect("enr builds");
+
+        // A one-record tree: the signed root points straight at the record.
+        let tree_key = SecretKey::from_slice(&[0x5a; 32]).expect("valid key");
+        let resolver = Arc::new(MapResolver::default());
+        let text = tree_enr.to_base64();
+        let hash = BASE32_NOPAD.encode(&keccak256(text.as_bytes())[..16]);
+        resolver.insert(format!("{hash}.{DOMAIN}"), text);
+        let mut root: TreeRootEntry = "enrtree-root:v1 e=QFT4PBCRX4XQCV3VUYJ6BTCEPU l=JGUFMSAGI7KZYB3P7IZW4S5Y3A seq=1 sig=3FmXuVwpa8Y7OstZTx9PIb1mt8FrW7VpDOFv4AaGCsZ2EIHmhraWhe4NxYhQDlw5MjeFXYMbJjsPeKlHzmJREQE"
+            .parse()
+            .expect("sample root parses");
+        root.enr_root = hash;
+        root.sign(&tree_key).expect("root signs");
+        resolver.insert(DOMAIN.to_string(), root.to_string());
+        let link = LinkEntry {
+            domain: DOMAIN.to_string(),
+            pubkey: PublicKey::from_secret_key(&Secp256k1::new(), &tree_key),
+        };
+
+        let CombinedKey::Secp256k1(secret_key) = CombinedKey::generate_secp256k1() else {
+            unreachable!()
+        };
+        let localhost = IpAddr::V4(Ipv4Addr::LOCALHOST);
+        let mut discovery = Discv5Driver::builder(
+            LocalNode::new(secret_key, localhost, 0, 0),
+            CHAIN_ID,
+            ConfigBuilder::new(SocketAddr::new(localhost, 0).into()).build(),
+        )
+        .build()
+        .expect("Failed to build discovery service");
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("bootstore.json");
+        discovery.bootstore = Some(BootStoreFile::Custom(path.clone()));
+        discovery.store_interval = Duration::from_millis(100);
+        discovery.enr_trees.push(
+            EnrTreeSync::new(link, CHAIN_ID, resolver, EnrTreeSync::DEFAULT_RETRY_INTERVAL).boxed(),
+        );
+
+        let (handle, mut enrs) = discovery.start();
+
+        let forwarded = tokio::time::timeout(Duration::from_secs(10), enrs.recv())
+            .await
+            .expect("tree record is forwarded in time");
+        assert_eq!(forwarded, Some(tree_enr.clone()));
+
+        let table = handle.table_enrs().await.expect("driver answers");
+        assert!(table.contains(&tree_enr), "tree record is in the discv5 table");
+
+        let stored = tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                let store: BootStore =
+                    BootStoreFile::Custom(path.clone()).try_into().expect("bootstore opens");
+                if store.peers.contains(&tree_enr) {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        })
+        .await;
+        assert!(stored.is_ok(), "tree record is persisted to the bootstore");
     }
 
     #[tokio::test]

@@ -4,7 +4,7 @@ use std::num::NonZeroUsize;
 
 use alloy_primitives::Address;
 use base_common_genesis::RollupConfig;
-use base_consensus_disc::LocalNode;
+use base_consensus_disc::{LinkEntry, LocalNode};
 use base_consensus_gossip::{ConnectionLimitsConfig, GaterConfig};
 use base_consensus_peers::{BootNodes, BootStoreFile, PeerMonitoring, PeerScoreLevel};
 use base_consensus_sources::BlockSigner;
@@ -51,6 +51,8 @@ pub struct NetworkConfig {
     pub max_identify_peerstore_peers: NonZeroUsize,
     /// An optional list of bootnode ENRs to start the node with.
     pub bootnodes: BootNodes,
+    /// EIP-1459 ENR trees (`enrtree://`) to sync additional bootnodes from.
+    pub enr_trees: Vec<LinkEntry>,
     /// The [`RollupConfig`].
     pub rollup_config: RollupConfig,
     /// A signer for gossip payloads.
@@ -97,6 +99,7 @@ impl NetworkConfig {
             enr_update: true,
             keypair: Keypair::generate_secp256k1(),
             bootnodes: Default::default(),
+            enr_trees: Default::default(),
             bootstore: Default::default(),
             gater_config: Default::default(),
             connection_limits_config: Default::default(),

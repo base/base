@@ -4,7 +4,7 @@ use std::{num::NonZeroUsize, time::Duration};
 
 use alloy_primitives::Address;
 use base_common_genesis::RollupConfig;
-use base_consensus_disc::{Discv5Builder, LocalNode};
+use base_consensus_disc::{Discv5Builder, LinkEntry, LocalNode};
 use base_consensus_gossip::{ConnectionLimitsConfig, GaterConfig, GossipDriverBuilder};
 use base_consensus_peers::{BootNodes, BootStoreFile, PeerMonitoring, PeerScoreLevel};
 use base_consensus_sources::BlockSigner;
@@ -47,6 +47,7 @@ impl From<NetworkConfig> for NetworkBuilder {
         .with_discovery_randomize(config.discovery_randomize)
         .with_bootstore(config.bootstore)
         .with_bootnodes(config.bootnodes)
+        .with_enr_trees(config.enr_trees)
         .with_discovery_interval(config.discovery_interval)
         .with_gossip_config(config.gossip_config)
         .with_peer_scoring(config.scoring)
@@ -121,6 +122,11 @@ impl NetworkBuilder {
     /// Sets the initial bootnodes to add to the bootstore.
     pub fn with_bootnodes(self, bootnodes: BootNodes) -> Self {
         Self { discovery: self.discovery.with_bootnodes(bootnodes), ..self }
+    }
+
+    /// Sets the EIP-1459 ENR trees to sync bootnodes from.
+    pub fn with_enr_trees(self, enr_trees: Vec<LinkEntry>) -> Self {
+        Self { discovery: self.discovery.with_enr_trees(enr_trees), ..self }
     }
 
     /// Sets the peer scoring based on the given [`PeerScoreLevel`].
