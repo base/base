@@ -12,9 +12,8 @@ use url::Url;
 
 use crate::{
     ConductorClusterSnapshot, ConductorControl, ConductorNodeConfig, ConductorNodeStatus,
-    ConductorSource, Confirm, JsonOutput, KeyValueTable, MonitoringConfig, NodeMetricsJson,
-    OptionalValue, SequencerCommandError, StateConvergenceTimeoutError, fetch_sequencer_active,
-    start_sequencer, stop_sequencer,
+    ConductorSource, Confirm, ConsensusClient, JsonOutput, KeyValueTable, MonitoringConfig,
+    NodeMetricsJson, OptionalValue, SequencerCommandError, StateConvergenceTimeoutError,
 };
 
 /// Inspect and control sequencer activity on HA conductor nodes.
@@ -208,8 +207,10 @@ async fn run_start(
         unsafe_head_source = %unsafe_head_source.as_str(),
         "calling admin_startSequencer"
     );
-    start_sequencer(&node.cl_rpc, unsafe_head).await?;
-    wait_for_expected_state(node, SequencerAction::Start, Some(unsafe_head)).await?;
+    let cl_client = ConsensusClient::connect(&node.cl_rpc)?
+        .with_timeout(ConsensusClient::SEQUENCER_ADMIN_TIMEOUT);
+    cl_client.start_sequencer(unsafe_head).await?;
+    wait_for_expected_state(node, &cl_client, SequencerAction::Start, Some(unsafe_head)).await?;
     info!(
         network = %config.name,
         node = %node.name,
@@ -267,11 +268,13 @@ async fn run_stop(
         cl_rpc = %node.cl_rpc,
         "calling admin_stopSequencer"
     );
-    let unsafe_head = stop_sequencer(&node.cl_rpc).await?;
+    let cl_client = ConsensusClient::connect(&node.cl_rpc)?
+        .with_timeout(ConsensusClient::SEQUENCER_ADMIN_TIMEOUT);
+    let unsafe_head = cl_client.stop_sequencer().await?;
     // A zero head means the sequencer stopped but the captured head is unavailable,
     // so do not surface it as a valid restart point.
     let captured_head = (unsafe_head != B256::ZERO).then_some(unsafe_head);
-    wait_for_expected_state(node, SequencerAction::Stop, captured_head).await?;
+    wait_for_expected_state(node, &cl_client, SequencerAction::Stop, captured_head).await?;
     info!(
         network = %config.name,
         node = %node.name,
@@ -419,6 +422,7 @@ fn parse_unsafe_head(raw: &str) -> Result<B256, SequencerCommandError> {
 
 async fn wait_for_expected_state(
     node: &ConductorNodeConfig,
+    cl_client: &ConsensusClient,
     action: SequencerAction,
     unsafe_head: Option<B256>,
 ) -> Result<(), SequencerCommandError> {
@@ -428,7 +432,7 @@ async fn wait_for_expected_state(
         unsafe_head,
         OBSERVATION_TIMEOUT,
         POLL_INTERVAL,
-        || fetch_sequencer_active(&node.cl_rpc),
+        || async { Ok(cl_client.sequencer_active().await?) },
     )
     .await
 }
@@ -853,8 +857,8 @@ mod tests {
         resolve_start_hash, wait_for_expected_state_with_fetch,
     };
     use crate::{
-        ConductorClusterSnapshot, ConductorNodeConfig, ConductorNodeStatus, NodeLookupError,
-        SEQUENCER_ACTIVE_RPC_TIMEOUT, SequencerCommandError,
+        ConductorClusterSnapshot, ConductorNodeConfig, ConductorNodeStatus, ConsensusClient,
+        NodeLookupError, SequencerCommandError,
     };
 
     fn node(name: &str) -> ConductorNodeConfig {
@@ -1130,7 +1134,7 @@ mod tests {
 
     #[test]
     fn observation_timeout_allows_two_full_status_polls() {
-        let minimum_timeout = SEQUENCER_ACTIVE_RPC_TIMEOUT
+        let minimum_timeout = ConsensusClient::SEQUENCER_ADMIN_TIMEOUT
             .checked_mul(REQUIRED_OBSERVATIONS as u32)
             .and_then(|timeout| {
                 POLL_INTERVAL

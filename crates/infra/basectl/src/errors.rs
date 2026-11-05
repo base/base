@@ -414,6 +414,54 @@ pub enum BatcherCommandError {
     },
 }
 
+/// Error returned by [`ConsensusClient`](crate::ConsensusClient) calls.
+#[derive(Debug, Error)]
+#[non_exhaustive]
+pub enum ConsensusRpcError {
+    /// The consensus-node RPC client could not be built.
+    #[error("failed to build consensus-node RPC client for {rpc}")]
+    BuildClient {
+        /// The consensus-node RPC URL origin, without credentials, path, or query.
+        rpc: String,
+        /// The underlying client construction error.
+        #[source]
+        source: JsonRpcClientError,
+    },
+    /// The consensus node does not expose the called method.
+    #[error("consensus-node RPC method `{method}` is not exposed by {rpc}")]
+    MethodUnavailable {
+        /// The consensus-node RPC URL origin, without credentials, path, or query.
+        rpc: String,
+        /// The unavailable RPC method.
+        method: &'static str,
+    },
+    /// A consensus-node RPC call failed for a reason other than method availability.
+    #[error("consensus-node RPC method `{method}` failed on {rpc}")]
+    Rpc {
+        /// The consensus-node RPC URL origin, without credentials, path, or query.
+        rpc: String,
+        /// The RPC method that failed.
+        method: &'static str,
+        /// The underlying RPC error.
+        #[source]
+        source: JsonRpcClientError,
+    },
+    /// A consensus-node RPC call did not answer within its timeout.
+    #[error("consensus-node RPC method `{method}` timed out after {timeout:?} on {rpc}")]
+    Timeout {
+        /// The consensus-node RPC URL origin, without credentials, path, or query.
+        rpc: String,
+        /// The RPC method that timed out.
+        method: &'static str,
+        /// The timeout the call was given.
+        timeout: Duration,
+    },
+    /// `admin_startSequencer` was asked to start from the zero hash, which is never a valid
+    /// unsafe head.
+    #[error("unsafe head must not be zero")]
+    ZeroUnsafeHead,
+}
+
 /// Error returned by txpool RPC helpers and command execution.
 #[derive(Debug, Error)]
 #[non_exhaustive]

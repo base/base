@@ -1,9 +1,6 @@
 use std::{collections::BTreeSet, sync::Arc, time::Duration};
 
-use base_consensus_rpc::{
-    AdminApiClient, BaseP2PApiClient, ClusterMembership, ConductorApiClient, RollupNodeApiClient,
-    ServerSuffrage,
-};
+use base_consensus_rpc::{ClusterMembership, ConductorApiClient, ServerSuffrage};
 use futures::{StreamExt, stream, stream::FuturesUnordered};
 use jsonrpsee::{
     core::client::{ClientT, Error as JsonRpcClientError},
@@ -13,6 +10,7 @@ use jsonrpsee::{
 use tokio::sync::mpsc;
 use tracing::{debug, warn};
 
+use super::ConsensusClient;
 use crate::config::{ConductorNodeConfig, ConductorSource};
 
 /// Live status snapshot for a single node in an HA conductor cluster.
@@ -884,7 +882,7 @@ type ConductorClientTuple = (
     String,
     String,
     jsonrpsee::http_client::HttpClient,
-    jsonrpsee::http_client::HttpClient,
+    ConsensusClient,
     Option<jsonrpsee::http_client::HttpClient>,
 );
 
@@ -902,13 +900,12 @@ fn build_conductor_clients(
                     warn!(error = %e, node = %node.name, "failed to build conductor HTTP client");
                 })
                 .ok()?;
-            let cl_client = HttpClientBuilder::default()
-                .request_timeout(timeout)
-                .build(node.cl_rpc.as_str())
+            let cl_client = ConsensusClient::connect(&node.cl_rpc)
                 .inspect_err(|e| {
                     warn!(error = %e, node = %node.name, "failed to build CL HTTP client");
                 })
-                .ok()?;
+                .ok()?
+                .with_timeout(timeout);
             let el_client = node.el_rpc.as_ref().and_then(|url| {
                 HttpClientBuilder::default()
                     .request_timeout(timeout)
@@ -956,9 +953,9 @@ async fn fetch_conductor_statuses(
                 ConductorApiClient::conductor_paused(conductor_client),
                 ConductorApiClient::conductor_stopped(conductor_client),
                 ConductorApiClient::conductor_sequencer_healthy(conductor_client),
-                AdminApiClient::admin_sequencer_active(cl_client),
-                RollupNodeApiClient::sync_status(cl_client),
-                BaseP2PApiClient::opp2p_peer_stats(cl_client),
+                cl_client.sequencer_active(),
+                cl_client.sync_status(),
+                cl_client.peer_stats(),
                 async {
                     if let Some(el) = el_client {
                         let r: Result<alloy_primitives::U64, _> =

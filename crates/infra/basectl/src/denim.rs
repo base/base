@@ -19,14 +19,14 @@ use anyhow::{Context, Result, anyhow};
 use base_common_consensus::Predeploys;
 use base_common_evm::BaseTime;
 use base_common_network::Base;
-use base_consensus_rpc::RollupNodeApiClient;
 use base_protocol::BaseTimeUpdateTx;
 use futures::{SinkExt, StreamExt};
-use jsonrpsee::http_client::HttpClientBuilder;
 use serde::Serialize;
 use serde_json::{Value, json};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 use url::Url;
+
+use crate::ConsensusClient;
 
 alloy_sol_types::sol! {
     function timestampMillisPart() external view returns (uint16);
@@ -174,13 +174,7 @@ impl DenimChecker {
             .disable_recommended_fillers()
             .network::<Base>()
             .connect_client(RpcClient::new(Http::with_client(http, el_rpc.clone()), false));
-        let cl = HttpClientBuilder::default()
-            .request_timeout(Duration::from_secs(10))
-            .build(cl_rpc.as_str())
-            .with_context(|| format!("connecting to consensus node RPC at {cl_rpc}"))?;
-        let rollup = RollupNodeApiClient::rollup_config(&cl)
-            .await
-            .with_context(|| format!("fetching optimism_rollupConfig from {cl_rpc}"))?;
+        let rollup = ConsensusClient::connect(cl_rpc)?.rollup_config().await?;
         let hash = match target {
             DenimCheckTarget::Latest => {
                 provider

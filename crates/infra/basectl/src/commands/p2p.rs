@@ -8,11 +8,11 @@ use serde::Serialize;
 use url::Url;
 
 use crate::{
-    CommandOutcome, Confirm, JsonOutput, KeyValueTable, MonitoringConfig, P2pCommandError,
-    P2pInfoJson, P2pInfoTable, P2pTargetError, PeerListReport, PeerSummary, ReachabilityOutcome,
-    ReachabilityResponse, TelemetryClient, add_peer, ban_el_peer, ban_peer, connect_peer,
-    disconnect_peer, el_peer_is_trusted, fetch_connected_peers, fetch_info, fetch_l2_chain_id,
-    fetch_raw_info, fetch_raw_peers, list_banned_peers, remove_peer, unban_el_peer, unban_peer,
+    CommandOutcome, Confirm, ConsensusClient, JsonOutput, KeyValueTable, MonitoringConfig,
+    P2pCommandError, P2pInfoJson, P2pInfoTable, P2pTargetError, PeerListReport, PeerSummary,
+    ReachabilityOutcome, ReachabilityResponse, TelemetryClient, add_peer, ban_el_peer,
+    el_peer_is_trusted, fetch_connected_peers, fetch_info, fetch_l2_chain_id, fetch_raw_info,
+    fetch_raw_peers, remove_peer, unban_el_peer,
 };
 
 /// Inspect p2p peers and advertised endpoints.
@@ -264,7 +264,7 @@ async fn run_add_peer(config: MonitoringConfig, args: DestructivePeerArgs) -> Re
             if !Confirm::prompt_or_abort(&prompt, yes)? {
                 return Ok(());
             }
-            connect_peer(&cl_rpc, &multiaddr).await?;
+            ConsensusClient::connect(&cl_rpc)?.connect_peer(&multiaddr).await?;
             print_peer_action(&PeerActionJson::cl(&config.name, PeerAction::Add, multiaddr), json)?;
         }
     }
@@ -308,7 +308,7 @@ async fn run_remove_peer(config: MonitoringConfig, args: DestructivePeerArgs) ->
             if !Confirm::prompt_or_abort(&prompt, yes)? {
                 return Ok(());
             }
-            disconnect_peer(&cl_rpc, &peer_id).await?;
+            ConsensusClient::connect(&cl_rpc)?.disconnect_peer(&peer_id).await?;
             print_peer_action(
                 &PeerActionJson::cl(&config.name, PeerAction::Remove, peer_id),
                 json,
@@ -367,13 +367,14 @@ async fn run_peer_ban_action(
             if !Confirm::prompt_or_abort(&prompt, yes)? {
                 return Ok(());
             }
+            let cl_client = ConsensusClient::connect(&cl_rpc)?;
             let disconnect_error = match action {
                 BanAction::Ban => {
-                    ban_peer(&cl_rpc, &peer_id).await?;
-                    disconnect_peer(&cl_rpc, &peer_id).await.err().map(|err| err.to_string())
+                    cl_client.ban_peer(&peer_id).await?;
+                    cl_client.disconnect_peer(&peer_id).await.err().map(|err| err.to_string())
                 }
                 BanAction::Unban => {
-                    unban_peer(&cl_rpc, &peer_id).await?;
+                    cl_client.unban_peer(&peer_id).await?;
                     None
                 }
             };
@@ -397,7 +398,8 @@ async fn run_unban_all(
 ) -> Result<CommandOutcome> {
     let DestructiveClBulkArgs { cl_rpc: cl_rpc_override, yes, json } = args;
     let cl_rpc = config.resolve_cl_rpc(cl_rpc_override.as_ref(), "p2p unban-all")?;
-    let mut peer_ids = list_banned_peers(&cl_rpc).await?;
+    let cl_client = ConsensusClient::connect(&cl_rpc)?;
+    let mut peer_ids = cl_client.list_banned_peers().await?;
     peer_ids.sort();
 
     if peer_ids.is_empty() {
@@ -419,7 +421,7 @@ async fn run_unban_all(
 
     let mut results = Vec::with_capacity(peer_ids.len());
     for peer_id in peer_ids {
-        match unban_peer(&cl_rpc, &peer_id).await {
+        match cl_client.unban_peer(&peer_id).await {
             Ok(()) => results.push(PeerBulkActionResultJson::ok(peer_id)),
             Err(err) => results.push(PeerBulkActionResultJson::err(peer_id, err.to_string())),
         }
