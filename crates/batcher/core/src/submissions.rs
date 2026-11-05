@@ -7,7 +7,7 @@ use base_batcher_encoder::{
     BatchPipeline, BatcherMetrics, BlobPayload, DaEgress, DaType, FrameEncoder, SubmissionId,
     SubmissionPayload,
 };
-use base_blobs::{BlobEncodeError, BlobEncoder};
+use base_common_blobs::BlobEncodeError;
 use base_protocol::Frame;
 use base_tx_manager::{TxCandidate, TxManager};
 use futures::stream::{FuturesUnordered, StreamExt};
@@ -50,7 +50,7 @@ impl BatchTxCandidateBuilder {
         // fixed by the encoder and must remain visible to the transaction sidecar.
         for payload in payloads {
             payload_size += 1 + payload.frame_bytes();
-            blobs.push(BlobEncoder::encode_packed(payload.frames())?);
+            blobs.push(FrameEncoder::to_blob(payload.frames())?);
         }
 
         Ok((

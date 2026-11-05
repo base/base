@@ -47,7 +47,7 @@ while let Some(sub) = encoder.next_submission() {
     match sub.payload() {
         SubmissionPayload::Blobs(blobs) => {
             for blob in blobs {
-                let encoded = base_blobs::BlobEncoder::encode_packed(blob.frames())?;
+                let encoded = base_batcher_encoder::FrameEncoder::to_blob(blob.frames())?;
             }
         }
         SubmissionPayload::Calldata(frame) => {
@@ -76,4 +76,5 @@ Every `next_submission()` must be followed by `confirm` or `requeue`.
 submissions remain pending and cannot be leased again.
 
 `FrameEncoder::to_calldata` is `[DERIVATION_VERSION_0] ++ frame.encode()`.
-Blob payloads use `base_blobs::BlobEncoder::encode_packed`.
+`FrameEncoder::to_blob` packs `[DERIVATION_VERSION_0] ++ frame0.encode() ++ …`
+into one blob with `base_common_blobs::BlobEncoder`.

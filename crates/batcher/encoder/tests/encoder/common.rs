@@ -11,7 +11,6 @@ use base_batcher_encoder::{
     BatchComposer, BatchEncoder, BatchPipeline, BatchSubmission, BlobPayload, DaType,
     EncoderConfig, FrameEncoder, StepResult, SubmissionPayload,
 };
-use base_blobs::BlobEncoder;
 use base_common_consensus::{BaseBlock, BaseTxEnvelope, TxDeposit};
 use base_common_genesis::{RollupConfig, UpgradeConfig};
 use base_consensus_derive::{
@@ -350,7 +349,7 @@ impl EncoderFixture {
                 blobs
                     .iter()
                     .flat_map(|blob| {
-                        let encoded = BlobEncoder::encode_packed(blob.frames())
+                        let encoded = FrameEncoder::to_blob(blob.frames())
                             .expect("the blob payload should fit a blob");
                         let data = BlobData {
                             data: Some(Bytes::copy_from_slice(encoded.as_slice())),
