@@ -127,77 +127,63 @@ impl ValidityBounds {
 
 /// Conditions compiled at ingress for repeated pool and builder checks.
 ///
-/// Timing comparisons are reduced to bounds. Every submitted predicate is moved
-/// into exactly one partition, so the pool holds each predicate once; timing
-/// always gates state reads. The submitted count is retained because transaction
-/// ordering uses it, even when redundant bounds collapse.
+/// Timing comparisons are reduced to bounds. Every submitted predicate is kept
+/// exactly once, grouped into partitions, so the pool holds each predicate once;
+/// timing always gates state reads. The submitted count is retained because
+/// transaction ordering uses it, even when redundant bounds collapse.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ValidityConditions {
     block: ValidityBounds,
     flashblock: ValidityBounds,
-    /// Block and flashblock predicates as submitted, in wire order.
+    /// Submitted predicates grouped into timing, balance, nonce, then storage partitions, each
+    /// in wire order.
     ///
-    /// Bounds normalization is lossy for the wire form the sender signed, so these
-    /// are kept verbatim for forwarding and never used for evaluation.
-    timing: Vec<ValidityPredicate>,
-    balance: Vec<ValidityPredicate>,
-    nonce: Vec<ValidityPredicate>,
-    storage: Vec<ValidityPredicate>,
+    /// Bounds normalization is lossy for the wire form the sender signed, so the block and
+    /// flashblock predicates are kept verbatim for forwarding and never used for evaluation.
+    predicates: Vec<ValidityPredicate>,
+    /// End of the timing partition, which is also the start of the balance partition.
+    timing_end: usize,
+    /// End of the balance partition.
+    balance_end: usize,
+    /// End of the nonce partition; the storage partition runs to the end.
+    nonce_end: usize,
 }
 
 impl ValidityConditions {
-    /// Compiles submitted predicates, moving each into its partition without cloning.
-    pub fn new(predicates: Vec<ValidityPredicate>) -> Self {
-        // Count partitions first so each backing vector is allocated exactly once at its
-        // final size: larger batches do not repeatedly grow buffers, and small or empty
-        // partitions do not retain minimum Vec capacity.
-        let mut timing_count = 0;
-        let mut balance_count = 0;
-        let mut nonce_count = 0;
-        let mut storage_count = 0;
-        let mut block_exclusions = 0;
-        let mut flashblock_exclusions = 0;
+    /// Compiles submitted predicates, grouping them into partitions within the submitted
+    /// vector, so ingestion moves no predicate into a separate allocation.
+    pub fn new(mut predicates: Vec<ValidityPredicate>) -> Self {
+        // A stable sort keeps wire order within each partition.
+        predicates.sort_by_key(|predicate| match predicate {
+            ValidityPredicate::BlockNumber { .. } | ValidityPredicate::FlashblockIndex { .. } => 0,
+            ValidityPredicate::Balance { .. } => 1,
+            ValidityPredicate::Nonce { .. } => 2,
+            ValidityPredicate::Storage { .. } => 3,
+        });
+        // Submitted batches carry growth spare capacity, which the pool would otherwise hold.
+        predicates.shrink_to_fit();
+        let mut conditions = Self::default();
         for predicate in &predicates {
             match predicate {
-                ValidityPredicate::Balance { .. } => balance_count += 1,
-                ValidityPredicate::Nonce { .. } => nonce_count += 1,
-                ValidityPredicate::Storage { .. } => storage_count += 1,
-                ValidityPredicate::BlockNumber { op, .. } => {
-                    timing_count += 1;
-                    if *op == ValidityOperator::NotEqual {
-                        block_exclusions += 1;
-                    }
-                }
-                ValidityPredicate::FlashblockIndex { op, .. } => {
-                    timing_count += 1;
-                    if *op == ValidityOperator::NotEqual {
-                        flashblock_exclusions += 1;
-                    }
-                }
-            }
-        }
-        let mut conditions = Self::default();
-        conditions.timing.reserve_exact(timing_count);
-        conditions.balance.reserve_exact(balance_count);
-        conditions.nonce.reserve_exact(nonce_count);
-        conditions.storage.reserve_exact(storage_count);
-        conditions.block.excluded.reserve_exact(block_exclusions);
-        conditions.flashblock.excluded.reserve_exact(flashblock_exclusions);
-        for predicate in predicates {
-            match &predicate {
                 ValidityPredicate::BlockNumber { op, value } => {
+                    conditions.timing_end += 1;
                     conditions.block.insert(*op, *value);
-                    conditions.timing.push(predicate);
                 }
                 ValidityPredicate::FlashblockIndex { op, value } => {
+                    conditions.timing_end += 1;
                     conditions.flashblock.insert(*op, *value);
-                    conditions.timing.push(predicate);
                 }
-                ValidityPredicate::Balance { .. } => conditions.balance.push(predicate),
-                ValidityPredicate::Nonce { .. } => conditions.nonce.push(predicate),
-                ValidityPredicate::Storage { .. } => conditions.storage.push(predicate),
+                ValidityPredicate::Balance { .. } => conditions.balance_end += 1,
+                ValidityPredicate::Nonce { .. } => conditions.nonce_end += 1,
+                ValidityPredicate::Storage { .. } => {}
             }
         }
+        conditions.balance_end += conditions.timing_end;
+        conditions.nonce_end += conditions.balance_end;
+        // Exclusions are rare; trim their growth capacity as for the predicates.
+        conditions.block.excluded.shrink_to_fit();
+        conditions.flashblock.excluded.shrink_to_fit();
+        conditions.predicates = predicates;
         conditions
     }
 
@@ -215,7 +201,7 @@ impl ValidityConditions {
     /// arrived, which the EIP-712 authorization tolerates because it sorts predicates
     /// by struct hash before hashing.
     pub fn submitted(&self) -> impl Iterator<Item = &ValidityPredicate> {
-        self.timing.iter().chain(self.state_predicates())
+        self.predicates.iter()
     }
 
     /// Block-number bounds.
@@ -230,7 +216,7 @@ impl ValidityConditions {
 
     /// Number of submitted predicates, before normalization.
     pub const fn len(&self) -> usize {
-        self.timing.len() + self.balance.len() + self.nonce.len() + self.storage.len()
+        self.predicates.len()
     }
 
     /// Whether the transaction carries no validity conditions.
@@ -240,7 +226,7 @@ impl ValidityConditions {
 
     /// State predicates in balance, nonce, then storage order.
     pub fn state_predicates(&self) -> impl Iterator<Item = &ValidityPredicate> {
-        self.balance.iter().chain(&self.nonce).chain(&self.storage)
+        self.predicates[self.timing_end..].iter()
     }
 
     /// Normalized predicates in evaluation order, for parking and resting checks.
@@ -266,9 +252,15 @@ impl ValidityConditions {
             ValidityPredicate::FlashblockIndex { op, value } => {
                 self.flashblock.contains(*op, *value)
             }
-            ValidityPredicate::Balance { .. } => self.balance.contains(predicate),
-            ValidityPredicate::Nonce { .. } => self.nonce.contains(predicate),
-            ValidityPredicate::Storage { .. } => self.storage.contains(predicate),
+            ValidityPredicate::Balance { .. } => {
+                self.predicates[self.timing_end..self.balance_end].contains(predicate)
+            }
+            ValidityPredicate::Nonce { .. } => {
+                self.predicates[self.balance_end..self.nonce_end].contains(predicate)
+            }
+            ValidityPredicate::Storage { .. } => {
+                self.predicates[self.nonce_end..].contains(predicate)
+            }
         }
     }
 
@@ -292,11 +284,7 @@ impl ValidityConditions {
     pub const fn heap_size(&self) -> usize {
         self.block.heap_size()
             + self.flashblock.heap_size()
-            + (self.timing.capacity()
-                + self.balance.capacity()
-                + self.nonce.capacity()
-                + self.storage.capacity())
-                * core::mem::size_of::<ValidityPredicate>()
+            + self.predicates.capacity() * core::mem::size_of::<ValidityPredicate>()
     }
 }
 
@@ -428,13 +416,8 @@ mod tests {
 
     #[test]
     fn heap_size_counts_spare_capacity_in_every_backing_vector() {
-        let mut conditions = ValidityConditions {
-            timing: Vec::with_capacity(11),
-            balance: Vec::with_capacity(3),
-            nonce: Vec::with_capacity(5),
-            storage: Vec::with_capacity(7),
-            ..Default::default()
-        };
+        let mut conditions =
+            ValidityConditions { predicates: Vec::with_capacity(26), ..Default::default() };
         conditions.block.excluded.reserve_exact(4);
         conditions.flashblock.excluded.reserve_exact(6);
         conditions.block.insert(ValidityOperator::NotEqual, U256::ONE);
