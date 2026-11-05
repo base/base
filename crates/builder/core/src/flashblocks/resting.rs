@@ -2,7 +2,7 @@
 
 use alloy_primitives::TxHash;
 use base_execution_payload_builder::RestingStats;
-use base_execution_txpool::{ValidityConditions, ValidityPredicate};
+use base_execution_txpool::ValidityPredicate;
 use revm::state::EvmState;
 
 /// Lifecycle callbacks for validity transactions resting in a payload job.
@@ -23,9 +23,10 @@ pub trait RestingPayloadTransactions {
     /// Wakes transactions resting on state changed by one committed transaction.
     fn record_committed_state(&mut self, _state: &EvmState) {}
 
-    /// Returns whether a transaction with `predicates` rests under an unchanged predicate.
-    fn is_resting(&self, _transaction_hash: TxHash, _predicates: &ValidityConditions) -> bool {
-        false
+    /// Returns the transactions the pool iterators adopted on their admission-time evaluation
+    /// since the last call, so the build loop can report their deferral.
+    fn take_adopted(&mut self) -> Vec<TxHash> {
+        Vec::new()
     }
 
     /// Returns and resets the work spent holding back resting transactions.

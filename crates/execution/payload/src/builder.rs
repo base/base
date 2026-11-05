@@ -319,7 +319,7 @@ where
             ParkableBestPayloadTransactions::new(
                 self.pool.best_transactions_with_attributes_and_parking(
                     attrs,
-                    resting.map(SharedRestingPredicates::iterator_hold),
+                    resting.map(SharedRestingPredicates::native_iterator_hold),
                 ),
             )
         })
@@ -364,8 +364,8 @@ fn job_interrupt(cancel: &Arc<CancelOnDrop>) -> HoldInterrupt {
     Arc::new(move || cancel.upgrade().is_none_or(|cancel| cancel.is_interrupted()))
 }
 
-/// Creates the candidate iterator of one build from the fee attributes and, for an enforcing
-/// build, the resting set whose hold the iterator parks members with.
+/// Creates the candidate iterator of one build from the fee attributes and, when the build carries
+/// resting transactions, the resting set whose hold the iterator parks members with.
 pub type BestTransactionsFactory<'a, Txs> =
     dyn FnOnce(BestTransactionsAttributes, Option<&SharedRestingPredicates>) -> Txs + 'a;
 
@@ -392,7 +392,7 @@ pub struct Builder<'a, Txs> {
     /// Permanently removes mempool transactions that exceeded a per-transaction resource limit.
     #[debug(skip)]
     evict_permanently_rejected: Box<dyn FnOnce(Vec<TxHash>) + 'a>,
-    /// Carries resting validity transactions between builds when the carried mode is enabled.
+    /// Carries resting validity transactions between builds; used from Denim on.
     resting_predicates: Option<RestingPredicateStore>,
 }
 
@@ -483,16 +483,14 @@ impl<Txs> Builder<'_, Txs> {
             // Without flashblocks, resting transactions only carry across blocks, from Denim on.
             resting = resting_predicates
                 .as_ref()
-                .filter(|_| {
-                    ctx.builder_config.resting_predicate_mode.is_enabled()
-                        && ctx.is_one_shot_building_active()
-                })
+                .filter(|_| ctx.is_one_shot_building_active())
                 .map(|store| {
                     let start = Instant::now();
                     let mut resting = store.take(
                         ctx.builder_config.predicate_bucket_ordered_threshold,
                         RESTING_SWEEP_WAIT_LIMIT,
                     );
+                    resting.track_written_keys();
                     // The transitions hold the system calls and deposits applied on top of the
                     // parent state.
                     let carry_over = resting.begin_block(
@@ -504,12 +502,8 @@ impl<Txs> Builder<'_, Txs> {
                     SharedRestingPredicates::new(resting)
                         .with_interrupt(job_interrupt(&cancel_watch))
                 });
-            // Only an enforcing build hands the pool iterator a hold; a shadow build evaluates
-            // resting members to count mismatches.
-            let hold = resting
-                .as_ref()
-                .filter(|_| ctx.builder_config.resting_predicate_mode.is_enforced());
-            let best_txs = best(ctx.best_transaction_attributes(builder.evm_mut().block()), hold);
+            let best_txs =
+                best(ctx.best_transaction_attributes(builder.evm_mut().block()), resting.as_ref());
             let cancelled =
                 ctx.execute_best_transactions(&mut info, &mut builder, best_txs, resting.as_ref())?;
             if !info.permanently_rejected_txs.is_empty() {
@@ -995,6 +989,31 @@ where
         Ok(info)
     }
 
+    /// Emits the deferral of each transaction the pool iterator's hold adopted on its
+    /// admission-time evaluation since the last call, which the build loop never evaluates.
+    fn report_adopted(
+        &self,
+        resting: &SharedRestingPredicates,
+        deferrals: &mut BlockDeferrals,
+        validity_consideration_index: &mut u64,
+    ) {
+        for tx_hash in resting.take_adopted() {
+            *validity_consideration_index += 1;
+            if deferrals.record(tx_hash, "validity_predicate_not_satisfied") {
+                emit_native_validity_event!(
+                    self,
+                    TransactionEventType::BuilderDeferred,
+                    tx_hash,
+                    *validity_consideration_index,
+                    {
+                        "defer_reason" => "validity_predicate_not_satisfied",
+                        "defer_detail" => "a validity predicate is not satisfied by the current build state",
+                    }
+                );
+            }
+        }
+    }
+
     /// Executes the given best transactions and updates the execution info.
     ///
     /// Transaction-scope resource-throttling excludes are recorded on
@@ -1048,9 +1067,6 @@ where
         let mut validity_candidates_evaluated = 0_u64;
         let mut validity_candidates_deferred = 0_u64;
         let mut predicate_eval_cutoff_hit = false;
-        let resting_mode = self.builder_config.resting_predicate_mode;
-        // Counted locally and recorded once per build, so the loop does no metric lookups.
-        let mut carried_shadow_mismatches = 0_u64;
 
         let block_timestamp = self.attributes().timestamp();
         let mut coinbase_tip_affordability = CoinbaseTipAffordability::load(
@@ -1182,13 +1198,6 @@ where
                             expired: false,
                             ..
                         }) => resting.rest(tx_hash, predicate.clone()),
-                        Ok(ValidityPredicateEvaluation::Matched)
-                            if !resting_mode.is_enforced()
-                                && resting.member(tx_hash, tx.validity_conditions()).is_some() =>
-                        {
-                            carried_shadow_mismatches += 1;
-                            resting.remove(tx_hash);
-                        }
                         _ => {
                             resting.remove(tx_hash);
                         }
@@ -1551,6 +1560,11 @@ where
             }
 
             best_txs.mark_current_committed();
+            // Report adoptions before promoting woken members, so a woken transaction's deferral
+            // precedes its inclusion.
+            if let Some(resting) = resting {
+                self.report_adopted(resting, &mut deferrals, &mut validity_consideration_index);
+            }
             // Members the pool iterator held are parked in it; a commit that changed the state
             // their predicate reads promotes them so the scan evaluates them at their priority
             // position.
@@ -1682,17 +1696,22 @@ where
             predicate_bucket_wakeups,
             &predicate_index,
         );
-        if let Some(stats) = resting.map(SharedRestingPredicates::take_stats)
-            && stats.parked > 0
-        {
-            ValidityMetrics::resting_predicate_parked_total().increment(stats.parked);
-            ValidityMetrics::resting_predicate_carried_parked_total()
-                .increment(stats.carried_parked);
-            ValidityMetrics::record_resting_hold_duration(stats.duration);
-        }
-        if carried_shadow_mismatches > 0 {
-            ValidityMetrics::resting_predicate_shadow_mismatches_total()
-                .increment(carried_shadow_mismatches);
+        if let Some(resting) = resting {
+            self.report_adopted(resting, &mut deferrals, &mut validity_consideration_index);
+            let stats = resting.take_stats();
+            if stats.parked > 0 {
+                ValidityMetrics::resting_predicate_parked_total().increment(stats.parked);
+                ValidityMetrics::resting_predicate_carried_parked_total()
+                    .increment(stats.carried_parked);
+                ValidityMetrics::record_resting_hold_duration(stats.duration);
+            }
+            if stats.ingestion.applied > 0 {
+                evaluation_counters.increment(
+                    ValidityEvaluationOutcome::RestedAtIngestion,
+                    stats.ingestion.applied,
+                );
+            }
+            ValidityMetrics::record_ingestion_rest(&stats.ingestion);
         }
         if resource_throttled > 0 {
             info!(
@@ -1737,7 +1756,8 @@ mod tests {
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
     use base_execution_evm::BaseEvmConfig;
     use base_execution_txpool::{
-        BasePooledTransaction, BestTransactionsHold, ValidityOperator, ValidityPredicate,
+        BasePooledTransaction, BasePooledTx as _, BestTransactionsHold, IngestionRest,
+        ValidityOperator, ValidityPredicate,
     };
     use base_observability_events::{TransactionEventCapture, TransactionEventType};
     use reth_basic_payload_builder::{BuildOutcomeKind, PayloadConfig};
@@ -1770,8 +1790,8 @@ mod tests {
         BasePayloadBuilderAttributes, DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD, MeteringProvider,
         NoopMeteringProvider, ParkablePayloadTransactions, ResourceMeteringConfig,
         ResourceMeteringDimension, ResourceMeteringOperation, ResourceMeteringSchedule,
-        RestingPredicateMode, RestingPredicateStore, SharedMeteringProvider,
-        SharedRestingPredicates, config::BaseBuilderConfig, payload::EthPayloadBuilderAttributes,
+        RestingPredicateStore, SharedMeteringProvider, SharedRestingPredicates,
+        config::BaseBuilderConfig, payload::EthPayloadBuilderAttributes,
     };
 
     #[derive(Debug)]
@@ -2466,17 +2486,13 @@ mod tests {
         store
     }
 
-    /// Builds one block at `timestamp` with the resting `mode`, returning the included hashes and
-    /// the block hash.
+    /// Builds one block at `timestamp`, returning the included hashes and the block hash.
     fn build_carrying_resting_at(
         timestamp: u64,
-        mode: RestingPredicateMode,
         store: &RestingPredicateStore,
         transactions: Vec<BasePooledTransaction>,
     ) -> (Vec<TxHash>, B256) {
-        let mut ctx = pool_payload_context(timestamp);
-        ctx.builder_config.resting_predicate_mode = mode;
-        build_carrying_resting_with(ctx, store, transactions)
+        build_carrying_resting_with(pool_payload_context(timestamp), store, transactions)
     }
 
     /// Builds one block with `ctx`, returning the included hashes and the block hash.
@@ -2490,7 +2506,7 @@ mod tests {
         let provider = funded_provider(&funded_senders);
         let outcome = Builder::new(|_, resting| {
             TestParkableTransactions::new(transactions)
-                .with_hold(resting.map(SharedRestingPredicates::iterator_hold))
+                .with_hold(resting.map(SharedRestingPredicates::native_iterator_hold))
         })
         .with_resting_predicates(store.clone())
         .build(
@@ -2508,24 +2524,232 @@ mod tests {
         (included, payload.block().hash())
     }
 
-    /// Builds one Denim block with the resting `mode`, returning the included hashes and the
-    /// block hash.
+    /// Builds one Denim block, returning the included hashes and the block hash.
     fn build_carrying_resting(
-        mode: RestingPredicateMode,
         store: &RestingPredicateStore,
         transactions: Vec<BasePooledTransaction>,
     ) -> (Vec<TxHash>, B256) {
-        build_carrying_resting_at(DENIM_TIMESTAMP, mode, store, transactions)
+        build_carrying_resting_at(DENIM_TIMESTAMP, store, transactions)
     }
 
     fn pool_parent_hash() -> B256 {
         pool_payload_context(DENIM_TIMESTAMP).parent().hash()
     }
 
+    /// Builds one Denim block starting from an empty resting set, and returns the included hashes.
+    fn build_with_ingestion_rest(transactions: Vec<BasePooledTransaction>) -> Vec<TxHash> {
+        build_carrying_resting(&RestingPredicateStore::default(), transactions).0
+    }
+
+    /// A validity transaction whose admission-time evaluation on the parent recorded `predicate`
+    /// as unsatisfied.
+    fn admitted_unsatisfied(
+        nonce: u64,
+        to: Address,
+        predicate: ValidityPredicate,
+        evaluated_on: B256,
+    ) -> BasePooledTransaction {
+        let transaction = pool_transaction_to(nonce, to, U256::ZERO)
+            .with_validity_predicates(vec![predicate.clone()]);
+        transaction.set_ingestion_rest(IngestionRest { state_block_hash: evaluated_on, predicate });
+        transaction
+    }
+
+    #[test]
+    fn native_hold_releases_flashblock_members_while_flashblocks_hold_preserves_them() {
+        let blocker = ValidityPredicate::Balance {
+            address: Address::repeat_byte(0x73),
+            op: ValidityOperator::Equal,
+            value: U256::ONE,
+        };
+        let transaction = pool_transaction_to(0, Address::repeat_byte(0x74), U256::ZERO)
+            .with_validity_predicates(vec![
+                blocker.clone(),
+                ValidityPredicate::FlashblockIndex {
+                    op: ValidityOperator::GreaterThanOrEqual,
+                    value: U256::ONE,
+                },
+            ]);
+        let candidate = pooled_candidate(transaction);
+        let shared =
+            SharedRestingPredicates::new(RestingPredicateStore::default().take(32, Duration::ZERO));
+        shared.rest(*candidate.hash(), blocker);
+
+        assert!(shared.iterator_hold().hold(&candidate));
+        assert!(!shared.native_iterator_hold().hold(&candidate));
+        assert!(shared.is_empty());
+    }
+
+    #[test]
+    fn native_builder_rejects_flashblock_predicates_before_ingestion_adoption() {
+        let event_capture = TransactionEventCapture::install();
+        let blocker = ValidityPredicate::Balance {
+            address: Address::repeat_byte(0x71),
+            op: ValidityOperator::Equal,
+            value: U256::ONE,
+        };
+        let transaction = pool_transaction_to(0, Address::repeat_byte(0x72), U256::ZERO)
+            .with_validity_predicates(vec![
+                blocker.clone(),
+                ValidityPredicate::FlashblockIndex {
+                    op: ValidityOperator::GreaterThanOrEqual,
+                    value: U256::ONE,
+                },
+            ]);
+        transaction.set_ingestion_rest(IngestionRest {
+            state_block_hash: pool_parent_hash(),
+            predicate: blocker,
+        });
+        let hash = *transaction.hash();
+
+        assert!(build_with_ingestion_rest(vec![transaction]).is_empty());
+        let decisions = event_capture
+            .events()
+            .into_iter()
+            .filter(|event| event.tx_hash == Some(hash))
+            .map(|event| (event.event_type, event.data["rejection_reason"].clone()))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            decisions,
+            [(
+                TransactionEventType::BuilderRejected,
+                "unsupported_flashblock_index_predicate".into(),
+            )]
+        );
+    }
+
+    /// The pool recorded `gated` as unsatisfied under a predicate that in fact holds, so whether
+    /// it is included shows whether the build evaluated it or the hold adopted the admission
+    /// result.
+    #[test]
+    fn native_builder_adopts_an_applicable_admission_result() {
+        let holds = ValidityPredicate::Balance {
+            address: Address::repeat_byte(0x4c),
+            op: ValidityOperator::Equal,
+            value: U256::ZERO,
+        };
+        let gated = admitted_unsatisfied(0, Address::repeat_byte(0x5d), holds, pool_parent_hash());
+
+        assert!(build_with_ingestion_rest(vec![gated]).is_empty());
+    }
+
+    #[test]
+    fn native_builder_evaluates_when_the_admission_result_is_from_another_block() {
+        let holds = ValidityPredicate::Balance {
+            address: Address::repeat_byte(0x4d),
+            op: ValidityOperator::Equal,
+            value: U256::ZERO,
+        };
+        let gated =
+            admitted_unsatisfied(0, Address::repeat_byte(0x5e), holds, B256::repeat_byte(0xee));
+
+        assert_eq!(build_with_ingestion_rest(vec![gated.clone()]), [*gated.hash()]);
+    }
+
+    /// The trigger writes the watched balance before `gated` is yielded, so the admission result,
+    /// evaluated before that write, no longer stands in for evaluation.
+    #[test]
+    fn native_builder_evaluates_when_the_block_already_wrote_the_predicate_state() {
+        let watched_address = Address::repeat_byte(0x4e);
+        let blocker = ValidityPredicate::Balance {
+            address: watched_address,
+            op: ValidityOperator::Equal,
+            value: U256::ONE,
+        };
+        let trigger = pool_transaction_to(0, watched_address, U256::ONE);
+        let gated =
+            admitted_unsatisfied(0, Address::repeat_byte(0x5f), blocker, pool_parent_hash());
+        let expected = [*trigger.hash(), *gated.hash()];
+
+        assert_eq!(build_with_ingestion_rest(vec![trigger, gated]), expected);
+    }
+
+    /// A candidate the hold adopted is woken by the commit that satisfies its predicate, exactly
+    /// like one the build evaluated and parked.
+    #[test]
+    fn native_builder_includes_an_adopted_transaction_once_its_state_changes() {
+        let watched_address = Address::repeat_byte(0x4f);
+        let blocker = ValidityPredicate::Balance {
+            address: watched_address,
+            op: ValidityOperator::Equal,
+            value: U256::ONE,
+        };
+        let gated =
+            admitted_unsatisfied(0, Address::repeat_byte(0x60), blocker, pool_parent_hash());
+        let trigger = pool_transaction_to(0, watched_address, U256::ONE);
+        let expected = [*trigger.hash(), *gated.hash()];
+
+        assert_eq!(build_with_ingestion_rest(vec![gated, trigger]), expected);
+    }
+
+    /// The build loop never sees an adopted transaction, so its deferral is reported from the
+    /// hold's adoption list, once.
+    #[test]
+    fn native_builder_reports_an_adopted_transaction_as_deferred_once() {
+        let event_capture = TransactionEventCapture::install();
+        // Event capture is process-global, so this transaction must not share a hash with other
+        // tests.
+        let blocker = ValidityPredicate::Balance {
+            address: Address::repeat_byte(0x61),
+            op: ValidityOperator::Equal,
+            value: U256::ONE,
+        };
+        let gated =
+            admitted_unsatisfied(0, Address::repeat_byte(0x62), blocker, pool_parent_hash());
+        let gated_hash = *gated.hash();
+
+        assert!(build_with_ingestion_rest(vec![gated]).is_empty());
+
+        let gated_events = event_capture
+            .events()
+            .into_iter()
+            .filter(|event| event.tx_hash == Some(gated_hash))
+            .map(|event| event.event_type)
+            .collect::<Vec<_>>();
+        assert_eq!(gated_events, [TransactionEventType::BuilderDeferred]);
+    }
+
+    /// A commit later in the block wakes the adopted transaction and it is included; it was still
+    /// deferred first, as it would have been had the build loop evaluated it.
+    #[test]
+    fn native_builder_reports_an_adopted_transaction_woken_in_the_same_block_as_deferred() {
+        let event_capture = TransactionEventCapture::install();
+        // Event capture is process-global, so this transaction must not share a hash with other
+        // tests.
+        let watched_address = Address::repeat_byte(0x63);
+        let blocker = ValidityPredicate::Balance {
+            address: watched_address,
+            op: ValidityOperator::Equal,
+            value: U256::ONE,
+        };
+        let gated =
+            admitted_unsatisfied(0, Address::repeat_byte(0x64), blocker, pool_parent_hash());
+        let gated_hash = *gated.hash();
+        let trigger = pool_transaction_to(0, watched_address, U256::ONE);
+        let trigger_hash = *trigger.hash();
+
+        assert_eq!(build_with_ingestion_rest(vec![gated, trigger]), [trigger_hash, gated_hash]);
+
+        let gated_events = event_capture
+            .events()
+            .into_iter()
+            .filter(|event| event.tx_hash == Some(gated_hash))
+            .map(|event| event.event_type)
+            .collect::<Vec<_>>();
+        assert_eq!(gated_events.first(), Some(&TransactionEventType::BuilderDeferred));
+        assert_eq!(
+            gated_events
+                .iter()
+                .filter(|event_type| **event_type == TransactionEventType::BuilderDeferred)
+                .count(),
+            1
+        );
+    }
+
     /// The set records `gated` as resting although its predicate holds, so whether it is included
     /// shows whether the build evaluated it.
     #[test]
-    fn native_builder_skips_evaluating_carried_resting_transactions_only_when_enforced() {
+    fn native_builder_skips_evaluating_carried_resting_transactions() {
         let watched_address = Address::repeat_byte(0x47);
         let holds = ValidityPredicate::Balance {
             address: watched_address,
@@ -2536,19 +2760,17 @@ mod tests {
             .with_validity_predicates(vec![holds.clone()]);
         let gated_hash = *gated.hash();
 
-        for (mode, evaluated) in [
-            (RestingPredicateMode::Off, true),
-            (RestingPredicateMode::Shadow, true),
-            (RestingPredicateMode::Enforce, false),
-        ] {
-            let store = resting_store(pool_parent_hash(), &gated, holds.clone());
-            let (included, _) = build_carrying_resting(mode, &store, vec![gated.clone()]);
-            assert_eq!(included.contains(&gated_hash), evaluated, "mode {mode:?}");
-        }
+        let (included, _) =
+            build_carrying_resting(&RestingPredicateStore::default(), vec![gated.clone()]);
+        assert_eq!(included, [gated_hash], "an uncarried transaction is evaluated");
+
+        let store = resting_store(pool_parent_hash(), &gated, holds);
+        let (included, _) = build_carrying_resting(&store, vec![gated]);
+        assert!(included.is_empty(), "a carried resting transaction is held back");
     }
 
     /// A stale carried member that a concurrent build rejected stays excluded: held back while it
-    /// rests, and skipped by the rejection cache once released or when resting is off.
+    /// rests, and skipped by the rejection cache when it is not carried.
     #[test]
     fn native_builder_excludes_a_rejected_resting_transaction() {
         let watched_address = Address::repeat_byte(0x4b);
@@ -2560,13 +2782,16 @@ mod tests {
         let gated = pool_transaction_to(0, Address::repeat_byte(0x5c), U256::ZERO)
             .with_validity_predicates(vec![holds.clone()]);
 
-        for mode in [RestingPredicateMode::Off, RestingPredicateMode::Enforce] {
-            let store = resting_store(pool_parent_hash(), &gated, holds.clone());
-            let mut ctx = pool_payload_context(DENIM_TIMESTAMP);
-            ctx.builder_config.resting_predicate_mode = mode;
+        for carried in [false, true] {
+            let store = if carried {
+                resting_store(pool_parent_hash(), &gated, holds.clone())
+            } else {
+                RestingPredicateStore::default()
+            };
+            let ctx = pool_payload_context(DENIM_TIMESTAMP);
             ctx.builder_config.rejection_cache.insert(*gated.hash());
             let (included, _) = build_carrying_resting_with(ctx, &store, vec![gated.clone()]);
-            assert!(included.is_empty(), "mode {mode:?}");
+            assert!(included.is_empty(), "carried {carried}");
         }
     }
 
@@ -2583,8 +2808,7 @@ mod tests {
         let gated_hash = *gated.hash();
         let store = resting_store(B256::repeat_byte(0x99), &gated, holds);
 
-        let (included, _) =
-            build_carrying_resting(RestingPredicateMode::Enforce, &store, vec![gated]);
+        let (included, _) = build_carrying_resting(&store, vec![gated]);
 
         assert_eq!(included, [gated_hash]);
     }
@@ -2604,11 +2828,15 @@ mod tests {
         let trigger = pool_transaction_to(0, watched_address, U256::ONE);
         let expected = vec![*trigger.hash(), *gated.hash()];
 
-        for mode in [RestingPredicateMode::Off, RestingPredicateMode::Enforce] {
-            let store = resting_store(pool_parent_hash(), &gated, blocker.clone());
+        for carried in [false, true] {
+            let store = if carried {
+                resting_store(pool_parent_hash(), &gated, blocker.clone())
+            } else {
+                RestingPredicateStore::default()
+            };
             let (included, _) =
-                build_carrying_resting(mode, &store, vec![gated.clone(), trigger.clone()]);
-            assert_eq!(included, expected, "mode {mode:?}");
+                build_carrying_resting(&store, vec![gated.clone(), trigger.clone()]);
+            assert_eq!(included, expected, "carried {carried}");
         }
     }
 
@@ -2624,8 +2852,7 @@ mod tests {
             .with_validity_predicates(vec![blocker]);
         let store = RestingPredicateStore::default();
 
-        let (included, block_hash) =
-            build_carrying_resting(RestingPredicateMode::Enforce, &store, vec![gated.clone()]);
+        let (included, block_hash) = build_carrying_resting(&store, vec![gated.clone()]);
 
         assert!(included.is_empty());
         let mut resting =
@@ -2637,7 +2864,7 @@ mod tests {
 
     /// Without flashblocks, resting transactions only carry across blocks, which needs Denim.
     #[test]
-    fn native_builder_ignores_the_resting_set_when_off_or_before_denim() {
+    fn native_builder_ignores_the_resting_set_before_denim() {
         let watched_address = Address::repeat_byte(0x4b);
         let blocker = ValidityPredicate::Balance {
             address: watched_address,
@@ -2647,19 +2874,13 @@ mod tests {
         let gated = pool_transaction_to(0, Address::repeat_byte(0x5c), U256::ZERO)
             .with_validity_predicates(vec![blocker]);
 
-        for (timestamp, mode) in [
-            (DENIM_TIMESTAMP, RestingPredicateMode::Off),
-            (DENIM_TIMESTAMP - 1, RestingPredicateMode::Enforce),
-        ] {
-            let store = RestingPredicateStore::default();
-            build_carrying_resting_at(timestamp, mode, &store, vec![gated.clone()]);
-            assert!(
-                store
-                    .take(DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD, RESTING_SWEEP_WAIT_LIMIT)
-                    .is_empty(),
-                "timestamp {timestamp}, mode {mode:?}"
-            );
-        }
+        let store = RestingPredicateStore::default();
+        build_carrying_resting_at(DENIM_TIMESTAMP - 1, &store, vec![gated]);
+        assert!(
+            store
+                .take(DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD, RESTING_SWEEP_WAIT_LIMIT)
+                .is_empty()
+        );
     }
 
     /// Builds a gated transaction, a predicate-matching transaction, and a trigger that wakes the

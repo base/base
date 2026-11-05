@@ -25,7 +25,7 @@ pub use execution_metering_mode::ExecutionMeteringMode;
 mod traits;
 pub use base_execution_payload_builder::{
     MeteringProvider, NoopMeteringProvider, RejectionCache, ResourceMeteringConfig,
-    RestingPredicateMode, SharedMeteringProvider,
+    SharedMeteringProvider,
 };
 pub use traits::{ClientBounds, NodeBounds, PayloadTxsBounds, PoolBounds};
 

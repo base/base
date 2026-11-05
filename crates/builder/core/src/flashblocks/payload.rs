@@ -325,9 +325,7 @@ where
         // Resting transactions carry across flashblocks and across the blocks this builder finishes
         // in sequence. Checked against the parent before the fallback build merges the transitions,
         // which hold the system calls and deposits applied on top of the parent state.
-        let resting = (!ctx.attributes().no_tx_pool
-            && self.config.resting_predicate_mode.is_enabled())
-        .then(|| {
+        let resting = (!ctx.attributes().no_tx_pool).then(|| {
             let _span = debug_span!(target: "payload_builder", "resting_begin_block").entered();
             let start = Instant::now();
             // The sweep has already overlapped the previous block's state root and the leeway, so
@@ -337,6 +335,7 @@ where
                 self.config.predicate_bucket_ordered_threshold,
                 self.config.flashblocks_interval,
             );
+            resting.track_written_keys();
             let carry_over = resting.begin_block(
                 ctx.parent().hash(),
                 ctx.block_number(),
@@ -465,11 +464,7 @@ where
         let resting = SharedRestingPredicates::new(resting.unwrap_or_else(|| {
             RestingPredicates::new(self.config.predicate_bucket_ordered_threshold)
         }));
-        let hold = self
-            .config
-            .resting_predicate_mode
-            .is_enforced()
-            .then(|| crate::flashblock_hold(&resting, &fb_cancel));
+        let hold = Some(crate::flashblock_hold(&resting, &fb_cancel));
         let best_txs_attributes = ctx.best_transaction_attributes();
         let mut best_txs = BestFlashblocksTxs::new(
             ParkableBestPayloadTransactions::new(
@@ -477,7 +472,6 @@ where
             ),
             self.config.rejection_cache.clone(),
         )
-        .with_resting_predicate_mode(self.config.resting_predicate_mode)
         .with_resting_predicates(resting);
         let interval = self.config.flashblocks_interval;
         let (tx, mut rx) = mpsc::channel((self.config.flashblocks_per_block() + 1) as usize);
@@ -694,7 +688,7 @@ where
         best_txs.refresh_iterator(ParkableBestPayloadTransactions::new(
             self.pool.best_transactions_with_attributes_and_parking(
                 best_txs_attributes,
-                best_txs.iterator_hold(&ctx.cancel),
+                Some(best_txs.iterator_hold(&ctx.cancel)),
             ),
         ));
         let transaction_pool_fetch_time = best_txs_start_time.elapsed();
@@ -1046,15 +1040,9 @@ where
     {
         // Start the end-of-block sweep before the state root so the two overlap. The set is only
         // stored once the block is sealed, so a block that fails to seal does not hand it on.
-        let resting = self
-            .config
-            .resting_predicate_mode
-            .is_enabled()
-            .then(|| self.resting_predicates.finish(best_txs.take_resting_predicates()));
+        let resting = self.resting_predicates.finish(best_txs.take_resting_predicates());
         let payload = self.finalize_payload(state, proof_provider, ctx, info)?;
-        if let Some(resting) = resting {
-            self.resting_predicates.put(resting, payload.block().hash());
-        }
+        self.resting_predicates.put(resting, payload.block().hash());
         Ok(payload)
     }
 

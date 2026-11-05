@@ -13,7 +13,7 @@ use base_execution_payload_builder::{
 
 use crate::{
     BuilderMetrics, ExecutionMeteringMode, NoopMeteringProvider, RejectionCache,
-    ResourceMeteringConfig, RestingPredicateMode, SharedMeteringProvider,
+    ResourceMeteringConfig, SharedMeteringProvider,
 };
 
 /// Configuration values for the flashblocks builder.
@@ -73,10 +73,6 @@ pub struct BuilderConfig {
     /// Number of parked predicates that converts one state bucket to ordered wakeups.
     pub predicate_bucket_ordered_threshold: usize,
 
-    /// Whether validity transactions resting under an unchanged predicate are held back. The
-    /// resting set carries across flashblocks and across blocks this builder finishes in sequence.
-    pub resting_predicate_mode: RestingPredicateMode,
-
     /// Resource metering provider
     pub metering_provider: SharedMeteringProvider,
     /// Resource-unit metering used to throttle transactions in the native
@@ -128,7 +124,6 @@ impl core::fmt::Debug for BuilderConfig {
             .field("metering_wait_duration", &self.metering_wait_duration)
             .field("predicate_eval_hard_cutoff", &self.predicate_eval_hard_cutoff)
             .field("predicate_bucket_ordered_threshold", &self.predicate_bucket_ordered_threshold)
-            .field("resting_predicate_mode", &self.resting_predicate_mode)
             .field("metering_provider", &self.metering_provider)
             .field("resource_metering", &self.resource_metering)
             .field("rejection_cache_size", &self.rejection_cache.entry_count())
@@ -157,7 +152,6 @@ impl Default for BuilderConfig {
             metering_wait_duration: None,
             predicate_eval_hard_cutoff: Duration::from_millis(10),
             predicate_bucket_ordered_threshold: DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD,
-            resting_predicate_mode: RestingPredicateMode::Off,
             metering_provider: Arc::clone(&metering_provider),
             resource_metering: ResourceMeteringConfig {
                 provider: metering_provider,
@@ -245,13 +239,6 @@ impl BuilderConfig {
     #[must_use]
     pub const fn with_predicate_eval_hard_cutoff_ms(mut self, ms: u64) -> Self {
         self.predicate_eval_hard_cutoff = Duration::from_millis(ms);
-        self
-    }
-
-    /// Sets the resting predicate mode.
-    #[must_use]
-    pub const fn with_resting_predicate_mode(mut self, mode: RestingPredicateMode) -> Self {
-        self.resting_predicate_mode = mode;
         self
     }
 }

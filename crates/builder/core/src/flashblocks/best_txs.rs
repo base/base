@@ -7,25 +7,22 @@ use base_execution_payload_builder::{
     DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD, ParkablePayloadTransactions, RestingPredicates,
     SharedRestingPredicates,
 };
-use base_execution_txpool::{
-    BasePooledTx, BestTransactionsHold, ValidityConditions, ValidityPredicate,
-};
+use base_execution_txpool::{BasePooledTx, BestTransactionsHold, ValidityPredicate};
 use reth_payload_util::PayloadTransactions;
 use revm::state::EvmState;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    BuilderMetrics, CounterHandle, RejectionCache, RestingPayloadTransactions,
-    RestingPredicateMode, RestingStats,
+    BuilderMetrics, CounterHandle, RejectionCache, RestingPayloadTransactions, RestingStats,
 };
 
 /// An adapter that skips transactions already committed or permanently rejected by flashblocks.
 ///
 /// It also owns the validity transactions resting under an unchanged predicate, see
-/// [`RestingPayloadTransactions`]. Under [`RestingPredicateMode::Enforce`], every pool iterator
-/// the flashblocks builder creates takes an [`Self::iterator_hold`] that parks resting members at
-/// the source, so their nonce lane stays blocked without the build loop seeing them. A commit that
-/// changes the state a member's predicate reads promotes it back at its priority position.
+/// [`RestingPayloadTransactions`]. Every pool iterator the flashblocks builder creates takes an
+/// [`Self::iterator_hold`] that parks resting members at the source, so their nonce lane stays
+/// blocked without the build loop seeing them. A commit that changes the state a member's
+/// predicate reads promotes it back at its priority position.
 pub struct BestFlashblocksTxs<T, I>
 where
     T: BasePooledTx,
@@ -39,7 +36,6 @@ where
     rejection_cache: RejectionCache,
     // Identity of the transaction most recently returned to the build loop.
     current_transaction: Option<(TxHash, Address, u64)>,
-    resting_predicate_mode: RestingPredicateMode,
     // Transactions resting under the predicate last found unsatisfied, carried across flashblocks
     // and blocks, and shared with the holds of the pool iterators.
     resting: SharedRestingPredicates,
@@ -69,7 +65,6 @@ where
         f.debug_struct("BestFlashblocksTxs")
             .field("committed_transactions", &self.committed_transactions)
             .field("rejection_cache_size", &self.rejection_cache.entry_count())
-            .field("resting_predicate_mode", &self.resting_predicate_mode)
             .field("resting", &self.resting.len())
             .finish_non_exhaustive()
     }
@@ -87,21 +82,12 @@ where
             committed_transactions: Default::default(),
             rejection_cache,
             current_transaction: None,
-            resting_predicate_mode: RestingPredicateMode::Off,
             resting: SharedRestingPredicates::new(RestingPredicates::new(
                 DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD,
             )),
             rejection_cache_hits: None,
             transaction: PhantomData,
         }
-    }
-
-    /// Sets whether resting validity transactions are tracked and held back, within a block and
-    /// across blocks.
-    #[must_use]
-    pub const fn with_resting_predicate_mode(mut self, mode: RestingPredicateMode) -> Self {
-        self.resting_predicate_mode = mode;
-        self
     }
 
     /// Starts from `resting`, typically carried over from the previous block. The pool iterators
@@ -112,14 +98,10 @@ where
         self
     }
 
-    /// Returns the hold a new inner iterator parks resting members with, or `None` when resting
-    /// transactions are not enforced and the build loop evaluates them. `cancel` is the
+    /// Returns the hold a new inner iterator parks resting members with. `cancel` is the
     /// cancellation of the flashblock the iterator serves.
-    pub fn iterator_hold(
-        &self,
-        cancel: &CancellationToken,
-    ) -> Option<Box<dyn BestTransactionsHold<T>>> {
-        self.resting_predicate_mode.is_enforced().then(|| flashblock_hold(&self.resting, cancel))
+    pub fn iterator_hold(&self, cancel: &CancellationToken) -> Box<dyn BestTransactionsHold<T>> {
+        flashblock_hold(&self.resting, cancel)
     }
 
     /// Takes the resting set, leaving an empty one, so it can be carried into the next block.
@@ -236,31 +218,21 @@ where
     I: ParkablePayloadTransactions<Pooled = T>,
 {
     fn rest(&mut self, transaction_hash: TxHash, predicate: &ValidityPredicate) {
-        if self.resting_predicate_mode.is_enabled() {
-            self.resting.rest(transaction_hash, predicate.clone());
-        }
+        self.resting.rest(transaction_hash, predicate.clone());
     }
 
-    // With resting off the set stays empty, so these skip its lock rather than take it once per
-    // evaluated validity candidate and once per commit.
     fn release(&mut self, transaction_hash: TxHash) {
-        if self.resting_predicate_mode.is_enabled() {
-            self.resting.remove(transaction_hash);
-        }
+        self.resting.remove(transaction_hash);
     }
 
     fn record_committed_state(&mut self, state: &EvmState) {
-        if !self.resting_predicate_mode.is_enabled() {
-            return;
-        }
         for transaction_hash in self.resting.wake_by_state(state) {
             self.inner.promote(transaction_hash);
         }
     }
 
-    fn is_resting(&self, transaction_hash: TxHash, predicates: &ValidityConditions) -> bool {
-        self.resting_predicate_mode.is_enabled()
-            && self.resting.member(transaction_hash, predicates).is_some()
+    fn take_adopted(&mut self) -> Vec<TxHash> {
+        self.resting.take_adopted()
     }
 
     fn take_resting_stats(&mut self) -> RestingStats {
@@ -293,7 +265,7 @@ mod tests {
     use super::*;
     use crate::{
         BestFlashblocksTxs, ParkableBestPayloadTransactions, ParkablePayloadTransactions,
-        RejectionCache, RestingPayloadTransactions, RestingPredicateMode, RestingStats,
+        RejectionCache, RestingPayloadTransactions, RestingStats,
     };
 
     type Ordering = BaseOrdering<BasePooledTransaction>;
@@ -690,7 +662,7 @@ mod tests {
     }
 
     /// Builds the production lane-parking iterator over a snapshot of `pool` whose hold parks the
-    /// resting members of `resting`, as the pool does for an enforcing build.
+    /// resting members of `resting`, as the pool does for every flashblock.
     fn parkable_with_hold(
         pool: &PendingPool<Ordering>,
         hold: Option<Box<dyn BestTransactionsHold<BasePooledTransaction>>>,
@@ -700,24 +672,21 @@ mod tests {
         ))
     }
 
-    fn resting_iterator_in_mode(
+    fn resting_iterator_with(
         pool: &PendingPool<Ordering>,
-        mode: RestingPredicateMode,
         resting: RestingPredicates,
     ) -> BestFlashblocksTxs<BasePooledTransaction, Parkable> {
         let resting = SharedRestingPredicates::new(resting);
-        let hold = mode.is_enforced().then(|| resting.iterator_hold());
+        let hold = Some(resting.iterator_hold());
         BestFlashblocksTxs::new(parkable_with_hold(pool, hold), test_rejection_cache())
-            .with_resting_predicate_mode(mode)
             .with_resting_predicates(resting)
     }
 
     fn resting_iterator(
         pool: &PendingPool<Ordering>,
     ) -> BestFlashblocksTxs<BasePooledTransaction, Parkable> {
-        resting_iterator_in_mode(
+        resting_iterator_with(
             pool,
-            RestingPredicateMode::Enforce,
             RestingPredicates::new(DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD),
         )
     }
@@ -729,7 +698,7 @@ mod tests {
     ) {
         iterator.refresh_iterator(parkable_with_hold(
             pool,
-            iterator.iterator_hold(&CancellationToken::new()),
+            Some(iterator.iterator_hold(&CancellationToken::new())),
         ));
     }
 
@@ -800,7 +769,8 @@ mod tests {
         // the iterator returns control after one check interval instead of finishing the walk.
         let cancelled = CancellationToken::new();
         cancelled.cancel();
-        iterator.refresh_iterator(parkable_with_hold(&pool, iterator.iterator_hold(&cancelled)));
+        iterator
+            .refresh_iterator(parkable_with_hold(&pool, Some(iterator.iterator_hold(&cancelled))));
         assert!(iterator.next(()).is_none());
         assert_eq!(iterator.take_resting_stats().parked, u64::from(HOLD_INTERRUPT_INTERVAL));
 
@@ -952,51 +922,17 @@ mod tests {
         assert_eq!(*iterator.next(()).unwrap().hash(), *resting.hash());
     }
 
-    #[test]
-    fn shadow_mode_tracks_resting_transactions_without_holding_them_back() {
-        let resting = validity_transaction(0, 0, 10, vec![balance_at_least(WATCHED, 1)]);
-        let pool = pending_pool(&[Arc::clone(&resting)]);
-        let mut iterator = resting_iterator_in_mode(
-            &pool,
-            RestingPredicateMode::Shadow,
-            RestingPredicates::new(DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD),
-        );
-
-        let first = iterator.next(()).unwrap();
-        park_unsatisfied(&mut iterator, &first);
-
-        refresh(&mut iterator, &pool);
-        let yielded = iterator.next(()).unwrap();
-        assert_eq!(*yielded.hash(), *resting.hash());
-        assert!(iterator.is_resting(*resting.hash(), yielded.transaction.validity_conditions()));
-    }
-
-    #[test]
-    fn off_mode_does_not_track_resting_transactions() {
-        let resting = validity_transaction(0, 0, 10, vec![balance_at_least(WATCHED, 1)]);
-        let predicate = resting.transaction.validity_predicates().next().unwrap();
-        let mut iterator = BestFlashblocksTxs::new(
-            parkable(&pending_pool(&[Arc::clone(&resting)])),
-            test_rejection_cache(),
-        );
-
-        iterator.rest(*resting.hash(), predicate);
-
-        assert!(!iterator.is_resting(*resting.hash(), resting.transaction.validity_conditions()));
-    }
-
     /// Finishes the block `iterator` built and returns the next block's iterator over `pool`,
     /// carrying the resting set.
     fn next_block_iterator(
         mut iterator: BestFlashblocksTxs<BasePooledTransaction, Parkable>,
         pool: &PendingPool<Ordering>,
-        mode: RestingPredicateMode,
     ) -> BestFlashblocksTxs<BasePooledTransaction, Parkable> {
         const FINISHED: B256 = B256::repeat_byte(0x01);
         let mut resting = iterator.take_resting_predicates();
         resting.end_block(FINISHED);
         resting.begin_block(FINISHED, 1, Some(&TransitionState::default()));
-        resting_iterator_in_mode(pool, mode, resting)
+        resting_iterator_with(pool, resting)
     }
 
     #[test]
@@ -1008,7 +944,7 @@ mod tests {
         let first = iterator.next(()).unwrap();
         park_unsatisfied(&mut iterator, &first);
 
-        let mut iterator = next_block_iterator(iterator, &pool, RestingPredicateMode::Enforce);
+        let mut iterator = next_block_iterator(iterator, &pool);
 
         assert_eq!(*iterator.next(()).unwrap().hash(), *trigger.hash());
         iterator.record_committed_state(&balance_change(WATCHED, 0, 1));
@@ -1016,25 +952,6 @@ mod tests {
         assert_eq!(*iterator.next(()).unwrap().hash(), *resting.hash());
         let stats = iterator.take_resting_stats();
         assert_eq!((stats.parked, stats.carried_parked), (1, 1));
-    }
-
-    #[test]
-    fn shadow_mode_carries_resting_transactions_without_holding_them_back() {
-        let resting = validity_transaction(0, 0, 10, vec![balance_at_least(WATCHED, 1)]);
-        let pool = pending_pool(&[Arc::clone(&resting)]);
-        let mut iterator = resting_iterator_in_mode(
-            &pool,
-            RestingPredicateMode::Shadow,
-            RestingPredicates::new(DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD),
-        );
-        let first = iterator.next(()).unwrap();
-        park_unsatisfied(&mut iterator, &first);
-
-        let mut iterator = next_block_iterator(iterator, &pool, RestingPredicateMode::Shadow);
-
-        let yielded = iterator.next(()).unwrap();
-        assert_eq!(*yielded.hash(), *resting.hash());
-        assert!(iterator.is_resting(*resting.hash(), yielded.transaction.validity_conditions()));
     }
 
     #[test]
@@ -1047,7 +964,7 @@ mod tests {
         // A later evaluation in the same block finds the predicate satisfied.
         iterator.release(*resting.hash());
 
-        let mut iterator = next_block_iterator(iterator, &pool, RestingPredicateMode::Enforce);
+        let mut iterator = next_block_iterator(iterator, &pool);
 
         assert_eq!(*iterator.next(()).unwrap().hash(), *resting.hash());
     }
