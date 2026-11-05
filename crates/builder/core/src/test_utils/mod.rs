@@ -1,7 +1,6 @@
 //! Test utilities for the Base block builder.
 
 mod apis;
-mod contracts;
 mod driver;
 mod external;
 mod instance;
@@ -14,7 +13,6 @@ use alloy_signer_local::PrivateKeySigner;
 pub use apis::*;
 use base_common_consensus::{BaseTransactionSigned, BaseTypedTransaction};
 use base_execution_chainspec::BaseChainSpec;
-pub use contracts::*;
 pub use driver::*;
 pub use external::*;
 pub use instance::*;
@@ -24,7 +22,7 @@ use reth_primitives_traits::Recovered;
 pub use txs::*;
 pub use utils::*;
 
-use crate::BuilderConfig;
+use crate::BaseBuilderConfig;
 
 /// Signs a Base transaction and returns the recovered signed transaction.
 pub fn sign_base_tx(
@@ -47,47 +45,31 @@ pub fn generate_signer_from_seed(seed: &str) -> PrivateKeySigner {
         .expect("Failed to create signer from seed")
 }
 
-/// Sets up a test instance with default flashblocks configuration.
-/// This is the simplified replacement for the `rb_test` macro.
+/// Sets up a test instance with the default payload builder configuration.
 pub async fn setup_test_instance() -> eyre::Result<LocalInstance> {
-    clear_otel_env_vars();
-    LocalInstance::flashblocks().await
+    setup_test_instance_with_builder_config(BaseBuilderConfig::default()).await
 }
 
-/// Sets up a test instance with custom `BuilderConfig`.
-/// The flashblocks WebSocket port will be automatically set to an available port if set to 0.
+/// Sets up a test instance with a custom [`BaseBuilderConfig`].
 pub async fn setup_test_instance_with_builder_config(
-    mut config: BuilderConfig,
+    config: BaseBuilderConfig,
 ) -> eyre::Result<LocalInstance> {
     clear_otel_env_vars();
-    if config.flashblocks_ws_addr.port() == 0 {
-        config.flashblocks_ws_addr.set_port(get_available_port());
-    }
     LocalInstance::new(config).await
 }
 
-/// Sets up a test instance with custom `BuilderConfig` and `NodeConfig`.
-/// The flashblocks WebSocket port will be automatically set to an available port if set to 0.
+/// Sets up a test instance with a custom [`BaseBuilderConfig`] and `NodeConfig`.
 pub async fn setup_test_instance_with_node_config(
-    mut builder_config: BuilderConfig,
+    builder_config: BaseBuilderConfig,
     node_config: NodeConfig<BaseChainSpec>,
 ) -> eyre::Result<LocalInstance> {
     clear_otel_env_vars();
-    if builder_config.flashblocks_ws_addr.port() == 0 {
-        builder_config.flashblocks_ws_addr.set_port(get_available_port());
-    }
     LocalInstance::new_with_node_config(builder_config, node_config).await
 }
 
-/// Hardcoded builder private key (anvil default key[1]).
-pub const BUILDER_PRIVATE_KEY: &str =
-    "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d";
 /// Hardcoded funded account private key (anvil default key[0]).
 pub const FUNDED_PRIVATE_KEY: &str =
     "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
-/// Hardcoded flashblocks contract deployer private key (anvil default key[8]).
-pub const FLASHBLOCKS_DEPLOY_KEY: &str =
-    "0xdbda1821b80551c9d65939329250298aa3472ba22feea921c0cf5d620ea67b97";
 
 /// Default block gas limit used in tests.
 pub const DEFAULT_GAS_LIMIT: u64 = 10_000_000;

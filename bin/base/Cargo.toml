@@ -32,7 +32,6 @@ base-consensus-node.workspace = true
 base-upgrade-signal.workspace = true
 base-builder-metering.workspace = true
 base-consensus-engine.workspace = true
-base-builder-multiplex.workspace = true
 base-execution-chainspec.workspace = true
 base-execution-consensus.workspace = true
 base-shadow-indexer.workspace = true
@@ -77,12 +76,10 @@ default = [ "asm-keccak", "jemalloc", "keccak-cache-global" ]
 asm-keccak = [ "base-execution-cli/asm-keccak" ]
 keccak-cache-global = [ "base-execution-cli/keccak-cache-global" ]
 jemalloc = [
-	"base-builder-core/jemalloc",
 	"base-execution-cli/jemalloc",
 	"reth-cli-util/jemalloc",
 ]
 jemalloc-prof = [
-	"base-builder-core/jemalloc-prof",
 	"base-execution-cli/jemalloc-symbols",
 	"jemalloc",
 	"reth-cli-util/jemalloc-prof",

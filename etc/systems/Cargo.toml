@@ -26,15 +26,12 @@ base-test-utils = { workspace = true, optional = true }
 base-load-tests.workspace = true
 base-txpool-rpc.workspace = true
 base-tx-manager.workspace = true
-base-flashblocks.workspace = true
-base-builder-multiplex.workspace = true
 base-tx-forwarding.workspace = true
 base-execution-cli.workspace = true
 base-txpool-tracing.workspace = true
 base-upgrade-signal.workspace = true
 base-batcher-encoder.workspace = true
 base-batcher-service.workspace = true
-base-flashblocks-node.workspace = true
 base-proofs-extension.workspace = true
 base-consensus-rpc = { workspace = true, features = ["client"] }
 base-protocol = { workspace = true, features = ["serde", "std"] }
@@ -146,9 +143,6 @@ base-consensus-engine = { workspace = true, features = ["test-utils"] }
 # alloy
 alloy-json-rpc.workspace = true
 
-# base-alloy
-base-common-flashblocks.workspace = true
-
 # proof
 base-optimism-rpc.workspace = true
 
@@ -165,7 +159,6 @@ sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "chrono", "j
 # misc
 anyhow.workspace = true
 indicatif.workspace = true
-tokio-tungstenite.workspace = true
 
 [[bench]]
 name = "b20_zk_proving"

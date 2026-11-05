@@ -46,8 +46,6 @@ pub const COLOR_GROWTH: Color = Color::Rgb(255, 180, 100);
 pub const COLOR_BURN: Color = Color::Rgb(100, 200, 100);
 /// Color for gas target markers.
 pub const COLOR_TARGET: Color = Color::Rgb(255, 200, 100);
-/// Color for gas bar fill below target.
-pub const COLOR_GAS_FILL: Color = Color::Rgb(100, 180, 255);
 
 const BACKLOG_THRESHOLDS: &[(u64, Color)] = &[
     (5_000_000, Color::Rgb(100, 200, 100)),
@@ -59,9 +57,6 @@ const BACKLOG_THRESHOLDS: &[(u64, Color)] = &[
 ];
 
 const TARGET_USAGE_MAX: f64 = 1.5;
-
-const FLASHBLOCK_TARGET_MS: i64 = 200;
-const FLASHBLOCK_TOLERANCE_MS: i64 = 50;
 
 /// Formatting and color helpers for basectl output rendering.
 #[derive(Debug)]
@@ -139,18 +134,6 @@ impl Format {
         BLOCK_COLORS[(block_number as usize) % BLOCK_COLORS.len()]
     }
 
-    /// Returns a brightened version of the block color for emphasis.
-    pub const fn block_color_bright(block_number: u64) -> Color {
-        let Color::Rgb(r, g, b) = BLOCK_COLORS[(block_number as usize) % BLOCK_COLORS.len()] else {
-            unreachable!()
-        };
-        Color::Rgb(
-            r.saturating_add((255 - r) / 2),
-            g.saturating_add((255 - g) / 2),
-            b.saturating_add((255 - b) / 2),
-        )
-    }
-
     /// Returns a color representing how close usage is to the target (blue to red).
     pub fn target_usage_color(usage: f64) -> Color {
         let t = usage.clamp(0.0, TARGET_USAGE_MAX);
@@ -167,23 +150,6 @@ impl Format {
             (a.1 as f64 + (b.1 as f64 - a.1 as f64) * t) as u8,
             (a.2 as f64 + (b.2 as f64 - a.2 as f64) * t) as u8,
         )
-    }
-
-    /// Returns a color indicating how close a time delta is to the 200ms target.
-    pub fn time_diff_color(ms: i64) -> Color {
-        let target = FLASHBLOCK_TARGET_MS;
-        let tol = FLASHBLOCK_TOLERANCE_MS;
-        if (target - tol..=target + tol).contains(&ms) {
-            Color::Green
-        } else if (target - 2 * tol..target - tol).contains(&ms) {
-            Color::Blue
-        } else if ms < target - 2 * tol {
-            Color::Magenta
-        } else if (target + tol..target + 2 * tol).contains(&ms) {
-            Color::Yellow
-        } else {
-            Color::Red
-        }
     }
 
     /// Formats a Unix timestamp (seconds since epoch) as `YYYY-MM-DD HH:MM:SS UTC`.

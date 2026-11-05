@@ -174,7 +174,7 @@ pub struct SnapshotBenchmarkArgs {
     /// no follow-client validation or validator metrics are produced.
     #[arg(long, env = "BASE_SNAPSHOT_CLIENT_DATADIR")]
     pub client_datadir: Option<PathBuf>,
-    /// Load-test YAML. RPC and Flashblocks URLs are replaced with launched endpoints.
+    /// Load-test YAML. RPC URLs are replaced with launched endpoints.
     #[arg(long)]
     pub load_test_config: PathBuf,
     /// Required benchmark artifact directory.
@@ -218,7 +218,7 @@ pub struct SnapshotBenchmarkArgs {
     #[command(flatten)]
     pub builder_engine: crate::BuilderEngineSharingConfig,
     /// How the snapshot's native payload builder tracks validity transactions whose predicates
-    /// did not match: `off` evaluates every candidate on every flashblock, `shadow` tracks
+    /// did not match: `off` evaluates every candidate on every payload build, `shadow` tracks
     /// resting transactions while still evaluating them, `enforce` parks them until a state
     /// change can satisfy their predicate.
     #[arg(
@@ -331,16 +331,9 @@ impl LocalBenchmarkArgs {
         let run_result: Result<LocalBenchmarkResult> = async {
             let builder_rpc = stack.l2_rpc_url()?;
             let client_rpc = stack.l2_client_rpc_url()?;
-            let flashblocks_ws = stack
-                .l2_stack()
-                .builder()
-                .flashblocks_url()
-                .parse()
-                .wrap_err("invalid fresh-devnet Flashblocks URL")?;
             test_config.transaction_submission_rpcs = vec![builder_rpc.clone()];
             test_config.query_rpc = Some(client_rpc);
             test_config.txpool_nodes.clear();
-            test_config.flashblocks_ws = Some(flashblocks_ws);
             test_config.chain_id = Some(chain_id);
 
             if deploy_devnet_swap_harness {
@@ -1162,9 +1155,6 @@ impl SnapshotBenchmarkArgs {
         // is not persisted in the snapshot datadir. Do not require optional admin
         // txpool RPC wiring during setup; nonce recovery remains load-test-owned.
         test_config.txpool_nodes.clear();
-        test_config.flashblocks_ws = (block_interval == DevnetBlockInterval::TwoSeconds)
-            .then(|| stack.builder_flashblocks_url())
-            .transpose()?;
         test_config.chain_id = Some(stack.chain_id());
         let mut load_config = test_config.to_load_config(None)?;
         load_config.canonical_heads_ws = Some(stack.builder_ws_url()?);
@@ -1778,7 +1768,6 @@ benchmark_workloads:
     transaction_submission_rpcs: http://localhost:8545
     query_rpc: http://localhost:8545
     txpool_nodes: []
-    flashblocks_ws: ws://localhost:7111
     sender_count: 10
     in_flight_per_sender: 16
     transactions:
@@ -1831,7 +1820,6 @@ benchmark_workloads:
         let yaml = r#"
 transaction_submission_rpcs: http://localhost:8545
 query_rpc: http://localhost:8545
-flashblocks_ws: ws://localhost:7111
 transactions:
   - weight: 40
     type: uniswap_v3

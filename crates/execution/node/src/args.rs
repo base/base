@@ -368,7 +368,7 @@ pub struct RollupArgs {
 
     /// Maximum number of inflight EIP-7702 delegated account transactions per sender in the
     /// txpool. Reth defaults to 1, which prevents delegated accounts from submitting multiple
-    /// transactions within a block (e.g. buy + approve in a single Flashblock).
+    /// transactions within a block (e.g. buy + approve in a single block).
     ///
     /// We raise the default to 4 (matching the EIP-8130 sender cap). Delegated code can move the
     /// account's balance mid-block, so a queued tx can become insolvent before the next canonical

@@ -17,9 +17,8 @@ type DeferralBlocks = HashMap<(TxHash, &'static str), u64>;
 
 /// The deferrals journaled as `BUILDER_DEFERRED` for the block being built.
 ///
-/// A validity-gated transaction that stays blocked is parked again after every promotion, by
-/// the flashblocks builder on every flashblock, and again in every following block until its
-/// predicate is satisfied. Builders report a deferral only when it tells the journal something
+/// A validity-gated transaction that stays blocked is parked again after every promotion, and
+/// again in every following block until its predicate is satisfied. Builders report a deferral only when it tells the journal something
 /// new: the first time a transaction is deferred for a reason.
 ///
 /// [`BlockDeferrals::default`] remembers deferrals for one block build only. A block started from

@@ -120,13 +120,6 @@ pub struct ConductorNodeConfig {
     /// If set, the TUI can restart this container with `r`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub docker_cl: Option<String>,
-    /// Flashblocks WebSocket endpoint for this sequencer's builder node.
-    ///
-    /// When set, the command center will automatically reconnect its flashblocks
-    /// stream to the current Raft leader's endpoint whenever leadership changes,
-    /// rather than staying connected to the original leader's now-idle socket.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub flashblocks_ws: Option<Url>,
 }
 
 impl ConductorNodeConfig {
@@ -278,7 +271,6 @@ impl ConductorSource {
                     docker_conductor: None,
                     docker_el: None,
                     docker_cl: None,
-                    flashblocks_ws: None,
                 })
             }
         }
@@ -314,7 +306,6 @@ impl ConductorSource {
                     docker_conductor: None,
                     docker_el: None,
                     docker_cl: None,
-                    flashblocks_ws: None,
                 }
             })
             .collect::<Vec<_>>();
@@ -354,8 +345,6 @@ pub struct MonitoringConfig {
     /// Optional public L2 JSON-RPC endpoint used for network-reference reads.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub public_rpc: Option<Url>,
-    /// Flashblocks WebSocket endpoint URL.
-    pub flashblocks_ws: Url,
     /// L1 Ethereum JSON-RPC endpoint URL.
     pub l1_rpc: Url,
     /// Optional Base consensus node JSON-RPC endpoint URL.
@@ -544,7 +533,6 @@ struct MonitoringConfigOverride {
     rpc: Option<Url>,
     el_ws_rpc: Option<Url>,
     public_rpc: Option<Url>,
-    flashblocks_ws: Option<Url>,
     l1_rpc: Option<Url>,
     consensus_node_rpc: Option<Url>,
     chain_id: Option<u64>,
@@ -597,7 +585,6 @@ impl MonitoringConfig {
             rpc: Url::parse("http://127.0.0.1:8545").unwrap(),
             el_ws_rpc: None,
             public_rpc: Some(Url::parse("https://mainnet.base.org").unwrap()),
-            flashblocks_ws: Url::parse("wss://mainnet.flashblocks.base.org/ws").unwrap(),
             l1_rpc: Url::parse("https://ethereum-rpc.publicnode.com").unwrap(),
             consensus_node_rpc: Some(Url::parse("http://127.0.0.1:9545").unwrap()),
             chain_id: Some(8453),
@@ -626,7 +613,6 @@ impl MonitoringConfig {
             rpc: Url::parse("http://127.0.0.1:8545").unwrap(),
             el_ws_rpc: None,
             public_rpc: Some(Url::parse("https://sepolia.base.org").unwrap()),
-            flashblocks_ws: Url::parse("wss://sepolia.flashblocks.base.org/ws").unwrap(),
             l1_rpc: Url::parse("https://ethereum-sepolia-rpc.publicnode.com").unwrap(),
             consensus_node_rpc: Some(Url::parse("http://127.0.0.1:9545").unwrap()),
             chain_id: Some(84532),
@@ -661,7 +647,6 @@ impl MonitoringConfig {
             rpc: Url::parse("http://localhost:7545").unwrap(),
             el_ws_rpc: Some(Url::parse("ws://localhost:7546").unwrap()),
             public_rpc: None,
-            flashblocks_ws: Url::parse("ws://localhost:7111").unwrap(),
             l1_rpc: Url::parse("http://localhost:4545").unwrap(),
             consensus_node_rpc: Some(Url::parse("http://localhost:7549").unwrap()),
             // Populated from optimism_rollupConfig in load_devnet.
@@ -684,7 +669,6 @@ impl MonitoringConfig {
                     docker_conductor: Some("op-conductor-0".to_string()),
                     docker_el: Some("base-builder".to_string()),
                     docker_cl: Some("base-builder".to_string()),
-                    flashblocks_ws: Some(Url::parse("ws://localhost:7111").unwrap()),
                 },
                 ConductorNodeConfig {
                     name: "op-conductor-1".to_string(),
@@ -696,7 +680,6 @@ impl MonitoringConfig {
                     docker_conductor: Some("op-conductor-1".to_string()),
                     docker_el: Some("base-sequencer-1".to_string()),
                     docker_cl: Some("base-sequencer-1".to_string()),
-                    flashblocks_ws: Some(Url::parse("ws://localhost:10111").unwrap()),
                 },
                 ConductorNodeConfig {
                     name: "op-conductor-2".to_string(),
@@ -708,7 +691,6 @@ impl MonitoringConfig {
                     docker_conductor: Some("op-conductor-2".to_string()),
                     docker_el: Some("base-sequencer-2".to_string()),
                     docker_cl: Some("base-sequencer-2".to_string()),
-                    flashblocks_ws: Some(Url::parse("ws://localhost:11111").unwrap()),
                 },
             ]),
             validators: Some(vec![
@@ -842,7 +824,6 @@ impl MonitoringConfig {
             rpc: overrides.rpc.unwrap_or(base.rpc),
             el_ws_rpc: overrides.el_ws_rpc.or(base.el_ws_rpc),
             public_rpc: overrides.public_rpc.or(base.public_rpc),
-            flashblocks_ws: overrides.flashblocks_ws.unwrap_or(base.flashblocks_ws),
             l1_rpc: overrides.l1_rpc.unwrap_or(base.l1_rpc),
             consensus_node_rpc: overrides.consensus_node_rpc.or(base.consensus_node_rpc),
             chain_id: overrides.chain_id.or(base.chain_id),
@@ -967,6 +948,22 @@ mod tests {
     }
 
     #[test]
+    fn configs_with_removed_flashblocks_ws_keys_still_load() {
+        let mut devnet = MonitoringConfig::devnet_base();
+        devnet.conductors.as_mut().unwrap().truncate(1);
+        let yaml = serde_yaml::to_string(&devnet).unwrap().replace(
+            "  raft_addr: op-conductor-0:5050\n",
+            "  raft_addr: op-conductor-0:5050\n  flashblocks_ws: ws://localhost:7111\n",
+        );
+        let yaml = format!("{yaml}flashblocks_ws: ws://localhost:7111\n");
+        assert_eq!(yaml.matches("flashblocks_ws").count(), 2);
+
+        let loaded: MonitoringConfig = serde_yaml::from_str(&yaml).unwrap();
+
+        assert_eq!(loaded.conductors.unwrap()[0].name, "op-conductor-0");
+    }
+
+    #[test]
     fn test_devnet_base_config() {
         // Test the base devnet config structure (without RPC call)
         let devnet = MonitoringConfig::devnet_base();
@@ -974,7 +971,6 @@ mod tests {
         assert_eq!(devnet.rpc.as_str(), "http://localhost:7545/");
         assert_eq!(devnet.el_ws_rpc.unwrap().as_str(), "ws://localhost:7546/");
         assert!(devnet.public_rpc.is_none());
-        assert_eq!(devnet.flashblocks_ws.as_str(), "ws://localhost:7111/");
         assert_eq!(devnet.l1_rpc.as_str(), "http://localhost:4545/");
         assert_eq!(devnet.consensus_node_rpc.unwrap().as_str(), "http://localhost:7549/");
         assert_eq!(devnet.chain_id, None);

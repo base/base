@@ -1,15 +1,13 @@
 //! Tracex canonical block subscription.
 
-use std::{sync::Arc, time::Instant};
+use std::time::Instant;
 
 use base_execution_txpool::BasePooledTx;
-use base_flashblocks::{FlashblocksAPI, PendingBlocks};
 use futures::StreamExt;
 use reth_node_api::NodePrimitives;
 use reth_provider::CanonStateNotification;
 use reth_tracing::tracing::debug;
 use reth_transaction_pool::{FullTransactionEvent, TransactionPool};
-use tokio::sync::broadcast::Receiver;
 use tokio_stream::wrappers::BroadcastStream;
 
 use crate::{NonceSlot, PooledTxInfo, TxFlow, tracker::Tracker};
@@ -17,10 +15,9 @@ use crate::{NonceSlot, PooledTxInfo, TxFlow, tracker::Tracker};
 /// Subscription task that tracks transaction timing from mempool to block inclusion.
 ///
 /// Monitors transaction lifecycle events and records timing metrics by listening
-/// to canonical state notifications, flashblock updates, and mempool events.
-pub async fn tracex_subscription<N, Pool, FB>(
+/// to canonical state notifications and mempool events.
+pub async fn tracex_subscription<N, Pool>(
     canonical_stream: BroadcastStream<CanonStateNotification<N>>,
-    flashblocks_api: Arc<FB>,
     pool: Pool,
     enable_logs: bool,
     node_role: Option<String>,
@@ -28,7 +25,6 @@ pub async fn tracex_subscription<N, Pool, FB>(
     N: NodePrimitives,
     Pool: TransactionPool + 'static,
     Pool::Transaction: BasePooledTx,
-    FB: FlashblocksAPI + 'static,
 {
     debug!(target: "tracex", "Starting transaction tracking subscription");
     let mut tracker = Tracker::new_with_node_role(enable_logs, node_role);
@@ -36,10 +32,6 @@ pub async fn tracex_subscription<N, Pool, FB>(
     // Subscribe to events from the mempool.
     let mut all_events_stream = pool.all_transactions_event_listener();
     let mut canonical_stream = canonical_stream;
-
-    // Subscribe to flashblocks.
-    let mut flashblock_stream: Receiver<Arc<PendingBlocks>> =
-        flashblocks_api.subscribe_to_flashblocks();
 
     loop {
         tokio::select! {
@@ -54,11 +46,9 @@ pub async fn tracex_subscription<N, Pool, FB>(
                 tracker.handle_canon_state_notification(notification, received_at);
             }
 
-            // Track flashblock inclusion timing.
-            Ok(pending_blocks) = flashblock_stream.recv() => {
-                let received_at = Instant::now();
-                tracker.handle_flashblock_notification(pending_blocks, received_at);
-            }
+            // The pool event stream has ended and the canonical stream closed or lagged;
+            // without the else arm `select!` would panic once every branch is disabled.
+            else => break,
         }
     }
 }

@@ -310,12 +310,7 @@ impl BlockWatcher {
                 expected_boundary: pulse_expected_boundary,
                 observed_at: latest.observation.observed_at,
             };
-            if self
-                .pulse_tx
-                .send(InclusionPulse::canonical(block_pulse, block_match.released_gas))
-                .await
-                .is_err()
-            {
+            if self.pulse_tx.send(InclusionPulse::canonical(block_pulse)).await.is_err() {
                 return;
             }
 

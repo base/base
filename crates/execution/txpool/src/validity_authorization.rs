@@ -110,8 +110,7 @@ impl ValidityAuthorization {
             ValidityPredicate::Storage { address, slot, mask, op, value } => {
                 (*address, *slot, *mask, *op, *value)
             }
-            ValidityPredicate::BlockNumber { op, value }
-            | ValidityPredicate::FlashblockIndex { op, value } => {
+            ValidityPredicate::BlockNumber { op, value } => {
                 (Address::ZERO, U256::ZERO, U256::ZERO, *op, *value)
             }
         };
@@ -194,10 +193,6 @@ mod tests {
                 op: ValidityOperator::LessThanOrEqual,
                 value: U256::from(100),
             },
-            ValidityPredicate::FlashblockIndex {
-                op: ValidityOperator::LessThanOrEqual,
-                value: U256::from(3),
-            },
         ]
     }
 
@@ -218,9 +213,9 @@ mod tests {
     #[test]
     fn eip712_digest_matches_independently_encoded_vector() {
         // Independently encoded with Keccak-256 and the documented EIP-712 types:
-        // chain 8453, hash 0x44...44, balance/storage/block/flashblock predicates in canonical order.
+        // chain 8453, hash 0x44...44, balance/storage/block predicates in canonical order.
         let expected: B256 =
-            "0xccc8fc76b39e370a65b7e6c377ad2f7a00d309b80f5e100cf119b03f41de294d".parse().unwrap();
+            "0xb27a4c51aa79c16a0bdcb7d5684131a8e40850ee55e1494d6f437fce9d9892b7".parse().unwrap();
         assert_eq!(
             ValidityAuthorization::signing_hash(8453, B256::repeat_byte(0x44), &predicates()),
             expected,
@@ -396,8 +391,7 @@ mod tests {
                 ValidityPredicate::Balance { value, .. }
                 | ValidityPredicate::Nonce { value, .. }
                 | ValidityPredicate::Storage { value, .. }
-                | ValidityPredicate::BlockNumber { value, .. }
-                | ValidityPredicate::FlashblockIndex { value, .. } => *value += U256::from(1),
+                | ValidityPredicate::BlockNumber { value, .. } => *value += U256::from(1),
             }
             mutations.push(changed);
             let mut changed = predicates.clone();
@@ -405,12 +399,11 @@ mod tests {
                 ValidityPredicate::Balance { op, .. }
                 | ValidityPredicate::Nonce { op, .. }
                 | ValidityPredicate::Storage { op, .. }
-                | ValidityPredicate::BlockNumber { op, .. }
-                | ValidityPredicate::FlashblockIndex { op, .. } => *op = ValidityOperator::NotEqual,
+                | ValidityPredicate::BlockNumber { op, .. } => *op = ValidityOperator::NotEqual,
             }
             mutations.push(changed);
         }
-        for index in [0, 1, 4] {
+        for index in [0, 1, 3] {
             let mut changed = predicates.clone();
             match &mut changed[index] {
                 ValidityPredicate::Balance { address, .. }
@@ -430,10 +423,12 @@ mod tests {
             *mask = U256::MAX;
         }
         mutations.push(mask);
+        // Same account, operator, and value under a different kind.
         let mut kind = predicates;
-        kind[2] = ValidityPredicate::FlashblockIndex {
-            op: ValidityOperator::LessThanOrEqual,
-            value: U256::from(100),
+        kind[0] = ValidityPredicate::Nonce {
+            address: Address::repeat_byte(0x22),
+            op: ValidityOperator::GreaterThan,
+            value: U256::from(10),
         };
         mutations.push(kind);
 
@@ -565,10 +560,9 @@ mod tests {
                 ValidityPredicateKind::Balance as u8,
                 ValidityPredicateKind::Storage as u8,
                 ValidityPredicateKind::BlockNumber as u8,
-                ValidityPredicateKind::FlashblockIndex as u8,
                 ValidityPredicateKind::Nonce as u8,
             ],
-            [0, 1, 2, 3, 4]
+            [0, 1, 2, 4]
         );
         assert_eq!(
             [

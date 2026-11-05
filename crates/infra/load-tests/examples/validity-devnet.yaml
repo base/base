@@ -29,9 +29,6 @@ txpool_nodes:
   - "http://localhost:7545"
   - "http://localhost:8545"
 
-# Optional early inclusion source; canonical polling remains the fallback.
-flashblocks_ws: "ws://localhost:7111"
-
 # Number of sender accounts.
 sender_count: 100
 block_time: "2s"
@@ -103,8 +100,8 @@ validity:
   #     op: ">="
   #     value: "0x0"
   #
-  # Build-position predicates (block_number / flashblock_index) become available
-  # once https://github.com/base/base/pull/4614 lands. A future block_number
+  # The block_number build-position predicate becomes available once
+  # https://github.com/base/base/pull/4614 lands. A future block_number
   # lower bound parks the whole validity cohort until that block, then releases
   # it together as a predictable, precisely-timed load spike (BASE-164). Choose
   # the target beyond the blocks consumed by funding/setup before submission:
@@ -112,9 +109,3 @@ validity:
   #   - type: block_number
   #     op: ">="
   #     value: "<current_tip + N>"
-  #
-  # Restrict inclusion to a flashblock index within each block:
-  #
-  #   - type: flashblock_index
-  #     op: ">="
-  #     value: "1"

@@ -1,13 +1,15 @@
 #![allow(missing_docs)]
 
+use core::time::Duration;
+
 use alloy_consensus::Transaction;
 use alloy_eips::eip2718::Encodable2718;
 use alloy_network::TransactionResponse;
 use alloy_primitives::{Address, U256};
 use alloy_provider::Provider;
 use base_builder_core::{
-    BuilderApiExtension, BuilderApiExtensionConfig, BuilderConfig, DEFAULT_MAX_VALIDITY_PREDICATES,
-    RestingPredicateMode,
+    BaseBuilderConfig, BuilderApiExtension, BuilderApiExtensionConfig,
+    DEFAULT_MAX_VALIDITY_PREDICATES, RestingPredicateMode,
     test_utils::{ChainDriverExt, LocalInstanceBuilder, ONE_ETH, setup_test_instance},
 };
 use base_execution_txpool::{
@@ -15,8 +17,7 @@ use base_execution_txpool::{
 };
 use futures::{StreamExt, future::join_all, stream};
 
-/// This test ensures that the transactions are ordered by fee priority within each flashblock.
-/// We expect breaks in global ordering that align with flashblock boundaries.
+/// This test ensures that the transactions are ordered by fee priority within the block.
 #[tokio::test]
 async fn fee_priority_ordering() -> eyre::Result<()> {
     let rbuilder = setup_test_instance().await?;
@@ -62,10 +63,7 @@ async fn fee_priority_ordering() -> eyre::Result<()> {
         "not all transactions included in the block"
     );
 
-    let config = rbuilder.builder_config();
-    let flashblocks_per_block = config.flashblocks_per_block();
-
-    // verify user transactions are fee-ordered within each flashblock boundary
+    // verify user transactions are fee-ordered
     let tips_in_block_order = driver
         .latest_full()
         .await?
@@ -80,11 +78,9 @@ async fn fee_priority_ordering() -> eyre::Result<()> {
         })
         .collect::<Vec<_>>();
 
-    let breaks = tips_in_block_order.windows(2).filter(|pair| pair[0] < pair[1]).count();
-
     assert!(
-        (breaks as u64) <= flashblocks_per_block,
-        "Observed more ordering resets than flashblocks_per_block (breaks={breaks}, flashblocks_per_block={flashblocks_per_block})"
+        tips_in_block_order.is_sorted_by(|a, b| a >= b),
+        "user transactions are not ordered by fee priority: {tips_in_block_order:?}"
     );
 
     Ok(())
@@ -94,7 +90,7 @@ async fn fee_priority_ordering() -> eyre::Result<()> {
 /// predicate, while retaining priority over lower-priority work once it becomes valid.
 #[tokio::test]
 async fn predicates_delay_priority_without_blocking_nonce_descendants() -> eyre::Result<()> {
-    let instance = LocalInstanceBuilder::new(BuilderConfig::for_tests())
+    let instance = LocalInstanceBuilder::new(BaseBuilderConfig::default())
         .install_ext::<BuilderApiExtension>(
             BuilderApiExtensionConfig::new(DEFAULT_MAX_VALIDITY_PREDICATES).with_noop_metering(),
         )
@@ -182,7 +178,7 @@ async fn predicates_delay_priority_without_blocking_nonce_descendants() -> eyre:
 /// A nonce-gated transaction wakes within the same block after the watched sender executes.
 #[tokio::test]
 async fn nonce_predicate_promotes_after_watched_sender_executes() -> eyre::Result<()> {
-    let instance = LocalInstanceBuilder::new(BuilderConfig::for_tests())
+    let instance = LocalInstanceBuilder::new(BaseBuilderConfig::default())
         .install_ext::<BuilderApiExtension>(
             BuilderApiExtensionConfig::new(DEFAULT_MAX_VALIDITY_PREDICATES).with_noop_metering(),
         )
@@ -236,20 +232,22 @@ async fn nonce_predicate_promotes_after_watched_sender_executes() -> eyre::Resul
     Ok(())
 }
 
-/// Once a flashblock's validity-predicate evaluation time budget is exhausted, further
+/// Once a payload build's validity-predicate evaluation time budget is exhausted, further
 /// validity-gated transactions are deferred without evaluation rather than checked, even when
 /// their predicate is already satisfied. An ordinary transaction is unaffected by the cutoff, so
-/// it can be included in the same flashblock ahead of a higher-priority deferred transaction.
+/// it is included in the same block while the higher-priority deferred transaction waits for a
+/// later block.
 #[tokio::test]
 async fn predicate_eval_hard_cutoff_defers_without_evaluating() -> eyre::Result<()> {
-    let instance =
-        LocalInstanceBuilder::new(BuilderConfig::for_tests().with_predicate_eval_hard_cutoff_ms(0))
-            .install_ext::<BuilderApiExtension>(
-                BuilderApiExtensionConfig::new(DEFAULT_MAX_VALIDITY_PREDICATES)
-                    .with_noop_metering(),
-            )
-            .build()
-            .await?;
+    let instance = LocalInstanceBuilder::new(BaseBuilderConfig {
+        predicate_eval_hard_cutoff: Duration::ZERO,
+        ..Default::default()
+    })
+    .install_ext::<BuilderApiExtension>(
+        BuilderApiExtensionConfig::new(DEFAULT_MAX_VALIDITY_PREDICATES).with_noop_metering(),
+    )
+    .build()
+    .await?;
     let driver = instance.driver().await?;
     let accounts = driver.fund_accounts(3, ONE_ETH).await?;
 
@@ -317,21 +315,23 @@ async fn predicate_eval_hard_cutoff_defers_without_evaluating() -> eyre::Result<
         .await?
         .tx_hash();
 
-    let block = driver.build_new_block().await?;
     let tracked = [first_hash, deferred_hash, ordinary_hash];
-    let actual = block
-        .transactions
-        .into_transactions()
-        .filter_map(|transaction| {
-            tracked.contains(&transaction.tx_hash()).then(|| transaction.tx_hash())
-        })
-        .collect::<Vec<_>>();
+    let included = |block: alloy_rpc_types_eth::Block<base_common_rpc_types::Transaction>| {
+        block
+            .transactions
+            .into_transactions()
+            .filter_map(|transaction| {
+                tracked.contains(&transaction.tx_hash()).then(|| transaction.tx_hash())
+            })
+            .collect::<Vec<_>>()
+    };
 
-    // `first` is evaluated within budget and included immediately at its natural priority
-    // position. `deferred` has higher priority than `ordinary` but is skipped by the exhausted
-    // budget, so `ordinary` (unaffected by the cutoff) is included ahead of it; `deferred` is
-    // still included overall, just in a later flashblock once the budget resets.
-    assert_eq!(actual, [first_hash, ordinary_hash, deferred_hash]);
+    // `first` is evaluated within budget and included at its natural priority position.
+    // `deferred` has higher priority than `ordinary` but is skipped by the exhausted budget, so
+    // only `ordinary` (unaffected by the cutoff) joins it; `deferred` is included in the next
+    // block, where it is the first validity-gated candidate and fits the fresh budget.
+    assert_eq!(included(driver.build_new_block().await?), [first_hash, ordinary_hash]);
+    assert_eq!(included(driver.build_new_block().await?), [deferred_hash]);
 
     Ok(())
 }
@@ -341,7 +341,7 @@ async fn predicate_eval_hard_cutoff_defers_without_evaluating() -> eyre::Result<
 #[tokio::test]
 async fn resting_transaction_is_included_once_its_blocking_state_changes() -> eyre::Result<()> {
     let instance = LocalInstanceBuilder::new(
-        BuilderConfig::for_tests().with_resting_predicate_mode(RestingPredicateMode::Enforce),
+        BaseBuilderConfig::default().with_resting_predicate_mode(RestingPredicateMode::Enforce),
     )
     .install_ext::<BuilderApiExtension>(
         BuilderApiExtensionConfig::new(DEFAULT_MAX_VALIDITY_PREDICATES).with_noop_metering(),

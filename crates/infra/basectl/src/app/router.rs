@@ -7,8 +7,6 @@ pub enum ViewId {
     CommandCenter,
     /// Data availability backlog monitor.
     DaMonitor,
-    /// Flashblocks stream viewer.
-    Flashblocks,
     /// Chain and system configuration viewer.
     Config,
     /// HA conductor cluster status monitor.

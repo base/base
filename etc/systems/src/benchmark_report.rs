@@ -381,7 +381,7 @@ transactions:
                 gas_limit: 400_000_000,
                 transaction_count: 19_047,
                 prometheus_metrics: BTreeMap::from([(
-                    "reth_base_builder_total_block_built_duration_avg".to_string(),
+                    "reth_base_builder_native_payload_build_duration_avg".to_string(),
                     0.1,
                 )]),
             }],
@@ -409,7 +409,7 @@ transactions:
         assert_eq!(metrics[0]["ExecutionMetrics"]["gas/per_second"], 2_000_000_000.0);
         assert_eq!(metrics[0]["ExecutionMetrics"]["transactions/per_second"], 95_235.0);
         assert_eq!(
-            metrics[0]["ExecutionMetrics"]["reth_base_builder_total_block_built_duration_avg"],
+            metrics[0]["ExecutionMetrics"]["reth_base_builder_native_payload_build_duration_avg"],
             0.1
         );
 

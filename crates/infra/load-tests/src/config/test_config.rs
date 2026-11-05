@@ -41,9 +41,6 @@ pub struct TestConfig {
     /// Optional HTTP JSON-RPC endpoints whose txpools should be cleared before a test.
     #[serde(default)]
     pub txpool_nodes: Vec<Url>,
-    /// Optional legacy builder flashblocks WebSocket endpoint.
-    #[serde(default)]
-    pub flashblocks_ws: Option<Url>,
 
     /// Mnemonic phrase for deriving sender accounts.
     /// If not provided, accounts are generated from seed.
@@ -171,7 +168,6 @@ impl Default for TestConfig {
             ],
             query_rpc: None,
             txpool_nodes: Vec::new(),
-            flashblocks_ws: None,
             mnemonic: None,
             funding_amount: "10000000000000000".to_string(),
             sender_count: 100,
@@ -205,7 +201,6 @@ impl fmt::Debug for TestConfig {
             .field("transaction_submission_rpcs", &self.transaction_submission_rpcs)
             .field("query_rpc", &self.query_rpc)
             .field("txpool_nodes", &self.txpool_nodes)
-            .field("flashblocks_ws", &self.flashblocks_ws)
             .field("mnemonic", &self.mnemonic.as_ref().map(|_| "[REDACTED]"))
             .field("funding_amount", &self.funding_amount)
             .field("sender_count", &self.sender_count)
@@ -556,10 +551,6 @@ impl TestConfig {
             Self::validate_http_url(url, "txpool_nodes")?;
         }
 
-        if let Some(flashblocks_ws) = &self.flashblocks_ws {
-            Self::validate_ws_url(flashblocks_ws, "flashblocks_ws")?;
-        }
-
         if !(0.0..=1.0).contains(&self.fresh_recipient_ratio) {
             return Err(BaselineError::Config(
                 "fresh_recipient_ratio must be between 0.0 and 1.0".into(),
@@ -602,21 +593,6 @@ impl TestConfig {
             ))),
             scheme => Err(BaselineError::Config(format!(
                 "{field_name} has invalid scheme '{scheme}', expected 'http://' or 'https://'"
-            ))),
-        }
-    }
-
-    fn validate_ws_url(url: &Url, field_name: &str) -> Result<()> {
-        match url.scheme() {
-            "ws" | "wss" => Ok(()),
-            "http" => Err(BaselineError::Config(format!(
-                "{field_name} uses 'http://' scheme but requires 'ws://' for WebSocket connections"
-            ))),
-            "https" => Err(BaselineError::Config(format!(
-                "{field_name} uses 'https://' scheme but requires 'wss://' for secure WebSocket connections"
-            ))),
-            scheme => Err(BaselineError::Config(format!(
-                "{field_name} has invalid scheme '{scheme}', expected 'ws://' or 'wss://'"
             ))),
         }
     }
@@ -804,7 +780,6 @@ impl TestConfig {
                 .map(|max| max as usize),
             batch_size: self.batch_size as usize,
             max_gas_price: crate::runner::DEFAULT_MAX_GAS_PRICE,
-            flashblocks_ws: self.flashblocks_ws.clone(),
             canonical_heads_ws: None,
             fresh_recipient_ratio: self.fresh_recipient_ratio,
             validity_ratio: self.validity.ratio,
@@ -1047,11 +1022,9 @@ where
 mod tests {
     use super::*;
 
-    /// Minimal valid config with the primary RPC and flashblocks websocket set, plus `extra`.
+    /// Minimal valid config with the primary RPC set, plus `extra`.
     fn config_yaml(extra: &str) -> String {
-        format!(
-            "transaction_submission_rpcs: http://localhost:8545\nflashblocks_ws: ws://localhost:7111\n{extra}"
-        )
+        format!("transaction_submission_rpcs: http://localhost:8545\n{extra}")
     }
 
     #[test]
@@ -1068,7 +1041,6 @@ mod tests {
             serde_json::to_value(&baseline.transactions).unwrap()
         );
         assert_eq!(load.target_gps.unwrap() as f64 * load.block_time.as_secs_f64(), 4_000_000.0);
-        assert!(load.flashblocks_ws.is_none());
         assert!(load.txpool_nodes.is_empty());
     }
 
@@ -1133,7 +1105,6 @@ steady_submission_interval: 20ms
 transaction_submission_rpcs:
   - http://localhost:7545
   - http://localhost:7546
-flashblocks_ws: ws://localhost:7111
 "#;
         let config = TestConfig::from_yaml(yaml).unwrap();
         let load_config = config.to_load_config(Some(1337)).unwrap();
@@ -1149,7 +1120,6 @@ transaction_submission_rpcs: http://localhost:8545
 txpool_nodes:
   - http://localhost:7545
   - http://localhost:10545
-flashblocks_ws: ws://localhost:7111
 "#;
         let config = TestConfig::from_yaml(yaml).unwrap();
         let load_config = config.to_load_config(Some(1337)).unwrap();
@@ -1162,7 +1132,6 @@ flashblocks_ws: ws://localhost:7111
     fn parse_full_config() {
         let yaml = r#"
 transaction_submission_rpcs: https://sepolia.base.org
-flashblocks_ws: wss://sepolia.flashblocks.base.org/ws
 mnemonic: "test test test test test test test test test test test junk"
 funding_amount: "500000000000000000"
 sender_count: 20
@@ -1202,7 +1171,6 @@ duration: "30s"
 
         let yaml2 = r#"
 transaction_submission_rpcs: http://localhost:8545
-flashblocks_ws: ws://localhost:7111
 duration: "1h 30m"
 "#;
         let config2 = TestConfig::from_yaml(yaml2).unwrap();
@@ -1435,7 +1403,6 @@ transactions:
             let yaml = format!(
                 r#"
 transaction_submission_rpcs: http://localhost:8545
-flashblocks_ws: ws://localhost:7111
 transactions:
   - weight: 100
     type: storage
@@ -1489,22 +1456,10 @@ transactions:
     }
 
     #[test]
-    fn rejects_http_scheme_for_flashblocks_ws() {
-        let yaml = r#"
-transaction_submission_rpcs: http://localhost:8545
-flashblocks_ws: http://localhost:7111
-"#;
-        let err = TestConfig::from_yaml(yaml).unwrap_err();
-        assert!(err.to_string().contains("flashblocks_ws"));
-        assert!(err.to_string().contains("ws://"));
-    }
-
-    #[test]
     fn query_rpc_accepts_http() {
         let yaml = r#"
 transaction_submission_rpcs: http://localhost:8545
 query_rpc: http://localhost:8546
-flashblocks_ws: ws://localhost:7111
 "#;
         let config = TestConfig::from_yaml(yaml).unwrap();
         assert_eq!(config.query_rpc.as_ref().unwrap().scheme(), "http");
@@ -1559,7 +1514,6 @@ fresh_recipient_ratio: 1.1
         let yaml = r#"
 transaction_submission_rpcs: http://localhost:8545
 query_rpc: wss://localhost:8546
-flashblocks_ws: wss://localhost:7111
 "#;
         let err = TestConfig::from_yaml(yaml).unwrap_err();
         assert!(err.to_string().contains("query_rpc"));
@@ -1572,47 +1526,10 @@ flashblocks_ws: wss://localhost:7111
 transaction_submission_rpcs: http://localhost:8545
 txpool_nodes:
   - ws://localhost:7546
-flashblocks_ws: ws://localhost:7111
 "#;
         let err = TestConfig::from_yaml(yaml).unwrap_err();
         assert!(err.to_string().contains("txpool_nodes"));
         assert!(err.to_string().contains("http://"));
-    }
-
-    #[test]
-    fn flashblocks_ws_accepts_wss() {
-        let yaml = r#"
-transaction_submission_rpcs: http://localhost:8545
-flashblocks_ws: wss://localhost:7111
-"#;
-        let config = TestConfig::from_yaml(yaml).unwrap();
-        assert_eq!(config.flashblocks_ws.as_ref().unwrap().scheme(), "wss");
-    }
-
-    #[test]
-    fn flashblocks_ws_is_optional() {
-        let yaml = r#"
-transaction_submission_rpcs: http://localhost:8545
-"#;
-        let config = TestConfig::from_yaml(yaml).unwrap();
-        assert!(config.flashblocks_ws.is_none());
-        assert!(config.to_load_config(Some(1337)).unwrap().flashblocks_ws.is_none());
-    }
-
-    #[test]
-    fn flashblocks_ws_is_preserved_for_runtime() {
-        let yaml = config_yaml("");
-        let config = TestConfig::from_yaml(&yaml).unwrap();
-
-        assert_eq!(
-            config
-                .to_load_config(Some(1337))
-                .unwrap()
-                .flashblocks_ws
-                .as_ref()
-                .map(url::Url::as_str),
-            Some("ws://localhost:7111/")
-        );
     }
 
     #[test]

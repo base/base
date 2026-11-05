@@ -3,8 +3,7 @@
 use alloc::{vec, vec::Vec};
 
 use alloy_evm::FromRecoveredTx;
-use alloy_primitives::{Address, B256, Bytes, TxKind, U256};
-use alloy_rpc_types_eth::state::StateOverride;
+use alloy_primitives::{Address, Bytes, TxKind, U256};
 use base_common_consensus::{
     BaseTxEnvelope, Call, Eip8130Constants, Eip8130Contracts, Eip8130Signed,
     Eip8130StructuralError, Eip8130Structure, TxEip8130,
@@ -74,23 +73,6 @@ pub const EIP8130_PRE_EVEREST_RPC_ERROR: &str = "EIP-8130 RPC features are not a
 pub struct Eip8130Nonce;
 
 impl Eip8130Nonce {
-    /// Looks up a Nonce Manager storage slot in a state override.
-    ///
-    /// A full `state` replacement takes precedence and returns zero for a missing slot. A
-    /// `state_diff` only returns values explicitly present in the diff.
-    pub fn override_for_slot(
-        state_overrides: Option<&StateOverride>,
-        address: Address,
-        slot: B256,
-    ) -> Option<U256> {
-        let account_override = state_overrides?.get(&address)?;
-        let value = match &account_override.state {
-            Some(state) => state.get(&slot).copied().unwrap_or_default(),
-            None => *account_override.state_diff.as_ref()?.get(&slot)?,
-        };
-        Some(U256::from_be_bytes(value.0))
-    }
-
     /// Decodes the Solidity-packed `u64` channel nonce from an EVM storage word.
     pub fn decode_channel_nonce(slot_value: U256) -> U256 {
         slot_value & U256::from(u64::MAX)
@@ -291,8 +273,7 @@ impl BaseTransactionRequest {
 #[cfg(test)]
 mod tests {
     use alloy_evm::Evm;
-    use alloy_primitives::{address, b256, hex};
-    use alloy_rpc_types_eth::state::AccountOverride;
+    use alloy_primitives::{B256, address, b256, hex};
     use base_common_consensus::{Eip8130Constants, Eip8130Signed};
     use base_common_evm::{BaseSpecId, BaseUpgrade, Builder, DefaultBase};
     use k256::ecdsa::SigningKey;
@@ -566,37 +547,5 @@ mod tests {
     fn channel_nonce_decodes_low_u64() {
         let slot = (U256::ONE << 200) | U256::from(42);
         assert_eq!(Eip8130Nonce::decode_channel_nonce(slot), U256::from(42));
-    }
-
-    #[test]
-    fn channel_nonce_reads_state_diff_override() {
-        let slot = B256::repeat_byte(0xab);
-        let value = B256::from(U256::from(9).to_be_bytes::<32>());
-        let overrides = [(
-            SENDER,
-            AccountOverride {
-                state_diff: Some([(slot, value)].into_iter().collect()),
-                ..Default::default()
-            },
-        )]
-        .into_iter()
-        .collect();
-        assert_eq!(
-            Eip8130Nonce::override_for_slot(Some(&overrides), SENDER, slot),
-            Some(U256::from(9))
-        );
-    }
-
-    #[test]
-    fn channel_nonce_full_state_miss_is_zero() {
-        let slot = B256::repeat_byte(0xab);
-        let overrides =
-            [(SENDER, AccountOverride { state: Some(Default::default()), ..Default::default() })]
-                .into_iter()
-                .collect();
-        assert_eq!(
-            Eip8130Nonce::override_for_slot(Some(&overrides), SENDER, slot),
-            Some(U256::ZERO)
-        );
     }
 }

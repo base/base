@@ -45,14 +45,13 @@ pub struct BaseBuilderConfig {
     /// Native payload jobs skip hashes already in this cache even if the
     /// transaction is re-gossiped into the pool. Nonce-lane descendants are
     /// skipped for the current scan via `PayloadTransactions::mark_invalid`;
-    /// skipping those descendants across later jobs is Flashblocks-only.
+    /// later jobs do not skip those descendants.
     pub rejection_cache: RejectionCache,
     /// Whether to record per-call state fetch latency for the build loop.
     ///
-    /// Mirrors the Flashblocks builder: wraps the payload builder's state provider so account,
-    /// storage, and code reads are timed under `sync.state_provider` with a `builder` source
-    /// label. Adds overhead to every state read, so it follows reth's
-    /// `--engine.state-provider-metrics` and stays off by default.
+    /// Wraps the payload builder's state provider so account, storage, and code reads are timed
+    /// under `sync.state_provider` with a `builder` source label. Adds overhead to every state
+    /// read, so it follows reth's `--engine.state-provider-metrics` and stays off by default.
     pub state_provider_metrics: bool,
     /// Whether validity transactions whose predicate was found unsatisfied in an earlier block skip
     /// evaluation until a state change wakes them. Applies from Denim onward.

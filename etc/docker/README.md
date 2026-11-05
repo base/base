@@ -186,19 +186,15 @@ just anvil-nitro-local up
 Set `L2_BASE_DENIM_BLOCK` to another block to move activation, or set it to an
 empty value to leave Denim unscheduled.
 
-To exercise validity transactions on the native payload builder, the deployment must schedule Denim and configure both sides
-of the forwarding path:
-
-- builder: `--builder.payload-builder-cutover`. The builder always registers
-  `base_sendRawTransactionValidity` for direct submission.
-- mempool/client: `--enable-tx-forwarding` and a `--builder-rpc-urls` endpoint
-  targeting the builder
+The builder always runs the native payload builder, before and after Denim, and
+always registers `base_sendRawTransactionValidity` for direct submission. To
+forward validity transactions from mempool nodes, configure the mempool/client
+with `--enable-tx-forwarding` and a `--builder-rpc-urls` endpoint targeting the
+builder.
 
 The default devnet compose files include these flags and schedule Cobalt at
-block 22 and Denim at block 25. Builder selection and block cadence change at
-Denim. Native payload building supports balance,
-storage, and block-number predicates; `flashblock_index` predicates remain specific
-to the Flashblocks builder and are rejected after the Denim cutover.
+block 22 and Denim at block 25. Block cadence changes at Denim. Native payload
+building supports balance, storage, and block-number predicates.
 
 Everest enables EIP-8130 account-abstraction transactions. Everest mode additionally
 activates Everest at block 100:

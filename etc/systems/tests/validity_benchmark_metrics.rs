@@ -2,8 +2,9 @@
 //! snapshot benchmark collects.
 //!
 //! Runs the load tester's validity path (`base_sendRawTransactionValidity` with offset
-//! `block_number` predicates) against a fresh devnet whose builder enforces resting predicates,
-//! then scrapes the builder's Prometheus endpoint the way `base-bench snapshot` does and checks
+//! `block_number` predicates) against a fresh Denim devnet whose native builder enforces resting
+//! predicates (the native builder carries resting predicates between blocks from Denim on), then
+//! scrapes the builder's Prometheus endpoint the way `base-bench snapshot` does and checks
 //! that the flattened keys the benchmark allowlists are present with the expected shape.
 
 use alloy_signer_local::PrivateKeySigner;
@@ -16,7 +17,7 @@ use base_system_tests::{
     ANVIL_ACCOUNT_1, DevnetConfig, PrometheusBlockCollector, PrometheusSnapshot,
     SystemTestStackBuilder,
 };
-use eyre::{Result, WrapErr};
+use eyre::Result;
 
 /// Mirrors the `validity-resting` benchmark workload (every transaction is unsatisfied until two
 /// blocks after it was prepared and expires thirty blocks later) with an always-true balance and
@@ -24,7 +25,7 @@ use eyre::{Result, WrapErr};
 const WORKLOAD: &str = r#"
 transaction_submission_rpcs: ["http://placeholder"]
 sender_count: 20
-block_time: "2s"
+block_time: "200ms"
 in_flight_per_sender: 8
 batch_size: 20
 duration: "30s"
@@ -49,6 +50,8 @@ async fn validity_resting_workload_populates_benchmark_series() -> Result<()> {
     let chain_id = devnet.l2_chain_id;
     let stack = SystemTestStackBuilder::new()
         .with_devnet_config(devnet)
+        .with_base_cobalt_activation_block(0)
+        .with_base_denim_activation_block(0)
         .with_resting_predicate_mode(RestingPredicateMode::Enforce)
         .build()
         .await?;
@@ -57,8 +60,6 @@ async fn validity_resting_workload_populates_benchmark_series() -> Result<()> {
         let mut test_config = TestConfig::from_yaml(WORKLOAD)?;
         test_config.transaction_submission_rpcs = vec![stack.l2_rpc_url()?];
         test_config.query_rpc = Some(stack.l2_client_rpc_url()?);
-        test_config.flashblocks_ws =
-            Some(stack.l2_stack().builder().flashblocks_url().parse().wrap_err("flashblocks url")?);
         test_config.chain_id = Some(chain_id);
         test_config.validate()?;
         let load_config = test_config.to_load_config(None)?;
@@ -145,7 +146,6 @@ async fn validity_resting_workload_populates_benchmark_series() -> Result<()> {
     }
     // Present (recorded every build) even when small.
     let present = [
-        "reth_base_builder_validity_candidate_handling_duration_avg",
         "reth_base_builder_validity_predicate_eval_duration_per_block_avg",
         "reth_base_builder_validity_predicate_evaluation_coverage_per_build_avg",
         "reth_base_builder_predicate_accounts_loaded_total_avg",

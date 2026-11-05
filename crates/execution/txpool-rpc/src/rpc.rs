@@ -36,9 +36,6 @@ use tracing::{debug, info, warn};
 pub const VALIDITY_TX_PRE_EVEREST_RPC_ERROR: &str = "EIP-8130 validity transactions are gated behind \
      the Everest hard fork; they are not accepted before Everest is active";
 
-/// Error returned for flashblock-index predicates once blocks are built without flashblocks.
-const FLASHBLOCK_INDEX_UNSUPPORTED_MESSAGE: &str = "flashblock_index predicates are not supported after Denim: blocks are built every 200ms without flashblocks";
-
 /// Legacy full-block cadence used before Denim activates.
 const LEGACY_BLOCK_INTERVAL_MILLIS: u64 = 2_000;
 
@@ -211,22 +208,18 @@ where
         Ok(header.map(|header| (header.number(), header.timestamp())))
     }
 
-    /// Returns whether the block being built uses Denim's native 200ms cadence.
-    fn builds_subsecond_blocks(&self, latest_timestamp: u64) -> bool {
+    /// Returns the full-block interval, in milliseconds, of the block being built.
+    fn block_interval_millis(&self, latest_timestamp: u64) -> u64 {
         // The target build can be the first Denim block even though the latest committed header
         // is pre-Denim. Check both its parent timestamp and the next legacy block timestamp so
-        // the transition block counts as a subsecond block.
+        // the window uses Denim's 200ms full-block cadence at that transition.
         let next_legacy_timestamp =
             latest_timestamp.saturating_add(LEGACY_BLOCK_INTERVAL_MILLIS.saturating_div(1_000));
         let chain_spec = self.provider.chain_spec();
-        chain_spec.is_feature_active_at_timestamp(BaseFeature::SubsecondBlocks, latest_timestamp)
+        if chain_spec.is_feature_active_at_timestamp(BaseFeature::SubsecondBlocks, latest_timestamp)
             || chain_spec
                 .is_feature_active_at_timestamp(BaseFeature::SubsecondBlocks, next_legacy_timestamp)
-    }
-
-    /// Returns the full-block interval, in milliseconds, of the block being built.
-    fn block_interval_millis(&self, latest_timestamp: u64) -> u64 {
-        if self.builds_subsecond_blocks(latest_timestamp) {
+        {
             RollupConfig::NATIVE_SUBSECOND_BLOCK_INTERVAL_MILLIS
         } else {
             LEGACY_BLOCK_INTERVAL_MILLIS
@@ -289,28 +282,6 @@ where
         tx: Bytes,
         options: SendRawTransactionValidityOptions,
     ) -> RpcResult<TxHash> {
-        let latest = self.latest_block_number_and_timestamp();
-
-        // Native 200ms blocks have no flashblocks, and the native builder skips every transaction
-        // carrying a flashblock-index predicate. Reject them before forwarding so the submitter
-        // gets an error from the first node instead of a hash for a transaction that will never
-        // be included. A forwarding node that cannot read its head defers to the upstream node,
-        // which runs the same check.
-        let latest_timestamp =
-            latest.as_ref().ok().copied().flatten().map_or(0, |(_, timestamp)| timestamp);
-        if self.builds_subsecond_blocks(latest_timestamp)
-            && options
-                .validity
-                .iter()
-                .any(|predicate| matches!(predicate, ValidityPredicate::FlashblockIndex { .. }))
-        {
-            return Err(ErrorObjectOwned::owned(
-                ErrorCode::InvalidParams.code(),
-                FLASHBLOCK_INDEX_UNSUPPORTED_MESSAGE,
-                None::<()>,
-            ));
-        }
-
         if let Some(client) = &self.sequencer_client {
             return client
                 .request("base_sendRawTransactionValidity", (tx, options))
@@ -318,7 +289,7 @@ where
                 .map_err(ErrorObjectOwned::from);
         }
 
-        let latest = latest?;
+        let latest = self.latest_block_number_and_timestamp()?;
 
         ValidityPredicate::validate_batch(&options.validity, self.max_validity_predicates)
             .map_err(|error| {
@@ -753,10 +724,6 @@ mod tests {
                 op: base_execution_txpool::ValidityOperator::LessThan,
                 value: U256::from(32),
             },
-            ValidityPredicate::FlashblockIndex {
-                op: base_execution_txpool::ValidityOperator::LessThan,
-                value: U256::from(5),
-            },
         ]
     }
 
@@ -797,65 +764,10 @@ mod tests {
         );
     }
 
-    /// Provider whose chain builds native 200ms blocks from genesis.
-    fn denim_provider() -> MockEthProvider<BasePrimitives, Arc<BaseChainSpec>> {
-        MockEthProvider::<BasePrimitives>::new()
-            .with_chain_spec(Arc::new(
-                BaseChainSpecBuilder::base_mainnet()
-                    .with_fork(BaseUpgrade::Denim, ForkCondition::Timestamp(0))
-                    .build(),
-            ))
-            .with_genesis_block()
-    }
-
-    fn flashblock_index_request() -> (Bytes, SendRawTransactionValidityOptions) {
-        let signer = PrivateKeySigner::random();
-        let (raw, mut options) = validity_request(signed_eip1559(&signer, 0, 1));
-        options.validity.push(ValidityPredicate::FlashblockIndex {
-            op: base_execution_txpool::ValidityOperator::GreaterThanOrEqual,
-            value: U256::from(1),
-        });
-        (raw, options)
-    }
-
+    /// Flashblock-index predicates were removed with Flashblocks. Their wire tag no longer
+    /// deserializes, so the request fails as invalid params before forwarding or admission.
     #[tokio::test]
-    async fn send_raw_transaction_validity_rejects_flashblock_index_after_denim() {
-        let rpc = validity_rpc(denim_provider());
-        let (raw, options) = flashblock_index_request();
-
-        let error = rpc
-            .send_raw_transaction_validity(raw, options)
-            .await
-            .expect_err("flashblock-index predicates should be rejected after Denim");
-
-        assert_eq!(error.code(), ErrorCode::InvalidParams.code());
-        assert_eq!(error.message(), FLASHBLOCK_INDEX_UNSUPPORTED_MESSAGE);
-    }
-
-    #[tokio::test]
-    async fn send_raw_transaction_validity_rejects_flashblock_index_on_the_denim_transition_block()
-    {
-        // The latest header predates Denim, but the block being built is the first Denim block.
-        let provider = MockEthProvider::<BasePrimitives>::new()
-            .with_chain_spec(Arc::new(
-                BaseChainSpecBuilder::base_mainnet()
-                    .with_fork(BaseUpgrade::Denim, ForkCondition::Timestamp(2))
-                    .build(),
-            ))
-            .with_genesis_block();
-        let rpc = validity_rpc(provider);
-        let (raw, options) = flashblock_index_request();
-
-        let error = rpc
-            .send_raw_transaction_validity(raw, options)
-            .await
-            .expect_err("flashblock-index predicates should be rejected on the transition block");
-
-        assert_eq!(error.message(), FLASHBLOCK_INDEX_UNSUPPORTED_MESSAGE);
-    }
-
-    #[tokio::test]
-    async fn forwarding_node_rejects_flashblock_index_after_denim_without_forwarding() {
+    async fn send_raw_transaction_validity_rejects_removed_flashblock_index_predicate() {
         let sequencer = MockServer::start();
         let mock = sequencer.mock(|when, then| {
             when.method(POST).path("/");
@@ -864,33 +776,38 @@ mod tests {
                 .json_body(json!({"jsonrpc": "2.0", "id": 0, "result": TxHash::ZERO}));
         });
         let client = SequencerClient::new_http_with_headers(sequencer.base_url(), vec![]).unwrap();
-        let rpc =
-            SendRawTransactionValidityApiImpl::new(denim_provider(), test_transaction_sender())
-                .with_sequencer_client(client);
-        let (raw, options) = flashblock_index_request();
+        let module =
+            SendRawTransactionValidityApiImpl::new(everest_provider(), test_transaction_sender())
+                .with_sequencer_client(client)
+                .into_rpc();
+        let signer = PrivateKeySigner::random();
+        let request = json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "base_sendRawTransactionValidity",
+            "params": [
+                signed_eip1559(&signer, 0, 1),
+                {
+                    "validity": [
+                        {"type": "block_number", "params": {"op": "<=", "value": "0x1f"}},
+                        {"type": "flashblock_index", "params": {"op": ">=", "value": "0x1"}},
+                    ],
+                },
+            ],
+        });
 
-        let error = rpc
-            .send_raw_transaction_validity(raw, options)
-            .await
-            .expect_err("a forwarding node should reject flashblock-index predicates after Denim");
+        let (response, _) = module.raw_json_request(&request.to_string(), 1).await.unwrap();
+        let response: serde_json::Value = serde_json::from_str(response.get()).unwrap();
 
-        assert_eq!(error.code(), ErrorCode::InvalidParams.code());
-        assert_eq!(error.message(), FLASHBLOCK_INDEX_UNSUPPORTED_MESSAGE);
+        assert!(response.get("result").is_none(), "unexpected success: {response}");
+        assert_eq!(response["error"]["code"], ErrorCode::InvalidParams.code());
+        assert!(
+            response["error"]["data"]
+                .as_str()
+                .is_some_and(|data| data.contains("unknown variant `flashblock_index`")),
+            "unexpected error: {response}"
+        );
         mock.assert_calls(0);
-    }
-
-    #[tokio::test]
-    async fn send_raw_transaction_validity_allows_flashblock_index_before_denim() {
-        // Mainnet's chain spec has not activated Denim at the genesis timestamp.
-        let rpc = validity_rpc(pre_everest_provider());
-        let (raw, options) = flashblock_index_request();
-
-        // The noop pool rejects insertion, so any error must come from a later stage.
-        let result = rpc.send_raw_transaction_validity(raw, options).await;
-
-        if let Err(error) = result {
-            assert_ne!(error.message(), FLASHBLOCK_INDEX_UNSUPPORTED_MESSAGE);
-        }
     }
 
     fn signed_eip1559(signer: &PrivateKeySigner, nonce: u64, priority_fee: u128) -> Bytes {
@@ -1021,13 +938,6 @@ mod tests {
                         "value": "0x20",
                     },
                 },
-                {
-                    "type": "flashblock_index",
-                    "params": {
-                        "op": "<",
-                        "value": "0x5",
-                    },
-                },
             ])
         );
     }
@@ -1055,7 +965,6 @@ mod tests {
         let capture = TransactionEventCapture::install();
         let signer = PrivateKeySigner::random();
         let raw = signed_eip1559(&signer, 0, 1);
-        // Pre-Denim, so the flashblock-index variant is still admitted.
         let rpc = validity_rpc(pre_everest_provider());
         let options = SendRawTransactionValidityOptions {
             validity: all_predicate_variants(),
@@ -1335,30 +1244,6 @@ mod tests {
         assert!(error.message().contains("outside its mask"));
     }
 
-    #[tokio::test]
-    async fn send_raw_transaction_validity_rejects_unsatisfiable_flashblock_index() {
-        // Pre-Denim; after Denim every flashblock-index predicate is rejected before this check.
-        let rpc = SendRawTransactionValidityApiImpl::new(
-            pre_everest_provider(),
-            test_transaction_sender(),
-        );
-        let (raw, mut options) = validity_request(Bytes::from_static(&[0x02]));
-        // A flashblock-index predicate that only holds at index 0, which pooled
-        // transactions never reach, would park forever if admitted.
-        options.validity = vec![ValidityPredicate::FlashblockIndex {
-            op: base_execution_txpool::ValidityOperator::Equal,
-            value: U256::ZERO,
-        }];
-
-        let error = rpc
-            .send_raw_transaction_validity(raw, options)
-            .await
-            .expect_err("an unsatisfiable flashblock-index predicate should be rejected");
-
-        assert_eq!(error.code(), ErrorCode::InvalidParams.code());
-        assert!(error.message().contains("can never be satisfied"));
-    }
-
     /// A single storage predicate encoded as JSON, used to build oversized
     /// `validity` arrays cheaply.
     fn storage_predicate_json() -> String {
@@ -1474,8 +1359,8 @@ mod tests {
     #[tokio::test]
     async fn send_raw_transaction_validity_accepts_bound_on_the_block_being_built() {
         // With the head at block 100, `block_number = 101` targets the block currently
-        // being built and may still land in one of its flashblocks, so validation passes
-        // and submission proceeds to the pool (which the noop pool then rejects).
+        // being built, so validation passes and submission proceeds to the pool (which the
+        // noop pool then rejects).
         let capture = TransactionEventCapture::install();
         let signer = PrivateKeySigner::random();
         let raw = signed_eip1559(&signer, 0, 1);

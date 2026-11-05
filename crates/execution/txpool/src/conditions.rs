@@ -18,13 +18,11 @@ pub struct ValidityBounds {
     excluded: Vec<U256>,
     below_zero: bool,
     above_max: bool,
-    present: bool,
 }
 
 impl ValidityBounds {
     /// Adds one timing comparison to this conjunction.
     pub fn insert(&mut self, op: ValidityOperator, value: U256) {
-        self.present = true;
         match op {
             ValidityOperator::LessThan => match value.checked_sub(U256::from(1)) {
                 Some(max) => self.max = Some(self.max.map_or(max, |old| old.min(max))),
@@ -46,11 +44,6 @@ impl ValidityBounds {
                 self.min = Some(self.min.map_or(value, |old| old.max(value)));
             }
         }
-    }
-
-    /// Returns whether any predicate for this timing target was submitted.
-    pub const fn is_present(&self) -> bool {
-        self.present
     }
 
     /// Returns the tightest inclusive lower bound.
@@ -134,8 +127,7 @@ impl ValidityBounds {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ValidityConditions {
     block: ValidityBounds,
-    flashblock: ValidityBounds,
-    /// Block and flashblock predicates as submitted, in wire order.
+    /// Block-number predicates as submitted, in wire order.
     ///
     /// Bounds normalization is lossy for the wire form the sender signed, so these
     /// are kept verbatim for forwarding and never used for evaluation.
@@ -156,7 +148,6 @@ impl ValidityConditions {
         let mut nonce_count = 0;
         let mut storage_count = 0;
         let mut block_exclusions = 0;
-        let mut flashblock_exclusions = 0;
         for predicate in &predicates {
             match predicate {
                 ValidityPredicate::Balance { .. } => balance_count += 1,
@@ -168,12 +159,6 @@ impl ValidityConditions {
                         block_exclusions += 1;
                     }
                 }
-                ValidityPredicate::FlashblockIndex { op, .. } => {
-                    timing_count += 1;
-                    if *op == ValidityOperator::NotEqual {
-                        flashblock_exclusions += 1;
-                    }
-                }
             }
         }
         let mut conditions = Self::default();
@@ -182,15 +167,10 @@ impl ValidityConditions {
         conditions.nonce.reserve_exact(nonce_count);
         conditions.storage.reserve_exact(storage_count);
         conditions.block.excluded.reserve_exact(block_exclusions);
-        conditions.flashblock.excluded.reserve_exact(flashblock_exclusions);
         for predicate in predicates {
             match &predicate {
                 ValidityPredicate::BlockNumber { op, value } => {
                     conditions.block.insert(*op, *value);
-                    conditions.timing.push(predicate);
-                }
-                ValidityPredicate::FlashblockIndex { op, value } => {
-                    conditions.flashblock.insert(*op, *value);
                     conditions.timing.push(predicate);
                 }
                 ValidityPredicate::Balance { .. } => conditions.balance.push(predicate),
@@ -223,11 +203,6 @@ impl ValidityConditions {
         &self.block
     }
 
-    /// Flashblock-index bounds, whose indices reset each block.
-    pub const fn flashblock(&self) -> &ValidityBounds {
-        &self.flashblock
-    }
-
     /// Number of submitted predicates, before normalization.
     pub const fn len(&self) -> usize {
         self.timing.len() + self.balance.len() + self.nonce.len() + self.storage.len()
@@ -251,11 +226,6 @@ impl ValidityConditions {
         self.block
             .comparisons()
             .map(|(op, value)| Cow::Owned(ValidityPredicate::BlockNumber { op, value }))
-            .chain(
-                self.flashblock.comparisons().map(|(op, value)| {
-                    Cow::Owned(ValidityPredicate::FlashblockIndex { op, value })
-                }),
-            )
             .chain(self.state_predicates().map(Cow::Borrowed))
     }
 
@@ -263,35 +233,23 @@ impl ValidityConditions {
     pub fn contains(&self, predicate: &ValidityPredicate) -> bool {
         match predicate {
             ValidityPredicate::BlockNumber { op, value } => self.block.contains(*op, *value),
-            ValidityPredicate::FlashblockIndex { op, value } => {
-                self.flashblock.contains(*op, *value)
-            }
             ValidityPredicate::Balance { .. } => self.balance.contains(predicate),
             ValidityPredicate::Nonce { .. } => self.nonce.contains(predicate),
             ValidityPredicate::Storage { .. } => self.storage.contains(predicate),
         }
     }
 
-    /// Whether a passed timing upper bound proves permanent expiry.
+    /// Whether a passed block-number upper bound proves permanent expiry.
     ///
-    /// A flashblock deadline is terminal only in the last allowed block. State
-    /// mismatches and contradictory lower bounds do not change expiry policy.
+    /// State mismatches and contradictory lower bounds do not change expiry policy.
     pub fn is_expired(&self, context: &PredicateContext) -> bool {
-        let block = U256::from(context.block_number);
         self.block.below_zero
-            || self.flashblock.below_zero
-            || self.block.max.is_some_and(|max| max < block)
-            || (self.block.max == Some(block)
-                && self
-                    .flashblock
-                    .max
-                    .is_some_and(|max| max < U256::from(context.flashblock_index)))
+            || self.block.max.is_some_and(|max| max < U256::from(context.block_number))
     }
 
     /// Heap bytes used by the partitioned conditions.
     pub const fn heap_size(&self) -> usize {
         self.block.heap_size()
-            + self.flashblock.heap_size()
             + (self.timing.capacity()
                 + self.balance.capacity()
                 + self.nonce.capacity()
@@ -355,48 +313,34 @@ mod tests {
 
     #[test]
     fn normalized_membership_is_exact_not_logical_implication() {
-        for flashblock in [false, true] {
-            let predicate = |op, value| {
-                if flashblock {
-                    ValidityPredicate::FlashblockIndex { op, value }
-                } else {
-                    ValidityPredicate::BlockNumber { op, value }
-                }
-            };
-            let conditions = ValidityConditions::new(vec![
-                predicate(GreaterThan, U256::from(9)),
-                predicate(LessThan, U256::from(21)),
-                predicate(Equal, U256::from(15)),
-                predicate(NotEqual, U256::from(15)),
-                predicate(NotEqual, U256::from(15)),
-                predicate(LessThan, U256::ZERO),
-                predicate(GreaterThan, U256::MAX),
-            ]);
-            for (op, value) in [
-                (GreaterThanOrEqual, U256::from(15)),
-                (LessThanOrEqual, U256::from(15)),
-                (NotEqual, U256::from(15)),
-                (LessThan, U256::ZERO),
-                (GreaterThan, U256::MAX),
-            ] {
-                assert!(conditions.contains(&predicate(op, value)));
-            }
-            for (op, value) in [
-                (Equal, U256::from(15)),
-                (GreaterThan, U256::from(9)),
-                (LessThan, U256::from(21)),
-                (GreaterThanOrEqual, U256::from(10)),
-                (LessThanOrEqual, U256::from(20)),
-                (NotEqual, U256::from(14)),
-            ] {
-                assert!(!conditions.contains(&predicate(op, value)));
-            }
-            // The other timing partition is absent, even at the same threshold.
-            assert!(!conditions.contains(&if flashblock {
-                ValidityPredicate::BlockNumber { op: NotEqual, value: U256::from(15) }
-            } else {
-                ValidityPredicate::FlashblockIndex { op: NotEqual, value: U256::from(15) }
-            }));
+        let predicate = |op, value| ValidityPredicate::BlockNumber { op, value };
+        let conditions = ValidityConditions::new(vec![
+            predicate(GreaterThan, U256::from(9)),
+            predicate(LessThan, U256::from(21)),
+            predicate(Equal, U256::from(15)),
+            predicate(NotEqual, U256::from(15)),
+            predicate(NotEqual, U256::from(15)),
+            predicate(LessThan, U256::ZERO),
+            predicate(GreaterThan, U256::MAX),
+        ]);
+        for (op, value) in [
+            (GreaterThanOrEqual, U256::from(15)),
+            (LessThanOrEqual, U256::from(15)),
+            (NotEqual, U256::from(15)),
+            (LessThan, U256::ZERO),
+            (GreaterThan, U256::MAX),
+        ] {
+            assert!(conditions.contains(&predicate(op, value)));
+        }
+        for (op, value) in [
+            (Equal, U256::from(15)),
+            (GreaterThan, U256::from(9)),
+            (LessThan, U256::from(21)),
+            (GreaterThanOrEqual, U256::from(10)),
+            (LessThanOrEqual, U256::from(20)),
+            (NotEqual, U256::from(14)),
+        ] {
+            assert!(!conditions.contains(&predicate(op, value)));
         }
     }
 
@@ -436,12 +380,10 @@ mod tests {
             ..Default::default()
         };
         conditions.block.excluded.reserve_exact(4);
-        conditions.flashblock.excluded.reserve_exact(6);
         conditions.block.insert(ValidityOperator::NotEqual, U256::ONE);
-        conditions.flashblock.insert(ValidityOperator::NotEqual, U256::ONE);
         assert_eq!(
             conditions.heap_size(),
-            26 * core::mem::size_of::<ValidityPredicate>() + 10 * core::mem::size_of::<U256>()
+            26 * core::mem::size_of::<ValidityPredicate>() + 4 * core::mem::size_of::<U256>()
         );
     }
 
@@ -475,10 +417,6 @@ mod tests {
             op: ValidityOperator::GreaterThanOrEqual,
             value: U256::from(10),
         };
-        let flashblock = ValidityPredicate::FlashblockIndex {
-            op: ValidityOperator::NotEqual,
-            value: U256::from(2),
-        };
         let balance = ValidityPredicate::Balance {
             address: Address::ZERO,
             op: ValidityOperator::Equal,
@@ -496,27 +434,20 @@ mod tests {
             op: ValidityOperator::Equal,
             value: U256::ZERO,
         };
-        let raw = vec![
-            storage.clone(),
-            block.clone(),
-            nonce.clone(),
-            flashblock.clone(),
-            balance.clone(),
-        ];
+        let raw = vec![storage.clone(), block.clone(), nonce.clone(), balance.clone()];
         let conditions = ValidityConditions::new(raw.clone());
         let normalized = conditions.iter().collect::<Vec<_>>();
         assert_eq!(
             normalized,
             vec![
                 Cow::Owned(normalized_block.clone()),
-                Cow::Owned(flashblock.clone()),
                 Cow::Borrowed(&balance),
                 Cow::Borrowed(&nonce),
                 Cow::Borrowed(&storage),
             ]
         );
-        assert!(normalized[2..].iter().all(|predicate| matches!(predicate, Cow::Borrowed(_))));
-        for predicate in [&normalized_block, &flashblock, &balance, &nonce, &storage] {
+        assert!(normalized[1..].iter().all(|predicate| matches!(predicate, Cow::Borrowed(_))));
+        for predicate in [&normalized_block, &balance, &nonce, &storage] {
             assert!(conditions.contains(predicate));
         }
         assert!(!conditions.contains(&block));
@@ -528,7 +459,7 @@ mod tests {
         // Forwarding regroups state predicates after the timing predicates.
         assert_eq!(
             conditions.submitted().cloned().collect::<Vec<_>>(),
-            [block, flashblock, balance, nonce, storage]
+            [block, balance, nonce, storage]
         );
         assert_eq!(conditions.len(), raw.len());
     }
@@ -552,54 +483,37 @@ mod tests {
             U256::MAX,
         ];
         let mut db = InMemoryDB::default();
-        for flashblock in [false, true] {
-            for first in operators {
-                for second in operators {
-                    for left in values {
-                        for right in values {
-                            let predicate = |op, value| {
-                                if flashblock {
-                                    ValidityPredicate::FlashblockIndex { op, value }
-                                } else {
-                                    ValidityPredicate::BlockNumber { op, value }
-                                }
-                            };
-                            let raw = [predicate(first, left), predicate(second, right)];
-                            let conditions = ValidityConditions::new(raw.to_vec());
+        for first in operators {
+            for second in operators {
+                for left in values {
+                    for right in values {
+                        let raw = [
+                            ValidityPredicate::BlockNumber { op: first, value: left },
+                            ValidityPredicate::BlockNumber { op: second, value: right },
+                        ];
+                        let conditions = ValidityConditions::new(raw.to_vec());
+                        assert_eq!(
+                            conditions.block().expiry_bound(),
+                            ValidityPredicate::block_expiry_bound(&raw)
+                        );
+                        for block_number in [0, 1, 2, 3, u64::MAX] {
+                            let context = PredicateContext { block_number };
+                            let expected = raw
+                                .iter()
+                                .all(|predicate| predicate.matches(&mut db, &context).unwrap());
+                            let actual = conditions
+                                .iter()
+                                .all(|predicate| predicate.matches(&mut db, &context).unwrap());
+                            assert_eq!(actual, expected, "{raw:?} at {context:?}");
+                            let direct = conditions
+                                .block()
+                                .first_unsatisfied(U256::from(block_number))
+                                .is_none();
+                            assert_eq!(direct, expected, "compiled {raw:?} at {context:?}");
                             assert_eq!(
-                                conditions.block().expiry_bound(),
-                                ValidityPredicate::block_expiry_bound(&raw)
+                                conditions.is_expired(&context),
+                                ValidityPredicate::is_batch_expired(&raw, &context)
                             );
-                            assert_eq!(
-                                conditions.flashblock().expiry_bound(),
-                                ValidityPredicate::flashblock_expiry_bound(&raw)
-                            );
-                            for position in [0, 1, 2, 3, u64::MAX] {
-                                let context = PredicateContext {
-                                    block_number: position,
-                                    flashblock_index: position,
-                                };
-                                let expected = raw
-                                    .iter()
-                                    .all(|predicate| predicate.matches(&mut db, &context).unwrap());
-                                let actual = conditions
-                                    .iter()
-                                    .all(|predicate| predicate.matches(&mut db, &context).unwrap());
-                                assert_eq!(actual, expected, "{raw:?} at {context:?}");
-                                let direct = conditions
-                                    .block()
-                                    .first_unsatisfied(U256::from(position))
-                                    .is_none()
-                                    && conditions
-                                        .flashblock()
-                                        .first_unsatisfied(U256::from(position))
-                                        .is_none();
-                                assert_eq!(direct, expected, "compiled {raw:?} at {context:?}");
-                                assert_eq!(
-                                    conditions.is_expired(&context),
-                                    ValidityPredicate::is_batch_expired(&raw, &context)
-                                );
-                            }
                         }
                     }
                 }
@@ -641,31 +555,11 @@ mod tests {
         for (block_number, expected) in
             [(9, false), (10, true), (15, false), (20, true), (21, false)]
         {
-            let context = PredicateContext { block_number, flashblock_index: 1 };
+            let context = PredicateContext { block_number };
             assert_eq!(
                 conditions.iter().all(|predicate| predicate.matches(&mut db, &context).unwrap()),
                 expected
             );
-        }
-    }
-
-    #[test]
-    fn flashblock_expiry_resets_until_last_allowed_block() {
-        let conditions = ValidityConditions::new(vec![
-            ValidityPredicate::BlockNumber {
-                op: ValidityOperator::LessThanOrEqual,
-                value: U256::from(102),
-            },
-            ValidityPredicate::FlashblockIndex {
-                op: ValidityOperator::LessThan,
-                value: U256::from(3),
-            },
-        ]);
-        for (block_number, flashblock_index, expired) in
-            [(100, 3, false), (101, 1, false), (102, 2, false), (102, 3, true), (103, 1, true)]
-        {
-            let context = PredicateContext { block_number, flashblock_index };
-            assert_eq!(conditions.is_expired(&context), expired);
         }
     }
 
@@ -685,7 +579,7 @@ mod tests {
         };
         let conditions =
             ValidityConditions::new(vec![storage.clone(), nonce.clone(), balance.clone()]);
-        let context = PredicateContext { block_number: 100, flashblock_index: 1 };
+        let context = PredicateContext { block_number: 100 };
         let mut db = InMemoryDB::default();
         assert!(conditions.contains(&balance));
         assert!(conditions.contains(&nonce));
@@ -693,13 +587,5 @@ mod tests {
         assert!(!conditions.iter().all(|predicate| predicate.matches(&mut db, &context).unwrap()));
         assert!(!conditions.is_expired(&context));
         assert_eq!(conditions.block().expiry_bound(), None);
-    }
-
-    #[test]
-    fn explicit_unbounded_flashblock_comparisons_are_still_present() {
-        let mut bounds = ValidityBounds::default();
-        bounds.insert(ValidityOperator::GreaterThanOrEqual, U256::ZERO);
-        assert!(bounds.is_present());
-        assert_eq!(bounds.expiry_bound(), None);
     }
 }

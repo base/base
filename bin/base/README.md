@@ -74,7 +74,7 @@ simulation nodes.
 ## `base sequencer`
 
 `base sequencer` starts a sequencing node by launching an embedded execution node, embedded
-Flashblocks builder, and embedded consensus node in the same process. The consensus node calls the
+native payload builder, and embedded consensus node in the same process. The consensus node calls the
 execution node's Engine API handlers in memory, with no socket, IPC, or JWT in between. Engine API
 calls also skip JSON-RPC encoding; L2 reads are still dispatched as JSON-RPC into the auth module.
 
@@ -97,7 +97,6 @@ Useful sequencer-specific flags include:
 - `--sequencer.recover` enables recovery mode and forces empty block production.
 - `--conductor.rpc` enables conductor-backed leader checks.
 - `--conductor.binary-commit` uses the conductor binary commit endpoint.
-- `--flashblocks.port` selects the Flashblocks websocket port.
 
 ## `base dev`
 

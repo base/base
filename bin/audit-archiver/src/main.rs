@@ -107,7 +107,7 @@ struct Args {
     )]
     transaction_event_warm_retention_days: u32,
 
-    /// Days to keep failures, drops, inclusion, and flashblock events, by
+    /// Days to keep failures, drops, inclusion, and retired flashblock events, by
     /// `event_time`.
     #[arg(
         long,

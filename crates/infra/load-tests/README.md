@@ -77,7 +77,7 @@ legacy clients, and use explicit signing before enabling required enforcement.
 
 ## 200ms devnet profile
 
-`examples/denim-devnet.yaml` uses canonical polling at 200ms, without a Flashblocks WebSocket.
+`examples/denim-devnet.yaml` uses canonical polling at 200ms.
 It keeps the `devnet.yaml` transaction mix and 20M gas/s target: 4M gas per 200ms block instead
 of 40M per 2s block. Configure the devnet separately with Denim active and native building;
 use one tenth of the baseline block gas limit to preserve gas/s capacity. The profile does not
@@ -134,11 +134,10 @@ pools so the configured request concurrency can be reached. The shared semaphore
 authoritative outbound request limit. `batch_size` controls the maximum transactions per JSON-RPC
 batch request and defaults to 100.
 
-During measurement, the runner refills immediately after an inclusion source releases transaction
-inventory. When `flashblocks_ws` is configured, builder broadcasts provide the earliest signal;
-phase-locked canonical polling remains active as an automatic fallback and the authoritative source
-for final metrics. Both sources feed the same idempotent depth controller, so canonical observation
-does not double-release transactions already seen in a flashblock.
+During measurement, the runner refills immediately after phase-locked canonical block polling
+observes newly included transactions and releases their inventory. Canonical polling is the
+inclusion source for both pacing and final metrics; a timer-driven safety refill keeps submission
+going when a canonical observation is late.
 
 The controller calibrates expected execution gas before measurement, targets
 `target_gps * block_time` of that estimated gas outstanding, and permits up to twice that depth
@@ -146,13 +145,11 @@ while confirmed gas is behind the run-average target. Transaction gas limits rem
 execution safety, but do not reduce TPS when they conservatively exceed observed gas usage. Refills
 measure depth from transactions accepted by a submission RPC; local submission backlog still counts
 toward sender and aggregate transaction capacity but is not treated as node mempool inventory.
-Refills are capped by the cumulative measured submission budget (`target_gps * elapsed`), so faster
-flashblock inclusion cannot drive offered load above the configured rate. When `target_gps` is
+Refills are capped by the cumulative measured submission budget (`target_gps * elapsed`), so fast
+inclusion cannot drive offered load above the configured rate. When `target_gps` is
 omitted, the floor is one full block and the ceiling is two full blocks. Capacity and submission
-bottlenecks are reported without failing the run. Omit `flashblocks_ws` to run with canonical
-polling only; removing the flashblock watcher does not change the controller or submission pipeline.
-The final pacing summary reports canonical, flashblock, and safety refill-cycle counts so source
-fallback is visible.
+bottlenecks are reported without failing the run. The final pacing summary reports canonical and
+safety refill-cycle counts so timer fallback is visible.
 
 ### Logging
 
@@ -520,10 +517,9 @@ port 8545. Ingress must have forwarding configured as described below.
 
 A configurable fraction of *senders* can route their entire traffic through the
 `base_sendRawTransactionValidity` endpoint, attaching validity predicates to
-every transaction they submit. All five server predicate types are supported:
+every transaction they submit. All four server predicate types are supported:
 the state-based `balance`, `nonce`, and `storage` conditions, and the build-position
-`block_number` and `flashblock_index` conditions (compared against the block and
-flashblock currently being built). This exercises the sequencer and builder
+`block_number` condition (compared against the block currently being built). This exercises the sequencer and builder
 under congestion when validity predicates are in play. Set `validity.ratio` to
 `0.0` (the default) to disable the workload entirely, in which case behavior is
 identical to a plain run.
@@ -567,7 +563,7 @@ validity:
         key: sender
       op: ">="
       value: "0x0"
-    # build-position predicates read the block/flashblock being built:
+    # build-position predicates read the block being built:
     - type: block_number
       op: ">="
       value: "0x0"                # absolute block number
@@ -575,9 +571,6 @@ validity:
     - type: block_number
       op: "<="                  # required block-number expiry bound
       offset: "10"
-    - type: flashblock_index
-      op: ">="
-      value: "1"
 ```
 
 The `nonce` predicate compares the watched account's protocol nonce immediately
@@ -590,11 +583,10 @@ Predicate addresses resolve per transaction: `sender` → the tx `from`,
 `recipient` → the tx `to` (falling back to `from` for contract creation), or a
 fixed `0x` address. Storage slots are either a `fixed` slot or a `mapping`
 slot, which computes the Solidity mapping slot `keccak256(key ++ mapping_slot)`
-so `balanceOf(key)` slots are expressible. The `flashblock_index` predicate
-carries an `op` and `value`, and `block_number` carries an `op` plus exactly one
-of `value` (a fixed absolute block number) or `offset` (resolved to
-`current_block + offset` at prepare time); both read the build position rather
-than any address or slot. Storage predicate values may also be `sender_parity`,
+so `balanceOf(key)` slots are expressible. The `block_number` predicate carries an
+`op` plus exactly one of `value` (a fixed absolute block number) or `offset`
+(resolved to `current_block + offset` at prepare time); it reads the build position
+rather than any address or slot. Storage predicate values may also be `sender_parity`,
 which resolves to the low bit of each transaction sender's address. Fixed values,
 slots, masks, and offsets accept hex (`0x...`) or decimal strings. At most 64
 predicates may be attached per transaction.
@@ -652,10 +644,7 @@ predicate; setting both or neither is a configuration error.
 **Required setup for end-to-end evaluation.** If forwarding is used, configure `--enable-tx-forwarding` and `--builder-rpc-urls=<url>` on ingress.
 The submission proxy must also route `base_sendRawTransactionValidity` to that ingress.
 Rejected requests must not be retried as plain `eth_sendRawTransaction`.
-Both build paths evaluate state and block predicates. `flashblock_index` requires the
-flashblocks path; the native/Denim builder permanently rejects that predicate.
-3. The builder runs the flashblocks build path (the only builder path wired in
-   the shipped binaries), which is where predicates are evaluated against state.
+The builder evaluates state and block predicates while building each block.
 
 If `validity.ratio > 0` but the ingress endpoint does not serve
 `base_sendRawTransactionValidity`, the run fails loudly at startup rather than

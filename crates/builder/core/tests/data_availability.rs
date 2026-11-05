@@ -89,9 +89,6 @@ async fn block_fill() -> eyre::Result<()> {
 
     let block = driver.build_new_block_with_current_timestamp(None).await?;
 
-    // in flashblocks the DA quota is divided by the number of flashblocks
-    // so we will include only some txs in the block because not all of them
-    // will fit within DA quota / flashblocks count.
     assert!(block.includes(fit_tx_1.tx_hash()), "tx 1 should be in block");
     assert!(block.includes(fit_tx_2.tx_hash()), "tx 2 should be in block");
     assert!(block.includes(fit_tx_3.tx_hash()), "tx 3 should be in block");
@@ -163,8 +160,7 @@ async fn da_footprint_fills_to_limit() -> eyre::Result<()> {
         "DA footprint (blob_gas_used={blob_gas}) must not exceed block gas limit ({gas_limit})"
     );
 
-    // Verify the block fills up to the DA footprint limit (flashblocks mode)
-    // With more capacity now (no builder tx), more txs can fit
+    // Verify the block fills up to the DA footprint limit
     for (i, tx_hash) in tx_hashes.iter().enumerate().take(9) {
         assert!(block.includes(tx_hash), "tx {i} should be included in the block");
     }

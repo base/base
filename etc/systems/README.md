@@ -44,10 +44,8 @@ blocks. Transactions submitted to the builder use its real transaction pool and 
 Interactive `base-devnet` runs the sequencer and validator concurrently.
 
 This is an unsafe-chain development network, not a valid restartable continuation of Base mainnet.
-It has no L1, derivation, batching, or safe/finalized-head advancement. At 200ms it produces full
-canonical blocks with Base/Reth's standard payload service. The 2s case uses the Flashblocks payload
-service, but the 200ms case neither starts nor subscribes to Flashblocks. Treat 200ms results as
-full-block results and do not compare Flashblock latency against the 2s case.
+It has no L1, derivation, batching, or safe/finalized-head advancement. Both cadences produce full
+canonical blocks with Base's native payload builder driven by Reth's standard payload service.
 
 ## Prerequisites
 
@@ -131,8 +129,7 @@ cast balance "$FUNDER_ADDRESS" --rpc-url "$BUILDER_RPC"
 ```
 
 The runtime JSON contains `status`, `chain_id`, `boundary_number`, `boundary_hash`,
-`block_interval_ms`, `block_gas_limit`, `builder_rpc_url`, `builder_flashblocks_url`, and
-`client_rpc_url`. Dynamic ports are the default and are safest for automation. `--stable-ports`
+`block_interval_ms`, `block_gas_limit`, `builder_rpc_url`, and `client_rpc_url`. Dynamic ports are the default and are safest for automation. `--stable-ports`
 binds the builder and client RPCs to ports 7545 and 8545, respectively, but fails if those ports are
 occupied.
 
@@ -204,8 +201,7 @@ the stack down. It does not own the caller-provided snapshot datadirs.
 Snapshot runs can opt into native-builder state sharing with
 `--engine.share-sparse-trie-with-payload-builder` and
 `--engine.share-execution-cache-with-payload-builder`. Both default to false.
-These settings affect the basic builder selected at Denim for 200 ms runs, not
-the Flashblocks builder. Sparse sharing requires at least five available CPUs;
+These settings affect the native payload builder at both cadences. Sparse sharing requires at least five available CPUs;
 an unsupported host fails rather than silently ignoring the option. Host-derived
 worker-pool sizing is unchanged. The options are CLI-only, not load-test YAML keys.
 
@@ -235,9 +231,8 @@ The account-create workload uses the adaptive open-loop load generator. Every su
 targets a runtime-random fresh address, forcing an account-trie insertion. Its 100 senders and 1,024
 in-flight transactions per sender can hold about 2.1 Ggas of 21K-gas transfers, more than two
 default 200ms blocks. The cross-cadence example keeps 1M gas outstanding. Larger 20M and 80M
-fresh-account queues overran payload deadlines in local storage: the 2s Flashblocks builder missed
-subsequent FCUs and the 200ms standard builder could remain inside state-root construction without
-advancing the measurement. It measures exactly 500 newly observed canonical blocks. Setup, prefill,
+fresh-account queues overran payload deadlines in local storage: the builder could remain inside
+state-root construction without advancing the measurement. It measures exactly 500 newly observed canonical blocks. Setup, prefill,
 and post-run confirmation draining are outside the measured block count. Use `duration` instead of
 (or in addition to) `measurement_blocks` in a custom YAML when a time-bounded smoke test is
 preferable; when both are set, the first limit reached stops submissions.
@@ -284,15 +279,14 @@ series are identified by scenario and node role; `--run-id` is only the unique a
 defaults to `<benchmark-run>-<timestamp>` when omitted. Upload the metrics and artifact files before
 `metadata.json` when publishing to the report service because metadata is its completion signal.
 
-Which builder metrics describe the canonical blocks depends on cadence. At 2s the flashblocks
-builder produces them, so read `reth_base_builder_total_block_built_duration_avg` and the other
-flashblocks series. At 200ms the payload-builder cutover selects the native builder after Denim and
-sends the flashblocks builder a no-pool build of each block, so its series describe that discarded
-payload. Read `reth_base_builder_native_payload_{build,execution,state_root}_duration_avg` instead.
+The native payload builder produces the canonical blocks at both cadences, so read
+`reth_base_builder_native_payload_{build,execution,state_root}_duration_avg` for build timing.
 `reth_base_builder_txs_included_per_block_flow_*_avg` and
 `reth_base_builder_tx_gas_used_per_block_flow_*_avg` count pool transactions, excluding sequencer
-transactions, in blocks from whichever builder was selected. Like every histogram average they span
-the scrape interval; `transactions/per_block` and `gas/per_block` are exact per block.
+transactions, per payload build. Before Denim (the 2s cadence) Reth's payload job may rebuild a block
+several times before it is sealed, and each build is recorded; from Denim on (the 200ms cadence) each
+block is built once. Like every histogram average they span the scrape interval;
+`transactions/per_block` and `gas/per_block` are exact per block.
 
 For a saturated Blake2f comparison with equal 60-second measured windows, provide separate 2s and
 200ms YAMLs with 30 and 300 measured blocks, respectively. Both should issue one fixed 50,000-round
@@ -395,9 +389,6 @@ lingering `base-devnet` or `base-bench` process before changing the datadir life
 - **Port conflict:** omit `--stable-ports` and consume the allocated URLs from runtime JSON.
 - **Unexpected disk growth:** account creation changes state heavily. Monitor available storage
   throughout long runs.
-- **No 200ms Flashblock data:** expected. The 200ms snapshot stack uses Base/Reth's standard payload
-  service and does not publish or subscribe to Flashblocks; the 2s path remains unchanged. Compare
-  canonical blocks, confirmations, gas, and throughput instead.
 
 See the exact supported options at any revision with:
 

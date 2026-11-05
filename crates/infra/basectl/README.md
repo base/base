@@ -9,8 +9,9 @@ txpool, peer, proof, conductor, sequencer, batcher, and diagnostic workflows. `C
 dispatches parsed commands and returns a process outcome.
 
 The crate also provides the interactive terminal monitor for block production,
-node sync status, flashblock throughput, and system metrics, plus the
-non-interactive `basectl flashblocks` JSON-lines stream.
+data availability, node sync status, and system metrics. Live L2 block rows in the
+DA and command center views come from polling the active EL RPC for the latest
+canonical block once per second.
 
 ## Denim Readiness
 

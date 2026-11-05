@@ -9,7 +9,7 @@ use std::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use alloy_primitives::TxHash;
@@ -27,12 +27,6 @@ pub const DEFAULT_METERING_STORE_TTL_SECS: u64 = 30;
 pub struct MeteringStore {
     /// LRU cache mapping transaction hash to metering data.
     cache: Cache<TxHash, Arc<MeterBundleResponse>>,
-    /// Records when a transaction was committed without metering data.
-    ///
-    /// Late-arriving data is only terminal for transactions that were already
-    /// included without it. A plain lookup miss is not enough because the
-    /// transaction may be skipped for a transient reason and retried later.
-    needed_at: Cache<TxHash, Instant>,
     /// Whether resource metering is enabled.
     metering_enabled: AtomicBool,
 }
@@ -41,7 +35,6 @@ impl core::fmt::Debug for MeteringStore {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("MeteringStore")
             .field("entries", &self.cache.entry_count())
-            .field("needed_at", &self.needed_at.entry_count())
             .field("metering_enabled", &self.metering_enabled.load(Ordering::Relaxed))
             .finish()
     }
@@ -69,13 +62,7 @@ impl MeteringStore {
             })
             .build();
 
-        let needed_at = Cache::builder()
-            .max_capacity(max_capacity as u64)
-            .eviction_policy(EvictionPolicy::lru())
-            .time_to_live(ttl)
-            .build();
-
-        Self { cache, needed_at, metering_enabled: AtomicBool::new(enable_resource_metering) }
+        Self { cache, metering_enabled: AtomicBool::new(enable_resource_metering) }
     }
 
     /// Returns the number of stored entries.
@@ -103,33 +90,8 @@ impl MeteringProvider for MeteringStore {
     }
 
     fn insert(&self, tx_hash: TxHash, metering: MeterBundleResponse) {
-        // If the builder needed metering data for this tx but didn't have it,
-        // the data arrived late. Record how late and what the values were.
-        if let Some(needed_at) = self.needed_at.remove(&tx_hash) {
-            let latency_ms = needed_at.elapsed().as_millis() as f64;
-            BuilderMetrics::metering_late_arrival_total().increment(1);
-            BuilderMetrics::metering_late_arrival_latency_ms().record(latency_ms);
-            BuilderMetrics::metering_late_arrival_execution_time_us()
-                .record(metering.total_execution_time_us as f64);
-            return;
-        }
-
         self.cache.insert(tx_hash, Arc::new(metering));
         BuilderMetrics::metering_store_size().set(self.cache.entry_count() as f64);
-    }
-
-    fn mark_included_without_metering(&self, tx_hash: &TxHash) {
-        if !self.metering_enabled.load(Ordering::Relaxed) || self.cache.get(tx_hash).is_some() {
-            return;
-        }
-
-        // Atomically record the first unmetered inclusion. Later flashblock
-        // iterations must not overwrite the original timestamp.
-        self.needed_at.entry_by_ref(tx_hash).or_insert(Instant::now());
-    }
-
-    fn skip(&self, tx_hash: &TxHash) {
-        self.needed_at.invalidate(tx_hash);
     }
 
     fn remove(&self, tx_hashes: &[TxHash]) {
@@ -141,7 +103,6 @@ impl MeteringProvider for MeteringStore {
 
     fn clear(&self) {
         self.cache.invalidate_all();
-        self.needed_at.invalidate_all();
         BuilderMetrics::metering_store_size().set(0.0);
     }
 
@@ -157,15 +118,6 @@ impl Default for MeteringStore {
             DEFAULT_METERING_STORE_MAX_CAPACITY as usize,
             Duration::from_secs(DEFAULT_METERING_STORE_TTL_SECS),
         )
-    }
-}
-
-#[cfg(test)]
-impl MeteringStore {
-    /// Runs pending async tasks in all caches (for deterministic tests).
-    fn run_pending_tasks(&self) {
-        self.cache.run_pending_tasks();
-        self.needed_at.run_pending_tasks();
     }
 }
 
@@ -249,76 +201,10 @@ mod tests {
 
         // A lookup miss alone does not mean the transaction was included.
         assert!(store.get(&tx_hash).is_none());
-        assert!(!store.needed_at.contains_key(&tx_hash));
 
         // Data that arrives after a miss is still needed if the tx remains pending.
         store.insert(tx_hash, create_test_metering(42000));
         assert!(store.get(&tx_hash).is_some(), "metering should cache after a plain miss");
-    }
-
-    #[test]
-    fn test_late_insert_after_unmetered_inclusion() {
-        let store = MeteringStore::new(true, 100, Duration::from_secs(30));
-        let tx_hash = TxHash::random();
-
-        store.mark_included_without_metering(&tx_hash);
-        assert!(store.needed_at.contains_key(&tx_hash));
-
-        // Late-arriving data is consumed by insert(), does not enter cache
-        store.insert(tx_hash, create_test_metering(42000));
-        store.run_pending_tasks();
-        assert!(!store.needed_at.contains_key(&tx_hash));
-        assert!(store.get(&tx_hash).is_none(), "late arrival should not re-enter cache");
-    }
-
-    #[test]
-    fn test_skip_clears_needed_at() {
-        let store = MeteringStore::new(true, 100, Duration::from_secs(30));
-        let tx_hash = TxHash::random();
-
-        store.mark_included_without_metering(&tx_hash);
-        assert!(store.needed_at.contains_key(&tx_hash));
-
-        store.skip(&tx_hash);
-        assert!(!store.needed_at.contains_key(&tx_hash));
-
-        // Data arrives after skip — normal insert, not a late arrival
-        store.insert(tx_hash, create_test_metering(21000));
-        assert!(store.get(&tx_hash).is_some());
-    }
-
-    #[test]
-    fn test_no_needed_at_when_data_present() {
-        let store = MeteringStore::new(true, 100, Duration::from_secs(30));
-        let tx_hash = TxHash::random();
-
-        // Insert data first, then get() finds it — no needed_at entry
-        store.insert(tx_hash, create_test_metering(21000));
-        assert!(store.get(&tx_hash).is_some());
-        assert!(!store.needed_at.contains_key(&tx_hash));
-    }
-
-    #[test]
-    fn test_clear_resets_needed_at() {
-        let store = MeteringStore::new(true, 100, Duration::from_secs(30));
-        let tx_hash = TxHash::random();
-
-        store.mark_included_without_metering(&tx_hash);
-        assert!(store.needed_at.contains_key(&tx_hash));
-
-        store.clear();
-        assert!(!store.needed_at.contains_key(&tx_hash));
-    }
-
-    #[test]
-    fn test_mark_included_without_metering_ignores_cached_data() {
-        let store = MeteringStore::new(true, 100, Duration::from_secs(30));
-        let tx_hash = TxHash::random();
-
-        store.insert(tx_hash, create_test_metering(21000));
-        store.mark_included_without_metering(&tx_hash);
-
-        assert!(!store.needed_at.contains_key(&tx_hash));
     }
 
     #[test]
@@ -391,7 +277,7 @@ mod tests {
         assert!(store.get(&tx_hash).is_some(), "entry should be present before TTL");
 
         std::thread::sleep(Duration::from_millis(100));
-        store.run_pending_tasks();
+        store.cache.run_pending_tasks();
 
         assert!(store.get(&tx_hash).is_none(), "entry should expire after TTL");
     }
@@ -404,7 +290,7 @@ mod tests {
         store.insert(tx_hash, create_test_metering(21000));
 
         std::thread::sleep(Duration::from_millis(50));
-        store.run_pending_tasks();
+        store.cache.run_pending_tasks();
 
         assert!(store.get(&tx_hash).is_some(), "entry should persist within TTL");
     }

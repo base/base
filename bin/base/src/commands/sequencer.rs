@@ -3,9 +3,8 @@
 use std::sync::Arc;
 
 use base_builder_cli::Args as BuilderArgs;
-use base_builder_core::BuilderApiExtension;
+use base_builder_core::{BuilderApiExtension, BuilderServiceBuilder};
 use base_builder_metering::MeteringStoreExtension;
-use base_builder_multiplex::MultiplexingServiceBuilder;
 use base_consensus_cli::{
     CliMetrics, ConsensusNodeArgs, ConsensusNodeConfigArgs, ConsensusNodeOverrides,
     ConsensusNodeStartOptions, EmbeddedSequencerConsensusNodeConfigArgs,
@@ -39,7 +38,7 @@ pub(crate) struct SequencerCommand {
     #[command(flatten)]
     pub(crate) execution: ExecutionNodeConfigArgs,
 
-    /// Embedded builder and Flashblocks arguments.
+    /// Embedded builder arguments.
     #[command(flatten)]
     pub(crate) builder: BuilderArgs,
 
@@ -77,8 +76,6 @@ impl SequencerCommand {
         // config carries an `enabled` flag (false unless ENABLE_SHADOW_INDEXER is set), so the
         // ExEx is installed unconditionally and no-ops for non-shadow sequencers.
         let shadow_indexer_config = ShadowIndexerConfig::try_from(&builder.shadow_indexer)?;
-        let payload_builder_cutover = builder.payload_builder_cutover;
-        let basic_payload_builder = builder.basic_payload_builder;
         let builder_config = builder.into_builder_config(Arc::clone(&metering_provider))?;
         let da_config = builder_config.da_config.clone();
         let gas_limit_config = builder_config.gas_limit_config.clone();
@@ -107,11 +104,7 @@ impl SequencerCommand {
                 .with_da_config(da_config)
                 .with_gas_limit_config(gas_limit_config)
                 .with_manifest_precheck_enabled(manifest_precheck_enabled)
-                .with_service_builder(
-                    MultiplexingServiceBuilder::new(builder_config)
-                        .with_cutover_enabled(payload_builder_cutover)
-                        .with_basic_only(basic_payload_builder),
-                );
+                .with_service_builder(BuilderServiceBuilder::new(builder_config));
             runner.install_ext::<MeteringStoreExtension>(Arc::clone(&metering_provider));
             runner.install_ext::<TxPoolRpcExtension>(TxPoolRpcConfig { sequencer_rpc });
             runner.install_ext::<BuilderApiExtension>(
@@ -214,10 +207,8 @@ mod tests {
             "30333",
             "--rpc.port",
             "9546",
-            "--builder.max_gas_per_txn",
-            "30000000",
-            "--flashblocks.port",
-            "1112",
+            "--builder.validity-max-predicates",
+            "7",
             "--rollup.sequencer",
             "http://localhost:8545",
             "--rollup.sequencer-headers",
@@ -235,8 +226,7 @@ mod tests {
 
         assert_eq!(sequencer.execution.network.port, 30333);
         assert_eq!(sequencer.consensus.rpc_flags.listen_port, 9546);
-        assert_eq!(sequencer.builder.max_gas_per_txn, Some(30_000_000));
-        assert_eq!(sequencer.builder.flashblocks.flashblocks_port, 1112);
+        assert_eq!(sequencer.builder.validity_max_predicates, 7);
         assert_eq!(
             sequencer.builder.rollup_args.sequencer.as_deref(),
             Some("http://localhost:8545")
@@ -327,7 +317,7 @@ mod tests {
         let builder_config = sequencer
             .builder
             .into_builder_config(Arc::clone(&metering_provider))
-            .expect("valid schedule should build active BuilderConfig");
+            .expect("valid schedule should build an active builder config");
 
         assert!(builder_config.resource_metering.enabled);
         assert!(builder_config.resource_metering.is_active());

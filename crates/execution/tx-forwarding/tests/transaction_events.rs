@@ -71,7 +71,6 @@ async fn mempool(builder_urls: Vec<Url>) -> Result<TestHarness> {
             tracing_enabled: true,
             tracing_logs_enabled: false,
             transaction_event_node_role: None,
-            flashblocks_config: None,
         })
         .with_ext::<SendRawTransactionValidityExtension>(SendRawTransactionValidityConfig::default())
         .with_ext::<TxForwardingExtension>(

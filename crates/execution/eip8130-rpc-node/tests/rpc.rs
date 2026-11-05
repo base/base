@@ -21,7 +21,7 @@ use base_common_consensus::{Eip8130Constants, Eip8130Contracts, Predeploys};
 use base_common_evm::BaseTime;
 use base_common_precompiles::NonceManagerStorage;
 use base_execution_chainspec::BaseChainSpec;
-use base_execution_eip8130_rpc_node::{Eip8130RpcExtension, Eip8130RpcMode};
+use base_execution_eip8130_rpc_node::Eip8130RpcExtension;
 use base_node_runner::{
     BaseNodeExtension, NodeHooks,
     test_utils::{L1_BLOCK_INFO_DEPOSIT_TX, TestHarness},
@@ -38,7 +38,7 @@ async fn setup_with(genesis: Genesis) -> eyre::Result<(TestHarness, RpcClient)> 
     let chain_spec = Arc::new(BaseChainSpec::from_genesis(genesis));
     let harness = TestHarness::builder()
         .with_chain_spec(chain_spec)
-        .with_ext::<Eip8130RpcExtension>(Eip8130RpcMode::Register)
+        .with_ext::<Eip8130RpcExtension>(())
         .build()
         .await?;
     let client = harness.rpc_client()?;
@@ -585,7 +585,7 @@ async fn setup_holding_every_blocking_io_permit()
     let probe = BlockingIoProbe::default();
     let harness = TestHarness::builder()
         .with_chain_spec(Arc::new(BaseChainSpec::from_genesis(build_test_genesis_everest())))
-        .with_ext::<Eip8130RpcExtension>(Eip8130RpcMode::Register)
+        .with_ext::<Eip8130RpcExtension>(())
         .with_extension(probe.clone())
         .build()
         .await?;
@@ -645,7 +645,7 @@ const TRANSFER_GAS: u64 = 21_000;
 async fn eip8130_call_and_estimate_respect_the_rpc_gas_cap() -> eyre::Result<()> {
     let harness = TestHarness::builder()
         .with_chain_spec(Arc::new(BaseChainSpec::from_genesis(build_test_genesis_everest())))
-        .with_ext::<Eip8130RpcExtension>(Eip8130RpcMode::Register)
+        .with_ext::<Eip8130RpcExtension>(())
         .with_rpc_gas_cap(TRANSFER_GAS)
         .build()
         .await?;

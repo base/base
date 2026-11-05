@@ -1,4 +1,6 @@
-//! End-to-end tests for the Denim builder and 200ms cutover, with and without later Zenith.
+//! End-to-end tests for the Denim network upgrade on a fresh devnet: the native payload builder
+//! includes pool transactions before and after Denim activation, with and without a later Zenith,
+//! and the chain switches from 2s to 200ms blocks at Denim.
 
 use std::time::Duration;
 
@@ -9,43 +11,38 @@ use alloy_primitives::{Address, Bytes, U256};
 use alloy_provider::{Provider, RootProvider};
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
-use base_common_flashblocks::{FlashblocksPayloadV1, Metadata};
 use base_common_genesis::{BaseUpgrade, RollupConfig};
 use base_common_network::Base;
 use base_common_rpc_types::BaseTransactionRequest;
 use base_system_tests::{ANVIL_ACCOUNT_1, SystemTestStackBuilder};
 use eyre::{OptionExt, Result, WrapErr};
-use futures::StreamExt;
 use tokio::time::{sleep, timeout};
-use tokio_tungstenite::{connect_async, tungstenite::Message};
 
 const L1_CHAIN_ID: u64 = 1337;
 const L2_CHAIN_ID: u64 = 84538453;
 // Leave enough pre-Denim runway for both stacks to start under the system-test concurrency used
-// in CI. A very early activation makes the "pre-cutover" transaction race node startup.
+// in CI. A very early activation makes the pre-Denim transaction race node startup.
 const DENIM_ACTIVATION_BLOCK: u64 = 25;
 const BLOCK_TIMEOUT: Duration = Duration::from_secs(45);
-const REPLAY_QUIET_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[tokio::test]
-async fn cuts_over_builder_and_block_time_at_denim() -> Result<()> {
-    verify_cutover(None).await
+async fn native_builder_includes_transactions_across_denim() -> Result<()> {
+    verify_denim_activation(None).await
 }
 
 #[tokio::test]
-async fn zenith_keeps_native_builder_and_denim_cadence() -> Result<()> {
-    verify_cutover(Some(DENIM_ACTIVATION_BLOCK + 10)).await
+async fn native_builder_includes_transactions_across_denim_and_zenith() -> Result<()> {
+    verify_denim_activation(Some(DENIM_ACTIVATION_BLOCK + 10)).await
 }
 
-async fn verify_cutover(zenith_activation_block: Option<u64>) -> Result<()> {
+async fn verify_denim_activation(zenith_activation_block: Option<u64>) -> Result<()> {
     base_node_runner::test_utils::init_silenced_tracing();
 
     let mut setup = SystemTestStackBuilder::new()
         .with_l1_chain_id(L1_CHAIN_ID)
         .with_l2_chain_id(L2_CHAIN_ID)
         .with_base_cobalt_activation_block(0)
-        .with_base_denim_activation_block(DENIM_ACTIVATION_BLOCK)
-        .with_payload_builder_cutover();
+        .with_base_denim_activation_block(DENIM_ACTIVATION_BLOCK);
     if let Some(block) = zenith_activation_block {
         setup = setup.with_base_zenith_activation_block(block);
     }
@@ -58,30 +55,23 @@ async fn verify_cutover(zenith_activation_block: Option<u64>) -> Result<()> {
     let zenith_timestamp = rollup_config.upgrade_activation_timestamp(BaseUpgrade::Zenith);
     assert_eq!(zenith_timestamp.is_some(), zenith_activation_block.is_some());
 
-    let pre_cutover_receipt_block =
-        send_transaction(&builder, &signer).await.wrap_err("pre-cutover transaction failed")?;
+    let pre_denim_receipt_block =
+        send_transaction(&builder, &signer).await.wrap_err("pre-Denim transaction failed")?;
     assert!(
-        pre_cutover_receipt_block < DENIM_ACTIVATION_BLOCK,
-        "pre-cutover transaction landed at block {pre_cutover_receipt_block}"
+        pre_denim_receipt_block < DENIM_ACTIVATION_BLOCK,
+        "pre-Denim transaction landed at block {pre_denim_receipt_block}"
     );
 
     wait_for_block(&builder, DENIM_ACTIVATION_BLOCK + 1).await?;
-    let post_cutover_receipt_block =
-        send_transaction(&builder, &signer).await.wrap_err("post-cutover transaction failed")?;
+    let post_denim_receipt_block =
+        send_transaction(&builder, &signer).await.wrap_err("post-Denim transaction failed")?;
     assert!(
-        post_cutover_receipt_block > DENIM_ACTIVATION_BLOCK,
-        "post-cutover transaction landed at block {post_cutover_receipt_block}"
+        post_denim_receipt_block > DENIM_ACTIVATION_BLOCK,
+        "post-Denim transaction landed at block {post_denim_receipt_block}"
     );
 
-    let mut last_verified_block = post_cutover_receipt_block + 4;
+    let mut last_verified_block = post_denim_receipt_block + 4;
     if let Some(timestamp) = zenith_timestamp {
-        let metrics_url = system.l2_stack().builder().metrics_url()?;
-        let metrics_before = reqwest::get(metrics_url.clone()).await?.text().await?;
-        let flashblocks_builds_before = selected_build_count(&metrics_before, "flashblocks")?;
-        let basic_builds_before = selected_build_count(&metrics_before, "basic")?;
-        assert!(flashblocks_builds_before > 0, "Flashblocks was never selected before Denim");
-        assert!(basic_builds_before > 0, "basic builder was never selected after Denim");
-
         // Use the generated schedule rather than assuming the harness's requested block number
         // still identifies the activation after Denim changes the block cadence.
         let zenith_active_head = wait_for_timestamp(&builder, timestamp).await?;
@@ -92,32 +82,21 @@ async fn verify_cutover(zenith_activation_block: Option<u64>) -> Result<()> {
             "post-Zenith transaction landed at block {post_zenith_receipt_block}"
         );
         last_verified_block = post_zenith_receipt_block + 4;
-        wait_for_block(&builder, last_verified_block).await?;
-
-        let metrics_after = reqwest::get(metrics_url).await?.text().await?;
-        assert_eq!(
-            selected_build_count(&metrics_after, "flashblocks")?,
-            flashblocks_builds_before,
-            "Zenith restarted Flashblocks builder selection"
-        );
-        assert!(
-            selected_build_count(&metrics_after, "basic")? > basic_builds_before,
-            "basic builder was not selected after Zenith"
-        );
     }
 
     wait_for_block(&builder, last_verified_block).await?;
     wait_for_block(&client, last_verified_block).await?;
     verify_chain_and_cadence(&builder, &client, last_verified_block).await?;
-    verify_flashblocks_stop_at_denim(&system.l2_stack().builder().flashblocks_url()).await?;
 
-    // Every pool transaction sent above is canonical, and only the selected builder records
-    // inclusion, so the builders' combined count must equal the transactions sent. The metrics
-    // recorder is process-global, so this relies on nextest running each test in its own process.
+    // Every pool transaction sent above is canonical and was composed by the native builder.
+    // Pre-Denim payload jobs may rebuild a block before it is sealed, and each build records its
+    // inclusion, so the count is a lower bound. The metrics recorder is process-global, so this
+    // relies on nextest running each test in its own process.
     let metrics = reqwest::get(system.l2_stack().builder().metrics_url()?).await?.text().await?;
     let sent = if zenith_timestamp.is_some() { 3.0 } else { 2.0 };
     let standard_txs = r#"reth_base_builder_txs_included_per_block_sum{flow="standard"}"#;
-    assert_eq!(metric_value(&metrics, standard_txs)?, sent);
+    let included = metric_value(&metrics, standard_txs)?;
+    assert!(included >= sent, "native builder recorded {included} inclusions for {sent} sent");
     for series in [
         "reth_base_builder_native_payload_build_duration_sum",
         "reth_base_builder_native_payload_execution_duration_sum",
@@ -127,17 +106,6 @@ async fn verify_cutover(zenith_activation_block: Option<u64>) -> Result<()> {
     }
 
     Ok(())
-}
-
-fn selected_build_count(metrics: &str, builder: &str) -> Result<u64> {
-    let label = format!("builder=\"{builder}\"");
-    metrics
-        .lines()
-        .find(|line| line.contains("mux_selected_builds_total") && line.contains(&label))
-        .and_then(|line| line.split_whitespace().last())
-        .ok_or_else(|| eyre::eyre!("missing selected-build metric for {builder}"))?
-        .parse()
-        .wrap_err_with(|| format!("invalid selected-build metric for {builder}"))
 }
 
 fn metric_value(metrics: &str, series: &str) -> Result<f64> {
@@ -244,34 +212,6 @@ async fn verify_chain_and_cadence(
         previous_hash = Some(builder_block.header.hash);
         previous_timestamp_ms = Some(timestamp_ms);
     }
-
-    Ok(())
-}
-
-async fn verify_flashblocks_stop_at_denim(url: &str) -> Result<()> {
-    let replay_url = format!("{url}?block_number=0&flashblock_index=0");
-    let (stream, _) = connect_async(replay_url).await?;
-    let (_, mut messages) = stream.split();
-    let mut positions = Vec::new();
-
-    while let Ok(Some(message)) = timeout(REPLAY_QUIET_TIMEOUT, messages.next()).await {
-        let Message::Text(message) = message? else {
-            continue;
-        };
-        let flashblock: FlashblocksPayloadV1 = serde_json::from_str(&message)?;
-        let metadata: Metadata = serde_json::from_value(flashblock.metadata)?;
-        positions.push((metadata.block_number, flashblock.index));
-    }
-
-    assert!(!positions.is_empty(), "no pre-Denim flashblocks were published");
-    assert!(
-        positions.iter().any(|(number, _)| *number == DENIM_ACTIVATION_BLOCK - 1),
-        "no Flashblocks were published immediately before Denim: {positions:?}"
-    );
-    assert!(
-        positions.iter().all(|(number, _)| *number < DENIM_ACTIVATION_BLOCK),
-        "post-Denim flashblock published at {positions:?}"
-    );
 
     Ok(())
 }

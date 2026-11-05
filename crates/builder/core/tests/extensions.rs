@@ -5,7 +5,7 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 
-use base_builder_core::{BuilderConfig, test_utils::LocalInstanceBuilder};
+use base_builder_core::{BaseBuilderConfig, test_utils::LocalInstanceBuilder};
 use base_node_runner::{BaseNodeExtension, FromExtensionConfig, NodeHooks};
 
 /// A minimal extension that flips a shared flag from its node-started hook, proving the extension's
@@ -38,7 +38,7 @@ impl FromExtensionConfig for StartedFlagExtension {
 #[tokio::test]
 async fn installed_extension_runs_through_the_hook_pipeline() -> eyre::Result<()> {
     let started = Arc::new(AtomicBool::new(false));
-    let _instance = LocalInstanceBuilder::new(BuilderConfig::for_tests())
+    let _instance = LocalInstanceBuilder::new(BaseBuilderConfig::default())
         .install_ext::<StartedFlagExtension>(Arc::clone(&started))
         .build()
         .await?;

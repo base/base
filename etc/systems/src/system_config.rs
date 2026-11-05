@@ -210,7 +210,7 @@ pub struct DevnetSnapshotConfig {
     #[serde(default)]
     pub builder_engine: BuilderEngineSharingConfig,
     /// How the snapshot's native payload builder tracks validity transactions whose predicates
-    /// did not match. `Off` (the default) evaluates every candidate on every flashblock.
+    /// did not match. `Off` (the default) evaluates every candidate on every payload build.
     #[serde(default)]
     pub resting_predicate_mode: RestingPredicateMode,
 }
@@ -254,8 +254,6 @@ pub struct SystemTestPorts {
     pub l2_builder_auth: u16,
     /// L2 Builder P2P port
     pub l2_builder_p2p: u16,
-    /// L2 Builder Flashblocks port
-    pub l2_builder_flashblocks: u16,
     /// L2 Builder Metrics port
     pub l2_builder_metrics: u16,
     /// L2 Builder CL RPC port
@@ -301,7 +299,6 @@ impl SystemTestPorts {
             l2_builder_ws: 7546,
             l2_builder_auth: 7551,
             l2_builder_p2p: 7303,
-            l2_builder_flashblocks: 7111,
             l2_builder_metrics: 7090,
             l2_builder_cl_rpc: 7549,
             l2_builder_cl_p2p: 7003,

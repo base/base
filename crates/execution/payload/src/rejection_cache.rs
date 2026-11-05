@@ -20,8 +20,8 @@ pub const REJECTION_CACHE_TTL: Duration = Duration::from_secs(30 * 60);
 /// predictions or operator limits change. Native payload jobs skip cached
 /// hashes even if the transaction is re-gossiped into the pool. Nonce-lane
 /// descendants are skipped for the **current** scan via
-/// `PayloadTransactions::mark_invalid`; skipping those descendants across
-/// later jobs is Flashblocks-only (its iterator consults this cache).
+/// `PayloadTransactions::mark_invalid`; later jobs do not skip those
+/// descendants.
 ///
 /// Builders look up every candidate, so keys are hashed with the seeded fixed-bytes hasher the
 /// other per-candidate hash sets use rather than the default `SipHash`.

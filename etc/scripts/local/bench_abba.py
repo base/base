@@ -7,11 +7,11 @@ This script builds the benchmark binaries of a base ref (A) and a head ref (B) o
 each, then runs the two binaries alternately (A B B A, repeated) and reports every
 run next to the per-arm median, so a code effect has to show up consistently across
 arms while load swings average out. It is the local counterpart of the advisory
-`bench-pr.yml` comparison, for the builder selection-loop benchmarks whose per-PR
+`bench-pr.yml` comparison, for the native builder selection-loop benchmarks whose per-PR
 CI numbers are too noisy to read on their own.
 
 Example, comparing the checked-out head against the merge base with `origin/main`
-on the resting-predicate scenarios of both builders:
+on the native builder's resting-predicate scenarios:
 
     etc/scripts/local/bench_abba.py --rounds 3
 
@@ -40,16 +40,10 @@ from pathlib import Path
 # `(package, bench target, filter regex)`; criterion matches the filter against the
 # full benchmark id.
 RESTING_BENCHES = [
-    (
-        "base-builder-core",
-        "tx_selection",
-        r"resting_blocks/.*mode=Enforce|resting_predicates/resting=10000/.*mode=Enforce"
-        r"|resting_blocks/resting=20000/.*mode=Off",
-    ),
     ("base-execution-payload-builder", "native_build_loop", r"mode=Enforce"),
 ]
 
-# `tx_selection/resting_blocks/... time:   [1.2 s 1.3 s 1.4 s]` across two lines. The middle
+# `native_build_loop/... time:   [1.2 s 1.3 s 1.4 s]` across two lines. The middle
 # value is criterion's point estimate of the iteration time (the regression slope, or the
 # mean when it has no slope), not a median.
 _BENCH_ID = re.compile(r"^([a-z_]+/\S+)\s*$")

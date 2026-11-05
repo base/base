@@ -2,7 +2,7 @@
 
 use alloy_consensus::Transaction;
 use base_builder_core::{
-    BuilderConfig,
+    BaseBuilderConfig,
     test_utils::{
         BlockTransactionsExt, ChainDriverExt, ONE_ETH, default_node_config, setup_test_instance,
         setup_test_instance_with_node_config,
@@ -18,7 +18,7 @@ async fn pending_pool_limit() -> eyre::Result<()> {
         txpool: TxPoolArgs { pending_max_count: 50, ..Default::default() },
         ..default_node_config()
     };
-    let builder_config = BuilderConfig::for_tests();
+    let builder_config = BaseBuilderConfig::default();
     let rbuilder = setup_test_instance_with_node_config(builder_config, node_config).await?;
     let driver = rbuilder.driver().await?;
     let accounts = driver.fund_accounts(50, ONE_ETH).await?;

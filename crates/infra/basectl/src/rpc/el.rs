@@ -1,17 +1,13 @@
 use std::{sync::Arc, time::Duration};
 
-use alloy_consensus::{Transaction, transaction::SignerRecoverable};
-use alloy_eips::{
-    BlockId,
-    eip2718::{Decodable2718, Encodable2718},
-};
-use alloy_primitives::{Address, B256, Bytes};
+use alloy_consensus::Transaction;
+use alloy_eips::{BlockId, eip2718::Encodable2718};
+use alloy_primitives::{Address, B256};
 use alloy_provider::{Network, Provider, ProviderBuilder, network::TransactionResponse};
 use alloy_rpc_client::RpcClient;
 use alloy_rpc_types_eth::BlockNumberOrTag;
 use alloy_transport_http::Http;
 use anyhow::{Context, Result, anyhow};
-use base_common_consensus::BaseTxEnvelope;
 use base_common_network::Base;
 use futures::{StreamExt, stream};
 use tokio::sync::mpsc;
@@ -22,6 +18,7 @@ use super::fetch_safe_and_latest;
 use crate::tui::Toast;
 
 const CONCURRENT_BLOCK_FETCHES: usize = 16;
+const LATEST_BLOCK_POLL_INTERVAL: Duration = Duration::from_secs(1);
 
 /// Fetches a single L2 block via `eth_getBlockByHash` or `eth_getBlockByNumber`.
 ///
@@ -86,6 +83,12 @@ pub struct BlockDaInfo {
     pub da_bytes: u64,
     /// Unix timestamp of the block.
     pub timestamp: u64,
+    /// Number of transactions in the block, including deposits.
+    pub tx_count: usize,
+    /// Gas used by the block.
+    pub gas_used: u64,
+    /// Gas limit of the block.
+    pub gas_limit: u64,
 }
 
 /// Summary of the initial DA backlog between safe and latest blocks.
@@ -143,7 +146,62 @@ async fn fetch_raw_block_info<P: Provider<Base>>(
     let da_bytes: u64 =
         block.transactions.txns().map(|tx| tx.inner.inner.encode_2718_len() as u64).sum();
 
-    Some(BlockDaInfo { block_number: block_num, da_bytes, timestamp: block.header.timestamp })
+    Some(BlockDaInfo {
+        block_number: block_num,
+        da_bytes,
+        timestamp: block.header.timestamp,
+        tx_count: block.transactions.len(),
+        gas_used: block.header.gas_used,
+        gas_limit: block.header.gas_limit,
+    })
+}
+
+/// Polls the latest L2 block number and forwards DA info for every new canonical block, in order.
+///
+/// The first poll emits only the current head; each later poll emits every block after the
+/// last emitted head, so the receiver sees each canonical block once. Blocks whose fetch
+/// fails are skipped; the receiver backfills gaps through [`run_block_fetcher`].
+pub async fn run_latest_block_poller(
+    l2_rpc: String,
+    tx: mpsc::Sender<BlockDaInfo>,
+    toast_tx: mpsc::Sender<Toast>,
+) {
+    let provider = match ProviderBuilder::new()
+        .disable_recommended_fillers()
+        .network::<Base>()
+        .connect(&l2_rpc)
+        .await
+    {
+        Ok(p) => p,
+        Err(e) => {
+            warn!(error = %e, "Failed to connect to L2 RPC for latest block polling");
+            let _ = toast_tx.try_send(Toast::warning("Latest block poller connection failed"));
+            return;
+        }
+    };
+
+    let mut last_emitted: Option<u64> = None;
+    let mut interval = tokio::time::interval(LATEST_BLOCK_POLL_INTERVAL);
+    loop {
+        interval.tick().await;
+        let Ok(latest) = provider.get_block_number().await else { continue };
+        let first = last_emitted.map_or(latest, |last| last + 1);
+        if first > latest {
+            continue;
+        }
+
+        let mut blocks = stream::iter(first..=latest)
+            .map(|block_num| fetch_raw_block_info(&provider, block_num))
+            .buffered(CONCURRENT_BLOCK_FETCHES);
+        while let Some(info) = blocks.next().await {
+            if let Some(info) = info
+                && tx.send(info).await.is_err()
+            {
+                return;
+            }
+        }
+        last_emitted = Some(latest);
+    }
 }
 
 /// Fetches DA info for requested block numbers and sends results back.
@@ -277,41 +335,6 @@ fn effective_priority_fee_per_gas(
     base_fee_per_gas
         .map(|base_fee| effective_gas_price.saturating_sub(u128::from(base_fee)))
         .or(max_priority_fee_per_gas)
-}
-
-/// Decodes raw EIP-2718 encoded transaction bytes into summaries.
-///
-/// Used to extract transaction details from flashblock stream data without RPC calls.
-pub fn decode_flashblock_transactions(
-    raw_txs: &[Bytes],
-    base_fee_per_gas: Option<u64>,
-) -> Vec<TxSummary> {
-    raw_txs
-        .iter()
-        .filter_map(|tx_bytes| {
-            let envelope = BaseTxEnvelope::decode_2718_exact(tx_bytes.as_ref())
-                .inspect_err(|e| warn!(error = %e, "failed to decode transaction"))
-                .ok()?;
-            let hash = envelope.tx_hash();
-            let to = envelope.to();
-            let effective_priority_fee_per_gas = effective_priority_fee_per_gas(
-                base_fee_per_gas,
-                envelope.effective_gas_price(base_fee_per_gas),
-                envelope.max_priority_fee_per_gas(),
-            );
-            let recovered = envelope
-                .try_into_recovered()
-                .inspect_err(|e| warn!(error = %e, "failed to recover signer"))
-                .ok()?;
-            Some(TxSummary {
-                hash,
-                from: recovered.signer(),
-                to,
-                effective_priority_fee_per_gas,
-                base_fee_per_gas,
-            })
-        })
-        .collect()
 }
 
 /// Fetches all transactions for a given block and sends summaries through the channel.

@@ -2,8 +2,8 @@
 
 mod format;
 pub use format::{
-    COLOR_ACTIVE_BORDER, COLOR_BASE_BLUE, COLOR_BURN, COLOR_GAS_FILL, COLOR_GROWTH,
-    COLOR_ROW_HIGHLIGHTED, COLOR_ROW_SELECTED, COLOR_TARGET, Format,
+    COLOR_ACTIVE_BORDER, COLOR_BASE_BLUE, COLOR_BURN, COLOR_GROWTH, COLOR_ROW_HIGHLIGHTED,
+    COLOR_ROW_SELECTED, COLOR_TARGET, Format,
 };
 
 mod json;
@@ -14,8 +14,7 @@ pub use p2p::{P2pClInfoJson, P2pElInfoJson, P2pInfoJson, P2pInfoTable};
 
 mod render;
 pub use render::{
-    L1BlocksTableParams, build_gas_bar, render_da_backlog_bar, render_gas_usage_bar,
-    render_l1_blocks_table,
+    L1BlocksTableParams, render_da_backlog_bar, render_gas_usage_bar, render_l1_blocks_table,
 };
 
 mod table;

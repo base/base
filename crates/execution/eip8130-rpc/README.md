@@ -5,8 +5,7 @@ RPC-layer helpers for EIP-8130: 2D nonce reads and gas estimation.
 ## `ChannelNonceReader`
 
 Exposes [`ChannelNonceReader`], which resolves a `(address, nonce_key)` channel
-nonce against a state snapshot at a given block, optionally honoring
-state overrides (e.g. flashblocks pending state).
+nonce against a state snapshot at a given block.
 
 Behavior by `nonce_key`:
 
@@ -18,10 +17,9 @@ Behavior by `nonce_key`:
   which has no per-channel counter — replay protection there relies on
   the `valid_before` validity-window bound instead.
 - otherwise: derives the precompile storage slot via
-  `NonceManagerStorage::nonce_slot`, consults any provided state overrides
-  for that slot, falls back to a raw `StateProvider::storage` lookup
-  against the requested block, and decodes the resulting u64 from the
-  slot's low 8 bytes.
+  `NonceManagerStorage::nonce_slot`, reads it with a raw
+  `StateProvider::storage` lookup against the requested block, and decodes
+  the resulting u64 from the slot's low 8 bytes.
 
 This avoids the cost of an `eth_call` to the precompile's `getNonce` for
 the common `nonce_key != 0` case while keeping layout ownership inside

@@ -27,10 +27,10 @@ base-upgrade-signal = { workspace = true }
 base-consensus-peers = { workspace = true }
 base-proof-contracts = { workspace = true }
 alloy-transport-http = { workspace = true }
+base-common-consensus = { workspace = true }
 base-consensus-gossip = { workspace = true }
 alloy-rpc-types-txpool = { workspace = true }
 base-common-precompiles = { workspace = true }
-base-common-flashblocks = { workspace = true }
 base-prover-service-client = { workspace = true }
 base-prover-service-protocol = { workspace = true }
 clap = { workspace = true, features = ["derive", "env"] }
@@ -44,13 +44,12 @@ tokio = { workspace = true, features = ["macros", "net", "process", "time"] }
 alloy-eips = { workspace = true, features = ["std"] }
 serde_json = { workspace = true, features = ["std"] }
 alloy-sol-types = { workspace = true, features = ["std"] }
+alloy-consensus = { workspace = true, features = ["std"] }
 jsonrpsee = { workspace = true, features = ["http-client"] }
 alloy-primitives = { workspace = true, features = ["serde"] }
 alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 base-consensus-rpc = { workspace = true, features = ["client"] }
-base-common-consensus = { workspace = true, features = ["k256"] }
 base-protocol = { workspace = true, features = ["serde", "std"] }
-alloy-consensus = { workspace = true, features = ["std", "k256"] }
 base-common-genesis = { workspace = true, features = ["serde", "std"] }
 base-proof-submission = { workspace = true, features = ["snark-receipt"] }
 tokio-tungstenite = { workspace = true, features = ["rustls-tls-webpki-roots"] }

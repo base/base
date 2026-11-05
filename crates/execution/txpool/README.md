@@ -95,7 +95,8 @@ ValidityAuthorization(bytes32 transactionHash,ValidityPredicate[] validity)
 ```
 
 `transactionHash` hashes the complete signed EIP-2718 transaction envelope.
-`kind` is balance = 0, storage = 1, block number = 2, flashblock index = 3, nonce = 4.
+`kind` is balance = 0, storage = 1, block number = 2, nonce = 4. Kind 3 belonged to
+the removed flashblock-index predicate and is not reused.
 `operator` is `<` = 0, `<=` = 1, `=` = 2, `!=` = 3, `>` = 4, `>=` = 5.
 Balance and nonce predicates use `account`; storage uses `account`, `slot`, and `mask`.
 Nonce predicates read the account's protocol nonce, not an EIP-8130 channel nonce.
@@ -141,7 +142,7 @@ the reth `Pool` for standard transactions, the EIP-8130 sidecar for finite
 2D-nonce channels and nonce-free transactions, and a validity pool for every
 transaction that carries validity predicates (conditional transactions), whatever
 its envelope type. Validity transactions rest in the pool until a predicate on hot
-state flips or their block or flashblock expiry passes, so the validity pool has
+state flips or their block expiry passes, so the validity pool has
 its own count, size and per-sender caps and evicts only among validity
 transactions. A burst of conditional transactions therefore cannot push standard
 user transactions out of reth's pending subpool, and reth's own eviction cannot

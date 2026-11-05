@@ -215,8 +215,7 @@ type CounterHandle = metrics::Counter;
 #[cfg(not(feature = "metrics"))]
 type CounterHandle = base_metrics::NoopMetric;
 
-/// `outcome` label of `validity_predicate_evaluations_total` recorded by the flashblocks and
-/// native build loops.
+/// `outcome` label of `validity_predicate_evaluations_total` recorded by the native build loop.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ValidityEvaluationOutcome {
     /// Primary scan: every predicate held.
@@ -227,10 +226,8 @@ pub enum ValidityEvaluationOutcome {
     ReadError,
     /// Primary scan: deferred unevaluated because the evaluation budget was exhausted.
     BudgetExhausted,
-    /// Primary scan: a predicate can no longer be satisfied (native builder).
+    /// Primary scan: a predicate can no longer be satisfied.
     Expired,
-    /// Primary scan: rejected unevaluated because of an unsupported predicate (native builder).
-    Unsupported,
     /// Rescan: every predicate held.
     RescanMatched,
     /// Rescan: a predicate did not hold.
@@ -243,13 +240,12 @@ pub enum ValidityEvaluationOutcome {
 
 impl ValidityEvaluationOutcome {
     /// Every variant in declaration order; its length sizes [`ValidityEvaluationCounters`].
-    const ALL: [Self; 10] = [
+    const ALL: [Self; 9] = [
         Self::Matched,
         Self::NotSatisfied,
         Self::ReadError,
         Self::BudgetExhausted,
         Self::Expired,
-        Self::Unsupported,
         Self::RescanMatched,
         Self::RescanNotSatisfied,
         Self::RescanReadError,
@@ -265,7 +261,6 @@ impl ValidityEvaluationOutcome {
             Self::ReadError => "read_error",
             Self::BudgetExhausted => "budget_exhausted",
             Self::Expired => "expired",
-            Self::Unsupported => "unsupported",
             Self::RescanMatched => "rescan_matched",
             Self::RescanNotSatisfied => "rescan_not_satisfied",
             Self::RescanReadError => "rescan_read_error",

@@ -61,7 +61,7 @@
           "showLineNumbers": false,
           "showMiniMap": false
         },
-        "content": "# 🔵 Base MEV · Validity Transaction Control Room\nFollow the local path from **RPC/client admission → builder predicates → Flashblock selection → inclusion and fee value**. Blue is validity traffic, cyan is standard traffic, green is healthy, amber needs attention, and red is actionable. Rates use **$window**; summary charts use **p$quantile**.",
+        "content": "# 🔵 Base MEV · Validity Transaction Control Room\nFollow the local path from **RPC/client admission → builder predicates → transaction selection → inclusion and fee value**. Blue is validity traffic, cyan is standard traffic, green is healthy, amber needs attention, and red is actionable. Rates use **$window**; summary charts use **p$quantile**.",
         "mode": "markdown"
       },
       "pluginVersion": "10.4.1",
@@ -629,7 +629,7 @@
         "type": "prometheus",
         "uid": "PBFA97CFB590B2093"
       },
-      "description": "Builder predicate evaluations by outcome. Investigate read errors immediately; budget exhaustion means candidates were deferred to a later Flashblock rather than rejected.",
+      "description": "Builder predicate evaluations by outcome. Investigate read errors immediately; budget exhaustion means candidates were deferred to a later block rather than rejected.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1081,7 +1081,7 @@
         "type": "prometheus",
         "uid": "PBFA97CFB590B2093"
       },
-      "description": "Observation-weighted mean included gas per block, segmented by flow. Use the Flashblock headroom row to diagnose saturation.",
+      "description": "Observation-weighted mean included gas per block, segmented by flow.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1391,7 +1391,7 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "description": "Share of supported primary-scan validity candidates that the builder evaluated instead of deferring after exhausting its predicate budget. Weighted coverage works with existing builders; the selected per-build quantile appears with the new instrumentation. Rescans and unsupported Flashblock-index predicates are excluded.",
+          "description": "Share of supported primary-scan validity candidates that the builder evaluated instead of deferring after exhausting its predicate budget. Weighted coverage works with existing builders; the selected per-build quantile appears with the new instrumentation. Rescans are excluded.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -2999,266 +2999,6 @@
       ],
       "title": "Optional external metering & resource limits · Is the builder informed and resource-safe?",
       "type": "row"
-    },
-    {
-      "collapsed": true,
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 60
-      },
-      "id": 107,
-      "panels": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "PBFA97CFB590B2093"
-          },
-          "description": "Messages received from the legacy pre-Denim Flashblock stream by consumer node. Near-zero traffic is expected after the payload-builder cutover; use this row only for compatibility-mode diagnosis.",
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "palette-classic"
-              },
-              "custom": {
-                "drawStyle": "line",
-                "fillOpacity": 15,
-                "lineWidth": 2,
-                "showPoints": "never",
-                "spanNulls": false,
-                "stacking": {
-                  "group": "A",
-                  "mode": "none"
-                }
-              },
-              "decimals": 2,
-              "mappings": [],
-              "unit": "cps"
-            },
-            "overrides": []
-          },
-          "gridPos": {
-            "h": 7,
-            "w": 8,
-            "x": 0,
-            "y": 55
-          },
-          "id": 29,
-          "options": {
-            "legend": {
-              "calcs": [
-                "lastNotNull",
-                "max"
-              ],
-              "displayMode": "table",
-              "placement": "bottom",
-              "showLegend": true
-            },
-            "tooltip": {
-              "mode": "multi",
-              "sort": "desc"
-            }
-          },
-          "pluginVersion": "10.4.1",
-          "targets": [
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "PBFA97CFB590B2093"
-              },
-              "editorMode": "code",
-              "expr": "sum by (job) (rate((reth_reth_flashblocks_upstream_messages{job=~\"l2_client|l2_base_rpc\"} * 1)[$window:]))",
-              "legendFormat": "{{job}}",
-              "range": true,
-              "refId": "A"
-            }
-          ],
-          "title": "Legacy Flashblock Receive Rate",
-          "type": "timeseries"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "PBFA97CFB590B2093"
-          },
-          "description": "Legacy stream errors, processing failures, unexpected order, reconnects, and stale drops. Explicit zero baselines mean no event while the consumer targets are healthy.",
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "fixedColor": "#F2495C",
-                "mode": "fixed"
-              },
-              "custom": {
-                "drawStyle": "bars",
-                "fillOpacity": 45,
-                "lineWidth": 1,
-                "showPoints": "never",
-                "spanNulls": false,
-                "stacking": {
-                  "group": "A",
-                  "mode": "none"
-                }
-              },
-              "decimals": 3,
-              "mappings": [],
-              "unit": "cps"
-            },
-            "overrides": []
-          },
-          "gridPos": {
-            "h": 7,
-            "w": 8,
-            "x": 8,
-            "y": 55
-          },
-          "id": 30,
-          "options": {
-            "legend": {
-              "calcs": [
-                "lastNotNull",
-                "max"
-              ],
-              "displayMode": "table",
-              "placement": "right",
-              "showLegend": true
-            },
-            "tooltip": {
-              "mode": "multi",
-              "sort": "desc"
-            }
-          },
-          "pluginVersion": "10.4.1",
-          "targets": [
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "PBFA97CFB590B2093"
-              },
-              "editorMode": "code",
-              "expr": "(sum by (job) (rate((reth_reth_flashblocks_upstream_errors{job=~\"l2_client|l2_base_rpc\"} * 1)[$window:]))) or on() label_replace(0 * sum(up{job=~\"l2_client|l2_base_rpc\"}), \"job\", \"all\", \"\", \"\")",
-              "legendFormat": "{{job}} · upstream error",
-              "range": true,
-              "refId": "A"
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "PBFA97CFB590B2093"
-              },
-              "editorMode": "code",
-              "expr": "(sum by (job) (rate((reth_reth_flashblocks_block_processing_error{job=~\"l2_client|l2_base_rpc\"} * 1)[$window:]))) or on() label_replace(0 * sum(up{job=~\"l2_client|l2_base_rpc\"}), \"job\", \"all\", \"\", \"\")",
-              "legendFormat": "{{job}} · processing error",
-              "range": true,
-              "refId": "B"
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "PBFA97CFB590B2093"
-              },
-              "editorMode": "code",
-              "expr": "(sum by (job) (rate((reth_reth_flashblocks_unexpected_block_order{job=~\"l2_client|l2_base_rpc\"} * 1)[$window:]))) or on() label_replace(0 * sum(up{job=~\"l2_client|l2_base_rpc\"}), \"job\", \"all\", \"\", \"\")",
-              "legendFormat": "{{job}} · unexpected order",
-              "range": true,
-              "refId": "C"
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "PBFA97CFB590B2093"
-              },
-              "editorMode": "code",
-              "expr": "(sum by (job) (rate((reth_reth_flashblocks_reconnect_attempts{job=~\"l2_client|l2_base_rpc\"} * 1)[$window:]))) or on() label_replace(0 * sum(up{job=~\"l2_client|l2_base_rpc\"}), \"job\", \"all\", \"\", \"\")",
-              "legendFormat": "{{job}} · reconnect",
-              "range": true,
-              "refId": "D"
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "PBFA97CFB590B2093"
-              },
-              "editorMode": "code",
-              "expr": "(sum by (job) (rate((reth_reth_flashblocks_pending_drop_stale{job=~\"l2_client|l2_base_rpc\"} * 1)[$window:]))) or on() label_replace(0 * sum(up{job=~\"l2_client|l2_base_rpc\"}), \"job\", \"all\", \"\", \"\")",
-              "legendFormat": "{{job}} · stale drop",
-              "range": true,
-              "refId": "E"
-            }
-          ],
-          "title": "Stream Integrity Events",
-          "type": "timeseries"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "PBFA97CFB590B2093"
-          },
-          "description": "Selected local summary quantile for legacy Flashblock processing. Zero is expected when the pre-Denim stream is inactive; keep each node separate because exporter summary quantiles are not aggregatable.",
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "palette-classic"
-              },
-              "custom": {
-                "drawStyle": "line",
-                "fillOpacity": 15,
-                "lineWidth": 2,
-                "showPoints": "never",
-                "spanNulls": false,
-                "stacking": {
-                  "group": "A",
-                  "mode": "none"
-                }
-              },
-              "decimals": 4,
-              "mappings": [],
-              "unit": "s"
-            },
-            "overrides": []
-          },
-          "gridPos": {
-            "h": 7,
-            "w": 8,
-            "x": 16,
-            "y": 55
-          },
-          "id": 31,
-          "options": {
-            "legend": {
-              "calcs": [
-                "lastNotNull",
-                "max"
-              ],
-              "displayMode": "table",
-              "placement": "bottom",
-              "showLegend": true
-            },
-            "tooltip": {
-              "mode": "multi",
-              "sort": "desc"
-            }
-          },
-          "pluginVersion": "10.4.1",
-          "targets": [
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "PBFA97CFB590B2093"
-              },
-              "editorMode": "code",
-              "expr": "reth_reth_flashblocks_block_processing_duration{job=~\"l2_client|l2_base_rpc\",quantile=\"$quantile\"}",
-              "legendFormat": "{{job}} · p$quantile",
-              "range": true,
-              "refId": "A"
-            }
-          ],
-          "title": "Processing Latency · p$quantile",
-          "type": "timeseries"
-        }
-      ],
-      "title": "Legacy Flashblock compatibility · Is the pre-Denim consumer stream healthy when active?",
-      "type": "row"
     }
   ],
   "refresh": "5s",
@@ -3267,8 +3007,7 @@
     "devnet",
     "mev",
     "validity",
-    "builder",
-    "flashblocks"
+    "builder"
   ],
   "templating": {
     "list": [

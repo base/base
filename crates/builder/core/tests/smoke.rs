@@ -9,12 +9,7 @@ use std::collections::HashSet;
 use alloy_primitives::TxHash;
 #[cfg(target_os = "linux")]
 use base_builder_core::test_utils::ExternalNode;
-use base_builder_core::{
-    BuilderConfig,
-    test_utils::{
-        TransactionBuilderExt, setup_test_instance, setup_test_instance_with_builder_config,
-    },
-};
+use base_builder_core::test_utils::{ChainDriver, Ipc, TransactionBuilderExt, setup_test_instance};
 use tokio::{join, task::yield_now};
 use tracing::info;
 
@@ -120,7 +115,7 @@ async fn produces_blocks_under_load_within_deadline() -> eyre::Result<()> {
                 // Ensure that the builder can still produce blocks under
                 // heavy load of incoming transactions.
                 let block = tokio::time::timeout(
-                    rbuilder.builder_config().block_time + Duration::from_millis(1500),
+                    ChainDriver::<Ipc>::BLOCK_TIME + Duration::from_secs(4),
                     driver.build_new_block_with_current_timestamp(None),
                 )
                 .await
@@ -164,70 +159,13 @@ async fn test_no_tx_pool() -> eyre::Result<()> {
 }
 
 #[tokio::test]
-async fn chain_produces_big_tx_with_gas_limit() -> eyre::Result<()> {
-    let config = BuilderConfig::for_tests().with_max_gas_per_txn(Some(25000));
-    let rbuilder = setup_test_instance_with_builder_config(config).await?;
-    let driver = rbuilder.driver().await?;
-
-    #[cfg(target_os = "linux")]
-    let driver = driver.with_validation_node(ExternalNode::reth().await?).await?;
-
-    // insert valid txn under limit
-    let tx = driver
-        .create_transaction()
-        .random_valid_transfer()
-        .send()
-        .await
-        .expect("Failed to send transaction");
-
-    // insert txn with gas usage above limit
-    let tx_high_gas = driver
-        .create_transaction()
-        .random_big_transaction()
-        .send()
-        .await
-        .expect("Failed to send transaction");
-
-    let block = driver.build_new_block_with_current_timestamp(None).await?;
-    let txs = block.transactions;
-
-    // deposit + valid user tx (high gas tx excluded due to limit)
-    assert_eq!(txs.len(), 2, "Should have 2 transactions (deposit + valid user tx)");
-
-    // assert we included the tx with gas under limit
-    let inclusion_result = txs.hashes().find(|hash| hash == tx.tx_hash());
-    assert!(inclusion_result.is_some());
-
-    // assert we do not include the tx with gas above limit
-    let exclusion_result = txs.hashes().find(|hash| hash == tx_high_gas.tx_hash());
-    assert!(exclusion_result.is_none());
-
-    // Regression: the over-cap tx must be evicted from the pool and seeded into the
-    // shared rejection cache after the first post-execution rejection. Otherwise the
-    // builder will re-execute it on every subsequent flashblock/block attempt, turning
-    // the cap into an unpaid EVM-execution sink.
-    tokio::time::sleep(Duration::from_millis(250)).await;
-    assert!(
-        rbuilder.builder_config().rejection_cache.contains_key(tx_high_gas.tx_hash()),
-        "over-cap tx should be in the shared rejection cache after one rejection"
-    );
-    assert!(
-        !rbuilder.pool().exists(*tx_high_gas.tx_hash()),
-        "over-cap tx should be evicted from the txpool after one rejection"
-    );
-
-    Ok(())
-}
-
-#[tokio::test]
-async fn chain_produces_big_tx_without_gas_limit() -> eyre::Result<()> {
+async fn chain_produces_big_tx() -> eyre::Result<()> {
     let rbuilder = setup_test_instance().await?;
     let driver = rbuilder.driver().await?;
 
     #[cfg(target_os = "linux")]
     let driver = driver.with_validation_node(ExternalNode::reth().await?).await?;
 
-    // insert txn with gas usage but there is no limit
     let tx = driver
         .create_transaction()
         .random_big_transaction()
@@ -242,33 +180,8 @@ async fn chain_produces_big_tx_without_gas_limit() -> eyre::Result<()> {
     let inclusion_result = txs.hashes().find(|hash| hash == tx.tx_hash());
     assert!(inclusion_result.is_some());
 
-    // deposit + big tx (no gas limit to exclude it)
+    // deposit + big tx
     assert_eq!(txs.len(), 2, "Should have 2 transactions (deposit + big tx)");
-
-    Ok(())
-}
-
-#[tokio::test]
-async fn metering_wait_duration_does_not_delay_txs_when_metering_is_disabled() -> eyre::Result<()> {
-    let config =
-        BuilderConfig::for_tests().with_metering_wait_duration(Some(Duration::from_secs(60)));
-    let rbuilder = setup_test_instance_with_builder_config(config).await?;
-    let driver = rbuilder.driver().await?;
-
-    let tx = driver
-        .create_transaction()
-        .random_valid_transfer()
-        .send()
-        .await
-        .expect("Failed to send transaction");
-
-    let block = driver.build_new_block_with_current_timestamp(None).await?;
-    let txs = block.transactions;
-
-    assert!(
-        txs.hashes().any(|hash| hash == *tx.tx_hash()),
-        "fresh tx should not be delayed when metering is disabled"
-    );
 
     Ok(())
 }

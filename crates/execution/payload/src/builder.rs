@@ -480,7 +480,8 @@ impl<Txs> Builder<'_, Txs> {
         // 3. if mem pool transactions are requested we execute them
         let mut resting = None;
         if !ctx.attributes().no_tx_pool() {
-            // Without flashblocks, resting transactions only carry across blocks, from Denim on.
+            // The resting set carries from one block's build to the next, so it needs one build
+            // per block, from Denim on.
             resting = resting_predicates
                 .as_ref()
                 .filter(|_| {
@@ -607,9 +608,8 @@ impl<Txs> Builder<'_, Txs> {
             Some(executed),
             block_access_list.map(|bal| alloy_rlp::encode(bal).into()),
         );
-        // `no_tx_pool` builds replay consensus input; the payload-builder cutover also sends one
-        // to the unselected builder for every block. Only the builder that composed the block
-        // records its inclusion, matching flashblocks.
+        // `no_tx_pool` builds replay consensus input rather than composing a block from the pool,
+        // so only pool builds record inclusion.
         if !no_tx_pool {
             BuilderMetrics::record_inclusion(&info.inclusion);
             BuilderMetrics::record_native_build(execution_duration, build_start.elapsed());
@@ -1001,8 +1001,8 @@ where
     /// [`ExecutionInfo::permanently_rejected_txs`] for the payload job to remove from the
     /// pool and insert into [`crate::config::BaseBuilderConfig::rejection_cache`] after this scan.
     /// Later jobs sharing that cache skip the hash even if the pool has it again.
-    /// Nonce-lane descendants are skipped for this scan via `mark_invalid`;
-    /// skipping those descendants across later jobs is Flashblocks-only.
+    /// Nonce-lane descendants are skipped for this scan via `mark_invalid`, not across
+    /// later jobs.
     /// Block-scope excludes only skip the current iterator.
     ///
     /// Returns `Ok(Some(()))` if the job was cancelled.
@@ -1033,7 +1033,7 @@ where
         let base_fee = builder.evm_mut().block().basefee();
         let block_number =
             builder.evm_mut().block().number().try_into().expect("block number must fit in u64");
-        let predicate_context = PredicateContext { block_number, flashblock_index: 0 };
+        let predicate_context = PredicateContext { block_number };
         let mut predicate_index =
             ParkedPredicateIndex::new(self.builder_config.predicate_bucket_ordered_threshold);
         let mut predicate_loads = PredicateLoadTracker::default();
@@ -1107,29 +1107,6 @@ where
             if has_validity_predicates {
                 validity_consideration_index += 1;
             }
-            if tx.validity_conditions().flashblock().is_present() {
-                evaluation_counters.increment(ValidityEvaluationOutcome::Unsupported, 1);
-                emit_native_validity_event!(
-                    self,
-                    TransactionEventType::BuilderRejected,
-                    tx_hash,
-                    validity_consideration_index,
-                    {
-                        "rejection_reason" => "unsupported_flashblock_index_predicate",
-                        "rejection_detail" =>
-                            "flashblock-index predicates are unsupported by the native builder",
-                        "permanent" => true,
-                    }
-                );
-                trace!(
-                    target: "payload_builder",
-                    tx_hash = ?tx_hash,
-                    "skipping transaction with unsupported flashblock-index predicate"
-                );
-                Self::skip_current(&mut best_txs, tx.sender(), tx.nonce(), replay_independent);
-                continue;
-            }
-
             if has_validity_predicates
                 && predicate_eval_duration.is_some_and(|duration| {
                     duration >= self.builder_config.predicate_eval_hard_cutoff
@@ -2243,7 +2220,7 @@ mod tests {
     fn native_builder_includes_transaction_with_matching_block_predicate() {
         let event_capture = TransactionEventCapture::install();
         // Event capture is process-global, so this transaction must not share a hash with other
-        // tests, such as the flashblock-index rejection test that uses `pool_transaction(0)`.
+        // tests, such as those that use `pool_transaction(0)`.
         let transaction = pool_transaction_to(0, Address::repeat_byte(0x4d), U256::ZERO)
             .with_validity_predicates(vec![ValidityPredicate::BlockNumber {
                 op: ValidityOperator::Equal,
@@ -2348,24 +2325,6 @@ mod tests {
             .map(|event| event.event_type)
             .collect::<Vec<_>>();
         assert_eq!(gated_events, [TransactionEventType::BuilderDeferred]);
-    }
-
-    #[test]
-    fn native_builder_rejects_flashblock_index_predicates() {
-        let transaction = pool_transaction(0).with_validity_predicates(vec![
-            ValidityPredicate::FlashblockIndex { op: ValidityOperator::Equal, value: U256::ZERO },
-        ]);
-        let sender = transaction.sender();
-
-        let BuildOutcomeKind::Freeze(payload) = build_parkable_pool_payload(
-            pool_payload_context(DENIM_TIMESTAMP),
-            TestParkableTransactions::new(vec![transaction]),
-            &[sender],
-        ) else {
-            panic!("Denim payload must freeze")
-        };
-
-        assert!(payload.block().body().transactions.is_empty());
     }
 
     #[test]
@@ -2635,7 +2594,8 @@ mod tests {
         assert!(resting.member(*gated.hash(), gated.validity_conditions()).is_some());
     }
 
-    /// Without flashblocks, resting transactions only carry across blocks, which needs Denim.
+    /// The resting set carries from one block's build to the next, which needs Denim's one build
+    /// per block.
     #[test]
     fn native_builder_ignores_the_resting_set_when_off_or_before_denim() {
         let watched_address = Address::repeat_byte(0x4b);

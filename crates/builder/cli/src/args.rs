@@ -1,12 +1,11 @@
 //! Builder CLI arguments and config conversion helpers.
 
-use core::{net::SocketAddr, time::Duration};
+use core::time::Duration;
 use std::{path::PathBuf, sync::Arc};
 
 use base_builder_core::{
-    BuilderApiExtensionConfig, BuilderConfig, DEFAULT_MAX_VALIDITY_PREDICATES,
-    ExecutionMeteringMode, RejectionCache, ResourceMeteringConfig, RestingPredicateMode,
-    SharedMeteringProvider, ValiditySignatureMode,
+    BaseBuilderConfig, BuilderApiExtensionConfig, DEFAULT_MAX_VALIDITY_PREDICATES, RejectionCache,
+    ResourceMeteringConfig, RestingPredicateMode, SharedMeteringProvider, ValiditySignatureMode,
 };
 use base_builder_metering::MeteringStore;
 use base_execution_cli::ShadowIndexerArgs;
@@ -18,43 +17,83 @@ use base_observability_events::{
 use eyre::WrapErr;
 use tracing::{info, warn};
 
-/// Parameters for Flashblocks configuration.
+/// Retired builder flags, accepted and ignored so older deployment configurations keep parsing.
 ///
-/// The names in the struct are prefixed with `flashblocks` to avoid conflicts
-/// with the legacy standard builder configuration (now removed) since these args are
-/// flattened into the main `Args` struct with the other rollup/node args.
-#[derive(Debug, Clone, PartialEq, Eq, clap::Args)]
-pub struct FlashblocksArgs {
-    /// Flashblocks is always enabled; these options tune its behavior.
-    /// The port that we bind to for the websocket server that provides flashblocks
-    #[arg(long = "flashblocks.port", env = "FLASHBLOCKS_WS_PORT", default_value = "1111")]
-    pub flashblocks_port: u16,
+/// These configured the Flashblocks builder, the payload-builder cutover, and retired builder
+/// resource limits. Scheduled for removal in v1.4.0 after rolling deployments have migrated.
+#[derive(Debug, Clone, Default, PartialEq, Eq, clap::Args)]
+pub struct RetiredArgs {
+    /// Deprecated and ignored.
+    #[arg(long = "rollup.chain-block-time", hide = true)]
+    pub chain_block_time: Option<String>,
 
-    /// The address that we bind to for the websocket server that provides flashblocks
-    #[arg(long = "flashblocks.addr", env = "FLASHBLOCKS_WS_ADDR", default_value = "127.0.0.1")]
-    pub flashblocks_addr: String,
+    /// Deprecated and ignored.
+    #[arg(long = "builder.max_gas_per_txn", hide = true)]
+    pub max_gas_per_txn: Option<String>,
 
-    /// flashblock block time in milliseconds
-    #[arg(long = "flashblocks.block-time", default_value = "250", env = "FLASHBLOCK_BLOCK_TIME")]
-    pub flashblocks_block_time: u64,
+    /// Deprecated and ignored.
+    #[arg(long = "builder.max-execution-time-per-tx-us", hide = true)]
+    pub max_execution_time_per_tx_us: Option<String>,
 
-    /// Time by which blocks would be completed earlier in milliseconds.
-    ///
-    /// This time is used to account for latencies and would be deducted from total block
-    /// building time before calculating number of fbs.
-    #[arg(long = "flashblocks.leeway-time", default_value = "75", env = "FLASHBLOCK_LEEWAY_TIME")]
-    pub flashblocks_leeway_time: u64,
-}
+    /// Deprecated and ignored.
+    #[arg(long = "builder.flashblock-execution-time-budget-us", hide = true)]
+    pub flashblock_execution_time_budget_us: Option<String>,
 
-impl Default for FlashblocksArgs {
-    fn default() -> Self {
-        Self {
-            flashblocks_port: 1111,
-            flashblocks_addr: "127.0.0.1".to_string(),
-            flashblocks_block_time: 250,
-            flashblocks_leeway_time: 75,
-        }
-    }
+    /// Deprecated and ignored.
+    #[arg(long = "builder.block-state-root-gas-limit", hide = true)]
+    pub block_state_root_gas_limit: Option<String>,
+
+    /// Deprecated and ignored.
+    #[arg(long = "builder.state-root-gas-coefficient", hide = true)]
+    pub state_root_gas_coefficient: Option<String>,
+
+    /// Deprecated and ignored.
+    #[arg(long = "builder.state-root-gas-anchor-us", hide = true)]
+    pub state_root_gas_anchor_us: Option<String>,
+
+    /// Deprecated and ignored.
+    #[arg(long = "builder.execution-metering-mode", hide = true)]
+    pub execution_metering_mode: Option<String>,
+
+    /// Deprecated and ignored.
+    #[arg(long = "builder.extra-block-deadline-secs", hide = true)]
+    pub extra_block_deadline_secs: Option<String>,
+
+    /// Deprecated and ignored.
+    #[arg(long = "builder.max-uncompressed-block-size", hide = true)]
+    pub max_uncompressed_block_size: Option<String>,
+
+    /// Deprecated and ignored.
+    #[arg(long = "builder.metering-wait-duration-ms", hide = true)]
+    pub metering_wait_duration_ms: Option<String>,
+
+    /// Deprecated and ignored.
+    #[arg(long = "telemetry.sampling-ratio", hide = true)]
+    pub sampling_ratio: Option<String>,
+
+    /// Deprecated and ignored.
+    #[arg(long = "flashblocks.port", hide = true)]
+    pub flashblocks_port: Option<String>,
+
+    /// Deprecated and ignored.
+    #[arg(long = "flashblocks.addr", hide = true)]
+    pub flashblocks_addr: Option<String>,
+
+    /// Deprecated and ignored.
+    #[arg(long = "flashblocks.block-time", hide = true)]
+    pub flashblocks_block_time: Option<String>,
+
+    /// Deprecated and ignored.
+    #[arg(long = "flashblocks.leeway-time", hide = true)]
+    pub flashblocks_leeway_time: Option<String>,
+
+    /// Deprecated and ignored.
+    #[arg(long = "builder.payload-builder-cutover", hide = true)]
+    pub payload_builder_cutover: bool,
+
+    /// Deprecated and ignored.
+    #[arg(long = "builder.basic-payload-builder", hide = true)]
+    pub basic_payload_builder: bool,
 }
 
 /// Dedicated transaction event journal configuration.
@@ -143,55 +182,10 @@ pub struct Args {
     #[command(flatten)]
     pub rollup_args: RollupArgs,
 
-    /// chain block time in milliseconds
-    #[arg(long = "rollup.chain-block-time", default_value = "1000", env = "CHAIN_BLOCK_TIME")]
-    pub chain_block_time: u64,
-
-    /// max gas a transaction can use
-    #[arg(long = "builder.max_gas_per_txn")]
-    pub max_gas_per_txn: Option<u64>,
-
-    /// Legacy Flashblocks-only wall-clock execution-time ceiling per transaction in microseconds.
-    /// Retired after Mainnet Denim soaks; native payload resource metering uses `--payload.resource-metering-schedule`.
-    #[arg(long = "builder.max-execution-time-per-tx-us")]
-    pub max_execution_time_per_tx_us: Option<u128>,
-
-    /// Deprecated and ignored. Kept so older deployment configurations remain accepted.
-    /// Scheduled for removal in v1.4.0 after rolling deployments have migrated.
-    #[arg(long = "builder.flashblock-execution-time-budget-us", hide = true)]
-    pub flashblock_execution_time_budget_us: Option<u128>,
-
-    /// Deprecated and ignored. Kept so older deployment configurations remain accepted.
-    /// Scheduled for removal in v1.4.0 after rolling deployments have migrated.
-    #[arg(long = "builder.block-state-root-gas-limit", hide = true)]
-    pub block_state_root_gas_limit: Option<u64>,
-
-    /// Deprecated and ignored. Kept so older deployment configurations remain accepted.
-    /// Scheduled for removal in v1.4.0 after rolling deployments have migrated.
-    #[arg(long = "builder.state-root-gas-coefficient", hide = true)]
-    pub state_root_gas_coefficient: Option<f64>,
-
-    /// Deprecated and ignored. Kept so older deployment configurations remain accepted.
-    /// Scheduled for removal in v1.4.0 after rolling deployments have migrated.
-    #[arg(long = "builder.state-root-gas-anchor-us", hide = true)]
-    pub state_root_gas_anchor_us: Option<u128>,
-
-    /// Legacy Flashblocks-only wall-clock execution-metering mode (`off`, `dry-run`, or `enforce`), retired after Mainnet Denim soaks.
-    /// Native payload resource metering uses per-dimension `dryRun` in `--payload.resource-metering-schedule`.
-    #[arg(long = "builder.execution-metering-mode", value_enum, default_value = "off")]
-    pub execution_metering_mode: ExecutionMeteringMode,
-
-    /// How much extra time to wait for the block building job to complete and not get garbage collected
-    #[arg(long = "builder.extra-block-deadline-secs", default_value = "20")]
-    pub extra_block_deadline_secs: u64,
-
-    /// Enables builder resource metering across both the Flashblocks metering
-    /// store (`MeteringStore`) and native payload resource-metering schedule
-    /// evaluation (`--payload.resource-metering-schedule`).
+    /// Enables builder resource metering: the metering store (`MeteringStore`) and native
+    /// payload resource-metering schedule evaluation (`--payload.resource-metering-schedule`).
     ///
-    /// This is the single on/off switch for builder metering: when enabled,
-    /// native schedule evaluation and Flashblocks metering run on whichever
-    /// builder is live; when disabled, neither runs.
+    /// This is the single on/off switch for builder metering; when disabled, neither runs.
     #[arg(
         long = "builder.enable-resource-metering",
         env = "BUILDER_ENABLE_RESOURCE_METERING",
@@ -229,15 +223,6 @@ pub struct Args {
     #[arg(long = "validity-signature-mode", default_value_t = ValiditySignatureMode::Off)]
     pub validity_signature_mode: ValiditySignatureMode,
 
-    /// Maximum cumulative uncompressed (EIP-2718 encoded) block size in bytes
-    #[arg(long = "builder.max-uncompressed-block-size")]
-    pub max_uncompressed_block_size: Option<u64>,
-
-    /// Duration in milliseconds to wait for metering data before including a transaction.
-    /// Transactions younger than this without metering data will be skipped.
-    #[arg(long = "builder.metering-wait-duration-ms")]
-    pub metering_wait_duration_ms: Option<u64>,
-
     /// Hard cutoff, in milliseconds, on cumulative validity-predicate evaluation time per
     /// builder iteration. Once exceeded, further validity-gated transactions are deferred to a
     /// later iteration rather than evaluated.
@@ -254,8 +239,7 @@ pub struct Args {
 
     /// Hold back validity transactions whose predicate was found unsatisfied until a state change
     /// wakes them: off, shadow (track and count mismatches only), or enforce. Resting transactions
-    /// carry across flashblocks and across blocks this builder finishes in sequence; the native
-    /// builder carries them across blocks from Denim onward.
+    /// carry across blocks from Denim onward.
     #[arg(long = "builder.resting-predicates", value_enum, default_value = "off")]
     pub resting_predicate_mode: RestingPredicateMode,
 
@@ -276,10 +260,6 @@ pub struct Args {
     #[arg(long = "builder.rejection-cache-ttl-secs", default_value = "1800")]
     pub rejection_cache_ttl_secs: u64,
 
-    /// Inverted sampling frequency in blocks. 1 - each block, 100 - every 100th block.
-    #[arg(long = "telemetry.sampling-ratio", env = "SAMPLING_RATIO", default_value = "100")]
-    pub sampling_ratio: u64,
-
     /// Whether to drop positively stale EIP-8130 transactions using their
     /// captured authorization manifest before execution. Disable with
     /// `--builder.eip8130-manifest-precheck=false`.
@@ -290,25 +270,9 @@ pub struct Args {
     )]
     pub manifest_precheck_enabled: bool,
 
-    /// Flashblocks configuration
+    /// Retired flags that are accepted and ignored.
     #[command(flatten)]
-    pub flashblocks: FlashblocksArgs,
-
-    /// Runs both payload builders and selects the basic builder when Denim activates.
-    #[arg(
-        long = "builder.payload-builder-cutover",
-        default_value = "false",
-        conflicts_with = "basic_payload_builder"
-    )]
-    pub payload_builder_cutover: bool,
-
-    /// Runs only the basic payload builder after the cutover is complete.
-    #[arg(
-        long = "builder.basic-payload-builder",
-        default_value = "false",
-        conflicts_with = "payload_builder_cutover"
-    )]
-    pub basic_payload_builder: bool,
+    pub retired: RetiredArgs,
 
     /// Transaction event journal configuration
     #[command(flatten)]
@@ -340,21 +304,10 @@ impl Default for Args {
     fn default() -> Self {
         Self {
             rollup_args: RollupArgs::default(),
-            chain_block_time: 1000,
-            max_gas_per_txn: None,
-            max_execution_time_per_tx_us: None,
-            flashblock_execution_time_budget_us: None,
-            block_state_root_gas_limit: None,
-            state_root_gas_coefficient: None,
-            state_root_gas_anchor_us: None,
-            execution_metering_mode: ExecutionMeteringMode::Off,
-            extra_block_deadline_secs: 20,
             enable_resource_metering: false,
             resource_metering_schedule: None,
             validity_max_predicates: DEFAULT_MAX_VALIDITY_PREDICATES,
             validity_signature_mode: ValiditySignatureMode::Off,
-            max_uncompressed_block_size: None,
-            metering_wait_duration_ms: None,
             predicate_eval_hard_cutoff_ms: 10,
             predicate_bucket_ordered_threshold: 32,
             resting_predicate_mode: RestingPredicateMode::Off,
@@ -362,11 +315,8 @@ impl Default for Args {
             metering_store_ttl_secs: 30,
             rejection_cache_max_capacity: 100_000,
             rejection_cache_ttl_secs: 1800,
-            sampling_ratio: 100,
             manifest_precheck_enabled: true,
-            flashblocks: FlashblocksArgs::default(),
-            payload_builder_cutover: false,
-            basic_payload_builder: false,
+            retired: RetiredArgs::default(),
             transaction_events: TransactionEventsArgs::default(),
             shadow_indexer: ShadowIndexerArgs::default(),
         }
@@ -380,26 +330,15 @@ impl Args {
             .with_validity_signature_mode(self.validity_signature_mode)
     }
 
-    /// Converts these CLI arguments into a [`BuilderConfig`] using the given shared metering
+    /// Converts these CLI arguments into a [`BaseBuilderConfig`] using the given shared metering
     /// provider. The same provider must also be passed to the RPC extension so that the
     /// building loop and the `base_setMeteringInformation` handler share a single store.
     pub fn into_builder_config(
         self,
         metering_provider: SharedMeteringProvider,
-    ) -> eyre::Result<BuilderConfig> {
-        if self.flashblock_execution_time_budget_us.is_some()
-            || self.block_state_root_gas_limit.is_some()
-            || self.state_root_gas_coefficient.is_some()
-            || self.state_root_gas_anchor_us.is_some()
-        {
-            warn!("deprecated builder resource limit flags are ignored");
-        }
-        if !self.enable_resource_metering && self.execution_metering_mode.is_enabled() {
-            warn!(
-                execution_metering_mode = ?self.execution_metering_mode,
-                enable_resource_metering = self.enable_resource_metering,
-                "Flashblocks wall-clock execution limit is inert because builder resource metering is disabled"
-            );
+    ) -> eyre::Result<BaseBuilderConfig> {
+        if self.retired != RetiredArgs::default() {
+            warn!(retired = ?self.retired, "retired builder flags are ignored");
         }
         if self.enable_resource_metering && self.resource_metering_schedule.is_none() {
             warn!(
@@ -428,38 +367,19 @@ impl Args {
             );
         }
 
-        let flashblocks_ws_addr = SocketAddr::new(
-            self.flashblocks.flashblocks_addr.parse()?,
-            self.flashblocks.flashblocks_port,
-        );
-
-        Ok(BuilderConfig {
-            state_provider_metrics: false,
-            block_time: Duration::from_millis(self.chain_block_time),
-            block_time_leeway: Duration::from_secs(self.extra_block_deadline_secs),
+        Ok(BaseBuilderConfig {
             da_config: Default::default(),
             gas_limit_config: Default::default(),
-            sampling_ratio: self.sampling_ratio,
-            flashblocks_ws_addr,
-            flashblocks_interval: Duration::from_millis(self.flashblocks.flashblocks_block_time),
-            flashblocks_leeway_time: Duration::from_millis(
-                self.flashblocks.flashblocks_leeway_time,
-            ),
-            max_gas_per_txn: self.max_gas_per_txn,
-            max_execution_time_per_tx_us: self.max_execution_time_per_tx_us,
-            execution_metering_mode: self.execution_metering_mode,
-            max_uncompressed_block_size: self.max_uncompressed_block_size,
-            metering_wait_duration: self.metering_wait_duration_ms.map(Duration::from_millis),
+            manifest_precheck_enabled: self.manifest_precheck_enabled,
             predicate_eval_hard_cutoff: Duration::from_millis(self.predicate_eval_hard_cutoff_ms),
             predicate_bucket_ordered_threshold: self.predicate_bucket_ordered_threshold,
-            resting_predicate_mode: self.resting_predicate_mode,
-            metering_provider,
             resource_metering,
             rejection_cache: RejectionCache::new(
                 self.rejection_cache_max_capacity,
                 Duration::from_secs(self.rejection_cache_ttl_secs),
             ),
-            manifest_precheck_enabled: self.manifest_precheck_enabled,
+            state_provider_metrics: false,
+            resting_predicate_mode: self.resting_predicate_mode,
         })
     }
 }
@@ -480,7 +400,7 @@ mod tests {
         args: Args,
     }
 
-    fn convert(args: Args) -> BuilderConfig {
+    fn convert(args: Args) -> BaseBuilderConfig {
         let metering_provider: SharedMeteringProvider = Arc::new(NoopMeteringProvider);
         args.into_builder_config(metering_provider).expect("conversion should succeed")
     }
@@ -496,8 +416,6 @@ mod tests {
         let args = Args::default();
         assert_eq!(args.validity_max_predicates, DEFAULT_MAX_VALIDITY_PREDICATES);
         let config = convert(args);
-        assert_eq!(config.block_time, Duration::from_millis(1000));
-        assert!(config.max_gas_per_txn.is_none());
         assert!(config.manifest_precheck_enabled);
     }
 
@@ -562,78 +480,6 @@ mod tests {
     }
 
     #[test]
-    fn payload_builder_cutover_defaults_to_disabled() {
-        let parsed = CommandParser::parse_from(["test"]);
-        assert!(!parsed.args.payload_builder_cutover);
-        assert!(!parsed.args.basic_payload_builder);
-    }
-
-    #[test]
-    fn payload_builder_cutover_requires_explicit_opt_in() {
-        let parsed = CommandParser::parse_from(["test", "--builder.payload-builder-cutover"]);
-        assert!(parsed.args.payload_builder_cutover);
-    }
-
-    #[test]
-    fn basic_payload_builder_requires_explicit_opt_in() {
-        let parsed = CommandParser::parse_from(["test", "--builder.basic-payload-builder"]);
-        assert!(parsed.args.basic_payload_builder);
-    }
-
-    #[test]
-    fn payload_builder_modes_are_mutually_exclusive() {
-        let parsed = CommandParser::try_parse_from([
-            "test",
-            "--builder.payload-builder-cutover",
-            "--builder.basic-payload-builder",
-        ]);
-        assert!(parsed.is_err());
-    }
-
-    #[rstest]
-    #[case::block_time_1s(1000, 1000)]
-    #[case::block_time_2s(2000, 2000)]
-    #[case::block_time_250ms(250, 250)]
-    fn chain_block_time_maps_to_block_time(#[case] input_ms: u64, #[case] expected_ms: u64) {
-        let args = Args { chain_block_time: input_ms, ..Default::default() };
-        let config = convert(args);
-        assert_eq!(config.block_time, Duration::from_millis(expected_ms));
-    }
-
-    #[rstest]
-    #[case::some_gas(Some(50000), Some(50000))]
-    #[case::none(None, None)]
-    #[case::large_gas(Some(1_000_000), Some(1_000_000))]
-    fn max_gas_per_txn_maps_correctly(#[case] input: Option<u64>, #[case] expected: Option<u64>) {
-        let args = Args { max_gas_per_txn: input, ..Default::default() };
-        let config = convert(args);
-        assert_eq!(config.max_gas_per_txn, expected);
-    }
-
-    #[rstest]
-    #[case::leeway_30s(30, 30)]
-    #[case::leeway_10s(10, 10)]
-    #[case::leeway_0s(0, 0)]
-    fn extra_block_deadline_maps_to_leeway(#[case] input_secs: u64, #[case] expected_secs: u64) {
-        let args = Args { extra_block_deadline_secs: input_secs, ..Default::default() };
-        let config = convert(args);
-        assert_eq!(config.block_time_leeway, Duration::from_secs(expected_secs));
-    }
-
-    #[rstest]
-    #[case::interval_500ms(500, 500)]
-    #[case::interval_200ms(200, 200)]
-    #[case::interval_250ms(250, 250)]
-    fn flashblocks_interval_maps_correctly(#[case] input_ms: u64, #[case] expected_ms: u64) {
-        let args = Args {
-            flashblocks: FlashblocksArgs { flashblocks_block_time: input_ms, ..Default::default() },
-            ..Default::default()
-        };
-        let config = convert(args);
-        assert_eq!(config.flashblocks_interval, Duration::from_millis(expected_ms));
-    }
-
-    #[test]
     fn metering_data_written_to_provider_is_readable_from_config() {
         let metering_provider: SharedMeteringProvider =
             Arc::new(MeteringStore::new(true, 100, Duration::from_secs(30)));
@@ -658,21 +504,8 @@ mod tests {
             },
         );
 
-        let result = config.metering_provider.get(&tx_hash);
+        let result = config.resource_metering.provider.get(&tx_hash);
         assert_eq!(result.unwrap().total_execution_time_us, 500);
-    }
-
-    #[rstest]
-    #[case::some_duration(Some(500), Some(Duration::from_millis(500)))]
-    #[case::none(None, None)]
-    #[case::zero(Some(0), Some(Duration::from_millis(0)))]
-    fn metering_wait_duration_maps_correctly(
-        #[case] input: Option<u64>,
-        #[case] expected: Option<Duration>,
-    ) {
-        let args = Args { metering_wait_duration_ms: input, ..Default::default() };
-        let config = convert(args);
-        assert_eq!(config.metering_wait_duration, expected);
     }
 
     #[rstest]
@@ -732,24 +565,30 @@ mod tests {
     }
 
     #[test]
-    fn deprecated_resource_limit_flags_remain_accepted() {
+    fn retired_flags_remain_accepted() {
         let args = CommandParser::parse_from([
             "builder",
-            "--builder.flashblock-execution-time-budget-us",
-            "5000000",
-            "--builder.block-state-root-gas-limit",
-            "1000000",
+            "--rollup.chain-block-time",
+            "200",
             "--builder.state-root-gas-coefficient",
             "0.1",
-            "--builder.state-root-gas-anchor-us",
-            "5000",
+            "--builder.execution-metering-mode",
+            "enforce",
+            "--flashblocks.port",
+            "7111",
+            "--flashblocks.block-time",
+            "200",
+            "--builder.payload-builder-cutover",
+            "--builder.basic-payload-builder",
         ])
         .args;
 
-        assert_eq!(args.flashblock_execution_time_budget_us, Some(5_000_000));
-        assert_eq!(args.block_state_root_gas_limit, Some(1_000_000));
-        assert_eq!(args.state_root_gas_coefficient, Some(0.1));
-        assert_eq!(args.state_root_gas_anchor_us, Some(5_000));
+        assert_eq!(args.retired.chain_block_time.as_deref(), Some("200"));
+        assert_eq!(args.retired.flashblocks_port.as_deref(), Some("7111"));
+        assert!(args.retired.payload_builder_cutover);
+        assert!(args.retired.basic_payload_builder);
+        assert_ne!(args.retired, RetiredArgs::default());
+        assert!(args.into_builder_config(Arc::new(NoopMeteringProvider)).is_ok());
     }
 
     #[rstest]
@@ -763,32 +602,6 @@ mod tests {
         let args =
             CommandParser::parse_from(std::iter::once("builder").chain(flags.iter().copied())).args;
         assert_eq!(convert(args).resting_predicate_mode, expected);
-    }
-
-    #[test]
-    fn combined_overrides_work_together() {
-        let args = Args {
-            chain_block_time: 2000,
-            max_gas_per_txn: Some(100000),
-            max_execution_time_per_tx_us: Some(5000),
-            execution_metering_mode: ExecutionMeteringMode::Enforce,
-            extra_block_deadline_secs: 10,
-            flashblocks: FlashblocksArgs {
-                flashblocks_block_time: 200,
-                flashblocks_leeway_time: 50,
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        let config = convert(args);
-
-        assert_eq!(config.block_time, Duration::from_millis(2000));
-        assert_eq!(config.max_gas_per_txn, Some(100000));
-        assert_eq!(config.max_execution_time_per_tx_us, Some(5000));
-        assert_eq!(config.execution_metering_mode, ExecutionMeteringMode::Enforce);
-        assert_eq!(config.block_time_leeway, Duration::from_secs(10));
-        assert_eq!(config.flashblocks_interval, Duration::from_millis(200));
-        assert_eq!(config.flashblocks_leeway_time, Duration::from_millis(50));
     }
 
     const VALID_RESOURCE_METERING_SCHEDULE_JSON: &str = r#"{
@@ -953,27 +766,20 @@ mod tests {
         std::fs::write(&schedule_path, VALID_RESOURCE_METERING_SCHEDULE_JSON)
             .expect("write schedule");
 
-        for mode in [
-            ExecutionMeteringMode::Off,
-            ExecutionMeteringMode::DryRun,
-            ExecutionMeteringMode::Enforce,
-        ] {
-            let off_args = Args {
-                enable_resource_metering: false,
-                execution_metering_mode: mode,
-                resource_metering_schedule: Some(schedule_path.clone()),
-                ..Default::default()
-            };
-            let store = off_args.build_metering_store();
-            assert!(
-                !store.is_enabled(),
-                "MeteringStore must stay disabled when --builder.enable-resource-metering is false (mode={mode:?})"
-            );
-            let config =
-                off_args.into_builder_config(Arc::new(store)).expect("conversion should succeed");
-            assert!(!config.resource_metering.enabled);
-            assert!(!config.resource_metering.is_active());
-        }
+        let off_args = Args {
+            enable_resource_metering: false,
+            resource_metering_schedule: Some(schedule_path.clone()),
+            ..Default::default()
+        };
+        let store = off_args.build_metering_store();
+        assert!(
+            !store.is_enabled(),
+            "MeteringStore must stay disabled when --builder.enable-resource-metering is false"
+        );
+        let config =
+            off_args.into_builder_config(Arc::new(store)).expect("conversion should succeed");
+        assert!(!config.resource_metering.enabled);
+        assert!(!config.resource_metering.is_active());
         let on_args = Args {
             enable_resource_metering: true,
             resource_metering_schedule: Some(schedule_path),
@@ -985,36 +791,5 @@ mod tests {
             on_args.into_builder_config(Arc::new(on_store)).expect("conversion should succeed");
         assert!(on_config.resource_metering.enabled);
         assert!(on_config.resource_metering.is_active());
-    }
-
-    #[test]
-    fn live_enabled_without_schedule_configs_boot_with_warning_metric() {
-        let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
-        let handle = recorder.handle();
-
-        for mode in [ExecutionMeteringMode::DryRun, ExecutionMeteringMode::Enforce] {
-            let args = Args {
-                enable_resource_metering: true,
-                execution_metering_mode: mode,
-                resource_metering_schedule: None,
-                ..Default::default()
-            };
-            let store = args.build_metering_store();
-            assert!(store.is_enabled());
-            let provider: SharedMeteringProvider = Arc::new(store);
-            // `base sequencer` performs `into_builder_config` before Reth installs its
-            // recorder during launch; record the counter from the post-install startup
-            // hook so it is not lost there.
-            let config = args
-                .into_builder_config(provider)
-                .expect("live enabled-without-schedule config must boot without error");
-            metrics::with_local_recorder(&recorder, || {
-                config.record_startup_metrics();
-            });
-            assert!(config.resource_metering.enabled);
-            assert!(!config.resource_metering.is_active());
-        }
-        let rendered = handle.render();
-        assert!(rendered.contains("base_builder_resource_metering_schedule_missing_total 2"));
     }
 }

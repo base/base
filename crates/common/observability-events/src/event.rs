@@ -189,12 +189,17 @@ pub enum TransactionEventType {
     #[serde(rename = "BUILDER_PAYLOAD_FINALIZED")]
     BuilderPayloadFinalized,
     /// The builder started building a flashblock.
+    ///
+    /// Retired: only the Flashblocks builder, removed after the Denim network upgrade, emitted
+    /// the `BUILDER_FLASHBLOCK_*` types. They remain so the audit archiver can still read events
+    /// stored before Denim until they age out of retention.
     #[serde(rename = "BUILDER_FLASHBLOCK_STARTED")]
     BuilderFlashblockStarted,
-    /// The builder published a flashblock.
+    /// The builder published a flashblock. Retired; see [`Self::BuilderFlashblockStarted`].
     #[serde(rename = "BUILDER_FLASHBLOCK_PUBLISHED")]
     BuilderFlashblockPublished,
-    /// The builder stopped flashblock construction before publishing.
+    /// The builder stopped flashblock construction before publishing. Retired; see
+    /// [`Self::BuilderFlashblockStarted`].
     #[serde(rename = "BUILDER_FLASHBLOCK_BUILD_STOPPED")]
     BuilderFlashblockBuildStopped,
 }

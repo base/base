@@ -15,89 +15,50 @@ workspace = true
 # workspace
 base-bundles.workspace = true
 base-node-runner.workspace = true
-base-builder-publish.workspace = true
-base-common-flashblocks.workspace = true
-base-observability-events.workspace = true
 
 # reth
 reth-db.workspace = true
-reth-cli.workspace = true
-reth-evm.workspace = true
-reth-trie.workspace = true
-reth-revm.workspace = true
 reth-tasks.workspace = true
 base-metrics.workspace = true
-reth-rpc-api.workspace = true
 reth-provider.workspace = true
 reth-node-api.workspace = true
-reth-cli-util.workspace = true
 base-node-core.workspace = true
 reth-chainspec.workspace = true
 reth-rpc-layer.workspace = true
-reth-chain-state.workspace = true
-reth-engine-tree.workspace = true
-reth-payload-util.workspace = true
 reth-node-builder.workspace = true
-reth-tracing-otlp.workspace = true
-reth-cli-commands.workspace = true
-reth-network-peers.workspace = true
 base-execution-evm.workspace = true
-reth-node-ethereum.workspace = true
-reth-rpc-eth-types.workspace = true
-reth-rpc-engine-api.workspace = true
-reth-execution-types.workspace = true
 reth-payload-builder.workspace = true
-reth-execution-cache.workspace = true
 base-execution-txpool.workspace = true
 reth-transaction-pool.workspace = true
 reth-primitives-traits.workspace = true
-reth-payload-primitives.workspace = true
 base-execution-chainspec.workspace = true
-base-execution-consensus.workspace = true
 reth-basic-payload-builder.workspace = true
 base-execution-payload-builder = { workspace = true, features = ["clap"] }
 reth-ipc = { workspace = true, optional = true }
-reth-payload-builder-primitives.workspace = true
 reth-node-core = { workspace = true, features = ["otlp"] }
 base-execution-rpc = { workspace = true, features = ["client"] }
 
 # revm
-revm.workspace = true
 
 # alloy
-alloy-evm.workspace = true
-alloy-signer.workspace = true
 alloy-network.workspace = true
 alloy-provider.workspace = true
-alloy-contract.workspace = true
-alloy-json-rpc.workspace = true
-alloy-transport.workspace = true
-alloy-rpc-client.workspace = true
 alloy-primitives.workspace = true
 alloy-signer-local.workspace = true
-alloy-transport-http.workspace = true
-alloy-rpc-types-beacon.workspace = true
 alloy-eips = { workspace = true, features = ["std"] }
-alloy-serde = { workspace = true, features = ["std"] }
 alloy-consensus = { workspace = true, features = ["std"] }
 alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 alloy-rpc-types-engine = { workspace = true, features = ["std"] }
-alloy-sol-types = { workspace = true, features = ["json", "std"] }
 
 # base-common
-base-common-flz.workspace = true
-base-common-chains.workspace = true
 base-common-network.workspace = true
 base-common-rpc-types.workspace = true
-base-execution-eip8130.workspace = true
 base-common-rpc-types-engine.workspace = true
 base-common-evm = { workspace = true, features = ["std"] }
 base-common-consensus = { workspace = true, features = ["reth"] }
 
 # tokio
 tokio.workspace = true
-tokio-util.workspace = true
-tokio-tungstenite.workspace = true
 
 # async
 futures.workspace = true
@@ -105,8 +66,6 @@ async-trait.workspace = true
 
 # rpc
 jsonrpsee.workspace = true
-jsonrpsee-core.workspace = true
-jsonrpsee-types.workspace = true
 
 # cli
 clap.workspace = true
@@ -123,83 +82,48 @@ url.workspace = true
 hex.workspace = true
 k256.workspace = true
 rand.workspace = true
-sha3.workspace = true
 http.workspace = true
 eyre.workspace = true
 tower.workspace = true
 either.workspace = true
 chrono.workspace = true
 dashmap.workspace = true
-secp256k1.workspace = true
-serde_with.workspace = true
-parking_lot.workspace = true
-tar = { workspace = true, optional = true }
 ctor = { workspace = true, optional = true }
-hyper = { workspace = true, optional = true }
 rlimit = { workspace = true, optional = true }
-serde = { workspace = true, features = ["std"] }
-hyper-util = { workspace = true, optional = true }
-thiserror = { workspace = true, features = ["std"] }
 serde_json = { workspace = true, features = ["std"] }
-opentelemetry = { workspace = true, optional = true }
 testcontainers = { workspace = true, optional = true }
-http-body-util = { workspace = true, optional = true }
 derive_more = { workspace = true, features = ["debug"] }
 uuid = { workspace = true, features = ["serde", "v5", "v4"] }
-
-[target.'cfg(unix)'.dependencies]
-tikv-jemallocator = { workspace = true, optional = true }
 
 [dev-dependencies]
 # workspace
 base-test-utils.workspace = true
 base-txpool-rpc.workspace = true
+base-observability-events = { workspace = true, features = ["test-utils"] }
 base-builder-core = { path = ".", features = ["test-utils"] }
 
 # reth
 reth-ipc.workspace = true
-reth-testing-utils.workspace = true
 reth-node-builder = { workspace = true, features = ["test-utils"] }
 
-# trie
-reth-trie-common.workspace = true
-base-execution-trie.workspace = true
-
-# metrics
-metrics-exporter-prometheus.workspace = true
-
 # alloy
+alloy-signer.workspace = true
+alloy-json-rpc.workspace = true
+alloy-rpc-client.workspace = true
 alloy-provider = { workspace = true, default-features = true, features = ["txpool-api"] }
-
-# bench
-iai-callgrind.workspace = true
-criterion = { workspace = true, features = ["html_reports"] }
 
 # misc
 ctor.workspace = true
-hyper.workspace = true
 rlimit.workspace = true
 rstest.workspace = true
-tempfile.workspace = true
-hyper-util.workspace = true
-http-body-util.workspace = true
 
 [features]
-default = [ "jemalloc", "metrics" ]
+default = [ "metrics" ]
 metrics = [
 	"base-common-evm/metrics",
 	"base-execution-payload-builder/metrics",
 	"base-metrics/metrics",
-	"base-observability-events/metrics",
 	"dep:metrics",
-	"reth-evm/metrics",
-	"reth-trie/metrics",
-]
-jemalloc = [ "dep:tikv-jemallocator", "reth-cli-util/jemalloc" ]
-jemalloc-prof = [
-	"jemalloc",
-	"reth-cli-util/jemalloc-prof",
-	"tikv-jemallocator?/profiling",
 ]
 min-error-logs = [ "tracing/release_max_level_error" ]
 min-warn-logs = [ "tracing/release_max_level_warn" ]
@@ -208,52 +132,19 @@ min-debug-logs = [ "tracing/release_max_level_debug" ]
 min-trace-logs = [ "tracing/release_max_level_trace" ]
 test-utils = [
 	"base-bundles/test-utils",
-	"base-common-chains/test-utils",
-	"base-execution-eip8130/test-utils",
 	"base-execution-rpc/client",
 	"base-node-core/test-utils",
 	"base-node-runner/test-utils",
-	"base-observability-events/test-utils",
 	"ctor",
-	"http-body-util",
-	"hyper",
-	"hyper-util",
-	"reth-chain-state/test-utils",
 	"reth-chainspec/test-utils",
 	"reth-db/test-utils",
-	"reth-engine-tree/test-utils",
-	"reth-evm/test-utils",
-	"reth-execution-cache/test-utils",
 	"reth-ipc",
 	"reth-node-builder/test-utils",
-	"reth-node-ethereum/test-utils",
 	"reth-payload-builder/test-utils",
 	"reth-primitives-traits/test-utils",
 	"reth-provider/test-utils",
-	"reth-revm/test-utils",
 	"reth-tasks/test-utils",
 	"reth-transaction-pool/test-utils",
-	"reth-trie/test-utils",
 	"rlimit",
 	"testcontainers",
 ]
-
-[[bench]]
-name = "build_loop"
-harness = false
-
-[[bench]]
-name = "build_loop_iai"
-harness = false
-
-[[bench]]
-name = "state_root"
-harness = false
-
-[[bench]]
-name = "flashblocks_resting_sweep"
-harness = false
-
-[[bench]]
-name = "tx_selection"
-harness = false

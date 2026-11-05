@@ -21,7 +21,6 @@ pub struct MetricsCollector {
     failed_count: u64,
     failure_reasons: HashMap<String, u64>,
     rolling: RollingWindow,
-    flashblocks_rolling: RollingWindow,
     throughput_samples: Vec<ThroughputSample>,
     /// Fallback per-tx gas used for live throughput while the real receipt gas is
     /// still pending. Canonical gas arrives only in the end-of-run receipt pass, so
@@ -46,7 +45,6 @@ impl MetricsCollector {
             failed_count: 0,
             failure_reasons: HashMap::new(),
             rolling: RollingWindow::new(),
-            flashblocks_rolling: RollingWindow::new(),
             throughput_samples: Vec::new(),
             estimated_gas: 0,
             receipt_coverage: ReceiptCoverage::default(),
@@ -84,14 +82,6 @@ impl MetricsCollector {
             self.rolling.push_gas(live_gas, at);
         }
         self.transactions.push(metrics);
-    }
-
-    /// Records a flashblock observation from the WS stream.
-    ///
-    /// Called when a transaction is first seen in the flashblock websocket, using
-    /// the actual WS observation time — not canonical block confirmation time.
-    pub fn record_flashblock_observed(&mut self, latency: Duration, observed_at: Instant) {
-        self.flashblocks_rolling.push_latency(latency, observed_at);
     }
 
     /// Backfills gas, effective gas price, and revert status onto landed transactions
@@ -240,7 +230,6 @@ impl MetricsCollector {
         self.failed_count = 0;
         self.failure_reasons.clear();
         self.rolling = RollingWindow::new();
-        self.flashblocks_rolling = RollingWindow::new();
         self.throughput_samples.clear();
         self.estimated_gas = 0;
         self.receipt_coverage = ReceiptCoverage::default();
@@ -297,11 +286,6 @@ impl MetricsCollector {
                 .pacing_cycles
                 .iter()
                 .filter(|cycle| cycle.source == PacingCycleSource::Canonical)
-                .count() as u64,
-            flashblock_cycles: self
-                .pacing_cycles
-                .iter()
-                .filter(|cycle| cycle.source == PacingCycleSource::Flashblock)
                 .count() as u64,
             safety_cycles: self
                 .pacing_cycles
@@ -421,11 +405,6 @@ impl MetricsCollector {
     pub fn rolling_p50_p99(&mut self) -> (std::time::Duration, std::time::Duration) {
         self.rolling.p50_p99()
     }
-
-    /// Rolling 10-second flashblocks (p50, p99).
-    pub fn rolling_flashblocks_p50_p99(&mut self) -> (std::time::Duration, std::time::Duration) {
-        self.flashblocks_rolling.p50_p99()
-    }
 }
 
 impl Default for MetricsCollector {
@@ -441,14 +420,7 @@ mod tests {
     use super::*;
 
     fn landed(tx_hash: TxHash, block_number: u64) -> TransactionMetrics {
-        TransactionMetrics::new(
-            tx_hash,
-            Some(Duration::from_millis(100)),
-            None,
-            0,
-            0,
-            Some(block_number),
-        )
+        TransactionMetrics::new(tx_hash, Some(Duration::from_millis(100)), 0, 0, Some(block_number))
     }
 
     fn receipt(tx_hash: TxHash, gas_used: u64, success: bool) -> BlockReceipt {
@@ -555,14 +527,13 @@ mod tests {
 
         assert_eq!(summary.pacing.offered_gps, 5_000_000.0);
         assert_eq!(summary.pacing.canonical_cycles, 1);
-        assert_eq!(summary.pacing.flashblock_cycles, 0);
     }
 
     #[test]
     fn pacing_counts_refill_sources() {
         let mut collector = MetricsCollector::new();
         collector.record_pacing_cycle(PacingCycleObservation {
-            source: PacingCycleSource::Flashblock,
+            source: PacingCycleSource::Canonical,
             ..Default::default()
         });
         collector.record_pacing_cycle(PacingCycleObservation {
@@ -572,8 +543,7 @@ mod tests {
 
         let summary = collector.summarize(Duration::from_secs(1), None);
 
-        assert_eq!(summary.pacing.canonical_cycles, 0);
-        assert_eq!(summary.pacing.flashblock_cycles, 1);
+        assert_eq!(summary.pacing.canonical_cycles, 1);
         assert_eq!(summary.pacing.safety_cycles, 1);
     }
 

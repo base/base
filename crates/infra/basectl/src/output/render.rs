@@ -6,87 +6,13 @@ use ratatui::{
 };
 
 use crate::{
-    app::{DaTracker, FlashblockEntry, L1Block, L1BlockFilter, LoadingState},
-    output::{COLOR_BASE_BLUE, COLOR_GAS_FILL, COLOR_ROW_SELECTED, COLOR_TARGET, Format},
+    app::{BlockContribution, DaTracker, L1Block, L1BlockFilter, LoadingState},
+    output::{COLOR_BASE_BLUE, COLOR_ROW_SELECTED, COLOR_TARGET, Format},
     rpc::L1ConnectionMode,
 };
 
-const EIGHTH_BLOCKS: [char; 8] = ['▏', '▎', '▍', '▌', '▋', '▊', '▉', '█'];
-const GAS_COLOR_WARM: (u8, u8, u8) = (255, 200, 80);
-const GAS_COLOR_HOT: (u8, u8, u8) = (255, 60, 60);
-
-/// Builds a styled gas usage bar line with target marker.
-pub fn build_gas_bar(
-    gas_used: u64,
-    gas_limit: u64,
-    elasticity: u64,
-    bar_chars: usize,
-) -> Line<'static> {
-    if gas_limit == 0 {
-        return Line::from("-".to_string());
-    }
-
-    let bar_units = bar_chars * 8;
-    let gas_target = gas_limit / elasticity;
-    let target_char = ((gas_target as f64 / gas_limit as f64) * bar_chars as f64).round() as usize;
-
-    let filled_units = ((gas_used as f64 / gas_limit as f64) * bar_units as f64).ceil() as usize;
-    let filled_units = filled_units.min(bar_units);
-
-    let target_units = target_char * 8;
-    let excess_chars = bar_chars.saturating_sub(target_char).max(1);
-
-    let excess_color = |char_idx: usize| -> Color {
-        let t = (char_idx - target_char) as f64 / excess_chars as f64;
-        Format::lerp_rgb(GAS_COLOR_WARM, GAS_COLOR_HOT, t.clamp(0.0, 1.0))
-    };
-
-    let mut spans = Vec::new();
-    let mut current_units = 0;
-
-    for char_idx in 0..bar_chars {
-        let char_end_units = (char_idx + 1) * 8;
-
-        if char_idx == target_char {
-            if filled_units <= target_units {
-                spans.push(Span::styled("▏", Style::default().fg(COLOR_TARGET)));
-            } else {
-                let over_units = filled_units.saturating_sub(target_units).min(8);
-                let color = excess_color(char_idx);
-                if over_units >= 8 {
-                    spans.push(Span::styled("█", Style::default().fg(color)));
-                } else {
-                    let opacity = over_units as f64 / 8.0;
-                    let dimmed = dim_color(color, opacity);
-                    spans.push(Span::styled(
-                        EIGHTH_BLOCKS[over_units - 1].to_string(),
-                        Style::default().fg(dimmed),
-                    ));
-                }
-            }
-        } else if current_units >= filled_units {
-            spans.push(Span::raw(" "));
-        } else if char_end_units <= filled_units {
-            let fill_color =
-                if char_idx < target_char { COLOR_GAS_FILL } else { excess_color(char_idx) };
-            spans.push(Span::styled("█", Style::default().fg(fill_color)));
-        } else {
-            let units_in_char = filled_units - current_units;
-            let opacity = units_in_char as f64 / 8.0;
-            let fill_color =
-                if char_idx < target_char { COLOR_GAS_FILL } else { excess_color(char_idx) };
-            let dimmed = dim_color(fill_color, opacity);
-            spans.push(Span::styled(
-                EIGHTH_BLOCKS[units_in_char - 1].to_string(),
-                Style::default().fg(dimmed),
-            ));
-        }
-
-        current_units = char_end_units;
-    }
-
-    Line::from(spans)
-}
+/// Maximum number of recent blocks aggregated by [`render_gas_usage_bar`].
+const GAS_USAGE_BAR_BLOCKS: usize = 30;
 
 /// Parameters for rendering the L1 blocks table.
 #[derive(Debug)]
@@ -296,23 +222,21 @@ pub fn render_da_backlog_bar(
 }
 
 /// Renders a horizontal bar showing aggregate gas usage across recent blocks.
+///
+/// `blocks` is newest first; only blocks with known gas data are included.
 pub fn render_gas_usage_bar(
     f: &mut Frame<'_>,
     area: Rect,
-    entries: &VecDeque<FlashblockEntry>,
+    blocks: &VecDeque<BlockContribution>,
     elasticity: u64,
     highlighted_block: Option<u64>,
 ) {
-    let mut block_gas: Vec<(u64, u64)> = Vec::new();
-    for entry in entries {
-        if let Some(last) = block_gas.last_mut()
-            && last.0 == entry.block_number
-        {
-            last.1 = last.1.max(entry.gas_used);
-            continue;
-        }
-        block_gas.push((entry.block_number, entry.gas_used));
-    }
+    let block_gas: Vec<(u64, u64)> = blocks
+        .iter()
+        .filter(|b| b.gas_limit > 0)
+        .take(GAS_USAGE_BAR_BLOCKS)
+        .map(|b| (b.block_number, b.gas_used))
+        .collect();
 
     let n_label = block_gas.len();
     let title_widget = Block::default()
@@ -338,7 +262,7 @@ pub fn render_gas_usage_bar(
     }
 
     let n_blocks = block_gas.len() as u64;
-    let gas_limit = entries.front().map(|e| e.gas_limit).unwrap_or(0);
+    let gas_limit = blocks.iter().find(|b| b.gas_limit > 0).map_or(0, |b| b.gas_limit);
     let per_block_target = if elasticity > 0 && gas_limit > 0 { gas_limit / elasticity } else { 0 };
     let total_target = per_block_target * n_blocks;
     let total_limit = gas_limit * n_blocks;
@@ -421,11 +345,4 @@ pub fn render_gas_usage_bar(
     let line = Line::from(spans);
     let para = Paragraph::new(line);
     f.render_widget(para, inner);
-}
-
-const fn dim_color(color: Color, opacity: f64) -> Color {
-    let Color::Rgb(r, g, b) = color else {
-        return color;
-    };
-    Color::Rgb((r as f64 * opacity) as u8, (g as f64 * opacity) as u8, (b as f64 * opacity) as u8)
 }
