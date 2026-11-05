@@ -243,10 +243,20 @@ async fn payload_builder_modes_match_flashblocks_baseline() -> eyre::Result<()> 
 
     assert_eq!(baseline_head.header.hash, multiplex_head.header.hash, "genesis mismatch");
 
-    let wall_clock =
-        std::time::SystemTime::now().duration_since(std::time::SystemTime::UNIX_EPOCH)?;
+    // Build on the last legacy block slot before Denim rather than on wall-clock time. Denim
+    // activated on mainnet, so wall-clock timestamps now produce post-Denim attributes, which the
+    // engine rejects unless they carry the BaseTime update deposit at tx[1] and follow the
+    // deterministic 200ms cadence. These smoke nodes build a single legacy block, so anchor the
+    // timestamp to the final pre-Denim slot: past every scheduled fork (so withdrawals and the
+    // Jovian base-fee fields are expected) and exactly one legacy interval before Denim
+    // activation. Keep this anchor below activation — do not add slack past it, or the test
+    // quietly starts depending on post-Denim attribute handling.
+    let schedule = BaseChainSpec::mainnet()
+        .denim_timestamp_schedule()
+        .expect("mainnet Denim schedule must be valid")
+        .expect("mainnet must schedule Denim");
     let build_timestamp =
-        std::cmp::max(baseline_head.header.timestamp + 2, wall_clock.as_secs() + 2);
+        schedule.denim_activation_timestamp - schedule.legacy_block_interval.get();
     let baseline_block =
         build_new_block(&baseline_provider, &baseline.auth_ipc_path, build_timestamp).await?;
     let disabled_block =
