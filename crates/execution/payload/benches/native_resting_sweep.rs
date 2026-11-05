@@ -1,155 +1,134 @@
-//! Per-block latency of the native (post-Denim) payload builder carrying a large resting set,
-//! including the blocks that sweep members no build yielded.
+//! Per-block cost of the native (post-Denim) payload builder selecting from the production Base
+//! transaction pool while it holds a resting validity population.
 //!
-//! The pool holds [`LIVE_RESTING`] validity transactions whose predicates never become satisfied,
-//! so every block yields them and holds them back, plus one block of plain transfers. Each block
-//! also rests [`CHURN_PER_BLOCK`] members whose transactions then leave the pool, so the sweep
-//! always has members to drop and the set stays at a steady size.
+//! The pool is the production `BaseTransactionPool` (see `fixtures/production_pool.rs`). It
+//! holds a population of high-priority validity transactions whose predicates stay unsatisfied,
+//! plus [`FILLER_PER_BLOCK`] fresh ordinary transfers admitted before every block. Each block
+//! runs the native builder's calls in order: carry the builder's resting set into the block when
+//! its resting mode is on, report the pre-selection writes to the pool, build the pool iterator,
+//! run the selection loop, report the validity transactions it found unsatisfied, store the
+//! resting set, and report the sealed block's state. Between blocks the pool mines the previous
+//! block through the node's canonical update, which also moves the base fee, and runs the node's
+//! canonical state-diff maintenance with that block's bundle, which advances validity dormancy.
+//! The matrix of populations, lane kinds, liveness cases and modes, the phases each block is split
+//! into, and the environment that selects them are described in `fixtures/resting_matrix.rs`.
 //!
-//! Blocks run back to back through the same store calls as the native builder: take the set,
-//! carry it into the block, run the selection loop, then finish the block and store the set. By
-//! default the next block starts immediately, so a sweep still running when it takes the set is
-//! counted against that block rather than hidden behind a state root.
-//! `RESTING_SWEEP_BENCH_GAP_MS` adds an untimed pause between blocks to model the state root. The
-//! table reports the build path of each block from taking the set to the end of the selection
-//! loop.
+//! Every block asserts that it includes all of its ordinary traffic and nothing else, plus the
+//! woken lanes in the liveness case's wake block. When a mode withholds resting transactions, the
+//! last block's probe must yield nothing but executable transactions, so the population is
+//! withheld from the iterator's input rather than yielded and skipped; under pool dormancy the
+//! pool's dormant gauge must also count every lane still resting. The liveness case also asserts
+//! that the pool expired its expiring lanes.
 //!
 //! ```sh
 //! cargo bench -p base-execution-payload-builder --bench native_resting_sweep
+//! RESTING_MATRIX_CASES=protocol RESTING_MATRIX_POPULATIONS=75000 \
+//!   RESTING_MATRIX_MODES=enforce,off,builder_enforce \
+//!   cargo bench -p base-execution-payload-builder --bench native_resting_sweep
 //! ```
 
-use std::{
-    sync::Arc,
-    time::{Duration, Instant},
-};
+#[path = "fixtures/production_pool.rs"]
+pub mod production_pool;
+#[path = "fixtures/resting_matrix.rs"]
+pub mod resting_matrix;
 
-use alloy_consensus::{Header, SignableTransaction, TxEip1559};
-use alloy_eips::eip2718::Encodable2718;
-use alloy_primitives::{Address, B256, Bytes, Signature, TxKind, U256, keccak256};
+use std::{sync::Arc, time::Instant};
+
+use alloy_consensus::Header;
+use alloy_evm::Evm as _;
+use alloy_primitives::{Address, B256, TxHash, U256};
 use base_common_chains::BaseUpgrade;
-use base_common_consensus::{BaseTransactionSigned, BaseTxEnvelope, Predeploys};
+use base_common_consensus::{BaseTxEnvelope, Predeploys};
 use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
 use base_execution_evm::BaseEvmConfig;
 use base_execution_payload_builder::{
-    BasePayloadBuilderAttributes, DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD,
-    ParkableBestPayloadTransactions, RESTING_UNSEEN_RETAINED_BLOCKS, RestingPredicateMode,
-    SharedRestingPredicates,
+    BasePayloadBuilderAttributes, ParkableBestPayloadTransactions,
     builder::{BasePayloadBuilderCtx, ExecutionInfo},
     config::BaseBuilderConfig,
     payload::EthPayloadBuilderAttributes,
 };
-use base_execution_txpool::{
-    BaseOrdering, BasePooledTransaction, ParkedBestTransactions, ValidityOperator,
-    ValidityPredicate,
+use base_execution_txpool::{BuiltState, ParkableTransactionPool, ValidityDormancyMode};
+use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
+use production_pool::{Accounts, ProductionPool, TRANSFER_GAS};
+use resting_matrix::{
+    BlockTiming, Case, Matrix, Mode, Phase, Probe, Report, WOKEN, block_hash, fund_woken,
+    parent_base_fee, timed_drop, wake_transitions,
 };
 use reth_basic_payload_builder::PayloadConfig;
 use reth_ethereum_forks::ForkCondition;
 use reth_evm::execute::{BlockBuilder, BlockExecutor};
 use reth_payload_builder::PayloadId;
-use reth_primitives_traits::{Recovered, SealedHeader};
+use reth_primitives_traits::SealedHeader;
 use reth_revm::db::State;
-use reth_transaction_pool::{
-    TransactionOrigin, ValidPoolTransaction, identifier::TransactionId, pool::PendingPool,
-};
 use revm::{
-    database::{InMemoryDB, TransitionState},
+    database::{BundleState, InMemoryDB, states::bundle_state::BundleRetention},
     state::AccountInfo,
 };
 
-type Ordering = BaseOrdering<BasePooledTransaction>;
-type Pool = PendingPool<Ordering>;
 type Ctx = BasePayloadBuilderCtx<BaseEvmConfig, BaseChainSpec>;
 
 const CHAIN_ID: u64 = 8_453;
-/// Resting validity transactions the pool yields in every block.
-const LIVE_RESTING: usize = 100_000;
-/// Members rested in each block whose transactions leave the pool afterwards.
-const CHURN_PER_BLOCK: u64 = 4_800;
-/// Plain transfers that fill each block.
+/// Ordinary transfers admitted before, and included in, each block.
 const FILLER_PER_BLOCK: usize = 120;
-/// Blocks built before measuring, so the set reaches its steady-state size.
-const WARMUP_BLOCKS: u64 = 3 * RESTING_UNSEEN_RETAINED_BLOCKS;
-/// Blocks measured.
-const MEASURED_BLOCKS: u64 = 4 * RESTING_UNSEEN_RETAINED_BLOCKS;
-/// Long enough that a block always waits for the previous block's sweep, so carry includes it.
-const SWEEP_WAIT_LIMIT: Duration = Duration::from_secs(1);
-const TRANSFER_GAS: u64 = 21_000;
-const SENDER_OFFSET: usize = 1_000_000;
 const DENIM_TIMESTAMP: u64 = 1;
+/// The pool's dormant-transaction gauge as Prometheus renders it.
+const DORMANT_GAUGE: &str = "txpool_validity_dormant_transactions";
 
-fn address(index: usize) -> Address {
-    Address::from_word(U256::from(index + 1).into())
-}
+/// The native builder's resting-predicate store calls at this revision.
+mod selection {
+    use std::time::Duration;
 
-fn transaction(
-    sender_index: usize,
-    priority_fee: u128,
-    predicates: Vec<ValidityPredicate>,
-) -> Arc<ValidPoolTransaction<BasePooledTransaction>> {
-    let tx = TxEip1559 {
-        chain_id: CHAIN_ID,
-        nonce: 0,
-        gas_limit: TRANSFER_GAS,
-        max_fee_per_gas: 1_000_000_000_000,
-        max_priority_fee_per_gas: priority_fee,
-        to: TxKind::Call(Address::repeat_byte(0xee)),
-        value: U256::from(sender_index),
-        access_list: Default::default(),
-        input: Bytes::new(),
+    use alloy_primitives::B256;
+    use base_execution_payload_builder::{
+        DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD, RestingPredicateStore, SharedRestingPredicates,
     };
-    let envelope = BaseTxEnvelope::Eip1559(tx.into_signed(Signature::test_signature()));
-    let encoded_length = envelope.encode_2718_len();
-    let sender = address(SENDER_OFFSET + sender_index);
-    let transaction = BasePooledTransaction::new(
-        Recovered::new_unchecked(BaseTransactionSigned::from(envelope), sender),
-        encoded_length,
-    )
-    .with_validity_predicates(predicates);
-    Arc::new(ValidPoolTransaction {
-        transaction_id: TransactionId::new(((SENDER_OFFSET + sender_index) as u64).into(), 0),
-        transaction,
-        propagate: true,
-        timestamp: Instant::now(),
-        origin: TransactionOrigin::External,
-        authority_ids: None,
-    })
-}
+    use revm::database::TransitionState;
 
-/// [`LIVE_RESTING`] never-satisfied validity transactions, each watching its own balance, plus
-/// one block of filler, and the parent state that funds every sender.
-fn resting_pool() -> (Pool, InMemoryDB) {
-    let mut pool = PendingPool::new(Ordering::coinbase_tip());
-    let mut db = InMemoryDB::default();
-    for sender_index in 0..LIVE_RESTING + FILLER_PER_BLOCK {
-        let (priority_fee, predicates) = if sender_index < LIVE_RESTING {
-            (
-                10,
-                vec![ValidityPredicate::Balance {
-                    address: address(sender_index),
-                    op: ValidityOperator::Equal,
-                    value: U256::ONE,
-                }],
-            )
-        } else {
-            (1, Vec::new())
-        };
-        pool.add_transaction(transaction(sender_index, priority_fee, predicates), 0);
-        db.insert_account_info(
-            address(SENDER_OFFSET + sender_index),
-            AccountInfo { balance: U256::from(u128::MAX), ..Default::default() },
-        );
+    /// The native builder's `RESTING_SWEEP_WAIT_LIMIT`.
+    const SWEEP_WAIT_LIMIT: Duration = Duration::from_millis(25);
+
+    pub(super) fn store() -> RestingPredicateStore {
+        RestingPredicateStore::new(reth_tasks::Runtime::test())
     }
-    (pool, db)
+
+    pub(super) fn begin(
+        store: &RestingPredicateStore,
+        parent: B256,
+        block: u64,
+        pre_block_changes: &TransitionState,
+    ) -> SharedRestingPredicates {
+        let mut resting = store.take(DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD, SWEEP_WAIT_LIMIT);
+        resting.begin_block(parent, block, Some(pre_block_changes));
+        SharedRestingPredicates::new(resting)
+    }
+
+    pub(super) fn put(
+        store: &RestingPredicateStore,
+        resting: SharedRestingPredicates,
+        block_hash: B256,
+    ) {
+        store.put(store.finish(resting.take_predicates()), block_hash);
+    }
 }
 
-fn payload_context() -> Ctx {
-    let chain_spec = Arc::new(
+fn chain_spec() -> Arc<BaseChainSpec> {
+    Arc::new(
         BaseChainSpecBuilder::base_mainnet()
             .with_fork(BaseUpgrade::Denim, ForkCondition::Timestamp(DENIM_TIMESTAMP))
             .build(),
-    );
-    let gas_limit = FILLER_PER_BLOCK as u64 * TRANSFER_GAS;
-    let parent = Arc::new(SealedHeader::seal_slow(Header { gas_limit, ..Default::default() }));
+    )
+}
+
+/// A Denim payload context for `block`, whose parent carries the block's scheduled base fee and
+/// whose gas limit fits a block of filler plus every woken lane.
+fn payload_context(chain_spec: &Arc<BaseChainSpec>, mode: Mode, block: u64) -> Ctx {
+    let gas_limit = (FILLER_PER_BLOCK + WOKEN) as u64 * TRANSFER_GAS;
+    let parent = Arc::new(SealedHeader::seal_slow(Header {
+        number: block - 1,
+        gas_limit,
+        base_fee_per_gas: Some(parent_base_fee(block)),
+        ..Default::default()
+    }));
     let payload_id = PayloadId::new([0; 8]);
     let attributes = BasePayloadBuilderAttributes::<BaseTxEnvelope> {
         payload_attributes: EthPayloadBuilderAttributes {
@@ -163,152 +142,238 @@ fn payload_context() -> Ctx {
         ..Default::default()
     };
     BasePayloadBuilderCtx {
-        evm_config: BaseEvmConfig::base(Arc::clone(&chain_spec)),
-        builder_config: BaseBuilderConfig::default()
-            .with_resting_predicate_mode(RestingPredicateMode::Enforce),
-        chain_spec,
+        evm_config: BaseEvmConfig::base(Arc::clone(chain_spec)),
+        builder_config: BaseBuilderConfig::default().with_resting_predicate_mode(mode.resting()),
+        chain_spec: Arc::clone(chain_spec),
         config: PayloadConfig::new(parent, attributes, payload_id),
         cancel: Default::default(),
         best_payload: None,
     }
 }
 
-/// A storage predicate on its own slot, the shape of a smart-account nonce check.
-fn churn_predicate(index: u64) -> ValidityPredicate {
-    ValidityPredicate::Storage {
-        address: Address::repeat_byte(0xcc),
-        slot: U256::from(index),
-        mask: U256::MAX,
-        op: ValidityOperator::Equal,
-        value: U256::from(index + 1),
+fn fund(db: &mut InMemoryDB, address: Address) {
+    db.insert_account_info(
+        address,
+        AccountInfo { balance: U256::from(u128::MAX), ..Default::default() },
+    );
+}
+
+/// The pool's dormant-transaction gauge, zero before the pool first sets it.
+fn dormant_gauge(metrics: &PrometheusHandle) -> usize {
+    metrics
+        .render()
+        .lines()
+        .find_map(|line| line.strip_prefix(DORMANT_GAUGE)?.trim().parse::<f64>().ok())
+        .map_or(0, |value| value as usize)
+}
+
+/// Runs one case of the matrix and returns its block timings.
+fn run_case(
+    report: Report,
+    metrics: &PrometheusHandle,
+    matrix: &Matrix,
+    chain_spec: &Arc<BaseChainSpec>,
+    case: Case,
+    mode: Mode,
+    population: usize,
+) -> Vec<BlockTiming> {
+    let pool = ProductionPool::new(CHAIN_ID, mode.dormancy());
+    let lanes = case.lanes(population);
+    let start = Instant::now();
+    let (resting_hashes, resting_senders) =
+        pool.admit_resting(case.kind(), lanes, |lane| case.predicates(lane));
+    report.setup(case, mode, population, lanes, start.elapsed());
+
+    let mut db = InMemoryDB::default();
+    for sender in &resting_senders {
+        fund(&mut db, *sender);
     }
-}
-
-fn block_hash(block: u64) -> B256 {
-    keccak256(block.to_be_bytes())
-}
-
-/// Store calls that differ between builder versions.
-mod store {
-    use alloy_primitives::B256;
-    use base_execution_payload_builder::{RestingPredicateStore, RestingPredicates};
-
-    pub(super) fn new() -> RestingPredicateStore {
-        RestingPredicateStore::new(reth_tasks::Runtime::test())
-    }
-
-    pub(super) fn finish_and_put(
-        store: &RestingPredicateStore,
-        resting: RestingPredicates,
-        block_hash: B256,
-    ) {
-        store.put(store.finish(resting), block_hash);
-    }
-}
-
-/// Untimed pause between finishing a block and starting the next, from
-/// `RESTING_SWEEP_BENCH_GAP_MS`, standing in for the state root and leeway an end-of-block
-/// sweep overlaps in the builder. Unset, the next block starts immediately.
-fn block_gap() -> Option<Duration> {
-    std::env::var("RESTING_SWEEP_BENCH_GAP_MS").ok().map(|ms| {
-        Duration::from_millis(ms.parse().expect("RESTING_SWEEP_BENCH_GAP_MS is a number"))
-    })
-}
-
-struct BlockTiming {
-    block: u64,
-    carry: Duration,
-    selection: Duration,
-    carried: usize,
-}
-
-fn main() {
-    let (pool, db) = resting_pool();
-    let ctx = payload_context();
-    let store = store::new();
-    let gap = block_gap();
-    let mut churn = 0u64;
+    let store = selection::store();
+    let mut mined: (Vec<TxHash>, Vec<Address>, BundleState) = Default::default();
+    let mut held = None;
+    let mut previous_base_fee = 0;
     let mut timings = Vec::new();
 
-    for block in 1..=WARMUP_BLOCKS + MEASURED_BLOCKS {
-        let start = Instant::now();
-        let mut resting = store.take(DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD, SWEEP_WAIT_LIMIT);
-        resting.begin_block(block_hash(block - 1), block, Some(&TransitionState::default()));
-        let carry = start.elapsed();
-        let carried = resting.len();
+    for block in 1..=matrix.blocks {
+        let first_ordinary = (block as usize - 1) * FILLER_PER_BLOCK;
+        for index in first_ordinary..first_ordinary + FILLER_PER_BLOCK {
+            fund(&mut db, Accounts::Ordinary.address(index));
+        }
+        let woken = case.woken(block);
+        fund_woken(&mut db, woken.clone());
 
+        let ctx = payload_context(chain_spec, mode, block);
         let mut state = State::builder().with_database(db.clone()).with_bundle_update().build();
         state.load_cache_account(Predeploys::L1_BLOCK_INFO).expect("in-memory load cannot fail");
         let mut builder = ctx.block_builder(&mut state).expect("block builder");
-        let mut info = ExecutionInfo::default();
-        // The production builder hands the pool iterator a hold over the shared set, so resting
-        // members are parked at the source instead of reaching the build loop.
-        let shared = SharedRestingPredicates::new(resting);
-        let best = ParkableBestPayloadTransactions::new(Box::new(
-            ParkedBestTransactions::new(pool.best(), Ordering::coinbase_tip(), 0)
-                .with_hold(Some(shared.iterator_hold())),
-        ));
-        ctx.execute_best_transactions(&mut info, &mut builder, best, Some(&shared))
-            .expect("in-memory execution cannot fail");
-        let mut resting = shared.take_predicates();
-        assert_eq!(builder.executor().receipts().len(), FILLER_PER_BLOCK);
-        let selection = start.elapsed() - carry;
+        let attributes = ctx.best_transaction_attributes(builder.evm_mut().block());
 
-        for _ in 0..CHURN_PER_BLOCK {
-            resting.rest(keccak256(churn.to_be_bytes()), churn_predicate(churn));
-            churn += 1;
+        let mut mutation = Default::default();
+        let mut dormancy = Default::default();
+        if block > 1 {
+            let (hashes, senders, bundle) = std::mem::take(&mut mined);
+            let start = Instant::now();
+            pool.mine(block - 1, previous_base_fee, attributes.basefee, hashes, &senders);
+            mutation = start.elapsed();
+            let start = Instant::now();
+            pool.maintain_canonical(block - 1, &bundle);
+            dormancy = start.elapsed();
         }
-        store::finish_and_put(&store, resting, block_hash(block));
-        if let Some(gap) = gap {
+        let start = Instant::now();
+        let (ordinary, ordinary_senders) = pool.admit_ordinary(first_ordinary, FILLER_PER_BLOCK);
+        mutation += start.elapsed();
+        let held_drop = held.take().map(timed_drop).unwrap_or_default();
+        if case.expired_by() == Some(block) {
+            for lane in case.expiring() {
+                assert!(
+                    !pool.contains(&resting_hashes[lane]),
+                    "the pool must expire lane {lane} after its deadline"
+                );
+            }
+        }
+
+        let pre_block_changes = wake_transitions(woken.clone());
+        let start = Instant::now();
+        let mut resting = mode
+            .resting()
+            .is_enabled()
+            .then(|| selection::begin(&store, block_hash(block - 1), block, &pre_block_changes));
+        let carry = start.elapsed();
+        let members = resting.as_ref().map_or(0, |resting| resting.len());
+
+        let start = Instant::now();
+        pool.pool.report_built_state(block, BuiltState::Transitions(&pre_block_changes));
+        let mut report_time = start.elapsed();
+        // The gauge is process-wide; only a dormancy-enforcing pool set it during this case.
+        let dormant = if mode.dormancy() == ValidityDormancyMode::Enforce {
+            dormant_gauge(metrics)
+        } else {
+            0
+        };
+
+        let hold = || {
+            resting
+                .as_ref()
+                .filter(|_| mode.resting().is_enforced())
+                .map(|resting| resting.iterator_hold())
+        };
+        let start = Instant::now();
+        let best = pool.pool.best_transactions_with_attributes_and_parking(attributes, hold());
+        let construct = start.elapsed();
+        let executable = FILLER_PER_BLOCK + woken.len();
+        let probe = Probe::run(|| {
+            pool.pool.best_transactions_with_attributes_and_parking(attributes, hold())
+        });
+        let phase = Phase::of(mode, probe.yielded, executable, !woken.is_empty());
+        let probe_drop = if case.holds_iterator() {
+            held = Some(probe.iterator);
+            Default::default()
+        } else {
+            timed_drop(probe.iterator)
+        };
+
+        let mut info = ExecutionInfo {
+            unsatisfied_validity_txs: pool.pool.collects_unsatisfied().then(Vec::new),
+            ..Default::default()
+        };
+        let start = Instant::now();
+        ctx.execute_best_transactions(
+            &mut info,
+            &mut builder,
+            ParkableBestPayloadTransactions::new(best),
+            resting.as_ref(),
+        )
+        .expect("in-memory execution cannot fail");
+        let selection_time = start.elapsed();
+        let included = builder.executor().receipts().len();
+        assert_eq!(included, executable, "block {block} must include every executable transaction");
+
+        let start = Instant::now();
+        if let Some(unsatisfied) = info.unsatisfied_validity_txs.take()
+            && !unsatisfied.is_empty()
+        {
+            pool.pool.report_unsatisfied(unsatisfied);
+        }
+        report_time += start.elapsed();
+
+        let start = Instant::now();
+        if let Some(resting) = resting.take() {
+            selection::put(&store, resting, block_hash(block));
+        }
+        let store_time = start.elapsed();
+
+        drop(builder);
+        state.merge_transitions(BundleRetention::Reverts);
+        let bundle = state.take_bundle();
+        let start = Instant::now();
+        pool.pool.report_built_state(block, BuiltState::Bundle(&bundle));
+        report_time += start.elapsed();
+
+        mined = (ordinary, ordinary_senders, bundle);
+        for lane in woken {
+            mined.0.push(resting_hashes[lane]);
+            mined.1.push(resting_senders[lane]);
+        }
+        previous_base_fee = attributes.basefee;
+        let timing = BlockTiming {
+            block,
+            phase,
+            members,
+            dormant,
+            probe_yielded: probe.yielded,
+            included,
+            mutation,
+            dormancy,
+            held_drop,
+            carry,
+            probe_construct: probe.construct,
+            probe_first_yield: probe.first_yield,
+            probe_drain: probe.drain,
+            probe_drop,
+            construct,
+            selection: selection_time,
+            store: store_time,
+            report: report_time,
+            ..Default::default()
+        };
+        report.row(case, mode, population, &timing);
+        timings.push(timing);
+        if let Some(gap) = matrix.gap {
             std::thread::sleep(gap);
         }
+    }
 
-        if block > WARMUP_BLOCKS {
-            timings.push(BlockTiming { block, carry, selection, carried });
+    let last = timings.last().expect("the matrix builds blocks");
+    if mode.withholds() && lanes > 0 {
+        assert_eq!(
+            last.phase,
+            Phase::Steady,
+            "the resting population must be withheld from the last block's iterator"
+        );
+    }
+    if mode.dormancy() == ValidityDormancyMode::Enforce && lanes > 0 {
+        assert_eq!(
+            last.dormant,
+            case.final_members(lanes),
+            "dormant validity transactions at the last block"
+        );
+    }
+    timings
+}
+
+fn main() {
+    let matrix = Matrix::from_env();
+    let report = Report { builder: "native" };
+    let chain_spec = chain_spec();
+    let metrics = PrometheusBuilder::new().install_recorder().expect("installs the recorder");
+    println!("blocks={} gap_ms={}", matrix.blocks, matrix.gap.map_or(0, |gap| gap.as_millis()));
+    for &mode in &matrix.modes {
+        for (case, populations) in &matrix.cases {
+            for &population in populations {
+                let timings =
+                    run_case(report, &metrics, &matrix, &chain_spec, *case, mode, population);
+                report.summary(*case, mode, population, &timings);
+            }
         }
     }
-
-    println!("gap_ms={}", gap.map_or(0, |gap| gap.as_millis()));
-    println!(
-        "{:>6} {:>9} {:>12} {:>14} {:>12}",
-        "block", "carried", "carry (ms)", "selection (ms)", "total (ms)"
-    );
-    for t in &timings {
-        println!(
-            "{:>6} {:>9} {:>12.3} {:>14.3} {:>12.3}",
-            t.block,
-            t.carried,
-            t.carry.as_secs_f64() * 1e3,
-            t.selection.as_secs_f64() * 1e3,
-            (t.carry + t.selection).as_secs_f64() * 1e3
-        );
-    }
-    let summarize = |label: &str, filter: &dyn Fn(&BlockTiming) -> bool| {
-        let mut carry: Vec<f64> =
-            timings.iter().filter(|t| filter(t)).map(|t| t.carry.as_secs_f64() * 1e3).collect();
-        let mut total: Vec<f64> = timings
-            .iter()
-            .filter(|t| filter(t))
-            .map(|t| (t.carry + t.selection).as_secs_f64() * 1e3)
-            .collect();
-        carry.sort_by(f64::total_cmp);
-        total.sort_by(f64::total_cmp);
-        let mean = |v: &[f64]| v.iter().sum::<f64>() / v.len() as f64;
-        let quantile = |v: &[f64], q: f64| v[((v.len() - 1) as f64 * q).round() as usize];
-        println!(
-            "SUMMARY {label} blocks={} carry_mean_ms={:.3} carry_p50_ms={:.3} carry_p90_ms={:.3} carry_max_ms={:.3} total_mean_ms={:.3} total_p50_ms={:.3} total_p90_ms={:.3} total_max_ms={:.3}",
-            carry.len(),
-            mean(&carry),
-            quantile(&carry, 0.5),
-            quantile(&carry, 0.9),
-            quantile(&carry, 1.0),
-            mean(&total),
-            quantile(&total, 0.5),
-            quantile(&total, 0.9),
-            quantile(&total, 1.0),
-        );
-    };
-    summarize("all", &|_| true);
-    summarize("sweep_blocks", &|t| t.block.is_multiple_of(RESTING_UNSEEN_RETAINED_BLOCKS));
-    summarize("other_blocks", &|t| !t.block.is_multiple_of(RESTING_UNSEEN_RETAINED_BLOCKS));
 }
