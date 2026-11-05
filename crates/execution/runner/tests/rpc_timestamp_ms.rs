@@ -96,7 +96,7 @@ async fn assert_pending_estimate(
 fn block_transactions(harness: &TestHarness, number: u64) -> eyre::Result<Vec<Bytes>> {
     let schedule = harness.chain_spec().denim_timestamp_schedule()?.expect("Denim is scheduled");
     let mut transactions = vec![L1_BLOCK_INFO_DEPOSIT_TX];
-    if schedule.is_denim_active_at_block(number) {
+    if schedule.is_subsecond_active_at_block(number) {
         let millis_part = schedule.block_timestamp_parts(number).1;
         let base_time = BaseTimeUpdateTx::new(millis_part)?.into_deposit_tx(number);
         transactions.push(base_time.encoded_2718().into());

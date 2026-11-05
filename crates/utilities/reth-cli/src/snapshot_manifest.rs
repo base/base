@@ -26,7 +26,7 @@ pub use reth_cli_commands::download::manifest::{
 use tracing::info;
 
 /// Default blocks per static file segment.
-const DEFAULT_BLOCKS_PER_FILE: u64 = 500_000;
+pub const DEFAULT_BLOCKS_PER_FILE: u64 = 500_000;
 
 /// Maximum number of chunks allowed before bailing to prevent OOM.
 /// At 500k blocks per file, 100k chunks covers 50 billion blocks.

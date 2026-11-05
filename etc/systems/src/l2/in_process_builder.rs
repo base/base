@@ -2,14 +2,14 @@
 //!
 //! This module provides [`InProcessBuilder`], which spawns a real builder node in the
 //! current process instead of using Docker containers. This enables faster test execution
-//! and easier debugging while maintaining the same external interface as [`BuilderContainer`].
+//! and easier debugging.
 
 use core::net::{Ipv4Addr, SocketAddr};
 use std::{any::Any, path::PathBuf, sync::Arc, time::Duration};
 
 use alloy_primitives::hex::ToHexExt;
 use alloy_rpc_types_engine::JwtSecret;
-use base_builder_core::BuilderConfig;
+use base_builder_core::{BuilderConfig, RestingPredicateMode};
 use base_builder_multiplex::MultiplexingServiceBuilder;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_txpool::{
@@ -49,7 +49,7 @@ pub struct InProcessBuilderConfig {
     pub chain_spec: Arc<BaseChainSpec>,
     /// Existing caller-owned datadir. A temporary datadir is created when omitted.
     pub datadir: Option<PathBuf>,
-    /// JWT secret hex for Engine API authentication.
+    /// JWT secret for Engine API authentication.
     pub jwt_secret: JwtSecret,
     /// Optional fixed HTTP RPC port (uses random if None).
     pub http_port: Option<u16>,
@@ -67,6 +67,9 @@ pub struct InProcessBuilderConfig {
     pub payload_builder_cutover: bool,
     /// Staged signature policy used by both validity-bearing RPC endpoints.
     pub validity_signature_mode: ValiditySignatureMode,
+    /// How the native payload builder tracks validity transactions whose predicates did not
+    /// match. `Off` evaluates every candidate on every flashblock.
+    pub resting_predicate_mode: RestingPredicateMode,
     /// Additional node extensions installed after the builder's built-in RPC wiring.
     ///
     /// Lets downstream consumers layer their own [`BaseNodeExtension`] onto the standard
@@ -97,7 +100,7 @@ impl InProcessBuilderConfig {
     }
 }
 
-/// An in-process builder node that replaces Docker-based `BuilderContainer`.
+/// An in-process builder node.
 ///
 /// This spawns a real builder node within the current process, binding to dynamic ports.
 /// Docker containers (like consensus nodes) can connect via `host.docker.internal`.
@@ -165,6 +168,7 @@ impl InProcessBuilder {
             block_time_leeway: Duration::from_secs(20),
             flashblocks_ws_addr: SocketAddr::new(Ipv4Addr::LOCALHOST.into(), flashblocks_port),
             flashblocks_interval: Duration::from_millis(200),
+            resting_predicate_mode: config.resting_predicate_mode,
             ..Default::default()
         };
 

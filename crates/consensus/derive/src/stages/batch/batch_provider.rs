@@ -5,7 +5,7 @@ use core::fmt::Debug;
 
 use alloy_eips::BlockNumHash;
 use async_trait::async_trait;
-use base_common_genesis::{RollupConfig, SystemConfig};
+use base_common_genesis::{BaseFeature, RollupConfig, SystemConfig};
 use base_protocol::{BlockInfo, L2BlockInfo, SingleBatch};
 
 use super::NextBatchProvider;
@@ -65,14 +65,22 @@ where
         if let Some(prev) = self.prev.take() {
             // On the first call to `attempt_update`, we need to determine the active stage to
             // initialize the mux with.
-            if self.cfg.is_holocene_active(origin.timestamp) {
+            if self.cfg.is_feature_active_cascading(
+                BaseFeature::StrictDerivationOrdering,
+                origin.timestamp,
+            ) {
                 self.batch_validator =
                     Some(BatchValidator::new(Arc::clone(&self.cfg), prev, self.provider.clone()));
             } else {
                 self.batch_queue =
                     Some(BatchQueue::new(Arc::clone(&self.cfg), prev, self.provider.clone()));
             }
-        } else if self.batch_queue.is_some() && self.cfg.is_holocene_active(origin.timestamp) {
+        } else if self.batch_queue.is_some()
+            && self.cfg.is_feature_active_cascading(
+                BaseFeature::StrictDerivationOrdering,
+                origin.timestamp,
+            )
+        {
             // If the batch queue is active and Holocene is also active, transition to the batch
             // validator.
             let batch_queue = self.batch_queue.take().expect("Must have batch queue");
@@ -81,7 +89,12 @@ where
             bv.l1_blocks = batch_queue.l1_blocks;
             bv.origin = batch_queue.origin;
             self.batch_validator = Some(bv);
-        } else if self.batch_validator.is_some() && !self.cfg.is_holocene_active(origin.timestamp) {
+        } else if self.batch_validator.is_some()
+            && !self.cfg.is_feature_active_cascading(
+                BaseFeature::StrictDerivationOrdering,
+                origin.timestamp,
+            )
+        {
             // If the batch validator is active, and Holocene is not active, it indicates an L1
             // reorg around Holocene activation. Transition back to the batch queue
             // until Holocene re-activates.

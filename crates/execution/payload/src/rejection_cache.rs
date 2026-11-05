@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use alloy_primitives::TxHash;
+use alloy_primitives::{TxHash, map::FbBuildHasher};
 use moka::sync::Cache;
 
 /// Default maximum number of cached permanently rejected transaction hashes.
@@ -22,8 +22,11 @@ pub const REJECTION_CACHE_TTL: Duration = Duration::from_secs(30 * 60);
 /// descendants are skipped for the **current** scan via
 /// `PayloadTransactions::mark_invalid`; skipping those descendants across
 /// later jobs is Flashblocks-only (its iterator consults this cache).
+///
+/// Builders look up every candidate, so keys are hashed with the seeded fixed-bytes hasher the
+/// other per-candidate hash sets use rather than the default `SipHash`.
 #[derive(Clone)]
-pub struct RejectionCache(Cache<TxHash, ()>);
+pub struct RejectionCache(Cache<TxHash, (), FbBuildHasher<32>>);
 
 impl std::fmt::Debug for RejectionCache {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -40,7 +43,12 @@ impl Default for RejectionCache {
 impl RejectionCache {
     /// Creates a new [`RejectionCache`] with the given capacity and TTL.
     pub fn new(max_capacity: u64, ttl: Duration) -> Self {
-        Self(Cache::builder().max_capacity(max_capacity).time_to_live(ttl).build())
+        Self(
+            Cache::builder()
+                .max_capacity(max_capacity)
+                .time_to_live(ttl)
+                .build_with_hasher(FbBuildHasher::default()),
+        )
     }
 
     /// Returns `true` if `hash` is cached as permanently rejected.

@@ -187,15 +187,18 @@ fn validate_real_token_pair_matches_swaps(
                 })?;
                 (token_in, token_out)
             }
+            TxTypeConfig::UniswapV3Liquidity(payload) => (payload.token0, payload.token1),
             TxTypeConfig::Transfer
             | TxTypeConfig::Eip8430Transfer
             | TxTypeConfig::Calldata { .. }
             | TxTypeConfig::X402
+            | TxTypeConfig::TokenMove { .. }
             | TxTypeConfig::Erc20 { .. }
             | TxTypeConfig::B20
             | TxTypeConfig::Precompile { .. }
             | TxTypeConfig::Storage { .. }
             | TxTypeConfig::DoubleCounter { .. }
+            | TxTypeConfig::AaBundle { .. }
             | TxTypeConfig::Osaka { .. } => continue,
         };
         saw_swap = true;

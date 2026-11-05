@@ -44,9 +44,12 @@ against the block state.
 
 Because the EIP-8130 pipeline charges a deterministic, signature-independent
 amount (intrinsic + phased-call gas, less the EIP-3529-capped refund, plus payer
-authentication), one simulation yields the exact estimate; no gas-limit binary
-search is needed. Plain (non-8130) requests fall through to the standard reth
-estimator unchanged.
+authentication), one simulation resolves the sender and prices intrinsic and
+authentication gas once. Inside it, `simulate` binary-searches only the call
+pool, re-dispatching the phased calls over reverted journal checkpoints, so the
+returned limit covers the unrefunded call spend and EIP-150's 63/64 retention.
+There is no outer gas-limit search like reth's standard estimator. Plain
+(non-8130) requests fall through to the standard reth estimator unchanged.
 
 The simulation applies the request's validity window at the simulated block's
 time (honoring a `time` block override on `eth_call`) and applies its account

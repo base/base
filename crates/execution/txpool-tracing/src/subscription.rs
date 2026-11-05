@@ -2,6 +2,7 @@
 
 use std::{sync::Arc, time::Instant};
 
+use base_execution_txpool::BasePooledTx;
 use base_flashblocks::{FlashblocksAPI, PendingBlocks};
 use futures::StreamExt;
 use reth_node_api::NodePrimitives;
@@ -11,7 +12,7 @@ use reth_transaction_pool::{FullTransactionEvent, TransactionPool};
 use tokio::sync::broadcast::Receiver;
 use tokio_stream::wrappers::BroadcastStream;
 
-use crate::{NonceSlot, tracker::Tracker};
+use crate::{NonceSlot, PooledTxInfo, TxFlow, tracker::Tracker};
 
 /// Subscription task that tracks transaction timing from mempool to block inclusion.
 ///
@@ -26,6 +27,7 @@ pub async fn tracex_subscription<N, Pool, FB>(
 ) where
     N: NodePrimitives,
     Pool: TransactionPool + 'static,
+    Pool::Transaction: BasePooledTx,
     FB: FlashblocksAPI + 'static,
 {
     debug!(target: "tracex", "Starting transaction tracking subscription");
@@ -42,8 +44,8 @@ pub async fn tracex_subscription<N, Pool, FB>(
     loop {
         tokio::select! {
             Some(full_event) = all_events_stream.next() => {
-                let nonce_slot = resolve_nonce_slot(&full_event, &pool);
-                tracker.handle_event(full_event, nonce_slot);
+                let info = resolve_pooled_tx_info(&full_event, &pool);
+                tracker.handle_event(full_event, info);
             },
 
             // Use canonical state notifications to track time to inclusion.
@@ -61,13 +63,20 @@ pub async fn tracex_subscription<N, Pool, FB>(
     }
 }
 
-fn resolve_nonce_slot<Pool: TransactionPool>(
+fn resolve_pooled_tx_info<Pool>(
     event: &FullTransactionEvent<Pool::Transaction>,
     pool: &Pool,
-) -> Option<NonceSlot> {
+) -> Option<PooledTxInfo>
+where
+    Pool: TransactionPool,
+    Pool::Transaction: BasePooledTx,
+{
     let tx_hash = match event {
         FullTransactionEvent::Pending(hash) | FullTransactionEvent::Queued(hash, _) => hash,
         _ => return None,
     };
-    pool.get(tx_hash).map(|tx| NonceSlot::new(tx.sender(), tx.nonce()))
+    pool.get(tx_hash).map(|tx| PooledTxInfo {
+        nonce_slot: NonceSlot::new(tx.sender(), tx.nonce()),
+        flow: TxFlow::from_validity_predicates(!tx.transaction.validity_conditions().is_empty()),
+    })
 }

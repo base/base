@@ -357,6 +357,33 @@ fn parity_halted_call_with_value_rolls_back_transfer() {
 }
 
 #[test]
+fn parity_value_exceeding_post_mint_balance_charges_full_gas_limit() {
+    // The sender holds only the 1_000 minted wei but sends 5_000. The OP-stack treats the failed
+    // top-level transfer as a failed deposit charged the full gas limit, for calls and creates.
+    let target = Address::repeat_byte(0x66);
+    assert_parity(Fixture {
+        seed: vec![],
+        to: TxKind::Call(target),
+        mint: 1_000,
+        value: U256::from(5_000),
+        gas_limit: 200_000,
+        input: vec![],
+        is_system: false,
+        compare: vec![(SENDER, vec![]), (target, vec![])],
+    });
+    assert_parity(Fixture {
+        seed: vec![],
+        to: TxKind::Create,
+        mint: 1_000,
+        value: U256::from(5_000),
+        gas_limit: 200_000,
+        input: vec![0x60, 0x00, 0x60, 0x00, 0xf3],
+        is_system: false,
+        compare: vec![(SENDER, vec![]), (SENDER.create(0), vec![])],
+    });
+}
+
+#[test]
 fn parity_warm_account_access() {
     // The called contract runs `EXTCODESIZE(0x1)` — an account access whose EIP-2929 warm/cold
     // gas only agrees with the reference if the deposit handler pre-warms the same base set

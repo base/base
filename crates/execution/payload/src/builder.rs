@@ -10,10 +10,10 @@ use alloy_evm::{
     Evm as AlloyEvm,
     block::{CommitChanges, TxResult},
 };
-use alloy_primitives::{Address, B256, TxHash, U256, map::B256Set};
+use alloy_primitives::{Address, B256, TxHash, U256};
 use alloy_rpc_types_debug::ExecutionWitness;
 use alloy_rpc_types_engine::PayloadId;
-use base_common_chains::Upgrades;
+use base_common_chains::{BaseFeature, Upgrades};
 use base_common_consensus::{BaseTransaction, DepositReceiptExt, Predeploys};
 use base_common_evm::{BaseSpecId, L1BlockInfo};
 use base_execution_eip8130::IntrinsicGas;
@@ -44,7 +44,7 @@ use reth_primitives_traits::{
 };
 use reth_revm::{database::StateProviderDatabase, db::State, witness::ExecutionWitnessRecord};
 use reth_storage_api::{BlockReader, StateProvider, StateProviderFactory, errors::ProviderError};
-use reth_tasks::CancelOnDrop;
+use reth_tasks::{CancelOnDrop, Runtime};
 use reth_transaction_pool::{
     BestTransactionsAttributes, PoolTransaction, TransactionPool, ValidPoolTransaction,
 };
@@ -55,12 +55,12 @@ use tracing::{debug, debug_span, info, instrument, trace, warn};
 
 use crate::{
     Attributes, BasePayloadBuilderAttributes, BlockDeferrals, BuilderMetrics,
-    CoinbaseTipAffordability, InclusionTracker, MeteringProvider, ParkableBestPayloadTransactions,
-    ParkablePayloadTransactions, ParkedPredicateIndex, PayloadPrimitives, PredicateLoadTracker,
-    PredicateReadRecorder, RejectionCacheMetrics, RestingPredicateStore, RestingPredicates,
-    StateChangeEffects, ValidityEvaluationCounters, ValidityEvaluationOutcome, ValidityMetrics,
-    ValidityPredicateEvaluation, config::BaseBuilderConfig, error::BasePayloadBuilderError,
-    payload::BaseBuiltPayload,
+    CoinbaseTipAffordability, HoldInterrupt, InclusionTracker, MeteringProvider,
+    ParkableBestPayloadTransactions, ParkablePayloadTransactions, ParkedPredicateIndex,
+    PayloadPrimitives, PredicateLoadTracker, PredicateReadRecorder, RejectionCacheMetrics,
+    RestingPredicateStore, SharedRestingPredicates, StateChangeEffects, ValidityEvaluationCounters,
+    ValidityEvaluationOutcome, ValidityMetrics, ValidityPredicateEvaluation,
+    config::BaseBuilderConfig, error::BasePayloadBuilderError, payload::BaseBuiltPayload,
 };
 
 macro_rules! emit_native_validity_event {
@@ -136,6 +136,14 @@ where
     }
 }
 
+/// Longest a native build waits for the previous block's resting sweep before starting with an
+/// empty set.
+///
+/// The native builder has no leeway: the sweep overlaps only the previous block's state root, and
+/// any wait comes out of a short block's selection time, where re-evaluating every validity
+/// transaction is cheaper than a long wait.
+const RESTING_SWEEP_WAIT_LIMIT: Duration = Duration::from_millis(25);
+
 impl<Pool, Client, Evm, Attrs> BasePayloadBuilder<Pool, Client, Evm, Attrs> {
     /// `BasePayloadBuilder` constructor.
     ///
@@ -159,6 +167,13 @@ impl<Pool, Client, Evm, Attrs> BasePayloadBuilder<Pool, Client, Evm, Attrs> {
             resting_predicates: RestingPredicateStore::default(),
             _pd: PhantomData,
         }
+    }
+
+    /// Runs end-of-block maintenance of the resting validity set, such as the unseen sweep, on
+    /// `executor` instead of inline.
+    pub fn with_task_executor(mut self, executor: Runtime) -> Self {
+        self.resting_predicates = RestingPredicateStore::new(executor);
+        self
     }
 }
 
@@ -188,7 +203,10 @@ where
     fn build_payload<'a, Txs>(
         &self,
         args: BuildArguments<Attrs, BaseBuiltPayload<N>>,
-        best: impl FnOnce(BestTransactionsAttributes) -> Txs + Send + Sync + 'a,
+        best: impl FnOnce(BestTransactionsAttributes, Option<&SharedRestingPredicates>) -> Txs
+        + Send
+        + Sync
+        + 'a,
     ) -> Result<BuildOutcome<BaseBuiltPayload<N>>, PayloadBuilderError>
     where
         Txs: ParkablePayloadTransactions<
@@ -273,7 +291,7 @@ where
 
         let state_provider = self.client.state_by_block_hash(ctx.parent().hash())?;
 
-        let builder = Builder::new(|_| NoopPayloadTransactions::<Pool::Transaction>::default());
+        let builder = Builder::new(|_, _| NoopPayloadTransactions::<Pool::Transaction>::default());
         builder.witness(state_provider, &self.client, &ctx)
     }
 }
@@ -297,9 +315,12 @@ where
         &self,
         args: BuildArguments<Self::Attributes, Self::BuiltPayload>,
     ) -> Result<BuildOutcome<Self::BuiltPayload>, PayloadBuilderError> {
-        self.build_payload(args, |attrs| {
+        self.build_payload(args, |attrs, resting| {
             ParkableBestPayloadTransactions::new(
-                self.pool.best_transactions_with_attributes_and_parking(attrs),
+                self.pool.best_transactions_with_attributes_and_parking(
+                    attrs,
+                    resting.map(SharedRestingPredicates::iterator_hold),
+                ),
             )
         })
     }
@@ -327,13 +348,26 @@ where
             cancel: Default::default(),
             best_payload: None,
         };
-        self.build_payload(args, |_| {
+        self.build_payload(args, |_, _| {
             NoopPayloadTransactions::<Arc<ValidPoolTransaction<Pool::Transaction>>>::default()
         })?
         .into_payload()
         .ok_or_else(|| PayloadBuilderError::MissingPayload)
     }
 }
+
+/// Interrupts a pool iterator's walk past held resting transactions once its job is cancelled or
+/// asked to finalize, as the build loop checks before each candidate. Resting transactions are
+/// only held from Denim on, where the build loop honours finalization requests.
+fn job_interrupt(cancel: &Arc<CancelOnDrop>) -> HoldInterrupt {
+    let cancel = Arc::downgrade(cancel);
+    Arc::new(move || cancel.upgrade().is_none_or(|cancel| cancel.is_interrupted()))
+}
+
+/// Creates the candidate iterator of one build from the fee attributes and, for an enforcing
+/// build, the resting set whose hold the iterator parks members with.
+pub type BestTransactionsFactory<'a, Txs> =
+    dyn FnOnce(BestTransactionsAttributes, Option<&SharedRestingPredicates>) -> Txs + 'a;
 
 /// The type that builds the payload.
 ///
@@ -354,7 +388,7 @@ where
 pub struct Builder<'a, Txs> {
     /// Yields the best transaction to include if transactions from the mempool are allowed.
     #[debug(skip)]
-    best: Box<dyn FnOnce(BestTransactionsAttributes) -> Txs + 'a>,
+    best: Box<BestTransactionsFactory<'a, Txs>>,
     /// Permanently removes mempool transactions that exceeded a per-transaction resource limit.
     #[debug(skip)]
     evict_permanently_rejected: Box<dyn FnOnce(Vec<TxHash>) + 'a>,
@@ -364,7 +398,12 @@ pub struct Builder<'a, Txs> {
 
 impl<'a, Txs> Builder<'a, Txs> {
     /// Creates a new [`Builder`].
-    pub fn new(best: impl FnOnce(BestTransactionsAttributes) -> Txs + Send + Sync + 'a) -> Self {
+    pub fn new(
+        best: impl FnOnce(BestTransactionsAttributes, Option<&SharedRestingPredicates>) -> Txs
+        + Send
+        + Sync
+        + 'a,
+    ) -> Self {
         Self {
             best: Box::new(best),
             evict_permanently_rejected: Box::new(|_| {}),
@@ -409,6 +448,10 @@ impl<Txs> Builder<'_, Txs> {
         Attrs: Attributes<Transaction = N::SignedTx>,
     {
         let Self { best, evict_permanently_rejected, resting_predicates } = self;
+        // The pool iterator's hold watches the job's cancellation through a weak reference. A
+        // dropped `CancelOnDrop` clone cancels the job, so only this owner, dropped with `ctx` when
+        // the build returns, keeps one.
+        let cancel_watch = Arc::new(ctx.cancel.clone());
         let build_start = Instant::now();
         debug!(target: "payload_builder", id=%ctx.payload_id(), parent_header = ?ctx.parent().hash(), parent_number = ctx.parent().number(), "building new payload");
 
@@ -441,11 +484,15 @@ impl<Txs> Builder<'_, Txs> {
             resting = resting_predicates
                 .as_ref()
                 .filter(|_| {
-                    ctx.builder_config.resting_predicate_mode.is_enabled() && ctx.is_denim_active()
+                    ctx.builder_config.resting_predicate_mode.is_enabled()
+                        && ctx.is_one_shot_building_active()
                 })
                 .map(|store| {
-                    let mut resting =
-                        store.take(ctx.builder_config.predicate_bucket_ordered_threshold);
+                    let start = Instant::now();
+                    let mut resting = store.take(
+                        ctx.builder_config.predicate_bucket_ordered_threshold,
+                        RESTING_SWEEP_WAIT_LIMIT,
+                    );
                     // The transitions hold the system calls and deposits applied on top of the
                     // parent state.
                     let carry_over = resting.begin_block(
@@ -453,12 +500,18 @@ impl<Txs> Builder<'_, Txs> {
                         ctx.parent().number().saturating_add(1),
                         builder.evm_mut().db_mut().transition_state.as_ref(),
                     );
-                    ValidityMetrics::record_resting_carry_over(&carry_over);
-                    resting
+                    ValidityMetrics::record_resting_carry_over(&carry_over, start.elapsed());
+                    SharedRestingPredicates::new(resting)
+                        .with_interrupt(job_interrupt(&cancel_watch))
                 });
-            let best_txs = best(ctx.best_transaction_attributes(builder.evm_mut().block()));
+            // Only an enforcing build hands the pool iterator a hold; a shadow build evaluates
+            // resting members to count mismatches.
+            let hold = resting
+                .as_ref()
+                .filter(|_| ctx.builder_config.resting_predicate_mode.is_enforced());
+            let best_txs = best(ctx.best_transaction_attributes(builder.evm_mut().block()), hold);
             let cancelled =
-                ctx.execute_best_transactions(&mut info, &mut builder, best_txs, resting.as_mut())?;
+                ctx.execute_best_transactions(&mut info, &mut builder, best_txs, resting.as_ref())?;
             if !info.permanently_rejected_txs.is_empty() {
                 let rejected = std::mem::take(&mut info.permanently_rejected_txs);
                 let count = rejected.len();
@@ -482,12 +535,16 @@ impl<Txs> Builder<'_, Txs> {
             }
 
             // check if the new payload is even more valuable
-            if !ctx.is_denim_active() && !ctx.is_better_payload(info.total_fees) {
+            if !ctx.is_one_shot_building_active() && !ctx.is_better_payload(info.total_fees) {
                 // can skip building the block
                 return Ok(BuildOutcomeKind::Aborted { fees: info.total_fees });
             }
         }
         let execution_duration = build_start.elapsed();
+        // Start the end-of-block sweep now so it overlaps the state root.
+        let resting = resting
+            .zip(resting_predicates.as_ref())
+            .map(|(resting, store)| store.finish(resting.take_predicates()));
 
         let block_num = ctx.parent().number().saturating_add(1);
         let state_root = state_root_handle.and_then(|mut task| {
@@ -526,9 +583,8 @@ impl<Txs> Builder<'_, Txs> {
 
         let sealed_block = Arc::new(block.sealed_block().clone());
         debug!(target: "payload_builder", id=%ctx.payload_id(), sealed_block_header = ?sealed_block.header(), "sealed built block");
-        if let (Some(mut resting), Some(store)) = (resting, resting_predicates) {
-            resting.end_block(sealed_block.hash());
-            store.put(resting);
+        if let (Some(resting), Some(store)) = (resting, resting_predicates) {
+            store.put(resting, sealed_block.hash());
         }
 
         let execution_outcome =
@@ -559,7 +615,7 @@ impl<Txs> Builder<'_, Txs> {
             BuilderMetrics::record_native_build(execution_duration, build_start.elapsed());
         }
 
-        if no_tx_pool || ctx.is_denim_active() {
+        if no_tx_pool || ctx.is_one_shot_building_active() {
             // if `no_tx_pool` is set only transactions from the payload attributes will be included
             // in the payload. In other words, the payload is deterministic and we can
             // freeze it once we've successfully built it.
@@ -607,7 +663,10 @@ impl<Txs> Builder<'_, Txs> {
             return Err(PayloadBuilderError::other(BasePayloadBuilderError::Cancelled));
         }
 
-        if ctx.chain_spec.is_isthmus_active_at_timestamp(ctx.attributes().timestamp()) {
+        if ctx.chain_spec.is_feature_active_at_timestamp(
+            BaseFeature::L2ToL1MessageRoot,
+            ctx.attributes().timestamp(),
+        ) {
             // force load `L2ToL1MessagePasser.sol` so l2 withdrawals root can be computed even if
             // no l2 withdrawals in block
             _ = db.load_cache_account(Predeploys::L2_TO_L1_MESSAGE_PASSER)?;
@@ -749,9 +808,12 @@ where
         &self.config.attributes
     }
 
-    /// Returns `true` if Denim is active at this payload's timestamp.
-    pub fn is_denim_active(&self) -> bool {
-        self.chain_spec.is_denim_active_at_timestamp(self.attributes().timestamp())
+    /// Returns whether this payload uses one-shot building rather than fee-based replacement.
+    pub fn is_one_shot_building_active(&self) -> bool {
+        self.chain_spec.is_feature_active_at_timestamp(
+            BaseFeature::OneShotPayloadBuilding,
+            self.attributes().timestamp(),
+        )
     }
 
     /// Returns the current fee settings for transactions from the mempool
@@ -952,7 +1014,7 @@ where
         mut best_txs: impl ParkablePayloadTransactions<
             Pooled: PoolTransaction<Consensus = TxTy<Evm::Primitives>> + BasePooledTx,
         >,
-        mut resting: Option<&mut RestingPredicates>,
+        resting: Option<&SharedRestingPredicates>,
     ) -> Result<Option<()>, PayloadBuilderError>
     where
         Builder: BlockBuilder<Primitives = Evm::Primitives>,
@@ -987,11 +1049,7 @@ where
         let mut validity_candidates_deferred = 0_u64;
         let mut predicate_eval_cutoff_hit = false;
         let resting_mode = self.builder_config.resting_predicate_mode;
-        // Carried resting transactions held back unevaluated in this build. A commit that wakes one
-        // promotes it so the scan evaluates it at its priority position.
-        let mut parked_resting = B256Set::default();
         // Counted locally and recorded once per build, so the loop does no metric lookups.
-        let mut carried_parked = 0_u64;
         let mut carried_shadow_mismatches = 0_u64;
 
         let block_timestamp = self.attributes().timestamp();
@@ -1001,13 +1059,26 @@ where
             BaseSpecId::from_timestamp(&*self.chain_spec, block_timestamp),
             u128::from(base_fee),
         );
-        let can_finalize_early = self.is_denim_active();
+        let can_finalize_early = self.is_one_shot_building_active();
         let resource_metering = &self.builder_config.resource_metering;
         let mut resource_throttled = 0u64;
+        // Only deposits can write the L1 block info predeploy, so the scalar left in state by the
+        // sequencer transactions holds for every pool candidate in this scan.
+        let da_footprint_gas_scalar = self
+            .chain_spec
+            .is_feature_active_at_timestamp(BaseFeature::DaFootprint, self.attributes().timestamp())
+            .then(|| {
+                L1BlockInfo::fetch_da_footprint_gas_scalar(builder.evm_mut().db_mut())
+                    .expect("DA footprint should always be available from the database post jovian")
+            });
+        // Set when the job is cancelled mid-scan. The loop breaks instead of returning so the
+        // per-build validity metrics below are still recorded for scans cut short.
+        let mut cancelled = false;
         while let Some(pooled) = best_txs.next(()) {
             let tx = &pooled.transaction;
             if self.cancel.is_cancelled() {
-                return Ok(Some(()));
+                cancelled = true;
+                break;
             }
             if can_finalize_early && self.cancel.is_finalization_requested() {
                 break;
@@ -1015,6 +1086,7 @@ where
 
             let tx_hash = *tx.hash();
             let replay_independent = tx.is_eip8130_nonce_free();
+            let has_validity_predicates = !tx.validity_conditions().is_empty();
             if self.builder_config.rejection_cache.is_rejected(&tx_hash) {
                 RejectionCacheMetrics::hits().increment(1);
                 RejectionCacheMetrics::size()
@@ -1028,7 +1100,6 @@ where
                 continue;
             }
 
-            let has_validity_predicates = !tx.validity_conditions().is_empty();
             let coinbase_tip = tx.coinbase_tip();
             let has_coinbase_tip = coinbase_tip.is_some();
             // Every validity candidate ends with a decision event, so there is no separate
@@ -1056,20 +1127,6 @@ where
                     "skipping transaction with unsupported flashblock-index predicate"
                 );
                 Self::skip_current(&mut best_txs, tx.sender(), tx.nonce(), replay_independent);
-                continue;
-            }
-
-            if has_validity_predicates
-                && resting_mode.is_enforced()
-                && let Some(resting) = resting.as_deref_mut()
-                && resting.hold(tx_hash, tx.validity_conditions()).is_some()
-            {
-                // No commit since the recorded predicate was found unsatisfied changed the state it
-                // reads, so evaluating it again would park it again. The deferral was reported
-                // when it started resting, so this hot path emits nothing per member.
-                best_txs.park_current();
-                parked_resting.insert(tx_hash);
-                carried_parked += 1;
                 continue;
             }
 
@@ -1118,7 +1175,7 @@ where
                 };
                 *predicate_eval_duration.get_or_insert(Duration::ZERO) +=
                     evaluation_start.elapsed();
-                if let Some(resting) = resting.as_deref_mut() {
+                if let Some(resting) = resting {
                     match &evaluation {
                         Ok(ValidityPredicateEvaluation::Unsatisfied {
                             predicate,
@@ -1337,18 +1394,7 @@ where
                 continue;
             }
 
-            let tx_encoded = tx.encoded_2718().into_owned();
-            let tx = tx.clone_into_consensus();
-
-            let da_footprint_gas_scalar = self
-                .chain_spec
-                .is_jovian_active_at_timestamp(self.attributes().timestamp())
-                .then_some(
-                    L1BlockInfo::fetch_da_footprint_gas_scalar(builder.evm_mut().db_mut()).expect(
-                        "DA footprint should always be available from the database post jovian",
-                    ),
-                );
-
+            // Checked before cloning the candidate: in a full block most candidates stop here.
             if info.is_tx_over_limits(
                 tx_da_size,
                 block_gas_limit,
@@ -1369,9 +1415,12 @@ where
                         false,
                     );
                 }
-                Self::skip_current(&mut best_txs, tx.signer(), tx.nonce(), replay_independent);
+                Self::skip_current(&mut best_txs, tx.sender(), tx.nonce(), replay_independent);
                 continue;
             }
+
+            let tx_encoded = tx.encoded_2718().into_owned();
+            let tx = tx.clone_into_consensus();
 
             // A sequencer's block should never contain blob or deposit transactions from the pool.
             if tx.is_eip4844() || tx.is_deposit() {
@@ -1389,7 +1438,8 @@ where
             }
 
             if self.cancel.is_cancelled() {
-                return Ok(Some(()));
+                cancelled = true;
+                break;
             }
 
             let mut state_change_effects = StateChangeEffects::default();
@@ -1417,8 +1467,8 @@ where
                                 predicate_index.affected_by_state(&result_and_state.state);
                             predicate_bucket_wakeups += state_change_effects.woken_buckets as u64;
                         }
-                        if let Some(resting) = resting.as_deref() {
-                            resting_woken = resting.woken_by_state(&result_and_state.state);
+                        if let Some(resting) = resting {
+                            resting_woken = resting.wake_by_state(&result_and_state.state);
                         }
                         CommitChanges::Yes
                     }
@@ -1501,13 +1551,11 @@ where
             }
 
             best_txs.mark_current_committed();
-            if let Some(resting) = resting.as_deref_mut() {
-                for woken in resting_woken {
-                    resting.remove(woken);
-                    if parked_resting.remove(&woken) {
-                        best_txs.promote(woken);
-                    }
-                }
+            // Members the pool iterator held are parked in it; a commit that changed the state
+            // their predicate reads promotes them so the scan evaluates them at their priority
+            // position.
+            for woken in resting_woken {
+                best_txs.promote(woken);
             }
             let predicates_need_rescan = !state_change_effects.affected_transactions.is_empty();
             let predicate_rescan_start = Instant::now();
@@ -1546,7 +1594,7 @@ where
                     Ok(ValidityPredicateEvaluation::Matched) => {
                         evaluation_counters.increment(ValidityEvaluationOutcome::RescanMatched, 1);
                         predicate_index.remove(parked_hash);
-                        if let Some(resting) = resting.as_deref_mut() {
+                        if let Some(resting) = resting {
                             resting.remove(parked_hash);
                         }
                         best_txs.promote(parked_hash);
@@ -1554,7 +1602,7 @@ where
                     Ok(ValidityPredicateEvaluation::Unsatisfied { predicate, .. }) => {
                         evaluation_counters
                             .increment(ValidityEvaluationOutcome::RescanNotSatisfied, 1);
-                        if let Some(resting) = resting.as_deref_mut() {
+                        if let Some(resting) = resting {
                             resting.rest(parked_hash, predicate.clone());
                         }
                         predicate_index.reindex(parked_hash, predicate);
@@ -1569,7 +1617,7 @@ where
                             "failed to re-read validity predicate state"
                         );
                         predicate_index.remove(parked_hash);
-                        if let Some(resting) = resting.as_deref_mut() {
+                        if let Some(resting) = resting {
                             resting.remove(parked_hash);
                         }
                         best_txs.discard_parked(parked_hash);
@@ -1634,9 +1682,13 @@ where
             predicate_bucket_wakeups,
             &predicate_index,
         );
-        if carried_parked > 0 {
-            ValidityMetrics::resting_predicate_parked_total().increment(carried_parked);
-            ValidityMetrics::resting_predicate_carried_parked_total().increment(carried_parked);
+        if let Some(stats) = resting.map(SharedRestingPredicates::take_stats)
+            && stats.parked > 0
+        {
+            ValidityMetrics::resting_predicate_parked_total().increment(stats.parked);
+            ValidityMetrics::resting_predicate_carried_parked_total()
+                .increment(stats.carried_parked);
+            ValidityMetrics::record_resting_hold_duration(stats.duration);
         }
         if carried_shadow_mismatches > 0 {
             ValidityMetrics::resting_predicate_shadow_mismatches_total()
@@ -1651,6 +1703,9 @@ where
             );
         }
 
+        if cancelled {
+            return Ok(Some(()));
+        }
         // A cancellation that raced the finalization break (or an empty iterator) must still
         // win, so re-check it before the finalized payload is assembled. Gated on Denim so
         // pre-Denim control flow is unchanged.
@@ -1681,7 +1736,9 @@ mod tests {
     use base_common_evm::BaseTime;
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
     use base_execution_evm::BaseEvmConfig;
-    use base_execution_txpool::{BasePooledTransaction, ValidityOperator, ValidityPredicate};
+    use base_execution_txpool::{
+        BasePooledTransaction, BestTransactionsHold, ValidityOperator, ValidityPredicate,
+    };
     use base_observability_events::{TransactionEventCapture, TransactionEventType};
     use reth_basic_payload_builder::{BuildOutcomeKind, PayloadConfig};
     use reth_chainspec::ChainSpec;
@@ -1706,13 +1763,15 @@ mod tests {
     };
     use revm::{Database, database::TransitionState, state::EvmState};
 
-    use super::{BasePayloadBuilderCtx, Builder, ExecutionInfo};
+    use super::{
+        BasePayloadBuilderCtx, Builder, ExecutionInfo, RESTING_SWEEP_WAIT_LIMIT, job_interrupt,
+    };
     use crate::{
         BasePayloadBuilderAttributes, DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD, MeteringProvider,
         NoopMeteringProvider, ParkablePayloadTransactions, ResourceMeteringConfig,
         ResourceMeteringDimension, ResourceMeteringOperation, ResourceMeteringSchedule,
         RestingPredicateMode, RestingPredicateStore, SharedMeteringProvider,
-        config::BaseBuilderConfig, payload::EthPayloadBuilderAttributes,
+        SharedRestingPredicates, config::BaseBuilderConfig, payload::EthPayloadBuilderAttributes,
     };
 
     #[derive(Debug)]
@@ -1769,7 +1828,7 @@ mod tests {
             best_payload: None,
         };
         let provider = NoopProvider::default();
-        let builder = Builder::new(|_| NoopPayloadTransactions::<PooledCandidate>::default());
+        let builder = Builder::new(|_, _| NoopPayloadTransactions::<PooledCandidate>::default());
         let outcome = builder
             .build(
                 StateProviderDatabase::new((&provider).into_evm_state_provider()),
@@ -1889,7 +1948,7 @@ mod tests {
         Txs: ParkablePayloadTransactions<Pooled = BasePooledTransaction> + Send + Sync,
     {
         let provider = funded_provider(funded_senders);
-        Builder::new(|_| transactions)
+        Builder::new(|_, _| transactions)
             .build(
                 StateProviderDatabase::new((&provider).into_evm_state_provider()),
                 &provider,
@@ -1947,7 +2006,7 @@ mod tests {
         Txs: ParkablePayloadTransactions<Pooled = BasePooledTransaction> + Send + Sync,
     {
         let provider = funded_provider(funded_senders);
-        Builder::new(|_| transactions)
+        Builder::new(|_, _| transactions)
             .with_permanent_eviction(evict)
             .build(
                 StateProviderDatabase::new((&provider).into_evm_state_provider()),
@@ -2007,6 +2066,8 @@ mod tests {
         /// they outbid them.
         promoted_first: bool,
         invalid: Arc<Mutex<Vec<(Address, u64)>>>,
+        /// Parks held candidates before yielding them, as the pool's parking iterator does.
+        hold: Option<Box<dyn BestTransactionsHold<BasePooledTransaction>>>,
     }
 
     impl TestParkableTransactions {
@@ -2026,7 +2087,17 @@ mod tests {
                 current: None,
                 promoted_first: true,
                 invalid,
+                hold: None,
             }
+        }
+
+        /// Parks the candidates `hold` holds before yielding them.
+        fn with_hold(
+            mut self,
+            hold: Option<Box<dyn BestTransactionsHold<BasePooledTransaction>>>,
+        ) -> Self {
+            self.hold = hold;
+            self
         }
 
         /// Yields promoted transactions only after every queued one, so queued transactions can
@@ -2041,13 +2112,22 @@ mod tests {
 
         fn next(&mut self, _ctx: ()) -> Option<Self::Transaction> {
             assert!(self.current.is_none(), "current transaction was not lifecycle-managed");
-            let transaction = if self.promoted_first {
-                self.ready.pop_front().or_else(|| self.queued.pop_front())
-            } else {
-                self.queued.pop_front().or_else(|| self.ready.pop_front())
-            }?;
-            self.current = Some(Arc::clone(&transaction));
-            Some(transaction)
+            loop {
+                let transaction = if self.promoted_first {
+                    self.ready.pop_front().or_else(|| self.queued.pop_front())
+                } else {
+                    self.queued.pop_front().or_else(|| self.ready.pop_front())
+                }?;
+                if let Some(hold) = self.hold.as_mut()
+                    && !transaction.transaction.validity_conditions().is_empty()
+                    && hold.hold(&transaction)
+                {
+                    self.parked.insert(*transaction.hash(), transaction);
+                    continue;
+                }
+                self.current = Some(Arc::clone(&transaction));
+                return Some(transaction);
+            }
         }
 
         fn mark_invalid(&mut self, sender: Address, nonce: u64) {
@@ -2378,11 +2458,11 @@ mod tests {
         predicate: ValidityPredicate,
     ) -> RestingPredicateStore {
         let store = RestingPredicateStore::default();
-        let mut resting = store.take(DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD);
+        let mut resting =
+            store.take(DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD, RESTING_SWEEP_WAIT_LIMIT);
         resting.begin_block(B256::ZERO, 0, Some(&TransitionState::default()));
         resting.rest(*transaction.hash(), predicate);
-        resting.end_block(tip);
-        store.put(resting);
+        store.put(store.finish(resting), tip);
         store
     }
 
@@ -2396,18 +2476,30 @@ mod tests {
     ) -> (Vec<TxHash>, B256) {
         let mut ctx = pool_payload_context(timestamp);
         ctx.builder_config.resting_predicate_mode = mode;
+        build_carrying_resting_with(ctx, store, transactions)
+    }
+
+    /// Builds one block with `ctx`, returning the included hashes and the block hash.
+    fn build_carrying_resting_with(
+        ctx: BasePayloadBuilderCtx<BaseEvmConfig, BaseChainSpec>,
+        store: &RestingPredicateStore,
+        transactions: Vec<BasePooledTransaction>,
+    ) -> (Vec<TxHash>, B256) {
         let funded_senders =
             transactions.iter().map(|transaction| transaction.sender()).collect::<Vec<_>>();
         let provider = funded_provider(&funded_senders);
-        let outcome = Builder::new(|_| TestParkableTransactions::new(transactions))
-            .with_resting_predicates(store.clone())
-            .build(
-                StateProviderDatabase::new((&provider).into_evm_state_provider()),
-                &provider,
-                Some(state_root_handle()),
-                ctx,
-            )
-            .expect("payload must build");
+        let outcome = Builder::new(|_, resting| {
+            TestParkableTransactions::new(transactions)
+                .with_hold(resting.map(SharedRestingPredicates::iterator_hold))
+        })
+        .with_resting_predicates(store.clone())
+        .build(
+            StateProviderDatabase::new((&provider).into_evm_state_provider()),
+            &provider,
+            Some(state_root_handle()),
+            ctx,
+        )
+        .expect("payload must build");
         let (BuildOutcomeKind::Better { payload } | BuildOutcomeKind::Freeze(payload)) = outcome
         else {
             panic!("expected a built payload, got {outcome:?}")
@@ -2452,6 +2544,29 @@ mod tests {
             let store = resting_store(pool_parent_hash(), &gated, holds.clone());
             let (included, _) = build_carrying_resting(mode, &store, vec![gated.clone()]);
             assert_eq!(included.contains(&gated_hash), evaluated, "mode {mode:?}");
+        }
+    }
+
+    /// A stale carried member that a concurrent build rejected stays excluded: held back while it
+    /// rests, and skipped by the rejection cache once released or when resting is off.
+    #[test]
+    fn native_builder_excludes_a_rejected_resting_transaction() {
+        let watched_address = Address::repeat_byte(0x4b);
+        let holds = ValidityPredicate::Balance {
+            address: watched_address,
+            op: ValidityOperator::Equal,
+            value: U256::ZERO,
+        };
+        let gated = pool_transaction_to(0, Address::repeat_byte(0x5c), U256::ZERO)
+            .with_validity_predicates(vec![holds.clone()]);
+
+        for mode in [RestingPredicateMode::Off, RestingPredicateMode::Enforce] {
+            let store = resting_store(pool_parent_hash(), &gated, holds.clone());
+            let mut ctx = pool_payload_context(DENIM_TIMESTAMP);
+            ctx.builder_config.resting_predicate_mode = mode;
+            ctx.builder_config.rejection_cache.insert(*gated.hash());
+            let (included, _) = build_carrying_resting_with(ctx, &store, vec![gated.clone()]);
+            assert!(included.is_empty(), "mode {mode:?}");
         }
     }
 
@@ -2513,7 +2628,8 @@ mod tests {
             build_carrying_resting(RestingPredicateMode::Enforce, &store, vec![gated.clone()]);
 
         assert!(included.is_empty());
-        let mut resting = store.take(DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD);
+        let mut resting =
+            store.take(DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD, RESTING_SWEEP_WAIT_LIMIT);
         let carry_over = resting.begin_block(block_hash, 2, Some(&TransitionState::default()));
         assert_eq!(carry_over.carried, 1);
         assert!(resting.member(*gated.hash(), gated.validity_conditions()).is_some());
@@ -2538,7 +2654,9 @@ mod tests {
             let store = RestingPredicateStore::default();
             build_carrying_resting_at(timestamp, mode, &store, vec![gated.clone()]);
             assert!(
-                store.take(DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD).is_empty(),
+                store
+                    .take(DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD, RESTING_SWEEP_WAIT_LIMIT)
+                    .is_empty(),
                 "timestamp {timestamp}, mode {mode:?}"
             );
         }
@@ -2610,6 +2728,23 @@ mod tests {
     }
 
     #[test]
+    fn job_interrupt_observes_the_job_without_cancelling_it() {
+        let cancel = CancelOnDrop::default();
+        let watch = Arc::new(cancel.clone());
+
+        let interrupt = job_interrupt(&watch);
+        assert!(!interrupt());
+        drop(interrupt);
+        assert!(!cancel.is_interrupted(), "dropping the hold's interrupt must not cancel the job");
+
+        let interrupt = job_interrupt(&watch);
+        cancel.request_finalization();
+        assert!(interrupt(), "a finalization request interrupts the walk");
+        drop(watch);
+        assert!(interrupt(), "a finished build interrupts the walk");
+    }
+
+    #[test]
     fn cancellation_takes_precedence_over_finalization() {
         let ctx = pool_payload_context(DENIM_TIMESTAMP);
         ctx.cancel.request_finalization();
@@ -2627,7 +2762,7 @@ mod tests {
         ctx.config.attributes.transactions = vec![sequencer_attribute_tx(&pool_transaction(0))];
         drop(ctx.cancel.clone());
 
-        let err = Builder::new(|_| NoopPayloadTransactions::<BasePooledTransaction>::default())
+        let err = Builder::new(|_, _| NoopPayloadTransactions::<BasePooledTransaction>::default())
             .witness(test_state_provider(), NoopProvider::default(), &ctx)
             .unwrap_err();
         assert!(err.to_string().contains("cancelled"), "{err}");

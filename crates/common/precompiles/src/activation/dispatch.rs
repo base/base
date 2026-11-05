@@ -2,7 +2,7 @@
 
 use alloy_primitives::Bytes;
 use alloy_sol_types::SolCall;
-use base_common_genesis::BaseUpgrade;
+use base_common_genesis::{BaseFeature, BaseUpgrade};
 use base_precompile_storage::{BasePrecompileError, PrecompileResult, StorageCtx};
 
 use crate::{
@@ -50,7 +50,9 @@ impl ActivationRegistryStorage<'_> {
         // Activation-registry selectors are all nonpayable; reject attached ETH from Cobalt
         // onward. Pre-Cobalt (Beryl) preserves the historical accept-and-strand behavior so
         // replay of live-installed activation calls remains byte-identical.
-        if upgrade >= BaseUpgrade::Cobalt && !ctx.call_value().is_zero() {
+        if upgrade.is_feature_enabled(BaseFeature::ActivationRegistryRejectsValue)
+            && !ctx.call_value().is_zero()
+        {
             return recorder.record_base_error_result(
                 ctx,
                 BasePrecompileError::revert(IActivationRegistry::NonPayable {}),

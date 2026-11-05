@@ -8,6 +8,7 @@ use url::Url;
 use crate::{
     config::{OsakaTarget, ValiditySigningMode},
     utils::{BaselineError, Result},
+    workload::UniswapV3Hop,
 };
 
 /// Source for a validity predicate's address, resolved per transaction at
@@ -179,11 +180,27 @@ pub enum TxType {
         contract: Address,
         /// Number of storage slots to write per transaction.
         slots_per_tx: u32,
+        /// Mean fraction of written slots that are fresh.
+        new_slot_ratio: f64,
     },
     /// Deterministic `DoubleCounter` `increment()` call.
     DoubleCounter {
         /// `DoubleCounter` contract address.
         contract: Address,
+    },
+    /// Batched real-token transfers through Disperse.
+    TokenMove {
+        /// Number of token transfers per transaction.
+        transfers_per_tx: u32,
+        /// Token and recipients shared across calibration and measured generators.
+        context: std::sync::Arc<std::sync::OnceLock<crate::workload::TokenMoveContext>>,
+    },
+    /// ERC-4337 `handleOps` stand-in bundling signed ops.
+    AaBundle {
+        /// Signed ops per bundle transaction.
+        ops_per_bundle: u32,
+        /// Random calldata bytes appended to each bundle.
+        padding_bytes: u32,
     },
     /// Precompile call.
     Precompile {
@@ -226,6 +243,8 @@ pub enum TxType {
         reverse_max_amount: U256,
         /// Replaces the reverse range with the forward range priced at the pool before the run.
         derive_reverse_amounts: bool,
+        /// Intermediate tokens for a multi-hop route; empty for a single pool.
+        via: Vec<UniswapV3Hop>,
     },
     /// Aerodrome Slipstream (concentrated liquidity) swap.
     AerodromeCl {
@@ -246,6 +265,8 @@ pub enum TxType {
         /// Maximum amount when swapping `token_out` to `token_in`.
         reverse_max_amount: U256,
     },
+    /// Uniswap V3 position-manager operations.
+    UniswapV3Liquidity(crate::workload::UniswapV3LiquidityPayload),
 }
 
 /// Default maximum gas price cap (1000 gwei).

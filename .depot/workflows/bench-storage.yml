@@ -1,7 +1,22 @@
 name: Storage provider benchmarks (advisory)
 
+# Runs after merge on pushes to main that touch the storage provider, comparing
+# against the previous main commit. On PRs it runs only with the ci:perf or
+# ci:full label.
+# Labels are read on the next push or reopen, not when added, so that an
+# unrelated label never posts a skipped check over a real result.
 on:
+  push:
+    branches: [main]
+    paths:
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "crates/execution/node/**"
+      - "etc/scripts/ci/bench_compare.py"
+      - "etc/scripts/ci/run_storage_bench.sh"
+      - ".depot/workflows/bench-storage.yml"
   pull_request:
+    types: [opened, reopened, synchronize]
     paths:
       - "Cargo.lock"
       - "Cargo.toml"
@@ -26,21 +41,24 @@ permissions:
 jobs:
   historical-reads:
     name: Historical state reads
-    if: >
-      github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
+    if: >-
+      github.event_name != 'pull_request' || (
+      github.event.pull_request.head.repo.full_name == github.repository && (
+      contains(github.event.pull_request.labels.*.name, 'ci:perf') ||
+      contains(github.event.pull_request.labels.*.name, 'ci:full')))
     runs-on: depot-ubuntu-24.04-8
     timeout-minutes: 90
     env:
       HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-      BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
+      BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before || '' }}
     steps:
       - name: Harden the runner (Audit all outbound calls)
-        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
         with:
           egress-policy: audit
 
       - name: Checkout head
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 1
@@ -132,7 +150,7 @@ jobs:
 
       - name: Upload Criterion estimates
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: storage-provider-benchmark
           path: target/criterion/**/storage-*/estimates.json

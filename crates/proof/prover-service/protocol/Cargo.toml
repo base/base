@@ -23,6 +23,7 @@ chrono = { workspace = true, features = ["serde"] }
 jsonrpsee = { workspace = true, optional = true }
 
 # Misc
+thiserror.workspace = true
 uuid = { workspace = true, features = ["v5"] }
 
 [dev-dependencies]

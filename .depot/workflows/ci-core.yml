@@ -17,10 +17,6 @@ on:
         required: false
         type: boolean
         default: false
-      run_system_tests:
-        required: false
-        type: boolean
-        default: false
 env:
   CARGO_TERM_COLOR: always
   RUSTC_WRAPPER: "sccache"
@@ -36,19 +32,16 @@ jobs:
       pull-requests: read
     outputs:
       docker: ${{ steps.filter.outputs.docker }}
-      proof-mpt-bench: ${{ steps.filter.outputs.proof-mpt-bench }}
-      system-tests: ${{ steps.system-tests.outputs.system-tests }}
     steps:
       - name: Harden the runner (Audit all outbound calls)
-        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
         with:
           egress-policy: audit
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # PRs are checked out at their test merge commit. The affected-crate
-          # calculation below compares it to its first parent.
+          # Keep the first parent so change detection can diff against it.
           fetch-depth: 2
-      - uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3.0.2
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         id: filter
         with:
           filters: |
@@ -61,64 +54,15 @@ jobs:
               - '.env.mainnet'
               - '.env.sepolia'
               - '.dockerignore'
-            # This benchmark only exercises the MPT implementation. Keep it in
-            # merge-queue CI, but do not spend a runner on unrelated PRs.
-            proof-mpt-bench:
-              - 'Cargo.toml'
-              - 'Cargo.lock'
-              - '.cargo/**'
-              - 'rust-toolchain.toml'
-              - 'crates/proof/mpt/**'
-              - 'crates/proof/primitives/**'
-              - 'crates/execution/trie/**'
-              - 'etc/scripts/ci/**'
-              - '.depot/workflows/ci-core.yml'
-            # Non-crate inputs which can affect the system-test environment.
-            # Crate changes are classified by the dependency-aware step below.
-            system-test-inputs:
-              - 'Cargo.toml'
-              - 'Cargo.lock'
-              - '.cargo/**'
-              - 'rust-toolchain.toml'
-              - 'Justfile'
-              - 'etc/just/**'
-              - 'etc/docker/**'
-              - 'etc/systems/**'
-              - 'docker-compose.yml'
-              - '.env.mainnet'
-              - '.env.sepolia'
-              - '.depot/actions/setup/**'
-              - '.depot/workflows/ci-core.yml'
-      - name: Detect system-test dependency changes
-        id: system-tests
-        shell: bash
-        env:
-          SYSTEM_TEST_INPUTS: ${{ steps.filter.outputs.system-test-inputs }}
-        run: |
-          set -euo pipefail
-
-          # Merge-queue CI is exhaustive. This job still runs there to select
-          # Docker work, but no dependency classification is necessary.
-          if [ "$GITHUB_EVENT_NAME" != pull_request ]; then
-            echo "system-tests=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          if [ "$SYSTEM_TEST_INPUTS" = true ] || \
-             python3 etc/scripts/local/affected-crates.py HEAD^1 | grep -Fxq base-system-tests; then
-            echo "system-tests=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "system-tests=false" >> "$GITHUB_OUTPUT"
-          fi
   metadata-checks:
     name: Metadata Checks
     runs-on: depot-ubuntu-latest # was: ubuntu-latest. Mapped standard GitHub runner to Depot equivalent.
     steps:
       - name: Harden the runner (Audit all outbound calls)
-        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
         with:
           egress-policy: audit
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
       - uses: ./.depot/actions/setup
@@ -139,10 +83,10 @@ jobs:
     runs-on: depot-ubuntu-latest # was: ubuntu-latest. Mapped standard GitHub runner to Depot equivalent.
     steps:
       - name: Harden the runner (Audit all outbound calls)
-        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
         with:
           egress-policy: audit
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
       - uses: ./.depot/actions/setup
@@ -152,30 +96,20 @@ jobs:
       - run: just check::format
   rust:
     name: Rust
-    needs: changes
-    # `changes` is only needed for the RUN_BENCH decision. Clippy and the tests
-    # must not depend on change detection succeeding, so run even if `changes`
-    # fails; the benchmark step then skips because its output is unavailable.
-    if: ${{ !cancelled() }}
-    # One sandbox so that Clippy, the tests and the benchmark share a single
-    # `target/` and toolchain/tool setup instead of each compiling the workspace
-    # from scratch. System tests are wall-clock bound by Docker rather than CPU,
-    # so they run in a parallel job instead of extending this one.
-    runs-on: depot-ubuntu-24.04-32
+    # One sandbox so that Clippy and the tests share a single `target/` and
+    # toolchain/tool setup instead of each compiling the workspace from scratch.
+    # An 8-vCPU runner is slower per run than a larger one but uses fewer
+    # runner-weighted minutes for the same work.
+    runs-on: depot-ubuntu-24.04-8
     timeout-minutes: 120
     env:
       DIFF_BASE: ${{ inputs.diff_base }}
-      RUN_BENCH: >-
-        ${{ github.event_name != 'pull_request' ||
-        needs.changes.outputs.proof-mpt-bench == 'true' ||
-        contains(github.event.pull_request.labels.*.name, 'ci:perf') ||
-        contains(github.event.pull_request.labels.*.name, 'ci:full') }}
     steps:
       - name: Harden the runner (Audit all outbound calls)
-        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
         with:
           egress-policy: audit
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: ${{ inputs.diff_base != '' && 2 || 1 }}
       - uses: ./.depot/actions/setup
@@ -208,13 +142,10 @@ jobs:
           fi
       - name: Report test results
         if: ${{ !cancelled() && steps.junit-tests.outputs.present == 'true' }}
-        uses: mikepenz/action-junit-report@bccf2e31636835cf0874589931c4116687171386 # v6.4.0
+        uses: mikepenz/action-junit-report@6ef3fdcfcd5f0b5d14df3e659ef19b8c6820f93d # v6.6.1
         with:
           check_name: Test Results
           report_paths: target/nextest/ci/test-results.xml
-      - name: Run benchmarks
-        if: ${{ !cancelled() && env.RUN_BENCH == 'true' }}
-        run: cargo bench --locked -p base-proof-mpt --bench trie_node -- --test
   docker:
     name: Docker
     runs-on: depot-ubuntu-latest # was: ubuntu-latest. Mapped standard GitHub runner to Depot equivalent.
@@ -224,11 +155,11 @@ jobs:
       contents: read
     steps:
       - name: Harden the runner (Audit all outbound calls)
-        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
         with:
           egress-policy: audit
       - name: Checkout repository
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
       - name: Set up Depot CLI
@@ -243,10 +174,10 @@ jobs:
     runs-on: depot-ubuntu-latest # was: ubuntu-latest. Mapped standard GitHub runner to Depot equivalent.
     steps:
       - name: Harden the runner (Audit all outbound calls)
-        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
         with:
           egress-policy: audit
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
       - uses: ./.depot/actions/setup
@@ -256,74 +187,3 @@ jobs:
           rustup target add x86_64-unknown-linux-musl
       - name: Run SIGSEGV tests under musl
         run: cargo test --locked -p base-cli-utils --test sigsegv_test --target x86_64-unknown-linux-musl
-  system-tests:
-    name: System Tests
-    needs: changes
-    if: >-
-      inputs.run_system_tests && (
-      github.event_name != 'pull_request' ||
-      needs.changes.outputs.system-tests == 'true' ||
-      contains(github.event.pull_request.labels.*.name, 'ci:system') ||
-      contains(github.event.pull_request.labels.*.name, 'ci:full'))
-    runs-on: depot-ubuntu-24.04-16
-    timeout-minutes: 90
-    steps:
-      - name: Harden the runner (Audit all outbound calls)
-        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
-        with:
-          egress-policy: audit
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          fetch-depth: 1
-      - uses: ./.depot/actions/setup
-        with:
-          native-deps: "true"
-          foundry: "true"
-          sp1: "true"
-          tools: cargo-nextest
-      - name: Clear prior JUnit report
-        run: rm -f target/nextest/ci/test-results.xml
-      - name: Run system tests
-        shell: bash
-        run: |
-          set -euo pipefail
-          # Image pulls are network-bound; overlap them with the compile.
-          just devnet pull-images &
-          pull_pid=$!
-          just build::contracts
-          # Build the fixture with the ci profile (as tests-ci does) so the
-          # devnet dependency tree is compiled once rather than again in dev.
-          cargo build --locked --profile ci -p base-system-tests --bin base-devnet
-          wait "$pull_pid"
-          runtime_dir="$(mktemp -d)"
-          runtime_file="$runtime_dir/shared-l1.json"
-          network_name="base-system-tests-shared-l1-$GITHUB_RUN_ID"
-          cargo run --locked --profile ci -p base-system-tests --bin base-devnet -- \
-            shared-l1 --runtime-file "$runtime_file" --network-name "$network_name" &
-          fixture_pid=$!
-          cleanup() {
-            kill -INT "$fixture_pid" 2>/dev/null || true
-            wait "$fixture_pid" 2>/dev/null || true
-          }
-          trap cleanup EXIT
-          until [ -f "$runtime_file" ]; do
-            kill -0 "$fixture_pid"
-            sleep 1
-          done
-          BASE_SYSTEM_TEST_SHARED_L1_RUNTIME="$runtime_file" just devnet tests-ci
-      - name: Check for JUnit testcases
-        if: always()
-        id: junit-results
-        shell: bash
-        run: |
-          if [ -f target/nextest/ci/test-results.xml ] && grep -q '<testcase[ >]' target/nextest/ci/test-results.xml; then
-            echo "present=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "present=false" >> "$GITHUB_OUTPUT"
-          fi
-      - name: Report test results
-        if: ${{ always() && steps.junit-results.outputs.present == 'true' }}
-        uses: mikepenz/action-junit-report@bccf2e31636835cf0874589931c4116687171386 # v6.4.0
-        with:
-          check_name: System Test Results
-          report_paths: target/nextest/ci/test-results.xml

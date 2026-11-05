@@ -12,7 +12,7 @@ use std::{
 use alloy_consensus::{BlockHeader, Transaction, constants::KECCAK_EMPTY};
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, B256, LogData, U256, map::AddressSet};
-use base_common_chains::{BaseUpgrade, Upgrades};
+use base_common_chains::{BaseFeature, Upgrades};
 use base_common_consensus::{
     BaseTimeUpdateTx, Eip8130Constants, Eip8130Contracts, Eip8130Signed, Eip8130StructuralError,
     Eip8130Structure, Eip8130TimestampError,
@@ -74,6 +74,10 @@ pub enum BaseTxPoolError {
         /// Static validation label for the failure.
         reason: &'static str,
     },
+    /// The transaction carries validity predicates but is an EIP-7702
+    /// transaction or comes from an EIP-7702 delegated sender.
+    #[error("validity predicates are not allowed on EIP-7702 transactions or delegated senders")]
+    DelegatedValidityTransaction,
 }
 
 /// Resolved EIP-8130 actors and state data required to build the pool outcome.
@@ -937,7 +941,7 @@ where
         let timestamp = header.timestamp();
         let timestamp_ms = self
             .chain_spec()
-            .is_denim_active_at_timestamp(timestamp)
+            .is_feature_active_at_timestamp(BaseFeature::SubsecondBlocks, timestamp)
             .then(|| BaseTimeUpdateTx::decode_timestamp_ms(transactions, timestamp))
             .flatten()
             .unwrap_or_else(|| timestamp.saturating_mul(1_000));
@@ -1048,10 +1052,39 @@ where
                 // bounds what it sponsors.
                 authorities: None,
             };
-            return self.apply_base_checks(outcome, false);
+            return self.apply_base_checks(Self::reject_delegated_validity(outcome), false);
         }
         let outcome = self.inner.validate_one_with_state(origin, transaction, state);
-        self.apply_base_checks(outcome, true)
+        self.apply_base_checks(Self::reject_delegated_validity(outcome), true)
+    }
+
+    /// Rejects a transaction with validity predicates that is an EIP-7702
+    /// transaction or whose sender is EIP-7702 delegated.
+    ///
+    /// Validity transactions live in their own pool, which does not enforce
+    /// reth's in-flight limits for delegated accounts and pending
+    /// authorizations. Keeping delegation out of validity transactions entirely
+    /// means those limits never need to span both pools. A sender delegated
+    /// after admission loses its validity transactions on the code change (see
+    /// `BaseTransactionPool::apply_state_diff`).
+    fn reject_delegated_validity(
+        outcome: TransactionValidationOutcome<Tx>,
+    ) -> TransactionValidationOutcome<Tx> {
+        match outcome {
+            TransactionValidationOutcome::Valid { transaction, bytecode_hash, .. }
+                if !transaction.transaction().validity_conditions().is_empty()
+                    && (transaction.transaction().authorization_list().is_some()
+                        || bytecode_hash.is_some_and(|hash| hash != KECCAK_EMPTY)) =>
+            {
+                TransactionValidationOutcome::Invalid(
+                    transaction.into_transaction(),
+                    InvalidPoolTransactionError::other(
+                        BaseTxPoolError::DelegatedValidityTransaction,
+                    ),
+                )
+            }
+            outcome => outcome,
+        }
     }
 
     /// Returns a low-cardinality sender authenticator label for metrics.
@@ -1105,8 +1138,8 @@ where
         let now_ms = self.block_timestamp_ms();
         // Before Zenith there is no Keystore: authorization, lock state, and the
         // high-rate payer classification never read `AccountConfiguration`.
-        let keystore =
-            BaseSpecId::from_timestamp(self.chain_spec(), now).is_enabled_in(BaseUpgrade::Zenith);
+        let keystore = BaseSpecId::from_timestamp(self.chain_spec(), now)
+            .is_feature_enabled(BaseFeature::Keystore);
         let state = self.client().latest().map_err(|error| Self::provider_unavailable(error))?;
 
         // Authorize *and apply* the account changes against a writable overlay so
@@ -1220,8 +1253,10 @@ where
         // EIP-7825 (from Azul): `gas_limit` plus the payer authentication
         // metered on top of it is bounded by the per-transaction gas cap,
         // matching execution.
-        if self.chain_spec().is_azul_active_at_timestamp(now)
-            && FeeCheck::max_chargeable_gas(signed.tx().gas_limit, intrinsic.payer_auth)
+        if self
+            .chain_spec()
+            .is_feature_active_at_timestamp(BaseFeature::TransactionGasLimitCap, now)
+            && FeeCheck::max_chargeable_gas(signed.tx().gas_limit, intrinsic.payer_floor)
                 > MAX_TX_GAS_LIMIT_OSAKA
         {
             return Err(InvalidTransactionError::GasLimitTooHigh.into());
@@ -1234,7 +1269,7 @@ where
         FeeCheck::validate_balance(
             payer_account.balance,
             signed.tx().gas_limit,
-            intrinsic.payer_auth,
+            intrinsic.payer_floor,
             signed.tx().max_fee_per_gas,
         )
         .map_err(|_| {
@@ -1243,7 +1278,7 @@ where
                     got: payer_account.balance,
                     expected: FeeCheck::max_fee_charge(
                         signed.tx().gas_limit,
-                        intrinsic.payer_auth,
+                        intrinsic.payer_floor,
                         signed.tx().max_fee_per_gas,
                     ),
                 }
@@ -1350,7 +1385,7 @@ where
 
         let gas_charge = FeeCheck::max_fee_charge(
             signed.tx().gas_limit,
-            intrinsic.payer_auth,
+            intrinsic.payer_floor,
             signed.tx().max_fee_per_gas,
         );
         let additional_fee = if self.requires_l1_data_gas_fee() {
@@ -1360,7 +1395,7 @@ where
                 &encoded,
                 U256::from(FeeCheck::max_chargeable_gas(
                     signed.tx().gas_limit,
-                    intrinsic.payer_auth,
+                    intrinsic.payer_floor,
                 )),
                 spec_id,
             )
@@ -1424,14 +1459,19 @@ where
     ///
     /// The boundary depends on the nonce mode, matching `validate_timestamp`:
     /// - **Nonce-bearing** (`nonce_free == false`): the upper bound is
-    ///   **inclusive** — valid while `block.timestamp * 1000 <= valid_before` — so
-    ///   the last includable second is `floor(valid_before / 1000)`.
+    ///   **inclusive** — valid while `now_ms <= valid_before` — so the last
+    ///   second containing an includable millisecond is `floor(valid_before / 1000)`.
     /// - **Nonce-free** (`nonce_free == true`): the nonce-manager replay ring
     ///   admits only a strictly-future `valid_before`, so the bound is
-    ///   **exclusive** — valid while `block.timestamp * 1000 < valid_before` — and
-    ///   the last includable second is `floor((valid_before - 1) / 1000)`. Without
-    ///   the `- 1` a `valid_before` that is an exact multiple of 1000 would linger
-    ///   one second past its on-chain expiry.
+    ///   **exclusive** — valid while `now_ms < valid_before` — and the last such
+    ///   second is `floor((valid_before - 1) / 1000)`. Without the `- 1` a
+    ///   `valid_before` that is an exact multiple of 1000 would linger one second
+    ///   past its on-chain expiry.
+    ///
+    /// Sub-second blocks later in that second may already reject the
+    /// transaction; execution enforces the exact millisecond bound, so eviction
+    /// at second granularity only lets an expired transaction linger for under a
+    /// second.
     const fn tx_valid_before_secs(valid_before: u64, nonce_free: bool) -> u64 {
         if valid_before == 0 {
             u64::MAX
@@ -1860,12 +1900,13 @@ where
         let now_ms = self.block_timestamp_ms();
         // Fork gate: EIP-8130 (account abstraction) transactions are only
         // admissible to the pool once the Everest upgrade is active.
-        if !self.chain_spec().is_everest_active_at_timestamp(now) {
+        if !self.chain_spec().is_feature_active_at_timestamp(BaseFeature::Eip8130, now) {
             return Err(InvalidTransactionError::TxTypeNotSupported.into());
         }
         // Without the Keystore an EIP-8130 transaction may use only delegation
         // and native secp256k1 keys; anything else is an unsupported type.
-        if !BaseSpecId::from_timestamp(self.chain_spec(), now).is_enabled_in(BaseUpgrade::Zenith)
+        if !BaseSpecId::from_timestamp(self.chain_spec(), now)
+            .is_feature_enabled(BaseFeature::Keystore)
             && TransactionAuthorizer::check_without_keystore(signed).is_err()
         {
             return Err(InvalidTransactionError::TxTypeNotSupported.into());
@@ -2007,7 +2048,10 @@ where
             let mut l1_block_info = self.block_info.l1_block_info.read().clone();
 
             // Check to ensure tx doesn't exceed the DA footprint limit
-            if self.chain_spec().is_jovian_active_at_timestamp(self.block_timestamp()) {
+            if self
+                .chain_spec()
+                .is_feature_active_at_timestamp(BaseFeature::DaFootprint, self.block_timestamp())
+            {
                 let da_footprint = valid_tx.transaction().estimated_da_size().saturating_mul(
                     l1_block_info
                         .da_footprint_gas_scalar

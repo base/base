@@ -2,7 +2,7 @@ use std::convert::TryFrom;
 
 use base_prover_service_protocol::{
     ProofRequest as ProtocolProofRequest, ProofRequestKind as ProtocolProofRequestKind,
-    ProofResult as ProtocolProofResult, TeeKind as ProtocolTeeKind, ZkBackend,
+    ProofResult as ProtocolProofResult, TeeKind as ProtocolTeeKind, ZkBackend, ZkRangeError,
     ZkVm as ProtocolZkVm,
 };
 use chrono::{DateTime, Utc};
@@ -299,6 +299,9 @@ pub enum CreateProofRequestError {
 /// Validation errors for protocol-facing proof request creation.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum CreateProofRequestValidationError {
+    /// The ZK proof range violates the protocol constraints.
+    #[error("invalid ZK proof range: {0}")]
+    InvalidZkRange(#[from] ZkRangeError),
     /// A caller supplied an empty protocol session identifier.
     #[error("session_id must not be empty")]
     EmptySessionId,
@@ -897,6 +900,15 @@ impl DerivedProofRequestFields {
         request: &ProtocolProofRequest,
     ) -> Result<Self, CreateProofRequestValidationError> {
         match &request.request {
+            ProtocolProofRequestKind::Compressed(proof) => {
+                proof.validate_range()?;
+            }
+            ProtocolProofRequestKind::SnarkPlonk(request) => {
+                request.proof.validate_range()?;
+            }
+            ProtocolProofRequestKind::Tee(_) => {}
+        }
+        match &request.request {
             ProtocolProofRequestKind::Compressed(proof) => Ok(Self {
                 api_proof_type: ApiProofType::Compressed,
                 zk_vm: Some(protocol_zk_vm(proof.zk_vm)),
@@ -1215,7 +1227,8 @@ mod tests {
     use std::num::NonZeroU64;
 
     use base_prover_service_protocol::{
-        SnarkPlonkProofResult, ZkBackend, ZkProofRequest, ZkProofResult, ZkVm,
+        SnarkPlonkProofRequest, SnarkPlonkProofResult, ZkBackend, ZkProofRequest, ZkProofResult,
+        ZkVm,
     };
 
     use super::*;
@@ -1261,6 +1274,73 @@ mod tests {
                 zk_vm: ZkVm::Sp1,
                 zk_backend: ZkBackend::Cluster,
             }),
+        }
+    }
+
+    fn range_request(start: u64, count: u64, snark: bool) -> ProtocolProofRequest {
+        let mut request = compressed_protocol_request("range");
+        let ProtocolProofRequestKind::Compressed(proof) = &mut request.request else {
+            unreachable!()
+        };
+        proof.start_block_number = start;
+        proof.number_of_blocks_to_prove = count;
+        if snark {
+            request.request = ProtocolProofRequestKind::SnarkPlonk(SnarkPlonkProofRequest {
+                proof: proof.clone(),
+                prover_address: Default::default(),
+            });
+        }
+        request
+    }
+
+    #[test]
+    fn create_compressed_rejects_empty_range() {
+        let error = CreateProofRequest::new(range_request(100, 0, false)).unwrap_err();
+        assert_eq!(
+            error,
+            CreateProofRequestValidationError::InvalidZkRange(ZkRangeError::EmptyRange)
+        );
+        assert!(std::error::Error::source(&error).is_some());
+    }
+
+    #[test]
+    fn create_snark_rejects_empty_range() {
+        let error = CreateProofRequest::new(range_request(100, 0, true)).unwrap_err();
+        assert_eq!(
+            error,
+            CreateProofRequestValidationError::InvalidZkRange(ZkRangeError::EmptyRange)
+        );
+    }
+
+    #[test]
+    fn create_rejects_misaligned_ranges() {
+        for snark in [false, true] {
+            let error = CreateProofRequest::new(range_request(100, 9, snark)).unwrap_err();
+            assert_eq!(
+                error,
+                CreateProofRequestValidationError::InvalidZkRange(ZkRangeError::MisalignedRange {
+                    number_of_blocks_to_prove: 9,
+                    intermediate_block_interval: NonZeroU64::new(5).unwrap(),
+                })
+            );
+        }
+    }
+
+    #[test]
+    fn create_rejects_overflowing_ranges() {
+        for snark in [false, true] {
+            let error = CreateProofRequest::new(range_request(u64::MAX - 4, 5, snark)).unwrap_err();
+            assert_eq!(
+                error.to_string(),
+                "invalid ZK proof range: start block 18446744073709551611 plus block count 5 overflows u64"
+            );
+        }
+    }
+
+    #[test]
+    fn create_accepts_aligned_range_ending_at_u64_max() {
+        for snark in [false, true] {
+            CreateProofRequest::new(range_request(u64::MAX - 20, 20, snark)).unwrap();
         }
     }
 

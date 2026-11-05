@@ -1,6 +1,6 @@
 //! Contains the `[L1BlockInfo]` type and its implementation.
 use base_common_consensus::Predeploys;
-use base_common_genesis::BaseUpgrade;
+use base_common_genesis::BaseFeature;
 use base_common_l1_fees::L1FeeParams;
 use revm::{
     database_interface::Database,
@@ -188,7 +188,7 @@ impl L1BlockInfo {
         };
 
         // Post-Ecotone
-        if !spec_id.is_enabled_in(BaseUpgrade::Ecotone) {
+        if !spec_id.is_feature_enabled(BaseFeature::BlobAwareL1Fees) {
             out.l1_base_fee_scalar = db.storage(Predeploys::L1_BLOCK_INFO, Self::L1_SCALAR_SLOT)?;
             out.l1_fee_overhead =
                 Some(db.storage(Predeploys::L1_BLOCK_INFO, Self::L1_OVERHEAD_SLOT)?);
@@ -199,12 +199,12 @@ impl L1BlockInfo {
         out.try_fetch_ecotone(db)?;
 
         // Post-Isthmus L1 block info
-        if spec_id.is_enabled_in(BaseUpgrade::Isthmus) {
+        if spec_id.is_feature_enabled(BaseFeature::OperatorFee) {
             out.try_fetch_isthmus(db)?;
         }
 
         // Pre-Jovian
-        if spec_id.is_enabled_in(BaseUpgrade::Jovian) {
+        if spec_id.is_feature_enabled(BaseFeature::DaFootprint) {
             out.try_fetch_jovian(db)?;
         }
 
@@ -236,7 +236,7 @@ impl L1BlockInfo {
     ///
     /// Introduced in isthmus. Prior to isthmus, the operator fee is always zero.
     pub fn operator_fee_refund(&self, gas: &Gas, spec_id: BaseSpecId) -> U256 {
-        if !spec_id.is_enabled_in(BaseUpgrade::Isthmus) {
+        if !spec_id.is_feature_enabled(BaseFeature::OperatorFee) {
             return U256::ZERO;
         }
 
@@ -290,7 +290,7 @@ impl L1BlockInfo {
         let mut additional_cost = self.calculate_tx_l1_cost(enveloped_tx, spec);
 
         // compute operator fee
-        if spec.is_enabled_in(BaseUpgrade::Isthmus) {
+        if spec.is_feature_enabled(BaseFeature::OperatorFee) {
             let operator_fee_charge = self.operator_fee_charge(enveloped_tx, gas_limit, spec);
             additional_cost = additional_cost.saturating_add(operator_fee_charge);
         }
@@ -318,12 +318,12 @@ impl L1BlockInfo {
         // If the input is a deposit transaction or empty, the default value is zero.
         let tx_l1_cost = if input.is_empty() || input.first() == Some(&0x7E) {
             return U256::ZERO;
-        } else if spec_id.is_enabled_in(BaseUpgrade::Fjord) {
+        } else if spec_id.is_feature_enabled(BaseFeature::FastLzL1Fees) {
             fastlz_size.map_or_else(
                 || self.calculate_tx_l1_cost_fjord(input),
                 |size| self.params().calculate_tx_l1_cost_fjord_with_fastlz_size(input, size),
             )
-        } else if spec_id.is_enabled_in(BaseUpgrade::Ecotone) {
+        } else if spec_id.is_feature_enabled(BaseFeature::BlobAwareL1Fees) {
             self.calculate_tx_l1_cost_ecotone(input, spec_id)
         } else {
             self.calculate_tx_l1_cost_bedrock(input, spec_id)
@@ -372,7 +372,7 @@ mod tests {
     };
 
     use super::*;
-    use crate::BaseTransaction;
+    use crate::{BaseTransaction, BaseUpgrade};
 
     #[test]
     fn test_data_gas_non_zero_bytes() {

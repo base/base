@@ -12,6 +12,15 @@ pub(crate) struct ReaderConfig {
     /// duplicates to the forwarder.
     pub(crate) resend_after: Duration,
 
+    /// How long a validity transaction forwarded without a reported failure is held before it
+    /// may be re-sent.
+    ///
+    /// Longer than any validity transaction lives, so in practice one is never resent on a timer:
+    /// staying in the pool until its predicates hold is its expected state, and the destination
+    /// keeps it parked until its block expiry. A failed forward puts it on the
+    /// [`Self::resend_after`] schedule instead.
+    pub(crate) validity_hold: Duration,
+
     /// Bounded per-destination queue capacity for outgoing transactions.
     ///
     /// A transaction's position is fixed once it is queued, so a deep queue delays the point

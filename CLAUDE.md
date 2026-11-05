@@ -24,6 +24,7 @@
 - Sort `Cargo.toml` dependencies by line length (waterfall style) and preserve the workspace's logical grouping.
 - Put features sections at the bottom of manifests.
 - Every crate and binary manifest must inherit workspace lints with `[lints] workspace = true`.
+- Before choosing a new crate's directory, check its dependencies, including dev-dependencies, against `etc/scripts/ci/check-crate-deps.sh`, and run that script before opening a PR.
 - Do not enable dependency features in the workspace root `Cargo.toml`. Enable them only in the crates or binaries that need them to prevent feature leakage into `no_std` crates.
 
 ## Documentation and Lints

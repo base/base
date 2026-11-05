@@ -9,7 +9,7 @@ use std::{
 use alloy_consensus::{BlockHeader, Typed2718};
 use alloy_primitives::{B256, Bytes};
 use alloy_rpc_types_eth::TransactionInfo;
-use base_common_chains::Upgrades;
+use base_common_chains::{BaseFeature, Upgrades};
 use base_common_consensus::{
     BaseTransaction, BaseTransactionInfo, DepositInfo, DepositReceiptExt, EIP8130_TX_TYPE_ID,
 };
@@ -66,7 +66,7 @@ where
         let (tx, pool_transaction) = tx.split();
 
         if pool_transaction.consensus_ref().ty() == EIP8130_TX_TYPE_ID
-            && !self.is_everest_active_at_latest()?
+            && !self.is_eip8130_active_at_latest()?
         {
             return Err(BaseInvalidTransactionError::Eip8130NotAccepted.into());
         }
@@ -228,11 +228,14 @@ where
     N::Provider: BlockReaderIdExt + ChainSpecProvider<ChainSpec: Upgrades>,
     Rpc: RpcConvert<Primitives = N::Primitives, Error = BaseEthApiError>,
 {
-    fn is_everest_active_at_latest(&self) -> Result<bool, BaseEthApiError> {
+    fn is_eip8130_active_at_latest(&self) -> Result<bool, BaseEthApiError> {
         let Some(header) = self.provider().latest_header()? else {
             return Ok(false);
         };
-        Ok(self.provider().chain_spec().is_everest_active_at_timestamp(header.timestamp()))
+        Ok(self
+            .provider()
+            .chain_spec()
+            .is_feature_active_at_timestamp(BaseFeature::Eip8130, header.timestamp()))
     }
 }
 

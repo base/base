@@ -31,6 +31,9 @@ const BLOCK_AVAILABILITY_PROBE_INTERVAL: Duration = Duration::from_millis(10);
 const LIVE_CATCHUP_WINDOW: Duration = Duration::from_secs(16);
 /// Canonical blocks between live gas-calibration receipt samples.
 const LIVE_RECEIPT_SAMPLE_BLOCKS: u64 = 10;
+/// Every block's receipts are sampled until this many measured transactions have receipt gas,
+/// so the pacing gas estimate converges in the first blocks even at low transaction rates.
+const LIVE_RECEIPT_WARMUP_TRANSACTIONS: u64 = 10_000;
 /// Maximum time to wait for a block watcher RPC request.
 const BLOCK_RPC_TIMEOUT: Duration = Duration::from_secs(10);
 /// Maximum time to wait for a block receipt RPC request.
@@ -317,7 +320,8 @@ impl BlockWatcher {
             }
 
             if has_measured_pending
-                && latest_number.is_multiple_of(LIVE_RECEIPT_SAMPLE_BLOCKS)
+                && (latest_number.is_multiple_of(LIVE_RECEIPT_SAMPLE_BLOCKS)
+                    || self.results_tracker.observed_gas().1 < LIVE_RECEIPT_WARMUP_TRANSACTIONS)
                 && let Ok(permit) = Arc::clone(&live_receipt_fetch).try_acquire_owned()
             {
                 let provider = self.provider.clone();

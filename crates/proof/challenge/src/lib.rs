@@ -18,8 +18,15 @@ pub use config::ChallengerConfig;
 mod driver;
 pub use driver::{Driver, DriverComponents};
 
-mod pending;
-pub use pending::{DisputeIntent, PendingProof, PendingProofs, ProofKind, ProofPhase, ProofUpdate};
+mod dispute_attempt;
+pub use dispute_attempt::{
+    Action, AttemptLimits, AttemptPhase, AttemptProofSource, AttemptReprove, AttemptSource,
+    AttemptUpdate, DisputeAttempt, DisputeIntent, DisputeTarget, DropReason, Event, IgnoreReason,
+    Need, RetryReason, TeeAttempt, TeeSubmissionFailure, ZkAttempt, ZkFallback,
+};
+
+mod attempt_reporter;
+pub use attempt_reporter::AttemptReporter;
 
 mod proof_manager;
 pub use proof_manager::DisputeProofManager;

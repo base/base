@@ -3482,6 +3482,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
+ "tracing-subscriber",
  "url",
 ]
 
@@ -4496,9 +4497,11 @@ dependencies = [
  "base-common-evm",
  "base-common-genesis",
  "base-common-rpc-types-engine",
+ "base-consensus-upgrades",
  "base-execution-chainspec",
  "base-execution-consensus",
  "base-protocol",
+ "iai-callgrind",
  "reth-chainspec",
  "reth-errors",
  "reth-evm",
@@ -4510,8 +4513,11 @@ dependencies = [
  "reth-rpc-eth-types",
  "reth-storage-api",
  "reth-storage-errors",
+ "reth-trie-common",
  "revm",
+ "serde_json",
  "thiserror 2.0.19",
+ "tikv-jemallocator",
 ]
 
 [[package]]
@@ -4596,6 +4602,7 @@ dependencies = [
  "clap",
  "criterion",
  "derive_more 2.1.1",
+ "iai-callgrind",
  "metrics",
  "metrics-exporter-prometheus",
  "moka",
@@ -4752,7 +4759,6 @@ dependencies = [
  "serde",
  "serial_test",
  "static_assertions",
- "strum 0.27.2",
  "tempfile",
  "thiserror 2.0.19",
  "tokio",
@@ -4789,6 +4795,7 @@ dependencies = [
  "derive_more 2.1.1",
  "futures",
  "hostname",
+ "iai-callgrind",
  "jsonrpsee",
  "lru 0.16.4",
  "metrics",
@@ -5646,6 +5653,7 @@ dependencies = [
  "tokio",
  "tokio-vsock",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -5674,7 +5682,6 @@ dependencies = [
  "thiserror 2.0.19",
  "tokio",
  "tokio-util",
- "tokio-vsock",
  "tower 0.5.3",
  "tracing",
  "url",
@@ -5735,6 +5742,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
+ "tracing-subscriber",
  "url",
  "x509-parser",
 ]
@@ -5779,6 +5787,7 @@ version = "0.0.0"
 dependencies = [
  "alloy-consensus 2.5.0",
  "alloy-primitives",
+ "alloy-provider",
  "anyhow",
  "async-trait",
  "backoff",
@@ -5805,6 +5814,7 @@ dependencies = [
  "tokio-util",
  "tonic 0.14.6",
  "tracing",
+ "tracing-subscriber",
  "url",
 ]
 
@@ -6116,6 +6126,7 @@ dependencies = [
  "jsonrpsee",
  "serde",
  "serde_json",
+ "thiserror 2.0.19",
  "uuid",
 ]
 
@@ -6707,6 +6718,7 @@ dependencies = [
  "alloy-primitives",
  "alloy-rpc-types-engine",
  "base-common-consensus",
+ "base-execution-txpool",
  "base-flashblocks",
  "base-flashblocks-node",
  "base-metrics",
@@ -6719,6 +6731,7 @@ dependencies = [
  "futures",
  "lru 0.16.4",
  "metrics",
+ "metrics-exporter-prometheus",
  "reth-node-api",
  "reth-primitives-traits",
  "reth-provider",

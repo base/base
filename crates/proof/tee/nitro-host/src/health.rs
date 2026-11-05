@@ -71,16 +71,17 @@ mod tests {
     use std::sync::{Arc, atomic::Ordering};
 
     use base_proof_contracts::TEEProverRegistryClient;
+    use base_proof_tee_nitro_enclave::EnclaveClient;
 
     use super::*;
-    use crate::{test_utils::MockRegistry, transport::NitroTransport};
+    use crate::test_utils::MockRegistry;
 
     fn test_healthz_with_mock(
         registry: impl TEEProverRegistryClient + 'static,
     ) -> (Arc<RegistrationChecker>, RegistrationHealthzRpc) {
         let server = Arc::new(base_proof_tee_nitro_enclave::Server::new_local().unwrap());
-        let transport = Arc::new(NitroTransport::local(server));
-        let checker = Arc::new(RegistrationChecker::new(vec![transport], registry).unwrap());
+        let enclave_client = Arc::new(EnclaveClient::in_process(server));
+        let checker = Arc::new(RegistrationChecker::new(vec![enclave_client], registry).unwrap());
         let rpc = RegistrationHealthzRpc::new("0.0.0", Arc::clone(&checker));
         (checker, rpc)
     }

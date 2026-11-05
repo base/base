@@ -5,6 +5,8 @@
 
 extern crate alloc;
 
+pub use base_common_genesis::BaseFeature;
+
 mod config;
 pub use config::{
     Bootnodes, ChainConfig, DEVNET_BERYL_ACTIVATION_ADMIN_ADDRESS,

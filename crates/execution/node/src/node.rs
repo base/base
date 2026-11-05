@@ -10,7 +10,7 @@ use std::{
 use alloy_consensus::BlockHeader;
 use alloy_primitives::{Address, B64, B256, Bytes, map::AddressSet};
 use alloy_rlp::encode;
-use base_common_chains::Upgrades;
+use base_common_chains::{BaseFeature, Upgrades};
 use base_common_consensus::{BasePrimitives, BaseTransaction, BaseTxEnvelope};
 use base_common_rpc_types_engine::{BasePayloadAttributes, ExecutionData};
 use base_execution_chainspec::BaseChainSpec;
@@ -30,7 +30,7 @@ use base_execution_rpc::{
 use base_execution_txpool::{
     BaseOrdering, BasePooledTransaction, BasePooledTx, BaseTransactionPool,
     BaseTransactionValidator, GuardLimits, ParkableTransactionPool, TimestampedTransaction,
-    maintain_state_diff_invalidation,
+    ValidityPoolLimits, maintain_state_diff_invalidation,
 };
 use reth_chain_state::CanonStateSubscriptions;
 use reth_chainspec::{BaseFeeParams, ChainSpecProvider, EthChainSpec, Hardforks};
@@ -168,11 +168,11 @@ impl PayloadAttributesBuilder<BasePayloadBuilderAttributes<BaseTxEnvelope>>
                 suggested_fee_recipient: Address::random(),
                 withdrawals: self
                     .chain_spec
-                    .is_canyon_active_at_timestamp(timestamp)
+                    .is_feature_active_at_timestamp(BaseFeature::Withdrawals, timestamp)
                     .then(Default::default),
                 parent_beacon_block_root: self
                     .chain_spec
-                    .is_ecotone_active_at_timestamp(timestamp)
+                    .is_feature_active_at_timestamp(BaseFeature::BeaconRoots, timestamp)
                     .then(B256::random),
                 slot_number: None,
                 target_gas_limit: None,
@@ -274,6 +274,7 @@ impl BaseNode {
                         payment_limit: mempool_payer_limit,
                         allowlisted_payment_limit: mempool_allowlisted_payer_limit,
                     })
+                    .with_validity_pool_limits(self.args.validity_pool_limits())
                     .with_additional_trusted_delegation_targets(
                         self.args.mempool_trusted_delegation_targets.iter().copied(),
                     )
@@ -808,6 +809,8 @@ pub struct BasePoolBuilder<T = BasePooledTransaction> {
     pub max_inflight_delegated_slots: usize,
     /// Per-account EIP-8130 admission caps.
     pub guard_limits: GuardLimits,
+    /// Capacity of the validity pool; unset fields copy the pending subpool limit.
+    pub validity_pool_limits: ValidityPoolLimits,
     /// Additional trusted EIP-7702 delegation targets for locked payers.
     pub additional_trusted_delegation_targets: AddressSet,
     /// Operator-allowlisted EIP-8130 payers.
@@ -822,6 +825,7 @@ impl<T> Default for BasePoolBuilder<T> {
             ordering: BaseOrdering::default(),
             max_inflight_delegated_slots: 4,
             guard_limits: GuardLimits::default(),
+            validity_pool_limits: ValidityPoolLimits::inherit(),
             additional_trusted_delegation_targets: AddressSet::default(),
             allowlisted_payers: AddressSet::default(),
             _pd: Default::default(),
@@ -835,6 +839,7 @@ impl<T> Clone for BasePoolBuilder<T> {
             ordering: self.ordering.clone(),
             max_inflight_delegated_slots: self.max_inflight_delegated_slots,
             guard_limits: self.guard_limits,
+            validity_pool_limits: self.validity_pool_limits,
             additional_trusted_delegation_targets: self
                 .additional_trusted_delegation_targets
                 .clone(),
@@ -860,6 +865,12 @@ impl<T> BasePoolBuilder<T> {
     /// Sets the per-account EIP-8130 admission caps.
     pub const fn with_guard_limits(mut self, guard_limits: GuardLimits) -> Self {
         self.guard_limits = guard_limits;
+        self
+    }
+
+    /// Sets the validity pool's capacity. Unset fields copy the pending subpool limit.
+    pub const fn with_validity_pool_limits(mut self, limits: ValidityPoolLimits) -> Self {
+        self.validity_pool_limits = limits;
         self
     }
 
@@ -898,6 +909,7 @@ where
             ordering,
             max_inflight_delegated_slots,
             guard_limits,
+            validity_pool_limits,
             additional_trusted_delegation_targets,
             allowlisted_payers,
             ..
@@ -936,8 +948,9 @@ where
             final_pool_config.clone(),
         );
         let allowlisted_payer_count = allowlisted_payers.len();
-        let transaction_pool =
-            BaseTransactionPool::new(transaction_pool, ordering).with_guard_limits(guard_limits);
+        let transaction_pool = BaseTransactionPool::new(transaction_pool, ordering)
+            .with_guard_limits(guard_limits)
+            .with_validity_pool_limits(validity_pool_limits);
         spawn_maintenance_tasks(ctx, transaction_pool.clone(), &final_pool_config)?;
         let state_diff_events = BroadcastStream::new(ctx.provider().subscribe_to_canonical_state());
         ctx.task_executor().spawn_critical_task(
@@ -952,6 +965,12 @@ where
             payer_limit = guard_limits.payment_limit,
             allowlisted_payer_limit = guard_limits.allowlisted_payment_limit,
             allowlisted_payers = allowlisted_payer_count,
+            validity_pool_max_txs = validity_pool_limits
+                .max_txs
+                .unwrap_or(final_pool_config.pending_limit.max_txs),
+            validity_pool_max_size = validity_pool_limits
+                .max_size
+                .unwrap_or(final_pool_config.pending_limit.max_size),
             "Transaction pool initialized"
         );
         debug!(target: "reth::cli", "Spawned txpool maintenance tasks");
@@ -1095,7 +1114,8 @@ where
                     state_provider_metrics: ctx.config().engine.state_provider_metrics,
                     resting_predicate_mode: Default::default(),
                 },
-            );
+            )
+            .with_task_executor(ctx.task_executor().clone());
         Ok(payload_builder)
     }
 }

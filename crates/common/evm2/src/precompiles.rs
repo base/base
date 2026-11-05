@@ -1,7 +1,7 @@
 //! Base precompile set selection.
 
 use alloy_primitives::{Address, address};
-use base_common_genesis::BaseUpgrade;
+use base_common_genesis::BaseFeature;
 use evm2::{
     Evm, Precompiles,
     interpreter::{GasTracker, Message},
@@ -123,23 +123,23 @@ impl BaseEvmTypes {
     /// The Beryl/Cobalt dynamic precompiles (B20 factory, registries, `TxContext`, `NonceManager`)
     /// remain follow-up work.
     pub fn precompiles(spec: BaseSpecId) -> Precompiles<Self> {
-        let upgrade = spec.upgrade();
-        let at = |fork: BaseUpgrade| (upgrade as u8) >= (fork as u8);
         let mut precompiles = Precompiles::base(spec.into());
         let map = precompiles.as_map_mut();
 
-        if at(BaseUpgrade::Fjord) && !at(BaseUpgrade::Azul) {
+        if spec.is_feature_enabled(BaseFeature::Rip7212Precompile)
+            && !spec.is_feature_enabled(BaseFeature::RepricedP256Precompile)
+        {
             map.insert(P256VERIFY());
         }
 
         // bn254 pairing input cap: Jovian tightens the Granite cap.
-        if at(BaseUpgrade::Jovian) {
+        if spec.is_feature_enabled(BaseFeature::TightBn254PairingInputLimit) {
             map.insert(Precompile::new(
                 BN254_PAIR_ADDRESS,
                 PrecompileId::Bn254Pairing,
                 Self::run_bn254_pair_jovian,
             ));
-        } else if at(BaseUpgrade::Granite) {
+        } else if spec.is_feature_enabled(BaseFeature::Bn254PairingInputLimit) {
             map.insert(Precompile::new(
                 BN254_PAIR_ADDRESS,
                 PrecompileId::Bn254Pairing,
@@ -148,7 +148,7 @@ impl BaseEvmTypes {
         }
 
         // BLS12-381 MSM/pairing input caps: present from Isthmus (Prague BLS), tightened at Jovian.
-        if at(BaseUpgrade::Jovian) {
+        if spec.is_feature_enabled(BaseFeature::TightBlsInputLimits) {
             map.insert(Precompile::new(
                 BLS12_G1_MSM_ADDRESS,
                 PrecompileId::Bls12G1Msm,
@@ -164,7 +164,7 @@ impl BaseEvmTypes {
                 PrecompileId::Bls12Pairing,
                 Self::run_bls_pairing_jovian,
             ));
-        } else if at(BaseUpgrade::Isthmus) {
+        } else if spec.is_feature_enabled(BaseFeature::BlsInputLimits) {
             map.insert(Precompile::new(
                 BLS12_G1_MSM_ADDRESS,
                 PrecompileId::Bls12G1Msm,
@@ -188,6 +188,7 @@ impl BaseEvmTypes {
 
 #[cfg(test)]
 mod tests {
+    use base_common_genesis::BaseUpgrade;
     use evm2::{env::BlockEnv, evm::InMemoryDB};
 
     use super::*;

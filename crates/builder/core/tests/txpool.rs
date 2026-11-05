@@ -1,9 +1,10 @@
 #![allow(missing_docs)]
 
+use alloy_consensus::Transaction;
 use base_builder_core::{
     BuilderConfig,
     test_utils::{
-        BlockTransactionsExt, ChainDriverExt, ONE_ETH, default_node_config,
+        BlockTransactionsExt, ChainDriverExt, ONE_ETH, default_node_config, setup_test_instance,
         setup_test_instance_with_node_config,
     },
 };
@@ -64,5 +65,17 @@ async fn pending_pool_limit() -> eyre::Result<()> {
     // Ensure that 10 extra txs got included
     assert!(block.includes(&txs));
 
+    Ok(())
+}
+
+#[tokio::test]
+async fn explicit_nonce_overrides_pending_nonce() -> eyre::Result<()> {
+    let rbuilder = setup_test_instance().await?;
+    let driver = rbuilder.driver().await?;
+
+    let first = driver.create_transaction().with_nonce(0).build().await;
+    let second = driver.create_transaction().with_nonce(1).build().await;
+
+    assert_eq!((first.nonce(), second.nonce()), (0, 1));
     Ok(())
 }

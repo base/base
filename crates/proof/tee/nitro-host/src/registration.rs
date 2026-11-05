@@ -19,11 +19,12 @@ use std::{sync::Arc, time::Duration};
 
 use alloy_primitives::{Address, B256};
 use base_proof_contracts::{TEEProverRegistryClient, TEEProverRegistryContractClient};
+use base_proof_tee_nitro_enclave::EnclaveClient;
 use thiserror::Error;
 use tokio::sync::OnceCell;
 use tracing::warn;
 
-use super::{health::RegistrationHealthConfig, transport::NitroTransport};
+use super::health::RegistrationHealthConfig;
 
 const CHECK_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -66,7 +67,7 @@ pub enum RegistrationError {
 /// A signer that has been confirmed valid onchain via `TEEProverRegistry`.
 #[derive(Debug)]
 pub struct ValidSigner {
-    /// Index of the enclave in the configured transport list.
+    /// Index of the enclave in the configured enclave client list.
     pub index: usize,
     /// Ethereum address of the valid signer.
     pub signer: Address,
@@ -80,7 +81,7 @@ pub struct ValidSigner {
 /// health condition succeeds, [`check_health`](Self::check_health) stays healthy
 /// without further registry calls.
 pub struct RegistrationChecker {
-    transports: Vec<Arc<NitroTransport>>,
+    enclave_clients: Vec<Arc<EnclaveClient>>,
     registry: Box<dyn TEEProverRegistryClient>,
     healthy: OnceCell<()>,
     pending_image_hash: Option<B256>,
@@ -93,18 +94,18 @@ impl std::fmt::Debug for RegistrationChecker {
 }
 
 impl RegistrationChecker {
-    /// Creates a new checker for the given transports and registry client.
+    /// Creates a new checker for the given enclave clients and registry client.
     ///
-    /// Returns an error if `transports` is empty.
+    /// Returns an error if `enclave_clients` is empty.
     pub fn new(
-        transports: Vec<Arc<NitroTransport>>,
+        enclave_clients: Vec<Arc<EnclaveClient>>,
         registry: impl TEEProverRegistryClient + 'static,
     ) -> Result<Self, RegistrationError> {
-        if transports.is_empty() {
-            return Err(RegistrationError::Setup("at least one transport is required".into()));
+        if enclave_clients.is_empty() {
+            return Err(RegistrationError::Setup("at least one enclave client is required".into()));
         }
         Ok(Self {
-            transports,
+            enclave_clients,
             registry: Box::new(registry),
             healthy: OnceCell::new(),
             pending_image_hash: None,
@@ -127,7 +128,7 @@ impl RegistrationChecker {
 
     /// Creates a checker from a deployed `TEEProverRegistry` configuration.
     pub fn from_health_config(
-        transports: Vec<Arc<NitroTransport>>,
+        enclave_clients: Vec<Arc<EnclaveClient>>,
         config: &RegistrationHealthConfig,
     ) -> Result<Self, RegistrationError> {
         let l1_url = url::Url::parse(&config.l1_rpc_url).map_err(|err| {
@@ -138,16 +139,16 @@ impl RegistrationChecker {
         })?;
         let registry = TEEProverRegistryContractClient::new(config.registry_address, l1_url);
 
-        Self::new(transports, registry)?.with_pending_image_hash(config.pending_image_hash)
+        Self::new(enclave_clients, registry)?.with_pending_image_hash(config.pending_image_hash)
     }
 
-    /// Returns the configured enclave transports in checker index order.
-    pub fn transports(&self) -> Vec<Arc<NitroTransport>> {
-        self.transports.iter().map(Arc::clone).collect()
+    /// Returns the configured enclave clients in checker index order.
+    pub fn enclave_clients(&self) -> Vec<Arc<EnclaveClient>> {
+        self.enclave_clients.iter().map(Arc::clone).collect()
     }
 
-    async fn signer_address(transport: &NitroTransport) -> Result<Address, RegistrationError> {
-        transport
+    async fn signer_address(enclave_client: &EnclaveClient) -> Result<Address, RegistrationError> {
+        enclave_client
             .signer_address()
             .await
             .map_err(|e| RegistrationError::Setup(format!("signer public key: {e}")))
@@ -167,11 +168,11 @@ impl RegistrationChecker {
     async fn fetch_health(&self) -> Result<bool, RegistrationError> {
         let mut first_rpc_error = None;
 
-        for (index, transport) in self.transports.iter().enumerate() {
-            let signer = match Self::signer_address(transport).await {
+        for (index, enclave_client) in self.enclave_clients.iter().enumerate() {
+            let signer = match Self::signer_address(enclave_client).await {
                 Ok(s) => s,
                 Err(e) => {
-                    warn!(error = %e, index, "skipping transport: key fetch failed");
+                    warn!(error = %e, index, "skipping enclave client: key fetch failed");
                     continue;
                 }
             };
@@ -217,7 +218,7 @@ impl RegistrationChecker {
     ///
     /// Success latches forever, even after deregistration. Before the latch,
     /// pending image reads run only for invalid signers, at most once per
-    /// transport per call, with the same timeout as validity reads. An RPC
+    /// enclave client per call, with the same timeout as validity reads. An RPC
     /// failure returns an error if no other signer satisfies the health policy.
     /// See the [module-level docs](self) for the latch trade-off.
     pub async fn check_health(&self) -> Result<bool, RegistrationError> {
@@ -231,14 +232,14 @@ impl RegistrationChecker {
         Ok(valid)
     }
 
-    /// Fails the request unless the **first** transport's signer is currently
+    /// Fails the request unless the **first** enclave client's signer is currently
     /// valid.
     ///
     /// Fail-closed: if L1 is unreachable or the signer is not valid, the
     /// proof request is rejected.
     pub async fn require_valid_signer(&self) -> Result<(), RegistrationError> {
-        // Constructor guarantees at least one transport.
-        let signer = Self::signer_address(&self.transports[0]).await?;
+        // Constructor guarantees at least one enclave client.
+        let signer = Self::signer_address(&self.enclave_clients[0]).await?;
 
         match self.is_valid_signer(signer).await {
             Ok(true) => Ok(()),
@@ -261,11 +262,11 @@ impl RegistrationChecker {
         let mut discovered = Vec::new();
         let mut first_rpc_error = None;
 
-        for (index, transport) in self.transports.iter().enumerate() {
-            let signer = match Self::signer_address(transport).await {
+        for (index, enclave_client) in self.enclave_clients.iter().enumerate() {
+            let signer = match Self::signer_address(enclave_client).await {
                 Ok(s) => s,
                 Err(e) => {
-                    warn!(error = %e, index, "skipping transport: key fetch failed");
+                    warn!(error = %e, index, "skipping enclave client: key fetch failed");
                     continue;
                 }
             };
@@ -315,38 +316,38 @@ mod tests {
         registry: impl TEEProverRegistryClient + 'static,
     ) -> RegistrationChecker {
         let server = Arc::new(base_proof_tee_nitro_enclave::Server::new_local().unwrap());
-        let transport = Arc::new(NitroTransport::local(server));
-        RegistrationChecker::new(vec![transport], registry).unwrap()
+        let enclave_client = Arc::new(EnclaveClient::in_process(server));
+        RegistrationChecker::new(vec![enclave_client], registry).unwrap()
     }
 
     fn test_checker() -> RegistrationChecker {
         let server = Arc::new(base_proof_tee_nitro_enclave::Server::new_local().unwrap());
-        let transport = Arc::new(NitroTransport::local(server));
+        let enclave_client = Arc::new(EnclaveClient::in_process(server));
         let dummy_url = url::Url::parse("http://localhost:1").unwrap();
         let registry = base_proof_contracts::TEEProverRegistryContractClient::new(
             alloy_primitives::Address::ZERO,
             dummy_url,
         );
-        RegistrationChecker::new(vec![transport], registry).unwrap()
+        RegistrationChecker::new(vec![enclave_client], registry).unwrap()
     }
 
-    fn two_transport_checker(
+    fn two_enclave_client_checker(
         registry: impl TEEProverRegistryClient + 'static,
     ) -> RegistrationChecker {
         let s1 = Arc::new(base_proof_tee_nitro_enclave::Server::new_local().unwrap());
         let s2 = Arc::new(base_proof_tee_nitro_enclave::Server::new_local().unwrap());
-        let t1 = Arc::new(NitroTransport::local(s1));
-        let t2 = Arc::new(NitroTransport::local(s2));
+        let t1 = Arc::new(EnclaveClient::in_process(s1));
+        let t2 = Arc::new(EnclaveClient::in_process(s2));
         RegistrationChecker::new(vec![t1, t2], registry).unwrap()
     }
 
-    async fn transport_signer_address(transport: &NitroTransport) -> Address {
-        transport.signer_address().await.unwrap()
+    async fn enclave_client_signer_address(enclave_client: &EnclaveClient) -> Address {
+        enclave_client.signer_address().await.unwrap()
     }
 
-    async fn two_transport_signers(checker: &RegistrationChecker) -> (Address, Address) {
-        let a = transport_signer_address(&checker.transports[0]).await;
-        let b = transport_signer_address(&checker.transports[1]).await;
+    async fn two_enclave_client_signers(checker: &RegistrationChecker) -> (Address, Address) {
+        let a = enclave_client_signer_address(&checker.enclave_clients[0]).await;
+        let b = enclave_client_signer_address(&checker.enclave_clients[1]).await;
         (a, b)
     }
 
@@ -388,9 +389,10 @@ mod tests {
     async fn pending_health_latch_does_not_authorize_proving_or_routing() {
         let pending = B256::repeat_byte(1);
         let registry = AddressBasedMockRegistry::new(HashMap::new());
-        let checker =
-            two_transport_checker(registry.clone()).with_pending_image_hash(Some(pending)).unwrap();
-        let (pending_signer, current_signer) = two_transport_signers(&checker).await;
+        let checker = two_enclave_client_checker(registry.clone())
+            .with_pending_image_hash(Some(pending))
+            .unwrap();
+        let (pending_signer, current_signer) = two_enclave_client_signers(&checker).await;
         registry.image_hashes.lock().unwrap().insert(pending_signer, pending);
 
         assert!(checker.check_health().await.unwrap());
@@ -411,12 +413,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn pending_health_reads_each_invalid_transport_once_per_poll_before_latch() {
+    async fn pending_health_reads_each_invalid_enclave_client_once_per_poll_before_latch() {
         let pending = B256::repeat_byte(1);
         let registry = AddressBasedMockRegistry::new(HashMap::new());
-        let checker =
-            two_transport_checker(registry.clone()).with_pending_image_hash(Some(pending)).unwrap();
-        let (a, b) = two_transport_signers(&checker).await;
+        let checker = two_enclave_client_checker(registry.clone())
+            .with_pending_image_hash(Some(pending))
+            .unwrap();
+        let (a, b) = two_enclave_client_signers(&checker).await;
 
         assert!(!checker.check_health().await.unwrap());
         assert_eq!(*registry.image_hash_calls.lock().unwrap(), vec![a, b]);
@@ -437,10 +440,10 @@ mod tests {
     #[tokio::test]
     async fn pending_health_skips_image_reads_for_valid_signers_and_validity_errors() {
         let registry = AddressBasedMockRegistry::new(HashMap::new());
-        let checker = two_transport_checker(registry.clone())
+        let checker = two_enclave_client_checker(registry.clone())
             .with_pending_image_hash(Some(B256::repeat_byte(1)))
             .unwrap();
-        let (a, b) = two_transport_signers(&checker).await;
+        let (a, b) = two_enclave_client_signers(&checker).await;
         registry.fail_signers.lock().unwrap().insert(a);
         registry.validity_map.lock().unwrap().insert(b, true);
 
@@ -481,9 +484,10 @@ mod tests {
     async fn pending_health_can_recover_from_one_image_rpc_failure() {
         let pending = B256::repeat_byte(1);
         let registry = AddressBasedMockRegistry::new(HashMap::new());
-        let checker =
-            two_transport_checker(registry.clone()).with_pending_image_hash(Some(pending)).unwrap();
-        let (a, b) = two_transport_signers(&checker).await;
+        let checker = two_enclave_client_checker(registry.clone())
+            .with_pending_image_hash(Some(pending))
+            .unwrap();
+        let (a, b) = two_enclave_client_signers(&checker).await;
         registry.image_hash_fail_signers.lock().unwrap().insert(a);
         registry.image_hashes.lock().unwrap().insert(b, pending);
 
@@ -583,8 +587,8 @@ mod tests {
     #[tokio::test]
     async fn select_all_skips_invalid_returns_only_valid() {
         let registry = AddressBasedMockRegistry::new(HashMap::new());
-        let checker = two_transport_checker(registry.clone());
-        let (addr0, addr1) = two_transport_signers(&checker).await;
+        let checker = two_enclave_client_checker(registry.clone());
+        let (addr0, addr1) = two_enclave_client_signers(&checker).await;
 
         registry.validity_map.lock().unwrap().insert(addr0, false);
         registry.validity_map.lock().unwrap().insert(addr1, true);
@@ -598,8 +602,8 @@ mod tests {
     #[tokio::test]
     async fn select_all_both_valid_returns_in_config_order() {
         let registry = AddressBasedMockRegistry::new(HashMap::new());
-        let checker = two_transport_checker(registry.clone());
-        let (addr0, addr1) = two_transport_signers(&checker).await;
+        let checker = two_enclave_client_checker(registry.clone());
+        let (addr0, addr1) = two_enclave_client_signers(&checker).await;
 
         registry.validity_map.lock().unwrap().insert(addr0, true);
         registry.validity_map.lock().unwrap().insert(addr1, true);
@@ -615,7 +619,7 @@ mod tests {
     #[tokio::test]
     async fn select_all_none_valid_returns_no_valid_signer() {
         let registry = AddressBasedMockRegistry::new(HashMap::new());
-        let checker = two_transport_checker(registry);
+        let checker = two_enclave_client_checker(registry);
 
         let err = checker.select_all_valid_enclaves().await.unwrap_err();
         match err {
@@ -629,8 +633,8 @@ mod tests {
     #[tokio::test]
     async fn health_any_valid_returns_true() {
         let registry = AddressBasedMockRegistry::new(HashMap::new());
-        let checker = two_transport_checker(registry.clone());
-        let (addr0, addr1) = two_transport_signers(&checker).await;
+        let checker = two_enclave_client_checker(registry.clone());
+        let (addr0, addr1) = two_enclave_client_signers(&checker).await;
 
         registry.validity_map.lock().unwrap().insert(addr0, false);
         registry.validity_map.lock().unwrap().insert(addr1, true);
@@ -639,10 +643,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn health_latches_with_multi_transport() {
+    async fn health_latches_with_multi_enclave_client() {
         let registry = AddressBasedMockRegistry::new(HashMap::new());
-        let checker = two_transport_checker(registry.clone());
-        let (addr0, addr1) = two_transport_signers(&checker).await;
+        let checker = two_enclave_client_checker(registry.clone());
+        let (addr0, addr1) = two_enclave_client_signers(&checker).await;
 
         registry.validity_map.lock().unwrap().insert(addr0, true);
         registry.validity_map.lock().unwrap().insert(addr1, false);
@@ -658,8 +662,8 @@ mod tests {
     #[tokio::test]
     async fn select_all_valid_returns_valid_when_other_rpc_fails() {
         let registry = AddressBasedMockRegistry::new(HashMap::new());
-        let checker = two_transport_checker(registry.clone());
-        let (addr0, addr1) = two_transport_signers(&checker).await;
+        let checker = two_enclave_client_checker(registry.clone());
+        let (addr0, addr1) = two_enclave_client_signers(&checker).await;
 
         registry.validity_map.lock().unwrap().insert(addr0, true);
         registry.validity_map.lock().unwrap().insert(addr1, true);
@@ -676,8 +680,8 @@ mod tests {
     #[tokio::test]
     async fn select_all_valid_propagates_rpc_error_when_none_valid() {
         let registry = AddressBasedMockRegistry::new(HashMap::new());
-        let checker = two_transport_checker(registry.clone());
-        let (addr0, addr1) = two_transport_signers(&checker).await;
+        let checker = two_enclave_client_checker(registry.clone());
+        let (addr0, addr1) = two_enclave_client_signers(&checker).await;
 
         // Enclave 0 RPC fails, enclave 1 reports not-valid. No valid signer,
         // so the RPC error should surface so the operator sees L1 trouble.
@@ -689,10 +693,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn require_valid_signer_checks_first_transport_only() {
+    async fn require_valid_signer_checks_first_enclave_client_only() {
         let registry = AddressBasedMockRegistry::new(HashMap::new());
-        let checker = two_transport_checker(registry.clone());
-        let (addr0, addr1) = two_transport_signers(&checker).await;
+        let checker = two_enclave_client_checker(registry.clone());
+        let (addr0, addr1) = two_enclave_client_signers(&checker).await;
 
         registry.validity_map.lock().unwrap().insert(addr0, false);
         registry.validity_map.lock().unwrap().insert(addr1, true);

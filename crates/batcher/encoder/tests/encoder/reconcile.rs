@@ -250,7 +250,11 @@ fn reconcile_reports_a_confirmed_channel_derivation_skipped() {
 /// the same frames, pruned tail included, and derivation reads both channels from what landed.
 #[test]
 fn shared_blob_keeps_serving_the_remaining_channel_after_a_prune() {
-    let config = EncoderConfig { compressed_size_target: Some(1), ..EncoderConfig::default() };
+    let config = EncoderConfig {
+        compressed_size_target: Some(1),
+        max_blobs_per_tx: 1,
+        ..EncoderConfig::default()
+    };
     let fixture = EncoderFixture::new(config);
     let mut encoder = fixture.encoder();
     let shared = SharedBlob::encode(&mut encoder);

@@ -1,7 +1,7 @@
 //! Block header verification w.r.t. the EIP-1559 parameters in `extraData` introduced in Holocene.
 
 use alloy_consensus::BlockHeader;
-use base_common_chains::Upgrades;
+use base_common_chains::{BaseFeature, Upgrades};
 use base_common_consensus::{EIP1559ParamError, HoloceneExtraData, JovianExtraData};
 use reth_consensus::ConsensusError;
 
@@ -15,15 +15,18 @@ pub fn ensure_valid_extra_data<H: BlockHeader>(
     header: &H,
 ) -> Result<(), ConsensusError> {
     let timestamp = header.timestamp();
-    let (elasticity, denominator) = if chain_spec.is_jovian_active_at_timestamp(timestamp) {
-        let (elasticity, denominator, _) =
-            JovianExtraData::decode(header.extra_data()).map_err(ConsensusError::other)?;
-        (elasticity, denominator)
-    } else if chain_spec.is_holocene_active_at_timestamp(timestamp) {
-        HoloceneExtraData::decode(header.extra_data()).map_err(ConsensusError::other)?
-    } else {
-        return Ok(());
-    };
+    let (elasticity, denominator) =
+        if chain_spec.is_feature_active_at_timestamp(BaseFeature::MinBaseFee, timestamp) {
+            let (elasticity, denominator, _) =
+                JovianExtraData::decode(header.extra_data()).map_err(ConsensusError::other)?;
+            (elasticity, denominator)
+        } else if chain_spec
+            .is_feature_active_at_timestamp(BaseFeature::DynamicBaseFeeParameters, timestamp)
+        {
+            HoloceneExtraData::decode(header.extra_data()).map_err(ConsensusError::other)?
+        } else {
+            return Ok(());
+        };
 
     if elasticity == 0 || denominator == 0 {
         return Err(ConsensusError::other(EIP1559ParamError::ZeroParams));

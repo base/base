@@ -7,7 +7,7 @@ use alloy_consensus::{
 use alloy_eips::{eip7685::EMPTY_REQUESTS_HASH, merge::BEACON_NONCE};
 use alloy_evm::block::BlockExecutorFactory;
 use alloy_primitives::logs_bloom;
-use base_common_chains::Upgrades;
+use base_common_chains::{BaseFeature, Upgrades};
 use base_common_consensus::DepositReceiptExt;
 use base_common_evm::BaseBlockExecutionCtx;
 use base_execution_consensus::{calculate_receipt_root_no_memo, isthmus};
@@ -61,35 +61,41 @@ impl<ChainSpec: Upgrades> BaseBlockAssembler<ChainSpec> {
         let receipts_root = calculate_receipt_root_no_memo(receipts, &self.chain_spec, timestamp);
         let logs_bloom = logs_bloom(receipts.iter().flat_map(|r| r.logs()));
 
-        let mut requests_hash = None;
+        let [empty_requests_hash, message_root] = BaseFeature::activation_states(
+            [BaseFeature::EmptyRequestsHash, BaseFeature::L2ToL1MessageRoot],
+            |feature| self.chain_spec.is_feature_active_at_timestamp(feature, timestamp),
+        );
+        let requests_hash = empty_requests_hash.then_some(EMPTY_REQUESTS_HASH);
 
-        let withdrawals_root =
-            if Upgrades::is_isthmus_active_at_timestamp(&*self.chain_spec, timestamp) {
-                // always empty requests hash post isthmus
-                requests_hash = Some(EMPTY_REQUESTS_HASH);
+        let withdrawals_root = if message_root {
+            // withdrawals root field in block header is used for storage root of L2 predeploy
+            // `l2tol1-message-passer`
+            Some(
+                isthmus::withdrawals_root(bundle_state, state_provider)
+                    .map_err(BlockExecutionError::other)?,
+            )
+        } else if self
+            .chain_spec
+            .is_feature_active_at_timestamp(BaseFeature::Withdrawals, timestamp)
+        {
+            Some(EMPTY_WITHDRAWALS)
+        } else {
+            None
+        };
 
-                // withdrawals root field in block header is used for storage root of L2 predeploy
-                // `l2tol1-message-passer`
-                Some(
-                    isthmus::withdrawals_root(bundle_state, state_provider)
-                        .map_err(BlockExecutionError::other)?,
-                )
-            } else if Upgrades::is_canyon_active_at_timestamp(&*self.chain_spec, timestamp) {
-                Some(EMPTY_WITHDRAWALS)
-            } else {
-                None
-            };
-
-        let (excess_blob_gas, blob_gas_used) =
-            if Upgrades::is_jovian_active_at_timestamp(&*self.chain_spec, timestamp) {
-                // In jovian, we're using the blob gas used field to store the current da
-                // footprint's value.
-                (Some(0), Some(*blob_gas_used))
-            } else if Upgrades::is_ecotone_active_at_timestamp(&*self.chain_spec, timestamp) {
-                (Some(0), Some(0))
-            } else {
-                (None, None)
-            };
+        let (excess_blob_gas, blob_gas_used) = if self
+            .chain_spec
+            .is_feature_active_at_timestamp(BaseFeature::DaFootprint, timestamp)
+        {
+            // In jovian, we're using the blob gas used field to store the current da
+            // footprint's value.
+            (Some(0), Some(*blob_gas_used))
+        } else if self.chain_spec.is_feature_active_at_timestamp(BaseFeature::BlobHeader, timestamp)
+        {
+            (Some(0), Some(0))
+        } else {
+            (None, None)
+        };
 
         let header = Header {
             parent_hash: ctx.parent_hash,
@@ -122,7 +128,9 @@ impl<ChainSpec: Upgrades> BaseBlockAssembler<ChainSpec> {
             BlockBody {
                 transactions,
                 ommers: Default::default(),
-                withdrawals: Upgrades::is_canyon_active_at_timestamp(&*self.chain_spec, timestamp)
+                withdrawals: self
+                    .chain_spec
+                    .is_feature_active_at_timestamp(BaseFeature::Withdrawals, timestamp)
                     .then(Default::default),
             },
         ))

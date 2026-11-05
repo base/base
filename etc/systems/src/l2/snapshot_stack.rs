@@ -8,7 +8,7 @@ use std::{
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types_engine::JwtSecret;
 use alloy_rpc_types_eth::SyncStatus as EthSyncStatus;
-use base_common_genesis::{BaseUpgrade, RollupConfig, SystemConfig};
+use base_common_genesis::{BaseFeature, BaseUpgrade, RollupConfig, SystemConfig};
 use base_common_network::Base;
 use base_consensus_node::StandalonePrefund;
 use base_execution_chainspec::BaseChainSpec;
@@ -97,6 +97,7 @@ impl SnapshotL2Stack {
             extra_extensions: Vec::new(),
             validity_signature_mode: ValiditySignatureMode::Off,
             persistence_threshold: Some(0),
+            resting_predicate_mode: config.snapshot.resting_predicate_mode,
             persistence_backpressure_threshold: Some(
                 block_interval.snapshot_persistence_backpressure_threshold(),
             ),
@@ -277,7 +278,10 @@ impl SnapshotL2Stack {
             .ok_or_else(|| eyre::eyre!("snapshot boundary block number overflow"))?;
         if block_interval == DevnetBlockInterval::TwoSeconds {
             ensure!(
-                !config.is_denim_active(config.l2_block_timestamp(boundary_number)),
+                !config.is_feature_active_cascading(
+                    BaseFeature::SubsecondBlocks,
+                    config.l2_block_timestamp(boundary_number)
+                ),
                 "two-second snapshot continuation requires a pre-Denim snapshot head"
             );
         }
@@ -450,16 +454,6 @@ impl SnapshotL2Stack {
             None,
         )
         .await
-    }
-
-    /// Verifies both ELs currently report the same block number.
-    pub async fn ensure_heads_match(&self) -> Result<()> {
-        let builder = RootProvider::<Base>::new_http(self.builder.rpc_url()?);
-        let client = RootProvider::<Base>::new_http(self.client()?.rpc_url()?);
-        let (builder_head, client_head) =
-            tokio::try_join!(builder.get_block_number(), client.get_block_number())?;
-        ensure!(builder_head == client_head, "builder head {builder_head} != client {client_head}");
-        Ok(())
     }
 
     fn client(&self) -> Result<&InProcessClient> {

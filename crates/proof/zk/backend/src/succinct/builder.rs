@@ -377,7 +377,7 @@ impl SuccinctZkProverBuilder {
 
     /// Reuses an already initialized witness provider.
     ///
-    /// The provider must use the same RPC endpoints as this builder's backend config.
+    /// The provider must use the same RPC endpoints and default sequence window as this builder's config.
     #[must_use]
     pub fn with_witness_provider(mut self, witness_provider: OpSuccinctWitnessProvider) -> Self {
         self.witness_provider = Some(witness_provider);
@@ -417,6 +417,8 @@ impl SuccinctZkProverBuilder {
         rpc: SuccinctRpcConfig,
         cancel: &CancellationToken,
     ) -> Result<Option<OpSuccinctWitnessProvider>, SuccinctZkProverBuildError> {
+        let l1_node_url = rpc.l1_rpc.as_str().to_owned();
+        let base_consensus_url = rpc.base_consensus_rpc.as_str().to_owned();
         let rpc_config = RPCConfig {
             l1_rpc: rpc.l1_rpc,
             l1_beacon_rpc: Some(rpc.l1_beacon_rpc),
@@ -445,7 +447,12 @@ impl SuccinctZkProverBuilder {
         };
         let fetcher = Arc::new(fetcher);
 
-        Ok(Some(OpSuccinctWitnessProvider::new(fetcher)))
+        Ok(Some(OpSuccinctWitnessProvider::new(
+            fetcher,
+            rpc.default_sequence_window,
+            l1_node_url,
+            base_consensus_url,
+        )))
     }
 
     /// Completes an initialization operation unless cancellation is requested.

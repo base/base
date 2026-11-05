@@ -7,9 +7,9 @@ use alloy_rpc_types::TransactionRequest;
 use tracing::instrument;
 
 use super::{
-    AerodromeClPayload, B20TransferPayload, CalldataPayload, DoubleCounterPayload, Erc20Payload,
-    OsakaPayload, Payload, PrecompilePayload, SeededRng, StoragePayload, TransferPayload,
-    UniswapV3Payload, chain_prep::ChainPrepContext,
+    AaBundlePayload, AerodromeClPayload, B20TransferPayload, CalldataPayload, DoubleCounterPayload,
+    Erc20Payload, OsakaPayload, Payload, PrecompilePayload, SeededRng, StoragePayload,
+    TransferPayload, UniswapV3Payload, chain_prep::ChainPrepContext,
 };
 use crate::{
     BaselineError,
@@ -93,13 +93,30 @@ impl WorkloadGenerator {
                         weight_pct,
                     );
                 }
-                TxType::Storage { contract, slots_per_tx } => {
-                    generator = generator
-                        .with_payload(StoragePayload::new(*contract, *slots_per_tx), weight_pct);
+                TxType::Storage { contract, slots_per_tx, new_slot_ratio } => {
+                    generator = generator.with_payload(
+                        StoragePayload::new(*contract, *slots_per_tx, *new_slot_ratio),
+                        weight_pct,
+                    );
                 }
                 TxType::DoubleCounter { contract } => {
                     generator =
                         generator.with_payload(DoubleCounterPayload::new(*contract), weight_pct);
+                }
+                TxType::TokenMove { transfers_per_tx, context } => {
+                    generator = generator.with_payload(
+                        super::TokenMovePayload {
+                            transfers_per_tx: *transfers_per_tx,
+                            context: Arc::clone(context),
+                        },
+                        weight_pct,
+                    );
+                }
+                TxType::AaBundle { ops_per_bundle, padding_bytes } => {
+                    generator = generator.with_payload(
+                        AaBundlePayload::new(*ops_per_bundle, *padding_bytes),
+                        weight_pct,
+                    );
                 }
                 TxType::Precompile { target, blake2f_rounds, iterations, looper_contract } => {
                     let payload = PrecompilePayload::with_options(
@@ -131,6 +148,7 @@ impl WorkloadGenerator {
                     max_amount,
                     reverse_min_amount,
                     reverse_max_amount,
+                    via,
                     ..
                 } => {
                     generator = generator.with_payload(
@@ -143,7 +161,8 @@ impl WorkloadGenerator {
                             *max_amount,
                             Some((*reverse_min_amount, *reverse_max_amount)),
                         )
-                        .with_native(*native),
+                        .with_native(*native)
+                        .with_via(via),
                         weight_pct,
                     );
                 }
@@ -169,6 +188,9 @@ impl WorkloadGenerator {
                         ),
                         weight_pct,
                     );
+                }
+                TxType::UniswapV3Liquidity(payload) => {
+                    generator = generator.with_payload(payload.clone(), weight_pct);
                 }
             }
         }
@@ -212,6 +234,16 @@ impl WorkloadGenerator {
     ) -> Result<TransactionRequest> {
         let payload = self.select_payload()?;
         Ok(self.generate_selected_payload(&payload, from, to))
+    }
+
+    /// Returns a selected payload's calibration requests with their relative weights.
+    pub fn calibration_requests(
+        &mut self,
+        from: alloy_primitives::Address,
+        to: alloy_primitives::Address,
+    ) -> Result<Vec<(TransactionRequest, u32)>> {
+        let selected = self.select_payload()?;
+        Ok(selected.payload.calibration_requests(&mut self.rng, from, to))
     }
 
     /// Selects a payload according to configured weights.
@@ -282,6 +314,7 @@ mod tests {
                     reverse_min_amount: U256::from(1),
                     reverse_max_amount: U256::from(1),
                     derive_reverse_amounts: false,
+                    via: vec![],
                 },
             },
             TxConfig {

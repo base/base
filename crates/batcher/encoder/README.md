@@ -7,15 +7,19 @@ historical derivation.
 
 The writable channel is the FIFO tail. Each accepted batch is compressed once;
 hard limits are checked before the stream is mutated. `compressed_size_target`
-tracks stable output emitted by the compression stream and closes after the
-batch that reaches it.
+tracks stable output emitted by the compression stream, which a channel with a
+target flushes every quarter target of input, and closes after the batch that
+reaches it.
 
 `DaEgress` frames compressor output against remaining blob capacity, so a full
 blob can emit while the channel is still open. Artifacts are immutable after
 creation. A soft-target or protocol-limit close retains the same channel's
 partial compressed tail until its L1 deadline or an explicit flush releases it.
-`max_blobs_per_tx` only controls how many blobs are grouped into a transaction;
-it does not close channels.
+A transaction carries consecutive ready blobs up to and including the first one
+that holds a channel's last frame, and at most `max_blobs_per_tx`. The safe head
+moves only once a channel's last frame is on L1, so the earlier blobs of a
+channel wait to go out with it, or until they fill a transaction, instead of
+each taking its own. `max_blobs_per_tx` does not close channels.
 
 Channel-close metric `reason` labels: `soft_target`, `protocol_limit`,
 `timeout`, `flush`, `discard`.

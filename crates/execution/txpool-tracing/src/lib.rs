@@ -8,7 +8,7 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
 mod events;
-pub use events::{EventLog, NonceSlot, NonceSummary, Pool, TxEvent};
+pub use events::{EventLog, NonceSlot, NonceSummary, Pool, PooledTxInfo, TxEvent, TxFlow};
 
 mod subscription;
 pub use subscription::tracex_subscription;

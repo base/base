@@ -56,7 +56,9 @@ serde = { workspace = true, features = ["derive", "std"] }
 tracing.workspace = true
 
 [dev-dependencies]
+alloy-provider.workspace = true
 tokio = { workspace = true, features = ["macros", "rt"] }
+tracing-subscriber = { workspace = true, features = ["json"] }
 
 [features]
 default = [ "metrics" ]

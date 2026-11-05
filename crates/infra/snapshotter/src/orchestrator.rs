@@ -3,7 +3,9 @@
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, bail};
-use base_reth_cli::{ChunkFilename, ManifestGenerationParams, SnapshotGenerator};
+use base_reth_cli::{
+    ChunkFilename, DEFAULT_BLOCKS_PER_FILE, ManifestGenerationParams, SnapshotGenerator,
+};
 use tracing::{error, info, warn};
 
 use crate::{
@@ -176,16 +178,14 @@ impl<C: ContainerManager, T: TipChecker> Snapshotter<C, T> {
         let source_datadir = self.config.source_datadir.clone();
         let chain_id = self.config.chain_id;
         let block = self.config.block.unwrap_or(latest_block);
-        let blocks_per_file = self.config.blocks_per_file;
+        let blocks_per_file = self.config.blocks_per_file.unwrap_or(DEFAULT_BLOCKS_PER_FILE);
         let remote_for_gen = remote_static_files.clone();
         let previous_manifest_for_gen = remote_manifest.clone();
         let upload_proofs = self.config.upload_proofs;
-        let effective_block = block;
-        let effective_blocks_per_file = blocks_per_file.unwrap_or(500_000);
-        let latest_chunk_start = effective_block
+        let latest_chunk_start = block
             .saturating_sub(1)
-            .checked_div(effective_blocks_per_file)
-            .and_then(|index| index.checked_mul(effective_blocks_per_file))
+            .checked_div(blocks_per_file)
+            .and_then(|index| index.checked_mul(blocks_per_file))
             .context("latest static-file chunk range overflow")?;
         let key_uploader = self.uploader.clone();
         let sink = StreamingS3ArchiveSink::new(
@@ -210,7 +210,7 @@ impl<C: ContainerManager, T: TipChecker> Snapshotter<C, T> {
                 chain_id,
                 base_url: None,
                 block: Some(block),
-                blocks_per_file,
+                blocks_per_file: Some(blocks_per_file),
                 remote_static_files: &remote_for_gen,
                 previous_manifest: previous_manifest_for_gen.as_ref(),
                 upload_proofs,
