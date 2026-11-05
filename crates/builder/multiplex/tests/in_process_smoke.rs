@@ -8,6 +8,7 @@ use alloy_provider::{Identity, Provider, ProviderBuilder, RootProvider};
 use alloy_rpc_types_engine::{ForkchoiceState, PayloadAttributes};
 use base_builder_core::{BuilderConfig, FlashblocksServiceBuilder};
 use base_builder_multiplex::MultiplexingServiceBuilder;
+use base_common_chains::{BaseFeature, Upgrades};
 use base_common_consensus::BaseTxEnvelope;
 use base_common_network::Base;
 use base_common_rpc_types_engine::BasePayloadAttributes;
@@ -245,8 +246,15 @@ async fn payload_builder_modes_match_flashblocks_baseline() -> eyre::Result<()> 
 
     let wall_clock =
         std::time::SystemTime::now().duration_since(std::time::SystemTime::UNIX_EPOCH)?;
+    // The nodes start from mainnet genesis and their attributes carry no sequencer
+    // transactions, which subsecond blocks require, so build just before that activation
+    // once the wall clock passes it.
+    let subsecond_activation = BaseChainSpec::mainnet()
+        .feature_activation_timestamp(BaseFeature::SubsecondBlocks)
+        .unwrap_or(u64::MAX);
     let build_timestamp =
-        std::cmp::max(baseline_head.header.timestamp + 2, wall_clock.as_secs() + 2);
+        std::cmp::max(baseline_head.header.timestamp + 2, wall_clock.as_secs() + 2)
+            .min(subsecond_activation - 1);
     let baseline_block =
         build_new_block(&baseline_provider, &baseline.auth_ipc_path, build_timestamp).await?;
     let disabled_block =
