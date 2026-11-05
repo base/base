@@ -1,29 +1,21 @@
 //! Builder Configuration
 
-use core::{
-    net::{Ipv4Addr, SocketAddr},
-    time::Duration,
-};
+use core::time::Duration;
 use std::sync::Arc;
 
 use base_execution_payload_builder::{
     DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD,
-    config::{BaseDAConfig, GasLimitConfig},
+    config::{BaseBuilderConfig, BaseDAConfig, GasLimitConfig},
 };
 
 use crate::{
-    BuilderMetrics, ExecutionMeteringMode, NoopMeteringProvider, RejectionCache,
-    ResourceMeteringConfig, RestingPredicateMode, SharedMeteringProvider,
+    BuilderMetrics, NoopMeteringProvider, RejectionCache, ResourceMeteringConfig,
+    RestingPredicateMode, SharedMeteringProvider,
 };
 
-/// Configuration values for the flashblocks builder.
+/// Configuration values for the Base block builder.
 #[derive(Clone)]
 pub struct BuilderConfig {
-    /// The interval at which blocks are added to the chain.
-    /// This is also the frequency at which the builder will be receiving FCU requests from the
-    /// sequencer.
-    pub block_time: Duration,
-
     /// Data Availability configuration for the payload builder.
     /// Defines constraints for the maximum size of data availability transactions.
     pub da_config: BaseDAConfig,
@@ -31,42 +23,9 @@ pub struct BuilderConfig {
     /// Gas limit configuration for the payload builder
     pub gas_limit_config: GasLimitConfig,
 
-    /// Extra time allowed for payload building before garbage collection.
-    pub block_time_leeway: Duration,
-
-    /// Inverted sampling frequency in blocks. 1 - each block, 100 - every 100th block.
-    pub sampling_ratio: u64,
-
-    /// The address of the websockets endpoint that listens for subscriptions to
-    /// new flashblocks updates.
-    pub flashblocks_ws_addr: SocketAddr,
-
-    /// How often a flashblock is produced. This is independent of the block time of the chain.
-    pub flashblocks_interval: Duration,
-
-    /// How much time would be deducted from block build time to account for latencies.
-    /// This value would be deducted from first flashblock and it shouldn't be more than interval.
-    pub flashblocks_leeway_time: Duration,
-
-    /// Maximum gas a transaction can use before being excluded.
-    pub max_gas_per_txn: Option<u64>,
-
-    /// Maximum execution time per transaction in microseconds.
-    pub max_execution_time_per_tx_us: Option<u128>,
-
-    /// Execution metering mode: off, dry-run, or enforce.
-    pub execution_metering_mode: ExecutionMeteringMode,
-
-    /// Maximum cumulative uncompressed (EIP-2718 encoded) block size in bytes.
-    pub max_uncompressed_block_size: Option<u64>,
-
-    /// Duration to wait for metering data before including a transaction.
-    /// Transactions younger than this without metering data will be skipped.
-    pub metering_wait_duration: Option<Duration>,
-
-    /// Hard cutoff on cumulative validity-predicate evaluation time per builder iteration.
+    /// Hard cutoff on cumulative validity-predicate evaluation time per payload build.
     /// Once the cutoff is exceeded, further validity-gated transactions are deferred to a
-    /// later iteration rather than evaluated. This is the guardrail backing the
+    /// later build rather than evaluated. This is the guardrail backing the
     /// `base_builder_predicate_eval_duration_per_block` metric's P99 SLO.
     pub predicate_eval_hard_cutoff: Duration,
 
@@ -74,7 +33,7 @@ pub struct BuilderConfig {
     pub predicate_bucket_ordered_threshold: usize,
 
     /// Whether validity transactions resting under an unchanged predicate are held back. The
-    /// resting set carries across flashblocks and across blocks this builder finishes in sequence.
+    /// resting set carries across blocks this builder finishes in sequence.
     pub resting_predicate_mode: RestingPredicateMode,
 
     /// Resource metering provider
@@ -101,31 +60,38 @@ pub struct BuilderConfig {
 }
 
 impl BuilderConfig {
-    /// Returns the number of flashblocks per block.
-    pub const fn flashblocks_per_block(&self) -> u64 {
-        if self.block_time.as_millis() == 0 {
-            return 0;
+    /// Native payload builder settings derived from this configuration.
+    ///
+    /// The rejection cache and metering provider are shared by reference so the build loop and
+    /// the `meterBundle` and `insertValidatedTransaction` RPC paths observe the same state.
+    pub fn payload_builder_config(&self) -> BaseBuilderConfig {
+        BaseBuilderConfig {
+            da_config: self.da_config.clone(),
+            gas_limit_config: self.gas_limit_config.clone(),
+            manifest_precheck_enabled: self.manifest_precheck_enabled,
+            predicate_eval_hard_cutoff: self.predicate_eval_hard_cutoff,
+            predicate_bucket_ordered_threshold: self.predicate_bucket_ordered_threshold,
+            resource_metering: self.resource_metering.clone(),
+            rejection_cache: self.rejection_cache.clone(),
+            state_provider_metrics: self.state_provider_metrics,
+            resting_predicate_mode: self.resting_predicate_mode,
         }
-        (self.block_time.as_millis() / self.flashblocks_interval.as_millis()) as u64
+    }
+
+    /// Records startup resource-metering configuration metrics once the node's
+    /// Prometheus recorder is installed.
+    pub fn record_startup_metrics(&self) {
+        if self.resource_metering.enabled && self.resource_metering.schedule.is_empty() {
+            BuilderMetrics::resource_metering_schedule_missing_total().increment(1);
+        }
     }
 }
 
 impl core::fmt::Debug for BuilderConfig {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("Config")
-            .field("block_time", &self.block_time)
-            .field("block_time_leeway", &self.block_time_leeway)
             .field("da_config", &self.da_config)
             .field("gas_limit_config", &self.gas_limit_config)
-            .field("sampling_ratio", &self.sampling_ratio)
-            .field("flashblocks_ws_addr", &self.flashblocks_ws_addr)
-            .field("flashblocks_interval", &self.flashblocks_interval)
-            .field("flashblocks_leeway_time", &self.flashblocks_leeway_time)
-            .field("max_gas_per_txn", &self.max_gas_per_txn)
-            .field("max_execution_time_per_tx_us", &self.max_execution_time_per_tx_us)
-            .field("execution_metering_mode", &self.execution_metering_mode)
-            .field("max_uncompressed_block_size", &self.max_uncompressed_block_size)
-            .field("metering_wait_duration", &self.metering_wait_duration)
             .field("predicate_eval_hard_cutoff", &self.predicate_eval_hard_cutoff)
             .field("predicate_bucket_ordered_threshold", &self.predicate_bucket_ordered_threshold)
             .field("resting_predicate_mode", &self.resting_predicate_mode)
@@ -142,19 +108,8 @@ impl Default for BuilderConfig {
     fn default() -> Self {
         let metering_provider: SharedMeteringProvider = Arc::new(NoopMeteringProvider);
         Self {
-            block_time: Duration::from_secs(2),
-            block_time_leeway: Duration::from_millis(500),
             da_config: BaseDAConfig::default(),
             gas_limit_config: GasLimitConfig::default(),
-            flashblocks_ws_addr: SocketAddr::new(Ipv4Addr::UNSPECIFIED.into(), 1111),
-            flashblocks_interval: Duration::from_millis(250),
-            flashblocks_leeway_time: Duration::from_millis(50),
-            sampling_ratio: 100,
-            max_gas_per_txn: None,
-            max_execution_time_per_tx_us: None,
-            execution_metering_mode: ExecutionMeteringMode::Off,
-            max_uncompressed_block_size: None,
-            metering_wait_duration: None,
             predicate_eval_hard_cutoff: Duration::from_millis(10),
             predicate_bucket_ordered_threshold: DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD,
             resting_predicate_mode: RestingPredicateMode::Off,
@@ -170,68 +125,11 @@ impl Default for BuilderConfig {
     }
 }
 
-impl BuilderConfig {
-    /// Records startup resource-metering configuration metrics once the node's
-    /// Prometheus recorder is installed.
-    pub fn record_startup_metrics(&self) {
-        if self.resource_metering.enabled && self.resource_metering.schedule.is_empty() {
-            BuilderMetrics::resource_metering_schedule_missing_total().increment(1);
-        }
-    }
-}
-
 #[cfg(any(test, feature = "test-utils"))]
 impl BuilderConfig {
-    /// Creates a new [`BuilderConfig`] suitable for testing with a randomized flashblocks port.
+    /// Creates a new [`BuilderConfig`] suitable for testing.
     pub fn for_tests() -> Self {
-        Self {
-            flashblocks_ws_addr: SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0),
-            flashblocks_interval: Duration::from_millis(200),
-            flashblocks_leeway_time: Duration::from_millis(100),
-            block_time: Duration::from_secs(1),
-            ..Self::default()
-        }
-    }
-
-    /// Sets the block time in milliseconds.
-    #[must_use]
-    pub const fn with_block_time_ms(mut self, ms: u64) -> Self {
-        self.block_time = Duration::from_millis(ms);
-        self
-    }
-
-    /// Sets the maximum gas per transaction.
-    #[must_use]
-    pub const fn with_max_gas_per_txn(mut self, max_gas: Option<u64>) -> Self {
-        self.max_gas_per_txn = max_gas;
-        self
-    }
-
-    /// Sets the flashblocks leeway time in milliseconds.
-    #[must_use]
-    pub const fn with_flashblocks_leeway_time_ms(mut self, ms: u64) -> Self {
-        self.flashblocks_leeway_time = Duration::from_millis(ms);
-        self
-    }
-
-    /// Sets the maximum uncompressed block size.
-    #[must_use]
-    pub const fn with_max_uncompressed_block_size(
-        mut self,
-        max_uncompressed_block_size: Option<u64>,
-    ) -> Self {
-        self.max_uncompressed_block_size = max_uncompressed_block_size;
-        self
-    }
-
-    /// Sets the metering wait duration.
-    #[must_use]
-    pub const fn with_metering_wait_duration(
-        mut self,
-        metering_wait_duration: Option<Duration>,
-    ) -> Self {
-        self.metering_wait_duration = metering_wait_duration;
-        self
+        Self::default()
     }
 
     /// Toggles the EIP-8130 manifest precheck.
@@ -253,5 +151,61 @@ impl BuilderConfig {
     pub const fn with_resting_predicate_mode(mut self, mode: RestingPredicateMode) -> Self {
         self.resting_predicate_mode = mode;
         self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy_primitives::TxHash;
+    use base_execution_payload_builder::ResourceMeteringSchedule;
+
+    use super::*;
+
+    #[test]
+    fn payload_builder_config_shares_metering_provider_and_rejection_cache() {
+        let builder_config = BuilderConfig::default();
+        let hash = TxHash::repeat_byte(0x11);
+        builder_config.rejection_cache.insert(hash);
+        let provider = Arc::clone(&builder_config.metering_provider);
+
+        let native = builder_config.payload_builder_config();
+        assert!(native.rejection_cache.contains_key(&hash));
+        assert!(!native.resource_metering.enabled);
+        assert!(native.resource_metering.schedule.is_empty());
+        assert!(!native.resource_metering.is_active());
+        assert!(Arc::ptr_eq(&native.resource_metering.provider, &provider));
+    }
+
+    #[test]
+    fn payload_builder_config_propagates_resource_metering_schedule() {
+        let schedule = ResourceMeteringSchedule::from_json(
+            r#"{
+                "version": 1,
+                "dimensions": [{
+                    "name": "compute",
+                    "blockLimit": 1000,
+                    "transactionLimit": 500,
+                    "baseGasWeight": 1,
+                    "operations": [{"name": "SSTORE", "gasUsedWeight": 2, "countCost": 10}],
+                    "dryRun": true
+                }]
+            }"#,
+        )
+        .expect("valid schedule");
+
+        let mut builder_config = BuilderConfig::default();
+        let provider = Arc::clone(&builder_config.metering_provider);
+        builder_config.resource_metering = ResourceMeteringConfig {
+            enabled: true,
+            schedule: Arc::new(schedule),
+            provider: Arc::clone(&provider),
+        };
+
+        let native = builder_config.payload_builder_config();
+        assert!(native.resource_metering.enabled);
+        assert!(native.resource_metering.is_active());
+        assert_eq!(native.resource_metering.schedule.dimensions.len(), 1);
+        assert_eq!(native.resource_metering.schedule.dimensions[0].name, "compute");
+        assert!(Arc::ptr_eq(&native.resource_metering.provider, &provider));
     }
 }

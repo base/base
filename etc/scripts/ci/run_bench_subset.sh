@@ -33,13 +33,7 @@ run cargo bench -p base-consensus-derive --bench batch_queue --features test-uti
   -- --save-baseline "$baseline" --noplot
 run cargo bench -p base-common-precompiles --bench base_precompiles --features test-utils \
   -- --save-baseline "$baseline" --noplot
-run cargo bench -p base-builder-core --bench tx_selection \
-  -- --save-baseline "$baseline" --noplot
-run cargo bench -p base-flashblocks-node --bench sender_recovery \
-  -- --save-baseline "$baseline" sequential --noplot
 run cargo bench -p base-common-flz --bench flz \
-  -- --save-baseline "$baseline" --noplot
-run cargo bench -p base-common-flashblocks --bench flashblock_decode \
   -- --save-baseline "$baseline" --noplot
 run cargo bench -p base-protocol --bench frame_parse \
   -- --save-baseline "$baseline" --noplot

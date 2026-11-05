@@ -50,7 +50,7 @@ pub use validity::{
 };
 
 mod block_expiry;
-pub use block_expiry::{BlockExpiryIndex, ExpiryPosition, FlashblockExpiry};
+pub use block_expiry::{BlockExpiryIndex, ExpiryPosition};
 
 mod transaction;
 pub use transaction::{

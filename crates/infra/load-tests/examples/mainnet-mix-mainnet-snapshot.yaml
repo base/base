@@ -29,7 +29,6 @@
 
 transaction_submission_rpcs: ["http://127.0.0.1:7545"]
 query_rpc: "http://127.0.0.1:7545"
-flashblocks_ws: "ws://127.0.0.1:7111"
 chain_id: 8453
 sender_count: 100
 target_gps: 19015706

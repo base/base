@@ -1,30 +1,9 @@
-//! Block and flashblock expiry index for validity-predicate transactions.
+//! Block deadline index for validity-predicate transactions, keyed by the last
+//! block (and, when bounded, flashblock index) in which they can be included.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use alloy_primitives::TxHash;
-
-/// Coordinates flashblock publication with deadline eviction and admission.
-///
-/// The builder publishes and expires in one critical section. A node that follows the
-/// builder's flashblock stream (a mempool or RPC node) only observes publication, so it
-/// expires from the received position instead of waiting for the block to commit; until then
-/// an expired transaction would still hold its same-nonce slot against an unbumped replacement.
-pub trait FlashblockExpiry: Clone + Send + Sync + 'static {
-    /// Publishes while holding the admission lock, then evicts expired transactions.
-    /// A failed publication must leave the pool unchanged.
-    fn publish_and_expire<R, E>(
-        &self,
-        block_number: u64,
-        flashblock_index: u64,
-        publish: impl FnOnce() -> Result<R, E>,
-    ) -> Result<(R, usize), E>;
-
-    /// Records a flashblock published elsewhere and evicts transactions whose deadline it
-    /// passed, returning how many were evicted. Positions at or behind the last recorded one
-    /// are ignored.
-    fn expire_published(&self, block_number: u64, flashblock_index: u64) -> usize;
-}
 
 /// An inclusive validity deadline, ordered by block number before flashblock index.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -88,15 +67,6 @@ impl BlockExpiryIndex {
             return std::mem::take(&mut self.by_hash).into_keys().collect();
         };
         self.drain_before(ExpiryPosition { block_number: next_block, flashblock_index: 0 })
-    }
-
-    /// Removes deadlines through the flashblock that was just published.
-    /// Block-only deadlines are retained until the next block.
-    pub fn drain_published(&mut self, block: u64, flashblock: u64) -> Vec<TxHash> {
-        let Some(next_flashblock) = flashblock.checked_add(1) else {
-            return self.drain_expired(block);
-        };
-        self.drain_before(ExpiryPosition { block_number: block, flashblock_index: next_flashblock })
     }
 
     /// Removes deadlines strictly before `cutoff`.
@@ -206,17 +176,18 @@ mod tests {
     }
 
     #[test]
-    fn flashblock_deadline_respects_block_reset_and_inclusive_index() {
+    fn flashblock_bounded_deadline_expires_with_its_block() {
         let mut index = BlockExpiryIndex::new();
         index.insert_with_flashblock(hash(1), 101, Some(2));
         index.insert_with_flashblock(hash(2), 100, Some(2));
         index.insert_with_flashblock(hash(3), 100, None);
-        assert!(index.drain_published(100, 1).is_empty());
-        assert_eq!(index.drain_published(100, 2), vec![hash(2)]);
-        assert!(index.drain_published(100, 9).is_empty());
-        assert_eq!(index.drain_expired(100), vec![hash(3)]);
-        assert!(index.drain_published(101, 1).is_empty());
-        assert_eq!(index.drain_published(101, 2), vec![hash(1)]);
+
+        // A flashblock bound within block 100 still holds until block 100 commits.
+        assert!(index.drain_expired(99).is_empty());
+        let mut expired = index.drain_expired(100);
+        expired.sort();
+        assert_eq!(expired, vec![hash(2), hash(3)]);
+        assert_eq!(index.drain_expired(101), vec![hash(1)]);
     }
 
     #[test]
@@ -225,7 +196,7 @@ mod tests {
         index.insert_with_flashblock(hash(1), 100, Some(1));
         index.remove(&hash(1));
         index.insert_with_flashblock(hash(2), 100, Some(3));
-        assert!(index.drain_published(100, 1).is_empty());
-        assert_eq!(index.drain_published(100, 3), vec![hash(2)]);
+        assert!(index.drain_expired(99).is_empty());
+        assert_eq!(index.drain_expired(100), vec![hash(2)]);
     }
 }

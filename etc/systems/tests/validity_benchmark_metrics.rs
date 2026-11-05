@@ -16,7 +16,7 @@ use base_system_tests::{
     ANVIL_ACCOUNT_1, DevnetConfig, PrometheusBlockCollector, PrometheusSnapshot,
     SystemTestStackBuilder,
 };
-use eyre::{Result, WrapErr};
+use eyre::Result;
 
 /// Mirrors the `validity-resting` benchmark workload (every transaction is unsatisfied until two
 /// blocks after it was prepared and expires thirty blocks later) with an always-true balance and
@@ -57,8 +57,6 @@ async fn validity_resting_workload_populates_benchmark_series() -> Result<()> {
         let mut test_config = TestConfig::from_yaml(WORKLOAD)?;
         test_config.transaction_submission_rpcs = vec![stack.l2_rpc_url()?];
         test_config.query_rpc = Some(stack.l2_client_rpc_url()?);
-        test_config.flashblocks_ws =
-            Some(stack.l2_stack().builder().flashblocks_url().parse().wrap_err("flashblocks url")?);
         test_config.chain_id = Some(chain_id);
         test_config.validate()?;
         let load_config = test_config.to_load_config(None)?;

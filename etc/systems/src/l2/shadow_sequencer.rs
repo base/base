@@ -15,7 +15,7 @@
 //! the next cycle. Accepting the canonical gossip requires the shadow's
 //! `unsafe_block_signer` to match the active sequencer's address.
 
-use std::{num::NonZeroU64, time::Duration};
+use std::num::NonZeroU64;
 
 use alloy_genesis::ChainConfig;
 use alloy_primitives::{Address, B256};
@@ -95,12 +95,9 @@ impl ShadowSequencer {
             ws_port: None,
             auth_port: None,
             p2p_port: None,
-            flashblocks_port: None,
             metrics_port: None,
-            payload_builder_cutover: false,
             extra_extensions: Vec::new(),
             validity_signature_mode: ValiditySignatureMode::Off,
-            block_time: Duration::from_secs(config.rollup_config.block_time),
             resting_predicate_mode: RestingPredicateMode::Off,
             persistence_threshold: None,
             persistence_backpressure_threshold: None,

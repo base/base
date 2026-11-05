@@ -1,5 +1,4 @@
-//! Standalone EIP-8130 `eth_getTransactionCount`, `eth_estimateGas` and `eth_call`
-//! overrides for nodes without flashblocks.
+//! EIP-8130 `eth_getTransactionCount`, `eth_estimateGas` and `eth_call` overrides.
 
 use alloy_eips::BlockId;
 use alloy_evm::EvmFactory;
@@ -31,8 +30,8 @@ use crate::{ChannelNonceReader, Eip8130EverestGate, Eip8130GasEstimator};
 /// and Everest-gated simulation via `eth_estimateGas` and `eth_call`.
 ///
 /// Plain estimation and call requests delegate to the standard reth implementation.
-/// Register only on nodes without the flashblocks override, which owns the same
-/// three methods with its own pending-state handling.
+/// This override owns all three methods on the node; no other extension may
+/// register them.
 #[rpc(server, namespace = "eth")]
 pub trait Eip8130EthApiOverride {
     /// Returns transaction count for an address.
@@ -43,9 +42,8 @@ pub trait Eip8130EthApiOverride {
     /// Nonce Manager precompile. `nonce_key == NONCE_KEY_MAX` returns
     /// `INVALID_PARAMS`.
     ///
-    /// No pending-flashblock state is consulted here; this override is for
-    /// nodes running without flashblocks. Use the flashblocks override if
-    /// pending-state semantics are required.
+    /// Only canonical state at the requested block is consulted; no
+    /// pending-state delta is applied.
     #[method(name = "getTransactionCount")]
     async fn get_transaction_count(
         &self,
@@ -142,9 +140,7 @@ where
         }
 
         // Protocol nonce path. Standard reth resolution against
-        // `account.nonce` at the requested block. No flashblocks
-        // pending-state delta. This override only registers when
-        // flashblocks is disabled.
+        // `account.nonce` at the requested block, with no pending-state delta.
         EthState::transaction_count(&self.eth_api, address, block_number).await.map_err(Into::into)
     }
 

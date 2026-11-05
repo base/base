@@ -103,8 +103,6 @@ pub struct SnapshotRuntime {
     pub block_gas_limit: u64,
     /// Builder execution JSON-RPC URL.
     pub builder_rpc_url: String,
-    /// Builder Flashblocks WebSocket URL.
-    pub builder_flashblocks_url: String,
     /// Client execution JSON-RPC URL.
     pub client_rpc_url: String,
 }
@@ -193,7 +191,6 @@ impl SnapshotRuntime {
             block_interval_ms: stack.block_interval().duration().as_millis() as u64,
             block_gas_limit: stack.block_gas_limit(),
             builder_rpc_url: stack.builder_rpc_url()?.to_string(),
-            builder_flashblocks_url: stack.builder_flashblocks_url()?.to_string(),
             client_rpc_url: stack.client_rpc_url()?.to_string(),
         })
     }

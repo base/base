@@ -114,8 +114,8 @@ every range read the whole window. The DataPilot table entry for v2 uses:
 with a small `NUM_SLICES` (DataPilot recommends 2-16 for incremental loads).
 
 Classes: hot (high-volume proxy and builder-decision events), warm (ingress,
-simulation success, txpool-forward), and cold (failures, drops, inclusion,
-flashblocks). An event's class comes from its `event_type` at ingest and is
+simulation success, txpool-forward), and cold (failures, drops, and inclusion).
+An event's class comes from its `event_type` at ingest and is
 stored in `retention_class`.
 
 ### Partition maintenance

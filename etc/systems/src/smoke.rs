@@ -399,7 +399,6 @@ pub struct SystemTestStackBuilder {
     tx_forwarding_config: Option<TxForwardingConfig>,
     validity_signature_mode: ValiditySignatureMode,
     resting_predicate_mode: RestingPredicateMode,
-    payload_builder_cutover: bool,
     verifier_l1_confs: u64,
     force_batch_submission: bool,
     client_consensus_mode: L2ClientConsensusMode,
@@ -531,12 +530,6 @@ impl SystemTestStackBuilder {
     /// the `base_insertValidatedTransaction` RPC endpoint.
     pub fn with_tx_forwarding(mut self, config: TxForwardingConfig) -> Self {
         self.tx_forwarding_config = Some(config);
-        self
-    }
-
-    /// Runs both payload builders and cuts selection from flashblocks to basic at Denim.
-    pub const fn with_payload_builder_cutover(mut self) -> Self {
-        self.payload_builder_cutover = true;
         self
     }
 
@@ -677,7 +670,6 @@ impl SystemTestStackBuilder {
                 builder_ws_port: Some(ports.l2_builder_ws),
                 builder_auth_port: Some(ports.l2_builder_auth),
                 builder_p2p_port: Some(ports.l2_builder_p2p),
-                builder_flashblocks_port: Some(ports.l2_builder_flashblocks),
                 client_http_port: Some(ports.l2_client_http),
                 client_ws_port: Some(ports.l2_client_ws),
                 client_auth_port: Some(ports.l2_client_auth),
@@ -820,7 +812,6 @@ impl SystemTestStackBuilder {
                 builder_ws_port: Some(config.ports.l2_builder_ws),
                 builder_auth_port: Some(config.ports.l2_builder_auth),
                 builder_p2p_port: Some(config.ports.l2_builder_p2p),
-                builder_flashblocks_port: Some(config.ports.l2_builder_flashblocks),
                 client_http_port: Some(config.ports.l2_client_http),
                 client_ws_port: Some(config.ports.l2_client_ws),
                 client_auth_port: Some(config.ports.l2_client_auth),
@@ -947,7 +938,6 @@ impl SystemTestStackBuilder {
             tx_forwarding_config: self.tx_forwarding_config,
             validity_signature_mode: self.validity_signature_mode,
             resting_predicate_mode: self.resting_predicate_mode,
-            payload_builder_cutover: self.payload_builder_cutover,
             verifier_l1_confs: self.verifier_l1_confs,
             force_batch_submission: self.force_batch_submission,
             client_consensus_mode: self.client_consensus_mode,

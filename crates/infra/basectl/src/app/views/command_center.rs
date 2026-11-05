@@ -15,8 +15,7 @@ use crate::{
     },
     output::{
         COLOR_BASE_BLUE, COLOR_BURN, COLOR_GROWTH, COLOR_ROW_HIGHLIGHTED, COLOR_ROW_SELECTED,
-        Format, L1BlocksTableParams, build_gas_bar, render_da_backlog_bar, render_gas_usage_bar,
-        render_l1_blocks_table,
+        Format, L1BlocksTableParams, render_da_backlog_bar, render_l1_blocks_table,
     },
     tui::{Browser, Keybinding, Toast},
 };
@@ -24,11 +23,10 @@ use crate::{
 const KEYBINDINGS: &[Keybinding] = &[
     Keybinding { key: "Esc", description: "Back to home" },
     Keybinding { key: "?", description: "Toggle help" },
-    Keybinding { key: "←/→/Tab/1-3", description: "Switch panel" },
+    Keybinding { key: "←/→/Tab/1-2", description: "Switch panel" },
     Keybinding { key: "↑/k", description: "Move up" },
     Keybinding { key: "↓/j", description: "Move down" },
     Keybinding { key: "g/G", description: "Top/Bottom" },
-    Keybinding { key: "Space", description: "Pause flashblocks" },
     Keybinding { key: "y", description: "Copy block/tx hash" },
     Keybinding { key: "o", description: "Open in explorer" },
     Keybinding { key: "f", description: "Filter L1 blocks" },
@@ -37,18 +35,16 @@ const KEYBINDINGS: &[Keybinding] = &[
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Panel {
-    Flashblocks,
     Da,
     L1Blocks,
     Txns,
 }
 
-/// Combined monitoring view with flashblocks, DA, and L1 block panels.
+/// Combined monitoring view with DA and L1 block panels.
 #[derive(Debug)]
 pub struct CommandCenterView {
     focused_panel: Panel,
     da_table_state: TableState,
-    flash_table_state: TableState,
     l1_table_state: TableState,
     highlighted_block: Option<u64>,
     l1_filter: L1BlockFilter,
@@ -67,14 +63,11 @@ impl CommandCenterView {
     pub fn new() -> Self {
         let mut da_table_state = TableState::default();
         da_table_state.select(Some(0));
-        let mut flash_table_state = TableState::default();
-        flash_table_state.select(Some(0));
         let mut l1_table_state = TableState::default();
         l1_table_state.select(Some(0));
         Self {
-            focused_panel: Panel::Flashblocks,
+            focused_panel: Panel::Da,
             da_table_state,
-            flash_table_state,
             l1_table_state,
             highlighted_block: None,
             l1_filter: L1BlockFilter::All,
@@ -85,29 +78,27 @@ impl CommandCenterView {
 
     const fn next_panel(&mut self) {
         self.focused_panel = match self.focused_panel {
-            Panel::Flashblocks => Panel::Da,
             Panel::Da => Panel::L1Blocks,
             Panel::L1Blocks => {
                 if self.tx_pane.is_some() {
                     Panel::Txns
                 } else {
-                    Panel::Flashblocks
+                    Panel::Da
                 }
             }
-            Panel::Txns => Panel::Flashblocks,
+            Panel::Txns => Panel::Da,
         };
     }
 
     const fn prev_panel(&mut self) {
         self.focused_panel = match self.focused_panel {
-            Panel::Flashblocks => {
+            Panel::Da => {
                 if self.tx_pane.is_some() {
                     Panel::Txns
                 } else {
                     Panel::L1Blocks
                 }
             }
-            Panel::Da => Panel::Flashblocks,
             Panel::L1Blocks => Panel::Da,
             Panel::Txns => Panel::L1Blocks,
         };
@@ -115,7 +106,6 @@ impl CommandCenterView {
 
     const fn active_table_state(&mut self) -> &mut TableState {
         match self.focused_panel {
-            Panel::Flashblocks => &mut self.flash_table_state,
             Panel::Da | Panel::Txns => &mut self.da_table_state,
             Panel::L1Blocks => &mut self.l1_table_state,
         }
@@ -123,7 +113,6 @@ impl CommandCenterView {
 
     fn selected_row(&self, panel: Panel) -> usize {
         match panel {
-            Panel::Flashblocks => self.flash_table_state.selected().unwrap_or(0),
             Panel::Da | Panel::Txns => self.da_table_state.selected().unwrap_or(0),
             Panel::L1Blocks => self.l1_table_state.selected().unwrap_or(0),
         }
@@ -132,7 +121,6 @@ impl CommandCenterView {
     fn update_highlighted_block(&mut self, resources: &Resources) {
         let row = self.selected_row(self.focused_panel);
         self.highlighted_block = match self.focused_panel {
-            Panel::Flashblocks => resources.flash.entries.get(row).map(|e| e.block_number),
             Panel::Da => resources.da.tracker.block_contributions.get(row).map(|c| c.block_number),
             Panel::Txns => self.tx_pane.as_ref().map(|p| p.block_number),
             Panel::L1Blocks => None,
@@ -142,9 +130,6 @@ impl CommandCenterView {
     fn get_copyable_block(&self, resources: &Resources) -> Option<String> {
         let row = self.selected_row(self.focused_panel);
         match self.focused_panel {
-            Panel::Flashblocks => {
-                resources.flash.entries.get(row).map(|e| e.block_number.to_string())
-            }
             Panel::Da => resources
                 .da
                 .tracker
@@ -164,13 +149,6 @@ impl CommandCenterView {
     fn open_selected_block_in_explorer(&self, resources: &mut Resources) {
         let row = self.selected_row(self.focused_panel);
         let url = match self.focused_panel {
-            Panel::Flashblocks => resources.config.explorer_base_url().and_then(|base_url| {
-                resources
-                    .flash
-                    .entries
-                    .get(row)
-                    .map(|e| format!("{base_url}/block/{}", e.block_number))
-            }),
             Panel::Da => resources.config.explorer_base_url().and_then(|base_url| {
                 resources
                     .da
@@ -224,16 +202,11 @@ impl View for CommandCenterView {
                 Action::None
             }
             KeyCode::Char('1') => {
-                self.focused_panel = Panel::Flashblocks;
-                self.update_highlighted_block(resources);
-                Action::None
-            }
-            KeyCode::Char('2') => {
                 self.focused_panel = Panel::Da;
                 self.update_highlighted_block(resources);
                 Action::None
             }
-            KeyCode::Char('3') => {
+            KeyCode::Char('2') => {
                 self.focused_panel = Panel::L1Blocks;
                 self.update_highlighted_block(resources);
                 Action::None
@@ -254,10 +227,6 @@ impl View for CommandCenterView {
                 self.l1_table_state.select(Some(0));
                 Action::None
             }
-            KeyCode::Char(' ') => {
-                resources.flash.paused = !resources.flash.paused;
-                Action::None
-            }
             KeyCode::Up | KeyCode::Char('k') => {
                 let state = self.active_table_state();
                 if let Some(selected) = state.selected()
@@ -270,10 +239,6 @@ impl View for CommandCenterView {
             }
             KeyCode::Down | KeyCode::Char('j') => {
                 let (state, max) = match self.focused_panel {
-                    Panel::Flashblocks => (
-                        &mut self.flash_table_state,
-                        resources.flash.entries.len().saturating_sub(1),
-                    ),
                     Panel::Da | Panel::Txns => (
                         &mut self.da_table_state,
                         resources.da.tracker.block_contributions.len().saturating_sub(1),
@@ -303,7 +268,6 @@ impl View for CommandCenterView {
             }
             KeyCode::Char('G') => {
                 let max = match self.focused_panel {
-                    Panel::Flashblocks => resources.flash.entries.len(),
                     Panel::Da | Panel::Txns => resources.da.tracker.block_contributions.len(),
                     Panel::L1Blocks => {
                         resources.da.tracker.filtered_l1_blocks(self.l1_filter).count()
@@ -328,33 +292,17 @@ impl View for CommandCenterView {
                 Action::None
             }
             KeyCode::Enter => {
-                match self.focused_panel {
-                    Panel::Flashblocks => {
-                        let row = self.selected_row(Panel::Flashblocks);
-                        if let Some(entry) = resources.flash.entries.get(row) {
-                            self.tx_pane = Some(TransactionPane::with_data(
-                                entry.block_number,
-                                format!("Flashblock {}::{}", entry.block_number, entry.index),
-                                entry.decode_txs(),
-                                resources.config.explorer_base_url(),
-                            ));
-                            self.tx_origin_panel = Some(Panel::Flashblocks);
-                            self.focused_panel = Panel::Txns;
-                        }
+                if self.focused_panel == Panel::Da {
+                    let row = self.selected_row(Panel::Da);
+                    if let Some(contrib) = resources.da.tracker.block_contributions.get(row) {
+                        self.tx_pane = Some(TransactionPane::for_block(
+                            contrib.block_number,
+                            resources.config.rpc.as_str(),
+                            resources.config.explorer_base_url(),
+                        ));
+                        self.tx_origin_panel = Some(Panel::Da);
+                        self.focused_panel = Panel::Txns;
                     }
-                    Panel::Da => {
-                        let row = self.selected_row(Panel::Da);
-                        if let Some(contrib) = resources.da.tracker.block_contributions.get(row) {
-                            self.tx_pane = Some(TransactionPane::for_block(
-                                contrib.block_number,
-                                resources.config.rpc.as_str(),
-                                resources.config.explorer_base_url(),
-                            ));
-                            self.tx_origin_panel = Some(Panel::Da);
-                            self.focused_panel = Panel::Txns;
-                        }
-                    }
-                    _ => {}
                 }
                 Action::None
             }
@@ -376,25 +324,12 @@ impl View for CommandCenterView {
     fn render(&mut self, frame: &mut Frame<'_>, area: Rect, resources: &Resources) {
         let main_chunks = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(3),
-                Constraint::Length(3),
-                Constraint::Length(5),
-                Constraint::Min(0),
-            ])
+            .constraints([Constraint::Length(3), Constraint::Length(5), Constraint::Min(0)])
             .split(area);
-
-        render_gas_usage_bar(
-            frame,
-            main_chunks[0],
-            &resources.flash.entries,
-            DEFAULT_ELASTICITY,
-            self.highlighted_block,
-        );
 
         render_da_backlog_bar(
             frame,
-            main_chunks[1],
+            main_chunks[0],
             &resources.da.tracker,
             resources.da.loading.as_ref(),
             resources.da.loaded,
@@ -404,7 +339,7 @@ impl View for CommandCenterView {
         let info_chunks = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-            .split(main_chunks[2]);
+            .split(main_chunks[1]);
 
         render_config_panel(frame, info_chunks[0], resources);
         render_stats_panel(frame, info_chunks[1], resources);
@@ -414,37 +349,23 @@ impl View for CommandCenterView {
                 .direction(Direction::Horizontal)
                 .constraints([
                     Constraint::Percentage(25),
-                    Constraint::Percentage(12),
-                    Constraint::Percentage(13),
+                    Constraint::Percentage(25),
                     Constraint::Percentage(50),
                 ])
-                .split(main_chunks[3]);
-            let tx_pane_area = chunks[3];
+                .split(main_chunks[2]);
+            let tx_pane_area = chunks[2];
             (chunks, Some(tx_pane_area))
         } else {
             let chunks = Layout::default()
                 .direction(Direction::Horizontal)
-                .constraints([
-                    Constraint::Percentage(50),
-                    Constraint::Percentage(25),
-                    Constraint::Percentage(25),
-                ])
-                .split(main_chunks[3]);
+                .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+                .split(main_chunks[2]);
             (chunks, None)
         };
 
-        render_flash_panel(
-            frame,
-            panel_chunks[0],
-            resources,
-            self.focused_panel == Panel::Flashblocks,
-            &self.flash_table_state,
-            self.highlighted_block,
-        );
-
         render_da_panel(
             frame,
-            panel_chunks[1],
+            panel_chunks[0],
             resources,
             self.focused_panel == Panel::Da,
             &self.da_table_state,
@@ -453,7 +374,7 @@ impl View for CommandCenterView {
 
         render_l1_blocks_table(
             frame,
-            panel_chunks[2],
+            panel_chunks[1],
             L1BlocksTableParams {
                 l1_blocks: resources.da.tracker.filtered_l1_blocks(self.l1_filter),
                 is_active: self.focused_panel == Panel::L1Blocks,
@@ -539,27 +460,9 @@ fn render_stats_panel(f: &mut Frame<'_>, area: Rect, resources: &Resources) {
     let base_share = tracker.base_blob_share(L1_BLOCK_WINDOW);
     let target_usage = tracker.blob_target_usage(L1_BLOCK_WINDOW, resources.config.l1_blob_target);
 
-    let flash_status = if resources.flash.paused { " [PAUSED]" } else { "" };
-
     let lines = vec![
         Line::from(vec![
-            Span::styled("Flash: ", Style::default().fg(Color::DarkGray)),
-            Span::styled(
-                resources.flash.message_count.to_string(),
-                Style::default().fg(Color::White),
-            ),
-            Span::styled(flash_status, Style::default().fg(Color::Yellow)),
-            Span::raw("  "),
-            Span::styled("Missed: ", Style::default().fg(Color::DarkGray)),
-            Span::styled(
-                resources.flash.missed_flashblocks.to_string(),
-                Style::default().fg(if resources.flash.missed_flashblocks > 0 {
-                    Color::Red
-                } else {
-                    Color::Green
-                }),
-            ),
-            Span::raw("  "),
+            Span::styled("Rate: ", Style::default().fg(Color::DarkGray)),
             Span::styled("↑", Style::default().fg(COLOR_GROWTH)),
             Span::styled(Format::rate(growth_rate), Style::default().fg(COLOR_GROWTH)),
             Span::raw(" "),
@@ -674,115 +577,6 @@ fn render_da_panel(
 
     let widths =
         [Constraint::Max(10), Constraint::Length(5), Constraint::Length(8), Constraint::Min(6)];
-    let table = Table::new(rows, widths).header(header);
-    f.render_stateful_widget(table, inner, &mut table_state.clone());
-}
-
-const GAS_BAR_CHARS: usize = 20;
-const DEFAULT_ELASTICITY: u64 = 6;
-
-fn render_flash_panel(
-    f: &mut Frame<'_>,
-    area: Rect,
-    resources: &Resources,
-    is_active: bool,
-    table_state: &TableState,
-    highlighted_block: Option<u64>,
-) {
-    let flash = &resources.flash;
-    let border_color = if is_active { Color::Rgb(100, 180, 255) } else { Color::Rgb(0, 82, 255) };
-
-    let title = if flash.paused { " Flashblocks [PAUSED] " } else { " Flashblocks " };
-
-    let block = Block::default()
-        .title(title)
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(border_color));
-
-    let inner = block.inner(area);
-    f.render_widget(block, area);
-
-    let fixed_cols_width = 4 + 4 + (GAS_BAR_CHARS as u16 + 2) + 14 + 8 + 6;
-    let block_col_width = inner.width.saturating_sub(fixed_cols_width).clamp(4, 10) as usize;
-
-    let header_style = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
-    let header = Row::new(vec![
-        Cell::from("Block").style(header_style),
-        Cell::from("Idx").style(header_style),
-        Cell::from("Txs").style(header_style),
-        Cell::from("Gas").style(header_style),
-        Cell::from("Base Fee").style(header_style),
-        Cell::from("Δt").style(header_style),
-    ]);
-
-    let selected_row = table_state.selected();
-
-    let rows: Vec<Row<'_>> = flash
-        .entries
-        .iter()
-        .enumerate()
-        .map(|(idx, entry)| {
-            let is_selected = is_active && selected_row == Some(idx);
-            let is_highlighted = highlighted_block == Some(entry.block_number);
-
-            let style = if is_selected {
-                Style::default().fg(Color::White).bg(COLOR_ROW_SELECTED)
-            } else if is_highlighted {
-                Style::default().fg(Color::White).bg(COLOR_ROW_HIGHLIGHTED)
-            } else {
-                Style::default().fg(Color::White)
-            };
-
-            let (base_fee_str, base_fee_style) = if entry.index == 0 {
-                let fee_str = entry.base_fee.map(Format::gwei).unwrap_or_else(|| "-".to_string());
-                let style = match (entry.base_fee, entry.prev_base_fee) {
-                    (Some(curr), Some(prev)) if curr > prev => Style::default().fg(Color::Red),
-                    (Some(curr), Some(prev)) if curr < prev => Style::default().fg(Color::Green),
-                    _ => Style::default().fg(Color::White),
-                };
-                (fee_str, style)
-            } else {
-                (String::new(), Style::default())
-            };
-
-            let gas_bar =
-                build_gas_bar(entry.gas_used, entry.gas_limit, DEFAULT_ELASTICITY, GAS_BAR_CHARS);
-
-            let (time_diff_str, time_style) = entry.time_diff_ms.map_or_else(
-                || ("-".to_string(), Style::default().fg(Color::DarkGray)),
-                |ms| (format!("+{ms}ms"), Style::default().fg(Format::time_diff_color(ms))),
-            );
-
-            let block_style = if entry.index == 0 {
-                Style::default()
-                    .fg(Format::block_color_bright(entry.block_number))
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(Format::block_color(entry.block_number))
-            };
-
-            Row::new(vec![
-                Cell::from(Format::truncate_block_number(entry.block_number, block_col_width))
-                    .style(block_style),
-                Cell::from(entry.index.to_string()).style(block_style),
-                Cell::from(entry.tx_count.to_string()).style(block_style),
-                Cell::from(gas_bar),
-                Cell::from(base_fee_str).style(base_fee_style),
-                Cell::from(time_diff_str).style(time_style),
-            ])
-            .style(style)
-        })
-        .collect();
-
-    let widths = [
-        Constraint::Max(10),
-        Constraint::Length(4),
-        Constraint::Length(4),
-        Constraint::Length(GAS_BAR_CHARS as u16 + 2),
-        Constraint::Length(14),
-        Constraint::Min(8),
-    ];
-
     let table = Table::new(rows, widths).header(header);
     f.render_stateful_widget(table, inner, &mut table_state.clone());
 }
