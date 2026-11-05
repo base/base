@@ -51,7 +51,7 @@ pub struct BuilderIngressInjector {
 }
 
 impl BuilderIngressInjector {
-    /// Recognizes only known pool obsolescence errors during restoration, not initial delivery.
+    /// Recognizes known pool obsolescence errors for already-included or already-pooled transactions.
     pub fn is_obsolete(error: &eyre::Report, hash: TxHash) -> bool {
         let Some(error) = error.downcast_ref::<Arc<ClientError>>() else { return false };
         let ClientError::Call(error) = error.as_ref() else { return false };
