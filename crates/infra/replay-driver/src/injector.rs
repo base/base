@@ -9,6 +9,8 @@ use base_replay::{ReplayRecord, ReplayStream};
 use eyre::{Result, ensure};
 use tokio_util::sync::CancellationToken;
 
+use crate::BuilderIngressInjector;
+
 /// An ingress adapter; implementations select their own replay stream.
 #[cfg_attr(test, mockall::automock)]
 pub trait Injector: Sync {
@@ -61,7 +63,8 @@ impl InjectionSchedule {
     }
 
     /// Delivers through an optional immediate cutoff, or waits on the global clock without one.
-    /// Propagates stream, clock, delivery, and timeout errors.
+    /// Skips calls the pool rejects as obsolete; propagates other stream, clock, delivery, and
+    /// timeout errors.
     pub async fn deliver(&mut self, injector: &impl Injector, cutoff: Option<u64>) -> Result<()> {
         ensure!(
             self.records.iter().all(|record| record.stream == injector.stream()),
@@ -81,7 +84,18 @@ impl InjectionSchedule {
                     tokio::time::sleep(wait).await;
                 }
             }
-            tokio::time::timeout(self.timeout, injector.inject(record.clone())).await??;
+            match tokio::time::timeout(self.timeout, injector.inject(record.clone())).await? {
+                Ok(()) => {}
+                // A recorded rebroadcast of a transaction the replayed chain already holds.
+                Err(error)
+                    if record
+                        .tx_hash
+                        .is_some_and(|hash| BuilderIngressInjector::is_obsolete(&error, hash)) =>
+                {
+                    tracing::warn!(tx_hash = ?record.tx_hash, error = %error, "skipped obsolete scheduled call");
+                }
+                Err(error) => return Err(error),
+            }
             self.records.pop_front();
         }
         Ok(())
@@ -131,6 +145,41 @@ mod tests {
         schedule.timeout = Duration::from_millis(1);
 
         assert!(schedule.run(&injector, &CancellationToken::new()).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn skips_obsolete_rebroadcasts_and_fails_on_other_rejections() {
+        use std::sync::Arc;
+
+        use jsonrpsee::{core::ClientError, types::ErrorObjectOwned};
+
+        let hash = alloy_primitives::TxHash::ZERO;
+        let record = |method: &str| {
+            serde_json::from_str(&format!(
+                r#"{{"stream":"builder_ingress","received_at_ms":0,"method":"{method}","params":[],"source":"","tx_hash":"{hash}"}}"#
+            ))
+            .unwrap()
+        };
+        let rejection = move |reason: &str| {
+            eyre::Report::new(Arc::new(ClientError::Call(ErrorObjectOwned::owned(
+                jsonrpsee::types::error::INTERNAL_ERROR_CODE,
+                format!("pool rejected transaction: [{hash}]: {reason}"),
+                None::<()>,
+            ))))
+        };
+        let mut injector = MockInjector::new();
+        injector.expect_stream().return_const(ReplayStream::BuilderIngress);
+        injector.expect_inject().returning(move |record| {
+            let reason = match record.method.as_str() {
+                "stale" => "transaction nonce is not consistent: next nonce 2, tx nonce 0",
+                _ => "insufficient funds",
+            };
+            let error = rejection(reason);
+            Box::pin(async move { Err(error) })
+        });
+
+        InjectionSchedule::new(vec![record("stale")]).warmup(&injector, 0).await.unwrap();
+        assert!(InjectionSchedule::new(vec![record("bad")]).warmup(&injector, 0).await.is_err());
     }
 
     #[test]
