@@ -4,7 +4,7 @@ Gas-limit billing charges a Base transaction for the gas it reserves instead of 
 
 ## Problem
 
-The builder evaluates and executes candidates in priority-fee order within a fixed flashblock time budget, including a separate validity-predicate evaluation budget. Ranking is by `tip` per gas, known at admission; payment is `tip * gas_used`, known after execution. A transaction can reserve enough gas for a costly execution path but terminate early when an opportunity is unavailable. A high tip then buys priority while the small amount of consumed gas keeps payment low. A flood of these transactions consumes evaluation and execution time, deferring other transactions.
+The builder evaluates and executes candidates in priority-fee order within a fixed block time budget, including a separate validity-predicate evaluation budget. Ranking is by `tip` per gas, known at admission; payment is `tip * gas_used`, known after execution. A transaction can reserve enough gas for a costly execution path but terminate early when an opportunity is unavailable. A high tip then buys priority while the small amount of consumed gas keeps payment low. A flood of these transactions consumes evaluation and execution time, deferring other transactions.
 
 Hypothetical example with a 1 gwei reference tip (illustrative values, not network measurements):
 
@@ -71,11 +71,11 @@ if cfg.spec().is_feature_enabled(BaseFeature::GasLimitBilling)
 }
 ```
 
-Everything downstream (EIP-7623 floor, `reimburse_caller`, operator-fee refund, `reward_beneficiary`, `ResultGas`) then observes `gas_used == gas_limit`, so the block executor, both payload builders, flashblocks pending state and receipts use the same accounting. A single settlement hook avoids duplicating fee logic across execution paths, which could otherwise produce inconsistent receipts roots between builders and validators. `eth_call` and `eth_estimateGas` run with `disable_fee_charge`, so they stay metered and estimation still converges.
+Everything downstream (EIP-7623 floor, `reimburse_caller`, operator-fee refund, `reward_beneficiary`, `ResultGas`) then observes `gas_used == gas_limit`, so the block executor, the payload builder and receipts use the same accounting. A single settlement hook avoids duplicating fee logic across execution paths, which could otherwise produce inconsistent receipts roots between builders and validators. `eth_call` and `eth_estimateGas` run with `disable_fee_charge`, so they stay metered and estimation still converges.
 
 **EIP-8130** ([`eip8130.rs`](../../crates/common/evm/src/eip8130.rs)). `Eip8130Executor::billable_gas` returns `FeeCheck::max_chargeable_gas(gas_limit, payer_floor)` under the feature: exactly what `prepay` pre-charged and what the builder and txpool reserve. The `simulate` estimate stays metered but stops folding `payer_floor` into the returned limit, since settlement adds it on top; a sponsored transaction sent at `gas_limit = estimate` settles `estimate + payer_floor` once.
 
-**Builder cap** ([`execution.rs`](../../crates/builder/core/src/execution.rs)). `--builder.max_gas_per_txn` becomes a cap on declared limits: under the feature the flashblocks builder sets `ResourceLimits::max_reserved_gas_per_tx` and rejects `gas_limit + payer_floor > cap` (`TxResources::gas_limit + TxResources::payer_auth` in the builder) before execution with the permanent `MaxGasUsageExceeded`. It is also the operator's lever for bounding the worst-case fee of a padded transaction.
+**Builder reservation** ([`builder.rs`](../../crates/execution/payload/src/builder.rs)). The payload builder already reserves `gas_limit` (`gas_limit + payer_auth` for EIP-8130) against the block gas budget before execution, so under the feature the reserved gas is also the billed gas and a transaction that does not fit on its declared limit is not executed. There is no separate per-transaction gas cap in the builder; the EIP-7825 cap bounds `B`.
 
 ## Effects
 
@@ -88,7 +88,7 @@ Users pay `gas_limit * price` instead of `gas_used * price`; out-of-gas already 
 | `debug_trace*`, `trace_*` | Top-level `gasUsed` is the limit; per-opcode costs stay metered. Summing per-opcode costs does not reproduce metered gas (intrinsic gas, refunds, and the EIP-7623 floor are not opcode costs). Whether to expose a separate metered total is an activation consideration. |
 | Receipts, blocks, `eth_feeHistory` | Report reserved gas. |
 
-**Recovering metered gas.** Fee-charge-disabled execution stays metered, so re-running an included transaction with `eth_call` or `eth_estimateGas` against the parent block's state reports the gas it needed; the result is exact when no earlier transaction in the same block changed state the transaction reads. This is how a sender sizes its next limit after an over-estimate. Separately, the builder's per-transaction events ([`transaction_events.rs`](../../crates/builder/core/src/transaction_events.rs)) are to carry the metered gas of every included user transaction alongside the billed gas, so before/after analysis does not require re-simulation. Those events are internal telemetry: no receipt, header, state root, or RPC response changes.
+**Recovering metered gas.** Fee-charge-disabled execution stays metered, so re-running an included transaction with `eth_call` or `eth_estimateGas` against the parent block's state reports the gas it needed; the result is exact when no earlier transaction in the same block changed state the transaction reads. This is how a sender sizes its next limit after an over-estimate. Separately, the builder's per-transaction events ([`builder.rs`](../../crates/execution/payload/src/builder.rs)) are to carry the metered gas of every included validity-predicate transaction alongside the billed gas, so before/after analysis does not require re-simulation. Those events are internal telemetry: no receipt, header, state root, or RPC response changes.
 
 ## Design invariants
 
@@ -96,7 +96,7 @@ All execution paths must enforce the same accounting after activation while pres
 
 - The payer's fee debit equals `B * effectiveGasPrice + l1Fee + operatorFee(B)`; fee-vault and sequencer credits account for the full fee. Value transfers are separate: only committed transfers debit the sender, which may differ from the fee payer for sponsored EIP-8130 transactions.
 - Receipt `gasUsed` equals the gas limit (`B`) for every billed transaction. Header `gasUsed` equals the sum of the receipts' `gasUsed` and agrees with the last receipt's `cumulativeGasUsed`.
-- Builders refuse transactions whose reservation exceeds the remaining block gas or the configured per-transaction cap, even when metered execution would fit. Validators reject payloads with inconsistent gas accounting.
+- Builders refuse transactions whose reservation exceeds the remaining block gas, even when metered execution would fit. Validators reject payloads with inconsistent gas accounting.
 - EIP-3529 and EIP-7702 refunds and the EIP-7623 floor do not reduce the billed amount. Reverts and successful execution at the same reservation have the same billable gas.
 - Estimation remains metered. EIP-8130 estimates exclude `payer_floor`, which settlement adds exactly once.
 - Deposits retain metered gas and pay no L2 execution fee.
@@ -123,7 +123,7 @@ The following choices must be resolved before network activation:
 
 - **RPC**: define `eth_simulateV1` fee charging when `validation=false`, metered gas reporting in traces, and whether `Eip8130Executor::execute` must honor `disable_fee_charge` consistently with standard transactions.
 
-Key risks are higher fees for padded limits, greater dependence on accurate estimation, searchers paying for inclusion-time uncertainty, a changed meaning of `gasUsed`, fewer transactions per block when reservations exceed consumption, and divergence from the OP Stack fee model. `--builder.max_gas_per_txn` bounds the reservation, but the fee also depends on the transaction's effective gas price.
+Key risks are higher fees for padded limits, greater dependence on accurate estimation, searchers paying for inclusion-time uncertainty, a changed meaning of `gasUsed`, fewer transactions per block when reservations exceed consumption, and divergence from the OP Stack fee model. The EIP-7825 cap bounds the reservation, but the fee also depends on the transaction's effective gas price.
 
 ## Activation
 
