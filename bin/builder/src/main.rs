@@ -30,6 +30,7 @@ fn main() {
     base_cli_utils::init_common!();
     base_reth_cli::init_reth!();
     base_reth_cli::init_snapshots!();
+    base_reth_cli::init_engine!();
 
     let cli = base_cli_utils::parse_cli!(BuilderCli);
 
