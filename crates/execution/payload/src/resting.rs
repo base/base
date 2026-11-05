@@ -529,6 +529,10 @@ impl<T: BasePooledTx> BestTransactionsHold<T> for RestingHold {
         true
     }
 
+    fn has_candidates(&self) -> bool {
+        !self.shared.is_empty()
+    }
+
     fn record_duration(&mut self, duration: Duration) {
         self.shared.inner.lock().stats.duration += duration;
     }
@@ -615,7 +619,7 @@ impl RestingPredicateStore {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, U256};
-    use base_execution_txpool::ValidityOperator;
+    use base_execution_txpool::{BasePooledTransaction, ValidityOperator};
     use revm::{
         database::{AccountStatus, TransitionAccount, TransitionState, states::StorageSlot},
         state::{Account, AccountInfo},
@@ -699,6 +703,18 @@ mod tests {
         }
         resting.end_block(PARENT);
         resting
+    }
+
+    #[test]
+    fn an_iterator_hold_observes_rests_added_and_removed_after_creation() {
+        let shared = SharedRestingPredicates::new(RestingPredicates::new(32));
+        let hold = shared.iterator_hold::<BasePooledTransaction>();
+        assert!(!hold.has_candidates());
+
+        shared.rest(hash(0), balance_at_least(WATCHED, 1));
+        assert!(hold.has_candidates());
+        assert!(shared.remove(hash(0)));
+        assert!(!hold.has_candidates());
     }
 
     #[test]
