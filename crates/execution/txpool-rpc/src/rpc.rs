@@ -201,17 +201,14 @@ where
     /// Returns the latest committed header's `(number, timestamp)`, or `None` when no canonical
     /// head exists (e.g. before genesis is committed).
     fn latest_block_number_and_timestamp(&self) -> RpcResult<Option<(u64, u64)>> {
-        let Some(header) = self.provider.latest_header().map_err(|error| {
+        let header = self.provider.latest_header().map_err(|error| {
             ErrorObjectOwned::owned(
                 ErrorCode::InternalError.code(),
                 format!("failed to resolve latest header: {error}"),
                 None::<()>,
             )
-        })?
-        else {
-            return Ok(None);
-        };
-        Ok(Some((header.number(), header.timestamp())))
+        })?;
+        Ok(header.map(|header| (header.number(), header.timestamp())))
     }
 
     /// Returns whether the block being built uses Denim's native 200ms cadence.
@@ -264,26 +261,21 @@ impl<Pool: TransactionPool + 'static> TransactionStatusApiServer
 {
     async fn transaction_status(&self, tx_hash: TxHash) -> RpcResult<TransactionStatusResponse> {
         let Some(ref sequencer_client) = self.sequencer_client else {
-            return Ok(match self.pool.get(&tx_hash) {
-                Some(_) => TransactionStatusResponse { status: Status::Known },
-                None => TransactionStatusResponse { status: Status::Unknown },
-            });
+            let status = if self.pool.contains(&tx_hash) { Status::Known } else { Status::Unknown };
+            return Ok(TransactionStatusResponse { status });
         };
 
-        match sequencer_client
+        sequencer_client
             .request::<TransactionStatusResponse, _>("base_transactionStatus", rpc_params![tx_hash])
             .await
-        {
-            Ok(result) => Ok(result),
-            Err(e) => {
+            .map_err(|e| {
                 warn!(tx_hash = %tx_hash, error = %e, "failed to fetch transaction status");
-                Err(ErrorObjectOwned::owned(
+                ErrorObjectOwned::owned(
                     ErrorCode::InternalError.code(),
                     format!("failed to fetch transaction status: {e}"),
                     None::<()>,
-                ))
-            }
-        }
+                )
+            })
     }
 }
 
