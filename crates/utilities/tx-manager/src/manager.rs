@@ -1787,7 +1787,7 @@ mod tests {
     //! cannot construct, to reject confirmation under an RPC-supplied hash.
 
     use std::{
-        sync::{Arc, Mutex, atomic::AtomicBool},
+        sync::{Arc, atomic::AtomicBool},
         time::Duration,
     };
 
@@ -1808,6 +1808,7 @@ mod tests {
         Clock,
         deterministic::{Config, Runner},
     };
+    use mockall::predicate::eq;
     use rstest::rstest;
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
@@ -1818,7 +1819,7 @@ mod tests {
     use super::{PreparedTx, SimpleTxManager, TxEnvelope};
     use crate::{
         BlobTxBuilder, GasPriceCaps, NonceManager, NoopTxMetrics, SendOutcome, SendState,
-        TxCandidate, TxManager, TxManagerConfig, TxManagerError, TxMetrics,
+        TxCandidate, TxManager, TxManagerConfig, TxManagerError, metrics::MockTxMetrics,
     };
 
     async fn setup() -> (SimpleTxManager<RootProvider>, alloy_node_bindings::AnvilInstance) {
@@ -2475,32 +2476,6 @@ mod tests {
         });
     }
 
-    /// Records send and inclusion latencies and ignores every other metric.
-    #[derive(Debug, Default)]
-    struct LatencyMetrics {
-        send: Mutex<Vec<(u64, SendOutcome)>>,
-        inclusion: Mutex<Vec<u64>>,
-    }
-
-    impl TxMetrics for LatencyMetrics {
-        fn record_tx_max_fee(&self, _fee_gwei: f64) {}
-        fn record_gas_bump(&self) {}
-        fn record_send_latency(&self, latency_ms: u64, outcome: SendOutcome) {
-            self.send.lock().unwrap().push((latency_ms, outcome));
-        }
-        fn record_inclusion_latency(&self, latency_ms: u64) {
-            self.inclusion.lock().unwrap().push(latency_ms);
-        }
-        fn record_current_nonce(&self, _nonce: u64) {}
-        fn record_publish_error(&self) {}
-        fn record_basefee(&self, _basefee_gwei: f64) {}
-        fn record_tipcap(&self, _tipcap_gwei: f64) {}
-        fn record_blob_fee_cap(&self, _blob_fee_cap_gwei: f64) {}
-        fn record_rpc_error(&self) {}
-        fn record_tx_confirmed(&self) {}
-        fn record_tx_failed(&self) {}
-    }
-
     /// A confirmed send records its inclusion latency together with its send latency,
     /// from the timestamp of the canonical block the receipt poller already read: the
     /// latency runs from the start of the send, in milliseconds of wall-clock time, to
@@ -2523,14 +2498,27 @@ mod tests {
             asserter.push_success(&10u64);
             asserter.push_success(&Some(&receipt));
             asserter.push_success(&Some(&block));
-            let metrics = Arc::new(LatencyMetrics::default());
+            let mut metrics = MockTxMetrics::new();
+            metrics
+                .expect_record_send_latency()
+                .with(eq(0), eq(SendOutcome::Confirmed))
+                .times(1)
+                .return_const(());
+            // The send starts at 1_700_000_000.300 s and the block's timestamp is 1_700_000_020 s.
+            metrics.expect_record_inclusion_latency().with(eq(19_700)).times(1).return_const(());
+            // The send also records fee, nonce and outcome metrics, which this test does not check.
+            metrics.expect_record_basefee().return_const(());
+            metrics.expect_record_tipcap().return_const(());
+            metrics.expect_record_tx_max_fee().return_const(());
+            metrics.expect_record_current_nonce().return_const(());
+            metrics.expect_record_tx_confirmed().return_const(());
             let manager = SimpleTxManager::from_wallet_with_runtime(
                 ctx.clone(),
                 ProviderBuilder::new().connect_mocked_client(asserter.clone()),
                 EthereumWallet::from(PrivateKeySigner::random()),
                 TxManagerConfig { num_confirmations: 1, ..TxManagerConfig::default() },
                 1,
-                Arc::clone(&metrics) as Arc<dyn TxMetrics>,
+                Arc::new(metrics),
             )
             .await
             .expect("should construct manager");
@@ -2543,9 +2531,6 @@ mod tests {
 
             assert_eq!(confirmed.transaction_hash, tx_hash);
             assert!(asserter.read_q().is_empty(), "every mocked response should be used");
-            assert_eq!(*metrics.send.lock().unwrap(), vec![(0, SendOutcome::Confirmed)]);
-            // The send starts at 1_700_000_000.300 s and the block's timestamp is 1_700_000_020 s.
-            assert_eq!(*metrics.inclusion.lock().unwrap(), vec![19_700]);
         });
     }
 

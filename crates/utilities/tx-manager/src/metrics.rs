@@ -71,6 +71,7 @@ impl SendOutcome {
 ///
 /// Implement this trait to plug in your own metrics backend. A [`BaseTxMetrics`]
 /// implementation backed by the [`metrics`] crate is provided for production use.
+#[cfg_attr(test, mockall::automock)]
 pub trait TxMetrics: Send + Sync + Debug + 'static {
     /// Record the maximum possible transaction fee in gwei (`gas_limit` * `fee_cap`).
     fn record_tx_max_fee(&self, fee_gwei: f64);
