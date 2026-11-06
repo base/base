@@ -70,9 +70,9 @@ pub const ORDINARY_PRIORITY_FEE: u128 = 1;
 const SENDER_BALANCE: u128 = 100_000_000_000_000_000_000;
 /// Transactions each sub-pool admits: above the largest population plus every block of ordinary
 /// traffic, so no bench evicts.
-const SUB_POOL_TRANSACTIONS: usize = 250_000;
+const SUB_POOL_TRANSACTIONS: usize = 1_000_000;
 /// Bytes each sub-pool admits, sized with [`SUB_POOL_TRANSACTIONS`].
-const SUB_POOL_BYTES: usize = 1 << 30;
+const SUB_POOL_BYTES: usize = 1 << 32;
 /// Transactions admitted per validation batch.
 const ADMISSION_BATCH: usize = 4_096;
 /// Recipient of filler and resting transfers, whose distinct values keep otherwise identical
