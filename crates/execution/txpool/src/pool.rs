@@ -1593,7 +1593,7 @@ where
             let live = LiveLaneUpdates::new(events, Arc::clone(&self.validity.pool));
             (
                 sidecar.best_transactions(self.ordering.clone(), base_fee),
-                validity.best_transactions(self.ordering.clone(), base_fee).with_live_updates(live),
+                validity.live_best_transactions(self.ordering.clone(), base_fee, live),
                 validity.lanes_ahead_of_state().clone(),
                 self.bridged_descendants(&sidecar, &validity),
             )

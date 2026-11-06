@@ -1327,6 +1327,28 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
             self.protocol_nonce_lanes,
             ordering,
             base_fee,
+            None,
+        )
+    }
+
+    /// Returns a best-transactions iterator that also walks the transactions
+    /// `live` reports pending after this snapshot.
+    pub(crate) fn live_best_transactions<O>(
+        &self,
+        ordering: O,
+        base_fee: u64,
+        live: LiveLaneUpdates<T>,
+    ) -> BestTwoDTransactions<T, O>
+    where
+        O: TransactionOrdering<Transaction = T>,
+    {
+        BestTwoDTransactions::new(
+            &self.lanes,
+            &self.nonce_free,
+            self.protocol_nonce_lanes,
+            ordering,
+            base_fee,
+            Some(live),
         )
     }
 
@@ -1407,7 +1429,7 @@ impl<T: BasePooledTx> LiveLaneUpdates<T> {
 ///
 /// Each finite channel contributes its contiguous head and each nonce-free
 /// transaction contributes an independent one-item candidate. The walk is a
-/// snapshot unless [`Self::with_live_updates`] also feeds it transactions
+/// snapshot unless [`TwoDNoncePool::live_best_transactions`] also feeds it transactions
 /// that become pending while it runs.
 #[derive(Debug)]
 pub(crate) struct BestTwoDTransactions<T: BasePooledTx, O>
@@ -1430,8 +1452,6 @@ where
     protocol_nonce_lanes: bool,
     ordering: O,
     base_fee: u64,
-    /// Snapshot lanes before this index are finite channels, the rest nonce-free.
-    finite_lanes: usize,
     /// Pending admissions after the snapshot; `None` keeps the walk static.
     live: Option<LiveLaneUpdates<T>>,
 }
@@ -1478,6 +1498,7 @@ where
         protocol_nonce_lanes: bool,
         ordering: O,
         base_fee: u64,
+        live: Option<LiveLaneUpdates<T>>,
     ) -> Self {
         let mut snapshot = Vec::with_capacity(lanes.len() + nonce_free.len());
         snapshot.extend(lanes.iter().filter_map(|(id, lane)| {
@@ -1487,17 +1508,20 @@ where
             tail.extend(pending.cloned());
             Some(LaneIterator::new(*id, head, tail))
         }));
-        let finite_lanes = snapshot.len();
         let lane_indexes = snapshot
             .iter()
             .enumerate()
-            .filter(|(_, lane)| !lane.tail.is_empty())
+            .filter(|(_, lane)| live.is_some() || !lane.tail.is_empty())
             .map(|(index, lane)| (lane.id, index))
             .collect();
-        snapshot.extend(nonce_free.values().map(|transaction| {
+        let mut nonce_free_indexes = B256Map::default();
+        for (replay_id, transaction) in nonce_free {
+            if live.is_some() {
+                nonce_free_indexes.insert(*replay_id, snapshot.len());
+            }
             let id = (transaction.sender(), Eip8130Constants::NONCE_KEY_MAX);
-            LaneIterator::new(id, Arc::clone(transaction), Vec::new())
-        }));
+            snapshot.push(LaneIterator::new(id, Arc::clone(transaction), Vec::new()));
+        }
         let candidates = BinaryHeap::from(
             snapshot
                 .iter()
@@ -1511,30 +1535,12 @@ where
             lanes: snapshot,
             candidates,
             lane_indexes,
-            nonce_free_indexes: B256Map::default(),
+            nonce_free_indexes,
             protocol_nonce_lanes,
             ordering,
             base_fee,
-            finite_lanes,
-            live: None,
+            live,
         }
-    }
-
-    /// Also walks transactions the store makes pending after this snapshot.
-    pub(crate) fn with_live_updates(mut self, live: LiveLaneUpdates<T>) -> Self {
-        let (finite, nonce_free) = self.lanes.split_at(self.finite_lanes);
-        self.lane_indexes =
-            finite.iter().enumerate().map(|(index, lane)| (lane.id, index)).collect();
-        self.nonce_free_indexes = nonce_free
-            .iter()
-            .enumerate()
-            .filter_map(|(offset, lane)| {
-                let replay_id = lane.head.transaction.eip8130_replay_id()?;
-                Some((replay_id, self.finite_lanes + offset))
-            })
-            .collect();
-        self.live = Some(live);
-        self
     }
 
     fn push_lane_head(&mut self, index: usize) {
@@ -1918,6 +1924,7 @@ mod tests {
             false,
             BaseOrdering::coinbase_tip(),
             0,
+            None,
         );
         let snapshot_elapsed = snapshot_started.elapsed();
 
@@ -2406,6 +2413,7 @@ mod tests {
             false,
             BaseOrdering::coinbase_tip(),
             0,
+            None,
         );
         assert_eq!(best.next().map(|transaction| *transaction.hash()), Some(*transaction.hash()));
         assert!(best.next().is_none());
