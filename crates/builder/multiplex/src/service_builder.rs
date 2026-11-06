@@ -66,6 +66,7 @@ impl MultiplexingServiceBuilder {
         BaseBuilderConfig {
             da_config: self.builder_config.da_config.clone(),
             gas_limit_config: self.builder_config.gas_limit_config.clone(),
+            max_uncompressed_block_size: self.builder_config.max_uncompressed_block_size,
             manifest_precheck_enabled: self.builder_config.manifest_precheck_enabled,
             predicate_eval_hard_cutoff: self.builder_config.predicate_eval_hard_cutoff,
             predicate_bucket_ordered_threshold: self
@@ -211,6 +212,21 @@ mod tests {
     use base_execution_payload_builder::{ResourceMeteringConfig, ResourceMeteringSchedule};
 
     use super::*;
+
+    /// Both cutover and basic-only builds retain the shared uncompressed byte cap.
+    #[test]
+    fn native_payload_config_forwards_max_uncompressed_block_size() {
+        for limit in [None, Some(0), Some(1_000)] {
+            for basic_only in [false, true] {
+                let config = BuilderConfig {
+                    max_uncompressed_block_size: limit,
+                    ..BuilderConfig::default()
+                };
+                let service = MultiplexingServiceBuilder::new(config).with_basic_only(basic_only);
+                assert_eq!(service.native_payload_config(false).max_uncompressed_block_size, limit);
+            }
+        }
+    }
 
     #[test]
     fn native_payload_config_preserves_metering_provider_and_rejection_cache() {
