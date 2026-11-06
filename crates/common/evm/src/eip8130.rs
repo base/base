@@ -2996,41 +2996,48 @@ mod tests {
             ..base_tx()
         };
         let effective = u128::from(BASE_FEE) + tx.max_priority_fee_per_gas;
-        let sign = |tx: TxEip8130| {
-            let sender_auth = eoa_sig(&key, tx.sender_signature_hash());
-            let payer_auth = eoa_sig(&payer_key, tx.payer_signature_hash(sender));
-            Eip8130Signed::new(tx, sender_auth, payer_auth)
-        };
-        let signed = sign(tx.clone());
         let intrinsic_of = |signed: &Eip8130Signed| {
             let envelope = BaseTxEnvelope::Eip8130(signed.clone());
             let encoded: Bytes = alloy_eips::eip2718::Encodable2718::encoded_2718(&envelope).into();
             IntrinsicGas::compute(signed, &encoded, &IntrinsicGasInput::new(sender, true))
                 .expect("intrinsic gas")
         };
-        let intrinsic = intrinsic_of(&signed);
-        assert!(intrinsic.payer_floor > 0, "a sponsored transaction meters payer authentication");
+
+        // Estimate the way `eth_estimateGas` does: nobody has signed yet, so both
+        // auth blobs are 65-byte placeholders of all-non-zero bytes (the RPC's
+        // `STUB_AUTH_FILL`). No real signature costs more.
+        let placeholder = Bytes::from([0xff_u8; 65]);
+        let unsigned = Eip8130Signed::new(tx.clone(), placeholder.clone(), placeholder);
+        let estimated = intrinsic_of(&unsigned);
+        assert!(estimated.payer_floor > 0, "a sponsored transaction meters payer authentication");
 
         // The estimate is the sender budget alone: sender-intrinsic gas plus the
         // cold access of the STOP target, raised to the sender's EIP-7623 floor,
         // with no payer authentication folded in.
-        let estimate_gas = estimate(BaseUpgrade::Everest, &signed, sender, payer, &contracts);
+        let estimate_gas = estimate(BaseUpgrade::Everest, &unsigned, sender, payer, &contracts);
         assert_eq!(
             estimate_gas,
-            (intrinsic.sender_intrinsic() + COLD_ACCOUNT_ACCESS_COST).max(intrinsic.sender_floor()),
+            (estimated.sender_intrinsic() + COLD_ACCOUNT_ACCESS_COST).max(estimated.sender_floor()),
             "the estimate must exclude `payer_floor` under gas-limit billing",
         );
 
-        // Re-signing at a new limit changes how many signature bytes are zero, and
-        // payload DA prices a zero byte 12 gas below a non-zero one, so the
-        // re-signed transaction declares enough slack for its two 65-byte
-        // signatures. Settlement then bills the declared limit plus `payer_floor`
-        // once, not payer authentication a second time.
-        const RESIGN_SLACK: u64 = 2 * 65 * 12;
-        let declared = sign(TxEip8130 { gas_limit: estimate_gas + RESIGN_SLACK, ..tx });
+        // Sign at exactly `gas_limit = estimate`, as a wallet would, with no slack.
+        let declared_tx = TxEip8130 { gas_limit: estimate_gas, ..tx };
+        let declared = Eip8130Signed::new(
+            declared_tx.clone(),
+            eoa_sig(&key, declared_tx.sender_signature_hash()),
+            eoa_sig(&payer_key, declared_tx.payer_signature_hash(sender)),
+        );
+        let actual = intrinsic_of(&declared);
+        // Real signatures never cost more than the placeholders, so the estimate still
+        // clears the sender floor and leaves the calls at least the searched pool.
+        assert!(actual.sender_intrinsic() <= estimated.sender_intrinsic());
+        assert!(actual.sender_floor() <= estimated.sender_floor());
+
         let billed = settle(BaseUpgrade::Everest, &declared, payer, &contracts);
-        assert!(billed.success, "the estimate plus signature slack must be a sufficient limit");
-        assert_eq!(billed.gas_used, declared.tx().gas_limit + intrinsic_of(&declared).payer_floor);
+        assert!(billed.success, "`gas_limit = estimate` must be a sufficient limit");
+        // Billed once: the declared limit plus the real `payer_floor`.
+        assert_eq!(billed.gas_used, estimate_gas + actual.payer_floor);
         assert_eq!(
             billed.paid,
             U256::from(effective) * U256::from(billed.gas_used)
