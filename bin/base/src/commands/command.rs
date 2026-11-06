@@ -35,7 +35,7 @@ pub(crate) enum BaseCommand {
     /// Run integrated execution, builder, and consensus services in sequencer mode.
     #[command(name = "sequencer")]
     Sequencer(Box<SequencerCommand>),
-    /// Run an L1-free development chain on an existing snapshot datadir.
+    /// Run an L1-free development chain from a fresh genesis or an existing snapshot datadir.
     #[command(name = "dev")]
     Dev(Box<DevCommand>),
     /// Run only the execution layer.
@@ -74,7 +74,7 @@ impl BaseCommand {
             Self::Rpc(rpc) => (*rpc).run(chain_resolver.resolve()?),
             Self::Follow(follow) => (*follow).run(chain_resolver.resolve()?),
             Self::Sequencer(sequencer) => (*sequencer).run(chain_resolver.resolve()?),
-            Self::Dev(dev) => (*dev).run(chain_resolver.resolve()?),
+            Self::Dev(dev) => (*dev).run(chain_resolver),
             Self::Execution(execution) => (*execution).run(chain_resolver.resolve()?),
             Self::Consensus(consensus) => {
                 (*consensus).run(chain_resolver.resolve()?, metrics_enabled)

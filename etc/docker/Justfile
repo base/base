@@ -20,6 +20,30 @@ up mode='default':
 up-single mode='default':
     just --justfile {{ source_file() }} _up-devnet "base" {{ quote(mode) }}
 
+# Builds base and runs `base dev --fresh` in the foreground, e.g. `fresh --dir ~/data/fresh-devnet`
+[no-cd]
+[positional-arguments]
+fresh *args:
+    exec cargo run --release --manifest-path {{ quote(source_directory() / "../../Cargo.toml") }} --bin base -- dev --fresh "$@"
+
+# Regenerates the genesis embedded for `base dev --fresh` with the offline devnet op-deployer
+fresh-genesis: _build-setup-image
+    #!/usr/bin/env bash
+    set -euo pipefail
+    out="$(mktemp -d)"
+    trap 'rm -rf "$out"' EXIT
+    # Every current upgrade activates at genesis. A fixed timestamp and salt keep the output
+    # deterministic; `base dev --fresh` moves genesis to the current time when it creates a chain.
+    docker run --rm --user "$(id -u):$(id -g)" -v "$out:/output" \
+      -e OUTPUT_DIR=/output/l1 -e L2_OUTPUT_DIR=/output/l2 -e BASE_DEVNET_TIMESTAMP=1 \
+      -e BASE_DEVNET_SALT=0x0000000000000000000000000000000000000000000000000000000000000001 \
+      -e CHAIN_ID="$L1_CHAIN_ID" -e L2_CHAIN_ID -e UPGRADE_SIGNAL_PREINSTALL=false \
+      -e DEPLOYER_ADDR -e SEQUENCER_ADDR -e BATCHER_ADDR -e PROPOSER_ADDR -e CHALLENGER_ADDR \
+      -e L2_BASE_AZUL_BLOCK=0 -e L2_BASE_BERYL_BLOCK=0 -e L2_BASE_COBALT_BLOCK=0 \
+      -e L2_BASE_DENIM_BLOCK=0 \
+      devnet-setup:local-v2 op-deployer
+    cp "$out/l2/genesis.json" "$out/l2/rollup.json" crates/consensus/service/res/dev/
+
 # Starts the single-Anvil L1 devnet and its two-worker local Nitro proof stack
 up-anvil-nitro-local: down-anvil _build-setup-image (_build-rust-images "devnet" "dev") (_build-nitro-images "dev")
     #!/usr/bin/env bash
