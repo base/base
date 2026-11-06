@@ -49,7 +49,7 @@ use crate::{
     StateDiffInvalidation, ValidityDormancyMode, ValidityPoolLimits, ValidityPoolMetrics,
     ValidityPredicate, WokenTransaction,
     best::{BridgedDescendants, MergeBestTransactions},
-    dormancy::BuildLocal,
+    dormancy::{BuildLocal, DORMANCY_MERGE_WAIT_LIMIT, DormancyMergeGate},
     two_d_nonce_pool::{
         InsertOutcome, LaneCursor, LaneId, LaneUpdate, SidecarLimits, TwoDNoncePool,
     },
@@ -185,6 +185,9 @@ pub struct BaseTransactionPool<
     /// invalidation and guard maintenance, so a same-nonce submission cannot
     /// race a sweep. Validation itself remains outside this lock.
     protocol_admission_lock: Arc<Mutex<()>>,
+    /// Whether the parks of the last sealed build are still being merged
+    /// into the dormancy index, off the build path.
+    dormancy_merge: Arc<DormancyMergeGate>,
     /// Whether the validity pool keeps dormant transactions out of builds.
     dormancy: ValidityDormancyMode,
 }
@@ -221,6 +224,7 @@ where
             guard: Arc::clone(&self.guard),
             block_expiry: Arc::clone(&self.block_expiry),
             protocol_admission_lock: Arc::clone(&self.protocol_admission_lock),
+            dormancy_merge: Arc::clone(&self.dormancy_merge),
             dormancy: self.dormancy,
         }
     }
@@ -269,6 +273,7 @@ where
             guard: Arc::new(RwLock::new(MempoolGuard::unlimited())),
             block_expiry: Arc::new(RwLock::new(crate::BlockExpiryIndex::new())),
             protocol_admission_lock: Arc::new(Mutex::new(())),
+            dormancy_merge: Arc::default(),
             dormancy: ValidityDormancyMode::Off,
         }
     }
@@ -2565,38 +2570,53 @@ where
         if !self.dormancy_enforced() {
             return None;
         }
+        if let Some(waited) = self.dormancy_merge.wait(DORMANCY_MERGE_WAIT_LIMIT) {
+            ValidityPoolMetrics::dormancy_merge_wait().record(waited.as_secs_f64());
+        }
         let build = TwoDNoncePool::write_retiring(&self.validity.pool, |validity| {
             let build = validity.begin_build(parent, block_number, pre_selection);
             ValidityPoolMetrics::record_dormancy(validity.dormant_len(), 0);
             build
         });
         let Some(build) = build else {
-            ValidityPoolMetrics::dormancy_fallback_builds("build_active").increment(1);
+            let reason =
+                if self.dormancy_merge.is_pending() { "merge_pending" } else { "build_active" };
+            ValidityPoolMetrics::dormancy_fallback_builds(reason).increment(1);
             return None;
         };
         let pool = Arc::clone(&self.validity.pool);
+        let merge_gate = Arc::clone(&self.dormancy_merge);
         Some(DormancyBuild::new(build, move |sealed| {
-            // A seal detaches the build's parks under the lock, collects them
-            // after releasing it and merges them in chunks, the build keeping
-            // the index until the merge ends. Whatever a seal or drop retires
-            // is freed outside the lock.
-            let woken = sealed.map_or_else(
-                || TwoDNoncePool::write_retiring(&pool, |validity| validity.abandon_build(build)),
-                |block_hash| {
-                    let local = TwoDNoncePool::write_retiring(&pool, |validity| {
-                        validity.seal_build(build, block_hash)
-                    });
-                    let parks = local.map(BuildLocal::into_parks).unwrap_or_default();
-                    for chunk in parks.chunks(DORMANCY_INSTALL_BATCH) {
-                        pool.write().merge_build_parks(build, chunk);
-                    }
-                    TwoDNoncePool::write_retiring(&pool, |validity| validity.release_build(build))
-                },
-            );
-            if let Some(woken) = woken {
-                ValidityPoolMetrics::dormant_wakes().record(woken as f64);
+            let Some(block_hash) = sealed else {
+                let woken =
+                    TwoDNoncePool::write_retiring(&pool, |validity| validity.abandon_build(build));
+                TwoDNoncePool::record_build_end(&pool, woken);
+                return;
+            };
+            // A seal detaches the build's parks under the lock and returns;
+            // a blocking task collects and merges them in chunks, the build
+            // keeping the index until the merge ends, so the next build waits
+            // on the gate rather than running without the index.
+            merge_gate.start();
+            let local = TwoDNoncePool::write_retiring(&pool, |validity| {
+                validity.seal_build(build, block_hash)
+            });
+            let merge = move || {
+                let mut local = local.unwrap_or_else(|| BuildLocal::new(false));
+                let adopted = pool.write().adopt_build_parks(build, &mut local);
+                let parks = local.into_parks();
+                for chunk in parks.chunks(DORMANCY_INSTALL_BATCH) {
+                    pool.write().merge_build_parks(build, chunk, adopted);
+                }
+                let woken =
+                    TwoDNoncePool::write_retiring(&pool, |validity| validity.release_build(build));
+                merge_gate.finish();
+                TwoDNoncePool::record_build_end(&pool, woken);
+            };
+            match tokio::runtime::Handle::try_current() {
+                Ok(runtime) => drop(runtime.spawn_blocking(merge)),
+                Err(_) => merge(),
             }
-            ValidityPoolMetrics::record_dormancy(pool.read().dormant_len(), 0);
         }))
     }
 }
@@ -7132,8 +7152,14 @@ mod tests {
         fn advance(pool: &IntegrationPool, number: u64) {
             if let Some(build) = pool.begin_dormancy_build(block_hash(number - 1), number, None) {
                 build.seal(block_hash(number));
+                wait_for_merge(pool);
             }
             canonical(pool, number, block_hash(number));
+        }
+
+        /// Waits for the background merge of the last sealed build's parks.
+        fn wait_for_merge(pool: &IntegrationPool) {
+            pool.dormancy_merge.wait(Duration::from_secs(10));
         }
 
         /// The state a committed transaction leaves after moving `CONTRACT`'s `slot` to one.
@@ -7372,7 +7398,8 @@ mod tests {
             let _next = match next {
                 NextBuild::OnTheSealedBlock => {
                     build.seal(block_hash(2));
-                    assert_eq!(pool.validity.pool.read().dormant_len(), 1, "merged at the seal");
+                    wait_for_merge(&pool);
+                    assert_eq!(pool.validity.pool.read().dormant_len(), 1, "merged after the seal");
                     Some(begin(&pool, block_hash(2), 3))
                 }
                 NextBuild::OnAnotherParent => {
@@ -7715,6 +7742,99 @@ mod tests {
 
             pool.restore_discarded_dormancy();
             assert_eq!(pool.pool_size().queued, 0, "maintenance made them ready again");
+        }
+
+        /// An enforcing pool sealed at block 1 that holds a transaction blocked
+        /// on `SLOT`, and a runtime with a single blocking thread that seals in
+        /// it can merge on, which a test can occupy to hold a merge back.
+        async fn pool_with_one_merge_thread() -> (IntegrationPool, TxHash, tokio::runtime::Runtime)
+        {
+            let (pool, client) = dormancy_pool(ValidityDormancyMode::Enforce);
+            let signer = funded_signer(&client);
+            advance(&pool, 1);
+            let root = add(&pool, with_predicates(signed_1559(&signer, 0), [slot_is_one()])).await;
+            let merges = tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(1)
+                .max_blocking_threads(1)
+                .build()
+                .unwrap();
+            (pool, root, merges)
+        }
+
+        /// Parks `root` in build 2 and seals it on `merges` while its only
+        /// blocking thread is busy, so the merge is queued; returns the sender
+        /// that frees the thread and the task occupying it.
+        fn seal_with_the_merge_held_back(
+            pool: &IntegrationPool,
+            root: TxHash,
+            merges: &tokio::runtime::Runtime,
+        ) -> (std::sync::mpsc::Sender<()>, tokio::task::JoinHandle<()>) {
+            let build = begin(pool, block_hash(1), 2);
+            let mut best = build_iterator(pool, Some(&build));
+            let yielded = best.next().unwrap();
+            assert_eq!(*yielded.hash(), root);
+            best.park_unsatisfied(&yielded, slot_is_one());
+            drop(best);
+            let (release, held) = std::sync::mpsc::channel::<()>();
+            let occupied = merges.spawn_blocking(move || {
+                held.recv().ok();
+            });
+            let _merges = merges.enter();
+            build.seal(block_hash(2));
+            (release, occupied)
+        }
+
+        /// A seal returns without merging the build's parks; a blocking task
+        /// merges them afterwards and a later build sees them dormant.
+        #[tokio::test(flavor = "multi_thread")]
+        async fn a_seal_returns_before_its_parks_are_merged() {
+            let (pool, root, merges) = pool_with_one_merge_thread().await;
+            let (release, occupied) = seal_with_the_merge_held_back(&pool, root, &merges);
+
+            assert_eq!(pool.validity.pool.read().dormant_len(), 0, "nothing merged yet");
+            assert!(pool.dormancy_merge.is_pending());
+
+            release.send(()).unwrap();
+            occupied.await.unwrap();
+            let _next = begin(&pool, block_hash(2), 3);
+            assert_eq!(pool.validity.pool.read().dormant_len(), 1);
+            assert!(!in_best(&pool, root), "the next build leaves the merged park out");
+            merges.shutdown_background();
+        }
+
+        /// A build starting while the previous build's parks are still being
+        /// merged waits for the merge instead of running without the index.
+        #[tokio::test(flavor = "multi_thread")]
+        async fn a_build_starting_during_a_merge_waits_for_it() {
+            let (pool, root, merges) = pool_with_one_merge_thread().await;
+            let (release, occupied) = seal_with_the_merge_held_back(&pool, root, &merges);
+            let starter = {
+                let pool = pool.clone();
+                std::thread::spawn(move || {
+                    let recorder = DebuggingRecorder::new();
+                    let (owned, dormant) = metrics::with_local_recorder(&recorder, || {
+                        let build = pool.begin_dormancy_build(block_hash(2), 3, None);
+                        (build.is_some(), pool.validity.pool.read().dormant_len())
+                    });
+                    let waited = recorder.snapshotter().snapshot().into_vec().into_iter().any(
+                        |(key, _, _, value)| {
+                            key.key().name() == "txpool.validity.dormancy_merge_wait"
+                                && matches!(value, DebugValue::Histogram(samples) if !samples.is_empty())
+                        },
+                    );
+                    (owned, waited, dormant)
+                })
+            };
+            std::thread::sleep(Duration::from_millis(20));
+            assert!(!starter.is_finished(), "the build waits for the merge");
+
+            release.send(()).unwrap();
+            occupied.await.unwrap();
+            let (owned, waited, dormant) = starter.join().unwrap();
+            assert!(owned, "it owns the index once the merge ends");
+            assert!(waited, "its wait is recorded");
+            assert_eq!(dormant, 1, "and it starts from the merged parks");
+            merges.shutdown_background();
         }
 
         /// A discard requested while a build runs waits for the build to end,

@@ -6,13 +6,15 @@ use std::{
     fmt,
     str::FromStr,
     sync::Arc,
+    time::{Duration, Instant},
 };
 
 use alloy_eips::BlockNumHash;
 use alloy_primitives::{
     B256, TxHash, U256,
-    map::{AddressSet, B256Set, HashMap, HashSet},
+    map::{AddressSet, B256Map, B256Set, HashMap, HashSet},
 };
+use parking_lot::{Condvar, Mutex};
 use reth_transaction_pool::{PoolTransaction, ValidPoolTransaction};
 use revm::{Database, state::EvmState};
 
@@ -32,6 +34,48 @@ pub const DORMANCY_CANARY_BUDGET: usize = 64;
 /// Most classification results installed per hold of the validity pool lock, so a build waiting
 /// on the lock never waits long.
 pub const DORMANCY_INSTALL_BATCH: usize = 256;
+
+/// Longest a build starting waits for the merge of the previous build's parks before running
+/// without the dormancy index.
+pub const DORMANCY_MERGE_WAIT_LIMIT: Duration = Duration::from_millis(100);
+
+/// Tells a build starting whether the parks of the last sealed build are still being merged into
+/// the dormancy index off the build path, and lets it wait for the merge to end.
+#[derive(Debug, Default)]
+pub(crate) struct DormancyMergeGate {
+    pending: Mutex<bool>,
+    finished: Condvar,
+}
+
+impl DormancyMergeGate {
+    /// Records that a merge started.
+    pub(crate) fn start(&self) {
+        *self.pending.lock() = true;
+    }
+
+    /// Records that the merge ended and wakes the builds waiting for it.
+    pub(crate) fn finish(&self) {
+        *self.pending.lock() = false;
+        self.finished.notify_all();
+    }
+
+    /// Whether a merge is pending.
+    pub(crate) fn is_pending(&self) -> bool {
+        *self.pending.lock()
+    }
+
+    /// Waits up to `limit` for a pending merge to end, returning how long it waited, or `None`
+    /// when no merge was pending.
+    pub(crate) fn wait(&self, limit: Duration) -> Option<Duration> {
+        let mut pending = self.pending.lock();
+        if !*pending {
+            return None;
+        }
+        let started = Instant::now();
+        self.finished.wait_while_for(&mut pending, |pending| *pending, limit);
+        Some(started.elapsed())
+    }
+}
 
 /// Whether the validity pool keeps transactions whose predicates cannot hold yet out of the
 /// best-transactions snapshot.
@@ -290,16 +334,14 @@ impl<T: PoolTransaction> BuildLocal<T> {
 /// An index a discard set aside, whose transactions are made ready again off the build path.
 #[derive(Debug, Default)]
 pub(crate) struct DiscardedIndex {
-    index: ParkedPredicateIndex<DormantEntry>,
+    _index: ParkedPredicateIndex<()>,
+    entries: B256Map<DormantEntry>,
 }
 
 impl DiscardedIndex {
     /// Where each discarded transaction sat. Walks the whole index, so call it without locks.
     pub(crate) fn into_slots(self) -> Vec<(TxHash, DormantSlot)> {
-        self.index
-            .hashes()
-            .filter_map(|hash| Some((hash, self.index.transaction(hash)?.slot)))
-            .collect()
+        self.entries.into_iter().map(|(hash, entry)| (hash, entry.slot)).collect()
     }
 }
 
@@ -318,7 +360,11 @@ pub(crate) struct RetiredCollections {
 #[derive(Debug)]
 pub(crate) struct Dormancy {
     mode: ValidityDormancyMode,
-    pub index: ParkedPredicateIndex<DormantEntry>,
+    /// The predicate each indexed transaction is blocked on, for wakes. It may also hold, for
+    /// the length of a merge, a sealed build's parks not yet confirmed dormant.
+    pub index: ParkedPredicateIndex<()>,
+    /// The dormant transactions: those in `index` confirmed to be dormant.
+    entries: B256Map<DormantEntry>,
     block_releases: BTreeMap<u64, B256Set>,
     lanes: HashMap<LaneId, TxHash>,
     queue: B256Set,
@@ -360,6 +406,7 @@ impl Dormancy {
         Self {
             mode,
             index: ParkedPredicateIndex::default(),
+            entries: B256Map::default(),
             block_releases: BTreeMap::new(),
             lanes: HashMap::default(),
             queue: B256Set::default(),
@@ -386,7 +433,7 @@ impl Dormancy {
 
     /// Number of dormant transactions.
     pub(crate) fn len(&self) -> usize {
-        self.index.len()
+        self.entries.len()
     }
 
     /// Whether `build` is the running build.
@@ -407,7 +454,10 @@ impl Dormancy {
         self.retired.releases.push(std::mem::take(&mut self.block_releases));
         self.retired.canaries.push(std::mem::take(&mut self.canary));
         self.lanes = HashMap::default();
-        self.discarded.push(DiscardedIndex { index: std::mem::take(&mut self.index) });
+        self.discarded.push(DiscardedIndex {
+            _index: std::mem::take(&mut self.index),
+            entries: std::mem::take(&mut self.entries),
+        });
         self.clear_fences();
     }
 
@@ -449,7 +499,34 @@ impl Dormancy {
     }
 
     pub(crate) fn is_dormant(&self, hash: &TxHash) -> bool {
-        self.index.transaction(*hash).is_some()
+        self.entries.contains_key(hash)
+    }
+
+    /// Adopts a sealed build's parks as the index in constant time when the index is empty, as
+    /// it is after a discard or before the first seal. Each adopted transaction becomes dormant
+    /// once [`Self::confirm_adopted`] confirms it, and is dropped from the index otherwise.
+    pub(crate) fn adopt_index(&mut self, parks: &mut ParkedPredicateIndex<()>) -> bool {
+        if !self.index.is_empty() || !self.entries.is_empty() {
+            return false;
+        }
+        std::mem::swap(&mut self.index, parks);
+        true
+    }
+
+    /// Whether `hash` is an adopted park still awaiting confirmation: in the index, not yet
+    /// dormant.
+    pub(crate) fn awaits_confirmation(&self, hash: &TxHash) -> bool {
+        !self.entries.contains_key(hash) && self.index.transaction(*hash).is_some()
+    }
+
+    /// Makes an adopted park dormant in `slot`, keeping the predicate it was adopted under.
+    pub(crate) fn confirm_adopted(
+        &mut self,
+        hash: TxHash,
+        slot: DormantSlot,
+        release_block: Option<u64>,
+    ) {
+        self.record_entry(hash, DormantEntry { slot, release_block, indexed_at: self.snapshots });
     }
 
     pub(crate) fn dormant_lane_root(&self, lane_id: &LaneId) -> Option<TxHash> {
@@ -471,25 +548,31 @@ impl Dormancy {
         release_block: Option<u64>,
     ) {
         self.remove(hash);
-        let entry = DormantEntry { slot, release_block, indexed_at: self.snapshots };
-        self.index.park(hash, entry, predicate);
-        if let DormantSlot::Lane(lane_id) = slot {
+        self.index.park(hash, (), predicate);
+        self.record_entry(hash, DormantEntry { slot, release_block, indexed_at: self.snapshots });
+    }
+
+    /// Records that indexed `hash` is dormant as `entry`.
+    fn record_entry(&mut self, hash: TxHash, entry: DormantEntry) {
+        if let DormantSlot::Lane(lane_id) = entry.slot {
             self.lanes.insert(lane_id, hash);
         }
-        if let Some(block) = release_block {
+        if let Some(block) = entry.release_block {
             self.block_releases.entry(block).or_default().insert(hash);
         }
+        self.entries.insert(hash, entry);
         self.canary.push_back(hash);
-        if self.canary.len() > 2 * self.index.len() + DORMANCY_CANARY_BUDGET {
+        if self.canary.len() > 2 * self.entries.len() + DORMANCY_CANARY_BUDGET {
             let mut seen = B256Set::default();
-            let index = &self.index;
-            self.canary.retain(|hash| index.transaction(*hash).is_some() && seen.insert(*hash));
+            let entries = &self.entries;
+            self.canary.retain(|hash| entries.contains_key(hash) && seen.insert(*hash));
         }
     }
 
-    /// Forgets an indexed transaction, returning its entry.
+    /// Forgets an indexed transaction, returning its entry, or `None` when it was not dormant.
     pub(crate) fn remove(&mut self, hash: TxHash) -> Option<DormantEntry> {
-        let entry = self.index.remove(hash)?;
+        self.index.remove(hash);
+        let entry = self.entries.remove(&hash)?;
         if let DormantSlot::Lane(lane_id) = entry.slot {
             self.lanes.remove(&lane_id);
         }

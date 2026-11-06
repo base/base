@@ -1611,34 +1611,76 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
     /// Indexes, on top of the tip build `build` sealed, transactions it left
     /// parked: each that is still pooled and a ready root or nonce-free
     /// transaction becomes dormant under the predicate it failed.
+    ///
+    /// With `adopted`, the parks are already the index, adopted by
+    /// [`Self::adopt_build_parks`]: each still there is confirmed dormant if
+    /// it qualifies and dropped from the index otherwise, with no index
+    /// insertion.
     pub(crate) fn merge_build_parks(
         &mut self,
         build: u64,
         parks: &[(Arc<ValidPoolTransaction<T>>, ValidityPredicate)],
+        adopted: bool,
     ) {
         if !self.dormancy.is_running(build) || self.dormancy.deferred_discard.is_some() {
             return;
         }
         for (transaction, predicate) in parks {
             let hash = *transaction.hash();
-            if !self.is_pooled(transaction) || self.dormancy.is_dormant(&hash) {
+            let pending = if adopted {
+                self.dormancy.awaits_confirmation(&hash)
+            } else {
+                !self.dormancy.is_dormant(&hash)
+            };
+            if !pending {
                 continue;
             }
-            let release_block = match predicate {
-                ValidityPredicate::BlockNumber { op, value } => {
-                    let Some(release) =
-                        DormancyClassification::release_block(*op, *value, self.dormancy.height)
-                    else {
-                        continue;
-                    };
-                    Some(release)
+            let qualifies = self.parked_slot(transaction, predicate);
+            match (qualifies, adopted) {
+                (Some((slot, release_block)), true) => {
+                    self.dormancy.confirm_adopted(hash, slot, release_block);
+                    self.leave_snapshot(slot);
                 }
-                _ => None,
-            };
-            let Some(slot) = self.eligible_slot(&hash) else { continue };
-            self.dormancy.park(hash, slot, predicate.clone(), release_block);
-            self.leave_snapshot(slot);
+                (Some((slot, release_block)), false) => {
+                    self.dormancy.park(hash, slot, predicate.clone(), release_block);
+                    self.leave_snapshot(slot);
+                }
+                (None, true) => {
+                    self.dormancy.index.remove(hash);
+                }
+                (None, false) => {}
+            }
         }
+    }
+
+    /// Where `transaction`, parked by a sealed build on `predicate`, would be
+    /// dormant, with the block that releases it, or `None` when it is no
+    /// longer pooled, not a ready root or nonce-free transaction, or blocked
+    /// on a block bound the chain can never reach.
+    fn parked_slot(
+        &self,
+        transaction: &Arc<ValidPoolTransaction<T>>,
+        predicate: &ValidityPredicate,
+    ) -> Option<(DormantSlot, Option<u64>)> {
+        if !self.is_pooled(transaction) {
+            return None;
+        }
+        let release_block = match predicate {
+            ValidityPredicate::BlockNumber { op, value } => {
+                Some(DormancyClassification::release_block(*op, *value, self.dormancy.height)?)
+            }
+            _ => None,
+        };
+        Some((self.eligible_slot(transaction.hash())?, release_block))
+    }
+
+    /// Adopts sealed build `build`'s parks as the index in constant time when
+    /// the index is empty, as on the first seal or after a discard; returns
+    /// whether it did, so the merge only confirms them.
+    pub(crate) fn adopt_build_parks(&mut self, build: u64, local: &mut BuildLocal<T>) -> bool {
+        self.dormancy.is_running(build)
+            && self.dormancy.deferred_discard.is_none()
+            && self.dormancy.adopt_index(&mut local.index)
     }
 
     /// Ends build `build`'s ownership after its seal, applying a discard
@@ -1716,6 +1758,15 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
         };
         drop(retired);
         result
+    }
+
+    /// Records the metrics of a build that ended having woken `woken`
+    /// transactions, or `None` when it no longer owned the index.
+    pub(crate) fn record_build_end(pool: &RwLock<Self>, woken: Option<usize>) {
+        if let Some(woken) = woken {
+            ValidityPoolMetrics::dormant_wakes().record(woken as f64);
+        }
+        ValidityPoolMetrics::record_dormancy(pool.read().dormant_len(), 0);
     }
 
     /// Takes an index a discard set aside, so its transactions can be made
@@ -3639,7 +3690,7 @@ mod tests {
         let local = pool.seal_build(build, B256::repeat_byte(1)).unwrap();
         assert_eq!(Arc::strong_count(&root), parked, "the seal hands the parks over");
         let parks = local.into_parks();
-        pool.merge_build_parks(build, &parks);
+        pool.merge_build_parks(build, &parks, false);
         pool.release_build(build);
         drop(parks);
         assert!(pool.dormancy.is_dormant(&hash), "the merged park is dormant on the tip");
@@ -3696,6 +3747,49 @@ mod tests {
         pool.install_dormancy(vec![(root, dormant)]);
 
         assert_eq!(pool.dormancy.is_dormant(&hash), parked);
+    }
+
+    /// On an empty index a seal's parks are adopted as the index wholesale;
+    /// the merge then confirms the roots and nonce-free transactions dormant
+    /// and drops every other park from the index.
+    #[test]
+    fn an_empty_index_adopts_a_sealed_builds_parks() {
+        let signer = signer();
+        let mut pool = protocol_lane_pool();
+        pool.set_dormancy_mode(ValidityDormancyMode::Enforce);
+        let mut parked = Vec::new();
+        for nonce in 0..2 {
+            let transaction = valid_pool_transaction(signed_1559(&signer, nonce, 1_000));
+            let hash = *transaction.hash();
+            pool.insert_validated(transaction, 0).unwrap();
+            parked.push(pool.get(&hash).unwrap());
+        }
+        let (root, member) = (*parked[0].hash(), *parked[1].hash());
+        let blocker = ValidityPredicate::Balance {
+            address: Address::repeat_byte(0xbb),
+            op: ValidityOperator::GreaterThanOrEqual,
+            value: U256::from(1),
+        };
+        let build = pool.begin_build(B256::ZERO, 1, None).unwrap();
+        let (_, local) = pool.begin_snapshot(build);
+        for transaction in &parked {
+            local.lock().park(transaction, blocker.clone());
+        }
+        drop(local);
+
+        let mut local = pool.seal_build(build, B256::repeat_byte(1)).unwrap();
+        assert!(pool.adopt_build_parks(build, &mut local));
+        assert!(!pool.dormancy.is_dormant(&root), "adopted parks await confirmation");
+        pool.merge_build_parks(build, &local.into_parks(), true);
+        pool.release_build(build);
+
+        assert!(pool.dormancy.is_dormant(&root));
+        assert!(!pool.dormancy.is_dormant(&member));
+        let mut state = revm::state::Account::default();
+        state.info.balance = U256::from(1);
+        state.mark_touch();
+        let funded = revm::state::EvmState::from_iter([(Address::repeat_byte(0xbb), state)]);
+        assert_eq!(pool.dormant_affected_by(&funded), vec![root], "the member left the index");
     }
 
     #[test]
