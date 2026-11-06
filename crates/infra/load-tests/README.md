@@ -638,8 +638,10 @@ Read the `by_cohort` output as the payment comparison: under metered billing the
 `total_fee_wei` far below what its `total_gas_limit` would cost at its tip, while `validity_pass`
 pays for the gas it used. Under gas-limit billing the reverting arbs' `total_gas` and `total_fee_wei`
 rise to their declared limits. Set `LOAD_TEST_OUTPUT=<path>` to keep the JSON summary.
-`priority_lead_payload` accepts any transaction type, but payloads that need chain preparation
-(B-20, swaps) are not prepared for the lead cohort.
+`priority_lead_payload` takes any transaction type that works without chain preparation and
+submits through the validity path; config validation rejects payloads that need preparation
+(B-20, swaps, x402, token moves, AA bundles, `storage` without an explicit contract) and native
+EIP-8430 payloads, since the lead cohort is never prepared.
 
 `etc/scripts/devnet/gas-limit-billing-demo.sh` runs this profile twice on one devnet started with
 a late Everest block (before and after activation), snapshots the builder's predicate-budget and
