@@ -140,7 +140,11 @@ impl Workload {
             for position in 0..MAX_STATE_PREDICATES {
                 let location = index * MAX_STATE_PREDICATES + position;
                 db.insert_account_info(&account(location), info.clone());
-                db.insert_account_storage(&WATCHED_CONTRACT, &slot(location), &slot_value(location));
+                db.insert_account_storage(
+                    &WATCHED_CONTRACT,
+                    &slot(location),
+                    &slot_value(location),
+                );
             }
         }
         db

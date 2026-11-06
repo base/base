@@ -377,11 +377,7 @@ impl MainnetBlock {
 
     /// Mainnet genesis predeploys, the Jovian `L1Block` implementation, the system contracts, the
     /// token, and every account the block reads, funded.
-    fn pre_state(
-        evm_config: &BaseEvmConfig,
-        evm_env: &BaseEvmEnv,
-        mix: BlockMix,
-    ) -> InMemoryDB {
+    fn pre_state(evm_config: &BaseEvmConfig, evm_env: &BaseEvmEnv, mix: BlockMix) -> InMemoryDB {
         let mut db = InMemoryDB::default();
 
         let genesis: Genesis = serde_json::from_str(ChainConfig::mainnet().genesis_json)
@@ -437,17 +433,18 @@ impl MainnetBlock {
                 .map(|i| address(NS_TOKEN_CALLER, i)),
         );
         for holder in token_holders {
-            db.insert_account_storage(&TOKEN, &holder.into_word().into(), &U256::from(TOKEN_BALANCE));
+            db.insert_account_storage(
+                &TOKEN,
+                &holder.into_word().into(),
+                &U256::from(TOKEN_BALANCE),
+            );
         }
 
         db
     }
 
     /// Runs the Jovian upgrade's `L1Block` deployment and returns the deployed account.
-    fn deploy_jovian_l1_block(
-        evm_config: &BaseEvmConfig,
-        evm_env: &BaseEvmEnv,
-    ) -> AccountInfo {
+    fn deploy_jovian_l1_block(evm_config: &BaseEvmConfig, evm_env: &BaseEvmEnv) -> AccountInfo {
         let deployment: BaseTransactionSigned = TxDeposit {
             source_hash: Jovian::deploy_l1_block_source(),
             from: Deployers::JOVIAN_L1_BLOCK,
@@ -500,7 +497,8 @@ impl MainnetBlock {
         txs: Vec<BlockTx>,
     ) -> BlockExecutionOutput<BaseReceipt> {
         let evm = self.evm_config.evm_with_env(state, self.evm_env.clone());
-        let mut executor = self.evm_config.block_executor_factory().create_executor(evm, self.ctx.clone());
+        let mut executor =
+            self.evm_config.block_executor_factory().create_executor(evm, self.ctx.clone());
         executor.apply_pre_execution_changes().expect("pre-execution changes apply");
         for tx in txs {
             executor.execute_transaction(tx).expect("every block transaction is valid");

@@ -17,11 +17,11 @@ use base_execution_payload_builder::{
     config::BaseBuilderConfig, payload::EthPayloadBuilderAttributes,
 };
 use base_execution_txpool::BasePooledTransaction;
+use evm2::evm::{AccountInfo, InMemoryDB};
 use reth_basic_payload_builder::PayloadConfig;
 use reth_ethereum_forks::ForkCondition;
 use reth_payload_builder::PayloadId;
 use reth_payload_util::PayloadTransactions;
-use evm2::evm::{AccountInfo, InMemoryDB};
 use reth_primitives_traits::{SealedHeader, SignedTransaction};
 use reth_transaction_pool::{TransactionOrigin, ValidPoolTransaction, identifier::TransactionId};
 

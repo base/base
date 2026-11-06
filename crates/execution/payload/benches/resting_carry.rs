@@ -113,8 +113,7 @@ fn bench_begin_block(c: &mut Criterion) {
             b.iter_batched(
                 || large_set(block - 1, burst),
                 |mut resting| {
-                    let carry_over =
-                        resting.begin_block(block_hash(block - 1), block, Some(empty));
+                    let carry_over = resting.begin_block(block_hash(block - 1), block, Some(empty));
                     black_box(carry_over);
                     resting
                 },

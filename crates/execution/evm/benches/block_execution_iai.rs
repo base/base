@@ -33,9 +33,9 @@ use std::hint::black_box;
 
 use alloy_consensus::TxReceipt;
 use base_common_consensus::BaseReceipt;
+use evm2::evm::InMemoryDB;
 use fixture::{BlockTx, MAINNET_MIX, MainnetBlock};
 use iai_callgrind::{library_benchmark, library_benchmark_group, main};
-use evm2::evm::InMemoryDB;
 use reth_evm::BlockExecutionOutput;
 
 /// A block ready to execute: the fixture, a fresh pre-state, and the converted transactions.

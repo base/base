@@ -13,7 +13,7 @@ use evm2::{
     evm::{CacheDB, Db},
 };
 use evm2_inspectors::transfer::TransferInspector;
-use reth_chainspec::{ChainSpecProvider, EthChainSpec, EthereumHardforks, Hardforks};
+use reth_chainspec::{ChainSpecProvider, EthChainSpec, EthereumHardforks};
 use reth_errors::RethError;
 use reth_evm::{
     BundleState, ConfigureEvm, Evm as _, EvmEnv, EvmTypesFor, TxResultWithStateFor,

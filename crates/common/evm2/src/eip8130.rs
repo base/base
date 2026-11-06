@@ -19,7 +19,7 @@
 
 use alloy_primitives::{Address, U256};
 use base_common_consensus::{Call, Predeploys};
-use base_common_genesis::BaseUpgrade;
+use base_common_genesis::BaseFeature;
 use base_execution_eip8130::{
     Eip8130BlockContext, Eip8130CallFrame, Eip8130CallHost, Eip8130Calls, Eip8130CallsResult,
     Eip8130Error, Eip8130FeeSplit, Eip8130Outcome, Eip8130Pipeline,
@@ -86,7 +86,7 @@ impl Eip8130Handler {
         // Consensus-critical: the EIP-8130 transaction type exists only from Everest. Every
         // ingress path gates it, but a block delivered by the Engine API or P2P reaches execution
         // directly.
-        if upgrade < BaseUpgrade::Everest {
+        if !upgrade.is_feature_enabled(BaseFeature::Eip8130) {
             return Err(Self::reject(Eip8130Pipeline::not_active_error()));
         }
         host.ext_mut().tx_origin = signer;
@@ -97,7 +97,7 @@ impl Eip8130Handler {
             now_ms: 0,
             base_fee: host.block().basefee.saturating_to(),
             tx_gas_limit_cap: host.version().tx_gas_limit_cap,
-            keystore: upgrade >= BaseUpgrade::Zenith,
+            keystore: upgrade.is_feature_enabled(BaseFeature::Keystore),
         };
 
         if let Some(simulation) = tx.simulation {

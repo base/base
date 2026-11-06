@@ -1129,8 +1129,10 @@ where
             u128::from(base_fee),
         );
         // Only deposits write the `L1Block` predeploy, so the scalar holds for the whole scan.
-        let da_footprint_gas_scalar =
-            self.chain_spec.is_feature_active_at_timestamp(BaseFeature::DaFootprint, block_timestamp).then(|| {
+        let da_footprint_gas_scalar = self
+            .chain_spec
+            .is_feature_active_at_timestamp(BaseFeature::DaFootprint, block_timestamp)
+            .then(|| {
                 let state = builder.evm_mut().state_db_mut();
                 L1Block::read_fee_params(upgrade, |slot| {
                     state.get_storage(&Predeploys::L1_BLOCK_INFO, &slot)
