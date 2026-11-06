@@ -688,6 +688,19 @@ impl StandardBaseRethNode {
         Ok(())
     }
 
+    /// Rejects validity dormancy on a node that forwards transactions: a forwarding node would
+    /// stop forwarding the validity transactions it holds dormant, and dormancy is meant only for
+    /// the sequencer's builder.
+    pub fn validate_validity_dormancy_args(rpc: &RpcStandardNodeArgs) -> eyre::Result<()> {
+        if rpc.enable_tx_forwarding && rpc.rollup_args.validity_dormancy.is_enforced() {
+            eyre::bail!(
+                "--rollup.validity-dormancy enforce cannot be combined with --enable-tx-forwarding"
+            );
+        }
+
+        Ok(())
+    }
+
     fn upgrade_signal_config(
         rollup_args: &RollupArgs,
     ) -> eyre::Result<Option<ExecutionUpgradeSignalConfig>> {
@@ -709,6 +722,7 @@ impl StandardBaseRethNode {
         let rollup_args = args.rpc.rollup_args.clone();
         // Fail fast on an incomplete upgrade-signal configuration before installing extensions.
         Self::validate_upgrade_signal_args(&rollup_args)?;
+        Self::validate_validity_dormancy_args(&args.rpc)?;
         let mut runner = BaseNodeRunner::new(rollup_args.clone());
         let resource_metering_enabled = args.metering.enable_metering;
         let provider: SharedMeteringProvider = if resource_metering_enabled
@@ -1332,6 +1346,24 @@ mod tests {
 
             assert!(result.is_err(), "{flag} {value} must be rejected");
         }
+    }
+
+    #[rstest::rstest]
+    #[case::forwarding_with_enforce(&["--enable-tx-forwarding", "--rollup.validity-dormancy", "enforce"], false)]
+    #[case::forwarding_with_off(&["--enable-tx-forwarding", "--rollup.validity-dormancy", "off"], true)]
+    #[case::enforce_without_forwarding(&["--rollup.validity-dormancy", "enforce"], true)]
+    fn validity_dormancy_is_rejected_on_forwarding_nodes(
+        #[case] flags: &[&str],
+        #[case] accepted: bool,
+    ) {
+        let args = CommandParser::<RpcStandardNodeArgs>::parse_from(
+            std::iter::once("base-reth").chain(flags.iter().copied()),
+        )
+        .args;
+
+        let result = StandardBaseRethNode::validate_validity_dormancy_args(&args);
+
+        assert_eq!(result.is_ok(), accepted, "{flags:?}");
     }
 
     #[test]
