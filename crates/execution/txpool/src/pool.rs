@@ -1073,6 +1073,42 @@ where
             .collect()
     }
 
+    /// Validates transactions whose outcomes depend on submission order together,
+    /// then admits them in that order.
+    ///
+    /// Validation reads canonical state, never pool contents, so validating the
+    /// batch against one snapshot before admitting any of it yields the outcomes
+    /// of per-transaction adds unless the canonical head changes in that window.
+    /// Each lane store's balance epoch is read before validation starts, as
+    /// [`Self::add_lane_transaction`] reads it, so a balance update that lands
+    /// meanwhile still invalidates the validated balance.
+    pub async fn add_ordered_batch(
+        &self,
+        transactions: Vec<(TransactionOrigin, T)>,
+    ) -> Vec<PoolResult<AddedTransactionOutcome>> {
+        let sidecar_epoch = self.sidecar.pool.read().balance_epoch();
+        let validity_epoch = self.validity.pool.read().balance_epoch();
+        let keys: Vec<_> = transactions
+            .iter()
+            .map(|(origin, tx)| (PoolStore::of(tx), *origin, *tx.hash(), tx.sender(), tx.nonce()))
+            .collect();
+        let validated = self.validator().validate_transactions(transactions).await;
+        keys.into_iter()
+            .zip(validated)
+            .map(|((store, origin, hash, sender, nonce), validated)| match store {
+                PoolStore::Protocol => {
+                    self.add_validated_protocol_transaction(origin, hash, sender, nonce, validated)
+                }
+                PoolStore::Sidecar => {
+                    self.add_validated_lane_transaction(store, validated, origin, sidecar_epoch)
+                }
+                PoolStore::Validity => {
+                    self.add_validated_lane_transaction(store, validated, origin, validity_epoch)
+                }
+            })
+            .collect()
+    }
+
     fn add_validated_protocol_transaction(
         &self,
         origin: TransactionOrigin,
@@ -1763,10 +1799,10 @@ where
         transactions: Vec<(TransactionOrigin, Self::Transaction)>,
     ) -> Vec<PoolResult<AddedTransactionOutcome>> {
         // Senders with a transaction bound for a lane store keep their whole
-        // batch on the per-transaction path, in submission order, because their
-        // lane and cross-store replacement outcomes depend on that order. Every
-        // other transaction is protocol-bound and validated as one batch, which
-        // is admitted first: a batch promises no order across senders.
+        // batch admitted in submission order, because their lane and
+        // cross-store replacement outcomes depend on that order. Every other
+        // transaction is protocol-bound and admitted first: a batch promises no
+        // order across senders. Each group is validated as one batch.
         let lane_senders: AddressSet = transactions
             .iter()
             .filter(|(_, transaction)| PoolStore::of(transaction).is_lane_store())
@@ -1796,8 +1832,14 @@ where
                 results[index] = Some(result);
             }
         }
-        for (index, origin, transaction) in one_by_one {
-            results[index] = Some(self.add_transaction(origin, transaction).await);
+        let (ordered_indexes, ordered): (Vec<_>, Vec<_>) = one_by_one
+            .into_iter()
+            .map(|(index, origin, transaction)| (index, (origin, transaction)))
+            .unzip();
+        for (index, result) in
+            ordered_indexes.into_iter().zip(self.add_ordered_batch(ordered).await)
+        {
+            results[index] = Some(result);
         }
         results.into_iter().map(|result| result.expect("every transaction is admitted")).collect()
     }
@@ -3397,6 +3439,26 @@ mod tests {
         let (batched, pool) = assert_batch_matches_sequential(batch, &[sender.address()]).await;
         assert!(batched.iter().all(Result::is_ok));
         assert!(pool.sidecar.pool.read().contains(&sidecar_hash));
+    }
+
+    #[tokio::test]
+    async fn batch_of_validity_transactions_matches_sequential_add() {
+        let (first, second, replaced, unfunded) = (signer(), signer(), signer(), signer());
+        let batch = vec![
+            (TransactionOrigin::External, validity_1559(&first, 0, 1_000)),
+            (TransactionOrigin::External, validity_1559(&second, 0, 1_000)),
+            (TransactionOrigin::External, signed_1559(&first, 1)),
+            (TransactionOrigin::External, validity_1559(&replaced, 0, 1_000)),
+            (TransactionOrigin::External, signed_1559_with_fees(&replaced, 0, 2_000, 0)),
+            (TransactionOrigin::External, validity_1559(&unfunded, 0, 1_000)),
+            (TransactionOrigin::External, validity_1559(&second, 1, 1_000)),
+        ];
+        let (batched, _) = assert_batch_matches_sequential(
+            batch,
+            &[first.address(), second.address(), replaced.address()],
+        )
+        .await;
+        assert!(batched[5].is_err(), "the unfunded sender is rejected");
     }
 
     /// Adds `batch` one transaction at a time to one fresh pool and as one
