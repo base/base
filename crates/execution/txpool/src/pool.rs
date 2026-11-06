@@ -524,7 +524,9 @@ where
         if !self.dormancy_enforced() {
             return;
         }
-        self.validity.pool.write().discard_dormancy(reason);
+        TwoDNoncePool::write_retiring(&self.validity.pool, |validity| {
+            validity.discard_dormancy(reason);
+        });
         self.restore_discarded_dormancy();
         ValidityPoolMetrics::record_dormancy(self.validity.pool.read().dormant_len(), 0);
     }
@@ -1793,7 +1795,9 @@ where
         let Some(head) = canonical.last().filter(|_| self.dormancy_enforced()) else {
             return;
         };
-        self.validity.pool.write().observe_canonical(canonical);
+        TwoDNoncePool::write_retiring(&self.validity.pool, |validity| {
+            validity.observe_canonical(canonical);
+        });
         self.restore_discarded_dormancy();
         // Runs outside the admission lock: admission inserts ready, and the
         // install re-checks each transaction against the pool as it is then.
@@ -2561,28 +2565,32 @@ where
         if !self.dormancy_enforced() {
             return None;
         }
-        let build = {
-            let mut validity = self.validity.pool.write();
+        let build = TwoDNoncePool::write_retiring(&self.validity.pool, |validity| {
             let build = validity.begin_build(parent, block_number, pre_selection);
             ValidityPoolMetrics::record_dormancy(validity.dormant_len(), 0);
             build
-        };
+        });
         let Some(build) = build else {
             ValidityPoolMetrics::dormancy_fallback_builds("build_active").increment(1);
             return None;
         };
         let pool = Arc::clone(&self.validity.pool);
         Some(DormancyBuild::new(build, move |sealed| {
-            // The parks a seal merges are taken under one lock hold and merged
-            // in chunks, the build keeping the index until the merge ends.
+            // A seal detaches the build's parks under the lock, collects them
+            // after releasing it and merges them in chunks, the build keeping
+            // the index until the merge ends. Whatever a seal or drop retires
+            // is freed outside the lock.
             let woken = sealed.map_or_else(
-                || pool.write().abandon_build(build),
+                || TwoDNoncePool::write_retiring(&pool, |validity| validity.abandon_build(build)),
                 |block_hash| {
-                    let parks = pool.write().seal_build(build, block_hash).unwrap_or_default();
+                    let local = TwoDNoncePool::write_retiring(&pool, |validity| {
+                        validity.seal_build(build, block_hash)
+                    });
+                    let parks = local.map(BuildLocal::into_parks).unwrap_or_default();
                     for chunk in parks.chunks(DORMANCY_INSTALL_BATCH) {
                         pool.write().merge_build_parks(build, chunk);
                     }
-                    pool.write().release_build(build)
+                    TwoDNoncePool::write_retiring(&pool, |validity| validity.release_build(build))
                 },
             );
             if let Some(woken) = woken {

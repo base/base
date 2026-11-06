@@ -15,7 +15,8 @@
 //! all ready at first, then classification parks all but the 1 000 with dormancy enforced; its
 //! snapshot time should stay flat as the dormant count grows. In `dormant_scaling_shared` every
 //! sender also has a standard transaction queued behind its validity one, so the snapshot bridges
-//! the 1 000 ready lanes and must skip the dormant ones.
+//! the 1 000 ready lanes and must skip the dormant ones; `dormant_scaling_nonce_free` holds
+//! nonce-free EIP-8130 transactions instead.
 //!
 //! `dormancy_commit_wake` measures what each commit of a build owning the dormancy index pays to
 //! find the transactions it may wake, when it wakes none, as the dormant count grows.
@@ -40,15 +41,23 @@ mod support;
 
 use std::hint::black_box;
 
+use alloy_consensus::transaction::Recovered;
 use alloy_eips::BlockNumHash;
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{Address, B256, Bytes, U256};
+use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
+use base_common_chains::ChainConfig;
+use base_common_consensus::{
+    BasePooledTransaction as ConsensusPooledTransaction, Eip8130Constants, Eip8130Signed, TxEip8130,
+};
 use base_execution_txpool::{
     BasePooledTransaction, ParkableTransactionPool, StateDiffInvalidation, ValidityDormancyMode,
     ValidityOperator, ValidityPredicate,
 };
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use reth_transaction_pool::{BestTransactionsAttributes, TransactionOrigin, TransactionPool};
+use reth_transaction_pool::{
+    BestTransactionsAttributes, PoolTransaction, TransactionOrigin, TransactionPool,
+};
 use revm::state::{Account, EvmState, EvmStorageSlot};
 use support::{BenchPool, build_pool, funded_signer, standard, validity};
 
@@ -151,10 +160,69 @@ fn classify(pool: &BenchPool) {
 /// Ready validity transactions in every `dormant_scaling` pool.
 const SCALING_READY: usize = 1_000;
 
+/// The validity transactions a `dormant_scaling` pool holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ScalingKind {
+    /// Lane roots.
+    Lanes,
+    /// Lane roots, each with a standard transaction queued behind.
+    SharedLanes,
+    /// Nonce-free EIP-8130 transactions.
+    NonceFree,
+}
+
+/// The block-number bound every `dormant_scaling` transaction carries, so it rests.
+const fn resting_bound() -> ValidityPredicate {
+    ValidityPredicate::BlockNumber {
+        op: ValidityOperator::LessThanOrEqual,
+        value: U256::from_limbs([1_000, 0, 0, 0]),
+    }
+}
+
+/// A nonce-free EIP-8130 transaction from `signer` paying `fee` per gas, blocked until a storage
+/// slot nobody writes holds one when `blocked`.
+fn nonce_free(signer: &PrivateKeySigner, fee: u128, blocked: bool) -> BasePooledTransaction {
+    let tx = TxEip8130 {
+        chain_id: ChainConfig::mainnet().chain_id,
+        sender: None,
+        nonce_key: Eip8130Constants::NONCE_KEY_MAX,
+        nonce_sequence: 0,
+        valid_after: 0,
+        valid_before: NONCE_FREE_VALID_BEFORE_MS,
+        max_priority_fee_per_gas: 0,
+        max_fee_per_gas: fee,
+        gas_limit: 50_000,
+        account_changes: Vec::new(),
+        calls: Vec::new(),
+        metadata: Bytes::new(),
+        payer: None,
+    };
+    let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
+    let signed = Eip8130Signed::new(tx, Bytes::from(signature.as_bytes().to_vec()), Bytes::new());
+    let mut predicates = vec![resting_bound()];
+    if blocked {
+        predicates.push(ValidityPredicate::Storage {
+            address: Address::repeat_byte(0xcc),
+            slot: U256::ZERO,
+            mask: U256::MAX,
+            op: ValidityOperator::Equal,
+            value: U256::ONE,
+        });
+    }
+    BasePooledTransaction::from_pooled(Recovered::new_unchecked(
+        ConsensusPooledTransaction::Eip8130(signed),
+        signer.address(),
+    ))
+    .with_validity_predicates(predicates)
+}
+
+/// Nonce-free expiry a few seconds past the bench pool's clock, in milliseconds.
+const NONCE_FREE_VALID_BEFORE_MS: u64 = 1_700_000_005_000;
+
 /// A pool enforcing dormancy with [`SCALING_READY`] ready validity transactions and `dormant`
-/// dormant ones, each from its own sender and all admitted ready before classification parks the
-/// dormant ones. With `shared`, every sender also has a standard transaction queued behind.
-fn dormant_scaling_pool(dormant: usize, shared: bool) -> (BenchPool, tokio::runtime::Runtime) {
+/// dormant ones of `kind`, each from its own sender and all admitted ready before classification
+/// parks the dormant ones.
+fn dormant_scaling_pool(dormant: usize, kind: ScalingKind) -> (BenchPool, tokio::runtime::Runtime) {
     let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap();
     let pool = runtime.block_on(async {
         let (pool, client) = build_pool(SCALING_READY + DORMANT_SCALING.last().unwrap());
@@ -163,12 +231,13 @@ fn dormant_scaling_pool(dormant: usize, shared: bool) -> (BenchPool, tokio::runt
         for index in 0..SCALING_READY + dormant {
             let signer = funded_signer(&client);
             let tip = 2 + index as u128 % 50;
-            transactions.push(if index < SCALING_READY {
-                validity(&signer, 0, tip)
-            } else {
-                dormant_validity(&signer, tip)
+            let ready = index < SCALING_READY;
+            transactions.push(match (kind, ready) {
+                (ScalingKind::NonceFree, _) => nonce_free(&signer, 1_000 + tip, !ready),
+                (_, true) => validity(&signer, 0, tip),
+                (_, false) => dormant_validity(&signer, tip),
             });
-            if shared {
+            if kind == ScalingKind::SharedLanes {
                 transactions.push(standard(&signer, 1, tip));
             }
         }
@@ -176,8 +245,11 @@ fn dormant_scaling_pool(dormant: usize, shared: bool) -> (BenchPool, tokio::runt
         classify(&pool);
         pool
     });
-    assert_eq!(pool.pool_size().pending, SCALING_READY, "only the ready transactions are pending");
-    let offered = if shared { 2 * SCALING_READY } else { SCALING_READY };
+    // A dormant nonce-free transaction still counts as pending.
+    let pending =
+        if kind == ScalingKind::NonceFree { SCALING_READY + dormant } else { SCALING_READY };
+    assert_eq!(pool.pool_size().pending, pending, "dormant lane roots are queued");
+    let offered = if kind == ScalingKind::SharedLanes { 2 * SCALING_READY } else { SCALING_READY };
     assert_eq!(pool.best_transactions().count(), offered, "ready lanes and their bridged runs");
     (pool, runtime)
 }
@@ -188,9 +260,13 @@ const DORMANT_SCALING: [usize; 3] = [0, 25_000, 75_000];
 fn dormant_scaling_benches(c: &mut Criterion) {
     let mut group = c.benchmark_group("txpool/best_transactions");
     group.sample_size(20);
-    for (name, shared) in [("dormant_scaling", false), ("dormant_scaling_shared", true)] {
+    for (name, kind) in [
+        ("dormant_scaling", ScalingKind::Lanes),
+        ("dormant_scaling_shared", ScalingKind::SharedLanes),
+        ("dormant_scaling_nonce_free", ScalingKind::NonceFree),
+    ] {
         for dormant in DORMANT_SCALING {
-            let (pool, _runtime) = dormant_scaling_pool(dormant, shared);
+            let (pool, _runtime) = dormant_scaling_pool(dormant, kind);
             let id = BenchmarkId::new(format!("{name}/snapshot"), dormant);
             group.bench_with_input(id, &pool, |b, pool| {
                 b.iter(|| black_box(pool.best_transactions()));
@@ -254,7 +330,7 @@ fn dormancy_commit_wake_benches(c: &mut Criterion) {
     let mut group = c.benchmark_group("txpool/dormancy_commit_wake");
     let commit = unrelated_commit();
     for dormant in DORMANT_SCALING {
-        let (pool, _runtime) = dormant_scaling_pool(dormant, false);
+        let (pool, _runtime) = dormant_scaling_pool(dormant, ScalingKind::Lanes);
         let build = pool.begin_dormancy_build(B256::repeat_byte(1), 2, None).unwrap();
         let mut best = pool.best_transactions_with_attributes_and_parking(
             BestTransactionsAttributes::new(0, None),

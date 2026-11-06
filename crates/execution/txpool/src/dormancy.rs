@@ -211,13 +211,6 @@ impl WriteFence {
         }
     }
 
-    /// Adds every location `other` recorded.
-    pub(crate) fn absorb(&mut self, other: Self) {
-        self.overflowed |= other.overflowed;
-        self.storage.extend(other.storage);
-        self.record(other.keys.into_iter().map(WrittenLocation::Key));
-    }
-
     /// Whether the location `predicate` reads was written.
     pub(crate) fn contains(&self, predicate: &ValidityPredicate) -> bool {
         let key = ValidityPredicateKey::for_predicate(predicate);
@@ -260,6 +253,12 @@ impl<T: PoolTransaction> BuildLocal<T> {
         self.parked.insert(hash, (Arc::clone(transaction), predicate));
     }
 
+    /// The parked transactions with the predicates they failed. Walks every park and frees the
+    /// build's predicate index, so call it without locks.
+    pub(crate) fn into_parks(self) -> Vec<(Arc<ValidPoolTransaction<T>>, ValidityPredicate)> {
+        self.parked.into_values().collect()
+    }
+
     /// Records what a commit wrote and returns the parked transactions it may satisfy, which are
     /// no longer parked here.
     pub(crate) fn wake(&mut self, state: &EvmState) -> Vec<Arc<ValidPoolTransaction<T>>> {
@@ -294,6 +293,13 @@ impl DiscardedIndex {
             .filter_map(|hash| Some((hash, self.index.transaction(hash)?.slot)))
             .collect()
     }
+}
+
+/// Collections the validity pool retired under its lock, to free after releasing it.
+#[derive(Debug, Default)]
+pub(crate) struct RetiredCollections {
+    releases: Vec<BTreeMap<u64, B256Set>>,
+    canaries: Vec<VecDeque<TxHash>>,
 }
 
 /// The validity pool's predicate index, scoped to the builder's tip, with the classification
@@ -332,6 +338,11 @@ pub(crate) struct Dormancy {
     /// Locations builds wrote on top of the state classification reads, besides those of the
     /// running build, which it keeps itself.
     pub fence: WriteFence,
+    /// The locations sealed builds wrote while a classification was in flight, kept whole
+    /// rather than merged into `fence` so a seal does no work per location.
+    pub sealed_fences: Vec<WriteFence>,
+    /// Collections retired under the lock, freed once it is released.
+    retired: RetiredCollections,
     /// Transactions woken during the running build.
     pub build_wakes: usize,
 }
@@ -356,6 +367,8 @@ impl Dormancy {
             discards: 0,
             classifying: None,
             fence: WriteFence::default(),
+            sealed_fences: Vec::new(),
+            retired: RetiredCollections::default(),
             build_wakes: 0,
         }
     }
@@ -384,9 +397,30 @@ impl Dormancy {
     /// empty index; the transactions it held are made ready again by
     /// [`Self::take_discarded`]'s caller, off the build path.
     pub(crate) fn set_index_aside(&mut self) {
-        self.block_releases = BTreeMap::new();
+        self.retired.releases.push(std::mem::take(&mut self.block_releases));
+        self.retired.canaries.push(std::mem::take(&mut self.canary));
         self.lanes = HashMap::default();
         self.discarded.push(DiscardedIndex { index: std::mem::take(&mut self.index) });
+        self.clear_fences();
+    }
+
+    /// Forgets every location builds wrote; the fences hold no values needing a drop, so this
+    /// only frees their tables.
+    pub(crate) fn clear_fences(&mut self) {
+        self.fence = WriteFence::default();
+        self.sealed_fences.clear();
+    }
+
+    /// Whether a build wrote the location `predicate` reads since the state classification
+    /// read, apart from the running build's own writes.
+    pub(crate) fn is_fenced(&self, predicate: &ValidityPredicate) -> bool {
+        self.fence.contains(predicate)
+            || self.sealed_fences.iter().any(|fence| fence.contains(predicate))
+    }
+
+    /// Takes the collections retired so far, to free outside the lock.
+    pub(crate) fn take_retired(&mut self) -> RetiredCollections {
+        std::mem::take(&mut self.retired)
     }
 
     /// Takes one discarded index to make ready again; [`Self::finish_restoring`] ends it.
