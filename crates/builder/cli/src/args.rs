@@ -78,7 +78,8 @@ pub struct TransactionEventsArgs {
     #[arg(
         long = "builder.transaction-events.leader-poll-interval-ms",
         env = "BUILDER_TRANSACTION_EVENTS_LEADER_POLL_INTERVAL_MS",
-        default_value_t = SequencerLeadershipConfig::DEFAULT_POLL_INTERVAL.as_millis() as u64
+        default_value_t = SequencerLeadershipConfig::DEFAULT_POLL_INTERVAL.as_millis() as u64,
+        value_parser = clap::value_parser!(u64).range(1..)
     )]
     pub leader_poll_interval_ms: u64,
 }
@@ -366,6 +367,35 @@ mod tests {
     fn convert(args: Args) -> BuilderConfig {
         let metering_provider: SharedMeteringProvider = Arc::new(NoopMeteringProvider);
         args.into_builder_config(metering_provider).expect("conversion should succeed")
+    }
+
+    #[test]
+    fn leader_rpc_url_enables_the_leadership_probe() {
+        let parsed = CommandParser::try_parse_from([
+            "builder",
+            "--builder.transaction-events.leader-rpc-url",
+            "http://localhost:9545",
+            "--builder.transaction-events.leader-poll-interval-ms",
+            "250",
+        ])
+        .unwrap();
+        assert_eq!(
+            parsed.args.transaction_events.leadership_config(),
+            Some(SequencerLeadershipConfig {
+                poll_interval: Duration::from_millis(250),
+                ..SequencerLeadershipConfig::new("http://localhost:9545".parse().unwrap())
+            })
+        );
+
+        let unset = CommandParser::try_parse_from(["builder"]).unwrap();
+        assert_eq!(unset.args.transaction_events.leadership_config(), None);
+
+        let zero = CommandParser::try_parse_from([
+            "builder",
+            "--builder.transaction-events.leader-poll-interval-ms",
+            "0",
+        ]);
+        assert!(zero.is_err(), "a zero poll interval must be rejected at parse time");
     }
 
     #[test]

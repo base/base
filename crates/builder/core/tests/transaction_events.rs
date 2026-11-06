@@ -339,6 +339,8 @@ async fn builder_accepted_reports_metered_gas_below_billed_gas_under_gas_limit_b
 
 /// A builder whose gate is closed, as a sequencer that is not the active leader, journals
 /// neither the inserts it receives nor its build decisions; reopening the gate resumes both.
+/// Each transaction carries a satisfied predicate, since the native builder journals only
+/// validity-gated candidates.
 #[tokio::test]
 async fn closed_gate_withholds_every_builder_event() -> eyre::Result<()> {
     let capture = TransactionEventCapture::install();
@@ -365,7 +367,14 @@ async fn closed_gate_withholds_every_builder_event() -> eyre::Result<()> {
                     sender: accounts[account].address(),
                     raw: tx.encoded_2718().into(),
                     metering: None,
-                    extensions: TransactionValidity::default(),
+                    extensions: TransactionValidity {
+                        validity: vec![ValidityPredicate::Balance {
+                            address: accounts[account].address(),
+                            op: ValidityOperator::NotEqual,
+                            value: U256::ZERO,
+                        }],
+                        validity_signature: None,
+                    },
                 },),
             )
             .await?;
@@ -384,9 +393,13 @@ async fn closed_gate_withholds_every_builder_event() -> eyre::Result<()> {
         .filter(|event| event.tx_hash == Some(journaled))
         .map(|event| event.event_type)
         .collect();
-    assert!(
-        journaled_types.contains(&TransactionEventType::TxpoolValidatedInsertAccepted),
-        "an open gate must journal the insert again, got {journaled_types:?}"
-    );
+    for expected in
+        [TransactionEventType::TxpoolValidatedInsertAccepted, TransactionEventType::BuilderAccepted]
+    {
+        assert!(
+            journaled_types.contains(&expected),
+            "an open gate must journal {expected} again, got {journaled_types:?}"
+        );
+    }
     Ok(())
 }

@@ -55,7 +55,8 @@ fn main() {
             .transaction_events
             .leadership_config()
             .filter(|_| transaction_events_enabled)
-            .map(|config| SequencerLeadershipProbe::spawn(config, transaction_event_gate));
+            .map(|config| SequencerLeadershipProbe::spawn(config, transaction_event_gate))
+            .transpose()?;
 
         let builder_api_config = builder_args.builder_api_config();
         let shadow_indexer_config = ShadowIndexerConfig::try_from(&builder_args.shadow_indexer)?;

@@ -59,10 +59,21 @@ pub struct SequencerLeadershipProbe {
 
 impl SequencerLeadershipProbe {
     /// Starts polling on the current Tokio runtime.
-    pub fn spawn(config: SequencerLeadershipConfig, gate: TransactionEventGate) -> Self {
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `config.poll_interval` is zero, which would make the probe spin
+    /// on the consensus node.
+    pub fn spawn(
+        config: SequencerLeadershipConfig,
+        gate: TransactionEventGate,
+    ) -> eyre::Result<Self> {
+        if config.poll_interval.is_zero() {
+            eyre::bail!("sequencer leadership poll interval must not be zero");
+        }
         let client = RpcClient::builder().http(config.rpc_url.clone());
         let task = tokio::spawn(Self::run(config, client, gate));
-        Self { task }
+        Ok(Self { task })
     }
 
     async fn run(config: SequencerLeadershipConfig, client: RpcClient, gate: TransactionEventGate) {
@@ -181,7 +192,7 @@ mod tests {
     async fn gate_follows_the_consensus_node_answer() {
         let node = FakeConsensusNode::start(Some(false)).await;
         let gate = TransactionEventGate::default();
-        let _probe = SequencerLeadershipProbe::spawn(node.config(), gate.clone());
+        let _probe = SequencerLeadershipProbe::spawn(node.config(), gate.clone()).unwrap();
 
         wait_until(&gate, false).await;
 
@@ -196,7 +207,7 @@ mod tests {
     async fn failed_requests_keep_the_last_answer() {
         let node = FakeConsensusNode::start(None).await;
         let gate = TransactionEventGate::default();
-        let _probe = SequencerLeadershipProbe::spawn(node.config(), gate.clone());
+        let _probe = SequencerLeadershipProbe::spawn(node.config(), gate.clone()).unwrap();
 
         // Errors before any answer leave the gate as found.
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -212,10 +223,22 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn zero_poll_interval_is_rejected() {
+        let node = FakeConsensusNode::start(Some(false)).await;
+        let gate = TransactionEventGate::default();
+        let config = SequencerLeadershipConfig { poll_interval: Duration::ZERO, ..node.config() };
+
+        let error = SequencerLeadershipProbe::spawn(config, gate.clone()).unwrap_err();
+        assert!(error.to_string().contains("poll interval"), "{error}");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(gate.is_open(), "a rejected probe must not touch the gate");
+    }
+
+    #[tokio::test]
     async fn dropping_the_probe_stops_polling() {
         let node = FakeConsensusNode::start(Some(false)).await;
         let gate = TransactionEventGate::default();
-        let probe = SequencerLeadershipProbe::spawn(node.config(), gate.clone());
+        let probe = SequencerLeadershipProbe::spawn(node.config(), gate.clone()).unwrap();
         wait_until(&gate, false).await;
 
         drop(probe);

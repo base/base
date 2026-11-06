@@ -275,8 +275,9 @@ the last answer and counts in
 withholds count in `transaction_events_gated_events`. Consequences for readers:
 a builder's events start at the moment it became leader, so a transaction it
 accepted while inactive has `BUILDER_*` events without an earlier
-`TXPOOL_VALIDATED_INSERT_ACCEPTED` from that host, and within one poll interval
-of a transfer either both or neither sequencer may journal.
+`TXPOOL_VALIDATED_INSERT_ACCEPTED` from that host, and around a transfer, for
+one poll interval plus the request's latency, either both or neither sequencer
+may journal.
 
 Builder caveat: `BUILDER_ACCEPTED`, `BUILDER_REJECTED`, `BUILDER_DEFERRED`,
 and `BUILDER_EXPIRED` are emitted per payload-building attempt and include
