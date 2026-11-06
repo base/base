@@ -18,6 +18,7 @@ fn main() {
     // Keep reth_info and network identity aligned with the Base binary version.
     base_reth_cli::init_reth!();
     base_reth_cli::init_snapshots!();
+    base_reth_cli::init_engine!();
 
     base_cli_utils::run_cli_main!(cli::BaseCli);
 }
