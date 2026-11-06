@@ -30,6 +30,11 @@ pub struct BaseBuilderConfig {
     pub da_config: BaseDAConfig,
     /// Gas limit configuration for the Base payload builder.
     pub gas_limit_config: GasLimitConfig,
+    /// Maximum cumulative uncompressed (EIP-2718 encoded) block size in bytes, if any.
+    ///
+    /// Sequencer transactions always count toward the total; pool transactions that would push
+    /// the block over the limit are skipped for this block.
+    pub max_uncompressed_block_size: Option<u64>,
     /// Whether to drop positively stale EIP-8130 transactions using their
     /// captured authorization manifest before execution.
     pub manifest_precheck_enabled: bool,
@@ -64,6 +69,7 @@ impl Default for BaseBuilderConfig {
         Self {
             da_config: BaseDAConfig::default(),
             gas_limit_config: GasLimitConfig::default(),
+            max_uncompressed_block_size: None,
             manifest_precheck_enabled: true,
             predicate_eval_hard_cutoff: Duration::from_millis(10),
             predicate_bucket_ordered_threshold: DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD,
@@ -85,6 +91,7 @@ impl BaseBuilderConfig {
         Self {
             da_config,
             gas_limit_config,
+            max_uncompressed_block_size: None,
             manifest_precheck_enabled,
             predicate_eval_hard_cutoff: Duration::from_millis(10),
             predicate_bucket_ordered_threshold: DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD,

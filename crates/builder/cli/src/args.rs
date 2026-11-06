@@ -588,6 +588,17 @@ mod tests {
         assert_eq!(convert(args).manifest_precheck_enabled, enabled);
     }
 
+    /// The existing size flag still maps to the shared builder configuration.
+    #[test]
+    fn max_uncompressed_block_size_flag_maps_to_config() {
+        assert_eq!(convert(Args::default()).max_uncompressed_block_size, None);
+
+        let parsed =
+            CommandParser::parse_from(["builder", "--builder.max-uncompressed-block-size", "1000"]);
+        let config = convert(parsed.args);
+        assert_eq!(config.max_uncompressed_block_size, Some(1_000));
+    }
+
     #[test]
     fn manifest_precheck_accepts_explicit_false() {
         let parsed =
