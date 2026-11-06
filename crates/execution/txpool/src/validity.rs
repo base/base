@@ -319,12 +319,11 @@ impl ValidityPredicate {
     /// `max_expiry_secs` at `block_interval_millis`, so the transaction has a
     /// bounded lifetime. Lower bounds (`>`, `>=`) and `!=` do not establish expiry.
     /// State predicates ([`Self::Balance`], [`Self::Nonce`], [`Self::Storage`])
-    /// do not establish expiry, and flashblock indices reset each block.
+    /// do not establish expiry.
     ///
-    /// A bound equal to `current_block` is deliberately accepted: the
-    /// transaction can still land in a later flashblock of the block being
-    /// built. `block_interval_millis` must be the active full-block cadence;
-    /// flashblock cadence must not be used.
+    /// A bound equal to `current_block` is deliberately accepted: the block
+    /// being built can still include the transaction. `block_interval_millis`
+    /// must be the active full-block cadence.
     pub fn validate_block_expiry_bounds(
         predicates: &[Self],
         current_block: u64,
@@ -1390,8 +1389,8 @@ mod tests {
 
     #[test]
     fn validate_block_expiry_bounds_accepts_bounds_within_the_window() {
-        // A bound equal to the block currently being built may still land in a
-        // later flashblock. Bounds through 130 are within the 60-second window
+        // The block currently being built can still include a bound equal to it.
+        // Bounds through 130 are within the 60-second window
         // at 2-second blocks.
         let within_window = [
             (ValidityOperator::Equal, 100),
