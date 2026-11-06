@@ -18,7 +18,7 @@ created the legacy `transaction_events` tree and `004` drops it; they stay
 because sqlx verifies the checksums of applied migrations. `005` adds the
 function that summarizes v2's BRIN indexes. `006` and `007` tune bitmap-scan
 prefetch and vacuum truncation. `008` adds the btree index on
-`(ingested_at, event_seq)` that DataPilot's extraction planning query scans
+`(ingested_at, event_seq)` that `DataPilot`'s extraction planning query scans
 instead of the heap. `schema.sql` is a committed
 `pg_dump` of the schema those migrations produce, without dated day partitions.
 The Postgres integration tests fail if a fresh or upgraded database differs
