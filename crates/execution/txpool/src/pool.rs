@@ -43,8 +43,8 @@ use crate::{
     StateDiffInvalidation, ValidityPoolLimits, ValidityPoolMetrics,
     best::{BridgedDescendants, MergeBestTransactions},
     two_d_nonce_pool::{
-        BestTwoDTransactions, InsertOutcome, LaneCursor, LaneId, LaneUpdate, LiveLaneUpdates,
-        SidecarLimits, TwoDNoncePool,
+        InsertOutcome, LaneCursor, LaneId, LaneUpdate, LiveLaneUpdates, SidecarLimits,
+        TwoDNoncePool,
     },
 };
 
@@ -1563,13 +1563,12 @@ where
         AllTransactionsEvents::new(rx)
     }
 
-    /// Merges every store's best transactions. With `live_validity`, validity
-    /// transactions that become pending while the merge is walked are offered
-    /// too; the other stores stay as they were when the merge was created.
+    /// Merges every store's best transactions. Validity transactions that
+    /// become pending while the merge is walked are offered too; the sidecar
+    /// stays as it was when the merge was created.
     fn merged_best_transactions(
         &self,
         attributes: BestTransactionsAttributes,
-        live_validity: bool,
     ) -> MergeBestTransactions<T, O> {
         let base_fee = attributes.basefee;
         // The lane bookkeeping the merge relies on (anchors, shared lanes) and
@@ -1580,12 +1579,21 @@ where
         // and a stale one leaves a validity head waiting, never released early.
         // The bookkeeping comes from the validity pool's incremental indexes,
         // so this costs the lanes that straddle stores, not the pool sizes.
+        // The validity feed is subscribed under the same guards: admissions
+        // publish while holding the write lock, so it starts where the
+        // snapshot ends.
         let (sidecar, validity, anchors, bridged) = {
             let sidecar = self.sidecar.pool.read();
             let validity = self.validity.pool.read();
+            let events = self
+                .validity
+                .listeners
+                .write()
+                .subscribe_new_transactions(TransactionListenerKind::All);
+            let live = LiveLaneUpdates::new(events, Arc::clone(&self.validity.pool));
             (
                 sidecar.best_transactions(self.ordering.clone(), base_fee),
-                self.validity_best_transactions(&validity, base_fee, live_validity),
+                validity.best_transactions(self.ordering.clone(), base_fee).with_live_updates(live),
                 validity.lanes_ahead_of_state().clone(),
                 self.bridged_descendants(&sidecar, &validity),
             )
@@ -1602,28 +1610,6 @@ where
         )
         .with_external_anchors(anchors)
         .with_bridged_descendants(bridged)
-    }
-
-    /// The validity pool's best transactions from `validity`, which the caller
-    /// holds read-locked. A live walk subscribes under that guard: admissions
-    /// publish while holding the write lock, so the feed starts where the
-    /// snapshot ends.
-    fn validity_best_transactions(
-        &self,
-        validity: &TwoDNoncePool<T>,
-        base_fee: u64,
-        live: bool,
-    ) -> BestTwoDTransactions<T, O> {
-        let best = validity.best_transactions(self.ordering.clone(), base_fee);
-        if !live {
-            return best;
-        }
-        let events = self
-            .validity
-            .listeners
-            .write()
-            .subscribe_new_transactions(TransactionListenerKind::All);
-        best.with_live_updates(LiveLaneUpdates::new(events, Arc::clone(&self.validity.pool)))
     }
 
     /// For each validity lane that shares its nonce space with a standard
@@ -1992,14 +1978,14 @@ where
             block_info.pending_basefee,
             block_info.pending_blob_fee.map(|fee| u64::try_from(fee).unwrap_or(u64::MAX)),
         );
-        Box::new(self.merged_best_transactions(best_transactions_attributes, false))
+        Box::new(self.merged_best_transactions(best_transactions_attributes))
     }
 
     fn best_transactions_with_attributes(
         &self,
         best_transactions_attributes: BestTransactionsAttributes,
     ) -> Box<dyn BestTransactions<Item = Arc<ValidPoolTransaction<Self::Transaction>>>> {
-        Box::new(self.merged_best_transactions(best_transactions_attributes, false))
+        Box::new(self.merged_best_transactions(best_transactions_attributes))
     }
 
     fn pending_transactions(&self) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
@@ -2423,7 +2409,7 @@ where
         hold: Option<Box<dyn BestTransactionsHold<Self::Transaction>>>,
     ) -> Box<dyn ParkableBestTransactions<Self::Transaction>> {
         let base_fee = attributes.basefee;
-        let merged = self.merged_best_transactions(attributes, true);
+        let merged = self.merged_best_transactions(attributes);
         Box::new(
             ParkedBestTransactions::new(merged, self.ordering.clone(), base_fee).with_hold(hold),
         )
