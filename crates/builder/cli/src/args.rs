@@ -5,7 +5,8 @@ use std::{path::PathBuf, sync::Arc};
 
 use base_builder_core::{
     BuilderApiExtensionConfig, BuilderConfig, DEFAULT_MAX_VALIDITY_PREDICATES, RejectionCache,
-    ResourceMeteringConfig, SharedMeteringProvider, ValiditySignatureMode,
+    ResourceMeteringConfig, SequencerLeadershipConfig, SharedMeteringProvider,
+    ValiditySignatureMode,
 };
 use base_builder_metering::MeteringStore;
 use base_execution_cli::ShadowIndexerArgs;
@@ -16,6 +17,7 @@ use base_observability_events::{
 };
 use eyre::WrapErr;
 use tracing::{info, warn};
+use url::Url;
 
 /// Dedicated transaction event journal configuration.
 #[derive(Debug, Clone, PartialEq, Eq, clap::Args)]
@@ -63,6 +65,22 @@ pub struct TransactionEventsArgs {
         default_value = "unknown"
     )]
     pub network: String,
+
+    /// Consensus node RPC URL whose `admin_sequencerActive` answer decides whether this builder
+    /// journals transaction events. Unset, every event is journaled regardless of leadership.
+    #[arg(
+        long = "builder.transaction-events.leader-rpc-url",
+        env = "BUILDER_TRANSACTION_EVENTS_LEADER_RPC_URL"
+    )]
+    pub leader_rpc_url: Option<Url>,
+
+    /// Milliseconds between two `admin_sequencerActive` requests.
+    #[arg(
+        long = "builder.transaction-events.leader-poll-interval-ms",
+        env = "BUILDER_TRANSACTION_EVENTS_LEADER_POLL_INTERVAL_MS",
+        default_value_t = SequencerLeadershipConfig::DEFAULT_POLL_INTERVAL.as_millis() as u64
+    )]
+    pub leader_poll_interval_ms: u64,
 }
 
 impl Default for TransactionEventsArgs {
@@ -75,6 +93,9 @@ impl Default for TransactionEventsArgs {
             max_files: DEFAULT_MAX_FILES,
             required: false,
             network: "unknown".to_string(),
+            leader_rpc_url: None,
+            leader_poll_interval_ms: SequencerLeadershipConfig::DEFAULT_POLL_INTERVAL.as_millis()
+                as u64,
         }
     }
 }
@@ -92,6 +113,14 @@ impl TransactionEventsArgs {
             producer: TransactionEventProducer::BaseBuilder,
             network: self.network.clone(),
         }
+    }
+
+    /// Returns the leadership probe config when a consensus node URL is configured.
+    pub fn leadership_config(&self) -> Option<SequencerLeadershipConfig> {
+        self.leader_rpc_url.clone().map(|rpc_url| SequencerLeadershipConfig {
+            poll_interval: Duration::from_millis(self.leader_poll_interval_ms),
+            ..SequencerLeadershipConfig::new(rpc_url)
+        })
     }
 }
 

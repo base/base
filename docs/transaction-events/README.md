@@ -258,6 +258,26 @@ The three `BUILDER_FLASHBLOCK_*` types are legacy events from the retired
 Flashblocks builder: they stay in the schema so historical journals still parse,
 and no current builder emits them.
 
+Leader gating: every sequencer runs a builder, and every mempool node forwards
+every transaction to every builder, so without gating each builder journals the
+same `TXPOOL_VALIDATED_INSERT_ACCEPTED` once per sequencer (five times per
+transaction on mainnet). Only the active sequencer builds blocks, so only its
+journal is kept. The builder polls the local consensus node's
+`admin_sequencerActive` when `--builder.transaction-events.leader-rpc-url` (for
+example `http://localhost:9545`) is set, every
+`--builder.transaction-events.leader-poll-interval-ms` (default 500), and
+journals nothing while the answer is `false`. Leadership is read live rather
+than configured because it moves between sequencers without a redeploy. Until
+the first answer the builder journals; a request that fails or times out keeps
+the last answer and counts in
+`base_builder_sequencer_leadership_poll_errors_total`, and
+`base_builder_sequencer_active` reports the answer in force. Events the gate
+withholds count in `transaction_events_gated_events`. Consequences for readers:
+a builder's events start at the moment it became leader, so a transaction it
+accepted while inactive has `BUILDER_*` events without an earlier
+`TXPOOL_VALIDATED_INSERT_ACCEPTED` from that host, and within one poll interval
+of a transfer either both or neither sequencer may journal.
+
 Builder caveat: `BUILDER_ACCEPTED`, `BUILDER_REJECTED`, `BUILDER_DEFERRED`,
 and `BUILDER_EXPIRED` are emitted per payload-building attempt and include
 `payload_id` and `block_number`. The same transaction can therefore produce

@@ -18,7 +18,7 @@ use tracing::warn;
 
 use crate::{
     DEFAULT_MAX_FILE_BYTES, DEFAULT_MAX_FILES, DEFAULT_QUEUE_CAPACITY, Metrics, TransactionEvent,
-    TransactionEventProducer, TransactionEventValidationError,
+    TransactionEventGate, TransactionEventProducer, TransactionEventValidationError,
 };
 
 /// Configuration for the dedicated transaction event JSONL writer.
@@ -98,6 +98,7 @@ pub type DeferredTransactionEvent = Box<dyn FnOnce(&str) -> TransactionEvent + S
 #[derive(Clone)]
 pub struct TransactionEventWriter {
     inner: Arc<WriterInner>,
+    gate: TransactionEventGate,
 }
 
 struct WriterInner {
@@ -141,6 +142,7 @@ impl fmt::Debug for TransactionEventWriter {
         f.debug_struct("TransactionEventWriter")
             .field("backend", &backend)
             .field("network", &self.inner.network)
+            .field("gate_open", &self.gate.is_open())
             .finish_non_exhaustive()
     }
 }
@@ -302,7 +304,28 @@ impl TransactionEventWriter {
     }
 
     fn new(backend: WriterBackend, network: impl Into<String>) -> Self {
-        Self { inner: Arc::new(WriterInner { backend, network: network.into() }) }
+        Self {
+            inner: Arc::new(WriterInner { backend, network: network.into() }),
+            gate: TransactionEventGate::default(),
+        }
+    }
+
+    /// Gates this handle and its clones on `gate`.
+    pub fn with_gate(mut self, gate: TransactionEventGate) -> Self {
+        self.gate = gate;
+        self
+    }
+
+    /// Returns this writer while its gate is open.
+    ///
+    /// A closed gate counts the skipped event, so a producer can verify how much the gate
+    /// withholds without building the events it withholds.
+    pub fn open(&self) -> Option<&Self> {
+        if self.gate.is_open() {
+            return Some(self);
+        }
+        Metrics::gated_events().increment(1);
+        None
     }
 
     /// Attempts to enqueue one event without blocking the caller.
