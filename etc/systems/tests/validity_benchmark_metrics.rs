@@ -12,8 +12,6 @@
 
 use std::time::Duration;
 
-use tokio_util::task::AbortOnDropHandle;
-
 use alloy_signer_local::PrivateKeySigner;
 use base_load_tests::{
     LoadTestExecutor, LoadTestRunHooks, LoadTestRunOptions, MetricsSummary, SubmitCohortLabel,
@@ -23,6 +21,7 @@ use base_system_tests::{
     SystemTestStackBuilder,
 };
 use eyre::Result;
+use tokio_util::task::AbortOnDropHandle;
 
 /// How often the mutator flips the `DoubleCounter` slot the workload's parity predicate reads.
 ///
