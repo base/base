@@ -483,8 +483,9 @@ where
 
     /// Classifies queued dormancy candidates and the canary's share of
     /// dormant transactions against `db`, the canonical state at `head`,
-    /// without holding the pool lock, then installs the results in batches of
-    /// [`DORMANCY_INSTALL_BATCH`] so a build never waits long on the lock.
+    /// without holding the pool lock. Candidates are taken, classified and
+    /// installed in chunks of [`DORMANCY_INSTALL_BATCH`], so no lock hold
+    /// costs more than one chunk and a build never waits long on the lock.
     fn classify_dormancy<DB: Database>(&self, head: B256, db: &mut DB) {
         let Some(batch) = self.validity.pool.write().take_dormancy_batch(head) else {
             return;
@@ -502,13 +503,13 @@ where
                 })
                 .collect::<Vec<_>>()
         };
-        let candidates = classify(batch.candidates);
         let canary = classify(batch.canary);
         let false_dormant = self.validity.pool.write().wake_runnable(canary);
-        let mut candidates = candidates.into_iter().peekable();
-        while candidates.peek().is_some() {
-            let installing = candidates.by_ref().take(DORMANCY_INSTALL_BATCH).collect();
-            self.validity.pool.write().install_dormancy(installing);
+        let queued = batch.queued.into_iter().collect::<Vec<_>>();
+        for chunk in queued.chunks(DORMANCY_INSTALL_BATCH) {
+            let candidates = self.validity.pool.read().dormancy_candidates(chunk);
+            let classified = classify(candidates);
+            self.validity.pool.write().install_dormancy(classified);
         }
         let mut validity = self.validity.pool.write();
         validity.finish_classification();
@@ -7434,11 +7435,13 @@ mod tests {
         /// batch is being classified.
         struct RacingDatabase<F> {
             race: Option<F>,
+            /// Storage reads so far: one per classified candidate blocked on `SLOT`.
+            reads: usize,
         }
 
         impl<F: FnOnce()> RacingDatabase<F> {
             const fn new(race: F) -> Self {
-                Self { race: Some(race) }
+                Self { race: Some(race), reads: 0 }
             }
         }
 
@@ -7454,6 +7457,7 @@ mod tests {
             }
 
             fn storage(&mut self, _: Address, _: U256) -> Result<U256, Self::Error> {
+                self.reads += 1;
                 if let Some(race) = self.race.take() {
                     race();
                 }
@@ -7515,6 +7519,29 @@ mod tests {
             );
 
             assert!(in_best(&pool, root), "the readmission's predicates hold");
+        }
+
+        /// Candidates are taken from the queue a chunk at a time, so a
+        /// transaction removed while an earlier chunk is classified is never
+        /// classified.
+        #[tokio::test]
+        async fn classification_takes_candidates_a_chunk_at_a_time() {
+            let (pool, client) = dormancy_pool(ValidityDormancyMode::Enforce);
+            advance(&pool, 1);
+            let mut queued = Vec::new();
+            for _ in 0..DORMANCY_INSTALL_BATCH + 8 {
+                let signer = funded_signer(&client);
+                queued.push(
+                    add(&pool, with_predicates(signed_1559(&signer, 0), [slot_is_one()])).await,
+                );
+            }
+
+            let mut db = RacingDatabase::new(|| {
+                pool.remove_transactions(queued.clone());
+            });
+            pool.classify_dormancy(block_hash(1), &mut db);
+
+            assert_eq!(db.reads, DORMANCY_INSTALL_BATCH, "only the first chunk was classified");
         }
 
         /// Advances to canonical block `number` and returns how many dormant

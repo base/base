@@ -13,7 +13,7 @@ use std::{
 use alloy_eips::BlockNumHash;
 use alloy_primitives::{
     Address, B256, TxHash, U256, U512,
-    map::{AddressMap, B256Map, HashMap},
+    map::{AddressMap, B256Map, B256Set, HashMap},
 };
 use base_common_consensus::Eip8130Constants;
 use reth_primitives_traits::transaction::error::InvalidTransactionError;
@@ -537,8 +537,9 @@ pub(crate) struct TwoDNoncePool<T: BasePooledTx> {
 pub(crate) struct DormancyBatch<T: BasePooledTx> {
     /// The block the candidates are classified for.
     pub context: PredicateContext,
-    /// Ready transactions to classify.
-    pub candidates: Vec<Arc<ValidPoolTransaction<T>>>,
+    /// Queued hashes, taken from the queue at once and turned into
+    /// candidates a chunk at a time with [`TwoDNoncePool::dormancy_candidates`].
+    pub queued: B256Set,
     /// Dormant transactions the canary re-evaluates.
     pub canary: Vec<Arc<ValidPoolTransaction<T>>>,
 }
@@ -1708,10 +1709,11 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
         run.next().is_some_and(|head| Arc::ptr_eq(head, root)).then(|| run.cloned().collect())
     }
 
-    /// Takes the queued transactions that are still dormancy candidates, and
-    /// the canary's next dormant ones, to classify against the canonical
-    /// state `head` without holding the pool lock. `None` unless dormancy is
-    /// enforced and `head` is the tip; the queue then waits.
+    /// Takes the classification queue, and the canary's next dormant
+    /// transactions, to classify against the canonical state `head` without
+    /// holding the pool lock; the queue is moved out whole, not walked.
+    /// `None` unless dormancy is enforced and `head` is the tip; the queue
+    /// then waits.
     pub(crate) fn take_dormancy_batch(&mut self, head: B256) -> Option<DormancyBatch<T>> {
         let tip = self.dormancy.tip.filter(|tip| {
             self.dormancy.is_enforced()
@@ -1720,13 +1722,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
         })?;
         let context =
             PredicateContext { block_number: tip.number.checked_add(1)?, flashblock_index: 0 };
-        let candidates = self
-            .dormancy
-            .take_queue()
-            .into_iter()
-            .filter(|hash| !self.dormancy.is_dormant(hash) && self.eligible_slot(hash).is_some())
-            .filter_map(|hash| self.hashes.get(&hash).cloned())
-            .collect();
+        let queued = self.dormancy.take_queue();
         let canary = self
             .dormancy
             .take_canary()
@@ -1734,7 +1730,20 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
             .filter_map(|hash| self.hashes.get(&hash).cloned())
             .collect();
         self.dormancy.classifying = Some(self.dormancy.discards);
-        Some(DormancyBatch { context, candidates, canary })
+        Some(DormancyBatch { context, queued, canary })
+    }
+
+    /// The transactions among `hashes` that are still dormancy candidates:
+    /// pooled, not dormant, and a ready root or nonce-free transaction.
+    pub(crate) fn dormancy_candidates(
+        &self,
+        hashes: &[TxHash],
+    ) -> Vec<Arc<ValidPoolTransaction<T>>> {
+        hashes
+            .iter()
+            .filter(|hash| !self.dormancy.is_dormant(hash) && self.eligible_slot(hash).is_some())
+            .filter_map(|hash| self.hashes.get(hash).cloned())
+            .collect()
     }
 
     /// Installs some of a batch's classifications, deciding per transaction

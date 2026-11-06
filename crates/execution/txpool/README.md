@@ -274,8 +274,9 @@ transaction is dormant when its block-number lower bound or one of its balance,
 nonce or storage predicates fails; it is indexed under that one blocking
 predicate. Flashblock-index predicates never make a transaction dormant, and a
 transaction whose block bounds have already passed is left to block expiry.
-Results are installed in batches of at most 256 transactions per lock hold, each
-against the pool as it is then: a transaction is parked only if the very
+The queue is taken whole and its candidates are looked up, classified and
+installed in chunks of at most 256 transactions, so no lock hold costs more
+than one chunk. Each result is installed against the pool as it is then: a transaction is parked only if the very
 transaction classified is still pooled (a readmitted envelope with other
 predicates has the same hash but is a new transaction) and is still a ready root
 or nonce-free transaction, no build has written its blocking location since the
