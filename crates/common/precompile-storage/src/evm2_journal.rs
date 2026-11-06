@@ -63,7 +63,7 @@ where
     /// metadata and the transaction origin are snapshotted from the EVM.
     pub fn new(evm: &'e mut Evm<'db, T>, caller: Address) -> Self {
         let block = evm.block();
-        let block_number = block.number.to::<u64>();
+        let block_number = block.number.saturating_to::<u64>();
         let timestamp = block.timestamp;
         let beneficiary = block.beneficiary;
         let chain_id = evm.version().chain_id;

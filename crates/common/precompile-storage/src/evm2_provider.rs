@@ -64,7 +64,7 @@ where
         storage_features: StorageFeatures,
     ) -> Self {
         let block = evm.block();
-        let block_number = block.number.to::<u64>();
+        let block_number = block.number.saturating_to::<u64>();
         let timestamp = block.timestamp;
         let beneficiary = block.beneficiary;
         let chain_id = evm.version().chain_id;

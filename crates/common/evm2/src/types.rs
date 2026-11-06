@@ -94,6 +94,10 @@ pub struct BaseEvmExt {
     /// precompiles: the caller of a standard transaction, the depositor of a deposit, or the
     /// resolved sender of an EIP-8130 transaction.
     pub tx_origin: Address,
+    /// The `FastLZ` compressed size of the executing transaction's EIP-2718 bytes, when the
+    /// block executor already computed it for the Jovian DA footprint. Taken by the L1 data fee
+    /// so the hot path compresses each transaction once; cleared after every transaction.
+    pub tx_fastlz_size: Option<u32>,
 }
 
 impl Evm2TxOrigin for BaseEvmExt {

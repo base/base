@@ -2,7 +2,7 @@
 
 use alloy_primitives::{U256, uint};
 use base_common_consensus::Predeploys;
-use base_common_genesis::BaseUpgrade;
+use base_common_genesis::{BaseFeature, BaseUpgrade};
 use base_common_l1_fees::L1FeeParams;
 use evm2::{Evm, registry::HandlerResult};
 
@@ -41,6 +41,23 @@ impl L1Block {
     pub const OPERATOR_FEE_SCALAR_OFFSET: usize = 20;
     /// Byte offset of the 8-byte operator fee constant in [`Self::OPERATOR_FEE_SCALARS_SLOT`].
     pub const OPERATOR_FEE_CONSTANT_OFFSET: usize = 24;
+
+    /// Returns the L1 data fee for the EIP-2718 bytes `enveloped` at the active upgrade, reusing
+    /// the `FastLZ` size the block executor cached in [`BaseEvmExt::tx_fastlz_size`] (and
+    /// clearing it) instead of compressing the transaction a second time.
+    ///
+    /// [`BaseEvmExt::tx_fastlz_size`]: crate::BaseEvmExt::tx_fastlz_size
+    pub fn tx_l1_fee(evm: &mut Evm<'_, BaseEvmTypes>, enveloped: &[u8]) -> U256 {
+        let upgrade = evm.config_spec_id().upgrade();
+        let fastlz_size = evm.ext_mut().tx_fastlz_size.take();
+        let params = &evm.block().ext;
+        match fastlz_size {
+            Some(size) if upgrade.is_feature_enabled(BaseFeature::FastLzL1Fees) => {
+                params.calculate_tx_l1_cost_fjord_with_fastlz_size(enveloped, size)
+            }
+            _ => params.calculate_tx_l1_cost(enveloped, upgrade),
+        }
+    }
 
     /// Loads the current block's L1 fee parameters into the block environment extension, unless
     /// they were already loaded for this block number.

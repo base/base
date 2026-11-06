@@ -4,6 +4,7 @@ use alloy_consensus::{Eip658Value, Receipt, Transaction, transaction::Recovered}
 use alloy_eips::eip2718::Typed2718;
 use alloy_primitives::{Address, B256, Bytes};
 use base_common_consensus::{BaseReceipt, DepositReceipt, EIP8130_TX_TYPE_ID, Eip8130Receipt};
+use base_common_flz::flz_compress_len;
 use base_common_genesis::BaseFeature;
 use evm2::{
     BlockStateAccumulator, Evm, PendingState, SpecId, TxResultWithState,
@@ -370,10 +371,14 @@ impl<'a, S: BaseBlockState> BaseBlockExecutor<'a, S> {
 
         // From Jovian, each non-deposit transaction's DA footprint is metered against the block's
         // DA footprint budget: the block gas limit less what earlier transactions consumed.
+        let mut fastlz = None;
         let da_footprint = if spec.is_feature_enabled(BaseFeature::DaFootprint) && !is_deposit {
             L1Block::ensure_fee_params(&mut self.evm)?;
             let enveloped = tx.enveloped().map(|bytes| bytes.as_ref()).unwrap_or_default();
-            let footprint = self.evm.block().ext.jovian_da_footprint(enveloped);
+            // Compressed once here and reused by the L1 data fee (`L1Block::tx_l1_fee`).
+            let fastlz_size = flz_compress_len(enveloped);
+            fastlz = Some(fastlz_size);
+            let footprint = self.evm.block().ext.jovian_da_footprint_from_fastlz_size(fastlz_size);
             let available = block_gas_limit.saturating_sub(self.da_footprint_used);
             if footprint > available {
                 return Err(HandlerError::external(DaFootprintAboveGasLimit {
@@ -400,7 +405,11 @@ impl<'a, S: BaseBlockState> BaseBlockExecutor<'a, S> {
             None
         };
 
-        let result = self.evm.transact(tx)?.detach();
+        self.evm.ext_mut().tx_fastlz_size = fastlz;
+        let result = self.evm.transact(tx).map(|executed| executed.detach());
+        // Never let one transaction's size leak into the next, whichever path ran.
+        self.evm.ext_mut().tx_fastlz_size = None;
+        let result = result?;
         Ok(BaseExecutedTx { result, ty, deposit_nonce, da_footprint, is_deposit })
     }
 

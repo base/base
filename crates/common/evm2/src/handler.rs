@@ -33,8 +33,7 @@ impl BaseTxHandlerHooks {
         let Some(enveloped) = envelope.enveloped() else {
             return U256::ZERO;
         };
-        let upgrade = host.config_spec_id().upgrade();
-        host.block_env().ext.calculate_tx_l1_cost(enveloped, upgrade)
+        L1Block::tx_l1_fee(host, enveloped)
     }
 
     /// Returns the Isthmus operator fee for `envelope` over `gas`. Zero for deposits and before

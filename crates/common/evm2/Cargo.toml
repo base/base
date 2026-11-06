@@ -14,6 +14,7 @@ workspace = true
 
 [dependencies]
 # base
+base-common-flz.workspace = true
 base-common-genesis.workspace = true
 base-common-eip8130.workspace = true
 base-common-l1-fees.workspace = true

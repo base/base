@@ -238,7 +238,7 @@ impl Eip8130Handler {
         let gas_charge = U256::from(max_gas)
             .checked_mul(U256::from(outcome.effective))
             .ok_or_else(|| Self::invalid("EIP-8130 gas pre-charge overflow"))?;
-        let l1_fee = host.block().ext.calculate_tx_l1_cost(&tx.enveloped, upgrade);
+        let l1_fee = L1Block::tx_l1_fee(host, &tx.enveloped);
         let operator_fee =
             host.block().ext.operator_fee_charge(&tx.enveloped, U256::from(max_gas), upgrade);
         let prepay = gas_charge

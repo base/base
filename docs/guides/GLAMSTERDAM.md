@@ -20,6 +20,7 @@
 - [ ] **State creation (EIP-8037):** Choose Base's gas price per byte of new state.
 - [ ] **State access (EIP-8038):** Choose Base's account/storage access and write prices.
 - [ ] **BAL Bandwidth Analysis:** Compare payload sizes with and without BALs, before and after compression.
+- [ ] **BAL parallel execution admission:** Reth's parallel BAL path admits transactions only through `BlockExecutor::validate_transaction_gas_limit`, which sees the gas limit alone. Base's executor also reserves EIP-8130 payer-authentication gas, exempts pre-Regolith deposits and meters the Jovian DA footprint against canonical counters, so those checks must move into an admission hook that sees the transaction before BALs activate.
 
 ## EIPs
 

@@ -5,10 +5,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use alloy_consensus::{
-    BlockHeader, Transaction, Typed2718,
-    transaction::{Recovered, TxHashRef},
-};
+use alloy_consensus::{BlockHeader, Transaction, Typed2718, transaction::TxHashRef};
 use alloy_primitives::{Address, TxHash, U256};
 use alloy_rpc_types_debug::ExecutionWitness;
 use alloy_rpc_types_engine::PayloadId;
@@ -31,12 +28,12 @@ use reth_basic_payload_builder::{
 };
 use reth_chainspec::{ChainSpecProvider, EthChainSpec};
 use reth_evm::{
-    BlockExecutorFactory, BlockExecutorFor, BlockTransactionResult, CommitChanges, ConfigureEvm,
-    Database, Evm as _, EvmEnv, GasOutput, OnStateHook, RecoveredTx,
+    BlockExecutorFactory, BlockExecutorFor, CommitChanges, ConfigureEvm, Database, Evm as _,
+    EvmEnv, OnStateHook,
     database::StateProviderDatabase,
     execute::{
         BasicBlockBuilder, BlockBuilder, BlockBuilderOutcome, BlockExecutionError, BlockExecutor,
-        BlockValidationError, ExecutorTx,
+        BlockValidationError,
     },
     witness::ExecutionWitnessRecord,
 };
@@ -45,7 +42,7 @@ use reth_payload_builder_primitives::PayloadBuilderError;
 use reth_payload_primitives::{BuildNextEnv, BuiltPayloadExecutedBlock};
 use reth_payload_util::{NoopPayloadTransactions, PayloadTransactions};
 use reth_primitives_traits::{
-    HeaderTy, NodePrimitives, SealedHeader, SealedHeaderFor, SignedTransaction, TxTy, WithEncoded,
+    HeaderTy, SealedHeader, SealedHeaderFor, SignedTransaction, TxTy, WithEncoded,
 };
 use reth_storage_api::{BlockReader, StateProvider, StateProviderFactory};
 use reth_tasks::{CancelOnDrop, Runtime};
@@ -689,50 +686,6 @@ impl<Txs> Builder<'_, Txs> {
     }
 }
 
-/// The block builder a payload job executes and assembles its block with.
-pub type PayloadBlockBuilder<'a, Evm> = BasicBlockBuilder<
-    'a,
-    <Evm as ConfigureEvm>::BlockExecutorFactory,
-    BlockExecutorFor<'a, Evm>,
-    <Evm as ConfigureEvm>::BlockAssembler,
-    <Evm as ConfigureEvm>::Primitives,
->;
-
-/// A [`BlockBuilder`] that decides whether to commit a transaction after seeing its state changes.
-pub trait StateCommitCondition: BlockBuilder {
-    /// Executes `tx`, passes its result and detached state changes to `f`, and saves it for
-    /// block assembly only if `f` returns [`CommitChanges::Yes`].
-    fn execute_transaction_with_state_condition(
-        &mut self,
-        tx: impl ExecutorTx<Self::Executor>,
-        f: impl FnOnce(&<Self::Executor as BlockExecutor>::TransactionResultWithState) -> CommitChanges,
-    ) -> Result<Option<GasOutput>, BlockExecutionError>;
-}
-
-impl<'a, F, Executor, Assembler, N> StateCommitCondition
-    for BasicBlockBuilder<'a, F, Executor, Assembler, N>
-where
-    Self: BlockBuilder<Executor = Executor>,
-    F: BlockExecutorFactory + 'a,
-    Executor: BlockExecutor<Transaction = TxTy<N>>,
-    N: NodePrimitives,
-{
-    fn execute_transaction_with_state_condition(
-        &mut self,
-        tx: impl ExecutorTx<Executor>,
-        f: impl FnOnce(&Executor::TransactionResultWithState) -> CommitChanges,
-    ) -> Result<Option<GasOutput>, BlockExecutionError> {
-        let (tx_env, tx) = tx.into_parts();
-        let output = self.executor.execute_transaction_without_commit((tx_env, &tx))?;
-        if !f(&output).should_commit() {
-            return Ok(None);
-        }
-        let gas_output = self.executor.commit_transaction(output)?;
-        self.transactions.push(Recovered::new_unchecked(tx.tx().clone(), *tx.signer()));
-        Ok(Some(gas_output))
-    }
-}
-
 /// State updates a build commits before its selection loop starts: the pre-execution system calls
 /// and the sequencer transactions.
 ///
@@ -917,7 +870,10 @@ where
     pub fn block_builder<'a, DB: Database + 'a>(
         &'a self,
         db: DB,
-    ) -> Result<PayloadBlockBuilder<'a, Evm>, PayloadBuilderError> {
+    ) -> Result<
+        impl BlockBuilder<Primitives = Evm::Primitives, Executor = BlockExecutorFor<'a, Evm>> + 'a,
+        PayloadBuilderError,
+    > {
         let attributes = Evm::NextBlockEnvCtx::build_next_env(
             self.attributes(),
             self.parent(),
@@ -1002,7 +958,7 @@ where
     )]
     pub fn execute_sequencer_transactions(
         &self,
-        builder: &mut impl StateCommitCondition<Primitives = Evm::Primitives>,
+        builder: &mut impl BlockBuilder<Primitives = Evm::Primitives>,
     ) -> Result<ExecutionInfo, PayloadBuilderError> {
         tracing::Span::current().record("block_number", self.parent().number().saturating_add(1));
         let mut info = ExecutionInfo::new();
@@ -1029,14 +985,13 @@ where
 
             let mut pending_resource_usage = None;
             let tx_hash = *sequencer_tx.tx_hash();
-            let gas_output = match builder.execute_transaction_with_state_condition(
+            let gas_output = match builder.execute_transaction_with_commit_condition(
                 sequencer_tx.clone(),
-                |output| {
-                    let output = output.result();
+                |result, changes| {
                     pending_resource_usage = resource_metering.unthrottled_usage(
                         &tx_hash,
-                        output.result.tx_gas_used(),
-                        output.pending_state.account_changes(),
+                        result.tx_gas_used(),
+                        changes.account_changes(),
                     );
                     CommitChanges::Yes
                 },
@@ -1100,7 +1055,7 @@ where
     pub fn execute_best_transactions(
         &self,
         info: &mut ExecutionInfo,
-        builder: &mut impl StateCommitCondition<
+        builder: &mut impl BlockBuilder<
             Primitives = Evm::Primitives,
             Executor: BlockExecutor<Evm: reth_evm::Evm<EvmTypes: MeteredGasEvmTypes>>,
         >,
@@ -1548,20 +1503,18 @@ where
             let mut pending_resource_usage = None;
             let mut executed_decision = None;
             let mut metered_gas = None;
-            let gas_output = match builder.execute_transaction_with_state_condition(
+            let gas_output = match builder.execute_transaction_with_commit_condition(
                 WithEncoded::new(tx_encoded, tx.clone()),
-                |output| {
-                    let output = output.result();
+                |result, changes| {
                     // The gas this transaction metered, for the accepted event. `None` only if
                     // the transaction never reached settlement, which an included user
                     // transaction always does; the event then reports `null` rather than a
                     // figure that would pass for a transaction using its whole limit.
-                    metered_gas = output.result.ext.metered_gas();
-                    let state = &output.pending_state;
+                    metered_gas = result.ext.metered_gas();
                     let decision = resource_metering.check_executed_usage(
                         &tx_hash,
-                        output.result.tx_gas_used(),
-                        state.account_changes(),
+                        result.tx_gas_used(),
+                        changes.account_changes(),
                         simulated.as_ref(),
                         &info.resource_metering_usage,
                     );
@@ -1572,11 +1525,11 @@ where
                         pending_resource_usage = decision.committed_usage();
                         if !predicate_index.is_empty() {
                             state_change_effects =
-                                predicate_index.affected_by_state(state.account_changes());
+                                predicate_index.affected_by_state(changes.account_changes());
                             predicate_bucket_wakeups += state_change_effects.woken_buckets as u64;
                         }
                         if let Some(resting) = resting {
-                            resting_woken = resting.wake_by_state(state.account_changes());
+                            resting_woken = resting.wake_by_state(changes.account_changes());
                         }
                         CommitChanges::Yes
                     }
