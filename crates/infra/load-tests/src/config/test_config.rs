@@ -922,9 +922,9 @@ impl TestConfig {
                 TxType::AaBundle { ops_per_bundle: *ops_per_bundle, padding_bytes: *padding_bytes }
             }
             TxTypeConfig::RevertArb { contract, gas_limit } => {
-                if *gas_limit < MIN_REVERT_ARB_GAS_LIMIT {
+                if !(MIN_REVERT_ARB_GAS_LIMIT..=MAX_TX_GAS_LIMIT_OSAKA).contains(gas_limit) {
                     return Err(BaselineError::Config(format!(
-                        "revert_arb gas_limit must be >= {MIN_REVERT_ARB_GAS_LIMIT}"
+                        "revert_arb gas_limit must be within {MIN_REVERT_ARB_GAS_LIMIT}..={MAX_TX_GAS_LIMIT_OSAKA} (the EIP-7623 floor and the EIP-7825 per-tx cap)"
                     )));
                 }
                 TxType::RevertArb { contract: *contract, gas_limit: *gas_limit }
@@ -1852,7 +1852,7 @@ validity:
     }
 
     #[test]
-    fn revert_arb_gas_limit_defaults_and_rejects_sub_intrinsic_values() {
+    fn revert_arb_gas_limit_defaults_and_rejects_out_of_range_values() {
         let yaml = config_yaml(
             r#"
 transactions:
@@ -1877,7 +1877,19 @@ transactions:
 "#,
         );
         let error = TestConfig::from_yaml(&yaml).unwrap().to_load_config(Some(1337)).unwrap_err();
-        assert!(error.to_string().contains("revert_arb gas_limit must be >="), "{error}");
+        assert!(error.to_string().contains("revert_arb gas_limit must be within"), "{error}");
+
+        let yaml = config_yaml(
+            r#"
+transactions:
+  - weight: 100
+    type: revert_arb
+    contract: "0x1111111111111111111111111111111111111111"
+    gas_limit: 16777217
+"#,
+        );
+        let error = TestConfig::from_yaml(&yaml).unwrap().to_load_config(Some(1337)).unwrap_err();
+        assert!(error.to_string().contains("revert_arb gas_limit must be within"), "{error}");
     }
 
     #[test]
