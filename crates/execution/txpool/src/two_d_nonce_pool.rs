@@ -1279,12 +1279,10 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
         &self,
         offer_dormant: bool,
     ) -> impl Iterator<Item = (LaneId, u64)> + '_ {
-        let lanes = if self.dormancy.is_enforced() && !offer_dormant {
-            &self.pending_shared_lanes
-        } else {
-            &self.shared_lanes
-        };
-        lanes.iter().filter_map(move |lane_id| {
+        let filtered = self.dormancy.is_enforced() && !offer_dormant;
+        let shared = (!filtered).then(|| self.shared_lanes.iter()).into_iter().flatten();
+        let pending = filtered.then(|| self.pending_shared_lanes.iter()).into_iter().flatten();
+        shared.chain(pending).filter_map(move |lane_id| {
             self.lanes.get(lane_id)?.offered_end(offer_dormant).map(|end| (*lane_id, end))
         })
     }
@@ -1515,20 +1513,21 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
     }
 
     /// Starts build `block_number` on `parent` and returns its id; the build
-    /// owns the index until it ends or another build starts. The index is
-    /// kept only when `parent` is the tip and no other build is running; then
-    /// the writes `pre_selection` made and the block's height wake what they
-    /// may satisfy. Otherwise it is discarded, and a running build becomes
-    /// stale: it no longer reads or writes the index.
+    /// owns the index until it seals or is dropped. `None` while another
+    /// build owns it: that build runs without the index, as with dormancy
+    /// off. The index is kept only when `parent` is the tip; then the writes
+    /// `pre_selection` made and the block's height wake what they may
+    /// satisfy. Otherwise it is discarded.
     pub(crate) fn begin_build(
         &mut self,
         parent: B256,
         block_number: u64,
         pre_selection: Option<&TransitionState>,
-    ) -> u64 {
+    ) -> Option<u64> {
         if self.dormancy.building {
-            self.discard_dormancy_now(DormancyDiscardReason::Superseded);
-        } else if self.dormancy.tip.is_some_and(|tip| tip.hash != parent) {
+            return None;
+        }
+        if self.dormancy.tip.is_some_and(|tip| tip.hash != parent) {
             self.discard_dormancy_now(DormancyDiscardReason::ParentMismatch);
         }
         self.dormancy.builds += 1;
@@ -1545,7 +1544,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
         for hash in woken {
             self.wake(hash);
         }
-        self.dormancy.builds
+        Some(self.dormancy.builds)
     }
 
     /// Ends build `build` with the block it sealed and drops the entries
@@ -1621,17 +1620,14 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
         }
     }
 
-    /// Records that build `build` takes its snapshot now and returns the
-    /// snapshot's id, or `None` when `build` no longer owns the index; its
-    /// snapshot then ignores dormancy. Call under the same lock hold as the
-    /// snapshot, so the snapshot holds exactly the transactions that were not
-    /// dormant at this id.
-    pub(crate) const fn begin_snapshot(&mut self, build: u64) -> Option<u64> {
-        if !self.dormancy.is_running(build) {
-            return None;
-        }
+    /// Records that build `build`, which owns the index until it seals or is
+    /// dropped, takes its snapshot now, and returns the snapshot's id. Call
+    /// under the same lock hold as the snapshot, so the snapshot holds
+    /// exactly the transactions that were not dormant at this id.
+    pub(crate) fn begin_snapshot(&mut self, build: u64) -> u64 {
+        debug_assert!(self.dormancy.is_running(build), "only the owning build snapshots");
         self.dormancy.snapshots += 1;
-        Some(self.dormancy.snapshots)
+        self.dormancy.snapshots
     }
 
     /// Wakes the transactions a commit of build `build`, whose snapshot is
@@ -1667,25 +1663,22 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
     /// Indexes a transaction build `build` found failing `predicate`, so a
     /// later commit can wake it. An eligible transaction becomes dormant and
     /// stays so in later builds on this one; any other is indexed until the
-    /// build ends. Returns `false` when `build` no longer owns the index.
+    /// build ends.
     pub(crate) fn park_unsatisfied(
         &mut self,
         build: u64,
         transaction: &Arc<ValidPoolTransaction<T>>,
         predicate: ValidityPredicate,
-    ) -> bool {
-        if !self.dormancy.is_running(build) {
-            return false;
-        }
-        if !self.is_pooled(transaction) {
-            return true;
+    ) {
+        if !self.dormancy.is_running(build) || !self.is_pooled(transaction) {
+            return;
         }
         let release_block = match &predicate {
             ValidityPredicate::BlockNumber { op, value } => {
                 let Some(release) =
                     DormancyClassification::release_block(*op, *value, self.dormancy.height)
                 else {
-                    return true;
+                    return;
                 };
                 Some(release)
             }
@@ -1695,7 +1688,6 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
         let slot = self.eligible_slot(&hash);
         self.dormancy.park(hash, slot, predicate, release_block);
         self.leave_snapshot(slot);
-        true
     }
 
     /// The rest of the pending run `root` heads in `lane_id`, or `None` when
@@ -3383,7 +3375,7 @@ mod tests {
         let root = pool.get(&root_hash).unwrap();
         pool.mark_shared_lane(lane);
         let tip = B256::repeat_byte(1);
-        let build = pool.begin_build(B256::ZERO, 1, None);
+        let build = pool.begin_build(B256::ZERO, 1, None).unwrap();
         pool.seal_build(build, tip);
         pool.take_dormancy_batch(tip).unwrap();
 
@@ -3423,7 +3415,7 @@ mod tests {
             roots.push(pool.get(&hash).unwrap());
         }
         let tip = B256::repeat_byte(1);
-        let build = pool.begin_build(B256::ZERO, 1, None);
+        let build = pool.begin_build(B256::ZERO, 1, None).unwrap();
         pool.seal_build(build, tip);
         pool.take_dormancy_batch(tip).unwrap();
         let blocker = ValidityPredicate::BlockNumber {

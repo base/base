@@ -3227,6 +3227,227 @@ mod tests {
         assert_eq!(*parked.lock().unwrap(), vec![gated_hash]);
     }
 
+    type EnforcingPool = base_execution_txpool::BaseTransactionPool<
+        reth_provider::test_utils::MockEthProvider<BasePrimitives, Arc<BaseChainSpec>>,
+        reth_transaction_pool::blobstore::InMemoryBlobStore,
+        BaseEvmConfig,
+    >;
+
+    /// A Base transaction pool enforcing validity dormancy, with `funded` holding balance.
+    fn enforcing_pool(funded: &[Address]) -> EnforcingPool {
+        let mut genesis = base_test_utils::build_test_genesis_everest();
+        genesis.config.chain_id = 8_453;
+        let chain_spec = Arc::new(BaseChainSpec::from_genesis(genesis));
+        let client = reth_provider::test_utils::MockEthProvider::<BasePrimitives>::new()
+            .with_chain_spec(Arc::clone(&chain_spec))
+            .with_genesis_block();
+        for address in funded {
+            client.add_account(
+                *address,
+                reth_provider::test_utils::ExtendedAccount::new(0, U256::from(u64::MAX)),
+            );
+        }
+        let blob_store = reth_transaction_pool::blobstore::InMemoryBlobStore::default();
+        let validator = reth_transaction_pool::validate::EthTransactionValidatorBuilder::new(
+            client,
+            BaseEvmConfig::base(Arc::clone(&chain_spec)),
+        )
+        .no_shanghai()
+        .no_cancun()
+        .build_with_tasks(reth_tasks::Runtime::test(), blob_store.clone())
+        .map(|inner| {
+            let validator = base_execution_txpool::BaseTransactionValidator::with_block_info(
+                inner,
+                base_execution_txpool::BaseL1BlockInfo::default(),
+            );
+            let header = Header { timestamp: DENIM_TIMESTAMP, ..Default::default() };
+            validator.update_l1_block_info::<_, TxEip1559>(&header, &[]);
+            validator
+        });
+        let ordering = base_execution_txpool::BaseOrdering::default();
+        let pool = reth_transaction_pool::Pool::new(
+            validator,
+            ordering.clone(),
+            blob_store,
+            Default::default(),
+        );
+        base_execution_txpool::BaseTransactionPool::new(pool, ordering)
+            .with_guard_limits(base_execution_txpool::GuardLimits::default())
+            .with_validity_dormancy(base_execution_txpool::ValidityDormancyMode::Enforce)
+    }
+
+    /// A transaction from `signer` paying `tip` to send `value` to `to`, with `predicates`.
+    fn signed_pool_transaction(
+        signer: &alloy_signer_local::PrivateKeySigner,
+        to: Address,
+        value: U256,
+        tip: u128,
+        predicates: Vec<ValidityPredicate>,
+    ) -> BasePooledTransaction {
+        use alloy_signer::SignerSync;
+
+        let tx = TxEip1559 {
+            chain_id: 8_453,
+            nonce: 0,
+            gas_limit: 100_000,
+            max_fee_per_gas: 2_000_000_000,
+            max_priority_fee_per_gas: tip,
+            to: TxKind::Call(to),
+            value,
+            ..Default::default()
+        };
+        let signature = signer.sign_hash_sync(&tx.signature_hash()).unwrap();
+        let envelope = BaseTxEnvelope::Eip1559(tx.into_signed(signature));
+        let encoded_len = envelope.encode_2718_len();
+        let transaction = BasePooledTransaction::new(
+            envelope.try_into_recovered().expect("signature must recover"),
+            encoded_len,
+        );
+        if predicates.is_empty() {
+            transaction
+        } else {
+            transaction.with_validity_predicates(predicates)
+        }
+    }
+
+    /// Runs `hook` when the build first asks for a candidate, after the snapshot was taken.
+    struct HookOnFirstCandidate<Txs, F> {
+        inner: Txs,
+        hook: Option<F>,
+    }
+
+    impl<Txs: ParkablePayloadTransactions, F: FnOnce()> PayloadTransactions
+        for HookOnFirstCandidate<Txs, F>
+    {
+        type Transaction = Txs::Transaction;
+
+        fn next(&mut self, ctx: ()) -> Option<Self::Transaction> {
+            if let Some(hook) = self.hook.take() {
+                hook();
+            }
+            self.inner.next(ctx)
+        }
+
+        fn mark_invalid(&mut self, sender: Address, nonce: u64) {
+            self.inner.mark_invalid(sender, nonce);
+        }
+    }
+
+    impl<Txs: ParkablePayloadTransactions, F: FnOnce()> ParkablePayloadTransactions
+        for HookOnFirstCandidate<Txs, F>
+    {
+        type Pooled = Txs::Pooled;
+
+        fn park_current(&mut self) {
+            self.inner.park_current();
+        }
+
+        fn mark_current_committed(&mut self) {
+            self.inner.mark_current_committed();
+        }
+
+        fn promote(&mut self, transaction_hash: TxHash) -> bool {
+            self.inner.promote(transaction_hash)
+        }
+
+        fn discard_parked(&mut self, transaction_hash: TxHash) -> bool {
+            self.inner.discard_parked(transaction_hash)
+        }
+
+        fn parks_in_pool_index(&self) -> bool {
+            self.inner.parks_in_pool_index()
+        }
+
+        fn park_current_unsatisfied(&mut self, predicate: ValidityPredicate) {
+            self.inner.park_current_unsatisfied(predicate);
+        }
+
+        fn wake_by_state(&mut self, state: &EvmState) {
+            self.inner.wake_by_state(state);
+        }
+    }
+
+    fn included_hashes(
+        outcome: BuildOutcomeKind<crate::BaseBuiltPayload<BasePrimitives>>,
+    ) -> Vec<TxHash> {
+        let BuildOutcomeKind::Freeze(payload) = outcome else {
+            panic!("Denim payload must freeze")
+        };
+        payload
+            .block()
+            .body()
+            .transactions
+            .iter()
+            .map(|transaction| TxHash::from(*transaction.tx_hash()))
+            .collect()
+    }
+
+    /// A build that begins while another owns the pool's dormancy index runs without it, as with
+    /// dormancy off, and still includes a transaction an earlier commit in its block satisfies;
+    /// the owner keeps waking through the index and includes it in its own block too.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_build_beginning_while_another_owns_the_dormancy_index_still_wakes_mid_block() {
+        use base_execution_txpool::ParkableTransactionPool;
+        use reth_transaction_pool::TransactionPool;
+
+        let watched = Address::repeat_byte(0x44);
+        let (gated_signer, trigger_signer) = (
+            alloy_signer_local::PrivateKeySigner::random(),
+            alloy_signer_local::PrivateKeySigner::random(),
+        );
+        let funded = [gated_signer.address(), trigger_signer.address()];
+        let gated = signed_pool_transaction(
+            &gated_signer,
+            Address::repeat_byte(0x55),
+            U256::ZERO,
+            10,
+            vec![
+                ValidityPredicate::BlockNumber {
+                    op: ValidityOperator::LessThanOrEqual,
+                    value: U256::from(1_000),
+                },
+                ValidityPredicate::Balance {
+                    address: watched,
+                    op: ValidityOperator::Equal,
+                    value: U256::ONE,
+                },
+            ],
+        );
+        let trigger = signed_pool_transaction(&trigger_signer, watched, U256::ONE, 1, Vec::new());
+        let expected = vec![*trigger.hash(), *gated.hash()];
+        let pool = enforcing_pool(&funded);
+        for transaction in [gated, trigger] {
+            pool.add_transaction(TransactionOrigin::External, transaction).await.unwrap();
+        }
+        let build = |best_hook: Box<dyn FnOnce() + Send + Sync + '_>| {
+            let provider = funded_provider(&funded);
+            Builder::new(|attributes, _, dormancy| HookOnFirstCandidate {
+                inner: crate::ParkableBestPayloadTransactions::new(
+                    pool.best_transactions_with_attributes_and_parking(attributes, None, dormancy),
+                ),
+                hook: Some(best_hook),
+            })
+            .with_dormancy(|parent, number, pre_selection| {
+                pool.begin_dormancy_build(parent, number, pre_selection)
+            })
+            .build(
+                StateProviderDatabase::new((&provider).into_evm_state_provider()),
+                &provider,
+                Some(state_root_handle()),
+                pool_payload_context(DENIM_TIMESTAMP),
+            )
+            .expect("payload must build")
+        };
+
+        let second = std::sync::Mutex::new(None);
+        let first = build(Box::new(|| {
+            *second.lock().unwrap() = Some(included_hashes(build(Box::new(|| {}))));
+        }));
+
+        assert_eq!(second.into_inner().unwrap(), Some(expected.clone()), "the second build");
+        assert_eq!(included_hashes(first), expected, "the build owning the index");
+    }
+
     /// A native build starts a dormancy build on its parent for the next block, after the writes
     /// made before selection, and seals it with the sealed block's hash.
     #[test]

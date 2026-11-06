@@ -216,7 +216,7 @@ stateDiagram-v2
     Tip --> Building: build starts on another parent (index discarded)
     Building --> Tip: block sealed, tip = its hash
     Building --> NoTip: build dropped before sealing (index discarded)
-    Building --> Building: another build starts (index discarded)
+    Building --> Building: another build starts (it runs without the index)
     Tip --> NoTip: canonical block at the tip's height differs, reorg or feed gap
     Building --> Discarding: canonical block at the tip's height differs, reorg or feed gap
     Discarding --> NoTip: build sealed or dropped (index discarded)
@@ -227,16 +227,17 @@ classification again; the next snapshot offers all of them.
 
 **Build ownership.** `begin_dormancy_build` returns a `DormancyBuild` token, and
 the build's snapshot, parks and wakes all go through it; nothing resolves "the
-current build" globally. At most one build owns the index. A build that starts
-while another runs supersedes it and discards the index; the superseded build
-is stale from then on: its snapshot, if not yet taken, ignores dormancy and
-offers every lane as `off` does, it writes nothing to the index, and a
-transaction that fails in it invalidates its lane in that iterator. A
-superseded build may therefore miss dormant transactions, which is acceptable
-because reth cancels a superseded job. A discard requested for any other reason
-while a build runs (a canonical mismatch, a reorg, a feed gap) waits until that
-build seals or is dropped, so its parked transactions and omitted roots keep
-waking; it is applied then, and the sealed block does not become the tip.
+current build" globally. At most one build owns the index, from
+`begin_dormancy_build` until it seals or is dropped; the first build wins.
+`begin_dormancy_build` returns `None` to any build that starts meanwhile, and
+that build runs exactly as with `off`: its snapshot offers every pending lane,
+dormant roots included, it parks in and wakes from its own per-build predicate
+index, and it neither reads nor writes the pool's index. It is correct, only
+slower, and reth may still return its payload, since it does not cancel older
+jobs. A discard requested while a build runs (a canonical mismatch, a reorg, a
+feed gap) waits until that build seals or is dropped, so its parked
+transactions and omitted roots keep waking; it is applied then, and the sealed
+block does not become the tip.
 
 - **Build start** on parent `P` for block `B`: when `P` is the tip, the writes
   made before selection (system calls and deposits) wake the dormant
@@ -303,14 +304,16 @@ its own per-build predicate index, the pool keeps no dormancy state and takes
 no extra locks, and canonical maintenance makes no dormancy calls and hands no
 work to a blocking thread. `enforce` keeps dormant transactions out of the snapshot.
 A node with transaction forwarding enabled rejects `enforce`, since it would
-stop forwarding dormant transactions. With `enforce`, the native builder ignores
-its resting-predicate mode: the pool's index replaces it. Metrics:
+stop forwarding dormant transactions. With `enforce`, a native build that owns
+the index ignores its resting-predicate mode: the pool's index replaces it. Metrics:
 `txpool.validity.dormant_transactions` (gauge),
 `txpool.validity.dormant_wakes` (histogram, transactions woken per build),
 `txpool.validity.false_dormancy` (counter), and
 `txpool.validity.dormancy_discards{reason}` (counter; `parent_mismatch`,
-`abandoned`, `superseded`, `canonical_mismatch`, `reorg` or `feed_gap`; a
-deferred discard counts its own reason when it is applied).
+`abandoned`, `canonical_mismatch`, `reorg` or `feed_gap`; a deferred discard
+counts its own reason when it is applied), and
+`txpool.validity.dormancy_fallback_builds{reason}` (counter; `build_active`
+when a build runs without the index because another build owns it).
 
 ## Usage
 

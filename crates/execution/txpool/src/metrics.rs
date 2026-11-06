@@ -123,13 +123,15 @@ base_metrics::define_metrics! {
         default = [
             "parent_mismatch",
             "abandoned",
-            "superseded",
             "canonical_mismatch",
             "reorg",
             "feed_gap"
         ]
     )]
     dormancy_discards: counter,
+    #[describe("Builds that ran without the dormancy index, as with dormancy off, because another build owned it")]
+    #[label(name = "reason", default = ["build_active"])]
+    dormancy_fallback_builds: counter,
 }
 
 impl ValidityPoolMetrics {

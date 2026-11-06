@@ -108,16 +108,11 @@ pub struct WokenTransaction<T: PoolTransaction> {
     pub dormant_at_snapshot: bool,
 }
 
-/// The validity pool's dormancy index as one build's iterator drives it. Calls made after the
-/// build ended, or once another build superseded it, do nothing.
+/// The validity pool's dormancy index as the iterator of the build that owns it drives it. Calls
+/// made after the build ended do nothing.
 pub trait BuildDormancy<T: PoolTransaction>: Send + Sync {
-    /// Indexes a transaction the build found failing `predicate`. Returns `false`, indexing
-    /// nothing, once the build no longer owns the index.
-    fn park(
-        &self,
-        transaction: &Arc<ValidPoolTransaction<T>>,
-        predicate: ValidityPredicate,
-    ) -> bool;
+    /// Indexes a transaction the build found failing `predicate`.
+    fn park(&self, transaction: &Arc<ValidPoolTransaction<T>>, predicate: ValidityPredicate);
 
     /// Removes and returns the indexed transactions a commit that wrote `state` may satisfy.
     fn wake(&self, state: &EvmState) -> Vec<WokenTransaction<T>>;
@@ -132,10 +127,9 @@ pub trait BuildDormancy<T: PoolTransaction>: Send + Sync {
 }
 
 /// One build's ownership of the validity pool's dormancy index, which every snapshot, park and
-/// wake of the build goes through. [`Self::seal`] makes the sealed block the tip; dropping it
-/// unsealed, as a cancelled or failed build does, discards the index. A build that starts while
-/// this one runs supersedes it: this one then reads and writes nothing in the index and may miss
-/// dormant transactions, which is acceptable because reth cancels a superseded job.
+/// wake of the build goes through. At most one build owns the index, from
+/// [`ParkableTransactionPool::begin_dormancy_build`] until [`Self::seal`] makes the sealed block
+/// the tip or dropping it unsealed, as a cancelled or failed build does, discards the index.
 pub struct DormancyBuild {
     id: u64,
     finish: Option<Box<dyn FnOnce(Option<B256>) + Send>>,
@@ -223,7 +217,8 @@ where
     /// Starts a build of block `block_number` on `parent` against the pool's dormancy index, after
     /// the build applied `pre_selection` writes such as system calls and deposits, and before it
     /// takes its snapshot. `None` when the pool keeps no dormancy index, which the default never
-    /// does.
+    /// does, or while another build owns it; the build then runs as with dormancy off, using its
+    /// own predicate index and a snapshot of every pending lane.
     fn begin_dormancy_build(
         &self,
         _parent: B256,
@@ -605,20 +600,15 @@ where
         self.dormancy.is_some()
     }
 
-    /// Once the build is superseded the pool's index takes nothing and wakes nothing, so a
-    /// parked transaction could never return; its lane is invalidated for this iterator instead.
     fn park_unsatisfied(
         &mut self,
         transaction: &Arc<ValidPoolTransaction<T>>,
         predicate: ValidityPredicate,
     ) {
-        if self.dormancy.as_ref().is_some_and(|dormancy| !dormancy.park(transaction, predicate)) {
-            if let Some(lane) = BestTransactionLane::for_transaction(transaction) {
-                self.invalidate_lane(lane);
-            }
-            return;
-        }
         self.park(transaction);
+        if let Some(dormancy) = &self.dormancy {
+            dormancy.park(transaction, predicate);
+        }
     }
 
     fn wake_by_state(&mut self, state: &EvmState) {

@@ -1637,13 +1637,15 @@ where
     }
 
     /// Snapshots the merged best transactions. For dormancy build `build`,
-    /// the snapshot is recorded under the same validity pool lock hold and its
-    /// id returned while the build owns the index; a superseded build gets a
-    /// snapshot that ignores dormancy, as Off takes, and no id.
+    /// which owns the index, the snapshot is recorded under the same validity
+    /// pool lock hold and its id returned. `offer_dormant` takes a snapshot
+    /// that ignores dormancy, as Off takes, for a build that runs without the
+    /// index.
     fn merged_best_transactions(
         &self,
         attributes: BestTransactionsAttributes,
         build: Option<u64>,
+        offer_dormant: bool,
     ) -> (MergeBestTransactions<T, O>, Option<u64>) {
         let base_fee = attributes.basefee;
         // The lane bookkeeping the merge relies on (anchors, shared lanes) and
@@ -1661,10 +1663,9 @@ where
                 |build| {
                     let mut validity = self.validity.pool.write();
                     let snapshot = validity.begin_snapshot(build);
-                    (RwLockWriteGuard::downgrade(validity), snapshot)
+                    (RwLockWriteGuard::downgrade(validity), Some(snapshot))
                 },
             );
-            let offer_dormant = build.is_some() && snapshot.is_none();
             (
                 sidecar.best_transactions(self.ordering.clone(), base_fee, false),
                 validity.best_transactions(self.ordering.clone(), base_fee, offer_dormant),
@@ -2081,14 +2082,14 @@ where
             block_info.pending_basefee,
             block_info.pending_blob_fee.map(|fee| u64::try_from(fee).unwrap_or(u64::MAX)),
         );
-        Box::new(self.merged_best_transactions(best_transactions_attributes, None).0)
+        Box::new(self.merged_best_transactions(best_transactions_attributes, None, false).0)
     }
 
     fn best_transactions_with_attributes(
         &self,
         best_transactions_attributes: BestTransactionsAttributes,
     ) -> Box<dyn BestTransactions<Item = Arc<ValidPoolTransaction<Self::Transaction>>>> {
-        Box::new(self.merged_best_transactions(best_transactions_attributes, None).0)
+        Box::new(self.merged_best_transactions(best_transactions_attributes, None, false).0)
     }
 
     fn pending_transactions(&self) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
@@ -2513,8 +2514,11 @@ where
         build: Option<&DormancyBuild>,
     ) -> Box<dyn ParkableBestTransactions<Self::Transaction>> {
         let base_fee = attributes.basefee;
+        // A build without ownership of the dormancy index runs as with
+        // dormancy off, so its snapshot offers every pending lane.
         let build = build.filter(|_| self.dormancy_enforced()).map(DormancyBuild::id);
-        let (merged, snapshot) = self.merged_best_transactions(attributes, build);
+        let offer_dormant = self.dormancy_enforced() && build.is_none();
+        let (merged, snapshot) = self.merged_best_transactions(attributes, build, offer_dormant);
         let dormancy = build.zip(snapshot).map(|(build, snapshot)| {
             Box::new(PoolBuildDormancy { pool: self.clone(), build, snapshot })
                 as Box<dyn BuildDormancy<Self::Transaction>>
@@ -2540,6 +2544,10 @@ where
             let build = validity.begin_build(parent, block_number, pre_selection);
             ValidityPoolMetrics::record_dormancy(validity.dormant_len(), 0);
             build
+        };
+        let Some(build) = build else {
+            ValidityPoolMetrics::dormancy_fallback_builds("build_active").increment(1);
+            return None;
         };
         let pool = Arc::clone(&self.validity.pool);
         Some(DormancyBuild::new(build, move |sealed| {
@@ -2575,12 +2583,8 @@ where
     O: reth_transaction_pool::TransactionOrdering<Transaction = T> + Clone,
     S: BlobStore + Clone,
 {
-    fn park(
-        &self,
-        transaction: &Arc<ValidPoolTransaction<T>>,
-        predicate: ValidityPredicate,
-    ) -> bool {
-        self.pool.validity.pool.write().park_unsatisfied(self.build, transaction, predicate)
+    fn park(&self, transaction: &Arc<ValidPoolTransaction<T>>, predicate: ValidityPredicate) {
+        self.pool.validity.pool.write().park_unsatisfied(self.build, transaction, predicate);
     }
 
     fn wake(&self, state: &EvmState) -> Vec<WokenTransaction<T>> {
@@ -7570,52 +7574,44 @@ mod tests {
                 .unwrap_or_default()
         }
 
-        /// A build that starts while another runs supersedes it. The
-        /// superseded build snapshots without dormancy and writes nothing to
-        /// the index, so it cannot hide from the superseding build a
-        /// transaction the latter's writes satisfy.
+        /// While a build owns the index another build gets no ownership and
+        /// runs as with dormancy off, offering dormant transactions too; the
+        /// owner keeps the index and its wakes.
         #[tokio::test]
-        async fn a_superseded_build_neither_reads_nor_writes_the_index() {
+        async fn a_build_beginning_while_another_owns_the_index_falls_back() {
             let (pool, client) = dormancy_pool(ValidityDormancyMode::Enforce);
             let signer = funded_signer(&client);
             let root = add(&pool, with_predicates(signed_1559(&signer, 0), [slot_is_one()])).await;
             advance(&pool, 1);
-            let superseded = begin(&pool, block_hash(1), 2);
-            let current = pool
-                .begin_dormancy_build(block_hash(1), 2, Some(&slot_written_before_selection()))
-                .unwrap();
+            let owner = begin(&pool, block_hash(1), 2);
 
-            let mut stale = build_iterator(&pool, Some(&superseded));
-            assert!(!stale.parks_in_pool_index(), "a superseded build keeps its own index");
-            let yielded = stale.next().unwrap();
-            assert_eq!(*yielded.hash(), root);
-            stale.park_unsatisfied(&yielded, slot_is_one());
+            let recorder = DebuggingRecorder::new();
+            let fallback = metrics::with_local_recorder(&recorder, || {
+                pool.begin_dormancy_build(block_hash(1), 2, None)
+            });
+            assert!(fallback.is_none());
+            assert_eq!(counter(&recorder, "txpool.validity.dormancy_fallback_builds"), 1);
 
-            let mut best = build_iterator(&pool, Some(&current));
-            assert_eq!(commit_all(&mut best), vec![root]);
+            let mut fallback_best = build_iterator(&pool, None);
+            assert!(!fallback_best.parks_in_pool_index());
+            assert_eq!(commit_all(&mut fallback_best), vec![root], "it offers every pending lane");
+            let mut best = build_iterator(&pool, Some(&owner));
+            best.wake_by_state(&slot_written(SLOT));
+            assert_eq!(commit_all(&mut best), vec![root], "the owner still wakes it");
         }
 
-        /// A build superseded after its snapshot no longer parks in the index:
-        /// a failing transaction invalidates its lane in that iterator instead.
-        #[tokio::test]
-        async fn a_build_superseded_mid_block_invalidates_failing_lanes() {
-            let (pool, client) = dormancy_pool(ValidityDormancyMode::Enforce);
-            let signer = funded_signer(&client);
-            advance(&pool, 1);
-            let root = add(&pool, with_predicates(signed_1559(&signer, 0), [slot_is_one()])).await;
-            add(&pool, with_predicates(signed_1559(&signer, 1), [])).await;
-            let superseded = begin(&pool, block_hash(1), 2);
-            let mut stale = build_iterator(&pool, Some(&superseded));
-            let _current = begin(&pool, block_hash(1), 2);
-
-            let yielded = stale.next().unwrap();
-            assert_eq!(*yielded.hash(), root);
-            stale.park_unsatisfied(&yielded, slot_is_one());
-            stale.wake_by_state(&slot_written(SLOT));
-
-            assert!(!stale.promote(root), "nothing is left parked that could never wake");
-            assert!(commit_all(&mut stale).is_empty(), "the lane is invalid for this iterator");
-            assert_eq!(pool.validity.pool.read().dormant_len(), 0, "nothing reached the index");
+        /// The value of counter `name` in `recorder`.
+        fn counter(recorder: &DebuggingRecorder, name: &str) -> u64 {
+            recorder
+                .snapshotter()
+                .snapshot()
+                .into_vec()
+                .into_iter()
+                .find_map(|(key, _, _, value)| match value {
+                    DebugValue::Counter(count) if key.key().name() == name => Some(count),
+                    _ => None,
+                })
+                .unwrap_or_default()
         }
 
         /// A discard requested while a build runs waits for the build to end,
@@ -7691,7 +7687,6 @@ mod tests {
         #[rstest]
         #[case::parent_mismatch(DormancyDiscardReason::ParentMismatch)]
         #[case::abandoned(DormancyDiscardReason::Abandoned)]
-        #[case::superseded(DormancyDiscardReason::Superseded)]
         #[case::canonical_mismatch(DormancyDiscardReason::CanonicalMismatch)]
         #[case::reorg(DormancyDiscardReason::Reorg)]
         #[case::feed_gap(DormancyDiscardReason::FeedGap)]
@@ -7703,10 +7698,6 @@ mod tests {
             let counted = discards_during(reason, || match reason {
                 DormancyDiscardReason::ParentMismatch => drop(begin(&pool, fork_hash(1), 2)),
                 DormancyDiscardReason::Abandoned => drop(begin(&pool, block_hash(1), 2)),
-                DormancyDiscardReason::Superseded => {
-                    let _superseded = begin(&pool, block_hash(1), 2);
-                    begin(&pool, block_hash(1), 2).seal(block_hash(2));
-                }
                 DormancyDiscardReason::CanonicalMismatch => canonical(&pool, 1, fork_hash(1)),
                 DormancyDiscardReason::Reorg | DormancyDiscardReason::FeedGap => {
                     pool.discard_dormancy_index(reason);

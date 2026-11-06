@@ -138,8 +138,6 @@ pub enum DormancyDiscardReason {
     ParentMismatch,
     /// A build ended without sealing a block.
     Abandoned,
-    /// A build started while another was running.
-    Superseded,
     /// The canonical block at the tip's height is not the tip.
     CanonicalMismatch,
     /// The canonical chain reorged.
@@ -154,7 +152,6 @@ impl DormancyDiscardReason {
         match self {
             Self::ParentMismatch => "parent_mismatch",
             Self::Abandoned => "abandoned",
-            Self::Superseded => "superseded",
             Self::CanonicalMismatch => "canonical_mismatch",
             Self::Reorg => "reorg",
             Self::FeedGap => "feed_gap",
