@@ -619,7 +619,8 @@ impl ReplayBenchmarkArgs {
     }
 
     /// Resolves the chain the way `base-bench snapshot` does and applies the run's schedule:
-    /// Denim at the first produced block for 200 ms, never for 2 s.
+    /// Denim at the first produced block for 200 ms, never for 2 s. An export of canonical blocks
+    /// keeps the chain's own schedule.
     pub fn replay_chain_spec(
         manifest: &ReplayManifest,
     ) -> Result<(BaseChainSpec, DevnetBlockInterval)> {
@@ -635,11 +636,15 @@ impl ReplayBenchmarkArgs {
             rollup_config: manifest.rollup_config.clone(),
         }
         .resolve()?;
-        let chain_spec = SnapshotL2Stack::chain_spec(
-            (*chain.chain_spec).clone(),
-            manifest.first_block_timestamp,
-            block_interval,
-        );
+        let chain_spec = if manifest.source.is_some() {
+            (*chain.chain_spec).clone()
+        } else {
+            SnapshotL2Stack::chain_spec(
+                (*chain.chain_spec).clone(),
+                manifest.first_block_timestamp,
+                block_interval,
+            )
+        };
         Ok((chain_spec, block_interval))
     }
 
@@ -697,13 +702,15 @@ mod tests {
     use std::time::Duration;
 
     use alloy_primitives::B256;
-    use base_common_chains::Upgrades;
+    use base_common_chains::{ChainConfig, Upgrades};
     use base_common_genesis::BaseUpgrade;
     use clap::Parser;
     use reth_ethereum_forks::ForkCondition;
 
     use super::{LatencySummary, ReplayBenchmarkArgs, ReplayBlockTiming, ReplayMode, ReplayRun};
-    use crate::{BenchmarkCli, BenchmarkCommand, DevnetBlockInterval, ReplayManifest};
+    use crate::{
+        BenchmarkCli, BenchmarkCommand, DevnetBlockInterval, ExportSource, ReplayManifest,
+    };
 
     const FIRST_BLOCK_TIMESTAMP: u64 = 2_000_000_000;
 
@@ -719,6 +726,7 @@ mod tests {
             last_hash: B256::repeat_byte(2),
             last_state_root: B256::repeat_byte(3),
             block_count: 2,
+            source: None,
         }
     }
 
@@ -864,6 +872,22 @@ mod tests {
 
         assert_eq!(interval, DevnetBlockInterval::TwoSeconds);
         assert_eq!(chain_spec.fork(BaseUpgrade::Denim), ForkCondition::Never);
+    }
+
+    #[test]
+    fn canonical_manifest_keeps_the_chain_denim_schedule() {
+        let mut manifest = manifest(2_000);
+        manifest.source = Some(ExportSource {
+            datadir: "datadir".into(),
+            head_number: manifest.last_number,
+            head_timestamp: FIRST_BLOCK_TIMESTAMP,
+        });
+        let (chain_spec, _) = ReplayBenchmarkArgs::replay_chain_spec(&manifest).unwrap();
+
+        assert_eq!(
+            chain_spec.fork(BaseUpgrade::Denim),
+            ForkCondition::Timestamp(ChainConfig::mainnet().denim_timestamp.unwrap())
+        );
     }
 
     #[test]
