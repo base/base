@@ -61,8 +61,8 @@ use revm::{
 };
 
 use super::production_pool::{
-    Accounts, BLOCK_TIME_SECS, NONCE_FREE_LIFETIME_SECS, RestingKind, valid_through_block,
-    watched_balance_is_one,
+    ADMISSION_BATCH, Accounts, BLOCK_TIME_SECS, NONCE_FREE_LIFETIME_SECS, RestingKind,
+    valid_through_block, watched_balance_is_one,
 };
 
 /// Resting populations of the full matrix, in pool transactions.
@@ -106,6 +106,9 @@ pub const DEMO_HOT_PERCENT: usize = 10;
 pub const DEMO_BLOCK_INTERVAL: Duration = Duration::from_millis(200);
 /// Build-path time per block the demo counts blocks over.
 pub const DEMO_BUILD_BUDGET: Duration = Duration::from_millis(50);
+/// Parked validity transactions each concurrent demo submitter admits per call of the pool's
+/// async admission API, by default.
+pub const DEMO_SUBMIT_BATCH: usize = 256;
 
 /// One row of the matrix: a lane kind and how the bench drives it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -502,6 +505,72 @@ pub struct DemoBlock {
     pub maintenance: Duration,
 }
 
+/// Concurrent ingest for the demo case: after setup, [`Self::submitters`] threads keep admitting
+/// parked validity transactions through the pool's async admission API while the blocks build on
+/// a [`DEMO_BLOCK_INTERVAL`] cadence and each sealed block's canonical maintenance runs on a
+/// thread of its own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DemoConcurrency {
+    /// Submitter threads, each admitting from senders of its own.
+    pub submitters: usize,
+    /// Transactions per admission call.
+    pub batch: usize,
+    /// Aggregate admission rate the submitters pace to, in transactions a second, or `None` to
+    /// admit as fast as the pool accepts.
+    pub rate: Option<u64>,
+}
+
+impl DemoConcurrency {
+    /// Time between the starts of one submitter's batches at the target rate, `None` when
+    /// free-running.
+    pub fn batch_interval(&self) -> Option<Duration> {
+        self.rate.map(|rate| {
+            Duration::from_secs_f64((self.batch * self.submitters) as f64 / rate as f64)
+        })
+    }
+}
+
+/// One block of the concurrent demo, built while submitters admit and the previous block's
+/// maintenance may still run.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ConcurrentBlock {
+    /// The build-path phases (`carry`, `construct`, `selection`, `store`), block number,
+    /// inclusions, and the dormant gauge when the build began.
+    pub timing: BlockTiming,
+    /// Funding and admitting the block's valid, satisfied, ordinary and satisfying transactions
+    /// on the build thread just before the build, contending with the submitters.
+    pub prep: Duration,
+    /// Parked transactions the submitters admitted during the block's slot.
+    pub ingested: usize,
+    /// Predicates the build loop found unsatisfied: parked transactions that reached the build
+    /// before any classification.
+    pub parked_evaluated: usize,
+    /// Whether the build ran without the pool's dormancy index although the pool enforces
+    /// dormancy.
+    pub fallback: bool,
+    /// Whether the block's prep and build overran its slot, so the next block started at once.
+    pub overran: bool,
+    /// The block's canonical maintenance on the maintenance thread: the canonical update and the
+    /// state-diff maintenance, which classifies.
+    pub maintenance: Duration,
+    /// How long the block's maintenance ran on after the next block's build began; zero when it
+    /// finished first or no block followed.
+    pub maintenance_lag: Duration,
+}
+
+/// What the concurrent demo's submitters did while the blocks built.
+#[derive(Debug, Clone, Default)]
+pub struct ConcurrentIngest {
+    /// Parked transactions admitted from the first block's slot until the last block ended.
+    pub admitted: usize,
+    /// From the first block's slot until the last block ended.
+    pub elapsed: Duration,
+    /// Latency of every admission call, each carrying [`DemoConcurrency::batch`] transactions.
+    pub batches: Vec<Duration>,
+    /// The pool's dormant gauge once the last block's maintenance finished.
+    pub dormant_end: usize,
+}
+
 /// The matrix to run, from the environment:
 ///
 /// - `RESTING_MATRIX_CASES`: comma-separated [`Case::label`]s, default every case that
@@ -521,6 +590,11 @@ pub struct DemoBlock {
 ///   `RESTING_MATRIX_DEMO_WATCHED`, `RESTING_MATRIX_DEMO_HOT_PERCENT`: the [`Demo`] fields,
 ///   defaults [`DEMO_ARRIVALS`], [`DEMO_VALID`], [`DEMO_SATISFIED`], [`DEMO_WATCHED`] and
 ///   [`DEMO_HOT_PERCENT`].
+/// - `RESTING_MATRIX_DEMO_SUBMITTERS`: [`DemoConcurrency::submitters`]; set to at least one to run
+///   the demo concurrently, unset to run it sequentially.
+/// - `RESTING_MATRIX_DEMO_BATCH`: [`DemoConcurrency::batch`], at most [`ADMISSION_BATCH`], default
+///   [`DEMO_SUBMIT_BATCH`].
+/// - `RESTING_MATRIX_DEMO_RATE`: [`DemoConcurrency::rate`], default free-running.
 ///
 /// Every case and population is checked with [`Case::check`] before any pool is built.
 #[derive(Debug, Clone)]
@@ -540,6 +614,8 @@ pub struct Matrix {
     pub discard_interval: u64,
     /// Per-block ingest and predicate layout of the demo case.
     pub demo: Demo,
+    /// Concurrent ingest for the demo case, `None` to run it sequentially.
+    pub demo_concurrency: Option<DemoConcurrency>,
 }
 
 impl Matrix {
@@ -621,7 +697,23 @@ impl Matrix {
         };
         assert!(demo.watched > 0, "the demo watches at least one balance");
         assert!(demo.hot_percent <= 100, "the demo's hot share is a percentage");
-        Self { cases, blocks, modes, gap, churn, discard_interval, demo }
+        let demo_concurrency = std::env::var("RESTING_MATRIX_DEMO_SUBMITTERS").ok().map(|_| {
+            let concurrency = DemoConcurrency {
+                submitters: number("RESTING_MATRIX_DEMO_SUBMITTERS", 0) as usize,
+                batch: number("RESTING_MATRIX_DEMO_BATCH", DEMO_SUBMIT_BATCH as u64) as usize,
+                rate: std::env::var("RESTING_MATRIX_DEMO_RATE")
+                    .ok()
+                    .map(|_| number("RESTING_MATRIX_DEMO_RATE", 0)),
+            };
+            assert!(concurrency.submitters > 0, "the concurrent demo runs at least one submitter");
+            assert!(
+                (1..=ADMISSION_BATCH).contains(&concurrency.batch),
+                "a submitter batch fits one admission call of at most {ADMISSION_BATCH}"
+            );
+            assert_ne!(concurrency.rate, Some(0), "the concurrent demo's target rate is positive");
+            concurrency
+        });
+        Self { cases, blocks, modes, gap, churn, discard_interval, demo, demo_concurrency }
     }
 }
 
@@ -970,6 +1062,101 @@ impl Report {
             mebibytes(setup.rss_classified),
             mebibytes(rss_end),
             bytes_per(setup.rss_base, setup.rss_classified, setup.parked),
+        );
+    }
+
+    /// Reports one concurrent demo block: its build path and phases, the prep before it, its
+    /// maintenance and how far that ran into the next build, and the parked transactions the
+    /// submitters admitted during its slot.
+    pub fn concurrent_row(&self, mode: Mode, population: usize, block: &ConcurrentBlock) {
+        let ms = |duration: Duration| duration.as_secs_f64() * 1e3;
+        let timing = &block.timing;
+        println!(
+            "CROW {} block={} build_ms={:.3} carry_ms={:.3} construct_ms={:.3} selection_ms={:.3} \
+             store_ms={:.3} prep_ms={:.3} maint_ms={:.3} maint_lag_ms={:.3} ingested={} \
+             parked_evaluated={} included={} dormant={} fallback={} overran={}",
+            self.key(Case::Demo, mode, population),
+            timing.block,
+            ms(timing.total()),
+            ms(timing.carry),
+            ms(timing.construct),
+            ms(timing.selection),
+            ms(timing.store),
+            ms(block.prep),
+            ms(block.maintenance),
+            ms(block.maintenance_lag),
+            block.ingested,
+            block.parked_evaluated,
+            timing.included,
+            timing.dormant,
+            block.fallback,
+            block.overran,
+        );
+    }
+
+    /// Reports the concurrent demo's achieved ingest against its target, admission-call latency
+    /// per batch and per transaction, build-path percentiles and blocks over
+    /// [`DEMO_BUILD_BUDGET`], maintenance percentiles and lag, the final dormant count, and
+    /// resident memory after the last block.
+    pub fn concurrent_summary(
+        &self,
+        mode: Mode,
+        population: usize,
+        concurrency: &DemoConcurrency,
+        ingest: &ConcurrentIngest,
+        blocks: &[ConcurrentBlock],
+        rss_end: Option<u64>,
+    ) {
+        let sorted_ms = |values: &mut dyn Iterator<Item = Duration>| {
+            let mut values: Vec<f64> = values.map(|value| value.as_secs_f64() * 1e3).collect();
+            values.sort_by(f64::total_cmp);
+            values
+        };
+        let batches = sorted_ms(&mut ingest.batches.iter().copied());
+        let per_tx_us = |batch_ms: f64| batch_ms * 1e3 / concurrency.batch as f64;
+        let builds = sorted_ms(&mut blocks.iter().map(|block| block.timing.total()));
+        let maintenance = sorted_ms(&mut blocks.iter().map(|block| block.maintenance));
+        let lags = sorted_ms(&mut blocks.iter().map(|block| block.maintenance_lag));
+        let over_budget =
+            blocks.iter().filter(|block| block.timing.total() > DEMO_BUILD_BUDGET).count();
+        let lagged = blocks.iter().filter(|block| !block.maintenance_lag.is_zero()).count();
+        let overruns = blocks.iter().filter(|block| block.overran).count();
+        let fallbacks = blocks.iter().filter(|block| block.fallback).count();
+        let batch_quantile = |q: f64| {
+            if batches.is_empty() { f64::NAN } else { quantile(&batches, q) }
+        };
+        println!(
+            "CONCURRENT {} blocks={} submitters={} batch={} target_tx_per_s={} \
+             ingest_tx_per_s={:.0} ingested={} batches={} batch_p50_ms={:.3} batch_p99_ms={:.3} \
+             batch_max_ms={:.3} tx_p50_us={:.2} tx_p99_us={:.2} tx_max_us={:.2} \
+             build_p50_ms={:.3} build_p99_ms={:.3} build_max_ms={:.3} over_{}ms_blocks={over_budget} \
+             overruns={overruns} fallback_builds={fallbacks} maint_p50_ms={:.3} maint_p99_ms={:.3} \
+             maint_max_ms={:.3} maint_lagged_blocks={lagged} maint_lag_max_ms={:.3} dormant_end={} \
+             rss_end_mb={}",
+            self.key(Case::Demo, mode, population),
+            blocks.len(),
+            concurrency.submitters,
+            concurrency.batch,
+            concurrency.rate.map_or_else(|| "free".to_owned(), |rate| rate.to_string()),
+            ingest.admitted as f64 / ingest.elapsed.as_secs_f64(),
+            ingest.admitted,
+            batches.len(),
+            batch_quantile(0.5),
+            batch_quantile(0.99),
+            batch_quantile(1.0),
+            per_tx_us(batch_quantile(0.5)),
+            per_tx_us(batch_quantile(0.99)),
+            per_tx_us(batch_quantile(1.0)),
+            quantile(&builds, 0.5),
+            quantile(&builds, 0.99),
+            quantile(&builds, 1.0),
+            DEMO_BUILD_BUDGET.as_millis(),
+            quantile(&maintenance, 0.5),
+            quantile(&maintenance, 0.99),
+            quantile(&maintenance, 1.0),
+            quantile(&lags, 1.0),
+            ingest.dormant_end,
+            mebibytes(rss_end),
         );
     }
 

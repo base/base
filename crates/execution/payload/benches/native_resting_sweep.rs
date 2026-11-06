@@ -37,12 +37,19 @@
 //! transaction and no parked one, and it reports `SETUP` throughput and resident memory, a `ROW`
 //! per block, and a `DEMO` summary of build percentiles against the 50 ms budget.
 //!
+//! With `RESTING_MATRIX_DEMO_SUBMITTERS` set the demo runs concurrently instead; see
+//! [`run_concurrent_demo`]. It reports `SETUP` as before, a `CROW` per block, and a `CONCURRENT`
+//! summary of achieved ingest, admission latency, build and maintenance percentiles.
+//!
 //! ```sh
 //! cargo bench -p base-execution-payload-builder --bench native_resting_sweep
 //! RESTING_MATRIX_CASES=protocol RESTING_MATRIX_POPULATIONS=75000 \
 //!   RESTING_MATRIX_MODES=enforce,off,builder_enforce \
 //!   cargo bench -p base-execution-payload-builder --bench native_resting_sweep
 //! RESTING_MATRIX_CASES=demo RESTING_MATRIX_POPULATIONS=1000000 RESTING_MATRIX_BLOCKS=10 \
+//!   cargo bench -p base-execution-payload-builder --bench native_resting_sweep
+//! RESTING_MATRIX_CASES=demo RESTING_MATRIX_POPULATIONS=1000000 RESTING_MATRIX_BLOCKS=15 \
+//!   RESTING_MATRIX_DEMO_SUBMITTERS=4 RESTING_MATRIX_DEMO_RATE=50000 \
 //!   cargo bench -p base-execution-payload-builder --bench native_resting_sweep
 //! ```
 
@@ -53,7 +60,12 @@ pub mod resting_matrix;
 
 use std::{
     collections::VecDeque,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+        mpsc,
+    },
+    thread,
     time::{Duration, Instant},
 };
 
@@ -75,8 +87,9 @@ use base_execution_txpool::{ParkableTransactionPool, ValidityDormancyMode};
 use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
 use production_pool::{Accounts, ProductionPool, TRANSFER_GAS, watched_balance_is_one};
 use resting_matrix::{
-    BlockTiming, Case, Demo, DemoBlock, DemoSetup, Matrix, Mode, Phase, Probe, Report, block_hash,
-    fund_woken, parent_base_fee, resident_bytes, sibling_hash, timed_drop, wake_transitions,
+    BlockTiming, Case, ConcurrentBlock, ConcurrentIngest, DEMO_BLOCK_INTERVAL, Demo, DemoBlock,
+    DemoConcurrency, DemoSetup, Matrix, Mode, Phase, Probe, Report, block_hash, fund_woken,
+    parent_base_fee, resident_bytes, sibling_hash, timed_drop, wake_transitions,
 };
 use reth_basic_payload_builder::PayloadConfig;
 use reth_ethereum_forks::ForkCondition;
@@ -102,6 +115,10 @@ const UNSATISFIED_EVALUATIONS: &str =
     "base_builder_validity_predicate_evaluations_total{outcome=\"not_satisfied\"}";
 /// Builds whose predicate evaluation budget ran out, as Prometheus renders it.
 const CUTOFF_BUILDS: &str = "base_builder_validity_predicate_eval_cutoff_builds_total";
+/// Bit position above which a concurrent demo submitter's number sits in its validity sender
+/// indices, keeping each submitter's senders apart from the setup population, the build thread's
+/// senders, and every other submitter's.
+const SUBMITTER_SENDER_SHIFT: u32 = 40;
 
 /// The native builder's resting-predicate store calls at this revision.
 mod selection {
@@ -502,6 +519,10 @@ fn run_demo(
             "maintenance before the first build classifies every parked transaction dormant"
         );
     }
+    if matrix.demo_concurrency.is_some() {
+        run_concurrent_demo(report, metrics, matrix, chain_spec, mode, population, &pool);
+        return;
+    }
 
     let executable = FILLER_PER_BLOCK + demo.valid + 2 * demo.satisfied;
     let gas_limit = executable as u64 * TRANSFER_GAS;
@@ -703,6 +724,437 @@ fn run_demo(
         }
     }
     report.demo_summary(mode, population, &demo, &setup, &blocks, resident_bytes());
+}
+
+/// A sealed block the maintenance thread tells the pool about, as the node's pool maintenance does
+/// once the block is canonical.
+#[derive(Debug)]
+pub struct CanonicalBlock {
+    /// Block number.
+    pub number: u64,
+    /// The block's base fee.
+    pub base_fee: u64,
+    /// The next block's base fee.
+    pub pending_base_fee: u64,
+    /// Hashes of the transactions the block included.
+    pub mined: Vec<TxHash>,
+    /// Senders of the transactions the block included.
+    pub senders: Vec<Address>,
+    /// The block's state changes.
+    pub bundle: BundleState,
+}
+
+/// When one block's maintenance ran on the maintenance thread.
+#[derive(Debug, Clone, Copy)]
+pub struct MaintenanceRun {
+    /// The maintained block.
+    pub block: u64,
+    /// When the maintenance began.
+    pub started: Instant,
+    /// When the maintenance ended.
+    pub finished: Instant,
+}
+
+/// Runs the canonical update and the state-diff maintenance for every block `canonical` delivers,
+/// in order, until the build thread hangs up, as the node's maintenance task does off the build
+/// path.
+fn maintain(
+    pool: &ProductionPool,
+    canonical: mpsc::Receiver<CanonicalBlock>,
+) -> Vec<MaintenanceRun> {
+    let _runtime = pool.enter();
+    canonical
+        .into_iter()
+        .map(|block| {
+            let started = Instant::now();
+            pool.mine(
+                block.number,
+                block.base_fee,
+                block.pending_base_fee,
+                block.mined,
+                &block.senders,
+            );
+            pool.maintain_canonical(
+                BlockNumHash::new(block.number, block_hash(block.number)),
+                &block.bundle,
+            );
+            MaintenanceRun { block: block.number, started, finished: Instant::now() }
+        })
+        .collect()
+}
+
+/// One concurrent demo submitter: admits parked validity transactions from senders of its own,
+/// [`DemoConcurrency::batch`] per call of the pool's async admission API, paced to its share of
+/// [`DemoConcurrency::rate`] when set, until `stop`. Adds each batch to `admitted` once the pool
+/// accepted it and returns every call's latency, which excludes generating the batch and funding
+/// its senders.
+fn submit_parked(
+    pool: &ProductionPool,
+    demo: Demo,
+    concurrency: DemoConcurrency,
+    submitter: usize,
+    stop: &AtomicBool,
+    admitted: &AtomicUsize,
+) -> Vec<Duration> {
+    let interval = concurrency.batch_interval();
+    let mut next_sender = (submitter + 1) << SUBMITTER_SENDER_SHIFT;
+    let mut due = Instant::now();
+    let mut latencies = Vec::new();
+    while !stop.load(Ordering::Relaxed) {
+        if let Some(interval) = interval {
+            if let Some(wait) = due.checked_duration_since(Instant::now()) {
+                thread::sleep(wait);
+            }
+            // A submitter behind its schedule admits at once but does not burst to catch up.
+            due = (due + interval).max(Instant::now());
+        }
+        let senders = next_sender..next_sender + concurrency.batch;
+        next_sender = senders.end;
+        pool.fund_validity(senders.clone());
+        let transactions: Vec<_> = senders
+            .map(|sender| pool.validity_transaction(sender, demo.parked_predicates(sender)))
+            .collect();
+        let start = Instant::now();
+        pool.admit(transactions);
+        latencies.push(start.elapsed());
+        admitted.fetch_add(concurrency.batch, Ordering::Relaxed);
+    }
+    latencies
+}
+
+/// The base fee the build of `block` runs at, which the canonical update of the block before it
+/// moves the pool to.
+fn scheduled_base_fee(
+    chain_spec: &Arc<BaseChainSpec>,
+    mode: Mode,
+    block: u64,
+    gas_limit: u64,
+) -> u64 {
+    let ctx = payload_context(chain_spec, mode, block, gas_limit);
+    let mut state = State::builder().with_database(InMemoryDB::default()).build();
+    state.load_cache_account(Predeploys::L1_BLOCK_INFO).expect("in-memory load cannot fail");
+    let mut builder = ctx.block_builder(&mut state).expect("block builder");
+    ctx.best_transaction_attributes(builder.evm_mut().block()).basefee
+}
+
+/// The concurrent demo's build thread: what it builds from and where it hands sealed blocks.
+#[derive(Debug)]
+pub struct ConcurrentBuilder<'a> {
+    /// The pool the submitters admit into.
+    pub pool: &'a ProductionPool,
+    /// The process's metrics.
+    pub metrics: &'a PrometheusHandle,
+    /// The chain the blocks build on.
+    pub chain_spec: &'a Arc<BaseChainSpec>,
+    /// The run's mode.
+    pub mode: Mode,
+    /// Per-block ingest and predicate layout.
+    pub demo: Demo,
+    /// The parked population admitted at setup, below the build thread's senders.
+    pub population: usize,
+    /// Blocks to build.
+    pub blocks: u64,
+    /// Parked transactions the submitters admitted so far.
+    pub admitted: &'a AtomicUsize,
+    /// Set once the last block ends, stopping the submitters.
+    pub stop: &'a AtomicBool,
+    /// The maintenance thread's queue of sealed blocks.
+    pub canonical: mpsc::Sender<CanonicalBlock>,
+}
+
+impl ConcurrentBuilder<'_> {
+    /// Builds every block on a [`DEMO_BLOCK_INTERVAL`] cadence, starting a block at once when the
+    /// previous one overran its slot, then stops the submitters. Each block admits its valid,
+    /// satisfied, ordinary and satisfying transactions on this thread just before it builds
+    /// through the production native path (begin on the tip, snapshot, select with a wake per
+    /// commit, seal), and hands the sealed block to the maintenance thread without waiting for it.
+    /// Returns every block with when its build began, the parked transactions admitted from the
+    /// first slot until the stop, and how long that took.
+    pub fn run(self) -> (Vec<(ConcurrentBlock, Instant)>, usize, Duration) {
+        let pool = self.pool;
+        let demo = self.demo;
+        let enforced = self.mode.dormancy() == ValidityDormancyMode::Enforce;
+        let executable = FILLER_PER_BLOCK + demo.valid + 2 * demo.satisfied;
+        let gas_limit = executable as u64 * TRANSFER_GAS;
+        let base_fees: Vec<u64> = (1..=self.blocks + 1)
+            .map(|block| scheduled_base_fee(self.chain_spec, self.mode, block, gas_limit))
+            .collect();
+        let base_fee = |block: u64| base_fees[block as usize - 1];
+        let store = selection::store();
+        let mut db = InMemoryDB::default();
+        let mut next_sender = self.population;
+        let mut satisfied_so_far = 0;
+        let mut built = Vec::with_capacity(self.blocks as usize);
+        let mut slot_admitted = Vec::with_capacity(self.blocks as usize);
+        let first_slot = Instant::now();
+        let mut slot_end = first_slot;
+
+        for block in 1..=self.blocks {
+            if let Some(wait) = slot_end.checked_duration_since(Instant::now()) {
+                thread::sleep(wait);
+            }
+            slot_end = Instant::now() + DEMO_BLOCK_INTERVAL;
+            slot_admitted.push(self.admitted.load(Ordering::Relaxed));
+
+            let satisfied = next_sender..next_sender + demo.satisfied;
+            let valid = satisfied.end..satisfied.end + demo.valid;
+            next_sender = valid.end;
+            let first_ordinary = (block as usize - 1) * FILLER_PER_BLOCK;
+            let satisfiers = satisfied_so_far..satisfied_so_far + demo.satisfied;
+            let satisfied_watched: Vec<usize> =
+                satisfiers.clone().map(|target| demo.target_watched(target)).collect();
+            for sender in satisfied.clone().chain(valid.clone()) {
+                fund(&mut db, Accounts::Validity.address(sender));
+            }
+            for index in first_ordinary..first_ordinary + FILLER_PER_BLOCK {
+                fund(&mut db, Accounts::Ordinary.address(index));
+            }
+            for index in satisfiers.clone() {
+                fund(&mut db, Accounts::Satisfier.address(index));
+            }
+
+            let start = Instant::now();
+            pool.fund_validity(satisfied.start..valid.end);
+            let mut satisfied_hashes = Vec::with_capacity(demo.satisfied);
+            pool.admit_validity(
+                satisfied.clone(),
+                |sender| vec![watched_balance_is_one(satisfied_watched[sender - satisfied.start])],
+                |hash| satisfied_hashes.push(hash),
+            );
+            let mut valid_hashes = Vec::with_capacity(demo.valid);
+            pool.admit_validity(valid.clone(), Demo::valid_predicates, |hash| {
+                valid_hashes.push(hash)
+            });
+            let (ordinary, ordinary_senders) =
+                pool.admit_ordinary(first_ordinary, FILLER_PER_BLOCK);
+            let (satisfier_hashes, satisfier_senders) =
+                pool.admit_satisfiers(satisfiers.start, &satisfied_watched);
+            let prep = start.elapsed();
+
+            let ctx = payload_context(self.chain_spec, self.mode, block, gas_limit);
+            let mut state = State::builder().with_database(db.clone()).with_bundle_update().build();
+            state
+                .load_cache_account(Predeploys::L1_BLOCK_INFO)
+                .expect("in-memory load cannot fail");
+            let mut builder = ctx.block_builder(&mut state).expect("block builder");
+            let attributes = ctx.best_transaction_attributes(builder.evm_mut().block());
+            assert_eq!(
+                attributes.basefee,
+                base_fee(block),
+                "block {block} builds at its scheduled fee"
+            );
+            let evaluated_before = metric(self.metrics, UNSATISFIED_EVALUATIONS);
+
+            let parent = block_hash(block - 1);
+            let pre_block_changes = TransitionState::default();
+            let build_start = Instant::now();
+            let dormancy_build =
+                pool.pool.begin_dormancy_build(parent, block, Some(&pre_block_changes));
+            let mut resting = (dormancy_build.is_none() && self.mode.resting().is_enabled())
+                .then(|| selection::begin(&store, parent, block, &pre_block_changes));
+            let carry = build_start.elapsed();
+            let fallback = enforced && dormancy_build.is_none();
+            let start = Instant::now();
+            let best = pool.pool.best_transactions_with_attributes_and_parking(
+                attributes,
+                resting
+                    .as_ref()
+                    .filter(|_| self.mode.resting().is_enforced())
+                    .map(|resting| resting.iterator_hold()),
+                dormancy_build.as_ref(),
+            );
+            let construct = start.elapsed();
+            let mut info = ExecutionInfo::default();
+            let start = Instant::now();
+            ctx.execute_best_transactions(
+                &mut info,
+                &mut builder,
+                ParkableBestPayloadTransactions::new(best),
+                resting.as_ref(),
+            )
+            .expect("in-memory execution cannot fail");
+            let selection_time = start.elapsed();
+            let start = Instant::now();
+            if let Some(resting) = resting.take() {
+                selection::put(&store, resting, block_hash(block));
+            }
+            if let Some(dormancy_build) = dormancy_build {
+                dormancy_build.seal(block_hash(block));
+            }
+            let store_time = start.elapsed();
+
+            let included = builder.executor().receipts().len();
+            drop(builder);
+            state.merge_transitions(BundleRetention::Reverts);
+            let bundle = state.take_bundle();
+            let committed = |address: Address| {
+                bundle
+                    .account(&address)
+                    .and_then(|account| account.info.as_ref())
+                    .is_some_and(|info| info.nonce == 1)
+            };
+            let validity_senders: Vec<Address> = satisfied
+                .clone()
+                .chain(valid.clone())
+                .map(|sender| Accounts::Validity.address(sender))
+                .collect();
+            assert!(
+                validity_senders.iter().all(|&sender| committed(sender)),
+                "block {block} must include every valid and same-block-satisfied transaction"
+            );
+            assert!(
+                ordinary_senders.iter().chain(&satisfier_senders).all(|&sender| committed(sender)),
+                "block {block} must include all of its ordinary traffic"
+            );
+            assert_eq!(
+                included, executable,
+                "block {block} includes its executable transactions and no parked one"
+            );
+            assert_exhaustive_selection(self.metrics);
+            let parked_evaluated = metric(self.metrics, UNSATISFIED_EVALUATIONS) - evaluated_before;
+            let dormant = if enforced { dormant_gauge(self.metrics) } else { 0 };
+
+            let senders: Vec<Address> = ordinary_senders
+                .into_iter()
+                .chain(satisfier_senders)
+                .chain(validity_senders)
+                .collect();
+            // The next block builds on this one's nonces, so a mined transaction the lagging
+            // maintenance has not yet removed fails its nonce rather than landing twice.
+            for &sender in &senders {
+                db.insert_account_info(
+                    sender,
+                    AccountInfo { balance: U256::from(u128::MAX), nonce: 1, ..Default::default() },
+                );
+            }
+            self.canonical
+                .send(CanonicalBlock {
+                    number: block,
+                    base_fee: base_fee(block),
+                    pending_base_fee: base_fee(block + 1),
+                    mined: [ordinary, satisfier_hashes, valid_hashes, satisfied_hashes].concat(),
+                    senders,
+                    bundle,
+                })
+                .expect("the maintenance thread outlives the builds");
+            satisfied_so_far = satisfiers.end;
+            let timing = BlockTiming {
+                block,
+                dormant,
+                included,
+                carry,
+                construct,
+                selection: selection_time,
+                store: store_time,
+                ..Default::default()
+            };
+            let overran = Instant::now() > slot_end;
+            built.push((
+                ConcurrentBlock {
+                    timing,
+                    prep,
+                    parked_evaluated,
+                    fallback,
+                    overran,
+                    ..Default::default()
+                },
+                build_start,
+            ));
+        }
+        self.stop.store(true, Ordering::Relaxed);
+        let admitted_at_stop = self.admitted.load(Ordering::Relaxed);
+        let elapsed = first_slot.elapsed();
+        slot_admitted.push(admitted_at_stop);
+        for ((block, _), window) in built.iter_mut().zip(slot_admitted.windows(2)) {
+            block.ingested = window[1] - window[0];
+        }
+        (built, admitted_at_stop - slot_admitted[0], elapsed)
+    }
+}
+
+/// Runs the demo's blocks concurrently with ingest (see [`DemoConcurrency`]) on a pool whose
+/// parked population [`run_demo`] admitted and classified, and reports every block and the run's
+/// summary.
+///
+/// The build thread, the maintenance thread and the submitters share only the pool and the state
+/// it validates against, so the build thread waits on the others only through the pool's own locks
+/// (and the in-memory provider's, which validation and classification read); it never joins them
+/// before the last block ends. Each block asserts that it includes every valid and same-block-
+/// satisfied transaction and its ordinary traffic, and no parked transaction.
+fn run_concurrent_demo(
+    report: Report,
+    metrics: &PrometheusHandle,
+    matrix: &Matrix,
+    chain_spec: &Arc<BaseChainSpec>,
+    mode: Mode,
+    population: usize,
+    pool: &ProductionPool,
+) {
+    let concurrency = matrix.demo_concurrency.expect("the concurrent demo runs with submitters");
+    let stop = AtomicBool::new(false);
+    let admitted = AtomicUsize::new(0);
+    let (canonical, maintenance_queue) = mpsc::channel();
+    let (built, ingest, runs) = thread::scope(|scope| {
+        let maintenance = scope.spawn(move || maintain(pool, maintenance_queue));
+        let submitters: Vec<_> = (0..concurrency.submitters)
+            .map(|submitter| {
+                let (stop, admitted) = (&stop, &admitted);
+                scope.spawn(move || {
+                    submit_parked(pool, matrix.demo, concurrency, submitter, stop, admitted)
+                })
+            })
+            .collect();
+        let (built, admitted, elapsed) = ConcurrentBuilder {
+            pool,
+            metrics,
+            chain_spec,
+            mode,
+            demo: matrix.demo,
+            population,
+            blocks: matrix.blocks,
+            admitted: &admitted,
+            stop: &stop,
+            canonical,
+        }
+        .run();
+        let batches = submitters
+            .into_iter()
+            .flat_map(|submitter| submitter.join().expect("a submitter panicked"))
+            .collect();
+        let runs = maintenance.join().expect("the maintenance thread panicked");
+        (built, ConcurrentIngest { admitted, elapsed, batches, dormant_end: 0 }, runs)
+    });
+    let ingest = ConcurrentIngest {
+        dormant_end: if mode.dormancy() == ValidityDormancyMode::Enforce {
+            dormant_gauge(metrics)
+        } else {
+            0
+        },
+        ..ingest
+    };
+    assert_eq!(runs.len(), built.len(), "every sealed block is maintained");
+    let blocks: Vec<ConcurrentBlock> = built
+        .iter()
+        .zip(&runs)
+        .enumerate()
+        .map(|(index, ((block, _), run))| {
+            assert_eq!(
+                run.block, block.timing.block,
+                "maintenance follows the sealed blocks in order"
+            );
+            let next_build = built.get(index + 1).map(|(_, build_start)| *build_start);
+            ConcurrentBlock {
+                maintenance: run.finished - run.started,
+                maintenance_lag: next_build
+                    .map_or(Duration::ZERO, |next| run.finished.saturating_duration_since(next)),
+                ..*block
+            }
+        })
+        .collect();
+    for block in &blocks {
+        report.concurrent_row(mode, population, block);
+    }
+    report.concurrent_summary(mode, population, &concurrency, &ingest, &blocks, resident_bytes());
 }
 
 fn main() {

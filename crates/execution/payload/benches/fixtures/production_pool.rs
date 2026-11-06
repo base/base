@@ -74,8 +74,9 @@ const SENDER_BALANCE: u128 = 100_000_000_000_000_000_000;
 const SUB_POOL_TRANSACTIONS: usize = 16_000_000;
 /// Bytes each sub-pool admits, sized with [`SUB_POOL_TRANSACTIONS`].
 const SUB_POOL_BYTES: usize = 1 << 34;
-/// Transactions admitted per validation batch.
-const ADMISSION_BATCH: usize = 4_096;
+/// Transactions admitted per validation batch: the most one call of the pool's async admission
+/// API carries.
+pub const ADMISSION_BATCH: usize = 4_096;
 /// Recipient of filler and resting transfers, whose distinct values keep otherwise identical
 /// transfers apart: every transfer carries the same test signature.
 const SINK: Address = Address::repeat_byte(0xee);
@@ -228,17 +229,24 @@ impl ProductionPool {
         predicates: impl Fn(usize) -> Vec<ValidityPredicate>,
         admitted: impl FnMut(TxHash),
     ) {
-        let transactions = senders.map(|index| {
-            self.eip1559(
-                Accounts::Validity.address(index),
-                0,
-                VALIDITY_PRIORITY_FEE,
-                SINK,
-                U256::from(index),
-                predicates(index),
-            )
-        });
+        let transactions = senders.map(|index| self.validity_transaction(index, predicates(index)));
         self.admit_streaming(transactions, admitted);
+    }
+
+    /// The protocol validity transaction from validity sender `sender`, gated by `predicates`.
+    pub fn validity_transaction(
+        &self,
+        sender: usize,
+        predicates: Vec<ValidityPredicate>,
+    ) -> BasePooledTransaction {
+        self.eip1559(
+            Accounts::Validity.address(sender),
+            0,
+            VALIDITY_PRIORITY_FEE,
+            SINK,
+            U256::from(sender),
+            predicates,
+        )
     }
 
     /// Admits `count` ordinary transfers from fresh funded senders `first..first + count`,
