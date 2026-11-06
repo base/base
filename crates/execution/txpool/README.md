@@ -218,11 +218,25 @@ stateDiagram-v2
     Building --> NoTip: build dropped before sealing (index discarded)
     Building --> Building: another build starts (index discarded)
     Tip --> NoTip: canonical block at the tip's height differs, reorg or feed gap
-    Building --> NoTip: canonical block at the tip's height differs, reorg or feed gap
+    Building --> Discarding: canonical block at the tip's height differs, reorg or feed gap
+    Discarding --> NoTip: build sealed or dropped (index discarded)
 ```
 
 Discarding the index wakes every dormant transaction and queues it for
 classification again; the next snapshot offers all of them.
+
+**Build ownership.** `begin_dormancy_build` returns a `DormancyBuild` token, and
+the build's snapshot, parks and wakes all go through it; nothing resolves "the
+current build" globally. At most one build owns the index. A build that starts
+while another runs supersedes it and discards the index; the superseded build
+is stale from then on: its snapshot, if not yet taken, ignores dormancy and
+offers every lane as `off` does, it writes nothing to the index, and a
+transaction that fails in it invalidates its lane in that iterator. A
+superseded build may therefore miss dormant transactions, which is acceptable
+because reth cancels a superseded job. A discard requested for any other reason
+while a build runs (a canonical mismatch, a reorg, a feed gap) waits until that
+build seals or is dropped, so its parked transactions and omitted roots keep
+waking; it is applied then, and the sealed block does not become the tip.
 
 - **Build start** on parent `P` for block `B`: when `P` is the tip, the writes
   made before selection (system calls and deposits) wake the dormant
@@ -235,8 +249,8 @@ classification again; the next snapshot offers all of them.
     back into priority competition;
   - a root that was dormant when the build took its snapshot, so the snapshot
     never held it, is injected into the iterator with the rest of its lane's
-    pending run and the standard transactions bridged behind it. It is skipped when the
-    iterator already holds a member of its lane. A nonce-free transaction is
+    pending run and the standard transactions bridged behind it. It is skipped
+    when the iterator already holds a member of its lane. A nonce-free transaction is
     injected alone.
 
   A spurious wake costs one predicate evaluation when the iterator reaches it.
@@ -245,10 +259,11 @@ classification again; the next snapshot offers all of them.
   and later blocks built on this one leave it out. A transaction that is not
   eligible is indexed only until the build ends, for mid-block wakes. A
   block-number blocker is released at the first block that satisfies it.
-- **Seal** makes the sealed block's hash the tip.
+- **Seal** makes the sealed block's hash the tip, unless a discard was deferred
+  during the build.
 - **Canonical notifications** only check the tip: a committed block at the
   tip's height with another hash, a reorg or a gap in the canonical-state feed
-  discards the index. Canonical state changes wake nothing; on the builder they
+  discards the index, after the running build ends if one runs. Canonical state changes wake nothing; on the builder they
   are the blocks it sealed.
 
 **Classification.** Admission inserts a transaction as ready and queues it.
@@ -289,8 +304,11 @@ A node with transaction forwarding enabled rejects `enforce`, since it would
 stop forwarding dormant transactions. With `enforce`, the native builder ignores
 its resting-predicate mode: the pool's index replaces it. Metrics:
 `txpool.validity.dormant_transactions` (gauge),
-`txpool.validity.dormant_wakes` (histogram, transactions woken per build), and
-`txpool.validity.false_dormancy` (counter).
+`txpool.validity.dormant_wakes` (histogram, transactions woken per build),
+`txpool.validity.false_dormancy` (counter), and
+`txpool.validity.dormancy_discards{reason}` (counter; `parent_mismatch`,
+`abandoned`, `superseded`, `canonical_mismatch`, `reorg` or `feed_gap`; a
+deferred discard counts its own reason when it is applied).
 
 ## Usage
 

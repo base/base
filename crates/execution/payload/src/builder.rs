@@ -206,7 +206,11 @@ where
     fn build_payload<'a, Txs>(
         &self,
         args: BuildArguments<Attrs, BaseBuiltPayload<N>>,
-        best: impl FnOnce(BestTransactionsAttributes, Option<&SharedRestingPredicates>) -> Txs
+        best: impl FnOnce(
+            BestTransactionsAttributes,
+            Option<&SharedRestingPredicates>,
+            Option<&DormancyBuild>,
+        ) -> Txs
         + Send
         + Sync
         + 'a,
@@ -298,7 +302,8 @@ where
 
         let state_provider = self.client.state_by_block_hash(ctx.parent().hash())?;
 
-        let builder = Builder::new(|_, _| NoopPayloadTransactions::<Pool::Transaction>::default());
+        let builder =
+            Builder::new(|_, _, _| NoopPayloadTransactions::<Pool::Transaction>::default());
         builder.witness(state_provider, &self.client, &ctx)
     }
 }
@@ -324,11 +329,12 @@ where
     ) -> Result<BuildOutcome<Self::BuiltPayload>, PayloadBuilderError> {
         self.build_payload(
             args,
-            |attrs, resting| {
+            |attrs, resting, dormancy| {
                 ParkableBestPayloadTransactions::new(
                     self.pool.best_transactions_with_attributes_and_parking(
                         attrs,
                         resting.map(SharedRestingPredicates::iterator_hold),
+                        dormancy,
                     ),
                 )
             },
@@ -363,7 +369,7 @@ where
         };
         self.build_payload(
             args,
-            |_, _| {
+            |_, _, _| {
                 NoopPayloadTransactions::<Arc<ValidPoolTransaction<Pool::Transaction>>>::default()
             },
             None,
@@ -387,10 +393,15 @@ fn job_interrupt(cancel: &Arc<CancelOnDrop>) -> HoldInterrupt {
 pub type BeginDormancyFn<'a> =
     dyn FnOnce(B256, u64, Option<&TransitionState>) -> Option<DormancyBuild> + 'a;
 
-/// Creates the candidate iterator of one build from the fee attributes and, for an enforcing
-/// build, the resting set whose hold the iterator parks members with.
-pub type BestTransactionsFactory<'a, Txs> =
-    dyn FnOnce(BestTransactionsAttributes, Option<&SharedRestingPredicates>) -> Txs + 'a;
+/// Creates the candidate iterator of one build from the fee attributes, for an enforcing build
+/// the resting set whose hold the iterator parks members with, and the build's ownership of the
+/// pool's dormancy index, which its snapshot, parks and wakes go through.
+pub type BestTransactionsFactory<'a, Txs> = dyn FnOnce(
+        BestTransactionsAttributes,
+        Option<&SharedRestingPredicates>,
+        Option<&DormancyBuild>,
+    ) -> Txs
+    + 'a;
 
 /// The type that builds the payload.
 ///
@@ -425,7 +436,11 @@ pub struct Builder<'a, Txs> {
 impl<'a, Txs> Builder<'a, Txs> {
     /// Creates a new [`Builder`].
     pub fn new(
-        best: impl FnOnce(BestTransactionsAttributes, Option<&SharedRestingPredicates>) -> Txs
+        best: impl FnOnce(
+            BestTransactionsAttributes,
+            Option<&SharedRestingPredicates>,
+            Option<&DormancyBuild>,
+        ) -> Txs
         + Send
         + Sync
         + 'a,
@@ -556,7 +571,11 @@ impl<Txs> Builder<'_, Txs> {
             let hold = resting
                 .as_ref()
                 .filter(|_| ctx.builder_config.resting_predicate_mode.is_enforced());
-            let best_txs = best(ctx.best_transaction_attributes(builder.evm_mut().block()), hold);
+            let best_txs = best(
+                ctx.best_transaction_attributes(builder.evm_mut().block()),
+                hold,
+                dormancy.as_ref(),
+            );
             let cancelled =
                 ctx.execute_best_transactions(&mut info, &mut builder, best_txs, resting.as_ref())?;
             if !info.permanently_rejected_txs.is_empty() {
@@ -1877,7 +1896,7 @@ mod tests {
             best_payload: None,
         };
         let provider = NoopProvider::default();
-        let builder = Builder::new(|_, _| NoopPayloadTransactions::<PooledCandidate>::default());
+        let builder = Builder::new(|_, _, _| NoopPayloadTransactions::<PooledCandidate>::default());
         let outcome = builder
             .build(
                 StateProviderDatabase::new((&provider).into_evm_state_provider()),
@@ -1997,7 +2016,7 @@ mod tests {
         Txs: ParkablePayloadTransactions<Pooled = BasePooledTransaction> + Send + Sync,
     {
         let provider = funded_provider(funded_senders);
-        Builder::new(|_, _| transactions)
+        Builder::new(|_, _, _| transactions)
             .build(
                 StateProviderDatabase::new((&provider).into_evm_state_provider()),
                 &provider,
@@ -2055,7 +2074,7 @@ mod tests {
         Txs: ParkablePayloadTransactions<Pooled = BasePooledTransaction> + Send + Sync,
     {
         let provider = funded_provider(funded_senders);
-        Builder::new(|_, _| transactions)
+        Builder::new(|_, _, _| transactions)
             .with_permanent_eviction(evict)
             .build(
                 StateProviderDatabase::new((&provider).into_evm_state_provider()),
@@ -2577,7 +2596,7 @@ mod tests {
         let funded_senders =
             transactions.iter().map(|transaction| transaction.sender()).collect::<Vec<_>>();
         let provider = funded_provider(&funded_senders);
-        let outcome = Builder::new(|_, resting| {
+        let outcome = Builder::new(|_, resting, _| {
             TestParkableTransactions::new(transactions)
                 .with_hold(resting.map(SharedRestingPredicates::iterator_hold))
         })
@@ -2851,9 +2870,10 @@ mod tests {
         ctx.config.attributes.transactions = vec![sequencer_attribute_tx(&pool_transaction(0))];
         drop(ctx.cancel.clone());
 
-        let err = Builder::new(|_, _| NoopPayloadTransactions::<BasePooledTransaction>::default())
-            .witness(test_state_provider(), NoopProvider::default(), &ctx)
-            .unwrap_err();
+        let err =
+            Builder::new(|_, _, _| NoopPayloadTransactions::<BasePooledTransaction>::default())
+                .witness(test_state_provider(), NoopProvider::default(), &ctx)
+                .unwrap_err();
         assert!(err.to_string().contains("cancelled"), "{err}");
     }
 
@@ -3221,10 +3241,10 @@ mod tests {
         let sealed = Arc::new(Mutex::new(Vec::new()));
         let (record_begun, record_sealed) = (Arc::clone(&begun), Arc::clone(&sealed));
 
-        let outcome = Builder::new(|_, _| transactions)
+        let outcome = Builder::new(|_, _, _| transactions)
             .with_dormancy(move |parent, number, pre_selection| {
                 record_begun.lock().unwrap().push((parent, number, pre_selection.is_some()));
-                Some(DormancyBuild::new(move |hash| record_sealed.lock().unwrap().push(hash)))
+                Some(DormancyBuild::new(1, move |hash| record_sealed.lock().unwrap().push(hash)))
             })
             .build(
                 StateProviderDatabase::new((&provider).into_evm_state_provider()),

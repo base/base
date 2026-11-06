@@ -60,7 +60,7 @@ pub use predicate_index::{
 mod dormancy;
 pub use dormancy::{
     DORMANCY_CANARY_BUDGET, DORMANCY_FENCE_CAPACITY, DORMANCY_INSTALL_BATCH,
-    DormancyClassification, ValidityDormancyMode,
+    DormancyClassification, DormancyDiscardReason, ValidityDormancyMode,
 };
 
 mod block_expiry;

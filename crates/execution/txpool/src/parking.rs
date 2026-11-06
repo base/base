@@ -109,10 +109,15 @@ pub struct WokenTransaction<T: PoolTransaction> {
 }
 
 /// The validity pool's dormancy index as one build's iterator drives it. Calls made after the
-/// build ended, or once another build started, do nothing.
+/// build ended, or once another build superseded it, do nothing.
 pub trait BuildDormancy<T: PoolTransaction>: Send + Sync {
-    /// Indexes a transaction the build found failing `predicate`.
-    fn park(&self, transaction: &Arc<ValidPoolTransaction<T>>, predicate: ValidityPredicate);
+    /// Indexes a transaction the build found failing `predicate`. Returns `false`, indexing
+    /// nothing, once the build no longer owns the index.
+    fn park(
+        &self,
+        transaction: &Arc<ValidPoolTransaction<T>>,
+        predicate: ValidityPredicate,
+    ) -> bool;
 
     /// Removes and returns the indexed transactions a commit that wrote `state` may satisfy.
     fn wake(&self, state: &EvmState) -> Vec<WokenTransaction<T>>;
@@ -126,16 +131,26 @@ pub trait BuildDormancy<T: PoolTransaction>: Send + Sync {
     ) -> Option<Vec<Arc<ValidPoolTransaction<T>>>>;
 }
 
-/// One build's hold on the validity pool's dormancy tip. [`Self::seal`] makes the sealed block
-/// the tip; dropping it unsealed, as a cancelled or failed build does, discards the index.
+/// One build's ownership of the validity pool's dormancy index, which every snapshot, park and
+/// wake of the build goes through. [`Self::seal`] makes the sealed block the tip; dropping it
+/// unsealed, as a cancelled or failed build does, discards the index. A build that starts while
+/// this one runs supersedes it: this one then reads and writes nothing in the index and may miss
+/// dormant transactions, which is acceptable because reth cancels a superseded job.
 pub struct DormancyBuild {
+    id: u64,
     finish: Option<Box<dyn FnOnce(Option<B256>) + Send>>,
 }
 
 impl DormancyBuild {
-    /// A hold that calls `finish` with the sealed block's hash, or `None` when dropped unsealed.
-    pub fn new(finish: impl FnOnce(Option<B256>) + Send + 'static) -> Self {
-        Self { finish: Some(Box::new(finish)) }
+    /// Build `id`'s ownership, calling `finish` with the sealed block's hash, or `None` when
+    /// dropped unsealed.
+    pub fn new(id: u64, finish: impl FnOnce(Option<B256>) + Send + 'static) -> Self {
+        Self { id, finish: Some(Box::new(finish)) }
+    }
+
+    /// The build's id in the pool that started it.
+    pub const fn id(&self) -> u64 {
+        self.id
     }
 
     /// Records that the build sealed `block_hash`.
@@ -156,7 +171,7 @@ impl Drop for DormancyBuild {
 
 impl std::fmt::Debug for DormancyBuild {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("DormancyBuild").finish_non_exhaustive()
+        f.debug_struct("DormancyBuild").field("id", &self.id).finish_non_exhaustive()
     }
 }
 
@@ -196,11 +211,13 @@ pub trait ParkableTransactionPool: TransactionPool
 where
     Self::Transaction: BasePooledTx,
 {
-    /// Returns a parkable best iterator using the supplied fee attributes.
+    /// Returns a parkable best iterator using the supplied fee attributes, for the dormancy build
+    /// `build` when the build has one.
     fn best_transactions_with_attributes_and_parking(
         &self,
         attributes: BestTransactionsAttributes,
         hold: Option<Box<dyn BestTransactionsHold<Self::Transaction>>>,
+        build: Option<&DormancyBuild>,
     ) -> Box<dyn ParkableBestTransactions<Self::Transaction>>;
 
     /// Starts a build of block `block_number` on `parent` against the pool's dormancy index, after
@@ -588,15 +605,20 @@ where
         self.dormancy.is_some()
     }
 
+    /// Once the build is superseded the pool's index takes nothing and wakes nothing, so a
+    /// parked transaction could never return; its lane is invalidated for this iterator instead.
     fn park_unsatisfied(
         &mut self,
         transaction: &Arc<ValidPoolTransaction<T>>,
         predicate: ValidityPredicate,
     ) {
-        self.park(transaction);
-        if let Some(dormancy) = &self.dormancy {
-            dormancy.park(transaction, predicate);
+        if self.dormancy.as_ref().is_some_and(|dormancy| !dormancy.park(transaction, predicate)) {
+            if let Some(lane) = BestTransactionLane::for_transaction(transaction) {
+                self.invalidate_lane(lane);
+            }
+            return;
         }
+        self.park(transaction);
     }
 
     fn wake_by_state(&mut self, state: &EvmState) {
@@ -625,6 +647,7 @@ where
         &self,
         attributes: BestTransactionsAttributes,
         _hold: Option<Box<dyn BestTransactionsHold<Self::Transaction>>>,
+        _build: Option<&DormancyBuild>,
     ) -> Box<dyn ParkableBestTransactions<Self::Transaction>> {
         Box::new(ParkedBestTransactions::new(
             std::iter::empty(),

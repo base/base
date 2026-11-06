@@ -43,11 +43,11 @@ use tracing::debug;
 
 use crate::{
     Admission, BasePooledTx, BaseTransactionValidator, BestTransactionsHold, BuildDormancy,
-    DORMANCY_INSTALL_BATCH, DormancyBuild, DormancyClassification, GuardLimits, GuardMetrics,
-    InvalidationCause, InvalidationKey, LimitRejection, MempoolGuard, ParkableBestTransactions,
-    ParkableTransactionPool, ParkedBestTransactions, PoolStore, StateDiffInvalidation,
-    ValidityDormancyMode, ValidityPoolLimits, ValidityPoolMetrics, ValidityPredicate,
-    WokenTransaction,
+    DORMANCY_INSTALL_BATCH, DormancyBuild, DormancyClassification, DormancyDiscardReason,
+    GuardLimits, GuardMetrics, InvalidationCause, InvalidationKey, LimitRejection, MempoolGuard,
+    ParkableBestTransactions, ParkableTransactionPool, ParkedBestTransactions, PoolStore,
+    StateDiffInvalidation, ValidityDormancyMode, ValidityPoolLimits, ValidityPoolMetrics,
+    ValidityPredicate, WokenTransaction,
     best::{BridgedDescendants, MergeBestTransactions},
     two_d_nonce_pool::{
         InsertOutcome, LaneCursor, LaneId, LaneUpdate, SidecarLimits, TwoDNoncePool,
@@ -515,14 +515,15 @@ where
         ValidityPoolMetrics::record_dormancy(validity.dormant_len(), false_dormant);
     }
 
-    /// Discards the validity pool's dormancy index, for a canonical feed
-    /// position the pool cannot reconcile.
-    pub fn discard_dormancy_index(&self) {
+    /// Discards the validity pool's dormancy index for `reason`, such as a
+    /// canonical feed position the pool cannot reconcile; deferred until a
+    /// running build ends.
+    pub fn discard_dormancy_index(&self, reason: DormancyDiscardReason) {
         if !self.dormancy_enforced() {
             return;
         }
         let mut validity = self.validity.pool.write();
-        validity.discard_dormancy();
+        validity.discard_dormancy(reason);
         ValidityPoolMetrics::record_dormancy(validity.dormant_len(), 0);
     }
 
@@ -1634,14 +1635,15 @@ where
         AllTransactionsEvents::new(rx)
     }
 
-    /// Snapshots the merged best transactions. With `for_build`, a running
-    /// dormancy build also records its snapshot, under the same validity pool
-    /// lock hold, and its build and snapshot ids are returned.
+    /// Snapshots the merged best transactions. For dormancy build `build`,
+    /// the snapshot is recorded under the same validity pool lock hold and its
+    /// id returned while the build owns the index; a superseded build gets a
+    /// snapshot that ignores dormancy, as Off takes, and no id.
     fn merged_best_transactions(
         &self,
         attributes: BestTransactionsAttributes,
-        for_build: bool,
-    ) -> (MergeBestTransactions<T, O>, Option<(u64, u64)>) {
+        build: Option<u64>,
+    ) -> (MergeBestTransactions<T, O>, Option<u64>) {
         let base_fee = attributes.basefee;
         // The lane bookkeeping the merge relies on (anchors, shared lanes) and
         // the lane stores' iterators are snapshotted under one pair of read
@@ -1651,21 +1653,23 @@ where
         // and a stale one leaves a validity head waiting, never released early.
         // The bookkeeping comes from the validity pool's incremental indexes,
         // so this costs the lanes that straddle stores, not the pool sizes.
-        let (sidecar, validity, anchors, bridged, build) = {
+        let (sidecar, validity, anchors, bridged, snapshot) = {
             let sidecar = self.sidecar.pool.read();
-            let (validity, build) = if for_build {
-                let mut validity = self.validity.pool.write();
-                let build = validity.begin_snapshot();
-                (RwLockWriteGuard::downgrade(validity), build)
-            } else {
-                (self.validity.pool.read(), None)
-            };
+            let (validity, snapshot) = build.map_or_else(
+                || (self.validity.pool.read(), None),
+                |build| {
+                    let mut validity = self.validity.pool.write();
+                    let snapshot = validity.begin_snapshot(build);
+                    (RwLockWriteGuard::downgrade(validity), snapshot)
+                },
+            );
+            let offer_dormant = build.is_some() && snapshot.is_none();
             (
-                sidecar.best_transactions(self.ordering.clone(), base_fee),
-                validity.best_transactions(self.ordering.clone(), base_fee),
+                sidecar.best_transactions(self.ordering.clone(), base_fee, false),
+                validity.best_transactions(self.ordering.clone(), base_fee, offer_dormant),
                 validity.lanes_ahead_of_state().clone(),
-                self.bridged_descendants(&sidecar, &validity),
-                build,
+                self.bridged_descendants(&sidecar, &validity, offer_dormant),
+                snapshot,
             )
         };
         // Reth hands back a boxed iterator of a private type, so it is boxed
@@ -1680,7 +1684,7 @@ where
         )
         .with_external_anchors(anchors)
         .with_bridged_descendants(bridged);
-        (merged, build)
+        (merged, snapshot)
     }
 
     /// For each validity lane that shares its nonce space with a standard
@@ -1692,9 +1696,10 @@ where
         &self,
         sidecar: &TwoDNoncePool<T>,
         validity: &TwoDNoncePool<T>,
+        offer_dormant: bool,
     ) -> BridgedDescendants<T> {
         let mut bridged = BridgedDescendants::default();
-        for (lane_id, end) in validity.shared_lanes_pending_end() {
+        for (lane_id, end) in validity.shared_lanes_pending_end(offer_dormant) {
             let run: VecDeque<_> = (end..)
                 .map_while(|nonce| self.standard_transaction(sidecar, lane_id, nonce))
                 .collect();
@@ -1779,8 +1784,8 @@ where
         }
     }
 
-    fn discard_dormancy(&self) {
-        self.discard_dormancy_index();
+    fn discard_dormancy(&self, reason: DormancyDiscardReason) {
+        self.discard_dormancy_index(reason);
     }
 }
 
@@ -2071,14 +2076,14 @@ where
             block_info.pending_basefee,
             block_info.pending_blob_fee.map(|fee| u64::try_from(fee).unwrap_or(u64::MAX)),
         );
-        Box::new(self.merged_best_transactions(best_transactions_attributes, false).0)
+        Box::new(self.merged_best_transactions(best_transactions_attributes, None).0)
     }
 
     fn best_transactions_with_attributes(
         &self,
         best_transactions_attributes: BestTransactionsAttributes,
     ) -> Box<dyn BestTransactions<Item = Arc<ValidPoolTransaction<Self::Transaction>>>> {
-        Box::new(self.merged_best_transactions(best_transactions_attributes, false).0)
+        Box::new(self.merged_best_transactions(best_transactions_attributes, None).0)
     }
 
     fn pending_transactions(&self) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
@@ -2500,10 +2505,12 @@ where
         &self,
         attributes: BestTransactionsAttributes,
         hold: Option<Box<dyn BestTransactionsHold<Self::Transaction>>>,
+        build: Option<&DormancyBuild>,
     ) -> Box<dyn ParkableBestTransactions<Self::Transaction>> {
         let base_fee = attributes.basefee;
-        let (merged, build) = self.merged_best_transactions(attributes, self.dormancy_enforced());
-        let dormancy = build.map(|(build, snapshot)| {
+        let build = build.filter(|_| self.dormancy_enforced()).map(DormancyBuild::id);
+        let (merged, snapshot) = self.merged_best_transactions(attributes, build);
+        let dormancy = build.zip(snapshot).map(|(build, snapshot)| {
             Box::new(PoolBuildDormancy { pool: self.clone(), build, snapshot })
                 as Box<dyn BuildDormancy<Self::Transaction>>
         });
@@ -2530,7 +2537,7 @@ where
             build
         };
         let pool = Arc::clone(&self.validity.pool);
-        Some(DormancyBuild::new(move |sealed| {
+        Some(DormancyBuild::new(build, move |sealed| {
             let mut validity = pool.write();
             let woken = match sealed {
                 Some(block_hash) => validity.seal_build(build, block_hash),
@@ -2563,8 +2570,12 @@ where
     O: reth_transaction_pool::TransactionOrdering<Transaction = T> + Clone,
     S: BlobStore + Clone,
 {
-    fn park(&self, transaction: &Arc<ValidPoolTransaction<T>>, predicate: ValidityPredicate) {
-        self.pool.validity.pool.write().park_unsatisfied(self.build, transaction, predicate);
+    fn park(
+        &self,
+        transaction: &Arc<ValidPoolTransaction<T>>,
+        predicate: ValidityPredicate,
+    ) -> bool {
+        self.pool.validity.pool.write().park_unsatisfied(self.build, transaction, predicate)
     }
 
     fn wake(&self, state: &EvmState) -> Vec<WokenTransaction<T>> {
@@ -7077,12 +7088,15 @@ mod tests {
             )
         }
 
+        /// The candidate iterator of the build `build` owns, as the native builder creates it.
         fn build_iterator(
             pool: &IntegrationPool,
+            build: Option<&DormancyBuild>,
         ) -> Box<dyn ParkableBestTransactions<BasePooledTransaction>> {
             pool.best_transactions_with_attributes_and_parking(
                 BestTransactionsAttributes::new(0, None),
                 None,
+                build,
             )
         }
 
@@ -7131,7 +7145,7 @@ mod tests {
             let (pool, client) = dormancy_pool(ValidityDormancyMode::Off);
             let signer = funded_signer(&client);
             let root = add(&pool, with_predicates(signed_1559(&signer, 0), [slot_is_one()])).await;
-            let mut best = build_iterator(&pool);
+            let mut best = build_iterator(&pool, None);
             assert!(!best.parks_in_pool_index());
 
             let yielded = best.next().unwrap();
@@ -7177,8 +7191,8 @@ mod tests {
             let bridged = add(&pool, signed_1559(&signer, 2)).await;
             advance(&pool, 1);
 
-            let _build = begin(&pool, block_hash(1), 2);
-            let mut best = build_iterator(&pool);
+            let build = begin(&pool, block_hash(1), 2);
+            let mut best = build_iterator(&pool, Some(&build));
             best.wake_by_state(&slot_written(SLOT));
 
             assert_eq!(commit_all(&mut best), vec![root, tail, bridged]);
@@ -7199,8 +7213,8 @@ mod tests {
             advance(&pool, 1);
             assert!(!in_best(&pool, nonce_free));
 
-            let _build = begin(&pool, block_hash(1), 2);
-            let mut best = build_iterator(&pool);
+            let build = begin(&pool, block_hash(1), 2);
+            let mut best = build_iterator(&pool, Some(&build));
             best.wake_by_state(&slot_written(OTHER_SLOT));
             assert!(commit_all(&mut best).is_empty(), "an unrelated write wakes nothing");
             best.wake_by_state(&slot_written(SLOT));
@@ -7233,8 +7247,8 @@ mod tests {
             let root = add(&pool, with_predicates(signed_1559(&signer, 0), [slot_is_one()])).await;
             let tail = add(&pool, with_predicates(signed_1559(&signer, 1), [])).await;
 
-            let _build = begin(&pool, block_hash(1), 2);
-            let mut best = build_iterator(&pool);
+            let build = begin(&pool, block_hash(1), 2);
+            let mut best = build_iterator(&pool, Some(&build));
             let yielded = best.next().unwrap();
             assert_eq!(*yielded.hash(), root);
             best.park_unsatisfied(&yielded, slot_is_one());
@@ -7269,7 +7283,7 @@ mod tests {
             advance(&pool, 1);
             let root = add(&pool, with_predicates(signed_1559(&signer, 0), [slot_is_one()])).await;
             let build = begin(&pool, block_hash(1), 2);
-            let mut best = build_iterator(&pool);
+            let mut best = build_iterator(&pool, Some(&build));
             let yielded = best.next().unwrap();
             best.park_unsatisfied(&yielded, slot_is_one());
             drop(best);
@@ -7365,7 +7379,7 @@ mod tests {
             assert_eq!(counts(&pool), ((0, 2), 0));
             assert!(is_queued(&pool, root) && is_queued(&pool, tail));
 
-            pool.discard_dormancy_index();
+            pool.discard_dormancy_index(DormancyDiscardReason::FeedGap);
             assert_eq!(counts(&pool), ((2, 0), 2));
             assert!(pending.try_recv().is_err(), "parking and waking announce nothing");
         }
@@ -7470,7 +7484,7 @@ mod tests {
                 block_hash(1),
                 &mut RacingDatabase::new(|| {
                     let build = begin(&pool, block_hash(1), 2);
-                    build_iterator(&pool).wake_by_state(&slot_written(written));
+                    build_iterator(&pool, Some(&build)).wake_by_state(&slot_written(written));
                     build.seal(block_hash(2));
                 }),
             );
@@ -7523,6 +7537,152 @@ mod tests {
                     _ => None,
                 })
                 .unwrap_or_default()
+        }
+
+        /// A build that starts while another runs supersedes it. The
+        /// superseded build snapshots without dormancy and writes nothing to
+        /// the index, so it cannot hide from the superseding build a
+        /// transaction the latter's writes satisfy.
+        #[tokio::test]
+        async fn a_superseded_build_neither_reads_nor_writes_the_index() {
+            let (pool, client) = dormancy_pool(ValidityDormancyMode::Enforce);
+            let signer = funded_signer(&client);
+            let root = add(&pool, with_predicates(signed_1559(&signer, 0), [slot_is_one()])).await;
+            advance(&pool, 1);
+            let superseded = begin(&pool, block_hash(1), 2);
+            let current = pool
+                .begin_dormancy_build(block_hash(1), 2, Some(&slot_written_before_selection()))
+                .unwrap();
+
+            let mut stale = build_iterator(&pool, Some(&superseded));
+            assert!(!stale.parks_in_pool_index(), "a superseded build keeps its own index");
+            let yielded = stale.next().unwrap();
+            assert_eq!(*yielded.hash(), root);
+            stale.park_unsatisfied(&yielded, slot_is_one());
+
+            let mut best = build_iterator(&pool, Some(&current));
+            assert_eq!(commit_all(&mut best), vec![root]);
+        }
+
+        /// A build superseded after its snapshot no longer parks in the index:
+        /// a failing transaction invalidates its lane in that iterator instead.
+        #[tokio::test]
+        async fn a_build_superseded_mid_block_invalidates_failing_lanes() {
+            let (pool, client) = dormancy_pool(ValidityDormancyMode::Enforce);
+            let signer = funded_signer(&client);
+            advance(&pool, 1);
+            let root = add(&pool, with_predicates(signed_1559(&signer, 0), [slot_is_one()])).await;
+            add(&pool, with_predicates(signed_1559(&signer, 1), [])).await;
+            let superseded = begin(&pool, block_hash(1), 2);
+            let mut stale = build_iterator(&pool, Some(&superseded));
+            let _current = begin(&pool, block_hash(1), 2);
+
+            let yielded = stale.next().unwrap();
+            assert_eq!(*yielded.hash(), root);
+            stale.park_unsatisfied(&yielded, slot_is_one());
+            stale.wake_by_state(&slot_written(SLOT));
+
+            assert!(!stale.promote(root), "nothing is left parked that could never wake");
+            assert!(commit_all(&mut stale).is_empty(), "the lane is invalid for this iterator");
+            assert_eq!(pool.validity.pool.read().dormant_len(), 0, "nothing reached the index");
+        }
+
+        /// A discard requested while a build runs waits for the build to end,
+        /// so its iterator still wakes the transaction it parked and the root
+        /// its snapshot left out; the sealed block then does not become the tip.
+        #[rstest]
+        #[case::feed_gap(DormancyDiscardReason::FeedGap)]
+        #[case::reorg(DormancyDiscardReason::Reorg)]
+        #[tokio::test]
+        async fn a_discard_during_a_build_waits_for_it_to_end(
+            #[case] reason: DormancyDiscardReason,
+        ) {
+            let (pool, client) = dormancy_pool(ValidityDormancyMode::Enforce);
+            let (first, second) = (funded_signer(&client), funded_signer(&client));
+            let omitted =
+                add(&pool, with_predicates(signed_1559(&first, 0), [slot_is_one()])).await;
+            advance(&pool, 1);
+            let parked =
+                add(&pool, with_predicates(signed_1559(&second, 0), [slot_is_one()])).await;
+            let build = begin(&pool, block_hash(1), 2);
+            let mut best = build_iterator(&pool, Some(&build));
+            let yielded = best.next().unwrap();
+            assert_eq!(*yielded.hash(), parked);
+            best.park_unsatisfied(&yielded, slot_is_one());
+
+            pool.discard_dormancy_index(reason);
+            best.wake_by_state(&slot_written(SLOT));
+
+            let mut woken = commit_all(&mut best);
+            woken.sort();
+            let mut expected = vec![omitted, parked];
+            expected.sort();
+            assert_eq!(woken, expected);
+
+            build.seal(block_hash(2));
+            let late = add(&pool, with_predicates(signed_1559(&first, 1), [])).await;
+            let blocked = add(
+                &pool,
+                with_predicates(signed_1559(&funded_signer(&client), 0), [slot_is_one()]),
+            )
+            .await;
+            canonical(&pool, 2, block_hash(2));
+            assert!(in_best(&pool, late));
+            assert!(
+                in_best(&pool, blocked),
+                "block 2 did not become the tip, so nothing classifies"
+            );
+        }
+
+        /// How many times `run` discarded the dormancy index for `reason`.
+        fn discards_during(reason: DormancyDiscardReason, run: impl FnOnce()) -> u64 {
+            let recorder = DebuggingRecorder::new();
+            metrics::with_local_recorder(&recorder, run);
+            recorder
+                .snapshotter()
+                .snapshot()
+                .into_vec()
+                .into_iter()
+                .find_map(|(key, _, _, value)| match value {
+                    DebugValue::Counter(count)
+                        if key.key().name() == "txpool.validity.dormancy_discards"
+                            && key.key().labels().any(|label| {
+                                label.key() == "reason" && label.value() == reason.as_label()
+                            }) =>
+                    {
+                        Some(count)
+                    }
+                    _ => None,
+                })
+                .unwrap_or_default()
+        }
+
+        #[rstest]
+        #[case::parent_mismatch(DormancyDiscardReason::ParentMismatch)]
+        #[case::abandoned(DormancyDiscardReason::Abandoned)]
+        #[case::superseded(DormancyDiscardReason::Superseded)]
+        #[case::canonical_mismatch(DormancyDiscardReason::CanonicalMismatch)]
+        #[case::reorg(DormancyDiscardReason::Reorg)]
+        #[case::feed_gap(DormancyDiscardReason::FeedGap)]
+        #[tokio::test]
+        async fn discards_are_counted_by_reason(#[case] reason: DormancyDiscardReason) {
+            let (pool, _client) = dormancy_pool(ValidityDormancyMode::Enforce);
+            advance(&pool, 1);
+
+            let counted = discards_during(reason, || match reason {
+                DormancyDiscardReason::ParentMismatch => drop(begin(&pool, fork_hash(1), 2)),
+                DormancyDiscardReason::Abandoned => drop(begin(&pool, block_hash(1), 2)),
+                DormancyDiscardReason::Superseded => {
+                    let _superseded = begin(&pool, block_hash(1), 2);
+                    begin(&pool, block_hash(1), 2).seal(block_hash(2));
+                }
+                DormancyDiscardReason::CanonicalMismatch => canonical(&pool, 1, fork_hash(1)),
+                DormancyDiscardReason::Reorg | DormancyDiscardReason::FeedGap => {
+                    pool.discard_dormancy_index(reason);
+                }
+            });
+
+            assert_eq!(counted, 1);
         }
 
         #[tokio::test]

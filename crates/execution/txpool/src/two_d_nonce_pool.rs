@@ -27,8 +27,9 @@ use reth_transaction_pool::{
 use revm::{database::TransitionState, state::EvmState};
 
 use crate::{
-    BasePooledTx, BestTransactionPriority, DormancyClassification, PredicateContext,
-    ValidityDormancyMode, ValidityPredicate, WokenTransaction, WrittenLocation,
+    BasePooledTx, BestTransactionPriority, DormancyClassification, DormancyDiscardReason,
+    PredicateContext, ValidityDormancyMode, ValidityPoolMetrics, ValidityPredicate,
+    WokenTransaction, WrittenLocation,
     best::MergeSource,
     dormancy::{Dormancy, DormantEntry, DormantSlot},
 };
@@ -178,6 +179,28 @@ impl<T: BasePooledTx> NonceLane<T> {
         self.transactions
             .range((Bound::Included(self.next_nonce), self.pending_bound()))
             .map(|(_, transaction)| transaction)
+    }
+
+    /// What a snapshot offers from this lane: the pending run or, with
+    /// `offer_dormant`, the consecutive run even behind a dormant root.
+    fn offered_run(
+        &self,
+        offer_dormant: bool,
+    ) -> impl Iterator<Item = &Arc<ValidPoolTransaction<T>>> {
+        let end = if offer_dormant { self.run_end() } else { self.pending_bound() };
+        self.transactions
+            .range((Bound::Included(self.next_nonce), end))
+            .map(|(_, transaction)| transaction)
+    }
+
+    const fn offered_len(&self, offer_dormant: bool) -> u64 {
+        if offer_dormant { self.run_len } else { self.pending_len() }
+    }
+
+    /// The nonce right after [`Self::offered_run`], or `None` when it is empty.
+    fn offered_end(&self, offer_dormant: bool) -> Option<u64> {
+        let len = self.offered_len(offer_dormant);
+        (len > 0).then(|| self.next_nonce.saturating_add(len))
     }
 
     const fn consecutive_pending_len(&self) -> usize {
@@ -1219,10 +1242,14 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
     }
 
     /// The shared lanes with a pending run, with the nonce right after it. A
-    /// dormant root ends its lane's run, so its lane is left out.
-    pub(crate) fn shared_lanes_pending_end(&self) -> impl Iterator<Item = (LaneId, u64)> + '_ {
-        self.shared_lanes.iter().filter_map(|lane_id| {
-            self.lanes.get(lane_id).and_then(NonceLane::pending_end).map(|end| (*lane_id, end))
+    /// dormant root ends its lane's run, so its lane is left out unless
+    /// `offer_dormant`, as for a snapshot that ignores dormancy.
+    pub(crate) fn shared_lanes_pending_end(
+        &self,
+        offer_dormant: bool,
+    ) -> impl Iterator<Item = (LaneId, u64)> + '_ {
+        self.shared_lanes.iter().filter_map(move |lane_id| {
+            self.lanes.get(lane_id)?.offered_end(offer_dormant).map(|end| (*lane_id, end))
         })
     }
 
@@ -1405,21 +1432,24 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
     /// transactions. That backing is kept on the transactions as costs and
     /// balances change (see `refresh_tip_backing`), so the snapshot costs the
     /// pending lanes, not every transaction. A dormant root ends its lane's
-    /// pending run, so its lane offers nothing.
+    /// pending run, so its lane offers nothing, unless `offer_dormant` asks
+    /// for a snapshot that ignores dormancy, as Off takes.
     pub(crate) fn best_transactions<O>(
         &self,
         ordering: O,
         base_fee: u64,
+        offer_dormant: bool,
     ) -> BestTwoDTransactions<T, O>
     where
         O: TransactionOrdering<Transaction = T>,
     {
         let lanes = self.lanes.iter().map(|(id, lane)| (*id, lane));
-        if !self.dormancy.is_enforced() {
+        if !self.dormancy.is_enforced() || offer_dormant {
             return BestTwoDTransactions::new(
                 lanes,
                 self.nonce_free.values(),
                 self.protocol_nonce_lanes,
+                true,
                 ordering,
                 base_fee,
             );
@@ -1428,6 +1458,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
             lanes,
             self.ready_nonce_free.iter().filter_map(|replay_id| self.nonce_free.get(replay_id)),
             self.protocol_nonce_lanes,
+            false,
             ordering,
             base_fee,
         )
@@ -1446,18 +1477,22 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
         (root.hash() == hash).then_some(DormantSlot::Lane(lane_id))
     }
 
-    /// Starts build `block_number` on `parent` and returns its id. The index
-    /// is kept only when `parent` is the tip and no other build is running;
-    /// then the writes `pre_selection` made and the block's height wake what
-    /// they may satisfy. Otherwise it is discarded.
+    /// Starts build `block_number` on `parent` and returns its id; the build
+    /// owns the index until it ends or another build starts. The index is
+    /// kept only when `parent` is the tip and no other build is running; then
+    /// the writes `pre_selection` made and the block's height wake what they
+    /// may satisfy. Otherwise it is discarded, and a running build becomes
+    /// stale: it no longer reads or writes the index.
     pub(crate) fn begin_build(
         &mut self,
         parent: B256,
         block_number: u64,
         pre_selection: Option<&TransitionState>,
     ) -> u64 {
-        if self.dormancy.building || self.dormancy.tip.map(|tip| tip.hash) != Some(parent) {
-            self.discard_dormancy();
+        if self.dormancy.building {
+            self.discard_dormancy_now(DormancyDiscardReason::Superseded);
+        } else if self.dormancy.tip.is_some_and(|tip| tip.hash != parent) {
+            self.discard_dormancy_now(DormancyDiscardReason::ParentMismatch);
         }
         self.dormancy.builds += 1;
         self.dormancy.building = true;
@@ -1476,46 +1511,68 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
         self.dormancy.builds
     }
 
-    /// Makes the block `build` sealed the tip and drops the entries indexed
-    /// only for its mid-block wakes. Returns how many transactions the build
-    /// woke, or `None` when `build` is not the running build.
+    /// Ends build `build` with the block it sealed and drops the entries
+    /// indexed only for its mid-block wakes. The block becomes the tip unless
+    /// a discard was deferred during the build, which is applied instead.
+    /// Returns how many transactions the build woke, or `None` when `build`
+    /// does not own the index.
     pub(crate) fn seal_build(&mut self, build: u64, block_hash: B256) -> Option<usize> {
         if !self.dormancy.is_running(build) {
             return None;
         }
-        self.dormancy.tip = Some(BlockNumHash::new(self.dormancy.height, block_hash));
+        let woken = self.dormancy.build_wakes;
         self.dormancy.building = false;
         for hash in self.dormancy.in_build_hashes() {
             self.dormancy.remove(hash);
         }
+        if let Some(reason) = self.dormancy.deferred_discard.take() {
+            self.discard_dormancy_now(reason);
+            return Some(woken);
+        }
+        self.dormancy.tip = Some(BlockNumHash::new(self.dormancy.height, block_hash));
         if self.dormancy.classifying.is_none() {
             self.dormancy.clear_fence();
         }
-        Some(self.dormancy.build_wakes)
+        Some(woken)
     }
 
     /// Discards the index when `build` ends without a seal. Returns how many
-    /// transactions the build woke, or `None` when it is not the running build.
+    /// transactions the build woke, or `None` when it does not own the index.
     pub(crate) fn abandon_build(&mut self, build: u64) -> Option<usize> {
         if !self.dormancy.is_running(build) {
             return None;
         }
         let woken = self.dormancy.build_wakes;
-        self.discard_dormancy();
+        let reason =
+            self.dormancy.deferred_discard.take().unwrap_or(DormancyDiscardReason::Abandoned);
+        self.discard_dormancy_now(reason);
         Some(woken)
     }
 
-    /// Wakes every indexed transaction and forgets the tip, so nothing is
-    /// dormant until the next seal and classification.
-    pub(crate) fn discard_dormancy(&mut self) {
+    /// Discards the index for `reason`, or once the running build ends if
+    /// one is running, so its iterator keeps waking what it parked and what
+    /// its snapshot left out.
+    pub(crate) fn discard_dormancy(&mut self, reason: DormancyDiscardReason) {
+        if self.dormancy.building {
+            self.dormancy.deferred_discard.get_or_insert(reason);
+        } else {
+            self.discard_dormancy_now(reason);
+        }
+    }
+
+    /// Wakes every indexed transaction and forgets the tip and the running
+    /// build, so nothing is dormant until the next seal and classification.
+    fn discard_dormancy_now(&mut self, reason: DormancyDiscardReason) {
         let indexed = self.dormancy.index.hashes().collect::<Vec<_>>();
         for hash in indexed {
             self.wake(hash);
         }
         self.dormancy.tip = None;
         self.dormancy.building = false;
+        self.dormancy.deferred_discard = None;
         self.dormancy.discards += 1;
         self.dormancy.clear_fence();
+        ValidityPoolMetrics::dormancy_discards(reason.as_label()).increment(1);
     }
 
     /// Discards the index when canonical `blocks` hold a block at the tip's
@@ -1523,20 +1580,21 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
     pub(crate) fn observe_canonical(&mut self, blocks: &[BlockNumHash]) {
         let Some(tip) = self.dormancy.tip else { return };
         if blocks.iter().any(|block| block.number == tip.number && block.hash != tip.hash) {
-            self.discard_dormancy();
+            self.discard_dormancy(DormancyDiscardReason::CanonicalMismatch);
         }
     }
 
-    /// Records that the running build, if any, takes its snapshot now, and
-    /// returns the build's id and the snapshot's. Call under the same lock
-    /// hold as the snapshot, so the snapshot holds exactly the transactions
-    /// that were not dormant at this id.
-    pub(crate) const fn begin_snapshot(&mut self) -> Option<(u64, u64)> {
-        if !self.dormancy.building {
+    /// Records that build `build` takes its snapshot now and returns the
+    /// snapshot's id, or `None` when `build` no longer owns the index; its
+    /// snapshot then ignores dormancy. Call under the same lock hold as the
+    /// snapshot, so the snapshot holds exactly the transactions that were not
+    /// dormant at this id.
+    pub(crate) const fn begin_snapshot(&mut self, build: u64) -> Option<u64> {
+        if !self.dormancy.is_running(build) {
             return None;
         }
         self.dormancy.snapshots += 1;
-        Some((self.dormancy.builds, self.dormancy.snapshots))
+        Some(self.dormancy.snapshots)
     }
 
     /// Wakes the transactions a commit of build `build`, whose snapshot is
@@ -1572,22 +1630,25 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
     /// Indexes a transaction build `build` found failing `predicate`, so a
     /// later commit can wake it. An eligible transaction becomes dormant and
     /// stays so in later builds on this one; any other is indexed until the
-    /// build ends.
+    /// build ends. Returns `false` when `build` no longer owns the index.
     pub(crate) fn park_unsatisfied(
         &mut self,
         build: u64,
         transaction: &Arc<ValidPoolTransaction<T>>,
         predicate: ValidityPredicate,
-    ) {
-        if !self.dormancy.is_running(build) || !self.is_pooled(transaction) {
-            return;
+    ) -> bool {
+        if !self.dormancy.is_running(build) {
+            return false;
+        }
+        if !self.is_pooled(transaction) {
+            return true;
         }
         let release_block = match &predicate {
             ValidityPredicate::BlockNumber { op, value } => {
                 let Some(release) =
                     DormancyClassification::release_block(*op, *value, self.dormancy.height)
                 else {
-                    return;
+                    return true;
                 };
                 Some(release)
             }
@@ -1597,6 +1658,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
         let slot = self.eligible_slot(&hash);
         self.dormancy.park(hash, slot, predicate, release_block);
         self.leave_snapshot(slot);
+        true
     }
 
     /// The rest of the pending run `root` heads in `lane_id`, or `None` when
@@ -1615,8 +1677,11 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
     /// state `head` without holding the pool lock. `None` unless dormancy is
     /// enforced and `head` is the tip; the queue then waits.
     pub(crate) fn take_dormancy_batch(&mut self, head: B256) -> Option<DormancyBatch<T>> {
-        let tip =
-            self.dormancy.tip.filter(|tip| self.dormancy.is_enforced() && tip.hash == head)?;
+        let tip = self.dormancy.tip.filter(|tip| {
+            self.dormancy.is_enforced()
+                && tip.hash == head
+                && self.dormancy.deferred_discard.is_none()
+        })?;
         let context =
             PredicateContext { block_number: tip.number.checked_add(1)?, flashblock_index: 0 };
         let candidates = self
@@ -1858,6 +1923,7 @@ where
         lanes: impl Iterator<Item = (LaneId, &'a NonceLane<T>)>,
         nonce_free: impl Iterator<Item = &'a Arc<ValidPoolTransaction<T>>>,
         protocol_nonce_lanes: bool,
+        offer_dormant: bool,
         ordering: O,
         base_fee: u64,
     ) -> Self
@@ -1868,9 +1934,9 @@ where
         let mut snapshot =
             Vec::with_capacity(capacity(lanes.size_hint()) + capacity(nonce_free.size_hint()));
         snapshot.extend(lanes.filter_map(|(id, lane)| {
-            let mut pending = lane.consecutive_pending_transactions();
+            let mut pending = lane.offered_run(offer_dormant);
             let head = Arc::clone(pending.next()?);
-            let mut tail = Vec::with_capacity(lane.consecutive_pending_len() - 1);
+            let mut tail = Vec::with_capacity(lane.offered_len(offer_dormant) as usize - 1);
             tail.extend(pending.cloned());
             Some(LaneIterator::new(id, head, tail))
         }));
@@ -2130,7 +2196,7 @@ mod tests {
 
         let ordering = CountingOrdering::default();
         let priority_evaluations = Arc::clone(&ordering.priority_evaluations);
-        let yielded = pool.best_transactions(ordering, 0).count();
+        let yielded = pool.best_transactions(ordering, 0, false).count();
 
         assert_eq!(yielded, lane_count);
         priority_evaluations.load(Ordering::Relaxed)
@@ -2159,6 +2225,7 @@ mod tests {
         let best = BestTwoDTransactions::new(
             lanes.iter().map(|(id, lane)| (*id, lane)),
             std::iter::empty::<&Arc<ValidPoolTransaction<BasePooledTransaction>>>(),
+            false,
             false,
             BaseOrdering::coinbase_tip(),
             0,
@@ -2283,7 +2350,7 @@ mod tests {
         pool.insert_validated(high, 0).unwrap();
         pool.insert_validated(low, 0).unwrap();
 
-        let mut best = pool.best_transactions(BaseOrdering::coinbase_tip(), 0);
+        let mut best = pool.best_transactions(BaseOrdering::coinbase_tip(), 0, false);
         let yielded = best.next().unwrap();
         assert_eq!(*yielded.hash(), high_hash);
         best.mark_invalid(&yielded, InvalidPoolTransactionError::Underpriced);
@@ -2648,6 +2715,7 @@ mod tests {
             lanes.iter().map(|(id, lane)| (*id, lane)),
             std::iter::empty::<&Arc<ValidPoolTransaction<BasePooledTransaction>>>(),
             false,
+            false,
             BaseOrdering::coinbase_tip(),
             0,
         );
@@ -2774,7 +2842,7 @@ mod tests {
         pool.insert_validated(second_lane_head, 0).unwrap();
 
         let lane_to_invalidate = pool.get(&first_lane_head_hash).unwrap();
-        let mut best = pool.best_transactions(BaseOrdering::coinbase_tip(), 0);
+        let mut best = pool.best_transactions(BaseOrdering::coinbase_tip(), 0, false);
         best.mark_invalid(
             &lane_to_invalidate,
             InvalidPoolTransactionError::Consensus(InvalidTransactionError::TxTypeNotSupported),
@@ -2827,7 +2895,7 @@ mod tests {
         }
         pool.insert_validated(poor, 0).unwrap();
 
-        let mut best = pool.best_transactions(BaseOrdering::coinbase_tip(), 0);
+        let mut best = pool.best_transactions(BaseOrdering::coinbase_tip(), 0, false);
         assert_eq!(best.next().map(|tx| *tx.hash()), Some(rich_hashes[0]));
         // Holding the lane after its head was pulled leaves the rest of it
         // alone: the other lane is offered instead of the lane's next member.
@@ -2856,7 +2924,7 @@ mod tests {
         pool.insert_validated(low_tip_high_cap, 0).unwrap();
         pool.insert_validated(high_tip_lower_cap, 0).unwrap();
 
-        let mut best = pool.best_transactions(BaseOrdering::coinbase_tip(), 10);
+        let mut best = pool.best_transactions(BaseOrdering::coinbase_tip(), 10, false);
         assert_eq!(best.next().map(|transaction| *transaction.hash()), Some(high_tip_hash));
     }
 
@@ -2879,7 +2947,7 @@ mod tests {
         pool.insert_validated(older, 0).unwrap();
         pool.insert_validated(newer, 0).unwrap();
 
-        let mut best = pool.best_transactions(BaseOrdering::coinbase_tip(), 10);
+        let mut best = pool.best_transactions(BaseOrdering::coinbase_tip(), 10, false);
         assert_eq!(best.next().map(|transaction| *transaction.hash()), Some(older_hash));
     }
 
@@ -3246,8 +3314,9 @@ mod tests {
         pool.mark_shared_lane(lane);
 
         assert!(pool.ready_nonce_free.is_empty());
-        assert_eq!(pool.shared_lanes_pending_end().collect::<Vec<_>>(), vec![(lane, 1)]);
-        let best = pool.best_transactions(BaseOrdering::coinbase_tip(), 0).collect::<Vec<_>>();
+        assert_eq!(pool.shared_lanes_pending_end(false).collect::<Vec<_>>(), vec![(lane, 1)]);
+        let best =
+            pool.best_transactions(BaseOrdering::coinbase_tip(), 0, false).collect::<Vec<_>>();
         assert_eq!(best.len(), 2);
         assert!(best.iter().any(|transaction| *transaction.hash() == root_hash));
     }
@@ -3280,15 +3349,15 @@ mod tests {
             DormancyClassification::Dormant { predicate: blocker, release_block: Some(10) };
         pool.install_dormancy(vec![(Arc::clone(&root), dormant)]);
 
-        assert_eq!(pool.best_transactions(BaseOrdering::coinbase_tip(), 0).count(), 0);
-        assert_eq!(pool.shared_lanes_pending_end().count(), 0);
+        assert_eq!(pool.best_transactions(BaseOrdering::coinbase_tip(), 0, false).count(), 0);
+        assert_eq!(pool.shared_lanes_pending_end(false).count(), 0);
         assert_eq!(pool.lane_pending_end(&lane), None);
         assert_eq!(pool.pending_and_queued_txn_count(), (0, 2));
         assert_eq!(pool.lane_cursor(&lane), Some(LaneCursor::at(0)));
 
-        pool.discard_dormancy();
-        assert_eq!(pool.best_transactions(BaseOrdering::coinbase_tip(), 0).count(), 2);
-        assert_eq!(pool.shared_lanes_pending_end().collect::<Vec<_>>(), vec![(lane, 2)]);
+        pool.discard_dormancy(DormancyDiscardReason::Reorg);
+        assert_eq!(pool.best_transactions(BaseOrdering::coinbase_tip(), 0, false).count(), 2);
+        assert_eq!(pool.shared_lanes_pending_end(false).collect::<Vec<_>>(), vec![(lane, 2)]);
         assert_eq!(pool.pending_and_queued_txn_count(), (2, 0));
     }
 

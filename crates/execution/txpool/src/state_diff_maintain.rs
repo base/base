@@ -13,7 +13,7 @@ use revm::database::BundleState;
 use tokio_stream::wrappers::{BroadcastStream, errors::BroadcastStreamRecvError};
 use tracing::{debug, warn};
 
-use crate::AccountStateDiff;
+use crate::{AccountStateDiff, DormancyDiscardReason};
 
 /// Why every guarded transaction was flushed in one shot. Both paths are
 /// fail-safe (the guard cannot prove any admission current), but they differ
@@ -57,8 +57,8 @@ pub trait StateDiffInvalidation: Clone + Send + Sync + 'static {
     /// those committing only empty blocks.
     fn advance_dormancy(&self, canonical: &[BlockNumHash]);
 
-    /// Discards the dormancy index, making every dormant validity transaction ready.
-    fn discard_dormancy(&self);
+    /// Discards the dormancy index for `reason`, making every dormant validity transaction ready.
+    fn discard_dormancy(&self, reason: DormancyDiscardReason);
 }
 
 /// Feeds each canonical block's account and storage diff into the pool.
@@ -74,7 +74,8 @@ pub async fn maintain_state_diff_invalidation<P, N>(
             Some(Ok(notification)) => notification,
             Some(Err(BroadcastStreamRecvError::Lagged(missed))) => {
                 let removed = pool.invalidate_all_tracked(InvalidationCause::FeedGap);
-                run_blocking(&pool, StateDiffInvalidation::discard_dormancy).await;
+                run_blocking(&pool, |pool| pool.discard_dormancy(DormancyDiscardReason::FeedGap))
+                    .await;
                 warn!(
                     missed = missed,
                     removed = removed,
@@ -90,7 +91,7 @@ pub async fn maintain_state_diff_invalidation<P, N>(
             // back the reverted segment. Correct targeted handling would need
             // both key sets, so conservatively flush this exceptional path.
             let removed = pool.invalidate_all_tracked(InvalidationCause::Reorg);
-            run_blocking(&pool, StateDiffInvalidation::discard_dormancy).await;
+            run_blocking(&pool, |pool| pool.discard_dormancy(DormancyDiscardReason::Reorg)).await;
             warn!(
                 removed = removed,
                 "canonical chain reorged; invalidated all guarded transactions"

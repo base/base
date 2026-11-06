@@ -117,6 +117,19 @@ base_metrics::define_metrics! {
     dormant_wakes: histogram,
     #[describe("Dormant validity transactions the canary found runnable and woke")]
     false_dormancy: counter,
+    #[describe("Times the validity pool discarded its dormancy index, making every dormant transaction ready, labeled by reason")]
+    #[label(
+        name = "reason",
+        default = [
+            "parent_mismatch",
+            "abandoned",
+            "superseded",
+            "canonical_mismatch",
+            "reorg",
+            "feed_gap"
+        ]
+    )]
+    dormancy_discards: counter,
 }
 
 impl ValidityPoolMetrics {

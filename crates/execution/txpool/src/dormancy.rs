@@ -131,6 +131,37 @@ impl DormancyClassification {
     }
 }
 
+/// Why the validity pool discarded its dormancy index, making every dormant transaction ready.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DormancyDiscardReason {
+    /// A build started on a parent other than the tip.
+    ParentMismatch,
+    /// A build ended without sealing a block.
+    Abandoned,
+    /// A build started while another was running.
+    Superseded,
+    /// The canonical block at the tip's height is not the tip.
+    CanonicalMismatch,
+    /// The canonical chain reorged.
+    Reorg,
+    /// The canonical-state feed skipped notifications.
+    FeedGap,
+}
+
+impl DormancyDiscardReason {
+    /// The metric label for this reason.
+    pub const fn as_label(self) -> &'static str {
+        match self {
+            Self::ParentMismatch => "parent_mismatch",
+            Self::Abandoned => "abandoned",
+            Self::Superseded => "superseded",
+            Self::CanonicalMismatch => "canonical_mismatch",
+            Self::Reorg => "reorg",
+            Self::FeedGap => "feed_gap",
+        }
+    }
+}
+
 /// Where a dormant transaction sits in the validity pool.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum DormantSlot {
@@ -172,6 +203,9 @@ pub(crate) struct Dormancy {
     pub snapshots: u64,
     /// The block number of the latest build started.
     pub height: u64,
+    /// A discard requested while a build was running, applied when that build ends so its
+    /// iterator keeps waking what it parked and what its snapshot left out.
+    pub deferred_discard: Option<DormancyDiscardReason>,
     /// Entries without a slot, dropped when their build ends.
     in_build: B256Set,
     /// Discards so far, so a classification can tell the index it read is gone.
@@ -200,6 +234,7 @@ impl Dormancy {
             building: false,
             snapshots: 0,
             height: 0,
+            deferred_discard: None,
             in_build: B256Set::default(),
             discards: 0,
             classifying: None,
