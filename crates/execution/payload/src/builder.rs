@@ -22,7 +22,7 @@ use base_execution_txpool::{
     estimated_da_size::DataAvailabilitySized,
 };
 use base_observability_events::{
-    GlobalTransactionEventWriter, TransactionEventProducer, TransactionEventType, transaction_event,
+    TransactionEventProducer, TransactionEventType, transaction_event,
 };
 use reth_basic_payload_builder::{
     BuildArguments, BuildOutcome, BuildOutcomeKind, MissingPayloadBehaviour, PayloadBuilder,
@@ -67,31 +67,31 @@ macro_rules! emit_native_validity_event {
     ($ctx:expr, $event_type:expr, $tx_hash:expr, $attempt:expr, {
         $( $data_name:expr => $data_value:expr ),* $(,)?
     }) => {
-        if GlobalTransactionEventWriter::get().is_some() {
-            if let Err(error) = transaction_event!(
-                producer: TransactionEventProducer::BaseBuilder,
-                event_type: $event_type,
-                tx_hash: $tx_hash,
-                block_number: $ctx.parent().number().saturating_add(1),
-                payload_id: $ctx.payload_id().to_string(),
-                id: {
-                    "validity_consideration_index" => $attempt,
-                },
-                data: {
-                    "builder_mode" => "native",
-                    "source_queue" => "txpool_best",
-                    "parent_hash" => format!("{:#x}", $ctx.parent().hash()),
-                    $( $data_name => $data_value ),*
-                },
-            ) {
-                warn!(
-                    target: "payload_builder",
-                    error = %error,
-                    event_type = %$event_type,
-                    tx_hash = ?$tx_hash,
-                    "failed to enqueue native builder validity transaction event"
-                );
-            }
+        // `transaction_event!` builds the event only once a writer is available and its gate
+        // is open, so no field is formatted for a disabled or inactive builder.
+        if let Err(error) = transaction_event!(
+            producer: TransactionEventProducer::BaseBuilder,
+            event_type: $event_type,
+            tx_hash: $tx_hash,
+            block_number: $ctx.parent().number().saturating_add(1),
+            payload_id: $ctx.payload_id().to_string(),
+            id: {
+                "validity_consideration_index" => $attempt,
+            },
+            data: {
+                "builder_mode" => "native",
+                "source_queue" => "txpool_best",
+                "parent_hash" => format!("{:#x}", $ctx.parent().hash()),
+                $( $data_name => $data_value ),*
+            },
+        ) {
+            warn!(
+                target: "payload_builder",
+                error = %error,
+                event_type = %$event_type,
+                tx_hash = ?$tx_hash,
+                "failed to enqueue native builder validity transaction event"
+            );
         }
     };
 }

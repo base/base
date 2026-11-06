@@ -10,6 +10,7 @@ Block builder library for Base. Wires the native Base payload builder from `base
 - **`NativePayloadServiceBuilder`**: Spawns the native payload builder behind reth's basic payload job generator, building one full block per payload job.
 - **`BuilderConfig`**: Builder settings shared between the payload service and the RPC extensions, including DA and gas limits, validity-predicate tuning, resource metering, and the rejection cache.
 - **`BuilderApiExtension`**: Registers the `base_insertValidatedTransaction` RPC endpoint.
+- **`SequencerLeadershipProbe`**: Polls the consensus node's `admin_sequencerActive` and opens the transaction event gate only while this sequencer is the active leader, so inactive builders do not journal the transactions every builder receives.
 - **`test_utils`**: Local node instances, chain drivers, transaction builders, and pool observers for integration tests (behind the `test-utils` feature).
 
 ## Features
