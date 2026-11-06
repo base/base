@@ -18,7 +18,7 @@ use base_common_consensus::{BaseTransaction, DepositReceiptExt, Predeploys};
 use base_common_evm::{BaseSpecId, L1BlockInfo, MeteredGas};
 use base_execution_eip8130::IntrinsicGas;
 use base_execution_txpool::{
-    BasePooledTx, GuardMetrics, ParkableTransactionPool, PredicateContext,
+    BasePooledTx, GuardMetrics, ParkableTransactionPool, PredicateContext, ValidityPredicate,
     estimated_da_size::DataAvailabilitySized,
 };
 use base_observability_events::{
@@ -1117,7 +1117,11 @@ where
             if has_validity_predicates {
                 validity_consideration_index += 1;
             }
-            if tx.validity_conditions().flashblock().is_present() {
+            if tx
+                .validity_conditions()
+                .submitted()
+                .any(|predicate| matches!(predicate, ValidityPredicate::FlashblockIndex { .. }))
+            {
                 evaluation_counters.increment(ValidityEvaluationOutcome::Unsupported, 1);
                 emit_native_validity_event!(
                     self,

@@ -60,14 +60,6 @@ impl ValidityPredicateKey {
         {
             return Ok(Some((ValidityPredicate::BlockNumber { op, value }, Self::BlockNumber)));
         }
-        if let Some((op, value)) =
-            predicates.flashblock().first_unsatisfied(U256::from(context.flashblock_index))
-        {
-            return Ok(Some((
-                ValidityPredicate::FlashblockIndex { op, value },
-                Self::FlashblockIndex,
-            )));
-        }
         for predicate in predicates.state_predicates() {
             if !predicate.matches(db, context)? {
                 return Ok(Some((predicate.clone(), Self::for_predicate(predicate))));
@@ -846,10 +838,6 @@ mod tests {
         let state = balance(Address::ZERO, ValidityOperator::Equal, 1);
         let conditions = ValidityConditions::new(vec![
             state,
-            ValidityPredicate::FlashblockIndex {
-                op: ValidityOperator::Equal,
-                value: U256::from(2),
-            },
             ValidityPredicate::BlockNumber {
                 op: ValidityOperator::GreaterThan,
                 value: U256::from(9),
@@ -867,58 +855,14 @@ mod tests {
                 value: U256::from(15),
             },
         ]);
-        for (block_number, flashblock_index, blocker, op, value, expired) in [
-            (
-                9,
-                1,
-                ValidityPredicateKey::BlockNumber,
-                ValidityOperator::GreaterThanOrEqual,
-                10,
-                false,
-            ),
-            (15, 1, ValidityPredicateKey::BlockNumber, ValidityOperator::NotEqual, 15, false),
-            (21, 1, ValidityPredicateKey::BlockNumber, ValidityOperator::LessThanOrEqual, 20, true),
-            (
-                10,
-                1,
-                ValidityPredicateKey::FlashblockIndex,
-                ValidityOperator::GreaterThanOrEqual,
-                2,
-                false,
-            ),
-            (
-                10,
-                3,
-                ValidityPredicateKey::FlashblockIndex,
-                ValidityOperator::LessThanOrEqual,
-                2,
-                false,
-            ),
-            (
-                20,
-                3,
-                ValidityPredicateKey::FlashblockIndex,
-                ValidityOperator::LessThanOrEqual,
-                2,
-                true,
-            ),
-            // A later block resets the flashblock index, so a missed flashblock is not terminal.
-            (
-                11,
-                1,
-                ValidityPredicateKey::FlashblockIndex,
-                ValidityOperator::GreaterThanOrEqual,
-                2,
-                false,
-            ),
+        for (block_number, op, value, expired) in [
+            (9, ValidityOperator::GreaterThanOrEqual, 10, false),
+            (15, ValidityOperator::NotEqual, 15, false),
+            (21, ValidityOperator::LessThanOrEqual, 20, true),
         ] {
-            let context = PredicateContext { block_number, flashblock_index };
-            let predicate = match blocker {
-                ValidityPredicateKey::BlockNumber => {
-                    ValidityPredicate::BlockNumber { op, value: U256::from(value) }
-                }
-                _ => ValidityPredicate::FlashblockIndex { op, value: U256::from(value) },
-            };
+            let context = PredicateContext { block_number, flashblock_index: 1 };
+            let blocker = ValidityPredicateKey::BlockNumber;
+            let predicate = ValidityPredicate::BlockNumber { op, value: U256::from(value) };
             let mut db = RecordingDatabase { fail_on: Some(1), ..Default::default() };
             assert_eq!(
                 ValidityPredicateEvaluation::evaluate(&conditions, &mut db, &context),
