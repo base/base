@@ -86,12 +86,18 @@ where
 /// occupied and [`ParkableBestTransactions::promote`] returns them to priority competition.
 pub trait BestTransactionsHold<T: PoolTransaction>: Send + Sync {
     /// Returns whether `transaction` is parked instead of yielded. Called once per source candidate
-    /// that carries validity predicates and is not blocked by its lane.
+    /// that carries validity predicates and is not blocked by its lane, and for eligible lane roots
+    /// when the iterator is created.
     fn hold(&mut self, transaction: &ValidPoolTransaction<T>) -> bool;
 
+    /// Returns false when nothing is resting, so iterator creation can skip asking about roots.
+    fn has_candidates(&self) -> bool {
+        true
+    }
+
     /// Records the time one `next` call spent from its first hold until it found a candidate,
-    /// which includes advancing past further held transactions. Calls that hold nothing record
-    /// nothing.
+    /// which includes advancing past further held transactions, or the time spent holding lane roots
+    /// at creation. Calls that hold nothing record nothing.
     fn record_duration(&mut self, duration: Duration);
 
     /// Returns whether the build driving the iterator has stopped selecting transactions.
@@ -107,6 +113,14 @@ pub trait BestTransactionsHold<T: PoolTransaction>: Send + Sync {
 /// Number of held transactions a parking iterator advances past between checks of
 /// [`BestTransactionsHold::is_interrupted`], so the check stays off the per-transaction path.
 pub const HOLD_INTERRUPT_INTERVAL: u32 = 256;
+
+/// Yields the run of a root the source held at creation; see
+/// [`ParkedBestTransactions::with_source_held`].
+pub type PromoteSourceHeld<T, I> = fn(&mut I, TxHash) -> Option<Vec<Arc<ValidPoolTransaction<T>>>>;
+
+/// Takes a root the source held at creation, for discarding; see
+/// [`ParkedBestTransactions::with_source_held`].
+pub type TakeSourceHeld<T, I> = fn(&mut I, TxHash) -> Option<Arc<ValidPoolTransaction<T>>>;
 
 /// A transaction pool that can create lane-aware parkable best iterators.
 pub trait ParkableTransactionPool: TransactionPool
@@ -142,6 +156,8 @@ where
     ready: HashMap<TxHash, (Arc<ValidPoolTransaction<T>>, Option<BestTransactionLane>)>,
     ready_heap: BinaryHeap<(BestTransactionPriority<O::PriorityValue>, TxHash)>,
     hold: Option<Box<dyn BestTransactionsHold<T>>>,
+    promote_held: PromoteSourceHeld<T, I>,
+    take_held: TakeSourceHeld<T, I>,
 }
 
 impl<T, I, O> std::fmt::Debug for ParkedBestTransactions<T, I, O>
@@ -178,12 +194,26 @@ where
             ready: HashMap::default(),
             ready_heap: BinaryHeap::new(),
             hold: None,
+            promote_held: |_, _| None,
+            take_held: |_, _| None,
         }
     }
 
     /// Parks the candidates `hold` holds before they are yielded.
     pub fn with_hold(mut self, hold: Option<Box<dyn BestTransactionsHold<T>>>) -> Self {
         self.hold = hold;
+        self
+    }
+
+    /// Lets `promote` and `discard_parked` reach roots that `inner` held at creation, which were
+    /// never yielded so are not in `parked`.
+    pub fn with_source_held(
+        mut self,
+        promote_held: PromoteSourceHeld<T, I>,
+        take_held: TakeSourceHeld<T, I>,
+    ) -> Self {
+        self.promote_held = promote_held;
+        self.take_held = take_held;
         self
     }
 
@@ -356,6 +386,41 @@ where
         }
         transaction
     }
+
+    /// Readies a root `inner` held at creation, queued behind any claimant of its lane, with the
+    /// rest of its run buffered behind it.
+    fn promote_source_held(&mut self, transaction_hash: TxHash) -> bool {
+        let Some(run) = (self.promote_held)(&mut self.inner, transaction_hash) else {
+            return false;
+        };
+        // The cached head may claim the root's lane, and must be ranked against the successors
+        // `inner` releases behind the run, so it competes from the ready set.
+        if let Some((head, lane)) = self.source_head.take() {
+            let head = self.record_yielded(head, lane);
+            self.push_ready(head, lane);
+        }
+        let mut run = run.into_iter();
+        let Some(root) = run.next() else { return false };
+        let lane = BestTransactionLane::for_transaction(&root);
+        match lane.map(|lane| self.lanes.entry(lane)) {
+            Some(Entry::Occupied(mut entry)) => match entry.get_mut() {
+                BestTransactionLaneState::Invalid => return false,
+                BestTransactionLaneState::Occupied(buffered) => {
+                    buffered.push_back(root);
+                    buffered.extend(run);
+                }
+            },
+            Some(Entry::Vacant(vacant)) => {
+                // Not `collect()`: the in-place path can leave an empty deque's head past its buffer.
+                let mut buffered = VecDeque::with_capacity(run.len());
+                buffered.extend(run);
+                vacant.insert(BestTransactionLaneState::Occupied(buffered));
+                self.push_ready(root, lane);
+            }
+            None => self.push_ready(root, None),
+        }
+        true
+    }
 }
 
 impl<T, I, O> Iterator for ParkedBestTransactions<T, I, O>
@@ -422,7 +487,7 @@ where
 
     fn promote(&mut self, transaction_hash: TxHash) -> bool {
         let Some((transaction, lane)) = self.parked.remove(&transaction_hash) else {
-            return false;
+            return self.promote_source_held(transaction_hash);
         };
         if self.is_lane_invalid(lane) {
             return false;
@@ -436,7 +501,11 @@ where
         transaction_hash: TxHash,
         kind: InvalidPoolTransactionError,
     ) -> bool {
-        let Some((transaction, lane)) = self.parked.remove(&transaction_hash) else {
+        let Some((transaction, lane)) = self.parked.remove(&transaction_hash).or_else(|| {
+            let root = (self.take_held)(&mut self.inner, transaction_hash)?;
+            let lane = BestTransactionLane::for_transaction(&root);
+            Some((root, lane))
+        }) else {
             return false;
         };
         if self.is_lane_invalid(lane) {

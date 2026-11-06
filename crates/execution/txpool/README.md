@@ -167,9 +167,10 @@ until the merge has yielded the transaction before it, and standard transactions
 queued right behind a validity run are released by the merge once that run has
 been yielded, so a predicate-delayed transaction does not keep its descendants out
 of the same block. The lanes that straddle stores are indexed incrementally
-(`TwoDNoncePool::lanes_ahead_of_state`, `shared_lanes_pending_end`), so building
-the iterator costs those lanes plus each store's own snapshot, not the pool sizes;
-`benches/best_transactions.rs` measures it on a large pool.
+(`TwoDNoncePool::lanes_ahead_of_state`, `shared_lanes_pending_end`), so cross-store
+bookkeeping visits those indexed lanes rather than scanning both stores. The validity
+snapshot still scans its lanes and copies references to their pending transactions;
+`benches/best_transactions.rs` measures iterator construction on a large pool.
 
 Capacity defaults to reth's pending subpool limit (`--txpool.pending-max-count`,
 `--txpool.pending-max-size`, `--txpool.max-account-slots`) and is overridable with
@@ -179,6 +180,42 @@ Occupancy is published as `txpool.validity.pool_transactions` and
 `txpool.validity.pool_bytes`, evictions as `txpool.validity.evicted`, and
 replacements that crossed a store boundary as
 `txpool.validity.cross_store_replaced{direction}`.
+
+#### Resting transactions
+
+A validity transaction whose predicate failed in a build rests until a commit writes the state
+it watches or a new block changes its condition; a wake asks for a recheck, not inclusion.
+Expiry, removal and replacement drop a rest instead of waking it.
+
+Pulling every resting transaction through the priority walk each build, only to park it again,
+would make selection cost grow with the resting set. So when
+`best_transactions_with_attributes_and_parking` gets a `BestTransactionsHold` that reports
+resting transactions, it asks the hold about the validity pool's lane roots once, after
+releasing the pool's locks and before ranking. A root (a lane's first pending transaction) is
+asked only if it has validity predicates, is priced at the base fee, and is nonce-free or starts
+at canonical state rather than behind another store's run (`lanes_ahead_of_state`). A held root
+and the rest of its lane never enter the heap. Everything else, including roots left unasked
+when the build is interrupted, takes the existing path: the parking adapter checks each
+candidate it reaches.
+
+```mermaid
+stateDiagram-v2
+    state "Checked by the iterator" as Checked
+    state "Resting: out of the priority walk" as Resting
+    [*] --> Resting: known rest at iterator creation
+    [*] --> Checked: not held
+    Checked --> Resting: predicate unsatisfied
+    Checked --> Included: predicates satisfied, execution accepted
+    Resting --> Checked: woken by a commit or a new block
+    Resting --> Removed: expiry, removal or replacement
+```
+
+`promote` readies a root held at creation behind any claimant of its lane (a member already
+yielded or parked, or the adapter's cached next candidate), with the rest of its run buffered
+behind it and bridged standard successors released after it commits. `discard_parked`
+invalidates its lane. Each iterator still snapshots the pool, so this saves the walk, not the
+snapshot. Asking at creation marks held roots as seen for that block, so they stay retained
+rather than aging out.
 
 ## Usage
 

@@ -7,7 +7,7 @@ use std::{
 };
 
 use alloy_primitives::{
-    U256,
+    TxHash, U256,
     map::{HashMap, HashSet},
 };
 use reth_primitives_traits::transaction::error::InvalidTransactionError;
@@ -31,6 +31,11 @@ pub(crate) trait MergeSource<T: BasePooledTx>:
 
     /// Offers the members of a held lane again, from where it stopped.
     fn release_lane(&mut self, _lane_id: &LaneId) {}
+
+    /// Removes and returns the held run whose root is `transaction_hash`.
+    fn take_held(&mut self, _transaction_hash: &TxHash) -> Option<HeldRun<T>> {
+        None
+    }
 }
 
 impl<T: BasePooledTx> MergeSource<T>
@@ -39,6 +44,9 @@ impl<T: BasePooledTx> MergeSource<T>
 }
 
 type BoxedBest<T> = Box<dyn MergeSource<T>>;
+
+/// A held root and the rest of its pending run, in nonce order.
+pub type HeldRun<T> = (Arc<ValidPoolTransaction<T>>, Vec<Arc<ValidPoolTransaction<T>>>);
 
 /// Standard transactions a standard store holds queued directly behind a
 /// validity lane's pending run, per lane and in nonce order. Their store never
@@ -321,6 +329,42 @@ where
         };
         self.deferred.release_after(lane_id, nonce, priority_of);
         self.bridged.release_after(lane_id, nonce, priority_of);
+    }
+
+    /// Takes a held validity run and yields it up to its first underpriced
+    /// member, which invalidates the lane. `None` if the hash is not held or
+    /// its lane is invalid.
+    pub(crate) fn promote_held(
+        &mut self,
+        transaction_hash: TxHash,
+    ) -> Option<Vec<Arc<ValidPoolTransaction<T>>>> {
+        let (root, tail) = self.take_live_held(transaction_hash)?;
+        let mut run = Vec::with_capacity(1 + tail.len());
+        for member in std::iter::once(root).chain(tail) {
+            if member.effective_tip_per_gas(self.base_fee).is_none() {
+                self.mark_invalid(&member, InvalidPoolTransactionError::Underpriced);
+                break;
+            }
+            self.record_yielded(&member);
+            run.push(member);
+        }
+        (!run.is_empty()).then_some(run)
+    }
+
+    /// Takes a held validity root without yielding anything; the caller
+    /// discards it. `None` as for [`Self::promote_held`].
+    pub(crate) fn take_held_root(
+        &mut self,
+        transaction_hash: TxHash,
+    ) -> Option<Arc<ValidPoolTransaction<T>>> {
+        self.take_live_held(transaction_hash).map(|(root, _)| root)
+    }
+
+    fn take_live_held(&mut self, transaction_hash: TxHash) -> Option<HeldRun<T>> {
+        let held = self.sources[PoolStore::Validity.index()].best.take_held(&transaction_hash)?;
+        let invalid =
+            Self::slot(&held.0).is_some_and(|(lane_id, _)| self.invalid_lanes.contains(&lane_id));
+        (!invalid).then_some(held)
     }
 
     fn pop_best(&mut self) -> Option<Arc<ValidPoolTransaction<T>>> {
