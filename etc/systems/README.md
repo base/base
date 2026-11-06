@@ -335,8 +335,9 @@ replay mutates `--datadir`; restore it again before another run.
 When a call returns a status other than `VALID`, the replay also writes
 `<output-dir>/first-divergence.json`: the engine call, the returned status with its validation
 error, the exported block with its engine payload, and the files Reth's witness invalid-block hook
-wrote for that block under `<datadir>/invalid_block_hooks/witness/`. The hook runs only for blocks
-the node executed, so a block rejected before execution (for example on a hash mismatch) has none.
+wrote for that block, copied from `<datadir>/invalid_block_hooks/witness/` to
+`<output-dir>/invalid-block-hooks/`. The hook runs only for blocks the node executed, so a block
+rejected before execution (for example on a hash mismatch) has none.
 
 ## Measure DA bytes for a block range
 

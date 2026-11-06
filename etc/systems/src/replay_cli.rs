@@ -52,6 +52,8 @@ pub const REPLAY_METRICS_FILE: &str = "metrics-validator.json";
 pub const FIRST_DIVERGENCE_FILE: &str = "first-divergence.json";
 /// Where Reth's witness invalid-block hook writes inside the datadir.
 const WITNESS_HOOK_DIR: &str = "invalid_block_hooks/witness";
+/// Where the hook's files for the rejected block are copied inside `--output-dir`.
+const WITNESS_COPY_DIR: &str = "invalid-block-hooks";
 
 /// Placeholder trusted peer for the replay node. [`InProcessClient`] always configures one
 /// trusted peer; the replay node must not sync from anyone, so it gets an unreachable one. The
@@ -221,25 +223,31 @@ pub struct FirstDivergence {
     pub status: PayloadStatus,
     /// The rejected block and its engine payload.
     pub block: ExportedBlock,
-    /// Files the witness invalid-block hook wrote for the block; empty when the node rejected
-    /// it without executing it.
+    /// Copies in the output directory of the files the witness invalid-block hook wrote for the
+    /// block; empty when the node rejected it without executing it.
     pub invalid_block_hook_files: Vec<PathBuf>,
 }
 
 impl FirstDivergence {
-    /// Collects the witness hook files for the block from `datadir` and writes
-    /// `first-divergence.json` to `output_dir`.
+    /// Copies the witness hook files for the block from `datadir` into `output_dir`, since the
+    /// datadir is restored before the next run, and writes `first-divergence.json` there.
     pub fn write(&mut self, output_dir: &Path, datadir: &Path) -> Result<PathBuf> {
         // Reth names every file it writes for a block `<number>_<hash>.*`.
         let prefix = format!("{}_{}", self.block.number, self.block.hash);
-        self.invalid_block_hook_files = fs::read_dir(datadir.join(WITNESS_HOOK_DIR))
-            .into_iter()
-            .flatten()
-            .filter_map(|entry| Some(entry.ok()?.path()))
-            .filter(|path| {
-                path.file_name().is_some_and(|name| name.to_string_lossy().starts_with(&prefix))
-            })
-            .collect();
+        let copy_dir = output_dir.join(WITNESS_COPY_DIR);
+        for entry in fs::read_dir(datadir.join(WITNESS_HOOK_DIR)).into_iter().flatten() {
+            let path = entry?.path();
+            let Some(name) = path.file_name() else { continue };
+            if !name.to_string_lossy().starts_with(&prefix) {
+                continue;
+            }
+            fs::create_dir_all(&copy_dir)
+                .wrap_err_with(|| format!("failed to create {}", copy_dir.display()))?;
+            let copy = copy_dir.join(name);
+            fs::copy(&path, &copy)
+                .wrap_err_with(|| format!("failed to copy {}", path.display()))?;
+            self.invalid_block_hook_files.push(copy);
+        }
         self.invalid_block_hook_files.sort();
         let path = output_dir.join(FIRST_DIVERGENCE_FILE);
         LocalBenchmarkArgs::write_json(&path, self, "first divergence")?;
@@ -391,8 +399,11 @@ impl ReplayBenchmarkArgs {
         if let Some(divergence) =
             run.error.as_mut().and_then(|error| error.downcast_mut::<FirstDivergence>())
         {
-            let path = divergence.write(&self.output_dir, client.datadir())?;
-            println!("first divergence: {}", path.display());
+            // Keep going on failure so `replay-result.json` still records the rejection.
+            match divergence.write(&self.output_dir, client.datadir()) {
+                Ok(path) => println!("first divergence: {}", path.display()),
+                Err(error) => warn!(?error, "failed to write first divergence"),
+            }
         }
         let replayed_all = run.error.is_none();
         let proofs = match probe {
@@ -759,6 +770,11 @@ impl ReplayBenchmarkArgs {
                     .wrap_err_with(|| format!("failed to remove stale {}", stale.display()))?;
             }
         }
+        let stale = path.join(WITNESS_COPY_DIR);
+        if stale.exists() {
+            fs::remove_dir_all(&stale)
+                .wrap_err_with(|| format!("failed to remove stale {}", stale.display()))?;
+        }
         Ok(())
     }
 
@@ -984,7 +1000,13 @@ mod tests {
         assert_eq!(written["status"]["validationError"], "state root mismatch");
         assert_eq!(written["block"]["number"], 7);
         assert_eq!(written["block"]["envelope"]["executionPayload"]["blockHash"], hash.to_string());
-        assert_eq!(written["invalidBlockHookFiles"], serde_json::json!([diff, witness]));
+        let copies = output.path().join("invalid-block-hooks");
+        let diff_copy = copies.join(diff.file_name().unwrap());
+        let witness_copy = copies.join(witness.file_name().unwrap());
+        assert_eq!(written["invalidBlockHookFiles"], serde_json::json!([diff_copy, witness_copy]));
+        assert_eq!(fs::read_dir(&copies).unwrap().count(), 2);
+        drop(datadir);
+        assert_eq!(fs::read_to_string(witness_copy).unwrap(), "{}");
         assert!(error.to_string().contains("newPayload returned Invalid"));
     }
 
