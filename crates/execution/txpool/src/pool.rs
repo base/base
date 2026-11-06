@@ -842,7 +842,7 @@ where
             block_expiry.remove(&replaced);
         }
         if let Some(last_valid_block) = last_valid_block {
-            block_expiry.insert_with_flashblock(hash, last_valid_block, None);
+            block_expiry.insert(hash, last_valid_block);
         }
     }
 
