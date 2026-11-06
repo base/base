@@ -137,6 +137,6 @@ mod tests {
             panic!("expected bootnode command");
         };
         assert_eq!(bootnode.consensus.listen_tcp_port, 9222);
-        assert_eq!(bootnode.execution.v4_addr.to_string(), "0.0.0.0:30301");
+        assert_eq!(bootnode.execution.addr.to_string(), "0.0.0.0:30301");
     }
 }
