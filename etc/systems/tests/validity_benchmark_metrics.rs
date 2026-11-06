@@ -11,7 +11,6 @@
 //! would never populate the resting series.
 
 use alloy_signer_local::PrivateKeySigner;
-use base_builder_core::RestingPredicateMode;
 use base_load_tests::{
     LoadTestExecutor, LoadTestRunHooks, LoadTestRunOptions, MetricsSummary, SubmitCohortLabel,
     TestConfig,
@@ -54,7 +53,6 @@ async fn validity_resting_workload_populates_benchmark_series() -> Result<()> {
     let stack = SystemTestStackBuilder::new()
         .with_devnet_config(devnet)
         .with_base_denim_activation_block(0)
-        .with_resting_predicate_mode(RestingPredicateMode::Enforce)
         .build()
         .await?;
 

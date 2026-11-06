@@ -33,7 +33,6 @@ const VISUALIZER_METRICS: &[&str] = &[
     "reth_base_builder_resting_predicate_carry_released_total_reason_unseen",
     "reth_base_builder_resting_predicate_carry_resets_total",
     "reth_base_builder_resting_predicate_parked_total",
-    "reth_base_builder_resting_predicate_shadow_mismatches_total",
     "reth_base_builder_payload_transaction_simulation_duration_avg",
     "reth_base_builder_sequencer_tx_duration_avg",
     "reth_base_builder_state_root_calculation_duration_avg",

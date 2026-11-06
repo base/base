@@ -18,7 +18,6 @@ use alloy_provider::RootProvider;
 use alloy_rpc_client::RpcClient;
 use alloy_rpc_types_engine::JwtSecret;
 use alloy_signer_local::PrivateKeySigner;
-use base_builder_core::RestingPredicateMode;
 #[cfg(feature = "upgrade-signal")]
 use base_common_genesis::{BaseUpgrade, RollupConfig, RuntimeUpgradeRegistry, UpgradeActivation};
 use base_common_network::Base;
@@ -398,7 +397,6 @@ pub struct SystemTestStackBuilder {
     output_dir: Option<PathBuf>,
     tx_forwarding_config: Option<TxForwardingConfig>,
     validity_signature_mode: ValiditySignatureMode,
-    resting_predicate_mode: RestingPredicateMode,
     verifier_l1_confs: u64,
     force_batch_submission: bool,
     client_consensus_mode: L2ClientConsensusMode,
@@ -605,12 +603,6 @@ impl SystemTestStackBuilder {
     /// Sets the same staged validity signature policy on forwarding ingress and the builder.
     pub const fn with_validity_signature_mode(mut self, mode: ValiditySignatureMode) -> Self {
         self.validity_signature_mode = mode;
-        self
-    }
-
-    /// Sets how the builder tracks validity transactions whose predicates did not match.
-    pub const fn with_resting_predicate_mode(mut self, mode: RestingPredicateMode) -> Self {
-        self.resting_predicate_mode = mode;
         self
     }
 
@@ -937,7 +929,6 @@ impl SystemTestStackBuilder {
             container_config: l2_container_config,
             tx_forwarding_config: self.tx_forwarding_config,
             validity_signature_mode: self.validity_signature_mode,
-            resting_predicate_mode: self.resting_predicate_mode,
             verifier_l1_confs: self.verifier_l1_confs,
             force_batch_submission: self.force_batch_submission,
             client_consensus_mode: self.client_consensus_mode,
