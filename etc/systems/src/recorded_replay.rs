@@ -185,9 +185,9 @@ impl RecordedReplay {
         Ok(())
     }
 
-    /// Recorded message files in recorded order. Files share a millisecond often; within one,
-    /// payloads go first because a payload depends only on its parent's payload, while a
-    /// forkchoice update to it needs it inserted.
+    /// Recorded message files in recorded order. Files often share a millisecond; within one,
+    /// payloads go first because a payload needs only its parent inserted, while a forkchoice
+    /// update may need a payload from the same millisecond.
     pub fn message_files(store_dir: &Path) -> Result<Vec<PathBuf>> {
         let mut files = Vec::new();
         for entry in fs::read_dir(store_dir)
