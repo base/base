@@ -130,8 +130,9 @@ async fn validity_resting_workload_populates_benchmark_series() -> Result<()> {
     // failed body already dropped the handle, aborting the mutator; the stack still tears down.
     let (summary, snapshot, mutator) = match result {
         Ok(parts) => parts,
+        // Report the body's error, not a teardown failure on top of it.
         Err(error) => {
-            stack.shutdown().await?;
+            let _ = stack.shutdown().await;
             return Err(error);
         }
     };
