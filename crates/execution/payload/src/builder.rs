@@ -15,7 +15,7 @@ use alloy_rpc_types_debug::ExecutionWitness;
 use alloy_rpc_types_engine::PayloadId;
 use base_common_chains::{BaseFeature, Upgrades};
 use base_common_consensus::{BaseTransaction, DepositReceiptExt, Predeploys};
-use base_common_evm::{BaseSpecId, L1BlockInfo};
+use base_common_evm::{BaseSpecId, L1BlockInfo, MeteredGas};
 use base_execution_eip8130::IntrinsicGas;
 use base_execution_txpool::{
     BasePooledTx, GuardMetrics, ParkableTransactionPool, PredicateContext,
@@ -1557,6 +1557,12 @@ where
                     return Err(PayloadBuilderError::EvmExecutionError(Box::new(err)));
                 }
             };
+            // Taken right after `transact` returns and before anything else executes on this
+            // thread: the gas this transaction metered, for the accepted event. `None` only if the
+            // transaction never reached settlement, which an included user transaction always
+            // does; the event then reports `null` rather than a figure that would pass for a
+            // transaction using its whole limit.
+            let metered_gas = MeteredGas::take();
 
             info.cumulative_gas_used += gas_output.tx_gas_used();
             info.cumulative_da_bytes_used += tx_da_size;
@@ -1676,13 +1682,24 @@ where
                 miner_fee as f64,
             );
             if has_validity_predicates {
+                if metered_gas.is_none() {
+                    warn!(
+                        target: "payload_builder",
+                        tx_hash = %tx_hash,
+                        "executed transaction published no metered gas"
+                    );
+                }
                 emit_native_validity_event!(
                     self,
                     TransactionEventType::BuilderAccepted,
                     tx_hash,
                     validity_consideration_index,
                     {
-                        "gas_used" => gas_output.tx_gas_used(),
+                        "tx_gas_limit" => tx.gas_limit(),
+                        "gas_used" => gas_used,
+                        "metered_gas_used" => metered_gas.map(|metered| metered.gas_used),
+                        "payer_auth_gas_reserved" =>
+                            metered_gas.and_then(|metered| metered.payer_auth_gas_reserved),
                     }
                 );
             }

@@ -88,7 +88,7 @@ use revm::{
 use crate::{
     BaseContext, BaseContextTr, BaseEvm, BaseFeature, BaseHaltReason, BaseSpecId, BaseTime,
     BaseTransaction, BaseTransactionError, BaseTxTr, Eip8130CommittedPhases, Eip8130ExecutionMode,
-    L1BlockInfo, handler::BaseHandler,
+    L1BlockInfo, MeteredGas, handler::BaseHandler,
 };
 
 /// EIP-3529 maximum gas refund quotient: refunds are capped at `gas_used / 5`.
@@ -255,6 +255,7 @@ impl Eip8130Executor {
         // the `transact` caller's `take`), so this transaction's result can only
         // ever carry its own count. See [`Eip8130CommittedPhases`] panic safety.
         Eip8130CommittedPhases::clear();
+        MeteredGas::clear();
 
         // The signed envelope is cloned out of the context because the pipeline
         // borrows `ctx` mutably (journal/account access) while needing the
@@ -448,6 +449,14 @@ impl Eip8130Executor {
         // for the next transaction; only the allocation-free result construction
         // below runs before the caller's `take`.
         Eip8130CommittedPhases::set(calls.committed_phases);
+        // Likewise the metered gas, for the builder's transaction events: what this
+        // transaction would have been billed without gas-limit billing, and the
+        // payer-authentication gas the reserved budget adds on top of `gas_limit`.
+        MeteredGas {
+            gas_used: Self::metered_gas_used(&outcome, &calls),
+            payer_auth_gas_reserved: Some(outcome.payer_floor),
+        }
+        .set();
 
         // The gas refund is already folded into `gas_used` (via `net_used` in
         // `settle_fees`), so the `refunded` counter is left 0.
@@ -507,6 +516,11 @@ impl Eip8130Executor {
                 Journal: core::fmt::Debug + JournalExt,
             >,
     {
+        // Simulation settles nothing and publishes no metered gas, but it still runs on
+        // a thread that may later `take()`: clear the slot so an unread value from an
+        // earlier transaction cannot be attributed to a later one.
+        MeteredGas::clear();
+
         // Clone the envelope + optional acting-actor hint before taking a mutable
         // borrow of `ctx` (same pattern as `execute`).
         let (signed, acting_actor_hint, mode) = evm
@@ -2913,6 +2927,8 @@ mod tests {
     struct Settlement {
         success: bool,
         gas_used: u64,
+        /// What the executor published for the builder's events.
+        metered: MeteredGas,
         paid: U256,
         state: EvmState,
         tip: U256,
@@ -2952,12 +2968,14 @@ mod tests {
         payer: Address,
     ) -> Settlement {
         let outcome = evm.transact_raw(into_base_tx(signed)).expect("tx should execute");
+        let metered = MeteredGas::take().expect("a settled transaction publishes its metered gas");
         let balance = |address: Address| {
             outcome.state.get(&address).map(|acc| acc.info.balance).unwrap_or_default()
         };
         Settlement {
             success: outcome.result.is_success(),
             gas_used: outcome.result.tx_gas_used(),
+            metered,
             paid: settlement_funding() - balance(payer),
             tip: balance(BENEFICIARY),
             burned: balance(Predeploys::BASE_FEE_VAULT),
@@ -3019,6 +3037,12 @@ mod tests {
         let billed = settle(BaseUpgrade::Everest, &signed, sender, &contracts);
         assert!(billed.success);
         assert_eq!(billed.gas_used, gas_limit, "result must report the reserved budget");
+        // The metered gas survives for telemetry; a self-paid transaction reserves no
+        // payer authentication, so the reserved budget is the limit alone.
+        assert_eq!(
+            billed.metered,
+            MeteredGas { gas_used: metered.tx_gas_used(), payer_auth_gas_reserved: Some(0) }
+        );
         assert_eq!(billed.tip, U256::from(priority_fee) * U256::from(gas_limit));
         assert_eq!(billed.burned, U256::from(BASE_FEE) * U256::from(gas_limit));
         assert_eq!(billed.operator_fee, operator_fee(gas_limit));
@@ -3060,6 +3084,10 @@ mod tests {
         let billed = settle(BaseUpgrade::Everest, &signed, sender, &contracts);
         assert!(!billed.success, "the call must still revert");
         assert_eq!(billed.gas_used, gas_limit, "result must report the reserved budget");
+        assert_eq!(
+            billed.metered,
+            MeteredGas { gas_used: metered.tx_gas_used(), payer_auth_gas_reserved: Some(0) }
+        );
         assert_eq!(billed.tip, U256::from(priority_fee) * U256::from(gas_limit));
         assert_eq!(billed.burned, U256::from(BASE_FEE) * U256::from(gas_limit));
         assert_eq!(billed.operator_fee, operator_fee(gas_limit));
@@ -3134,6 +3162,56 @@ mod tests {
                 + operator_fee(billed.gas_used)
         );
         assert_eq!(billed.paid, billed.received(), "billing must neither mint nor burn");
+    }
+
+    /// A sponsored transaction publishes, for the builder's events, the gas it would have
+    /// been billed without gas-limit billing (payer authentication included) and the reserved
+    /// payer authentication (`payer_floor`) that the bill adds on top of the declared limit,
+    /// so `gas_used == gas_limit + payer_auth_gas_reserved`.
+    #[test]
+    fn gas_limit_billing_publishes_metered_gas_and_reserved_payer_auth_for_a_sponsored_tx() {
+        let key = signing_key(0x3a);
+        let sender = eoa_address(&key);
+        let payer_key = signing_key(0x3b);
+        let payer = eoa_address(&payer_key);
+        let target = address!("0x00000000000000000000000000000000000000cb");
+        let contracts = [(target, bytes!("00"))];
+
+        let tx = TxEip8130 {
+            payer: Some(Eip8130Constants::OPEN_PAYER),
+            calls: vec![vec![Call { to: target, value: U256::ZERO, data: Bytes::new() }]],
+            ..base_tx()
+        };
+        let gas_limit = tx.gas_limit;
+        let sender_auth = eoa_sig(&key, tx.sender_signature_hash());
+        let payer_auth = eoa_sig(&payer_key, tx.payer_signature_hash(sender));
+        let signed = Eip8130Signed::new(tx, sender_auth, payer_auth);
+        let envelope = BaseTxEnvelope::Eip8130(signed.clone());
+        let encoded: Bytes = alloy_eips::eip2718::Encodable2718::encoded_2718(&envelope).into();
+        let payer_floor =
+            IntrinsicGas::compute(&signed, &encoded, &IntrinsicGasInput::new(sender, true))
+                .expect("intrinsic gas")
+                .payer_floor;
+        assert!(payer_floor > 0, "a sponsored transaction reserves payer authentication");
+
+        let metered = metered_call(
+            &mut settlement_evm(BaseUpgrade::Everest, payer, &contracts),
+            &signed,
+            sender,
+        );
+        assert!(metered.is_success());
+        assert!(metered.tx_gas_used() < gas_limit, "the fixture must leave gas unused");
+
+        let billed = settle(BaseUpgrade::Everest, &signed, payer, &contracts);
+        assert!(billed.success);
+        assert_eq!(billed.gas_used, gas_limit + payer_floor);
+        assert_eq!(
+            billed.metered,
+            MeteredGas {
+                gas_used: metered.tx_gas_used(),
+                payer_auth_gas_reserved: Some(payer_floor)
+            }
+        );
     }
 
     /// With fee charging disabled, as `eth_call`, `eth_estimateGas` and

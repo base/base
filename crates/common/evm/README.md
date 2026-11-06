@@ -36,12 +36,19 @@ high-tip transaction that reverts early costs what the execution it was sized fo
 The rationale, billing rule, implementation boundaries, alternatives, and design decisions are in
 [`docs/guides/GAS_LIMIT_BILLING.md`](../../../docs/guides/GAS_LIMIT_BILLING.md).
 
-The mechanism is one hook: `BaseHandler::refund` spends the transaction's remaining gas and drops
-its refund counter when the feature is active, fee charging is enabled, and the transaction is not
-a deposit. Everything downstream of revm's result (the EIP-7623 floor, `reimburse_caller`, the
-operator-fee refund, `reward_beneficiary`, `ResultGas`) then observes `gas_used == gas_limit`
-without further special cases, so the block executor, the payload builder,
+The mechanism is one hook: `BaseHandler::post_execution` spends the transaction's remaining gas and
+drops its refund counter, between revm's refund step and the result gas, when the feature is active,
+fee charging is enabled, and the transaction is not a deposit. Everything downstream (`ResultGas`,
+the EIP-7623 floor, `reimburse_caller`, the operator-fee refund, `reward_beneficiary`) then observes
+`gas_used == gas_limit` without further special cases, so the block executor, the payload builder,
 and receipts agree by construction.
+
+Immediately before the hook, the handler records the gas the transaction metered (what it would
+have been billed without the feature: spent less the capped EIP-3529 refund, raised to the EIP-7623
+floor) in `MeteredGas`, a per-transaction thread-local slot like `Eip8130CommittedPhases` that the
+caller of `transact` takes right after the call returns. `Eip8130Executor` publishes
+`metered_gas_used` and the reserved `payer_floor` the same way. The payload builder reports it in its
+`BUILDER_ACCEPTED` transaction event; nothing on the consensus path reads it.
 
 | Component | Feature off | Feature on |
 |---|---|---|
