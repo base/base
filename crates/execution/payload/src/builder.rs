@@ -1947,15 +1947,12 @@ mod tests {
     fn native_builder_uncompressed_limit_rejects_validity_and_skips_nonce_lane() {
         let event_capture = TransactionEventCapture::install();
         for timestamp in [DENIM_TIMESTAMP - 1, DENIM_TIMESTAMP] {
-            let transaction = pool_transaction_to(
-                0,
-                Address::repeat_byte(0x6e + timestamp as u8),
-                U256::ZERO,
-            )
-            .with_validity_predicates(vec![ValidityPredicate::BlockNumber {
-                op: ValidityOperator::Equal,
-                value: U256::ONE,
-            }]);
+            let transaction =
+                pool_transaction_to(0, Address::repeat_byte(0x6e + timestamp as u8), U256::ZERO)
+                    .with_validity_predicates(vec![ValidityPredicate::BlockNumber {
+                        op: ValidityOperator::Equal,
+                        value: U256::ONE,
+                    }]);
             let sender = transaction.sender();
             let hash = *transaction.hash();
             let invalid = Arc::new(Mutex::new(Vec::new()));
