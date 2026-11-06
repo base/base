@@ -174,7 +174,8 @@ pub struct ReplayBlockTiming {
 pub struct ReplayResult {
     /// The export manifest the replay verified against.
     pub manifest: ReplayManifest,
-    /// Whether trie updates were checked against a serial computation on every block.
+    /// Whether trie updates were checked against a serial computation on every block. The check
+    /// runs inside `newPayload`, so it adds to `newPayload` latency.
     pub compare_updates: bool,
     /// Paced or unpaced scheduling.
     pub mode: ReplayMode,
@@ -604,7 +605,7 @@ impl ReplayBenchmarkArgs {
     }
 
     /// Fails with a [`FirstDivergence`] unless `status` is `VALID`.
-    pub fn ensure_valid(
+    fn ensure_valid(
         status: &PayloadStatus,
         call: &'static str,
         block: &ExportedBlock,
