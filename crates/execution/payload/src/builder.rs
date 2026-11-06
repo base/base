@@ -1001,8 +1001,7 @@ where
     /// [`ExecutionInfo::permanently_rejected_txs`] for the payload job to remove from the
     /// pool and insert into [`crate::config::BaseBuilderConfig::rejection_cache`] after this scan.
     /// Later jobs sharing that cache skip the hash even if the pool has it again.
-    /// Nonce-lane descendants are skipped for this scan via `mark_invalid`;
-    /// skipping those descendants across later jobs is Flashblocks-only.
+    /// Nonce-lane descendants are skipped for this scan via `mark_invalid`.
     /// Block-scope excludes only skip the current iterator.
     ///
     /// Returns `Ok(Some(()))` if the job was cancelled.
@@ -1755,13 +1754,10 @@ mod tests {
         PoolTransaction, TransactionOrigin, ValidPoolTransaction, identifier::TransactionId,
     };
     use reth_trie_common::{HashedPostState, updates::TrieUpdates};
-    use reth_trie_parallel::{
-        error::StateRootTaskError,
-        state_root_task::{
-            PayloadStateRootHandle, StateRootComputeOutcome, StateRootSink, StateRootUpdateStream,
-        },
+    use reth_trie_parallel::state_root_task::{
+        PayloadStateRootHandle, StateRootComputeOutcome, StateRootHandle, StateRootTaskCancelGuard,
     };
-    use revm::{Database, database::TransitionState, state::EvmState};
+    use revm::{Database, database::TransitionState};
 
     use super::{
         BasePayloadBuilderCtx, Builder, ExecutionInfo, RESTING_SWEEP_WAIT_LIMIT, job_interrupt,
@@ -1774,30 +1770,20 @@ mod tests {
         SharedRestingPredicates, config::BaseBuilderConfig, payload::EthPayloadBuilderAttributes,
     };
 
-    #[derive(Debug)]
-    struct TestStateRootSink {
-        result: std::sync::mpsc::Sender<Result<StateRootComputeOutcome, StateRootTaskError>>,
-    }
-
-    impl StateRootSink for TestStateRootSink {
-        fn on_state_update(&self, _state: EvmState) {}
-
-        fn on_hashed_state_update(&self, _state: HashedPostState) {}
-
-        fn on_updates_finished(&self) {
-            _ = self.result.send(Ok(StateRootComputeOutcome {
+    fn state_root_handle() -> PayloadStateRootHandle {
+        let (updates_tx, _updates_rx) = crossbeam_channel::unbounded();
+        let (cancel_guard, _cancel_rx) = StateRootTaskCancelGuard::channel();
+        let (result_tx, result_rx) = std::sync::mpsc::channel();
+        let (_hashed_state_tx, hashed_state_rx) = std::sync::mpsc::channel();
+        result_tx
+            .send(Ok(StateRootComputeOutcome {
                 state_root: B256::repeat_byte(0x42),
                 trie_updates: Arc::new(TrieUpdates::default()),
                 hashed_state: Arc::new(HashedPostState::default()),
-            }));
-        }
-    }
-
-    fn state_root_handle() -> PayloadStateRootHandle {
-        let (result_tx, result_rx) = std::sync::mpsc::channel();
-        let hook = StateRootUpdateStream::new(Arc::new(TestStateRootSink { result: result_tx }))
-            .into_state_hook();
-        PayloadStateRootHandle::new("test", Some(hook), result_rx, None)
+            }))
+            .unwrap();
+        StateRootHandle::new(B256::ZERO, updates_tx, cancel_guard, result_rx, hashed_state_rx)
+            .into_payload_state_root_handle()
     }
 
     fn build_empty_payload(state_root_handle: PayloadStateRootHandle) -> B256 {

@@ -338,7 +338,6 @@ impl ExecutionNodeLaunchConfig {
 #[cfg(test)]
 mod tests {
     use clap::Parser;
-    use url::Url;
 
     use super::*;
 
@@ -371,16 +370,13 @@ mod tests {
             "reth",
             "--port",
             "30333",
-            "--flashblocks-url",
-            "wss://example.com/ws",
+            "--rollup.sequencer",
+            "http://localhost:8545",
         ])
         .args;
 
         assert_eq!(args.node.network.port, 30333);
-        assert_eq!(
-            args.standard.flashblocks_url.as_ref().map(Url::as_str),
-            Some("wss://example.com/ws")
-        );
+        assert_eq!(args.standard.rollup_args.sequencer.as_deref(), Some("http://localhost:8545"));
         assert!(!args.metering.enable_metering);
     }
 

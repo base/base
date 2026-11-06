@@ -2244,7 +2244,7 @@
     "type": "prometheus",
     "uid": "PBFA97CFB590B2093"
    },
-   "description": "Mean time from send to confirmation for L1 batcher txs.",
+   "description": "Mean time from send to confirmation for L1 batcher txs, stacked: the wait until the tx is included in an L1 block, then the wait for confirmations.",
    "fieldConfig": {
     "defaults": {
      "color": {
@@ -2276,7 +2276,7 @@
       "spanNulls": false,
       "stacking": {
        "group": "A",
-       "mode": "none"
+       "mode": "normal"
       },
       "thresholdsStyle": {
        "mode": "off"
@@ -2324,10 +2324,21 @@
       "uid": "PBFA97CFB590B2093"
      },
      "editorMode": "code",
-     "expr": "sum(rate(base_tx_manager_tx_send_latency_ms_sum{job=\"batcher\",name=\"batcher\",outcome=\"confirmed\"}[$__rate_interval])) / clamp_min(sum(rate(base_tx_manager_tx_send_latency_ms_count{job=\"batcher\",name=\"batcher\",outcome=\"confirmed\"}[$__rate_interval])), 1e-9)",
-     "legendFormat": "avg latency",
+     "expr": "sum(rate(base_tx_manager_tx_inclusion_latency_ms_sum{job=\"batcher\",name=\"batcher\"}[$__rate_interval])) / clamp_min(sum(rate(base_tx_manager_tx_inclusion_latency_ms_count{job=\"batcher\",name=\"batcher\"}[$__rate_interval])), 1e-9)",
+     "legendFormat": "until included",
      "range": true,
      "refId": "A"
+    },
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "PBFA97CFB590B2093"
+     },
+     "editorMode": "code",
+     "expr": "(sum(rate(base_tx_manager_tx_send_latency_ms_sum{job=\"batcher\",name=\"batcher\",outcome=\"confirmed\"}[$__rate_interval])) / clamp_min(sum(rate(base_tx_manager_tx_send_latency_ms_count{job=\"batcher\",name=\"batcher\",outcome=\"confirmed\"}[$__rate_interval])), 1e-9)) - (sum(rate(base_tx_manager_tx_inclusion_latency_ms_sum{job=\"batcher\",name=\"batcher\"}[$__rate_interval])) / clamp_min(sum(rate(base_tx_manager_tx_inclusion_latency_ms_count{job=\"batcher\",name=\"batcher\"}[$__rate_interval])), 1e-9))",
+     "legendFormat": "included to confirmed",
+     "range": true,
+     "refId": "B"
     }
    ],
    "title": "Avg send latency, confirmed txs (ms)",

@@ -3,9 +3,9 @@ use std::{cmp::Reverse, collections::BTreeMap, time::Duration};
 use serde::{Deserialize, Serialize};
 
 use super::{
-    BlockLoadMetrics, BlockRange, CohortMetrics, ConfigSummary, FlashblocksLatencyMetrics,
-    GasMetrics, LatencyMetrics, PacingMetrics, SubmissionStats, SubmitCohortLabel,
-    ThroughputMetrics, ThroughputPercentiles, ThroughputSample, TransactionMetrics,
+    BlockLoadMetrics, BlockRange, CohortMetrics, ConfigSummary, GasMetrics, LatencyMetrics,
+    PacingMetrics, SubmissionStats, SubmitCohortLabel, ThroughputMetrics, ThroughputPercentiles,
+    ThroughputSample, TransactionMetrics,
 };
 
 /// Bucket width of [`MetricsSummary::submit_offset_histogram`].
@@ -60,7 +60,6 @@ impl<'a> MetricsAggregator<'a> {
             measurement_end_block: None,
             measurement_block_count: 0,
             block_latency: Self::compute_block_latency(self.transactions),
-            flashblocks_latency: Self::compute_flashblocks_latency(self.transactions),
             throughput: Self::compute_throughput(
                 self.transactions,
                 throughput_duration,
@@ -154,30 +153,6 @@ impl<'a> MetricsAggregator<'a> {
             p50: Self::percentile(latencies, 50),
             p95: Self::percentile(latencies, 95),
             p99: Self::percentile(latencies, 99),
-        }
-    }
-
-    fn compute_flashblocks_latency<'t>(
-        transactions: impl IntoIterator<Item = &'t TransactionMetrics>,
-    ) -> FlashblocksLatencyMetrics {
-        let mut latencies: Vec<Duration> =
-            transactions.into_iter().filter_map(|t| t.flashblocks_latency).collect();
-
-        if latencies.is_empty() {
-            return FlashblocksLatencyMetrics::default();
-        }
-
-        let base = Self::compute_duration_metrics(&mut latencies);
-
-        FlashblocksLatencyMetrics {
-            count: latencies.len() as u64,
-            min: base.min,
-            max: base.max,
-            mean: base.mean,
-            p50: base.p50,
-            p90: Self::percentile(&latencies, 90),
-            p95: base.p95,
-            p99: base.p99,
         }
     }
 
@@ -317,8 +292,6 @@ pub struct MetricsSummary {
     pub measurement_block_count: u64,
     /// Block landing latency (full run).
     pub block_latency: LatencyMetrics,
-    /// Flashblocks sequencer latency (full run).
-    pub flashblocks_latency: FlashblocksLatencyMetrics,
     /// Throughput statistics (full run).
     pub throughput: ThroughputMetrics,
     /// Rolling-window throughput percentiles (TPS and GPS).
@@ -428,11 +401,11 @@ mod tests {
     }
 
     fn transaction(block_number: u64, gas_used: u64) -> TransactionMetrics {
-        TransactionMetrics::new(TxHash::ZERO, None, None, gas_used, 0, Some(block_number))
+        TransactionMetrics::new(TxHash::ZERO, None, gas_used, 0, Some(block_number))
     }
 
     fn unconfirmed_transaction(gas_used: u64) -> TransactionMetrics {
-        TransactionMetrics::new(TxHash::ZERO, None, None, gas_used, 0, None)
+        TransactionMetrics::new(TxHash::ZERO, None, gas_used, 0, None)
     }
 
     fn cohort_transaction(
@@ -443,7 +416,6 @@ mod tests {
         let mut transaction = TransactionMetrics::new(
             TxHash::ZERO,
             Some(Duration::from_millis(10)),
-            None,
             gas_used,
             0,
             Some(block_number),

@@ -1,17 +1,13 @@
 use std::{sync::Arc, time::Duration};
 
-use alloy_consensus::{Transaction, transaction::SignerRecoverable};
-use alloy_eips::{
-    BlockId,
-    eip2718::{Decodable2718, Encodable2718},
-};
-use alloy_primitives::{Address, B256, Bytes};
+use alloy_consensus::Transaction;
+use alloy_eips::{BlockId, eip2718::Encodable2718};
+use alloy_primitives::{Address, B256};
 use alloy_provider::{Network, Provider, ProviderBuilder, network::TransactionResponse};
 use alloy_rpc_client::RpcClient;
 use alloy_rpc_types_eth::BlockNumberOrTag;
 use alloy_transport_http::Http;
 use anyhow::{Context, Result, anyhow};
-use base_common_consensus::BaseTxEnvelope;
 use base_common_network::Base;
 use futures::{StreamExt, stream};
 use tokio::sync::mpsc;
@@ -22,6 +18,7 @@ use super::fetch_safe_and_latest;
 use crate::tui::Toast;
 
 const CONCURRENT_BLOCK_FETCHES: usize = 16;
+const LATEST_HEAD_POLL_INTERVAL: Duration = Duration::from_secs(1);
 
 /// Fetches a single L2 block via `eth_getBlockByHash` or `eth_getBlockByNumber`.
 ///
@@ -86,6 +83,8 @@ pub struct BlockDaInfo {
     pub da_bytes: u64,
     /// Unix timestamp of the block.
     pub timestamp: u64,
+    /// Number of transactions in the block.
+    pub tx_count: usize,
 }
 
 /// Summary of the initial DA backlog between safe and latest blocks.
@@ -143,7 +142,52 @@ async fn fetch_raw_block_info<P: Provider<Base>>(
     let da_bytes: u64 =
         block.transactions.txns().map(|tx| tx.inner.inner.encode_2718_len() as u64).sum();
 
-    Some(BlockDaInfo { block_number: block_num, da_bytes, timestamp: block.header.timestamp })
+    Some(BlockDaInfo {
+        block_number: block_num,
+        da_bytes,
+        timestamp: block.header.timestamp,
+        tx_count: block.transactions.len(),
+    })
+}
+
+/// Polls the latest L2 block number and requests every newly produced block.
+///
+/// Each block number from the previously seen head (exclusive) to the current
+/// head (inclusive) is sent on `request_tx`, so a consumer such as
+/// [`run_block_fetcher`] sees every block exactly once and in order. The first
+/// poll only requests the current head.
+pub async fn run_latest_head_poller(
+    l2_rpc: String,
+    request_tx: mpsc::Sender<u64>,
+    toast_tx: mpsc::Sender<Toast>,
+) {
+    let provider = match ProviderBuilder::new()
+        .disable_recommended_fillers()
+        .network::<Base>()
+        .connect(&l2_rpc)
+        .await
+    {
+        Ok(p) => p,
+        Err(e) => {
+            warn!(error = %e, "Failed to connect to L2 RPC for latest head polling");
+            let _ = toast_tx.try_send(Toast::warning("Latest head poller connection failed"));
+            return;
+        }
+    };
+
+    let mut interval = tokio::time::interval(LATEST_HEAD_POLL_INTERVAL);
+    let mut last_seen: Option<u64> = None;
+    loop {
+        interval.tick().await;
+        let Ok(latest) = provider.get_block_number().await else { continue };
+        let first = last_seen.map_or(latest, |seen| seen + 1);
+        for block_num in first..=latest {
+            if request_tx.send(block_num).await.is_err() {
+                return;
+            }
+        }
+        last_seen = Some(last_seen.map_or(latest, |seen| seen.max(latest)));
+    }
 }
 
 /// Fetches DA info for requested block numbers and sends results back.
@@ -277,41 +321,6 @@ fn effective_priority_fee_per_gas(
     base_fee_per_gas
         .map(|base_fee| effective_gas_price.saturating_sub(u128::from(base_fee)))
         .or(max_priority_fee_per_gas)
-}
-
-/// Decodes raw EIP-2718 encoded transaction bytes into summaries.
-///
-/// Used to extract transaction details from flashblock stream data without RPC calls.
-pub fn decode_flashblock_transactions(
-    raw_txs: &[Bytes],
-    base_fee_per_gas: Option<u64>,
-) -> Vec<TxSummary> {
-    raw_txs
-        .iter()
-        .filter_map(|tx_bytes| {
-            let envelope = BaseTxEnvelope::decode_2718_exact(tx_bytes.as_ref())
-                .inspect_err(|e| warn!(error = %e, "failed to decode transaction"))
-                .ok()?;
-            let hash = envelope.tx_hash();
-            let to = envelope.to();
-            let effective_priority_fee_per_gas = effective_priority_fee_per_gas(
-                base_fee_per_gas,
-                envelope.effective_gas_price(base_fee_per_gas),
-                envelope.max_priority_fee_per_gas(),
-            );
-            let recovered = envelope
-                .try_into_recovered()
-                .inspect_err(|e| warn!(error = %e, "failed to recover signer"))
-                .ok()?;
-            Some(TxSummary {
-                hash,
-                from: recovered.signer(),
-                to,
-                effective_priority_fee_per_gas,
-                base_fee_per_gas,
-            })
-        })
-        .collect()
 }
 
 /// Fetches all transactions for a given block and sends summaries through the channel.

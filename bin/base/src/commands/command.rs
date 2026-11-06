@@ -232,8 +232,6 @@ mod tests {
             args.extend([
                 "--p2p.sequencer.key",
                 "bcc617ea05150ff60490d3c6058630ba94ae9f12a02a87efd291349ca0e54e0a",
-                "--flashblocks.port",
-                "0",
             ]);
         }
         let cli = BaseCli::parse_from(args);
