@@ -13,7 +13,7 @@ use std::{
 use alloy_eips::BlockNumHash;
 use alloy_primitives::{
     Address, B256, TxHash, U256, U512,
-    map::{AddressMap, B256Map, B256Set, HashMap},
+    map::{AddressMap, B256Map, B256Set, HashMap, IndexSet},
 };
 use base_common_consensus::Eip8130Constants;
 use reth_primitives_traits::transaction::error::InvalidTransactionError;
@@ -525,10 +525,12 @@ pub(crate) struct TwoDNoncePool<T: BasePooledTx> {
     /// Replay ids of the nonce-free transactions that are not dormant.
     ready_nonce_free: HashSet<B256>,
     /// With dormancy enforced, the lanes with a non-empty pending run, so a
-    /// snapshot costs the lanes it offers rather than every dormant one.
-    pending_lanes: HashSet<LaneId>,
+    /// snapshot costs the lanes it offers rather than every dormant one. An
+    /// `IndexSet` iterates its live entries densely, where a hash set walks
+    /// its whole table, which keeps its size after lanes go dormant.
+    pending_lanes: IndexSet<LaneId>,
     /// The shared lanes in `pending_lanes`, which bridging walks.
-    pending_shared_lanes: HashSet<LaneId>,
+    pending_shared_lanes: IndexSet<LaneId>,
     dormancy: Dormancy,
 }
 
@@ -560,8 +562,8 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
             ahead_of_state: HashMap::default(),
             shared_lanes: HashSet::default(),
             ready_nonce_free: HashSet::default(),
-            pending_lanes: HashSet::default(),
-            pending_shared_lanes: HashSet::default(),
+            pending_lanes: IndexSet::default(),
+            pending_shared_lanes: IndexSet::default(),
             dormancy: Dormancy::new(ValidityDormancyMode::Off),
         }
     }
@@ -744,8 +746,8 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
                 self.pending_shared_lanes.insert(lane_id);
             }
         } else {
-            self.pending_lanes.remove(&lane_id);
-            self.pending_shared_lanes.remove(&lane_id);
+            self.pending_lanes.swap_remove(&lane_id);
+            self.pending_shared_lanes.swap_remove(&lane_id);
         }
     }
 
@@ -1262,7 +1264,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
     pub(crate) fn unmark_shared_lane(&mut self, lane_id: &LaneId) {
         self.shared_lanes.remove(lane_id);
         if self.dormancy.is_enforced() {
-            self.pending_shared_lanes.remove(lane_id);
+            self.pending_shared_lanes.swap_remove(lane_id);
         }
     }
 
@@ -3399,40 +3401,64 @@ mod tests {
         assert_eq!(pool.pending_and_queued_txn_count(), (2, 0));
     }
 
-    /// With dormancy enforced, a snapshot and bridging cost the lanes with a
-    /// pending run, whatever the number of dormant ones.
+    /// With dormancy enforced, snapshots and bridging walk an index of the
+    /// lanes with a pending run, which must follow lanes as they are admitted
+    /// ready, go dormant and wake.
     #[test]
-    fn an_enforced_snapshot_walks_only_lanes_with_a_pending_run() {
+    fn enforced_snapshots_and_bridging_follow_lanes_going_dormant_and_waking() {
         let mut pool = protocol_lane_pool();
         pool.set_dormancy_mode(ValidityDormancyMode::Enforce);
         let mut roots = Vec::new();
+        let mut lanes = Vec::new();
         for _ in 0..4 {
             let signer = signer();
             let root = valid_pool_transaction(signed_1559(&signer, 0, 1_000));
             let hash = *root.hash();
             pool.insert_validated(root, 0).unwrap();
-            pool.mark_shared_lane((signer.address(), U256::ZERO));
+            let lane = (signer.address(), U256::ZERO);
+            pool.mark_shared_lane(lane);
             roots.push(pool.get(&hash).unwrap());
+            lanes.push(lane);
         }
-        let tip = B256::repeat_byte(1);
-        let build = pool.begin_build(B256::ZERO, 1, None).unwrap();
-        pool.seal_build(build, tip);
-        pool.take_dormancy_batch(tip).unwrap();
+        let offered = |pool: &TwoDNoncePool<BasePooledTransaction>| {
+            let mut best = pool
+                .best_transactions(BaseOrdering::coinbase_tip(), 0, false)
+                .map(|transaction| *transaction.hash())
+                .collect::<Vec<_>>();
+            best.sort();
+            let mut bridged =
+                pool.shared_lanes_pending_end(false).map(|(lane, _)| lane).collect::<Vec<_>>();
+            bridged.sort();
+            (best, bridged)
+        };
+        let mut all = (roots.iter().map(|root| *root.hash()).collect::<Vec<_>>(), lanes.clone());
+        all.0.sort();
+        all.1.sort();
+        let ready = (vec![*roots[0].hash()], vec![lanes[0]]);
+        assert_eq!(offered(&pool), all);
+
         let blocker = ValidityPredicate::BlockNumber {
             op: ValidityOperator::GreaterThanOrEqual,
             value: U256::from(10),
         };
         let dormant =
             DormancyClassification::Dormant { predicate: blocker, release_block: Some(10) };
-        pool.install_dormancy(
-            roots[1..].iter().map(|root| (Arc::clone(root), dormant.clone())).collect(),
-        );
+        let park_all_but_first = |pool: &mut TwoDNoncePool<BasePooledTransaction>, block: u8| {
+            let tip = B256::repeat_byte(block);
+            let build = pool.begin_build(B256::ZERO, 1, None).unwrap();
+            pool.seal_build(build, tip);
+            pool.take_dormancy_batch(tip).unwrap();
+            pool.install_dormancy(
+                roots[1..].iter().map(|root| (Arc::clone(root), dormant.clone())).collect(),
+            );
+        };
+        park_all_but_first(&mut pool, 1);
+        assert_eq!(offered(&pool), ready);
 
-        let best = pool.best_transactions(BaseOrdering::coinbase_tip(), 0, false);
-        assert_eq!(best.lanes.capacity(), 1, "the snapshot allocates for the ready lane only");
-        assert_eq!(best.count(), 1);
-        assert_eq!(pool.pending_shared_lanes.len(), 1, "bridging walks the ready lane only");
-        assert_eq!(pool.shared_lanes_pending_end(false).count(), 1);
+        pool.discard_dormancy(DormancyDiscardReason::Reorg);
+        assert_eq!(offered(&pool), all);
+        park_all_but_first(&mut pool, 2);
+        assert_eq!(offered(&pool), ready);
     }
 
     #[test]

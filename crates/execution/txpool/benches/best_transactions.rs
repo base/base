@@ -11,8 +11,11 @@
 //! - `drain_shared`: the snapshot plus yielding every shared validity head and the standard
 //!   transactions it releases, so the merge accumulates many released lanes at once.
 //!
-//! `dormant_scaling` holds 1 000 ready validity transactions and a growing number of dormant
-//! ones with dormancy enforced; its snapshot time should stay flat as the dormant count grows.
+//! `dormant_scaling` admits 1 000 ready validity transactions and a growing number of others,
+//! all ready at first, then classification parks all but the 1 000 with dormancy enforced; its
+//! snapshot time should stay flat as the dormant count grows. In `dormant_scaling_shared` every
+//! sender also has a standard transaction queued behind its validity one, so the snapshot bridges
+//! the 1 000 ready lanes and must skip the dormant ones.
 //!
 //! `dormant` is the `isolated` pool with dormancy enforced and every validity transaction
 //! blocked on an unset storage slot, so the snapshot walks only the standard transactions.
@@ -145,35 +148,50 @@ fn classify(pool: &BenchPool) {
 const SCALING_READY: usize = 1_000;
 
 /// A pool enforcing dormancy with [`SCALING_READY`] ready validity transactions and `dormant`
-/// dormant ones, each from its own sender.
-fn dormant_scaling_pool(dormant: usize) -> (BenchPool, tokio::runtime::Runtime) {
+/// dormant ones, each from its own sender and all admitted ready before classification parks the
+/// dormant ones. With `shared`, every sender also has a standard transaction queued behind.
+fn dormant_scaling_pool(dormant: usize, shared: bool) -> (BenchPool, tokio::runtime::Runtime) {
     let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap();
     let pool = runtime.block_on(async {
-        let (pool, client) = build_pool(QUEUED_STANDARD);
+        let (pool, client) = build_pool(SCALING_READY + DORMANT_SCALING.last().unwrap());
         let pool = pool.with_validity_dormancy(ValidityDormancyMode::Enforce);
-        let ready: Vec<_> = (0..SCALING_READY)
-            .map(|index| validity(&funded_signer(&client), 0, 2 + index as u128 % 50))
-            .collect();
-        add(&pool, ready).await;
-        let blocked: Vec<_> = (0..dormant)
-            .map(|index| dormant_validity(&funded_signer(&client), 2 + index as u128 % 50))
-            .collect();
-        add(&pool, blocked).await;
+        let mut transactions = Vec::new();
+        for index in 0..SCALING_READY + dormant {
+            let signer = funded_signer(&client);
+            let tip = 2 + index as u128 % 50;
+            transactions.push(if index < SCALING_READY {
+                validity(&signer, 0, tip)
+            } else {
+                dormant_validity(&signer, tip)
+            });
+            if shared {
+                transactions.push(standard(&signer, 1, tip));
+            }
+        }
+        add(&pool, transactions).await;
         classify(&pool);
         pool
     });
     assert_eq!(pool.pool_size().pending, SCALING_READY, "only the ready transactions are pending");
+    let offered = if shared { 2 * SCALING_READY } else { SCALING_READY };
+    assert_eq!(pool.best_transactions().count(), offered, "ready lanes and their bridged runs");
     (pool, runtime)
 }
 
+/// Dormant transaction counts the `dormant_scaling` arms hold.
+const DORMANT_SCALING: [usize; 3] = [0, 25_000, 75_000];
+
 fn dormant_scaling_benches(c: &mut Criterion) {
-    let mut group = c.benchmark_group("txpool/best_transactions/dormant_scaling");
+    let mut group = c.benchmark_group("txpool/best_transactions");
     group.sample_size(20);
-    for dormant in [0, 25_000, 75_000] {
-        let (pool, _runtime) = dormant_scaling_pool(dormant);
-        group.bench_with_input(BenchmarkId::new("snapshot", dormant), &pool, |b, pool| {
-            b.iter(|| black_box(pool.best_transactions()));
-        });
+    for (name, shared) in [("dormant_scaling", false), ("dormant_scaling_shared", true)] {
+        for dormant in DORMANT_SCALING {
+            let (pool, _runtime) = dormant_scaling_pool(dormant, shared);
+            let id = BenchmarkId::new(format!("{name}/snapshot"), dormant);
+            group.bench_with_input(id, &pool, |b, pool| {
+                b.iter(|| black_box(pool.best_transactions()));
+            });
+        }
     }
     group.finish();
 }

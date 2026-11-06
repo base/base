@@ -55,7 +55,8 @@ pub(crate) fn build_pool(queued_limit: usize) -> (BenchPool, Client) {
         });
     let config = PoolConfig {
         pending_limit: SubPoolLimit::new(100_000, 125 * MIB),
-        queued_limit: SubPoolLimit::new(queued_limit, 25 * MIB),
+        // A KiB per queued transaction, so large queues are not evicted by size.
+        queued_limit: SubPoolLimit::new(queued_limit, (queued_limit * 1024).max(25 * MIB)),
         ..PoolConfig::default()
     };
     let ordering = BaseOrdering::default();
