@@ -176,6 +176,7 @@ mod tests {
             from: Address::with_last_byte(sender),
             nonce,
             gas_limit,
+            priority_fee: 0,
             estimated_gas,
             validity: Vec::new(),
             cohort: SubmitCohort::Plain,
