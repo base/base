@@ -195,6 +195,7 @@ fn run_case(
     population: usize,
 ) -> Vec<BlockTiming> {
     let pool = ProductionPool::new(CHAIN_ID, mode.dormancy());
+    let _runtime = pool.enter();
     let lanes = case.lanes(population);
     let churn = case.churn(matrix.churn, lanes);
     let start = Instant::now();

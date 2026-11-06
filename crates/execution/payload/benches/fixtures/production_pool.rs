@@ -114,6 +114,14 @@ pub struct ProductionPool {
     runtime: tokio::runtime::Runtime,
 }
 
+impl ProductionPool {
+    /// Enters the pool's runtime, so pool work the builder hands to background tasks runs off the
+    /// bench thread as it does on a node.
+    pub fn enter(&self) -> tokio::runtime::EnterGuard<'_> {
+        self.runtime.enter()
+    }
+}
+
 impl std::fmt::Debug for ProductionPool {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ProductionPool").field("chain_id", &self.chain_id).finish_non_exhaustive()
