@@ -5,6 +5,10 @@
 //! `block_number` predicates) against a fresh devnet whose builder enforces resting predicates,
 //! then scrapes the builder's Prometheus endpoint the way `base-bench snapshot` does and checks
 //! that the flattened keys the benchmark allowlists are present with the expected shape.
+//!
+//! The devnet activates Denim at genesis: the native builder only parks resting transactions
+//! while one-shot payload building is active, which is a Denim feature, so a pre-Denim devnet
+//! would never populate the resting series.
 
 use alloy_signer_local::PrivateKeySigner;
 use base_builder_core::RestingPredicateMode;
@@ -49,6 +53,7 @@ async fn validity_resting_workload_populates_benchmark_series() -> Result<()> {
     let chain_id = devnet.l2_chain_id;
     let stack = SystemTestStackBuilder::new()
         .with_devnet_config(devnet)
+        .with_base_denim_activation_block(0)
         .with_resting_predicate_mode(RestingPredicateMode::Enforce)
         .build()
         .await?;
