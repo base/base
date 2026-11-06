@@ -39,9 +39,9 @@ use tracing::warn;
 use crate::{
     ChainSpecSource, DevnetBlockInterval, ExportedBlock, InProcessClient, InProcessClientConfig,
     InProcessNodeRuntime, LocalBenchmarkArgs, PrometheusBlockCollector, ProofsSummary,
-    ReplayManifest, ReplayProofsProbe, SnapshotBenchmarkArgs, SnapshotBenchmarkReportConfig,
-    SnapshotChainConfig, SnapshotL2Stack, VisualizerBlockMetrics, read_export_manifest,
-    read_exported_blocks,
+    RecordedReplay, ReplayManifest, ReplayProofsProbe, SnapshotBenchmarkArgs,
+    SnapshotBenchmarkReportConfig, SnapshotChainConfig, SnapshotL2Stack, VisualizerBlockMetrics,
+    read_export_manifest, read_exported_blocks,
 };
 
 /// File the replay result is written to inside `--output-dir`.
@@ -52,9 +52,9 @@ pub const REPLAY_METRICS_FILE: &str = "metrics-validator.json";
 /// Placeholder trusted peer for the replay node. [`InProcessClient`] always configures one
 /// trusted peer; the replay node must not sync from anyone, so it gets an unreachable one. The
 /// node ID is the secp256k1 generator point, a valid public key that no peer will answer for.
-const UNREACHABLE_PEER_ENODE: &str = "enode://79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798483ada7726a3c4655da4fbfc0e1108a8fd17b448a68554199c47d08ffb10d4b8@127.0.0.1:1";
+pub(crate) const UNREACHABLE_PEER_ENODE: &str = "enode://79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798483ada7726a3c4655da4fbfc0e1108a8fd17b448a68554199c47d08ffb10d4b8@127.0.0.1:1";
 /// Placeholder `rollup.sequencer` URL; the replay node receives no transactions to forward.
-const UNUSED_SEQUENCER_URL: &str = "http://127.0.0.1:1";
+pub(crate) const UNUSED_SEQUENCER_URL: &str = "http://127.0.0.1:1";
 /// Exported blocks decoded ahead of the engine calls, off the async runtime.
 const PREFETCH_BLOCKS: usize = 64;
 
@@ -90,6 +90,11 @@ pub struct ReplayBenchmarkArgs {
     /// history covers while all are busy are skipped.
     #[arg(long, default_value = "2")]
     pub proofs_concurrency: NonZeroUsize,
+    /// Directory a node wrote with `--debug.engine-api-store`. Replays its messages verbatim
+    /// instead of the export's blocks, from the first payload built on the datadir head, and
+    /// writes `recorded-replay-result.json`. The export supplies only the chain spec.
+    #[arg(long, conflicts_with_all = ["paced", "proofs_dir"])]
+    pub engine_store_dir: Option<PathBuf>,
 }
 
 /// How blocks were scheduled.
@@ -260,7 +265,10 @@ impl ReplayBenchmarkArgs {
         .await
         .wrap_err("failed to start replay node")?;
 
-        let output_result = self.execute(&client, manifest, block_interval, jwt_secret).await;
+        let output_result = match &self.engine_store_dir {
+            Some(dir) => RecordedReplay::run(&client, jwt_secret, dir, &self.output_dir).await,
+            None => self.execute(&client, manifest, block_interval, jwt_secret).await,
+        };
         if let Err(error) = &output_result {
             eprintln!("replay failed: {error:?}");
             let _ = std::io::stderr().flush();
