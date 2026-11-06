@@ -60,11 +60,13 @@ impl fmt::Debug for LocalNode {
 
 impl LocalNode {
     /// Launch a new local node with the provided extensions and chain spec, and
-    /// `rpc_gas_cap` as its `--rpc.gascap` when set.
+    /// `rpc_gas_cap` as its `--rpc.gascap` and `engine_api_store` as its
+    /// `--debug.engine-api-store` when set.
     pub async fn new(
         extensions: Vec<Box<dyn BaseNodeExtension>>,
         chain_spec: Arc<BaseChainSpec>,
         rpc_gas_cap: Option<u64>,
+        engine_api_store: Option<PathBuf>,
     ) -> Result<Self> {
         let exec = Runtime::test();
 
@@ -101,6 +103,7 @@ impl LocalNode {
         // follow-up payload validation can resolve parent headers from the database-backed paths
         // that reth 2.3.0 now consults during state-root/proof work.
         node_config.engine.persistence_threshold = 0;
+        node_config.debug.engine_api_store = engine_api_store;
 
         let datadir_path = MaybePlatformPath::<DataDirPath>::from(db_path.clone());
         node_config = node_config
