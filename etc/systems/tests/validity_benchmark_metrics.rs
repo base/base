@@ -12,6 +12,8 @@
 
 use std::time::Duration;
 
+use tokio_util::task::AbortOnDropHandle;
+
 use alloy_signer_local::PrivateKeySigner;
 use base_load_tests::{
     LoadTestExecutor, LoadTestRunHooks, LoadTestRunOptions, MetricsSummary, SubmitCohortLabel,
@@ -76,58 +78,66 @@ async fn validity_resting_workload_populates_benchmark_series() -> Result<()> {
         .build()
         .await?;
 
-    let workload = tempfile::NamedTempFile::new()?;
-    std::fs::write(workload.path(), WORKLOAD)?;
-    let (test_config, pending) = PendingFixtures::load(workload.path())?;
-    let pending = pending.expect("placeholder workload must leave fixtures pending");
+    let result: Result<(MetricsSummary, PrometheusSnapshot, Option<AbortOnDropHandle<()>>)> =
+        async {
+            let workload = tempfile::NamedTempFile::new()?;
+            std::fs::write(workload.path(), WORKLOAD)?;
+            let (mut test_config, pending) = PendingFixtures::load(workload.path())?;
+            let pending = pending.expect("placeholder workload must leave fixtures pending");
 
-    let funder = PrivateKeySigner::from_bytes(&ANVIL_ACCOUNT_1.private_key)?;
-    let builder_rpc = stack.l2_rpc_url()?;
-    // Fixtures deploy before the load tester funds its senders, so the funder's nonce stream is
-    // used by one party at a time; the mutator then runs on its own funded key and stops when its
-    // handle drops.
-    let (mut test_config, mutator) = {
-        let (resolved, deployed) = pending.deploy(&builder_rpc, &funder).await?;
-        let mutator = deployed.start_mutator(&builder_rpc, MUTATOR_INTERVAL);
-        (resolved, mutator)
-    };
+            let funder = PrivateKeySigner::from_bytes(&ANVIL_ACCOUNT_1.private_key)?;
+            let builder_rpc = stack.l2_rpc_url()?;
+            // Fixtures deploy before the load tester funds its senders, so the funder's nonce stream is
+            // used by one party at a time; the mutator then runs on its own funded key until its handle
+            // drops, which the caller does once the run is over.
+            let (mut test_config, mutator) = {
+                let (resolved, deployed) = pending.deploy(&builder_rpc, &funder).await?;
+                let mutator = deployed.start_mutator(&builder_rpc, MUTATOR_INTERVAL);
+                (resolved, mutator)
+            };
 
-    let result: Result<(MetricsSummary, PrometheusSnapshot)> = async {
-        test_config.transaction_submission_rpcs = vec![stack.l2_rpc_url()?];
-        test_config.query_rpc = Some(stack.l2_client_rpc_url()?);
-        test_config.chain_id = Some(chain_id);
-        test_config.validate()?;
-        let load_config = test_config.to_load_config(None)?;
+            test_config.transaction_submission_rpcs = vec![stack.l2_rpc_url()?];
+            test_config.query_rpc = Some(stack.l2_client_rpc_url()?);
+            test_config.chain_id = Some(chain_id);
+            test_config.validate()?;
+            let load_config = test_config.to_load_config(None)?;
 
-        let output = LoadTestExecutor::run_prepared(
-            test_config,
-            load_config,
-            funder,
-            LoadTestRunOptions {
-                continuous: false,
-                install_signal_handler: false,
-                skip_drain: true,
-            },
-            LoadTestRunHooks {
-                display: None,
-                before_cleanup: (|_: &MetricsSummary| {}) as fn(&MetricsSummary),
-            },
-        )
-        .await?;
-        if let Some(error) = output.run_error {
-            eyre::bail!("load test run error: {error}");
+            let output = LoadTestExecutor::run_prepared(
+                test_config,
+                load_config,
+                funder,
+                LoadTestRunOptions {
+                    continuous: false,
+                    install_signal_handler: false,
+                    skip_drain: true,
+                },
+                LoadTestRunHooks {
+                    display: None,
+                    before_cleanup: (|_: &MetricsSummary| {}) as fn(&MetricsSummary),
+                },
+            )
+            .await?;
+            if let Some(error) = output.run_error {
+                eyre::bail!("load test run error: {error}");
+            }
+
+            let metrics_url = stack.l2_stack().builder().metrics_url()?;
+            let body = reqwest::get(metrics_url).await?.error_for_status()?.text().await?;
+            Ok((output.summary, PrometheusSnapshot::parse(&body), mutator))
         }
+        .await;
 
-        let metrics_url = stack.l2_stack().builder().metrics_url()?;
-        let body = reqwest::get(metrics_url).await?.error_for_status()?.text().await?;
-        Ok((output.summary, PrometheusSnapshot::parse(&body)))
-    }
-    .await;
-
-    // Stop the mutator before teardown so its transactions do not race the stack's shutdown.
+    // Stop the mutator before teardown so its transactions do not race the stack's shutdown. A
+    // failed body already dropped the handle, aborting the mutator; the stack still tears down.
+    let (summary, snapshot, mutator) = match result {
+        Ok(parts) => parts,
+        Err(error) => {
+            stack.shutdown().await?;
+            return Err(error);
+        }
+    };
     drop(mutator);
     let shutdown = stack.shutdown().await;
-    let (summary, snapshot) = result?;
     shutdown?;
 
     // The load tester routed every sender through the validity endpoint and they landed.
