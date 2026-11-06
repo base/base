@@ -180,6 +180,118 @@ Occupancy is published as `txpool.validity.pool_transactions` and
 replacements that crossed a store boundary as
 `txpool.validity.cross_store_replaced{direction}`.
 
+### Dormant validity transactions
+
+Validity transactions can wait in the pool for a long time for a predicate to
+hold. Dormancy keeps the ones that cannot run yet out of the best-transactions
+snapshot, so each build pays for ready transactions only. The build loop still
+evaluates every predicate before inclusion: dormancy only decides what the
+builder sees, never what it may include. Dormancy is meant for the sequencer's
+native block builder, which builds one block per height; other nodes keep it
+off.
+
+**Eligibility.** Only a nonce-free validity transaction, or the root of a
+validity lane anchored at canonical state, can be dormant. The root is the
+transaction at the lane's canonical nonce; a lane whose cursor relies on another
+store's pending run (`lanes_ahead_of_state`) is not anchored. A dormant root
+ends its lane's pending run before it starts: the lane offers nothing to the
+snapshot, bridges no standard transactions behind it, and its members count as
+queued. Its cursor stays at the canonical nonce, so other stores are unaffected.
+Lane events and eviction follow the lane's consecutive run regardless of
+dormancy: parking and waking a root emit no pending or queued events and do not
+change which transactions are evicted first. Other lane members are never
+dormant, and a dormant nonce-free transaction still counts as pending.
+Removal, replacement, eviction and expiry treat a dormant transaction like any
+other pooled transaction, and a lane whose root changes is ready again.
+
+**The tip.** The validity pool keeps one predicate index, keyed by the state
+location that blocks each entry, and a tip: the hash of the last block this
+builder sealed. Every dormant transaction is false on top of the tip.
+
+```mermaid
+stateDiagram-v2
+    [*] --> NoTip
+    NoTip --> Building: build starts (index discarded)
+    Tip --> Building: build starts on the tip (index kept)
+    Tip --> Building: build starts on another parent (index discarded)
+    Building --> Tip: block sealed, tip = its hash
+    Building --> NoTip: build dropped before sealing (index discarded)
+    Building --> Building: another build starts (index discarded)
+    Tip --> NoTip: canonical block at the tip's height differs, reorg or feed gap
+    Building --> NoTip: canonical block at the tip's height differs, reorg or feed gap
+```
+
+Discarding the index wakes every dormant transaction and queues it for
+classification again; the next snapshot offers all of them.
+
+- **Build start** on parent `P` for block `B`: when `P` is the tip, the writes
+  made before selection (system calls and deposits) wake the dormant
+  transactions they may satisfy, and block `B` releases every block-number
+  blocker it satisfies. Otherwise the index is discarded. Builds that only
+  replay payload attributes (`no_tx_pool`) neither start nor seal one.
+- **Each commit** in the build loop looks up the locations it wrote in the
+  index, once, and wakes what it may satisfy:
+  - a transaction the build's iterator parked earlier in this block is promoted
+    back into priority competition;
+  - a root that was dormant when the build took its snapshot, so the snapshot
+    never held it, is injected into the iterator with the rest of its lane's
+    pending run and the standard transactions bridged behind it. It is skipped when the
+    iterator already holds a member of its lane. A nonce-free transaction is
+    injected alone.
+
+  A spurious wake costs one predicate evaluation when the iterator reaches it.
+- **A transaction that fails its predicate** in the build loop is parked in the
+  iterator and in the pool's index, so a later commit in the block can wake it
+  and later blocks built on this one leave it out. A transaction that is not
+  eligible is indexed only until the build ends, for mid-block wakes. A
+  block-number blocker is released at the first block that satisfies it.
+- **Seal** makes the sealed block's hash the tip.
+- **Canonical notifications** only check the tip: a committed block at the
+  tip's height with another hash, a reorg or a gap in the canonical-state feed
+  discards the index. Canonical state changes wake nothing; on the builder they
+  are the blocks it sealed.
+
+**Classification.** Admission inserts a transaction as ready and queues it.
+After each canonical block, if the canonical head is the tip, the canonical
+state-diff maintenance task evaluates queued transactions against the latest
+state for the next block, on a blocking thread outside the pool locks. A
+transaction is dormant when its block-number lower bound or one of its balance,
+nonce or storage predicates fails; it is indexed under that one blocking
+predicate. Flashblock-index predicates never make a transaction dormant, and a
+transaction whose block bounds have already passed is left to block expiry.
+Results are installed in batches of at most 256 transactions per lock hold, each
+against the pool as it is then: a transaction is parked only if the very
+transaction classified is still pooled (a readmitted envelope with other
+predicates has the same hash but is a new transaction) and is still a ready root
+or nonce-free transaction, no build has written its blocking location since the
+state classification read, and no build already started at a height that
+satisfies its block-number bound. Nothing is installed once the index was
+discarded after classification started. A transaction that is not parked stays
+ready and is queued again.
+
+Builds record the locations they write while the index has a tip, from the
+tip's state on, so classification knows what changed since the state it read.
+Past 65,536 recorded locations nothing is parked until the next seal without a
+classification in flight; a commit that destroys an account fences all its
+storage slots.
+
+**Canary.** Each classification also re-evaluates up to 64 dormant
+transactions. One that matches is woken and counted as a false dormancy.
+
+Every failure mode errs toward ready: a state read error, an overflowing fence,
+a missed canonical notification or an unknown parent leaves transactions ready.
+
+**Modes.** `--rollup.validity-dormancy off|enforce`, default `off`. `off`
+classifies nothing and builds the same snapshot as before; the builder keeps
+its own per-build predicate index and the pool keeps no dormancy state and
+takes no extra locks. `enforce` keeps dormant transactions out of the snapshot.
+A node with transaction forwarding enabled rejects `enforce`, since it would
+stop forwarding dormant transactions. With `enforce`, the native builder ignores
+its resting-predicate mode: the pool's index replaces it. Metrics:
+`txpool.validity.dormant_transactions` (gauge),
+`txpool.validity.dormant_wakes` (histogram, transactions woken per build), and
+`txpool.validity.false_dormancy` (counter).
+
 ## Usage
 
 Add the dependency to your `Cargo.toml`:

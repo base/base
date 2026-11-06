@@ -20,6 +20,7 @@ alloy-primitives = { workspace = true, features = ["k256", "map-foldhash"] }
 
 # reth
 reth-evm.workspace = true
+reth-revm.workspace = true
 reth-node-api.workspace = true
 reth-provider.workspace = true
 reth-chainspec.workspace = true

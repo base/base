@@ -10,6 +10,7 @@ use std::{
     time::Instant,
 };
 
+use alloy_eips::BlockNumHash;
 use alloy_primitives::{
     Address, B256, TxHash, U256, U512,
     map::{AddressMap, B256Map, HashMap},
@@ -23,8 +24,14 @@ use reth_transaction_pool::{
     identifier::{SenderId, TransactionId},
     pool::{AddedTransactionState, QueuedReason},
 };
+use revm::{database::TransitionState, state::EvmState};
 
-use crate::{BasePooledTx, BestTransactionPriority, best::MergeSource};
+use crate::{
+    BasePooledTx, BestTransactionPriority, DormancyClassification, PredicateContext,
+    ValidityDormancyMode, ValidityPredicate, WokenTransaction, WrittenLocation,
+    best::MergeSource,
+    dormancy::{Dormancy, DormantEntry, DormantSlot},
+};
 
 /// A finite channel: `(sender, nonce_key)`.
 pub(crate) type LaneId = (Address, U256);
@@ -52,9 +59,13 @@ struct NonceLane<T: BasePooledTx> {
     state_nonce: u64,
     /// First executable nonce; see [`LaneCursor::next_nonce`].
     next_nonce: u64,
-    /// Length of the consecutive pending run from `next_nonce`. Kept in step
-    /// by every mutation, so pending and queued splits never walk the lane.
-    pending_len: u64,
+    /// Length of the consecutive run from `next_nonce`. Kept in step by every
+    /// mutation, so pending and queued splits never walk the lane.
+    run_len: u64,
+    /// Whether the run's root is a dormant validity transaction, which ends
+    /// the pending run before it starts. Set by the owning pool, which
+    /// recomputes it after every lane mutation.
+    root_dormant: bool,
     transactions: BTreeMap<u64, Arc<ValidPoolTransaction<T>>>,
 }
 
@@ -71,7 +82,8 @@ impl<T: BasePooledTx> NonceLane<T> {
         let mut lane = Self {
             state_nonce: cursor.state_nonce,
             next_nonce: cursor.next_nonce,
-            pending_len: 0,
+            run_len: 0,
+            root_dormant: false,
             transactions,
         };
         lane.extend_pending_run();
@@ -86,15 +98,27 @@ impl<T: BasePooledTx> NonceLane<T> {
     /// Grows the pending run over every member directly following it.
     fn extend_pending_run(&mut self) {
         while self
-            .nonce_at(self.pending_len)
+            .nonce_at(self.run_len)
             .is_some_and(|nonce| self.transactions.contains_key(&nonce))
         {
-            self.pending_len += 1;
+            self.run_len += 1;
         }
     }
 
+    fn in_run(&self, nonce: u64) -> bool {
+        nonce.checked_sub(self.next_nonce).is_some_and(|offset| offset < self.run_len)
+    }
+
+    /// Length of the pending run: the consecutive run, unless a dormant root
+    /// ends it. Snapshots, bridging and pending and queued counts follow it;
+    /// lane events and eviction follow the consecutive run, so parking and
+    /// waking a root changes neither.
+    const fn pending_len(&self) -> u64 {
+        if self.root_dormant { 0 } else { self.run_len }
+    }
+
     fn is_pending(&self, nonce: u64) -> bool {
-        nonce.checked_sub(self.next_nonce).is_some_and(|offset| offset < self.pending_len)
+        nonce.checked_sub(self.next_nonce).is_some_and(|offset| offset < self.pending_len())
     }
 
     fn insert(
@@ -103,7 +127,7 @@ impl<T: BasePooledTx> NonceLane<T> {
         transaction: Arc<ValidPoolTransaction<T>>,
     ) -> Option<Arc<ValidPoolTransaction<T>>> {
         let replaced = self.transactions.insert(nonce, transaction);
-        if self.nonce_at(self.pending_len) == Some(nonce) {
+        if self.nonce_at(self.run_len) == Some(nonce) {
             self.extend_pending_run();
         }
         replaced
@@ -111,8 +135,8 @@ impl<T: BasePooledTx> NonceLane<T> {
 
     fn remove(&mut self, nonce: u64) -> Option<Arc<ValidPoolTransaction<T>>> {
         let removed = self.transactions.remove(&nonce)?;
-        if self.is_pending(nonce) {
-            self.pending_len = nonce - self.next_nonce;
+        if self.in_run(nonce) {
+            self.run_len = nonce - self.next_nonce;
         }
         Some(removed)
     }
@@ -122,7 +146,7 @@ impl<T: BasePooledTx> NonceLane<T> {
         let retained = self.transactions.split_off(&next_nonce);
         let stale = std::mem::replace(&mut self.transactions, retained);
         self.next_nonce = next_nonce;
-        self.pending_len = 0;
+        self.run_len = 0;
         self.extend_pending_run();
         stale
     }
@@ -133,10 +157,15 @@ impl<T: BasePooledTx> NonceLane<T> {
         self.nonce_at(offset).map_or(Bound::Excluded(u64::MAX), Bound::Included)
     }
 
-    /// Key bound right after the consecutive pending run; open when the run
-    /// reaches `u64::MAX`.
+    /// Key bound right after the consecutive run; open when the run reaches
+    /// `u64::MAX`.
     fn run_end(&self) -> Bound<u64> {
-        self.nonce_at(self.pending_len).map_or(Bound::Unbounded, Bound::Excluded)
+        self.nonce_at(self.run_len).map_or(Bound::Unbounded, Bound::Excluded)
+    }
+
+    /// Key bound right after the pending run.
+    fn pending_bound(&self) -> Bound<u64> {
+        self.nonce_at(self.pending_len()).map_or(Bound::Unbounded, Bound::Excluded)
     }
 
     fn live_transactions(&self) -> impl Iterator<Item = &Arc<ValidPoolTransaction<T>>> {
@@ -147,17 +176,17 @@ impl<T: BasePooledTx> NonceLane<T> {
         &self,
     ) -> impl Iterator<Item = &Arc<ValidPoolTransaction<T>>> {
         self.transactions
-            .range((Bound::Included(self.next_nonce), self.run_end()))
+            .range((Bound::Included(self.next_nonce), self.pending_bound()))
             .map(|(_, transaction)| transaction)
     }
 
     const fn consecutive_pending_len(&self) -> usize {
-        self.pending_len as usize
+        self.pending_len() as usize
     }
 
     fn queued_transactions(&self) -> impl Iterator<Item = &Arc<ValidPoolTransaction<T>>> {
         self.transactions
-            .range((self.offset_start(self.pending_len), Bound::Unbounded))
+            .range((self.offset_start(self.pending_len()), Bound::Unbounded))
             .map(|(_, transaction)| transaction)
     }
 
@@ -167,15 +196,23 @@ impl<T: BasePooledTx> NonceLane<T> {
         self.transactions.len() - self.consecutive_pending_len()
     }
 
-    /// Whether every live member is in the pending run.
-    fn is_fully_pending(&self) -> bool {
-        self.transactions.last_key_value().is_none_or(|(nonce, _)| self.is_pending(*nonce))
+    /// Whether every live member is in the consecutive run, as eviction ranks
+    /// lanes: a dormant root does not make its lane evicted first.
+    fn is_fully_in_run(&self) -> bool {
+        self.transactions.last_key_value().is_none_or(|(nonce, _)| self.in_run(*nonce))
     }
 
     /// The nonce right after the lane's consecutive pending run, or `None`
     /// when nothing is pending.
     fn pending_end(&self) -> Option<u64> {
-        (self.pending_len > 0).then(|| self.next_nonce.saturating_add(self.pending_len))
+        (self.pending_len() > 0).then(|| self.next_nonce.saturating_add(self.pending_len()))
+    }
+
+    /// The pending root of a lane whose executable cursor sits at its canonical anchor.
+    fn anchored_root(&self) -> Option<&Arc<ValidPoolTransaction<T>>> {
+        (self.next_nonce == self.state_nonce && self.run_len > 0)
+            .then(|| self.transactions.get(&self.next_nonce))
+            .flatten()
     }
 
     const fn cursor(&self) -> LaneCursor {
@@ -462,6 +499,20 @@ pub(crate) struct TwoDNoncePool<T: BasePooledTx> {
     /// when the two meet. Cleared with the lane; a flag may outlive the other
     /// store's transactions, so readers verify before relying on it.
     shared_lanes: HashSet<LaneId>,
+    /// Replay ids of the nonce-free transactions that are not dormant.
+    ready_nonce_free: HashSet<B256>,
+    dormancy: Dormancy,
+}
+
+/// Dormancy candidates taken for classification, with the state they must be classified for.
+#[derive(Debug)]
+pub(crate) struct DormancyBatch<T: BasePooledTx> {
+    /// The block the candidates are classified for.
+    pub context: PredicateContext,
+    /// Ready transactions to classify.
+    pub candidates: Vec<Arc<ValidPoolTransaction<T>>>,
+    /// Dormant transactions the canary re-evaluates.
+    pub canary: Vec<Arc<ValidPoolTransaction<T>>>,
 }
 
 impl<T: BasePooledTx> TwoDNoncePool<T> {
@@ -479,7 +530,21 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
             lane_candidates: HashMap::default(),
             ahead_of_state: HashMap::default(),
             shared_lanes: HashSet::default(),
+            ready_nonce_free: HashSet::default(),
+            dormancy: Dormancy::new(ValidityDormancyMode::Off),
         }
+    }
+
+    /// Sets whether validity transactions that cannot run yet are kept out of
+    /// best-transactions snapshots. Call before inserting.
+    pub(crate) fn set_dormancy_mode(&mut self, mode: ValidityDormancyMode) {
+        debug_assert!(self.hashes.is_empty(), "the ready indexes start empty with the pool");
+        self.dormancy = Dormancy::new(mode);
+    }
+
+    /// Number of dormant transactions.
+    pub(crate) fn dormant_len(&self) -> usize {
+        self.dormancy.len()
     }
 
     /// Applies admission and capacity limits. Call before inserting.
@@ -589,10 +654,10 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
         }
     }
 
-    /// Re-ranks `lane_id`'s tail after the lane changed. Must follow every lane
-    /// mutation: the tail, and whether it is pending, depend on the whole lane.
     /// Brings every per-lane index in line with `lane_id` after it changed:
-    /// its eviction candidate, its ahead-of-state anchor and its shared flag.
+    /// its eviction candidate, its ahead-of-state anchor, its shared flag and,
+    /// when dormancy is enforced, whether its root is dormant. Must follow
+    /// every lane mutation: each depends on the whole lane.
     fn refresh_lane_indexes(&mut self, lane_id: LaneId) {
         if let Some(previous) = self.lane_candidates.remove(&lane_id) {
             self.eviction_order.remove(&previous);
@@ -600,17 +665,40 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
         let Some(lane) = self.lanes.get(&lane_id) else {
             self.ahead_of_state.remove(&lane_id);
             self.shared_lanes.remove(&lane_id);
+            if self.dormancy.is_enforced()
+                && let Some(root) = self.dormancy.dormant_lane_root(&lane_id)
+            {
+                self.dormancy.remove(root);
+            }
             return;
         };
+        let mut root_dormant = false;
+        if self.dormancy.is_enforced() {
+            let root = lane.anchored_root().map(|root| *root.hash());
+            if let Some(dormant) = self.dormancy.dormant_lane_root(&lane_id)
+                && root != Some(dormant)
+            {
+                self.dormancy.remove(dormant);
+            }
+            root_dormant = root.is_some_and(|root| self.dormancy.is_dormant(&root));
+            if let Some(root) = root.filter(|_| !root_dormant) {
+                self.dormancy.enqueue(root);
+            }
+        }
         if lane.next_nonce > lane.state_nonce {
             self.ahead_of_state.insert(lane_id, lane.state_nonce);
         } else {
             self.ahead_of_state.remove(&lane_id);
         }
         if let Some((_, tail)) = lane.transactions.last_key_value() {
-            let key = self.eviction_key(tail, lane.is_fully_pending());
+            let key = self.eviction_key(tail, lane.is_fully_in_run());
             self.eviction_order.insert(key);
             self.lane_candidates.insert(lane_id, key);
+        }
+        if self.dormancy.is_enforced()
+            && let Some(lane) = self.lanes.get_mut(&lane_id)
+        {
+            lane.root_dormant = root_dormant;
         }
     }
 
@@ -833,8 +921,15 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
                 self.hashes.remove(existing.hash());
                 self.usage.remove(existing);
                 self.eviction_order.remove(&self.eviction_key(existing, true));
+                if self.dormancy.is_enforced() {
+                    self.dormancy.remove(*existing.hash());
+                }
             }
             self.nonce_free.insert(replay_id, Arc::clone(&transaction));
+            if self.dormancy.is_enforced() {
+                self.ready_nonce_free.insert(replay_id);
+                self.dormancy.enqueue(hash);
+            }
             self.usage.add(&transaction);
             self.eviction_order.insert(self.eviction_key(&transaction, true));
             self.hashes.insert(hash, Arc::clone(&transaction));
@@ -894,7 +989,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
         let anchor = self.set_lane_cursor(lane_id, cursor);
         let lane =
             self.lanes.entry(lane_id).or_insert_with(|| NonceLane::new(cursor, BTreeMap::new()));
-        let pending_len_before = lane.pending_len;
+        let run_len_before = lane.run_len;
 
         lane.insert(nonce, Arc::clone(&transaction));
         self.hashes.insert(hash, Arc::clone(&transaction));
@@ -906,7 +1001,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
             self.usage.remove(replaced);
         }
 
-        let state = if lane.is_pending(nonce) {
+        let state = if lane.in_run(nonce) {
             AddedTransactionState::Pending
         } else {
             AddedTransactionState::Queued(QueuedReason::NonceGap)
@@ -915,7 +1010,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
         // Members the newcomer closed a gap in front of join the pending run with it.
         let promoted = lane
             .transactions
-            .range((lane.offset_start(pending_len_before), lane.run_end()))
+            .range((lane.offset_start(run_len_before), lane.run_end()))
             .map(|(_, candidate)| candidate)
             .filter(|candidate| *candidate.hash() != hash)
             .cloned()
@@ -982,10 +1077,10 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
         // the shared middle stays pending and is never visited. Where the two
         // spans overlap, the runs are disjoint and the overlap lies in the gap
         // between them, so nothing there is reported.
-        let (old_next_nonce, old_pending_len) = (lane.next_nonce, lane.pending_len);
+        let (old_next_nonce, old_run_len) = (lane.next_nonce, lane.run_len);
         let old_end = lane.run_end();
         let was_pending = |nonce: u64| {
-            nonce.checked_sub(old_next_nonce).is_some_and(|offset| offset < old_pending_len)
+            nonce.checked_sub(old_next_nonce).is_some_and(|offset| offset < old_run_len)
         };
         let stale = lane.set_next_nonce(cursor.next_nonce);
         for transaction in stale.into_values() {
@@ -1009,7 +1104,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
             .range(starts)
             .chain(ends.into_iter().flat_map(|ends| lane.transactions.range(ends)));
         for (nonce, transaction) in changed {
-            match (was_pending(*nonce), lane.is_pending(*nonce)) {
+            match (was_pending(*nonce), lane.in_run(*nonce)) {
                 (false, true) => update.promoted.push(Arc::clone(transaction)),
                 (true, false) => update.queued.push(Arc::clone(transaction)),
                 _ => {}
@@ -1123,8 +1218,8 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
         self.shared_lanes.contains(lane_id)
     }
 
-    /// The shared lanes that currently have a pending run, with the nonce
-    /// right after that run.
+    /// The shared lanes with a pending run, with the nonce right after it. A
+    /// dormant root ends its lane's run, so its lane is left out.
     pub(crate) fn shared_lanes_pending_end(&self) -> impl Iterator<Item = (LaneId, u64)> + '_ {
         self.shared_lanes.iter().filter_map(|lane_id| {
             self.lanes.get(lane_id).and_then(NonceLane::pending_end).map(|end| (*lane_id, end))
@@ -1309,7 +1404,8 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
     /// while its balance covers the summed `cost()` of all its sidecar
     /// transactions. That backing is kept on the transactions as costs and
     /// balances change (see `refresh_tip_backing`), so the snapshot costs the
-    /// pending lanes, not every transaction.
+    /// pending lanes, not every transaction. A dormant root ends its lane's
+    /// pending run, so its lane offers nothing.
     pub(crate) fn best_transactions<O>(
         &self,
         ordering: O,
@@ -1318,13 +1414,334 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
     where
         O: TransactionOrdering<Transaction = T>,
     {
+        let lanes = self.lanes.iter().map(|(id, lane)| (*id, lane));
+        if !self.dormancy.is_enforced() {
+            return BestTwoDTransactions::new(
+                lanes,
+                self.nonce_free.values(),
+                self.protocol_nonce_lanes,
+                ordering,
+                base_fee,
+            );
+        }
         BestTwoDTransactions::new(
-            &self.lanes,
-            &self.nonce_free,
+            lanes,
+            self.ready_nonce_free.iter().filter_map(|replay_id| self.nonce_free.get(replay_id)),
             self.protocol_nonce_lanes,
             ordering,
             base_fee,
         )
+    }
+
+    /// Where `hash` would sit as a dormant transaction: a nonce-free
+    /// transaction or the root of a lane anchored at canonical state. `None`
+    /// for anything else.
+    fn eligible_slot(&self, hash: &TxHash) -> Option<DormantSlot> {
+        let transaction = self.hashes.get(hash)?;
+        if let Some(replay_id) = transaction.transaction.eip8130_replay_id() {
+            return Some(DormantSlot::NonceFree(replay_id));
+        }
+        let lane_id = (transaction.sender(), self.lane_key(&transaction.transaction)?);
+        let root = self.lanes.get(&lane_id)?.anchored_root()?;
+        (root.hash() == hash).then_some(DormantSlot::Lane(lane_id))
+    }
+
+    /// Starts build `block_number` on `parent` and returns its id. The index
+    /// is kept only when `parent` is the tip and no other build is running;
+    /// then the writes `pre_selection` made and the block's height wake what
+    /// they may satisfy. Otherwise it is discarded.
+    pub(crate) fn begin_build(
+        &mut self,
+        parent: B256,
+        block_number: u64,
+        pre_selection: Option<&TransitionState>,
+    ) -> u64 {
+        if self.dormancy.building || self.dormancy.tip.map(|tip| tip.hash) != Some(parent) {
+            self.discard_dormancy();
+        }
+        self.dormancy.builds += 1;
+        self.dormancy.building = true;
+        self.dormancy.height = block_number;
+        self.dormancy.build_wakes = 0;
+        let mut woken = self.dormancy.release_through(block_number);
+        if let Some(transitions) = pre_selection {
+            self.dormancy.fence(WrittenLocation::of_transitions(transitions));
+            woken.extend(
+                self.dormancy.index.affected_by_transitions(transitions).affected_transactions,
+            );
+        }
+        for hash in woken {
+            self.wake(hash);
+        }
+        self.dormancy.builds
+    }
+
+    /// Makes the block `build` sealed the tip and drops the entries indexed
+    /// only for its mid-block wakes. Returns how many transactions the build
+    /// woke, or `None` when `build` is not the running build.
+    pub(crate) fn seal_build(&mut self, build: u64, block_hash: B256) -> Option<usize> {
+        if !self.dormancy.is_running(build) {
+            return None;
+        }
+        self.dormancy.tip = Some(BlockNumHash::new(self.dormancy.height, block_hash));
+        self.dormancy.building = false;
+        for hash in self.dormancy.in_build_hashes() {
+            self.dormancy.remove(hash);
+        }
+        if self.dormancy.classifying.is_none() {
+            self.dormancy.clear_fence();
+        }
+        Some(self.dormancy.build_wakes)
+    }
+
+    /// Discards the index when `build` ends without a seal. Returns how many
+    /// transactions the build woke, or `None` when it is not the running build.
+    pub(crate) fn abandon_build(&mut self, build: u64) -> Option<usize> {
+        if !self.dormancy.is_running(build) {
+            return None;
+        }
+        let woken = self.dormancy.build_wakes;
+        self.discard_dormancy();
+        Some(woken)
+    }
+
+    /// Wakes every indexed transaction and forgets the tip, so nothing is
+    /// dormant until the next seal and classification.
+    pub(crate) fn discard_dormancy(&mut self) {
+        let indexed = self.dormancy.index.hashes().collect::<Vec<_>>();
+        for hash in indexed {
+            self.wake(hash);
+        }
+        self.dormancy.tip = None;
+        self.dormancy.building = false;
+        self.dormancy.discards += 1;
+        self.dormancy.clear_fence();
+    }
+
+    /// Discards the index when canonical `blocks` hold a block at the tip's
+    /// height that is not the tip.
+    pub(crate) fn observe_canonical(&mut self, blocks: &[BlockNumHash]) {
+        let Some(tip) = self.dormancy.tip else { return };
+        if blocks.iter().any(|block| block.number == tip.number && block.hash != tip.hash) {
+            self.discard_dormancy();
+        }
+    }
+
+    /// Records that the running build, if any, takes its snapshot now, and
+    /// returns the build's id and the snapshot's. Call under the same lock
+    /// hold as the snapshot, so the snapshot holds exactly the transactions
+    /// that were not dormant at this id.
+    pub(crate) const fn begin_snapshot(&mut self) -> Option<(u64, u64)> {
+        if !self.dormancy.building {
+            return None;
+        }
+        self.dormancy.snapshots += 1;
+        Some((self.dormancy.builds, self.dormancy.snapshots))
+    }
+
+    /// Wakes the transactions a commit of build `build`, whose snapshot is
+    /// `snapshot`, that wrote `state` may satisfy. Nothing happens unless
+    /// `build` is the running build.
+    pub(crate) fn wake_for_commit(
+        &mut self,
+        build: u64,
+        snapshot: u64,
+        state: &EvmState,
+    ) -> Vec<WokenTransaction<T>> {
+        if !self.dormancy.is_running(build) {
+            return Vec::new();
+        }
+        self.dormancy.fence(WrittenLocation::of_state(state));
+        if self.dormancy.index.is_empty() {
+            return Vec::new();
+        }
+        let affected = self.dormancy.index.affected_by_state(state).affected_transactions;
+        affected
+            .into_iter()
+            .filter_map(|hash| {
+                let entry = self.wake(hash)?;
+                let transaction = self.hashes.get(&hash)?;
+                Some(WokenTransaction {
+                    transaction: Arc::clone(transaction),
+                    dormant_at_snapshot: entry.slot.is_some() && entry.indexed_at < snapshot,
+                })
+            })
+            .collect()
+    }
+
+    /// Indexes a transaction build `build` found failing `predicate`, so a
+    /// later commit can wake it. An eligible transaction becomes dormant and
+    /// stays so in later builds on this one; any other is indexed until the
+    /// build ends.
+    pub(crate) fn park_unsatisfied(
+        &mut self,
+        build: u64,
+        transaction: &Arc<ValidPoolTransaction<T>>,
+        predicate: ValidityPredicate,
+    ) {
+        if !self.dormancy.is_running(build) || !self.is_pooled(transaction) {
+            return;
+        }
+        let release_block = match &predicate {
+            ValidityPredicate::BlockNumber { op, value } => {
+                let Some(release) =
+                    DormancyClassification::release_block(*op, *value, self.dormancy.height)
+                else {
+                    return;
+                };
+                Some(release)
+            }
+            _ => None,
+        };
+        let hash = *transaction.hash();
+        let slot = self.eligible_slot(&hash);
+        self.dormancy.park(hash, slot, predicate, release_block);
+        self.leave_snapshot(slot);
+    }
+
+    /// The rest of the pending run `root` heads in `lane_id`, or `None` when
+    /// `root` does not head it.
+    pub(crate) fn pending_run_behind(
+        &self,
+        lane_id: &LaneId,
+        root: &Arc<ValidPoolTransaction<T>>,
+    ) -> Option<Vec<Arc<ValidPoolTransaction<T>>>> {
+        let mut run = self.lanes.get(lane_id)?.consecutive_pending_transactions();
+        run.next().is_some_and(|head| Arc::ptr_eq(head, root)).then(|| run.cloned().collect())
+    }
+
+    /// Takes the queued transactions that are still dormancy candidates, and
+    /// the canary's next dormant ones, to classify against the canonical
+    /// state `head` without holding the pool lock. `None` unless dormancy is
+    /// enforced and `head` is the tip; the queue then waits.
+    pub(crate) fn take_dormancy_batch(&mut self, head: B256) -> Option<DormancyBatch<T>> {
+        let tip =
+            self.dormancy.tip.filter(|tip| self.dormancy.is_enforced() && tip.hash == head)?;
+        let context =
+            PredicateContext { block_number: tip.number.checked_add(1)?, flashblock_index: 0 };
+        let candidates = self
+            .dormancy
+            .take_queue()
+            .into_iter()
+            .filter(|hash| !self.dormancy.is_dormant(hash) && self.eligible_slot(hash).is_some())
+            .filter_map(|hash| self.hashes.get(&hash).cloned())
+            .collect();
+        let canary = self
+            .dormancy
+            .take_canary()
+            .into_iter()
+            .filter_map(|hash| self.hashes.get(&hash).cloned())
+            .collect();
+        self.dormancy.classifying = Some(self.dormancy.discards);
+        Some(DormancyBatch { context, candidates, canary })
+    }
+
+    /// Installs some of a batch's classifications, deciding per transaction
+    /// against the pool as it is now: a candidate is parked only while the
+    /// very transaction classified is still pooled as a ready dormancy
+    /// candidate, no build wrote its blocker since the state classification
+    /// read, and no build already started at a height that satisfies it.
+    /// Candidates not parked are queued again, and nothing is parked once
+    /// the index was discarded after classification started.
+    ///
+    /// A hash alone does not identify what was classified: validity
+    /// predicates are not part of it, so an envelope removed and readmitted
+    /// with other predicates during classification has the same hash.
+    pub(crate) fn install_dormancy(
+        &mut self,
+        candidates: Vec<(Arc<ValidPoolTransaction<T>>, DormancyClassification)>,
+    ) {
+        let discarded = self.dormancy.classifying != Some(self.dormancy.discards);
+        for (transaction, classification) in candidates {
+            match classification {
+                DormancyClassification::Dormant { predicate, release_block } if !discarded => {
+                    self.park_classified(&transaction, predicate, release_block);
+                }
+                _ => self.dormancy.enqueue(*transaction.hash()),
+            }
+        }
+    }
+
+    /// Wakes the canary transactions still pooled, still dormant and found
+    /// runnable; returns how many.
+    pub(crate) fn wake_runnable(
+        &mut self,
+        canary: Vec<(Arc<ValidPoolTransaction<T>>, DormancyClassification)>,
+    ) -> usize {
+        canary
+            .into_iter()
+            .filter(|(transaction, classification)| {
+                *classification == DormancyClassification::Matched
+                    && self.is_pooled(transaction)
+                    && self.dormancy.is_dormant(transaction.hash())
+                    && self.wake(*transaction.hash()).is_some()
+            })
+            .count()
+    }
+
+    /// Ends the classification in flight.
+    pub(crate) fn finish_classification(&mut self) {
+        self.dormancy.classifying = None;
+        if !self.dormancy.building {
+            self.dormancy.clear_fence();
+        }
+    }
+
+    fn park_classified(
+        &mut self,
+        transaction: &Arc<ValidPoolTransaction<T>>,
+        predicate: ValidityPredicate,
+        release_block: Option<u64>,
+    ) {
+        let hash = *transaction.hash();
+        if !self.is_pooled(transaction) || self.dormancy.is_dormant(&hash) {
+            return;
+        }
+        let Some(slot) = self.eligible_slot(&hash) else { return };
+        if self.dormancy.is_fenced(&predicate)
+            || release_block.is_some_and(|release| release <= self.dormancy.height)
+        {
+            self.dormancy.enqueue(hash);
+            return;
+        }
+        self.dormancy.park(hash, Some(slot), predicate, release_block);
+        self.leave_snapshot(Some(slot));
+    }
+
+    /// Whether `transaction` itself, not just its hash, is pooled.
+    fn is_pooled(&self, transaction: &Arc<ValidPoolTransaction<T>>) -> bool {
+        self.hashes.get(transaction.hash()).is_some_and(|pooled| Arc::ptr_eq(pooled, transaction))
+    }
+
+    /// Takes a newly dormant transaction out of snapshots.
+    fn leave_snapshot(&mut self, slot: Option<DormantSlot>) {
+        match slot {
+            Some(DormantSlot::Lane(lane_id)) => {
+                if let Some(lane) = self.lanes.get_mut(&lane_id) {
+                    lane.root_dormant = true;
+                }
+            }
+            Some(DormantSlot::NonceFree(replay_id)) => {
+                self.ready_nonce_free.remove(&replay_id);
+            }
+            None => {}
+        }
+    }
+
+    /// Removes `hash` from the index; a dormant transaction becomes ready and
+    /// is queued for classification. Returns its entry.
+    fn wake(&mut self, hash: TxHash) -> Option<DormantEntry> {
+        let entry = self.dormancy.remove(hash)?;
+        self.dormancy.build_wakes += 1;
+        match entry.slot {
+            Some(DormantSlot::Lane(lane_id)) => self.refresh_lane_indexes(lane_id),
+            Some(DormantSlot::NonceFree(replay_id)) => {
+                self.ready_nonce_free.insert(replay_id);
+                self.dormancy.enqueue(hash);
+            }
+            None => {}
+        }
+        Some(entry)
     }
 
     fn remove_hash(&mut self, hash: TxHash) -> Option<Arc<ValidPoolTransaction<T>>> {
@@ -1332,6 +1749,10 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
             && let Some(replay_id) = transaction.transaction.eip8130_replay_id()
         {
             let transaction = self.nonce_free.remove(&replay_id)?;
+            if self.dormancy.is_enforced() {
+                self.ready_nonce_free.remove(&replay_id);
+                self.dormancy.remove(hash);
+            }
             self.hashes.remove(&hash);
             self.usage.remove(&transaction);
             self.eviction_order.remove(&self.eviction_key(&transaction, true));
@@ -1433,20 +1854,25 @@ impl<T: BasePooledTx, O> BestTwoDTransactions<T, O>
 where
     O: TransactionOrdering<Transaction = T>,
 {
-    fn new(
-        lanes: &HashMap<LaneId, NonceLane<T>>,
-        nonce_free: &B256Map<Arc<ValidPoolTransaction<T>>>,
+    fn new<'a>(
+        lanes: impl Iterator<Item = (LaneId, &'a NonceLane<T>)>,
+        nonce_free: impl Iterator<Item = &'a Arc<ValidPoolTransaction<T>>>,
         protocol_nonce_lanes: bool,
         ordering: O,
         base_fee: u64,
-    ) -> Self {
-        let mut snapshot = Vec::with_capacity(lanes.len() + nonce_free.len());
-        snapshot.extend(lanes.iter().filter_map(|(id, lane)| {
+    ) -> Self
+    where
+        T: 'a,
+    {
+        let capacity = |items: (usize, Option<usize>)| items.1.unwrap_or(items.0);
+        let mut snapshot =
+            Vec::with_capacity(capacity(lanes.size_hint()) + capacity(nonce_free.size_hint()));
+        snapshot.extend(lanes.filter_map(|(id, lane)| {
             let mut pending = lane.consecutive_pending_transactions();
             let head = Arc::clone(pending.next()?);
             let mut tail = Vec::with_capacity(lane.consecutive_pending_len() - 1);
             tail.extend(pending.cloned());
-            Some(LaneIterator::new(*id, head, tail))
+            Some(LaneIterator::new(id, head, tail))
         }));
         let lane_indexes = snapshot
             .iter()
@@ -1454,7 +1880,7 @@ where
             .filter(|(_, lane)| !lane.tail.is_empty())
             .map(|(index, lane)| (lane.id, index))
             .collect();
-        snapshot.extend(nonce_free.values().map(|transaction| {
+        snapshot.extend(nonce_free.map(|transaction| {
             let id = (transaction.sender(), Eip8130Constants::NONCE_KEY_MAX);
             LaneIterator::new(id, Arc::clone(transaction), Vec::new())
         }));
@@ -1716,7 +2142,7 @@ mod tests {
             Arc::new(valid_pool_transaction(signed_channel_tx(&signer, U256::from(1), 0, 1_000)));
 
         let setup_started = Instant::now();
-        let lanes = (1..=lane_count)
+        let lanes: HashMap<LaneId, NonceLane<BasePooledTransaction>> = (1..=lane_count)
             .map(|nonce_key| {
                 (
                     (signer.address(), U256::from(nonce_key)),
@@ -1731,8 +2157,8 @@ mod tests {
 
         let snapshot_started = Instant::now();
         let best = BestTwoDTransactions::new(
-            &lanes,
-            &B256Map::default(),
+            lanes.iter().map(|(id, lane)| (*id, lane)),
+            std::iter::empty::<&Arc<ValidPoolTransaction<BasePooledTransaction>>>(),
             false,
             BaseOrdering::coinbase_tip(),
             0,
@@ -2219,8 +2645,8 @@ mod tests {
         .collect();
 
         let mut best = BestTwoDTransactions::new(
-            &lanes,
-            &B256Map::default(),
+            lanes.iter().map(|(id, lane)| (*id, lane)),
+            std::iter::empty::<&Arc<ValidPoolTransaction<BasePooledTransaction>>>(),
             false,
             BaseOrdering::coinbase_tip(),
             0,
@@ -2800,6 +3226,70 @@ mod tests {
 
     fn protocol_lane_pool() -> TwoDNoncePool<BasePooledTransaction> {
         TwoDNoncePool::new(PriceBumpConfig::default()).with_protocol_nonce_lanes()
+    }
+
+    /// Off is the pool as it was before dormancy: its snapshot and bridging
+    /// walk every lane and every nonce-free transaction.
+    #[test]
+    fn a_pool_without_dormancy_offers_every_pending_run() {
+        let signer = signer();
+        let lane = (signer.address(), U256::ZERO);
+        let mut pool = protocol_lane_pool();
+        let root = valid_pool_transaction(signed_1559(&signer, 0, 1_000));
+        let root_hash = *root.hash();
+        pool.insert_validated(root, 0).unwrap();
+        pool.insert_validated(
+            valid_pool_transaction(signed_nonce_free_tx(&signer, u64::MAX, 0, 1_000)),
+            0,
+        )
+        .unwrap();
+        pool.mark_shared_lane(lane);
+
+        assert!(pool.ready_nonce_free.is_empty());
+        assert_eq!(pool.shared_lanes_pending_end().collect::<Vec<_>>(), vec![(lane, 1)]);
+        let best = pool.best_transactions(BaseOrdering::coinbase_tip(), 0).collect::<Vec<_>>();
+        assert_eq!(best.len(), 2);
+        assert!(best.iter().any(|transaction| *transaction.hash() == root_hash));
+    }
+
+    /// A dormant root ends its lane's pending run for snapshots, bridging,
+    /// the lane's pending end and pending and queued counts, while the lane
+    /// cursor stays at the canonical nonce.
+    #[test]
+    fn a_dormant_root_ends_its_lanes_pending_run() {
+        let signer = signer();
+        let lane = (signer.address(), U256::ZERO);
+        let mut pool = protocol_lane_pool();
+        pool.set_dormancy_mode(ValidityDormancyMode::Enforce);
+        let root = valid_pool_transaction(signed_1559(&signer, 0, 1_000));
+        let root_hash = *root.hash();
+        pool.insert_validated(root, 0).unwrap();
+        pool.insert_validated(valid_pool_transaction(signed_1559(&signer, 1, 1_000)), 0).unwrap();
+        let root = pool.get(&root_hash).unwrap();
+        pool.mark_shared_lane(lane);
+        let tip = B256::repeat_byte(1);
+        let build = pool.begin_build(B256::ZERO, 1, None);
+        pool.seal_build(build, tip);
+        pool.take_dormancy_batch(tip).unwrap();
+
+        let blocker = ValidityPredicate::BlockNumber {
+            op: ValidityOperator::GreaterThanOrEqual,
+            value: U256::from(10),
+        };
+        let dormant =
+            DormancyClassification::Dormant { predicate: blocker, release_block: Some(10) };
+        pool.install_dormancy(vec![(Arc::clone(&root), dormant)]);
+
+        assert_eq!(pool.best_transactions(BaseOrdering::coinbase_tip(), 0).count(), 0);
+        assert_eq!(pool.shared_lanes_pending_end().count(), 0);
+        assert_eq!(pool.lane_pending_end(&lane), None);
+        assert_eq!(pool.pending_and_queued_txn_count(), (0, 2));
+        assert_eq!(pool.lane_cursor(&lane), Some(LaneCursor::at(0)));
+
+        pool.discard_dormancy();
+        assert_eq!(pool.best_transactions(BaseOrdering::coinbase_tip(), 0).count(), 2);
+        assert_eq!(pool.shared_lanes_pending_end().collect::<Vec<_>>(), vec![(lane, 2)]);
+        assert_eq!(pool.pending_and_queued_txn_count(), (2, 0));
     }
 
     #[test]

@@ -18,7 +18,7 @@ use base_common_consensus::{BaseTransaction, DepositReceiptExt, Predeploys};
 use base_common_evm::{BaseSpecId, L1BlockInfo};
 use base_execution_eip8130::IntrinsicGas;
 use base_execution_txpool::{
-    BasePooledTx, GuardMetrics, ParkableTransactionPool, PredicateContext,
+    BasePooledTx, DormancyBuild, GuardMetrics, ParkableTransactionPool, PredicateContext,
     estimated_da_size::DataAvailabilitySized,
 };
 use base_observability_events::{
@@ -50,7 +50,10 @@ use reth_transaction_pool::{
 };
 use reth_trie_common::ExecutionWitnessMode;
 use reth_trie_parallel::state_root_task::PayloadStateRootHandle;
-use revm::context::{Block, BlockEnv};
+use revm::{
+    context::{Block, BlockEnv},
+    database::TransitionState,
+};
 use tracing::{debug, debug_span, info, instrument, trace, warn};
 
 use crate::{
@@ -207,6 +210,7 @@ where
         + Send
         + Sync
         + 'a,
+        begin_dormancy: Option<Box<BeginDormancyFn<'a>>>,
     ) -> Result<BuildOutcome<BaseBuiltPayload<N>>, PayloadBuilderError>
     where
         Txs: ParkablePayloadTransactions<
@@ -234,11 +238,14 @@ where
         tracing::Span::current().record("parent_num", ctx.parent().number());
 
         let pool = self.pool.clone();
-        let builder = Builder::new(best)
+        let mut builder = Builder::new(best)
             .with_permanent_eviction(move |hashes| {
                 let _ = pool.remove_transactions(hashes);
             })
             .with_resting_predicates(self.resting_predicates.clone());
+        if let Some(begin) = begin_dormancy {
+            builder = builder.with_dormancy(begin);
+        }
 
         let state_provider = crate::BuilderStateProvider::new(
             self.client.state_by_block_hash(ctx.parent().hash())?,
@@ -315,14 +322,20 @@ where
         &self,
         args: BuildArguments<Self::Attributes, Self::BuiltPayload>,
     ) -> Result<BuildOutcome<Self::BuiltPayload>, PayloadBuilderError> {
-        self.build_payload(args, |attrs, resting| {
-            ParkableBestPayloadTransactions::new(
-                self.pool.best_transactions_with_attributes_and_parking(
-                    attrs,
-                    resting.map(SharedRestingPredicates::iterator_hold),
-                ),
-            )
-        })
+        self.build_payload(
+            args,
+            |attrs, resting| {
+                ParkableBestPayloadTransactions::new(
+                    self.pool.best_transactions_with_attributes_and_parking(
+                        attrs,
+                        resting.map(SharedRestingPredicates::iterator_hold),
+                    ),
+                )
+            },
+            Some(Box::new(|parent, block_number, pre_selection| {
+                self.pool.begin_dormancy_build(parent, block_number, pre_selection)
+            })),
+        )
     }
 
     fn on_missing_payload(
@@ -348,9 +361,13 @@ where
             cancel: Default::default(),
             best_payload: None,
         };
-        self.build_payload(args, |_, _| {
-            NoopPayloadTransactions::<Arc<ValidPoolTransaction<Pool::Transaction>>>::default()
-        })?
+        self.build_payload(
+            args,
+            |_, _| {
+                NoopPayloadTransactions::<Arc<ValidPoolTransaction<Pool::Transaction>>>::default()
+            },
+            None,
+        )?
         .into_payload()
         .ok_or_else(|| PayloadBuilderError::MissingPayload)
     }
@@ -363,6 +380,12 @@ fn job_interrupt(cancel: &Arc<CancelOnDrop>) -> HoldInterrupt {
     let cancel = Arc::downgrade(cancel);
     Arc::new(move || cancel.upgrade().is_none_or(|cancel| cancel.is_interrupted()))
 }
+
+/// Starts a build against the pool's dormancy index from the parent's hash, the number of the
+/// block being built and the writes made before selection; see
+/// [`ParkableTransactionPool::begin_dormancy_build`].
+pub type BeginDormancyFn<'a> =
+    dyn FnOnce(B256, u64, Option<&TransitionState>) -> Option<DormancyBuild> + 'a;
 
 /// Creates the candidate iterator of one build from the fee attributes and, for an enforcing
 /// build, the resting set whose hold the iterator parks members with.
@@ -394,6 +417,9 @@ pub struct Builder<'a, Txs> {
     evict_permanently_rejected: Box<dyn FnOnce(Vec<TxHash>) + 'a>,
     /// Carries resting validity transactions between builds when the carried mode is enabled.
     resting_predicates: Option<RestingPredicateStore>,
+    /// Starts the build against the pool's dormancy index, which then replaces the resting set.
+    #[debug(skip)]
+    begin_dormancy: Option<Box<BeginDormancyFn<'a>>>,
 }
 
 impl<'a, Txs> Builder<'a, Txs> {
@@ -408,7 +434,19 @@ impl<'a, Txs> Builder<'a, Txs> {
             best: Box::new(best),
             evict_permanently_rejected: Box::new(|_| {}),
             resting_predicates: None,
+            begin_dormancy: None,
         }
+    }
+
+    /// Sets the callback that starts the build against the pool's dormancy index. When it
+    /// returns a [`DormancyBuild`], the build seals it with the block and ignores its resting
+    /// set, which the pool's index replaces.
+    pub fn with_dormancy(
+        mut self,
+        begin: impl FnOnce(B256, u64, Option<&TransitionState>) -> Option<DormancyBuild> + 'a,
+    ) -> Self {
+        self.begin_dormancy = Some(Box::new(begin));
+        self
     }
 
     /// Sets the callback used to permanently remove mempool transactions that exceeded a
@@ -447,7 +485,7 @@ impl<Txs> Builder<'_, Txs> {
         >,
         Attrs: Attributes<Transaction = N::SignedTx>,
     {
-        let Self { best, evict_permanently_rejected, resting_predicates } = self;
+        let Self { best, evict_permanently_rejected, resting_predicates, begin_dormancy } = self;
         // The pool iterator's hold watches the job's cancellation through a weak reference. A
         // dropped `CancelOnDrop` clone cancels the job, so only this owner, dropped with `ctx` when
         // the build returns, keeps one.
@@ -479,13 +517,22 @@ impl<Txs> Builder<'_, Txs> {
 
         // 3. if mem pool transactions are requested we execute them
         let mut resting = None;
+        let mut dormancy = None;
         if !ctx.attributes().no_tx_pool() {
+            dormancy = begin_dormancy.and_then(|begin| {
+                begin(
+                    ctx.parent().hash(),
+                    ctx.parent().number().saturating_add(1),
+                    builder.evm_mut().db_mut().transition_state.as_ref(),
+                )
+            });
             // Without flashblocks, resting transactions only carry across blocks, from Denim on.
             resting = resting_predicates
                 .as_ref()
                 .filter(|_| {
                     ctx.builder_config.resting_predicate_mode.is_enabled()
                         && ctx.is_one_shot_building_active()
+                        && dormancy.is_none()
                 })
                 .map(|store| {
                     let start = Instant::now();
@@ -585,6 +632,9 @@ impl<Txs> Builder<'_, Txs> {
         debug!(target: "payload_builder", id=%ctx.payload_id(), sealed_block_header = ?sealed_block.header(), "sealed built block");
         if let (Some(resting), Some(store)) = (resting, resting_predicates) {
             store.put(resting, sealed_block.hash());
+        }
+        if let Some(dormancy) = dormancy {
+            dormancy.seal(sealed_block.hash());
         }
 
         let execution_outcome =
@@ -1033,6 +1083,9 @@ where
         let block_number =
             builder.evm_mut().block().number().try_into().expect("block number must fit in u64");
         let predicate_context = PredicateContext { block_number, flashblock_index: 0 };
+        // A build against the pool's dormancy index parks and wakes there; otherwise the build keeps
+        // its own index.
+        let pool_index = best_txs.parks_in_pool_index();
         let mut predicate_index =
             ParkedPredicateIndex::new(self.builder_config.predicate_bucket_ordered_threshold);
         let mut predicate_loads = PredicateLoadTracker::default();
@@ -1234,7 +1287,11 @@ where
                             ?blocker,
                             "parking transaction with unsatisfied validity predicate"
                         );
-                        best_txs.park_current();
+                        if pool_index {
+                            best_txs.park_current_unsatisfied(predicate.clone());
+                        } else {
+                            best_txs.park_current();
+                        }
                         if deferrals.record(tx_hash, "validity_predicate_not_satisfied") {
                             emit_native_validity_event!(
                                 self,
@@ -1247,7 +1304,9 @@ where
                                 }
                             );
                         }
-                        predicate_index.park(tx_hash, pooled, predicate);
+                        if !pool_index {
+                            predicate_index.park(tx_hash, pooled, predicate);
+                        }
                         continue;
                     }
                     Err(error) => {
@@ -1468,6 +1527,9 @@ where
                         }
                         if let Some(resting) = resting {
                             resting_woken = resting.wake_by_state(&result_and_state.state);
+                        }
+                        if pool_index {
+                            best_txs.wake_by_state(&result_and_state.state);
                         }
                         CommitChanges::Yes
                     }
@@ -1736,7 +1798,8 @@ mod tests {
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
     use base_execution_evm::BaseEvmConfig;
     use base_execution_txpool::{
-        BasePooledTransaction, BestTransactionsHold, ValidityOperator, ValidityPredicate,
+        BasePooledTransaction, BestTransactionsHold, DormancyBuild, ValidityOperator,
+        ValidityPredicate,
     };
     use base_observability_events::{TransactionEventCapture, TransactionEventType};
     use reth_basic_payload_builder::{BuildOutcomeKind, PayloadConfig};
@@ -1757,7 +1820,7 @@ mod tests {
     use reth_trie_parallel::state_root_task::{
         PayloadStateRootHandle, StateRootComputeOutcome, StateRootHandle, StateRootTaskCancelGuard,
     };
-    use revm::{Database, database::TransitionState};
+    use revm::{Database, database::TransitionState, state::EvmState};
 
     use super::{
         BasePayloadBuilderCtx, Builder, ExecutionInfo, RESTING_SWEEP_WAIT_LIMIT, job_interrupt,
@@ -2054,6 +2117,10 @@ mod tests {
         invalid: Arc<Mutex<Vec<(Address, u64)>>>,
         /// Parks held candidates before yielding them, as the pool's parking iterator does.
         hold: Option<Box<dyn BestTransactionsHold<BasePooledTransaction>>>,
+        /// Stands in for the pool's dormancy index.
+        pool_index: Option<crate::ParkedPredicateIndex<()>>,
+        /// Every hash the build parked in `pool_index`.
+        pool_parked: Arc<Mutex<Vec<TxHash>>>,
     }
 
     impl TestParkableTransactions {
@@ -2074,7 +2141,18 @@ mod tests {
                 promoted_first: true,
                 invalid,
                 hold: None,
+                pool_index: None,
+                pool_parked: Arc::default(),
             }
+        }
+
+        /// Parks unsatisfied candidates in, and wakes them from, a stand-in for the pool's
+        /// dormancy index, recording every hash parked there into `parked`.
+        fn with_pool_index(mut self, parked: Arc<Mutex<Vec<TxHash>>>) -> Self {
+            self.pool_index =
+                Some(crate::ParkedPredicateIndex::new(DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD));
+            self.pool_parked = parked;
+            self
         }
 
         /// Parks the candidates `hold` holds before yielding them.
@@ -2145,6 +2223,31 @@ mod tests {
 
         fn discard_parked(&mut self, transaction_hash: B256) -> bool {
             self.parked.remove(&transaction_hash).is_some()
+        }
+
+        fn parks_in_pool_index(&self) -> bool {
+            self.pool_index.is_some()
+        }
+
+        fn park_current_unsatisfied(&mut self, predicate: ValidityPredicate) {
+            if let (Some(transaction), Some(index)) =
+                (self.current.as_ref(), self.pool_index.as_mut())
+            {
+                index.park(*transaction.hash(), (), predicate);
+                self.pool_parked.lock().unwrap().push(*transaction.hash());
+            }
+            self.park_current();
+        }
+
+        fn wake_by_state(&mut self, state: &EvmState) {
+            let Some(index) = self.pool_index.as_mut() else { return };
+            let woken = index.affected_by_state(state).affected_transactions;
+            for hash in &woken {
+                index.remove(*hash);
+            }
+            for hash in woken {
+                self.promote(hash);
+            }
         }
     }
 
@@ -3065,6 +3168,77 @@ mod tests {
         assert_eq!(included_tx_count(outcome), 0);
         assert!(evicted.lock().unwrap().is_empty());
         assert_eq!(invalid.lock().unwrap().len(), 1);
+    }
+
+    /// With the pool's dormancy index, the build parks an unsatisfied transaction there and an
+    /// earlier commit that satisfies it wakes it into the same block.
+    #[test]
+    fn native_builder_parks_in_and_wakes_from_the_pool_index() {
+        let watched_address = Address::repeat_byte(0x44);
+        let gated = pool_transaction_to(0, Address::repeat_byte(0x55), U256::ZERO)
+            .with_validity_predicates(vec![ValidityPredicate::Balance {
+                address: watched_address,
+                op: ValidityOperator::Equal,
+                value: U256::ONE,
+            }]);
+        let trigger = pool_transaction_to(0, watched_address, U256::ONE);
+        let funded_senders = [gated.sender(), trigger.sender()];
+        let (gated_hash, trigger_hash) = (*gated.hash(), *trigger.hash());
+        let parked = Arc::new(Mutex::new(Vec::new()));
+        let transactions = TestParkableTransactions::new(vec![gated, trigger])
+            .with_pool_index(Arc::clone(&parked));
+
+        let BuildOutcomeKind::Freeze(payload) = build_parkable_pool_payload(
+            pool_payload_context(DENIM_TIMESTAMP),
+            transactions,
+            &funded_senders,
+        ) else {
+            panic!("Denim payload must freeze")
+        };
+
+        let included_hashes = payload
+            .block()
+            .body()
+            .transactions
+            .iter()
+            .map(|transaction| *transaction.tx_hash())
+            .collect::<Vec<_>>();
+        assert_eq!(included_hashes, vec![trigger_hash, gated_hash]);
+        assert_eq!(*parked.lock().unwrap(), vec![gated_hash]);
+    }
+
+    /// A native build starts a dormancy build on its parent for the next block, after the writes
+    /// made before selection, and seals it with the sealed block's hash.
+    #[test]
+    fn native_build_begins_and_seals_a_dormancy_build() {
+        let tx = pool_transaction(0);
+        let ctx = pool_payload_context(DENIM_TIMESTAMP);
+        let (parent, block) = (ctx.parent().hash(), ctx.parent().number + 1);
+        let provider = funded_provider(&[tx.sender()]);
+        let transactions =
+            TestParkableTransactions::recording(vec![tx], Arc::new(Mutex::new(Vec::new())));
+        let begun = Arc::new(Mutex::new(Vec::new()));
+        let sealed = Arc::new(Mutex::new(Vec::new()));
+        let (record_begun, record_sealed) = (Arc::clone(&begun), Arc::clone(&sealed));
+
+        let outcome = Builder::new(|_, _| transactions)
+            .with_dormancy(move |parent, number, pre_selection| {
+                record_begun.lock().unwrap().push((parent, number, pre_selection.is_some()));
+                Some(DormancyBuild::new(move |hash| record_sealed.lock().unwrap().push(hash)))
+            })
+            .build(
+                StateProviderDatabase::new((&provider).into_evm_state_provider()),
+                &provider,
+                Some(state_root_handle()),
+                ctx,
+            )
+            .expect("payload must build");
+
+        let BuildOutcomeKind::Freeze(payload) = outcome else {
+            panic!("Denim payload must freeze")
+        };
+        assert_eq!(*begun.lock().unwrap(), vec![(parent, block, true)]);
+        assert_eq!(*sealed.lock().unwrap(), vec![Some(payload.block().hash())]);
     }
 
     #[test]

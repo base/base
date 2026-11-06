@@ -4,6 +4,7 @@
 //! drops committed storage diffs. This task feeds complete canonical account
 //! deltas into the EIP-8130 invalidation index.
 
+use alloy_eips::BlockNumHash;
 use alloy_primitives::{B256, U256};
 use base_common_precompiles::NonceManagerStorage;
 use futures::StreamExt;
@@ -49,6 +50,15 @@ pub trait StateDiffInvalidation: Clone + Send + Sync + 'static {
 
     /// Invalidates every guarded transaction, attributing the flush to `cause`.
     fn invalidate_all_tracked(&self, cause: InvalidationCause) -> usize;
+
+    /// Advances dormant validity transactions past the `canonical` blocks a notification
+    /// committed, in ascending order: checks them against the builder's tip and classifies
+    /// queued transactions against the head's state. Called for every notification, including
+    /// those committing only empty blocks.
+    fn advance_dormancy(&self, canonical: &[BlockNumHash]);
+
+    /// Discards the dormancy index, making every dormant validity transaction ready.
+    fn discard_dormancy(&self);
 }
 
 /// Feeds each canonical block's account and storage diff into the pool.
@@ -64,6 +74,7 @@ pub async fn maintain_state_diff_invalidation<P, N>(
             Some(Ok(notification)) => notification,
             Some(Err(BroadcastStreamRecvError::Lagged(missed))) => {
                 let removed = pool.invalidate_all_tracked(InvalidationCause::FeedGap);
+                run_blocking(&pool, StateDiffInvalidation::discard_dormancy).await;
                 warn!(
                     missed = missed,
                     removed = removed,
@@ -79,6 +90,7 @@ pub async fn maintain_state_diff_invalidation<P, N>(
             // back the reverted segment. Correct targeted handling would need
             // both key sets, so conservatively flush this exceptional path.
             let removed = pool.invalidate_all_tracked(InvalidationCause::Reorg);
+            run_blocking(&pool, StateDiffInvalidation::discard_dormancy).await;
             warn!(
                 removed = removed,
                 "canonical chain reorged; invalidated all guarded transactions"
@@ -87,18 +99,29 @@ pub async fn maintain_state_diff_invalidation<P, N>(
         }
 
         let committed = notification.committed();
-        let diffs = AccountStateDiff::collect(&committed.execution_outcome().bundle);
-        if diffs.is_empty() {
-            continue;
+        let bundle = &committed.execution_outcome().bundle;
+        let diffs = AccountStateDiff::collect(bundle);
+        if !diffs.is_empty() {
+            let removed = pool.invalidate_from_state_diff(&diffs);
+            if removed > 0 {
+                debug!(
+                    removed = removed,
+                    accounts = diffs.len(),
+                    "invalidated EIP-8130 transactions from canonical state diff"
+                );
+            }
         }
-        let removed = pool.invalidate_from_state_diff(&diffs);
-        if removed > 0 {
-            debug!(
-                removed = removed,
-                accounts = diffs.len(),
-                "invalidated EIP-8130 transactions from canonical state diff"
-            );
-        }
+        let canonical = committed.blocks_iter().map(|block| block.num_hash()).collect::<Vec<_>>();
+        run_blocking(&pool, move |pool| pool.advance_dormancy(&canonical)).await;
+    }
+}
+
+/// Runs dormancy work that reads state or walks every dormant transaction on a blocking thread,
+/// awaiting it so notifications are still processed in order.
+async fn run_blocking<P: StateDiffInvalidation>(pool: &P, work: impl FnOnce(&P) + Send + 'static) {
+    let pool = pool.clone();
+    if let Err(error) = tokio::task::spawn_blocking(move || work(&pool)).await {
+        warn!(error = %error, "dormancy maintenance task failed");
     }
 }
 
