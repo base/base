@@ -159,6 +159,11 @@ pub struct Args {
     )]
     pub predicate_bucket_ordered_threshold: usize,
 
+    /// Maximum cumulative uncompressed (EIP-2718 encoded) block size in bytes. Unlimited when
+    /// unset.
+    #[arg(long = "builder.max-uncompressed-block-size")]
+    pub max_uncompressed_block_size: Option<u64>,
+
     /// Buffer size for tx data store (LRU eviction when full)
     #[arg(long = "builder.tx-data-store-buffer-size", default_value = "10000")]
     pub tx_data_store_buffer_size: usize,
@@ -238,6 +243,7 @@ impl Default for Args {
             validity_signature_mode: ValiditySignatureMode::Off,
             predicate_eval_hard_cutoff_ms: 10,
             predicate_bucket_ordered_threshold: 32,
+            max_uncompressed_block_size: None,
             tx_data_store_buffer_size: 10000,
             metering_store_ttl_secs: 30,
             rejection_cache_max_capacity: 100_000,
@@ -298,6 +304,7 @@ impl Args {
             state_provider_metrics: false,
             da_config: Default::default(),
             gas_limit_config: Default::default(),
+            max_uncompressed_block_size: self.max_uncompressed_block_size,
             predicate_eval_hard_cutoff: Duration::from_millis(self.predicate_eval_hard_cutoff_ms),
             predicate_bucket_ordered_threshold: self.predicate_bucket_ordered_threshold,
             metering_provider,
@@ -413,6 +420,17 @@ mod tests {
             "75",
         ])
         .expect("deprecated flashblocks flags should still parse");
+    }
+
+    #[test]
+    fn max_uncompressed_block_size_flag_maps_to_config() {
+        assert_eq!(convert(Args::default()).max_uncompressed_block_size, None);
+
+        let parsed =
+            CommandParser::parse_from(["builder", "--builder.max-uncompressed-block-size", "1000"]);
+        let config = convert(parsed.args);
+        assert_eq!(config.max_uncompressed_block_size, Some(1_000));
+        assert_eq!(config.payload_builder_config().max_uncompressed_block_size, Some(1_000));
     }
 
     #[test]
