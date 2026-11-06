@@ -18,7 +18,6 @@ use alloy_primitives::{Address, B256};
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types_eth::BlockNumberOrTag;
 use alloy_signer_local::PrivateKeySigner;
-use base_builder_core::RestingPredicateMode;
 use base_common_network::Base;
 use base_common_precompiles::ActivationFeature;
 use base_load_tests::{
@@ -217,17 +216,6 @@ pub struct SnapshotBenchmarkArgs {
     /// Opt-in state sharing for the snapshot's native payload builder.
     #[command(flatten)]
     pub builder_engine: crate::BuilderEngineSharingConfig,
-    /// How the snapshot's native payload builder tracks validity transactions whose predicates
-    /// did not match: `off` evaluates every candidate on every build, `shadow` tracks
-    /// resting transactions while still evaluating them, `enforce` parks them until a state
-    /// change can satisfy their predicate.
-    #[arg(
-        long,
-        env = "BASE_BENCH_RESTING_PREDICATE_MODE",
-        value_enum,
-        default_value_t = RestingPredicateMode::Off
-    )]
-    pub resting_predicate_mode: RestingPredicateMode,
     /// Pause between `DoubleCounter.increment()` calls from the fixture's mutator account while
     /// the load test runs, measured from the previous call's receipt (or its timeout), flipping
     /// slot 0 so parity-gated validity transactions swap between matching and resting. Only used
@@ -1006,7 +994,6 @@ impl SnapshotBenchmarkArgs {
         snapshot.block_gas_limit = self.block_gas_limit.map(NonZeroU64::get);
         snapshot.eip1559_elasticity_override = Some(SNAPSHOT_BENCHMARK_EIP1559_ELASTICITY);
         snapshot.builder_engine = self.builder_engine;
-        snapshot.resting_predicate_mode = self.resting_predicate_mode;
         snapshot.prefund =
             Some(DevnetPrefund { address: funder_key.address(), amount: PREFUND_AMOUNT_WEI });
 

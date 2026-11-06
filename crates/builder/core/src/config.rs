@@ -10,7 +10,7 @@ use base_execution_payload_builder::{
 
 use crate::{
     BuilderMetrics, NoopMeteringProvider, RejectionCache, ResourceMeteringConfig,
-    RestingPredicateMode, SharedMeteringProvider,
+    SharedMeteringProvider,
 };
 
 /// Configuration values for the Base block builder.
@@ -31,10 +31,6 @@ pub struct BuilderConfig {
 
     /// Number of parked predicates that converts one state bucket to ordered wakeups.
     pub predicate_bucket_ordered_threshold: usize,
-
-    /// Whether validity transactions resting under an unchanged predicate are held back. The
-    /// resting set carries across blocks this builder finishes in sequence.
-    pub resting_predicate_mode: RestingPredicateMode,
 
     /// Resource metering provider
     pub metering_provider: SharedMeteringProvider,
@@ -74,7 +70,6 @@ impl BuilderConfig {
             resource_metering: self.resource_metering.clone(),
             rejection_cache: self.rejection_cache.clone(),
             state_provider_metrics: self.state_provider_metrics,
-            resting_predicate_mode: self.resting_predicate_mode,
         }
     }
 
@@ -94,7 +89,6 @@ impl core::fmt::Debug for BuilderConfig {
             .field("gas_limit_config", &self.gas_limit_config)
             .field("predicate_eval_hard_cutoff", &self.predicate_eval_hard_cutoff)
             .field("predicate_bucket_ordered_threshold", &self.predicate_bucket_ordered_threshold)
-            .field("resting_predicate_mode", &self.resting_predicate_mode)
             .field("metering_provider", &self.metering_provider)
             .field("resource_metering", &self.resource_metering)
             .field("rejection_cache_size", &self.rejection_cache.entry_count())
@@ -112,7 +106,6 @@ impl Default for BuilderConfig {
             gas_limit_config: GasLimitConfig::default(),
             predicate_eval_hard_cutoff: Duration::from_millis(10),
             predicate_bucket_ordered_threshold: DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD,
-            resting_predicate_mode: RestingPredicateMode::Off,
             metering_provider: Arc::clone(&metering_provider),
             resource_metering: ResourceMeteringConfig {
                 provider: metering_provider,
@@ -143,13 +136,6 @@ impl BuilderConfig {
     #[must_use]
     pub const fn with_predicate_eval_hard_cutoff_ms(mut self, ms: u64) -> Self {
         self.predicate_eval_hard_cutoff = Duration::from_millis(ms);
-        self
-    }
-
-    /// Sets the resting predicate mode.
-    #[must_use]
-    pub const fn with_resting_predicate_mode(mut self, mode: RestingPredicateMode) -> Self {
-        self.resting_predicate_mode = mode;
         self
     }
 }
