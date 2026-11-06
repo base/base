@@ -132,6 +132,15 @@ jobs:
           export RUSTUP_TOOLCHAIN
           cd "$BASE_ANVIL_DIR"
           rustup show active-toolchain
+          # The patched base/base crates can require newer crates than the
+          # versions locked in base-anvil's checked-in lockfile, and cargo will
+          # not rewrite a locked version for unmodified workspace members during
+          # build-time resolution. Align the lockfile with the alloy-hardforks
+          # version the base/base workspace pins so the patched graph resolves.
+          hardforks_version="$(sed -n 's/^alloy-hardforks = "\([^"]*\)"$/\1/p' "$GITHUB_WORKSPACE/Cargo.toml")"
+          cargo update -p alloy-hardforks --precise "$hardforks_version" \
+            --config "patch.\"https://github.com/base/base.git\".base-common-precompiles.path=\"$GITHUB_WORKSPACE/crates/common/precompiles\"" \
+            --config "patch.\"https://github.com/base/base.git\".base-common-chains.path=\"$GITHUB_WORKSPACE/crates/common/chains\""
           cargo \
             --config "patch.\"https://github.com/base/base.git\".base-common-precompiles.path=\"$GITHUB_WORKSPACE/crates/common/precompiles\"" \
             --config "patch.\"https://github.com/base/base.git\".base-common-chains.path=\"$GITHUB_WORKSPACE/crates/common/chains\"" \
