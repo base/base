@@ -81,7 +81,7 @@ async fn validity_resting_workload_populates_benchmark_series() -> Result<()> {
         async {
             let workload = tempfile::NamedTempFile::new()?;
             std::fs::write(workload.path(), WORKLOAD)?;
-            let (mut test_config, pending) = PendingFixtures::load(workload.path())?;
+            let (_, pending) = PendingFixtures::load(workload.path())?;
             let pending = pending.expect("placeholder workload must leave fixtures pending");
 
             let funder = PrivateKeySigner::from_bytes(&ANVIL_ACCOUNT_1.private_key)?;
