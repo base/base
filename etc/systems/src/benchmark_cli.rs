@@ -627,6 +627,7 @@ impl LocalBenchmarkArgs {
                 | TxTypeConfig::Erc20 { .. }
                 | TxTypeConfig::Storage { .. }
                 | TxTypeConfig::DoubleCounter { .. }
+                | TxTypeConfig::RevertArb { .. }
                 | TxTypeConfig::AaBundle { .. }
                 | TxTypeConfig::Precompile { .. }
                 | TxTypeConfig::Osaka { .. }

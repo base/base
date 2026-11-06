@@ -16,7 +16,7 @@ use alloy_consensus::{TxEip1559, transaction::Recovered};
 use alloy_primitives::{Address, Bytes, TxKind, U256};
 use base_common_consensus::Predeploys;
 use base_common_evm::{
-    BaseSpecId as RevmBaseSpecId, BaseTransaction, Builder, DefaultBase, L1BlockInfo,
+    BaseSpecId as RevmBaseSpecId, BaseTransaction, Builder, DefaultBase, L1BlockInfo, MeteredGas,
 };
 use base_common_evm2::{BaseEvmExt, BaseEvmTypes, BaseSpecId, BaseTxEnvelope};
 use base_common_genesis::BaseUpgrade;
@@ -74,6 +74,8 @@ fn preloaded_l1_fee_params() -> BaseEvmExt {
 struct Outcome {
     success: bool,
     gas_used: u64,
+    /// The gas metered before gas-limit billing, as reported for the builder's events.
+    metered_gas_used: Option<u64>,
     balances: BTreeMap<Address, U256>,
 }
 
@@ -137,7 +139,12 @@ fn run_evm2(upgrade: BaseUpgrade) -> Outcome {
         })
         .collect();
 
-    Outcome { success: result.status, gas_used: result.tx_gas_used(), balances }
+    Outcome {
+        success: result.status,
+        gas_used: result.tx_gas_used(),
+        metered_gas_used: result.ext.metered_gas_used,
+        balances,
+    }
 }
 
 /// Runs the same transfer through the revm reference at `upgrade`.
@@ -179,6 +186,7 @@ fn run_revm(upgrade: BaseUpgrade) -> Outcome {
         .enveloped_tx(Some(enveloped()))
         .build_fill();
     let ResultAndState { result, state } = evm.transact(tx).unwrap();
+    let metered_gas_used = MeteredGas::take().map(|metered| metered.gas_used);
 
     let balances = fee_accounts()
         .into_iter()
@@ -188,7 +196,12 @@ fn run_revm(upgrade: BaseUpgrade) -> Outcome {
         })
         .collect();
 
-    Outcome { success: result.is_success(), gas_used: result.tx_gas_used(), balances }
+    Outcome {
+        success: result.is_success(),
+        gas_used: result.tx_gas_used(),
+        metered_gas_used,
+        balances,
+    }
 }
 
 #[test]

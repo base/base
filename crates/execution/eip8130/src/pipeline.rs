@@ -75,6 +75,10 @@ pub struct Eip8130BlockContext {
     pub tx_gas_limit_cap: u64,
     /// Whether the Keystore (`AccountConfiguration`) is active (Zenith onwards).
     pub keystore: bool,
+    /// Whether fees are charged. `eth_call`, `eth_estimateGas` and unvalidated
+    /// `eth_simulateV1` disable fee charging: nothing is pre-charged or settled, so the payer's
+    /// ability to afford the worst-case fee is not checked either.
+    pub fee_charge: bool,
 }
 
 /// The resolved pre-call context of an EIP-8130 transaction: the authorized
@@ -401,19 +405,23 @@ impl Eip8130Pipeline {
             ));
         }
 
-        // 5. Fee caps and payer balance.
+        // 5. Fee caps and, when fees will be charged, the payer's balance. A fee-free execution
+        //    reads nothing from the payer here, matching `simulate_resolve`, so the payer's
+        //    warmth is the same on both paths.
         FeeCheck::validate_fees(max_fee, max_priority, block.base_fee)
             .map_err(Eip8130Error::invalid)?;
-        let payer_balance = sctx
-            .with_account_info(payer, |info| Ok(info.balance))
-            .map_err(Eip8130Error::invalid)?;
-        FeeCheck::validate_balance(payer_balance, gas_limit, intrinsic.payer_floor, max_fee)
-            .map_err(|error| match error {
-                FeeError::InsufficientBalance { balance, required } => {
-                    Eip8130Error::PayerCannotPay { balance, required }
-                }
-                error => Eip8130Error::invalid(error),
-            })?;
+        if block.fee_charge {
+            let payer_balance = sctx
+                .with_account_info(payer, |info| Ok(info.balance))
+                .map_err(Eip8130Error::invalid)?;
+            FeeCheck::validate_balance(payer_balance, gas_limit, intrinsic.payer_floor, max_fee)
+                .map_err(|error| match error {
+                    FeeError::InsufficientBalance { balance, required } => {
+                        Eip8130Error::PayerCannotPay { balance, required }
+                    }
+                    error => Eip8130Error::invalid(error),
+                })?;
+        }
 
         // 6. Publish the transaction context (sender / payer / actor id) so it is
         //    readable by the `TxContext` precompile during `calls`.

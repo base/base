@@ -38,6 +38,35 @@ pub struct BaseTxResultExt {
     /// For an EIP-8130 transaction, the number of leading call phases that committed (the
     /// receipt's `committedPhases`); `None` for every other transaction type.
     pub eip8130_committed_phases: Option<u64>,
+    /// The gas the transaction metered: what it is charged, and its receipt reports, without
+    /// gas-limit billing (for an EIP-8130 transaction, payer authentication included). Equal to
+    /// the billed gas before the feature activates. `None` for deposits. Telemetry for the
+    /// builder's transaction events; nothing on the consensus path reads it.
+    pub metered_gas_used: Option<u64>,
+    /// For an EIP-8130 transaction, the payer-authentication gas (`payer_floor`) reserved and
+    /// billed on top of the sender's `gas_limit`; `None` for every other transaction type.
+    pub payer_auth_gas_reserved: Option<u64>,
+}
+
+/// Exposes the metered gas a transaction result carries, so code generic over the EVM types (the
+/// payload builder) can report it.
+pub trait MeteredGasReport {
+    /// The gas the transaction metered and, for an EIP-8130 transaction, the payer-authentication
+    /// gas reserved on top of its `gas_limit`. `None` when the transaction never reached
+    /// settlement.
+    fn metered_gas(&self) -> Option<(u64, Option<u64>)>;
+}
+
+/// EVM types whose transaction results report their metered gas, to bound code generic over the
+/// EVM types (the payload builder and its node wiring) without naming `evm2` traits.
+pub trait MeteredGasEvmTypes: EvmTypesHost<TxResultExt: MeteredGasReport> {}
+
+impl<T: EvmTypesHost<TxResultExt: MeteredGasReport>> MeteredGasEvmTypes for T {}
+
+impl MeteredGasReport for BaseTxResultExt {
+    fn metered_gas(&self) -> Option<(u64, Option<u64>)> {
+        self.metered_gas_used.map(|gas_used| (gas_used, self.payer_auth_gas_reserved))
+    }
 }
 
 /// EVM instance-wide extension state for Base transactions.

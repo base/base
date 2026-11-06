@@ -37,7 +37,7 @@ alloy-primitives.workspace = true
 # base — the revm execution path, for the differential parity harnesses. The other base, evm2,
 # and alloy crates the tests use are already in [dependencies]; Cargo unifies features across both
 # sections, so only the dev-only crates are listed here.
-base-common-evm = { workspace = true, features = ["blst", "c-kzg", "portable", "secp256k1", "std"] }
+base-common-evm = { workspace = true, features = ["blst", "c-kzg", "optional_fee_charge", "portable", "secp256k1", "std"] }
 # base — the revm precompile set, as the source of truth for the precompile parity tests.
 base-common-precompiles = { workspace = true, features = ["revm"] }
 # base — the revm transition hooks + fork schedule, for the transition-parity harness.

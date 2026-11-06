@@ -47,7 +47,7 @@ mod transition;
 pub use transition::{BaseBlockState, BaseForkActivations, IrregularStateChange};
 
 mod types;
-pub use types::{BaseEvmExt, BaseEvmTypes, BaseTxResultExt};
+pub use types::{BaseEvmExt, BaseEvmTypes, BaseTxResultExt, MeteredGasEvmTypes, MeteredGasReport};
 
 #[cfg(feature = "reth")]
 mod reth;

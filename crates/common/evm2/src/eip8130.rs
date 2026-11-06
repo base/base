@@ -98,6 +98,8 @@ impl Eip8130Handler {
             base_fee: host.block().basefee.saturating_to(),
             tx_gas_limit_cap: host.version().tx_gas_limit_cap,
             keystore: upgrade.is_feature_enabled(BaseFeature::Keystore),
+            // Simulation never checks the payer's balance; the verified path sets this below.
+            fee_charge: false,
         };
 
         if let Some(simulation) = tx.simulation {
@@ -120,6 +122,9 @@ impl Eip8130Handler {
         }
 
         Eip8130Pipeline::check_chain_id(tx.signed.tx(), block.chain_id).map_err(Self::reject)?;
+        // `eth_call`, `eth_estimateGas` and unvalidated `eth_simulateV1` disable fee charging:
+        // nothing is pre-charged or settled and the payer's balance is not checked.
+        block.fee_charge = host.feature(EvmFeatures::FEE_CHARGE);
         // Everest implies Denim, so the block's millisecond part is already in `BaseTime`.
         block.now_ms = BaseTime::timestamp_ms(host, now)?;
         L1Block::ensure_fee_params(host)?;
@@ -128,7 +133,12 @@ impl Eip8130Handler {
         let outcome = Self::run_pre_call(host, |sctx| {
             Eip8130Pipeline::authorize_and_apply(sctx, &tx.signed, &tx.enveloped, &block)
         })?;
-        let (prepay, l1_fee) = Self::prepay(host, &outcome, tx)?;
+        Self::consume_sender_nonce(host, &outcome)?;
+        let (prepay, l1_fee) = if block.fee_charge {
+            Self::prepay(host, &outcome, tx)?
+        } else {
+            (U256::ZERO, U256::ZERO)
+        };
         Ok(Eip8130Prepared { outcome, settlement: Eip8130Settlement::Verified { prepay, l1_fee } })
     }
 
@@ -157,8 +167,22 @@ impl Eip8130Handler {
                     &outcome,
                     outcome.execution_gas_available,
                 )?;
-                let gas_used = Self::settle_fees(host, &outcome, &calls, prepay, l1_fee, tx)?;
-                Ok(Self::result(calls, gas_used, l1_fee))
+                // With fee charging disabled nothing was pre-charged, so there is nothing to
+                // settle: report the metered gas, as `eth_call` does for every other transaction
+                // type, instead of the reservation that would have been billed.
+                let metered = calls.billable_gas(&outcome, false);
+                let gas_used = if host.feature(EvmFeatures::FEE_CHARGE) {
+                    Self::settle_fees(host, &outcome, &calls, prepay, l1_fee, tx)?
+                } else {
+                    metered
+                };
+                let mut result = Self::result(calls, gas_used, l1_fee);
+                // For the builder's transaction events: what this transaction would have been
+                // billed without gas-limit billing, and the payer authentication the reserved
+                // budget adds on top of `gas_limit`.
+                result.ext.metered_gas_used = Some(metered);
+                result.ext.payer_auth_gas_reserved = Some(outcome.payer_floor);
+                Ok(result)
             }
             Eip8130Settlement::Simulated { simulation, start } => {
                 let (calls, gas) = calls_host.simulate(tx, &outcome, simulation.mode)?;
@@ -188,19 +212,27 @@ impl Eip8130Handler {
         outcome.map_err(Self::reject)
     }
 
-    /// Bumps the sender's protocol nonce (for `nonce_key == 0`) and pre-charges the payer the
-    /// worst-case fee, so the `calls` cannot spend the gas reservation. Returns the amount debited
-    /// and its L1 data fee component.
+    /// Publishes the resolved sender as `tx.origin` and bumps its protocol nonce (for
+    /// `nonce_key == 0`). Runs for every verified transaction, whether or not fees are charged.
+    fn consume_sender_nonce(
+        host: &mut Evm<'_, BaseEvmTypes>,
+        outcome: &Eip8130Outcome,
+    ) -> HandlerResult<()> {
+        host.ext_mut().tx_origin = outcome.sender;
+        if outcome.bump_protocol_nonce {
+            host.state_mut().account(&outcome.sender)?.bump_nonce();
+        }
+        Ok(())
+    }
+
+    /// Pre-charges the payer the worst-case fee, so the `calls` cannot spend the gas
+    /// reservation. Returns the amount debited and its L1 data fee component. Skipped when fee
+    /// charging is disabled.
     fn prepay(
         host: &mut Evm<'_, BaseEvmTypes>,
         outcome: &Eip8130Outcome,
         tx: &Eip8130Tx,
     ) -> HandlerResult<(U256, U256)> {
-        host.ext_mut().tx_origin = outcome.sender;
-        if outcome.bump_protocol_nonce {
-            host.state_mut().account(&outcome.sender)?.bump_nonce();
-        }
-
         let upgrade = host.config_spec_id().upgrade();
         let max_gas = outcome.max_chargeable_gas();
         let gas_charge = U256::from(max_gas)
@@ -295,7 +327,11 @@ impl Eip8130Handler {
             total_gas_spent: gas,
             stop: if calls.reverted { InstrStop::Revert } else { InstrStop::Return },
             output: calls.output,
-            ext: BaseTxResultExt { l1_fee, eip8130_committed_phases: Some(calls.committed_phases) },
+            ext: BaseTxResultExt {
+                l1_fee,
+                eip8130_committed_phases: Some(calls.committed_phases),
+                ..Default::default()
+            },
             ..Default::default()
         }
     }

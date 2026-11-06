@@ -33,21 +33,30 @@ Under the `GasLimitBilling` feature (gas-limit billing, activated by the Everest
 charges a non-deposit transaction for its full declared `gas_limit` instead of the
 gas it consumed, so a transaction's fee is fixed by public inputs before it executes and a
 high-tip transaction that reverts early costs what the execution it was sized for would have cost.
+The rationale, billing rule, implementation boundaries, alternatives, and design decisions are in
+[`docs/guides/GAS_LIMIT_BILLING.md`](../../../docs/guides/GAS_LIMIT_BILLING.md).
 
-The mechanism is one hook: `BaseHandler::refund` spends the transaction's remaining gas and drops
-its refund counter when the feature is active, fee charging is enabled, and the transaction is not
-a deposit. Everything downstream of revm's result (the EIP-7623 floor, `reimburse_caller`, the
-operator-fee refund, `reward_beneficiary`, `ResultGas`) then observes `gas_used == gas_limit`
-without further special cases, so the block executor, the payload builder,
+The mechanism is one hook: `BaseHandler::post_execution` spends the transaction's remaining gas and
+drops its refund counter, between revm's refund step and the result gas, when the feature is active,
+fee charging is enabled, and the transaction is not a deposit. Everything downstream (`ResultGas`,
+the EIP-7623 floor, `reimburse_caller`, the operator-fee refund, `reward_beneficiary`) then observes
+`gas_used == gas_limit` without further special cases, so the block executor, the payload builder,
 and receipts agree by construction.
+
+Immediately before the hook, the handler records the gas the transaction metered (what it would
+have been billed without the feature: spent less the capped EIP-3529 refund, raised to the EIP-7623
+floor) in `MeteredGas`, a per-transaction thread-local slot like `Eip8130CommittedPhases` that the
+caller of `transact` takes right after the call returns. `Eip8130Executor` publishes
+`metered_gas_used` and the reserved `payer_floor` the same way. The payload builder reports it in its
+`BUILDER_ACCEPTED` transaction event; nothing on the consensus path reads it.
 
 | Component | Feature off | Feature on |
 |---|---|---|
 | Sender debit | `gas_used * effective_gas_price`; unused gas, EIP-3529 refunds and the operator-fee surplus are reimbursed | `gas_limit * effective_gas_price`; nothing is reimbursed |
 | Coinbase tip, `BaseFeeVault`, `OperatorFeeVault` | on `gas_used` | on `gas_limit` |
 | Receipt `gasUsed`, `cumulativeGasUsed`, header `gas_used` | metered | `gas_limit`, so `gasUsed * effectiveGasPrice` is the fee paid and receipts still sum to the header |
-| `eth_call`, `eth_estimateGas` (`disable_fee_charge`) | metered | metered: simulation bills nothing, so estimation still finds the gas a call needs |
-| `eth_simulateV1`, `debug_trace*` / `trace_*` replays (fee charging left on by reth) | metered | the reserved gas, with per-opcode trace costs still metered; whether to exempt these paths is decided separately (BASE-1434) |
+| `eth_call`, `eth_estimateGas`, `eth_simulateV1` with `validation=false` (`disable_fee_charge`) | metered | metered: simulation bills nothing, so estimation still finds the gas a call needs and a simulated call without `gas` does not consume the block's remaining gas |
+| `eth_simulateV1` with `validation=true`, `debug_trace*` / `trace_*` replays (fee charging on) | metered | the reserved gas, as a receipt reports it, with call frames and per-opcode trace costs still metered |
 | Deposit transactions | no fee, metered gas | no fee, metered gas |
 | L1 data fee, DA footprint, intrinsic gas, pool ordering | unchanged | unchanged |
 
@@ -60,7 +69,14 @@ used. The `eth_estimateGas` estimate (`Eip8130Executor::simulate`) stays metered
 `payer_floor` into the returned limit, because settlement adds it on top of whatever limit the sender
 declares: a sponsored transaction submitted at `gas_limit = estimate` settles `estimate + payer_floor`
 once. EIP-8130 is only valid from Everest, which also activates the feature, so EIP-8130
-transactions are always billed this way. `eth_call` still reports the metered gas.
+transactions are always billed this way. With `disable_fee_charge` set, `Eip8130Executor::execute`
+behaves exactly like the standard handler: signatures are still verified, the nonce is still
+validated and the sender's nonce consumed, and the fee caps are still sanity-checked, but the
+payer's balance is not checked, nothing is pre-charged and no settlement transfer runs, and the
+result reports the metered gas net of the EIP-3529-capped refund. RPC requests for EIP-8130
+(`eth_call`, `eth_estimateGas`, `eth_simulateV1`) route through `Eip8130Executor::simulate`, which
+never settles fees; honoring the flag in `execute` makes a fee-charge-disabled execution of a
+*signed* EIP-8130 transaction behave the same way, so the two entry points cannot diverge.
 
 ## License
 

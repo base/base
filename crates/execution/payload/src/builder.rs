@@ -14,7 +14,7 @@ use alloy_rpc_types_debug::ExecutionWitness;
 use alloy_rpc_types_engine::PayloadId;
 use base_common_chains::{BaseFeature, BaseUpgrade, BaseUpgradeExt, Upgrades};
 use base_common_consensus::{BaseTransaction, DepositReceiptExt, Predeploys};
-use base_common_evm2::L1Block;
+use base_common_evm2::{L1Block, MeteredGasEvmTypes, MeteredGasReport};
 use base_execution_eip8130::IntrinsicGas;
 use base_execution_txpool::{
     BasePooledTx, GuardMetrics, ParkableTransactionPool, PredicateContext,
@@ -216,6 +216,7 @@ where
         Txs: ParkablePayloadTransactions<
             Pooled: PoolTransaction<Consensus = N::SignedTx> + BasePooledTx,
         >,
+        <Evm::BlockExecutorFactory as BlockExecutorFactory>::EvmTypes: MeteredGasEvmTypes,
     {
         let BuildArguments {
             mut cached_reads,
@@ -309,6 +310,7 @@ where
     Evm: ConfigureEvm<
             Primitives = N,
             NextBlockEnvCtx: BuildNextEnv<Attrs, N::BlockHeader, Client::ChainSpec>,
+            BlockExecutorFactory: BlockExecutorFactory<EvmTypes: MeteredGasEvmTypes>,
         >,
     Attrs: Attributes<Transaction = N::SignedTx>,
 {
@@ -443,6 +445,7 @@ impl<Txs> Builder<'_, Txs> {
         Evm: ConfigureEvm<
                 Primitives = N,
                 NextBlockEnvCtx: BuildNextEnv<Attrs, N::BlockHeader, ChainSpec>,
+                BlockExecutorFactory: BlockExecutorFactory<EvmTypes: MeteredGasEvmTypes>,
             >,
         ChainSpec: EthChainSpec + Upgrades,
         N: PayloadPrimitives,
@@ -1097,7 +1100,10 @@ where
     pub fn execute_best_transactions(
         &self,
         info: &mut ExecutionInfo,
-        builder: &mut impl StateCommitCondition<Primitives = Evm::Primitives>,
+        builder: &mut impl StateCommitCondition<
+            Primitives = Evm::Primitives,
+            Executor: BlockExecutor<Evm: reth_evm::Evm<EvmTypes: MeteredGasEvmTypes>>,
+        >,
         mut best_txs: impl ParkablePayloadTransactions<
             Pooled: PoolTransaction<Consensus = TxTy<Evm::Primitives>> + BasePooledTx,
         >,
@@ -1541,10 +1547,16 @@ where
             let mut resting_woken = Vec::new();
             let mut pending_resource_usage = None;
             let mut executed_decision = None;
+            let mut metered_gas = None;
             let gas_output = match builder.execute_transaction_with_state_condition(
                 WithEncoded::new(tx_encoded, tx.clone()),
                 |output| {
                     let output = output.result();
+                    // The gas this transaction metered, for the accepted event. `None` only if
+                    // the transaction never reached settlement, which an included user
+                    // transaction always does; the event then reports `null` rather than a
+                    // figure that would pass for a transaction using its whole limit.
+                    metered_gas = output.result.ext.metered_gas();
                     let state = &output.pending_state;
                     let decision = resource_metering.check_executed_usage(
                         &tx_hash,
@@ -1754,13 +1766,24 @@ where
                 miner_fee as f64,
             );
             if has_validity_predicates {
+                if metered_gas.is_none() {
+                    warn!(
+                        target: "payload_builder",
+                        tx_hash = %tx_hash,
+                        "executed transaction published no metered gas"
+                    );
+                }
                 emit_native_validity_event!(
                     self,
                     TransactionEventType::BuilderAccepted,
                     tx_hash,
                     validity_consideration_index,
                     {
-                        "gas_used" => gas_output.tx_gas_used(),
+                        "tx_gas_limit" => tx.gas_limit(),
+                        "gas_used" => gas_used,
+                        "metered_gas_used" => metered_gas.map(|(gas_used, _)| gas_used),
+                        "payer_auth_gas_reserved" =>
+                            metered_gas.and_then(|(_, payer_auth)| payer_auth),
                     }
                 );
             }

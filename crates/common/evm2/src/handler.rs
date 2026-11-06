@@ -10,6 +10,7 @@ use evm2::{
     handler::{GasSettlement, TxHandlerHooks},
     interpreter::Host,
     registry::{HandlerError, HandlerResult},
+    version::GasId,
 };
 
 use crate::{BaseEvmTypes, L1Block, transaction::BaseTxEnvelope};
@@ -133,15 +134,29 @@ impl TxHandlerHooks<BaseEvmTypes> for BaseTxHandlerHooks {
         envelope: &BaseTxEnvelope,
         mut gas: GasSettlement<BaseEvmTypes>,
     ) -> HandlerResult<TxResult<BaseEvmTypes>> {
+        // The gas this transaction metered: what it is charged, and its receipt reports, without
+        // gas-limit billing (`max(spent - capped refund, floor)`, as `finalize_gas` computes it).
+        // Reported in the result for the builder's transaction events; nothing on the consensus
+        // path reads it.
+        let refund_quotient = host.version().gas_params.get(GasId::MaxRefundQuotient);
+        let spent = gas
+            .gas_limit
+            .saturating_sub(gas.result.gas.remaining())
+            .saturating_sub(gas.result.gas.reservoir());
+        let metered = spent
+            .saturating_sub(gas.result.final_refund(gas.gas_limit, refund_quotient))
+            .max(gas.floor_gas);
+
         // Gas-limit billing: a non-deposit transaction is billed, and reported, for the whole
         // `gas_limit` it reserved. Spending the remaining gas and dropping the refund counter
         // before settlement makes every fee, refund and receipt path below observe
         // `gas_used == gas_limit`, matching the revm reference's `BaseHandler::refund`.
         // Fee-charge-disabled simulation (`eth_call`, `eth_estimateGas`) keeps metered gas so
         // estimation still finds the gas a call needs.
-        if host.config_spec_id().upgrade().is_feature_enabled(BaseFeature::GasLimitBilling)
-            && host.feature(EvmFeatures::FEE_CHARGE)
-        {
+        let bill_gas_limit =
+            host.config_spec_id().upgrade().is_feature_enabled(BaseFeature::GasLimitBilling)
+                && host.feature(EvmFeatures::FEE_CHARGE);
+        if bill_gas_limit {
             gas.result.gas.spend_all();
             gas.result.gas.set_refunded(0);
         }
@@ -155,6 +170,7 @@ impl TxHandlerHooks<BaseEvmTypes> for BaseTxHandlerHooks {
         // fee. The base fee is credited to its vault below (the OP-stack does not burn it).
         let mut result = default_settle_gas(host, gas)?;
         let gas_used = result.tx_gas_used();
+        debug_assert!(bill_gas_limit || gas_used == metered, "metered gas mirrors finalize_gas");
 
         // Refund the operator fee down from the amount charged (on the gas limit) to the gas
         // actually used; the net is credited to the operator-fee vault below.
@@ -172,6 +188,7 @@ impl TxHandlerHooks<BaseEvmTypes> for BaseTxHandlerHooks {
         Self::credit(host, Predeploys::OPERATOR_FEE_VAULT, operator_fee_used)?;
 
         result.ext.l1_fee = l1_fee;
+        result.ext.metered_gas_used = Some(metered);
         Ok(result)
     }
 }

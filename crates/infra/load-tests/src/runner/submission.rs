@@ -94,8 +94,9 @@ impl SubmitCohort {
     pub const fn to_metric_label(self) -> crate::metrics::SubmitCohortLabel {
         match self {
             Self::Plain => crate::metrics::SubmitCohortLabel::Plain,
-            Self::ValidityPass | Self::ValidityPassPriorityLead => {
-                crate::metrics::SubmitCohortLabel::ValidityPass
+            Self::ValidityPass => crate::metrics::SubmitCohortLabel::ValidityPass,
+            Self::ValidityPassPriorityLead => {
+                crate::metrics::SubmitCohortLabel::ValidityPassPriorityLead
             }
         }
     }
@@ -276,6 +277,8 @@ pub struct SignedTransaction {
     pub nonce: u64,
     /// Gas reserved by the transaction.
     pub gas_limit: u64,
+    /// Priority fee per gas the transaction was signed with.
+    pub priority_fee: u128,
     /// Calibrated execution gas used for pacing.
     pub estimated_gas: u64,
     /// Resolved validity predicates transported with the transaction. Empty for
@@ -846,6 +849,7 @@ impl SubmissionPipeline {
                 from: prepared.from,
                 nonce,
                 gas_limit: prepared.gas_limit,
+                priority_fee: fees.priority_fee,
                 estimated_gas: prepared.estimated_gas,
                 validity: Vec::new(),
                 validity_signature: None,
@@ -881,6 +885,7 @@ impl SubmissionPipeline {
             from: prepared.from,
             nonce,
             gas_limit: prepared.gas_limit,
+            priority_fee: fees.priority_fee,
             estimated_gas: prepared.estimated_gas,
             validity: prepared.validity.clone(),
             validity_signature: None,
@@ -989,6 +994,8 @@ impl SubmissionPipeline {
                 .map(|signed| SentTransaction {
                     tx_hash: signed.tx_hash,
                     from: signed.from,
+                    gas_limit: signed.gas_limit,
+                    priority_fee: signed.priority_fee,
                     estimated_gas: signed.estimated_gas,
                     measured,
                     cohort: signed.cohort,
@@ -1266,6 +1273,8 @@ impl SubmissionPipeline {
             ctx.results_tracker.sent_transactions(vec![SentTransaction {
                 tx_hash,
                 from: signed.from,
+                gas_limit: signed.gas_limit,
+                priority_fee: signed.priority_fee,
                 estimated_gas: signed.estimated_gas,
                 measured,
                 cohort: signed.cohort,
@@ -1761,6 +1770,7 @@ mod tests {
                     from: sender,
                     nonce: 0,
                     gas_limit: 21_000,
+                    priority_fee: 0,
                     estimated_gas: 21_000,
                     validity: Vec::new(),
                     cohort: SubmitCohort::Plain,

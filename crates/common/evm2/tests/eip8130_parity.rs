@@ -32,11 +32,11 @@ use base_common_evm::{
     AlloyReceiptBuilder, BaseBlockExecutionCtx as RevmBlockExecutionCtx,
     BaseBlockExecutor as RevmBlockExecutor, BaseSpecId as RevmBaseSpecId, BaseTransaction,
     BaseTransactionError, Builder, DefaultBase, Eip8130CommittedPhases, Eip8130ExecutionMode,
-    L1BlockInfo,
+    L1BlockInfo, MeteredGas,
 };
 use base_common_evm2::{
     BaseBlockExecutionCtx, BaseBlockExecutor, BaseEvmExt, BaseEvmTypes, BaseSpecId, BaseTxEnvelope,
-    Eip8130Simulation, Eip8130SimulationMode,
+    Eip8130Simulation, Eip8130SimulationMode, MeteredGasReport,
 };
 use base_common_genesis::BaseUpgrade;
 use base_common_l1_fees::L1FeeParams;
@@ -173,6 +173,8 @@ struct World {
     upgrade: BaseUpgrade,
     accounts: Vec<(Address, U256, Option<Bytes>)>,
     storage: Vec<(Address, U256, U256)>,
+    /// Whether fees are charged; `false` models `eth_call` / unvalidated `eth_simulateV1`.
+    fee_charge: bool,
 }
 
 impl World {
@@ -188,7 +190,12 @@ impl World {
             (FORWARDER, U256::ZERO, Some(forwarder_code())),
             (NonceManagerStorage::ADDRESS, U256::ZERO, Some(Bytes::from_static(&[0xef]))),
         ]);
-        Self { upgrade, accounts, storage: Vec::new() }
+        Self { upgrade, accounts, storage: Vec::new(), fee_charge: true }
+    }
+
+    const fn without_fee_charge(mut self) -> Self {
+        self.fee_charge = false;
+        self
     }
 
     fn with_balance(mut self, address: Address, balance: U256) -> Self {
@@ -238,6 +245,9 @@ impl World {
         };
         let mut version = evm2::Version::new(spec.into());
         version.chain_id = CHAIN_ID;
+        if !self.fee_charge {
+            version.features.remove(evm2::EvmFeatures::FEE_CHARGE);
+        }
         Evm::new_with_execution_config(
             evm2::ExecutionConfig::for_spec_and_version(spec, version),
             spec,
@@ -281,7 +291,10 @@ impl World {
     }
 
     fn revm_cfg(&self) -> CfgEnv<RevmBaseSpecId> {
-        CfgEnv::new_with_spec(RevmBaseSpecId::new(self.upgrade)).with_chain_id(CHAIN_ID)
+        let mut cfg =
+            CfgEnv::new_with_spec(RevmBaseSpecId::new(self.upgrade)).with_chain_id(CHAIN_ID);
+        cfg.disable_fee_charge = !self.fee_charge;
+        cfg
     }
 
     fn revm(&self) -> base_common_evm::BaseEvm<RevmDb, NoOpInspector> {
@@ -328,6 +341,8 @@ struct Included {
     output: Bytes,
     logs: Vec<Log>,
     committed_phases: Option<u64>,
+    /// The metered gas and reserved payer authentication reported for the builder's events.
+    metered_gas: Option<(u64, Option<u64>)>,
 }
 
 /// Post-state of an account: balance, nonce, and code hash. Absent and empty accounts compare
@@ -410,6 +425,7 @@ fn run_evm2(world: &World, runs: &[Run], touched: &mut Touched) -> Outcome {
                         .ext
                         .eip8130_committed_phases
                         .filter(|_| run.simulation.is_none()),
+                    metered_gas: result.ext.metered_gas(),
                 }));
             }
             Err(error) => results.push(Err(evm2_rejection(error))),
@@ -460,6 +476,8 @@ fn run_revm(world: &World, runs: &[Run], touched: &mut Touched) -> Outcome {
         match evm.transact_raw(tx) {
             Ok(outcome) => {
                 let committed_phases = Eip8130CommittedPhases::take();
+                let metered_gas = MeteredGas::take()
+                    .map(|metered| (metered.gas_used, metered.payer_auth_gas_reserved));
                 for (address, account) in &outcome.state {
                     touched.accounts.insert(*address);
                     for key in account.storage.keys() {
@@ -480,6 +498,7 @@ fn run_revm(world: &World, runs: &[Run], touched: &mut Touched) -> Outcome {
                     // The revm executor reports the count through the thread-local handoff, and
                     // only for included (verified) transactions.
                     committed_phases: run.simulation.is_none().then_some(committed_phases),
+                    metered_gas,
                 }));
                 evm.db_mut().commit(outcome.state);
             }
@@ -602,6 +621,48 @@ fn payer_sponsored_transaction() {
     assert!(included(&outcome, 0).success);
     assert!(outcome.accounts[&payer].0 < U256::from(RICH), "the payer is charged");
     assert_eq!(outcome.accounts[&sender].0, U256::ZERO, "the sender is not charged");
+}
+
+/// With fee charging disabled (`eth_call`, unvalidated `eth_simulateV1`) both engines still
+/// verify and consume the nonce, but charge no fee, skip the payer's balance check, and report
+/// the metered gas instead of the gas-limit-billing reservation.
+#[test]
+fn fee_charge_disabled_execution_moves_no_fees() {
+    let key = signing_key(0x26);
+    let sender = eoa_address(&key);
+    let payer_key = signing_key(0x27);
+    let payer = eoa_address(&payer_key);
+    let mut self_paid = base_tx();
+    self_paid.calls = vec![vec![call(STORER, 0, &[0x04; 32]), call(RECIPIENT, 7, &[])]];
+    let sponsored = TxEip8130 {
+        payer: Some(Eip8130Constants::OPEN_PAYER),
+        nonce_sequence: 1,
+        calls: vec![vec![call(STORER, 0, &[0x05; 32])]],
+        ..base_tx()
+    };
+    let sender_auth = eoa_sig(&key, sponsored.sender_signature_hash());
+    let payer_auth = eoa_sig(&payer_key, sponsored.payer_signature_hash(sender));
+    let sponsored = Eip8130Signed::new(sponsored, sender_auth, payer_auth);
+    // The payer cannot afford the worst-case fee, which a fee-free execution never checks.
+    let world = World::new(BaseUpgrade::Everest, &[sender])
+        .with_balance(payer, U256::ZERO)
+        .without_fee_charge();
+    let outcome = assert_parity(
+        &world,
+        &[
+            Run::verified(eoa_signed(self_paid.clone(), &key), sender),
+            Run::verified(sponsored, sender),
+        ],
+    );
+    for index in 0..2 {
+        let result = included(&outcome, index);
+        assert!(result.success);
+        assert!(result.gas_used < self_paid.gas_limit, "fee-free execution reports metered gas");
+        assert_eq!(result.metered_gas.map(|(gas, _)| gas), Some(result.gas_used));
+    }
+    assert_eq!(outcome.accounts[&sender].0, U256::from(RICH) - U256::from(7), "only value moves");
+    assert_eq!(outcome.accounts[&sender].1, 2, "both nonces are consumed");
+    assert_eq!(outcome.accounts[&payer].0, U256::ZERO, "the payer is not charged");
 }
 
 #[test]
