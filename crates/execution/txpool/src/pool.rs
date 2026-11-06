@@ -1785,6 +1785,10 @@ where
         }
     }
 
+    fn tracks_dormancy(&self) -> bool {
+        self.dormancy_enforced()
+    }
+
     fn discard_dormancy(&self, reason: DormancyDiscardReason) {
         self.discard_dormancy_index(reason);
     }

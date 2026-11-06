@@ -299,8 +299,9 @@ a missed canonical notification or an unknown parent leaves transactions ready.
 
 **Modes.** `--rollup.validity-dormancy off|enforce`, default `off`. `off`
 classifies nothing and builds the same snapshot as before; the builder keeps
-its own per-build predicate index and the pool keeps no dormancy state and
-takes no extra locks. `enforce` keeps dormant transactions out of the snapshot.
+its own per-build predicate index, the pool keeps no dormancy state and takes
+no extra locks, and canonical maintenance makes no dormancy calls and hands no
+work to a blocking thread. `enforce` keeps dormant transactions out of the snapshot.
 A node with transaction forwarding enabled rejects `enforce`, since it would
 stop forwarding dormant transactions. With `enforce`, the native builder ignores
 its resting-predicate mode: the pool's index replaces it. Metrics:
