@@ -251,9 +251,10 @@ impl Eip8130Handler {
         l1_fee: U256,
         tx: &Eip8130Tx,
     ) -> HandlerResult<u64> {
-        let billable_gas = calls.billable_gas(outcome);
-        let split = Eip8130FeeSplit::new(outcome, billable_gas).map_err(Self::reject)?;
         let upgrade = host.config_spec_id().upgrade();
+        let billable_gas =
+            calls.billable_gas(outcome, upgrade.is_feature_enabled(BaseFeature::GasLimitBilling));
+        let split = Eip8130FeeSplit::new(outcome, billable_gas).map_err(Self::reject)?;
         let operator_fee =
             host.block().ext.operator_fee_charge(&tx.enveloped, U256::from(billable_gas), upgrade);
         // The pre-charge bounds every settled component, so the refund never underflows.
@@ -367,10 +368,21 @@ impl Evm2CallHost<'_, '_> {
                 let calls = Eip8130Calls::execute(self, &tx.signed, outcome, feasible_pool)?;
                 // The on-chain call pool at this limit is `gas_limit - intrinsic` (payer
                 // authentication is billed on top), so it is at least the verified-feasible pool;
-                // the EIP-7623 floor keeps a data-heavy estimate admissible.
-                let gas = outcome
-                    .floored_sender_gas(outcome.sender_intrinsic.saturating_add(feasible_pool))
-                    .saturating_add(outcome.payer_floor);
+                // the EIP-7623 floor keeps a data-heavy estimate admissible. Under gas-limit
+                // billing settlement adds `payer_floor` on top of the declared limit, so the
+                // estimate is the sender budget alone.
+                let sender_budget = outcome
+                    .floored_sender_gas(outcome.sender_intrinsic.saturating_add(feasible_pool));
+                let gas = if self
+                    .host
+                    .config_spec_id()
+                    .upgrade()
+                    .is_feature_enabled(BaseFeature::GasLimitBilling)
+                {
+                    sender_budget
+                } else {
+                    sender_budget.saturating_add(outcome.payer_floor)
+                };
                 return Ok((calls, gas));
             }
         }

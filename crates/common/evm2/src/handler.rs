@@ -131,8 +131,20 @@ impl TxHandlerHooks<BaseEvmTypes> for BaseTxHandlerHooks {
     fn settle_transaction(
         host: &mut Evm<'_, BaseEvmTypes>,
         envelope: &BaseTxEnvelope,
-        gas: GasSettlement<BaseEvmTypes>,
+        mut gas: GasSettlement<BaseEvmTypes>,
     ) -> HandlerResult<TxResult<BaseEvmTypes>> {
+        // Gas-limit billing: a non-deposit transaction is billed, and reported, for the whole
+        // `gas_limit` it reserved. Spending the remaining gas and dropping the refund counter
+        // before settlement makes every fee, refund and receipt path below observe
+        // `gas_used == gas_limit`, matching the revm reference's `BaseHandler::refund`.
+        // Fee-charge-disabled simulation (`eth_call`, `eth_estimateGas`) keeps metered gas so
+        // estimation still finds the gas a call needs.
+        if host.config_spec_id().upgrade().is_feature_enabled(BaseFeature::GasLimitBilling)
+            && host.feature(EvmFeatures::FEE_CHARGE)
+        {
+            gas.result.gas.spend_all();
+            gas.result.gas.set_refunded(0);
+        }
         let caller = gas.caller;
         let basefee = host.block_env().basefee;
         let l1_fee = host.ext().l1_fee;

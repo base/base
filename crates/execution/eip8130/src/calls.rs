@@ -115,8 +115,8 @@ pub struct Eip8130CallsResult {
 impl Eip8130CallsResult {
     /// The net gas the transaction is billed for these calls.
     #[must_use]
-    pub fn billable_gas(&self, outcome: &Eip8130Outcome) -> u64 {
-        outcome.billable_gas(self.call_gas_spent, self.refund)
+    pub fn billable_gas(&self, outcome: &Eip8130Outcome, gas_limit_billing: bool) -> u64 {
+        outcome.billable_gas(self.call_gas_spent, self.refund, gas_limit_billing)
     }
 
     /// The gross metered gas of these calls (refunds excluded), as reported by simulation.

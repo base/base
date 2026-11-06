@@ -19,7 +19,9 @@ transaction registry and static handler hooks. This crate defines that family fo
 - **Standard transactions** (legacy, EIP-2930, EIP-1559, EIP-7702; EIP-4844 is rejected):
   [`BaseTxHandlerHooks`] charges the L1 data fee and the Isthmus operator fee upfront, rejects
   callers who cannot pay them, and pays the L1 fee, base fee, and operator fee into their
-  vaults.
+  vaults. Under gas-limit billing (`BaseFeature::GasLimitBilling`, from Everest) settlement
+  bills the whole `gas_limit` with no refund unless fee charging is disabled (`eth_call`,
+  `eth_estimateGas`).
 - **L1 fee parameters**: [`L1Block`] reads them from the `L1Block` predeploy into the block
   environment extension once per block, at the block's first non-deposit transaction (after the
   L1-info deposit has run), like the revm reference's `L1BlockInfo` cache. An EVM built with
@@ -50,7 +52,8 @@ transaction registry and static handler hooks. This crate defines that family fo
   changes and delegation, the 2D nonce manager and the nonce-free replay ring with the
   millisecond validity window, the EIP-8130 intrinsic gas schedule, a worst-case payer pre-charge
   (gas, L1 data fee, operator fee), phased calls that commit or revert in order, and settlement
-  (refund cap, EIP-7623 floor, vault credits). The receipt is an `Eip8130Receipt` carrying
+  (refund cap, EIP-7623 floor, vault credits; under gas-limit billing, the reserved
+  `gas_limit + payer_floor` budget). The receipt is an `Eip8130Receipt` carrying
   `committedPhases`, reported through [`BaseTxResultExt::eip8130_committed_phases`]. The envelope
   ([`Eip8130Tx`]) carries the EIP-2718 bytes that price intrinsic gas, the L1 fee, and the DA
   footprint.

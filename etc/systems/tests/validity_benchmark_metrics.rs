@@ -24,10 +24,15 @@ use eyre::Result;
 /// Mirrors the `validity-resting` benchmark workload (every transaction is unsatisfied until two
 /// blocks after it was prepared and expires thirty blocks later) with an always-true balance and
 /// storage predicate in front, so account and slot reads are exercised too. Scaled down for a devnet.
+///
+/// The block time must match the devnet the stack builds: activating Denim at genesis puts the
+/// chain on its 200 ms cadence, and the load runner's block watcher paces its confirmation scans
+/// by this interval, so a workload slower than the chain schedules its scans minutes out and
+/// observes no inclusions.
 const WORKLOAD: &str = r#"
 transaction_submission_rpcs: ["http://placeholder"]
 sender_count: 20
-block_time: "2s"
+block_time: "200ms"
 in_flight_per_sender: 8
 batch_size: 20
 duration: "30s"

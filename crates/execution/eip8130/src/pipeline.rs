@@ -175,8 +175,16 @@ impl Eip8130Outcome {
     /// a data-heavy transaction whose `calls` execute cheaply still pays
     /// `sender_floor + payer_floor`. Mirrors revm's `eip7623_check_gas_floor`,
     /// which compares the floor against the post-refund gas used.
+    ///
+    /// Under gas-limit billing (`gas_limit_billing`, from `BaseFeature::GasLimitBilling`) the
+    /// charge is the reserved budget instead, [`Self::max_chargeable_gas`]: exactly what prepay
+    /// pre-charged and what the block executor and the builder reserve, regardless of what the
+    /// `calls` consumed or refunded.
     #[must_use]
-    pub fn billable_gas(&self, call_gas_spent: u64, refund: i64) -> u64 {
+    pub fn billable_gas(&self, call_gas_spent: u64, refund: i64, gas_limit_billing: bool) -> u64 {
+        if gas_limit_billing {
+            return self.max_chargeable_gas();
+        }
         let gross_used = self.sender_intrinsic.saturating_add(call_gas_spent);
         let refund = Eip8130Pipeline::capped_refund(refund, gross_used);
         self.metered_gas(gross_used.saturating_sub(refund))
@@ -735,12 +743,24 @@ mod tests {
     fn billable_gas_applies_the_eip7623_sender_floor() {
         let outcome = outcome();
         // Cheap execution stays below the floor, so the floor (plus payer floor) is billed.
-        assert_eq!(outcome.billable_gas(10_000, 0), outcome.sender_floor + outcome.payer_floor);
+        assert_eq!(
+            outcome.billable_gas(10_000, 0, false),
+            outcome.sender_floor + outcome.payer_floor
+        );
         // Heavy execution clears the floor, so the standard branch is billed.
         assert_eq!(
-            outcome.billable_gas(500_000, 0),
+            outcome.billable_gas(500_000, 0, false),
             outcome.sender_intrinsic + 500_000 + outcome.payer_auth_cost,
         );
+    }
+
+    #[test]
+    fn gas_limit_billing_bills_the_reserved_budget() {
+        let outcome = outcome();
+        let reserved = outcome.gas_limit + outcome.payer_floor;
+        for (spent, refund) in [(10_000, 0), (500_000, 0), (500_000, 100_000)] {
+            assert_eq!(outcome.billable_gas(spent, refund, true), reserved);
+        }
     }
 
     #[test]
@@ -748,11 +768,11 @@ mod tests {
         let outcome = outcome();
         let gross = outcome.sender_intrinsic + 500_000;
         assert_eq!(
-            outcome.billable_gas(500_000, i64::MAX),
+            outcome.billable_gas(500_000, i64::MAX, false),
             gross - gross / MAX_REFUND_QUOTIENT + outcome.payer_auth_cost,
         );
         // A net-negative refund grants nothing and never adds gas.
-        assert_eq!(outcome.billable_gas(500_000, -1_000), gross + outcome.payer_auth_cost);
+        assert_eq!(outcome.billable_gas(500_000, -1_000, false), gross + outcome.payer_auth_cost);
     }
 
     #[test]
