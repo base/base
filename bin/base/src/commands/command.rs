@@ -145,6 +145,35 @@ mod tests {
     }
 
     #[test]
+    fn accepts_deprecated_flashblocks_flags() {
+        let l1 = ["--l1-eth-rpc", "http://localhost:8545", "--l1-beacon", "http://localhost:5052"];
+        let follow = [&l1[..], &["--source-l2-rpc", "http://localhost:9545"]].concat();
+        for (command, required) in
+            [("execution", &[][..]), ("rpc", &l1[..]), ("follow", &follow[..])]
+        {
+            for url_flag in ["--flashblocks-url", "--websocket-url"] {
+                let mut args = vec![
+                    "base",
+                    command,
+                    url_flag,
+                    "ws://base-builder:7111",
+                    "--flashblocks.ping-interval",
+                    "45s",
+                    "--max-pending-blocks-depth",
+                    "5",
+                    "--enable-metering",
+                    "--metering.target-flashblocks-per-block",
+                    "4",
+                ];
+                args.extend_from_slice(required);
+                if let Err(err) = BaseCli::try_parse_from(args) {
+                    panic!("base {command} rejected {url_flag}: {err}");
+                }
+            }
+        }
+    }
+
+    #[test]
     fn rejects_top_level_chain_for_reth_subcommands() {
         let cli =
             BaseCli::try_parse_from(["base", "--chain", "sepolia", "reth", "db", "stats"]).unwrap();

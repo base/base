@@ -81,6 +81,14 @@ pub struct MeteringArgs {
     #[arg(long = "metering.da-bytes", requires = "enable_metering", hide = true)]
     pub metering_da_bytes: Option<u64>,
 
+    /// Deprecated and ignored; kept so existing node configurations keep parsing.
+    #[arg(
+        long = "metering.target-flashblocks-per-block",
+        requires = "enable_metering",
+        hide = true
+    )]
+    pub metering_target_flashblocks_per_block: Option<usize>,
+
     /// Resource-unit schedule used to throttle transactions in the native
     /// payload builder.
     #[command(flatten)]
@@ -286,6 +294,18 @@ pub struct RpcStandardNodeArgs {
         value_name = "RPC_FORWARDING_ENDPOINT"
     )]
     pub rpc_forwarding_endpoint: Option<String>,
+
+    /// Deprecated and ignored; kept so existing node configurations keep parsing.
+    #[arg(long, alias = "websocket-url", hide = true)]
+    pub flashblocks_url: Option<String>,
+
+    /// Deprecated and ignored; kept so existing node configurations keep parsing.
+    #[arg(long = "max-pending-blocks-depth", hide = true)]
+    pub max_pending_blocks_depth: Option<u64>,
+
+    /// Deprecated and ignored; kept so existing node configurations keep parsing.
+    #[arg(long = "flashblocks.ping-interval", hide = true)]
+    pub flashblocks_ping_interval: Option<String>,
 
     /// Enable transaction tracing for mempool-to-block timing analysis
     #[arg(long = "enable-transaction-tracing", value_name = "ENABLE_TRANSACTION_TRACING")]
@@ -777,6 +797,16 @@ impl StandardBaseRethNode {
             warn!("deprecated metering resource limit flags are ignored");
         }
 
+        if args.rpc.flashblocks_url.is_some()
+            || args.rpc.max_pending_blocks_depth.is_some()
+            || args.rpc.flashblocks_ping_interval.is_some()
+            || args.metering.metering_target_flashblocks_per_block.is_some()
+        {
+            warn!(
+                "Flashblocks flags are deprecated and ignored: Base no longer builds Flashblocks"
+            );
+        }
+
         let metering_config = if args.metering.enable_metering {
             let opcode_names = inspector_opcode_names(
                 args.metering.metering_metered_opcodes.clone(),
@@ -1001,6 +1031,9 @@ mod tests {
         RpcStandardNodeArgs {
             rollup_args: RollupArgs::default(),
             rpc_forwarding_endpoint: None,
+            flashblocks_url: None,
+            max_pending_blocks_depth: None,
+            flashblocks_ping_interval: None,
             enable_transaction_tracing: false,
             enable_transaction_tracing_logs: false,
             enable_transaction_event_journal: false,
@@ -1612,6 +1645,35 @@ mod tests {
         .expect("enable-metering without a schedule must still boot");
         assert!(config.enabled);
         assert!(!config.is_active());
+    }
+
+    #[test]
+    fn accepts_deprecated_flashblocks_flags() {
+        for url_flag in ["--flashblocks-url", "--websocket-url"] {
+            let mut args = CommandParser::<StandardNodeArgs>::try_parse_from([
+                "reth",
+                url_flag,
+                "ws://base-builder:7111",
+                "--flashblocks.ping-interval",
+                "45s",
+                "--max-pending-blocks-depth",
+                "5",
+                "--enable-metering",
+                "--metering.target-flashblocks-per-block",
+                "4",
+            ])
+            .expect("deprecated flashblocks flags should still parse")
+            .args;
+
+            assert_eq!(args.rpc.flashblocks_url.take().as_deref(), Some("ws://base-builder:7111"));
+            args.rpc.flashblocks_ping_interval = None;
+            args.rpc.max_pending_blocks_depth = None;
+            args.metering.metering_target_flashblocks_per_block = None;
+            assert_eq!(
+                args,
+                CommandParser::<StandardNodeArgs>::parse_from(["reth", "--enable-metering"]).args
+            );
+        }
     }
 
     #[test]
