@@ -8,52 +8,73 @@ use alloy_primitives::{Address, B256};
 use async_trait::async_trait;
 use base_common_genesis::{RollupConfig, SystemConfig};
 use base_consensus_derive::{
-    DerivationPipeline, EthereumDataSource, OriginProvider, Pipeline, PipelineBuilder,
-    PipelineErrorKind, PipelineResult, PolledAttributesQueueStage, Signal, SignalReceiver,
-    StatefulAttributesBuilder, StepResult,
+    BlobProvider, ChainProvider, DerivationPipeline, EthereumDataSource, OriginProvider, Pipeline,
+    PipelineBuilder, PipelineErrorKind, PipelineResult, PolledAttributesQueueStage, Signal,
+    SignalReceiver, StatefulAttributesBuilder, StepResult,
 };
 use base_protocol::{AttributesWithParent, BlockInfo, L2BlockInfo};
 
 use crate::{
-    AlloyChainProvider, AlloyL2ChainProvider, ConfDepthProvider, L1HeadNumber, OnlineBeaconClient,
-    OnlineBlobProvider,
+    AlloyChainProvider, AlloyChainProviderError, AlloyL2ChainProvider, ConfDepthProvider,
+    L1HeadNumber, OnlineBeaconClient, OnlineBlobProvider,
 };
 
+/// An L1 chain provider an [`OnlinePipeline`] can read from.
+pub trait OnlineChainProvider:
+    ChainProvider<Error: From<AlloyChainProviderError> + Send> + Clone + Debug + Send + Sync + 'static
+{
+}
+
+impl<T> OnlineChainProvider for T where
+    T: ChainProvider<Error: From<AlloyChainProviderError> + Send>
+        + Clone
+        + Debug
+        + Send
+        + Sync
+        + 'static
+{
+}
+
+/// A blob provider an [`OnlinePipeline`] can read from.
+pub trait OnlineBlobSource: BlobProvider + Clone + Debug + Send + Sync + 'static {}
+
+impl<T> OnlineBlobSource for T where T: BlobProvider + Clone + Debug + Send + Sync + 'static {}
+
 /// An online polled derivation pipeline.
-type OnlinePolledDerivationPipeline = DerivationPipeline<
+type OnlinePolledDerivationPipeline<C, B> = DerivationPipeline<
     PolledAttributesQueueStage<
-        OnlineDataProvider,
-        ConfDepthProvider,
+        EthereumDataSource<ConfDepthProvider<C>, B>,
+        ConfDepthProvider<C>,
         AlloyL2ChainProvider,
-        OnlineAttributesBuilder,
+        StatefulAttributesBuilder<ConfDepthProvider<C>, AlloyL2ChainProvider>,
     >,
     AlloyL2ChainProvider,
 >;
 
-/// An RPC-backed Ethereum data source.
-type OnlineDataProvider =
-    EthereumDataSource<ConfDepthProvider, OnlineBlobProvider<OnlineBeaconClient>>;
-
-/// An RPC-backed payload attributes builder for the `AttributesQueue` stage of the derivation
-/// pipeline.
-type OnlineAttributesBuilder = StatefulAttributesBuilder<ConfDepthProvider, AlloyL2ChainProvider>;
-
-/// An online derivation pipeline.
+/// An online derivation pipeline reading L1 chain data from `C` and blobs from `B`.
 #[derive(Debug)]
-pub struct OnlinePipeline {
+pub struct OnlinePipeline<C = AlloyChainProvider, B = OnlineBlobProvider<OnlineBeaconClient>>
+where
+    C: OnlineChainProvider,
+    B: OnlineBlobSource,
+{
     /// The inner polled derivation pipeline.
-    inner: OnlinePolledDerivationPipeline,
+    inner: OnlinePolledDerivationPipeline<C, B>,
 }
 
-impl OnlinePipeline {
+impl<C, B> OnlinePipeline<C, B>
+where
+    C: OnlineChainProvider,
+    B: OnlineBlobSource,
+{
     /// Constructs a new uninitialized polled derivation pipeline with an optional batcher address
     /// override used only to filter L1 data-availability transactions.
     #[allow(clippy::too_many_arguments)]
     pub fn new_polled_with_da_batcher_sender_override(
         cfg: Arc<RollupConfig>,
         l1_cfg: Arc<ChainConfig>,
-        blob_provider: OnlineBlobProvider<OnlineBeaconClient>,
-        chain_provider: AlloyChainProvider,
+        blob_provider: B,
+        chain_provider: C,
         l2_chain_provider: AlloyL2ChainProvider,
         l1_head_number: L1HeadNumber,
         verifier_l1_confs: u64,
@@ -84,21 +105,33 @@ impl OnlinePipeline {
 }
 
 #[async_trait]
-impl SignalReceiver for OnlinePipeline {
+impl<C, B> SignalReceiver for OnlinePipeline<C, B>
+where
+    C: OnlineChainProvider,
+    B: OnlineBlobSource,
+{
     /// Receives a signal from the driver.
     async fn signal(&mut self, signal: Signal) -> PipelineResult<()> {
         self.inner.signal(signal).await
     }
 }
 
-impl OriginProvider for OnlinePipeline {
+impl<C, B> OriginProvider for OnlinePipeline<C, B>
+where
+    C: OnlineChainProvider,
+    B: OnlineBlobSource,
+{
     /// Returns the optional L1 [`BlockInfo`] origin.
     fn origin(&self) -> Option<BlockInfo> {
         self.inner.origin()
     }
 }
 
-impl Iterator for OnlinePipeline {
+impl<C, B> Iterator for OnlinePipeline<C, B>
+where
+    C: OnlineChainProvider,
+    B: OnlineBlobSource,
+{
     type Item = AttributesWithParent;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -107,7 +140,11 @@ impl Iterator for OnlinePipeline {
 }
 
 #[async_trait]
-impl Pipeline for OnlinePipeline {
+impl<C, B> Pipeline for OnlinePipeline<C, B>
+where
+    C: OnlineChainProvider,
+    B: OnlineBlobSource,
+{
     /// Peeks at the next [`AttributesWithParent`] from the pipeline.
     fn peek(&self) -> Option<&AttributesWithParent> {
         self.inner.peek()

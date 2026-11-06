@@ -26,7 +26,7 @@ pub use follow::{
 };
 
 mod l1;
-pub use l1::L1ClientArgs;
+pub use l1::{L1Args, L1ClientArgs};
 
 mod l2;
 pub use l2::{EmbeddedL2ClientArgs, L2ClientArgs};

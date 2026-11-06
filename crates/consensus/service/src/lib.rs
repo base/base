@@ -11,8 +11,9 @@ extern crate tracing;
 
 mod service;
 pub use service::{
-    FollowNode, FollowNodeConfig, HEAD_STREAM_POLL_INTERVAL, L1Config, L1ConfigBuilder, NodeMode,
-    NodeOperatingMode, RollupNode, RollupNodeBuilder, ShutdownSignal, UpgradeSignalBuilderConfig,
+    FollowNode, FollowNodeConfig, HEAD_STREAM_POLL_INTERVAL, L1BlobProvider, L1ChainProvider,
+    L1Config, L1ConfigBuilder, L1NodeOriginProvider, L1OriginProvider, NodeMode, NodeOperatingMode,
+    RollupNode, RollupNodeBuilder, ShutdownSignal, UpgradeSignalBuilderConfig,
 };
 
 mod follow;
@@ -51,13 +52,13 @@ pub use actors::{
     NetworkBuilder, NetworkBuilderError, NetworkConfig, NetworkDriver, NetworkDriverError,
     NetworkEngineClient, NetworkHandler, NetworkInboundData, NodeActor, NoopCheckpointWriter,
     OriginSelector, PayloadBuilder, PayloadSealer, PendingStopSender, PoolActivation,
-    PrefetchedChainProvider, PrefetchedChainProviderError, PreparedL1Origin,
-    QueuedDerivationEngineClient, QueuedEngineDerivationClient, QueuedEngineRpcClient,
-    QueuedL1WatcherDerivationClient, QueuedNetworkEngineClient, QueuedSequencerAdminAPIClient,
-    QueuedSequencerEngineClient, QueuedUnsafePayloadGossipClient, ReconcileShadowRequest,
-    RecoveryModeGuard, ResetOrigin, ResetOutcome, ResetReason, ResetRequest, ResetRequestOutcome,
-    ResetResponder, RpcActor, RpcActorError, RpcContext, ScheduledTicker, SealState, SealStepError,
-    SealStepOutcome, SequencerActor, SequencerActorError, SequencerAdminQuery, SequencerConfig,
+    PrefetchedChainProvider, PreparedL1Origin, QueuedDerivationEngineClient,
+    QueuedEngineDerivationClient, QueuedEngineRpcClient, QueuedL1WatcherDerivationClient,
+    QueuedNetworkEngineClient, QueuedSequencerAdminAPIClient, QueuedSequencerEngineClient,
+    QueuedUnsafePayloadGossipClient, ReconcileShadowRequest, RecoveryModeGuard, ResetOrigin,
+    ResetOutcome, ResetReason, ResetRequest, ResetRequestOutcome, ResetResponder, RpcActor,
+    RpcActorError, RpcContext, ScheduledTicker, SealState, SealStepError, SealStepOutcome,
+    SequencerActor, SequencerActorError, SequencerAdminQuery, SequencerConfig,
     SequencerEngineClient, SequencerEngineRequestCoordinator, SequencerEngineState, SequencerKind,
     ShadowCycle, ShadowFunding, ShadowReconciliationGate, ShadowReconciliationTask,
     ShadowSequencingState, UnsafePayloadGossipClient, UnsafePayloadGossipClientError,

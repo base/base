@@ -182,6 +182,7 @@ base-builder-core = { path = "crates/builder/core" }
 base-builder-metering = { path = "crates/builder/metering" }
 
 # Consensus
+base-consensus-l1 = { path = "crates/consensus/l1" }
 base-consensus-cli = { path = "crates/consensus/cli" }
 base-consensus-rpc = { path = "crates/consensus/rpc" }
 base-consensus-safedb = { path = "crates/consensus/safedb" }
@@ -481,6 +482,7 @@ k256 = "0.13"
 p256 = "0.13"
 p384 = "0.13"
 blake3 = "1.8"
+blst = "0.3.16"
 getrandom = "0.4"
 rustls = "0.23.43"
 secp256k1 = "0.30"
@@ -511,6 +513,7 @@ discv5 = { git = "https://github.com/sigp/discv5", rev = "7663c00" }
 libp2p = "0.56.0"
 multihash = "0.19"
 libp2p-identity = "0.2.12"
+libp2p-stream = "0.4.0-alpha"
 unsigned-varint = { version = "0.8", default-features = false }
 
 # serde

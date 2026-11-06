@@ -2,13 +2,34 @@
 
 use std::{num::ParseIntError, time::Duration};
 
-use alloy_primitives::Address;
+use alloy_primitives::{Address, B256};
 use base_common_genesis::RollupConfig;
 use base_consensus_providers::L1_RPC_TIMEOUT;
 use tracing::warn;
 use url::Url;
 
 const DEFAULT_L1_TRUST_RPC: bool = true;
+
+/// Arguments for the stateless L1 node.
+#[derive(clap::Args, Clone, Debug, Default, PartialEq, Eq)]
+pub struct L1Args {
+    /// Run an embedded stateless L1 node instead of connecting to L1 RPCs.
+    ///
+    /// Heads and blobs come from beacon-chain peers over libp2p, and block data comes from L1
+    /// devp2p peers.
+    #[arg(long = "l1.embedded", env = "BASE_NODE_L1_EMBEDDED")]
+    pub l1_embedded: bool,
+
+    /// Trusted beacon block root to bootstrap the embedded L1 light client from.
+    ///
+    /// Defaults to a checkpoint built into this release.
+    #[arg(long = "l1.embedded.checkpoint", env = "BASE_NODE_L1_EMBEDDED_CHECKPOINT")]
+    pub l1_embedded_checkpoint: Option<B256>,
+
+    /// devp2p TCP and discovery UDP port of the embedded L1 node.
+    #[arg(long = "l1.embedded.port", env = "BASE_NODE_L1_EMBEDDED_PORT", default_value_t = 30304)]
+    pub l1_embedded_port: u16,
+}
 
 /// L1 client arguments.
 #[derive(Clone, Debug, clap::Args)]
