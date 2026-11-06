@@ -106,7 +106,11 @@ impl RecordedReplay {
             .await
             .err()
             .map(|error| format!("{error:#}"));
-        result.final_hash = Self::head(&provider).await.unwrap_or_default();
+        // After a rejected message the node may not answer; keep the result with an unknown head.
+        result.final_hash = match Self::head(&provider).await {
+            Err(error) if result.error.is_none() => return Err(error),
+            head => head.unwrap_or_default(),
+        };
         result.matches = result.expected_head == Some(result.final_hash);
 
         let result_path = output_dir.join(RECORDED_REPLAY_RESULT_FILE);
