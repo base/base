@@ -6,6 +6,7 @@ set -eo pipefail
 # add it here to ensure it stays no_std-compatible.
 no_std_packages=(
   # common crates (ported from op-alloy)
+  base-common-blobs
   base-common-consensus
   base-common-evm
   base-common-chains

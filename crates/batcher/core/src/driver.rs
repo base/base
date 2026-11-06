@@ -439,7 +439,7 @@ mod tests {
         L2BlockEvent,
         test_utils::{ChannelBlockSource, ChannelL1HeadSource},
     };
-    use base_blobs::{BlobDecoder, BlobEncoder};
+    use base_common_blobs::{BlobDecoder, BlobEncoder};
     use base_protocol::Frame;
     use base_runtime::{
         Cancellation, Clock, Spawner,

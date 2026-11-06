@@ -1,6 +1,10 @@
-# `base-blobs`
+# `base-common-blobs`
 
-EIP-4844 blob encoding and decoding for the Base batcher.
+EIP-4844 blob encoding and decoding for Base batch data. The batcher uses the
+encoder to build blobs; the derivation pipeline (`base-consensus-derive`) uses
+the decoder to read them back, so both sides share one codec. The crate is
+`no_std` compatible and knows nothing about frames; packing frames into a blob
+payload lives in the batcher (`FrameEncoder::to_blob`).
 
 `BlobEncoder` packs raw bytes into the BLS field-element-compatible wire
 format used by the Base derivation pipeline. Each 32-byte field element

@@ -13,8 +13,8 @@ workspace = true
 
 [dependencies]
 # local
-base-blobs.workspace = true
 base-tx-manager.workspace = true
+base-common-blobs.workspace = true
 base-batcher-source.workspace = true
 base-batcher-encoder.workspace = true
 base-protocol = { workspace = true, features = ["std"] }

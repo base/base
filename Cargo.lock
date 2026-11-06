@@ -3064,7 +3064,7 @@ dependencies = [
  "async-trait",
  "base-batcher-encoder",
  "base-batcher-source",
- "base-blobs",
+ "base-common-blobs",
  "base-common-consensus",
  "base-protocol",
  "base-runtime",
@@ -3087,7 +3087,7 @@ dependencies = [
  "alloy-eips 2.5.0",
  "alloy-primitives",
  "alloy-rlp",
- "base-blobs",
+ "base-common-blobs",
  "base-common-consensus",
  "base-common-flz",
  "base-common-genesis",
@@ -3163,17 +3163,6 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "tracing",
-]
-
-[[package]]
-name = "base-blobs"
-version = "0.0.0"
-dependencies = [
- "alloy-eips 2.5.0",
- "alloy-primitives",
- "base-protocol",
- "rstest",
- "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -3488,6 +3477,16 @@ dependencies = [
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "base-common-blobs"
+version = "0.0.0"
+dependencies = [
+ "alloy-eips 2.5.0",
+ "alloy-primitives",
+ "rstest",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -3832,6 +3831,7 @@ dependencies = [
  "alloy-rlp",
  "alloy-rpc-types-engine",
  "async-trait",
+ "base-common-blobs",
  "base-common-chains",
  "base-common-consensus",
  "base-common-genesis",
@@ -5781,6 +5781,7 @@ dependencies = [
  "alloy-rpc-types-eth 2.5.0",
  "arbitrary",
  "async-trait",
+ "base-common-blobs",
  "base-common-consensus",
  "base-common-genesis",
  "base-common-rpc-types",
