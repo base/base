@@ -18,9 +18,8 @@ pub const DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD: usize = 32;
 /// Location that currently blocks a parked validity predicate.
 ///
 /// State keys ([`Self::Balance`], [`Self::Nonce`], [`Self::Storage`]) are woken by
-/// [`ParkedPredicateIndex::affected_by_state`]. Context keys
-/// ([`Self::BlockNumber`], [`Self::FlashblockIndex`]) stay parked until the
-/// iterator is rebuilt with an updated context.
+/// [`ParkedPredicateIndex::affected_by_state`]. [`Self::BlockNumber`] stays parked
+/// until the iterator is rebuilt with an updated context.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ValidityPredicateKey {
     /// Account balance.
@@ -31,8 +30,6 @@ pub enum ValidityPredicateKey {
     Storage(Address, U256),
     /// Number of the block currently being built.
     BlockNumber,
-    /// Index of the flashblock currently being built.
-    FlashblockIndex,
 }
 
 impl ValidityPredicateKey {
@@ -42,8 +39,11 @@ impl ValidityPredicateKey {
             ValidityPredicate::Balance { address, .. } => Self::Balance(*address),
             ValidityPredicate::Nonce { address, .. } => Self::Nonce(*address),
             ValidityPredicate::Storage { address, slot, .. } => Self::Storage(*address, *slot),
-            ValidityPredicate::BlockNumber { .. } => Self::BlockNumber,
-            ValidityPredicate::FlashblockIndex { .. } => Self::FlashblockIndex,
+            // `ValidityConditions` compiles a flashblock index into a block bound that never
+            // holds.
+            ValidityPredicate::BlockNumber { .. } | ValidityPredicate::FlashblockIndex { .. } => {
+                Self::BlockNumber
+            }
         }
     }
 
