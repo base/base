@@ -299,7 +299,8 @@ ready and is queued again.
 
 Builds record the locations they write while the index has a tip, from the
 tip's state on, so classification knows what changed since the state it read;
-the running build keeps its own record, which classification also checks.
+the running build keeps its own record, which classification also checks, and a
+build sealed during a classification merges it into the pool's, deduplicated.
 Past 65,536 recorded locations nothing is parked until the next seal without a
 classification in flight; a commit that destroys an account fences all its
 storage slots.

@@ -211,6 +211,14 @@ impl WriteFence {
         }
     }
 
+    /// Adds every location `other` recorded, deduplicated and within the same cap: past it,
+    /// every location counts as written.
+    pub(crate) fn absorb(&mut self, other: Self) {
+        self.overflowed |= other.overflowed;
+        self.storage.extend(other.storage);
+        self.record(other.keys.into_iter().map(WrittenLocation::Key));
+    }
+
     /// Whether the location `predicate` reads was written.
     pub(crate) fn contains(&self, predicate: &ValidityPredicate) -> bool {
         let key = ValidityPredicateKey::for_predicate(predicate);
@@ -300,6 +308,7 @@ impl DiscardedIndex {
 pub(crate) struct RetiredCollections {
     releases: Vec<BTreeMap<u64, B256Set>>,
     canaries: Vec<VecDeque<TxHash>>,
+    fences: Vec<WriteFence>,
 }
 
 /// The validity pool's predicate index, scoped to the builder's tip, with the classification
@@ -336,11 +345,10 @@ pub(crate) struct Dormancy {
     /// `discards` when the classification in flight started.
     pub classifying: Option<u64>,
     /// Locations builds wrote on top of the state classification reads, besides those of the
-    /// running build, which it keeps itself.
+    /// running build, which it keeps itself: pre-selection writes and those of builds sealed
+    /// while a classification was in flight, deduplicated and capped at
+    /// [`DORMANCY_FENCE_CAPACITY`], past which the classification parks nothing.
     pub fence: WriteFence,
-    /// The locations sealed builds wrote while a classification was in flight, kept whole
-    /// rather than merged into `fence` so a seal does no work per location.
-    pub sealed_fences: Vec<WriteFence>,
     /// Collections retired under the lock, freed once it is released.
     retired: RetiredCollections,
     /// Transactions woken during the running build.
@@ -367,7 +375,6 @@ impl Dormancy {
             discards: 0,
             classifying: None,
             fence: WriteFence::default(),
-            sealed_fences: Vec::new(),
             retired: RetiredCollections::default(),
             build_wakes: 0,
         }
@@ -404,18 +411,15 @@ impl Dormancy {
         self.clear_fences();
     }
 
-    /// Forgets every location builds wrote; the fences hold no values needing a drop, so this
-    /// only frees their tables.
+    /// Forgets every location builds wrote, retiring the fence to free outside the lock.
     pub(crate) fn clear_fences(&mut self) {
-        self.fence = WriteFence::default();
-        self.sealed_fences.clear();
+        self.retired.fences.push(std::mem::take(&mut self.fence));
     }
 
-    /// Whether a build wrote the location `predicate` reads since the state classification
-    /// read, apart from the running build's own writes.
-    pub(crate) fn is_fenced(&self, predicate: &ValidityPredicate) -> bool {
-        self.fence.contains(predicate)
-            || self.sealed_fences.iter().any(|fence| fence.contains(predicate))
+    /// Records that a sealed build wrote `written` on top of the state a classification in
+    /// flight reads.
+    pub(crate) fn fence_sealed(&mut self, written: WriteFence) {
+        self.fence.absorb(written);
     }
 
     /// Takes the collections retired so far, to free outside the lock.

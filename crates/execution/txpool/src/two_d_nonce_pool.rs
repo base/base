@@ -1598,11 +1598,12 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
             return local;
         }
         self.dormancy.tip = Some(BlockNumHash::new(self.dormancy.height, block_hash));
-        let written = local.as_mut().and_then(|local| local.written.take());
-        match (self.dormancy.classifying, written) {
-            (Some(_), Some(written)) => self.dormancy.sealed_fences.push(written),
-            (None, _) => self.dormancy.clear_fences(),
-            (Some(_), None) => {}
+        // Without a classification in flight the build's written locations
+        // stay in what is returned, to be freed outside the lock.
+        if self.dormancy.classifying.is_none() {
+            self.dormancy.clear_fences();
+        } else if let Some(written) = local.as_mut().and_then(|local| local.written.take()) {
+            self.dormancy.fence_sealed(written);
         }
         local
     }
@@ -1926,7 +1927,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
         let written_by_running_build = self.running_build.as_ref().is_some_and(|local| {
             local.lock().written.as_ref().is_some_and(|written| written.contains(&predicate))
         });
-        if self.dormancy.is_fenced(&predicate)
+        if self.dormancy.fence.contains(&predicate)
             || written_by_running_build
             || release_block.is_some_and(|release| release <= self.dormancy.height)
         {
@@ -3642,6 +3643,59 @@ mod tests {
         pool.release_build(build);
         drop(parks);
         assert!(pool.dormancy.is_dormant(&hash), "the merged park is dormant on the tip");
+    }
+
+    /// The locations builds sealed during a classification write are merged
+    /// into one fence capped at [`crate::DORMANCY_FENCE_CAPACITY`]; past the cap the
+    /// classification parks nothing and its candidates stay ready.
+    #[rstest::rstest]
+    #[case::within_the_cap(1, true)]
+    #[case::past_the_cap(crate::DORMANCY_FENCE_CAPACITY + 1, false)]
+    fn sealed_writes_past_the_fence_cap_park_nothing(
+        #[case] written_slots: usize,
+        #[case] parked: bool,
+    ) {
+        let signer = signer();
+        let mut pool = protocol_lane_pool();
+        pool.set_dormancy_mode(ValidityDormancyMode::Enforce);
+        let root = valid_pool_transaction(signed_1559(&signer, 0, 1_000));
+        let hash = *root.hash();
+        pool.insert_validated(root, 0).unwrap();
+        let root = pool.get(&hash).unwrap();
+        let tip = B256::repeat_byte(1);
+        let build = pool.begin_build(B256::ZERO, 1, None).unwrap();
+        pool.seal_build(build, tip);
+        pool.release_build(build);
+        pool.take_dormancy_batch(tip).unwrap();
+
+        // A build on the tip writes slots of an account no predicate reads.
+        let build = pool.begin_build(tip, 2, None).unwrap();
+        let mut account = revm::state::Account::default();
+        for slot in 0..written_slots {
+            account.storage.insert(
+                U256::from(slot),
+                revm::state::EvmStorageSlot::new_changed(
+                    U256::ZERO,
+                    U256::from(1),
+                    Default::default(),
+                ),
+            );
+        }
+        account.mark_touch();
+        let state = revm::state::EvmState::from_iter([(Address::repeat_byte(0xdd), account)]);
+        pool.begin_snapshot(build).1.lock().wake(&state);
+        pool.seal_build(build, B256::repeat_byte(2));
+        pool.release_build(build);
+
+        let blocker = ValidityPredicate::BlockNumber {
+            op: ValidityOperator::GreaterThanOrEqual,
+            value: U256::from(10),
+        };
+        let dormant =
+            DormancyClassification::Dormant { predicate: blocker, release_block: Some(10) };
+        pool.install_dormancy(vec![(root, dormant)]);
+
+        assert_eq!(pool.dormancy.is_dormant(&hash), parked);
     }
 
     #[test]
