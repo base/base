@@ -186,7 +186,7 @@ def dur(d):
 for phase in phases:
     by = cohorts(phase)
     print(f"--- {phase}: per-cohort settlement (from receipts) and inclusion latency ---")
-    print(f"{'cohort':<30}{'confirmed':>10}{'reverted':>9}{'gas used':>14}{'gas limit':>14}{'tip/tx (ETH)':>15}{'fee/tx (ETH)':>15}{'p50':>8}{'p95':>8}{'max':>8}")
+    print(f"{'cohort':<30}{'confirmed':>10}{'reverted':>9}{'gas used':>14}{'gas limit':>14}{'tip/tx (ETH)':>15}{'exec fee/tx (ETH)':>18}{'p50':>8}{'p95':>8}{'max':>8}")
     for label, name in ((ARB, "reverting arbs (20x tip, 500k limit)"), (REGULAR, "regular (1x tip, ~122k limit)")):
         c = by.get(label)
         if not c:
@@ -196,7 +196,7 @@ for phase in phases:
         tip, fee = int(c.get("total_priority_fee_wei", 0)), int(c.get("total_fee_wei", 0))
         lat = c["block_latency"]
         rows[(phase, label)] = c
-        print(f"{name:<30}{n:>10}{c['reverted']:>9}{c['total_gas']:>14}{c.get('total_gas_limit', 0):>14}{tip / n / ETH:>15.9f}{fee / n / ETH:>15.9f}{dur(lat['p50']):>7.2f}s{dur(lat['p95']):>7.2f}s{dur(lat['max']):>7.2f}s")
+        print(f"{name:<30}{n:>10}{c['reverted']:>9}{c['total_gas']:>14}{c.get('total_gas_limit', 0):>14}{tip / n / ETH:>15.9f}{fee / n / ETH:>18.9f}{dur(lat['p50']):>7.2f}s{dur(lat['p95']):>7.2f}s{dur(lat['max']):>7.2f}s")
     summary = load(f"{out}/{phase}.summary.json")
     tp = summary.get("throughput", {})
     submitted, confirmed = tp.get("total_submitted", 0), tp.get("total_confirmed", 0)

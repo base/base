@@ -317,7 +317,7 @@ fn present_load_test_summary(summary: &MetricsSummary) {
             println!("By cohort:");
             for cohort in &summary.by_cohort {
                 println!(
-                    "  {}: confirmed={}  reverted={}  gas_used={}  gas_limit={}  fee_eth={:.6}  tip_eth={:.6}  block_latency p50={:.1?} p95={:.1?} max={:.1?}",
+                    "  {}: confirmed={}  reverted={}  gas_used={}  gas_limit={}  exec_fee_eth={:.6}  tip_eth={:.6}  block_latency p50={:.1?} p95={:.1?} max={:.1?}",
                     cohort.cohort.as_str(),
                     cohort.confirmed,
                     cohort.reverted,
