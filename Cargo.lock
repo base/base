@@ -6239,6 +6239,7 @@ dependencies = [
  "base-builder-core",
  "base-common-chains",
  "base-common-consensus",
+ "base-common-eip8130",
  "base-common-genesis",
  "base-common-network",
  "base-common-precompiles",

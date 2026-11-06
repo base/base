@@ -764,6 +764,8 @@ pub struct ExecutionInfo {
     pub cumulative_gas_used: u64,
     /// Estimated DA size
     pub cumulative_da_bytes_used: u64,
+    /// Uncompressed (EIP-2718 encoded) bytes of the transactions included so far.
+    pub cumulative_uncompressed_bytes: u64,
     /// Tracks fees from executed mempool transactions
     pub total_fees: U256,
     /// Inclusion and fee revenue from executed mempool transactions.
@@ -781,6 +783,7 @@ impl ExecutionInfo {
         Self {
             cumulative_gas_used: 0,
             cumulative_da_bytes_used: 0,
+            cumulative_uncompressed_bytes: 0,
             total_fees: U256::ZERO,
             inclusion: InclusionTracker::default(),
             resource_metering_usage: Vec::new(),
@@ -826,6 +829,18 @@ impl ExecutionInfo {
         }
 
         self.cumulative_gas_used.saturating_add(tx_reserved_gas) > block_gas_limit
+    }
+
+    /// Returns true if adding a transaction of `tx_uncompressed_size` EIP-2718 encoded bytes
+    /// would push the block past `block_uncompressed_limit`, when one is configured.
+    pub fn is_tx_over_uncompressed_limit(
+        &self,
+        tx_uncompressed_size: u64,
+        block_uncompressed_limit: Option<u64>,
+    ) -> bool {
+        block_uncompressed_limit.is_some_and(|limit| {
+            self.cumulative_uncompressed_bytes.saturating_add(tx_uncompressed_size) > limit
+        })
     }
 }
 
@@ -999,6 +1014,8 @@ where
                 ));
             }
 
+            let tx_uncompressed_size = sequencer_tx.encoded_bytes().len() as u64;
+
             // Convert the transaction to a [RecoveredTx]. This is
             // purely for the purposes of utilizing the `evm_config.tx_env`` function.
             // Deposit transactions do not have signatures, so if the tx is a deposit, this
@@ -1052,6 +1069,9 @@ where
             };
 
             info.cumulative_gas_used += gas_output.tx_gas_used();
+            // Sequencer transactions cannot be skipped, so they count toward the uncompressed
+            // block size even when they alone exceed the limit.
+            info.cumulative_uncompressed_bytes += tx_uncompressed_size;
             if let Some(usage) = pending_resource_usage {
                 resource_metering.apply_accounted_usage(
                     &tx_hash,
@@ -1094,6 +1114,7 @@ where
             .map_or(gas_limit, |cfg| cfg.min(gas_limit));
         let block_da_limit = self.builder_config.da_config.max_da_block_size();
         let tx_da_limit = self.builder_config.da_config.max_da_tx_size();
+        let block_uncompressed_limit = self.builder_config.max_uncompressed_block_size;
         let base_fee = builder.evm_env().block_base_fee();
         let block_number = block_env.number.try_into().expect("block number must fit in u64");
         let predicate_context = PredicateContext { block_number, flashblock_index: 0 };
@@ -1365,6 +1386,7 @@ where
             }
 
             let tx_da_size = tx.estimated_da_size();
+            let tx_uncompressed_size = tx.encoded_length() as u64;
 
             // EIP-8130 meters payer authentication gas on top of the declared gas limit, so it must
             // be reserved against the block gas budget in addition to `gas_limit`. Reserve a
@@ -1471,6 +1493,20 @@ where
                         validity_consideration_index,
                         "block_limits_exceeded",
                         "transaction does not fit the remaining block gas or DA budget",
+                        false,
+                    );
+                }
+                Self::skip_current(&mut best_txs, tx.sender(), tx.nonce(), replay_independent);
+                continue;
+            }
+
+            if info.is_tx_over_uncompressed_limit(tx_uncompressed_size, block_uncompressed_limit) {
+                if has_validity_predicates {
+                    self.emit_validity_rejection(
+                        tx_hash,
+                        validity_consideration_index,
+                        "block_uncompressed_size_exceeded",
+                        "transaction does not fit the remaining uncompressed block size budget",
                         false,
                     );
                 }
@@ -1602,6 +1638,7 @@ where
 
             info.cumulative_gas_used += gas_output.tx_gas_used();
             info.cumulative_da_bytes_used += tx_da_size;
+            info.cumulative_uncompressed_bytes += tx_uncompressed_size;
             if let Some(usage) = pending_resource_usage {
                 resource_metering.apply_accounted_usage(
                     &tx_hash,
@@ -1900,6 +1937,50 @@ mod tests {
 
         // payer_auth metered on top (reserved = 21_000 + 2_100) pushes over the block limit.
         assert!(info.is_tx_over_limits(0, block_gas_limit, None, None, 21_000 + 2_100, None));
+    }
+
+    #[test]
+    fn is_tx_over_uncompressed_limit_counts_cumulative_bytes() {
+        let mut info = ExecutionInfo::new();
+        info.cumulative_uncompressed_bytes = 90_000;
+
+        assert!(!info.is_tx_over_uncompressed_limit(u64::MAX, None));
+        assert!(!info.is_tx_over_uncompressed_limit(10_000, Some(100_000)));
+        assert!(info.is_tx_over_uncompressed_limit(10_001, Some(100_000)));
+    }
+
+    /// Pool transactions that would push the block past the uncompressed size limit are left
+    /// out, and the block still includes the transactions that fit. Sequencer transactions count
+    /// toward the limit and are never left out.
+    #[test]
+    fn native_builder_enforces_max_uncompressed_block_size() {
+        // Distinct recipients give each transaction its own recovered sender at nonce zero.
+        let transactions: Vec<_> =
+            (1..=4).map(|i| pool_transaction_to(0, Address::repeat_byte(i), U256::ZERO)).collect();
+        let senders: Vec<_> = transactions.iter().map(|tx| tx.sender()).collect();
+        let tx_size = transactions[0].encoded_length() as u64;
+        let (sequencer, pool) = transactions.split_first().expect("four transactions");
+        let build = |limit, with_sequencer: bool| {
+            let mut ctx = pool_payload_context(DENIM_TIMESTAMP);
+            ctx.builder_config.max_uncompressed_block_size = limit;
+            if with_sequencer {
+                ctx.config.attributes.transactions = vec![sequencer_attribute_tx(sequencer)];
+            }
+            included_tx_count(build_parkable_pool_payload(
+                ctx,
+                TestParkableTransactions::new(pool.to_vec()),
+                &senders,
+            ))
+        };
+
+        assert_eq!(build(None, false), 3);
+        assert_eq!(build(Some(2 * tx_size), false), 2);
+        assert_eq!(build(Some(tx_size - 1), false), 0);
+        // The sequencer transaction takes one of the three slots, leaving room for two pool
+        // transactions.
+        assert_eq!(build(Some(3 * tx_size), true), 3);
+        // A sequencer transaction over the limit is still included, and no pool transaction fits.
+        assert_eq!(build(Some(tx_size - 1), true), 1);
     }
 
     #[test]
