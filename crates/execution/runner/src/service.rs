@@ -7,7 +7,7 @@ use base_node_core::{
 use reth_node_builder::{NodeComponentsBuilder, components::ComponentsBuilder};
 
 use crate::{
-    node::BaseNode,
+    BaseNode,
     types::{BaseComponentsBuilder, BaseNodeTypes},
 };
 

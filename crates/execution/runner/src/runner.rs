@@ -18,8 +18,7 @@ use reth_provider::providers::BlockchainProvider;
 use tracing::info;
 
 use crate::{
-    BaseNodeBuilder, BaseNodeExtension, FromExtensionConfig, NodeHooks,
-    node::BaseNode,
+    BaseNode, BaseNodeBuilder, BaseNodeExtension, FromExtensionConfig, NodeHooks,
     service::{DefaultPayloadServiceBuilder, PayloadServiceBuilder},
 };
 
