@@ -29,10 +29,7 @@ pub use pipeline::{
 };
 
 mod sources;
-pub use sources::{
-    BLOB_ENCODING_ROUNDS, BLOB_ENCODING_VERSION, BLOB_MAX_DATA_SIZE, BlobData, BlobSource,
-    CalldataSource, EthereumDataSource,
-};
+pub use sources::{BLOB_MAX_DATA_SIZE, BlobData, BlobSource, CalldataSource, EthereumDataSource};
 
 mod stages;
 pub use stages::{

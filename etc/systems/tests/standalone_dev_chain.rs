@@ -21,7 +21,6 @@ use alloy_rpc_types_engine::{ForkchoiceState, JwtSecret};
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use axum::{Router, http::HeaderMap};
-use base_builder_core::RestingPredicateMode;
 use base_common_consensus::{BaseBlock, BaseTxEnvelope};
 use base_common_genesis::{
     ChainGenesis, RollupConfig, RuntimeUpgradeRegistry, SystemConfig, UpgradeConfig,
@@ -108,7 +107,6 @@ async fn standalone_dev_chain_persists_and_restores_schedule() -> Result<()> {
         p2p_port: None,
         metrics_port: None,
         validity_signature_mode: ValiditySignatureMode::Off,
-        resting_predicate_mode: RestingPredicateMode::Off,
         extra_extensions: vec![Box::new(ImpersonationRpcExtension(queue.clone()))],
         persistence_threshold: Some(0),
         persistence_backpressure_threshold: None,

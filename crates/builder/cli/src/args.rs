@@ -5,7 +5,7 @@ use std::{path::PathBuf, sync::Arc};
 
 use base_builder_core::{
     BuilderApiExtensionConfig, BuilderConfig, DEFAULT_MAX_VALIDITY_PREDICATES, RejectionCache,
-    ResourceMeteringConfig, RestingPredicateMode, SharedMeteringProvider, ValiditySignatureMode,
+    ResourceMeteringConfig, SharedMeteringProvider, ValiditySignatureMode,
 };
 use base_builder_metering::MeteringStore;
 use base_execution_cli::ShadowIndexerArgs;
@@ -159,12 +159,6 @@ pub struct Args {
     )]
     pub predicate_bucket_ordered_threshold: usize,
 
-    /// Hold back validity transactions whose predicate was found unsatisfied until a state change
-    /// wakes them: off, shadow (track and count mismatches only), or enforce. Resting transactions
-    /// carry across blocks this builder finishes in sequence.
-    #[arg(long = "builder.resting-predicates", value_enum, default_value = "off")]
-    pub resting_predicate_mode: RestingPredicateMode,
-
     /// Buffer size for tx data store (LRU eviction when full)
     #[arg(long = "builder.tx-data-store-buffer-size", default_value = "10000")]
     pub tx_data_store_buffer_size: usize,
@@ -244,7 +238,6 @@ impl Default for Args {
             validity_signature_mode: ValiditySignatureMode::Off,
             predicate_eval_hard_cutoff_ms: 10,
             predicate_bucket_ordered_threshold: 32,
-            resting_predicate_mode: RestingPredicateMode::Off,
             tx_data_store_buffer_size: 10000,
             metering_store_ttl_secs: 30,
             rejection_cache_max_capacity: 100_000,
@@ -307,7 +300,6 @@ impl Args {
             gas_limit_config: Default::default(),
             predicate_eval_hard_cutoff: Duration::from_millis(self.predicate_eval_hard_cutoff_ms),
             predicate_bucket_ordered_threshold: self.predicate_bucket_ordered_threshold,
-            resting_predicate_mode: self.resting_predicate_mode,
             metering_provider,
             resource_metering,
             rejection_cache: RejectionCache::new(
@@ -513,19 +505,6 @@ mod tests {
     fn metering_store_ttl_defaults_to_30s() {
         let args = Args::default();
         assert_eq!(args.metering_store_ttl_secs, 30);
-    }
-
-    #[rstest]
-    #[case::default(&[], RestingPredicateMode::Off)]
-    #[case::shadow(&["--builder.resting-predicates", "shadow"], RestingPredicateMode::Shadow)]
-    #[case::enforce(&["--builder.resting-predicates", "enforce"], RestingPredicateMode::Enforce)]
-    fn resting_predicate_mode_is_propagated(
-        #[case] flags: &[&str],
-        #[case] expected: RestingPredicateMode,
-    ) {
-        let args =
-            CommandParser::parse_from(std::iter::once("builder").chain(flags.iter().copied())).args;
-        assert_eq!(convert(args).resting_predicate_mode, expected);
     }
 
     const VALID_RESOURCE_METERING_SCHEDULE_JSON: &str = r#"{

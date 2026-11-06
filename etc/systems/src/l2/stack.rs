@@ -17,7 +17,6 @@ use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types_engine::JwtSecret;
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
-use base_builder_core::RestingPredicateMode;
 use base_common_genesis::RollupConfig;
 use base_common_network::Base;
 use base_common_rpc_types::BaseTransactionRequest;
@@ -83,8 +82,6 @@ pub struct L2StackConfig {
     pub tx_forwarding_config: Option<TxForwardingConfig>,
     /// Signature policy shared by forwarding ingress and builder admission.
     pub validity_signature_mode: ValiditySignatureMode,
-    /// How the builder tracks validity transactions whose predicates did not match.
-    pub resting_predicate_mode: RestingPredicateMode,
     /// Number of L1 blocks to keep distance from the L1 head for the client (validator)
     /// consensus node's derivation pipeline.
     pub verifier_l1_confs: u64,
@@ -230,7 +227,6 @@ impl L2Stack {
             metrics_port: None,
             validity_signature_mode: config.validity_signature_mode,
             extra_extensions: config.extra_builder_extensions,
-            resting_predicate_mode: config.resting_predicate_mode,
             persistence_threshold: None,
             persistence_backpressure_threshold: None,
             txpool_max_transactions: None,

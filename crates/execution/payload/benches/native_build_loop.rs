@@ -5,10 +5,9 @@
 //! transactions whose balance predicates never become satisfied, plus enough plain transfers to
 //! fill every block. Transaction events are enabled, as in production.
 //!
-//! With resting predicates off, every block re-evaluates every resting transaction. With them
-//! enforced, only the first block evaluates them and later blocks hold them back unevaluated.
-//! Every block builds on the same parent state, so the carried set stays valid from block to
-//! block.
+//! Only the first block evaluates the resting transactions; later blocks hold them back
+//! unevaluated. Every block builds on the same parent state, so the carried set stays valid from
+//! block to block.
 
 #[path = "fixtures/native_build_loop.rs"]
 mod fixture;
@@ -17,8 +16,8 @@ use std::{hint::black_box, time::Duration};
 
 use alloy_primitives::{B256, U256};
 use base_execution_payload_builder::{
-    DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD, RestingPredicateMode, RestingPredicates,
-    SharedRestingPredicates, builder::ExecutionInfo,
+    DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD, RestingPredicates, SharedRestingPredicates,
+    builder::ExecutionInfo,
 };
 use base_observability_events::{
     GlobalTransactionEventWriter, TransactionEventProducer, TransactionEventWriterConfig,
@@ -39,30 +38,30 @@ const RESTING_COUNTS: [usize; 2] = [20_000, 40_000];
 const REJECTED_COUNTS: [usize; 2] = [0, 10_000];
 
 /// Runs the selection loop for one block and returns the number of included transactions.
-fn run_block(
-    ctx: &Ctx,
-    pool: &Pool,
-    db: &InMemoryDB,
-    resting: Option<&SharedRestingPredicates>,
-) -> usize {
+fn run_block(ctx: &Ctx, pool: &Pool, db: &InMemoryDB, resting: &SharedRestingPredicates) -> usize {
     let mut builder = ctx.block_builder(db.clone()).expect("block builder");
     let mut info = ExecutionInfo::default();
     black_box(
-        ctx.execute_best_transactions(&mut info, &mut builder, parkable(pool, resting), resting)
-            .expect("in-memory execution cannot fail"),
+        ctx.execute_best_transactions(
+            &mut info,
+            &mut builder,
+            parkable(pool, Some(resting)),
+            Some(resting),
+        )
+        .expect("in-memory execution cannot fail"),
     );
     builder.executor().receipts().len()
 }
 
-/// Builds [`BLOCKS`] consecutive blocks, carrying the resting set when `mode` is enabled.
-fn run_blocks(ctx: &Ctx, pool: &Pool, db: &InMemoryDB, mode: RestingPredicateMode) {
+/// Builds [`BLOCKS`] consecutive blocks, carrying the resting set.
+fn run_blocks(ctx: &Ctx, pool: &Pool, db: &InMemoryDB) {
     let mut resting = RestingPredicates::new(DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD);
     let mut parent = B256::ZERO;
     for block in 1..=BLOCKS {
         // The production builder passes the pre-block writes; this loop makes none.
         resting.begin_block(parent, block, Some(&[]));
         let shared = SharedRestingPredicates::new(resting);
-        let included = run_block(ctx, pool, db, mode.is_enabled().then_some(&shared));
+        let included = run_block(ctx, pool, db, &shared);
         assert_eq!(included, FILLER_PER_BLOCK);
         resting = shared.take_predicates();
         parent = B256::from(U256::from(block));
@@ -90,13 +89,11 @@ fn native_build_loop_benches(c: &mut Criterion) {
             // The empty-cache case keeps its original name so earlier results stay comparable.
             let rejected_suffix =
                 if rejected == 0 { String::new() } else { format!("/rejected={rejected}") };
-            for mode in [RestingPredicateMode::Off, RestingPredicateMode::Enforce] {
-                let ctx = payload_context(mode, populated_rejection_cache(rejected));
-                group.bench_function(
-                    format!("resting={resting}/blocks={BLOCKS}/mode={mode:?}{rejected_suffix}"),
-                    |b| b.iter(|| run_blocks(&ctx, &pool, &db, mode)),
-                );
-            }
+            let ctx = payload_context(populated_rejection_cache(rejected));
+            group.bench_function(
+                format!("resting={resting}/blocks={BLOCKS}{rejected_suffix}"),
+                |b| b.iter(|| run_blocks(&ctx, &pool, &db)),
+            );
         }
     }
     group.finish();

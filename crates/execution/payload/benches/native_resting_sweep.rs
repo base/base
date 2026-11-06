@@ -32,8 +32,7 @@ use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
 use base_execution_evm::BaseEvmConfig;
 use base_execution_payload_builder::{
     BasePayloadBuilderAttributes, DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD,
-    ParkableBestPayloadTransactions, RESTING_UNSEEN_RETAINED_BLOCKS, RestingPredicateMode,
-    SharedRestingPredicates,
+    ParkableBestPayloadTransactions, RESTING_UNSEEN_RETAINED_BLOCKS, SharedRestingPredicates,
     builder::{BasePayloadBuilderCtx, ExecutionInfo},
     config::BaseBuilderConfig,
     payload::EthPayloadBuilderAttributes,
@@ -160,8 +159,7 @@ fn payload_context() -> Ctx {
     };
     BasePayloadBuilderCtx {
         evm_config: BaseEvmConfig::base(Arc::clone(&chain_spec)),
-        builder_config: BaseBuilderConfig::default()
-            .with_resting_predicate_mode(RestingPredicateMode::Enforce),
+        builder_config: BaseBuilderConfig::default(),
         chain_spec,
         config: PayloadConfig::new(parent, attributes, payload_id),
         cancel: Default::default(),

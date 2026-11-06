@@ -20,7 +20,6 @@ use std::num::NonZeroU64;
 use alloy_genesis::ChainConfig;
 use alloy_primitives::{Address, B256};
 use alloy_rpc_types_engine::JwtSecret;
-use base_builder_core::RestingPredicateMode;
 use base_common_genesis::RollupConfig;
 use base_consensus_node::NodeMode;
 use base_execution_txpool::ValiditySignatureMode;
@@ -98,7 +97,6 @@ impl ShadowSequencer {
             metrics_port: None,
             extra_extensions: Vec::new(),
             validity_signature_mode: ValiditySignatureMode::Off,
-            resting_predicate_mode: RestingPredicateMode::Off,
             persistence_threshold: None,
             persistence_backpressure_threshold: None,
             txpool_max_transactions: None,
