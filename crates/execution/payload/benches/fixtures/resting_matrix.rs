@@ -54,7 +54,7 @@ use std::{
 
 use alloy_primitives::{B256, U256, keccak256};
 use base_execution_payload_builder::RestingPredicateMode;
-use base_execution_txpool::{ValidityDormancyMode, ValidityPredicate};
+use base_execution_txpool::{ValidityDormancyMode, ValidityOperator, ValidityPredicate};
 use revm::{
     database::{AccountStatus, InMemoryDB, TransitionAccount, TransitionState},
     state::AccountInfo,
@@ -89,6 +89,23 @@ pub const CHURN_SATISFIED_PERCENT: usize = 1;
 /// The discard case builds every this many blocks on a parent that is not the last sealed block,
 /// by default.
 pub const DISCARD_INTERVAL: u64 = 4;
+/// Parked population of the demo case by default.
+pub const DEMO_POPULATION: usize = 1_000_000;
+/// Parked validity transactions the demo admits every block, by default: 10,000 a second at
+/// [`DEMO_BLOCK_INTERVAL`].
+pub const DEMO_ARRIVALS: usize = 2_000;
+/// Validity transactions valid at admission the demo admits and includes every block, by default.
+pub const DEMO_VALID: usize = 200;
+/// Parked validity transactions a commit in the same block satisfies, every block, by default.
+pub const DEMO_SATISFIED: usize = 100;
+/// Distinct watched balances the demo's parked predicates spread over, by default.
+pub const DEMO_WATCHED: usize = 10_000;
+/// Percent of the demo's parked transactions that watch one hot balance, by default.
+pub const DEMO_HOT_PERCENT: usize = 10;
+/// Block interval the demo's ingest rate is reported at.
+pub const DEMO_BLOCK_INTERVAL: Duration = Duration::from_millis(200);
+/// Build-path time per block the demo counts blocks over.
+pub const DEMO_BUILD_BUDGET: Duration = Duration::from_millis(50);
 
 /// One row of the matrix: a lane kind and how the bench drives it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -112,11 +129,14 @@ pub enum Case {
     /// Protocol lanes, every [`Matrix::discard_interval`]th block built on a parent that is not
     /// the last sealed block, which discards what the pool or the builder carried.
     Discard,
+    /// A large parked population, classified off the build path before the first block, under
+    /// production-like ingest every block; see [`Demo`]. Runs only when selected.
+    Demo,
 }
 
 impl Case {
     /// Every case, in report order.
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::Protocol,
         Self::HeldIterator,
         Self::Descendants,
@@ -125,6 +145,7 @@ impl Case {
         Self::Liveness,
         Self::Churn,
         Self::Discard,
+        Self::Demo,
     ];
 
     /// The case's report label, also accepted by `RESTING_MATRIX_CASES`.
@@ -138,15 +159,19 @@ impl Case {
             Self::Liveness => "liveness",
             Self::Churn => "churn",
             Self::Discard => "discard",
+            Self::Demo => "demo",
         }
     }
 
     /// The lane kind the case rests.
     pub const fn kind(self) -> RestingKind {
         match self {
-            Self::Protocol | Self::HeldIterator | Self::Liveness | Self::Churn | Self::Discard => {
-                RestingKind::Protocol
-            }
+            Self::Protocol
+            | Self::HeldIterator
+            | Self::Liveness
+            | Self::Churn
+            | Self::Discard
+            | Self::Demo => RestingKind::Protocol,
             Self::Descendants => RestingKind::ProtocolDescendants,
             Self::Channel => RestingKind::Channel,
             Self::NonceFree => RestingKind::NonceFree,
@@ -156,6 +181,11 @@ impl Case {
     /// Whether each block's probe iterator outlives the next block's pool maintenance.
     pub const fn holds_iterator(self) -> bool {
         matches!(self, Self::HeldIterator)
+    }
+
+    /// Whether the case runs when `RESTING_MATRIX_CASES` is unset.
+    pub const fn runs_by_default(self) -> bool {
+        !matches!(self, Self::Demo)
     }
 
     /// Populations the case runs by default.
@@ -168,6 +198,7 @@ impl Case {
             | Self::Liveness
             | Self::Churn
             | Self::Discard => vec![FOCUSED_POPULATION],
+            Self::Demo => vec![DEMO_POPULATION],
         }
     }
 
@@ -352,9 +383,129 @@ impl Mode {
     }
 }
 
+/// Per-block ingest and predicate layout of the demo case. Every validity transaction comes from
+/// its own [`Accounts::Validity`] sender, numbered in admission order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Demo {
+    /// Parked validity transactions admitted every block: the first half before the previous
+    /// block's canonical maintenance, which classifies them, and the rest after it, so they reach
+    /// the build unclassified.
+    pub arrivals: usize,
+    /// Validity transactions whose predicates hold at admission, admitted after the previous
+    /// block's maintenance and included in the block.
+    pub valid: usize,
+    /// Parked validity transactions admitted before the previous block's maintenance, each
+    /// watching a balance of its own that a transfer admitted for the block funds; the block
+    /// includes both.
+    pub satisfied: usize,
+    /// Distinct watched balances the parked transactions' predicates spread over.
+    pub watched: usize,
+    /// Percent of parked transactions that watch one hot balance instead.
+    pub hot_percent: usize,
+}
+
+impl Demo {
+    /// Predicates of the parked transaction from `sender`, which never hold: one of
+    /// [`Self::watched`] unfunded balances, or the hot one for [`Self::hot_percent`] of senders.
+    pub fn parked_predicates(&self, sender: usize) -> Vec<ValidityPredicate> {
+        let hot = self.watched;
+        let watched = if sender % 100 < self.hot_percent { hot } else { sender % self.watched };
+        vec![watched_balance_is_one(watched)]
+    }
+
+    /// The watched balance of the `target`th same-block-satisfied transaction, apart from the
+    /// parked transactions' balances so its satisfier wakes it alone.
+    pub const fn target_watched(&self, target: usize) -> usize {
+        self.watched + 1 + target
+    }
+
+    /// Predicates of a validity transaction from `sender` that hold at admission and in the
+    /// build: the funded sender's balance is positive.
+    pub fn valid_predicates(sender: usize) -> Vec<ValidityPredicate> {
+        vec![ValidityPredicate::Balance {
+            address: Accounts::Validity.address(sender),
+            op: ValidityOperator::GreaterThan,
+            value: U256::ZERO,
+        }]
+    }
+
+    /// Arrivals admitted before the previous block's maintenance.
+    pub const fn early_arrivals(&self) -> usize {
+        self.arrivals / 2
+    }
+
+    /// Arrivals admitted after the previous block's maintenance, which reach the build
+    /// unclassified.
+    pub const fn late_arrivals(&self) -> usize {
+        self.arrivals - self.early_arrivals()
+    }
+
+    /// Parked arrivals per second at [`DEMO_BLOCK_INTERVAL`].
+    pub fn ingest_per_second(&self) -> f64 {
+        self.arrivals as f64 / DEMO_BLOCK_INTERVAL.as_secs_f64()
+    }
+}
+
+/// The demo's setup: admitting its parked population and classifying it before the first block,
+/// with the process's resident set size after each step.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct DemoSetup {
+    /// Parked transactions admitted.
+    pub parked: usize,
+    /// Funding the parked senders in the state the pool validates against.
+    pub funding: Duration,
+    /// Generating and admitting the parked transactions.
+    pub admission: Duration,
+    /// The canonical maintenance that classified them, `None` when the pool keeps no dormancy
+    /// index.
+    pub classification: Option<Duration>,
+    /// Resident bytes before funding.
+    pub rss_base: Option<u64>,
+    /// Resident bytes after funding.
+    pub rss_funded: Option<u64>,
+    /// Resident bytes after admission.
+    pub rss_admitted: Option<u64>,
+    /// Resident bytes after classification.
+    pub rss_classified: Option<u64>,
+}
+
+impl DemoSetup {
+    /// The classification's `classification_ms` and `classification_tx_per_s` report fields.
+    fn classification_fields(&self) -> String {
+        self.classification.map_or_else(
+            || "classification_ms=na classification_tx_per_s=na".to_owned(),
+            |duration| {
+                format!(
+                    "classification_ms={:.3} classification_tx_per_s={:.0}",
+                    duration.as_secs_f64() * 1e3,
+                    self.parked as f64 / duration.as_secs_f64()
+                )
+            },
+        )
+    }
+}
+
+/// One demo block's ingest and inclusion counts, beside its [`BlockTiming`].
+#[derive(Debug, Clone, Copy, Default)]
+pub struct DemoBlock {
+    /// Parked arrivals admitted for the block.
+    pub arrivals: usize,
+    /// Predicates the build loop found unsatisfied: parked transactions that reached the build
+    /// before any classification.
+    pub parked_evaluated: usize,
+    /// Validity transactions valid at admission the block included.
+    pub valid_included: usize,
+    /// Same-block-satisfied validity transactions the block included.
+    pub satisfied_included: usize,
+    /// The pool's canonical maintenance between the previous build and this one: the canonical
+    /// update and the state-diff maintenance, which classifies, without admission.
+    pub maintenance: Duration,
+}
+
 /// The matrix to run, from the environment:
 ///
-/// - `RESTING_MATRIX_CASES`: comma-separated [`Case::label`]s, default all.
+/// - `RESTING_MATRIX_CASES`: comma-separated [`Case::label`]s, default every case that
+///   [`Case::runs_by_default`].
 /// - `RESTING_MATRIX_POPULATIONS`: comma-separated populations replacing every case's default.
 /// - `RESTING_MATRIX_BLOCKS`: blocks per case, at least [`MIN_BLOCKS`], default [`BLOCKS`].
 /// - `RESTING_MATRIX_MODES`: comma-separated [`Mode::label`]s, default `enforce`.
@@ -366,6 +517,10 @@ impl Mode {
 ///   [`CHURN_SATISFIED_PERCENT`].
 /// - `RESTING_MATRIX_DISCARD_INTERVAL`: [`Matrix::discard_interval`], default
 ///   [`DISCARD_INTERVAL`].
+/// - `RESTING_MATRIX_DEMO_ARRIVALS`, `RESTING_MATRIX_DEMO_VALID`, `RESTING_MATRIX_DEMO_SATISFIED`,
+///   `RESTING_MATRIX_DEMO_WATCHED`, `RESTING_MATRIX_DEMO_HOT_PERCENT`: the [`Demo`] fields,
+///   defaults [`DEMO_ARRIVALS`], [`DEMO_VALID`], [`DEMO_SATISFIED`], [`DEMO_WATCHED`] and
+///   [`DEMO_HOT_PERCENT`].
 ///
 /// Every case and population is checked with [`Case::check`] before any pool is built.
 #[derive(Debug, Clone)]
@@ -383,6 +538,8 @@ pub struct Matrix {
     /// The discard case builds every this many blocks on a parent other than the last sealed
     /// block.
     pub discard_interval: u64,
+    /// Per-block ingest and predicate layout of the demo case.
+    pub demo: Demo,
 }
 
 impl Matrix {
@@ -411,7 +568,9 @@ impl Matrix {
                     })
                     .collect::<Vec<_>>()
             })
-            .unwrap_or_else(|| Case::ALL.to_vec())
+            .unwrap_or_else(|| {
+                Case::ALL.into_iter().filter(|case| case.runs_by_default()).collect()
+            })
             .into_iter()
             .map(|case| (case, populations.clone().unwrap_or_else(|| case.default_populations())))
             .collect();
@@ -452,7 +611,17 @@ impl Matrix {
         let gap = std::env::var("RESTING_SWEEP_BENCH_GAP_MS").ok().map(|ms| {
             Duration::from_millis(ms.parse().expect("RESTING_SWEEP_BENCH_GAP_MS is a number"))
         });
-        Self { cases, blocks, modes, gap, churn, discard_interval }
+        let demo = Demo {
+            arrivals: number("RESTING_MATRIX_DEMO_ARRIVALS", DEMO_ARRIVALS as u64) as usize,
+            valid: number("RESTING_MATRIX_DEMO_VALID", DEMO_VALID as u64) as usize,
+            satisfied: number("RESTING_MATRIX_DEMO_SATISFIED", DEMO_SATISFIED as u64) as usize,
+            watched: number("RESTING_MATRIX_DEMO_WATCHED", DEMO_WATCHED as u64) as usize,
+            hot_percent: number("RESTING_MATRIX_DEMO_HOT_PERCENT", DEMO_HOT_PERCENT as u64)
+                as usize,
+        };
+        assert!(demo.watched > 0, "the demo watches at least one balance");
+        assert!(demo.hot_percent <= 100, "the demo's hot share is a percentage");
+        Self { cases, blocks, modes, gap, churn, discard_interval, demo }
     }
 }
 
@@ -700,12 +869,30 @@ impl Report {
 
     /// Reports one block.
     pub fn row(&self, case: Case, mode: Mode, population: usize, timing: &BlockTiming) {
+        println!("{}", self.row_line(case, mode, population, timing));
+    }
+
+    /// Reports one demo block: its [`Self::row`] followed by its ingest and inclusion counts.
+    pub fn demo_row(&self, mode: Mode, population: usize, timing: &BlockTiming, demo: &DemoBlock) {
+        println!(
+            "{} arrivals={} parked_evaluated={} valid_included={} satisfied_included={} \
+             maint_ms={:.3}",
+            self.row_line(Case::Demo, mode, population, timing),
+            demo.arrivals,
+            demo.parked_evaluated,
+            demo.valid_included,
+            demo.satisfied_included,
+            demo.maintenance.as_secs_f64() * 1e3,
+        );
+    }
+
+    fn row_line(&self, case: Case, mode: Mode, population: usize, timing: &BlockTiming) -> String {
         let metrics: String = timing
             .metrics()
             .iter()
             .map(|(name, value)| format!(" {name}_ms={:.3}", value.as_secs_f64() * 1e3))
             .collect();
-        println!(
+        format!(
             "ROW {} block={} phase={} members={} probe_yielded={} included={}{metrics} dormant={}",
             self.key(case, mode, population),
             timing.block,
@@ -714,6 +901,75 @@ impl Report {
             timing.probe_yielded,
             timing.included,
             timing.dormant,
+        )
+    }
+
+    /// Reports the demo's setup: admission and classification throughput, and resident memory
+    /// after each step, in total and per parked transaction.
+    pub fn demo_setup(&self, mode: Mode, population: usize, setup: &DemoSetup) {
+        let per_second = |duration: Duration| setup.parked as f64 / duration.as_secs_f64();
+        println!(
+            "SETUP {} parked={} funding_ms={:.3} admission_ms={:.3} admission_tx_per_s={:.0} \
+             {} rss_base_mb={} \
+             rss_funded_mb={} rss_admitted_mb={} rss_classified_mb={} provider_bytes_per_tx={} \
+             pool_bytes_per_tx={} dormancy_bytes_per_tx={} total_bytes_per_tx={}",
+            self.key(Case::Demo, mode, population),
+            setup.parked,
+            setup.funding.as_secs_f64() * 1e3,
+            setup.admission.as_secs_f64() * 1e3,
+            per_second(setup.admission),
+            setup.classification_fields(),
+            mebibytes(setup.rss_base),
+            mebibytes(setup.rss_funded),
+            mebibytes(setup.rss_admitted),
+            mebibytes(setup.rss_classified),
+            bytes_per(setup.rss_base, setup.rss_funded, setup.parked),
+            bytes_per(setup.rss_funded, setup.rss_admitted, setup.parked),
+            bytes_per(setup.rss_admitted, setup.rss_classified, setup.parked),
+            bytes_per(setup.rss_base, setup.rss_classified, setup.parked),
+        );
+    }
+
+    /// Reports the demo's build-path percentiles over every block, the blocks over
+    /// [`DEMO_BUILD_BUDGET`], mean maintenance, sustained ingest, setup throughput, and resident
+    /// memory after setup and after the last block.
+    pub fn demo_summary(
+        &self,
+        mode: Mode,
+        population: usize,
+        demo: &Demo,
+        setup: &DemoSetup,
+        blocks: &[(BlockTiming, DemoBlock)],
+        rss_end: Option<u64>,
+    ) {
+        let mut builds: Vec<f64> =
+            blocks.iter().map(|(timing, _)| timing.total().as_secs_f64() * 1e3).collect();
+        builds.sort_by(f64::total_cmp);
+        let over_budget =
+            blocks.iter().filter(|(timing, _)| timing.total() > DEMO_BUILD_BUDGET).count();
+        let maintenance =
+            blocks.iter().map(|(_, block)| block.maintenance.as_secs_f64() * 1e3).sum::<f64>()
+                / blocks.len() as f64;
+        let parked_evaluated =
+            blocks.iter().map(|(_, block)| block.parked_evaluated).sum::<usize>();
+        println!(
+            "DEMO {} blocks={} build_p50_ms={:.3} build_p99_ms={:.3} build_max_ms={:.3} \
+             over_{}ms_blocks={over_budget} maint_mean_ms={maintenance:.3} \
+             ingest_tx_per_s={:.0} parked_evaluated_total={parked_evaluated} \
+             admission_tx_per_s={:.0} {} rss_classified_mb={} \
+             rss_end_mb={} total_bytes_per_tx={}",
+            self.key(Case::Demo, mode, population),
+            blocks.len(),
+            quantile(&builds, 0.5),
+            quantile(&builds, 0.99),
+            quantile(&builds, 1.0),
+            DEMO_BUILD_BUDGET.as_millis(),
+            demo.ingest_per_second(),
+            setup.parked as f64 / setup.admission.as_secs_f64(),
+            setup.classification_fields(),
+            mebibytes(setup.rss_classified),
+            mebibytes(rss_end),
+            bytes_per(setup.rss_base, setup.rss_classified, setup.parked),
         );
     }
 
@@ -737,16 +993,58 @@ impl Report {
                     .map(|timing| timing.metrics()[index].1.as_secs_f64() * 1e3)
                     .collect();
                 values.sort_by(f64::total_cmp);
-                let quantile = |q: f64| values[((values.len() - 1) as f64 * q).round() as usize];
                 let mean = values.iter().sum::<f64>() / values.len() as f64;
                 line.push_str(&format!(
                     " {name}_mean_ms={mean:.3} {name}_p50_ms={:.3} {name}_p90_ms={:.3} {name}_max_ms={:.3}",
-                    quantile(0.5),
-                    quantile(0.9),
-                    quantile(1.0),
+                    quantile(&values, 0.5),
+                    quantile(&values, 0.9),
+                    quantile(&values, 1.0),
                 ));
             }
             println!("{line}");
         }
     }
+}
+
+/// The `q` quantile of ascending, non-empty `sorted`, by nearest rank.
+fn quantile(sorted: &[f64], q: f64) -> f64 {
+    sorted[((sorted.len() - 1) as f64 * q).round() as usize]
+}
+
+/// `bytes` in mebibytes, or `na` when unmeasured.
+fn mebibytes(bytes: Option<u64>) -> String {
+    bytes.map_or_else(|| "na".to_owned(), |bytes| format!("{:.1}", bytes as f64 / (1 << 20) as f64))
+}
+
+/// Resident bytes gained from `before` to `after` per one of `count` items, or `na`.
+fn bytes_per(before: Option<u64>, after: Option<u64>, count: usize) -> String {
+    match (before, after) {
+        (Some(before), Some(after)) if count > 0 => {
+            format!("{:.0}", (after as f64 - before as f64) / count as f64)
+        }
+        _ => "na".to_owned(),
+    }
+}
+
+/// The process's resident set size in bytes: `VmRSS` from `/proc/self/status` on Linux, `ps`
+/// elsewhere, or `None` when neither is available.
+pub fn resident_bytes() -> Option<u64> {
+    let kibibytes = match std::fs::read_to_string("/proc/self/status") {
+        Ok(status) => status
+            .lines()
+            .find_map(|line| line.strip_prefix("VmRSS:"))?
+            .trim()
+            .strip_suffix("kB")?
+            .trim()
+            .parse::<u64>()
+            .ok()?,
+        Err(_) => {
+            let output = std::process::Command::new("ps")
+                .args(["-o", "rss=", "-p", &std::process::id().to_string()])
+                .output()
+                .ok()?;
+            String::from_utf8(output.stdout).ok()?.trim().parse::<u64>().ok()?
+        }
+    };
+    Some(kibibytes * 1024)
 }

@@ -69,10 +69,11 @@ pub const ORDINARY_PRIORITY_FEE: u128 = 1;
 /// Balance of every funded sender in the pool's provider.
 const SENDER_BALANCE: u128 = 100_000_000_000_000_000_000;
 /// Transactions each sub-pool admits: above the largest population plus every block of ordinary
-/// traffic, so no bench evicts.
-const SUB_POOL_TRANSACTIONS: usize = 1_000_000;
+/// traffic and arrivals, so no bench evicts. The limit only caps admission; nothing is reserved
+/// for it.
+const SUB_POOL_TRANSACTIONS: usize = 16_000_000;
 /// Bytes each sub-pool admits, sized with [`SUB_POOL_TRANSACTIONS`].
-const SUB_POOL_BYTES: usize = 1 << 32;
+const SUB_POOL_BYTES: usize = 1 << 34;
 /// Transactions admitted per validation batch.
 const ADMISSION_BATCH: usize = 4_096;
 /// Recipient of filler and resting transfers, whose distinct values keep otherwise identical
@@ -183,8 +184,23 @@ impl ProductionPool {
 
     /// Admits `transactions` as a forwarding mempool node would, returning their hashes in order.
     /// Panics if the pool rejects any of them.
-    pub fn admit(&self, transactions: Vec<BasePooledTransaction>) -> Vec<TxHash> {
-        let hashes: Vec<TxHash> = transactions.iter().map(|tx| *tx.hash()).collect();
+    pub fn admit(
+        &self,
+        transactions: impl IntoIterator<Item = BasePooledTransaction>,
+    ) -> Vec<TxHash> {
+        let mut hashes = Vec::new();
+        self.admit_streaming(transactions, |hash| hashes.push(hash));
+        hashes
+    }
+
+    /// Admits `transactions` one validation batch at a time as they are generated, so the caller
+    /// holds at most one batch outside the pool, calling `admitted` with each hash in order.
+    /// Panics if the pool rejects any of them.
+    pub fn admit_streaming(
+        &self,
+        transactions: impl IntoIterator<Item = BasePooledTransaction>,
+        mut admitted: impl FnMut(TxHash),
+    ) {
         let mut transactions = transactions.into_iter().peekable();
         while transactions.peek().is_some() {
             let batch: Vec<_> = transactions.by_ref().take(ADMISSION_BATCH).collect();
@@ -192,10 +208,37 @@ impl ProductionPool {
                 .runtime
                 .block_on(self.pool.add_transactions(TransactionOrigin::External, batch));
             for result in added {
-                result.expect("the production pool admits every bench transaction");
+                admitted(result.expect("the production pool admits every bench transaction").hash);
             }
         }
-        hashes
+    }
+
+    /// Funds the validity senders `senders` in the state the pool validates against.
+    pub fn fund_validity(&self, senders: Range<usize>) {
+        for index in senders {
+            self.fund(Accounts::Validity.address(index));
+        }
+    }
+
+    /// Admits one protocol validity transaction from each funded validity sender in `senders`,
+    /// sender `i` gated by `predicates(i)`, streaming them through [`Self::admit_streaming`].
+    pub fn admit_validity(
+        &self,
+        senders: Range<usize>,
+        predicates: impl Fn(usize) -> Vec<ValidityPredicate>,
+        admitted: impl FnMut(TxHash),
+    ) {
+        let transactions = senders.map(|index| {
+            self.eip1559(
+                Accounts::Validity.address(index),
+                0,
+                VALIDITY_PRIORITY_FEE,
+                SINK,
+                U256::from(index),
+                predicates(index),
+            )
+        });
+        self.admit_streaming(transactions, admitted);
     }
 
     /// Admits `count` ordinary transfers from fresh funded senders `first..first + count`,
@@ -203,7 +246,7 @@ impl ProductionPool {
     pub fn admit_ordinary(&self, first: usize, count: usize) -> (Vec<TxHash>, Vec<Address>) {
         let senders: Vec<Address> =
             (first..first + count).map(|index| Accounts::Ordinary.address(index)).collect();
-        let transactions = senders
+        let transactions: Vec<_> = senders
             .iter()
             .enumerate()
             .map(|(offset, sender)| {
@@ -227,7 +270,7 @@ impl ProductionPool {
     pub fn admit_satisfiers(&self, first: usize, lanes: &[usize]) -> (Vec<TxHash>, Vec<Address>) {
         let senders: Vec<Address> =
             (first..first + lanes.len()).map(|index| Accounts::Satisfier.address(index)).collect();
-        let transactions = senders
+        let transactions: Vec<_> = senders
             .iter()
             .zip(lanes)
             .map(|(sender, lane)| {
