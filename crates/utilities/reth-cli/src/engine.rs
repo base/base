@@ -6,9 +6,11 @@ use reth_node_core::args::DefaultEngineValues;
 /// memory, and state/trie writes for the newest 11s of persisted blocks stay in memory so
 /// repeated writes to the same keys reach disk once. The memory block buffer target keeps reth's
 /// default, and buffer target + masking window must stay below the persistence threshold. The
-/// backpressure threshold derives to twice the persistence threshold.
+/// engine stalls once a flush has run for ~30s of new blocks (backpressure minus the threshold);
+/// reth treats the backpressure value as a floor under twice the persistence threshold.
 const PERSISTENCE_THRESHOLD: u64 = 150;
 const NUM_STATE_MASKING_BLOCKS: u64 = 55;
+const PERSISTENCE_BACKPRESSURE_THRESHOLD: u64 = 300;
 
 /// Reth engine default initialization for Base execution layer binaries.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -26,6 +28,7 @@ impl Engine {
         DefaultEngineValues::default()
             .with_persistence_threshold(PERSISTENCE_THRESHOLD)
             .with_num_state_masking_blocks(NUM_STATE_MASKING_BLOCKS)
+            .with_persistence_backpressure_threshold(PERSISTENCE_BACKPRESSURE_THRESHOLD)
             .try_init()
             .expect("failed to initialize engine defaults");
     }
