@@ -631,7 +631,7 @@ governor = "0.7"
 
 # evm2 is patched through its pre-transfer URL, which redirects to alloy-rs/evm2, because Cargo
 # rejects a patch from the same source. Mirrors paradigmxyz/reth so reth-core's evm2 dependency
-# resolves to the same revision.
+# resolves to the same revision. Remove it when paradigmxyz/reth drops its matching patch.
 [patch."https://github.com/alloy-rs/evm2"]
 evm2 = { git = "https://github.com/DaniPopes/evm2", rev = "592bf18c4e22fff54ac9b4db606c4ee276e345cb" }
 evm2-inspectors = { git = "https://github.com/DaniPopes/evm2", rev = "592bf18c4e22fff54ac9b4db606c4ee276e345cb" }
