@@ -499,9 +499,12 @@ const fn default_revert_arb_gas_limit() -> u64 {
     DEFAULT_REVERT_ARB_GAS_LIMIT
 }
 
-/// Lower bound on a revert arb's declared gas limit: the intrinsic cost of a call carrying a
-/// four-byte selector, below which the reverting arb cannot even be included.
-const MIN_REVERT_ARB_GAS_LIMIT: u64 = 21_064;
+/// Lower bound on a revert arb's declared gas limit, below which the pool rejects it outright:
+/// the EIP-7623 calldata floor for a four-byte selector (`21_000 + 10 * 4 bytes * 4 tokens`),
+/// which exceeds the 21,064 intrinsic cost of the same call. A limit this low runs out of gas
+/// before the selector dispatch; it is still billed in full, but set `gas_limit` well above it
+/// (the default is 2,000,000) so the arb reverts at dispatch as the demo describes.
+const MIN_REVERT_ARB_GAS_LIMIT: u64 = 21_160;
 
 /// Upper bound on `slots_per_tx` so the payload's gas limit
 /// (`slots_per_tx * 23_000 + 30_000`) stays under the ~30M per-tx block cap.
@@ -1870,7 +1873,7 @@ transactions:
   - weight: 100
     type: revert_arb
     contract: "0x1111111111111111111111111111111111111111"
-    gas_limit: 21000
+    gas_limit: 21100
 "#,
         );
         let error = TestConfig::from_yaml(&yaml).unwrap().to_load_config(Some(1337)).unwrap_err();
