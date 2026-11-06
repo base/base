@@ -140,8 +140,7 @@ impl RecordedReplay {
     ) -> Result<()> {
         let mut started = false;
         for path in Self::message_files(store_dir)? {
-            let message: RecordedEngineMessage = serde_json::from_slice(&fs::read(&path)?)
-                .wrap_err_with(|| format!("failed to decode {}", path.display()))?;
+            let message = Self::read(&path)?;
             started |= matches!(&message, RecordedEngineMessage::NewPayload { payload }
                 if payload.payload.as_v1().parent_hash == result.baseline_hash);
             if !started {
@@ -190,8 +189,9 @@ impl RecordedReplay {
     }
 
     /// Recorded message files in recorded order. Files often share a millisecond; within one,
-    /// payloads go first because a payload needs only its parent inserted, while a forkchoice
-    /// update may need a payload from the same millisecond.
+    /// payloads go first, by block number, because a payload needs only its parent inserted,
+    /// while a forkchoice update may need a payload from the same millisecond. Remaining ties,
+    /// which file names cannot order, fall back to the path so replays are reproducible.
     pub fn message_files(store_dir: &Path) -> Result<Vec<PathBuf>> {
         let mut files = Vec::new();
         for entry in fs::read_dir(store_dir)
@@ -199,18 +199,28 @@ impl RecordedReplay {
         {
             let path = entry?.path();
             let name = path.file_name().unwrap_or_default().to_string_lossy();
-            let Some((millis, rest)) = name.strip_suffix(".json").and_then(|n| n.split_once('-'))
+            let Some((millis, _)) = name.strip_suffix(".json").and_then(|n| n.split_once('-'))
             else {
                 continue;
             };
             let millis: u64 = millis
                 .parse()
                 .wrap_err_with(|| format!("engine store file {name} has no timestamp prefix"))?;
-            let forkchoice = rest.starts_with("fcu-");
-            files.push(((millis, forkchoice), path));
+            let number = match Self::read(&path)? {
+                RecordedEngineMessage::NewPayload { payload } => {
+                    Some(payload.payload.as_v1().block_number)
+                }
+                RecordedEngineMessage::ForkchoiceUpdated { .. } => None,
+            };
+            files.push(((millis, number.is_none(), number), path));
         }
-        files.sort_by_key(|(key, _)| *key);
+        files.sort();
         Ok(files.into_iter().map(|(_, path)| path).collect())
+    }
+
+    fn read(path: &Path) -> Result<RecordedEngineMessage> {
+        serde_json::from_slice(&fs::read(path)?)
+            .wrap_err_with(|| format!("failed to decode {}", path.display()))
     }
 
     async fn head(provider: &RootProvider<Base>) -> Result<B256> {
@@ -256,6 +266,23 @@ mod tests {
         recorder.advance_chain(5).await?;
         let recorded_head = recorder.latest_block().hash();
         drop(recorder);
+        // Move every payload into the first payload's millisecond, so they replay in order only
+        // if ties are broken by block number.
+        let mut payloads = Vec::new();
+        for entry in std::fs::read_dir(store.path())? {
+            let name = entry?.file_name().to_string_lossy().into_owned();
+            if let Some((millis, hash)) = name.split_once("-new_payload-") {
+                payloads.push((millis.to_owned(), hash.to_owned()));
+            }
+        }
+        payloads.sort();
+        let first = payloads[0].0.clone();
+        for (millis, hash) in payloads {
+            std::fs::rename(
+                store.path().join(format!("{millis}-new_payload-{hash}")),
+                store.path().join(format!("{first}-new_payload-{hash}")),
+            )?;
+        }
 
         let jwt_secret = JwtSecret::random();
         let replayer = InProcessClient::start(InProcessClientConfig {
