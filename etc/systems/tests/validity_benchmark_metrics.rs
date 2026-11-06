@@ -153,7 +153,6 @@ async fn validity_resting_workload_populates_benchmark_series() -> Result<()> {
     }
     // Present (recorded every build) even when small.
     let present = [
-        "reth_base_builder_validity_candidate_handling_duration_avg",
         "reth_base_builder_validity_predicate_eval_duration_per_block_avg",
         "reth_base_builder_validity_predicate_evaluation_coverage_per_build_avg",
         "reth_base_builder_predicate_accounts_loaded_total_avg",

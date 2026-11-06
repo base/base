@@ -19,7 +19,6 @@ const VISUALIZER_METRICS: &[&str] = &[
     "reth_base_builder_native_payload_build_duration_avg",
     "reth_base_builder_native_payload_execution_duration_avg",
     "reth_base_builder_native_payload_state_root_duration_avg",
-    "reth_base_builder_payload_num_tx_gauge",
     "reth_base_builder_predicate_accounts_loaded_total_avg",
     "reth_base_builder_predicate_accounts_loaded_unique_avg",
     "reth_base_builder_predicate_bucket_depth_avg",
@@ -42,7 +41,6 @@ const VISUALIZER_METRICS: &[&str] = &[
     "reth_base_builder_tx_gas_used_per_block_flow_validity_avg",
     "reth_base_builder_txs_included_per_block_flow_standard_avg",
     "reth_base_builder_txs_included_per_block_flow_validity_avg",
-    "reth_base_builder_validity_candidate_handling_duration_avg",
     "reth_base_builder_validity_predicate_candidates_deferred_per_build_avg",
     "reth_base_builder_validity_predicate_candidates_evaluated_per_build_avg",
     "reth_base_builder_validity_predicate_eval_cutoff_builds_total",
@@ -508,9 +506,6 @@ reth_base_builder_resting_predicate_carry_released_total{reason="pre_block_state
 # TYPE reth_base_builder_resting_predicate_carried histogram
 reth_base_builder_resting_predicate_carried_sum 90
 reth_base_builder_resting_predicate_carried_count 2
-# TYPE reth_base_builder_validity_candidate_handling_duration histogram
-reth_base_builder_validity_candidate_handling_duration_sum 0.03
-reth_base_builder_validity_candidate_handling_duration_count 10
 "#,
         );
         let delta = current.delta(&previous);
@@ -524,7 +519,6 @@ reth_base_builder_validity_candidate_handling_duration_count 10
                 2.0,
             ),
             ("reth_base_builder_resting_predicate_carried_avg", 45.0),
-            ("reth_base_builder_validity_candidate_handling_duration_avg", 0.003),
         ];
         for (name, value) in expected {
             assert!(
