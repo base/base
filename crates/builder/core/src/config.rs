@@ -23,6 +23,9 @@ pub struct BuilderConfig {
     /// Gas limit configuration for the payload builder
     pub gas_limit_config: GasLimitConfig,
 
+    /// Maximum cumulative uncompressed (EIP-2718 encoded) block size in bytes, if any.
+    pub max_uncompressed_block_size: Option<u64>,
+
     /// Hard cutoff on cumulative validity-predicate evaluation time per payload build.
     /// Once the cutoff is exceeded, further validity-gated transactions are deferred to a
     /// later build rather than evaluated. This is the guardrail backing the
@@ -64,6 +67,7 @@ impl BuilderConfig {
         BaseBuilderConfig {
             da_config: self.da_config.clone(),
             gas_limit_config: self.gas_limit_config.clone(),
+            max_uncompressed_block_size: self.max_uncompressed_block_size,
             manifest_precheck_enabled: self.manifest_precheck_enabled,
             predicate_eval_hard_cutoff: self.predicate_eval_hard_cutoff,
             predicate_bucket_ordered_threshold: self.predicate_bucket_ordered_threshold,
@@ -87,6 +91,7 @@ impl core::fmt::Debug for BuilderConfig {
         f.debug_struct("Config")
             .field("da_config", &self.da_config)
             .field("gas_limit_config", &self.gas_limit_config)
+            .field("max_uncompressed_block_size", &self.max_uncompressed_block_size)
             .field("predicate_eval_hard_cutoff", &self.predicate_eval_hard_cutoff)
             .field("predicate_bucket_ordered_threshold", &self.predicate_bucket_ordered_threshold)
             .field("metering_provider", &self.metering_provider)
@@ -104,6 +109,7 @@ impl Default for BuilderConfig {
         Self {
             da_config: BaseDAConfig::default(),
             gas_limit_config: GasLimitConfig::default(),
+            max_uncompressed_block_size: None,
             predicate_eval_hard_cutoff: Duration::from_millis(10),
             predicate_bucket_ordered_threshold: DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD,
             metering_provider: Arc::clone(&metering_provider),
