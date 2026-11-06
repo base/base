@@ -59,6 +59,7 @@ reth-ethereum-forks.workspace = true
 base-execution-rpc.workspace = true
 base-execution-txpool.workspace = true
 base-execution-chainspec.workspace = true
+base-execution-eip8130-rpc-node.workspace = true
 reth-node-builder = { workspace = true, features = ["test-utils"] }
 
 # alloy
