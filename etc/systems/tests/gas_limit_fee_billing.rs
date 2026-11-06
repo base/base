@@ -7,7 +7,8 @@
 //! 21k gas a transfer uses; after it they reflect the 100k gas limit, every fee recipient is paid
 //! on the limit, `eth_estimateGas` still reports the metered requirement, and the validator agrees
 //! with the builder on every block. A sponsored EIP-8130 transaction is then billed to its payer
-//! for the reserved `gas_limit + payer_auth` budget.
+//! for the reserved `gas_limit + payer_auth` budget, and one sent at `gas_limit = eth_estimateGas`
+//! settles at the estimate plus payer authentication, which the estimate leaves out.
 
 mod common;
 
@@ -41,8 +42,9 @@ use crate::common::{
 
 /// Cobalt activates where the other Everest system tests schedule it (`common/everest.rs`).
 const COBALT_ACTIVATION_BLOCK: u64 = 5;
-/// Everest, and with it gas-limit billing, activates late enough that the first transfer still has
-/// pre-Everest runway after the operator fee seeded on L1 has reached the L2 (about 15 blocks).
+/// Everest, and with it gas-limit billing, activates late enough that the operator fee seeded on
+/// L1 normally reaches the L2 (about 15 blocks) before activation. The pre-Everest transfer does
+/// not wait for it: every settlement reads the operator fee live at its own block.
 /// The other Everest system tests activate it at block 7 (see `common/everest.rs`).
 const EVEREST_ACTIVATION_BLOCK: u64 = 40;
 /// A plain transfer needs 21k gas; the limit is deliberately ~5x that.
@@ -60,11 +62,11 @@ const FUNDING_TIMEOUT: Duration = Duration::from_secs(15);
 /// How long the L2 may take to reflect an L1 `SystemConfig` update in its `L1Block` predeploy.
 const SYSTEM_CONFIG_PROPAGATION_TIMEOUT: Duration = Duration::from_secs(60);
 /// Operator fee parameters seeded through the L1 `SystemConfig`. The devnet genesis leaves both
-/// at zero, which would make the operator-fee term of every identity below vacuous.
+/// at zero, which would make the operator-fee term of the post-Everest identities vacuous.
 const OPERATOR_FEE_SCALAR: u32 = 1;
 const OPERATOR_FEE_CONSTANT: u64 = 50;
 /// Jovian scales the operator fee scalar by 100 (OP Stack Jovian operator fee), so the operator
-/// fee on `gas` is `gas * OPERATOR_FEE_SCALAR * 100 + OPERATOR_FEE_CONSTANT` wei.
+/// fee on `gas` is `gas * scalar * 100 + constant` wei.
 const OPERATOR_FEE_JOVIAN_MULTIPLIER: u64 = 100;
 
 sol! {
@@ -79,11 +81,42 @@ sol! {
     }
 }
 
-/// The operator fee owed on `gas` once [`OPERATOR_FEE_SCALAR`] and [`OPERATOR_FEE_CONSTANT`] are
-/// live, computed independently of the node's fee code.
-fn expected_operator_fee(gas: u64) -> U256 {
-    U256::from(gas) * U256::from(OPERATOR_FEE_SCALAR) * U256::from(OPERATOR_FEE_JOVIAN_MULTIPLIER)
-        + U256::from(OPERATOR_FEE_CONSTANT)
+/// The operator fee parameters the L2 `L1Block` predeploy reports at a block.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct OperatorFee {
+    scalar: u32,
+    constant: u64,
+}
+
+impl OperatorFee {
+    /// The parameters [`EverestSystem::start`] seeds on L1.
+    const SEEDED: Self = Self { scalar: OPERATOR_FEE_SCALAR, constant: OPERATOR_FEE_CONSTANT };
+
+    /// Reads the parameters live at `block` from the `L1Block` predeploy.
+    async fn at(provider: &RootProvider<Base>, block: BlockId) -> Result<Self> {
+        let l1_block_call = |call: Vec<u8>| {
+            BaseTransactionRequest::default().to(Predeploys::L1_BLOCK_INFO).input(call.into())
+        };
+        let scalar = L1Block::operatorFeeScalarCall::abi_decode_returns(
+            &provider
+                .call(l1_block_call(L1Block::operatorFeeScalarCall.abi_encode()))
+                .block(block)
+                .await?,
+        )?;
+        let constant = L1Block::operatorFeeConstantCall::abi_decode_returns(
+            &provider
+                .call(l1_block_call(L1Block::operatorFeeConstantCall.abi_encode()))
+                .block(block)
+                .await?,
+        )?;
+        Ok(Self { scalar, constant })
+    }
+
+    /// The operator fee owed on `gas`, computed independently of the node's fee code.
+    fn charge(self, gas: u64) -> U256 {
+        U256::from(gas) * U256::from(self.scalar) * U256::from(OPERATOR_FEE_JOVIAN_MULTIPLIER)
+            + U256::from(self.constant)
+    }
 }
 
 /// A running stack crossing Everest, with its builder and validator providers.
@@ -98,7 +131,8 @@ struct EverestSystem {
 
 impl EverestSystem {
     /// Starts the stack with Everest at [`EVEREST_ACTIVATION_BLOCK`], waits past Cobalt, and
-    /// seeds the operator fee so every fee recipient in the settlement identities is live.
+    /// submits the operator fee seed on L1. [`Self::wait_for_operator_fee`] waits for it to reach
+    /// the L2.
     async fn start() -> Result<Self> {
         base_node_runner::test_utils::init_silenced_tracing();
         let system = SystemTestStackBuilder::new()
@@ -119,14 +153,13 @@ impl EverestSystem {
             .upgrade_activation_timestamp(BaseUpgrade::Everest)
             .ok_or_eyre("Everest is not scheduled in the rollup config")?;
         let everest = Self { _system: system, builder, client, everest_timestamp };
-        everest.seed_operator_fee(rollup_config.l1_system_config_address).await?;
+        everest.submit_operator_fee(rollup_config.l1_system_config_address).await?;
         Ok(everest)
     }
 
     /// Sets [`OPERATOR_FEE_SCALAR`] and [`OPERATOR_FEE_CONSTANT`] on the L1 `SystemConfig` as
-    /// its owner and waits until the L2 `L1Block` predeploy reports them, i.e. until the
-    /// sequencer has derived an L1 origin carrying the config update.
-    async fn seed_operator_fee(&self, system_config: Address) -> Result<()> {
+    /// its owner. The L2 picks them up once the sequencer derives an L1 origin carrying the update.
+    async fn submit_operator_fee(&self, system_config: Address) -> Result<()> {
         let owner = PrivateKeySigner::from_bytes(&DEPLOYER.private_key)?;
         let l1 = ProviderBuilder::new()
             .wallet(EthereumWallet::from(owner))
@@ -145,25 +178,14 @@ impl EverestSystem {
             .await
             .wrap_err("setOperatorFeeScalars was not mined")?;
         ensure!(receipt.status(), "setOperatorFeeScalars reverted");
+        Ok(())
+    }
 
-        let l1_block_call = |call: Vec<u8>| {
-            BaseTransactionRequest::default().to(Predeploys::L1_BLOCK_INFO).input(call.into())
-        };
+    /// Waits until the L2 `L1Block` predeploy reports the seeded operator fee parameters.
+    async fn wait_for_operator_fee(&self) -> Result<()> {
         timeout(SYSTEM_CONFIG_PROPAGATION_TIMEOUT, async {
             loop {
-                let scalar = L1Block::operatorFeeScalarCall::abi_decode_returns(
-                    &self
-                        .builder
-                        .call(l1_block_call(L1Block::operatorFeeScalarCall.abi_encode()))
-                        .await?,
-                )?;
-                let constant = L1Block::operatorFeeConstantCall::abi_decode_returns(
-                    &self
-                        .builder
-                        .call(l1_block_call(L1Block::operatorFeeConstantCall.abi_encode()))
-                        .await?,
-                )?;
-                if scalar == OPERATOR_FEE_SCALAR && constant == OPERATOR_FEE_CONSTANT {
+                if OperatorFee::at(&self.builder, BlockId::latest()).await? == OperatorFee::SEEDED {
                     return Ok::<_, eyre::Error>(());
                 }
                 sleep(Duration::from_millis(500)).await;
@@ -229,6 +251,8 @@ struct Settlement {
     base_fee_per_gas: u128,
     /// The L1 data fee the receipt reports.
     l1_fee: u128,
+    /// The operator fee parameters live at the inclusion block.
+    operator_fee: OperatorFee,
     /// Wei the fee payer transferred as value on top of the fees (zero when it only sponsors).
     value_paid: U256,
     /// How much the fee payer's balance dropped, including `value_paid`.
@@ -275,8 +299,8 @@ impl Settlement {
         );
         assert_eq!(
             self.operator_fee_vault_received,
-            expected_operator_fee(billed_gas),
-            "operator fee must be the seeded scalar and constant applied to the billed gas"
+            self.operator_fee.charge(billed_gas),
+            "operator fee must be the live scalar and constant applied to the billed gas"
         );
         assert_eq!(
             self.l1_fee_vault_received,
@@ -309,7 +333,9 @@ async fn everest_bills_transactions_for_their_gas_limit() -> Result<()> {
     let signer = PrivateKeySigner::from_bytes(&ANVIL_ACCOUNT_1.private_key)?;
 
     // Before Everest: the transfer is charged for the 21k gas it used and the rest of its
-    // limit is reimbursed.
+    // limit is reimbursed. It is sent right away, so it has the whole pre-Everest runway; the
+    // operator fee seed may or may not have reached the L2 yet, and the identities use whichever
+    // parameters are live at its block.
     let before = send_transfer(builder, &signer).await.wrap_err("pre-Everest transfer")?;
     ensure!(
         before.block_timestamp < system.everest_timestamp,
@@ -320,6 +346,7 @@ async fn everest_bills_transactions_for_their_gas_limit() -> Result<()> {
 
     // After Everest: the identical transfer is charged for its full 100k gas limit. The receipt,
     // the block and every fee recipient agree on that quantity.
+    system.wait_for_operator_fee().await?;
     system.wait_for_everest().await?;
     let after = send_transfer(builder, &signer).await.wrap_err("post-Everest transfer")?;
     ensure!(
@@ -328,6 +355,11 @@ async fn everest_bills_transactions_for_their_gas_limit() -> Result<()> {
         after.block_number
     );
     after.assert_consistent(TX_GAS_LIMIT);
+    assert_eq!(
+        after.operator_fee,
+        OperatorFee::SEEDED,
+        "the operator fee term must not be vacuous"
+    );
     // The L1 data fee follows the L1 base fee, which moves between blocks, so it is only checked
     // to still be charged (the settlement identity above accounts for its exact amount).
     assert!(after.l1_fee > 0, "the L1 data fee must still be charged under gas-limit billing");
@@ -371,10 +403,11 @@ async fn everest_bills_sponsored_eip8130_for_its_reserved_budget() -> Result<()>
     let sender = PrivateKeySigner::from_bytes(&ANVIL_ACCOUNT_1.private_key)?;
     let payer = PrivateKeySigner::from_bytes(&ANVIL_ACCOUNT_2.private_key)?;
     builder.wait_for_balance(payer.address(), FUNDING_TIMEOUT).await?;
+    system.wait_for_operator_fee().await?;
     system.wait_for_everest().await?;
 
     let nonce_sequence = builder.get_transaction_count(sender.address()).await?;
-    let signed = sponsored_eip8130(&sender, &payer, nonce_sequence)?;
+    let signed = sponsored_eip8130(&sender, &payer, nonce_sequence, EIP8130_GAS_LIMIT)?;
     let reserved_gas = EIP8130_GAS_LIMIT + IntrinsicGas::max_payer_auth_cost(&signed)?;
     assert!(reserved_gas > EIP8130_GAS_LIMIT, "payer authentication must reserve gas");
     let raw: Bytes = signed.encoded_2718().into();
@@ -390,6 +423,11 @@ async fn everest_bills_sponsored_eip8130_for_its_reserved_budget() -> Result<()>
     assert!(receipt.status(), "sponsored EIP-8130 transaction must succeed");
     assert_eq!(receipt.payer, Some(payer.address()), "receipt must name the sponsor as payer");
     settlement.assert_consistent(reserved_gas);
+    assert_eq!(
+        settlement.operator_fee,
+        OperatorFee::SEEDED,
+        "the operator fee term must not be vacuous"
+    );
     assert_block_gas_matches_receipts(builder, settlement.block_number, reserved_gas).await?;
     let sender_after = builder
         .get_balance(sender.address())
@@ -404,6 +442,37 @@ async fn everest_bills_sponsored_eip8130_for_its_reserved_budget() -> Result<()>
         .await?
         .ok_or_eyre("validator has no receipt for the sponsored transaction")?;
     assert_eq!(client_receipt.gas_used(), reserved_gas);
+
+    // `eth_estimateGas` for a sponsored request returns the sender's budget only: settlement adds
+    // payer authentication on top, so a transaction sent at `gas_limit = estimate` succeeds and
+    // settles at `estimate + payer_auth`, not at the estimate. The EIP-8130 RPC module is installed
+    // on the validator node, not the builder, so the estimate comes from the client.
+    let request: BaseTransactionRequest = serde_json::from_value(serde_json::json!({
+        "from": sender.address(),
+        "calls": [[Call { to: RECIPIENT, value: U256::ZERO, data: Bytes::new() }]],
+        "payer": payer.address(),
+        "maxFeePerGas": U256::from(MAX_FEE_PER_GAS),
+        "maxPriorityFeePerGas": U256::from(MAX_PRIORITY_FEE_PER_GAS),
+    }))?;
+    let estimate =
+        system.client.estimate_gas(request).await.wrap_err("sponsored eth_estimateGas")?;
+    ensure!(
+        estimate < EIP8130_GAS_LIMIT,
+        "estimate {estimate} must be below the over-provisioned limit"
+    );
+    let signed = sponsored_eip8130(&sender, &payer, nonce_sequence + 1, estimate)?;
+    let payer_auth = IntrinsicGas::max_payer_auth_cost(&signed)?;
+    let raw: Bytes = signed.encoded_2718().into();
+    let (settlement, receipt) = settle(builder, &raw, payer.address(), U256::ZERO)
+        .await
+        .wrap_err("sponsored EIP-8130 at the estimate")?;
+    assert!(receipt.status(), "a sponsored transaction sent at the estimate must succeed");
+    assert_eq!(
+        receipt.gas_used(),
+        estimate + payer_auth,
+        "settlement must add payer authentication to the estimate exactly once"
+    );
+    settlement.assert_consistent(estimate + payer_auth);
 
     Ok(())
 }
@@ -465,11 +534,13 @@ async fn send_transfer(
 }
 
 /// A sponsored EIP-8130 transaction: `sender` dispatches one empty call and `payer` covers the
-/// fees, authenticating over the payer digest with the secp256k1 (`K1`) authenticator.
+/// fees, authenticating over the payer digest with the secp256k1 (`K1`) authenticator. The
+/// transaction declares `gas_limit`.
 fn sponsored_eip8130(
     sender: &PrivateKeySigner,
     payer: &PrivateKeySigner,
     nonce_sequence: u64,
+    gas_limit: u64,
 ) -> Result<Eip8130Signed> {
     let tx = TxEip8130 {
         chain_id: L2_CHAIN_ID,
@@ -480,7 +551,7 @@ fn sponsored_eip8130(
         valid_before: 0,
         max_priority_fee_per_gas: MAX_PRIORITY_FEE_PER_GAS,
         max_fee_per_gas: MAX_FEE_PER_GAS,
-        gas_limit: EIP8130_GAS_LIMIT,
+        gas_limit,
         account_changes: Vec::new(),
         calls: vec![vec![Call { to: RECIPIENT, value: U256::ZERO, data: Bytes::new() }]],
         metadata: Bytes::new(),
@@ -545,6 +616,7 @@ async fn settle(
             .ok_or_eyre("post-London block missing base fee")?
             .into(),
         l1_fee: receipt.l1_block_info.l1_fee.ok_or_eyre("receipt missing l1Fee")?,
+        operator_fee: OperatorFee::at(provider, BlockId::number(block_number)).await?,
         value_paid,
         payer_paid,
         coinbase_received: credited(block.header.beneficiary).await?,

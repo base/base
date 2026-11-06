@@ -600,10 +600,11 @@ across the `plain`, `validity_pass`, and `validity_pass_priority_lead` cohorts, 
 traffic can be compared against validity traffic when the workload is enabled. Each entry
 carries `confirmed`, `reverted`, `total_gas` (receipt `gas_used`: metered before Everest, the
 billed limit under gas-limit billing), `total_gas_limit` (declared limits), `total_fee_wei`
-(`gas_used * effective_gas_price` summed from receipts), `total_priority_fee_wei`
+(`gas_used * effective_gas_price` summed from receipts: the execution fee, excluding the L1 data
+fee and operator fee), `total_priority_fee_wei`
 (`gas_used * (effective_gas_price - block base fee)`, the tip the sequencer received), and block latency
-percentiles. The CLI prints the same breakdown as one `By cohort:` line per cohort, with the fee
-and tip in ETH.
+percentiles. The CLI prints the same breakdown as one `By cohort:` line per cohort, with the execution
+fee (`exec_fee_eth`) and tip in ETH.
 
 ##### Gas-limit billing demo
 
@@ -638,6 +639,12 @@ Read the `by_cohort` output as the payment comparison: under metered billing the
 `total_fee_wei` far below what its `total_gas_limit` would cost at its tip, while `validity_pass`
 pays for the gas it used. Under gas-limit billing the reverting arbs' `total_gas` and `total_fee_wei`
 rise to their declared limits. Set `LOAD_TEST_OUTPUT=<path>` to keep the JSON summary.
+
+Inclusion counts need a caveat. Pacing sizes the in-flight window from each payload's calibrated
+(metered) gas, so it counts a reverting arb at ~21-25k gas. Under gas-limit billing the arb reserves
+its full 500k declared limit, so blocks fill with fewer transactions than the pacer assumes. Some
+of the drop in included transactions after activation therefore comes from block space, not
+ordering.
 `priority_lead_payload` takes any transaction type that works without chain preparation and
 submits through the validity path; config validation rejects payloads that need preparation
 (B-20, swaps, x402, token moves, AA bundles, `storage` without an explicit contract) and native
