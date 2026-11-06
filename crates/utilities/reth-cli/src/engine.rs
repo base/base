@@ -3,9 +3,10 @@
 use reth_node_core::args::DefaultEngineValues;
 
 /// Reth's defaults (7 / 5 / 16) are block counts sized for 2s blocks; these keep the same
-/// time margins at Denim's 200ms block interval.
+/// time margins at Denim's 200ms block interval. The memory block buffer target stays at reth's
+/// default (5): state reads walk each in-memory block before the database, so a larger buffer
+/// slows `eth_call`.
 const PERSISTENCE_THRESHOLD: u64 = 70;
-const MEMORY_BLOCK_BUFFER_TARGET: u64 = 70;
 const PERSISTENCE_BACKPRESSURE_THRESHOLD: u64 = 160;
 
 /// Reth engine default initialization for Base execution layer binaries.
@@ -23,7 +24,6 @@ impl Engine {
     pub fn init_engine() {
         DefaultEngineValues::default()
             .with_persistence_threshold(PERSISTENCE_THRESHOLD)
-            .with_memory_block_buffer_target(MEMORY_BLOCK_BUFFER_TARGET)
             .with_persistence_backpressure_threshold(PERSISTENCE_BACKPRESSURE_THRESHOLD)
             .try_init()
             .expect("failed to initialize engine defaults");
@@ -52,7 +52,7 @@ mod tests {
 
         let args = EngineArgs::default();
         assert_eq!(args.persistence_threshold, 70);
-        assert_eq!(args.memory_block_buffer_target(), 70);
+        assert_eq!(args.memory_block_buffer_target(), 5);
         assert_eq!(args.persistence_backpressure_threshold(), 160);
         args.validate().unwrap();
     }
