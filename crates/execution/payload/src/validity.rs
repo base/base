@@ -771,7 +771,7 @@ mod tests {
             ordered[0].clone(),
             ordered[1].clone(),
         ]);
-        let context = PredicateContext { block_number: 100, flashblock_index: 2 };
+        let context = PredicateContext { block_number: 100 };
         let expected_reads = [
             (first, None),
             (second, None),
@@ -860,7 +860,7 @@ mod tests {
             (15, ValidityOperator::NotEqual, 15, false),
             (21, ValidityOperator::LessThanOrEqual, 20, true),
         ] {
-            let context = PredicateContext { block_number, flashblock_index: 1 };
+            let context = PredicateContext { block_number };
             let blocker = ValidityPredicateKey::BlockNumber;
             let predicate = ValidityPredicate::BlockNumber { op, value: U256::from(value) };
             let mut db = RecordingDatabase { fail_on: Some(1), ..Default::default() };
@@ -876,7 +876,7 @@ mod tests {
             assert!(db.reads.is_empty());
         }
         let mut db = RecordingDatabase { fail_on: Some(1), ..Default::default() };
-        let context = PredicateContext { block_number: 11, flashblock_index: 2 };
+        let context = PredicateContext { block_number: 11 };
         assert_eq!(
             ValidityPredicateEvaluation::evaluate(&conditions, &mut db, &context),
             Err(ReadError)
@@ -900,7 +900,7 @@ mod tests {
                 value: U256::from(101),
             },
         ]);
-        let context = PredicateContext { block_number: 100, flashblock_index: 1 };
+        let context = PredicateContext { block_number: 100 };
         let mut db = InMemoryDB::default();
         assert_eq!(
             ValidityPredicateEvaluation::evaluate(&conditions, &mut db, &context).unwrap(),
@@ -914,7 +914,7 @@ mod tests {
             },
         );
         assert!(db.cache.accounts.is_empty(), "timing gate must not load account state");
-        let next = PredicateContext { block_number: 101, ..context };
+        let next = PredicateContext { block_number: 101 };
         let evaluation =
             ValidityPredicateEvaluation::evaluate(&conditions, &mut db, &next).unwrap();
         assert!(
@@ -926,7 +926,7 @@ mod tests {
     #[test]
     fn passed_nonce_upper_bounds_remain_ineligible_until_block_expiry() {
         let address = Address::with_last_byte(1);
-        let context = PredicateContext { block_number: 100, flashblock_index: 1 };
+        let context = PredicateContext { block_number: 100 };
         for (op, initial_nonce) in [
             (ValidityOperator::Equal, 3),
             (ValidityOperator::LessThan, 2),
@@ -958,7 +958,7 @@ mod tests {
                     expired: false,
                 },
             );
-            let expired_context = PredicateContext { block_number: 103, ..context };
+            let expired_context = PredicateContext { block_number: 103 };
             assert_eq!(
                 ValidityPredicateEvaluation::evaluate(&predicates, &mut db, &expired_context)
                     .unwrap(),

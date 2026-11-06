@@ -1046,7 +1046,7 @@ where
         let base_fee = builder.evm_mut().block().basefee();
         let block_number =
             builder.evm_mut().block().number().try_into().expect("block number must fit in u64");
-        let predicate_context = PredicateContext { block_number, flashblock_index: 0 };
+        let predicate_context = PredicateContext { block_number };
         let mut predicate_index =
             ParkedPredicateIndex::new(self.builder_config.predicate_bucket_ordered_threshold);
         let mut predicate_loads = PredicateLoadTracker::default();

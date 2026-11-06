@@ -509,10 +509,7 @@ mod tests {
                                 ValidityPredicate::block_expiry_bound(&raw)
                             );
                             for position in [0, 1, 2, 3, u64::MAX] {
-                                let context = PredicateContext {
-                                    block_number: position,
-                                    flashblock_index: position,
-                                };
+                                let context = PredicateContext { block_number: position };
                                 let expected = raw
                                     .iter()
                                     .all(|predicate| predicate.matches(&mut db, &context).unwrap());
@@ -571,7 +568,7 @@ mod tests {
         for (block_number, expected) in
             [(9, false), (10, true), (15, false), (20, true), (21, false)]
         {
-            let context = PredicateContext { block_number, flashblock_index: 1 };
+            let context = PredicateContext { block_number };
             assert_eq!(
                 conditions.iter().all(|predicate| predicate.matches(&mut db, &context).unwrap()),
                 expected
@@ -592,7 +589,7 @@ mod tests {
             assert_eq!(conditions.block().expiry_bound(), Some(0));
             assert_eq!(ValidityPredicate::block_expiry_bound(&raw), Some(0));
             for block_number in [0, 100, 102, u64::MAX] {
-                let context = PredicateContext { block_number, flashblock_index: 0 };
+                let context = PredicateContext { block_number };
                 assert_eq!(
                     conditions.block().first_unsatisfied(U256::from(block_number)),
                     Some((LessThan, U256::ZERO))
@@ -625,7 +622,7 @@ mod tests {
         };
         let conditions =
             ValidityConditions::new(vec![storage.clone(), nonce.clone(), balance.clone()]);
-        let context = PredicateContext { block_number: 100, flashblock_index: 1 };
+        let context = PredicateContext { block_number: 100 };
         let mut db = InMemoryDB::default();
         assert!(conditions.contains(&balance));
         assert!(conditions.contains(&nonce));

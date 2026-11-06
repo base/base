@@ -82,9 +82,8 @@ fn allocations_during<T>(f: impl FnOnce() -> T) -> (T, usize, usize) {
 const EXPIRY_BLOCK: u64 = 1_000;
 const NONCE: u64 = 7;
 const BALANCE: u64 = 1_000;
-const CONTEXT: PredicateContext = PredicateContext { block_number: 500, flashblock_index: 3 };
-const EXPIRED_CONTEXT: PredicateContext =
-    PredicateContext { block_number: EXPIRY_BLOCK + 1, flashblock_index: 3 };
+const CONTEXT: PredicateContext = PredicateContext { block_number: 500 };
+const EXPIRED_CONTEXT: PredicateContext = PredicateContext { block_number: EXPIRY_BLOCK + 1 };
 /// Wire ceiling for one batch.
 const MAX_PREDICATES: usize = 64;
 /// Transactions in the pool-scale evaluation benchmark.

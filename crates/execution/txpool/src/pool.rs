@@ -538,7 +538,7 @@ where
     /// have moved back (a reorg, or reth's resync of drifted accounts), and a
     /// protocol-nonce lane anchors at the highest nonce reported for it, as
     /// reth does for the sender's standard transactions. Channel lanes and
-    /// pre-canonical (flashblock) nonces always move forward only.
+    /// pre-canonical nonces always move forward only.
     ///
     /// Runs under `protocol_admission_lock`: the target is derived from the
     /// standard stores' state without holding the validity lock, so a
