@@ -2652,6 +2652,11 @@ impl<T: BasePooledTx> SidecarListeners<T> {
         &mut self,
         kind: TransactionListenerKind,
     ) -> mpsc::Receiver<NewTransactionEvent<T>> {
+        // Every merged pool walk subscribes, and broadcasts only prune
+        // listeners while admissions flow, so drop closed ones here to keep
+        // quiet periods from accumulating them.
+        self.new_all.retain(|listener| !listener.is_closed());
+        self.new_propagate.retain(|listener| !listener.is_closed());
         let (tx, rx) = mpsc::channel(SIDE_CAR_EVENT_CHANNEL_SIZE);
         if kind.is_propagate_only() {
             self.new_propagate.push(tx);
@@ -6513,6 +6518,19 @@ mod tests {
         assert!(is_pending(&pool, validity1));
         assert_eq!(drain(&mut best), vec![standard0]);
         assert_eq!(drain(&mut builder_best(&pool)), vec![standard0, validity1]);
+    }
+
+    /// Pool walks that finished during a quiet period leave no listener behind
+    /// for the next one to inherit.
+    #[tokio::test]
+    async fn finished_pool_walks_do_not_accumulate_validity_listeners() {
+        let (pool, _client) = build_integration_pool();
+        for _ in 0..3 {
+            drop(pool.best_transactions());
+        }
+        let live = pool.best_transactions();
+        assert_eq!(pool.validity.listeners.read().new_all.len(), 1);
+        drop(live);
     }
 
     /// A mid-build replacement of a validity transaction the build has not
