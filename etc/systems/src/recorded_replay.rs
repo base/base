@@ -266,8 +266,8 @@ mod tests {
         recorder.advance_chain(5).await?;
         let recorded_head = recorder.latest_block().hash();
         drop(recorder);
-        // Move every payload into the first payload's millisecond, so they replay in order only
-        // if ties are broken by block number.
+        // Move every payload into the first payload's millisecond and name them so path order is
+        // child first; they replay in order only if ties are broken by block number.
         let mut payloads = Vec::new();
         for entry in std::fs::read_dir(store.path())? {
             let name = entry?.file_name().to_string_lossy().into_owned();
@@ -277,10 +277,11 @@ mod tests {
         }
         payloads.sort();
         let first = payloads[0].0.clone();
-        for (millis, hash) in payloads {
+        let count = payloads.len();
+        for (index, (millis, hash)) in payloads.into_iter().enumerate() {
             std::fs::rename(
                 store.path().join(format!("{millis}-new_payload-{hash}")),
-                store.path().join(format!("{first}-new_payload-{hash}")),
+                store.path().join(format!("{first}-new_payload-{}.json", count - index)),
             )?;
         }
 
