@@ -60,9 +60,7 @@ const NONCE: u64 = 7;
 const BALANCE: u64 = 1_000;
 /// Contract whose slots the storage predicates watch.
 const WATCHED_CONTRACT: Address = Address::repeat_byte(0xc0);
-/// The native builder evaluates every candidate at flashblock index zero.
-const CONTEXT: PredicateContext =
-    PredicateContext { block_number: BLOCK_NUMBER, flashblock_index: 0 };
+const CONTEXT: PredicateContext = PredicateContext { block_number: BLOCK_NUMBER };
 
 /// How a candidate's predicates evaluate against the build state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

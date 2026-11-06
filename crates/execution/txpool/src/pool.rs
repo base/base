@@ -538,7 +538,7 @@ where
     /// have moved back (a reorg, or reth's resync of drifted accounts), and a
     /// protocol-nonce lane anchors at the highest nonce reported for it, as
     /// reth does for the sender's standard transactions. Channel lanes and
-    /// pre-canonical (flashblock) nonces always move forward only.
+    /// pre-canonical nonces always move forward only.
     ///
     /// Runs under `protocol_admission_lock`: the target is derived from the
     /// standard stores' state without holding the validity lock, so a
@@ -778,14 +778,6 @@ where
         transaction.transaction().validity_conditions().block().expiry_bound()
     }
 
-    /// Optional flashblock upper bound, paired with the block bound for pool eviction.
-    fn validity_flashblock_expiry_bound(
-        validated: &TransactionValidationOutcome<T>,
-    ) -> Option<u64> {
-        let transaction = validated.as_valid_transaction()?;
-        transaction.transaction().validity_conditions().flashblock().expiry_bound()
-    }
-
     /// Rechecks an EIP-8130 transaction against the pool's block gas limit, which can
     /// move after validation, as reth's protocol pool does for every transaction at
     /// insert. Execution reserves `gas_limit + payer_auth` against the block, and an
@@ -840,7 +832,6 @@ where
         &self,
         hash: TxHash,
         last_valid_block: Option<u64>,
-        last_valid_flashblock: Option<u64>,
         replaced: Option<TxHash>,
     ) {
         if last_valid_block.is_none() && replaced.is_none() {
@@ -851,14 +842,13 @@ where
             block_expiry.remove(&replaced);
         }
         if let Some(last_valid_block) = last_valid_block {
-            block_expiry.insert_with_flashblock(hash, last_valid_block, last_valid_flashblock);
+            block_expiry.insert(hash, last_valid_block);
         }
     }
 
     /// Evicts validity-predicate transactions whose last valid block is at or
     /// before the newly committed `committed_block`, since the next block cannot include them.
     ///
-    /// Flashblock-bounded deadlines expire here too, once their block commits.
     /// Entries removed through inclusion or replacement remain indexed until
     /// their deadline, bounding index growth to the furthest accepted block bound.
     fn expire_by_block(&self, committed_block: u64) {
@@ -1122,7 +1112,6 @@ where
         let pre_admitted = self.pre_admit_protocol_transaction(hash, replaced, &validated)?;
         // Capture the block-expiry bounds before `validated` is consumed below.
         let block_expiry_bound = Self::validity_block_expiry_bound(&validated);
-        let flashblock_expiry_bound = Self::validity_flashblock_expiry_bound(&validated);
         let result = match insert(validated) {
             Ok(result) => result,
             Err(error) => {
@@ -1136,7 +1125,7 @@ where
         if let Some(cross) = cross {
             self.remove_cross_store_replaced(cross, hash);
         }
-        self.register_block_expiry(hash, block_expiry_bound, flashblock_expiry_bound, replaced);
+        self.register_block_expiry(hash, block_expiry_bound, replaced);
         self.share_validity_lane((sender, U256::ZERO));
         self.sync_validity_lanes([((sender, U256::ZERO), None)], false);
         Ok(result)
@@ -1298,7 +1287,6 @@ where
         // a finite 2D-nonce-channel transaction has no time-based expiry, so
         // without this it would linger indefinitely.
         let block_expiry_bound = Self::validity_block_expiry_bound(&validated);
-        let flashblock_expiry_bound = Self::validity_flashblock_expiry_bound(&validated);
         let _admission_guard = self.protocol_admission_lock.lock();
         if let Some(transaction) = validated.as_valid_transaction() {
             let hash = *transaction.transaction().hash();
@@ -1461,12 +1449,7 @@ where
                 if let Some(cross) = cross {
                     self.remove_cross_store_replaced(cross, inserted_hash);
                 }
-                self.register_block_expiry(
-                    inserted_hash,
-                    block_expiry_bound,
-                    flashblock_expiry_bound,
-                    replaced_hash,
-                );
+                self.register_block_expiry(inserted_hash, block_expiry_bound, replaced_hash);
                 match store {
                     PoolStore::Sidecar => {
                         if let Some(lane_id) = lane_id {
@@ -5278,12 +5261,12 @@ mod tests {
         let new_hash = TxHash::repeat_byte(0x22);
 
         // Seed the index with the soon-to-be-replaced transaction.
-        pool.register_block_expiry(replaced, Some(100), None, None);
+        pool.register_block_expiry(replaced, Some(100), None);
         assert_eq!(pool.block_expiry.read().len(), 1);
 
         // A fee-bump replacement must evict the stale entry rather than
         // accumulate it, so the index does not grow per replacement.
-        pool.register_block_expiry(new_hash, Some(200), None, Some(replaced));
+        pool.register_block_expiry(new_hash, Some(200), Some(replaced));
         assert_eq!(pool.block_expiry.read().len(), 1);
 
         // Only the new hash remains, tracked at its own bound.
@@ -5298,16 +5281,16 @@ mod tests {
         let replaced = TxHash::repeat_byte(0x33);
         let new_hash = TxHash::repeat_byte(0x44);
 
-        pool.register_block_expiry(replaced, Some(100), None, None);
+        pool.register_block_expiry(replaced, Some(100), None);
         assert_eq!(pool.block_expiry.read().len(), 1);
 
         // An unbounded replacement still clears the replaced hash's stale entry.
-        pool.register_block_expiry(new_hash, None, None, Some(replaced));
+        pool.register_block_expiry(new_hash, None, Some(replaced));
         assert!(pool.block_expiry.read().is_empty());
     }
 
     #[tokio::test]
-    async fn block_commit_expires_flashblock_bounded_and_block_only_deadlines() {
+    async fn flashblock_index_conditions_expire_at_the_next_block_commit() {
         let (pool, client) = build_integration_pool();
         let signer = signer();
         fund(&client, signer.address());
@@ -5333,15 +5316,15 @@ mod tests {
         let block_only_hash = *block_only.hash();
         pool.add_transaction(TransactionOrigin::Local, block_only).await.unwrap();
 
-        // Both deadlines hold until their last valid block commits.
-        pool.expire_by_block(99);
-        assert!(pool.get(&sidecar_hash).is_some());
+        // A flashblock-index predicate that bypasses ingress never holds, so the next commit
+        // evicts it while a plain block deadline stays live.
+        pool.expire_by_block(0);
+        assert!(pool.get(&sidecar_hash).is_none());
+        assert!(!pool.guard.read().contains(&sidecar_hash));
         assert!(pool.get(&block_only_hash).is_some());
 
         pool.expire_by_block(100);
-        assert!(pool.get(&sidecar_hash).is_none());
         assert!(pool.get(&block_only_hash).is_none());
-        assert!(!pool.guard.read().contains(&sidecar_hash));
 
         // The freed channel slot admits the continuation.
         let continuation = signed_channel_tx(&signer, U256::from(1), 0, 1_000);
