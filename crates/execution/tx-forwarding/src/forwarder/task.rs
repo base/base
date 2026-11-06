@@ -286,7 +286,8 @@ impl<R: ForwardRequest> DestinationForwarder<R> {
         let overall_start = Instant::now();
         for attempt in 0..=self.config.max_retries {
             // The first attempt is not journaled: every send ends in a failure or drop event here
-            // or a builder-side insert event. Only retries add information.
+            // or a builder-side insert event, except a duplicate of a transaction the builder
+            // already holds, which neither side journals. Only retries add information.
             if attempt > 0 {
                 for (tx_hash, method) in tx_hashes.iter().zip(&methods) {
                     self.emit_forward_event(
@@ -325,10 +326,14 @@ impl<R: ForwardRequest> DestinationForwarder<R> {
                                     error = %e,
                                     "batch item rejected",
                                 );
-                                if !is_already_imported_rejection(&e) {
-                                    self.report_failure(tx_hash);
-                                }
                                 err_count += 1;
+                                // The builder journaled this transaction as accepted when it
+                                // first arrived and still holds it, so the duplicate send is
+                                // delivered and adds nothing to the journal.
+                                if is_already_imported_rejection(&e) {
+                                    continue;
+                                }
+                                self.report_failure(tx_hash);
                                 self.emit_forward_event(
                                     TransactionEventType::TxpoolBuilderForwardFailure,
                                     tx_hash,
@@ -511,6 +516,7 @@ mod tests {
 
     use alloy_primitives::{Address, B256, Bytes};
     use base_execution_txpool::{NoExtensions, ValidatedTransaction};
+    use base_observability_events::TransactionEventCapture;
     use jsonrpsee::{RpcModule, http_client::HttpClientBuilder, server::Server};
     use serde::{Deserialize, Serialize};
     use serde_json::Value;
@@ -1025,9 +1031,12 @@ mod tests {
         std::iter::from_fn(|| failures.try_recv().ok()).collect()
     }
 
-    /// A rejection is a failed forward unless the destination already holds the transaction.
+    /// A rejection is a failed forward, reported and journaled, unless the destination already
+    /// holds the transaction: that duplicate is delivered, and the destination's earlier accepted
+    /// insert already records it.
     #[tokio::test]
-    async fn rejections_other_than_already_imported_are_reported_as_failures() {
+    async fn rejections_other_than_already_imported_are_reported_and_journaled_as_failures() {
+        let capture = TransactionEventCapture::install();
         let (url, _server) = rejecting_rpc_server().await;
         let (_sender, receiver) = mpsc::channel(1);
         let (report, mut failures) = mpsc::channel(8);
@@ -1036,7 +1045,17 @@ mod tests {
 
         forwarder.send_with_retries(batch).await;
 
-        assert_eq!(reported(&mut failures), [transaction::<NoExtensions>(2).tx_hash]);
+        let rejected = transaction::<NoExtensions>(2).tx_hash;
+        assert_eq!(reported(&mut failures), [rejected]);
+        // Other tests in this binary forward concurrently into the same process-global writer,
+        // but only this destination rejects, so the failure events are all this test's.
+        let journaled_failures: Vec<Option<B256>> = capture
+            .events()
+            .into_iter()
+            .filter(|event| event.event_type == TransactionEventType::TxpoolBuilderForwardFailure)
+            .map(|event| event.tx_hash)
+            .collect();
+        assert_eq!(journaled_failures, [Some(rejected)]);
     }
 
     /// Every transaction in a batch dropped after its retries is reported as a failure.

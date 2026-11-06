@@ -35,6 +35,9 @@ const SETTLE: Duration = Duration::from_millis(300);
 /// Long enough that no resend happens while a test runs.
 const RESEND_AFTER_MS: u64 = 60_000;
 
+/// `max_fee_per_gas` of every transfer unless a test prices one itself.
+const BASE_MAX_FEE_PER_GAS: u128 = 1_000_000_000;
+
 /// Serves `base_insertValidatedTransaction` the way a builder does.
 #[derive(Debug)]
 struct BuilderRpcExtension;
@@ -87,12 +90,18 @@ fn unreachable_url() -> Result<Url> {
     Ok(format!("http://{}", listener.local_addr()?).parse()?)
 }
 
+/// A transfer at the fee every test uses, so a second transfer with the same nonce is a duplicate.
 fn signed_transfer(account: Account, nonce: u64) -> Bytes {
+    priced_transfer(account, nonce, BASE_MAX_FEE_PER_GAS)
+}
+
+/// A transfer with its own `max_fee_per_gas`, so a test can replace one at another price.
+fn priced_transfer(account: Account, nonce: u64, max_fee_per_gas: u128) -> Bytes {
     let transaction = BaseTransactionRequest::default()
         .from(account.address())
         .transaction_type(2u8)
         .with_gas_limit(21_000)
-        .with_max_fee_per_gas(1_000_000_000)
+        .with_max_fee_per_gas(max_fee_per_gas)
         .with_max_priority_fee_per_gas(0)
         .with_chain_id(DEVNET_CHAIN_ID)
         .to(Account::Bob.address())
@@ -184,10 +193,11 @@ async fn unreachable_builder_journals_each_retry_and_the_drop() -> Result<()> {
     Ok(())
 }
 
-/// A builder that already holds the transaction, as after an earlier send, rejects the insert.
-/// The builder journals the rejection and the node journals the failed send.
+/// A builder that already holds the transaction, as after an earlier send, rejects the duplicate
+/// as already imported. Neither side journals it: the builder's earlier accepted insert already
+/// records the delivery.
 #[tokio::test]
-async fn builder_rejection_is_journaled_by_both_sides() -> Result<()> {
+async fn duplicate_forward_is_journaled_by_neither_side() -> Result<()> {
     let (builder, url) = builder().await?;
     let raw = signed_transfer(Account::Deployer, 0);
     let _pending = builder.provider().send_raw_transaction(&raw).await?;
@@ -200,10 +210,35 @@ async fn builder_rejection_is_journaled_by_both_sides() -> Result<()> {
     assert_journal(
         &capture,
         keccak256(&raw),
+        &["base-reth-node TXPOOL_SEND_RAW_TRANSACTION", "base-reth-node TXPOOL_PENDING"],
+    )
+    .await;
+    Ok(())
+}
+
+/// A builder that rejects a forwarded transaction for any other reason, here a replacement of
+/// a transaction it holds without the required price bump, returns the verdict to the node,
+/// which journals the failed send. The builder does not journal the rejection again.
+#[tokio::test]
+async fn builder_rejection_is_journaled_by_the_node_only() -> Result<()> {
+    let (builder, url) = builder().await?;
+    let _pending =
+        builder.provider().send_raw_transaction(&signed_transfer(Account::Deployer, 0)).await?;
+    // Installed after seeding the builder, which clears the seeding's admission event.
+    let capture = TransactionEventCapture::install();
+    let mempool = mempool(vec![url]).await?;
+
+    // Priced above the held transaction but short of the pool's replacement bump, so the
+    // mempool node admits it while the builder rejects it.
+    let raw = priced_transfer(Account::Deployer, 0, BASE_MAX_FEE_PER_GAS * 105 / 100);
+    let _pending = mempool.provider().send_raw_transaction(&raw).await?;
+
+    assert_journal(
+        &capture,
+        keccak256(&raw),
         &[
             "base-reth-node TXPOOL_SEND_RAW_TRANSACTION",
             "base-reth-node TXPOOL_PENDING",
-            "base-builder TXPOOL_VALIDATED_INSERT_REJECTED",
             "base-reth-node TXPOOL_BUILDER_FORWARD_FAILURE attempt=0",
         ],
     )

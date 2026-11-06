@@ -150,6 +150,9 @@ pub enum TransactionEventType {
     #[serde(rename = "TXPOOL_VALIDATED_INSERT_ACCEPTED")]
     TxpoolValidatedInsertAccepted,
     /// A validated txpool insert rejected a transaction.
+    ///
+    /// No longer emitted: the forwarding mempool node journals the same rejection as
+    /// [`Self::TxpoolBuilderForwardFailure`]. Retained so historical events remain readable.
     #[serde(rename = "TXPOOL_VALIDATED_INSERT_REJECTED")]
     TxpoolValidatedInsertRejected,
     /// A transaction was submitted through `eth_sendRawTransaction`.

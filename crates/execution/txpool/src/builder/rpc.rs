@@ -18,7 +18,6 @@ use reth_transaction_pool::{
     AddedTransactionOutcome, PoolResult, PoolTransaction, TransactionOrigin, TransactionPool,
     error::{PoolError, PoolErrorKind},
 };
-use serde_json::{Map, json};
 use tracing::debug;
 
 use super::metrics::Metrics as BuilderApiMetrics;
@@ -327,27 +326,16 @@ where
                 {
                     cache.insert_metering(tx_hash, metering);
                 }
-                self.emit_validated_insert_event(
-                    TransactionEventType::TxpoolValidatedInsertAccepted,
-                    tx_hash,
-                    || Map::from_iter([("encoded_len".to_string(), json!(encoded_len))]),
-                );
+                self.emit_validated_insert_accepted(tx_hash, encoded_len);
                 debug!(tx_hash = %tx_hash, "inserted validated transaction");
                 BuilderApiMetrics::txs_inserted().increment(1);
                 Ok(())
             }
             Err(e) => {
-                self.emit_validated_insert_event(
-                    TransactionEventType::TxpoolValidatedInsertRejected,
-                    tx_hash,
-                    || {
-                        Map::from_iter([
-                            ("rejection_stage".to_string(), json!("pool_insert")),
-                            ("encoded_len".to_string(), json!(encoded_len)),
-                            ("error".to_string(), json!(e.to_string())),
-                        ])
-                    },
-                );
+                // Not journaled: the error returned here reaches the forwarding mempool node,
+                // which journals it as `TXPOOL_BUILDER_FORWARD_FAILURE` with this builder's
+                // URL, so a builder-side rejection event would repeat the same verdict. The
+                // rejection is counted in metrics by reason.
                 debug!(tx_hash = %tx_hash, error = %e, "pool rejected transaction");
                 BuilderApiMetrics::txs_rejected(PoolRejectionLabel::from_error(&e)).increment(1);
                 Err(ErrorObjectOwned::owned(
@@ -375,28 +363,22 @@ pub fn is_already_imported_rejection(error: &ErrorObjectOwned) -> bool {
 }
 
 impl<P, E> BuilderApiImpl<P, E> {
-    /// Emits a validated-insert event, calling `data` for its fields only when an event writer is
-    /// configured. Every forwarded transaction reaches here, most of them as rejected duplicates,
-    /// and builders with transaction events disabled have no writer.
-    fn emit_validated_insert_event(
-        &self,
-        event_type: TransactionEventType,
-        tx_hash: TxHash,
-        data: impl FnOnce() -> Map<String, serde_json::Value>,
-    ) {
+    /// Journals an accepted validated insert: the delivery record for a forwarded transaction.
+    ///
+    /// The event's fields are built only when an event writer is configured; builders with
+    /// transaction events disabled have no writer.
+    fn emit_validated_insert_accepted(&self, tx_hash: TxHash, encoded_len: usize) {
         let _ = transaction_event!(
             producer: TransactionEventProducer::BaseBuilder,
-            event_type: event_type,
+            event_type: TransactionEventType::TxpoolValidatedInsertAccepted,
             tx_hash: tx_hash,
             id: {
                 "builder_host" => BUILDER_HOST.as_str(),
                 "tx_hash" => format!("{tx_hash:#x}"),
             },
             data: {
-                let mut data = data();
-                data.entry("rpc_method".to_string())
-                    .or_insert_with(|| json!("base_insertValidatedTransaction"));
-                data
+                "encoded_len" => encoded_len,
+                "rpc_method" => "base_insertValidatedTransaction",
             },
         );
     }
@@ -413,7 +395,8 @@ mod tests {
     use alloy_signer_local::PrivateKeySigner;
     use base_bundles::MeterBundleResponse;
     use base_common_consensus::{BaseTransactionSigned, BaseTypedTransaction, TxDeposit};
-    use reth_transaction_pool::noop::NoopTransactionPool;
+    use base_observability_events::TransactionEventCapture;
+    use reth_transaction_pool::{noop::NoopTransactionPool, pool::AddedTransactionState};
 
     use super::*;
     use crate::{
@@ -924,5 +907,48 @@ mod tests {
         assert!(is_already_imported_rejection(&duplicate), "{duplicate:?}");
         let underpriced = reject(PoolErrorKind::ReplacementUnderpriced).unwrap_err();
         assert!(!is_already_imported_rejection(&underpriced), "{underpriced:?}");
+    }
+
+    /// Only an accepted insert is journaled. A rejection is returned to the forwarding node,
+    /// which journals it, so the builder journaling it too would repeat the same verdict.
+    #[test]
+    fn accepted_inserts_are_journaled_and_rejections_are_not() {
+        let capture = TransactionEventCapture::install();
+        let handler = BuilderApiImpl::new(NoopTransactionPool::<BasePooledTransaction>::new());
+        let accepted = TxHash::repeat_byte(0x21);
+        let duplicate = TxHash::repeat_byte(0x22);
+        let underpriced = TxHash::repeat_byte(0x23);
+        let outcome =
+            AddedTransactionOutcome { hash: accepted, state: AddedTransactionState::Pending };
+
+        handler.finish_insert(accepted, 7, None, Ok(outcome)).unwrap();
+        let _ = handler.finish_insert(
+            duplicate,
+            0,
+            None,
+            Err(PoolError::new(duplicate, PoolErrorKind::AlreadyImported)),
+        );
+        let _ = handler.finish_insert(
+            underpriced,
+            0,
+            None,
+            Err(PoolError::new(underpriced, PoolErrorKind::ReplacementUnderpriced)),
+        );
+
+        let journaled: Vec<(Option<TxHash>, TransactionEventType, Option<u64>)> = capture
+            .events()
+            .into_iter()
+            .filter(|event| {
+                [Some(accepted), Some(duplicate), Some(underpriced)].contains(&event.tx_hash)
+            })
+            .map(|event| {
+                let encoded_len = event.data.get("encoded_len").and_then(|len| len.as_u64());
+                (event.tx_hash, event.event_type, encoded_len)
+            })
+            .collect();
+        assert_eq!(
+            journaled,
+            [(Some(accepted), TransactionEventType::TxpoolValidatedInsertAccepted, Some(7))]
+        );
     }
 }

@@ -209,7 +209,8 @@ including `BUILDER_DEFERRED`, `BUILDER_EXPIRED`, `BUILDER_ACCEPTED`, and
 replacement is a fresh admission with its own `tx_hash` and/or predicate list;
 `TXPOOL_REPLACED.replacement_hash` links the outgoing transaction to the
 incoming one. `base_insertValidatedTransaction` uses
-`TXPOOL_VALIDATED_INSERT_ACCEPTED` / `TXPOOL_VALIDATED_INSERT_REJECTED`.
+`TXPOOL_VALIDATED_INSERT_ACCEPTED`; its rejections are journaled by the
+forwarding node as `TXPOOL_BUILDER_FORWARD_FAILURE`.
 
 Forwarding:
 
@@ -219,19 +220,36 @@ Forwarding:
 - `TXPOOL_BUILDER_FORWARD_FAILURE`
 - `TXPOOL_BUILDER_FORWARD_DROPPED`
 - `TXPOOL_VALIDATED_INSERT_ACCEPTED`
-- `TXPOOL_VALIDATED_INSERT_REJECTED`
+- `TXPOOL_VALIDATED_INSERT_REJECTED` (retired)
 
 A mempool node forwards each pending transaction to every configured builder,
 and forwards it again every `--tx-forwarding-resend-after-ms` while it stays
 pending. A transaction carrying validity predicates is resent only after its
 forward to that builder failed. Each destination has its own pool reader and queue, so the mempool
 node does not journal the hand-off: it no longer emits
-`TXPOOL_BUILDER_CONSUMED` or `TXPOOL_BUILDER_FORWARD_SUCCESS`. Successful
-delivery is recorded by the receiving builder as
-`TXPOOL_VALIDATED_INSERT_ACCEPTED` or `TXPOOL_VALIDATED_INSERT_REJECTED`,
-whose event ID includes the builder host. A send that fails is recorded by the
-mempool node as `TXPOOL_BUILDER_FORWARD_FAILURE` or
-`TXPOOL_BUILDER_FORWARD_DROPPED`. `TXPOOL_BUILDER_FORWARD_ATTEMPT` is emitted
+`TXPOOL_BUILDER_CONSUMED` or `TXPOOL_BUILDER_FORWARD_SUCCESS`. Each builder
+verdict is journaled once:
+
+- Delivery is recorded by the receiving builder as
+  `TXPOOL_VALIDATED_INSERT_ACCEPTED`, whose event ID includes the builder
+  host.
+- A rejection is recorded by the mempool node as
+  `TXPOOL_BUILDER_FORWARD_FAILURE`, whose event ID includes the builder URL
+  and whose `data.error` carries the builder's rejection message. The builder
+  no longer emits `TXPOOL_VALIDATED_INSERT_REJECTED`, which repeated that
+  verdict; its `txpool.builder_rpc.txs_rejected{reason}` metric still counts
+  rejections by reason.
+- A duplicate of a transaction the builder's pool already holds
+  (`already imported`) is delivered as surely as an accepted insert, so
+  neither side journals it and the builder's earlier
+  `TXPOOL_VALIDATED_INSERT_ACCEPTED` stands for it. Every mempool node
+  forwards to every builder and resends while a transaction stays pending, so
+  before validity transactions were resent only after a failure these
+  duplicates were most of the forward failures on mainnet.
+- A send that fails without a builder verdict is recorded by the mempool node
+  as `TXPOOL_BUILDER_FORWARD_DROPPED`.
+
+`TXPOOL_BUILDER_FORWARD_ATTEMPT` is emitted
 only for RPC retries (`data.attempt` >= 1). The time a transaction was queued
 for each destination, its position in the pool iterator, and how many times it
 was resent are not journaled; the reader and forwarder metrics cover them in

@@ -48,7 +48,6 @@ metrics = { workspace = true, optional = true }
 # misc
 lru.workspace = true
 serde.workspace = true
-serde_json.workspace = true
 c-kzg.workspace = true
 revm.workspace = true
 futures.workspace = true
@@ -64,6 +63,7 @@ jsonrpsee = { workspace = true, features = ["http-client", "server", "macros"] }
 
 [dev-dependencies]
 rstest.workspace = true
+serde_json.workspace = true
 criterion.workspace = true
 iai-callgrind.workspace = true
 alloy-signer.workspace = true
@@ -75,6 +75,7 @@ metrics-util = { workspace = true, features = ["debugging"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
 reth-transaction-pool = { workspace = true, features = ["test-utils"] }
 tokio = { workspace = true, features = ["time", "rt-multi-thread", "macros"] }
+base-observability-events = { workspace = true, features = ["test-utils"] }
 
 [[bench]]
 name = "ingest_codec"
