@@ -149,8 +149,9 @@ pub struct CohortMetrics {
     /// Total gas limit declared by confirmed transactions in this cohort.
     #[serde(default)]
     pub total_gas_limit: u64,
-    /// Total fee paid by confirmed transactions in this cohort, in wei
-    /// (`gas_used * effective_gas_price` summed over the cohort).
+    /// Total execution fee paid by confirmed transactions in this cohort, in wei
+    /// (`gas_used * effective_gas_price` summed over the cohort). Excludes the L1 data fee and
+    /// the operator fee.
     #[serde(default)]
     pub total_fee_wei: u128,
     /// Total priority fee paid to the sequencer by confirmed transactions in this cohort, in wei

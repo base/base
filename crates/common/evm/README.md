@@ -56,7 +56,7 @@ caller of `transact` takes right after the call returns. `Eip8130Executor` publi
 | Coinbase tip, `BaseFeeVault`, `OperatorFeeVault` | on `gas_used` | on `gas_limit` |
 | Receipt `gasUsed`, `cumulativeGasUsed`, header `gas_used` | metered | `gas_limit`, so `gasUsed * effectiveGasPrice` is the fee paid and receipts still sum to the header |
 | `eth_call`, `eth_estimateGas`, `eth_simulateV1` with `validation=false` (`disable_fee_charge`) | metered | metered: simulation bills nothing, so estimation still finds the gas a call needs and a simulated call without `gas` does not consume the block's remaining gas |
-| `eth_simulateV1` with `validation=true`, `debug_trace*` / `trace_*` replays (fee charging on) | metered | the reserved gas, as a receipt reports it, with call frames and per-opcode trace costs still metered |
+| `eth_simulateV1` with `validation=true`, `debug_trace*` / `trace_*` replays of included transactions (fee charging on) | metered | the reserved gas, as a receipt reports it (`gas_limit + payer_floor` for a sponsored EIP-8130 transaction), with call frames and per-opcode trace costs still metered; `eth_simulateV1` rejects EIP-8130 requests |
 | Deposit transactions | no fee, metered gas | no fee, metered gas |
 | L1 data fee, DA footprint, intrinsic gas, pool ordering | unchanged | unchanged |
 
@@ -74,8 +74,8 @@ behaves exactly like the standard handler: signatures are still verified, the no
 validated and the sender's nonce consumed, and the fee caps are still sanity-checked, but the
 payer's balance is not checked, nothing is pre-charged and no settlement transfer runs, and the
 result reports the metered gas net of the EIP-3529-capped refund. RPC requests for EIP-8130
-(`eth_call`, `eth_estimateGas`, `eth_simulateV1`) route through `Eip8130Executor::simulate`, which
-never settles fees; honoring the flag in `execute` makes a fee-charge-disabled execution of a
+(`eth_call`, `eth_estimateGas`) route through `Eip8130Executor::simulate`, which never settles
+fees, and `eth_simulateV1` rejects them; honoring the flag in `execute` makes a fee-charge-disabled execution of a
 *signed* EIP-8130 transaction behave the same way, so the two entry points cannot diverge.
 
 ## License

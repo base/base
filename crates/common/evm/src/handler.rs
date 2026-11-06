@@ -269,7 +269,9 @@ where
         init_and_floor_gas: InitialAndFloorGas,
         eip7702_gas_refund: i64,
     ) -> Result<ResultGas, Self::Error> {
-        // Same steps as revm's `post_execution`, with the gas-limit billing hook between the
+        // Same steps as revm-handler 43.0.3's default `post_execution` (re-check this copy on every
+        // revm upgrade: a new or reordered default step does not reach Base otherwise), with the
+        // gas-limit billing hook between the
         // refund and the result gas. It lives here, not in `refund`, because the metered gas
         // recorded below needs the EIP-7623 floor, which only this step is handed.
         self.refund(evm, exec_result, eip7702_gas_refund)?;

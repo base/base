@@ -458,8 +458,9 @@ impl Eip8130Executor {
         }
         .set();
 
-        // The gas refund is already folded into `gas_used` (via `net_used` in
-        // `settle_fees`), so the `refunded` counter is left 0.
+        // `gas_used` is already final: the billed budget under gas-limit billing (no refund at
+        // all), otherwise metered gas net of the EIP-3529-capped refund (see `billable_gas` and
+        // `metered_gas_used`). The `refunded` counter is therefore left 0.
         let result_gas = ResultGas::new_with_state_gas(gas_used, 0, 0, 0);
         if calls.reverted {
             // The transaction is still included (nonce consumed, fee paid). Logs
@@ -501,6 +502,12 @@ impl Eip8130Executor {
     /// transaction's gas limit and the reported gas is that run's metered gas.
     /// In [`Eip8130ExecutionMode::Simulate`] the reported gas is the searched
     /// gas limit at which the calls succeed.
+    ///
+    /// Under gas-limit billing the `Simulate` figure is the sender's budget only:
+    /// it leaves out payer authentication, which settlement adds on top as
+    /// `payer_floor`, so it can be used directly as `gas_limit`. The `Call`-mode
+    /// figure (and [`Self::simulate_single_run`]) still includes
+    /// `payer_auth_cost`; no RPC exposes it as a gas limit today.
     pub fn simulate<DB, I, P>(
         evm: &mut BaseEvm<DB, I, P>,
     ) -> Result<ExecutionResult<BaseHaltReason>, EVMError<DB::Error, BaseTransactionError>>
@@ -1359,8 +1366,10 @@ impl Eip8130Executor {
     /// Pre-charges the payer the worst-case fee, returning the amount debited.
     /// The full `gas_limit` (plus payer authentication) is reserved at the
     /// effective price — alongside the L1 and worst-case operator fee — so the
-    /// `calls` cannot spend gas money; the surplus is refunded in
-    /// [`Self::settle_fees`]. Skipped entirely when fee charging is disabled.
+    /// `calls` cannot spend gas money. [`Self::settle_fees`] refunds the surplus
+    /// over the billed gas; under gas-limit billing the billed gas is the whole
+    /// reservation, so the gas surplus is zero. Skipped entirely when fee
+    /// charging is disabled.
     fn prepay<DB>(
         ctx: &mut BaseContext<DB>,
         outcome: &Eip8130Outcome,
@@ -1601,8 +1610,10 @@ impl Eip8130Executor {
             >,
     {
         let Some(inputs) = inputs else { return };
-        let mut gas = Gas::new(gas_limit);
-        let _ = gas.record_regular_cost(gas_used.min(gas_limit));
+        // A sponsored transaction settles `gas_limit + payer_floor` under gas-limit billing, more
+        // than the sender's `gas_limit`; widen the root so it reports what the receipt bills.
+        let mut gas = Gas::new(gas_limit.max(gas_used));
+        let _ = gas.record_regular_cost(gas_used);
         let mut outcome = CallOutcome::new(
             InterpreterResult {
                 result: if reverted {
@@ -3211,6 +3222,61 @@ mod tests {
                 gas_used: metered.tx_gas_used(),
                 payer_auth_gas_reserved: Some(payer_floor)
             }
+        );
+    }
+
+    /// Records the gas spent by the last frame to close, which for an inspected
+    /// EIP-8130 transaction is the synthetic transaction root.
+    #[derive(Debug, Default)]
+    struct RootGasSpent(Option<u64>);
+
+    impl<CTX> Inspector<CTX> for RootGasSpent {
+        fn call_end(&mut self, _: &mut CTX, _: &CallInputs, outcome: &mut CallOutcome) {
+            self.0 = Some(outcome.result.gas.spent());
+        }
+    }
+
+    /// Under gas-limit billing a sponsored transaction settles
+    /// `gas_limit + payer_floor`, more than the sender's `gas_limit`. The trace
+    /// root reports that billed gas, as the receipt does, instead of capping it
+    /// at `gas_limit`.
+    #[test]
+    fn gas_limit_billing_trace_root_reports_the_billed_gas_of_a_sponsored_tx() {
+        let key = signing_key(0x3c);
+        let sender = eoa_address(&key);
+        let payer_key = signing_key(0x3d);
+        let payer = eoa_address(&payer_key);
+        let target = address!("0x00000000000000000000000000000000000000cc");
+        let contracts = [(target, bytes!("00"))];
+
+        let tx = TxEip8130 {
+            payer: Some(Eip8130Constants::OPEN_PAYER),
+            calls: vec![vec![Call { to: target, value: U256::ZERO, data: Bytes::new() }]],
+            ..base_tx()
+        };
+        let gas_limit = tx.gas_limit;
+        let sender_auth = eoa_sig(&key, tx.sender_signature_hash());
+        let payer_auth = eoa_sig(&payer_key, tx.payer_signature_hash(sender));
+        let signed = Eip8130Signed::new(tx, sender_auth, payer_auth);
+        let envelope = BaseTxEnvelope::Eip8130(signed.clone());
+        let encoded: Bytes = alloy_eips::eip2718::Encodable2718::encoded_2718(&envelope).into();
+        let payer_floor =
+            IntrinsicGas::compute(&signed, &encoded, &IntrinsicGasInput::new(sender, true))
+                .expect("intrinsic gas")
+                .payer_floor;
+        assert!(payer_floor > 0, "a sponsored transaction reserves payer authentication");
+
+        let mut evm = settlement_evm(BaseUpgrade::Everest, payer, &contracts)
+            .with_inspector(RootGasSpent::default());
+        evm.set_inspector_enabled(true);
+        let outcome = evm.transact_raw(into_base_tx(&signed)).expect("tx should execute");
+        let _ = MeteredGas::take();
+        assert!(outcome.result.is_success());
+        assert_eq!(outcome.result.tx_gas_used(), gas_limit + payer_floor);
+        assert_eq!(
+            evm.components().1.0,
+            Some(gas_limit + payer_floor),
+            "the trace root must report the billed gas, not the sender's gas limit"
         );
     }
 
