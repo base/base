@@ -33,6 +33,8 @@ Under the `GasLimitBilling` feature (gas-limit billing, activated by the Everest
 charges a non-deposit transaction for its full declared `gas_limit` instead of the
 gas it consumed, so a transaction's fee is fixed by public inputs before it executes and a
 high-tip transaction that reverts early costs what the execution it was sized for would have cost.
+The rationale, billing rule, implementation boundaries, alternatives, and open design decisions are in
+[`docs/guides/GAS_LIMIT_BILLING.md`](../../../docs/guides/GAS_LIMIT_BILLING.md).
 
 The mechanism is one hook: `BaseHandler::refund` spends the transaction's remaining gas and drops
 its refund counter when the feature is active, fee charging is enabled, and the transaction is not
