@@ -524,6 +524,11 @@ pub(crate) struct TwoDNoncePool<T: BasePooledTx> {
     shared_lanes: HashSet<LaneId>,
     /// Replay ids of the nonce-free transactions that are not dormant.
     ready_nonce_free: HashSet<B256>,
+    /// With dormancy enforced, the lanes with a non-empty pending run, so a
+    /// snapshot costs the lanes it offers rather than every dormant one.
+    pending_lanes: HashSet<LaneId>,
+    /// The shared lanes in `pending_lanes`, which bridging walks.
+    pending_shared_lanes: HashSet<LaneId>,
     dormancy: Dormancy,
 }
 
@@ -554,6 +559,8 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
             ahead_of_state: HashMap::default(),
             shared_lanes: HashSet::default(),
             ready_nonce_free: HashSet::default(),
+            pending_lanes: HashSet::default(),
+            pending_shared_lanes: HashSet::default(),
             dormancy: Dormancy::new(ValidityDormancyMode::Off),
         }
     }
@@ -688,10 +695,11 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
         let Some(lane) = self.lanes.get(&lane_id) else {
             self.ahead_of_state.remove(&lane_id);
             self.shared_lanes.remove(&lane_id);
-            if self.dormancy.is_enforced()
-                && let Some(root) = self.dormancy.dormant_lane_root(&lane_id)
-            {
-                self.dormancy.remove(root);
+            if self.dormancy.is_enforced() {
+                if let Some(root) = self.dormancy.dormant_lane_root(&lane_id) {
+                    self.dormancy.remove(root);
+                }
+                self.refresh_pending_indexes(lane_id);
             }
             return;
         };
@@ -718,10 +726,25 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
             self.eviction_order.insert(key);
             self.lane_candidates.insert(lane_id, key);
         }
-        if self.dormancy.is_enforced()
-            && let Some(lane) = self.lanes.get_mut(&lane_id)
-        {
-            lane.root_dormant = root_dormant;
+        if self.dormancy.is_enforced() {
+            if let Some(lane) = self.lanes.get_mut(&lane_id) {
+                lane.root_dormant = root_dormant;
+            }
+            self.refresh_pending_indexes(lane_id);
+        }
+    }
+
+    /// Brings `pending_lanes` and `pending_shared_lanes` in line with
+    /// `lane_id`. Called only with dormancy enforced.
+    fn refresh_pending_indexes(&mut self, lane_id: LaneId) {
+        if self.lanes.get(&lane_id).is_some_and(|lane| lane.pending_len() > 0) {
+            self.pending_lanes.insert(lane_id);
+            if self.shared_lanes.contains(&lane_id) {
+                self.pending_shared_lanes.insert(lane_id);
+            }
+        } else {
+            self.pending_lanes.remove(&lane_id);
+            self.pending_shared_lanes.remove(&lane_id);
         }
     }
 
@@ -1228,12 +1251,18 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
     pub(crate) fn mark_shared_lane(&mut self, lane_id: LaneId) {
         if self.lanes.contains_key(&lane_id) {
             self.shared_lanes.insert(lane_id);
+            if self.dormancy.is_enforced() {
+                self.refresh_pending_indexes(lane_id);
+            }
         }
     }
 
     /// Clears the shared flag once the other store holds nothing in `lane_id`.
     pub(crate) fn unmark_shared_lane(&mut self, lane_id: &LaneId) {
         self.shared_lanes.remove(lane_id);
+        if self.dormancy.is_enforced() {
+            self.pending_shared_lanes.remove(lane_id);
+        }
     }
 
     /// Whether `lane_id` is flagged as shared with another store.
@@ -1243,12 +1272,18 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
 
     /// The shared lanes with a pending run, with the nonce right after it. A
     /// dormant root ends its lane's run, so its lane is left out unless
-    /// `offer_dormant`, as for a snapshot that ignores dormancy.
+    /// `offer_dormant`, as for a snapshot that ignores dormancy. With
+    /// dormancy enforced this walks only the shared lanes with a pending run.
     pub(crate) fn shared_lanes_pending_end(
         &self,
         offer_dormant: bool,
     ) -> impl Iterator<Item = (LaneId, u64)> + '_ {
-        self.shared_lanes.iter().filter_map(move |lane_id| {
+        let lanes = if self.dormancy.is_enforced() && !offer_dormant {
+            &self.pending_shared_lanes
+        } else {
+            &self.shared_lanes
+        };
+        lanes.iter().filter_map(move |lane_id| {
             self.lanes.get(lane_id)?.offered_end(offer_dormant).map(|end| (*lane_id, end))
         })
     }
@@ -1433,7 +1468,9 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
     /// balances change (see `refresh_tip_backing`), so the snapshot costs the
     /// pending lanes, not every transaction. A dormant root ends its lane's
     /// pending run, so its lane offers nothing, unless `offer_dormant` asks
-    /// for a snapshot that ignores dormancy, as Off takes.
+    /// for a snapshot that ignores dormancy, as Off takes. With dormancy
+    /// enforced the snapshot walks and allocates for the lanes with a pending
+    /// run only.
     pub(crate) fn best_transactions<O>(
         &self,
         ordering: O,
@@ -1443,10 +1480,9 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
     where
         O: TransactionOrdering<Transaction = T>,
     {
-        let lanes = self.lanes.iter().map(|(id, lane)| (*id, lane));
         if !self.dormancy.is_enforced() || offer_dormant {
             return BestTwoDTransactions::new(
-                lanes,
+                self.lanes.iter().map(|(id, lane)| (*id, lane)),
                 self.nonce_free.values(),
                 self.protocol_nonce_lanes,
                 true,
@@ -1455,7 +1491,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
             );
         }
         BestTwoDTransactions::new(
-            lanes,
+            self.pending_lanes.iter().filter_map(|id| Some((*id, self.lanes.get(id)?))),
             self.ready_nonce_free.iter().filter_map(|replay_id| self.nonce_free.get(replay_id)),
             self.protocol_nonce_lanes,
             false,
@@ -1785,6 +1821,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
                 if let Some(lane) = self.lanes.get_mut(&lane_id) {
                     lane.root_dormant = true;
                 }
+                self.refresh_pending_indexes(lane_id);
             }
             Some(DormantSlot::NonceFree(replay_id)) => {
                 self.ready_nonce_free.remove(&replay_id);
@@ -3359,6 +3396,42 @@ mod tests {
         assert_eq!(pool.best_transactions(BaseOrdering::coinbase_tip(), 0, false).count(), 2);
         assert_eq!(pool.shared_lanes_pending_end(false).collect::<Vec<_>>(), vec![(lane, 2)]);
         assert_eq!(pool.pending_and_queued_txn_count(), (2, 0));
+    }
+
+    /// With dormancy enforced, a snapshot and bridging cost the lanes with a
+    /// pending run, whatever the number of dormant ones.
+    #[test]
+    fn an_enforced_snapshot_walks_only_lanes_with_a_pending_run() {
+        let mut pool = protocol_lane_pool();
+        pool.set_dormancy_mode(ValidityDormancyMode::Enforce);
+        let mut roots = Vec::new();
+        for _ in 0..4 {
+            let signer = signer();
+            let root = valid_pool_transaction(signed_1559(&signer, 0, 1_000));
+            let hash = *root.hash();
+            pool.insert_validated(root, 0).unwrap();
+            pool.mark_shared_lane((signer.address(), U256::ZERO));
+            roots.push(pool.get(&hash).unwrap());
+        }
+        let tip = B256::repeat_byte(1);
+        let build = pool.begin_build(B256::ZERO, 1, None);
+        pool.seal_build(build, tip);
+        pool.take_dormancy_batch(tip).unwrap();
+        let blocker = ValidityPredicate::BlockNumber {
+            op: ValidityOperator::GreaterThanOrEqual,
+            value: U256::from(10),
+        };
+        let dormant =
+            DormancyClassification::Dormant { predicate: blocker, release_block: Some(10) };
+        pool.install_dormancy(
+            roots[1..].iter().map(|root| (Arc::clone(root), dormant.clone())).collect(),
+        );
+
+        let best = pool.best_transactions(BaseOrdering::coinbase_tip(), 0, false);
+        assert_eq!(best.lanes.capacity(), 1, "the snapshot allocates for the ready lane only");
+        assert_eq!(best.count(), 1);
+        assert_eq!(pool.pending_shared_lanes.len(), 1, "bridging walks the ready lane only");
+        assert_eq!(pool.shared_lanes_pending_end(false).count(), 1);
     }
 
     #[test]

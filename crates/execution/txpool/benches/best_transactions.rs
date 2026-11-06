@@ -11,6 +11,9 @@
 //! - `drain_shared`: the snapshot plus yielding every shared validity head and the standard
 //!   transactions it releases, so the merge accumulates many released lanes at once.
 //!
+//! `dormant_scaling` holds 1 000 ready validity transactions and a growing number of dormant
+//! ones with dormancy enforced; its snapshot time should stay flat as the dormant count grows.
+//!
 //! `dormant` is the `isolated` pool with dormancy enforced and every validity transaction
 //! blocked on an unset storage slot, so the snapshot walks only the standard transactions.
 //! `dormant_shared` makes 20 000 of those dormant validity transactions shared lanes with a
@@ -117,13 +120,7 @@ fn large_pool(
             shared.push(standard(&signer, 1, successor_tip));
         }
         add(&pool, shared).await;
-        // The builder seals block 1, which the canonical chain then reaches, so queued
-        // transactions are classified.
-        let block_hash = B256::repeat_byte(1);
-        if let Some(build) = pool.begin_dormancy_build(B256::ZERO, 1, None) {
-            build.seal(block_hash);
-        }
-        pool.advance_dormancy(&[BlockNumHash::new(1, block_hash)]);
+        classify(&pool);
         pool
     });
     // A dormant root ends its lane's pending run, so dormant validity transactions are queued.
@@ -132,6 +129,53 @@ fn large_pool(
     assert_eq!(size.pending, PENDING_STANDARD + VALIDITY - dormant, "ready validity is pending");
     assert_eq!(size.queued, QUEUED_STANDARD + dormant, "standard successors are queued");
     (pool, runtime)
+}
+
+/// The builder seals block 1, which the canonical chain then reaches, so queued transactions are
+/// classified.
+fn classify(pool: &BenchPool) {
+    let block_hash = B256::repeat_byte(1);
+    if let Some(build) = pool.begin_dormancy_build(B256::ZERO, 1, None) {
+        build.seal(block_hash);
+    }
+    pool.advance_dormancy(&[BlockNumHash::new(1, block_hash)]);
+}
+
+/// Ready validity transactions in every `dormant_scaling` pool.
+const SCALING_READY: usize = 1_000;
+
+/// A pool enforcing dormancy with [`SCALING_READY`] ready validity transactions and `dormant`
+/// dormant ones, each from its own sender.
+fn dormant_scaling_pool(dormant: usize) -> (BenchPool, tokio::runtime::Runtime) {
+    let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap();
+    let pool = runtime.block_on(async {
+        let (pool, client) = build_pool(QUEUED_STANDARD);
+        let pool = pool.with_validity_dormancy(ValidityDormancyMode::Enforce);
+        let ready: Vec<_> = (0..SCALING_READY)
+            .map(|index| validity(&funded_signer(&client), 0, 2 + index as u128 % 50))
+            .collect();
+        add(&pool, ready).await;
+        let blocked: Vec<_> = (0..dormant)
+            .map(|index| dormant_validity(&funded_signer(&client), 2 + index as u128 % 50))
+            .collect();
+        add(&pool, blocked).await;
+        classify(&pool);
+        pool
+    });
+    assert_eq!(pool.pool_size().pending, SCALING_READY, "only the ready transactions are pending");
+    (pool, runtime)
+}
+
+fn dormant_scaling_benches(c: &mut Criterion) {
+    let mut group = c.benchmark_group("txpool/best_transactions/dormant_scaling");
+    group.sample_size(20);
+    for dormant in [0, 25_000, 75_000] {
+        let (pool, _runtime) = dormant_scaling_pool(dormant);
+        group.bench_with_input(BenchmarkId::new("snapshot", dormant), &pool, |b, pool| {
+            b.iter(|| black_box(pool.best_transactions()));
+        });
+    }
+    group.finish();
 }
 
 fn best_transactions_benches(c: &mut Criterion) {
@@ -171,5 +215,5 @@ fn best_transactions_benches(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, best_transactions_benches);
+criterion_group!(benches, best_transactions_benches, dormant_scaling_benches);
 criterion_main!(benches);
