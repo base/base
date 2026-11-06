@@ -574,7 +574,7 @@ async fn postgres_day_partitions_disable_vacuum_truncate() -> anyhow::Result<()>
 
 /// 008 builds the extraction planning index on day partitions that are still
 /// empty, leaves populated ones to age out without it, and partitions created
-/// afterwards get it when they attach. The index covers DataPilot's range
+/// afterwards get it when they attach. The index covers `DataPilot`'s range
 /// split query, so the planner can answer it with an index-only scan.
 #[tokio::test]
 async fn postgres_ingested_at_btree_covers_extraction_planning() -> anyhow::Result<()> {
