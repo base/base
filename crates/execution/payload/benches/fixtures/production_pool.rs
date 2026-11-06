@@ -10,10 +10,10 @@
 //! [`BaseTransactionPool::new`], then configured with guard limits and a validity dormancy mode.
 //! [`ProductionPool::maintain_canonical`] runs the node's canonical state-diff maintenance.
 
-use std::sync::Arc;
+use std::{ops::Range, sync::Arc};
 
 use alloy_consensus::{Header, SignableTransaction, TxEip1559};
-use alloy_eips::eip2718::Encodable2718;
+use alloy_eips::{BlockNumHash, eip2718::Encodable2718};
 use alloy_primitives::{Address, B256, Bytes, Signature, TxHash, TxKind, U256, keccak256};
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
@@ -75,6 +75,9 @@ const SUB_POOL_TRANSACTIONS: usize = 250_000;
 const SUB_POOL_BYTES: usize = 1 << 30;
 /// Transactions admitted per validation batch.
 const ADMISSION_BATCH: usize = 4_096;
+/// Recipient of filler and resting transfers, whose distinct values keep otherwise identical
+/// transfers apart: every transfer carries the same test signature.
+const SINK: Address = Address::repeat_byte(0xee);
 
 /// Address families, so senders, watched accounts, and filler never collide.
 #[derive(Debug, Clone, Copy)]
@@ -87,6 +90,9 @@ pub enum Accounts {
     Watched = 2,
     /// Senders of ordinary transfers.
     Ordinary = 3,
+    /// Senders of the transfers that satisfy resting validity transactions by funding their
+    /// watched accounts.
+    Satisfier = 4,
 }
 
 impl Accounts {
@@ -194,23 +200,54 @@ impl ProductionPool {
             .enumerate()
             .map(|(offset, sender)| {
                 self.fund(*sender);
-                self.eip1559(*sender, 0, ORDINARY_PRIORITY_FEE, (first + offset) as u64, Vec::new())
+                self.eip1559(
+                    *sender,
+                    0,
+                    ORDINARY_PRIORITY_FEE,
+                    SINK,
+                    U256::from(first + offset),
+                    Vec::new(),
+                )
             })
             .collect();
         (self.admit(transactions), senders)
     }
 
-    /// Admits `lanes` resting lanes of `kind`, lane `i` gated by `predicates(i)`, returning every
+    /// Admits one ordinary transfer per lane in `lanes`, from fresh funded senders `first..`, that
+    /// funds the lane's watched account with the one wei [`watched_balance_is_one`] requires,
+    /// returning their hashes and senders.
+    pub fn admit_satisfiers(&self, first: usize, lanes: &[usize]) -> (Vec<TxHash>, Vec<Address>) {
+        let senders: Vec<Address> =
+            (first..first + lanes.len()).map(|index| Accounts::Satisfier.address(index)).collect();
+        let transactions = senders
+            .iter()
+            .zip(lanes)
+            .map(|(sender, lane)| {
+                self.fund(*sender);
+                self.eip1559(
+                    *sender,
+                    0,
+                    ORDINARY_PRIORITY_FEE,
+                    Accounts::Watched.address(*lane),
+                    U256::ONE,
+                    Vec::new(),
+                )
+            })
+            .collect();
+        (self.admit(transactions), senders)
+    }
+
+    /// Admits resting lanes `lanes` of `kind`, lane `i` gated by `predicates(i)`, returning every
     /// admitted hash and the protocol senders the build state must fund.
     pub fn admit_resting(
         &self,
         kind: RestingKind,
-        lanes: usize,
+        lanes: Range<usize>,
         predicates: impl Fn(usize) -> Vec<ValidityPredicate>,
     ) -> (Vec<TxHash>, Vec<Address>) {
-        let mut senders = Vec::with_capacity(lanes);
-        let mut transactions = Vec::with_capacity(lanes * kind.transactions_per_lane());
-        for lane in 0..lanes {
+        let mut senders = Vec::with_capacity(lanes.len());
+        let mut transactions = Vec::with_capacity(lanes.len() * kind.transactions_per_lane());
+        for lane in lanes {
             match kind {
                 RestingKind::Protocol | RestingKind::ProtocolDescendants => {
                     let sender = Accounts::Validity.address(lane);
@@ -220,7 +257,8 @@ impl ProductionPool {
                         sender,
                         0,
                         VALIDITY_PRIORITY_FEE,
-                        lane as u64,
+                        SINK,
+                        U256::from(lane),
                         predicates(lane),
                     ));
                     for nonce in 1..kind.transactions_per_lane() as u64 {
@@ -228,7 +266,8 @@ impl ProductionPool {
                             sender,
                             nonce,
                             VALIDITY_PRIORITY_FEE,
-                            lane as u64,
+                            SINK,
+                            U256::from(lane),
                             Vec::new(),
                         ));
                     }
@@ -293,16 +332,25 @@ impl ProductionPool {
         });
     }
 
-    /// Runs the node's canonical state-diff maintenance for block `number`, whose changes `bundle`
-    /// holds: invalidates guarded transactions the diff affects, then advances validity dormancy,
-    /// as `maintain_state_diff_invalidation` does for each committed block. The blocking work runs
-    /// on the calling thread rather than a blocking pool, so the caller can time it.
-    pub fn maintain_canonical(&self, number: u64, bundle: &BundleState) {
+    /// Runs the node's canonical state-diff maintenance for block `canonical`, whose changes
+    /// `bundle` holds: invalidates guarded transactions the diff affects, then advances validity
+    /// dormancy, which checks the builder's tip and classifies queued transactions against the
+    /// provider's state, as `maintain_state_diff_invalidation` does for each committed block. The
+    /// blocking work runs on the calling thread rather than a blocking pool, so the caller can
+    /// time it.
+    pub fn maintain_canonical(&self, canonical: BlockNumHash, bundle: &BundleState) {
         let diffs = AccountStateDiff::collect(bundle);
         if !diffs.is_empty() {
             self.pool.invalidate_from_state_diff(&diffs);
         }
-        self.pool.advance_dormancy(number, bundle);
+        self.pool.advance_dormancy(&[canonical]);
+    }
+
+    /// Removes `hashes` from the pool, as a cancellation or eviction does.
+    pub fn remove(&self, hashes: Vec<TxHash>) {
+        let count = hashes.len();
+        let removed = self.pool.remove_transactions(hashes);
+        assert_eq!(removed.len(), count, "every removed transaction was pooled");
     }
 
     /// Returns whether the pool holds `hash`.
@@ -315,7 +363,8 @@ impl ProductionPool {
         sender: Address,
         nonce: u64,
         priority_fee: u128,
-        salt: u64,
+        to: Address,
+        value: U256,
         predicates: Vec<ValidityPredicate>,
     ) -> BasePooledTransaction {
         let tx = TxEip1559 {
@@ -324,9 +373,8 @@ impl ProductionPool {
             gas_limit: TRANSFER_GAS,
             max_fee_per_gas: MAX_FEE_PER_GAS,
             max_priority_fee_per_gas: priority_fee,
-            to: TxKind::Call(Address::repeat_byte(0xee)),
-            // Distinguishes otherwise identical transfers.
-            value: U256::from(salt),
+            to: TxKind::Call(to),
+            value,
             access_list: Default::default(),
             input: Bytes::new(),
         };

@@ -4,20 +4,25 @@
 //! The pool is the production `BaseTransactionPool` (see `fixtures/production_pool.rs`). It
 //! holds a population of high-priority validity transactions whose predicates stay unsatisfied,
 //! plus [`FILLER_PER_BLOCK`] fresh ordinary transfers admitted before every block. Each block
-//! runs the native builder's calls in order: carry the builder's resting set into the block when
-//! its resting mode is on, report the pre-selection writes to the pool, build the pool iterator,
-//! run the selection loop, report the validity transactions it found unsatisfied, store the
-//! resting set, and report the sealed block's state. Between blocks the pool mines the previous
-//! block through the node's canonical update, which also moves the base fee, and runs the node's
-//! canonical state-diff maintenance with that block's bundle, which advances validity dormancy.
+//! runs the native builder's calls in order: begin a build against the pool's dormancy index on
+//! the block's parent with the pre-selection writes, or, when the pool keeps no index and the
+//! builder's resting mode is on, carry the builder's resting set into the block; build the pool
+//! iterator; run the selection loop, which parks unsatisfied validity transactions in the pool's
+//! index and wakes them by each commit's writes; then seal the dormancy build or store the resting
+//! set under the block's hash. Between blocks the pool mines the previous block through the node's
+//! canonical update, which also moves the base fee, and runs the node's canonical state-diff
+//! maintenance for that block, which checks the dormancy tip and classifies newly admitted
+//! validity transactions against the provider's state.
 //! The matrix of populations, lane kinds, liveness cases and modes, the phases each block is split
 //! into, and the environment that selects them are described in `fixtures/resting_matrix.rs`.
 //!
 //! Every block asserts that it includes all of its ordinary traffic and nothing else, plus the
-//! woken lanes in the liveness case's wake block. When a mode withholds resting transactions, the
+//! woken lanes in the liveness case's wake block and the churn case's satisfied lanes, each of
+//! which the block must include. When a mode withholds resting transactions, the
 //! last block's probe must yield nothing but executable transactions, so the population is
 //! withheld from the iterator's input rather than yielded and skipped; under pool dormancy the
-//! pool's dormant gauge must also count every lane still resting. The liveness case also asserts
+//! pool's dormant gauge must also count every lane still resting. In the discard case these hold
+//! for the last block built on the last sealed block. The liveness case also asserts
 //! that the pool expired its expiring lanes.
 //!
 //! ```sh
@@ -32,9 +37,10 @@ pub mod production_pool;
 #[path = "fixtures/resting_matrix.rs"]
 pub mod resting_matrix;
 
-use std::{sync::Arc, time::Instant};
+use std::{collections::VecDeque, sync::Arc, time::Instant};
 
 use alloy_consensus::Header;
+use alloy_eips::BlockNumHash;
 use alloy_evm::Evm as _;
 use alloy_primitives::{Address, B256, TxHash, U256};
 use base_common_chains::BaseUpgrade;
@@ -47,12 +53,12 @@ use base_execution_payload_builder::{
     config::BaseBuilderConfig,
     payload::EthPayloadBuilderAttributes,
 };
-use base_execution_txpool::{BuilderReport, ParkableTransactionPool, ValidityDormancyMode};
+use base_execution_txpool::{ParkableTransactionPool, ValidityDormancyMode};
 use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
 use production_pool::{Accounts, ProductionPool, TRANSFER_GAS};
 use resting_matrix::{
-    BlockTiming, Case, Matrix, Mode, Phase, Probe, Report, WOKEN, block_hash, fund_woken,
-    parent_base_fee, timed_drop, wake_transitions,
+    BlockTiming, Case, Matrix, Mode, Phase, Probe, Report, block_hash, fund_woken, parent_base_fee,
+    sibling_hash, timed_drop, wake_transitions,
 };
 use reth_basic_payload_builder::PayloadConfig;
 use reth_ethereum_forks::ForkCondition;
@@ -119,10 +125,9 @@ fn chain_spec() -> Arc<BaseChainSpec> {
     )
 }
 
-/// A Denim payload context for `block`, whose parent carries the block's scheduled base fee and
-/// whose gas limit fits a block of filler plus every woken lane.
-fn payload_context(chain_spec: &Arc<BaseChainSpec>, mode: Mode, block: u64) -> Ctx {
-    let gas_limit = (FILLER_PER_BLOCK + WOKEN) as u64 * TRANSFER_GAS;
+/// A Denim payload context for `block` with `gas_limit`, whose parent carries the block's scheduled
+/// base fee.
+fn payload_context(chain_spec: &Arc<BaseChainSpec>, mode: Mode, block: u64, gas_limit: u64) -> Ctx {
     let parent = Arc::new(SealedHeader::seal_slow(Header {
         number: block - 1,
         gas_limit,
@@ -179,15 +184,19 @@ fn run_case(
 ) -> Vec<BlockTiming> {
     let pool = ProductionPool::new(CHAIN_ID, mode.dormancy());
     let lanes = case.lanes(population);
+    let churn = case.churn(matrix.churn, lanes);
     let start = Instant::now();
-    let (resting_hashes, resting_senders) =
-        pool.admit_resting(case.kind(), lanes, |lane| case.predicates(lane));
+    let (mut resting_hashes, mut resting_senders) =
+        pool.admit_resting(case.kind(), 0..lanes, |lane| case.predicates(lane));
     report.setup(case, mode, population, lanes, start.elapsed());
 
     let mut db = InMemoryDB::default();
     for sender in &resting_senders {
         fund(&mut db, *sender);
     }
+    let gas_limit = (FILLER_PER_BLOCK + case.headroom(churn)) as u64 * TRANSFER_GAS;
+    let mut live: VecDeque<usize> = (0..lanes).collect();
+    let mut satisfiers = 0;
     let store = selection::store();
     let mut mined: (Vec<TxHash>, Vec<Address>, BundleState) = Default::default();
     let mut held = None;
@@ -201,8 +210,19 @@ fn run_case(
         }
         let woken = case.woken(block);
         fund_woken(&mut db, woken.clone());
+        let (replaced, satisfied) =
+            if block > 1 { churn.take(&mut live) } else { Default::default() };
+        let fresh = resting_hashes.len()..resting_hashes.len() + replaced.len() + satisfied.len();
+        let fresh_senders: Vec<Address> =
+            fresh.clone().map(|lane| Accounts::Validity.address(lane)).collect();
+        let satisfier_senders: Vec<Address> = (satisfiers..satisfiers + satisfied.len())
+            .map(|index| Accounts::Satisfier.address(index))
+            .collect();
+        for sender in fresh_senders.iter().chain(&satisfier_senders) {
+            fund(&mut db, *sender);
+        }
 
-        let ctx = payload_context(chain_spec, mode, block);
+        let ctx = payload_context(chain_spec, mode, block, gas_limit);
         let mut state = State::builder().with_database(db.clone()).with_bundle_update().build();
         state.load_cache_account(Predeploys::L1_BLOCK_INFO).expect("in-memory load cannot fail");
         let mut builder = ctx.block_builder(&mut state).expect("block builder");
@@ -214,14 +234,29 @@ fn run_case(
             let (hashes, senders, bundle) = std::mem::take(&mut mined);
             let start = Instant::now();
             pool.mine(block - 1, previous_base_fee, attributes.basefee, hashes, &senders);
+            if !replaced.is_empty() {
+                pool.remove(replaced.iter().map(|&lane| resting_hashes[lane]).collect());
+            }
+            let (hashes, senders) =
+                pool.admit_resting(case.kind(), fresh.clone(), |lane| case.predicates(lane));
             mutation = start.elapsed();
+            assert_eq!(senders, fresh_senders, "the build state funds every new resting sender");
+            resting_hashes.extend(hashes);
+            resting_senders.extend(senders);
+            live.extend(fresh.clone());
             let start = Instant::now();
-            pool.maintain_canonical(block - 1, &bundle);
+            pool.maintain_canonical(BlockNumHash::new(block - 1, block_hash(block - 1)), &bundle);
             dormancy = start.elapsed();
         }
         let start = Instant::now();
-        let (ordinary, ordinary_senders) = pool.admit_ordinary(first_ordinary, FILLER_PER_BLOCK);
+        let (mut ordinary, mut ordinary_senders) =
+            pool.admit_ordinary(first_ordinary, FILLER_PER_BLOCK);
+        let (satisfier_hashes, admitted_satisfiers) = pool.admit_satisfiers(satisfiers, &satisfied);
         mutation += start.elapsed();
+        assert_eq!(admitted_satisfiers, satisfier_senders, "the build state funds every satisfier");
+        satisfiers += satisfied.len();
+        ordinary.extend(satisfier_hashes);
+        ordinary_senders.extend(satisfier_senders);
         let held_drop = held.take().map(timed_drop).unwrap_or_default();
         if case.expired_by() == Some(block) {
             for lane in case.expiring() {
@@ -232,18 +267,16 @@ fn run_case(
             }
         }
 
+        let discarded = case.discards(block, matrix.discard_interval);
+        let parent = if discarded { sibling_hash(block - 1) } else { block_hash(block - 1) };
         let pre_block_changes = wake_transitions(woken.clone());
         let start = Instant::now();
-        let mut resting = mode
-            .resting()
-            .is_enabled()
-            .then(|| selection::begin(&store, block_hash(block - 1), block, &pre_block_changes));
+        let dormancy_build =
+            pool.pool.begin_dormancy_build(parent, block, Some(&pre_block_changes));
+        let mut resting = (dormancy_build.is_none() && mode.resting().is_enabled())
+            .then(|| selection::begin(&store, parent, block, &pre_block_changes));
         let carry = start.elapsed();
         let members = resting.as_ref().map_or(0, |resting| resting.len());
-
-        let start = Instant::now();
-        pool.pool.report_built_state(block, BuilderReport::PreSelection(&pre_block_changes));
-        let mut report_time = start.elapsed();
         // The gauge is process-wide; only a dormancy-enforcing pool set it during this case.
         let dormant = if mode.dormancy() == ValidityDormancyMode::Enforce {
             dormant_gauge(metrics)
@@ -260,11 +293,15 @@ fn run_case(
         let start = Instant::now();
         let best = pool.pool.best_transactions_with_attributes_and_parking(attributes, hold());
         let construct = start.elapsed();
-        let executable = FILLER_PER_BLOCK + woken.len();
+        let executable = FILLER_PER_BLOCK + woken.len() + 2 * satisfied.len();
         let probe = Probe::run(|| {
             pool.pool.best_transactions_with_attributes_and_parking(attributes, hold())
         });
-        let phase = Phase::of(mode, probe.yielded, executable, !woken.is_empty());
+        // Lanes admitted since the previous build reach a builder-enforcing iterator once, while
+        // the pool classifies them before the build.
+        let unclassified = if dormancy_build.is_some() { 0 } else { fresh.len() };
+        let phase =
+            Phase::of(mode, probe.yielded, executable + unclassified, !woken.is_empty(), discarded);
         let probe_drop = if case.holds_iterator() {
             held = Some(probe.iterator);
             Default::default()
@@ -272,10 +309,7 @@ fn run_case(
             timed_drop(probe.iterator)
         };
 
-        let mut info = ExecutionInfo {
-            unsatisfied_validity_txs: pool.pool.collects_unsatisfied().then(Vec::new),
-            ..Default::default()
-        };
+        let mut info = ExecutionInfo::default();
         let start = Instant::now();
         ctx.execute_best_transactions(
             &mut info,
@@ -289,29 +323,30 @@ fn run_case(
         assert_eq!(included, executable, "block {block} must include every executable transaction");
 
         let start = Instant::now();
-        if let Some(unsatisfied) = info.unsatisfied_validity_txs.take()
-            && !unsatisfied.is_empty()
-        {
-            pool.pool.report_unsatisfied(unsatisfied);
-        }
-        report_time += start.elapsed();
-
-        let start = Instant::now();
         if let Some(resting) = resting.take() {
             selection::put(&store, resting, block_hash(block));
+        }
+        if let Some(dormancy_build) = dormancy_build {
+            dormancy_build.seal(block_hash(block));
         }
         let store_time = start.elapsed();
 
         drop(builder);
         state.merge_transitions(BundleRetention::Reverts);
-        let bundle = Arc::new(state.take_bundle());
-        let start = Instant::now();
-        pool.pool.report_built_state(block, BuilderReport::Sealed(Arc::clone(&bundle) as _));
-        report_time += start.elapsed();
-        let bundle = Arc::unwrap_or_clone(bundle);
+        let bundle = state.take_bundle();
+        for &lane in &satisfied {
+            assert_eq!(
+                bundle
+                    .account(&resting_senders[lane])
+                    .and_then(|account| account.info.as_ref())
+                    .map(|info| info.nonce),
+                Some(1),
+                "block {block} must include satisfied lane {lane}"
+            );
+        }
 
         mined = (ordinary, ordinary_senders, bundle);
-        for lane in woken {
+        for lane in woken.chain(satisfied) {
             mined.0.push(resting_hashes[lane]);
             mined.1.push(resting_senders[lane]);
         }
@@ -334,7 +369,6 @@ fn run_case(
             construct,
             selection: selection_time,
             store: store_time,
-            report: report_time,
             ..Default::default()
         };
         report.row(case, mode, population, &timing);
@@ -344,19 +378,27 @@ fn run_case(
         }
     }
 
-    let last = timings.last().expect("the matrix builds blocks");
+    let last = timings
+        .iter()
+        .rev()
+        .find(|timing| timing.phase != Phase::Discard)
+        .expect("the matrix builds blocks on the last sealed block");
     if mode.withholds() && lanes > 0 {
         assert_eq!(
             last.phase,
             Phase::Steady,
-            "the resting population must be withheld from the last block's iterator"
+            "the resting population must be withheld from block {}'s iterator",
+            last.block
         );
     }
     if mode.dormancy() == ValidityDormancyMode::Enforce && lanes > 0 {
         assert_eq!(
             last.dormant,
-            case.final_members(lanes),
-            "dormant validity transactions at the last block"
+            // A block's satisfied lanes are still dormant when its build starts, beside the new
+            // lanes that replace them.
+            case.final_members(lanes) + churn.satisfied,
+            "dormant validity transactions at block {}",
+            last.block
         );
     }
     timings

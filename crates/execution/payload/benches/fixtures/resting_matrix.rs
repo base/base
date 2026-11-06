@@ -10,38 +10,44 @@
 //!   block and moves the base fee, then admitting the block's ordinary traffic). Pool work, not
 //!   selection.
 //! - `dormancy`: the canonical state-diff maintenance for the previous block (guard invalidation
-//!   from its bundle, then advancing validity dormancy, which applies queued builder reports, wakes
-//!   and classifies). It runs off the build path on a node, so it is reported beside `total`.
+//!   from its bundle, then advancing validity dormancy, which checks the builder's tip and
+//!   classifies the transactions admitted since the last classification). It runs off the build
+//!   path on a node, so it is reported beside `total`.
 //! - `intra_mutation`: pruning committed transactions and advancing their senders between
 //!   flashblocks, as the Flashblocks builder does. Zero for the native builder.
 //! - `held_drop`: dropping the previous block's probe iterator, which the held-iterator case keeps
 //!   alive across `mutation` so an obsolete pool snapshot is torn down here.
-//! - `carry`: taking the resting set from the store and carrying it into the block.
+//! - `carry`: starting the build: beginning a build against the pool's dormancy index on the
+//!   block's parent, which applies the pre-selection writes or discards the index when the parent
+//!   is not the tip, or else taking the builder's resting set from its store and carrying it into
+//!   the block.
 //! - `probe_*`: a diagnostic iterator created after the real build iterator, then asked for its
 //!   first candidate, drained without commits, and dropped. The build's `construct` phase pays
 //!   the first view sync; the probe must not perform it ahead of the measured build. Its yield
 //!   count shows whether resting lanes reach the iterator at all. Both arms are probe-warmed.
 //! - `construct`: building the build's pool iterators, one per flashblock.
 //! - `selection`: the build loop, which includes executing the included transactions.
-//! - `store`: putting the resting set back for the next block.
-//! - `report`: the native builder's reports to the pool: the pre-selection writes, the validity
-//!   transactions selection found unsatisfied, and the sealed block's state.
+//! - `store`: sealing the block: making it the pool's dormancy tip, or putting the builder's
+//!   resting set back for the next block.
 //! - `build_drop`: dropping the block's adapter and its last pool iterator after `store`. The
 //!   Flashblocks builder drops each earlier iterator inside `construct`, when the next flashblock
 //!   replaces it; the native builder's selection loop consumes its iterator, so its drop falls in
 //!   `selection` and `build_drop` is zero.
 //!
-//! `total` is `carry + construct + selection + store + report + build_drop`, the build path a
+//! `total` is `carry + construct + selection + store + build_drop`, the build path a
 //! payload job pays; mutation, dormancy maintenance and probes are reported beside it, never inside
 //! it. Each row also reports `dormant`, the pool's dormant-transaction gauge as the block's build
-//! saw it. A block whose probe yields more
-//! than the block's executable transactions is still classifying resting candidates and is
-//! reported apart from steady-state blocks, so the initial classification is visible.
+//! saw it. A block whose probe yields more than the block's executable transactions and the
+//! resting transactions admitted since the last classification is still classifying resting
+//! candidates and is reported apart from steady-state blocks, so the initial classification is
+//! visible. A block built on a parent other than the last sealed block is reported apart too, so
+//! the cost of recovering from a discarded index is visible.
 //!
 //! Timings from a laptop are not evidence of production latency; compare a baseline and a
 //! candidate build on the same host.
 
 use std::{
+    collections::VecDeque,
     ops::Range,
     time::{Duration, Instant},
 };
@@ -76,6 +82,13 @@ pub const WOKEN: usize = 100;
 pub const EXPIRY_DEADLINE: u64 = 4;
 /// Lanes of the liveness case that expire after [`EXPIRY_DEADLINE`].
 pub const EXPIRING: usize = 100;
+/// Percent of the churn case's lanes replaced by new resting lanes each block, by default.
+pub const CHURN_REPLACED_PERCENT: usize = 5;
+/// Percent of the churn case's lanes satisfied by a commit in each block, by default.
+pub const CHURN_SATISFIED_PERCENT: usize = 1;
+/// The discard case builds every this many blocks on a parent that is not the last sealed block,
+/// by default.
+pub const DISCARD_INTERVAL: u64 = 4;
 
 /// One row of the matrix: a lane kind and how the bench drives it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -93,17 +106,25 @@ pub enum Case {
     NonceFree,
     /// Protocol lanes, some woken by a pre-block write and some expired by the pool.
     Liveness,
+    /// Protocol lanes, a share replaced by new resting lanes and a share satisfied by a commit in
+    /// the same block, every block after the first; see [`Churn`].
+    Churn,
+    /// Protocol lanes, every [`Matrix::discard_interval`]th block built on a parent that is not
+    /// the last sealed block, which discards what the pool or the builder carried.
+    Discard,
 }
 
 impl Case {
     /// Every case, in report order.
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 8] = [
         Self::Protocol,
         Self::HeldIterator,
         Self::Descendants,
         Self::Channel,
         Self::NonceFree,
         Self::Liveness,
+        Self::Churn,
+        Self::Discard,
     ];
 
     /// The case's report label, also accepted by `RESTING_MATRIX_CASES`.
@@ -115,13 +136,17 @@ impl Case {
             Self::Channel => "channel",
             Self::NonceFree => "nonce_free",
             Self::Liveness => "liveness",
+            Self::Churn => "churn",
+            Self::Discard => "discard",
         }
     }
 
     /// The lane kind the case rests.
     pub const fn kind(self) -> RestingKind {
         match self {
-            Self::Protocol | Self::HeldIterator | Self::Liveness => RestingKind::Protocol,
+            Self::Protocol | Self::HeldIterator | Self::Liveness | Self::Churn | Self::Discard => {
+                RestingKind::Protocol
+            }
             Self::Descendants => RestingKind::ProtocolDescendants,
             Self::Channel => RestingKind::Channel,
             Self::NonceFree => RestingKind::NonceFree,
@@ -137,9 +162,12 @@ impl Case {
     pub fn default_populations(self) -> Vec<usize> {
         match self {
             Self::Protocol | Self::HeldIterator => POPULATIONS.to_vec(),
-            Self::Descendants | Self::Channel | Self::NonceFree | Self::Liveness => {
-                vec![FOCUSED_POPULATION]
-            }
+            Self::Descendants
+            | Self::Channel
+            | Self::NonceFree
+            | Self::Liveness
+            | Self::Churn
+            | Self::Discard => vec![FOCUSED_POPULATION],
         }
     }
 
@@ -168,6 +196,30 @@ impl Case {
         if matches!(self, Self::Liveness) { WOKEN..WOKEN + EXPIRING } else { 0..0 }
     }
 
+    /// Lanes replaced and satisfied each block among `lanes` lanes.
+    pub const fn churn(self, churn: Churn, lanes: usize) -> ChurnLanes {
+        if matches!(self, Self::Churn) {
+            ChurnLanes {
+                replaced: lanes * churn.replaced_percent / 100,
+                satisfied: lanes * churn.satisfied_percent / 100,
+            }
+        } else {
+            ChurnLanes { replaced: 0, satisfied: 0 }
+        }
+    }
+
+    /// Whether `block` builds on a parent that is not the last sealed block.
+    pub const fn discards(self, block: u64, interval: u64) -> bool {
+        matches!(self, Self::Discard) && block.is_multiple_of(interval)
+    }
+
+    /// Transactions beyond the ordinary traffic a block of the case may include: every woken lane,
+    /// or every satisfied churn lane and the transfer that satisfies it.
+    pub const fn headroom(self, churn: ChurnLanes) -> usize {
+        let satisfied = 2 * churn.satisfied;
+        if satisfied > WOKEN { satisfied } else { WOKEN }
+    }
+
     /// First block by which the pool must have expired the expiring lanes.
     pub const fn expired_by(self) -> Option<u64> {
         if matches!(self, Self::Liveness) { Some(EXPIRY_DEADLINE + 2) } else { None }
@@ -175,9 +227,10 @@ impl Case {
 
     /// Panics unless `population` over `blocks` blocks fits the case, so a bad override fails
     /// before anything is admitted: populations are whole lanes, the liveness case has every lane
-    /// it wakes and expires and runs past its wake and expiry, and nonce-free lanes outlive the
-    /// run.
-    pub fn check(self, population: usize, blocks: u64) {
+    /// it wakes and expires and runs past its wake and expiry, nonce-free lanes outlive the run,
+    /// churn shares fit the population, and the discard case discards at least once, with blocks
+    /// that follow the last sealed block in between.
+    pub fn check(self, population: usize, blocks: u64, churn: Churn, discard_interval: u64) {
         let per_lane = self.kind().transactions_per_lane();
         assert!(
             population.is_multiple_of(per_lane),
@@ -195,6 +248,19 @@ impl Case {
                 WOKEN + EXPIRING
             );
         }
+        if matches!(self, Self::Churn) {
+            assert!(
+                churn.replaced_percent + churn.satisfied_percent <= 100,
+                "the churn case replaces and satisfies at most every lane each block"
+            );
+        }
+        if matches!(self, Self::Discard) {
+            assert!(
+                discard_interval >= MIN_BLOCKS && blocks >= discard_interval,
+                "the discard case discards every {discard_interval} blocks, at least every \
+                 {MIN_BLOCKS} and at least once in {blocks} blocks"
+            );
+        }
         if matches!(self, Self::NonceFree) {
             assert!(
                 blocks * BLOCK_TIME_SECS < NONCE_FREE_LIFETIME_SECS,
@@ -208,6 +274,34 @@ impl Case {
     /// `lanes` lanes has happened.
     pub const fn final_members(self, lanes: usize) -> usize {
         if matches!(self, Self::Liveness) { lanes.saturating_sub(WOKEN + EXPIRING) } else { lanes }
+    }
+}
+
+/// Shares of the churn case's lanes that change each block, in percent of its lanes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Churn {
+    /// Lanes removed from the pool and replaced by as many new resting lanes.
+    pub replaced_percent: usize,
+    /// Lanes whose predicate a transfer in the block satisfies, so the block includes them; as
+    /// many new resting lanes replace them.
+    pub satisfied_percent: usize,
+}
+
+/// Lanes of one case that change each block.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ChurnLanes {
+    /// Lanes removed from the pool and replaced by new resting lanes.
+    pub replaced: usize,
+    /// Lanes satisfied, and included, in the block, then replaced by new resting lanes.
+    pub satisfied: usize,
+}
+
+impl ChurnLanes {
+    /// Takes the oldest of `live` lanes to replace and to satisfy this block.
+    pub fn take(&self, live: &mut VecDeque<usize>) -> (Vec<usize>, Vec<usize>) {
+        let replaced = live.drain(..self.replaced).collect();
+        let satisfied = live.drain(..self.satisfied).collect();
+        (replaced, satisfied)
     }
 }
 
@@ -266,6 +360,12 @@ impl Mode {
 /// - `RESTING_MATRIX_MODES`: comma-separated [`Mode::label`]s, default `enforce`.
 /// - `RESTING_SWEEP_BENCH_GAP_MS`: untimed pause between blocks, standing in for the state root,
 ///   default none.
+/// - `RESTING_MATRIX_CHURN_PERCENT`: [`Churn::replaced_percent`], default
+///   [`CHURN_REPLACED_PERCENT`].
+/// - `RESTING_MATRIX_SATISFIED_PERCENT`: [`Churn::satisfied_percent`], default
+///   [`CHURN_SATISFIED_PERCENT`].
+/// - `RESTING_MATRIX_DISCARD_INTERVAL`: [`Matrix::discard_interval`], default
+///   [`DISCARD_INTERVAL`].
 ///
 /// Every case and population is checked with [`Case::check`] before any pool is built.
 #[derive(Debug, Clone)]
@@ -278,6 +378,11 @@ pub struct Matrix {
     pub modes: Vec<Mode>,
     /// Untimed pause between blocks.
     pub gap: Option<Duration>,
+    /// Lanes the churn case changes each block.
+    pub churn: Churn,
+    /// The discard case builds every this many blocks on a parent other than the last sealed
+    /// block.
+    pub discard_interval: u64,
 }
 
 impl Matrix {
@@ -310,12 +415,25 @@ impl Matrix {
             .into_iter()
             .map(|case| (case, populations.clone().unwrap_or_else(|| case.default_populations())))
             .collect();
-        let blocks = std::env::var("RESTING_MATRIX_BLOCKS")
-            .map_or(BLOCKS, |value| value.parse().expect("RESTING_MATRIX_BLOCKS is a number"));
+        let number = |name: &str, default: u64| {
+            std::env::var(name).map_or(default, |value| {
+                value.parse().unwrap_or_else(|_| panic!("{name} is a number"))
+            })
+        };
+        let blocks = number("RESTING_MATRIX_BLOCKS", BLOCKS);
         assert!(blocks >= MIN_BLOCKS, "the resting matrix builds at least {MIN_BLOCKS} blocks");
+        let churn = Churn {
+            replaced_percent: number("RESTING_MATRIX_CHURN_PERCENT", CHURN_REPLACED_PERCENT as u64)
+                as usize,
+            satisfied_percent: number(
+                "RESTING_MATRIX_SATISFIED_PERCENT",
+                CHURN_SATISFIED_PERCENT as u64,
+            ) as usize,
+        };
+        let discard_interval = number("RESTING_MATRIX_DISCARD_INTERVAL", DISCARD_INTERVAL);
         for (case, populations) in &cases {
             for &population in populations {
-                case.check(population, blocks);
+                case.check(population, blocks, churn, discard_interval);
             }
         }
         let modes = list("RESTING_MATRIX_MODES")
@@ -334,7 +452,7 @@ impl Matrix {
         let gap = std::env::var("RESTING_SWEEP_BENCH_GAP_MS").ok().map(|ms| {
             Duration::from_millis(ms.parse().expect("RESTING_SWEEP_BENCH_GAP_MS is a number"))
         });
-        Self { cases, blocks, modes, gap }
+        Self { cases, blocks, modes, gap, churn, discard_interval }
     }
 }
 
@@ -348,6 +466,12 @@ pub const fn parent_base_fee(block: u64) -> u64 {
 /// Hash the bench finishes `block` as, which the next block names as its parent.
 pub fn block_hash(block: u64) -> B256 {
     keccak256(block.to_be_bytes())
+}
+
+/// Hash of a block at `block`'s height that the bench never sealed: a sibling of
+/// [`block_hash`]`(block)` a build can name as its parent.
+pub fn sibling_hash(block: u64) -> B256 {
+    keccak256([block.to_be_bytes(), *b"sibling!"].concat())
 }
 
 /// Funds the watched accounts of `woken` lanes with the one wei their predicate requires.
@@ -391,17 +515,28 @@ pub enum Phase {
     Wake,
     /// Nothing withholds resting candidates, so every one is yielded every block.
     Off,
+    /// The block was built on a parent other than the last sealed block, so nothing carried over.
+    Discard,
 }
 
 impl Phase {
-    /// The phase of a block whose probe yielded `yielded` candidates while `executable` of the
-    /// pool's transactions could be included.
-    pub const fn of(mode: Mode, yielded: usize, executable: usize, woke: bool) -> Self {
+    /// The phase of a block whose probe yielded `yielded` candidates while `expected` of the
+    /// pool's transactions could be included or were admitted since the withholding mode last
+    /// classified resting transactions.
+    pub const fn of(
+        mode: Mode,
+        yielded: usize,
+        expected: usize,
+        woke: bool,
+        discarded: bool,
+    ) -> Self {
         if !mode.withholds() {
             Self::Off
+        } else if discarded {
+            Self::Discard
         } else if woke {
             Self::Wake
-        } else if yielded > executable {
+        } else if yielded > expected {
             Self::Classify
         } else {
             Self::Steady
@@ -415,6 +550,7 @@ impl Phase {
             Self::Steady => "steady",
             Self::Wake => "wake",
             Self::Off => "off",
+            Self::Discard => "discard",
         }
     }
 }
@@ -467,7 +603,7 @@ pub struct BlockTiming {
     pub phase: Phase,
     /// Resting members the builder carried into the block.
     pub members: usize,
-    /// The pool's dormant validity transactions when the block's build began.
+    /// The pool's dormant validity transactions once the block's build began.
     pub dormant: usize,
     /// Candidates the probe yielded.
     pub probe_yielded: usize,
@@ -481,7 +617,7 @@ pub struct BlockTiming {
     pub intra_mutation: Duration,
     /// Dropping the previous block's held probe iterator.
     pub held_drop: Duration,
-    /// Carrying the resting set into the block.
+    /// Starting the build against the pool's dormancy index or carrying the resting set into it.
     pub carry: Duration,
     /// Building the probe iterator.
     pub probe_construct: Duration,
@@ -495,23 +631,21 @@ pub struct BlockTiming {
     pub construct: Duration,
     /// The build loop.
     pub selection: Duration,
-    /// Storing the resting set.
+    /// Sealing the block's dormancy build or storing the resting set.
     pub store: Duration,
-    /// The builder's reports to the pool.
-    pub report: Duration,
     /// Dropping the block's adapter and its last pool iterator.
     pub build_drop: Duration,
 }
 
 impl BlockTiming {
-    /// The build path a payload job pays: carry, iterator construction, selection, store, the
-    /// builder's reports, and dropping the block's iterator.
+    /// The build path a payload job pays: carry, iterator construction, selection, store, and
+    /// dropping the block's iterator.
     pub fn total(&self) -> Duration {
-        self.carry + self.construct + self.selection + self.store + self.report + self.build_drop
+        self.carry + self.construct + self.selection + self.store + self.build_drop
     }
 
     /// Every metric in report order. Metrics added after `total` keep earlier columns in place.
-    fn metrics(&self) -> [(&'static str, Duration); 15] {
+    fn metrics(&self) -> [(&'static str, Duration); 14] {
         [
             ("mutation", self.mutation),
             ("intra_mutation", self.intra_mutation),
@@ -527,7 +661,6 @@ impl BlockTiming {
             ("build_drop", self.build_drop),
             ("total", self.total()),
             ("dormancy", self.dormancy),
-            ("report", self.report),
         ]
     }
 }
@@ -586,7 +719,7 @@ impl Report {
 
     /// Reports the mean, median, 90th percentile, and maximum of every metric, per phase.
     pub fn summary(&self, case: Case, mode: Mode, population: usize, timings: &[BlockTiming]) {
-        for phase in [Phase::Classify, Phase::Steady, Phase::Wake, Phase::Off] {
+        for phase in [Phase::Classify, Phase::Steady, Phase::Wake, Phase::Off, Phase::Discard] {
             let blocks: Vec<_> = timings.iter().filter(|timing| timing.phase == phase).collect();
             if blocks.is_empty() {
                 continue;
