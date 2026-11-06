@@ -150,8 +150,8 @@ async fn set_request_state(
     job_status: ProofJobStatus,
 ) {
     sqlx::query("UPDATE proof_requests SET status = $1, job_status = $2 WHERE id = $3")
-        .bind(status.as_str())
-        .bind(job_status.as_str())
+        .bind(status)
+        .bind(job_status)
         .bind(id)
         .execute(pool)
         .await
@@ -170,9 +170,9 @@ async fn insert_running_session(
          VALUES ($1, $2, $3, $4)",
     )
     .bind(proof_request_id)
-    .bind(session_type.as_str())
+    .bind(session_type)
     .bind(backend_session_id)
-    .bind(SessionStatus::Running.as_str())
+    .bind(SessionStatus::Running)
     .execute(pool)
     .await
     .unwrap();
@@ -304,8 +304,8 @@ async fn test_legacy_rollout_request_without_protocol_storage_is_readable_and_re
     .bind(i64::try_from(req.start_block_number).unwrap())
     .bind(i64::try_from(req.number_of_blocks_to_prove).unwrap())
     .bind(req.sequence_window.map(|value| i64::try_from(value).unwrap()))
-    .bind(req.proof_type.expect("compressed request has proof_type").as_str())
-    .bind(ProofStatus::Created.as_str())
+    .bind(req.proof_type.expect("compressed request has proof_type"))
+    .bind(ProofStatus::Created)
     .bind(&req.prover_address)
     .bind(&req.l1_head)
     .execute(&pool)
@@ -538,7 +538,7 @@ async fn test_retry_or_fail_stuck_request_requeues_migration_parked_running_requ
     assert!(req.completed_at.is_none());
 
     let (job_status, lock_expires_at, attempt): (
-        String,
+        ProofJobStatus,
         Option<chrono::DateTime<chrono::Utc>>,
         i32,
     ) = sqlx::query_as(
@@ -549,18 +549,18 @@ async fn test_retry_or_fail_stuck_request_requeues_migration_parked_running_requ
     .await
     .unwrap();
 
-    assert_eq!(job_status, ProofJobStatus::Pending.as_str());
+    assert_eq!(job_status, ProofJobStatus::Pending);
     assert!(lock_expires_at.is_none());
     assert_eq!(attempt, 0);
 
-    let session_status: String =
+    let session_status: SessionStatus =
         sqlx::query_scalar("SELECT status FROM proof_sessions WHERE backend_session_id = $1")
             .bind(backend_id)
             .fetch_one(&pool)
             .await
             .unwrap();
 
-    assert_eq!(session_status, SessionStatus::Failed.as_str());
+    assert_eq!(session_status, SessionStatus::Failed);
 }
 
 // ============================================================
@@ -573,7 +573,7 @@ async fn drive_to_failed(pool: &PgPool, id: Uuid, error_message: &str) {
         "UPDATE proof_requests SET status = $1, error_message = $2, completed_at = NOW() \
          WHERE id = $3",
     )
-    .bind(ProofStatus::Failed.as_str())
+    .bind(ProofStatus::Failed)
     .bind(error_message)
     .bind(id)
     .execute(pool)
@@ -1889,7 +1889,7 @@ async fn test_record_worker_proof_session_preserves_terminal_backend_sessions() 
         "UPDATE proof_sessions SET status = $1, completed_at = NOW() \
          WHERE backend_session_id = $2",
     )
-    .bind(SessionStatus::Completed.as_str())
+    .bind(SessionStatus::Completed)
     .bind(&terminal_backend_id)
     .execute(&pool)
     .await

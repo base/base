@@ -11,8 +11,20 @@ use sqlx::FromRow;
 use uuid::Uuid;
 
 /// Status of a proof request
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    sqlx::Type,
+    strum::Display,
+    strum::IntoStaticStr,
+)]
 #[sqlx(type_name = "VARCHAR", rename_all = "SCREAMING_SNAKE_CASE")]
+#[strum(serialize_all = "SCREAMING_SNAKE_CASE")]
 pub enum ProofStatus {
     /// Proof request has been created but not yet queued.
     Created,
@@ -26,43 +38,21 @@ pub enum ProofStatus {
     Failed,
 }
 
-impl ProofStatus {
-    /// Convert enum to static string representation
-    pub const fn as_str(&self) -> &'static str {
-        match self {
-            Self::Created => "CREATED",
-            Self::Pending => "PENDING",
-            Self::Running => "RUNNING",
-            Self::Succeeded => "SUCCEEDED",
-            Self::Failed => "FAILED",
-        }
-    }
-}
-
-impl std::fmt::Display for ProofStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.as_str())
-    }
-}
-
-impl TryFrom<&str> for ProofStatus {
-    type Error = String;
-
-    fn try_from(s: &str) -> Result<Self, Self::Error> {
-        match s {
-            "CREATED" => Ok(Self::Created),
-            "PENDING" => Ok(Self::Pending),
-            "RUNNING" => Ok(Self::Running),
-            "SUCCEEDED" => Ok(Self::Succeeded),
-            "FAILED" => Ok(Self::Failed),
-            other => Err(format!("Unknown proof status: {other}")),
-        }
-    }
-}
-
 /// Worker-owned job lifecycle status, distinct from requester [`ProofStatus`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    sqlx::Type,
+    strum::Display,
+    strum::IntoStaticStr,
+)]
 #[sqlx(type_name = "VARCHAR", rename_all = "SCREAMING_SNAKE_CASE")]
+#[strum(serialize_all = "SCREAMING_SNAKE_CASE")]
 pub enum ProofJobStatus {
     /// Job is claimable and not currently owned by any worker.
     Pending,
@@ -74,41 +64,21 @@ pub enum ProofJobStatus {
     Failed,
 }
 
-impl ProofJobStatus {
-    /// Convert enum to static string representation.
-    pub const fn as_str(&self) -> &'static str {
-        match self {
-            Self::Pending => "PENDING",
-            Self::Claimed => "CLAIMED",
-            Self::Succeeded => "SUCCEEDED",
-            Self::Failed => "FAILED",
-        }
-    }
-}
-
-impl std::fmt::Display for ProofJobStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.as_str())
-    }
-}
-
-impl TryFrom<&str> for ProofJobStatus {
-    type Error = String;
-
-    fn try_from(s: &str) -> Result<Self, Self::Error> {
-        match s {
-            "PENDING" => Ok(Self::Pending),
-            "CLAIMED" => Ok(Self::Claimed),
-            "SUCCEEDED" => Ok(Self::Succeeded),
-            "FAILED" => Ok(Self::Failed),
-            other => Err(format!("Unknown proof job status: {other}")),
-        }
-    }
-}
-
 /// Status of an individual proof session (STARK or SNARK)
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    sqlx::Type,
+    strum::Display,
+    strum::IntoStaticStr,
+)]
 #[sqlx(type_name = "VARCHAR", rename_all = "SCREAMING_SNAKE_CASE")]
+#[strum(serialize_all = "SCREAMING_SNAKE_CASE")]
 pub enum SessionStatus {
     /// Reservation placeholder before the backend job has been submitted. The row holds a
     /// synthetic `backend_session_id` so the partial unique index serializes concurrent
@@ -123,78 +93,32 @@ pub enum SessionStatus {
 }
 
 impl SessionStatus {
-    /// Convert enum to static string representation
-    pub const fn as_str(&self) -> &'static str {
-        match self {
-            Self::Submitting => "SUBMITTING",
-            Self::Running => "RUNNING",
-            Self::Completed => "COMPLETED",
-            Self::Failed => "FAILED",
-        }
-    }
-
     /// Whether this status represents a terminal backend session.
     pub const fn is_terminal(&self) -> bool {
         matches!(self, Self::Completed | Self::Failed)
     }
 }
 
-impl std::fmt::Display for SessionStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.as_str())
-    }
-}
-
-impl TryFrom<&str> for SessionStatus {
-    type Error = String;
-
-    fn try_from(s: &str) -> Result<Self, Self::Error> {
-        match s {
-            "SUBMITTING" => Ok(Self::Submitting),
-            "RUNNING" => Ok(Self::Running),
-            "COMPLETED" => Ok(Self::Completed),
-            "FAILED" => Ok(Self::Failed),
-            other => Err(format!("Unknown session status: {other}")),
-        }
-    }
-}
-
 /// Type of proof session
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    sqlx::Type,
+    strum::Display,
+    strum::IntoStaticStr,
+)]
 #[sqlx(type_name = "VARCHAR", rename_all = "SCREAMING_SNAKE_CASE")]
+#[strum(serialize_all = "SCREAMING_SNAKE_CASE")]
 pub enum SessionType {
     /// STARK proof session.
     Stark,
     /// SNARK proof session.
     Snark,
-}
-
-impl SessionType {
-    /// Convert enum to static string representation
-    pub const fn as_str(&self) -> &'static str {
-        match self {
-            Self::Stark => "STARK",
-            Self::Snark => "SNARK",
-        }
-    }
-}
-
-impl std::fmt::Display for SessionType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.as_str())
-    }
-}
-
-impl TryFrom<&str> for SessionType {
-    type Error = String;
-
-    fn try_from(s: &str) -> Result<Self, Self::Error> {
-        match s {
-            "STARK" => Ok(Self::Stark),
-            "SNARK" => Ok(Self::Snark),
-            other => Err(format!("Unknown session type: {other}")),
-        }
-    }
 }
 
 /// Outcome of attempting to retry or fail a stuck proof request.
@@ -349,14 +273,24 @@ pub enum CreateProofRequestValidationError {
 ///
 /// Backend routing uses [`ZkBackend`]; the persisted strings keep their
 /// historical `cluster` names for schema compatibility.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
-#[sqlx(type_name = "VARCHAR")]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    sqlx::Type,
+    strum::Display,
+    strum::IntoStaticStr,
+)]
+#[sqlx(type_name = "VARCHAR", rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
 pub enum ProofType {
     /// Compressed SP1 proof.
-    #[sqlx(rename = "op_succinct_sp1_cluster_compressed")]
     OpSuccinctSp1ClusterCompressed,
     /// PLONK SNARK SP1 proof.
-    #[sqlx(rename = "op_succinct_sp1_cluster_snark_plonk")]
     OpSuccinctSp1ClusterSnarkPlonk,
 }
 
@@ -371,32 +305,6 @@ impl ProofType {
         match self {
             Self::OpSuccinctSp1ClusterCompressed => Self::PROTO_COMPRESSED,
             Self::OpSuccinctSp1ClusterSnarkPlonk => Self::PROTO_SNARK_PLONK,
-        }
-    }
-
-    /// Convert enum to static string representation
-    pub const fn as_str(&self) -> &'static str {
-        match self {
-            Self::OpSuccinctSp1ClusterCompressed => "op_succinct_sp1_cluster_compressed",
-            Self::OpSuccinctSp1ClusterSnarkPlonk => "op_succinct_sp1_cluster_snark_plonk",
-        }
-    }
-}
-
-impl std::fmt::Display for ProofType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.as_str())
-    }
-}
-
-impl TryFrom<&str> for ProofType {
-    type Error = String;
-
-    fn try_from(s: &str) -> Result<Self, Self::Error> {
-        match s {
-            "op_succinct_sp1_cluster_compressed" => Ok(Self::OpSuccinctSp1ClusterCompressed),
-            "op_succinct_sp1_cluster_snark_plonk" => Ok(Self::OpSuccinctSp1ClusterSnarkPlonk),
-            other => Err(format!("Unknown proof type: {other}")),
         }
     }
 }
@@ -415,118 +323,67 @@ impl TryFrom<i32> for ProofType {
 }
 
 /// Protocol-level proof type requested by API callers.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
-#[sqlx(type_name = "VARCHAR")]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    sqlx::Type,
+    strum::Display,
+    strum::IntoStaticStr,
+)]
+#[sqlx(type_name = "VARCHAR", rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
 pub enum ApiProofType {
     /// Compressed ZK proof.
-    #[sqlx(rename = "compressed")]
     Compressed,
     /// PLONK SNARK proof.
-    #[sqlx(rename = "snark_plonk")]
     SnarkPlonk,
     /// Trusted execution environment proof.
-    #[sqlx(rename = "tee")]
     Tee,
 }
 
-impl ApiProofType {
-    /// Convert enum to static string representation.
-    pub const fn as_str(&self) -> &'static str {
-        match self {
-            Self::Compressed => "compressed",
-            Self::SnarkPlonk => "snark_plonk",
-            Self::Tee => "tee",
-        }
-    }
-}
-
-impl std::fmt::Display for ApiProofType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.as_str())
-    }
-}
-
-impl TryFrom<&str> for ApiProofType {
-    type Error = String;
-
-    fn try_from(s: &str) -> Result<Self, Self::Error> {
-        match s {
-            "compressed" => Ok(Self::Compressed),
-            "snark_plonk" => Ok(Self::SnarkPlonk),
-            "tee" => Ok(Self::Tee),
-            other => Err(format!("Unknown API proof type: {other}")),
-        }
-    }
-}
-
 /// Protocol-level ZK virtual machine discriminator.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
-#[sqlx(type_name = "VARCHAR")]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    sqlx::Type,
+    strum::Display,
+    strum::IntoStaticStr,
+)]
+#[sqlx(type_name = "VARCHAR", rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
 pub enum ZkVmKind {
     /// Succinct SP1.
-    #[sqlx(rename = "sp1")]
     Sp1,
 }
 
-impl ZkVmKind {
-    /// Convert enum to static string representation.
-    pub const fn as_str(&self) -> &'static str {
-        match self {
-            Self::Sp1 => "sp1",
-        }
-    }
-}
-
-impl std::fmt::Display for ZkVmKind {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.as_str())
-    }
-}
-
-impl TryFrom<&str> for ZkVmKind {
-    type Error = String;
-
-    fn try_from(s: &str) -> Result<Self, Self::Error> {
-        match s {
-            "sp1" => Ok(Self::Sp1),
-            other => Err(format!("Unknown ZK VM: {other}")),
-        }
-    }
-}
-
 /// Protocol-level TEE implementation discriminator.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
-#[sqlx(type_name = "VARCHAR")]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    sqlx::Type,
+    strum::Display,
+    strum::IntoStaticStr,
+)]
+#[sqlx(type_name = "VARCHAR", rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
 pub enum TeeKind {
     /// AWS Nitro Enclaves.
-    #[sqlx(rename = "aws_nitro")]
     AwsNitro,
-}
-
-impl TeeKind {
-    /// Convert enum to static string representation.
-    pub const fn as_str(&self) -> &'static str {
-        match self {
-            Self::AwsNitro => "aws_nitro",
-        }
-    }
-}
-
-impl std::fmt::Display for TeeKind {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.as_str())
-    }
-}
-
-impl TryFrom<&str> for TeeKind {
-    type Error = String;
-
-    fn try_from(s: &str) -> Result<Self, Self::Error> {
-        match s {
-            "aws_nitro" => Ok(Self::AwsNitro),
-            other => Err(format!("Unknown TEE kind: {other}")),
-        }
-    }
 }
 
 /// A proof request record in the database

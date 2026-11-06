@@ -5899,6 +5899,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sqlx",
+ "strum 0.27.2",
  "thiserror 2.0.21",
  "tokio",
  "tracing",
