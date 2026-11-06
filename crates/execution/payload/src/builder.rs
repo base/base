@@ -1880,27 +1880,37 @@ mod tests {
     }
 
     /// Pool transactions that would push the block past the uncompressed size limit are left
-    /// out, and the block still includes the transactions that fit.
+    /// out, and the block still includes the transactions that fit. Sequencer transactions count
+    /// toward the limit and are never left out.
     #[test]
     fn native_builder_enforces_max_uncompressed_block_size() {
         // Distinct recipients give each transaction its own recovered sender at nonce zero.
         let transactions: Vec<_> =
-            (1..=3).map(|i| pool_transaction_to(0, Address::repeat_byte(i), U256::ZERO)).collect();
+            (1..=4).map(|i| pool_transaction_to(0, Address::repeat_byte(i), U256::ZERO)).collect();
         let senders: Vec<_> = transactions.iter().map(|tx| tx.sender()).collect();
         let tx_size = transactions[0].encoded_length() as u64;
-        let build = |limit| {
+        let (sequencer, pool) = transactions.split_first().expect("four transactions");
+        let build = |limit, with_sequencer: bool| {
             let mut ctx = pool_payload_context(DENIM_TIMESTAMP);
             ctx.builder_config.max_uncompressed_block_size = limit;
+            if with_sequencer {
+                ctx.config.attributes.transactions = vec![sequencer_attribute_tx(sequencer)];
+            }
             included_tx_count(build_parkable_pool_payload(
                 ctx,
-                TestParkableTransactions::new(transactions.clone()),
+                TestParkableTransactions::new(pool.to_vec()),
                 &senders,
             ))
         };
 
-        assert_eq!(build(None), 3);
-        assert_eq!(build(Some(2 * tx_size)), 2);
-        assert_eq!(build(Some(tx_size - 1)), 0);
+        assert_eq!(build(None, false), 3);
+        assert_eq!(build(Some(2 * tx_size), false), 2);
+        assert_eq!(build(Some(tx_size - 1), false), 0);
+        // The sequencer transaction takes one of the three slots, leaving room for two pool
+        // transactions.
+        assert_eq!(build(Some(3 * tx_size), true), 3);
+        // A sequencer transaction over the limit is still included, and no pool transaction fits.
+        assert_eq!(build(Some(tx_size - 1), true), 1);
     }
 
     #[test]
