@@ -79,10 +79,23 @@ impl ExportBenchmarkArgs {
         let boundary_number = self.from - 1;
         let boundary_hash =
             provider.block_hash(boundary_number)?.ok_or_eyre("boundary block is missing")?;
+        let timestamp = |number| -> Result<u64> {
+            Ok(provider
+                .header_by_number(number)?
+                .ok_or_eyre("datadir header is missing")?
+                .timestamp)
+        };
+        let first_block_timestamp = timestamp(self.from)?;
+        // A manifest has one block interval, which replay applies to every block.
+        let subsecond = chain_spec.is_denim_active_at_timestamp(timestamp(to)?);
+        ensure!(
+            chain_spec.is_denim_active_at_timestamp(first_block_timestamp) == subsecond,
+            "blocks {}..={to} span Denim activation; export each side separately",
+            self.from
+        );
         drop(provider);
 
         let mut writer = BlockExportWriter::create(&self.output_dir)?;
-        let mut timestamps = None;
         for start in (self.from..=to).step_by(CHUNK_BLOCKS as usize) {
             let end = to.min(start + CHUNK_BLOCKS - 1);
             let blocks = factory.provider()?.block_range(start..=end)?;
@@ -91,20 +104,9 @@ impl ExportBenchmarkArgs {
                 "datadir is missing blocks in {start}..={end}"
             );
             for block in &blocks {
-                let block = ExportedBlock::from_stored_block(block);
-                let timestamp = block.envelope.execution_payload.timestamp();
-                timestamps.get_or_insert((timestamp, timestamp)).1 = timestamp;
-                writer.write(&block)?;
+                writer.write(&ExportedBlock::from_stored_block(block))?;
             }
         }
-        let (first_block_timestamp, last_block_timestamp) = timestamps.unwrap_or_default();
-        // A manifest has one block interval, which replay applies to every block.
-        let subsecond = chain_spec.is_denim_active_at_timestamp(last_block_timestamp);
-        ensure!(
-            chain_spec.is_denim_active_at_timestamp(first_block_timestamp) == subsecond,
-            "blocks {}..={to} span Denim activation; export each side separately",
-            self.from
-        );
         writer.finish(ReplayManifest {
             chain: self.chain,
             rollup_config: self.rollup_config,
