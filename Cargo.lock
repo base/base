@@ -4496,6 +4496,8 @@ dependencies = [
  "alloy-rlp",
  "alloy-rpc-types-debug",
  "alloy-rpc-types-engine",
+ "alloy-signer 2.5.0",
+ "alloy-signer-local 2.5.0",
  "base-bundles",
  "base-common-chains",
  "base-common-consensus",
@@ -4507,6 +4509,7 @@ dependencies = [
  "base-execution-txpool",
  "base-metrics",
  "base-observability-events",
+ "base-test-utils",
  "criterion",
  "crossbeam-channel",
  "derive_more 2.1.1",
@@ -4540,6 +4543,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror 2.0.21",
+ "tokio",
  "tracing",
 ]
 
@@ -4716,6 +4720,7 @@ dependencies = [
  "reth-node-api",
  "reth-primitives-traits",
  "reth-provider",
+ "reth-revm",
  "reth-storage-api",
  "reth-tasks",
  "reth-transaction-pool",

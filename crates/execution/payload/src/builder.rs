@@ -18,7 +18,7 @@ use base_common_consensus::{BaseTransaction, DepositReceiptExt, Predeploys};
 use base_common_evm::{BaseSpecId, L1BlockInfo};
 use base_execution_eip8130::IntrinsicGas;
 use base_execution_txpool::{
-    BasePooledTx, GuardMetrics, ParkableTransactionPool, PredicateContext,
+    BasePooledTx, DormancyBuild, GuardMetrics, ParkableTransactionPool, PredicateContext,
     estimated_da_size::DataAvailabilitySized,
 };
 use base_observability_events::{
@@ -50,7 +50,10 @@ use reth_transaction_pool::{
 };
 use reth_trie_common::ExecutionWitnessMode;
 use reth_trie_parallel::state_root_task::PayloadStateRootHandle;
-use revm::context::{Block, BlockEnv};
+use revm::{
+    context::{Block, BlockEnv},
+    database::TransitionState,
+};
 use tracing::{debug, debug_span, info, instrument, trace, warn};
 
 use crate::{
@@ -203,10 +206,15 @@ where
     fn build_payload<'a, Txs>(
         &self,
         args: BuildArguments<Attrs, BaseBuiltPayload<N>>,
-        best: impl FnOnce(BestTransactionsAttributes, Option<&SharedRestingPredicates>) -> Txs
+        best: impl FnOnce(
+            BestTransactionsAttributes,
+            Option<&SharedRestingPredicates>,
+            Option<&DormancyBuild>,
+        ) -> Txs
         + Send
         + Sync
         + 'a,
+        begin_dormancy: Option<Box<BeginDormancyFn<'a>>>,
     ) -> Result<BuildOutcome<BaseBuiltPayload<N>>, PayloadBuilderError>
     where
         Txs: ParkablePayloadTransactions<
@@ -234,11 +242,14 @@ where
         tracing::Span::current().record("parent_num", ctx.parent().number());
 
         let pool = self.pool.clone();
-        let builder = Builder::new(best)
+        let mut builder = Builder::new(best)
             .with_permanent_eviction(move |hashes| {
                 let _ = pool.remove_transactions(hashes);
             })
             .with_resting_predicates(self.resting_predicates.clone());
+        if let Some(begin) = begin_dormancy {
+            builder = builder.with_dormancy(begin);
+        }
 
         let state_provider = crate::BuilderStateProvider::new(
             self.client.state_by_block_hash(ctx.parent().hash())?,
@@ -291,7 +302,8 @@ where
 
         let state_provider = self.client.state_by_block_hash(ctx.parent().hash())?;
 
-        let builder = Builder::new(|_, _| NoopPayloadTransactions::<Pool::Transaction>::default());
+        let builder =
+            Builder::new(|_, _, _| NoopPayloadTransactions::<Pool::Transaction>::default());
         builder.witness(state_provider, &self.client, &ctx)
     }
 }
@@ -315,14 +327,21 @@ where
         &self,
         args: BuildArguments<Self::Attributes, Self::BuiltPayload>,
     ) -> Result<BuildOutcome<Self::BuiltPayload>, PayloadBuilderError> {
-        self.build_payload(args, |attrs, resting| {
-            ParkableBestPayloadTransactions::new(
-                self.pool.best_transactions_with_attributes_and_parking(
-                    attrs,
-                    resting.map(SharedRestingPredicates::iterator_hold),
-                ),
-            )
-        })
+        self.build_payload(
+            args,
+            |attrs, resting, dormancy| {
+                ParkableBestPayloadTransactions::new(
+                    self.pool.best_transactions_with_attributes_and_parking(
+                        attrs,
+                        resting.map(SharedRestingPredicates::iterator_hold),
+                        dormancy,
+                    ),
+                )
+            },
+            Some(Box::new(|parent, block_number, pre_selection| {
+                self.pool.begin_dormancy_build(parent, block_number, pre_selection)
+            })),
+        )
     }
 
     fn on_missing_payload(
@@ -348,9 +367,13 @@ where
             cancel: Default::default(),
             best_payload: None,
         };
-        self.build_payload(args, |_, _| {
-            NoopPayloadTransactions::<Arc<ValidPoolTransaction<Pool::Transaction>>>::default()
-        })?
+        self.build_payload(
+            args,
+            |_, _, _| {
+                NoopPayloadTransactions::<Arc<ValidPoolTransaction<Pool::Transaction>>>::default()
+            },
+            None,
+        )?
         .into_payload()
         .ok_or_else(|| PayloadBuilderError::MissingPayload)
     }
@@ -364,10 +387,21 @@ fn job_interrupt(cancel: &Arc<CancelOnDrop>) -> HoldInterrupt {
     Arc::new(move || cancel.upgrade().is_none_or(|cancel| cancel.is_interrupted()))
 }
 
-/// Creates the candidate iterator of one build from the fee attributes and, when the build carries
-/// resting transactions, the resting set whose hold the iterator parks members with.
-pub type BestTransactionsFactory<'a, Txs> =
-    dyn FnOnce(BestTransactionsAttributes, Option<&SharedRestingPredicates>) -> Txs + 'a;
+/// Starts a build against the pool's dormancy index from the parent's hash, the number of the
+/// block being built and the writes made before selection; see
+/// [`ParkableTransactionPool::begin_dormancy_build`].
+pub type BeginDormancyFn<'a> =
+    dyn FnOnce(B256, u64, Option<&TransitionState>) -> Option<DormancyBuild> + 'a;
+
+/// Creates the candidate iterator of one build from the fee attributes, for an enforcing build
+/// the resting set whose hold the iterator parks members with, and the build's ownership of the
+/// pool's dormancy index, which its snapshot, parks and wakes go through.
+pub type BestTransactionsFactory<'a, Txs> = dyn FnOnce(
+        BestTransactionsAttributes,
+        Option<&SharedRestingPredicates>,
+        Option<&DormancyBuild>,
+    ) -> Txs
+    + 'a;
 
 /// The type that builds the payload.
 ///
@@ -394,12 +428,19 @@ pub struct Builder<'a, Txs> {
     evict_permanently_rejected: Box<dyn FnOnce(Vec<TxHash>) + 'a>,
     /// Carries resting validity transactions between builds; used from Denim on.
     resting_predicates: Option<RestingPredicateStore>,
+    /// Starts the build against the pool's dormancy index, which then replaces the resting set.
+    #[debug(skip)]
+    begin_dormancy: Option<Box<BeginDormancyFn<'a>>>,
 }
 
 impl<'a, Txs> Builder<'a, Txs> {
     /// Creates a new [`Builder`].
     pub fn new(
-        best: impl FnOnce(BestTransactionsAttributes, Option<&SharedRestingPredicates>) -> Txs
+        best: impl FnOnce(
+            BestTransactionsAttributes,
+            Option<&SharedRestingPredicates>,
+            Option<&DormancyBuild>,
+        ) -> Txs
         + Send
         + Sync
         + 'a,
@@ -408,7 +449,19 @@ impl<'a, Txs> Builder<'a, Txs> {
             best: Box::new(best),
             evict_permanently_rejected: Box::new(|_| {}),
             resting_predicates: None,
+            begin_dormancy: None,
         }
+    }
+
+    /// Sets the callback that starts the build against the pool's dormancy index. When it
+    /// returns a [`DormancyBuild`], the build seals it with the block and ignores its resting
+    /// set, which the pool's index replaces.
+    pub fn with_dormancy(
+        mut self,
+        begin: impl FnOnce(B256, u64, Option<&TransitionState>) -> Option<DormancyBuild> + 'a,
+    ) -> Self {
+        self.begin_dormancy = Some(Box::new(begin));
+        self
     }
 
     /// Sets the callback used to permanently remove mempool transactions that exceeded a
@@ -447,7 +500,7 @@ impl<Txs> Builder<'_, Txs> {
         >,
         Attrs: Attributes<Transaction = N::SignedTx>,
     {
-        let Self { best, evict_permanently_rejected, resting_predicates } = self;
+        let Self { best, evict_permanently_rejected, resting_predicates, begin_dormancy } = self;
         // The pool iterator's hold watches the job's cancellation through a weak reference. A
         // dropped `CancelOnDrop` clone cancels the job, so only this owner, dropped with `ctx` when
         // the build returns, keeps one.
@@ -479,11 +532,19 @@ impl<Txs> Builder<'_, Txs> {
 
         // 3. if mem pool transactions are requested we execute them
         let mut resting = None;
+        let mut dormancy = None;
         if !ctx.attributes().no_tx_pool() {
+            dormancy = begin_dormancy.and_then(|begin| {
+                begin(
+                    ctx.parent().hash(),
+                    ctx.parent().number().saturating_add(1),
+                    builder.evm_mut().db_mut().transition_state.as_ref(),
+                )
+            });
             // Without flashblocks, resting transactions only carry across blocks, from Denim on.
             resting = resting_predicates
                 .as_ref()
-                .filter(|_| ctx.is_one_shot_building_active())
+                .filter(|_| ctx.is_one_shot_building_active() && dormancy.is_none())
                 .map(|store| {
                     let start = Instant::now();
                     let mut resting = store.take(
@@ -501,8 +562,11 @@ impl<Txs> Builder<'_, Txs> {
                     SharedRestingPredicates::new(resting)
                         .with_interrupt(job_interrupt(&cancel_watch))
                 });
-            let best_txs =
-                best(ctx.best_transaction_attributes(builder.evm_mut().block()), resting.as_ref());
+            let best_txs = best(
+                ctx.best_transaction_attributes(builder.evm_mut().block()),
+                resting.as_ref(),
+                dormancy.as_ref(),
+            );
             let cancelled =
                 ctx.execute_best_transactions(&mut info, &mut builder, best_txs, resting.as_ref())?;
             if !info.permanently_rejected_txs.is_empty() {
@@ -578,6 +642,9 @@ impl<Txs> Builder<'_, Txs> {
         debug!(target: "payload_builder", id=%ctx.payload_id(), sealed_block_header = ?sealed_block.header(), "sealed built block");
         if let (Some(resting), Some(store)) = (resting, resting_predicates) {
             store.put(resting, sealed_block.hash());
+        }
+        if let Some(dormancy) = dormancy {
+            dormancy.seal(sealed_block.hash());
         }
 
         let execution_outcome =
@@ -1026,6 +1093,9 @@ where
         let block_number =
             builder.evm_mut().block().number().try_into().expect("block number must fit in u64");
         let predicate_context = PredicateContext { block_number, flashblock_index: 0 };
+        // A build against the pool's dormancy index parks and wakes there; otherwise the build keeps
+        // its own index.
+        let pool_index = best_txs.parks_in_pool_index();
         let mut predicate_index =
             ParkedPredicateIndex::new(self.builder_config.predicate_bucket_ordered_threshold);
         let mut predicate_loads = PredicateLoadTracker::default();
@@ -1217,7 +1287,11 @@ where
                             ?blocker,
                             "parking transaction with unsatisfied validity predicate"
                         );
-                        best_txs.park_current();
+                        if pool_index {
+                            best_txs.park_current_unsatisfied(predicate.clone());
+                        } else {
+                            best_txs.park_current();
+                        }
                         if deferrals.record(tx_hash, "validity_predicate_not_satisfied") {
                             emit_native_validity_event!(
                                 self,
@@ -1230,7 +1304,9 @@ where
                                 }
                             );
                         }
-                        predicate_index.park(tx_hash, pooled, predicate);
+                        if !pool_index {
+                            predicate_index.park(tx_hash, pooled, predicate);
+                        }
                         continue;
                     }
                     Err(error) => {
@@ -1451,6 +1527,9 @@ where
                         }
                         if let Some(resting) = resting {
                             resting_woken = resting.wake_by_state(&result_and_state.state);
+                        }
+                        if pool_index {
+                            best_txs.wake_by_state(&result_and_state.state);
                         }
                         CommitChanges::Yes
                     }
@@ -1715,7 +1794,8 @@ mod tests {
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
     use base_execution_evm::BaseEvmConfig;
     use base_execution_txpool::{
-        BasePooledTransaction, BestTransactionsHold, ValidityOperator, ValidityPredicate,
+        BasePooledTransaction, BestTransactionsHold, DormancyBuild, ValidityOperator,
+        ValidityPredicate,
     };
     use base_observability_events::{TransactionEventCapture, TransactionEventType};
     use reth_basic_payload_builder::{BuildOutcomeKind, PayloadConfig};
@@ -1736,7 +1816,7 @@ mod tests {
     use reth_trie_parallel::state_root_task::{
         PayloadStateRootHandle, StateRootComputeOutcome, StateRootHandle, StateRootTaskCancelGuard,
     };
-    use revm::{Database, database::TransitionState};
+    use revm::{Database, database::TransitionState, state::EvmState};
 
     use super::{
         BasePayloadBuilderCtx, Builder, ExecutionInfo, RESTING_SWEEP_WAIT_LIMIT, job_interrupt,
@@ -1793,7 +1873,7 @@ mod tests {
             best_payload: None,
         };
         let provider = NoopProvider::default();
-        let builder = Builder::new(|_, _| NoopPayloadTransactions::<PooledCandidate>::default());
+        let builder = Builder::new(|_, _, _| NoopPayloadTransactions::<PooledCandidate>::default());
         let outcome = builder
             .build(
                 StateProviderDatabase::new((&provider).into_evm_state_provider()),
@@ -1913,7 +1993,7 @@ mod tests {
         Txs: ParkablePayloadTransactions<Pooled = BasePooledTransaction> + Send + Sync,
     {
         let provider = funded_provider(funded_senders);
-        Builder::new(|_, _| transactions)
+        Builder::new(|_, _, _| transactions)
             .build(
                 StateProviderDatabase::new((&provider).into_evm_state_provider()),
                 &provider,
@@ -1971,7 +2051,7 @@ mod tests {
         Txs: ParkablePayloadTransactions<Pooled = BasePooledTransaction> + Send + Sync,
     {
         let provider = funded_provider(funded_senders);
-        Builder::new(|_, _| transactions)
+        Builder::new(|_, _, _| transactions)
             .with_permanent_eviction(evict)
             .build(
                 StateProviderDatabase::new((&provider).into_evm_state_provider()),
@@ -2033,6 +2113,10 @@ mod tests {
         invalid: Arc<Mutex<Vec<(Address, u64)>>>,
         /// Parks held candidates before yielding them, as the pool's parking iterator does.
         hold: Option<Box<dyn BestTransactionsHold<BasePooledTransaction>>>,
+        /// Stands in for the pool's dormancy index.
+        pool_index: Option<crate::ParkedPredicateIndex<()>>,
+        /// Every hash the build parked in `pool_index`.
+        pool_parked: Arc<Mutex<Vec<TxHash>>>,
     }
 
     impl TestParkableTransactions {
@@ -2053,7 +2137,18 @@ mod tests {
                 promoted_first: true,
                 invalid,
                 hold: None,
+                pool_index: None,
+                pool_parked: Arc::default(),
             }
+        }
+
+        /// Parks unsatisfied candidates in, and wakes them from, a stand-in for the pool's
+        /// dormancy index, recording every hash parked there into `parked`.
+        fn with_pool_index(mut self, parked: Arc<Mutex<Vec<TxHash>>>) -> Self {
+            self.pool_index =
+                Some(crate::ParkedPredicateIndex::new(DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD));
+            self.pool_parked = parked;
+            self
         }
 
         /// Parks the candidates `hold` holds before yielding them.
@@ -2124,6 +2219,31 @@ mod tests {
 
         fn discard_parked(&mut self, transaction_hash: B256) -> bool {
             self.parked.remove(&transaction_hash).is_some()
+        }
+
+        fn parks_in_pool_index(&self) -> bool {
+            self.pool_index.is_some()
+        }
+
+        fn park_current_unsatisfied(&mut self, predicate: ValidityPredicate) {
+            if let (Some(transaction), Some(index)) =
+                (self.current.as_ref(), self.pool_index.as_mut())
+            {
+                index.park(*transaction.hash(), (), predicate);
+                self.pool_parked.lock().unwrap().push(*transaction.hash());
+            }
+            self.park_current();
+        }
+
+        fn wake_by_state(&mut self, state: &EvmState) {
+            let Some(index) = self.pool_index.as_mut() else { return };
+            let woken = index.affected_by_state(state).affected_transactions;
+            for hash in &woken {
+                index.remove(*hash);
+            }
+            for hash in woken {
+                self.promote(hash);
+            }
         }
     }
 
@@ -2449,7 +2569,7 @@ mod tests {
         let funded_senders =
             transactions.iter().map(|transaction| transaction.sender()).collect::<Vec<_>>();
         let provider = funded_provider(&funded_senders);
-        let outcome = Builder::new(|_, resting| {
+        let outcome = Builder::new(|_, resting, _| {
             TestParkableTransactions::new(transactions)
                 .with_hold(resting.map(SharedRestingPredicates::iterator_hold))
         })
@@ -2718,9 +2838,10 @@ mod tests {
         ctx.config.attributes.transactions = vec![sequencer_attribute_tx(&pool_transaction(0))];
         drop(ctx.cancel.clone());
 
-        let err = Builder::new(|_, _| NoopPayloadTransactions::<BasePooledTransaction>::default())
-            .witness(test_state_provider(), NoopProvider::default(), &ctx)
-            .unwrap_err();
+        let err =
+            Builder::new(|_, _, _| NoopPayloadTransactions::<BasePooledTransaction>::default())
+                .witness(test_state_provider(), NoopProvider::default(), &ctx)
+                .unwrap_err();
         assert!(err.to_string().contains("cancelled"), "{err}");
     }
 
@@ -3035,6 +3156,298 @@ mod tests {
         assert_eq!(included_tx_count(outcome), 0);
         assert!(evicted.lock().unwrap().is_empty());
         assert_eq!(invalid.lock().unwrap().len(), 1);
+    }
+
+    /// With the pool's dormancy index, the build parks an unsatisfied transaction there and an
+    /// earlier commit that satisfies it wakes it into the same block.
+    #[test]
+    fn native_builder_parks_in_and_wakes_from_the_pool_index() {
+        let watched_address = Address::repeat_byte(0x44);
+        let gated = pool_transaction_to(0, Address::repeat_byte(0x55), U256::ZERO)
+            .with_validity_predicates(vec![ValidityPredicate::Balance {
+                address: watched_address,
+                op: ValidityOperator::Equal,
+                value: U256::ONE,
+            }]);
+        let trigger = pool_transaction_to(0, watched_address, U256::ONE);
+        let funded_senders = [gated.sender(), trigger.sender()];
+        let (gated_hash, trigger_hash) = (*gated.hash(), *trigger.hash());
+        let parked = Arc::new(Mutex::new(Vec::new()));
+        let transactions = TestParkableTransactions::new(vec![gated, trigger])
+            .with_pool_index(Arc::clone(&parked));
+
+        let BuildOutcomeKind::Freeze(payload) = build_parkable_pool_payload(
+            pool_payload_context(DENIM_TIMESTAMP),
+            transactions,
+            &funded_senders,
+        ) else {
+            panic!("Denim payload must freeze")
+        };
+
+        let included_hashes = payload
+            .block()
+            .body()
+            .transactions
+            .iter()
+            .map(|transaction| *transaction.tx_hash())
+            .collect::<Vec<_>>();
+        assert_eq!(included_hashes, vec![trigger_hash, gated_hash]);
+        assert_eq!(*parked.lock().unwrap(), vec![gated_hash]);
+    }
+
+    type EnforcingPool = base_execution_txpool::BaseTransactionPool<
+        reth_provider::test_utils::MockEthProvider<BasePrimitives, Arc<BaseChainSpec>>,
+        reth_transaction_pool::blobstore::InMemoryBlobStore,
+        BaseEvmConfig,
+    >;
+
+    /// A Base transaction pool enforcing validity dormancy, with `funded` holding balance.
+    fn enforcing_pool(funded: &[Address]) -> EnforcingPool {
+        let mut genesis = base_test_utils::build_test_genesis_everest();
+        genesis.config.chain_id = 8_453;
+        let chain_spec = Arc::new(BaseChainSpec::from_genesis(genesis));
+        let client = reth_provider::test_utils::MockEthProvider::<BasePrimitives>::new()
+            .with_chain_spec(Arc::clone(&chain_spec))
+            .with_genesis_block();
+        for address in funded {
+            client.add_account(
+                *address,
+                reth_provider::test_utils::ExtendedAccount::new(0, U256::from(u64::MAX)),
+            );
+        }
+        let blob_store = reth_transaction_pool::blobstore::InMemoryBlobStore::default();
+        let validator = reth_transaction_pool::validate::EthTransactionValidatorBuilder::new(
+            client,
+            BaseEvmConfig::base(Arc::clone(&chain_spec)),
+        )
+        .no_shanghai()
+        .no_cancun()
+        .build_with_tasks(reth_tasks::Runtime::test(), blob_store.clone())
+        .map(|inner| {
+            let validator = base_execution_txpool::BaseTransactionValidator::with_block_info(
+                inner,
+                base_execution_txpool::BaseL1BlockInfo::default(),
+            );
+            let header = Header { timestamp: DENIM_TIMESTAMP, ..Default::default() };
+            validator.update_l1_block_info::<_, TxEip1559>(&header, &[]);
+            validator
+        });
+        let ordering = base_execution_txpool::BaseOrdering::default();
+        let pool = reth_transaction_pool::Pool::new(
+            validator,
+            ordering.clone(),
+            blob_store,
+            Default::default(),
+        );
+        base_execution_txpool::BaseTransactionPool::new(pool, ordering)
+            .with_guard_limits(base_execution_txpool::GuardLimits::default())
+            .with_validity_dormancy(base_execution_txpool::ValidityDormancyMode::Enforce)
+    }
+
+    /// A transaction from `signer` paying `tip` to send `value` to `to`, with `predicates`.
+    fn signed_pool_transaction(
+        signer: &alloy_signer_local::PrivateKeySigner,
+        to: Address,
+        value: U256,
+        tip: u128,
+        predicates: Vec<ValidityPredicate>,
+    ) -> BasePooledTransaction {
+        use alloy_signer::SignerSync;
+
+        let tx = TxEip1559 {
+            chain_id: 8_453,
+            nonce: 0,
+            gas_limit: 100_000,
+            max_fee_per_gas: 2_000_000_000,
+            max_priority_fee_per_gas: tip,
+            to: TxKind::Call(to),
+            value,
+            ..Default::default()
+        };
+        let signature = signer.sign_hash_sync(&tx.signature_hash()).unwrap();
+        let envelope = BaseTxEnvelope::Eip1559(tx.into_signed(signature));
+        let encoded_len = envelope.encode_2718_len();
+        let transaction = BasePooledTransaction::new(
+            envelope.try_into_recovered().expect("signature must recover"),
+            encoded_len,
+        );
+        if predicates.is_empty() {
+            transaction
+        } else {
+            transaction.with_validity_predicates(predicates)
+        }
+    }
+
+    /// Runs `hook` when the build first asks for a candidate, after the snapshot was taken.
+    struct HookOnFirstCandidate<Txs, F> {
+        inner: Txs,
+        hook: Option<F>,
+    }
+
+    impl<Txs: ParkablePayloadTransactions, F: FnOnce()> PayloadTransactions
+        for HookOnFirstCandidate<Txs, F>
+    {
+        type Transaction = Txs::Transaction;
+
+        fn next(&mut self, ctx: ()) -> Option<Self::Transaction> {
+            if let Some(hook) = self.hook.take() {
+                hook();
+            }
+            self.inner.next(ctx)
+        }
+
+        fn mark_invalid(&mut self, sender: Address, nonce: u64) {
+            self.inner.mark_invalid(sender, nonce);
+        }
+    }
+
+    impl<Txs: ParkablePayloadTransactions, F: FnOnce()> ParkablePayloadTransactions
+        for HookOnFirstCandidate<Txs, F>
+    {
+        type Pooled = Txs::Pooled;
+
+        fn park_current(&mut self) {
+            self.inner.park_current();
+        }
+
+        fn mark_current_committed(&mut self) {
+            self.inner.mark_current_committed();
+        }
+
+        fn promote(&mut self, transaction_hash: TxHash) -> bool {
+            self.inner.promote(transaction_hash)
+        }
+
+        fn discard_parked(&mut self, transaction_hash: TxHash) -> bool {
+            self.inner.discard_parked(transaction_hash)
+        }
+
+        fn parks_in_pool_index(&self) -> bool {
+            self.inner.parks_in_pool_index()
+        }
+
+        fn park_current_unsatisfied(&mut self, predicate: ValidityPredicate) {
+            self.inner.park_current_unsatisfied(predicate);
+        }
+
+        fn wake_by_state(&mut self, state: &EvmState) {
+            self.inner.wake_by_state(state);
+        }
+    }
+
+    fn included_hashes(
+        outcome: BuildOutcomeKind<crate::BaseBuiltPayload<BasePrimitives>>,
+    ) -> Vec<TxHash> {
+        let BuildOutcomeKind::Freeze(payload) = outcome else {
+            panic!("Denim payload must freeze")
+        };
+        payload
+            .block()
+            .body()
+            .transactions
+            .iter()
+            .map(|transaction| TxHash::from(*transaction.tx_hash()))
+            .collect()
+    }
+
+    /// A build that begins while another owns the pool's dormancy index runs without it, as with
+    /// dormancy off, and still includes a transaction an earlier commit in its block satisfies;
+    /// the owner keeps waking through the index and includes it in its own block too.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_build_beginning_while_another_owns_the_dormancy_index_still_wakes_mid_block() {
+        use base_execution_txpool::ParkableTransactionPool;
+        use reth_transaction_pool::TransactionPool;
+
+        let watched = Address::repeat_byte(0x44);
+        let (gated_signer, trigger_signer) = (
+            alloy_signer_local::PrivateKeySigner::random(),
+            alloy_signer_local::PrivateKeySigner::random(),
+        );
+        let funded = [gated_signer.address(), trigger_signer.address()];
+        let gated = signed_pool_transaction(
+            &gated_signer,
+            Address::repeat_byte(0x55),
+            U256::ZERO,
+            10,
+            vec![
+                ValidityPredicate::BlockNumber {
+                    op: ValidityOperator::LessThanOrEqual,
+                    value: U256::from(1_000),
+                },
+                ValidityPredicate::Balance {
+                    address: watched,
+                    op: ValidityOperator::Equal,
+                    value: U256::ONE,
+                },
+            ],
+        );
+        let trigger = signed_pool_transaction(&trigger_signer, watched, U256::ONE, 1, Vec::new());
+        let expected = vec![*trigger.hash(), *gated.hash()];
+        let pool = enforcing_pool(&funded);
+        for transaction in [gated, trigger] {
+            pool.add_transaction(TransactionOrigin::External, transaction).await.unwrap();
+        }
+        let build = |best_hook: Box<dyn FnOnce() + Send + Sync + '_>| {
+            let provider = funded_provider(&funded);
+            Builder::new(|attributes, _, dormancy| HookOnFirstCandidate {
+                inner: crate::ParkableBestPayloadTransactions::new(
+                    pool.best_transactions_with_attributes_and_parking(attributes, None, dormancy),
+                ),
+                hook: Some(best_hook),
+            })
+            .with_dormancy(|parent, number, pre_selection| {
+                pool.begin_dormancy_build(parent, number, pre_selection)
+            })
+            .build(
+                StateProviderDatabase::new((&provider).into_evm_state_provider()),
+                &provider,
+                Some(state_root_handle()),
+                pool_payload_context(DENIM_TIMESTAMP),
+            )
+            .expect("payload must build")
+        };
+
+        let second = std::sync::Mutex::new(None);
+        let first = build(Box::new(|| {
+            *second.lock().unwrap() = Some(included_hashes(build(Box::new(|| {}))));
+        }));
+
+        assert_eq!(second.into_inner().unwrap(), Some(expected.clone()), "the second build");
+        assert_eq!(included_hashes(first), expected, "the build owning the index");
+    }
+
+    /// A native build starts a dormancy build on its parent for the next block, after the writes
+    /// made before selection, and seals it with the sealed block's hash.
+    #[test]
+    fn native_build_begins_and_seals_a_dormancy_build() {
+        let tx = pool_transaction(0);
+        let ctx = pool_payload_context(DENIM_TIMESTAMP);
+        let (parent, block) = (ctx.parent().hash(), ctx.parent().number + 1);
+        let provider = funded_provider(&[tx.sender()]);
+        let transactions =
+            TestParkableTransactions::recording(vec![tx], Arc::new(Mutex::new(Vec::new())));
+        let begun = Arc::new(Mutex::new(Vec::new()));
+        let sealed = Arc::new(Mutex::new(Vec::new()));
+        let (record_begun, record_sealed) = (Arc::clone(&begun), Arc::clone(&sealed));
+
+        let outcome = Builder::new(|_, _, _| transactions)
+            .with_dormancy(move |parent, number, pre_selection| {
+                record_begun.lock().unwrap().push((parent, number, pre_selection.is_some()));
+                Some(DormancyBuild::new(1, move |hash| record_sealed.lock().unwrap().push(hash)))
+            })
+            .build(
+                StateProviderDatabase::new((&provider).into_evm_state_provider()),
+                &provider,
+                Some(state_root_handle()),
+                ctx,
+            )
+            .expect("payload must build");
+
+        let BuildOutcomeKind::Freeze(payload) = outcome else {
+            panic!("Denim payload must freeze")
+        };
+        assert_eq!(*begun.lock().unwrap(), vec![(parent, block, true)]);
+        assert_eq!(*sealed.lock().unwrap(), vec![Some(payload.block().hash())]);
     }
 
     #[test]

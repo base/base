@@ -3,13 +3,14 @@
 use std::sync::Arc;
 
 use alloy_primitives::{Address, TxHash};
-use base_execution_txpool::{BasePooledTx, ParkableBestTransactions};
+use base_execution_txpool::{BasePooledTx, ParkableBestTransactions, ValidityPredicate};
 pub use reth_payload_util::NoopPayloadTransactions;
 use reth_payload_util::PayloadTransactions;
 use reth_transaction_pool::{
     PoolTransaction, ValidPoolTransaction,
     error::{InvalidPoolTransactionError, PoolTransactionError},
 };
+use revm::state::EvmState;
 
 /// Indicates that the payload builder excluded a transaction from the current candidate iterator.
 #[derive(Debug, thiserror::Error)]
@@ -51,6 +52,23 @@ pub trait ParkablePayloadTransactions:
 
     /// Excludes a predicate-parked transaction for the remainder of this iterator.
     fn discard_parked(&mut self, transaction_hash: TxHash) -> bool;
+
+    /// Whether unsatisfied transactions are parked in, and woken from, the pool's dormancy index
+    /// through [`Self::park_current_unsatisfied`] and [`Self::wake_by_state`] instead of an index
+    /// the build keeps. The default keeps none.
+    fn parks_in_pool_index(&self) -> bool {
+        false
+    }
+
+    /// Parks the current transaction, whose validity predicate `predicate` failed, in the
+    /// iterator and the pool's dormancy index. The default only parks it.
+    fn park_current_unsatisfied(&mut self, _predicate: ValidityPredicate) {
+        self.park_current();
+    }
+
+    /// Wakes the transactions in the pool's dormancy index that a committed transaction's `state`
+    /// may satisfy. The default wakes nothing.
+    fn wake_by_state(&mut self, _state: &EvmState) {}
 }
 
 impl<T> ParkablePayloadTransactions for NoopPayloadTransactions<Arc<ValidPoolTransaction<T>>>
@@ -163,5 +181,19 @@ where
             transaction_hash,
             InvalidPoolTransactionError::other(PayloadTransactionInvalidated),
         )
+    }
+
+    fn parks_in_pool_index(&self) -> bool {
+        self.inner.parks_in_pool_index()
+    }
+
+    fn park_current_unsatisfied(&mut self, predicate: ValidityPredicate) {
+        if let Some(transaction) = self.current.take() {
+            self.inner.park_unsatisfied(&transaction, predicate);
+        }
+    }
+
+    fn wake_by_state(&mut self, state: &EvmState) {
+        self.inner.wake_by_state(state);
     }
 }
