@@ -20,6 +20,7 @@
 - [ ] **State creation (EIP-8037):** Choose Base's gas price per byte of new state.
 - [ ] **State access (EIP-8038):** Choose Base's account/storage access and write prices.
 - [ ] **BAL Bandwidth Analysis:** Compare payload sizes with and without BALs, before and after compression.
+- [ ] **BAL parallel execution admission:** Reth's parallel BAL path admits transactions only through `BlockExecutor::validate_transaction_gas_limit`, which sees the gas limit alone. Base's executor also reserves EIP-8130 payer-authentication gas, exempts pre-Regolith deposits and meters the Jovian DA footprint against canonical counters, so those checks must move into an admission hook that sees the transaction before BALs activate.
 
 ## EIPs
 
@@ -232,9 +233,9 @@ Access-list data pricing must match the [EIP-7976 calldata floor](#calldata-floo
 - [BAL-based state healing over snap/2 (EIP-8189)](https://eips.ethereum.org/EIPS/eip-8189)
 - [Base L1 derivation and batch format](https://docs.base.org/specifications/base-protocol/consensus/derivation)
 - [Base rollup-node P2P and block gossip specification](https://docs.base.org/specifications/base-protocol/consensus/p2p)
-- [Reth v2.8.1 BAL storage and pruning](https://github.com/paradigmxyz/reth/blob/v2.8.1/crates/storage/provider/src/bal/rocksdb.rs)
-- [Reth v2.8.1 release notes](https://github.com/paradigmxyz/reth/releases/tag/v2.8.1)
-- [v2.8.1 source and pinned dependencies](https://github.com/paradigmxyz/reth/tree/v2.8.1)
+- [Reth v2.9.0 BAL storage and pruning](https://github.com/paradigmxyz/reth/blob/v2.9.0/crates/storage/provider/src/bal/rocksdb.rs)
+- [Reth v2.9.0 release notes](https://github.com/paradigmxyz/reth/releases/tag/v2.9.0)
+- [v2.9.0 source and pinned dependencies](https://github.com/paradigmxyz/reth/tree/v2.9.0)
 - [revm's Amsterdam gas rules](https://docs.rs/revm-context-interface/43.0.2/src/revm_context_interface/cfg/gas_params.rs.html)
-- [Reth networking implementations](https://github.com/paradigmxyz/reth/tree/v2.8.1/crates/net)
-- [BAL-based synchronization](https://github.com/paradigmxyz/reth/tree/v2.8.1/crates/snap-sync)
+- [Reth networking implementations](https://github.com/paradigmxyz/reth/tree/v2.9.0/crates/net)
+- [BAL-based synchronization](https://github.com/paradigmxyz/reth/tree/v2.9.0/crates/snap-sync)

@@ -2,18 +2,17 @@
 //!
 //! Runs the same OP-stack deposit through the `base-common-evm2` handler and the revm-based
 //! `base-common-evm` reference, then asserts the two engines agree on the observable outcome:
-//! success, gas used, the created contract address, and the post-state (balance, nonce,
+//! success, gas used, logs, the created contract address, and the post-state (balance, nonce,
 //! code hash, and storage) of every account the fixture cares about.
 //!
-//! Every fixture is swept across [`FORKS`] (Regolith/Ecotone/Isthmus → MERGE/CANCUN/PRAGUE) on
-//! both engines, exercising the Base fork schedule: evm2 selects the spec via
-//! [`BaseSpecId`] and revm via its own `BaseSpecId`, both from the same [`BaseUpgrade`]. Both
-//! take the same `base_common_consensus::TxDeposit` fields (shared thanks to the type dedup).
+//! Every fixture is swept across [`forks`] (Bedrock through Everest) on both engines, exercising
+//! the Base fork schedule: evm2 selects the spec via [`BaseSpecId`] and revm via its own
+//! `BaseSpecId`, both from the same [`BaseUpgrade`]. Both take the same `base_common_consensus::TxDeposit` fields (shared thanks to the type dedup).
 
 use std::collections::BTreeMap;
 
 use alloy_consensus::transaction::Recovered;
-use alloy_primitives::{Address, B256, Bytes, TxKind, U256, keccak256};
+use alloy_primitives::{Address, B256, Bytes, Log, TxKind, U256, keccak256};
 // shared consensus deposit type.
 use base_common_consensus::TxDeposit;
 // revm reference side.
@@ -37,9 +36,10 @@ use revm::{
 const SENDER: Address = Address::repeat_byte(0x11);
 const SOURCE_HASH: B256 = B256::repeat_byte(0xab);
 
-/// Base upgrades the parity fixtures are swept across, exercising the fork schedule end to end
-/// (MERGE, CANCUN, and PRAGUE gas schedules respectively).
-const FORKS: [BaseUpgrade; 3] = [BaseUpgrade::Regolith, BaseUpgrade::Ecotone, BaseUpgrade::Isthmus];
+/// Base upgrades the parity fixtures are swept across: the whole execution fork ladder.
+fn forks() -> impl Iterator<Item = BaseUpgrade> {
+    BaseUpgrade::EXECUTION_VARIANTS.into_iter()
+}
 
 /// An account to seed into both engines before execution.
 #[derive(Clone)]
@@ -51,6 +51,7 @@ struct Seed {
 }
 
 /// A deposit scenario plus the accounts/slots whose post-state to compare.
+#[derive(Clone)]
 struct Fixture {
     seed: Vec<Seed>,
     to: TxKind,
@@ -77,6 +78,7 @@ struct AccountState {
 struct Outcome {
     success: bool,
     gas_used: u64,
+    logs: Vec<Log>,
     created: Option<Address>,
     accounts: BTreeMap<Address, AccountState>,
 }
@@ -125,7 +127,7 @@ fn run_evm2(fixture: &Fixture, upgrade: BaseUpgrade) -> Outcome {
         let info = evm.state_mut().account_info_untracked(address).unwrap().unwrap_or_default();
         let mut storage = BTreeMap::new();
         for slot in slots {
-            let value = evm.state_mut().storage_slot(address, *slot, false).unwrap().current();
+            let value = evm.state_mut().storage_slot(address, *slot).unwrap().current();
             storage.insert(*slot, value);
         }
         accounts.insert(
@@ -142,6 +144,7 @@ fn run_evm2(fixture: &Fixture, upgrade: BaseUpgrade) -> Outcome {
     Outcome {
         success: result.status,
         gas_used: result.tx_gas_used(),
+        logs: result.logs,
         created: result.created_address,
         accounts,
     }
@@ -206,23 +209,33 @@ fn run_revm(fixture: &Fixture, upgrade: BaseUpgrade) -> Outcome {
                 .unwrap_or_default();
             storage.insert(*slot, value);
         }
+        // revm's state holds only the accounts the transaction touched; an untouched account
+        // keeps its seeded (or empty) pre-state.
+        let (balance, nonce, code_hash) = account
+            .map(|account| (account.info.balance, account.info.nonce, account.info.code_hash))
+            .or_else(|| {
+                let seed = fixture.seed.iter().find(|seed| seed.address == *address)?;
+                Some((seed.balance, seed.nonce, keccak256(&seed.code)))
+            })
+            .unwrap_or_default();
         accounts.insert(
             *address,
-            AccountState {
-                balance: account.map(|a| a.info.balance).unwrap_or_default(),
-                nonce: account.map(|a| a.info.nonce).unwrap_or_default(),
-                code_hash: norm_code_hash(account.map(|a| a.info.code_hash).unwrap_or_default()),
-                storage,
-            },
+            AccountState { balance, nonce, code_hash: norm_code_hash(code_hash), storage },
         );
     }
 
-    Outcome { success: result.is_success(), gas_used: result.tx_gas_used(), created, accounts }
+    Outcome {
+        success: result.is_success(),
+        gas_used: result.tx_gas_used(),
+        logs: result.logs().to_vec(),
+        created,
+        accounts,
+    }
 }
 
-/// Asserts the two engines produce identical outcomes for `fixture` at every fork in [`FORKS`].
+/// Asserts the two engines produce identical outcomes for `fixture` at every fork in [`forks`].
 fn assert_parity(fixture: Fixture) {
-    for upgrade in FORKS {
+    for upgrade in forks() {
         let evm2 = run_evm2(&fixture, upgrade);
         let revm = run_revm(&fixture, upgrade);
         assert_eq!(evm2, revm, "evm2 and revm deposit outcomes diverged at {upgrade:?}");
@@ -324,7 +337,7 @@ fn parity_halted_deposit() {
 }
 
 #[test]
-fn parity_system_transaction_rejected() {
+fn parity_system_transaction() {
     assert_parity(Fixture {
         seed: vec![],
         to: TxKind::Call(Address::repeat_byte(0x22)),
@@ -335,6 +348,44 @@ fn parity_system_transaction_rejected() {
         is_system: true,
         compare: vec![(SENDER, vec![])],
     });
+}
+
+/// A pre-Regolith L1-info deposit: a 150M-gas system transaction into a contract that stores a
+/// value and emits a log, standing in for the `L1Block` update. Before Regolith it executes and
+/// reports its actual gas; from Regolith it is rejected as a failed deposit charged its gas limit.
+#[test]
+fn parity_l1_info_system_deposit_executes_only_before_regolith() {
+    // Runtime code: PUSH1 0x2a, PUSH1 0x00, SSTORE, PUSH1 0x00, PUSH1 0x00, LOG0, STOP.
+    let l1_block = Address::repeat_byte(0x15);
+    const GAS_LIMIT: u64 = 150_000_000;
+    let fixture = Fixture {
+        seed: vec![Seed {
+            address: l1_block,
+            balance: U256::ZERO,
+            nonce: 1,
+            code: vec![0x60, 0x2a, 0x60, 0x00, 0x55, 0x60, 0x00, 0x60, 0x00, 0xa0, 0x00],
+        }],
+        to: TxKind::Call(l1_block),
+        mint: 0,
+        value: U256::ZERO,
+        gas_limit: GAS_LIMIT,
+        input: vec![],
+        is_system: true,
+        compare: vec![(SENDER, vec![]), (l1_block, vec![U256::ZERO])],
+    };
+    assert_parity(fixture.clone());
+
+    let bedrock = run_evm2(&fixture, BaseUpgrade::Bedrock);
+    assert!(bedrock.success);
+    assert!(bedrock.gas_used < GAS_LIMIT);
+    assert_eq!(bedrock.logs.len(), 1);
+    assert_eq!(bedrock.accounts[&l1_block].storage[&U256::ZERO], U256::from(0x2a));
+
+    let regolith = run_evm2(&fixture, BaseUpgrade::Regolith);
+    assert!(!regolith.success);
+    assert_eq!(regolith.gas_used, GAS_LIMIT);
+    assert!(regolith.logs.is_empty());
+    assert_eq!(regolith.accounts[&l1_block].storage[&U256::ZERO], U256::ZERO);
 }
 
 #[test]
@@ -405,5 +456,39 @@ fn parity_warm_account_access() {
         input: vec![],
         is_system: false,
         compare: vec![(SENDER, vec![])],
+    });
+}
+
+/// Calldata of 1,000 non-zero bytes: 37,000 intrinsic gas but a 61,000 EIP-7623 calldata floor
+/// from Isthmus (Prague) onwards.
+fn calldata_heavy_input() -> Vec<u8> {
+    vec![0x01; 1_000]
+}
+
+#[test]
+fn parity_calldata_heavy_deposit_pays_the_calldata_floor() {
+    assert_parity(Fixture {
+        seed: vec![],
+        to: TxKind::Call(Address::repeat_byte(0x22)),
+        mint: 1_000,
+        value: U256::ZERO,
+        gas_limit: 100_000,
+        input: calldata_heavy_input(),
+        is_system: false,
+        compare: vec![(SENDER, vec![]), (Address::repeat_byte(0x22), vec![])],
+    });
+}
+
+#[test]
+fn parity_deposit_below_the_calldata_floor_fails() {
+    assert_parity(Fixture {
+        seed: vec![],
+        to: TxKind::Call(Address::repeat_byte(0x22)),
+        mint: 1_000,
+        value: U256::ZERO,
+        gas_limit: 50_000,
+        input: calldata_heavy_input(),
+        is_system: false,
+        compare: vec![(SENDER, vec![]), (Address::repeat_byte(0x22), vec![])],
     });
 }

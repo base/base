@@ -1,9 +1,14 @@
 //! Precompile entry point for the EIP-8130 transaction context.
 
+#[cfg(feature = "revm")]
 use alloy_evm::precompiles::PrecompilesMap;
+#[cfg(feature = "revm")]
 use base_common_genesis::BaseUpgrade;
+use base_precompile_storage::{PrecompileResult, StorageCtx};
 
-use crate::{TxContextStorage, UpgradeGatedStorageFeatures, macros::base_precompile};
+use crate::TxContextStorage;
+#[cfg(feature = "revm")]
+use crate::{UpgradeGatedStorageFeatures, macros::base_precompile};
 
 /// Entry point for the EIP-8130 transaction context precompile.
 ///
@@ -16,20 +21,31 @@ use crate::{TxContextStorage, UpgradeGatedStorageFeatures, macros::base_precompi
 pub struct TxContext;
 
 impl TxContext {
+    /// Precompile identifier reported to the execution engine.
+    pub const ID: &'static str = "TxContext";
+
+    /// Dispatches one `TxContext` call.
+    pub fn run(ctx: StorageCtx<'_>, calldata: &[u8]) -> PrecompileResult {
+        TxContextStorage::new(ctx).dispatch(ctx, calldata)
+    }
+}
+
+#[cfg(feature = "revm")]
+impl TxContext {
     /// Installs the `TxContext` precompile, gated to the storage features
     /// active at `upgrade`.
     pub fn install(precompiles: &mut PrecompilesMap, upgrade: BaseUpgrade) {
         let storage_features = UpgradeGatedStorageFeatures::from_upgrade(upgrade);
         let precompile = base_precompile!(
-            "TxContext",
+            Self::ID,
             storage_features: storage_features,
-            |ctx, calldata| TxContextStorage::new(ctx).dispatch(ctx, calldata),
+            |ctx, calldata| Self::run(ctx, calldata),
         );
         precompiles.extend_precompiles(core::iter::once((TxContextStorage::ADDRESS, precompile)));
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "revm"))]
 mod tests {
     use alloy_evm::precompiles::PrecompilesMap;
     use base_common_genesis::BaseUpgrade;

@@ -268,11 +268,17 @@ skip = [
     "group",
     "k256",
     "p256",
+    "pkcs8",
     "primeorder",
     "rfc6979",
     "sec1",
+    "serdect",
     "signature",
     "spki",
+
+    # zstd version mismatch: reth v2.9 (reth-cli-commands) uses 0.14.x, other deps use 0.13.x
+    "zstd",
+    "zstd-safe",
 ]
 
 [sources]
@@ -282,9 +288,11 @@ unknown-git = "deny"
 # Allow git sources from known upstream repositories
 allow-git = [
     "https://github.com/paradigmxyz/reth",
+    "https://github.com/paradigmxyz/reth-core",
     "https://github.com/base/reth",
     "https://github.com/op-rs/op-reth",
     "https://github.com/ethereum-optimism/optimism",
     "https://github.com/alloy-rs/evm2",
     "https://github.com/sigp/discv5",
+    "https://github.com/DaniPopes/evm2",
 ]

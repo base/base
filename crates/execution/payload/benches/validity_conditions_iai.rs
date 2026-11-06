@@ -9,8 +9,9 @@
 //!   [`ValidityPredicateEvaluation::evaluate`]. That runs once per validity candidate in every
 //!   200 ms block after the Denim network upgrade, and again whenever a parked candidate is
 //!   rescanned, so it is on the per-candidate hot path (about 10^9 candidates a day; see
-//!   `docs/guides/HOT_PATH_PERFORMANCE_REVIEW.md`). The state is a fresh revm `State` over an
-//!   in-memory database, so first reads load into the per-build cache as in a real build.
+//!   `docs/guides/HOT_PATH_PERFORMANCE_REVIEW.md`). The state is a fresh per-build cache over an
+//!   in-memory database, shaped like the EVM's overlay database, so first reads load into the
+//!   cache as in a real build.
 //!   - `pass`: every candidate's predicates hold.
 //!   - `mixed`: one in eight candidates has passed its block expiry and two in eight fail their
 //!     last state predicate, so the run covers matched, expired, and parked outcomes.
@@ -44,9 +45,8 @@ use base_execution_payload_builder::{
 use base_execution_txpool::{
     PredicateContext, TransactionValidity, ValidityConditions, ValidityOperator, ValidityPredicate,
 };
+use evm2::evm::{AccountInfo, CacheDB, DynDatabase, InMemoryDB};
 use iai_callgrind::{library_benchmark, library_benchmark_group, main};
-use reth_revm::db::State;
-use revm::{database::InMemoryDB, state::AccountInfo};
 
 /// Candidates per run, the size of the criterion bench's pool-scale set.
 const CANDIDATES: usize = 10_000;
@@ -134,14 +134,17 @@ impl Workload {
     /// State under which every satisfied predicate of the candidate set holds.
     fn database(self) -> InMemoryDB {
         let mut db = InMemoryDB::default();
-        let info = AccountInfo { balance: U256::from(BALANCE), nonce: NONCE, ..Default::default() };
-        db.insert_account_info(WATCHED_CONTRACT, info.clone());
+        let info = AccountInfo::default().with_balance(U256::from(BALANCE)).with_nonce(NONCE);
+        db.insert_account_info(&WATCHED_CONTRACT, info.clone());
         for index in 0..CANDIDATES {
             for position in 0..MAX_STATE_PREDICATES {
                 let location = index * MAX_STATE_PREDICATES + position;
-                db.insert_account_info(account(location), info.clone());
-                db.insert_account_storage(WATCHED_CONTRACT, slot(location), slot_value(location))
-                    .expect("in-memory insert");
+                db.insert_account_info(&account(location), info.clone());
+                db.insert_account_storage(
+                    &WATCHED_CONTRACT,
+                    &slot(location),
+                    &slot_value(location),
+                );
             }
         }
         db
@@ -186,14 +189,17 @@ struct Outcomes {
     unique_slots: u64,
 }
 
+/// The build state predicates read: the EVM's per-build overlay cache over the parent state.
+type BuildState = CacheDB<Box<dyn DynDatabase>>;
+
 /// Compiled candidates and the build state they are evaluated against.
-type EvaluateInput = (Workload, Vec<ValidityConditions>, State<InMemoryDB>, PredicateLoadTracker);
+type EvaluateInput = (Workload, Vec<ValidityConditions>, BuildState, PredicateLoadTracker);
 
 /// Compiles the candidate set and builds fresh state outside the counted region.
 fn setup_evaluate(workload: Workload) -> EvaluateInput {
     let conditions =
         (0..CANDIDATES).map(|index| ValidityConditions::new(workload.batch(index))).collect();
-    let db = State::builder().with_database(workload.database()).with_bundle_update().build();
+    let db: BuildState = CacheDB::new(Box::new(workload.database()));
     (workload, conditions, db, PredicateLoadTracker::default())
 }
 

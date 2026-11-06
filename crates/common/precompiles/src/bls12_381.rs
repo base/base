@@ -1,3 +1,4 @@
+#[cfg(feature = "revm")]
 use revm::precompile::{
     self as precompile, Precompile, PrecompileHalt, PrecompileId, PrecompileOutput,
     PrecompileResult,
@@ -20,10 +21,12 @@ pub const ISTHMUS_PAIRING_MAX_INPUT_SIZE: usize = 235008;
 /// Max input size for the BLS12-381 pairing precompile after the Jovian upgrade.
 pub const JOVIAN_PAIRING_MAX_INPUT_SIZE: usize = 156_672;
 
+#[cfg(feature = "revm")]
 /// BLS12-381 G1 MSM precompile with Isthmus input limits.
 pub const ISTHMUS_G1_MSM: Precompile =
     Precompile::new(PrecompileId::Bls12G1Msm, G1_MSM_ADDRESS, run_isthmus_g1_msm);
 
+#[cfg(feature = "revm")]
 /// Run the BLS12-381 G1 MSM precompile with Isthmus input limits.
 pub fn run_isthmus_g1_msm(input: &[u8], gas_limit: u64, reservoir: u64) -> PrecompileResult {
     if input.len() > ISTHMUS_G1_MSM_MAX_INPUT_SIZE {
@@ -32,10 +35,12 @@ pub fn run_isthmus_g1_msm(input: &[u8], gas_limit: u64, reservoir: u64) -> Preco
     Ok(call_eth_precompile(precompile::bls12_381::g1_msm::g1_msm, input, gas_limit, reservoir))
 }
 
+#[cfg(feature = "revm")]
 /// BLS12-381 G2 MSM precompile with Isthmus input limits.
 pub const ISTHMUS_G2_MSM: Precompile =
     Precompile::new(PrecompileId::Bls12G2Msm, G2_MSM_ADDRESS, run_isthmus_g2_msm);
 
+#[cfg(feature = "revm")]
 /// Run the BLS12-381 G2 MSM precompile with Isthmus input limits.
 pub fn run_isthmus_g2_msm(input: &[u8], gas_limit: u64, reservoir: u64) -> PrecompileResult {
     if input.len() > ISTHMUS_G2_MSM_MAX_INPUT_SIZE {
@@ -44,10 +49,12 @@ pub fn run_isthmus_g2_msm(input: &[u8], gas_limit: u64, reservoir: u64) -> Preco
     Ok(call_eth_precompile(precompile::bls12_381::g2_msm::g2_msm, input, gas_limit, reservoir))
 }
 
+#[cfg(feature = "revm")]
 /// BLS12-381 pairing precompile with Isthmus input limits.
 pub const ISTHMUS_PAIRING: Precompile =
     Precompile::new(PrecompileId::Bls12Pairing, PAIRING_ADDRESS, run_isthmus_pairing);
 
+#[cfg(feature = "revm")]
 /// Run the BLS12-381 pairing precompile with Isthmus input limits.
 pub fn run_isthmus_pairing(input: &[u8], gas_limit: u64, reservoir: u64) -> PrecompileResult {
     if input.len() > ISTHMUS_PAIRING_MAX_INPUT_SIZE {
@@ -56,10 +63,12 @@ pub fn run_isthmus_pairing(input: &[u8], gas_limit: u64, reservoir: u64) -> Prec
     Ok(call_eth_precompile(precompile::bls12_381::pairing::pairing, input, gas_limit, reservoir))
 }
 
+#[cfg(feature = "revm")]
 /// BLS12-381 G1 MSM precompile with Jovian input limits.
 pub const JOVIAN_G1_MSM: Precompile =
     Precompile::new(PrecompileId::Bls12G1Msm, G1_MSM_ADDRESS, run_jovian_g1_msm);
 
+#[cfg(feature = "revm")]
 /// Run the BLS12-381 G1 MSM precompile with Jovian input limits.
 pub fn run_jovian_g1_msm(input: &[u8], gas_limit: u64, reservoir: u64) -> PrecompileResult {
     if input.len() > JOVIAN_G1_MSM_MAX_INPUT_SIZE {
@@ -68,10 +77,12 @@ pub fn run_jovian_g1_msm(input: &[u8], gas_limit: u64, reservoir: u64) -> Precom
     Ok(call_eth_precompile(precompile::bls12_381::g1_msm::g1_msm, input, gas_limit, reservoir))
 }
 
+#[cfg(feature = "revm")]
 /// BLS12-381 G2 MSM precompile with Jovian input limits.
 pub const JOVIAN_G2_MSM: Precompile =
     Precompile::new(PrecompileId::Bls12G2Msm, G2_MSM_ADDRESS, run_jovian_g2_msm);
 
+#[cfg(feature = "revm")]
 /// Run the BLS12-381 G2 MSM precompile with Jovian input limits.
 pub fn run_jovian_g2_msm(input: &[u8], gas_limit: u64, reservoir: u64) -> PrecompileResult {
     if input.len() > JOVIAN_G2_MSM_MAX_INPUT_SIZE {
@@ -80,10 +91,12 @@ pub fn run_jovian_g2_msm(input: &[u8], gas_limit: u64, reservoir: u64) -> Precom
     Ok(call_eth_precompile(precompile::bls12_381::g2_msm::g2_msm, input, gas_limit, reservoir))
 }
 
+#[cfg(feature = "revm")]
 /// BLS12-381 pairing precompile with Jovian input limits.
 pub const JOVIAN_PAIRING: Precompile =
     Precompile::new(PrecompileId::Bls12Pairing, PAIRING_ADDRESS, run_jovian_pairing);
 
+#[cfg(feature = "revm")]
 /// Run the BLS12-381 pairing precompile with Jovian input limits.
 pub fn run_jovian_pairing(input: &[u8], gas_limit: u64, reservoir: u64) -> PrecompileResult {
     if input.len() > JOVIAN_PAIRING_MAX_INPUT_SIZE {
@@ -92,7 +105,7 @@ pub fn run_jovian_pairing(input: &[u8], gas_limit: u64, reservoir: u64) -> Preco
     Ok(call_eth_precompile(precompile::bls12_381::pairing::pairing, input, gas_limit, reservoir))
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "revm"))]
 mod tests {
     use revm::{precompile::Precompile, primitives::Bytes};
     use rstest::rstest;

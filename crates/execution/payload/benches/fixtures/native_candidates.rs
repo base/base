@@ -17,12 +17,12 @@ use base_execution_payload_builder::{
     config::BaseBuilderConfig, payload::EthPayloadBuilderAttributes,
 };
 use base_execution_txpool::BasePooledTransaction;
+use evm2::evm::{AccountInfo, InMemoryDB};
 use reth_basic_payload_builder::PayloadConfig;
 use reth_ethereum_forks::ForkCondition;
 use reth_payload_builder::PayloadId;
 use reth_payload_util::PayloadTransactions;
-use reth_primitives_traits::{Account, SealedHeader, SignedTransaction};
-use reth_revm::test_utils::StateProviderTest;
+use reth_primitives_traits::{SealedHeader, SignedTransaction};
 use reth_transaction_pool::{TransactionOrigin, ValidPoolTransaction, identifier::TransactionId};
 
 /// Post-Azul mainnet timestamp; Denim and Everest are disabled in [`context`].
@@ -143,15 +143,11 @@ pub(crate) fn context(block_gas_limit: u64) -> BasePayloadBuilderCtx<BaseEvmConf
     }
 }
 
-pub(crate) fn funded_provider(candidates: &[Candidate]) -> StateProviderTest {
-    let mut provider = StateProviderTest::default();
+/// Parent state that funds every candidate's sender.
+pub(crate) fn funded_db(candidates: &[Candidate]) -> InMemoryDB {
+    let mut db = InMemoryDB::default();
     for candidate in candidates {
-        provider.insert_account(
-            candidate.sender(),
-            Account { balance: U256::MAX, ..Default::default() },
-            None,
-            Default::default(),
-        );
+        db.insert_account_info(&candidate.sender(), AccountInfo::default().with_balance(U256::MAX));
     }
-    provider
+    db
 }

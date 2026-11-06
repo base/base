@@ -4,13 +4,12 @@ use std::{sync::Arc, time::Instant};
 
 use alloy_eips::{BlockNumHash, NumHash, eip1898::BlockWithParent};
 use derive_more::Constructor;
-use reth_evm::{ConfigureEvm, execute::Executor};
+use reth_evm::{ConfigureEvm, database::StateProviderDatabase, execute::Executor};
 use reth_primitives_traits::{AlloyBlockHeader, BlockTy, NodePrimitives, RecoveredBlock};
 use reth_provider::{
     DatabaseProviderFactory, HashedPostStateProvider, StateProvider, StateProviderFactory,
     StateReader, StateRootProvider,
 };
-use reth_revm::database::StateProviderDatabase;
 use reth_trie_common::{HashedPostStateSorted, updates::TrieUpdatesSorted};
 use tracing::{info, warn};
 

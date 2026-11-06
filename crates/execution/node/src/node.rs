@@ -12,10 +12,11 @@ use alloy_primitives::{Address, B64, B256, Bytes, map::AddressSet};
 use alloy_rlp::encode;
 use base_common_chains::{BaseFeature, Upgrades};
 use base_common_consensus::{BasePrimitives, BaseTransaction, BaseTxEnvelope};
+use base_common_evm2::MeteredGasEvmTypes;
 use base_common_rpc_types_engine::{BasePayloadAttributes, ExecutionData};
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_consensus::BaseBeaconConsensus;
-use base_execution_evm::{BaseEvmConfig, BaseRethReceiptBuilder};
+use base_execution_evm::BaseEvmConfig;
 use base_execution_payload_builder::{
     Attributes, BaseBuiltPayload, BasePayloadBuilderAttributes,
     DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD, PayloadPrimitives, RejectionCache,
@@ -35,7 +36,7 @@ use base_execution_txpool::{
 use reth_chain_state::CanonStateSubscriptions;
 use reth_chainspec::{BaseFeeParams, ChainSpecProvider, EthChainSpec, Hardforks};
 use reth_discv5::discv5::enr::{IP_ENR_KEY, IP6_ENR_KEY};
-use reth_evm::ConfigureEvm;
+use reth_evm::{BlockExecutorFactory, ConfigureEvm};
 use reth_network::{
     NetworkConfig, NetworkConfigBuilder, NetworkHandle, NetworkManager, NetworkPrimitives,
     PeersInfo, types::BasicNetworkPrimitives,
@@ -791,7 +792,7 @@ where
     >;
 
     async fn build_evm(self, ctx: &BuilderContext<Node>) -> eyre::Result<Self::EVM> {
-        let evm_config = BaseEvmConfig::new(ctx.chain_spec(), BaseRethReceiptBuilder::default());
+        let evm_config = BaseEvmConfig::new(ctx.chain_spec());
 
         Ok(evm_config)
     }
@@ -1083,6 +1084,7 @@ where
                 HeaderTy<Node::Types>,
                 <Node::Types as NodeTypes>::ChainSpec,
             >,
+            BlockExecutorFactory: BlockExecutorFactory<EvmTypes: MeteredGasEvmTypes>,
         > + 'static,
     Pool: ParkableTransactionPool<Transaction: BasePooledTx<Consensus = TxTy<Node::Types>>>
         + Unpin

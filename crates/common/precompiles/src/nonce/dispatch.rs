@@ -67,6 +67,7 @@ mod tests {
     /// Drift tripwire: `CALLDATA_WORD_GAS` is `G_SHA3WORD`. If revm reprices
     /// `gas::KECCAK256WORD`, this fails so the input-word charge is re-decided
     /// deliberately rather than tracked silently.
+    #[cfg(feature = "revm")]
     #[test]
     fn gas_matches_evm_reference() {
         assert_eq!(super::CALLDATA_WORD_GAS, revm::interpreter::gas::KECCAK256WORD);

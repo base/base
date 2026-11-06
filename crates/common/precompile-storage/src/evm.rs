@@ -8,18 +8,20 @@
 use alloc::string::ToString;
 
 use alloy_evm::precompiles::PrecompileInput;
-use alloy_primitives::{Address, B256, Log, LogData, U256};
+use alloy_primitives::{Address, Log, LogData, U256};
 use revm::{
     context::journaled_state::JournalCheckpoint,
     context_interface::cfg::GasParams,
-    interpreter::gas::{Gas, KECCAK256, KECCAK256WORD, LOG},
-    primitives::keccak256,
-    state::{AccountInfo, Bytecode},
+    interpreter::gas::{Gas, LOG},
 };
 
 use crate::{
     error::{BasePrecompileError, Result},
-    provider::{PrecompileStorageProvider, StorageFeatures, validate_loaded_code_presence},
+    neutral::{AccountInfo, Bytecode, CheckpointStack, StorageCheckpoint},
+    provider::{
+        KECCAK256_GAS, KECCAK256_WORD_GAS, PrecompileStorageProvider, StorageFeatures,
+        validate_loaded_code_presence,
+    },
 };
 
 /// Production [`PrecompileStorageProvider`] backed by a live EVM journal.
@@ -42,6 +44,7 @@ pub struct EvmPrecompileStorageProvider<'a> {
     origin: Address,
     state_gas_used: u64,
     storage_features: StorageFeatures,
+    checkpoints: CheckpointStack<JournalCheckpoint>,
 }
 
 impl<'a> EvmPrecompileStorageProvider<'a> {
@@ -81,6 +84,7 @@ impl<'a> EvmPrecompileStorageProvider<'a> {
             origin,
             state_gas_used: 0,
             storage_features,
+            checkpoints: CheckpointStack::default(),
         }
     }
 }
@@ -133,11 +137,13 @@ impl PrecompileStorageProvider for EvmPrecompileStorageProvider<'_> {
             self.deduct_gas(self.gas_params.create_cost())?;
             // Yellow Paper G_sha3 + G_sha3word: cost of computing the stored code hash.
             let num_words = code_len.div_ceil(32) as u64;
-            self.deduct_gas(KECCAK256.saturating_add(KECCAK256WORD.saturating_mul(num_words)))?;
+            self.deduct_gas(
+                KECCAK256_GAS.saturating_add(KECCAK256_WORD_GAS.saturating_mul(num_words)),
+            )?;
         }
 
         self.internals
-            .set_code(address, code)
+            .set_code(address, code.into())
             .map_err(|e| BasePrecompileError::Fatal(e.to_string()))
     }
 
@@ -146,7 +152,7 @@ impl PrecompileStorageProvider for EvmPrecompileStorageProvider<'_> {
         address: Address,
         f: &mut dyn FnMut(&AccountInfo),
     ) -> Result<()> {
-        // Extract is_cold and clone AccountInfo before releasing the internals borrow.
+        // Extract is_cold and copy AccountInfo before releasing the internals borrow.
         // load_account is sufficient: every caller only needs code_hash — never info.code.
         // code_hash is always eagerly populated; load_account_code would fetch bytecode from
         // the database unnecessarily.
@@ -155,7 +161,7 @@ impl PrecompileStorageProvider for EvmPrecompileStorageProvider<'_> {
                 .internals
                 .load_account(address)
                 .map_err(|e| BasePrecompileError::Fatal(e.to_string()))?;
-            (state_load.data.info.clone(), state_load.is_cold)
+            (AccountInfo::from(&state_load.data.info), state_load.is_cold)
         };
 
         // EIP-2929: warm base cost always charged (100)
@@ -170,14 +176,14 @@ impl PrecompileStorageProvider for EvmPrecompileStorageProvider<'_> {
     }
 
     fn with_account_code(&mut self, address: Address, f: &mut dyn FnMut(&Bytecode)) -> Result<()> {
-        // Load and clone the full bytecode before releasing the journal borrow.
+        // Load and copy the full bytecode before releasing the journal borrow.
         let (code, is_cold) = {
             let state_load = self
                 .internals
                 .load_account_code(address)
                 .map_err(|e| BasePrecompileError::Fatal(e.to_string()))?;
             let expected_hash = *state_load.data.code_hash();
-            let code = state_load.data.code().cloned().ok_or_else(|| {
+            let code = state_load.data.code().map(Bytecode::from).ok_or_else(|| {
                 BasePrecompileError::Fatal(
                     "account code unavailable after successful EVM load".to_string(),
                 )
@@ -348,27 +354,19 @@ impl PrecompileStorageProvider for EvmPrecompileStorageProvider<'_> {
         core::mem::replace(&mut self.caller, caller)
     }
 
-    fn checkpoint(&mut self) -> JournalCheckpoint {
-        self.internals.checkpoint()
+    fn checkpoint(&mut self) -> StorageCheckpoint {
+        self.checkpoints.push(self.internals.checkpoint())
     }
 
     fn commit_latest_checkpoint(&mut self) {
+        self.checkpoints.commit_latest();
         self.internals.checkpoint_commit();
     }
 
-    fn checkpoint_revert(&mut self, checkpoint: JournalCheckpoint) {
-        self.internals.checkpoint_revert(checkpoint);
-    }
-
-    fn metered_keccak256(&mut self, data: &[u8]) -> Result<B256> {
-        let num_words =
-            u64::try_from(data.len().div_ceil(32)).map_err(|_| BasePrecompileError::OutOfGas)?;
-        let price = KECCAK256WORD
-            .checked_mul(num_words)
-            .and_then(|w| w.checked_add(KECCAK256))
-            .ok_or(BasePrecompileError::OutOfGas)?;
-        self.deduct_gas(price)?;
-        Ok(keccak256(data))
+    fn checkpoint_revert(&mut self, checkpoint: StorageCheckpoint) {
+        if let Some(checkpoint) = self.checkpoints.take(checkpoint) {
+            self.internals.checkpoint_revert(checkpoint);
+        }
     }
 }
 
@@ -384,21 +382,15 @@ mod tests {
     use alloy_primitives::{Address, Bytes, U256};
     use revm::{
         context_interface::cfg::GasParams, database::EmptyDB, primitives::hardfork::SpecId,
-        state::Bytecode,
     };
 
     use crate::{
         BytesLikeHandler, Handler, StorageCtx,
         error::BasePrecompileError,
         hashmap::HashMapStorageProvider,
+        neutral::Bytecode,
         provider::{PrecompileStorageProvider, StorageFeatures},
     };
-
-    fn amsterdam_provider() -> HashMapStorageProvider {
-        let mut provider = HashMapStorageProvider::new(1);
-        provider.set_gas_params(GasParams::new_spec(SpecId::AMSTERDAM));
-        provider
-    }
 
     fn make_evm_provider<'a>(
         ctx: &'a mut EthEvmContext<EmptyDB>,
@@ -648,7 +640,7 @@ mod tests {
         let mut provider = make_evm_provider(&mut ctx, gas_params, gas, true);
 
         assert_eq!(
-            provider.set_code(Address::ZERO, Bytecode::new_raw([0x60u8, 0x00].as_ref().into())),
+            provider.set_code(Address::ZERO, Bytecode::new_legacy([0x60u8, 0x00].as_ref().into())),
             Err(BasePrecompileError::StaticCallViolation),
         );
         // No gas must have been consumed.
@@ -661,13 +653,13 @@ mod tests {
     #[test]
     fn set_code_prefunded_account_charges_same_gas_as_empty_account() {
         let addr = Address::from([0x43u8; 20]);
-        let code = Bytecode::new_raw([0x60u8, 0x00].as_ref().into());
+        let code = Bytecode::new_legacy([0x60u8, 0x00].as_ref().into());
 
-        let mut empty_provider = amsterdam_provider();
+        let mut empty_provider = HashMapStorageProvider::new(1);
         empty_provider.set_code(addr, code.clone()).unwrap();
         let gas_for_empty = empty_provider.gas_deducted();
 
-        let mut prefunded_provider = amsterdam_provider();
+        let mut prefunded_provider = HashMapStorageProvider::new(1);
         prefunded_provider.set_balance(addr, U256::from(1u64));
         prefunded_provider.set_code(addr, code).unwrap();
         let gas_for_prefunded = prefunded_provider.gas_deducted();
@@ -682,10 +674,10 @@ mod tests {
     /// `set_code` on an account that already has code must replace it without error.
     #[test]
     fn set_code_existing_account_replaces_code() {
-        let mut provider = amsterdam_provider();
+        let mut provider = HashMapStorageProvider::new(1);
         let addr = Address::from([0x42u8; 20]);
-        let code1 = Bytecode::new_raw([0x60u8, 0x00].as_ref().into());
-        let code2 = Bytecode::new_raw([0x60u8, 0x01].as_ref().into());
+        let code1 = Bytecode::new_legacy([0x60u8, 0x00].as_ref().into());
+        let code2 = Bytecode::new_legacy([0x60u8, 0x01].as_ref().into());
         let expected_hash = code2.hash_slow();
 
         provider.set_code(addr, code1).unwrap();
@@ -700,10 +692,10 @@ mod tests {
 
     #[test]
     fn set_code_static_context_reverts_before_code_mutation() {
-        let mut provider = amsterdam_provider();
+        let mut provider = HashMapStorageProvider::new(1);
         provider.set_static(true);
         let addr = Address::from([0x42u8; 20]);
-        let code = Bytecode::new_raw([0x60u8, 0x00].as_ref().into());
+        let code = Bytecode::new_legacy([0x60u8, 0x00].as_ref().into());
 
         let err = provider.set_code(addr, code).unwrap_err();
 

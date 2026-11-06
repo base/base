@@ -3,8 +3,8 @@
 use std::fmt;
 
 use alloy_primitives::{Address, Signature, U256};
+use reth_evm::Database;
 use reth_transaction_pool::ValidPoolTransaction;
-use revm::Database;
 use serde::{Deserializer, de};
 
 use crate::{BasePooledTransaction, ExtensionError, ValidatedTransactionExtensions};
@@ -416,15 +416,16 @@ impl ValidityPredicate {
     ) -> Result<bool, DB::Error> {
         match self {
             Self::Balance { address, op, value } => {
-                let balance = db.basic(*address)?.map_or(U256::ZERO, |account| account.balance);
+                let balance =
+                    db.get_account(address)?.map_or(U256::ZERO, |account| account.balance);
                 Ok(op.matches(balance, *value))
             }
             Self::Nonce { address, op, value } => {
-                let nonce = db.basic(*address)?.map_or(0, |account| account.nonce);
+                let nonce = db.get_account(address)?.map_or(0, |account| account.nonce);
                 Ok(op.matches(U256::from(nonce), *value))
             }
             Self::Storage { address, slot, mask, op, value } => {
-                let storage = db.storage(*address, *slot)? & *mask;
+                let storage = db.get_storage(address, slot)? & *mask;
                 Ok(op.matches(storage, *value))
             }
             Self::BlockNumber { op, value } => {
@@ -668,7 +669,7 @@ mod tests {
     use alloy_eips::eip2718::Encodable2718;
     use alloy_primitives::TxKind;
     use base_common_consensus::{BaseTransactionSigned, TxDeposit};
-    use revm::{database::InMemoryDB, state::AccountInfo};
+    use evm2::evm::{AccountInfo, InMemoryDB};
     use serde_json::json;
 
     use super::*;
@@ -779,11 +780,8 @@ mod tests {
         let address = Address::repeat_byte(0x11);
         let slot = U256::from(7);
         let mut db = InMemoryDB::default();
-        db.insert_account_info(
-            address,
-            AccountInfo { balance: U256::from(10), ..Default::default() },
-        );
-        db.insert_account_storage(address, slot, U256::from(0xabcd)).unwrap();
+        db.insert_account_info(&address, AccountInfo::default().with_balance(U256::from(10)));
+        db.insert_account_storage(&address, &slot, &U256::from(0xabcd));
 
         let balance = ValidityPredicate::Balance {
             address,
@@ -833,7 +831,7 @@ mod tests {
     fn nonce_predicates_compare_current_account_nonce() {
         let address = Address::repeat_byte(0x11);
         let mut db = InMemoryDB::default();
-        db.insert_account_info(address, AccountInfo { nonce: 10, ..Default::default() });
+        db.insert_account_info(&address, AccountInfo::default().with_nonce(10));
         for (op, value, expected) in [
             (ValidityOperator::LessThan, 11, true),
             (ValidityOperator::LessThan, 10, false),
@@ -851,7 +849,7 @@ mod tests {
             let predicate = ValidityPredicate::Nonce { address, op, value: U256::from(value) };
             assert_eq!(predicate.matches(&mut db, &test_context()).unwrap(), expected);
         }
-        db.insert_account_info(address, AccountInfo { nonce: u64::MAX, ..Default::default() });
+        db.insert_account_info(&address, AccountInfo::default().with_nonce(u64::MAX));
         let predicate = ValidityPredicate::Nonce {
             address,
             op: ValidityOperator::Equal,
