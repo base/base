@@ -290,8 +290,6 @@ where
         tx: Bytes,
         options: SendRawTransactionValidityOptions,
     ) -> RpcResult<TxHash> {
-        let latest = self.latest_block_number_and_timestamp();
-
         // Reject before forwarding so the submitter gets an error from the first node instead of
         // a hash for a transaction that will never be included.
         if options
@@ -313,7 +311,7 @@ where
                 .map_err(ErrorObjectOwned::from);
         }
 
-        let latest = latest?;
+        let latest = self.latest_block_number_and_timestamp()?;
 
         ValidityPredicate::validate_batch(&options.validity, self.max_validity_predicates)
             .map_err(|error| {
