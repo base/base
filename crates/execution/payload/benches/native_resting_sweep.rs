@@ -291,11 +291,19 @@ fn run_case(
                 .map(|resting| resting.iterator_hold())
         };
         let start = Instant::now();
-        let best = pool.pool.best_transactions_with_attributes_and_parking(attributes, hold());
+        let best = pool.pool.best_transactions_with_attributes_and_parking(
+            attributes,
+            hold(),
+            dormancy_build.as_ref(),
+        );
         let construct = start.elapsed();
         let executable = FILLER_PER_BLOCK + woken.len() + 2 * satisfied.len();
         let probe = Probe::run(|| {
-            pool.pool.best_transactions_with_attributes_and_parking(attributes, hold())
+            pool.pool.best_transactions_with_attributes_and_parking(
+                attributes,
+                hold(),
+                dormancy_build.as_ref(),
+            )
         });
         // Lanes admitted since the previous build reach a builder-enforcing iterator once, while
         // the pool classifies them before the build.
