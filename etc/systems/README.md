@@ -334,7 +334,8 @@ just devnet bench export --chain mainnet --datadir "$SNAPSHOT_DATADIR" \
   --from 53091727 --output-dir "$EXPORT_DIR"
 ```
 
-`--to` defaults to the datadir head. The boundary is block `--from - 1`, so replay into a copy of
+`--to` defaults to the datadir head; a range must not span Denim activation, because a manifest
+holds one block interval. The boundary is block `--from - 1`, so replay into a copy of
 the datadir unwound to it (`base reth stage unwind to-block`). The manifest's `source` records the
 datadir, its head, and the head's timestamp, and a replay of it keeps the chain's own fork
 schedule.

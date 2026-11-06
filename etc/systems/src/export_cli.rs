@@ -98,14 +98,17 @@ impl ExportBenchmarkArgs {
             }
         }
         let (first_block_timestamp, last_block_timestamp) = timestamps.unwrap_or_default();
+        // A manifest has one block interval, which replay applies to every block.
+        let subsecond = chain_spec.is_denim_active_at_timestamp(last_block_timestamp);
+        ensure!(
+            chain_spec.is_denim_active_at_timestamp(first_block_timestamp) == subsecond,
+            "blocks {}..={to} span Denim activation; export each side separately",
+            self.from
+        );
         writer.finish(ReplayManifest {
             chain: self.chain,
             rollup_config: self.rollup_config,
-            block_interval_ms: if chain_spec.is_denim_active_at_timestamp(last_block_timestamp) {
-                200
-            } else {
-                2_000
-            },
+            block_interval_ms: if subsecond { 200 } else { 2_000 },
             boundary_number,
             boundary_hash,
             first_block_timestamp,
