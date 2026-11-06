@@ -31,7 +31,7 @@ const EIP8130_TX_TYPE: u8 = 0x79;
 /// Mines a minimal EOA-path EIP-8130 transaction on the Everest system-test stack.
 #[tokio::test]
 async fn eip8130_transaction_is_mined() -> Result<()> {
-    let (_system, provider) = everest::start_everest_system().await?;
+    let (_system, provider) = everest::start_everest_stack(SystemTestStackBuilder::new()).await?;
     let (_tx_hash, receipt) = send_minimal_eip8130(&provider).await?;
 
     assert!(receipt.status(), "EIP-8130 transaction receipt must report success");
