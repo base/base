@@ -25,6 +25,11 @@
 //! for the last block built on the last sealed block. The liveness case also asserts
 //! that the pool expired its expiring lanes.
 //!
+//! This measures exhaustive selection work, not throughput under a latency deadline. Both modes
+//! use an unlimited predicate-evaluation budget: the production 10 ms cutoff can defer executable
+//! lanes after classification work and would make the inclusion assertions depend on host speed.
+//! Every block also asserts that predicate evaluation was never cut short.
+//!
 //! ```sh
 //! cargo bench -p base-execution-payload-builder --bench native_resting_sweep
 //! RESTING_MATRIX_CASES=protocol RESTING_MATRIX_POPULATIONS=75000 \
@@ -37,7 +42,11 @@ pub mod production_pool;
 #[path = "fixtures/resting_matrix.rs"]
 pub mod resting_matrix;
 
-use std::{collections::VecDeque, sync::Arc, time::Instant};
+use std::{
+    collections::VecDeque,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use alloy_consensus::Header;
 use alloy_eips::BlockNumHash;
@@ -148,7 +157,10 @@ fn payload_context(chain_spec: &Arc<BaseChainSpec>, mode: Mode, block: u64, gas_
     };
     BasePayloadBuilderCtx {
         evm_config: BaseEvmConfig::base(Arc::clone(chain_spec)),
-        builder_config: BaseBuilderConfig::default().with_resting_predicate_mode(mode.resting()),
+        builder_config: BaseBuilderConfig {
+            predicate_eval_hard_cutoff: Duration::MAX,
+            ..BaseBuilderConfig::default().with_resting_predicate_mode(mode.resting())
+        },
         chain_spec: Arc::clone(chain_spec),
         config: PayloadConfig::new(parent, attributes, payload_id),
         cancel: Default::default(),
@@ -328,6 +340,16 @@ fn run_case(
         .expect("in-memory execution cannot fail");
         let selection_time = start.elapsed();
         let included = builder.executor().receipts().len();
+        assert!(
+            metrics
+                .render()
+                .lines()
+                .filter_map(|line| {
+                    line.strip_prefix("base_builder_validity_predicate_eval_cutoff_builds_total ")
+                })
+                .all(|value| value.trim() == "0"),
+            "exhaustive selection must not exhaust the predicate evaluation budget"
+        );
         assert_eq!(included, executable, "block {block} must include every executable transaction");
 
         let start = Instant::now();
