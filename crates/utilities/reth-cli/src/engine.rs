@@ -2,13 +2,13 @@
 
 use reth_node_core::args::DefaultEngineValues;
 
-/// Block counts at Denim's 200ms block interval: persistence starts once 30s of blocks are in
-/// memory, and state/trie writes for the newest 11s of persisted blocks stay in memory so
-/// repeated writes to the same keys reach disk once. The memory block buffer target keeps reth's
-/// default, and buffer target + masking window must stay below the persistence threshold. The
-/// backpressure threshold derives to twice the persistence threshold.
-const PERSISTENCE_THRESHOLD: u64 = 150;
-const NUM_STATE_MASKING_BLOCKS: u64 = 55;
+/// Reth's defaults are block counts sized for 2s blocks; these keep the same time margins at
+/// Denim's 200ms block interval. State masking is off because buffer target + masking window
+/// must stay below the persistence threshold.
+const PERSISTENCE_THRESHOLD: u64 = 70;
+const MEMORY_BLOCK_BUFFER_TARGET: u64 = 70;
+const NUM_STATE_MASKING_BLOCKS: u64 = 0;
+const PERSISTENCE_BACKPRESSURE_THRESHOLD: u64 = 160;
 
 /// Reth engine default initialization for Base execution layer binaries.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -25,7 +25,9 @@ impl Engine {
     pub fn init_engine() {
         DefaultEngineValues::default()
             .with_persistence_threshold(PERSISTENCE_THRESHOLD)
+            .with_memory_block_buffer_target(MEMORY_BLOCK_BUFFER_TARGET)
             .with_num_state_masking_blocks(NUM_STATE_MASKING_BLOCKS)
+            .with_persistence_backpressure_threshold(PERSISTENCE_BACKPRESSURE_THRESHOLD)
             .try_init()
             .expect("failed to initialize engine defaults");
     }
@@ -52,10 +54,10 @@ mod tests {
         Engine::init_engine();
 
         let args = EngineArgs::default();
-        assert_eq!(args.persistence_threshold, 150);
-        assert_eq!(args.memory_block_buffer_target(), 5);
-        assert_eq!(args.num_state_masking_blocks(), 55);
-        assert_eq!(args.persistence_backpressure_threshold(), 300);
+        assert_eq!(args.persistence_threshold, 70);
+        assert_eq!(args.memory_block_buffer_target(), 70);
+        assert_eq!(args.num_state_masking_blocks(), 0);
+        assert_eq!(args.persistence_backpressure_threshold(), 160);
         args.validate().unwrap();
     }
 }
