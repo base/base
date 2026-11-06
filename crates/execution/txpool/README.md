@@ -222,8 +222,15 @@ stateDiagram-v2
     Discarding --> NoTip: build sealed or dropped (index discarded)
 ```
 
-Discarding the index wakes every dormant transaction and queues it for
-classification again; the next snapshot offers all of them.
+Discarding the index makes every dormant transaction ready. A discard takes
+constant time wherever it happens, including on the build path (a parent other
+than the tip, a dropped build, a deferred discard applied at seal or drop): it
+sets the index aside. Until canonical maintenance has made the set-aside
+transactions ready again (clearing their lanes' dormant flags, restoring the
+pending-lane indexes and queueing them for classification, in chunks of at most
+256 per lock hold), every snapshot and bridging walk offers every pending lane,
+as with `off`, and pending and queued counts may still count those lanes as
+queued.
 
 **Build ownership.** `begin_dormancy_build` returns a `DormancyBuild` token, and
 the build's snapshot, parks and wakes all go through it; nothing resolves "the
@@ -244,8 +251,9 @@ block does not become the tip.
   transactions they may satisfy, and block `B` releases every block-number
   blocker it satisfies. Otherwise the index is discarded. Builds that only
   replay payload attributes (`no_tx_pool`) neither start nor seal one.
-- **Each commit** in the build loop looks up the locations it wrote in the
-  index, once, and wakes what it may satisfy:
+- **Each commit** in the build loop looks up the locations it wrote, once, in
+  the build's own parks, without the pool's lock, and in the pool's index under
+  a read lock, taking the write lock only when it wakes something there:
   - a transaction the build's iterator parked earlier in this block is promoted
     back into priority competition;
   - a root that was dormant when the build took its snapshot, so the snapshot
@@ -255,13 +263,16 @@ block does not become the tip.
     injected alone.
 
   A spurious wake costs one predicate evaluation when the iterator reaches it.
-- **A transaction that fails its predicate** in the build loop is parked in the
-  iterator and in the pool's index, so a later commit in the block can wake it
-  and later blocks built on this one leave it out. A transaction that is not
-  eligible is indexed only until the build ends, for mid-block wakes. A
-  block-number blocker is released at the first block that satisfies it.
+- **A transaction that fails its predicate** in the build loop is parked with
+  the build, under the predicate it failed, without the pool's lock, so a later
+  commit in the block can wake it. A block-number blocker is released at the
+  first block that satisfies it.
 - **Seal** makes the sealed block's hash the tip, unless a discard was deferred
-  during the build.
+  during the build, and merges what the build still holds parked into the
+  pool's index, in chunks of at most 256, so later blocks built on this one
+  leave it out; only roots and nonce-free transactions become dormant. The
+  build keeps the index until the merge ends. Dropping a build discards its
+  parks.
 - **Canonical notifications** only check the tip: a committed block at the
   tip's height with another hash, a reorg or a gap in the canonical-state feed
   discards the index, after the running build ends if one runs. Canonical state changes wake nothing; on the builder they
@@ -287,7 +298,8 @@ discarded after classification started. A transaction that is not parked stays
 ready and is queued again.
 
 Builds record the locations they write while the index has a tip, from the
-tip's state on, so classification knows what changed since the state it read.
+tip's state on, so classification knows what changed since the state it read;
+the running build keeps its own record, which classification also checks.
 Past 65,536 recorded locations nothing is parked until the next seal without a
 classification in flight; a commit that destroys an account fences all its
 storage slots.

@@ -5,6 +5,7 @@ use std::{
     collections::{BTreeMap, VecDeque},
     fmt,
     str::FromStr,
+    sync::Arc,
 };
 
 use alloy_eips::BlockNumHash;
@@ -12,7 +13,8 @@ use alloy_primitives::{
     B256, TxHash, U256,
     map::{AddressSet, B256Set, HashMap, HashSet},
 };
-use revm::Database;
+use reth_transaction_pool::{PoolTransaction, ValidPoolTransaction};
+use revm::{Database, state::EvmState};
 
 use crate::{
     ParkedPredicateIndex, PredicateContext, ValidityConditions, ValidityOperator,
@@ -171,11 +173,127 @@ pub(crate) enum DormantSlot {
 /// One indexed transaction.
 #[derive(Debug)]
 pub(crate) struct DormantEntry {
-    /// Where it is dormant; `None` for a transaction a build indexed only for mid-block wakes.
-    pub slot: Option<DormantSlot>,
+    /// Where it is dormant.
+    pub slot: DormantSlot,
     release_block: Option<u64>,
     /// [`Dormancy::snapshots`] when it was indexed: a snapshot with a higher id never held it.
     pub indexed_at: u64,
+}
+
+/// State locations builds wrote on top of the state a classification reads, so it does not park
+/// a transaction on a location that may since have changed.
+#[derive(Debug, Default)]
+pub(crate) struct WriteFence {
+    keys: HashSet<ValidityPredicateKey>,
+    storage: AddressSet,
+    overflowed: bool,
+}
+
+impl WriteFence {
+    /// Records `written`; past [`DORMANCY_FENCE_CAPACITY`] keys every location counts as written.
+    pub(crate) fn record(&mut self, written: impl IntoIterator<Item = WrittenLocation>) {
+        if self.overflowed {
+            return;
+        }
+        for location in written {
+            match location {
+                WrittenLocation::AllStorage(address) => {
+                    self.storage.insert(address);
+                }
+                WrittenLocation::Key(_) if self.keys.len() >= DORMANCY_FENCE_CAPACITY => {
+                    self.overflowed = true;
+                    return;
+                }
+                WrittenLocation::Key(key) => {
+                    self.keys.insert(key);
+                }
+            }
+        }
+    }
+
+    /// Adds every location `other` recorded.
+    pub(crate) fn absorb(&mut self, other: Self) {
+        self.overflowed |= other.overflowed;
+        self.storage.extend(other.storage);
+        self.record(other.keys.into_iter().map(WrittenLocation::Key));
+    }
+
+    /// Whether the location `predicate` reads was written.
+    pub(crate) fn contains(&self, predicate: &ValidityPredicate) -> bool {
+        let key = ValidityPredicateKey::for_predicate(predicate);
+        self.overflowed
+            || self.keys.contains(&key)
+            || matches!(key, ValidityPredicateKey::Storage(address, _) if self.storage.contains(&address))
+    }
+}
+
+/// What one build parked and wrote, kept with the build instead of in the validity pool so the
+/// build loop never takes the pool's lock to park. Parks still held when the build seals are
+/// merged into the pool's index, since they fail on top of the sealed block.
+#[derive(Debug)]
+pub(crate) struct BuildLocal<T: PoolTransaction> {
+    /// Transactions the build found failing a predicate and no later commit woke, under it.
+    pub index: ParkedPredicateIndex<()>,
+    pub parked: HashMap<TxHash, (Arc<ValidPoolTransaction<T>>, ValidityPredicate)>,
+    /// Locations the build wrote; recorded only when it builds on the tip.
+    pub written: Option<WriteFence>,
+}
+
+impl<T: PoolTransaction> BuildLocal<T> {
+    pub(crate) fn new(records_writes: bool) -> Self {
+        Self {
+            index: ParkedPredicateIndex::default(),
+            parked: HashMap::default(),
+            written: records_writes.then(WriteFence::default),
+        }
+    }
+
+    /// Parks `transaction` under the failing `predicate`.
+    pub(crate) fn park(
+        &mut self,
+        transaction: &Arc<ValidPoolTransaction<T>>,
+        predicate: ValidityPredicate,
+    ) {
+        let hash = *transaction.hash();
+        self.index.remove(hash);
+        self.index.park(hash, (), predicate.clone());
+        self.parked.insert(hash, (Arc::clone(transaction), predicate));
+    }
+
+    /// Records what a commit wrote and returns the parked transactions it may satisfy, which are
+    /// no longer parked here.
+    pub(crate) fn wake(&mut self, state: &EvmState) -> Vec<Arc<ValidPoolTransaction<T>>> {
+        if let Some(written) = self.written.as_mut() {
+            written.record(WrittenLocation::of_state(state));
+        }
+        if self.parked.is_empty() {
+            return Vec::new();
+        }
+        let woken = self.index.affected_by_state(state).affected_transactions;
+        woken
+            .into_iter()
+            .filter_map(|hash| {
+                self.index.remove(hash);
+                self.parked.remove(&hash).map(|(transaction, _)| transaction)
+            })
+            .collect()
+    }
+}
+
+/// An index a discard set aside, whose transactions are made ready again off the build path.
+#[derive(Debug, Default)]
+pub(crate) struct DiscardedIndex {
+    index: ParkedPredicateIndex<DormantEntry>,
+}
+
+impl DiscardedIndex {
+    /// Where each discarded transaction sat. Walks the whole index, so call it without locks.
+    pub(crate) fn into_slots(self) -> Vec<(TxHash, DormantSlot)> {
+        self.index
+            .hashes()
+            .filter_map(|hash| Some((hash, self.index.transaction(hash)?.slot)))
+            .collect()
+    }
 }
 
 /// The validity pool's predicate index, scoped to the builder's tip, with the classification
@@ -194,7 +312,7 @@ pub(crate) struct Dormancy {
     pub tip: Option<BlockNumHash>,
     /// Builds started so far; the latest one is `builds`.
     pub builds: u64,
-    /// Whether build `builds` is still running.
+    /// Whether build `builds` still owns the index.
     pub building: bool,
     /// Snapshots taken for builds so far; the id of the latest one.
     pub snapshots: u64,
@@ -203,16 +321,17 @@ pub(crate) struct Dormancy {
     /// A discard requested while a build was running, applied when that build ends so its
     /// iterator keeps waking what it parked and what its snapshot left out.
     pub deferred_discard: Option<DormancyDiscardReason>,
-    /// Entries without a slot, dropped when their build ends.
-    in_build: B256Set,
+    /// Indexes discards set aside whose transactions are not all ready again yet.
+    discarded: Vec<DiscardedIndex>,
+    /// Discarded indexes being made ready again right now.
+    restoring: usize,
     /// Discards so far, so a classification can tell the index it read is gone.
     pub discards: u64,
     /// `discards` when the classification in flight started.
     pub classifying: Option<u64>,
-    /// Locations builds wrote on top of the state classification reads.
-    fence: HashSet<ValidityPredicateKey>,
-    fenced_storage: AddressSet,
-    fence_overflowed: bool,
+    /// Locations builds wrote on top of the state classification reads, besides those of the
+    /// running build, which it keeps itself.
+    pub fence: WriteFence,
     /// Transactions woken during the running build.
     pub build_wakes: usize,
 }
@@ -232,12 +351,11 @@ impl Dormancy {
             snapshots: 0,
             height: 0,
             deferred_discard: None,
-            in_build: B256Set::default(),
+            discarded: Vec::new(),
+            restoring: 0,
             discards: 0,
             classifying: None,
-            fence: HashSet::default(),
-            fenced_storage: AddressSet::default(),
-            fence_overflowed: false,
+            fence: WriteFence::default(),
             build_wakes: 0,
         }
     }
@@ -248,12 +366,38 @@ impl Dormancy {
 
     /// Number of dormant transactions.
     pub(crate) fn len(&self) -> usize {
-        self.index.len() - self.in_build.len()
+        self.index.len()
     }
 
     /// Whether `build` is the running build.
     pub(crate) const fn is_running(&self, build: u64) -> bool {
         self.building && self.builds == build
+    }
+
+    /// Whether every transaction a discard set aside is ready again, so the per-lane dormancy
+    /// flags and the pending-lane indexes describe the current index.
+    pub(crate) const fn is_consistent(&self) -> bool {
+        self.discarded.is_empty() && self.restoring == 0
+    }
+
+    /// Sets the index, its block releases and its lane roots aside in constant time, leaving an
+    /// empty index; the transactions it held are made ready again by
+    /// [`Self::take_discarded`]'s caller, off the build path.
+    pub(crate) fn set_index_aside(&mut self) {
+        self.block_releases = BTreeMap::new();
+        self.lanes = HashMap::default();
+        self.discarded.push(DiscardedIndex { index: std::mem::take(&mut self.index) });
+    }
+
+    /// Takes one discarded index to make ready again; [`Self::finish_restoring`] ends it.
+    pub(crate) fn take_discarded(&mut self) -> Option<DiscardedIndex> {
+        let discarded = self.discarded.pop()?;
+        self.restoring += 1;
+        Some(discarded)
+    }
+
+    pub(crate) const fn finish_restoring(&mut self) {
+        self.restoring = self.restoring.saturating_sub(1);
     }
 
     pub(crate) fn enqueue(&mut self, hash: TxHash) {
@@ -267,46 +411,11 @@ impl Dormancy {
     }
 
     pub(crate) fn is_dormant(&self, hash: &TxHash) -> bool {
-        self.index.transaction(*hash).is_some_and(|entry| entry.slot.is_some())
+        self.index.transaction(*hash).is_some()
     }
 
     pub(crate) fn dormant_lane_root(&self, lane_id: &LaneId) -> Option<TxHash> {
         self.lanes.get(lane_id).copied()
-    }
-
-    /// Records locations a build wrote on top of the tip, for classification to avoid.
-    pub(crate) fn fence(&mut self, written: impl IntoIterator<Item = WrittenLocation>) {
-        if self.tip.is_none() || self.fence_overflowed {
-            return;
-        }
-        for location in written {
-            match location {
-                WrittenLocation::AllStorage(address) => {
-                    self.fenced_storage.insert(address);
-                }
-                WrittenLocation::Key(_) if self.fence.len() >= DORMANCY_FENCE_CAPACITY => {
-                    self.fence_overflowed = true;
-                    return;
-                }
-                WrittenLocation::Key(key) => {
-                    self.fence.insert(key);
-                }
-            }
-        }
-    }
-
-    pub(crate) fn clear_fence(&mut self) {
-        self.fence.clear();
-        self.fenced_storage.clear();
-        self.fence_overflowed = false;
-    }
-
-    /// Whether a build wrote the location `predicate` reads since the state classification read.
-    pub(crate) fn is_fenced(&self, predicate: &ValidityPredicate) -> bool {
-        let key = ValidityPredicateKey::for_predicate(predicate);
-        self.fence_overflowed
-            || self.fence.contains(&key)
-            || matches!(key, ValidityPredicateKey::Storage(address, _) if self.fenced_storage.contains(&address))
     }
 
     /// Returns the block-number blockers that block `block` satisfies.
@@ -319,22 +428,15 @@ impl Dormancy {
     pub(crate) fn park(
         &mut self,
         hash: TxHash,
-        slot: Option<DormantSlot>,
+        slot: DormantSlot,
         predicate: ValidityPredicate,
         release_block: Option<u64>,
     ) {
         self.remove(hash);
         let entry = DormantEntry { slot, release_block, indexed_at: self.snapshots };
         self.index.park(hash, entry, predicate);
-        match slot {
-            Some(DormantSlot::Lane(lane_id)) => {
-                self.lanes.insert(lane_id, hash);
-            }
-            Some(DormantSlot::NonceFree(_)) => {}
-            None => {
-                self.in_build.insert(hash);
-                return;
-            }
+        if let DormantSlot::Lane(lane_id) = slot {
+            self.lanes.insert(lane_id, hash);
         }
         if let Some(block) = release_block {
             self.block_releases.entry(block).or_default().insert(hash);
@@ -350,14 +452,8 @@ impl Dormancy {
     /// Forgets an indexed transaction, returning its entry.
     pub(crate) fn remove(&mut self, hash: TxHash) -> Option<DormantEntry> {
         let entry = self.index.remove(hash)?;
-        match entry.slot {
-            Some(DormantSlot::Lane(lane_id)) => {
-                self.lanes.remove(&lane_id);
-            }
-            Some(DormantSlot::NonceFree(_)) => {}
-            None => {
-                self.in_build.remove(&hash);
-            }
+        if let DormantSlot::Lane(lane_id) = entry.slot {
+            self.lanes.remove(&lane_id);
         }
         if let Some(block) = entry.release_block
             && let Some(hashes) = self.block_releases.get_mut(&block)
@@ -368,11 +464,6 @@ impl Dormancy {
             }
         }
         Some(entry)
-    }
-
-    /// The entries indexed only for the running build's mid-block wakes.
-    pub(crate) fn in_build_hashes(&self) -> Vec<TxHash> {
-        self.in_build.iter().copied().collect()
     }
 
     /// The next dormant transactions in the canary's rotation, at most

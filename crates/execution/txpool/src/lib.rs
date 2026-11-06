@@ -86,7 +86,7 @@ pub use parking::{
 };
 
 mod pool;
-pub use pool::{AccountStateDiff, BaseTransactionPool, PoolBuildDormancy};
+pub use pool::{AccountStateDiff, BaseTransactionPool, PoolBuildDormancy, PoolBuildSnapshot};
 
 mod state_diff_maintain;
 pub use state_diff_maintain::{

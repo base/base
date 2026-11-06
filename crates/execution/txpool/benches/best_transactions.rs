@@ -17,6 +17,9 @@
 //! sender also has a standard transaction queued behind its validity one, so the snapshot bridges
 //! the 1 000 ready lanes and must skip the dormant ones.
 //!
+//! `dormancy_commit_wake` measures what each commit of a build owning the dormancy index pays to
+//! find the transactions it may wake, when it wakes none, as the dormant count grows.
+//!
 //! `dormant` is the `isolated` pool with dormancy enforced and every validity transaction
 //! blocked on an unset storage slot, so the snapshot walks only the standard transactions.
 //! `dormant_shared` makes 20 000 of those dormant validity transactions shared lanes with a
@@ -45,7 +48,8 @@ use base_execution_txpool::{
     ValidityOperator, ValidityPredicate,
 };
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use reth_transaction_pool::{TransactionOrigin, TransactionPool};
+use reth_transaction_pool::{BestTransactionsAttributes, TransactionOrigin, TransactionPool};
+use revm::state::{Account, EvmState, EvmStorageSlot};
 use support::{BenchPool, build_pool, funded_signer, standard, validity};
 
 /// Standard transactions pending in reth, one per sender.
@@ -233,5 +237,41 @@ fn best_transactions_benches(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, best_transactions_benches, dormant_scaling_benches);
+/// One committed transaction's state: a storage write no dormant transaction is blocked on.
+fn unrelated_commit() -> EvmState {
+    let mut account = Account::default();
+    account.storage.insert(
+        U256::from(7),
+        EvmStorageSlot::new_changed(U256::ZERO, U256::from(1), Default::default()),
+    );
+    account.mark_touch();
+    EvmState::from_iter([(Address::repeat_byte(0xdd), account)])
+}
+
+/// What each commit of a build owning the dormancy index costs it to look up the transactions
+/// it may wake, in the common case where it wakes none, with a growing number of dormant ones.
+fn dormancy_commit_wake_benches(c: &mut Criterion) {
+    let mut group = c.benchmark_group("txpool/dormancy_commit_wake");
+    let commit = unrelated_commit();
+    for dormant in DORMANT_SCALING {
+        let (pool, _runtime) = dormant_scaling_pool(dormant, false);
+        let build = pool.begin_dormancy_build(B256::repeat_byte(1), 2, None).unwrap();
+        let mut best = pool.best_transactions_with_attributes_and_parking(
+            BestTransactionsAttributes::new(0, None),
+            None,
+            Some(&build),
+        );
+        group.bench_function(BenchmarkId::new("commit", dormant), |b| {
+            b.iter(|| best.wake_by_state(black_box(&commit)));
+        });
+    }
+    group.finish();
+}
+
+criterion_group!(
+    benches,
+    best_transactions_benches,
+    dormant_scaling_benches,
+    dormancy_commit_wake_benches
+);
 criterion_main!(benches);
