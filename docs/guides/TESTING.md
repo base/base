@@ -18,7 +18,7 @@ This is the single command [CONTRIBUTING.md](../../CONTRIBUTING.md) asks every c
 It fixes formatting/clippy/zepter issues, then runs every check and the full unit test suite:
 
 ```
-fix → check::all (format, clippy, udeps, deny) → test → lychee → zepter → check::no-std → check::no-std-proof
+fix → check::all (upgrade-docs, format, clippy, udeps, deny) → test → lychee → zepter → check::no-std → check::no-std-proof
 ```
 
 If you only touched a few crates and want faster feedback, `just pr` runs the same checks but
@@ -30,6 +30,11 @@ just pr
 
 Both commands require Docker, [`just`](https://github.com/casey/just), and Foundry (`forge`) to be
 installed — see the Developer Setup section of [CONTRIBUTING.md](../../CONTRIBUTING.md).
+
+`just check::upgrade-docs` runs the dependency-free feature registry/documentation check
+and its CLI regression tests. CI also runs it in Metadata Checks. When protocol code
+changes, follow [the upgrade guide](UPGRADES.md) to review and refresh the affected
+upgrade documentation; regenerating an inventory alone does not attest to review.
 
 
 ## The Four Testing Tiers
