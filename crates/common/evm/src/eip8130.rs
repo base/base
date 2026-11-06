@@ -3232,7 +3232,7 @@ mod tests {
 
     impl<CTX> Inspector<CTX> for RootGasSpent {
         fn call_end(&mut self, _: &mut CTX, _: &CallInputs, outcome: &mut CallOutcome) {
-            self.0 = Some(outcome.result.gas.spent());
+            self.0 = Some(outcome.result.gas.total_gas_spent());
         }
     }
 

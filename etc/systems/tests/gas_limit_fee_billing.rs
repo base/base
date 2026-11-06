@@ -445,7 +445,8 @@ async fn everest_bills_sponsored_eip8130_for_its_reserved_budget() -> Result<()>
 
     // `eth_estimateGas` for a sponsored request returns the sender's budget only: settlement adds
     // payer authentication on top, so a transaction sent at `gas_limit = estimate` succeeds and
-    // settles at `estimate + payer_auth`, not at the estimate.
+    // settles at `estimate + payer_auth`, not at the estimate. The EIP-8130 RPC module is installed
+    // on the validator node, not the builder, so the estimate comes from the client.
     let request: BaseTransactionRequest = serde_json::from_value(serde_json::json!({
         "from": sender.address(),
         "calls": [[Call { to: RECIPIENT, value: U256::ZERO, data: Bytes::new() }]],
@@ -453,7 +454,8 @@ async fn everest_bills_sponsored_eip8130_for_its_reserved_budget() -> Result<()>
         "maxFeePerGas": U256::from(MAX_FEE_PER_GAS),
         "maxPriorityFeePerGas": U256::from(MAX_PRIORITY_FEE_PER_GAS),
     }))?;
-    let estimate = builder.estimate_gas(request).await.wrap_err("sponsored eth_estimateGas")?;
+    let estimate =
+        system.client.estimate_gas(request).await.wrap_err("sponsored eth_estimateGas")?;
     ensure!(
         estimate < EIP8130_GAS_LIMIT,
         "estimate {estimate} must be below the over-provisioned limit"
