@@ -615,8 +615,8 @@ summary = "One-line crate description: typed Optimism rollup JSON-RPC provider e
 digest = "d0aafc0327"
 
 ["crates/utilities/reth-cli/README.md"]
-summary = "Reth-specific CLI utilities for Base EL binaries: init_reth! for version metadata, and the snapshot manifest archive generator shared by snapshot-manifest and the snapshotter sidecar."
-digest = "4bc018ccf3"
+summary = "Reth CLI utilities for Base EL binaries: init_reth! (version metadata), init_engine! (200ms-block persistence defaults), and the shared snapshot manifest archive generator."
+digest = "72f0488bd4"
 
 ["crates/utilities/retry/README.md"]
 summary = "Shared RetryConfig wrapper over backon exponential retry builders, giving services common delay normalization, jitter, and bounded or unbounded retry limits. Use when adding retry logic."

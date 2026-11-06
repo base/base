@@ -5,6 +5,7 @@ Reth-specific CLI utilities for Base execution layer binaries.
 ## Overview
 
 - **`init_reth!`**: Initializes Reth's global version metadata for P2P identification and logging.
+- **`init_engine!`**: Sets Reth engine persistence defaults sized for 200ms blocks.
 - **Snapshot manifests**: Provides the Base-owned archive generator shared by the execution node's
   `snapshot-manifest` command and the snapshotter sidecar. Existing archives can be reused without
   recompression after verifying their uncompressed BLAKE3 hashes.
@@ -20,6 +21,7 @@ base-reth-cli = { git = "https://github.com/base/base" }
 fn main() {
     base_reth_cli::init_reth!();
     base_reth_cli::init_snapshots!();
+    base_reth_cli::init_engine!();
 }
 ```
 
