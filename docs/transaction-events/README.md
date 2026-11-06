@@ -264,7 +264,7 @@ own `TXPOOL_VALIDATED_INSERT_ACCEPTED` or `TXPOOL_VALIDATED_INSERT_REJECTED`
 verdict for the same transaction (five rows per transaction on mainnet). Only
 the active sequencer builds blocks, so only its journal, verdicts included, is
 kept. The builder polls the local consensus node's
-`admin_sequencerActive` when `--builder.transaction-events.leader-rpc-url` (for
+`admin_sequencerActive` when `--builder.transaction-events.consensus-url` (for
 example `http://localhost:9545`) is set, every
 `--builder.transaction-events.leader-poll-interval-ms` (default 500), and
 journals nothing while the answer is `false`. Leadership is read live rather

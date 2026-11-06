@@ -66,13 +66,14 @@ pub struct TransactionEventsArgs {
     )]
     pub network: String,
 
-    /// Consensus node RPC URL whose `admin_sequencerActive` answer decides whether this builder
-    /// journals transaction events. Unset, every event is journaled regardless of leadership.
+    /// RPC URL of the consensus node whose `admin_sequencerActive` answer decides whether this
+    /// builder journals transaction events. Unset, every event is journaled regardless of
+    /// leadership.
     #[arg(
-        long = "builder.transaction-events.leader-rpc-url",
-        env = "BUILDER_TRANSACTION_EVENTS_LEADER_RPC_URL"
+        long = "builder.transaction-events.consensus-url",
+        env = "BUILDER_TRANSACTION_EVENTS_CONSENSUS_URL"
     )]
-    pub leader_rpc_url: Option<Url>,
+    pub consensus_url: Option<Url>,
 
     /// Milliseconds between two `admin_sequencerActive` requests.
     #[arg(
@@ -94,7 +95,7 @@ impl Default for TransactionEventsArgs {
             max_files: DEFAULT_MAX_FILES,
             required: false,
             network: "unknown".to_string(),
-            leader_rpc_url: None,
+            consensus_url: None,
             leader_poll_interval_ms: SequencerLeadershipConfig::DEFAULT_POLL_INTERVAL.as_millis()
                 as u64,
         }
@@ -118,9 +119,9 @@ impl TransactionEventsArgs {
 
     /// Returns the leadership probe config when a consensus node URL is configured.
     pub fn leadership_config(&self) -> Option<SequencerLeadershipConfig> {
-        self.leader_rpc_url.clone().map(|rpc_url| SequencerLeadershipConfig {
+        self.consensus_url.clone().map(|consensus_url| SequencerLeadershipConfig {
             poll_interval: Duration::from_millis(self.leader_poll_interval_ms),
-            ..SequencerLeadershipConfig::new(rpc_url)
+            ..SequencerLeadershipConfig::new(consensus_url)
         })
     }
 }
@@ -370,10 +371,10 @@ mod tests {
     }
 
     #[test]
-    fn leader_rpc_url_enables_the_leadership_probe() {
+    fn consensus_url_enables_the_leadership_probe() {
         let parsed = CommandParser::try_parse_from([
             "builder",
-            "--builder.transaction-events.leader-rpc-url",
+            "--builder.transaction-events.consensus-url",
             "http://localhost:9545",
             "--builder.transaction-events.leader-poll-interval-ms",
             "250",

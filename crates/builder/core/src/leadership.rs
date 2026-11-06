@@ -20,7 +20,7 @@ use crate::BuilderMetrics;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SequencerLeadershipConfig {
     /// HTTP RPC endpoint of the consensus node serving `admin_sequencerActive`.
-    pub rpc_url: Url,
+    pub consensus_url: Url,
     /// Time between two `admin_sequencerActive` requests.
     pub poll_interval: Duration,
     /// How long one request may take before it counts as failed.
@@ -35,10 +35,10 @@ impl SequencerLeadershipConfig {
     /// Default time one `admin_sequencerActive` request may take.
     pub const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
 
-    /// Probes `rpc_url` at the default interval and timeout.
-    pub const fn new(rpc_url: Url) -> Self {
+    /// Probes `consensus_url` at the default interval and timeout.
+    pub const fn new(consensus_url: Url) -> Self {
         Self {
-            rpc_url,
+            consensus_url,
             poll_interval: Self::DEFAULT_POLL_INTERVAL,
             request_timeout: Self::DEFAULT_REQUEST_TIMEOUT,
         }
@@ -71,7 +71,7 @@ impl SequencerLeadershipProbe {
         if config.poll_interval.is_zero() {
             eyre::bail!("sequencer leadership poll interval must not be zero");
         }
-        let client = RpcClient::builder().http(config.rpc_url.clone());
+        let client = RpcClient::builder().http(config.consensus_url.clone());
         let task = tokio::spawn(Self::run(config, client, gate));
         Ok(Self { task })
     }
@@ -87,17 +87,17 @@ impl SequencerLeadershipProbe {
             let answer = match tokio::time::timeout(config.request_timeout, request).await {
                 Ok(Ok(active)) => active,
                 Ok(Err(error)) => {
-                    Self::record_failure(&mut failing, &config.rpc_url, &error.to_string());
+                    Self::record_failure(&mut failing, &config.consensus_url, &error.to_string());
                     continue;
                 }
                 Err(_) => {
-                    Self::record_failure(&mut failing, &config.rpc_url, "request timed out");
+                    Self::record_failure(&mut failing, &config.consensus_url, "request timed out");
                     continue;
                 }
             };
             if failing {
                 failing = false;
-                info!(rpc_url = %config.rpc_url, "sequencer leadership probe recovered");
+                info!(consensus_url = %config.consensus_url, "sequencer leadership probe recovered");
             }
             if last_answer != Some(answer) {
                 info!(
@@ -111,12 +111,12 @@ impl SequencerLeadershipProbe {
         }
     }
 
-    fn record_failure(failing: &mut bool, rpc_url: &Url, error: &str) {
+    fn record_failure(failing: &mut bool, consensus_url: &Url, error: &str) {
         BuilderMetrics::sequencer_leadership_poll_errors_total().increment(1);
         if !*failing {
             *failing = true;
             warn!(
-                rpc_url = %rpc_url,
+                consensus_url = %consensus_url,
                 error = %error,
                 "could not read sequencer leadership; keeping the last known answer"
             );
@@ -171,7 +171,7 @@ mod tests {
 
         fn config(&self) -> SequencerLeadershipConfig {
             SequencerLeadershipConfig {
-                rpc_url: self.url.clone(),
+                consensus_url: self.url.clone(),
                 poll_interval: Duration::from_millis(10),
                 request_timeout: Duration::from_millis(500),
             }
