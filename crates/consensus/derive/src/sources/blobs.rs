@@ -143,7 +143,8 @@ where
                     block_hash = %block_ref.hash,
                     block_number = block_ref.number,
                     timestamp = block_ref.timestamp,
-                    "Failed to fetch blobs: {kind}"
+                    error = %kind,
+                    "Failed to fetch blobs"
                 );
             }
         })?;
