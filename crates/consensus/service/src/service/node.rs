@@ -59,8 +59,8 @@ impl<E: EngineClient + 'static> EngineRequestReceiver for ConfiguredEngineReceiv
         }
     }
 }
-/// Poll interval in seconds for the head block stream.
-pub const HEAD_STREAM_POLL_INTERVAL: u64 = 4;
+/// Poll interval for the head block stream.
+pub const HEAD_STREAM_POLL_INTERVAL: Duration = Duration::from_secs(4);
 
 /// The configuration for the L1 chain.
 #[derive(Debug, Clone)]
@@ -433,7 +433,7 @@ impl RollupNode {
         let head_stream = BlockStream::new_as_stream(
             self.l1_config.engine_provider.clone(),
             BlockNumberOrTag::Latest,
-            Duration::from_secs(HEAD_STREAM_POLL_INTERVAL),
+            HEAD_STREAM_POLL_INTERVAL,
         )?;
         let safe_stream = BlockStream::new_as_stream(
             self.l1_config.engine_provider.clone(),
