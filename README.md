@@ -61,6 +61,12 @@ Every push to `main` publishes patched `anvil` and `forge` binaries to GHCR
 as `ghcr.io/base/base-anvil`. Use immutable `sha-<commit>` tags for pinned
 downstream tests, or `main` for the latest successful `main` build.
 
+Use the image to test the precompiles on this repository's `main`. For new contract
+projects, use Foundry v1.8.4 or later with `--hardfork base:Cobalt`, as
+[docs.base.org](https://docs.base.org/sdks/base-anvil) recommends.
+[docs/guides/DEVNET.md](docs/guides/DEVNET.md#anvil-with-base-precompiles)
+compares the two and lists what they do not model.
+
 ## License
 
 Licensed under [MIT](LICENSE).
