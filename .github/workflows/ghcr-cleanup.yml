@@ -29,14 +29,28 @@ jobs:
         with:
           egress-policy: audit
 
-      - name: Clean up GHCR images
+      - name: Clean up node images
         uses: dataaxiom/ghcr-cleanup-action@d52806a0dc70b430571a37da1fde39733ffd640f # v1.2.2
         with:
           owner: ${{ github.repository_owner }}
-          packages: node,base-anvil
+          packages: node
           delete-tags: "*"
           delete-untagged: true
           exclude-tags: "v*"
+          older-than: 60 days
+          dry-run: ${{ inputs.dry_run }}
+          validate: true
+
+      # base-anvil has no release tags, and the README tells downstream tests to
+      # pin its sha-<commit> tags, so those tags are kept indefinitely.
+      - name: Clean up base-anvil images
+        uses: dataaxiom/ghcr-cleanup-action@d52806a0dc70b430571a37da1fde39733ffd640f # v1.2.2
+        with:
+          owner: ${{ github.repository_owner }}
+          packages: base-anvil
+          delete-tags: "*"
+          delete-untagged: true
+          exclude-tags: "sha-*"
           older-than: 60 days
           dry-run: ${{ inputs.dry_run }}
           validate: true

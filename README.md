@@ -58,8 +58,9 @@ Start with the [Run a Local Devnet](https://docs.base.org/build-on-base/run-a-lo
 ## Base Anvil Package
 
 Every push to `main` publishes patched `anvil` and `forge` binaries to GHCR
-as `ghcr.io/base/base-anvil`. Use immutable `sha-<commit>` tags for pinned
-downstream tests, or `main` for the latest successful `main` build.
+as `ghcr.io/base/base-anvil`. Use `sha-<commit>` tags for pinned downstream
+tests, or `main` for the latest successful `main` build. The weekly GHCR cleanup
+keeps `sha-<commit>` tags indefinitely.
 
 ## License
 
