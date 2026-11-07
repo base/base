@@ -6184,16 +6184,26 @@ mod tests {
     #[tokio::test]
     async fn validity_pool_byte_limit_evicts_the_cheapest_transaction() {
         let (pool, client) = build_integration_pool();
-        let probe = validity_1559(&funded_signer(&client), 0, 1_000);
-        let one_transaction = probe.size();
-        let pool = pool.with_validity_pool_limits(
-            ValidityPoolLimits::inherit().with_max_size(one_transaction),
-        );
-        let cheap = add(&pool, probe).await;
-        let rich = add(&pool, validity_1559(&funded_signer(&client), 0, 2_000)).await;
+        let cheap_signer =
+            PrivateKeySigner::from_slice(&U256::from(27).to_be_bytes::<32>()).unwrap();
+        let rich_signer =
+            PrivateKeySigner::from_slice(&U256::from(4_123).to_be_bytes::<32>()).unwrap();
+        fund(&client, cheap_signer.address());
+        fund(&client, rich_signer.address());
+        let cheap_transaction = validity_1559(&cheap_signer, 0, 1_000);
+        let rich_transaction = validity_1559(&rich_signer, 0, 2_000);
+        let cheap_size = cheap_transaction.size();
+        let rich_size = rich_transaction.size();
+        assert!(cheap_size < rich_size, "fixtures must exercise unequal signature lengths");
+        let byte_limit = cheap_size.max(rich_size);
+        assert!(cheap_size + rich_size > byte_limit);
+        let pool =
+            pool.with_validity_pool_limits(ValidityPoolLimits::inherit().with_max_size(byte_limit));
+        let cheap = add(&pool, cheap_transaction).await;
+        let rich = add(&pool, rich_transaction).await;
         assert_gone(&pool, cheap);
         assert_store(&pool, rich, PoolStore::Validity);
-        assert_eq!(pool.validity_pool_occupancy(), (1, one_transaction));
+        assert_eq!(pool.validity_pool_occupancy(), (1, rich_size));
     }
 
     #[tokio::test]
