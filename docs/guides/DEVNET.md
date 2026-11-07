@@ -32,6 +32,9 @@ just devnet down
 `etc/docker/devnet-env`. Pass `everest` or `zenith` to `up`/`up-single` to schedule those forks. Run
 `just devnet` for every command. Topology, batchers, and images: [etc/docker/README.md](../../etc/docker/README.md).
 
+To inject faults such as a batcher outage into a running devnet and watch the safe and unsafe heads
+react, use `just devnet chaos <scenario>`: [DEVNET_CHAOS.md](DEVNET_CHAOS.md).
+
 ## Anvil + Local Nitro Proving
 
 ```sh
