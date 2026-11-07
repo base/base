@@ -32,6 +32,17 @@ just devnet down
 `etc/docker/devnet-env`. Pass `everest` or `zenith` to `up`/`up-single` to schedule those forks. Run
 `just devnet` for every command. Topology, batchers, and images: [etc/docker/README.md](../../etc/docker/README.md).
 
+`up` and `up-single` compile the Base node image locally, which takes a while on the first run. To
+skip that on a clean checkout of a `main` commit, pull the images CI published for it:
+
+```sh
+DEVNET_IMAGES=pull just devnet up-single
+```
+
+Images that are not published, or a tree with uncommitted changes, fall back to a local build with a
+message saying why. To pin images yourself, see
+[Prebuilt devnet images](../../etc/docker/README.md#prebuilt-devnet-images).
+
 ## Anvil + Local Nitro Proving
 
 ```sh

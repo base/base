@@ -11,13 +11,22 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 env:
-  REGISTRY_IMAGE: ghcr.io/${{ github.repository_owner }}/node
+  REGISTRY: ghcr.io/${{ github.repository_owner }}
 permissions:
   contents: read
 jobs:
   build-and-push:
-    name: Build and push node
+    name: Build and push ${{ matrix.image }}
     runs-on: depot-ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: base
+            image: node
+          # `just devnet up` with DEVNET_IMAGES=pull uses the setup image tagged for HEAD.
+          - target: devnet-setup
+            image: devnet-setup
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
@@ -36,7 +45,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
-          images: ${{ env.REGISTRY_IMAGE }}
+          images: ${{ env.REGISTRY }}/${{ matrix.image }}
           tags: |
             type=ref,event=branch
             type=sha,format=long
@@ -51,7 +60,7 @@ jobs:
       - name: Build and push Docker image
         env:
           PROFILE: release
-          TARGET: base
+          TARGET: ${{ matrix.target }}
         run: |
           tag_args=()
           while IFS= read -r tag; do
