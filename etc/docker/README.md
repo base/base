@@ -72,8 +72,49 @@ The `docker-compose.yml` orchestrates a complete local devnet environment with b
 - The canonical Go `op-batcher` (`op-batcher` service) submitting L2 data to L1
 - The Rust `base batcher` (`base-batcher` service) running in **shadow mode**
 - A shadow validator (`base-shadow-validator` service) deriving its chain from the shadow DA
+- Prometheus, Grafana, and Jaeger for metrics, dashboards, and traces
 
 All services read configuration from `devnet-env` in this directory. The devnet stores chain data in `.devnet/` which is created on first run.
+
+### Production parity
+
+The devnet deliberately mirrors production instead of optimizing for startup time or iteration
+speed. Do not add a slimmer profile or change these defaults to make it faster, for example by
+activating forks at genesis, setting `BASE_NODE_VERIFIER_L1_CONFS=0`, shortening L1 slots, or
+dropping the shadow and observability services. Each default keeps behavior that a trimmed devnet
+would skip:
+
+- **12-second L1 slots.** `L1_SLOT_DURATION_OVERRIDE` defaults to `12`, Ethereum mainnet's slot
+  time, and sets both the slot duration used to generate L1 genesis and every L2 node's
+  `--l1-slot-duration-override`. The devnet used 4-second slots until
+  [#4795](https://github.com/base/base/pull/4795) switched every Docker devnet to 12 seconds for
+  mainnet-like L1 timing.
+- **15 verifier L1 confirmations.** `BASE_NODE_VERIFIER_L1_CONFS=15` is passed as
+  `--l1.verifier-confs` to `base-client`, `base-rpc`, and `base-shadow-validator`; the node's own
+  default is 0. Their derivation stays 15 L1 blocks behind the L1 head, about three minutes at
+  12-second slots, so their safe heads trail `base-builder`'s, which runs without a confirmation
+  depth. Setting it to 0 removes that lag.
+- **Forks after genesis.** Azul, Beryl, and Cobalt activate at L2 blocks 20, 21, and 22, and Denim
+  at block 25 (`L2_BASE_*_BLOCK` in `devnet-env`). Every fresh devnet therefore produces blocks under
+  the pre-fork rules and then crosses each activation boundary. At Denim the sequencer moves from
+  2-second blocks to the 200 ms cadence and changes builder selection. Activating the forks at block
+  0 would skip these transitions.
+- **Shadow services.** `base-batcher` in shadow mode and `base-shadow-validator` mirror our internal
+  zeronet batcher infrastructure, so every devnet derives a second chain from the Rust batcher's
+  data and can compare it with the canonical op-batcher chain. See
+  [Batcher topology](#batcher-topology-canonical--shadow).
+- **Observability.** `prometheus`, `grafana`, and `jaeger` start with every devnet. Prometheus
+  scrapes the L2 nodes, conductors, and both batchers; Grafana provisions the devnet dashboards,
+  including the [dynamic upgrades](#dynamic-upgrades-dashboard) and shadow batcher dashboards; Jaeger
+  accepts OTLP traces and is a Grafana data source. Scripts such as
+  `etc/scripts/devnet/validity-stress-gate.sh` read their results from Prometheus. The profiling
+  services (`pyroscope`, `alloy`) are already opt-in through the `profiling` Compose profile.
+
+For faster feedback, use the alternatives in
+[docs/guides/DEVNET.md](../../docs/guides/DEVNET.md#docker-devnet). A test that needs different
+timing or a different fork schedule should set them in its
+[acceptance scenario](../../acceptance/README.md) (`[devnet.l1] slot_duration`,
+`[devnet.l2] verifier_l1_confirmations`, `[devnet.l2.forks]`) rather than change these defaults.
 
 ### Batcher topology (canonical + shadow)
 

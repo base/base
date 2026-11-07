@@ -32,6 +32,16 @@ just devnet down
 `etc/docker/devnet-env`. Pass `everest` or `zenith` to `up`/`up-single` to schedule those forks. Run
 `just devnet` for every command. Topology, batchers, and images: [etc/docker/README.md](../../etc/docker/README.md).
 
+The Docker devnet deliberately mirrors production rather than optimizing for speed: 12-second L1
+slots, a verifier that waits 15 L1 confirmations, forks that activate at blocks 20–25 rather than at
+genesis, shadow batcher and validator services, and an observability stack. Do not trim these
+defaults to make it faster; [Production parity](../../etc/docker/README.md#production-parity)
+explains what each one does. For faster feedback, use the [snapshot devnet](#snapshot-devnet) or the
+[docs.base.org guide](https://docs.base.org/build-on-base/run-a-local-devnet) for app development,
+[action tests](../../actions/README.md) for batching and derivation logic, or an
+[acceptance scenario](../../acceptance/README.md) to run a test with a different L1 slot duration,
+confirmation depth, or fork schedule.
+
 ## Anvil + Local Nitro Proving
 
 ```sh
