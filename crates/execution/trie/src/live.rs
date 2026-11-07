@@ -92,7 +92,7 @@ where
         let db = StateProviderDatabase::new((&state_provider).into_evm_state_provider());
         let block_executor = self.evm_config.batch_executor(db);
 
-        let execution_result = block_executor.execute(&(*block).clone())?;
+        let execution_result = block_executor.execute(block)?;
 
         operation_durations.execution_duration_seconds = start.elapsed();
 
@@ -382,7 +382,7 @@ where
         let db = StateProviderDatabase::new((&state_provider).into_evm_state_provider());
         let block_executor = self.evm_config.batch_executor(db);
 
-        let execution_result = block_executor.execute(&(*block).clone())?;
+        let execution_result = block_executor.execute(block)?;
 
         let hashed_state = state_provider.hashed_post_state(&execution_result.state)?;
         let (state_root, trie_updates) =
