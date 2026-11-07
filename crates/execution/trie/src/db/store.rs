@@ -100,6 +100,12 @@ impl MdbxProofsStorage {
         Ok(Self { env })
     }
 
+    /// Opens a write transaction for a [`MdbxBatchSession`]. The writes become durable only when
+    /// [`MdbxBatchSession::commit`] is called; dropping the session aborts them.
+    pub fn begin_batch_session(&self) -> BaseProofsStorageResult<MdbxBatchSession<'_>> {
+        Ok(MdbxBatchSession::new(self, self.env.tx_mut()?))
+    }
+
     pub(crate) fn inner_get_latest_block_number_hash(
         &self,
         tx: &impl DbTx,
@@ -1027,8 +1033,7 @@ impl BaseProofsBatchStore for MdbxProofsStorage {
     where
         F: FnOnce(&mut Self::BatchSession<'_>) -> BaseProofsStorageResult<R>,
     {
-        let tx = self.env.tx_mut()?;
-        let mut session = MdbxBatchSession::new(self, tx);
+        let mut session = self.begin_batch_session()?;
         match f(&mut session) {
             Ok(result) => {
                 session.commit()?;

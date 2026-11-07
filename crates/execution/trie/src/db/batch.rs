@@ -38,7 +38,8 @@ impl<'tx> MdbxBatchSession<'tx> {
         Self { storage, tx: Some(tx) }
     }
 
-    pub(crate) fn commit(mut self) -> BaseProofsStorageResult<()> {
+    /// Commits the session's write transaction.
+    pub fn commit(mut self) -> BaseProofsStorageResult<()> {
         if let Some(tx) = self.tx.take() {
             tx.commit()?;
         }
