@@ -12,8 +12,13 @@ x-healthcheck-defaults: &healthcheck-defaults
   start_period: 250ms
   start_interval: 250ms
 
+# An L2 node is healthy once its chain has advanced past genesis and its consensus RPC answers.
+# The consensus drives the execution head by forkchoice, so an execution head above block 0
+# means the node has sequenced or imported an L2 block. JSON-RPC quantities have no leading
+# zeros, so "0x0" is the only zero. The consensus /healthz only proves its RPC is listening.
+# A node whose first block needs a service that waits for this check must not use it.
 x-node-healthcheck: &node-healthcheck
-  test: ["CMD-SHELL", "curl -sf -H 'Content-Type: application/json' --data '{\"jsonrpc\":\"2.0\",\"method\":\"eth_chainId\",\"params\":[],\"id\":1}' \"http://localhost:$${NODE_HEALTHCHECK_HTTP_PORT}/\" >/dev/null && curl -sf \"http://localhost:$${NODE_HEALTHCHECK_CL_RPC_PORT}/healthz\" >/dev/null"]
+  test: ["CMD-SHELL", "curl -sf -H 'Content-Type: application/json' --data '{\"jsonrpc\":\"2.0\",\"method\":\"eth_blockNumber\",\"params\":[],\"id\":1}' \"http://localhost:$${NODE_HEALTHCHECK_HTTP_PORT}/\" | grep -q '\"result\":\"0x[1-9a-f]' && curl -sf \"http://localhost:$${NODE_HEALTHCHECK_CL_RPC_PORT}/healthz\" >/dev/null"]
   <<: *healthcheck-defaults
 
 services:
