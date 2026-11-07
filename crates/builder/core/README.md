@@ -14,7 +14,7 @@ Block builder library for Base. Wires the native Base payload builder from `base
 
 ## Features
 
-- `jemalloc`: Use jemalloc allocator (default).
+- `jemalloc`: Use jemalloc allocator.
 - `jemalloc-prof`: Enable jemalloc profiling.
 - `metrics`: Export builder metrics (default).
 - `test-utils`: Enable the in-process test harness.

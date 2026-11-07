@@ -4,9 +4,18 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
 use base_execution_cli::{Cli, StandardBaseRethNode, StandardNodeArgs};
+#[cfg(all(feature = "mimalloc", feature = "jemalloc"))]
+use rustfs_mimalloc as _;
 
 type NodeCli = Cli<StandardNodeArgs>;
 
+// mimalloc is the default allocator. An explicitly enabled `jemalloc` feature (for example via
+// `jemalloc-prof` profiling builds) takes precedence so heap profiling keeps working.
+#[cfg(all(feature = "mimalloc", not(feature = "jemalloc")))]
+#[global_allocator]
+static ALLOC: rustfs_mimalloc::MiMalloc = rustfs_mimalloc::MiMalloc;
+
+#[cfg(feature = "jemalloc")]
 #[global_allocator]
 static ALLOC: reth_cli_util::allocator::Allocator = reth_cli_util::allocator::new_allocator();
 

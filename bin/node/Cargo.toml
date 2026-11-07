@@ -21,17 +21,23 @@ base-cli-utils.workspace = true
 
 # reth
 base-reth-cli.workspace = true
-reth-cli-util.workspace = true
+reth-cli-util = { workspace = true, optional = true }
+rustfs-mimalloc = { workspace = true, optional = true }
 base-execution-cli = { workspace = true, features = ["otlp"] }
 
 # cli
 clap.workspace = true
 
 [features]
-default = [ "asm-keccak", "jemalloc", "keccak-cache-global" ]
+default = [ "asm-keccak", "keccak-cache-global", "mimalloc" ]
 asm-keccak = [ "base-execution-cli/asm-keccak" ]
 keccak-cache-global = [ "base-execution-cli/keccak-cache-global" ]
-jemalloc = [ "base-execution-cli/jemalloc", "reth-cli-util/jemalloc" ]
+mimalloc = [ "dep:rustfs-mimalloc" ]
+jemalloc = [
+	"base-execution-cli/jemalloc",
+	"dep:reth-cli-util",
+	"reth-cli-util/jemalloc",
+]
 jemalloc-prof = [
 	"base-execution-cli/jemalloc-symbols",
 	"jemalloc",

@@ -47,7 +47,8 @@ reth-provider.workspace = true
 reth-node-core.workspace = true
 reth-cli-runner.workspace = true
 reth-cli-commands.workspace = true
-reth-cli-util.workspace = true
+reth-cli-util = { workspace = true, optional = true }
+rustfs-mimalloc = { workspace = true, optional = true }
 
 # cli
 clap = { workspace = true, features = ["env"] }
@@ -72,12 +73,14 @@ axum = { workspace = true, features = ["tokio", "http1", "http2"] }
 tokio = { workspace = true, features = ["net", "time", "macros", "process", "rt-multi-thread"] }
 
 [features]
-default = [ "asm-keccak", "jemalloc", "keccak-cache-global" ]
+default = [ "asm-keccak", "keccak-cache-global", "mimalloc" ]
 asm-keccak = [ "base-execution-cli/asm-keccak" ]
 keccak-cache-global = [ "base-execution-cli/keccak-cache-global" ]
+mimalloc = [ "dep:rustfs-mimalloc" ]
 jemalloc = [
 	"base-builder-core/jemalloc",
 	"base-execution-cli/jemalloc",
+	"dep:reth-cli-util",
 	"reth-cli-util/jemalloc",
 ]
 jemalloc-prof = [
