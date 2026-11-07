@@ -32,6 +32,11 @@ just devnet down
 `etc/docker/devnet-env`. Pass `everest` or `zenith` to `up`/`up-single` to schedule those forks. Run
 `just devnet` for every command. Topology, batchers, and images: [etc/docker/README.md](../../etc/docker/README.md).
 
+`just devnet info` prints a JSON manifest of the running devnet and writes it to `.devnet/manifest.json`:
+chain IDs, RPC and WebSocket URLs, L1 contract addresses, L2 predeploys, prefunded accounts with the
+roles devnet services use them for, and the portal's proof-window values. Tools and agents should read
+it rather than parse `devnet-env`. Fields: [etc/docker/README.md](../../etc/docker/README.md#devnet-manifest).
+
 ## Anvil + Local Nitro Proving
 
 ```sh
