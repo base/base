@@ -8,6 +8,7 @@ use base_execution_chainspec::BaseChainSpec;
 use base_execution_cli::{
     ExecutionUpgradeSignal, ExecutionUpgradeSignalConfig, ExecutionUpgradeSignalRuntimeExtension,
 };
+use base_execution_eip8130_rpc_node::Eip8130RpcExtension;
 use base_execution_txpool::ValiditySignatureMode;
 use base_node_core::args::RollupArgs;
 use base_node_runner::{BaseNode, BaseNodeExtension, FromExtensionConfig, NodeHooks};
@@ -405,6 +406,10 @@ impl InProcessClient {
             transaction_event_node_role: None,
         };
         extensions.push(Box::new(TxPoolExtension::new(txpool_config)));
+
+        // EIP-8130 RPC overrides (eth_call, eth_estimateGas, eth_getTransactionCount),
+        // mirroring the standard node CLI wiring so test nodes match production.
+        extensions.push(Box::new(Eip8130RpcExtension::from_config(())));
 
         // TxForwarding extension (optional - forwards txs to builder RPC)
         if let Some(ref tx_fwd_config) = config.tx_forwarding_config {
