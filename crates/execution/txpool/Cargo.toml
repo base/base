@@ -16,10 +16,11 @@ workspace = true
 alloy-eips.workspace = true
 alloy-sol-types.workspace = true
 alloy-consensus.workspace = true
-alloy-primitives = { workspace = true, features = ["k256", "map-foldhash"] }
+alloy-primitives = { workspace = true, features = ["k256", "map-foldhash", "map-indexmap"] }
 
 # reth
 reth-evm.workspace = true
+reth-revm.workspace = true
 reth-node-api.workspace = true
 reth-provider.workspace = true
 reth-chainspec.workspace = true

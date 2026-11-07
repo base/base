@@ -1,4 +1,4 @@
-//! Validity-predicate evaluation and indexing for payload transactions.
+//! Validity-predicate evaluation and indexing by the state location that blocks a transaction.
 
 use core::ops::Bound::{Excluded, Included};
 use std::collections::BTreeMap;
@@ -7,10 +7,9 @@ use alloy_primitives::{
     Address, TxHash, U256,
     map::{B256Map, B256Set, HashMap, U256Map},
 };
-use base_execution_txpool::{
-    PredicateContext, ValidityConditions, ValidityOperator, ValidityPredicate,
-};
 use revm::{Database, database::TransitionState, state::EvmState};
+
+use crate::{PredicateContext, ValidityConditions, ValidityOperator, ValidityPredicate};
 
 /// The number of parked predicates at which a flat bucket becomes ordered by default.
 pub const DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD: usize = 32;
@@ -236,26 +235,8 @@ impl<T> ParkedPredicateIndex<T> {
     /// Returns parked transactions and index-bucket wakeups triggered by `state`.
     pub fn affected_by_state(&self, state: &EvmState) -> StateChangeEffects {
         let mut effects = StateChangeEffects::default();
-        for (address, account) in state {
-            let destroyed = account.is_selfdestructed();
-            // Deleted accounts read as nonce zero, regardless of the retained account info.
-            let new_nonce = if destroyed { 0 } else { account.info.nonce };
-            self.wake_account(
-                &mut effects,
-                *address,
-                AccountChange {
-                    old_nonce: account.original_info().nonce,
-                    new_nonce,
-                    old_balance: account.original_info().balance,
-                    new_balance: account.info.balance,
-                    storage_destroyed: destroyed,
-                },
-                account
-                    .storage
-                    .iter()
-                    .filter(|(_, value)| value.is_changed())
-                    .map(|(slot, value)| (*slot, value.original_value(), value.present_value())),
-            );
+        for (address, change, slots) in AccountChange::of_state(state) {
+            self.wake_account(&mut effects, address, change, slots);
         }
         effects
     }
@@ -267,28 +248,15 @@ impl<T> ParkedPredicateIndex<T> {
     /// calls and deposits, which never pass through [`Self::affected_by_state`].
     pub fn affected_by_transitions(&self, transitions: &TransitionState) -> StateChangeEffects {
         let mut effects = StateChangeEffects::default();
-        for (address, transition) in &transitions.transitions {
-            let old = transition.previous_info.as_ref();
-            let new = transition.info.as_ref();
-            self.wake_account(
-                &mut effects,
-                *address,
-                AccountChange {
-                    old_nonce: old.map_or(0, |info| info.nonce),
-                    new_nonce: new.map_or(0, |info| info.nonce),
-                    old_balance: old.map_or(U256::ZERO, |info| info.balance),
-                    new_balance: new.map_or(U256::ZERO, |info| info.balance),
-                    storage_destroyed: transition.storage_was_destroyed
-                        || transition.status.was_destroyed(),
-                },
-                transition
-                    .storage
-                    .iter()
-                    .filter(|(_, slot)| slot.is_changed())
-                    .map(|(key, slot)| (*key, slot.previous_or_original_value, slot.present_value)),
-            );
+        for (address, change, slots) in AccountChange::of_transitions(transitions) {
+            self.wake_account(&mut effects, address, change, slots);
         }
         effects
+    }
+
+    /// Returns the hashes of every indexed transaction.
+    pub fn hashes(&self) -> impl Iterator<Item = TxHash> + '_ {
+        self.transactions.keys().copied()
     }
 
     /// Returns the number of indexed transactions.
@@ -418,6 +386,96 @@ struct AccountChange {
     new_balance: U256,
     /// Whether every storage slot of the account may have changed.
     storage_destroyed: bool,
+}
+
+impl AccountChange {
+    /// Each account `state` changed, with its changed slots as `(slot, old value, new value)`.
+    fn of_state(
+        state: &EvmState,
+    ) -> impl Iterator<Item = (Address, Self, impl Iterator<Item = (U256, U256, U256)> + '_)> + '_
+    {
+        state.iter().map(|(address, account)| {
+            let destroyed = account.is_selfdestructed();
+            let change = Self {
+                old_nonce: account.original_info().nonce,
+                // Deleted accounts read as nonce zero, regardless of the retained account info.
+                new_nonce: if destroyed { 0 } else { account.info.nonce },
+                old_balance: account.original_info().balance,
+                new_balance: account.info.balance,
+                storage_destroyed: destroyed,
+            };
+            let slots = account
+                .storage
+                .iter()
+                .filter(|(_, value)| value.is_changed())
+                .map(|(slot, value)| (*slot, value.original_value(), value.present_value()));
+            (*address, change, slots)
+        })
+    }
+
+    /// Each account `transitions` changed relative to the state it started from, with its
+    /// changed slots as `(slot, old value, new value)`.
+    fn of_transitions(
+        transitions: &TransitionState,
+    ) -> impl Iterator<Item = (Address, Self, impl Iterator<Item = (U256, U256, U256)> + '_)> + '_
+    {
+        transitions.transitions.iter().map(|(address, transition)| {
+            let old = transition.previous_info.as_ref();
+            let new = transition.info.as_ref();
+            let change = Self {
+                old_nonce: old.map_or(0, |info| info.nonce),
+                new_nonce: new.map_or(0, |info| info.nonce),
+                old_balance: old.map_or(U256::ZERO, |info| info.balance),
+                new_balance: new.map_or(U256::ZERO, |info| info.balance),
+                storage_destroyed: transition.storage_was_destroyed
+                    || transition.status.was_destroyed(),
+            };
+            let slots = transition
+                .storage
+                .iter()
+                .filter(|(_, slot)| slot.is_changed())
+                .map(|(key, slot)| (*key, slot.previous_or_original_value, slot.present_value));
+            (*address, change, slots)
+        })
+    }
+}
+
+/// A state location a change wrote, at the granularity validity predicates read state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WrittenLocation {
+    /// One balance, nonce or storage location.
+    Key(ValidityPredicateKey),
+    /// Every storage slot of an account whose storage was destroyed.
+    AllStorage(Address),
+}
+
+impl WrittenLocation {
+    /// The locations `state` wrote.
+    pub fn of_state(state: &EvmState) -> impl Iterator<Item = Self> + '_ {
+        AccountChange::of_state(state)
+            .flat_map(|(address, change, slots)| Self::of_account(address, change, slots))
+    }
+
+    /// The locations `transitions` wrote relative to the state it started from.
+    pub fn of_transitions(transitions: &TransitionState) -> impl Iterator<Item = Self> + '_ {
+        AccountChange::of_transitions(transitions)
+            .flat_map(|(address, change, slots)| Self::of_account(address, change, slots))
+    }
+
+    fn of_account(
+        address: Address,
+        change: AccountChange,
+        slots: impl Iterator<Item = (U256, U256, U256)>,
+    ) -> impl Iterator<Item = Self> {
+        let nonce = (change.old_nonce != change.new_nonce)
+            .then_some(Self::Key(ValidityPredicateKey::Nonce(address)));
+        let balance = (change.old_balance != change.new_balance)
+            .then_some(Self::Key(ValidityPredicateKey::Balance(address)));
+        let storage = change.storage_destroyed.then_some(Self::AllStorage(address));
+        nonce.into_iter().chain(balance).chain(storage).chain(
+            slots.map(move |(slot, ..)| Self::Key(ValidityPredicateKey::Storage(address, slot))),
+        )
+    }
 }
 
 impl ValidityPredicateKey {
@@ -708,9 +766,6 @@ pub mod test_utils {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, B256, U256, map::B256Set};
-    use base_execution_txpool::{
-        PredicateContext, ValidityConditions, ValidityOperator, ValidityPredicate,
-    };
     use revm::{
         database::InMemoryDB,
         state::{Account, AccountInfo, EvmState, EvmStorageSlot},
@@ -721,6 +776,7 @@ mod tests {
         ValidityPredicateKey,
         test_utils::{ReadError, RecordingDatabase},
     };
+    use crate::{PredicateContext, ValidityConditions, ValidityOperator, ValidityPredicate};
 
     fn balance(address: Address, op: ValidityOperator, value: u64) -> ValidityPredicate {
         ValidityPredicate::Balance { address, op, value: U256::from(value) }

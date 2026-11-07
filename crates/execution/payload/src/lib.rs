@@ -60,15 +60,11 @@ pub use predicate_loads::{PredicateLoadTracker, PredicateReadRecorder};
 mod traits;
 pub use traits::*;
 mod types;
-pub use types::BasePayloadTypes;
-
-mod validity;
-#[cfg(test)]
-pub use validity::test_utils;
-pub use validity::{
+pub use base_execution_txpool::{
     DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD, ParkedPredicateIndex, StateChangeEffects,
     ValidityPredicateEvaluation, ValidityPredicateKey,
 };
+pub use types::BasePayloadTypes;
 
 pub mod validator;
 pub use validator::BaseExecutionPayloadValidator;

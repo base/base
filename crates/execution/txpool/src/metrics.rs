@@ -111,6 +111,30 @@ base_metrics::define_metrics! {
     pool_transactions: gauge,
     #[describe("Summed size of transactions currently held by the validity pool, in bytes")]
     pool_bytes: gauge,
+    #[describe("Validity transactions currently kept out of builds as dormant")]
+    dormant_transactions: gauge,
+    #[describe("Validity transactions the dormancy index woke during each build")]
+    dormant_wakes: histogram,
+    #[describe("Dormant validity transactions the canary found runnable and woke")]
+    false_dormancy: counter,
+    #[describe("Times the validity pool discarded its dormancy index, making every dormant transaction ready, labeled by reason")]
+    #[label(
+        name = "reason",
+        default = [
+            "parent_mismatch",
+            "abandoned",
+            "canonical_mismatch",
+            "reorg",
+            "feed_gap",
+            "merge_failed"
+        ]
+    )]
+    dormancy_discards: counter,
+    #[describe("Builds that ran without the dormancy index, as with dormancy off, because another build owned it or a sealed build's parks were still being merged")]
+    #[label(name = "reason", default = ["build_active", "merge_pending"])]
+    dormancy_fallback_builds: counter,
+    #[describe("Time a build starting waited for the merge of the previous build's parks, in seconds")]
+    dormancy_merge_wait: histogram,
 }
 
 impl ValidityPoolMetrics {
@@ -139,6 +163,14 @@ impl ValidityPoolMetrics {
     pub fn record_cross_store_replacement(into_validity: bool) {
         Self::cross_store_replaced(if into_validity { "into_validity" } else { "out_of_validity" })
             .increment(1);
+    }
+
+    /// Publishes the dormant count and the canary's false dormancies.
+    pub fn record_dormancy(dormant: usize, false_dormant: usize) {
+        Self::dormant_transactions().set(dormant as f64);
+        if false_dormant > 0 {
+            Self::false_dormancy().increment(false_dormant as u64);
+        }
     }
 
     /// Publishes the validity pool's current occupancy.

@@ -4,6 +4,7 @@
 //! drops committed storage diffs. This task feeds complete canonical account
 //! deltas into the EIP-8130 invalidation index.
 
+use alloy_eips::BlockNumHash;
 use alloy_primitives::{B256, U256};
 use base_common_precompiles::NonceManagerStorage;
 use futures::StreamExt;
@@ -12,7 +13,7 @@ use revm::database::BundleState;
 use tokio_stream::wrappers::{BroadcastStream, errors::BroadcastStreamRecvError};
 use tracing::{debug, warn};
 
-use crate::AccountStateDiff;
+use crate::{AccountStateDiff, DormancyDiscardReason};
 
 /// Why every guarded transaction was flushed in one shot. Both paths are
 /// fail-safe (the guard cannot prove any admission current), but they differ
@@ -49,6 +50,19 @@ pub trait StateDiffInvalidation: Clone + Send + Sync + 'static {
 
     /// Invalidates every guarded transaction, attributing the flush to `cause`.
     fn invalidate_all_tracked(&self, cause: InvalidationCause) -> usize;
+
+    /// Whether the pool keeps dormant validity transactions. Without it the maintenance task
+    /// skips every dormancy call, and the work and blocking-thread hand-off before them.
+    fn tracks_dormancy(&self) -> bool;
+
+    /// Advances dormant validity transactions past the `canonical` blocks a notification
+    /// committed, in ascending order: checks them against the builder's tip and classifies
+    /// queued transactions against the head's state. Called for every notification, including
+    /// those committing only empty blocks, while the pool tracks dormancy.
+    fn advance_dormancy(&self, canonical: &[BlockNumHash]);
+
+    /// Discards the dormancy index for `reason`, making every dormant validity transaction ready.
+    fn discard_dormancy(&self, reason: DormancyDiscardReason);
 }
 
 /// Feeds each canonical block's account and storage diff into the pool.
@@ -64,6 +78,12 @@ pub async fn maintain_state_diff_invalidation<P, N>(
             Some(Ok(notification)) => notification,
             Some(Err(BroadcastStreamRecvError::Lagged(missed))) => {
                 let removed = pool.invalidate_all_tracked(InvalidationCause::FeedGap);
+                if pool.tracks_dormancy() {
+                    run_blocking(&pool, |pool| {
+                        pool.discard_dormancy(DormancyDiscardReason::FeedGap);
+                    })
+                    .await;
+                }
                 warn!(
                     missed = missed,
                     removed = removed,
@@ -79,6 +99,10 @@ pub async fn maintain_state_diff_invalidation<P, N>(
             // back the reverted segment. Correct targeted handling would need
             // both key sets, so conservatively flush this exceptional path.
             let removed = pool.invalidate_all_tracked(InvalidationCause::Reorg);
+            if pool.tracks_dormancy() {
+                run_blocking(&pool, |pool| pool.discard_dormancy(DormancyDiscardReason::Reorg))
+                    .await;
+            }
             warn!(
                 removed = removed,
                 "canonical chain reorged; invalidated all guarded transactions"
@@ -87,18 +111,32 @@ pub async fn maintain_state_diff_invalidation<P, N>(
         }
 
         let committed = notification.committed();
-        let diffs = AccountStateDiff::collect(&committed.execution_outcome().bundle);
-        if diffs.is_empty() {
-            continue;
+        let bundle = &committed.execution_outcome().bundle;
+        let diffs = AccountStateDiff::collect(bundle);
+        if !diffs.is_empty() {
+            let removed = pool.invalidate_from_state_diff(&diffs);
+            if removed > 0 {
+                debug!(
+                    removed = removed,
+                    accounts = diffs.len(),
+                    "invalidated EIP-8130 transactions from canonical state diff"
+                );
+            }
         }
-        let removed = pool.invalidate_from_state_diff(&diffs);
-        if removed > 0 {
-            debug!(
-                removed = removed,
-                accounts = diffs.len(),
-                "invalidated EIP-8130 transactions from canonical state diff"
-            );
+        if pool.tracks_dormancy() {
+            let canonical =
+                committed.blocks_iter().map(|block| block.num_hash()).collect::<Vec<_>>();
+            run_blocking(&pool, move |pool| pool.advance_dormancy(&canonical)).await;
         }
+    }
+}
+
+/// Runs dormancy work that reads state or walks every dormant transaction on a blocking thread,
+/// awaiting it so notifications are still processed in order.
+async fn run_blocking<P: StateDiffInvalidation>(pool: &P, work: impl FnOnce(&P) + Send + 'static) {
+    let pool = pool.clone();
+    if let Err(error) = tokio::task::spawn_blocking(move || work(&pool)).await {
+        warn!(error = %error, "dormancy maintenance task failed");
     }
 }
 
@@ -161,7 +199,13 @@ impl AccountStateDiff {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+
     use alloy_primitives::Address;
+    use base_common_consensus::BasePrimitives;
     use revm::{
         database::{BundleAccount, states::StorageSlot},
         primitives::HashMap,
@@ -197,6 +241,59 @@ mod tests {
             state.insert(address, account);
         }
         BundleState { state, ..Default::default() }
+    }
+
+    /// Counts the dormancy calls the maintenance task makes. Hand-rolled because the trait
+    /// requires `Clone`, and clones must share one count, which a mockall mock cannot express.
+    #[derive(Debug, Clone)]
+    struct DormancyCallCounter {
+        tracks_dormancy: bool,
+        calls: Arc<AtomicUsize>,
+    }
+
+    impl StateDiffInvalidation for DormancyCallCounter {
+        fn invalidate_from_state_diff(&self, _: &[AccountStateDiff]) -> usize {
+            0
+        }
+
+        fn invalidate_all_tracked(&self, _: InvalidationCause) -> usize {
+            0
+        }
+
+        fn tracks_dormancy(&self) -> bool {
+            self.tracks_dormancy
+        }
+
+        fn advance_dormancy(&self, _: &[BlockNumHash]) {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+        }
+
+        fn discard_dormancy(&self, _: DormancyDiscardReason) {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    #[rstest::rstest]
+    #[case::off(false, 0)]
+    #[case::enforce(true, 2)]
+    #[tokio::test]
+    async fn dormancy_work_runs_only_when_the_pool_tracks_dormancy(
+        #[case] tracks_dormancy: bool,
+        #[case] calls: usize,
+    ) {
+        let pool = DormancyCallCounter { tracks_dormancy, calls: Arc::default() };
+        let (sender, receiver) = tokio::sync::broadcast::channel(2);
+        sender
+            .send(CanonStateNotification::<BasePrimitives>::Commit { new: Arc::default() })
+            .unwrap();
+        sender
+            .send(CanonStateNotification::Reorg { old: Arc::default(), new: Arc::default() })
+            .unwrap();
+        drop(sender);
+
+        maintain_state_diff_invalidation(pool.clone(), BroadcastStream::new(receiver)).await;
+
+        assert_eq!(pool.calls.load(Ordering::Relaxed), calls);
     }
 
     #[test]
