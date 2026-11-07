@@ -30,10 +30,13 @@ pub use rpc::{
 };
 
 mod derivation;
+#[cfg(test)]
+pub use derivation::MockL1CanonicalChain;
 pub use derivation::{
-    DerivationActor, DerivationActorRequest, DerivationClientError, DerivationClientResult,
-    DerivationEngineClient, DerivationError, DerivationState, DerivationStateMachine,
-    DerivationStateTransitionError, DerivationStateUpdate, L2Finalizer,
+    ChainProviderCanonicalChain, DerivationActor, DerivationActorRequest, DerivationClientError,
+    DerivationClientResult, DerivationEngineClient, DerivationError, DerivationState,
+    DerivationStateMachine, DerivationStateTransitionError, DerivationStateUpdate,
+    L1CanonicalChain, L1CanonicalChainError, L2Finalizer, PendingFinalization,
     QueuedDerivationEngineClient,
 };
 
