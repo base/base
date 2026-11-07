@@ -15,14 +15,17 @@ use alloy_primitives::{
     map::{AddressMap, B256Map, HashMap},
 };
 use base_common_consensus::Eip8130Constants;
+use parking_lot::RwLock;
 use reth_primitives_traits::transaction::error::InvalidTransactionError;
 use reth_transaction_pool::{
-    AddedTransactionOutcome, BestTransactions, LocalTransactionConfig, PoolConfig, PoolResult,
-    PoolSize, PriceBumpConfig, SubPoolLimit, TransactionOrdering, ValidPoolTransaction,
+    AddedTransactionOutcome, BestTransactions, LocalTransactionConfig, NewTransactionEvent,
+    PoolConfig, PoolResult, PoolSize, PriceBumpConfig, SubPool, SubPoolLimit, TransactionOrdering,
+    ValidPoolTransaction,
     error::{InvalidPoolTransactionError, PoolError, PoolErrorKind},
     identifier::{SenderId, TransactionId},
     pool::{AddedTransactionState, QueuedReason},
 };
+use tokio::sync::mpsc::{self, error::TryRecvError};
 
 use crate::{BasePooledTx, BestTransactionPriority, best::MergeSource};
 
@@ -1324,6 +1327,28 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
             self.protocol_nonce_lanes,
             ordering,
             base_fee,
+            None,
+        )
+    }
+
+    /// Returns a best-transactions iterator that also walks the transactions
+    /// `live` reports pending after this snapshot.
+    pub(crate) fn live_best_transactions<O>(
+        &self,
+        ordering: O,
+        base_fee: u64,
+        live: LiveLaneUpdates<T>,
+    ) -> BestTwoDTransactions<T, O>
+    where
+        O: TransactionOrdering<Transaction = T>,
+    {
+        BestTwoDTransactions::new(
+            &self.lanes,
+            &self.nonce_free,
+            self.protocol_nonce_lanes,
+            ordering,
+            base_fee,
+            Some(live),
         )
     }
 
@@ -1374,10 +1399,38 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
     }
 }
 
-/// Snapshot iterator over the current best transactions of the EIP-8130 sidecar.
+/// Most live pending admissions a walk takes in per [`Iterator::next`] call.
+const MAX_LIVE_TRANSACTIONS_PER_POLL: usize = 16;
+
+/// Transactions a lane store makes pending after a [`BestTwoDTransactions`]
+/// snapshot was taken, so a build can still select them.
+///
+/// Subscribe under the read guard the snapshot is taken with: admissions
+/// publish while holding the pool's write lock, so the feed starts exactly
+/// where the snapshot ends, with no gap and no duplicate.
+#[derive(Debug)]
+pub(crate) struct LiveLaneUpdates<T: BasePooledTx> {
+    events: mpsc::Receiver<NewTransactionEvent<T>>,
+    /// Read only to tell whether a lane the snapshot lacks starts at canonical state.
+    pool: Arc<RwLock<TwoDNoncePool<T>>>,
+}
+
+impl<T: BasePooledTx> LiveLaneUpdates<T> {
+    /// Follows `events`, the new-transaction feed of the store `pool` holds.
+    pub(crate) const fn new(
+        events: mpsc::Receiver<NewTransactionEvent<T>>,
+        pool: Arc<RwLock<TwoDNoncePool<T>>>,
+    ) -> Self {
+        Self { events, pool }
+    }
+}
+
+/// Iterator over the current best transactions of a lane store.
 ///
 /// Each finite channel contributes its contiguous head and each nonce-free
-/// transaction contributes an independent one-item candidate.
+/// transaction contributes an independent one-item candidate. The walk is a
+/// snapshot unless [`TwoDNoncePool::live_best_transactions`] also feeds it transactions
+/// that become pending while it runs.
 #[derive(Debug)]
 pub(crate) struct BestTwoDTransactions<T: BasePooledTx, O>
 where
@@ -1389,12 +1442,18 @@ where
     /// member (the lane moved on, or was re-offered after a hold) is skipped.
     candidates: BinaryHeap<(BestTransactionPriority<O::PriorityValue>, usize)>,
     /// Only lanes with more than one member: invalidating or holding a lane
-    /// after its single member was yielded has nothing left to act on.
+    /// after its single member was yielded has nothing left to act on. Live
+    /// walks index every finite lane, since an arrival can extend any of them.
     lane_indexes: HashMap<LaneId, usize>,
+    /// Nonce-free candidates by replay id; filled only for live walks, where
+    /// an arrival can replace one.
+    nonce_free_indexes: B256Map<usize>,
     /// Mirrors the pool's protocol-nonce lane mode for lane lookups.
     protocol_nonce_lanes: bool,
     ordering: O,
     base_fee: u64,
+    /// Pending admissions after the snapshot; `None` keeps the walk static.
+    live: Option<LiveLaneUpdates<T>>,
 }
 
 /// One lane's pending run as the snapshot walks it.
@@ -1439,6 +1498,7 @@ where
         protocol_nonce_lanes: bool,
         ordering: O,
         base_fee: u64,
+        live: Option<LiveLaneUpdates<T>>,
     ) -> Self {
         let mut snapshot = Vec::with_capacity(lanes.len() + nonce_free.len());
         snapshot.extend(lanes.iter().filter_map(|(id, lane)| {
@@ -1451,13 +1511,17 @@ where
         let lane_indexes = snapshot
             .iter()
             .enumerate()
-            .filter(|(_, lane)| !lane.tail.is_empty())
+            .filter(|(_, lane)| live.is_some() || !lane.tail.is_empty())
             .map(|(index, lane)| (lane.id, index))
             .collect();
-        snapshot.extend(nonce_free.values().map(|transaction| {
+        let mut nonce_free_indexes = B256Map::default();
+        for (replay_id, transaction) in nonce_free {
+            if live.is_some() {
+                nonce_free_indexes.insert(*replay_id, snapshot.len());
+            }
             let id = (transaction.sender(), Eip8130Constants::NONCE_KEY_MAX);
-            LaneIterator::new(id, Arc::clone(transaction), Vec::new())
-        }));
+            snapshot.push(LaneIterator::new(id, Arc::clone(transaction), Vec::new()));
+        }
         let candidates = BinaryHeap::from(
             snapshot
                 .iter()
@@ -1467,7 +1531,16 @@ where
                 })
                 .collect::<Vec<_>>(),
         );
-        Self { lanes: snapshot, candidates, lane_indexes, protocol_nonce_lanes, ordering, base_fee }
+        Self {
+            lanes: snapshot,
+            candidates,
+            lane_indexes,
+            nonce_free_indexes,
+            protocol_nonce_lanes,
+            ordering,
+            base_fee,
+            live,
+        }
     }
 
     fn push_lane_head(&mut self, index: usize) {
@@ -1480,6 +1553,119 @@ where
             self.candidates.push((priority, index));
         }
     }
+
+    /// Takes up to [`MAX_LIVE_TRANSACTIONS_PER_POLL`] pending admissions from
+    /// the live feed into the walk.
+    fn poll_live(&mut self) {
+        for _ in 0..MAX_LIVE_TRANSACTIONS_PER_POLL {
+            let Some(live) = self.live.as_mut() else { return };
+            match live.events.try_recv() {
+                Ok(event) if event.subpool == SubPool::Pending => {
+                    self.add_live(event.transaction);
+                }
+                Ok(_) => {}
+                Err(TryRecvError::Empty) => return,
+                Err(TryRecvError::Disconnected) => {
+                    self.live = None;
+                    return;
+                }
+            }
+        }
+    }
+
+    /// Adds a transaction that became pending after the snapshot.
+    ///
+    /// The arrival extends its lane's run, replaces a member not yet yielded,
+    /// or starts a lane of its own; anything else waits for the next build.
+    /// It competes on priority alone, like a member the builder promotes after
+    /// a state change, so it can follow a cheaper transaction already yielded.
+    fn add_live(&mut self, transaction: Arc<ValidPoolTransaction<T>>) {
+        if let Some(replay_id) = transaction.transaction.eip8130_replay_id() {
+            match self.nonce_free_indexes.get(&replay_id).copied() {
+                Some(index) => self.replace_member(index, 0, transaction),
+                None => {
+                    self.nonce_free_indexes.insert(replay_id, self.lanes.len());
+                    let id = (transaction.sender(), Eip8130Constants::NONCE_KEY_MAX);
+                    self.push_lane(LaneIterator::new(id, transaction, Vec::new()));
+                }
+            }
+            return;
+        }
+        let Some(nonce_key) = transaction
+            .transaction
+            .eip8130_nonce_channel_key()
+            .or_else(|| self.protocol_nonce_lanes.then_some(U256::ZERO))
+        else {
+            return;
+        };
+        let lane_id = (transaction.sender(), nonce_key);
+        let Some(index) = self.lane_indexes.get(&lane_id).copied() else {
+            // A lane ahead of canonical state relies on another store's run,
+            // which only the merge's snapshot-time anchors can order.
+            let ahead = self
+                .live
+                .as_ref()
+                .is_some_and(|live| live.pool.read().lanes_ahead_of_state().contains_key(&lane_id));
+            if !ahead {
+                self.lane_indexes.insert(lane_id, self.lanes.len());
+                self.push_lane(LaneIterator::new(lane_id, transaction, Vec::new()));
+            }
+            return;
+        };
+        let lane = &mut self.lanes[index];
+        let Some(position) = transaction
+            .nonce()
+            .checked_sub(lane.head.nonce())
+            .and_then(|offset| usize::try_from(offset).ok())
+        else {
+            return;
+        };
+        if position == lane.tail.len() + 1 {
+            if lane.invalidated {
+                return;
+            }
+            let exhausted = lane.current().is_none();
+            lane.tail.push(transaction);
+            if exhausted {
+                self.push_lane_head(index);
+            }
+        } else {
+            self.replace_member(index, position, transaction);
+        }
+    }
+
+    /// Puts `transaction` at `position` of lane `index` if that member is still
+    /// to be yielded. A stale heap entry for the old member is skipped by hash.
+    fn replace_member(
+        &mut self,
+        index: usize,
+        position: usize,
+        transaction: Arc<ValidPoolTransaction<T>>,
+    ) {
+        let lane = &mut self.lanes[index];
+        if lane.invalidated || position < lane.index {
+            return;
+        }
+        let member = match position {
+            0 => &mut lane.head,
+            n => match lane.tail.get_mut(n - 1) {
+                Some(member) => member,
+                None => return,
+            },
+        };
+        if member.hash() == transaction.hash() {
+            return;
+        }
+        *member = transaction;
+        if position == lane.index {
+            self.push_lane_head(index);
+        }
+    }
+
+    fn push_lane(&mut self, lane: LaneIterator<T>) {
+        self.lanes.push(lane);
+        self.push_lane_head(self.lanes.len() - 1);
+    }
 }
 
 impl<T: BasePooledTx, O> Iterator for BestTwoDTransactions<T, O>
@@ -1489,6 +1675,7 @@ where
     type Item = Arc<ValidPoolTransaction<T>>;
 
     fn next(&mut self) -> Option<Self::Item> {
+        self.poll_live();
         loop {
             let (priority, best_index) = self.candidates.pop()?;
             let lane = &mut self.lanes[best_index];
@@ -1508,9 +1695,10 @@ impl<T: BasePooledTx, O> BestTransactions for BestTwoDTransactions<T, O>
 where
     O: TransactionOrdering<Transaction = T>,
 {
-    /// Parks the rest of `transaction`'s lane. Callers pass a transaction this
-    /// iterator yielded: a lane of one (every nonce-free transaction included)
-    /// has nothing left once yielded, so it is not indexed and this is a no-op.
+    /// Parks the rest of `transaction`'s lane, including members a live walk
+    /// would still add. Callers pass a transaction this iterator yielded: in a
+    /// static walk a lane of one (every nonce-free transaction included) has
+    /// nothing left once yielded, so it is not indexed and this is a no-op.
     fn mark_invalid(&mut self, transaction: &Self::Item, _kind: InvalidPoolTransactionError) {
         let Some(nonce_key) = transaction
             .transaction
@@ -1736,6 +1924,7 @@ mod tests {
             false,
             BaseOrdering::coinbase_tip(),
             0,
+            None,
         );
         let snapshot_elapsed = snapshot_started.elapsed();
 
@@ -2224,6 +2413,7 @@ mod tests {
             false,
             BaseOrdering::coinbase_tip(),
             0,
+            None,
         );
         assert_eq!(best.next().map(|transaction| *transaction.hash()), Some(*transaction.hash()));
         assert!(best.next().is_none());

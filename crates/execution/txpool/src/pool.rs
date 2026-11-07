@@ -43,7 +43,8 @@ use crate::{
     StateDiffInvalidation, ValidityPoolLimits, ValidityPoolMetrics,
     best::{BridgedDescendants, MergeBestTransactions},
     two_d_nonce_pool::{
-        InsertOutcome, LaneCursor, LaneId, LaneUpdate, SidecarLimits, TwoDNoncePool,
+        InsertOutcome, LaneCursor, LaneId, LaneUpdate, LiveLaneUpdates, SidecarLimits,
+        TwoDNoncePool,
     },
 };
 
@@ -1562,6 +1563,9 @@ where
         AllTransactionsEvents::new(rx)
     }
 
+    /// Merges every store's best transactions. Validity transactions that
+    /// become pending while the merge is walked are offered too; the sidecar
+    /// stays as it was when the merge was created.
     fn merged_best_transactions(
         &self,
         attributes: BestTransactionsAttributes,
@@ -1575,12 +1579,21 @@ where
         // and a stale one leaves a validity head waiting, never released early.
         // The bookkeeping comes from the validity pool's incremental indexes,
         // so this costs the lanes that straddle stores, not the pool sizes.
+        // The validity feed is subscribed under the same guards: admissions
+        // publish while holding the write lock, so it starts where the
+        // snapshot ends.
         let (sidecar, validity, anchors, bridged) = {
             let sidecar = self.sidecar.pool.read();
             let validity = self.validity.pool.read();
+            let events = self
+                .validity
+                .listeners
+                .write()
+                .subscribe_new_transactions(TransactionListenerKind::All);
+            let live = LiveLaneUpdates::new(events, Arc::clone(&self.validity.pool));
             (
                 sidecar.best_transactions(self.ordering.clone(), base_fee),
-                validity.best_transactions(self.ordering.clone(), base_fee),
+                validity.live_best_transactions(self.ordering.clone(), base_fee, live),
                 validity.lanes_ahead_of_state().clone(),
                 self.bridged_descendants(&sidecar, &validity),
             )
@@ -2639,6 +2652,11 @@ impl<T: BasePooledTx> SidecarListeners<T> {
         &mut self,
         kind: TransactionListenerKind,
     ) -> mpsc::Receiver<NewTransactionEvent<T>> {
+        // Every merged pool walk subscribes, and broadcasts only prune
+        // listeners while admissions flow, so drop closed ones here to keep
+        // quiet periods from accumulating them.
+        self.new_all.retain(|listener| !listener.is_closed());
+        self.new_propagate.retain(|listener| !listener.is_closed());
         let (tx, rx) = mpsc::channel(SIDE_CAR_EVENT_CHANNEL_SIZE);
         if kind.is_propagate_only() {
             self.new_propagate.push(tx);
@@ -6433,6 +6451,106 @@ mod tests {
         )
         .await;
         assert_eq!(best_hashes(&pool), vec![unrelated, validity0, rich_validity1, rich_validity2]);
+    }
+
+    /// The pool walk a payload build drives.
+    fn builder_best(
+        pool: &IntegrationPool,
+    ) -> Box<dyn ParkableBestTransactions<BasePooledTransaction>> {
+        pool.best_transactions_with_attributes_and_parking(
+            BestTransactionsAttributes::new(0, None),
+            None,
+        )
+    }
+
+    /// Walks `best` to its end, committing each transaction as the build loop
+    /// does after executing it, which releases its lane's successor.
+    fn drain(best: &mut Box<dyn ParkableBestTransactions<BasePooledTransaction>>) -> Vec<TxHash> {
+        let mut yielded = Vec::new();
+        while let Some(transaction) = best.next() {
+            best.mark_committed(&transaction);
+            yielded.push(*transaction.hash());
+        }
+        yielded
+    }
+
+    /// Validity transactions admitted while a build walks the pool are offered
+    /// to that build: a lane opened mid-build, the next nonce of a lane the
+    /// build already drained, and a nonce-free transaction.
+    #[tokio::test]
+    async fn builder_walk_offers_validity_transactions_admitted_mid_build() {
+        let (pool, client) = build_integration_pool();
+        let standard = funded_signer(&client);
+        let searcher = funded_signer(&client);
+        let late = funded_signer(&client);
+        let nonce_free_signer = funded_signer(&client);
+        let standard0 = add(&pool, signed_1559_with_fees(&standard, 0, 1_000, 10)).await;
+        let validity0 = add(&pool, validity_1559(&searcher, 0, 1_000)).await;
+
+        let mut best = builder_best(&pool);
+        assert_eq!(drain(&mut best), vec![standard0, validity0]);
+
+        let validity1 = add(&pool, validity_1559(&searcher, 1, 1_000)).await;
+        let opened = add(&pool, validity_1559(&late, 0, 1_000)).await;
+        let nonce_free = add(
+            &pool,
+            signed_nonce_free_tx(&nonce_free_signer, INTEGRATION_POOL_NOW_MS + 5_000, 1_000)
+                .with_validity_predicates(resting_predicates()),
+        )
+        .await;
+        let mut late_hashes = drain(&mut best);
+        late_hashes.sort();
+        let mut expected = vec![validity1, opened, nonce_free];
+        expected.sort();
+        assert_eq!(late_hashes, expected);
+    }
+
+    /// A lane that opens mid-build behind another store's pending run waits
+    /// for the next build: only the anchors taken with the snapshot order it.
+    #[tokio::test]
+    async fn builder_walk_defers_mid_build_validity_lanes_ahead_of_state() {
+        let (pool, client) = build_integration_pool();
+        let signer = funded_signer(&client);
+        let standard0 = add(&pool, signed_1559(&signer, 0)).await;
+
+        let mut best = builder_best(&pool);
+        let validity1 = add(&pool, validity_1559(&signer, 1, 1_000)).await;
+        assert!(is_pending(&pool, validity1));
+        assert_eq!(drain(&mut best), vec![standard0]);
+        assert_eq!(drain(&mut builder_best(&pool)), vec![standard0, validity1]);
+    }
+
+    /// Pool walks that finished during a quiet period leave no listener behind
+    /// for the next one to inherit.
+    #[tokio::test]
+    async fn finished_pool_walks_do_not_accumulate_validity_listeners() {
+        let (pool, _client) = build_integration_pool();
+        for _ in 0..3 {
+            drop(pool.best_transactions());
+        }
+        let live = pool.best_transactions();
+        assert_eq!(pool.validity.listeners.read().new_all.len(), 1);
+        drop(live);
+    }
+
+    /// A mid-build replacement of a validity transaction the build has not
+    /// yielded yet takes its place, so the slot is offered once.
+    #[tokio::test]
+    async fn builder_walk_offers_only_the_replacement_of_an_unyielded_validity_transaction() {
+        let (pool, client) = build_integration_pool();
+        let standard = funded_signer(&client);
+        let searcher = funded_signer(&client);
+        let standard0 = add(&pool, signed_1559_with_fees(&standard, 0, 1_000, 10)).await;
+        add(&pool, validity_1559(&searcher, 0, 1_000)).await;
+
+        let mut best = builder_best(&pool);
+        let replacement = add(
+            &pool,
+            signed_1559_with_fees(&searcher, 0, 2_000, 200)
+                .with_validity_predicates(resting_predicates()),
+        )
+        .await;
+        assert_eq!(drain(&mut best), vec![replacement, standard0]);
     }
 
     /// The builder's case: a predicate-delayed validity transaction must not
