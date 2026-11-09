@@ -187,7 +187,7 @@ fn database(predicates: impl IntoIterator<Item = ValidityPredicate>) -> InMemory
                 );
                 db.insert_account_storage(address, slot, slot).expect("in-memory insert");
             }
-            _ => {}
+            ValidityPredicate::BlockNumber { .. } | ValidityPredicate::FlashblockIndex { .. } => {}
         }
     }
     db
