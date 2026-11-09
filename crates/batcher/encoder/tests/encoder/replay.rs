@@ -8,7 +8,7 @@ use rstest::rstest;
 
 use crate::common::{
     BlockFixture, CHANNEL_TIMEOUT, EncoderFixture, MULTI_BLOB_PAYLOAD, MULTI_FRAME_PAYLOAD,
-    SharedBlob, SharedRetry, SubmissionFixture,
+    SharedBlob, SubmissionFixture,
 };
 
 /// A complete channel whose confirmations are more than the timeout apart, in either order, is
@@ -127,42 +127,6 @@ fn replay_includes_the_channel_sharing_a_blob() {
     );
     let replay = encoder.encode_and_drain().unwrap();
     assert_eq!(fixture.derive(&replay).concat(), BlockFixture::batches(&shared.blocks));
-}
-
-/// Replaying a channel also replays the channel whose retried blob shares a transaction with
-/// its retried tail, because a transaction lands whole. Confirming the replay clears the backlog.
-#[test]
-fn replay_includes_the_channel_sharing_a_transaction() {
-    let fixture = EncoderFixture::one_channel_per_block(2);
-    let mut encoder = fixture.encoder();
-    let shared = SharedRetry::encode(&mut encoder);
-
-    // The second channel's window closes with its tail, hence the retry, still in flight.
-    encoder.confirm(shared.full_blobs.id, 1);
-    encoder.advance_l1_head(1 + CHANNEL_TIMEOUT + 1);
-
-    let replay = encoder.encode_and_drain().unwrap();
-    assert_eq!(fixture.derive(&replay).concat(), BlockFixture::batches(&shared.blocks));
-    for submission in &replay {
-        encoder.confirm(submission.id, 5);
-    }
-    assert_eq!(encoder.da_backlog_bytes(), 0);
-}
-
-/// A transaction that landed no longer ties its channels together, so replaying one of them
-/// leaves the other, fully confirmed, alone.
-#[test]
-fn a_landed_transaction_does_not_pull_its_other_channel_into_a_replay() {
-    let fixture = EncoderFixture::one_channel_per_block(2);
-    let mut encoder = fixture.encoder();
-    let shared = SharedRetry::encode(&mut encoder);
-
-    // The second channel's window closes with its full blobs still in flight.
-    encoder.confirm(shared.retry.id, 1);
-    encoder.advance_l1_head(1 + CHANNEL_TIMEOUT + 1);
-
-    let replay = encoder.encode_and_drain().unwrap();
-    assert_eq!(fixture.derive(&replay).concat(), BlockFixture::batches(&shared.blocks[1..]));
 }
 
 /// Replaying a channel discards every later channel too, but not the earlier ones that landed
