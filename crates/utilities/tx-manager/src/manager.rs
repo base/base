@@ -2918,31 +2918,46 @@ mod tests {
         assert!(asserter.read_q().is_empty(), "every mocked response should be used");
     }
 
-    /// A blob transaction confirmed after a fee bump sets the per-blob tip later blob
-    /// transactions start from: 90% of the priority fee it paid per blob, scaled by their
-    /// own blob count. Regular transactions keep the minimum tip.
+    /// A confirmed blob transaction sets the per-blob tip later blob transactions start
+    /// from: 90% of the priority fee it paid per blob, scaled by their own blob count.
+    /// Regular transactions keep the minimum tip. The paid fee is the confirmed version's,
+    /// also when the fee bump's publication returns `AlreadyKnown` and the original version
+    /// confirms under its hash.
+    #[rstest]
+    // The bump pays 10 gwei over two blobs, 5 gwei per blob, decayed to 4.5 gwei.
+    #[case::bump_confirms(false, 11 * GWEI, [9 * GWEI, 4_500_000_000, 2 * GWEI])]
+    // The original pays 5 gwei over two blobs, 2.5 gwei per blob, decayed to 2.25 gwei.
+    #[case::original_confirms_after_already_known(true, 6 * GWEI, [4_500_000_000, 2_250_000_000, 2 * GWEI])]
     #[test]
-    fn confirmed_bumped_blob_tip_is_carried_forward() {
+    fn confirmed_blob_tip_is_carried_forward(
+        #[case] bump_already_known: bool,
+        #[case] effective_gas_price: u128,
+        #[case] expected_tips: [u128; 3],
+    ) {
         Runner::start(Config::seeded(0), |ctx| async move {
             let resubmission_timeout = Duration::from_secs(10);
             let (mut receipt, mut block) = mined_receipt(B256::with_last_byte(1), 10);
-            // The bumped version pays an 8 gwei priority fee over a 1 gwei base fee.
-            receipt.effective_gas_price = 9 * GWEI;
+            receipt.effective_gas_price = effective_gas_price;
             block.header.base_fee_per_gas = Some(1_000_000_000);
             let asserter = Asserter::new();
             asserter.push_success(&1u64);
-            // The first version is priced at 2 gwei per blob, 4 gwei for two blobs.
-            push_fee_responses(&asserter, GWEI, true);
+            // The original is priced at the 5 gwei suggested tip, above the 4 gwei minimum
+            // for two blobs.
+            push_fee_responses(&asserter, 5 * GWEI, true);
             asserter.push_success(&21_000u64);
             asserter.push_success(&0u64);
             asserter.push_success(&B256::with_last_byte(1));
-            // It is not mined before the resubmission timeout, so it is bumped to 8 gwei.
+            // It is not mined before the resubmission timeout, so it is bumped to 10 gwei.
             asserter.push_success(&1u64);
             asserter.push_success(&Option::<TransactionReceipt>::None);
             push_fee_responses(&asserter, GWEI, true);
             asserter.push_success(&21_000u64);
-            asserter.push_success(&B256::with_last_byte(2));
-            // The bumped version confirms.
+            if bump_already_known {
+                asserter.push_failure_msg("already known");
+            } else {
+                asserter.push_success(&B256::with_last_byte(2));
+            }
+            // A version confirms.
             asserter.push_success(&10u64);
             asserter.push_success(&Some(&receipt));
             asserter.push_success(&Some(&block));
@@ -2972,7 +2987,7 @@ mod tests {
             .expect("should construct manager");
 
             manager.send(candidate_with_blobs(2)).await.expect("the send should confirm");
-            assert_eq!(ctx.now(), resubmission_timeout, "the confirmed version is the fee bump");
+            assert_eq!(ctx.now(), resubmission_timeout, "a version confirms after the fee bump");
 
             let mut tips = vec![];
             for blob_count in [2, 1, 0] {
@@ -2983,8 +2998,7 @@ mod tests {
                 tips.push(prepared.gas_tip_cap);
             }
 
-            // 8 gwei over two blobs is 4 gwei per blob, decayed to 3.6 gwei.
-            assert_eq!(tips, [7_200_000_000, 3_600_000_000, 2 * GWEI]);
+            assert_eq!(tips, expected_tips);
             assert!(asserter.read_q().is_empty(), "every mocked response should be used");
         });
     }
