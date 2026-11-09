@@ -44,7 +44,7 @@ use tracing::debug;
 
 use crate::{
     Admission, BasePooledTx, BaseTransactionValidator, BestTransactionsHold, BuildDormancy,
-    DORMANCY_CLASSIFICATION_CHUNK, DormancyBuild, DormancyClassification, DormancyDiscardReason,
+    DORMANCY_INSTALL_BATCH, DormancyBuild, DormancyClassification, DormancyDiscardReason,
     GuardLimits, GuardMetrics, InvalidationCause, InvalidationKey, LimitRejection, MempoolGuard,
     ParkableBestTransactions, ParkableTransactionPool, ParkedBestTransactions, PoolStore,
     StateDiffInvalidation, ValidityDormancyMode, ValidityPoolLimits, ValidityPoolMetrics,
@@ -501,35 +501,51 @@ where
         self.dormancy.is_enforced()
     }
 
-    /// Classifies a pass of queued dormancy candidates against `db`, the
-    /// canonical state at `head`, without holding the pool lock, then
-    /// installs the results in one lock hold. The pass stops classifying,
-    /// every [`DORMANCY_CLASSIFICATION_CHUNK`] candidates, once its results
-    /// are void, and queues the candidates it did not classify again.
+    /// Classifies a pass of queued dormancy candidates and the canary's
+    /// share of dormant transactions against `db`, the canonical state at
+    /// `head`, without holding the pool lock. Candidates are looked up,
+    /// classified and installed in chunks of [`DORMANCY_INSTALL_BATCH`], so
+    /// no lock hold costs more than one chunk and a build never waits long on
+    /// the lock. The pass stops once its results are void and queues the
+    /// candidates it did not classify again.
     fn classify_dormancy<DB: Database>(&self, head: B256, db: &mut DB) {
         let Some(batch) = self.validity.pool.write().take_dormancy_batch(head) else {
             return;
         };
-        let mut candidates = batch.candidates.into_iter();
-        let mut classified = Vec::with_capacity(candidates.len());
-        while !candidates.as_slice().is_empty() && !self.validity.pool.read().classification_void()
-        {
-            classified.extend(candidates.by_ref().take(DORMANCY_CLASSIFICATION_CHUNK).map(
-                |transaction| {
+        let mut classify = |transactions: Vec<Arc<ValidPoolTransaction<T>>>| {
+            transactions
+                .into_iter()
+                .map(|transaction| {
                     let classification = DormancyClassification::of(
                         transaction.transaction.validity_conditions(),
                         db,
                         &batch.context,
                     );
                     (transaction, classification)
-                },
-            ));
+                })
+                .collect::<Vec<_>>()
+        };
+        let canary = classify(batch.canary);
+        let false_dormant = self.validity.pool.write().wake_runnable(canary);
+        let mut unclassified = batch.queued.as_slice();
+        while !unclassified.is_empty() {
+            let (chunk, rest) =
+                unclassified.split_at(DORMANCY_INSTALL_BATCH.min(unclassified.len()));
+            let candidates = {
+                let validity = self.validity.pool.read();
+                if validity.classification_void() {
+                    break;
+                }
+                validity.dormancy_candidates(chunk)
+            };
+            unclassified = rest;
+            let classified = classify(candidates);
+            self.validity.pool.write().install_dormancy(classified);
         }
         let mut validity = self.validity.pool.write();
-        validity.install_dormancy(classified);
-        validity.requeue_unclassified(candidates);
+        validity.requeue_unclassified(unclassified);
         validity.finish_classification();
-        ValidityPoolMetrics::dormant_transactions().set(validity.dormant_len() as f64);
+        ValidityPoolMetrics::record_dormancy(validity.dormant_len(), false_dormant);
     }
 
     /// Discards the validity pool's dormancy index for `reason`, such as a
@@ -539,24 +555,27 @@ where
         if !self.dormancy_enforced() {
             return;
         }
-        self.validity.pool.write().discard_dormancy(reason);
+        TwoDNoncePool::write_retiring(&self.validity.pool, |validity| {
+            validity.discard_dormancy(reason);
+        });
         self.restore_discarded_dormancy();
-        ValidityPoolMetrics::dormant_transactions()
-            .set(self.validity.pool.read().dormant_len() as f64);
+        ValidityPoolMetrics::record_dormancy(self.validity.pool.read().dormant_len(), 0);
     }
 
-    /// Makes ready again the transactions discards set aside in constant
-    /// time on the build path. Walking a discarded index happens without the
-    /// lock.
+    /// Makes ready again, chunk by chunk, the transactions discards set aside
+    /// in constant time on the build path. Walking a discarded index and
+    /// freeing it happen without the lock, and no lock hold covers more than
+    /// [`DORMANCY_INSTALL_BATCH`] transactions.
     pub fn restore_discarded_dormancy(&self) {
         loop {
             let Some(discarded) = self.validity.pool.write().take_discarded_dormancy() else {
                 return;
             };
             let slots = discarded.into_slots();
-            let mut validity = self.validity.pool.write();
-            validity.restore_ready(&slots);
-            validity.finish_restoring();
+            for chunk in slots.chunks(DORMANCY_INSTALL_BATCH) {
+                self.validity.pool.write().restore_ready(chunk);
+            }
+            self.validity.pool.write().finish_restoring();
         }
     }
 
@@ -1792,7 +1811,9 @@ where
         let Some(head) = canonical.last().filter(|_| self.dormancy_enforced()) else {
             return;
         };
-        self.validity.pool.write().observe_canonical(canonical);
+        TwoDNoncePool::write_retiring(&self.validity.pool, |validity| {
+            validity.observe_canonical(canonical);
+        });
         self.restore_discarded_dormancy();
         // Runs outside the admission lock: admission inserts ready, and the
         // install re-checks each transaction against the pool as it is then.
@@ -2567,12 +2588,11 @@ where
         if let Some(waited) = self.dormancy_merge.wait(self.dormancy_merge_wait) {
             ValidityPoolMetrics::dormancy_merge_wait().record(waited.as_secs_f64());
         }
-        let build = {
-            let mut validity = self.validity.pool.write();
+        let build = TwoDNoncePool::write_retiring(&self.validity.pool, |validity| {
             let build = validity.begin_build(parent, block_number, pre_selection);
-            ValidityPoolMetrics::dormant_transactions().set(validity.dormant_len() as f64);
+            ValidityPoolMetrics::record_dormancy(validity.dormant_len(), 0);
             build
-        };
+        });
         let Some(build) = build else {
             let reason =
                 if self.dormancy_merge.is_pending() { "merge_pending" } else { "build_active" };
@@ -2583,12 +2603,13 @@ where
         let merge_gate = Arc::clone(&self.dormancy_merge);
         Some(DormancyBuild::new(build, move |sealed| {
             let Some(block_hash) = sealed else {
-                let woken = pool.write().abandon_build(build);
+                let woken =
+                    TwoDNoncePool::write_retiring(&pool, |validity| validity.abandon_build(build));
                 TwoDNoncePool::record_build_end(&pool, woken);
                 return;
             };
             // A seal detaches the build's parks under the lock and returns;
-            // a blocking task collects and merges them, the build
+            // a blocking task collects and merges them in chunks, the build
             // keeping the index until the merge ends, so the next build waits
             // on the gate rather than running without the index.
             // The completion guard exists before the seal, so a seal or merge
@@ -2596,7 +2617,9 @@ where
             // ownership and wakes the builds waiting on the gate.
             merge_gate.start();
             let completion = BuildMergeCompletion::new(Arc::clone(&pool), merge_gate, build);
-            let sealed = pool.write().seal_build(build, block_hash);
+            let sealed = TwoDNoncePool::write_retiring(&pool, |validity| {
+                validity.seal_build(build, block_hash)
+            });
             let mut local = match sealed {
                 Ok(local) => local,
                 Err(woken) => {
@@ -2608,7 +2631,9 @@ where
             let merge = move || {
                 let adopted = pool.write().adopt_build_parks(build, &mut local);
                 let parks = local.into_parks();
-                pool.write().merge_build_parks(build, &parks, adopted);
+                for chunk in parks.chunks(DORMANCY_INSTALL_BATCH) {
+                    pool.write().merge_build_parks(build, chunk, adopted);
+                }
                 completion.complete();
             };
             match tokio::runtime::Handle::try_current() {
@@ -7255,7 +7280,10 @@ mod tests {
     mod dormancy {
         use std::convert::Infallible;
 
-        use metrics_util::debugging::{DebugValue, DebuggingRecorder};
+        use metrics_util::{
+            MetricKind,
+            debugging::{DebugValue, DebuggingRecorder},
+        };
         use revm::{
             database::{AccountStatus, TransitionAccount, states::StorageSlot},
             state::{Account, AccountInfo, Bytecode, EvmStorageSlot},
@@ -7450,6 +7478,8 @@ mod tests {
                 add(&pool, with_predicates(signed_1559(&signer, 0), [from_block_five])).await;
 
             advance(&pool, 1);
+            // Canonical block 4 would let the canary find it runnable; the
+            // builder runs ahead of it.
             for number in 2..=4 {
                 let build = begin(&pool, block_hash(number - 1), number);
                 assert!(!in_best(&pool, root), "block {number} is before the bound");
@@ -7756,7 +7786,7 @@ mod tests {
         /// batch is being classified.
         struct RacingDatabase<F> {
             race: Option<F>,
-            /// Storage reads so far.
+            /// Storage reads so far: one per classified candidate blocked on `SLOT`.
             reads: usize,
         }
 
@@ -7825,7 +7855,7 @@ mod tests {
         async fn a_discard_during_classification_stops_the_pass_and_keeps_its_candidates_queued() {
             let (pool, client) = dormancy_pool(ValidityDormancyMode::Enforce);
             advance(&pool, 1);
-            let total = DORMANCY_CLASSIFICATION_CHUNK + 1;
+            let total = DORMANCY_INSTALL_BATCH + 1;
             for _ in 0..total {
                 let signer = funded_signer(&client);
                 add(&pool, with_predicates(signed_1559(&signer, 0), [slot_is_one()])).await;
@@ -7835,7 +7865,7 @@ mod tests {
                 pool.discard_dormancy_index(DormancyDiscardReason::FeedGap);
             });
             pool.classify_dormancy(block_hash(1), &mut database);
-            assert_eq!(database.reads, DORMANCY_CLASSIFICATION_CHUNK, "the pass stops early");
+            assert_eq!(database.reads, DORMANCY_INSTALL_BATCH, "the pass stops early");
             assert_eq!(pool.validity.pool.read().dormant_len(), 0);
 
             advance(&pool, 2);
@@ -7865,6 +7895,51 @@ mod tests {
             );
 
             assert!(in_best(&pool, root), "the readmission's predicates hold");
+        }
+
+        /// Candidates are taken from the queue a chunk at a time, so a
+        /// transaction removed while an earlier chunk is classified is never
+        /// classified.
+        #[tokio::test]
+        async fn classification_takes_candidates_a_chunk_at_a_time() {
+            let (pool, client) = dormancy_pool(ValidityDormancyMode::Enforce);
+            advance(&pool, 1);
+            let mut queued = Vec::new();
+            for _ in 0..DORMANCY_INSTALL_BATCH + 8 {
+                let signer = funded_signer(&client);
+                queued.push(
+                    add(&pool, with_predicates(signed_1559(&signer, 0), [slot_is_one()])).await,
+                );
+            }
+
+            let mut db = RacingDatabase::new(|| {
+                pool.remove_transactions(queued.clone());
+            });
+            pool.classify_dormancy(block_hash(1), &mut db);
+
+            assert_eq!(db.reads, DORMANCY_INSTALL_BATCH, "only the first chunk was classified");
+        }
+
+        /// Advances to canonical block `number` and returns how many dormant
+        /// transactions only the canary found runnable.
+        fn advance_counting_false_dormancy(pool: &IntegrationPool, number: u64) -> u64 {
+            let recorder = DebuggingRecorder::new();
+            metrics::with_local_recorder(&recorder, || advance(pool, number));
+            recorder
+                .snapshotter()
+                .snapshot()
+                .into_vec()
+                .into_iter()
+                .find_map(|(key, _, _, value)| match value {
+                    DebugValue::Counter(count)
+                        if key.kind() == MetricKind::Counter
+                            && key.key().name() == "txpool.validity.false_dormancy" =>
+                    {
+                        Some(count)
+                    }
+                    _ => None,
+                })
+                .unwrap_or_default()
         }
 
         /// While a build owns the index another build gets no ownership and
@@ -8080,7 +8155,9 @@ mod tests {
             drop(best);
             // What a seal does before handing the merge to its task.
             pool.dormancy_merge.start();
-            let parks = pool.validity.pool.write().seal_build(build.id(), block_hash(2));
+            let parks = TwoDNoncePool::write_retiring(&pool.validity.pool, |validity| {
+                validity.seal_build(build.id(), block_hash(2))
+            });
             let completion = BuildMergeCompletion::new(
                 Arc::clone(&pool.validity.pool),
                 Arc::clone(&pool.dormancy_merge),
@@ -8223,6 +8300,85 @@ mod tests {
             });
 
             assert_eq!(counted, 1);
+        }
+
+        #[tokio::test]
+        async fn canary_wakes_and_counts_a_falsely_dormant_transaction() {
+            let (pool, client) = dormancy_pool(ValidityDormancyMode::Enforce);
+            let signer = funded_signer(&client);
+            let root = add(&pool, with_predicates(signed_1559(&signer, 0), [slot_is_one()])).await;
+            advance(&pool, 1);
+            assert!(!in_best(&pool, root));
+
+            // The write that satisfies it never passes through a build.
+            set_slot(&client, 1);
+            let false_dormant = advance_counting_false_dormancy(&pool, 2);
+
+            assert!(in_best(&pool, root));
+            assert_eq!(false_dormant, 1);
+        }
+
+        /// A canary wake during a build is not one of the build's wakes.
+        #[tokio::test]
+        async fn canary_wakes_stay_out_of_the_running_builds_wake_count() {
+            let (pool, client) = dormancy_pool(ValidityDormancyMode::Enforce);
+            let signer = funded_signer(&client);
+            let root = add(&pool, with_predicates(signed_1559(&signer, 0), [slot_is_one()])).await;
+            advance(&pool, 1);
+            begin(&pool, block_hash(1), 2).seal(block_hash(2));
+            wait_for_merge(&pool);
+            assert!(!in_best(&pool, root));
+            set_slot(&client, 1);
+
+            // Off the runtime the seal merges inline, so its metrics reach this
+            // thread's recorder.
+            let recorder = DebuggingRecorder::new();
+            std::thread::scope(|scope| {
+                scope.spawn(|| {
+                    metrics::with_local_recorder(&recorder, || {
+                        let build = begin(&pool, block_hash(2), 3);
+                        canonical(&pool, 2, block_hash(2));
+                        build.seal(block_hash(3));
+                    });
+                });
+            });
+
+            assert!(in_best(&pool, root), "the canary woke it");
+            let wakes: Vec<f64> = recorder
+                .snapshotter()
+                .snapshot()
+                .into_vec()
+                .into_iter()
+                .filter_map(|(key, _, _, value)| match value {
+                    DebugValue::Histogram(samples)
+                        if key.key().name() == "txpool.validity.dormant_wakes" =>
+                    {
+                        Some(samples.into_iter().map(|sample| sample.into_inner()))
+                    }
+                    _ => None,
+                })
+                .flatten()
+                .collect();
+            assert_eq!(wakes, [0.0]);
+        }
+
+        #[tokio::test]
+        async fn canary_ignores_a_block_number_blocker_reached_by_canonical_advance() {
+            let (pool, client) = dormancy_pool(ValidityDormancyMode::Enforce);
+            let signer = funded_signer(&client);
+            let from_block_three = ValidityPredicate::BlockNumber {
+                op: ValidityOperator::GreaterThanOrEqual,
+                value: U256::from(3),
+            };
+            let root =
+                add(&pool, with_predicates(signed_1559(&signer, 0), [from_block_three])).await;
+            advance(&pool, 1);
+            assert!(!in_best(&pool, root));
+
+            // Canonical block 2 makes block 3 the next height; the build at 3 releases it.
+            let false_dormant = advance_counting_false_dormancy(&pool, 2);
+
+            assert_eq!(false_dormant, 0);
         }
     }
 }
