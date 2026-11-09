@@ -60,11 +60,12 @@ pub struct Eip8130Signed {
     payer_auth: Bytes,
     /// Cached transaction hash (see [`Self::hash`]).
     hash: B256,
+    /// Cached hash of the exact encoding (see [`Self::encoded_hash`]).
+    encoded_hash: B256,
     /// Length of [`TxEip8130::encode_metered_payload`].
     metered_payload_len: usize,
     /// Zero bytes in [`TxEip8130::encode_metered_payload`], counted from the
-    /// EIP-2718 encoding built at construction so intrinsic gas never
-    /// re-encodes the payload.
+    /// hashing encoding so intrinsic gas never re-encodes the payload.
     metered_payload_zero_bytes: usize,
 }
 
@@ -200,22 +201,24 @@ pub enum Eip8130TimestampError {
 
 impl Eip8130Signed {
     /// Constructs a new [`Eip8130Signed`] from its parts, computing and caching
-    /// the transaction hash (see [`Self::hash`]).
+    /// the transaction hash (see [`Self::hash`]) and the encoding hash (see
+    /// [`Self::encoded_hash`]).
     pub fn new(tx: TxEip8130, sender_auth: Bytes, payer_auth: Bytes) -> Self {
         let mut this = Self {
             tx,
             sender_auth,
             payer_auth,
             hash: B256::ZERO,
+            encoded_hash: B256::ZERO,
             metered_payload_len: 0,
             metered_payload_zero_bytes: 0,
         };
         let mut encoded = Vec::with_capacity(this.encode_2718_len());
         this.encode_2718(&mut encoded);
-        this.hash = this.recover_sender().map_or_else(
-            |_| keccak256(&encoded),
-            |sender| this.tx.transaction_hash(sender),
-        );
+        this.encoded_hash = keccak256(&encoded);
+        this.hash = this
+            .recover_sender()
+            .map_or(this.encoded_hash, |sender| this.tx.transaction_hash(sender));
 
         let start = 1 + this.rlp_header().length() + this.tx.metered_payload_offset();
         this.metered_payload_len = this.tx.metered_payload_length();
@@ -262,6 +265,15 @@ impl Eip8130Signed {
     /// lengths.
     pub const fn hash(&self) -> &B256 {
         &self.hash
+    }
+
+    /// Returns the cached `keccak256` of the EIP-2718 encoding, authentication
+    /// fields included.
+    ///
+    /// This is the default [`Encodable2718::trie_hash`] and identifies the exact
+    /// bytes. It is not the transaction hash (see [`Self::hash`]).
+    pub const fn encoded_hash(&self) -> B256 {
+        self.encoded_hash
     }
 
     /// Length of the metered payload ([`TxEip8130::encode_metered_payload`]).
@@ -363,16 +375,6 @@ impl Eip8130Signed {
             }
         }
         Ok(())
-    }
-
-    /// `keccak256` of the EIP-2718 encoding, authentication fields included.
-    ///
-    /// This is the default [`Encodable2718::trie_hash`] and identifies the exact
-    /// bytes. It is not the transaction hash (see [`Self::hash`]).
-    pub fn encoded_hash(&self) -> B256 {
-        let mut buf = Vec::with_capacity(self.encode_2718_len());
-        self.encode_2718(&mut buf);
-        keccak256(&buf)
     }
 
     /// Returns the sender address if it is explicitly provided by the
