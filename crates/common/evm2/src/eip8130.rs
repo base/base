@@ -491,7 +491,7 @@ impl Eip8130CallHost for Evm2CallHost<'_, '_> {
             destination: call.to,
             call_target: call.to,
             caller,
-            input: call.data.clone(),
+            input: call.data.clone().into(),
             value: call.value,
             code,
             code_address,

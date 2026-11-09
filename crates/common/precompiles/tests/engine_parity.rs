@@ -249,7 +249,7 @@ fn run_evm2(pre: &PreState, call: &Call, slots: &[(Address, U256)]) -> Outcome {
         call_target: call.target,
         caller: call.caller,
         code_address: call.target,
-        input: call.calldata.clone(),
+        input: call.calldata.clone().into(),
         ..MessageExt::default()
     };
 
