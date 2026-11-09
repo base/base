@@ -27,6 +27,14 @@ confirmation.
 
 - **`FeeCalculator`** — pure arithmetic for EIP-1559/EIP-4844 fee caps, replacement
   thresholds, fee bumps, and fee limit enforcement.
+- Blob transactions are priced per blob: their tip is at least `min_tip_cap` per blob,
+  and at least 90% of the per-blob priority fee the last confirmed blob transaction
+  paid. That carried tip may lift the fee cap to at most half the fee limit
+  (`fee_limit_multiplier` times the suggested fee cap), so a transaction starting there
+  can still be bumped once. Where `fee_limit_threshold` skips the limit, the bound still
+  applies, computed from the suggested base fee rather than `min_basefee`. The carried
+  tip is kept in memory, so it starts from `min_tip_cap` after a restart. Regular
+  transactions use `min_tip_cap` as their minimum tip.
 - **`GasPriceCaps`** — intermediate fee estimates passed between estimation and construction.
 - **`FeeOverride`** — optional per-field fee and gas-limit overrides applied as a floor.
 - **`BumpedFees`** — result of a fee bump calculation.

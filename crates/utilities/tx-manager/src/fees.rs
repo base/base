@@ -51,6 +51,46 @@ impl FeeCalculator {
         blob_base_fee.saturating_mul(2)
     }
 
+    /// Computes the tip a new blob transaction carrying `blob_count` blobs carries forward
+    /// from `last_blob_tip`, the per-blob tip the last confirmed blob transaction paid.
+    ///
+    /// Each blob pays 90 % (rounded up) of `last_blob_tip`, so a new transaction does not
+    /// climb back through fee bumps during congestion, and the tip decays once L1 is quiet.
+    ///
+    /// Uses saturating arithmetic — the result is capped at [`u128::MAX`]
+    /// rather than panicking on overflow.
+    #[must_use]
+    pub const fn calc_carried_blob_tip(last_blob_tip: u128, blob_count: usize) -> u128 {
+        let per_blob = last_blob_tip - last_blob_tip / 10;
+        per_blob.saturating_mul(blob_count as u128)
+    }
+
+    /// Returns the highest tip [`calc_carried_blob_tip`](Self::calc_carried_blob_tip) may
+    /// set: the tip at which the fee cap reaches half the fee limit,
+    /// `fee_limit_multiplier × raw_gas_fee_cap`.
+    ///
+    /// A blob replacement doubles the fee cap, so a transaction starting at that tip can
+    /// still be bumped once within the limit. The carried tip comes from our own confirmed,
+    /// possibly bumped, tips. The bound also applies where `fee_limit_threshold` skips the
+    /// limit, so the carried tip stays tied to the suggested fees instead of growing with
+    /// each bumped confirmation.
+    ///
+    /// Where the limit applies, the fee cap is computed from `base_fee`, the base fee raised
+    /// to the configured minimum that [`check_limits`](Self::check_limits) sees. Where it is
+    /// skipped, it is computed from `raw_base_fee`, so that minimum does not use up the bound.
+    #[must_use]
+    pub const fn calc_max_carried_blob_tip(
+        raw_gas_fee_cap: u128,
+        raw_base_fee: u128,
+        base_fee: u128,
+        fee_limit_multiplier: u64,
+        fee_limit_threshold: u128,
+    ) -> u128 {
+        let base_fee = if raw_gas_fee_cap < fee_limit_threshold { raw_base_fee } else { base_fee };
+        let half_ceiling = (fee_limit_multiplier as u128).saturating_mul(raw_gas_fee_cap) / 2;
+        half_ceiling.saturating_sub(Self::calc_gas_fee_cap(base_fee, 0))
+    }
+
     /// Returns the minimum replacement value that satisfies geth's
     /// tx-replacement rules.
     ///
@@ -331,6 +371,57 @@ mod tests {
     #[case::half_max_blob(u128::MAX / 2 + 1, true, u128::MAX)]
     fn calc_threshold_value(#[case] x: u128, #[case] is_blob: bool, #[case] expected: u128) {
         assert_eq!(FeeCalculator::calc_threshold_value(x, is_blob), expected);
+    }
+
+    // ── calc_carried_blob_tip ───────────────────────────────────────────
+
+    #[rstest]
+    #[case::no_confirmation(0, 3, 0)]
+    #[case::one_blob(100, 1, 90)]
+    #[case::two_blobs(100, 2, 180)]
+    #[case::six_blobs(100, 6, 540)]
+    #[case::rounds_up(25, 1, 23)]
+    #[case::saturates(u128::MAX, 6, u128::MAX)]
+    fn calc_carried_blob_tip(
+        #[case] last_blob_tip: u128,
+        #[case] blob_count: usize,
+        #[case] expected: u128,
+    ) {
+        assert_eq!(FeeCalculator::calc_carried_blob_tip(last_blob_tip, blob_count), expected);
+    }
+
+    // ── calc_max_carried_blob_tip ───────────────────────────────────────
+
+    #[rstest]
+    // Suggested fee cap 30 (tip 10, base fee 10), multiplier 5: half the limit is 75.
+    #[case::limit_applies(30, 10, 10, 5, 0, 55)]
+    #[case::limit_skipped(30, 10, 10, 5, 100, 55)]
+    // A minimum base fee of 20 counts where the limit applies, since the checked fee cap
+    // includes it, and not where the limit is skipped.
+    #[case::min_basefee_limit_applies(30, 10, 20, 5, 0, 35)]
+    #[case::min_basefee_limit_skipped(30, 10, 20, 5, 100, 55)]
+    #[case::min_basefee_uses_up_half_the_limit(30, 10, 40, 5, 0, 0)]
+    // With a multiplier of 1, no bump fits within the limit.
+    #[case::multiplier_one(30, 10, 10, 1, 0, 0)]
+    #[case::saturates(u128::MAX, 0, 0, u64::MAX, 0, u128::MAX / 2)]
+    fn calc_max_carried_blob_tip(
+        #[case] raw_gas_fee_cap: u128,
+        #[case] raw_base_fee: u128,
+        #[case] base_fee: u128,
+        #[case] fee_limit_multiplier: u64,
+        #[case] fee_limit_threshold: u128,
+        #[case] expected: u128,
+    ) {
+        assert_eq!(
+            FeeCalculator::calc_max_carried_blob_tip(
+                raw_gas_fee_cap,
+                raw_base_fee,
+                base_fee,
+                fee_limit_multiplier,
+                fee_limit_threshold,
+            ),
+            expected,
+        );
     }
 
     // ── update_fees ─────────────────────────────────────────────────────

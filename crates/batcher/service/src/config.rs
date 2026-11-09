@@ -62,8 +62,8 @@ pub struct BatcherConfig {
     pub publish_max_retries: usize,
     /// Delay between those retries.
     pub publish_retry_delay: Duration,
-    /// Minimum L1 priority fee per gas (in wei), used in place of the tip the L1 node suggests
-    /// when that one is lower.
+    /// Minimum L1 priority fee per gas (in wei), per blob for blob transactions, used in place
+    /// of the tip the L1 node suggests when that one is lower.
     pub min_tip_cap: u128,
     /// Minimum L1 base fee (in wei) the fee cap is computed from, used in place of the base fee
     /// of the latest L1 block when that one is lower.

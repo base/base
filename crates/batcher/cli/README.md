@@ -58,8 +58,14 @@ throttle-driven blob override. `--network-timeout` bounds the RPC calls to L1,
 the sequencers and the parity validator, so an endpoint that stops answering
 never blocks the batcher. `--min-tip-cap` and `--min-basefee` set, in gwei, the
 lowest L1 priority fee and base fee the batcher prices its transactions with,
-in place of lower values from the L1 node (default 0, no minimum). The
-corresponding environment variables use the `BASE_BATCHER_` prefix.
+in place of lower values from the L1 node (default 0, no minimum). For blob
+transactions the minimum tip is per blob, and each new blob transaction pays at
+least 90% of the per-blob tip the last confirmed one paid, so its tip follows L1
+congestion instead of restarting from the minimum. That carried tip is at most
+the one that lifts the fee cap the L1 node suggests to 2.5 times its value, half
+the transaction manager's fee limit, so a transaction starting there can still
+be bumped once. The corresponding environment variables use the
+`BASE_BATCHER_` prefix.
 
 ## Shadow mode
 

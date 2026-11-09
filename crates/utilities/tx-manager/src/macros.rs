@@ -87,8 +87,8 @@ macro_rules! define_tx_manager_cli {
             )]
             pub fee_limit_threshold: u128,
 
-            /// Minimum tip cap (in gwei) to use for transactions. Accepts
-            /// decimal strings (e.g. `"0"`, `"1.5"`).
+            /// Minimum tip cap (in gwei) to use for transactions, per blob for
+            /// blob transactions. Accepts decimal strings (e.g. `"0"`, `"1.5"`).
             /// Stored as wei after parsing.
             #[arg(
                 long = "tx-manager.min-tip-cap",

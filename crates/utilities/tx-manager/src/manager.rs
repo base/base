@@ -36,7 +36,7 @@
 use std::{
     fmt::Debug,
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicBool, Ordering},
     },
     time::Duration,
@@ -112,16 +112,19 @@ impl PreparedTx {
 }
 
 /// A receipt confirmed to the required depth, with the timestamp of the canonical
-/// block that includes it.
+/// block that includes it and the priority fee the transaction paid in it.
 ///
 /// The receipt poller already reads that block to check the receipt is canonical, so
-/// the send loop gets the inclusion time without another RPC call.
+/// the send loop gets these without another RPC call.
 #[derive(Debug)]
 pub struct ConfirmedTx {
     /// The confirmed receipt.
     pub receipt: TransactionReceipt,
     /// Unix timestamp, in seconds, of the block that includes the transaction.
     pub block_timestamp: u64,
+    /// Priority fee per gas, in wei, the transaction paid: its effective gas price minus
+    /// the base fee of the block that includes it.
+    pub priority_fee_per_gas: u128,
 }
 
 /// Mutable fee-bump state tracked across iterations in the send loop.
@@ -189,6 +192,10 @@ pub struct SimpleTxManager<P, R = TokioRuntime> {
     closed: Arc<AtomicBool>,
     /// Metrics collector for transaction lifecycle events.
     metrics: Arc<dyn TxMetrics>,
+    /// Priority fee per gas and per blob, in wei, the last confirmed blob transaction paid.
+    /// Zero until one confirms. Shared across clones, so every send of this manager
+    /// carries it forward.
+    last_blob_tip: Arc<Mutex<u128>>,
 }
 
 impl<P> SimpleTxManager<P, TokioRuntime>
@@ -319,6 +326,7 @@ where
             chain_id,
             closed: Arc::new(AtomicBool::new(false)),
             metrics,
+            last_blob_tip: Arc::new(Mutex::new(0)),
         })
     }
 
@@ -525,27 +533,33 @@ where
     ///
     /// Returns [`TxManagerError::Rpc`] if any provider call fails.
     pub async fn suggest_gas_price_caps(&self) -> TxManagerResult<GasPriceCaps> {
-        self.suggest_gas_price_caps_for(false).await
+        self.suggest_gas_price_caps_for(0).await
     }
 
-    /// Queries the provider for current gas price estimates.
+    /// Queries the provider for current gas price estimates for a transaction carrying
+    /// `blob_count` blobs.
     ///
-    /// When `is_blob` is `true`, also fetches the blob base fee and computes
-    /// a blob fee cap via [`FeeCalculator::calc_blob_fee_cap`], enforcing the
+    /// For a blob transaction (`blob_count > 0`), also fetches the blob base fee and
+    /// computes a blob fee cap via [`FeeCalculator::calc_blob_fee_cap`], enforcing the
     /// configured `min_blob_fee` floor.
     ///
     /// Returns a [`GasPriceCaps`] containing:
-    /// - `gas_tip_cap`: maximum priority fee (enforced >= `config.min_tip_cap`)
+    /// - `gas_tip_cap`: maximum priority fee. For a regular transaction, at least
+    ///   `config.min_tip_cap`. For a blob transaction, at least `config.min_tip_cap` per
+    ///   blob, and at least the tip carried forward from the last confirmed blob
+    ///   transaction ([`FeeCalculator::calc_carried_blob_tip`]), up to
+    ///   [`FeeCalculator::calc_max_carried_blob_tip`]
     /// - `gas_fee_cap`: `tip + 2 * base_fee` via [`FeeCalculator::calc_gas_fee_cap`]
     /// - `raw_gas_fee_cap`: fee cap from the raw provider values before
     ///   enforcing minimums, used as the `suggested` baseline in
     ///   [`FeeCalculator::check_limits`]
-    /// - `blob_fee_cap`: `Some(2 × blob_base_fee)` when `is_blob`, else `None`
+    /// - `blob_fee_cap`: `Some(2 × blob_base_fee)` for a blob transaction, else `None`
     ///
     /// # Errors
     ///
     /// Returns [`TxManagerError::Rpc`] if any provider call fails.
-    async fn suggest_gas_price_caps_for(&self, is_blob: bool) -> TxManagerResult<GasPriceCaps> {
+    async fn suggest_gas_price_caps_for(&self, blob_count: usize) -> TxManagerResult<GasPriceCaps> {
+        let is_blob = blob_count > 0;
         // Query tip cap, latest block, and (optionally) blob base fee concurrently.
         let tip_fut = RuntimeTimeout::run(
             &self.runtime,
@@ -590,9 +604,26 @@ where
         // Compute raw gas fee cap from provider values before enforcing minimums.
         let raw_gas_fee_cap = FeeCalculator::calc_gas_fee_cap(raw_base_fee, raw_tip_cap);
 
-        // Enforce minimum tip cap and base fee.
-        let tip_cap = raw_tip_cap.max(self.config.min_tip_cap);
+        // Enforce minimum base fee and tip cap. A blob transaction is priced per blob, and
+        // pays at least the tip carried forward from the last confirmed blob transaction.
         let base_fee = raw_base_fee.max(self.config.min_basefee);
+        let tip_cap = if is_blob {
+            let last_blob_tip = *self.last_blob_tip.lock().expect("last blob tip lock poisoned");
+            let carried_tip = FeeCalculator::calc_carried_blob_tip(last_blob_tip, blob_count).min(
+                FeeCalculator::calc_max_carried_blob_tip(
+                    raw_gas_fee_cap,
+                    raw_base_fee,
+                    base_fee,
+                    self.config.fee_limit_multiplier,
+                    self.config.fee_limit_threshold,
+                ),
+            );
+            raw_tip_cap
+                .max(self.config.min_tip_cap.saturating_mul(blob_count as u128))
+                .max(carried_tip)
+        } else {
+            raw_tip_cap.max(self.config.min_tip_cap)
+        };
 
         // Compute gas fee cap with enforced minimums.
         let gas_fee_cap = FeeCalculator::calc_gas_fee_cap(base_fee, tip_cap);
@@ -667,7 +698,7 @@ where
         }
 
         // Step 1: Fetch fresh network fees.
-        let caps = self.suggest_gas_price_caps_for(is_blob).await?;
+        let caps = self.suggest_gas_price_caps_for(candidate.blobs.len()).await?;
 
         // Step 2: Derive effective base fee from the caps.
         let new_base_fee = FeeCalculator::base_fee_from_caps(caps.gas_fee_cap, caps.gas_tip_cap);
@@ -777,7 +808,7 @@ where
         // Step 1: Get fee estimates (includes blob base fee when is_blob).
         let caps = match caps {
             Some(caps) => caps,
-            None => self.suggest_gas_price_caps_for(is_blob).await?,
+            None => self.suggest_gas_price_caps_for(candidate.blobs.len()).await?,
         };
 
         // Step 2: Apply fee overrides as a floor.
@@ -1033,6 +1064,10 @@ where
             let included_unix_ms = confirmed.block_timestamp.saturating_mul(1_000);
             self.metrics.record_inclusion_latency(included_unix_ms.saturating_sub(start_unix_ms));
             self.metrics.record_tx_confirmed();
+            if candidate.is_blob() {
+                *self.last_blob_tip.lock().expect("last blob tip lock poisoned") =
+                    confirmed.priority_fee_per_gas / candidate.blobs.len() as u128;
+            }
         } else {
             self.metrics.record_send_latency(latency_ms, SendOutcome::Failed);
             self.metrics.record_tx_failed();
@@ -1725,7 +1760,12 @@ where
                 num_confirmations = %num_confirmations,
                 "transaction confirmed to required depth",
             );
-            Ok(Some(ConfirmedTx { receipt, block_timestamp: block.header.timestamp }))
+            let base_fee = u128::from(block.header.base_fee_per_gas.unwrap_or_default());
+            Ok(Some(ConfirmedTx {
+                priority_fee_per_gas: receipt.effective_gas_price.saturating_sub(base_fee),
+                receipt,
+                block_timestamp: block.header.timestamp,
+            }))
         } else {
             debug!(
                 tx_hash = %tx_hash,
@@ -1787,7 +1827,7 @@ mod tests {
     //! cannot construct, to reject confirmation under an RPC-supplied hash.
 
     use std::{
-        sync::{Arc, atomic::AtomicBool},
+        sync::{Arc, Mutex, atomic::AtomicBool},
         time::Duration,
     };
 
@@ -1819,7 +1859,8 @@ mod tests {
     use super::{PreparedTx, SimpleTxManager, TxEnvelope};
     use crate::{
         BlobTxBuilder, GasPriceCaps, NonceManager, NoopTxMetrics, SendOutcome, SendState,
-        TxCandidate, TxManager, TxManagerConfig, TxManagerError, metrics::MockTxMetrics,
+        TxCandidate, TxManager, TxManagerConfig, TxManagerError, TxManagerResult,
+        metrics::MockTxMetrics,
     };
 
     async fn setup() -> (SimpleTxManager<RootProvider>, alloy_node_bindings::AnvilInstance) {
@@ -2302,6 +2343,7 @@ mod tests {
                 chain_id: 1,
                 closed: Arc::new(AtomicBool::new(false)),
                 metrics: Arc::new(NoopTxMetrics),
+                last_blob_tip: Arc::new(Mutex::new(0)),
             };
 
             let confirmed = SimpleTxManager::<_>::wait_mined_using_runtime(
@@ -2391,6 +2433,7 @@ mod tests {
                 chain_id: 1,
                 closed: Arc::new(AtomicBool::new(false)),
                 metrics: Arc::new(NoopTxMetrics),
+                last_blob_tip: Arc::new(Mutex::new(0)),
             };
             let send_state = Arc::new(SendState::new(3).expect("send state should be valid"));
             let (receipt_tx, receipt_rx) = mpsc::channel(1);
@@ -2648,5 +2691,301 @@ mod tests {
             "gas_limit should be >= 21,000 for a value transfer, got {}",
             prepared.gas_limit,
         );
+    }
+
+    const GWEI: u128 = 1_000_000_000;
+
+    fn candidate_with_blobs(blob_count: usize) -> TxCandidate {
+        TxCandidate {
+            to: Some(Address::with_last_byte(0x42)),
+            blobs: Arc::from(vec![Box::<Blob>::default(); blob_count]),
+            ..Default::default()
+        }
+    }
+
+    /// Queues the responses read to price a transaction: the suggested tip, the latest
+    /// block with a 1 gwei base fee and, for a blob transaction, the blob base fee.
+    fn push_fee_responses(asserter: &Asserter, raw_tip: u128, is_blob: bool) {
+        let mut latest: Block = Block::default();
+        latest.header.base_fee_per_gas = Some(1_000_000_000);
+        asserter.push_success(&raw_tip);
+        asserter.push_success(&Some(&latest));
+        if is_blob {
+            asserter.push_success(&1u128);
+        }
+    }
+
+    async fn mocked_manager(
+        asserter: &Asserter,
+        config: TxManagerConfig,
+    ) -> SimpleTxManager<RootProvider> {
+        asserter.push_success(&1u64);
+        SimpleTxManager::from_wallet(
+            ProviderBuilder::default().connect_mocked_client(asserter.clone()),
+            EthereumWallet::from(PrivateKeySigner::random()),
+            config,
+            1,
+            Arc::new(NoopTxMetrics),
+        )
+        .await
+        .expect("should construct manager")
+    }
+
+    /// Before any blob transaction confirms, a blob transaction's tip is the minimum tip
+    /// per blob, unless the suggested tip is higher. A regular transaction's tip is the
+    /// greater of the suggested tip and the minimum tip, as before.
+    #[rstest]
+    #[case::regular_min_tip(GWEI, 0, 2 * GWEI)]
+    #[case::regular_suggested_tip(5 * GWEI, 0, 5 * GWEI)]
+    #[case::one_blob(GWEI, 1, 2 * GWEI)]
+    #[case::three_blobs(GWEI, 3, 6 * GWEI)]
+    #[case::six_blobs(GWEI, 6, 12 * GWEI)]
+    #[case::suggested_tip_above_blob_floor(10 * GWEI, 3, 10 * GWEI)]
+    #[tokio::test]
+    async fn craft_tx_prices_the_min_tip_per_blob(
+        #[case] raw_tip: u128,
+        #[case] blob_count: usize,
+        #[case] expected_tip: u128,
+    ) {
+        let asserter = Asserter::new();
+        let manager = mocked_manager(
+            &asserter,
+            TxManagerConfig { min_tip_cap: 2 * GWEI, ..TxManagerConfig::default() },
+        )
+        .await;
+        push_fee_responses(&asserter, raw_tip, blob_count > 0);
+        asserter.push_success(&21_000u64);
+        asserter.push_success(&0u64);
+
+        let prepared = manager
+            .craft_tx(&candidate_with_blobs(blob_count), None)
+            .await
+            .expect("should craft the transaction");
+
+        assert_eq!(prepared.gas_tip_cap, expected_tip);
+        assert_eq!(prepared.gas_fee_cap, expected_tip + 2 * GWEI);
+        assert!(asserter.read_q().is_empty(), "every mocked response should be used");
+    }
+
+    /// A 6-blob transaction with a suggested fee cap of 3 gwei (1 gwei tip, 1 gwei base
+    /// fee) and a fee limit of 5 times that, 15 gwei. The carried tip may lift the fee cap
+    /// to half the limit, 7.5 gwei, so the transaction can still be bumped once. Where the
+    /// limit applies, the minimum base fee is part of that fee cap; where it is skipped, it
+    /// does not reduce the carried tip. The carried tip never makes `craft_tx` fail, while
+    /// the minimum tip per blob still counts against the limit.
+    #[rstest]
+    #[case::below_the_bound(0, 0, 0, GWEI / 2, Ok(2_700_000_000))]
+    #[case::bounded(0, 0, 0, 10 * GWEI, Ok(5_500_000_000))]
+    #[case::bounded_where_limit_skipped(0, 0, 100 * GWEI, 10 * GWEI, Ok(5_500_000_000))]
+    #[case::min_basefee_where_limit_applies(0, 2 * GWEI, 0, 10 * GWEI, Ok(3_500_000_000))]
+    #[case::min_basefee_where_limit_skipped(0, 4 * GWEI, 100 * GWEI, 10 * GWEI, Ok(5_500_000_000))]
+    #[case::min_basefee_uses_up_half_the_limit(0, 5 * GWEI, 0, 10 * GWEI, Ok(GWEI))]
+    #[case::min_tip_counts_against_the_limit(10 * GWEI, 0, 0, 0, Err(TxManagerError::FeeLimitExceeded {
+        fee: 62 * GWEI,
+        ceiling: 15 * GWEI,
+    }))]
+    #[tokio::test]
+    async fn craft_tx_bounds_the_carried_blob_tip_by_half_the_fee_limit(
+        #[case] min_tip_cap: u128,
+        #[case] min_basefee: u128,
+        #[case] fee_limit_threshold: u128,
+        #[case] last_blob_tip: u128,
+        #[case] expected_tip: TxManagerResult<u128>,
+    ) {
+        let asserter = Asserter::new();
+        let manager = mocked_manager(
+            &asserter,
+            TxManagerConfig {
+                min_tip_cap,
+                min_basefee,
+                fee_limit_multiplier: 5,
+                fee_limit_threshold,
+                min_blob_fee: 1,
+                ..TxManagerConfig::default()
+            },
+        )
+        .await;
+        push_fee_responses(&asserter, GWEI, true);
+        asserter.push_success(&21_000u64);
+        asserter.push_success(&0u64);
+        *manager.last_blob_tip.lock().unwrap() = last_blob_tip;
+
+        let tip = manager
+            .craft_tx(&candidate_with_blobs(6), None)
+            .await
+            .map(|prepared| prepared.gas_tip_cap);
+
+        assert_eq!(tip, expected_tip);
+    }
+
+    /// When every blob transaction confirms only after one fee bump, as while the blob base
+    /// fee climbs, each one starts from 90% of the doubled tip of the one before, until the
+    /// carried tip reaches its bound: the fee cap at half of 5 × the 3 gwei suggested fee
+    /// cap. The bound holds where `fee_limit_threshold` skips the limit, and where it
+    /// applies every transaction starting at the bound is bumped within the limit,
+    /// including with a minimum base fee.
+    #[rstest]
+    #[case::limit_skipped(100 * GWEI, 0, 5_500_000_000)]
+    #[case::limit_applies(0, 0, 5_500_000_000)]
+    #[case::limit_applies_with_min_basefee(0, 2 * GWEI, 3_500_000_000)]
+    #[tokio::test]
+    async fn carried_blob_tip_stays_bounded_across_bumped_confirmations(
+        #[case] fee_limit_threshold: u128,
+        #[case] min_basefee: u128,
+        #[case] bound: u128,
+    ) {
+        let asserter = Asserter::new();
+        let manager = mocked_manager(
+            &asserter,
+            TxManagerConfig {
+                min_basefee,
+                fee_limit_multiplier: 5,
+                fee_limit_threshold,
+                min_blob_fee: 1,
+                ..TxManagerConfig::default()
+            },
+        )
+        .await;
+        let candidate = candidate_with_blobs(1);
+
+        let mut tips = vec![];
+        for nonce in 0..8 {
+            push_fee_responses(&asserter, GWEI, true);
+            asserter.push_success(&21_000u64);
+            if nonce == 0 {
+                asserter.push_success(&0u64);
+            }
+            let prepared =
+                manager.craft_tx(&candidate, None).await.expect("should craft the transaction");
+            push_fee_responses(&asserter, GWEI, true);
+            let bumped = manager
+                .increase_gas_price(
+                    &candidate,
+                    prepared.gas_tip_cap,
+                    prepared.gas_fee_cap,
+                    prepared.blob_fee_cap,
+                )
+                .await
+                .expect("the bump should fit within the fee limit");
+            // The bump confirms and pays its tip, as `send_tx` records it.
+            *manager.last_blob_tip.lock().unwrap() = bumped.gas_tip_cap;
+            tips.push(prepared.gas_tip_cap);
+        }
+
+        let unbounded = [GWEI, 1_800_000_000, 3_240_000_000, 5_832_000_000];
+        let expected: Vec<u128> =
+            (0..8).map(|i| unbounded.get(i).copied().unwrap_or(u128::MAX).min(bound)).collect();
+        assert_eq!(tips, expected);
+        assert!(asserter.read_q().is_empty(), "every mocked response should be used");
+    }
+
+    /// When each confirmed blob transaction pays the carried-forward tip, the per-blob tip
+    /// loses 10% per confirmation until it reaches the minimum tip, and stays there.
+    #[tokio::test]
+    async fn carried_blob_tip_decays_to_min_tip_cap() {
+        let asserter = Asserter::new();
+        let manager = mocked_manager(
+            &asserter,
+            TxManagerConfig { min_tip_cap: 10_000_000, ..TxManagerConfig::default() },
+        )
+        .await;
+        *manager.last_blob_tip.lock().unwrap() = 25_000_000;
+
+        let mut tips = vec![];
+        for nonce in 0..12 {
+            push_fee_responses(&asserter, 0, true);
+            asserter.push_success(&21_000u64);
+            if nonce == 0 {
+                asserter.push_success(&0u64);
+            }
+            let tip = manager
+                .craft_tx(&candidate_with_blobs(2), None)
+                .await
+                .expect("should craft the transaction")
+                .gas_tip_cap;
+            // The transaction confirms at that tip, as `send_tx` records it.
+            *manager.last_blob_tip.lock().unwrap() = tip / 2;
+            tips.push(tip / 2);
+        }
+
+        assert_eq!(
+            tips,
+            [
+                22_500_000, 20_250_000, 18_225_000, 16_402_500, 14_762_250, 13_286_025, 11_957_423,
+                10_761_681, 10_000_000, 10_000_000, 10_000_000, 10_000_000,
+            ]
+        );
+        assert!(asserter.read_q().is_empty(), "every mocked response should be used");
+    }
+
+    /// A blob transaction confirmed after a fee bump sets the per-blob tip later blob
+    /// transactions start from: 90% of the priority fee it paid per blob, scaled by their
+    /// own blob count. Regular transactions keep the minimum tip.
+    #[test]
+    fn confirmed_bumped_blob_tip_is_carried_forward() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let resubmission_timeout = Duration::from_secs(10);
+            let (mut receipt, mut block) = mined_receipt(B256::with_last_byte(1), 10);
+            // The bumped version pays an 8 gwei priority fee over a 1 gwei base fee.
+            receipt.effective_gas_price = 9 * GWEI;
+            block.header.base_fee_per_gas = Some(1_000_000_000);
+            let asserter = Asserter::new();
+            asserter.push_success(&1u64);
+            // The first version is priced at 2 gwei per blob, 4 gwei for two blobs.
+            push_fee_responses(&asserter, GWEI, true);
+            asserter.push_success(&21_000u64);
+            asserter.push_success(&0u64);
+            asserter.push_success(&B256::with_last_byte(1));
+            // It is not mined before the resubmission timeout, so it is bumped to 8 gwei.
+            asserter.push_success(&1u64);
+            asserter.push_success(&Option::<TransactionReceipt>::None);
+            push_fee_responses(&asserter, GWEI, true);
+            asserter.push_success(&21_000u64);
+            asserter.push_success(&B256::with_last_byte(2));
+            // The bumped version confirms.
+            asserter.push_success(&10u64);
+            asserter.push_success(&Some(&receipt));
+            asserter.push_success(&Some(&block));
+            // Later transactions: two blobs, one blob, then a regular one.
+            for is_blob in [true, true, false] {
+                push_fee_responses(&asserter, GWEI, is_blob);
+                asserter.push_success(&21_000u64);
+            }
+            let manager = SimpleTxManager::from_wallet_with_runtime(
+                ctx.clone(),
+                ProviderBuilder::new().connect_mocked_client(asserter.clone()),
+                EthereumWallet::from(PrivateKeySigner::random()),
+                TxManagerConfig {
+                    min_tip_cap: 2 * GWEI,
+                    // Keeps the carried tip below its bound.
+                    fee_limit_multiplier: 10,
+                    num_confirmations: 1,
+                    resubmission_timeout,
+                    receipt_query_interval: Duration::from_secs(60),
+                    safe_abort_nonce_too_low_count: 10,
+                    ..TxManagerConfig::default()
+                },
+                1,
+                Arc::new(NoopTxMetrics),
+            )
+            .await
+            .expect("should construct manager");
+
+            manager.send(candidate_with_blobs(2)).await.expect("the send should confirm");
+            assert_eq!(ctx.now(), resubmission_timeout, "the confirmed version is the fee bump");
+
+            let mut tips = vec![];
+            for blob_count in [2, 1, 0] {
+                let prepared = manager
+                    .craft_tx(&candidate_with_blobs(blob_count), None)
+                    .await
+                    .expect("should craft the transaction");
+                tips.push(prepared.gas_tip_cap);
+            }
+
+            // 8 gwei over two blobs is 4 gwei per blob, decayed to 3.6 gwei.
+            assert_eq!(tips, [7_200_000_000, 3_600_000_000, 2 * GWEI]);
+            assert!(asserter.read_q().is_empty(), "every mocked response should be used");
+        });
     }
 }

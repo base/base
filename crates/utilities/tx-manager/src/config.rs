@@ -105,7 +105,7 @@ pub struct TxManagerConfig {
     pub fee_limit_multiplier: u64,
     /// Minimum suggested fee (in wei) at which the fee-limit check activates.
     pub fee_limit_threshold: u128,
-    /// Minimum tip cap (in wei) to use for transactions.
+    /// Minimum tip cap (in wei) to use for transactions, per blob for blob transactions.
     pub min_tip_cap: u128,
     /// Minimum basefee (in wei) to use for transactions.
     pub min_basefee: u128,

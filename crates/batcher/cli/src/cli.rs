@@ -166,9 +166,12 @@ pub struct BatcherArgs {
     )]
     pub publish_retry_delay: Duration,
 
-    /// Minimum L1 priority fee per gas (in gwei). Accepts decimal strings (e.g. `0.01`).
+    /// Minimum L1 priority fee per gas (in gwei), per blob for blob transactions. Accepts
+    /// decimal strings (e.g. `0.01`).
     ///
-    /// Used in place of the tip the L1 node suggests when that one is lower.
+    /// Used in place of the tip the L1 node suggests when that one is lower. A blob
+    /// transaction also pays at least 90% of the per-blob tip the last confirmed one paid, up
+    /// to the tip that lifts the fee cap the L1 node suggests to 2.5 times its value.
     #[arg(
         long = "min-tip-cap",
         default_value = "0",
