@@ -60,7 +60,7 @@ pub use predicate_index::{
 mod dormancy;
 pub use dormancy::{
     DORMANCY_CLASSIFICATION_BUDGET, DORMANCY_CLASSIFICATION_CHUNK, DORMANCY_FENCE_CAPACITY,
-    DormancyClassification, DormancyDiscardReason, ValidityDormancyMode,
+    DORMANCY_MERGE_WAIT_LIMIT, DormancyClassification, DormancyDiscardReason, ValidityDormancyMode,
 };
 
 mod block_expiry;

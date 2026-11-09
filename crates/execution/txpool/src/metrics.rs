@@ -123,13 +123,16 @@ base_metrics::define_metrics! {
             "abandoned",
             "canonical_mismatch",
             "reorg",
-            "feed_gap"
+            "feed_gap",
+            "merge_failed"
         ]
     )]
     dormancy_discards: counter,
-    #[describe("Builds that ran without the dormancy index, as with dormancy off, because another build owned it")]
-    #[label(name = "reason", default = ["build_active"])]
+    #[describe("Builds that ran without the dormancy index, as with dormancy off, because another build owned it or a sealed build's parks were still being merged")]
+    #[label(name = "reason", default = ["build_active", "merge_pending"])]
     dormancy_fallback_builds: counter,
+    #[describe("Time a build starting waited for the merge of the previous build's parks, in seconds")]
+    dormancy_merge_wait: histogram,
 }
 
 impl ValidityPoolMetrics {

@@ -1,13 +1,20 @@
 //! Bookkeeping for dormant validity transactions: those the validity pool keeps out of the
 //! best-transactions snapshot until a state change or block advance can satisfy them.
 
-use std::{collections::BTreeMap, fmt, str::FromStr, sync::Arc};
+use std::{
+    collections::BTreeMap,
+    fmt,
+    str::FromStr,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use alloy_eips::BlockNumHash;
 use alloy_primitives::{
     B256, TxHash, U256,
     map::{AddressSet, B256Map, B256Set, HashMap, HashSet, IndexSet},
 };
+use parking_lot::{Condvar, Mutex};
 use reth_transaction_pool::{PoolTransaction, ValidPoolTransaction};
 use revm::{Database, state::EvmState};
 
@@ -29,6 +36,63 @@ pub const DORMANCY_CLASSIFICATION_BUDGET: usize = 32_768;
 /// Candidates classified between checks that the pass's results still count, so a pass whose
 /// results a discard or an overflowing fence voided stops reading state soon after.
 pub const DORMANCY_CLASSIFICATION_CHUNK: usize = 256;
+
+/// Longest a build starting waits for the merge of the previous build's parks before running
+/// without the dormancy index.
+pub const DORMANCY_MERGE_WAIT_LIMIT: Duration = Duration::from_millis(100);
+
+/// Tells a build starting whether the parks of the last sealed build are still being merged into
+/// the dormancy index off the build path, and lets it wait for the merge to end.
+#[derive(Debug, Default)]
+pub(crate) struct DormancyMergeGate {
+    merges: Mutex<MergeCounts>,
+    finished: Condvar,
+}
+
+/// The merges started and finished so far. At most one is pending: the sealing build keeps the
+/// dormancy index until its merge ends, so no other build can seal meanwhile.
+#[derive(Debug, Default)]
+struct MergeCounts {
+    started: u64,
+    finished: u64,
+}
+
+impl MergeCounts {
+    const fn is_pending(&self) -> bool {
+        self.finished < self.started
+    }
+}
+
+impl DormancyMergeGate {
+    /// Records that a merge started; [`Self::finish`] ends it.
+    pub(crate) fn start(&self) {
+        self.merges.lock().started += 1;
+    }
+
+    /// Records that the pending merge ended and wakes the builds waiting for it.
+    pub(crate) fn finish(&self) {
+        self.merges.lock().finished += 1;
+        self.finished.notify_all();
+    }
+
+    /// Whether a merge is pending.
+    pub(crate) fn is_pending(&self) -> bool {
+        self.merges.lock().is_pending()
+    }
+
+    /// Waits up to `limit` for the merges started so far to end, returning how long it waited,
+    /// or `None` when no merge was pending.
+    pub(crate) fn wait(&self, limit: Duration) -> Option<Duration> {
+        let mut merges = self.merges.lock();
+        if !merges.is_pending() {
+            return None;
+        }
+        let started_so_far = merges.started;
+        let started = Instant::now();
+        self.finished.wait_while_for(&mut merges, |merges| merges.finished < started_so_far, limit);
+        Some(started.elapsed())
+    }
+}
 
 /// Whether the validity pool keeps transactions whose predicates cannot hold yet out of the
 /// best-transactions snapshot.
@@ -140,6 +204,8 @@ pub enum DormancyDiscardReason {
     Reorg,
     /// The canonical-state feed skipped notifications.
     FeedGap,
+    /// The background merge of a sealed build's parks panicked or was cancelled.
+    MergeFailed,
 }
 
 impl DormancyDiscardReason {
@@ -151,6 +217,7 @@ impl DormancyDiscardReason {
             Self::CanonicalMismatch => "canonical_mismatch",
             Self::Reorg => "reorg",
             Self::FeedGap => "feed_gap",
+            Self::MergeFailed => "merge_failed",
         }
     }
 }
@@ -275,6 +342,12 @@ impl<T: PoolTransaction> BuildLocal<T> {
         self.parked.insert(hash, (Arc::clone(transaction), predicate));
     }
 
+    /// The parked transactions with the predicates they failed. Walks every park and frees the
+    /// build's predicate index, so call it without locks.
+    pub(crate) fn into_parks(self) -> Vec<(Arc<ValidPoolTransaction<T>>, ValidityPredicate)> {
+        self.parked.into_values().collect()
+    }
+
     /// Records what a commit wrote and returns the parked transactions it may satisfy, which are
     /// no longer parked here.
     pub(crate) fn wake(&mut self, state: &EvmState) -> Vec<Arc<ValidPoolTransaction<T>>> {
@@ -302,9 +375,10 @@ impl<T: PoolTransaction> BuildLocal<T> {
 #[derive(Debug)]
 pub(crate) struct Dormancy {
     mode: ValidityDormancyMode,
-    /// The predicate each dormant transaction is blocked on, for wakes.
+    /// The predicate each indexed transaction is blocked on, for wakes. It may also hold, for
+    /// the length of a merge, a sealed build's parks not yet confirmed dormant.
     pub index: ParkedPredicateIndex<()>,
-    /// The dormant transactions.
+    /// The dormant transactions: those in `index` confirmed to be dormant.
     entries: B256Map<DormantEntry>,
     block_releases: BTreeMap<u64, B256Set>,
     lanes: HashMap<LaneId, TxHash>,
@@ -421,6 +495,33 @@ impl Dormancy {
         self.entries.contains_key(hash)
     }
 
+    /// Adopts a sealed build's parks as the index in constant time when the index is empty, as
+    /// it is after a discard or before the first seal. Each adopted transaction becomes dormant
+    /// once [`Self::confirm_adopted`] confirms it, and is dropped from the index otherwise.
+    pub(crate) fn adopt_index(&mut self, parks: &mut ParkedPredicateIndex<()>) -> bool {
+        if !self.index.is_empty() || !self.entries.is_empty() {
+            return false;
+        }
+        std::mem::swap(&mut self.index, parks);
+        true
+    }
+
+    /// Whether `hash` is an adopted park still awaiting confirmation: in the index, not yet
+    /// dormant.
+    pub(crate) fn awaits_confirmation(&self, hash: &TxHash) -> bool {
+        !self.entries.contains_key(hash) && self.index.transaction(*hash).is_some()
+    }
+
+    /// Makes an adopted park dormant in `slot`, keeping the predicate it was adopted under.
+    pub(crate) fn confirm_adopted(
+        &mut self,
+        hash: TxHash,
+        slot: DormantSlot,
+        release_block: Option<u64>,
+    ) {
+        self.record_entry(hash, DormantEntry { slot, release_block, indexed_at: self.snapshots });
+    }
+
     pub(crate) fn dormant_lane_root(&self, lane_id: &LaneId) -> Option<TxHash> {
         self.lanes.get(lane_id).copied()
     }
@@ -512,5 +613,38 @@ mod tests {
         later.record([WrittenLocation::AllStorage(address(DORMANCY_FENCE_CAPACITY + 2))]);
         fence.absorb(later);
         assert!(fence.keys.is_empty() && fence.storage.is_empty(), "nothing is retained");
+    }
+
+    /// Each finish ends one started merge, so the gate stays pending until every merge started
+    /// has finished.
+    #[test]
+    fn each_finish_ends_one_started_merge() {
+        let gate = DormancyMergeGate::default();
+        gate.start();
+        gate.start();
+
+        gate.finish();
+        assert!(gate.is_pending(), "the earlier merge did not clear the later one");
+        gate.finish();
+        assert!(!gate.is_pending());
+        assert!(gate.wait(Duration::from_secs(10)).is_none());
+    }
+
+    /// A build waiting on a pending merge wakes when that merge finishes, well before its limit,
+    /// whether it began waiting before or after the merge finished.
+    #[test]
+    fn a_waiting_build_wakes_when_its_merge_finishes() {
+        let gate = Arc::new(DormancyMergeGate::default());
+        gate.start();
+        let (done, waited) = std::sync::mpsc::channel();
+        let waiter = {
+            let gate = Arc::clone(&gate);
+            std::thread::spawn(move || done.send(gate.wait(Duration::from_secs(10))).unwrap())
+        };
+
+        gate.finish();
+        let waited = waited.recv_timeout(Duration::from_secs(5)).expect("the waiter woke");
+        assert!(waited.is_none_or(|waited| waited < Duration::from_secs(5)));
+        waiter.join().unwrap();
     }
 }

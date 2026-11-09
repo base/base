@@ -269,14 +269,21 @@ block does not become the tip.
   commit in the block can wake it. A block-number blocker is released at the
   first block that satisfies it.
 - **Seal** makes the sealed block's hash the tip, unless a discard was deferred
-  during the build, and merges what the build still holds parked into the
-  pool's index under the same lock hold, so later blocks built on this one
-  leave it out; only roots and nonce-free transactions become dormant. The
-  build's ownership ends there. Dropping a build discards its parks.
-- **Canonical notifications** only check the tip: a committed block at the
-  tip's height with another hash, a reorg or a gap in the canonical-state feed
-  discards the index, after the running build ends if one runs. Canonical state changes wake nothing; on the builder they
-  are the blocks it sealed.
+  during the build, and returns. A blocking task then merges what the build
+  still holds parked into the pool's index, so later blocks built on this one
+  leave it out; only roots and nonce-free transactions become dormant. The merge
+  may take the lock more than once; no other build sees the index in between,
+  since the sealing build owns it until the merge ends. When the index is empty,
+  as on the first seal or after a discard, the build's parks are adopted as the
+  index wholesale and the merge only confirms or drops each. The build keeps the
+  index until the merge ends; a build starting meanwhile waits for it, up to
+  100 ms, before running without the index. A merge that panics or is
+  cancelled discards the build's index instead, ending its ownership. Dropping a
+  build discards its parks.
+- **Canonical notifications** only check the tip: a committed block at the tip's
+  height with another hash, a reorg or a gap in the canonical-state feed
+  discards the index, after the running build ends if one runs. Canonical state
+  changes wake nothing; on the builder they are the blocks it sealed.
 
 **Classification.** Admission inserts a transaction as ready and queues it; a
 transaction leaving the pool leaves the queue, so the queue never outgrows the
@@ -327,10 +334,13 @@ the index ignores its resting-predicate mode: the pool's index replaces it. Metr
 `txpool.validity.dormant_transactions` (gauge),
 `txpool.validity.dormant_wakes` (histogram, transactions woken per build),
 `txpool.validity.dormancy_discards{reason}` (counter; `parent_mismatch`,
-`abandoned`, `canonical_mismatch`, `reorg` or `feed_gap`; a
+`abandoned`, `canonical_mismatch`, `reorg`, `feed_gap` or `merge_failed`; a
 deferred discard counts its own reason when it is applied),
-and `txpool.validity.dormancy_fallback_builds{reason}` (counter; `build_active`
-when a build runs without the index because another build owns it).
+`txpool.validity.dormancy_fallback_builds{reason}` (counter; `build_active`
+when a build runs without the index because another build owns it,
+`merge_pending` when the previous build's parks were still being merged after
+the wait), and `txpool.validity.dormancy_merge_wait` (histogram, seconds a
+build starting waited for that merge).
 
 ## Usage
 
