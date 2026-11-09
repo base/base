@@ -16,7 +16,7 @@ use base_precompile_storage::{Bytecode, StorageCtx};
 
 use crate::{
     AccountChangeApplier, AccountConfigurationStorage, ApplyError, DelegationEffect, FeeCheck,
-    FeeError, IntrinsicGas, IntrinsicGasInput, NonceMode, NonceValidator, TransactionAuthorizer,
+    FeeError, IntrinsicGas, NonceMode, NonceValidator, TransactionAuthorizer,
 };
 
 /// EIP-3529 maximum gas refund quotient: refunds are capped at `gas_used / 5`.
@@ -104,18 +104,13 @@ pub struct Eip8130Outcome {
     pub gas_limit: u64,
     /// Sender-intrinsic gas (intrinsic gas excluding payer authentication).
     pub sender_intrinsic: u64,
-    /// EIP-7623 sender-side calldata floor: the minimum sender gas the
-    /// transaction is metered regardless of how little its `calls` execute
-    /// (`>= sender_intrinsic`). `gas_limit` is guaranteed `>= sender_floor` (the
-    /// transaction is rejected otherwise), and settlement charges at least this
-    /// for the sender portion.
+    /// EIP-7623 sender-side calldata floor: the minimum gas the transaction is
+    /// metered against `gas_limit` regardless of how little its `calls` execute.
+    /// `gas_limit` is guaranteed `>= sender_floor` (the transaction is rejected
+    /// otherwise).
     pub sender_floor: u64,
-    /// Payer-authentication gas with the `payer_auth` bytes at the EIP-7623
-    /// floor rate (`payer_floor`), metered on top of `gas_limit`. The ceiling
-    /// used for the pre-charge and the EIP-7825 cap.
-    pub payer_floor: u64,
-    /// Payer-authentication gas with the bytes at the standard rate
-    /// (`payer_auth_cost`), charged at settlement unless the floor binds.
+    /// Payer-authentication gas charged to the payer on top of `gas_limit`,
+    /// also used for the pre-charge and the EIP-7825 cap.
     pub payer_auth_cost: u64,
     /// Gas available to `calls` (`gas_limit - sender_intrinsic`).
     pub execution_gas_available: u64,
@@ -139,23 +134,22 @@ impl Eip8130Outcome {
     }
 
     /// Total metered gas for `sender_gas` of sender work, payer authentication
-    /// included: the standard charge or the EIP-7623 floor, whichever is larger,
+    /// included. Payer authentication already prices its bytes at the floor
+    /// rate, so only the sender portion is floored:
     ///
     /// ```text
-    /// max(sender_gas + payer_auth_cost, sender_floor + payer_floor)
+    /// max(sender_gas, sender_floor) + payer_auth_cost
     /// ```
     #[must_use]
     pub const fn metered_gas(&self, sender_gas: u64) -> u64 {
-        let standard = sender_gas.saturating_add(self.payer_auth_cost);
-        let floor = self.sender_floor.saturating_add(self.payer_floor);
-        if standard < floor { floor } else { standard }
+        self.floored_sender_gas(sender_gas).saturating_add(self.payer_auth_cost)
     }
 
     /// Worst-case chargeable gas: the full sender budget plus payer authentication, both billed
     /// at the effective price. This is what the payer is pre-charged for.
     #[must_use]
     pub const fn max_chargeable_gas(&self) -> u64 {
-        FeeCheck::max_chargeable_gas(self.gas_limit, self.payer_floor)
+        FeeCheck::max_chargeable_gas(self.gas_limit, self.payer_auth_cost)
     }
 
     /// The gas billed for an EIP-8130 transaction whose `calls` consumed `call_gas_spent` and
@@ -175,9 +169,9 @@ impl Eip8130Outcome {
     /// credited after execution and are never available to the call pool during
     /// execution, so the gas limit must cover the full gross spend.
     ///
-    /// The EIP-7623 floor applies to the total ([`Self::metered_gas`]):
+    /// The EIP-7623 floor applies to the sender portion ([`Self::metered_gas`]):
     /// a data-heavy transaction whose `calls` execute cheaply still pays
-    /// `sender_floor + payer_floor`. Mirrors revm's `eip7623_check_gas_floor`,
+    /// `sender_floor + payer_auth_cost`. Mirrors revm's `eip7623_check_gas_floor`,
     /// which compares the floor against the post-refund gas used.
     ///
     /// Under gas-limit billing (`gas_limit_billing`, from `BaseFeature::GasLimitBilling`) the
@@ -295,7 +289,6 @@ impl Eip8130Pipeline {
     pub fn authorize_and_apply(
         sctx: StorageCtx<'_>,
         signed: &Eip8130Signed,
-        encoded: &[u8],
         block: &Eip8130BlockContext,
     ) -> Result<Eip8130Outcome, Eip8130Error> {
         let tx = signed.tx();
@@ -351,55 +344,50 @@ impl Eip8130Pipeline {
         let mut nonce_mgr = NonceManagerStorage::new(sctx);
         let protocol_nonce =
             sctx.with_account_info(sender, |info| Ok(info.nonce)).map_err(Eip8130Error::invalid)?;
-        let (nonce_key_first_use, bump_protocol_nonce) =
-            if nonce_key == Eip8130Constants::NONCE_KEY_MAX {
-                NonceValidator::validate(
-                    tx,
-                    sender,
-                    protocol_nonce,
-                    &nonce_mgr,
-                    NonceMode::Inclusion,
-                    block.now_ms,
-                )
+        let bump_protocol_nonce = if nonce_key == Eip8130Constants::NONCE_KEY_MAX {
+            NonceValidator::validate(
+                tx,
+                sender,
+                protocol_nonce,
+                &nonce_mgr,
+                NonceMode::Inclusion,
+                block.now_ms,
+            )
+            .map_err(Eip8130Error::invalid)?;
+            let replay = tx.replay_id(sender);
+            nonce_mgr
+                .check_and_mark_expiring_nonce(replay, valid_before, block.now_ms)
                 .map_err(Eip8130Error::invalid)?;
-                let replay = tx.replay_id(sender);
-                nonce_mgr
-                    .check_and_mark_expiring_nonce(replay, valid_before, block.now_ms)
-                    .map_err(Eip8130Error::invalid)?;
-                (false, false)
-            } else if nonce_key == U256::ZERO {
-                NonceValidator::validate(
-                    tx,
-                    sender,
-                    protocol_nonce,
-                    &nonce_mgr,
-                    NonceMode::Inclusion,
-                    block.now_ms,
-                )
+            false
+        } else if nonce_key == U256::ZERO {
+            NonceValidator::validate(
+                tx,
+                sender,
+                protocol_nonce,
+                &nonce_mgr,
+                NonceMode::Inclusion,
+                block.now_ms,
+            )
+            .map_err(Eip8130Error::invalid)?;
+            true
+        } else {
+            let current_nonce =
+                nonce_mgr.get_nonce(sender, nonce_key).map_err(Eip8130Error::invalid)?;
+            NonceValidator::validate_sequence(tx, current_nonce, NonceMode::Inclusion)
                 .map_err(Eip8130Error::invalid)?;
-                (protocol_nonce == 0, true)
-            } else {
-                let current_nonce =
-                    nonce_mgr.get_nonce(sender, nonce_key).map_err(Eip8130Error::invalid)?;
-                NonceValidator::validate_sequence(tx, current_nonce, NonceMode::Inclusion)
-                    .map_err(Eip8130Error::invalid)?;
-                nonce_mgr.increment_nonce(sender, nonce_key).map_err(Eip8130Error::invalid)?;
-                (current_nonce == 0, false)
-            };
+            nonce_mgr.increment_nonce(sender, nonce_key).map_err(Eip8130Error::invalid)?;
+            false
+        };
 
         // 4. Intrinsic gas under the EIP-8130 schedule.
-        let (intrinsic, execution_gas_available) = Self::resolve_execution_gas(
-            signed,
-            encoded,
-            &IntrinsicGasInput::new(sender, nonce_key_first_use)
-                .with_sender_policy_gate(sender_actor.is_policy_gated())
-                .with_revoke_discount_slots(applied_tx.revoke_discount_slots),
-            gas_limit,
-        )?;
+        let (intrinsic, execution_gas_available) =
+            Self::resolve_execution_gas(signed, sender, gas_limit)?;
         // EIP-7825: the transaction may consume `gas_limit` plus the payer
         // authentication metered on top of it, and that total is bounded by the
         // per-transaction gas cap (from Azul).
-        if FeeCheck::max_chargeable_gas(gas_limit, intrinsic.payer_floor) > block.tx_gas_limit_cap {
+        if FeeCheck::max_chargeable_gas(gas_limit, intrinsic.payer_auth_cost)
+            > block.tx_gas_limit_cap
+        {
             return Err(Eip8130Error::invalid(
                 "transaction gas exceeds the EIP-7825 per-transaction cap",
             ));
@@ -414,13 +402,18 @@ impl Eip8130Pipeline {
             let payer_balance = sctx
                 .with_account_info(payer, |info| Ok(info.balance))
                 .map_err(Eip8130Error::invalid)?;
-            FeeCheck::validate_balance(payer_balance, gas_limit, intrinsic.payer_floor, max_fee)
-                .map_err(|error| match error {
-                    FeeError::InsufficientBalance { balance, required } => {
-                        Eip8130Error::PayerCannotPay { balance, required }
-                    }
-                    error => Eip8130Error::invalid(error),
-                })?;
+            FeeCheck::validate_balance(
+                payer_balance,
+                gas_limit,
+                intrinsic.payer_auth_cost,
+                max_fee,
+            )
+            .map_err(|error| match error {
+                FeeError::InsufficientBalance { balance, required } => {
+                    Eip8130Error::PayerCannotPay { balance, required }
+                }
+                error => Eip8130Error::invalid(error),
+            })?;
         }
 
         // 6. Publish the transaction context (sender / payer / actor id) so it is
@@ -438,7 +431,6 @@ impl Eip8130Pipeline {
             gas_limit,
             sender_intrinsic: intrinsic.sender_intrinsic(),
             sender_floor: intrinsic.sender_floor(),
-            payer_floor: intrinsic.payer_floor,
             payer_auth_cost: intrinsic.payer_auth_cost,
             execution_gas_available,
             effective: FeeCheck::effective_gas_price(max_fee, max_priority, block.base_fee),
@@ -462,21 +454,18 @@ impl Eip8130Pipeline {
     pub fn simulate_resolve(
         sctx: StorageCtx<'_>,
         signed: &Eip8130Signed,
-        encoded: &[u8],
         sender: Address,
         acting_actor_hint: Option<B256>,
         block: &Eip8130BlockContext,
     ) -> Result<Eip8130Outcome, Eip8130Error> {
         let tx = signed.tx();
-        let nonce_key = tx.nonce_key;
         let keystore = block.keystore;
         // EIP-7825: execution bounds `gas_limit` plus payer authentication by the
         // per-transaction cap, so simulate at most the gas a real transaction could
-        // carry. The payer authentication ceiling is the worst case, so a
-        // submission at the returned estimate always fits.
-        let payer_auth_ceiling =
-            IntrinsicGas::max_payer_auth_cost(signed).map_err(Eip8130Error::invalid)?;
-        let gas_limit = tx.gas_limit.min(block.tx_gas_limit_cap.saturating_sub(payer_auth_ceiling));
+        // carry.
+        let payer_auth_cost =
+            IntrinsicGas::payer_auth_cost_of(signed).map_err(Eip8130Error::invalid)?;
+        let gas_limit = tx.gas_limit.min(block.tx_gas_limit_cap.saturating_sub(payer_auth_cost));
         let max_fee = tx.max_fee_per_gas;
         let max_priority = tx.max_priority_fee_per_gas;
         // Use the declared payer (sponsor) so the payer published to the
@@ -489,42 +478,23 @@ impl Eip8130Pipeline {
             TransactionAuthorizer::check_without_keystore(signed).map_err(Eip8130Error::invalid)?;
         }
 
-        let nonce_mgr = NonceManagerStorage::new(sctx);
+        // 1. Intrinsic gas. It is a pure function of the signed transaction and its
+        //    sender (auth gas is priced from the auth-blob shape, so a stub signature
+        //    of the right authenticator type estimates exactly), so it equals what
+        //    execution charges. Estimation neither validates nor advances the nonce.
+        //    A `gas_limit` that cannot cover it is rejected before any change is
+        //    applied.
+        let (intrinsic, execution_gas_available) =
+            Self::resolve_execution_gas(signed, sender, gas_limit)?;
 
-        // 1. Nonce-channel first-use flag (drives intrinsic gas). Estimation
-        //    neither validates nor advances the nonce.
-        let protocol_nonce =
-            sctx.with_account_info(sender, |info| Ok(info.nonce)).map_err(Eip8130Error::invalid)?;
-        let nonce_key_first_use = if nonce_key == Eip8130Constants::NONCE_KEY_MAX {
-            false
-        } else if nonce_key == U256::ZERO {
-            protocol_nonce == 0
-        } else {
-            nonce_mgr.get_nonce(sender, nonce_key).map_err(Eip8130Error::invalid)? == 0
-        };
-
-        // 2. Intrinsic gas, a safe ceiling execution can only meet or undercharge:
-        //    the non-monotonic, state-dependent costs are pinned to their worst
-        //    case (the policy gate charged from Zenith, zero revoke discount) while
-        //    the monotonic nonce first-use cost stays resolved. None of this depends
-        //    on the applied account changes, so a `gas_limit` that cannot cover it
-        //    is rejected before any change is applied.
-        let (intrinsic, execution_gas_available) = Self::resolve_execution_gas(
-            signed,
-            encoded,
-            &IntrinsicGasInput::worst_case(sender, nonce_key_first_use, keystore),
-            gas_limit,
-        )?;
-
-        // 3. Apply account changes and install deferred code effects so the calls
+        // 2. Apply account changes and install deferred code effects so the calls
         //    run against post-change code. Must precede actor/policy resolution so
         //    an actor authorized in this same request is visible.
         Self::apply_account_changes(signed, sctx, sender, block.now)?;
 
-        // 4. Resolve the acting actor's real policy gate from the post-apply state.
-        //    This drives only call-gating, never the intrinsic estimate (which pins
-        //    the gate worst-case). Before Zenith the sender is always its own
-        //    ungated self-actor.
+        // 3. Resolve the acting actor's real policy gate from the post-apply state.
+        //    This drives only call-gating; intrinsic gas always charges the policy
+        //    read. Before Zenith the sender is always its own ungated self-actor.
         let sender_actor_id = acting_actor_hint
             .filter(|_| keystore)
             .unwrap_or_else(|| AccountConfigurationStorage::self_actor_id(sender));
@@ -534,7 +504,7 @@ impl Eip8130Pipeline {
             (false, Address::ZERO)
         };
 
-        // 5. Publish the transaction context for the `TxContext` precompile.
+        // 4. Publish the transaction context for the `TxContext` precompile.
         TxContextStorage::new(sctx)
             .set_context(sender, payer, sender_actor_id)
             .map_err(Eip8130Error::invalid)?;
@@ -548,7 +518,6 @@ impl Eip8130Pipeline {
             gas_limit,
             sender_intrinsic: intrinsic.sender_intrinsic(),
             sender_floor: intrinsic.sender_floor(),
-            payer_floor: intrinsic.payer_floor,
             payer_auth_cost: intrinsic.payer_auth_cost,
             execution_gas_available,
             effective: FeeCheck::effective_gas_price(max_fee, max_priority, block.base_fee),
@@ -676,17 +645,15 @@ impl Eip8130Pipeline {
     /// execution and estimation.
     ///
     /// Errors when `gas_limit` is below either the EIP-7623 sender floor or
-    /// sender-intrinsic gas. Both are checked: the floor dominates intrinsic gas
-    /// only while the floor rate is at least the standard data rate, and a
-    /// repriced schedule must be rejected rather than panic.
+    /// sender-intrinsic gas. Both are checked because neither dominates: the
+    /// floor excludes the state-dependent costs but meters data at the higher
+    /// rate.
     pub fn resolve_execution_gas(
         signed: &Eip8130Signed,
-        encoded: &[u8],
-        input: &IntrinsicGasInput,
+        sender: Address,
         gas_limit: u64,
     ) -> Result<(IntrinsicGas, u64), Eip8130Error> {
-        let intrinsic =
-            IntrinsicGas::compute(signed, encoded, input).map_err(Eip8130Error::invalid)?;
+        let intrinsic = IntrinsicGas::compute(signed, sender).map_err(Eip8130Error::invalid)?;
         if gas_limit < intrinsic.sender_floor() {
             return Err(Eip8130Error::invalid(
                 "EIP-8130 gas limit is below the EIP-7623 calldata floor",
@@ -738,7 +705,6 @@ mod tests {
             gas_limit: 1_000_000,
             sender_intrinsic: 100_000,
             sender_floor: 130_000,
-            payer_floor: 7_000,
             payer_auth_cost: 5_000,
             execution_gas_available: 900_000,
             effective: 1_000,
@@ -750,10 +716,10 @@ mod tests {
     #[test]
     fn billable_gas_applies_the_eip7623_sender_floor() {
         let outcome = outcome();
-        // Cheap execution stays below the floor, so the floor (plus payer floor) is billed.
+        // Cheap execution stays below the floor, so the floor (plus payer auth) is billed.
         assert_eq!(
             outcome.billable_gas(10_000, 0, false),
-            outcome.sender_floor + outcome.payer_floor
+            outcome.sender_floor + outcome.payer_auth_cost
         );
         // Heavy execution clears the floor, so the standard branch is billed.
         assert_eq!(
@@ -765,7 +731,7 @@ mod tests {
     #[test]
     fn gas_limit_billing_bills_the_reserved_budget() {
         let outcome = outcome();
-        let reserved = outcome.gas_limit + outcome.payer_floor;
+        let reserved = outcome.gas_limit + outcome.payer_auth_cost;
         for (spent, refund) in [(10_000, 0), (500_000, 0), (500_000, 100_000)] {
             assert_eq!(outcome.billable_gas(spent, refund, true), reserved);
         }

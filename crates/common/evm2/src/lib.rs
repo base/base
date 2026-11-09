@@ -36,9 +36,7 @@ pub use eip8130::{Eip8130Handler, Eip8130Prepared, Eip8130Settlement};
 
 mod registry;
 
-pub use base_common_eip8130::{
-    AuthWireForm, Eip8130GasSchedule, IntrinsicGas, IntrinsicGasError, IntrinsicGasInput,
-};
+pub use base_common_eip8130::{AuthWireForm, Eip8130GasSchedule, IntrinsicGas, IntrinsicGasError};
 
 mod nonce_manager;
 pub use nonce_manager::{NonceManager, NonceOverflow};

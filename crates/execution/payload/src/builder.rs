@@ -18,7 +18,7 @@ use base_execution_txpool::{
     estimated_da_size::DataAvailabilitySized,
 };
 use base_observability_events::{
-    GlobalTransactionEventWriter, TransactionEventProducer, TransactionEventType, transaction_event,
+    TransactionEventProducer, TransactionEventType, transaction_event,
 };
 use evm2::evm::{CacheDB, Db, DynDatabase};
 use parking_lot::Mutex;
@@ -68,31 +68,31 @@ macro_rules! emit_native_validity_event {
     ($ctx:expr, $event_type:expr, $tx_hash:expr, $attempt:expr, {
         $( $data_name:expr => $data_value:expr ),* $(,)?
     }) => {
-        if GlobalTransactionEventWriter::get().is_some() {
-            if let Err(error) = transaction_event!(
-                producer: TransactionEventProducer::BaseBuilder,
-                event_type: $event_type,
-                tx_hash: $tx_hash,
-                block_number: $ctx.parent().number().saturating_add(1),
-                payload_id: $ctx.payload_id().to_string(),
-                id: {
-                    "validity_consideration_index" => $attempt,
-                },
-                data: {
-                    "builder_mode" => "native",
-                    "source_queue" => "txpool_best",
-                    "parent_hash" => format!("{:#x}", $ctx.parent().hash()),
-                    $( $data_name => $data_value ),*
-                },
-            ) {
-                warn!(
-                    target: "payload_builder",
-                    error = %error,
-                    event_type = %$event_type,
-                    tx_hash = ?$tx_hash,
-                    "failed to enqueue native builder validity transaction event"
-                );
-            }
+        // `transaction_event!` builds the event only once a writer is available and its gate
+        // is open, so no field is formatted for a disabled or inactive builder.
+        if let Err(error) = transaction_event!(
+            producer: TransactionEventProducer::BaseBuilder,
+            event_type: $event_type,
+            tx_hash: $tx_hash,
+            block_number: $ctx.parent().number().saturating_add(1),
+            payload_id: $ctx.payload_id().to_string(),
+            id: {
+                "validity_consideration_index" => $attempt,
+            },
+            data: {
+                "builder_mode" => "native",
+                "source_queue" => "txpool_best",
+                "parent_hash" => format!("{:#x}", $ctx.parent().hash()),
+                $( $data_name => $data_value ),*
+            },
+        ) {
+            warn!(
+                target: "payload_builder",
+                error = %error,
+                event_type = %$event_type,
+                tx_hash = ?$tx_hash,
+                "failed to enqueue native builder validity transaction event"
+            );
         }
     };
 }
@@ -751,7 +751,7 @@ impl ExecutionInfo {
     /// - block gas limit: ensures the transaction still fits into the block. `tx_reserved_gas` is
     ///   the gas reserved against the block budget: `gas_limit` for ordinary transactions, and
     ///   `gas_limit + payer_auth` for EIP-8130, since payer authentication is metered on top of the
-    ///   declared gas limit (see `IntrinsicGas::max_payer_auth_cost`).
+    ///   declared gas limit (see `IntrinsicGas::payer_auth_cost_of`).
     /// - tx DA limit: if configured, ensures the tx does not exceed the maximum allowed DA limit
     ///   per tx.
     /// - block DA limit: if configured, ensures the transaction's DA size does not exceed the
@@ -1350,12 +1350,10 @@ where
             let tx_uncompressed_size = tx.encoded_length() as u64;
 
             // EIP-8130 meters payer authentication gas on top of the declared gas limit, so it must
-            // be reserved against the block gas budget in addition to `gas_limit`. Reserve a
-            // conservative upper bound (the payer auth bytes at the EIP-7623 floor rate) derived
-            // from the payer auth blob (`0` for non-8130 / self-pay); see
-            // `IntrinsicGas::max_payer_auth_cost`.
+            // be reserved against the block gas budget in addition to `gas_limit` (`0` for
+            // non-8130 / self-pay); see `IntrinsicGas::payer_auth_cost_of`.
             let tx_payer_auth = match tx.as_eip8130() {
-                Some(signed) => match IntrinsicGas::max_payer_auth_cost(signed) {
+                Some(signed) => match IntrinsicGas::payer_auth_cost_of(signed) {
                     Ok(payer_auth) => payer_auth,
                     Err(err) => {
                         trace!(

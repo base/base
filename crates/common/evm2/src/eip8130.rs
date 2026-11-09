@@ -108,7 +108,6 @@ impl Eip8130Handler {
                 Eip8130Pipeline::simulate_resolve(
                     sctx,
                     &tx.signed,
-                    &tx.enveloped,
                     signer,
                     simulation.sender_actor_id,
                     &block,
@@ -131,7 +130,7 @@ impl Eip8130Handler {
         Eip8130Pipeline::check_validity_window(tx.signed.tx(), block.now_ms)
             .map_err(Self::reject)?;
         let outcome = Self::run_pre_call(host, |sctx| {
-            Eip8130Pipeline::authorize_and_apply(sctx, &tx.signed, &tx.enveloped, &block)
+            Eip8130Pipeline::authorize_and_apply(sctx, &tx.signed, &block)
         })?;
         Self::consume_sender_nonce(host, &outcome)?;
         let (prepay, l1_fee) = if block.fee_charge {
@@ -181,7 +180,7 @@ impl Eip8130Handler {
                 // billed without gas-limit billing, and the payer authentication the reserved
                 // budget adds on top of `gas_limit`.
                 result.ext.metered_gas_used = Some(metered);
-                result.ext.payer_auth_gas_reserved = Some(outcome.payer_floor);
+                result.ext.payer_auth_gas_reserved = Some(outcome.payer_auth_cost);
                 Ok(result)
             }
             Eip8130Settlement::Simulated { simulation, start } => {
@@ -405,7 +404,7 @@ impl Evm2CallHost<'_, '_> {
                 // The on-chain call pool at this limit is `gas_limit - intrinsic` (payer
                 // authentication is billed on top), so it is at least the verified-feasible pool;
                 // the EIP-7623 floor keeps a data-heavy estimate admissible. Under gas-limit
-                // billing settlement adds `payer_floor` on top of the declared limit, so the
+                // billing settlement adds `payer_auth_cost` on top of the declared limit, so the
                 // estimate is the sender budget alone.
                 let sender_budget = outcome
                     .floored_sender_gas(outcome.sender_intrinsic.saturating_add(feasible_pool));
@@ -417,7 +416,7 @@ impl Evm2CallHost<'_, '_> {
                 {
                     sender_budget
                 } else {
-                    sender_budget.saturating_add(outcome.payer_floor)
+                    sender_budget.saturating_add(outcome.payer_auth_cost)
                 };
                 return Ok((calls, gas));
             }
@@ -445,13 +444,13 @@ impl Eip8130CallHost for Evm2CallHost<'_, '_> {
     /// journal, revertible until the transaction is finalized.
     fn commit(&mut self, _checkpoint: StateCheckpoint) {}
 
-    fn root_call_access_gas(&mut self, to: Address) -> HandlerResult<u64> {
+    fn root_call_access_gas(&mut self, to: Address, target_prepaid: bool) -> HandlerResult<u64> {
         let gas_params = &self.host.version().gas_params;
         let warm = gas_params.get(GasId::WarmStorageReadCost);
         let cold = warm.saturating_add(gas_params.cold_account_additional_cost());
         let access = |is_cold: bool| if is_cold { cold } else { warm };
         let target = self.load_account(to)?;
-        let mut gas = access(target.is_cold);
+        let mut gas = if target_prepaid { 0 } else { access(target.is_cold) };
         if let Some(delegate) = target.code.eip7702_address() {
             gas += access(self.load_account(delegate)?.is_cold);
         }

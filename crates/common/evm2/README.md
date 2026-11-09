@@ -28,7 +28,7 @@ transaction registry and static handler hooks. This crate defines that family fo
   [`BaseEvmExt::l1_fee_params_block`] already set to the block number uses the extension as given.
 - **Block executor**: [`BaseBlockExecutor`] runs the EIP-4788 and EIP-2935 pre-execution
   calls, checks each transaction against the remaining block gas (reserving the payer's
-  worst-case authentication gas for EIP-8130 transactions), meters the Jovian DA footprint into
+  authentication gas for EIP-8130 transactions), meters the Jovian DA footprint into
   `blob_gas_used`, and builds `BaseReceipt`s with the running cumulative gas (post-Regolith
   deposit receipts carry the depositor's pre-execution nonce, and from Canyon the receipt
   version). Every state change is committed through a [`BaseBlockState`]; the default
@@ -53,7 +53,7 @@ transaction registry and static handler hooks. This crate defines that family fo
   millisecond validity window, the EIP-8130 intrinsic gas schedule, a worst-case payer pre-charge
   (gas, L1 data fee, operator fee), phased calls that commit or revert in order, and settlement
   (refund cap, EIP-7623 floor, vault credits; under gas-limit billing, the reserved
-  `gas_limit + payer_floor` budget). The receipt is an `Eip8130Receipt` carrying
+  `gas_limit + payer_auth_cost` budget). The receipt is an `Eip8130Receipt` carrying
   `committedPhases`, reported through [`BaseTxResultExt::eip8130_committed_phases`]. The envelope
   ([`Eip8130Tx`]) carries the EIP-2718 bytes that price intrinsic gas, the L1 fee, and the DA
   footprint.

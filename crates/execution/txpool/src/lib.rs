@@ -44,9 +44,9 @@ pub use validity_authorization::{ValidityAuthorization, ValidityAuthorizationErr
 
 mod validity;
 pub use validity::{
-    DEFAULT_MAX_VALIDITY_EXPIRY_SECS, DEFAULT_MAX_VALIDITY_PREDICATES, FIRST_POOL_FLASHBLOCK_INDEX,
-    PredicateContext, TransactionValidity, ValidityOperator, ValidityPredicate,
-    ValidityPredicateError, ValidityPredicateKind, deserialize_bounded_predicates,
+    DEFAULT_MAX_VALIDITY_EXPIRY_SECS, DEFAULT_MAX_VALIDITY_PREDICATES, PredicateContext,
+    TransactionValidity, ValidityOperator, ValidityPredicate, ValidityPredicateError,
+    ValidityPredicateKind, deserialize_bounded_predicates,
 };
 
 mod block_expiry;

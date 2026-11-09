@@ -60,7 +60,15 @@ pub trait Eip8130CallHost {
     /// would charge it: the cold account access cost if `to` is cold or the warm access cost if it
     /// is warm, plus the same again for the delegation target if `to` carries an EIP-7702
     /// delegation. Loading warms both accounts.
-    fn root_call_access_gas(&mut self, to: Address) -> Result<u64, Self::Error>;
+    ///
+    /// `target_prepaid` is set for the transaction's first call, whose target access intrinsic
+    /// gas already charged (`IntrinsicGas::first_call`), so only its delegation target is
+    /// charged here.
+    fn root_call_access_gas(
+        &mut self,
+        to: Address,
+        target_prepaid: bool,
+    ) -> Result<u64, Self::Error>;
 
     /// Whether a call moving `value` from `sender` to `to` creates `to`, so it owes
     /// [`Eip8130GasSchedule::NEW_ACCOUNT_COST`]: `value` is non-zero, `to` is not `sender`, `to`
@@ -156,6 +164,7 @@ impl Eip8130Calls {
         let mut refund: i64 = 0;
         let mut committed_phases: u64 = 0;
         let mut last_output = Bytes::new();
+        let mut first_call = true;
 
         for phase in &signed.tx().calls {
             let checkpoint = host.checkpoint();
@@ -171,7 +180,8 @@ impl Eip8130Calls {
                     break;
                 }
 
-                let access_gas = host.root_call_access_gas(call.to)?;
+                let access_gas = host.root_call_access_gas(call.to, first_call)?;
+                first_call = false;
                 let Some(left) = remaining.checked_sub(access_gas) else {
                     phase_failure = Some(Bytes::new());
                     break;
@@ -331,7 +341,7 @@ mod tests {
             self.committed_phases += 1;
         }
 
-        fn root_call_access_gas(&mut self, _to: Address) -> Result<u64, Self::Error> {
+        fn root_call_access_gas(&mut self, _to: Address, _: bool) -> Result<u64, Self::Error> {
             Ok(100)
         }
 
@@ -382,7 +392,6 @@ mod tests {
             gas_limit: 0,
             sender_intrinsic: 0,
             sender_floor: 0,
-            payer_floor: 0,
             payer_auth_cost: 0,
             execution_gas_available: 0,
             effective: 0,

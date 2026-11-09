@@ -43,7 +43,7 @@ pub struct BaseTxResultExt {
     /// the billed gas before the feature activates. `None` for deposits. Telemetry for the
     /// builder's transaction events; nothing on the consensus path reads it.
     pub metered_gas_used: Option<u64>,
-    /// For an EIP-8130 transaction, the payer-authentication gas (`payer_floor`) reserved and
+    /// For an EIP-8130 transaction, the payer-authentication gas (`payer_auth_cost`) reserved and
     /// billed on top of the sender's `gas_limit`; `None` for every other transaction type.
     pub payer_auth_gas_reserved: Option<u64>,
 }

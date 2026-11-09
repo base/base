@@ -8,7 +8,8 @@ use audit_archiver_lib::{
     DEFAULT_TRANSACTION_EVENT_BRIN_SUMMARY_INTERVAL_SECS,
     DEFAULT_TRANSACTION_EVENT_COLD_RETENTION_DAYS, DEFAULT_TRANSACTION_EVENT_HOT_RETENTION_DAYS,
     DEFAULT_TRANSACTION_EVENT_MAX_BATCH_SIZE, DEFAULT_TRANSACTION_EVENT_MAX_DATA_BYTES,
-    DEFAULT_TRANSACTION_EVENT_MAX_EVENT_BYTES, DEFAULT_TRANSACTION_EVENT_MAX_REQUEST_BYTES,
+    DEFAULT_TRANSACTION_EVENT_MAX_EVENT_BYTES, DEFAULT_TRANSACTION_EVENT_MAX_IN_FLIGHT_REQUESTS,
+    DEFAULT_TRANSACTION_EVENT_MAX_REQUEST_BYTES,
     DEFAULT_TRANSACTION_EVENT_PARTITION_LOCK_TIMEOUT_MS,
     DEFAULT_TRANSACTION_EVENT_RETENTION_INTERVAL_SECS,
     DEFAULT_TRANSACTION_EVENT_WARM_RETENTION_DAYS,
@@ -178,6 +179,14 @@ struct Args {
         default_value_t = DEFAULT_TRANSACTION_EVENT_MAX_REQUEST_BYTES
     )]
     transaction_event_max_request_bytes: usize,
+
+    /// Maximum transaction event ingest requests handled at once; extra requests get a 503.
+    #[arg(
+        long,
+        env = "TIPS_AUDIT_TRANSACTION_EVENT_MAX_IN_FLIGHT_REQUESTS",
+        default_value_t = DEFAULT_TRANSACTION_EVENT_MAX_IN_FLIGHT_REQUESTS
+    )]
+    transaction_event_max_in_flight_requests: usize,
 }
 
 #[tokio::main]
@@ -283,6 +292,7 @@ async fn run_server(args: Args) -> Result<()> {
         max_event_bytes: args.transaction_event_max_event_bytes,
         max_data_bytes: args.transaction_event_max_data_bytes,
         max_request_bytes: args.transaction_event_max_request_bytes,
+        max_in_flight_requests: args.transaction_event_max_in_flight_requests,
     };
     let path = config.path.clone();
     info!(rpc_addr = %rpc_addr, %path, "transaction event HTTP ingest enabled on audit RPC server");

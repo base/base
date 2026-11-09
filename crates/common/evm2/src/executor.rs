@@ -64,7 +64,7 @@ impl core::error::Error for PreExecutionError {}
 /// Mirrors the reference `BlockValidationError::TransactionGasLimitMoreThanAvailableBlockGas`: a
 /// transaction whose reserved gas is larger than the block's unused gas cannot be included. The
 /// reserved gas is the transaction's gas limit, plus — for an EIP-8130 transaction — the payer's
-/// worst-case authentication gas ([`IntrinsicGas::max_payer_auth_cost`]), which is metered on top
+/// authentication gas ([`IntrinsicGas::payer_auth_cost_of`]), which is metered on top
 /// of the sender-signed gas limit (matching the reference `reserved_block_gas`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BlockGasLimitExceeded {
@@ -350,12 +350,12 @@ impl<'a, S: BaseBlockState> BaseBlockExecutor<'a, S> {
         let spec = self.evm.config_spec_id();
 
         // A transaction's reserved gas must fit in the block's remaining gas. For an EIP-8130
-        // transaction the reservation adds the payer's worst-case authentication gas, metered on
+        // transaction the reservation adds the payer's authentication gas, metered on
         // top of the sender-signed gas limit (the reference `reserved_block_gas`). Pre-Regolith
         // deposits are exempt (the reference's `is_regolith || !is_deposit` guard).
         let mut reserved_gas = tx.gas_limit();
         if let Some(eip8130) = tx.as_eip8130() {
-            let payer_auth = IntrinsicGas::max_payer_auth_cost(&eip8130.signed)
+            let payer_auth = IntrinsicGas::payer_auth_cost_of(&eip8130.signed)
                 .map_err(HandlerError::external)?;
             reserved_gas = reserved_gas.saturating_add(payer_auth);
         }

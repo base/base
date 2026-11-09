@@ -22,6 +22,10 @@ stdout/stderr and the normal Kubernetes log pipeline.
   written metrics. Event construction, validation, and JSON serialization run on
   the writer thread, so producers only pay for the enqueue; `try_write_with`
   also defers building the event itself.
+- **`TransactionEventGate`**: Runtime switch in front of the process-global
+  writer. While closed, `GlobalTransactionEventWriter::get` returns `None`, so
+  producers whose events only matter in one role (the active sequencer's
+  builder) skip building them entirely.
 - **`TransactionEventBuilder`** and **`transaction_event!`**: Helpers for
   producer call sites that use the process-global transaction event writer while
   filling common envelope fields such as `event_time`, `network`, join keys,

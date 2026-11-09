@@ -1,6 +1,6 @@
-//! Cost of the rejection-cache lookup both builders make for every candidate transaction.
+//! Cost of the rejection-cache lookup the native builder makes for every candidate transaction.
 //!
-//! Each arm looks up one flashblock's worth of candidates, [`CANDIDATES_PER_BUILD`], against a
+//! Each arm looks up one block build's worth of candidates, [`CANDIDATES_PER_BUILD`], against a
 //! cache holding `entries` hashes. Most candidates were never rejected, so most lookups miss: the
 //! `miss` arm is the common case, `hit` is the skip of a recently rejected transaction.
 //!
@@ -14,7 +14,7 @@ use alloy_primitives::{B256, TxHash};
 use base_execution_payload_builder::{REJECTION_CACHE_TTL, RejectionCache};
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 
-/// Candidates one large flashblock build considers.
+/// Candidates one large block build considers.
 const CANDIDATES_PER_BUILD: usize = 25_000;
 
 /// Cache sizes, from a small cache up to a large one.

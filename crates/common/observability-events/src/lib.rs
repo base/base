@@ -10,6 +10,9 @@
 mod event;
 pub use event::*;
 
+mod gate;
+pub use gate::TransactionEventGate;
+
 mod emit;
 pub use emit::{
     GlobalTransactionEventWriter, GlobalTransactionEventWriterInitStatus, TransactionEventBuilder,

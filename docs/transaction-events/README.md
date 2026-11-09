@@ -202,8 +202,9 @@ transaction is decoded and before sequencer forwarding or pool insertion.
 `tx_hash` is the join key. They are distinct from `TXPOOL_PENDING` /
 `TXPOOL_QUEUED`, which record later subpool membership.
 `TXPOOL_SEND_RAW_TRANSACTION_VALIDITY` is the **only** event that records
-`data.validity_predicates` (the serialized `balance`, `storage`,
-`block_number`, and `flashblock_index` list). Downstream lifecycle events —
+`data.validity_predicates` (the serialized `balance`, `storage`, and `block_number`
+list; `flashblock_index` predicates are rejected before this
+event). Downstream lifecycle events —
 including `BUILDER_DEFERRED`, `BUILDER_EXPIRED`, `BUILDER_ACCEPTED`, and
 `BUILDER_INCLUDED` — must not repeat that list; join them back by `tx_hash`. A
 replacement is a fresh admission with its own `tx_hash` and/or predicate list;
@@ -216,7 +217,7 @@ Forwarding:
 - `TXPOOL_BUILDER_CONSUMED` (retired)
 - `TXPOOL_BUILDER_FORWARD_ATTEMPT`
 - `TXPOOL_BUILDER_FORWARD_SUCCESS` (retired)
-- `TXPOOL_BUILDER_FORWARD_FAILURE`
+- `TXPOOL_BUILDER_FORWARD_FAILURE` (retired)
 - `TXPOOL_BUILDER_FORWARD_DROPPED`
 - `TXPOOL_VALIDATED_INSERT_ACCEPTED`
 - `TXPOOL_VALIDATED_INSERT_REJECTED`
@@ -226,16 +227,20 @@ and forwards it again every `--tx-forwarding-resend-after-ms` while it stays
 pending. A transaction carrying validity predicates is resent only after its
 forward to that builder failed. Each destination has its own pool reader and queue, so the mempool
 node does not journal the hand-off: it no longer emits
-`TXPOOL_BUILDER_CONSUMED` or `TXPOOL_BUILDER_FORWARD_SUCCESS`. Successful
-delivery is recorded by the receiving builder as
-`TXPOOL_VALIDATED_INSERT_ACCEPTED` or `TXPOOL_VALIDATED_INSERT_REJECTED`,
-whose event ID includes the builder host. A send that fails is recorded by the
-mempool node as `TXPOOL_BUILDER_FORWARD_FAILURE` or
-`TXPOOL_BUILDER_FORWARD_DROPPED`. `TXPOOL_BUILDER_FORWARD_ATTEMPT` is emitted
-only for RPC retries (`data.attempt` >= 1). The time a transaction was queued
-for each destination, its position in the pool iterator, and how many times it
-was resent are not journaled; the reader and forwarder metrics cover them in
-aggregate.
+`TXPOOL_BUILDER_CONSUMED`, `TXPOOL_BUILDER_FORWARD_SUCCESS` or
+`TXPOOL_BUILDER_FORWARD_FAILURE`. A send that reaches a builder is recorded by
+that builder as `TXPOOL_VALIDATED_INSERT_ACCEPTED` or
+`TXPOOL_VALIDATED_INSERT_REJECTED`, whose event ID includes the builder host and
+which only the active sequencer journals. Every builder receives every
+transaction, so a node-side failure row per destination duplicated the leader's
+verdict and added standby and canary verdicts that never decide inclusion; on
+mainnet those were 88% of the rows. Per-builder rejection counts remain in the
+forwarder metrics. A send that never reaches the builder is recorded by the
+mempool node as `TXPOOL_BUILDER_FORWARD_DROPPED`, and
+`TXPOOL_BUILDER_FORWARD_ATTEMPT` is emitted only for RPC retries
+(`data.attempt` >= 1). The time a transaction was queued for each destination,
+its position in the pool iterator, and how many times it was resent are not
+journaled; the reader and forwarder metrics cover them in aggregate.
 
 `TXPOOL_BUILDER_FORWARD_DROPPED` is emitted only for transaction-scoped drops
 where the forwarding task still knows the `tx_hash`, such as final RPC failure
@@ -257,6 +262,33 @@ Builder:
 The three `BUILDER_FLASHBLOCK_*` types are legacy events from the retired
 Flashblocks builder: they stay in the schema so historical journals still parse,
 and no current builder emits them.
+
+Leader gating: every sequencer runs a builder, and every mempool node forwards
+every transaction to every builder, so without gating each builder journals its
+own `TXPOOL_VALIDATED_INSERT_ACCEPTED` or `TXPOOL_VALIDATED_INSERT_REJECTED`
+verdict for the same transaction (five rows per transaction on mainnet). Only
+the active sequencer builds blocks, so only its journal, verdicts included, is
+kept. The builder polls the local consensus node's
+`admin_sequencerActive` when `--builder.transaction-events.consensus-url` (for
+example `http://localhost:9545`) is set, every
+`--builder.transaction-events.leader-poll-interval-ms` (default 500), and
+journals nothing while the answer is `false`. The unified `base sequencer`
+binary runs the consensus node in the same process and defaults the URL to that
+node's own admin RPC (`--rpc.addr`/`--rpc.port`, requires `--rpc.enable-admin`),
+so it needs no URL, and its gate starts closed until the first `true` answer.
+Leadership is read live rather than configured because it moves between
+sequencers without a redeploy. Until the first answer the standalone builder
+journals; a request that fails or times out keeps
+the last answer and counts in
+`base_builder_sequencer_leadership_poll_errors_total`, and
+`base_builder_sequencer_active` reports the answer in force. Events the gate
+withholds count in `transaction_events_gated_events`. Consequences for readers:
+a builder's events start at the moment it became leader, so a transaction it
+accepted while inactive has `BUILDER_*` events without an earlier
+`TXPOOL_VALIDATED_INSERT_ACCEPTED` from that host, a rejection is journaled
+only when the leader's pool rejects it, and around a transfer, for
+one poll interval plus the request's latency, either both or neither sequencer
+may journal.
 
 Builder caveat: `BUILDER_ACCEPTED`, `BUILDER_REJECTED`, `BUILDER_DEFERRED`,
 and `BUILDER_EXPIRED` are emitted per payload-building attempt and include
@@ -284,8 +316,8 @@ parking-capacity miss stays `BUILDER_REJECTED` with
 transaction was billed and its receipt reports; `data.metered_gas_used` is the
 gas it actually consumed, defined as the gas it would have been billed without
 gas-limit billing (gas spent less the EIP-3529-capped refund, raised to the
-EIP-7623 floor; for EIP-8130, sender gas plus payer authentication with the
-floor applied to the total). Before the gas-limit billing feature (Everest)
+EIP-7623 floor; for EIP-8130, sender gas raised to the sender's floor, plus
+payer authentication). Before the gas-limit billing feature (Everest)
 `metered_gas_used == gas_used`; after it, `gas_used` is `tx_gas_limit` for
 standard transactions and `tx_gas_limit + payer_auth_gas_reserved` for EIP-8130, where
 `data.payer_auth_gas_reserved` (`null` for every other transaction type) is the

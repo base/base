@@ -54,21 +54,20 @@ impl FeeCheck {
         if max_fee < cap { max_fee } else { cap }
     }
 
-    /// Maximum gas the payer can be charged: `gas_limit + payer_floor`. Payer
-    /// authentication is metered on top of `gas_limit` and reserved at the
-    /// EIP-7623 floor rate, so the payer reimburses it in addition to the
-    /// sender-signed budget. For self-pay (`payer_floor == 0`) this is just
-    /// `gas_limit`.
+    /// Maximum gas the payer can be charged: `gas_limit + payer_auth_cost`. Payer
+    /// authentication is metered on top of `gas_limit`, so the payer reimburses
+    /// it in addition to the sender-signed budget. For self-pay
+    /// (`payer_auth_cost == 0`) this is just `gas_limit`.
     #[must_use]
-    pub const fn max_chargeable_gas(gas_limit: u64, payer_floor: u64) -> u64 {
-        gas_limit.saturating_add(payer_floor)
+    pub const fn max_chargeable_gas(gas_limit: u64, payer_auth_cost: u64) -> u64 {
+        gas_limit.saturating_add(payer_auth_cost)
     }
 
     /// Upper bound on the payer's ETH debit:
-    /// `(gas_limit + payer_floor) · max_fee_per_gas`.
+    /// `(gas_limit + payer_auth_cost) · max_fee_per_gas`.
     #[must_use]
-    pub fn max_fee_charge(gas_limit: u64, payer_floor: u64, max_fee: u128) -> U256 {
-        U256::from(Self::max_chargeable_gas(gas_limit, payer_floor))
+    pub fn max_fee_charge(gas_limit: u64, payer_auth_cost: u64, max_fee: u128) -> U256 {
+        U256::from(Self::max_chargeable_gas(gas_limit, payer_auth_cost))
             .saturating_mul(U256::from(max_fee))
     }
 
@@ -101,10 +100,10 @@ impl FeeCheck {
     pub fn validate_balance(
         balance: U256,
         gas_limit: u64,
-        payer_floor: u64,
+        payer_auth_cost: u64,
         max_fee: u128,
     ) -> Result<(), FeeError> {
-        let required = Self::max_fee_charge(gas_limit, payer_floor, max_fee);
+        let required = Self::max_fee_charge(gas_limit, payer_auth_cost, max_fee);
         if balance < required {
             return Err(FeeError::InsufficientBalance { balance, required });
         }
@@ -178,7 +177,7 @@ mod tests {
     fn max_fee_charge_includes_payer_auth_on_top_of_gas_limit() {
         // self-pay: gas_limit * max_fee.
         assert_eq!(FeeCheck::max_fee_charge(21_000, 0, 2), U256::from(42_000u64));
-        // sponsored: (gas_limit + payer_floor) * max_fee.
+        // sponsored: (gas_limit + payer_auth_cost) * max_fee.
         assert_eq!(FeeCheck::max_fee_charge(21_000, 5_100, 2), U256::from(52_200u64));
     }
 

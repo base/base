@@ -136,6 +136,9 @@ pub enum TransactionEventType {
     #[serde(rename = "TXPOOL_BUILDER_FORWARD_SUCCESS")]
     TxpoolBuilderForwardSuccess,
     /// Txpool failed to forward a transaction to the builder.
+    ///
+    /// No longer emitted: the receiving builder journals the same rejection as
+    /// [`Self::TxpoolValidatedInsertRejected`]. Retained so historical events remain readable.
     #[serde(rename = "TXPOOL_BUILDER_FORWARD_FAILURE")]
     TxpoolBuilderForwardFailure,
     /// Txpool dropped a queued builder forward for a transaction.

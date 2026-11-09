@@ -15,15 +15,6 @@ pub const DEFAULT_MAX_VALIDITY_PREDICATES: usize = 64;
 /// Default maximum lifetime, in seconds, for experimental validity transactions.
 pub const DEFAULT_MAX_VALIDITY_EXPIRY_SECS: u64 = 60;
 
-/// The first flashblock index at which pooled transactions are evaluated.
-///
-/// The fallback block published at flashblock index `0` executes only sequencer
-/// (attribute-derived) transactions; pooled transactions are first considered in
-/// the flashblock at index `1`. A [`ValidityPredicate::FlashblockIndex`] whose
-/// greatest satisfiable index is below this can therefore never hold for a pooled
-/// transaction.
-pub const FIRST_POOL_FLASHBLOCK_INDEX: u64 = 1;
-
 /// Error returned when a batch of validity predicates fails ingress validation.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ValidityPredicateError {
@@ -51,18 +42,14 @@ pub enum ValidityPredicateError {
         /// Position of the offending predicate within the batch.
         index: usize,
     },
-    /// A flashblock-index predicate can never be satisfied by a pooled transaction.
+    /// The submission carried a flashblock-index predicate, which no builder can satisfy.
     ///
-    /// Pooled transactions are first evaluated at flashblock index
-    /// [`FIRST_POOL_FLASHBLOCK_INDEX`]; the index-`0` fallback block carries only
-    /// sequencer transactions. A predicate whose greatest satisfiable flashblock
-    /// index is below that would never be includable and would park indefinitely,
-    /// so it is rejected at ingress. `index` is the position of the offending
-    /// predicate within the batch.
+    /// The variant stays decodable so submitters get this error instead of a parse
+    /// failure. `index` is the position of the offending predicate within the batch.
     #[error(
-        "flashblock-index predicate at index {index} can never be satisfied by a pooled transaction"
+        "flashblock_index predicate at index {index} is not supported: Base no longer builds flashblocks"
     )]
-    UnsatisfiableFlashblockIndex {
+    UnsupportedFlashblockIndex {
         /// Position of the offending predicate within the batch.
         index: usize,
     },
@@ -271,26 +258,8 @@ impl ValidityPredicate {
             Self::Storage { mask, value, .. } if (*value & !*mask) != U256::ZERO => {
                 Err(ValidityPredicateError::StorageValueOutsideMask { index })
             }
-            Self::FlashblockIndex { op, value } => {
-                // Pooled transactions are first evaluated at flashblock index
-                // FIRST_POOL_FLASHBLOCK_INDEX (the index-0 fallback block carries
-                // only sequencer transactions), so a predicate whose greatest
-                // satisfiable index is below that can never hold. Upper bounds
-                // (`<`, `<=`, `=`) cap the satisfiable index; lower bounds and
-                // `!=` always leave some index >= 1 satisfiable.
-                let max_satisfiable_index = match op {
-                    ValidityOperator::LessThan => value.checked_sub(U256::from(1)),
-                    ValidityOperator::LessThanOrEqual | ValidityOperator::Equal => Some(*value),
-                    ValidityOperator::NotEqual
-                    | ValidityOperator::GreaterThan
-                    | ValidityOperator::GreaterThanOrEqual => return Ok(()),
-                };
-                if max_satisfiable_index
-                    .is_none_or(|max| max < U256::from(FIRST_POOL_FLASHBLOCK_INDEX))
-                {
-                    return Err(ValidityPredicateError::UnsatisfiableFlashblockIndex { index });
-                }
-                Ok(())
+            Self::FlashblockIndex { .. } => {
+                Err(ValidityPredicateError::UnsupportedFlashblockIndex { index })
             }
             _ => Ok(()),
         }
@@ -1225,7 +1194,7 @@ mod tests {
     }
 
     #[test]
-    fn apply_rejects_unsatisfiable_flashblock_index() {
+    fn apply_rejects_flashblock_index() {
         let signed: BaseTransactionSigned = TxDeposit {
             source_hash: Default::default(),
             from: Address::ZERO,
@@ -1244,15 +1213,15 @@ mod tests {
         );
         let extension = TransactionValidity {
             validity: vec![ValidityPredicate::FlashblockIndex {
-                op: ValidityOperator::Equal,
-                value: U256::ZERO,
+                op: ValidityOperator::GreaterThanOrEqual,
+                value: U256::from(1),
             }],
             validity_signature: None,
         };
 
         let error = extension.apply(transaction).unwrap_err();
 
-        assert!(error.to_string().contains("can never be satisfied"));
+        assert!(error.to_string().contains("Base no longer builds flashblocks"));
     }
 
     #[test]
@@ -1323,48 +1292,26 @@ mod tests {
     }
 
     #[test]
-    fn validate_params_rejects_flashblock_index_unsatisfiable_for_pooled_transactions() {
-        // Every shape whose greatest satisfiable index is below the first pool
-        // flashblock index (1): pooled transactions never run at index 0.
-        let unsatisfiable = [
-            (ValidityOperator::LessThan, U256::ZERO), // < 0: never holds
-            (ValidityOperator::LessThan, U256::from(1)), // < 1: only index 0
-            (ValidityOperator::LessThanOrEqual, U256::ZERO), // <= 0: only index 0
-            (ValidityOperator::Equal, U256::ZERO),    // = 0: only index 0
-        ];
-        for (op, value) in unsatisfiable {
-            let predicate = ValidityPredicate::FlashblockIndex { op, value };
+    fn validate_params_rejects_every_flashblock_index_predicate() {
+        for op in [
+            ValidityOperator::LessThan,
+            ValidityOperator::LessThanOrEqual,
+            ValidityOperator::Equal,
+            ValidityOperator::NotEqual,
+            ValidityOperator::GreaterThan,
+            ValidityOperator::GreaterThanOrEqual,
+        ] {
+            let predicate = ValidityPredicate::FlashblockIndex { op, value: U256::from(1) };
             assert_eq!(
-                predicate.validate_params(2),
-                Err(ValidityPredicateError::UnsatisfiableFlashblockIndex { index: 2 }),
-                "expected {op:?} {value} to be rejected",
+                predicate.validate_params(2).map_err(|error| error.to_string()),
+                Err("flashblock_index predicate at index 2 is not supported: Base no longer builds flashblocks".to_string()),
+                "expected {op:?} to be rejected",
             );
         }
     }
 
     #[test]
-    fn validate_params_accepts_satisfiable_flashblock_index() {
-        // Shapes that some index >= 1 can still satisfy.
-        let satisfiable = [
-            (ValidityOperator::LessThan, U256::from(2)), // < 2: index 1
-            (ValidityOperator::LessThanOrEqual, U256::from(1)), // <= 1: index 1
-            (ValidityOperator::Equal, U256::from(1)),    // = 1
-            (ValidityOperator::NotEqual, U256::ZERO),    // != 0: any index >= 1
-            (ValidityOperator::GreaterThan, U256::ZERO), // > 0: index >= 1
-            (ValidityOperator::GreaterThanOrEqual, U256::from(3)), // >= 3
-        ];
-        for (op, value) in satisfiable {
-            let predicate = ValidityPredicate::FlashblockIndex { op, value };
-            assert_eq!(
-                predicate.validate_params(0),
-                Ok(()),
-                "expected {op:?} {value} to be accepted",
-            );
-        }
-    }
-
-    #[test]
-    fn validate_batch_rejects_unsatisfiable_flashblock_index_reporting_its_index() {
+    fn validate_batch_rejects_flashblock_index_reporting_its_index() {
         let predicates = vec![
             ValidityPredicate::Balance {
                 address: Address::repeat_byte(0x11),
@@ -1376,7 +1323,7 @@ mod tests {
 
         assert_eq!(
             ValidityPredicate::validate_batch(&predicates, DEFAULT_MAX_VALIDITY_PREDICATES),
-            Err(ValidityPredicateError::UnsatisfiableFlashblockIndex { index: 1 })
+            Err(ValidityPredicateError::UnsupportedFlashblockIndex { index: 1 })
         );
     }
 

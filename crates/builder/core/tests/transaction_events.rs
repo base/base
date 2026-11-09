@@ -336,3 +336,76 @@ async fn builder_accepted_reports_metered_gas_below_billed_gas_under_gas_limit_b
     assert!(payer_auth.is_null(), "only EIP-8130 transactions report payer_auth_gas_reserved");
     Ok(())
 }
+
+/// A builder whose gate is closed, as a sequencer that is not the active leader, journals
+/// neither insert verdict it gives nor its build decisions; reopening the gate resumes all of
+/// them. Each transaction is inserted twice, so the builder gives an accepted and a rejected
+/// (already imported) verdict, and carries a satisfied predicate, since the native builder
+/// journals only validity-gated candidates.
+#[tokio::test]
+async fn closed_gate_withholds_every_builder_event() -> eyre::Result<()> {
+    let capture = TransactionEventCapture::install();
+    let instance = validity_instance().build().await?;
+    let driver = instance.driver().await?;
+    let accounts = driver.fund_accounts(2, ONE_ETH).await?;
+
+    let mut hashes = Vec::new();
+    for (account, open) in [(0, false), (1, true)] {
+        capture.gate().set_open(open);
+        let tx = driver
+            .create_transaction()
+            .with_signer(&accounts[account])
+            .with_to(Address::random())
+            .with_value(1)
+            .build()
+            .await;
+        hashes.push(tx.tx_hash());
+        let insert = ValidatedTransaction {
+            sender: accounts[account].address(),
+            raw: tx.encoded_2718().into(),
+            metering: None,
+            extensions: TransactionValidity {
+                validity: vec![ValidityPredicate::Balance {
+                    address: accounts[account].address(),
+                    op: ValidityOperator::NotEqual,
+                    value: U256::ZERO,
+                }],
+                validity_signature: None,
+            },
+        };
+        driver
+            .provider()
+            .raw_request::<_, ()>("base_insertValidatedTransaction".into(), (insert.clone(),))
+            .await?;
+        let duplicate = driver
+            .provider()
+            .raw_request::<_, ()>("base_insertValidatedTransaction".into(), (insert,))
+            .await;
+        assert!(duplicate.is_err(), "the second insert must be rejected as already imported");
+        driver.build_new_block().await?;
+    }
+    let [withheld, journaled] = [hashes[0], hashes[1]];
+
+    let events = capture.events();
+    assert!(
+        events.iter().all(|event| event.tx_hash != Some(withheld)),
+        "a closed gate must withhold every event, got {:?}",
+        events.iter().filter(|event| event.tx_hash == Some(withheld)).collect::<Vec<_>>()
+    );
+    let journaled_types: Vec<_> = events
+        .iter()
+        .filter(|event| event.tx_hash == Some(journaled))
+        .map(|event| event.event_type)
+        .collect();
+    for expected in [
+        TransactionEventType::TxpoolValidatedInsertAccepted,
+        TransactionEventType::TxpoolValidatedInsertRejected,
+        TransactionEventType::BuilderAccepted,
+    ] {
+        assert!(
+            journaled_types.contains(&expected),
+            "an open gate must journal {expected} again, got {journaled_types:?}"
+        );
+    }
+    Ok(())
+}

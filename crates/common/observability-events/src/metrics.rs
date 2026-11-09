@@ -7,6 +7,8 @@ base_metrics::define_metrics! {
     #[describe("Transaction event journal entries dropped before enqueue")]
     #[label(name = "reason", default = ["disabled", "backpressure", "disconnected", "serialization", "validation"])]
     dropped_events: counter,
+    #[describe("Transaction event journal entries skipped because the emission gate was closed")]
+    gated_events: counter,
     #[describe("Transaction event journal write or flush errors")]
     #[label(name = "operation", default = ["write", "flush"])]
     write_errors: counter,

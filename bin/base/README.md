@@ -97,6 +97,15 @@ Useful sequencer-specific flags include:
 - `--sequencer.recover` enables recovery mode and forces empty block production.
 - `--conductor.rpc` enables conductor-backed leader checks.
 - `--conductor.binary-commit` uses the conductor binary commit endpoint.
+- `--builder.transaction-events.enabled` journals the builder's transaction events. Because the
+  consensus node runs in the same process, the journal is gated on its own `admin_sequencerActive`
+  (requires `--rpc.enable-admin`) without setting `--builder.transaction-events.consensus-url`.
+  The gate starts closed and opens on the first `true` answer, so a restarted standby journals
+  nothing while its consensus node comes up.
+  With the admin API or RPC server disabled, an ephemeral `--rpc.port 0`, and no explicit URL,
+  startup logs a warning and every sequencer journals, standbys included. The gate covers every
+  event the process journals, including `TXPOOL_SEND_RAW_TRANSACTION*` for transactions submitted
+  to the sequencer directly.
 
 ## `base dev`
 

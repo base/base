@@ -96,6 +96,8 @@ ValidityAuthorization(bytes32 transactionHash,ValidityPredicate[] validity)
 
 `transactionHash` hashes the complete signed EIP-2718 transaction envelope.
 `kind` is balance = 0, storage = 1, block number = 2, flashblock index = 3, nonce = 4.
+Flashblock-index predicates still decode but are rejected at ingress: Base no longer
+builds flashblocks.
 `operator` is `<` = 0, `<=` = 1, `=` = 2, `!=` = 3, `>` = 4, `>=` = 5.
 Balance and nonce predicates use `account`; storage uses `account`, `slot`, and `mask`.
 Nonce predicates read the account's protocol nonce, not an EIP-8130 channel nonce.

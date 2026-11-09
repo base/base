@@ -35,6 +35,7 @@ base-consensus-engine.workspace = true
 base-execution-chainspec.workspace = true
 base-execution-consensus.workspace = true
 base-shadow-indexer.workspace = true
+base-observability-events.workspace = true
 base-cli-utils = { workspace = true, features = ["otlp"] }
 
 # alloy
