@@ -139,20 +139,13 @@ impl Tracker {
 
         // If the LRU is full and we're about to insert a new tx, log the `EventLog` for that tx
         // before it gets evicted. This can be useful to see the full history of a transaction.
+        // Eviction is a tracker bookkeeping limit, not a transaction lifecycle fact, so it is
+        // recorded as a metric and log only; it is not journaled as a transaction event.
         if self.txs.len() == Self::MAX_SIZE
             && let Some((tx_hash, event_log)) = self.txs.peek_lru()
         {
             self.log(tx_hash, event_log, "Transaction inserted");
-            self.emit_transaction_event(
-                *tx_hash,
-                TxEvent::Overflowed,
-                event_log.events.len(),
-                TxpoolEventData {
-                    overflow_reason: Some("tracker_lru_eviction"),
-                    time_in_mempool: Some(event_log.mempool_time.elapsed()),
-                    ..Default::default()
-                },
-            );
+            Self::record_histogram(event_log.mempool_time.elapsed(), TxEvent::Overflowed);
         }
 
         self.txs.put(tx_hash, EventLog::new(Local::now(), event));
@@ -370,22 +363,14 @@ impl Tracker {
     }
 
     // If `is_overflowed` is true then we record an overflowed metric and log the event log
-    // and don't record the other event that was supposed to be recorded.
+    // and don't record the other event that was supposed to be recorded. Overflow describes
+    // the tracker's own per-tx event limit, so it is not journaled as a transaction event.
     fn is_overflowed(&self, tx_hash: &TxHash, event_log: &EventLog) -> bool {
         if event_log.events.len() < event_log.limit {
             return false;
         }
 
         self.log(tx_hash, event_log, "Transaction removed from cache due to limit");
-        self.emit_transaction_event(
-            *tx_hash,
-            TxEvent::Overflowed,
-            event_log.events.len(),
-            TxpoolEventData {
-                time_in_mempool: Some(event_log.mempool_time.elapsed()),
-                ..Default::default()
-            },
-        );
         Self::record_histogram(event_log.mempool_time.elapsed(), TxEvent::Overflowed);
         true
     }
@@ -424,9 +409,6 @@ impl Tracker {
         if let Some(duration) = event_data.time_in_mempool {
             data.insert("time_in_mempool_ms".to_string(), duration_ms_json(duration));
         }
-        if let Some(overflow_reason) = event_data.overflow_reason {
-            data.insert("overflow_reason".to_string(), json!(overflow_reason));
-        }
         let event_time_ns = Local::now().timestamp_nanos_opt().unwrap_or_default();
 
         let _ = transaction_event!(
@@ -447,7 +429,6 @@ struct TxpoolEventData {
     pool: Option<Pool>,
     replacement_hash: Option<TxHash>,
     time_in_mempool: Option<Duration>,
-    overflow_reason: Option<&'static str>,
 }
 
 impl Pool {
@@ -465,11 +446,11 @@ const fn transaction_event_type(event: TxEvent) -> Option<TransactionEventType> 
         TxEvent::Queued => Some(TransactionEventType::Queued),
         TxEvent::Dropped => Some(TransactionEventType::Dropped),
         TxEvent::Replaced => Some(TransactionEventType::Replaced),
-        // Inclusion is journaled by the builder, not the txpool tracer.
-        TxEvent::BlockInclusion => None,
+        // Inclusion is journaled by the builder, not the txpool tracer. Overflow is a tracker
+        // bookkeeping limit recorded as a metric and log only.
+        TxEvent::BlockInclusion | TxEvent::Overflowed => None,
         TxEvent::PendingToQueued => Some(TransactionEventType::PendingToQueued),
         TxEvent::QueuedToPending => Some(TransactionEventType::QueuedToPending),
-        TxEvent::Overflowed => Some(TransactionEventType::Overflowed),
     }
 }
 
@@ -480,6 +461,7 @@ fn duration_ms_json(duration: Duration) -> Value {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::Address;
+    use base_observability_events::TransactionEventCapture;
     use reth_transaction_pool::test_utils::MockTransaction;
     use rstest::rstest;
 
@@ -558,10 +540,7 @@ mod tests {
             transaction_event_type(TxEvent::QueuedToPending),
             Some(TransactionEventType::QueuedToPending)
         );
-        assert_eq!(
-            transaction_event_type(TxEvent::Overflowed),
-            Some(TransactionEventType::Overflowed)
-        );
+        assert_eq!(transaction_event_type(TxEvent::Overflowed), None);
     }
 
     #[test]
@@ -682,30 +661,69 @@ mod tests {
     }
 
     #[test]
-    fn test_is_overflowed() {
-        let mut tracker = Tracker::new(false);
+    fn per_tx_event_limit_overflow_records_metric_without_journal_event() {
+        let event_capture = TransactionEventCapture::install();
         let tx_hash = TxHash::random();
 
-        // Create an event log - starts with 1 event (Pending)
-        tracker.transaction_inserted(tx_hash, TxEvent::Pending);
-        tracker.transaction_moved(tx_hash, Pool::Pending);
+        let rendered = render_metrics(|| {
+            let mut tracker = Tracker::new(false);
+            tracker.transaction_inserted(tx_hash, TxEvent::Pending);
+            tracker.transaction_moved(tx_hash, Pool::Pending);
 
-        // Add events until we hit the limit (limit is 10, we have 1 event already)
-        for _ in 0..9 {
-            if let Some(mut event_log) = tracker.txs.pop(&tx_hash) {
+            // Fill the per-tx event log up to its limit.
+            let mut event_log = tracker.txs.pop(&tx_hash).expect("tx should exist");
+            while event_log.events.len() < event_log.limit {
                 event_log.push(Local::now(), TxEvent::PendingToQueued);
-                tracker.txs.put(tx_hash, event_log);
             }
-        }
+            tracker.txs.put(tx_hash, event_log);
 
-        // Verify we're at the limit
-        assert_eq!(tracker.txs.get(&tx_hash).unwrap().events.len(), 10);
+            // The next transition overflows the log and evicts the tx.
+            tracker.transaction_moved(tx_hash, Pool::Queued);
+            assert!(tracker.txs.get(&tx_hash).is_none());
+        });
 
-        // Try to move again - should trigger overflow check
-        tracker.transaction_moved(tx_hash, Pool::Queued);
+        assert!(
+            rendered.contains("reth_transaction_tracing_tx_event_count{event=\"overflowed\"} 1"),
+            "expected overflowed histogram, got: {rendered}"
+        );
+        let event_types = event_capture
+            .events()
+            .into_iter()
+            .filter(|event| event.tx_hash == Some(tx_hash))
+            .map(|event| event.event_type)
+            .collect::<Vec<_>>();
+        assert_eq!(event_types, [TransactionEventType::Pending]);
+    }
 
-        // Transaction should be removed due to overflow
-        assert!(tracker.txs.get(&tx_hash).is_none());
+    #[test]
+    fn lru_eviction_records_metric_without_journal_event() {
+        let event_capture = TransactionEventCapture::install();
+        let evicted = TxHash::random();
+
+        let rendered = render_metrics(|| {
+            let mut tracker = Tracker::new(false);
+            tracker.transaction_inserted(evicted, TxEvent::Pending);
+            for _ in 1..Tracker::MAX_SIZE {
+                tracker.transaction_inserted(TxHash::random(), TxEvent::Pending);
+            }
+            assert_eq!(tracker.txs.len(), Tracker::MAX_SIZE);
+
+            // Inserting one more evicts the least-recently-used tx.
+            tracker.transaction_inserted(TxHash::random(), TxEvent::Pending);
+            assert!(tracker.txs.peek(&evicted).is_none());
+        });
+
+        assert!(
+            rendered.contains("reth_transaction_tracing_tx_event_count{event=\"overflowed\"} 1"),
+            "expected overflowed histogram, got: {rendered}"
+        );
+        let event_types = event_capture
+            .events()
+            .into_iter()
+            .filter(|event| event.tx_hash == Some(evicted))
+            .map(|event| event.event_type)
+            .collect::<Vec<_>>();
+        assert_eq!(event_types, [TransactionEventType::Pending]);
     }
 
     #[test]

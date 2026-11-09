@@ -42,6 +42,9 @@ derive_more = { workspace = true, features = ["display"] }
 serde_json.workspace = true
 
 [dev-dependencies]
+# workspace
+base-observability-events = { workspace = true, features = ["test-utils"] }
+
 # reth
 reth-transaction-pool = { workspace = true, features = ["test-utils"] }
 

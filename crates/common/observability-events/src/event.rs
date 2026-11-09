@@ -127,6 +127,8 @@ pub enum TransactionEventType {
     #[serde(rename = "TXPOOL_REPLACED")]
     Replaced,
     /// Txpool tracking overflowed before all events could be retained.
+    ///
+    /// No longer emitted. Retained so historical events remain readable.
     #[serde(rename = "TXPOOL_TRACKING_OVERFLOWED")]
     Overflowed,
     /// Txpool attempted to forward a transaction to the builder.
