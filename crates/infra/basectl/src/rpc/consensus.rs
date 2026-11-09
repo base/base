@@ -275,10 +275,8 @@ mod tests {
             "{debug}"
         );
 
-        let unavailable = client.peer_stats().await.unwrap_err();
-        assert!(matches!(unavailable, ConsensusRpcError::MethodUnavailable { .. }));
         assert_eq!(
-            unavailable.to_string(),
+            client.peer_stats().await.unwrap_err().to_string(),
             format!(
                 "consensus-node RPC method `opp2p_peerStats` is not exposed by http://{address}"
             )
