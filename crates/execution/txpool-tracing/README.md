@@ -40,7 +40,7 @@ let builder = Box::new(ext).apply(builder);
 
 ## Metrics
 
-The extension records a histogram named `reth_transaction_tracing_tx_event` with an `event` label for each lifecycle event (`pending`, `queued`, `replaced`, `dropped`, `block_inclusion`, etc.). Values represent the milliseconds a transaction spent in the mempool up to that event. When a transaction's event log reaches its per-transaction limit, or the in-memory tracker reaches its limit (20,000 transactions) and evicts a transaction, an `overflowed` metric is recorded so dashboards can alert on data loss. Overflow is a tracker bookkeeping limit, so it is recorded as a metric (and an optional `tracex` log) only and is not journaled as a transaction event.
+The extension records a histogram named `reth_transaction_tracing_tx_event` with an `event` label for each lifecycle event (`pending`, `queued`, `replaced`, `dropped`, `block_inclusion`, etc.). Values represent the milliseconds a transaction spent in the mempool up to that event. When a transaction's event log reaches its per-transaction limit, an `overflowed` event is recorded in that histogram; when the in-memory tracker reaches its limit (20,000 transactions) and evicts a transaction, the `reth_transaction_tracing_tracker_evictions` counter is incremented instead, since at steady state nearly every insert evicts. Both are tracker bookkeeping limits, recorded as metrics (and an optional `tracex` log) only and not journaled as transaction events.
 
 ## Transaction Events
 
