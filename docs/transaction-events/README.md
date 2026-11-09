@@ -217,7 +217,7 @@ Forwarding:
 - `TXPOOL_BUILDER_CONSUMED` (retired)
 - `TXPOOL_BUILDER_FORWARD_ATTEMPT`
 - `TXPOOL_BUILDER_FORWARD_SUCCESS` (retired)
-- `TXPOOL_BUILDER_FORWARD_FAILURE`
+- `TXPOOL_BUILDER_FORWARD_FAILURE` (retired)
 - `TXPOOL_BUILDER_FORWARD_DROPPED`
 - `TXPOOL_VALIDATED_INSERT_ACCEPTED`
 - `TXPOOL_VALIDATED_INSERT_REJECTED`
@@ -227,16 +227,20 @@ and forwards it again every `--tx-forwarding-resend-after-ms` while it stays
 pending. A transaction carrying validity predicates is resent only after its
 forward to that builder failed. Each destination has its own pool reader and queue, so the mempool
 node does not journal the hand-off: it no longer emits
-`TXPOOL_BUILDER_CONSUMED` or `TXPOOL_BUILDER_FORWARD_SUCCESS`. Successful
-delivery is recorded by the receiving builder as
-`TXPOOL_VALIDATED_INSERT_ACCEPTED` or `TXPOOL_VALIDATED_INSERT_REJECTED`,
-whose event ID includes the builder host. A send that fails is recorded by the
-mempool node as `TXPOOL_BUILDER_FORWARD_FAILURE` or
-`TXPOOL_BUILDER_FORWARD_DROPPED`. `TXPOOL_BUILDER_FORWARD_ATTEMPT` is emitted
-only for RPC retries (`data.attempt` >= 1). The time a transaction was queued
-for each destination, its position in the pool iterator, and how many times it
-was resent are not journaled; the reader and forwarder metrics cover them in
-aggregate.
+`TXPOOL_BUILDER_CONSUMED`, `TXPOOL_BUILDER_FORWARD_SUCCESS` or
+`TXPOOL_BUILDER_FORWARD_FAILURE`. A send that reaches a builder is recorded by
+that builder as `TXPOOL_VALIDATED_INSERT_ACCEPTED` or
+`TXPOOL_VALIDATED_INSERT_REJECTED`, whose event ID includes the builder host and
+which only the active sequencer journals. Every builder receives every
+transaction, so a node-side failure row per destination duplicated the leader's
+verdict and added standby and canary verdicts that never decide inclusion; on
+mainnet those were 88% of the rows. Per-builder rejection counts remain in the
+forwarder metrics. A send that never reaches the builder is recorded by the
+mempool node as `TXPOOL_BUILDER_FORWARD_DROPPED`, and
+`TXPOOL_BUILDER_FORWARD_ATTEMPT` is emitted only for RPC retries
+(`data.attempt` >= 1). The time a transaction was queued for each destination,
+its position in the pool iterator, and how many times it was resent are not
+journaled; the reader and forwarder metrics cover them in aggregate.
 
 `TXPOOL_BUILDER_FORWARD_DROPPED` is emitted only for transaction-scoped drops
 where the forwarding task still knows the `tx_hash`, such as final RPC failure
