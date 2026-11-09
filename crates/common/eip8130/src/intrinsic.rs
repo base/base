@@ -85,10 +85,9 @@ pub struct IntrinsicGas {
     /// first call only for its EIP-7702 delegate.
     pub first_call: u64,
     /// `sender_access_cost` — [`Eip8130GasSchedule::COLD_ACCOUNT_ACCESS`] for
-    /// the sender's account when a payer is set and the transaction touches
-    /// it: the protocol nonce, a call with value or targeting the sender, or a
-    /// delegation. `AA_BASE_COST` covers one account access, which a sponsored
-    /// transaction spends on the payer. `0` otherwise.
+    /// the sender's account when a payer is set. `AA_BASE_COST` covers one
+    /// account access, which a sponsored transaction spends on the payer, and
+    /// every transaction reads the sender's account nonce. `0` for self-pay.
     pub sender_account: u64,
     /// `nonce_key_cost`.
     pub nonce_key: u64,
@@ -269,17 +268,8 @@ impl IntrinsicGas {
             .count();
         let value_transfer = Eip8130GasSchedule::TX_VALUE_COST
             .saturating_mul(u64::try_from(value_calls).unwrap_or(u64::MAX));
-        let touches_sender = tx.nonce_key.is_zero()
-            || tx.calls.iter().flatten().any(|call| !call.value.is_zero() || call.to == sender)
-            || tx
-                .account_changes
-                .iter()
-                .any(|change| matches!(change, AccountChange::Delegation(_)));
-        let sender_account = if tx.payer.is_some() && touches_sender {
-            Eip8130GasSchedule::COLD_ACCOUNT_ACCESS
-        } else {
-            0
-        };
+        let sender_account =
+            if tx.payer.is_some() { Eip8130GasSchedule::COLD_ACCOUNT_ACCESS } else { 0 };
 
         let (mut payload, mut payload_floor) = Self::data_costs_of_counts(
             signed.metered_payload_zero_bytes(),
@@ -667,33 +657,24 @@ mod tests {
     }
 
     #[test]
-    fn sponsored_transaction_pays_for_the_sender_account_only_when_it_touches_it() {
+    fn sponsored_transaction_pays_for_the_sender_account() {
         let other = address!("0x3333333333333333333333333333333333333333");
-        let payer = Some(Address::repeat_byte(0x22));
-        let sequenced = U256::from(7u64);
         let call =
             |to, value: u64| vec![vec![Call { to, value: U256::from(value), data: Bytes::new() }]];
         let sender_account = |tx: TxEip8130| {
             let payer_auth = if tx.payer.is_some() { configured_auth(K1) } else { vec![] };
             intrinsic(&signed(tx, vec![0xcd; 65], payer_auth)).sender_account
         };
-        let sponsored = TxEip8130 { payer, nonce_key: sequenced, ..Default::default() };
 
-        // The payer's account is the one access the base covers.
-        assert_eq!(sender_account(TxEip8130 { calls: call(other, 0), ..sponsored.clone() }), 0);
-        // A self-paid transaction touches only the sender.
+        // A self-paid transaction touches only the sender's account.
         assert_eq!(sender_account(TxEip8130 { calls: call(other, 1), ..Default::default() }), 0);
 
-        let touching = [
-            TxEip8130 { nonce_key: U256::ZERO, ..sponsored.clone() },
-            TxEip8130 { calls: call(other, 1), ..sponsored.clone() },
-            TxEip8130 { calls: call(ACCOUNT, 0), ..sponsored.clone() },
-            TxEip8130 {
-                account_changes: vec![AccountChange::Delegation(Delegation { target: other })],
-                ..sponsored
-            },
-        ];
-        for tx in touching {
+        // Execution reads the sender's account nonce whatever the nonce key, so a
+        // sponsored transaction touches a second account even when it only calls
+        // another address with no value.
+        let payer = Some(Address::repeat_byte(0x22));
+        for nonce_key in [U256::ZERO, U256::from(7u64), Eip8130Constants::NONCE_KEY_MAX] {
+            let tx = TxEip8130 { payer, nonce_key, calls: call(other, 0), ..Default::default() };
             assert_eq!(sender_account(tx), Eip8130GasSchedule::COLD_ACCOUNT_ACCESS);
         }
     }

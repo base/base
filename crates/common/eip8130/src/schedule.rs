@@ -63,7 +63,7 @@ impl Eip8130GasSchedule {
     /// Base intrinsic cost for any AA transaction (`AA_BASE_COST`), equal to
     /// EIP-2780's `TX_BASE_COST`: one account access, one nonce write and one
     /// balance write, whichever accounts they land in. A sponsored transaction
-    /// that also touches the sender's account pays for that second access in
+    /// also touches the sender's account and pays for that second access in
     /// `sender_access_cost`. The base also covers the sender's cold
     /// `policy_manager` SLOAD: whether the sender's actor is policy-gated is
     /// state, so every transaction pays the read that authorization performs
