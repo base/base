@@ -13,6 +13,7 @@ workspace = true
 
 [dependencies]
 # workspace
+base-common-blobs.workspace = true
 base-common-genesis.workspace = true
 
 # alloy
@@ -90,6 +91,7 @@ std = [
 	"alloy-rlp/std",
 	"alloy-rpc-types-engine/std",
 	"alloy-rpc-types-eth/std",
+	"base-common-blobs/std",
 	"base-common-consensus/std",
 	"base-common-genesis/std",
 	"base-common-rpc-types-engine/std",

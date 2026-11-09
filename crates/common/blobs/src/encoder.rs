@@ -1,11 +1,8 @@
 //! EIP-4844 blob encoder.
 
-use std::sync::Arc;
+use alloc::{boxed::Box, vec};
 
 use alloy_eips::eip4844::{BYTES_PER_BLOB, Blob, VERSIONED_HASH_VERSION_KZG};
-use base_protocol::{
-    BLOB_MAX_DATA_SIZE as PROTOCOL_BLOB_MAX_DATA_SIZE, DERIVATION_VERSION_0, Frame,
-};
 
 /// Errors returned by [`BlobEncoder::encode`].
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -35,31 +32,10 @@ impl BlobEncoder {
     /// bytes (4 x 31 payload bytes + 3 reassembled bytes). With 1024 rounds that
     /// gives `127 * 1024 = 130_048` bytes, minus 4 bytes for the version +
     /// 3-byte length header in field element 0.
-    pub const BLOB_MAX_DATA_SIZE: usize = PROTOCOL_BLOB_MAX_DATA_SIZE;
+    pub const BLOB_MAX_DATA_SIZE: usize = (4 * 31 + 3) * Self::BLOB_ENCODING_ROUNDS - 4;
 
     /// Number of encoding rounds (one per group of 4 field elements).
     pub const BLOB_ENCODING_ROUNDS: usize = 1024;
-
-    /// Per-frame encoding overhead: 16 (`channel_id`) + 2 (`frame_number`) + 4 (`data_len`) + 1 (`is_last`).
-    ///
-    /// The blob payload for N frames is:
-    /// `1 (DERIVATION_VERSION_0) + N * FRAME_OVERHEAD + sum(frame.data.len())`.
-    pub const FRAME_OVERHEAD: usize = 23;
-
-    /// Pack multiple frames into a single blob payload.
-    ///
-    /// Encodes `[DERIVATION_VERSION_0] ++ frame0.encode() ++ frame1.encode() ++ …`
-    /// into one blob. The derivation pipeline's `Frame::parse_frames` uses a
-    /// `while offset < len` loop, so all packed frames are decoded correctly.
-    pub fn encode_packed(frames: &[Arc<Frame>]) -> Result<Box<Blob>, BlobEncodeError> {
-        let encoded_size: usize = frames.iter().map(|f| Self::FRAME_OVERHEAD + f.data.len()).sum();
-        let mut data = Vec::with_capacity(1 + encoded_size);
-        data.push(DERIVATION_VERSION_0);
-        for frame in frames {
-            data.extend_from_slice(&frame.encode());
-        }
-        Self::encode(&data)
-    }
 
     /// Encode `data` into a single EIP-4844 [`Blob`].
     ///
@@ -115,6 +91,8 @@ impl BlobEncoder {
 
 #[cfg(test)]
 mod tests {
+    use alloc::vec::Vec;
+
     use alloy_eips::eip4844::BYTES_PER_BLOB;
     use rstest::rstest;
 
@@ -122,6 +100,7 @@ mod tests {
     use crate::BlobDecoder;
 
     #[rstest]
+    #[case::empty(b"")]
     #[case::single_byte(b"x")]
     #[case::hello(b"hello")]
     #[case::zeros(&[0u8; 128])]

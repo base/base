@@ -14,6 +14,7 @@ workspace = true
 # Protocol
 base-metrics.workspace = true
 base-protocol.workspace = true
+base-common-blobs.workspace = true
 base-common-genesis.workspace = true
 base-consensus-upgrades.workspace = true
 

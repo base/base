@@ -27,35 +27,6 @@ use crate::{ParkedPredicateIndex, ValidityMetrics, ValidityPredicateKey};
 /// off the build path; see [`RestingPredicateStore::finish`].
 pub const RESTING_UNSEEN_RETAINED_BLOCKS: u64 = 10;
 
-/// Mode for holding back validity transactions that rest under an unchanged predicate.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
-#[serde(rename_all = "snake_case")]
-pub enum RestingPredicateMode {
-    /// Resting transactions are not tracked.
-    #[default]
-    Off,
-    /// Resting transactions are tracked and still evaluated. A resting transaction whose
-    /// predicates match is counted as a mismatch, which would be a missed inclusion under
-    /// enforcement.
-    Shadow,
-    /// Resting transactions are parked without being evaluated until a state change that can
-    /// satisfy their predicate wakes them.
-    Enforce,
-}
-
-impl RestingPredicateMode {
-    /// Returns whether resting transactions are tracked.
-    pub const fn is_enabled(&self) -> bool {
-        matches!(self, Self::Shadow | Self::Enforce)
-    }
-
-    /// Returns whether resting transactions are held back.
-    pub const fn is_enforced(&self) -> bool {
-        matches!(self, Self::Enforce)
-    }
-}
-
 /// Blocks in which a resting transaction was last evaluated and last yielded.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RestingMember {
@@ -456,15 +427,6 @@ impl SharedRestingPredicates {
     /// Removes a member, returning whether it was present.
     pub fn remove(&self, transaction_hash: TxHash) -> bool {
         self.inner.lock().predicates.remove(transaction_hash)
-    }
-
-    /// Returns the member for a transaction with `conditions`.
-    pub fn member(
-        &self,
-        transaction_hash: TxHash,
-        conditions: &ValidityConditions,
-    ) -> Option<RestingMember> {
-        self.inner.lock().predicates.member(transaction_hash, conditions)
     }
 
     /// Removes the members whose predicate may have changed in `state`, one committed

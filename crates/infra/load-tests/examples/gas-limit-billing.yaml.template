@@ -1,0 +1,55 @@
+# Local devnet gas-limit billing demo profile (see docs/guides/GAS_LIMIT_BILLING.md).
+# Rendered by `just load-test gas-limit-billing`; do not run this template directly.
+#
+# Every sender submits validity transactions carrying always-true predicates. The 10% priority-lead
+# cohort sends `revert_arb` calls: a 20x tip, a 500k declared gas limit (about 23x what the call
+# uses), and a selector `DoubleCounter` does not implement, so each one passes its predicates and
+# reverts after ~21-25k gas. The remaining 90% are regular transactions at the baseline tip:
+# `StorageFiller.fillStorage` writing four fresh slots, which uses ~90% of its ~122k declared limit,
+# the shape of an arbitrage that actually executes. The summary's `by_cohort` breakdown compares
+# what each cohort reserved, used, and paid.
+#
+# Sized for the devnet: 200 ms blocks with a 6,000,000 block gas limit, and a builder started with
+# L2_BUILDER_PREDICATE_EVAL_HARD_CUTOFF_MS=2 (about 40 predicate evaluations per block at ~0.05 ms
+# each). The ~20 reverting-arb senders are evaluated first every block; regular candidates queue
+# behind them, and with six transactions in flight per sender the queue outgrows what the budget
+# clears, so some regular transactions reach their 48 s expiry without ever being evaluated.
+
+transaction_submission_rpcs:
+  - "http://localhost:7545"
+query_rpc: "http://localhost:7545"
+txpool_nodes:
+  - "http://localhost:7545"
+  - "http://localhost:8545"
+  - "http://localhost:8645"
+
+sender_count: 200
+target_gps: 600000000
+block_time: "200ms"
+in_flight_per_sender: 6
+max_total_in_flight: 1200
+max_concurrent_submit_requests: 64
+batch_size: 1
+duration: "60s"
+seed: 8675309
+# 1 ETH per sender: the pool admits a reverting arb only when the sender can cover
+# gas_limit * max_fee for every one of its in-flight transactions.
+funding_amount: "1000000000000000000"
+
+transactions:
+  - weight: 100
+    type: storage
+    contract: "__STORAGE_FILLER__"
+    slots_per_tx: 4
+
+validity:
+  ratio: 1.0
+  priority_lead_ratio: 0.10
+  priority_lead_multiplier: 20
+  priority_fee_divisor: 1
+  priority_lead_payload:
+    type: revert_arb
+    contract: "__DOUBLE_COUNTER__"
+    gas_limit: 500000
+  predicates:
+__VALIDITY_PREDICATES__

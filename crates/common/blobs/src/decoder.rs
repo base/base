@@ -1,5 +1,7 @@
 //! EIP-4844 blob decoder.
 
+use alloc::vec;
+
 use alloy_eips::eip4844::{BYTES_PER_BLOB, Blob, VERSIONED_HASH_VERSION_KZG};
 use alloy_primitives::Bytes;
 
@@ -38,16 +40,12 @@ pub enum BlobDecodeError {
 
 /// Decodes Base EIP-4844 blobs back to raw byte payloads.
 ///
-/// This is the inverse of
-/// [`BlobEncoder::encode`](super::BlobEncoder::encode) and mirrors the
-/// decoding logic from `BlobData::decode()` in `base-consensus-derive`.
+/// This is the inverse of [`BlobEncoder::encode`](super::BlobEncoder::encode),
+/// and is the decoder the derivation pipeline uses for blob data.
 #[derive(Debug)]
 pub struct BlobDecoder;
 
 impl BlobDecoder {
-    /// Number of encoding rounds (one per group of 4 field elements).
-    const BLOB_ENCODING_ROUNDS: usize = 1024;
-
     /// Decode a [`Blob`] back to the raw payload bytes.
     ///
     /// Returns a [`BlobDecodeError`] if the blob has an invalid encoding
@@ -57,7 +55,7 @@ impl BlobDecoder {
 
         // Validate encoding version.
         let version = data[VERSIONED_HASH_VERSION_KZG as usize];
-        if version != 0 {
+        if version != BlobEncoder::BLOB_ENCODING_VERSION {
             return Err(BlobDecodeError::InvalidEncodingVersion { version });
         }
 
@@ -91,7 +89,7 @@ impl BlobDecoder {
         output_pos = Self::reassemble_bytes(output_pos, &encoded_byte, &mut output);
 
         // --- Rounds 1..1024 ---
-        for _ in 1..Self::BLOB_ENCODING_ROUNDS {
+        for _ in 1..BlobEncoder::BLOB_ENCODING_ROUNDS {
             if output_pos >= length {
                 break;
             }
@@ -156,6 +154,8 @@ impl BlobDecoder {
 
 #[cfg(test)]
 mod tests {
+    use alloc::{boxed::Box, vec::Vec};
+
     use alloy_eips::eip4844::{BYTES_PER_BLOB, Blob, VERSIONED_HASH_VERSION_KZG};
     use rstest::rstest;
 

@@ -5,9 +5,12 @@
 //! `block_number` predicates) against a fresh devnet whose builder enforces resting predicates,
 //! then scrapes the builder's Prometheus endpoint the way `base-bench snapshot` does and checks
 //! that the flattened keys the benchmark allowlists are present with the expected shape.
+//!
+//! The devnet activates Denim at genesis: the native builder only parks resting transactions
+//! while one-shot payload building is active, which is a Denim feature, so a pre-Denim devnet
+//! would never populate the resting series.
 
 use alloy_signer_local::PrivateKeySigner;
-use base_builder_core::RestingPredicateMode;
 use base_load_tests::{
     LoadTestExecutor, LoadTestRunHooks, LoadTestRunOptions, MetricsSummary, SubmitCohortLabel,
     TestConfig,
@@ -19,12 +22,19 @@ use base_system_tests::{
 use eyre::Result;
 
 /// Mirrors the `validity-resting` benchmark workload (every transaction is unsatisfied until two
-/// blocks after it was prepared and expires thirty blocks later) with an always-true balance and
+/// seconds after it was prepared and expires a minute later) with an always-true balance and
 /// storage predicate in front, so account and slot reads are exercised too. Scaled down for a devnet.
+///
+/// The block time must match the devnet the stack builds: activating Denim at genesis puts the
+/// chain on its 200 ms cadence, and the load runner's block watcher paces its confirmation scans
+/// by this interval, so a workload slower than the chain schedules its scans minutes out and
+/// observes no inclusions. The block-number offsets are counted in blocks, so they are stated in
+/// 200 ms units: ten blocks until the resting predicate is satisfied, three hundred (the 60 s
+/// ingress expiry window) until it expires.
 const WORKLOAD: &str = r#"
 transaction_submission_rpcs: ["http://placeholder"]
 sender_count: 20
-block_time: "2s"
+block_time: "200ms"
 in_flight_per_sender: 8
 batch_size: 20
 duration: "30s"
@@ -37,8 +47,8 @@ validity:
   predicates:
     - {type: balance, address: sender, op: ">=", value: "0"}
     - {type: storage, address: sender, slot: {kind: fixed, value: "0x0"}, op: ">=", value: "0"}
-    - {type: block_number, op: ">=", offset: "2"}
-    - {type: block_number, op: "<", offset: "30"}
+    - {type: block_number, op: ">=", offset: "10"}
+    - {type: block_number, op: "<", offset: "300"}
 transactions:
   - {weight: 100, type: transfer}
 "#;
@@ -49,7 +59,7 @@ async fn validity_resting_workload_populates_benchmark_series() -> Result<()> {
     let chain_id = devnet.l2_chain_id;
     let stack = SystemTestStackBuilder::new()
         .with_devnet_config(devnet)
-        .with_resting_predicate_mode(RestingPredicateMode::Enforce)
+        .with_base_denim_activation_block(0)
         .build()
         .await?;
 
@@ -126,7 +136,7 @@ async fn validity_resting_workload_populates_benchmark_series() -> Result<()> {
     // Series that this workload must drive, each allowlisted for the benchmark visualizer.
     let positive = [
         // Resting: unsatisfied on first evaluation, parked by the enforcing iterator, released at
-        // the next block start because a block-number predicate blocked it, then matched.
+        // a later block start because a block-number predicate blocked it, then matched.
         "reth_base_builder_validity_predicate_evaluations_total_outcome_not_satisfied",
         "reth_base_builder_resting_predicate_parked_total",
         "reth_base_builder_resting_predicate_carry_released_total_reason_block_number",
@@ -143,7 +153,6 @@ async fn validity_resting_workload_populates_benchmark_series() -> Result<()> {
     }
     // Present (recorded every build) even when small.
     let present = [
-        "reth_base_builder_validity_candidate_handling_duration_avg",
         "reth_base_builder_validity_predicate_eval_duration_per_block_avg",
         "reth_base_builder_validity_predicate_evaluation_coverage_per_build_avg",
         "reth_base_builder_predicate_accounts_loaded_total_avg",
@@ -157,7 +166,7 @@ async fn validity_resting_workload_populates_benchmark_series() -> Result<()> {
         assert!(PrometheusBlockCollector::is_visualizer_metric(key), "{key} is not allowlisted");
         assert!(totals.contains_key(key), "{key} missing from scrape");
     }
-    // Nothing expired within the 30-block window.
+    // Nothing expired within the 300-block window.
     assert_eq!(
         totals.get("reth_base_builder_validity_predicate_evaluations_total_outcome_expired"),
         None,

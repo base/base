@@ -2,9 +2,9 @@
 //!
 //! Under sustained validity traffic a builder can carry over 100k resting members, and an unseen
 //! sweep can drop tens of thousands of them at once. Work done in
-//! `RestingPredicates::begin_block` runs between the forkchoice update and flashblock
-//! scheduling, so every millisecond spent there delays the first flashblock and can cost whole
-//! flashblocks. This benchmark measures the block-start path and the unseen sweep separately.
+//! `RestingPredicates::begin_block` runs on the build path before transaction selection, so every
+//! millisecond spent there comes out of the block's build budget. This benchmark measures the
+//! block-start path and the unseen sweep separately.
 //! Before the sweep moved to the end of the block, `begin_block/sweep_block` included it.
 //!
 //! ```sh

@@ -113,6 +113,19 @@ every range read the whole window. The DataPilot table entry for v2 uses:
 
 with a small `NUM_SLICES` (DataPilot recommends 2-16 for incremental loads).
 
+Before fetching, the range split runs `MIN(event_seq)`, `MAX(event_seq)`, and
+`COUNT(*)` over the whole incremental window. The BRIN index on `ingested_at`
+only narrows which blocks to read, so that query reads every row of the window
+from the heap. Migration 008 adds a btree index on `(ingested_at, event_seq)`
+that answers it with an index-only scan. Because `sqlx` runs migrations in a
+transaction, 008 builds that index only on day partitions that are still empty,
+and later partitions get it when they attach. Populated partitions stay without
+it until retention drops them, so extraction windows that reach back into
+them still read their heap. 008 takes a `SHARE` lock on the parent tables, which
+queues inserts until it commits, and gives up after a 5 s `lock_timeout`; rerun
+`migrate up` if it times out. The API does not depend on 008, so it can roll
+out before or after the migration.
+
 Classes: hot (high-volume proxy and builder-decision events), warm (ingress,
 simulation success, txpool-forward), and cold (failures, drops, and inclusion).
 An event's class comes from its `event_type` at ingest and is

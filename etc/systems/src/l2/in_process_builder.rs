@@ -9,7 +9,7 @@ use std::{any::Any, path::PathBuf, sync::Arc, time::Duration};
 
 use alloy_primitives::hex::ToHexExt;
 use alloy_rpc_types_engine::JwtSecret;
-use base_builder_core::{BuilderConfig, NativePayloadServiceBuilder, RestingPredicateMode};
+use base_builder_core::{BuilderConfig, NativePayloadServiceBuilder};
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_txpool::{
     BasePooledTransaction, BuilderApiImpl, BuilderApiServer, DEFAULT_MAX_VALIDITY_PREDICATES,
@@ -62,9 +62,6 @@ pub struct InProcessBuilderConfig {
     pub metrics_port: Option<u16>,
     /// Staged signature policy used by both validity-bearing RPC endpoints.
     pub validity_signature_mode: ValiditySignatureMode,
-    /// How the native payload builder tracks validity transactions whose predicates did not
-    /// match. `Off` evaluates every candidate on every build.
-    pub resting_predicate_mode: RestingPredicateMode,
     /// Additional node extensions installed after the builder's built-in RPC wiring.
     ///
     /// Lets downstream consumers layer their own [`BaseNodeExtension`] onto the standard
@@ -153,10 +150,7 @@ impl InProcessBuilder {
             Ipv4Addr::LOCALHOST.into(),
             config.metrics_port.unwrap_or_else(|| ports.claim()),
         );
-        let builder_config = BuilderConfig {
-            resting_predicate_mode: config.resting_predicate_mode,
-            ..Default::default()
-        };
+        let builder_config = BuilderConfig { ..Default::default() };
 
         let da_config = builder_config.da_config.clone();
         let gas_limit_config = builder_config.gas_limit_config.clone();

@@ -2,7 +2,7 @@ use base_prover_service_protocol::{
     PROOF_REQUEST_CANCELLED_MESSAGE, ProofResult as ProtocolProofResult, ZkBackend,
 };
 use chrono::Utc;
-use sqlx::{PgPool, Result, Row};
+use sqlx::{FromRow, PgPool, Result, Row};
 use uuid::Uuid;
 
 use crate::{
@@ -47,15 +47,15 @@ impl ProofRequestRepo {
         .bind(prepared.id)
         .bind(&prepared.session_id)
         .bind(&prepared.request_payload)
-        .bind(prepared.api_proof_type.as_str())
-        .bind(prepared.zk_vm.map(|zk_vm| zk_vm.as_str()))
-        .bind(prepared.tee_kind.map(|tee_kind| tee_kind.as_str()))
+        .bind(prepared.api_proof_type)
+        .bind(prepared.zk_vm)
+        .bind(prepared.tee_kind)
         .bind(prepared.zk_backend.map(|zk_backend| zk_backend.as_str()))
         .bind(prepared.start_block_number)
         .bind(prepared.number_of_blocks_to_prove)
         .bind(prepared.sequence_window)
-        .bind(prepared.proof_type.map(|proof_type| proof_type.as_str()))
-        .bind(ProofStatus::Created.as_str())
+        .bind(prepared.proof_type)
+        .bind(ProofStatus::Created)
         .bind(&prepared.prover_address)
         .bind(&prepared.l1_head)
         .execute(&self.pool)
@@ -89,15 +89,15 @@ impl ProofRequestRepo {
         .bind(prepared.id)
         .bind(&prepared.session_id)
         .bind(&prepared.request_payload)
-        .bind(prepared.api_proof_type.as_str())
-        .bind(prepared.zk_vm.map(|zk_vm| zk_vm.as_str()))
-        .bind(prepared.tee_kind.map(|tee_kind| tee_kind.as_str()))
+        .bind(prepared.api_proof_type)
+        .bind(prepared.zk_vm)
+        .bind(prepared.tee_kind)
         .bind(prepared.zk_backend.map(|zk_backend| zk_backend.as_str()))
         .bind(prepared.start_block_number)
         .bind(prepared.number_of_blocks_to_prove)
         .bind(prepared.sequence_window)
-        .bind(prepared.proof_type.map(|proof_type| proof_type.as_str()))
-        .bind(ProofStatus::Created.as_str())
+        .bind(prepared.proof_type)
+        .bind(ProofStatus::Created)
         .bind(&prepared.prover_address)
         .bind(&prepared.l1_head)
         .execute(&mut *tx)
@@ -135,21 +135,18 @@ impl ProofRequestRepo {
         let existing_id: Uuid = row.get("id");
         let params = CreateRequestParams {
             request_payload: &prepared.request_payload,
-            api_proof_type: prepared.api_proof_type.as_str(),
-            zk_vm: prepared.zk_vm.map(|zk_vm| zk_vm.as_str()),
-            tee_kind: prepared.tee_kind.map(|tee_kind| tee_kind.as_str()),
+            api_proof_type: prepared.api_proof_type.into(),
+            zk_vm: prepared.zk_vm.map(Into::into),
+            tee_kind: prepared.tee_kind.map(Into::into),
             zk_backend: prepared.zk_backend.map(|zk_backend| zk_backend.as_str()),
             start_block_number: prepared.start_block_number,
             number_of_blocks_to_prove: prepared.number_of_blocks_to_prove,
             sequence_window: prepared.sequence_window,
-            proof_type: prepared.proof_type.map(|proof_type| proof_type.as_str()),
+            proof_type: prepared.proof_type.map(Into::into),
             prover_address: prepared.prover_address.as_deref(),
             l1_head: prepared.l1_head.as_deref(),
         };
-        let status_str: &str = row.get("status");
-        let status = ProofStatus::try_from(status_str).map_err(|e| {
-            sqlx::Error::Protocol(format!("Unknown proof status '{status_str}': {e}"))
-        })?;
+        let status: ProofStatus = row.try_get("status")?;
 
         let mismatch = match status {
             ProofStatus::Failed => params.first_mismatch_allowing_l1_head_replacement(&row),
@@ -199,11 +196,11 @@ impl ProofRequestRepo {
                     WHERE proof_request_id = $3 AND status IN ($4, $5)
                     "#,
                 )
-                .bind(SessionStatus::Failed.as_str())
+                .bind(SessionStatus::Failed)
                 .bind("cleared during worker-queue requeue")
                 .bind(existing_id)
-                .bind(SessionStatus::Submitting.as_str())
-                .bind(SessionStatus::Running.as_str())
+                .bind(SessionStatus::Submitting)
+                .bind(SessionStatus::Running)
                 .execute(&mut *tx)
                 .await?;
 
@@ -233,7 +230,7 @@ impl ProofRequestRepo {
                     WHERE id = $5
                     "#,
                 )
-                .bind(ProofStatus::Created.as_str())
+                .bind(ProofStatus::Created)
                 .bind(&prepared.request_payload)
                 .bind(&prepared.l1_head)
                 .bind(prepared.zk_backend.map(|backend| backend.as_str()))
@@ -286,10 +283,7 @@ impl ProofRequestRepo {
             return Ok(CancelProofRequestOutcome::UnsupportedBackend);
         }
 
-        let status_str: &str = row.get("status");
-        let status = ProofStatus::try_from(status_str).map_err(|e| {
-            sqlx::Error::Protocol(format!("Unknown proof status '{status_str}': {e}"))
-        })?;
+        let status: ProofStatus = row.try_get("status")?;
         if status == ProofStatus::Failed
             && row.get::<Option<&str>, _>("error_message") == Some(PROOF_REQUEST_CANCELLED_MESSAGE)
         {
@@ -355,10 +349,7 @@ impl ProofRequestRepo {
             return Ok(DeleteProofRequestOutcome::NotFound);
         };
 
-        let status_str: &str = row.get("status");
-        let status = ProofStatus::try_from(status_str).map_err(|e| {
-            sqlx::Error::Protocol(format!("Unknown proof status '{status_str}': {e}"))
-        })?;
+        let status: ProofStatus = row.try_get("status")?;
         if !matches!(status, ProofStatus::Succeeded | ProofStatus::Failed) {
             tx.rollback().await?;
             return Ok(DeleteProofRequestOutcome::NotCompleted(status));
@@ -471,21 +462,17 @@ impl ProofRequestRepo {
 
         let row = match req.api_proof_type {
             ApiProofType::Tee => {
-                let tee_kinds: Vec<String> =
-                    req.tee_kinds.iter().map(|kind| kind.as_str().to_owned()).collect();
                 sqlx::query(&sql)
                     .bind(&req.worker_id)
                     .bind(lock_id)
                     .bind(i64::from(req.lock_duration_seconds))
-                    .bind(req.api_proof_type.as_str())
-                    .bind(&tee_kinds)
+                    .bind(req.api_proof_type)
+                    .bind(&req.tee_kinds)
                     .bind(i64::from(req.max_attempts))
                     .fetch_optional(&self.pool)
                     .await?
             }
             ApiProofType::Compressed | ApiProofType::SnarkPlonk => {
-                let zk_vms: Vec<String> =
-                    req.zk_vms.iter().map(|vm| vm.as_str().to_owned()).collect();
                 let zk_backends: Vec<String> = req
                     .zk_backends
                     .iter()
@@ -497,8 +484,8 @@ impl ProofRequestRepo {
                     .bind(&req.worker_id)
                     .bind(lock_id)
                     .bind(i64::from(req.lock_duration_seconds))
-                    .bind(req.api_proof_type.as_str())
-                    .bind(&zk_vms)
+                    .bind(req.api_proof_type)
+                    .bind(&req.zk_vms)
                     .bind(&zk_backends)
                     .bind(i64::from(req.max_attempts))
                     .fetch_optional(&self.pool)
@@ -661,11 +648,7 @@ impl ProofRequestRepo {
         let row = sqlx::query(&sql)
             .bind(job.id)
             .bind(if exhausted { "FAILED" } else { "PENDING" })
-            .bind(if exhausted {
-                ProofStatus::Failed.as_str()
-            } else {
-                ProofStatus::Created.as_str()
-            })
+            .bind(if exhausted { ProofStatus::Failed } else { ProofStatus::Created })
             .bind(exhausted.then_some(req.error_message.as_str()))
             .fetch_one(&mut *tx)
             .await?;
@@ -881,12 +864,12 @@ impl ProofRequestRepo {
             return Ok(RetryOutcome::Skipped);
         };
 
-        let status_str: &str = row.get("status");
-        let job_status_str: &str = row.get("job_status");
+        let status: ProofStatus = row.try_get("status")?;
+        let job_status: ProofJobStatus = row.try_get("job_status")?;
         let lock_expires_at: Option<chrono::DateTime<Utc>> = row.get("lock_expires_at");
-        let is_pending = status_str == ProofStatus::Pending.as_str();
-        let is_migration_parked_running = status_str == ProofStatus::Running.as_str()
-            && job_status_str == ProofJobStatus::Claimed.as_str()
+        let is_pending = status == ProofStatus::Pending;
+        let is_migration_parked_running = status == ProofStatus::Running
+            && job_status == ProofJobStatus::Claimed
             && lock_expires_at.is_none();
 
         if !is_pending && !is_migration_parked_running {
@@ -908,11 +891,11 @@ impl ProofRequestRepo {
             WHERE proof_request_id = $3 AND status IN ($4, $5)
             "#,
         )
-        .bind(SessionStatus::Failed.as_str())
+        .bind(SessionStatus::Failed)
         .bind("cleared during stuck-request retry")
         .bind(id)
-        .bind(SessionStatus::Submitting.as_str())
-        .bind(SessionStatus::Running.as_str())
+        .bind(SessionStatus::Submitting)
+        .bind(SessionStatus::Running)
         .execute(&mut *tx)
         .await?;
 
@@ -936,7 +919,7 @@ impl ProofRequestRepo {
             );
 
             let row = sqlx::query(&sql)
-                .bind(ProofStatus::Failed.as_str())
+                .bind(ProofStatus::Failed)
                 .bind(format!(
                     "{error_message} (max retries exceeded after {retry_count} attempts)"
                 ))
@@ -972,7 +955,7 @@ impl ProofRequestRepo {
             WHERE id = $2
             "#,
         )
-        .bind(ProofStatus::Created.as_str())
+        .bind(ProofStatus::Created)
         .bind(id)
         .execute(&mut *tx)
         .await?;
@@ -1001,7 +984,7 @@ impl ProofRequestRepo {
         .fetch_all(&self.pool)
         .await?;
 
-        rows.iter().map(row_to_proof_session).collect()
+        rows.iter().map(ProofSession::from_row).collect()
     }
 
     /// Get the active (`SUBMITTING` or `RUNNING`) backend session for a public
@@ -1028,11 +1011,11 @@ impl ProofRequestRepo {
             "#,
         )
         .bind(&session_id)
-        .bind(session_type.as_str())
+        .bind(session_type)
         .fetch_optional(&self.pool)
         .await?;
 
-        row.map(|r| row_to_proof_session(&r)).transpose()
+        row.as_ref().map(ProofSession::from_row).transpose()
     }
 
     /// Record (insert or update) the backend session for a claimed worker job.
@@ -1075,10 +1058,7 @@ impl ProofRequestRepo {
             claim.get::<Option<&str>, _>("error_message") == Some(PROOF_REQUEST_CANCELLED_MESSAGE);
 
         let proof_request_id: Uuid = claim.get("id");
-        let job_status_str: &str = claim.get("job_status");
-        let job_status = ProofJobStatus::try_from(job_status_str).map_err(|e| {
-            sqlx::Error::Protocol(format!("Unknown job_status '{job_status_str}': {e}"))
-        })?;
+        let job_status: ProofJobStatus = claim.try_get("job_status")?;
         let lock_id: Option<Uuid> = claim.get("lock_id");
         let worker_id: Option<String> = claim.get("worker_id");
         let lock_expires_at: Option<chrono::DateTime<Utc>> = claim.get("lock_expires_at");
@@ -1115,13 +1095,13 @@ impl ProofRequestRepo {
             "#,
         )
         .bind(proof_request_id)
-        .bind(req.session_type.as_str())
+        .bind(req.session_type)
         .bind(&req.backend_session_id)
         .fetch_all(&mut *tx)
         .await?;
 
         for row in existing_backend_sessions {
-            let session = row_to_proof_session(&row)?;
+            let session = ProofSession::from_row(&row)?;
             if session.status.is_terminal() {
                 return Ok(RecordSessionOutcome::TerminalBackendSession(session));
             }
@@ -1141,7 +1121,7 @@ impl ProofRequestRepo {
             "#,
         )
         .bind(proof_request_id)
-        .bind(req.session_type.as_str())
+        .bind(req.session_type)
         .fetch_optional(&mut *tx)
         .await?
         .map(|r| r.get("id"));
@@ -1160,7 +1140,7 @@ impl ProofRequestRepo {
                 "#,
             )
             .bind(&req.backend_session_id)
-            .bind(req.status.as_str())
+            .bind(req.status)
             .bind(active_id)
             .bind(&req.error_message)
             .fetch_optional(&mut *tx)
@@ -1186,15 +1166,15 @@ impl ProofRequestRepo {
                 "#,
             )
             .bind(proof_request_id)
-            .bind(req.session_type.as_str())
+            .bind(req.session_type)
             .bind(&req.backend_session_id)
-            .bind(req.status.as_str())
+            .bind(req.status)
             .bind(&req.error_message)
             .fetch_one(&mut *tx)
             .await?
         };
 
-        let session = row_to_proof_session(&row)?;
+        let session = ProofSession::from_row(&row)?;
         tx.commit().await?;
 
         Ok(RecordSessionOutcome::Recorded(session))
@@ -1267,7 +1247,7 @@ impl ProofRequestRepo {
                 LIMIT $2
                 "#,
             )
-            .bind(status.as_str())
+            .bind(status)
             .bind(limit)
             .fetch_all(&self.pool)
             .await?
@@ -1346,7 +1326,6 @@ impl ProofRequestRepo {
 
             futures::try_join!(rows, count)?
         } else {
-            let statuses = status_filter.iter().map(ProofStatus::as_str).collect::<Vec<_>>();
             let rows = sqlx::query_as::<_, ProofRequestListItem>(
                 r#"
                 SELECT
@@ -1380,7 +1359,7 @@ impl ProofRequestRepo {
                 LIMIT $2 OFFSET $3
                 "#,
             )
-            .bind(&statuses)
+            .bind(status_filter)
             .bind(page.limit())
             .bind(page.offset())
             .fetch_all(&self.pool);
@@ -1388,7 +1367,7 @@ impl ProofRequestRepo {
             let count = sqlx::query_as::<_, (i64,)>(
                 "SELECT COUNT(*) FROM proof_requests WHERE status::text = ANY($1::text[])",
             )
-            .bind(&statuses)
+            .bind(status_filter)
             .fetch_one(&self.pool);
 
             futures::try_join!(rows, count)?
@@ -1539,31 +1518,15 @@ fn row_to_proof_request(row: &sqlx::postgres::PgRow) -> Result<ProofRequest> {
     let prover_address = row.get::<Option<String>, _>("prover_address");
     let l1_head = row.get::<Option<String>, _>("l1_head");
 
-    let status_str: &str = row.get("status");
-    let status = ProofStatus::try_from(status_str)
-        .map_err(|e| sqlx::Error::Protocol(format!("Unknown proof status '{status_str}': {e}")))?;
-
-    let proof_type = row
-        .get::<Option<&str>, _>("proof_type")
-        .map(|proof_type_str| {
-            ProofType::try_from(proof_type_str).map_err(|e| {
-                sqlx::Error::Protocol(format!("Unknown proof_type '{proof_type_str}': {e}"))
-            })
-        })
-        .transpose()?;
-
-    let api_proof_type = match row.get::<Option<&str>, _>("api_proof_type") {
-        Some(value) => ApiProofType::try_from(value)
-            .map_err(|e| sqlx::Error::Protocol(format!("Unknown api_proof_type '{value}': {e}")))?,
-        None => api_proof_type_for_backend(proof_type),
-    };
-
+    let status: ProofStatus = row.try_get("status")?;
+    let proof_type: Option<ProofType> = row.try_get("proof_type")?;
+    let api_proof_type = row
+        .try_get::<Option<ApiProofType>, _>("api_proof_type")?
+        .unwrap_or_else(|| api_proof_type_for_backend(proof_type));
     let zk_vm = row
-        .get::<Option<&str>, _>("zk_vm")
-        .map(parse_zk_vm_kind)
-        .transpose()?
+        .try_get::<Option<ZkVmKind>, _>("zk_vm")?
         .or_else(|| fallback_zk_vm_for_request(api_proof_type));
-    let tee_kind = row.get::<Option<&str>, _>("tee_kind").map(parse_tee_kind).transpose()?;
+    let tee_kind: Option<TeeKind> = row.try_get("tee_kind")?;
     let mut request_payload =
         row.get::<Option<serde_json::Value>, _>("request_payload").ok_or_else(|| {
             sqlx::Error::Protocol(format!("proof request {session_id} has no request_payload"))
@@ -1595,16 +1558,6 @@ fn row_to_proof_request(row: &sqlx::postgres::PgRow) -> Result<ProofRequest> {
         completed_at: row.get("completed_at"),
         retry_count: row.get("retry_count"),
     })
-}
-
-fn parse_zk_vm_kind(value: &str) -> Result<ZkVmKind> {
-    ZkVmKind::try_from(value)
-        .map_err(|e| sqlx::Error::Protocol(format!("Unknown zk_vm '{value}': {e}")))
-}
-
-fn parse_tee_kind(value: &str) -> Result<TeeKind> {
-    TeeKind::try_from(value)
-        .map_err(|e| sqlx::Error::Protocol(format!("Unknown tee_kind '{value}': {e}")))
 }
 
 /// Columns returned by the claim query.
@@ -1687,10 +1640,7 @@ fn claim_query(api_proof_type: ApiProofType) -> String {
 fn row_to_proof_job(row: &sqlx::postgres::PgRow) -> Result<ProofJob> {
     let base = row_to_proof_request(row)?;
 
-    let job_status_str: &str = row.get("job_status");
-    let job_status = ProofJobStatus::try_from(job_status_str).map_err(|e| {
-        sqlx::Error::Protocol(format!("Unknown job_status '{job_status_str}': {e}"))
-    })?;
+    let job_status: ProofJobStatus = row.try_get("job_status")?;
 
     Ok(ProofJob {
         id: base.id,
@@ -1711,31 +1661,6 @@ fn row_to_proof_job(row: &sqlx::postgres::PgRow) -> Result<ProofJob> {
         created_at: base.created_at,
         updated_at: base.updated_at,
         completed_at: base.completed_at,
-    })
-}
-
-/// Helper function to convert a database row to `ProofSession`
-fn row_to_proof_session(row: &sqlx::postgres::PgRow) -> Result<ProofSession> {
-    let status_str: &str = row.get("status");
-    let status = SessionStatus::try_from(status_str).map_err(|e| {
-        sqlx::Error::Protocol(format!("Unknown session status '{status_str}': {e}"))
-    })?;
-
-    let session_type_str: &str = row.get("session_type");
-    let session_type = SessionType::try_from(session_type_str).map_err(|e| {
-        sqlx::Error::Protocol(format!("Unknown session type '{session_type_str}': {e}"))
-    })?;
-
-    Ok(ProofSession {
-        id: row.get("id"),
-        proof_request_id: row.get("proof_request_id"),
-        session_type,
-        backend_session_id: row.get("backend_session_id"),
-        status,
-        error_message: row.get("error_message"),
-        metadata: row.get("metadata"),
-        created_at: row.get("created_at"),
-        completed_at: row.get("completed_at"),
     })
 }
 

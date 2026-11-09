@@ -22,6 +22,10 @@ pub struct SentTransaction {
     pub tx_hash: TxHash,
     /// Sender address used for in-flight accounting.
     pub from: Address,
+    /// Gas limit declared by the signed transaction.
+    pub gas_limit: u64,
+    /// Priority fee per gas the transaction was signed with.
+    pub priority_fee: u128,
     /// Calibrated execution gas used for pacing.
     pub estimated_gas: u64,
     /// Whether this transaction belongs to the measured cohort.
@@ -41,6 +45,9 @@ pub struct BlockObservation {
     /// Block header millisecond timestamp, when the observer read one. `None` for headers
     /// with only second-resolution timestamps.
     pub timestamp_ms: Option<u64>,
+    /// Block base fee in wei, so a landed transaction's tip can be read off its receipt's
+    /// effective gas price.
+    pub base_fee: u128,
 }
 
 /// Load-test transactions matched while scanning one canonical block.
@@ -119,6 +126,8 @@ struct PendingTransaction {
     /// then), comparable with block timestamps.
     submitted_at: SystemTime,
     measured: bool,
+    gas_limit: u64,
+    priority_fee: u128,
     estimated_gas: u64,
     cohort: SubmitCohort,
 }
@@ -209,6 +218,8 @@ impl ResultsTracker {
                     submit_time,
                     submitted_at,
                     measured,
+                    gas_limit: transaction.gas_limit,
+                    priority_fee: transaction.priority_fee,
                     estimated_gas: transaction.estimated_gas,
                     cohort: transaction.cohort,
                 },
@@ -483,6 +494,9 @@ impl ResultsTrackerInner {
 
         let mut metrics = TransactionMetrics::new(tx_hash, block_latency, 0, 0, Some(block.number));
         metrics.cohort = pending.cohort.to_metric_label();
+        metrics.gas_limit = pending.gas_limit;
+        metrics.priority_fee = pending.priority_fee;
+        metrics.base_fee = block.base_fee;
         metrics.confirmed_at = Some(block.observed_at);
         metrics.submit_offset_ms = block
             .timestamp_ms
@@ -527,13 +541,15 @@ mod tests {
     }
 
     fn block_at(number: u64, observed_at: Instant) -> BlockObservation {
-        BlockObservation { number, observed_at, timestamp_ms: None }
+        BlockObservation { number, observed_at, timestamp_ms: None, base_fee: 0 }
     }
 
     fn sent(tx_hash: TxHash, from: Address, measured: bool) -> SentTransaction {
         SentTransaction {
             tx_hash,
             from,
+            gas_limit: 200_000,
+            priority_fee: 0,
             estimated_gas: 21_000,
             measured,
             cohort: SubmitCohort::Plain,
@@ -575,6 +591,7 @@ mod tests {
             number: 7,
             observed_at: Instant::now(),
             timestamp_ms: Some(block_timestamp_ms),
+            base_fee: 0,
         };
         tracker.on_new_block_hashes(block, vec![tx_hash]);
 
@@ -603,6 +620,7 @@ mod tests {
             number: 7,
             observed_at: Instant::now(),
             timestamp_ms: Some(block_timestamp_ms),
+            base_fee: 0,
         };
         tracker.on_new_block_hashes(block, vec![tx_hash]);
 
@@ -627,6 +645,7 @@ mod tests {
         assert_eq!(metrics[0].block_number, Some(7), "block number from polled block");
         assert!(metrics[0].block_latency.is_some(), "landing latency must be recorded");
         assert_eq!(metrics[0].gas_used, 0, "gas backfilled later by receipt pass");
+        assert_eq!(metrics[0].gas_limit, 200_000, "declared limit is known at landing time");
         assert!(!metrics[0].reverted, "revert backfilled later by receipt pass");
         assert_eq!(tracker.landed_block_numbers(), vec![7], "block 7 tracked for receipt pass");
         assert_eq!(tracker.total_in_flight(), 0, "landing releases in-flight slot");
