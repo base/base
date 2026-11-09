@@ -271,9 +271,10 @@ example `http://localhost:9545`) is set, every
 journals nothing while the answer is `false`. The unified `base sequencer`
 binary runs the consensus node in the same process and defaults the URL to that
 node's own admin RPC (`--rpc.addr`/`--rpc.port`, requires `--rpc.enable-admin`),
-so it needs no URL. Leadership is read live rather than configured because it
-moves between sequencers without a redeploy. Until
-the first answer the builder journals; a request that fails or times out keeps
+so it needs no URL, and its gate starts closed until the first `true` answer.
+Leadership is read live rather than configured because it moves between
+sequencers without a redeploy. Until the first answer the standalone builder
+journals; a request that fails or times out keeps
 the last answer and counts in
 `base_builder_sequencer_leadership_poll_errors_total`, and
 `base_builder_sequencer_active` reports the answer in force. Events the gate

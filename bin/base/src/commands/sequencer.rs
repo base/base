@@ -95,7 +95,10 @@ impl SequencerCommand {
         let builder_api_config = builder.builder_api_config();
         // This command builds its `BaseNodeRunner` directly, so it initializes the builder's
         // transaction event journal itself. The gate keeps the journal to the active sequencer.
-        let transaction_event_gate = TransactionEventGate::default();
+        // A probed gate starts closed: execution serves RPC before the embedded consensus node
+        // can answer, and a sequencer cannot be active before that, so an open gate would only
+        // let every standby journal during startup.
+        let transaction_event_gate = TransactionEventGate::new(leadership_config.is_none());
         GlobalTransactionEventWriter::init_gated(
             transaction_events.enabled.then(|| transaction_events.writer_config()),
             transaction_event_gate.clone(),
