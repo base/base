@@ -130,7 +130,7 @@ impl ProofSubmitter {
             .for_starting_block(starting_block_number)
             .await
             .map_err(SubmitAction::Failed)?;
-        if starting_block_number.checked_add(intervals.block_interval) != Some(target_block) {
+        if starting_block_number.checked_add(intervals.block_interval.get()) != Some(target_block) {
             return Err(SubmitAction::Failed(ProposerError::Internal(format!(
                 "target_block {target_block} is not {} blocks after starting block \
                  {starting_block_number}",
@@ -194,7 +194,7 @@ impl ProofSubmitter {
         let key = game_lookup_key(
             starting_block_number,
             parent_address,
-            intervals.block_interval,
+            intervals.block_interval.get(),
             intervals.intermediate_block_interval.get(),
             intermediate_roots,
         )

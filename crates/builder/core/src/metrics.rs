@@ -19,4 +19,9 @@ base_metrics::define_metrics! {
     metering_late_arrival_latency_ms: histogram,
     #[describe("Execution time from late-arriving metering data (microseconds)")]
     metering_late_arrival_execution_time_us: histogram,
+    #[describe("1 while the consensus node reports this sequencer as active, 0 otherwise")]
+    #[no_zero]
+    sequencer_active: gauge,
+    #[describe("admin_sequencerActive requests that failed or timed out")]
+    sequencer_leadership_poll_errors_total: counter,
 }

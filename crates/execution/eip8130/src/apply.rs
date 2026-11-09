@@ -324,8 +324,6 @@ impl AccountChangeApplier {
     /// Applies one authorized signed batch's ops against `account`, advancing the
     /// channel's sequence counter. Mirrors the mutation tail of
     /// `applySignedAccountChanges`.
-    /// Returns the number of empty zero-to-zero revoke slots discounted (see
-    /// [`Self::revoke_actor_with_account_state`]), for intrinsic-gas discounting.
     ///
     /// `now` is the block timestamp in Unix seconds (the same clock as
     /// [`ActorConfig::expiry`]), used to skip lapsed replayable JIT grants; see
@@ -338,13 +336,13 @@ impl AccountChangeApplier {
         channel: AccountChangeChannel,
         sequence: u64,
         now: u64,
-    ) -> Result<u32, ApplyError> {
+    ) -> Result<(), ApplyError> {
         let mut state = storage.get_account_state(account)?;
-        let revoke_discount_slots = Self::apply_config_change_with_account_state(
+        Self::apply_config_change_with_account_state(
             storage, account, changes, channel, sequence, &mut state, now,
         )?;
         storage.set_account_state(account, state)?;
-        Ok(revoke_discount_slots)
+        Ok(())
     }
 
     /// Applies one signed batch while carrying an already-loaded account state
@@ -377,9 +375,6 @@ impl AccountChangeApplier {
     /// `0` disables the skip entirely (`expiry != 0 && expiry <= 0` is never
     /// true, so every grant is retained); callers that must price every change
     /// unconditionally, regardless of expiry, can opt into that with a `0` clock.
-    ///
-    /// Returns the number of empty zero-to-zero revoke slots discounted (see
-    /// [`Self::revoke_actor_with_account_state`]), for intrinsic-gas discounting.
     pub fn apply_config_change_with_account_state(
         storage: &mut AccountConfigurationStorage<'_>,
         account: Address,
@@ -388,7 +383,7 @@ impl AccountChangeApplier {
         sequence: u64,
         state: &mut AccountState,
         now: u64,
-    ) -> Result<u32, ApplyError> {
+    ) -> Result<(), ApplyError> {
         // Reject an empty batch before advancing the sequence. A no-op batch would
         // otherwise consume the channel's sequence (or initialize a fresh account)
         // without changing any configuration. Mirrors `applySignedAccountChanges`'s
@@ -407,7 +402,6 @@ impl AccountChangeApplier {
             && sequence as u32 == Eip8130Constants::UNSEQUENCED;
         let locked = state.is_locked(now);
 
-        let mut revoke_discount_slots = 0u32;
         for change in changes {
             match change.change_type {
                 ChangeType::AuthorizeActor => {
@@ -446,9 +440,7 @@ impl AccountChangeApplier {
                         return Err(ApplyError::AccountIsLocked);
                     }
                     let actor_id = Self::decode_revoke(&change.payload)?;
-                    revoke_discount_slots = revoke_discount_slots.saturating_add(
-                        Self::revoke_actor_with_account_state(storage, account, actor_id, state)?,
-                    );
+                    Self::revoke_actor_with_account_state(storage, account, actor_id, state)?;
                 }
                 ChangeType::IncrementLocalEpoch => {
                     Self::apply_increment_local_epoch(&change.payload, state)?;
@@ -459,7 +451,7 @@ impl AccountChangeApplier {
                 }
             }
         }
-        Ok(revoke_discount_slots)
+        Ok(())
     }
 
     /// Advances the channel's replay counter for an applied batch, mirroring the
@@ -732,24 +724,8 @@ impl AccountChangeApplier {
     /// Revokes an actor while applying inline-self changes to `state` without
     /// independently reading or writing the packed account-state slot.
     ///
-    /// Returns the number of the revoke's three conservatively reset-priced slots
-    /// that were actually empty zero-to-zero touches, for intrinsic-gas discounting
-    /// (see [`crate::IntrinsicGasInput::revoke_discount_slots`]):
-    ///
-    /// - An **explicit** actor revoke returns `0`: its `actor_config` slot is a real
-    ///   reset and its policy slots are kept at the conservative reset price.
-    /// - An **inline** secp256k1 self revoke returns the count of its three
-    ///   conservatively-priced slots that are actually zero: `actor_config` is
-    ///   always empty, and each policy slot (`manager`, `commitment`) is counted
-    ///   only when its stored value is zero. An ungated self returns `3` (both
-    ///   policy slots unwritten); a gated self returns `1`, `2`, or `3` depending
-    ///   on how many of its policy slots were written non-zero — a gated actor may
-    ///   still carry a zero manager and/or commitment (see [`Self::slice_policy`]),
-    ///   which are zero-to-zero no-ops rather than real resets.
-    /// - An **absent** actor revoke is an idempotent no-op (mirrors
-    ///   `_applyRevoke`'s early return, eip-8130 #100) and returns `3`: all three
-    ///   conservatively reset-priced slots are empty, so the whole revoke is
-    ///   discounted.
+    /// Revoking an absent actor is an idempotent no-op (mirrors `_applyRevoke`'s
+    /// early return, eip-8130 #100).
     ///
     /// The authorize/create paths maintain mutual exclusion between the inline
     /// secp256k1 self key and an explicit non-k1 self actor. This method does not
@@ -761,7 +737,7 @@ impl AccountChangeApplier {
         account: Address,
         actor_id: B256,
         state: &mut AccountState,
-    ) -> Result<u32, ApplyError> {
+    ) -> Result<(), ApplyError> {
         let config = storage.actor_config_slot(account, actor_id)?;
         let is_self = actor_id == AccountConfigurationStorage::self_actor_id(account);
         if config.authenticator != Address::ZERO {
@@ -774,43 +750,24 @@ impl AccountChangeApplier {
             // future direct `set_actor_config` writer cannot leave a live inline
             // secp256k1 home behind an explicit self entry. `state` is already
             // loaded and flushed by the caller, so this adds no storage access.
-            // This clears a populated explicit `actor_config`, so it is not the
-            // discounted inline-self shape.
             if is_self {
                 Self::disable_inline_self(state);
             }
-            return Ok(0);
+            return Ok(());
         }
         if !is_self || state.default_eoa_revoked() {
             // Idempotent: the actor is already absent — no explicit `actor_config`
             // entry, and either a non-self id or a self whose inline secp256k1 key
             // is revoked. Mirrors `_applyRevoke`'s `if (!_isAuthorized(...)) return;`
-            // (eip-8130 #100): no state change and no `ActorRevoked` event. All
-            // three conservatively reset-priced revoke slots (`actor_config` and
-            // both policy slots) are empty for an absent actor, so the whole revoke
-            // is discounted.
-            return Ok(3);
+            // (eip-8130 #100): no state change and no `ActorRevoked` event.
+            return Ok(());
         }
 
-        // The inline self's `actor_config` slot is always empty (a zero-to-zero
-        // reset no-op). Its two policy slots are written verbatim at authorize
-        // time and may be zero even when the self is policy-gated (`slice_policy`
-        // permits a zero manager and/or commitment), so a zero slot is likewise a
-        // no-op. Count each actually-empty slot from the raw storage before
-        // `clear_policy` zeroes them; only the non-zero slots stay at the
-        // conservative reset price. The gate bit is not a reliable proxy here.
-        let mut empty_slots = 1; // `actor_config`
-        if storage.get_policy_manager(account, actor_id)?.is_zero() {
-            empty_slots += 1;
-        }
-        if storage.get_policy_commitment(account, actor_id)?.is_zero() {
-            empty_slots += 1;
-        }
         storage.clear_actor_config(account, actor_id)?;
         storage.clear_policy(account, actor_id)?;
         Self::disable_inline_self(state);
         AccountConfigurationEvents::emit_actor_revoked(storage, account, actor_id)?;
-        Ok(empty_slots)
+        Ok(())
     }
 
     /// Disables the inline secp256k1 self key in the packed account-state slot:
@@ -1613,18 +1570,17 @@ mod tests {
     }
 
     #[test]
-    fn revoke_absent_actor_is_idempotent_noop_with_full_discount() {
+    fn revoke_absent_actor_is_idempotent_noop() {
         // Revoking an actor that was never authorized mirrors `_applyRevoke`'s
         // `if (!_isAuthorized(...)) return;` (eip-8130 #100): a no-op that emits
-        // no `ActorRevoked` event and discounts all three conservatively
-        // reset-priced revoke slots (they are all empty for an absent actor).
+        // no `ActorRevoked` event.
         let events = with_storage_events(|acc| {
             let mut state = acc.get_account_state(ACCOUNT).unwrap();
             assert_eq!(
                 AccountChangeApplier::revoke_actor_with_account_state(
                     acc, ACCOUNT, NON_SELF, &mut state
                 ),
-                Ok(3),
+                Ok(()),
             );
             assert!(acc.actor_config_slot(ACCOUNT, NON_SELF).unwrap().is_empty());
         });
@@ -1749,134 +1705,6 @@ mod tests {
             let state = acc.get_account_state(ACCOUNT).unwrap();
             assert!(state.default_eoa_revoked());
             assert_eq!(acc.actor_config_slot(ACCOUNT, self_id).unwrap(), config);
-        });
-    }
-
-    #[test]
-    fn apply_config_change_counts_empty_revoke_slots() {
-        with_storage(|acc| {
-            let self_id = AccountConfigurationStorage::self_actor_id(ACCOUNT);
-
-            // Revoking the live *ungated* inline k1 self (empty actor_config + both
-            // empty policy slots) discounts all three conservatively-reset slots.
-            let revoke_self = vec![revoke_op(self_id)];
-            let count = AccountChangeApplier::apply_config_change(
-                acc,
-                ACCOUNT,
-                &revoke_self,
-                AccountChangeChannel::Multichain,
-                0,
-                0,
-            )
-            .unwrap();
-            assert_eq!(count, 3);
-        });
-
-        with_storage(|acc| {
-            let self_id = AccountConfigurationStorage::self_actor_id(ACCOUNT);
-            // A *policy-gated* inline k1 self with both policy slots written
-            // non-zero: only its empty actor_config slot is discounted; the two
-            // real policy resets stay at the conservative price.
-            let gated =
-                ActorConfig { authenticator: K1, scope: Eip8130Constants::SCOPE_POLICY, expiry: 0 };
-            let mut policy = Vec::new();
-            policy.extend_from_slice(MANAGER.as_slice());
-            policy.extend_from_slice(COMMITMENT.as_slice());
-            AccountChangeApplier::authorize_actor(acc, ACCOUNT, self_id, gated, &policy).unwrap();
-            let revoke_self = vec![revoke_op(self_id)];
-            let count = AccountChangeApplier::apply_config_change(
-                acc,
-                ACCOUNT,
-                &revoke_self,
-                AccountChangeChannel::Multichain,
-                0,
-                0,
-            )
-            .unwrap();
-            assert_eq!(count, 1);
-        });
-
-        with_storage(|acc| {
-            let self_id = AccountConfigurationStorage::self_actor_id(ACCOUNT);
-            // A policy-gated inline k1 self may still carry *zero* policy slots
-            // (the EIP permits a zero manager and/or commitment). Those slots are
-            // zero-to-zero no-ops, so all three conservatively-reset slots are
-            // discounted — the gate bit alone must not force a `1`.
-            let gated =
-                ActorConfig { authenticator: K1, scope: Eip8130Constants::SCOPE_POLICY, expiry: 0 };
-            AccountChangeApplier::authorize_actor(acc, ACCOUNT, self_id, gated, &[0u8; 52])
-                .unwrap();
-            let revoke_self = vec![revoke_op(self_id)];
-            let count = AccountChangeApplier::apply_config_change(
-                acc,
-                ACCOUNT,
-                &revoke_self,
-                AccountChangeChannel::Multichain,
-                0,
-                0,
-            )
-            .unwrap();
-            assert_eq!(count, 3);
-        });
-
-        with_storage(|acc| {
-            let self_id = AccountConfigurationStorage::self_actor_id(ACCOUNT);
-            // Mixed: a non-zero manager but a zero commitment. Only the empty
-            // commitment slot (plus the always-empty actor_config) is discounted;
-            // the written manager slot is a real reset.
-            let gated =
-                ActorConfig { authenticator: K1, scope: Eip8130Constants::SCOPE_POLICY, expiry: 0 };
-            let mut policy = Vec::new();
-            policy.extend_from_slice(MANAGER.as_slice());
-            policy.extend_from_slice(B256::ZERO.as_slice());
-            AccountChangeApplier::authorize_actor(acc, ACCOUNT, self_id, gated, &policy).unwrap();
-            let revoke_self = vec![revoke_op(self_id)];
-            let count = AccountChangeApplier::apply_config_change(
-                acc,
-                ACCOUNT,
-                &revoke_self,
-                AccountChangeChannel::Multichain,
-                0,
-                0,
-            )
-            .unwrap();
-            assert_eq!(count, 2);
-        });
-
-        with_storage(|acc| {
-            let self_id = AccountConfigurationStorage::self_actor_id(ACCOUNT);
-            // Install an *explicit* non-k1 self, then revoke it: this clears a
-            // populated actor_config home, so it is not the discounted shape.
-            let config = ungated(AUTHENTICATOR, 0);
-            AccountChangeApplier::authorize_actor(acc, ACCOUNT, self_id, config, &[]).unwrap();
-            let revoke_self = vec![revoke_op(self_id)];
-            let count = AccountChangeApplier::apply_config_change(
-                acc,
-                ACCOUNT,
-                &revoke_self,
-                AccountChangeChannel::Multichain,
-                0,
-                0,
-            )
-            .unwrap();
-            assert_eq!(count, 0);
-        });
-
-        with_storage(|acc| {
-            // Revoking a non-self actor is never the inline-self shape.
-            let config = ungated(AUTHENTICATOR, Eip8130Constants::SCOPE_OPERATOR);
-            AccountChangeApplier::authorize_actor(acc, ACCOUNT, NON_SELF, config, &[]).unwrap();
-            let revoke_other = vec![revoke_op(NON_SELF)];
-            let count = AccountChangeApplier::apply_config_change(
-                acc,
-                ACCOUNT,
-                &revoke_other,
-                AccountChangeChannel::Multichain,
-                0,
-                0,
-            )
-            .unwrap();
-            assert_eq!(count, 0);
         });
     }
 

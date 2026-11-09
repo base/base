@@ -259,6 +259,29 @@ The three `BUILDER_FLASHBLOCK_*` types are legacy events from the retired
 Flashblocks builder: they stay in the schema so historical journals still parse,
 and no current builder emits them.
 
+Leader gating: every sequencer runs a builder, and every mempool node forwards
+every transaction to every builder, so without gating each builder journals its
+own `TXPOOL_VALIDATED_INSERT_ACCEPTED` or `TXPOOL_VALIDATED_INSERT_REJECTED`
+verdict for the same transaction (five rows per transaction on mainnet). Only
+the active sequencer builds blocks, so only its journal, verdicts included, is
+kept. The builder polls the local consensus node's
+`admin_sequencerActive` when `--builder.transaction-events.consensus-url` (for
+example `http://localhost:9545`) is set, every
+`--builder.transaction-events.leader-poll-interval-ms` (default 500), and
+journals nothing while the answer is `false`. Leadership is read live rather
+than configured because it moves between sequencers without a redeploy. Until
+the first answer the builder journals; a request that fails or times out keeps
+the last answer and counts in
+`base_builder_sequencer_leadership_poll_errors_total`, and
+`base_builder_sequencer_active` reports the answer in force. Events the gate
+withholds count in `transaction_events_gated_events`. Consequences for readers:
+a builder's events start at the moment it became leader, so a transaction it
+accepted while inactive has `BUILDER_*` events without an earlier
+`TXPOOL_VALIDATED_INSERT_ACCEPTED` from that host, a rejection is journaled
+only when the leader's pool rejects it, and around a transfer, for
+one poll interval plus the request's latency, either both or neither sequencer
+may journal.
+
 Builder caveat: `BUILDER_ACCEPTED`, `BUILDER_REJECTED`, `BUILDER_DEFERRED`,
 and `BUILDER_EXPIRED` are emitted per payload-building attempt and include
 `payload_id` and `block_number`. The same transaction can therefore produce
@@ -285,8 +308,8 @@ parking-capacity miss stays `BUILDER_REJECTED` with
 transaction was billed and its receipt reports; `data.metered_gas_used` is the
 gas it actually consumed, defined as the gas it would have been billed without
 gas-limit billing (gas spent less the EIP-3529-capped refund, raised to the
-EIP-7623 floor; for EIP-8130, sender gas plus payer authentication with the
-floor applied to the total). Before the gas-limit billing feature (Everest)
+EIP-7623 floor; for EIP-8130, sender gas raised to the sender's floor, plus
+payer authentication). Before the gas-limit billing feature (Everest)
 `metered_gas_used == gas_used`; after it, `gas_used` is `tx_gas_limit` for
 standard transactions and `tx_gas_limit + payer_auth_gas_reserved` for EIP-8130, where
 `data.payer_auth_gas_reserved` (`null` for every other transaction type) is the

@@ -11,8 +11,9 @@ use async_trait::async_trait;
 use axum::{
     Json, Router,
     body::Bytes,
-    extract::{DefaultBodyLimit, State},
+    extract::{DefaultBodyLimit, Request, State},
     http::StatusCode,
+    middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::post,
 };
@@ -31,6 +32,7 @@ use sqlx::{
     migrate::{Migration, Migrator},
     postgres::PgPoolOptions,
 };
+use tokio::sync::Semaphore;
 use tower_http::limit::RequestBodyLimitLayer;
 use tracing::{error, warn};
 
@@ -54,6 +56,13 @@ pub const DEFAULT_TRANSACTION_EVENT_MAX_DATA_BYTES: usize = 128 * 1024;
 
 /// Default maximum request body size for the HTTP endpoint.
 pub const DEFAULT_TRANSACTION_EVENT_MAX_REQUEST_BYTES: usize = 8 * 1024 * 1024;
+
+/// Default maximum transaction-event ingest requests handled at once per process.
+///
+/// Requests over the limit get an immediate 503 so Vector backs off and retries,
+/// instead of buffering bodies while they wait for a Postgres connection. At the
+/// default body limit this caps buffered request bodies at 256 mebibytes.
+pub const DEFAULT_TRANSACTION_EVENT_MAX_IN_FLIGHT_REQUESTS: usize = 32;
 
 /// Maximum events inserted in one Postgres statement.
 ///
@@ -444,6 +453,8 @@ pub struct TransactionEventIngestConfig {
     pub max_data_bytes: usize,
     /// Maximum request body size in bytes.
     pub max_request_bytes: usize,
+    /// Maximum ingest requests handled concurrently; extra requests get a 503.
+    pub max_in_flight_requests: usize,
 }
 
 /// Whole-request ingest status.
@@ -1623,15 +1634,49 @@ impl TransactionEventIngestConfig {
     pub fn into_router(mut self, sink: Arc<dyn TransactionEventSink>) -> Router {
         self.max_batch_size = self.max_batch_size.min(MAX_TRANSACTION_EVENT_INSERT_BATCH_SIZE);
         let max_request_bytes = self.max_request_bytes;
+        let in_flight = Arc::new(Semaphore::new(self.max_in_flight_requests.max(1)));
         let path = self.path.clone();
         let state = Arc::new(TransactionEventIngestState { sink, config: self });
 
+        // The in-flight limit is the outermost layer so rejected requests are
+        // answered before their bodies are buffered.
         Router::new()
             .route(&path, post(transaction_event_batch_handler))
             .layer(DefaultBodyLimit::disable())
             .layer(RequestBodyLimitLayer::new(max_request_bytes))
+            .layer(middleware::from_fn_with_state(in_flight, limit_in_flight_requests))
             .with_state(state)
     }
+}
+
+async fn limit_in_flight_requests(
+    State(in_flight): State<Arc<Semaphore>>,
+    request: Request,
+    next: Next,
+) -> Response {
+    let Ok(_permit) = in_flight.try_acquire_owned() else {
+        Metrics::transaction_event_requests_shed().increment(1);
+        return in_flight_limit_response();
+    };
+    next.run(request).await
+}
+
+fn in_flight_limit_response() -> Response {
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        Json(TransactionEventBatchResponse {
+            status: TransactionEventBatchStatus::Rejected,
+            accepted: 0,
+            duplicate: 0,
+            rejected: 0,
+            results: vec![TransactionEventItemResult {
+                event_id: None,
+                status: TransactionEventItemStatus::Rejected,
+                reason: Some("too many in-flight requests; retry batch".to_string()),
+            }],
+        }),
+    )
+        .into_response()
 }
 
 async fn transaction_event_batch_handler(
@@ -2024,6 +2069,26 @@ mod tests {
         }
     }
 
+    /// Holds every insert until the test releases it.
+    #[derive(Debug)]
+    struct BlockedSink {
+        release: Arc<tokio::sync::Notify>,
+    }
+
+    #[async_trait]
+    impl TransactionEventSink for BlockedSink {
+        async fn insert_events(
+            &self,
+            events: &[TransactionEvent],
+        ) -> std::result::Result<TransactionEventInsertOutcome, TransactionEventStorageError>
+        {
+            self.release.notified().await;
+            Ok(TransactionEventInsertOutcome {
+                inserted_event_ids: events.iter().map(|event| event.event_id.clone()).collect(),
+            })
+        }
+    }
+
     fn config() -> TransactionEventIngestConfig {
         TransactionEventIngestConfig {
             path: DEFAULT_TRANSACTION_EVENT_BATCH_PATH.to_string(),
@@ -2031,6 +2096,7 @@ mod tests {
             max_event_bytes: 4096,
             max_data_bytes: 1024,
             max_request_bytes: 16 * 1024,
+            max_in_flight_requests: DEFAULT_TRANSACTION_EVENT_MAX_IN_FLIGHT_REQUESTS,
         }
     }
 
@@ -2041,6 +2107,7 @@ mod tests {
             max_event_bytes: DEFAULT_TRANSACTION_EVENT_MAX_EVENT_BYTES,
             max_data_bytes: DEFAULT_TRANSACTION_EVENT_MAX_DATA_BYTES,
             max_request_bytes: DEFAULT_TRANSACTION_EVENT_MAX_REQUEST_BYTES,
+            max_in_flight_requests: DEFAULT_TRANSACTION_EVENT_MAX_IN_FLIGHT_REQUESTS,
         }
     }
 
@@ -2675,5 +2742,30 @@ mod tests {
             response.results[0].reason.as_deref(),
             Some("database unavailable; retry batch")
         );
+    }
+
+    #[tokio::test]
+    async fn endpoint_sheds_requests_over_in_flight_limit() {
+        let release = Arc::new(tokio::sync::Notify::new());
+        let config = TransactionEventIngestConfig { max_in_flight_requests: 1, ..config() };
+        let app = config.into_router(Arc::new(BlockedSink { release: Arc::clone(&release) }));
+
+        let first = tokio::spawn(post_ndjson(app.clone(), boundary_events("held", 1)));
+        tokio::time::sleep(StdDuration::from_millis(50)).await;
+
+        let (status, json) = post_ndjson(app.clone(), boundary_events("shed", 1)).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(json["status"], "rejected");
+        assert_eq!(json["results"][0]["reason"], "too many in-flight requests; retry batch");
+
+        release.notify_one();
+        let (status, _) = first.await.unwrap();
+        assert_eq!(status, StatusCode::OK);
+
+        let next = tokio::spawn(post_ndjson(app, boundary_events("after", 1)));
+        tokio::time::sleep(StdDuration::from_millis(50)).await;
+        release.notify_one();
+        let (status, _) = next.await.unwrap();
+        assert_eq!(status, StatusCode::OK);
     }
 }

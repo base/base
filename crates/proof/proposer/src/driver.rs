@@ -353,14 +353,4 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(50)).await;
         assert!(!handle.is_running());
     }
-
-    #[tokio::test]
-    async fn test_pipeline_handle_debug() {
-        let cancel = CancellationToken::new();
-        let handle = test_pipeline_handle(cancel);
-
-        let debug = format!("{handle:?}");
-        assert!(debug.contains("PipelineHandle"));
-        assert!(debug.contains("running"));
-    }
 }

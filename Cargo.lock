@@ -3201,6 +3201,7 @@ dependencies = [
  "rstest",
  "tempfile",
  "tracing",
+ "url",
 ]
 
 [[package]]
@@ -6252,6 +6253,7 @@ dependencies = [
  "base-consensus-sources",
  "base-execution-chainspec",
  "base-execution-cli",
+ "base-execution-eip8130-rpc-node",
  "base-execution-rpc",
  "base-execution-txpool",
  "base-load-tests",
