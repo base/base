@@ -308,8 +308,8 @@ parking-capacity miss stays `BUILDER_REJECTED` with
 transaction was billed and its receipt reports; `data.metered_gas_used` is the
 gas it actually consumed, defined as the gas it would have been billed without
 gas-limit billing (gas spent less the EIP-3529-capped refund, raised to the
-EIP-7623 floor; for EIP-8130, sender gas plus payer authentication with the
-floor applied to the total). Before the gas-limit billing feature (Everest)
+EIP-7623 floor; for EIP-8130, sender gas raised to the sender's floor, plus
+payer authentication). Before the gas-limit billing feature (Everest)
 `metered_gas_used == gas_used`; after it, `gas_used` is `tx_gas_limit` for
 standard transactions and `tx_gas_limit + payer_auth_gas_reserved` for EIP-8130, where
 `data.payer_auth_gas_reserved` (`null` for every other transaction type) is the
