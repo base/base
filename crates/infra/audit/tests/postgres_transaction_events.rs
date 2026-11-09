@@ -9,10 +9,11 @@ use std::{
 use audit_archiver_lib::{
     AuditArchiverApiServer, AuditArchiverRpc, DEFAULT_TRANSACTION_EVENT_BATCH_PATH,
     DEFAULT_TRANSACTION_EVENT_MAX_BATCH_SIZE, DEFAULT_TRANSACTION_EVENT_MAX_DATA_BYTES,
-    DEFAULT_TRANSACTION_EVENT_MAX_EVENT_BYTES, DEFAULT_TRANSACTION_EVENT_MAX_REQUEST_BYTES,
-    MAX_TRANSACTION_EVENT_INSERT_BATCH_SIZE, PgTransactionEventSink, RejectedTransactionEventQuery,
-    TransactionEventIngestConfig, TransactionEventRecord, TransactionEventRetentionConfig,
-    TransactionEventSchemaReadinessError, TransactionEventSink,
+    DEFAULT_TRANSACTION_EVENT_MAX_EVENT_BYTES, DEFAULT_TRANSACTION_EVENT_MAX_IN_FLIGHT_REQUESTS,
+    DEFAULT_TRANSACTION_EVENT_MAX_REQUEST_BYTES, MAX_TRANSACTION_EVENT_INSERT_BATCH_SIZE,
+    PgTransactionEventSink, RejectedTransactionEventQuery, TransactionEventIngestConfig,
+    TransactionEventRecord, TransactionEventRetentionConfig, TransactionEventSchemaReadinessError,
+    TransactionEventSink,
 };
 use axum::{
     body::{Body, to_bytes},
@@ -213,6 +214,7 @@ fn default_ingest_config() -> TransactionEventIngestConfig {
         max_event_bytes: DEFAULT_TRANSACTION_EVENT_MAX_EVENT_BYTES,
         max_data_bytes: DEFAULT_TRANSACTION_EVENT_MAX_DATA_BYTES,
         max_request_bytes: DEFAULT_TRANSACTION_EVENT_MAX_REQUEST_BYTES,
+        max_in_flight_requests: DEFAULT_TRANSACTION_EVENT_MAX_IN_FLIGHT_REQUESTS,
     }
 }
 
