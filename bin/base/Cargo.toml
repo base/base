@@ -43,7 +43,6 @@ alloy-rpc-types-engine = { workspace = true, features = ["jwt"] }
 
 # reth
 reth-config.workspace = true
-reth-provider.workspace = true
 reth-node-core.workspace = true
 reth-cli-runner.workspace = true
 reth-cli-commands.workspace = true
