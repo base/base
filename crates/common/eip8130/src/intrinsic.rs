@@ -85,9 +85,11 @@ pub struct IntrinsicGas {
     /// first call only for its EIP-7702 delegate.
     pub first_call: u64,
     /// `sender_access_cost` — [`Eip8130GasSchedule::COLD_ACCOUNT_ACCESS`] for
-    /// the sender's account when a payer is set. `AA_BASE_COST` covers one
-    /// account access, which a sponsored transaction spends on the payer, and
-    /// every transaction reads the sender's account nonce. `0` for self-pay.
+    /// the sender's account when `payer` is set and differs from the sender.
+    /// `AA_BASE_COST` covers one account access, which a sponsored transaction
+    /// spends on the payer, and every transaction reads the sender's account
+    /// nonce. `0` for self-pay (`payer` empty or equal to the sender). Open
+    /// payer mode always pays it: its payer is only known from `payer_auth`.
     pub sender_account: u64,
     /// `nonce_key_cost`.
     pub nonce_key: u64,
@@ -268,8 +270,11 @@ impl IntrinsicGas {
             .count();
         let value_transfer = Eip8130GasSchedule::TX_VALUE_COST
             .saturating_mul(u64::try_from(value_calls).unwrap_or(u64::MAX));
-        let sender_account =
-            if tx.payer.is_some() { Eip8130GasSchedule::COLD_ACCOUNT_ACCESS } else { 0 };
+        let sender_account = if matches!(tx.payer, Some(payer) if payer != sender) {
+            Eip8130GasSchedule::COLD_ACCOUNT_ACCESS
+        } else {
+            0
+        };
 
         let (mut payload, mut payload_floor) = Self::data_costs_of_counts(
             signed.metered_payload_zero_bytes(),
@@ -666,8 +671,12 @@ mod tests {
             intrinsic(&signed(tx, vec![0xcd; 65], payer_auth)).sender_account
         };
 
-        // A self-paid transaction touches only the sender's account.
+        // A self-paid transaction touches only the sender's account, whether it
+        // leaves `payer` empty or names the sender.
         assert_eq!(sender_account(TxEip8130 { calls: call(other, 1), ..Default::default() }), 0);
+        let explicit_self_pay =
+            TxEip8130 { payer: Some(ACCOUNT), calls: call(other, 1), ..Default::default() };
+        assert_eq!(sender_account(explicit_self_pay), 0);
 
         // Execution reads the sender's account nonce whatever the nonce key, so a
         // sponsored transaction touches a second account even when it only calls
