@@ -67,8 +67,8 @@ pub struct TransactionEventsArgs {
     pub network: String,
 
     /// RPC URL of the consensus node whose `admin_sequencerActive` answer decides whether this
-    /// builder journals transaction events. Unset, every event is journaled regardless of
-    /// leadership.
+    /// builder journals transaction events. Unset, the standalone builder journals regardless of
+    /// leadership, while `base sequencer` asks the consensus node running in its own process.
     #[arg(
         long = "builder.transaction-events.consensus-url",
         env = "BUILDER_TRANSACTION_EVENTS_CONSENSUS_URL"
@@ -117,11 +117,18 @@ impl TransactionEventsArgs {
         }
     }
 
-    /// Returns the leadership probe config when a consensus node URL is configured.
-    pub fn leadership_config(&self) -> Option<SequencerLeadershipConfig> {
-        self.consensus_url.clone().map(|consensus_url| SequencerLeadershipConfig {
-            poll_interval: Duration::from_millis(self.leader_poll_interval_ms),
-            ..SequencerLeadershipConfig::new(consensus_url)
+    /// Returns the leadership probe config for the configured consensus node URL, or for
+    /// `default_consensus_url` when none is configured. A binary that runs the consensus node in
+    /// the same process passes that node's own RPC address so the probe needs no configuration.
+    pub fn leadership_config(
+        &self,
+        default_consensus_url: Option<Url>,
+    ) -> Option<SequencerLeadershipConfig> {
+        self.consensus_url.clone().or(default_consensus_url).map(|consensus_url| {
+            SequencerLeadershipConfig {
+                poll_interval: Duration::from_millis(self.leader_poll_interval_ms),
+                ..SequencerLeadershipConfig::new(consensus_url)
+            }
         })
     }
 }
@@ -380,16 +387,22 @@ mod tests {
             "250",
         ])
         .unwrap();
+        let in_process: Url = "http://127.0.0.1:7545".parse().unwrap();
         assert_eq!(
-            parsed.args.transaction_events.leadership_config(),
+            parsed.args.transaction_events.leadership_config(Some(in_process.clone())),
             Some(SequencerLeadershipConfig {
                 poll_interval: Duration::from_millis(250),
                 ..SequencerLeadershipConfig::new("http://localhost:9545".parse().unwrap())
-            })
+            }),
+            "an explicit consensus URL wins over the default"
         );
 
         let unset = CommandParser::try_parse_from(["builder"]).unwrap();
-        assert_eq!(unset.args.transaction_events.leadership_config(), None);
+        assert_eq!(unset.args.transaction_events.leadership_config(None), None);
+        assert_eq!(
+            unset.args.transaction_events.leadership_config(Some(in_process.clone())),
+            Some(SequencerLeadershipConfig::new(in_process))
+        );
 
         let zero = CommandParser::try_parse_from([
             "builder",

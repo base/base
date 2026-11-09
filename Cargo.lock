@@ -2888,6 +2888,7 @@ dependencies = [
  "base-execution-evm",
  "base-node-core",
  "base-node-runner",
+ "base-observability-events",
  "base-reth-cli",
  "base-shadow-indexer",
  "base-txpool-rpc",
