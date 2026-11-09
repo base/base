@@ -224,8 +224,76 @@ impl ConsensusClient {
             {
                 Err(ConsensusRpcError::MethodUnavailable { rpc: rpc(), method })
             }
+            Ok(Err(JsonRpcClientError::RequestTimeout)) | Err(_) => {
+                Err(ConsensusRpcError::Timeout { rpc: rpc(), method, timeout })
+            }
             Ok(Err(source)) => Err(ConsensusRpcError::Rpc { rpc: rpc(), method, source }),
-            Err(_) => Err(ConsensusRpcError::Timeout { rpc: rpc(), method, timeout }),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use jsonrpsee::{
+        server::{RpcModule, Server},
+        types::ErrorObjectOwned,
+    };
+
+    use super::*;
+
+    /// A missing method is reported as unavailable so callers can degrade, a short client
+    /// timeout bounds ordinary calls but not `admin_stopSequencer`, and neither errors nor
+    /// `Debug` expose the endpoint's credentials.
+    #[tokio::test]
+    async fn client_classifies_failures_and_bounds_calls() {
+        const DELAY: Duration = Duration::from_millis(200);
+        const TIMEOUT: Duration = Duration::from_millis(50);
+        let head = B256::repeat_byte(1);
+
+        let mut module = RpcModule::new(());
+        module
+            .register_async_method("admin_sequencerActive", |_, _, _| async {
+                tokio::time::sleep(DELAY).await;
+                true
+            })
+            .unwrap();
+        module
+            .register_async_method("admin_stopSequencer", move |_, _, _| async move {
+                tokio::time::sleep(DELAY).await;
+                Ok::<_, ErrorObjectOwned>(head)
+            })
+            .unwrap();
+        let server = Server::builder().build("127.0.0.1:0").await.unwrap();
+        let address = server.local_addr().unwrap();
+        let handle = server.start(module);
+        let rpc = Url::parse(&format!("http://operator:secret@{address}/cl?key=token")).unwrap();
+        let client = ConsensusClient::connect(&rpc).unwrap().with_timeout(TIMEOUT);
+
+        let debug = format!("{client:?}");
+        assert!(
+            !["operator", "secret", "/cl", "token"].iter().any(|s| debug.contains(s)),
+            "{debug}"
+        );
+
+        let unavailable = client.peer_stats().await.unwrap_err();
+        assert!(matches!(unavailable, ConsensusRpcError::MethodUnavailable { .. }));
+        assert_eq!(
+            unavailable.to_string(),
+            format!(
+                "consensus-node RPC method `opp2p_peerStats` is not exposed by http://{address}"
+            )
+        );
+
+        assert!(matches!(
+            client.sequencer_active().await,
+            Err(ConsensusRpcError::Timeout {
+                method: "admin_sequencerActive",
+                timeout: TIMEOUT,
+                ..
+            })
+        ));
+        assert_eq!(client.stop_sequencer().await.unwrap(), head);
+
+        handle.stop().unwrap();
     }
 }
