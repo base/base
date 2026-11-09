@@ -140,12 +140,14 @@ impl Tracker {
         // If the LRU is full and we're about to insert a new tx, log the `EventLog` for that tx
         // before it gets evicted. This can be useful to see the full history of a transaction.
         // Eviction is a tracker bookkeeping limit, not a transaction lifecycle fact, so it is
-        // recorded as a metric and log only; it is not journaled as a transaction event.
+        // counted and logged only; it is not journaled as a transaction event. At steady state
+        // nearly every insert evicts, so it gets its own counter rather than the `overflowed`
+        // histogram, which stays reserved for the rarer per-transaction event-log limit.
         if self.txs.len() == Self::MAX_SIZE
             && let Some((tx_hash, event_log)) = self.txs.peek_lru()
         {
             self.log(tx_hash, event_log, "Transaction inserted");
-            Self::record_histogram(event_log.mempool_time.elapsed(), TxEvent::Overflowed);
+            Metrics::tracker_evictions().increment(1);
         }
 
         self.txs.put(tx_hash, EventLog::new(Local::now(), event));
@@ -683,7 +685,7 @@ mod tests {
         });
 
         assert!(
-            rendered.contains("reth_transaction_tracing_tx_event_count{event=\"overflowed\"} 1"),
+            rendered.contains("reth_transaction_tracing_tx_event_count{event=\"overflowed\"} 1\n"),
             "expected overflowed histogram, got: {rendered}"
         );
         let event_types = event_capture
@@ -696,7 +698,7 @@ mod tests {
     }
 
     #[test]
-    fn lru_eviction_records_metric_without_journal_event() {
+    fn lru_eviction_counts_without_overflow_metric_or_journal_event() {
         let event_capture = TransactionEventCapture::install();
         let evicted = TxHash::random();
 
@@ -714,8 +716,12 @@ mod tests {
         });
 
         assert!(
-            rendered.contains("reth_transaction_tracing_tx_event_count{event=\"overflowed\"} 1"),
-            "expected overflowed histogram, got: {rendered}"
+            rendered.contains("reth_transaction_tracing_tracker_evictions 1\n"),
+            "expected one tracker eviction, got: {rendered}"
+        );
+        assert!(
+            !rendered.contains("event=\"overflowed\""),
+            "eviction must not record the overflowed histogram, got: {rendered}"
         );
         let event_types = event_capture
             .events()
