@@ -3,8 +3,10 @@
 //! The [`Driver`] schedules game scanning, output validation, proof lifecycle
 //! work, bond discovery, and anchor maintenance.
 
-use std::{sync::Arc, time::Duration};
+use std::{collections::HashSet, sync::Arc, time::Duration};
 
+use alloy_eips::BlockNumberOrTag;
+use alloy_primitives::Address;
 use base_proof_contracts::AggregateVerifierClient;
 use base_proof_rpc::{L1Provider, L2Provider};
 use base_prover_service_client::ProofRequesterProvider;
@@ -73,6 +75,11 @@ where
     pub validator: OutputValidator<L2>,
     /// Manages proof sessions, retries, submissions, and TEE-to-ZK fallback.
     pub proof_manager: DisputeProofManager<L2, P>,
+    /// Games whose intermediate roots all matched at L2 blocks that were already finalized.
+    ///
+    /// Onchain roots are immutable and finalized L2 blocks cannot reorg, so these games are
+    /// skipped instead of revalidated every poll. Pruned to the games returned by each scan.
+    pub valid_games: HashSet<Address>,
     /// Bond lifecycle manager (optional; enabled when claim addresses are configured).
     pub bond_manager: Option<BondManager<TokioRuntime>>,
     /// Best-effort anchor state updater.
@@ -106,6 +113,7 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager> Driver<L2, P, T> {
             ),
             verifier_client: components.verifier_client,
             validator,
+            valid_games: HashSet::new(),
             bond_manager: components.bond_manager,
             anchor_updater: components.anchor_updater,
             poll_interval: components.poll_interval,
@@ -144,6 +152,9 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager> Driver<L2, P, T> {
         self.anchor_updater.poll(&*self.verifier_client, &self.submitter).await;
 
         let candidates = self.scanner.scan().await?;
+        let scanned_games: HashSet<Address> =
+            candidates.iter().map(|candidate| candidate.factory.proxy).collect();
+        self.valid_games.retain(|game| scanned_games.contains(game));
 
         for candidate in candidates {
             let index = candidate.index;
@@ -166,6 +177,14 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager> Driver<L2, P, T> {
 
         if self.proof_manager.has_pending_proof(game_address) {
             debug!(game = %game_address, "skipping game with pending proof session");
+            return Ok(());
+        }
+
+        // A fraudulent ZK challenge still has to be nullified even when every root is valid.
+        if !matches!(candidate.category, GameCategory::FraudulentZkChallenge { .. })
+            && self.valid_games.contains(&game_address)
+        {
+            debug!(game = %game_address, "skipping game with finalized valid output roots");
             return Ok(());
         }
 
@@ -253,6 +272,19 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager> Driver<L2, P, T> {
 
         if result.is_valid {
             debug!(game = %game_address, "game output roots are valid");
+            match self.validator.l2_provider.header_by_number(BlockNumberOrTag::Finalized).await {
+                Ok(finalized) if finalized.number >= candidate.info.l2_block_number => {
+                    self.valid_games.insert(game_address);
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    debug!(
+                        game = %game_address,
+                        error = %e,
+                        "failed to fetch L2 finalized head; game will be revalidated"
+                    );
+                }
+            }
             return Ok(());
         }
 

@@ -3,7 +3,7 @@
 use std::{
     collections::HashMap,
     num::NonZeroU64,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, atomic::Ordering},
     time::Duration,
 };
 
@@ -28,6 +28,7 @@ use base_prover_service_protocol::{
     TeeProofResult, ZkBackend, ZkProofRequest, ZkVm,
 };
 use base_tx_manager::TxManagerError;
+use rstest::rstest;
 use tokio_util::sync::CancellationToken;
 
 const STORAGE_HASH: B256 = B256::repeat_byte(0xBB);
@@ -294,6 +295,59 @@ async fn test_step_validation_error_blocks_not_available() {
     let mut driver = test_driver(factory, verifier, l2, default_zk_prover(), default_tx_manager());
 
     driver.step().await.unwrap();
+}
+
+/// A valid game is revalidated every poll until its L2 block is finalized, then skipped.
+///
+/// Validation reads both checkpoint headers plus the finalized head, so skipping it saves three
+/// header requests on the second poll.
+#[rstest]
+#[case::finalized(20, 3)]
+#[case::not_finalized(15, 0)]
+#[tokio::test]
+async fn test_step_skips_revalidating_finalized_valid_games(
+    #[case] finalized_block_number: u64,
+    #[case] expected_saved_header_requests: usize,
+) {
+    let (header_15, account_15) = build_test_header_and_account(15, STORAGE_HASH);
+    let root_15 =
+        OutputRoot::from_parts(header_15.state_root, STORAGE_HASH, header_15.hash_slow()).hash();
+    let (header_20, account_20) = build_test_header_and_account(20, STORAGE_HASH);
+    let root_20 =
+        OutputRoot::from_parts(header_20.state_root, STORAGE_HASH, header_20.hash_slow()).hash();
+
+    let mut l2 = MockL2Provider {
+        finalized_block_number: Some(finalized_block_number),
+        ..Default::default()
+    };
+    l2.insert_block(15, header_15, account_15);
+    l2.insert_block(20, header_20, account_20);
+    let l2 = Arc::new(l2);
+
+    let verifier = single_game_verifier(MockGameState {
+        tee_prover: DEFAULT_TEE_PROVER,
+        intermediate_output_roots: vec![root_15, root_20],
+        ..game_state(20)
+    });
+    let mut driver = test_driver(
+        single_game_factory(),
+        verifier,
+        Arc::clone(&l2),
+        default_zk_prover(),
+        default_tx_manager(),
+    );
+
+    driver.step().await.unwrap();
+    let first_step_header_requests = l2.header_requests.load(Ordering::SeqCst);
+    driver.step().await.unwrap();
+    let second_step_header_requests =
+        l2.header_requests.load(Ordering::SeqCst) - first_step_header_requests;
+
+    assert_eq!(
+        first_step_header_requests - second_step_header_requests,
+        expected_saved_header_requests,
+    );
+    assert_eq!(driver.proof_manager.pending_proofs_len(), 0);
 }
 
 #[tokio::test]
