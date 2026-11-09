@@ -443,25 +443,46 @@ async fn everest_bills_sponsored_eip8130_for_its_reserved_budget() -> Result<()>
         .ok_or_eyre("validator has no receipt for the sponsored transaction")?;
     assert_eq!(client_receipt.gas_used(), reserved_gas);
 
-    // `eth_estimateGas` for a sponsored request returns the sender's budget only: settlement adds
-    // payer authentication on top, so a transaction sent at `gas_limit = estimate` succeeds and
-    // settles at `estimate + payer_auth`, not at the estimate. The EIP-8130 RPC module is installed
-    // on the validator node, not the builder, so the estimate comes from the client.
-    let request: BaseTransactionRequest = serde_json::from_value(serde_json::json!({
-        "from": sender.address(),
-        "calls": [[Call { to: RECIPIENT, value: U256::ZERO, data: Bytes::new() }]],
-        "payer": payer.address(),
-        "maxFeePerGas": U256::from(MAX_FEE_PER_GAS),
-        "maxPriorityFeePerGas": U256::from(MAX_PRIORITY_FEE_PER_GAS),
-    }))?;
-    let estimate =
-        system.client.estimate_gas(request).await.wrap_err("sponsored eth_estimateGas")?;
+    // `eth_estimateGas` for a sponsored request returns the sender's budget only. The same call
+    // estimated as self-pay has the same sender budget: naming a payer adds only its 20 address
+    // bytes to the sender payload, far less than payer authentication, so an estimate that folded
+    // payer authentication in would exceed the self-pay estimate by at least `payer_auth`. Sent at
+    // `gas_limit = estimate`, the sponsored transaction succeeds and settles at
+    // `estimate + payer_auth`. The EIP-8130 RPC module is installed on the validator node, not the
+    // builder, so the estimates come from the client.
+    let estimate_request = |payer: Option<Address>| -> Result<BaseTransactionRequest> {
+        let mut request = serde_json::json!({
+            "from": sender.address(),
+            "calls": [[Call { to: RECIPIENT, value: U256::ZERO, data: Bytes::new() }]],
+            "maxFeePerGas": U256::from(MAX_FEE_PER_GAS),
+            "maxPriorityFeePerGas": U256::from(MAX_PRIORITY_FEE_PER_GAS),
+        });
+        if let Some(payer) = payer {
+            request["payer"] = serde_json::json!(payer);
+        }
+        Ok(serde_json::from_value(request)?)
+    };
+    let estimate = system
+        .client
+        .estimate_gas(estimate_request(Some(payer.address()))?)
+        .await
+        .wrap_err("sponsored eth_estimateGas")?;
+    let self_pay_estimate = system
+        .client
+        .estimate_gas(estimate_request(None)?)
+        .await
+        .wrap_err("self-pay eth_estimateGas")?;
     ensure!(
         estimate < EIP8130_GAS_LIMIT,
         "estimate {estimate} must be below the over-provisioned limit"
     );
     let signed = sponsored_eip8130(&sender, &payer, nonce_sequence + 1, estimate)?;
     let payer_auth = IntrinsicGas::max_payer_auth_cost(&signed)?;
+    assert!(
+        estimate < self_pay_estimate + payer_auth,
+        "the sponsored estimate ({estimate}) must exclude payer authentication \
+         (self-pay estimate {self_pay_estimate}, payer authentication {payer_auth})"
+    );
     let raw: Bytes = signed.encoded_2718().into();
     let (settlement, receipt) = settle(builder, &raw, payer.address(), U256::ZERO)
         .await
