@@ -173,15 +173,18 @@ Edge/proxy:
 - `PROXY_INGRESS_RPC_SUCCESS` (retired)
 - `PROXY_INGRESS_RPC_FAILURE` (retired)
 
-proxyd emits exactly one terminal event per `eth_sendRawTransaction` it
-decodes: `PROXY_REJECTED` when proxyd refuses the transaction itself, otherwise
-`PROXY_BACKEND_SUCCESS` or `PROXY_BACKEND_FAILURE` per backend attempt.
+proxyd terminal events for a decoded `eth_sendRawTransaction`: `PROXY_REJECTED`
+when the address check rejects the transaction; otherwise exactly one of
+`PROXY_BACKEND_SUCCESS` or `PROXY_BACKEND_FAILURE` per request per completed
+`Backend.Forward` call, with `data.attempt` set to the backend index. Failover
+across backends therefore produces one event per backend tried, and a batch
+whose deadline expires before it is forwarded produces no terminal event.
 `PROXY_BACKEND_FAILURE` covers both transport failures and backends that answer
 with a JSON-RPC error (`nonce too low`, `already known`, ...); the latter carry
 `rpc_error_code` and `rpc_error_message_class` in `data`. Terminal events carry
-`received_at` (Unix milliseconds) in `data`, the time proxyd decoded the
-transaction, which is why the separate `PROXY_RECEIVED` event was retired. It
-is retained in the vocabulary so historical rows remain readable.
+`received_at` (Unix milliseconds) in `data`, the time proxyd decoded that
+request's transaction, which is why the separate `PROXY_RECEIVED` event was
+retired. It is retained in the vocabulary so historical rows remain readable.
 
 Ingress/audit (retired producer; retained so historical events remain readable):
 
