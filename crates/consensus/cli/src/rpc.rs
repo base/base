@@ -3,7 +3,7 @@
 //! Flags for configuring the RPC server.
 
 use std::{
-    net::{IpAddr, SocketAddr},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     num::NonZeroUsize,
     path::PathBuf,
     time::Duration,
@@ -127,6 +127,27 @@ impl Default for EmbeddedRpcArgs {
     }
 }
 
+impl RpcArgs {
+    /// Returns the HTTP URL at which a client in this process reaches the admin API, or `None`
+    /// when the server or its admin namespace is disabled.
+    ///
+    /// A server bound to an unspecified address (`0.0.0.0`, `::`) is reached over loopback.
+    pub fn local_admin_url(&self) -> Option<Url> {
+        if self.rpc_disabled || !self.enable_admin {
+            return None;
+        }
+        let host = if self.listen_addr.is_unspecified() {
+            match self.listen_addr {
+                IpAddr::V4(_) => IpAddr::V4(Ipv4Addr::LOCALHOST),
+                IpAddr::V6(_) => IpAddr::V6(Ipv6Addr::LOCALHOST),
+            }
+        } else {
+            self.listen_addr
+        };
+        Url::parse(&format!("http://{}", SocketAddr::new(host, self.listen_port))).ok()
+    }
+}
+
 impl From<EmbeddedRpcArgs> for RpcArgs {
     fn from(args: EmbeddedRpcArgs) -> Self {
         Self {
@@ -166,11 +187,32 @@ impl From<RpcArgs> for Option<RpcBuilder> {
 
 #[cfg(test)]
 mod tests {
-    use std::net::Ipv4Addr;
-
     use rstest::rstest;
 
     use super::*;
+
+    #[rstest]
+    #[case::unspecified_v4("0.0.0.0", 9545, true, false, Some("http://127.0.0.1:9545/"))]
+    #[case::unspecified_v6("::", 9545, true, false, Some("http://[::1]:9545/"))]
+    #[case::bound_address("10.0.0.7", 7545, true, false, Some("http://10.0.0.7:7545/"))]
+    #[case::admin_disabled("0.0.0.0", 9545, false, false, None)]
+    #[case::rpc_disabled("0.0.0.0", 9545, true, true, None)]
+    fn local_admin_url_points_a_local_client_at_the_admin_api(
+        #[case] addr: &str,
+        #[case] port: u16,
+        #[case] enable_admin: bool,
+        #[case] rpc_disabled: bool,
+        #[case] expected: Option<&str>,
+    ) {
+        let args = RpcArgs {
+            listen_addr: addr.parse().unwrap(),
+            listen_port: port,
+            enable_admin,
+            rpc_disabled,
+            ..RpcArgs::default()
+        };
+        assert_eq!(args.local_admin_url().map(|url| url.to_string()), expected.map(String::from));
+    }
 
     #[rstest]
     #[case::disable_rpc(&["--rpc.disabled"], |args: &mut RpcArgs| { args.rpc_disabled = true; })]

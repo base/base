@@ -97,6 +97,9 @@ Useful sequencer-specific flags include:
 - `--sequencer.recover` enables recovery mode and forces empty block production.
 - `--conductor.rpc` enables conductor-backed leader checks.
 - `--conductor.binary-commit` uses the conductor binary commit endpoint.
+- `--builder.transaction-events.enabled` journals the builder's transaction events. Because the
+  consensus node runs in the same process, the journal is gated on its own `admin_sequencerActive`
+  (requires `--rpc.enable-admin`) without setting `--builder.transaction-events.consensus-url`.
 
 ## `base dev`
 

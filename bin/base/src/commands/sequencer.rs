@@ -3,7 +3,9 @@
 use std::sync::Arc;
 
 use base_builder_cli::Args as BuilderArgs;
-use base_builder_core::{BuilderApiExtension, NativePayloadServiceBuilder};
+use base_builder_core::{
+    BuilderApiExtension, NativePayloadServiceBuilder, SequencerLeadershipProbe,
+};
 use base_builder_metering::MeteringStoreExtension;
 use base_consensus_cli::{
     CliMetrics, ConsensusNodeArgs, ConsensusNodeConfigArgs, ConsensusNodeOverrides,
@@ -15,6 +17,7 @@ use base_execution_cli::{
     ExecutionNodeConfigArgs, StandardBaseRethNode, chainspec::chain_value_parser,
 };
 use base_node_runner::BaseNodeRunner;
+use base_observability_events::{GlobalTransactionEventWriter, TransactionEventGate};
 use base_shadow_indexer::{ShadowIndexerConfig, ShadowIndexerExtension};
 use base_txpool_rpc::{
     SendRawTransactionValidityConfig, SendRawTransactionValidityExtension, TxPoolRpcConfig,
@@ -63,6 +66,12 @@ impl SequencerCommand {
             .upgrade_signal_l1_rpc
             .apply_default_from(&consensus_config.l1_rpc_args.l1_eth_rpc);
         consensus_config.upgrade_signal = builder.rollup_args.upgrade_signal.clone();
+        // The consensus node runs in this process, so its own admin API answers whether this
+        // sequencer is active unless a consensus URL is configured explicitly.
+        let transaction_events = builder.transaction_events.clone();
+        let leadership_config = transaction_events
+            .leadership_config(consensus_config.rpc_flags.local_admin_url())
+            .filter(|_| transaction_events.enabled);
         let consensus_args = ConsensusNodeArgs::new(consensus_chain, consensus_config);
         let mut rollup_config = consensus_args.load_rollup_config()?;
         Arc::make_mut(&mut execution_chain).block_time = Some(rollup_config.block_time);
@@ -72,6 +81,13 @@ impl SequencerCommand {
         let metering_provider: base_builder_core::SharedMeteringProvider =
             Arc::new(builder.build_metering_store());
         let builder_api_config = builder.builder_api_config();
+        // This command builds its `BaseNodeRunner` directly, so it initializes the builder's
+        // transaction event journal itself. The gate keeps the journal to the active sequencer.
+        let transaction_event_gate = TransactionEventGate::default();
+        GlobalTransactionEventWriter::init_gated(
+            transaction_events.enabled.then(|| transaction_events.writer_config()),
+            transaction_event_gate.clone(),
+        )?;
         // Build the shadow-indexer config before `into_builder_config` consumes `builder`. The
         // config carries an `enabled` flag (false unless ENABLE_SHADOW_INDEXER is set), so the
         // ExEx is installed unconditionally and no-ops for non-shadow sequencers.
@@ -82,6 +98,10 @@ impl SequencerCommand {
         let manifest_precheck_enabled = builder_config.manifest_precheck_enabled;
 
         CliRunner::try_default_runtime()?.run_command_until_exit(|ctx| async move {
+            // Lives until the node stops; dropping it stops the leadership polling.
+            let _leadership_probe = leadership_config
+                .map(|config| SequencerLeadershipProbe::spawn(config, transaction_event_gate))
+                .transpose()?;
             rollup_args
                 .upgrade_signal
                 .apply_startup_to_sinks(
