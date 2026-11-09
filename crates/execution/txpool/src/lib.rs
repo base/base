@@ -83,7 +83,7 @@ pub use pool_error_label::PoolRejectionLabel;
 
 mod builder;
 pub use builder::{
-    BuilderApiImpl, BuilderApiMetrics, BuilderApiServer, InsertMetering,
+    BuilderApiImpl, BuilderApiMetrics, BuilderApiServer, InsertMetering, KeyedMetering,
     MAX_VALIDATED_INSERT_BATCH, is_already_imported_rejection,
 };
 
