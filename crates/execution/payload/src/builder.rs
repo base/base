@@ -65,6 +65,11 @@ use crate::{
     config::BaseBuilderConfig, error::BasePayloadBuilderError, payload::BaseBuiltPayload,
 };
 
+/// A one-shot build whose finalization (scan exit plus sealing) takes at least this long logs
+/// its phase breakdown. A `getPayload` that overruns ~180ms leaves the next 200ms block no build
+/// time, so 100ms flags near misses as well as stalls.
+const SLOW_FINALIZATION_THRESHOLD: Duration = Duration::from_millis(100);
+
 macro_rules! emit_native_validity_event {
     ($ctx:expr, $event_type:expr, $tx_hash:expr, $attempt:expr, {
         $( $data_name:expr => $data_value:expr ),* $(,)?
@@ -573,6 +578,7 @@ impl<Txs> Builder<'_, Txs> {
             .map(|(resting, store)| store.finish(resting.take_predicates()));
 
         let block_num = ctx.parent().number().saturating_add(1);
+        let state_root_task_start = Instant::now();
         let state_root = state_root_handle.and_then(|mut task| {
             // Dropping the hook closes the update stream so the parallel task can finish.
             builder.evm_mut().db_mut().set_state_hook(None);
@@ -598,6 +604,9 @@ impl<Txs> Builder<'_, Txs> {
                 }
             }
         });
+        let state_root_task_duration = state_root_task_start.elapsed();
+        let synchronous_state_root = state_root.is_none();
+        let finish_start = Instant::now();
         let BlockBuilderOutcome {
             execution_result,
             hashed_state,
@@ -606,6 +615,7 @@ impl<Txs> Builder<'_, Txs> {
             block_access_list,
         } = debug_span!("finish_payload", block_num)
             .in_scope(|| builder.finish(state_provider, state_root))?;
+        let finish_duration = finish_start.elapsed();
 
         let sealed_block = Arc::new(block.sealed_block().clone());
         debug!(target: "payload_builder", id=%ctx.payload_id(), sealed_block_header = ?sealed_block.header(), "sealed built block");
@@ -639,6 +649,33 @@ impl<Txs> Builder<'_, Txs> {
         if !no_tx_pool {
             BuilderMetrics::record_inclusion(&info.inclusion);
             BuilderMetrics::record_native_build(execution_duration, build_start.elapsed());
+            let seal_duration = build_start.elapsed().saturating_sub(execution_duration);
+            // A request that predates the scan is bounded from the build start instead.
+            let exit_bound = if info.finalization_requested_before_scan {
+                Some(execution_duration)
+            } else {
+                info.finalization_exit_bound
+            };
+            BuilderMetrics::record_native_finalization(exit_bound, finish_duration);
+            let exit_bound = exit_bound.unwrap_or_default();
+            if ctx.is_one_shot_building_active()
+                && exit_bound + seal_duration >= SLOW_FINALIZATION_THRESHOLD
+            {
+                warn!(
+                    target: "payload_builder",
+                    id = %ctx.payload_id(),
+                    block_num,
+                    txs = info.inclusion.standard.txs + info.inclusion.validity.txs,
+                    requested_before_scan = info.finalization_requested_before_scan,
+                    gas_used = info.cumulative_gas_used,
+                    finalization_exit_ms = exit_bound.as_millis(),
+                    seal_ms = seal_duration.as_millis(),
+                    state_root_task_ms = state_root_task_duration.as_millis(),
+                    finish_ms = finish_duration.as_millis(),
+                    synchronous_state_root,
+                    "slow native payload finalization"
+                );
+            }
         }
 
         if no_tx_pool || ctx.is_one_shot_building_active() {
@@ -740,6 +777,14 @@ pub struct ExecutionInfo {
     /// Transaction hashes that exceeded a per-transaction resource limit and should be
     /// permanently removed from the pool and recorded in the shared rejection cache.
     pub permanently_rejected_txs: Vec<TxHash>,
+    /// One-shot builds only: upper bound on the time from a finalization request until the
+    /// transaction scan stopped, measured from the scan's last observation without a request.
+    /// `None` when the scan ended without a request or the request predated the scan.
+    pub finalization_exit_bound: Option<Duration>,
+    /// One-shot builds only: the finalization request arrived before the scan's first check, so
+    /// the scan cannot bound it. The caller bounds it from the build start; any delay before
+    /// the build job started is outside both.
+    pub finalization_requested_before_scan: bool,
 }
 
 impl ExecutionInfo {
@@ -753,6 +798,16 @@ impl ExecutionInfo {
             inclusion: InclusionTracker::default(),
             resource_metering_usage: Vec::new(),
             permanently_rejected_txs: Vec::new(),
+            finalization_exit_bound: None,
+            finalization_requested_before_scan: false,
+        }
+    }
+
+    /// Records a finalization request seen by the scan, given when the scan last saw none.
+    fn record_finalization(&mut self, last_unrequested: Option<Instant>) {
+        match last_unrequested {
+            Some(at) => self.finalization_exit_bound = Some(at.elapsed()),
+            None => self.finalization_requested_before_scan = true,
         }
     }
 
@@ -1117,14 +1172,23 @@ where
         // Set when the job is cancelled mid-scan. The loop breaks instead of returning so the
         // per-build validity metrics below are still recorded for scans cut short.
         let mut cancelled = false;
+        // When the scan last saw no finalization request, read before the flag so a request racing
+        // the read stays inside the bound. Its age when the scan stops bounds how long
+        // `getPayload` waited for the scan, including a slow transaction or iterator wait.
+        let mut last_unrequested = None;
         while let Some(pooled) = best_txs.next(()) {
             let tx = &pooled.transaction;
             if self.cancel.is_cancelled() {
                 cancelled = true;
                 break;
             }
-            if can_finalize_early && self.cancel.is_finalization_requested() {
-                break;
+            if can_finalize_early {
+                let checked_at = Instant::now();
+                if self.cancel.is_finalization_requested() {
+                    info.record_finalization(last_unrequested);
+                    break;
+                }
+                last_unrequested = Some(checked_at);
             }
 
             let tx_hash = *tx.hash();
@@ -1712,6 +1776,14 @@ where
                     }
                 );
             }
+        }
+        // An interrupted iterator hold ends the loop without reaching the check above.
+        if can_finalize_early
+            && info.finalization_exit_bound.is_none()
+            && !info.finalization_requested_before_scan
+            && self.cancel.is_finalization_requested()
+        {
+            info.record_finalization(last_unrequested);
         }
 
         if let Some(predicate_eval_duration) = predicate_eval_duration {
@@ -2343,6 +2415,76 @@ mod tests {
             panic!("Denim payload must freeze")
         };
         assert_eq!(payload.block().body().transactions.len(), 1);
+    }
+
+    /// Runs only the mempool scan of `ctx` over `transactions` and returns its execution info.
+    fn scan_execution_info(
+        ctx: &BasePayloadBuilderCtx<BaseEvmConfig, BaseChainSpec>,
+        transactions: impl ParkablePayloadTransactions<Pooled = BasePooledTransaction>,
+    ) -> ExecutionInfo {
+        let provider = test_state_provider();
+        let mut db = State::builder()
+            .with_database(StateProviderDatabase::new((&provider).into_evm_state_provider()))
+            .with_bundle_update()
+            .build();
+        db.load_cache_account(Predeploys::L1_BLOCK_INFO).expect("L1 block info must load");
+        let mut builder = ctx.block_builder(&mut db).expect("block builder");
+        builder.apply_pre_execution_changes().expect("pre-execution changes");
+        let mut info = ctx.execute_sequencer_transactions(&mut builder).expect("sequencer");
+        ctx.execute_best_transactions(&mut info, &mut builder, transactions, None)
+            .expect("mempool scan");
+        info
+    }
+
+    #[test]
+    fn denim_finalization_records_scan_exit_bound() {
+        let ctx = pool_payload_context(DENIM_TIMESTAMP);
+        let transactions = FinalizeAfterFirstTransaction {
+            transactions: TestParkableTransactions::new(vec![
+                pool_transaction(0),
+                pool_transaction(1),
+            ]),
+            calls: 0,
+            cancel: ManuallyDrop::new(ctx.cancel.clone()),
+        };
+
+        let info = scan_execution_info(&ctx, transactions);
+
+        assert!(info.finalization_exit_bound.is_some());
+        assert!(!info.finalization_requested_before_scan);
+    }
+
+    #[test]
+    fn denim_finalization_before_scan_is_flagged() {
+        let ctx = pool_payload_context(DENIM_TIMESTAMP);
+        ctx.cancel.request_finalization();
+        let transactions = TestParkableTransactions::new(vec![pool_transaction(0)]);
+
+        let info = scan_execution_info(&ctx, transactions);
+
+        assert!(info.finalization_requested_before_scan);
+        assert_eq!(info.finalization_exit_bound, None);
+    }
+
+    #[test]
+    fn exhausted_scan_records_no_scan_exit_bound() {
+        let ctx = pool_payload_context(DENIM_TIMESTAMP);
+        let transactions = TestParkableTransactions::new(vec![pool_transaction(0)]);
+
+        let info = scan_execution_info(&ctx, transactions);
+
+        assert_eq!(info.finalization_exit_bound, None);
+    }
+
+    #[test]
+    fn pre_denim_records_no_scan_exit_bound() {
+        let ctx = pool_payload_context(DENIM_TIMESTAMP - 1);
+        ctx.cancel.request_finalization();
+        let transactions = TestParkableTransactions::new(vec![pool_transaction(0)]);
+
+        let info = scan_execution_info(&ctx, transactions);
+
+        assert_eq!(info.finalization_exit_bound, None);
     }
 
     #[test]

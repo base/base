@@ -123,6 +123,14 @@ base_metrics::define_metrics! {
     )]
     #[label(name = "result", default = ["delivered", "no_receiver"])]
     payload_ready_hints_sent_total: counter,
+    #[describe(
+        "Upper bound on the time from a getPayload finalization request (or the build start, when the request predates the scan) until a one-shot native build stops its transaction scan, in seconds"
+    )]
+    native_payload_finalization_exit_duration: histogram,
+    #[describe(
+        "Time to assemble and seal the native payload, including the state root when no state-root job supplied one, in seconds"
+    )]
+    native_payload_finish_duration: histogram,
 }
 
 impl ValidityMetrics {
@@ -325,6 +333,15 @@ impl BuilderMetrics {
     pub fn record_payload_ready_hint(delivered: bool) {
         let result = if delivered { "delivered" } else { "no_receiver" };
         Self::payload_ready_hints_sent_total(result).increment(1);
+    }
+
+    /// Records the finalization phases of one native payload build: the scan-exit bound, when
+    /// finalization stopped the scan, and the payload finish.
+    pub fn record_native_finalization(exit_bound: Option<Duration>, finish: Duration) {
+        if let Some(exit_bound) = exit_bound {
+            Self::native_payload_finalization_exit_duration().record(exit_bound.as_secs_f64());
+        }
+        Self::native_payload_finish_duration().record(finish.as_secs_f64());
     }
 
     /// Records one included transaction's tip per gas by flow and bid mechanism.
