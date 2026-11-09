@@ -159,7 +159,8 @@ features! {
         RepricedP256Precompile,
         /// Configure the Osaka per-transaction gas limit cap in Base EVM environments.
         TransactionGasLimitCap,
-        /// Omit receipt and balance metadata from published flashblocks.
+        /// Legacy: omitted receipt and balance metadata from published flashblocks. Kept so the
+        /// Azul feature set stays unchanged.
         CompactFlashblockMetadata,
         /// Request V5 payload envelopes from the execution engine.
         EngineApiV5,
@@ -222,6 +223,8 @@ features! {
         Eip8430,
         /// Plant a nonempty code stub on the native nonce manager to preserve its persistent state.
         NativeNonceManager,
+        /// Bill transactions for their full gas limit rather than only the gas they use.
+        GasLimitBilling,
     },
     Zenith {
         /// Enable experimental EIP-8130 keystore support on genesis-configured chains only.

@@ -129,8 +129,11 @@ impl BaseEvmTypes {
         );
 
         // A halt has no L2 fee payer to refund, so it is charged the full gas limit. evm2 has
-        // already rolled back the execution state; the mint and nonce bump are retained.
-        if result.stop.is_halt() {
+        // already rolled back the execution state; the mint and nonce bump are retained. A
+        // top-level `OutOfFunds` (the sender cannot cover `value`) is a failed deposit too: the
+        // OP-stack charges it the full gas limit, but evm2 classifies the stop as a revert. At
+        // depth 0 this stop can only come from the initial transfer.
+        if result.stop.is_halt() || result.stop == InstrStop::OutOfFunds {
             return Ok(Self::failed_deposit(tx));
         }
 

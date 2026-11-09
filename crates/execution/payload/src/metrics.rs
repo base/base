@@ -70,8 +70,6 @@ base_metrics::define_metrics! {
     resting_predicate_parked_total: counter,
     #[describe("Time one native block build's transaction iterator spent advancing past held resting validity transactions, in seconds")]
     resting_predicate_hold_duration: histogram,
-    #[describe("Resting validity transactions whose predicates matched when evaluated in shadow mode")]
-    resting_predicate_shadow_mismatches_total: counter,
     #[describe("Of the parked resting validity transactions, those carried over from an earlier block")]
     resting_predicate_carried_parked_total: counter,
     #[describe("Duration of carrying resting validity transactions into a block build, on the build path before the selection loop, in seconds")]
@@ -215,8 +213,7 @@ type CounterHandle = metrics::Counter;
 #[cfg(not(feature = "metrics"))]
 type CounterHandle = base_metrics::NoopMetric;
 
-/// `outcome` label of `validity_predicate_evaluations_total` recorded by the flashblocks and
-/// native build loops.
+/// `outcome` label of `validity_predicate_evaluations_total` recorded by the native build loop.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ValidityEvaluationOutcome {
     /// Primary scan: every predicate held.
@@ -343,6 +340,7 @@ mod tests {
     use metrics_exporter_prometheus::PrometheusBuilder;
 
     use super::*;
+    use crate::InclusionTracker;
 
     #[test]
     fn records_predicate_metrics() {
@@ -444,6 +442,99 @@ mod tests {
     fn evaluation_outcome_variants_index_within_counters() {
         for (index, outcome) in ValidityEvaluationOutcome::ALL.into_iter().enumerate() {
             assert_eq!(outcome as usize, index);
+        }
+    }
+
+    #[test]
+    fn record_tip_per_gas_tags_flow_and_bid() {
+        let recorder = PrometheusBuilder::new().build_recorder();
+        let handle = recorder.handle();
+
+        metrics::with_local_recorder(&recorder, || {
+            // Standard EIP-1559: flow=standard, bid=priority_fee.
+            BuilderMetrics::record_tip_per_gas(false, false, 10.0);
+            BuilderMetrics::record_tip_per_gas(false, false, 30.0);
+            // Pre-8130 validity: flow=validity, bid=priority_fee.
+            BuilderMetrics::record_tip_per_gas(true, false, 50.0);
+            // EIP-8130 with predicates and a static phase-0 tip.
+            BuilderMetrics::record_tip_per_gas(true, true, 80.0);
+            // EIP-8130 without predicates, but with a static phase-0 tip.
+            BuilderMetrics::record_tip_per_gas(false, true, 20.0);
+            // EIP-8130 without a statically-analyzable tip: bid=priority_fee.
+            BuilderMetrics::record_tip_per_gas(false, false, 5.0);
+            BuilderMetrics::record_tip_per_gas(true, false, 15.0);
+        });
+
+        let rendered = handle.render();
+        for expected in [
+            "base_builder_tip_per_gas_count{flow=\"standard\",bid=\"priority_fee\"} 3",
+            "base_builder_tip_per_gas_sum{flow=\"standard\",bid=\"priority_fee\"} 45",
+            "base_builder_tip_per_gas_count{flow=\"validity\",bid=\"priority_fee\"} 2",
+            "base_builder_tip_per_gas_sum{flow=\"validity\",bid=\"priority_fee\"} 65",
+            "base_builder_tip_per_gas_count{flow=\"validity\",bid=\"coinbase_tip\"} 1",
+            "base_builder_tip_per_gas_sum{flow=\"validity\",bid=\"coinbase_tip\"} 80",
+            "base_builder_tip_per_gas_count{flow=\"standard\",bid=\"coinbase_tip\"} 1",
+            "base_builder_tip_per_gas_sum{flow=\"standard\",bid=\"coinbase_tip\"} 20",
+        ] {
+            assert!(rendered.contains(expected), "expected `{expected}`, got: {rendered}");
+        }
+    }
+
+    #[test]
+    fn record_inclusion_emits_per_block_histograms_including_zeros() {
+        let recorder = PrometheusBuilder::new().build_recorder();
+        let handle = recorder.handle();
+
+        let mut tracker = InclusionTracker::default();
+        tracker.record(true, 21_000, 2, 10, U256::from(500));
+        tracker.record(false, 10_000, 4, 10, U256::ZERO);
+        tracker.record(true, 8_000, 9, 10, U256::ZERO);
+
+        metrics::with_local_recorder(&recorder, || {
+            BuilderMetrics::record_inclusion(&tracker);
+        });
+
+        let rendered = handle.render();
+        for expected in [
+            "base_builder_txs_included_per_block_sum{flow=\"standard\"} 1",
+            "base_builder_txs_included_per_block_sum{flow=\"validity\"} 2",
+            "base_builder_tx_gas_used_per_block_sum{flow=\"standard\"} 10000",
+            "base_builder_tx_gas_used_per_block_sum{flow=\"validity\"} 29000",
+            "base_builder_priority_fee_revenue_wei_sum{flow=\"standard\"} 40000",
+            "base_builder_priority_fee_revenue_wei_sum{flow=\"validity\"} 114000",
+            "base_builder_base_fee_revenue_wei_sum{flow=\"standard\"} 100000",
+            "base_builder_base_fee_revenue_wei_sum{flow=\"validity\"} 290000",
+            "base_builder_coinbase_tip_revenue_wei_sum{flow=\"standard\"} 0",
+            "base_builder_coinbase_tip_revenue_wei_sum{flow=\"validity\"} 500",
+        ] {
+            assert!(rendered.contains(expected), "expected `{expected}`, got: {rendered}");
+        }
+    }
+
+    #[test]
+    fn record_inclusion_emits_zero_observations_for_empty_blocks() {
+        let recorder = PrometheusBuilder::new().build_recorder();
+        let handle = recorder.handle();
+
+        metrics::with_local_recorder(&recorder, || {
+            BuilderMetrics::record_inclusion(&InclusionTracker::default());
+        });
+
+        let rendered = handle.render();
+        for metric in [
+            "txs_included_per_block",
+            "tx_gas_used_per_block",
+            "priority_fee_revenue_wei",
+            "base_fee_revenue_wei",
+            "coinbase_tip_revenue_wei",
+        ] {
+            for flow in ["standard", "validity"] {
+                let expected = format!("base_builder_{metric}_count{{flow=\"{flow}\"}} 1");
+                assert!(
+                    rendered.contains(&expected),
+                    "empty blocks must still emit `{expected}`, got: {rendered}"
+                );
+            }
         }
     }
 }

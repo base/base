@@ -288,6 +288,8 @@ mod tests {
         let signer = PrivateKeySigner::random();
         let tx = transaction(&signer, 8453, 0);
         let mut validity = predicates();
+        // Builder ingress rejects the trailing flashblock-index predicate.
+        validity.pop();
         validity.push(ValidityPredicate::Nonce {
             address: Address::repeat_byte(0x44),
             op: ValidityOperator::Equal,

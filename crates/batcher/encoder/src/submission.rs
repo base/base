@@ -2,7 +2,9 @@
 
 use std::sync::Arc;
 
+use alloy_eips::eip4844::Blob;
 use alloy_primitives::Bytes;
+use base_common_blobs::{BlobEncodeError, BlobEncoder};
 use base_protocol::{DERIVATION_VERSION_0, Frame};
 
 /// Identifies a batch submission for receipt tracking.
@@ -132,5 +134,18 @@ impl FrameEncoder {
         data.push(DERIVATION_VERSION_0);
         data.extend_from_slice(&encoded);
         Bytes::from(data)
+    }
+
+    /// Packs `[DERIVATION_VERSION_0] ++ frame0.encode() ++ frame1.encode() ++ …`
+    /// into one blob. The derivation pipeline's `Frame::parse_frames` reads
+    /// frames until the payload ends, so every packed frame is recovered.
+    pub fn to_blob(frames: &[Arc<Frame>]) -> Result<Box<Blob>, BlobEncodeError> {
+        let encoded_size: usize = frames.iter().map(|f| f.encoded_len()).sum();
+        let mut data = Vec::with_capacity(1 + encoded_size);
+        data.push(DERIVATION_VERSION_0);
+        for frame in frames {
+            frame.encode_into(&mut data);
+        }
+        BlobEncoder::encode(&data)
     }
 }

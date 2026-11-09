@@ -33,6 +33,9 @@ pub use double_counter::{DOUBLE_COUNTER_GAS_LIMIT, DoubleCounterPayload};
 mod aa_bundle;
 pub use aa_bundle::AaBundlePayload;
 
+mod revert_arb;
+pub use revert_arb::{DEFAULT_REVERT_ARB_GAS_LIMIT, REVERT_ARB_SELECTOR, RevertArbPayload};
+
 mod precompile;
 pub use precompile::PrecompilePayload;
 

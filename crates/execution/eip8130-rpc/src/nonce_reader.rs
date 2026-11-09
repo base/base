@@ -29,9 +29,8 @@ impl ChannelNonceReader {
     /// honoring `state_overrides` if provided.
     ///
     /// `state_overrides` lets callers stack pending-state writes on top of the
-    /// canonical block — e.g. flashblocks passes its accumulated
-    /// [`StateOverride`] here so a 2D nonce incremented inside the pending
-    /// flashblock is visible. The override's `state` field, if present,
+    /// canonical block as a [`StateOverride`], so a 2D nonce incremented by a
+    /// not-yet-canonical transaction is visible. The override's `state` field, if present,
     /// fully replaces the precompile's storage view; otherwise `state_diff`
     /// is consulted slot-by-slot and the canonical storage is used for slots
     /// the diff doesn't mention.

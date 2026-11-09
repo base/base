@@ -8,7 +8,6 @@ doc-valid-idents = [
     "RPC",
     "EVM",
     "EIP",
-    "Flashblocks",
     "Reth",
 
     "geth",

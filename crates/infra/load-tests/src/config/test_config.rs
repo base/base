@@ -18,8 +18,8 @@ use crate::{
     runner::{TxConfig, TxType},
     utils::{BaselineError, Result},
     workload::{
-        AaBundlePayload, MAX_TOKEN_MOVE_TRANSFERS_PER_TX, RealTokenSetup, StoragePayload,
-        UniswapV3Hop,
+        AaBundlePayload, DEFAULT_REVERT_ARB_GAS_LIMIT, MAX_TOKEN_MOVE_TRANSFERS_PER_TX,
+        RealTokenSetup, StoragePayload, UniswapV3Hop,
     },
 };
 
@@ -41,9 +41,6 @@ pub struct TestConfig {
     /// Optional HTTP JSON-RPC endpoints whose txpools should be cleared before a test.
     #[serde(default)]
     pub txpool_nodes: Vec<Url>,
-    /// Optional legacy builder flashblocks WebSocket endpoint.
-    #[serde(default)]
-    pub flashblocks_ws: Option<Url>,
 
     /// Mnemonic phrase for deriving sender accounts.
     /// If not provided, accounts are generated from seed.
@@ -171,7 +168,6 @@ impl Default for TestConfig {
             ],
             query_rpc: None,
             txpool_nodes: Vec::new(),
-            flashblocks_ws: None,
             mnemonic: None,
             funding_amount: "10000000000000000".to_string(),
             sender_count: 100,
@@ -205,7 +201,6 @@ impl fmt::Debug for TestConfig {
             .field("transaction_submission_rpcs", &self.transaction_submission_rpcs)
             .field("query_rpc", &self.query_rpc)
             .field("txpool_nodes", &self.txpool_nodes)
-            .field("flashblocks_ws", &self.flashblocks_ws)
             .field("mnemonic", &self.mnemonic.as_ref().map(|_| "[REDACTED]"))
             .field("funding_amount", &self.funding_amount)
             .field("sender_count", &self.sender_count)
@@ -337,6 +332,18 @@ pub enum TxTypeConfig {
         padding_bytes: u32,
     },
 
+    /// Call to `contract` with a selector no test contract implements, so it reverts at
+    /// dispatch after ~21-25k gas while reserving `gas_limit`. Models a searcher reverting arb whose
+    /// opportunity is gone; pair it with `validity.priority_lead_payload` for the gas-limit
+    /// billing demo.
+    RevertArb {
+        /// Contract whose selector dispatch rejects the call (for example `DoubleCounter`).
+        contract: Address,
+        /// Declared gas limit carried by every reverting arb.
+        #[serde(default = "default_revert_arb_gas_limit")]
+        gas_limit: u64,
+    },
+
     /// Precompile call.
     Precompile {
         /// Target precompile configuration.
@@ -460,6 +467,45 @@ const fn default_aa_ops_per_bundle() -> u32 {
     12
 }
 
+impl TxTypeConfig {
+    /// Returns true when the payload only works after [`Payload::prepare`] ran for it
+    /// (deployments, token acquisition, run salts, signed-op contexts), so it cannot be used
+    /// where preparation is skipped.
+    ///
+    /// [`Payload::prepare`]: crate::workload::Payload::prepare
+    pub const fn requires_chain_preparation(&self) -> bool {
+        match self {
+            Self::X402
+            | Self::TokenMove { .. }
+            | Self::AaBundle { .. }
+            | Self::UniswapV3 { .. }
+            | Self::B20
+            | Self::AerodromeCl { .. }
+            | Self::UniswapV3Liquidity(_) => true,
+            Self::Storage { contract, .. } => contract.is_none(),
+            Self::Transfer
+            | Self::Eip8430Transfer
+            | Self::Calldata { .. }
+            | Self::Erc20 { .. }
+            | Self::DoubleCounter { .. }
+            | Self::RevertArb { .. }
+            | Self::Precompile { .. }
+            | Self::Osaka { .. } => false,
+        }
+    }
+}
+
+const fn default_revert_arb_gas_limit() -> u64 {
+    DEFAULT_REVERT_ARB_GAS_LIMIT
+}
+
+/// Lower bound on a revert arb's declared gas limit, below which the pool rejects it outright:
+/// the EIP-7623 calldata floor for a four-byte selector (`21_000 + 10 * 4 bytes * 4 tokens`),
+/// which exceeds the 21,064 intrinsic cost of the same call. A limit this low runs out of gas
+/// before the selector dispatch; it is still billed in full, but set `gas_limit` well above it
+/// (the default is 2,000,000) so the arb reverts at dispatch as the demo describes.
+const MIN_REVERT_ARB_GAS_LIMIT: u64 = 21_160;
+
 /// Upper bound on `slots_per_tx` so the payload's gas limit
 /// (`slots_per_tx * 23_000 + 30_000`) stays under the ~30M per-tx block cap.
 /// Target RPCs may enforce a lower per-tx ceiling; tune `slots_per_tx` to fit.
@@ -556,10 +602,6 @@ impl TestConfig {
             Self::validate_http_url(url, "txpool_nodes")?;
         }
 
-        if let Some(flashblocks_ws) = &self.flashblocks_ws {
-            Self::validate_ws_url(flashblocks_ws, "flashblocks_ws")?;
-        }
-
         if !(0.0..=1.0).contains(&self.fresh_recipient_ratio) {
             return Err(BaselineError::Config(
                 "fresh_recipient_ratio must be between 0.0 and 1.0".into(),
@@ -602,21 +644,6 @@ impl TestConfig {
             ))),
             scheme => Err(BaselineError::Config(format!(
                 "{field_name} has invalid scheme '{scheme}', expected 'http://' or 'https://'"
-            ))),
-        }
-    }
-
-    fn validate_ws_url(url: &Url, field_name: &str) -> Result<()> {
-        match url.scheme() {
-            "ws" | "wss" => Ok(()),
-            "http" => Err(BaselineError::Config(format!(
-                "{field_name} uses 'http://' scheme but requires 'ws://' for WebSocket connections"
-            ))),
-            "https" => Err(BaselineError::Config(format!(
-                "{field_name} uses 'https://' scheme but requires 'wss://' for secure WebSocket connections"
-            ))),
-            scheme => Err(BaselineError::Config(format!(
-                "{field_name} has invalid scheme '{scheme}', expected 'ws://' or 'wss://'"
             ))),
         }
     }
@@ -804,7 +831,6 @@ impl TestConfig {
                 .map(|max| max as usize),
             batch_size: self.batch_size as usize,
             max_gas_price: crate::runner::DEFAULT_MAX_GAS_PRICE,
-            flashblocks_ws: self.flashblocks_ws.clone(),
             canonical_heads_ws: None,
             fresh_recipient_ratio: self.fresh_recipient_ratio,
             validity_ratio: self.validity.ratio,
@@ -813,11 +839,24 @@ impl TestConfig {
             validity_priority_lead_ratio: self.validity.priority_lead_ratio,
             validity_priority_lead_multiplier: self.validity.priority_lead_multiplier,
             validity_priority_fee_divisor: self.validity.priority_fee_divisor,
+            validity_priority_lead_payload: self
+                .validity
+                .priority_lead_payload
+                .as_ref()
+                .map(|payload| self.convert_tx_type_config(payload))
+                .transpose()?,
         })
     }
 
     fn convert_tx_type(&self, weighted: &WeightedTxType) -> Result<TxConfig> {
-        let tx_type = match &weighted.tx_type {
+        Ok(TxConfig {
+            weight: weighted.weight,
+            tx_type: self.convert_tx_type_config(&weighted.tx_type)?,
+        })
+    }
+
+    fn convert_tx_type_config(&self, tx_type: &TxTypeConfig) -> Result<TxType> {
+        let tx_type = match tx_type {
             TxTypeConfig::Transfer => TxType::Transfer,
             TxTypeConfig::Eip8430Transfer => TxType::Eip8430Transfer,
             TxTypeConfig::X402 => {
@@ -881,6 +920,14 @@ impl TestConfig {
                     )));
                 }
                 TxType::AaBundle { ops_per_bundle: *ops_per_bundle, padding_bytes: *padding_bytes }
+            }
+            TxTypeConfig::RevertArb { contract, gas_limit } => {
+                if !(MIN_REVERT_ARB_GAS_LIMIT..=MAX_TX_GAS_LIMIT_OSAKA).contains(gas_limit) {
+                    return Err(BaselineError::Config(format!(
+                        "revert_arb gas_limit must be within {MIN_REVERT_ARB_GAS_LIMIT}..={MAX_TX_GAS_LIMIT_OSAKA} (the EIP-7623 floor and the EIP-7825 per-tx cap)"
+                    )));
+                }
+                TxType::RevertArb { contract: *contract, gas_limit: *gas_limit }
             }
             TxTypeConfig::Precompile { target, iterations } => {
                 let looper_contract = if *iterations > 1 {
@@ -1007,7 +1054,7 @@ impl TestConfig {
                 TxType::UniswapV3Liquidity(payload.clone())
             }
         };
-        Ok(TxConfig { weight: weighted.weight, tx_type })
+        Ok(tx_type)
     }
 }
 
@@ -1045,13 +1092,13 @@ where
 
 #[cfg(test)]
 mod tests {
+    use alloy_primitives::address;
+
     use super::*;
 
-    /// Minimal valid config with the primary RPC and flashblocks websocket set, plus `extra`.
+    /// Minimal valid config with the primary RPC set, plus `extra`.
     fn config_yaml(extra: &str) -> String {
-        format!(
-            "transaction_submission_rpcs: http://localhost:8545\nflashblocks_ws: ws://localhost:7111\n{extra}"
-        )
+        format!("transaction_submission_rpcs: http://localhost:8545\n{extra}")
     }
 
     #[test]
@@ -1068,7 +1115,6 @@ mod tests {
             serde_json::to_value(&baseline.transactions).unwrap()
         );
         assert_eq!(load.target_gps.unwrap() as f64 * load.block_time.as_secs_f64(), 4_000_000.0);
-        assert!(load.flashblocks_ws.is_none());
         assert!(load.txpool_nodes.is_empty());
     }
 
@@ -1133,7 +1179,6 @@ steady_submission_interval: 20ms
 transaction_submission_rpcs:
   - http://localhost:7545
   - http://localhost:7546
-flashblocks_ws: ws://localhost:7111
 "#;
         let config = TestConfig::from_yaml(yaml).unwrap();
         let load_config = config.to_load_config(Some(1337)).unwrap();
@@ -1149,7 +1194,6 @@ transaction_submission_rpcs: http://localhost:8545
 txpool_nodes:
   - http://localhost:7545
   - http://localhost:10545
-flashblocks_ws: ws://localhost:7111
 "#;
         let config = TestConfig::from_yaml(yaml).unwrap();
         let load_config = config.to_load_config(Some(1337)).unwrap();
@@ -1162,7 +1206,6 @@ flashblocks_ws: ws://localhost:7111
     fn parse_full_config() {
         let yaml = r#"
 transaction_submission_rpcs: https://sepolia.base.org
-flashblocks_ws: wss://sepolia.flashblocks.base.org/ws
 mnemonic: "test test test test test test test test test test test junk"
 funding_amount: "500000000000000000"
 sender_count: 20
@@ -1202,7 +1245,6 @@ duration: "30s"
 
         let yaml2 = r#"
 transaction_submission_rpcs: http://localhost:8545
-flashblocks_ws: ws://localhost:7111
 duration: "1h 30m"
 "#;
         let config2 = TestConfig::from_yaml(yaml2).unwrap();
@@ -1435,7 +1477,6 @@ transactions:
             let yaml = format!(
                 r#"
 transaction_submission_rpcs: http://localhost:8545
-flashblocks_ws: ws://localhost:7111
 transactions:
   - weight: 100
     type: storage
@@ -1489,22 +1530,10 @@ transactions:
     }
 
     #[test]
-    fn rejects_http_scheme_for_flashblocks_ws() {
-        let yaml = r#"
-transaction_submission_rpcs: http://localhost:8545
-flashblocks_ws: http://localhost:7111
-"#;
-        let err = TestConfig::from_yaml(yaml).unwrap_err();
-        assert!(err.to_string().contains("flashblocks_ws"));
-        assert!(err.to_string().contains("ws://"));
-    }
-
-    #[test]
     fn query_rpc_accepts_http() {
         let yaml = r#"
 transaction_submission_rpcs: http://localhost:8545
 query_rpc: http://localhost:8546
-flashblocks_ws: ws://localhost:7111
 "#;
         let config = TestConfig::from_yaml(yaml).unwrap();
         assert_eq!(config.query_rpc.as_ref().unwrap().scheme(), "http");
@@ -1559,7 +1588,6 @@ fresh_recipient_ratio: 1.1
         let yaml = r#"
 transaction_submission_rpcs: http://localhost:8545
 query_rpc: wss://localhost:8546
-flashblocks_ws: wss://localhost:7111
 "#;
         let err = TestConfig::from_yaml(yaml).unwrap_err();
         assert!(err.to_string().contains("query_rpc"));
@@ -1572,47 +1600,10 @@ flashblocks_ws: wss://localhost:7111
 transaction_submission_rpcs: http://localhost:8545
 txpool_nodes:
   - ws://localhost:7546
-flashblocks_ws: ws://localhost:7111
 "#;
         let err = TestConfig::from_yaml(yaml).unwrap_err();
         assert!(err.to_string().contains("txpool_nodes"));
         assert!(err.to_string().contains("http://"));
-    }
-
-    #[test]
-    fn flashblocks_ws_accepts_wss() {
-        let yaml = r#"
-transaction_submission_rpcs: http://localhost:8545
-flashblocks_ws: wss://localhost:7111
-"#;
-        let config = TestConfig::from_yaml(yaml).unwrap();
-        assert_eq!(config.flashblocks_ws.as_ref().unwrap().scheme(), "wss");
-    }
-
-    #[test]
-    fn flashblocks_ws_is_optional() {
-        let yaml = r#"
-transaction_submission_rpcs: http://localhost:8545
-"#;
-        let config = TestConfig::from_yaml(yaml).unwrap();
-        assert!(config.flashblocks_ws.is_none());
-        assert!(config.to_load_config(Some(1337)).unwrap().flashblocks_ws.is_none());
-    }
-
-    #[test]
-    fn flashblocks_ws_is_preserved_for_runtime() {
-        let yaml = config_yaml("");
-        let config = TestConfig::from_yaml(&yaml).unwrap();
-
-        assert_eq!(
-            config
-                .to_load_config(Some(1337))
-                .unwrap()
-                .flashblocks_ws
-                .as_ref()
-                .map(url::Url::as_str),
-            Some("ws://localhost:7111/")
-        );
     }
 
     #[test]
@@ -1818,6 +1809,105 @@ validity:
         assert_eq!(config.to_summary().validity_priority_fee_divisor, 3);
         assert_eq!(config.to_summary().validity_priority_lead_ratio, 0.2);
         assert_eq!(config.to_summary().validity_priority_lead_multiplier, 4);
+    }
+
+    #[test]
+    fn revert_arb_lead_payload_round_trips_to_runtime() {
+        let yaml = r#"
+transaction_submission_rpcs: http://localhost:7545
+transactions:
+  - weight: 100
+    type: double_counter
+    contract: "0x1111111111111111111111111111111111111111"
+validity:
+  ratio: 1.0
+  priority_lead_ratio: 0.3
+  priority_lead_multiplier: 20
+  priority_lead_payload:
+    type: revert_arb
+    contract: "0x1111111111111111111111111111111111111111"
+    gas_limit: 2000000
+  predicates:
+    - type: block_number
+      op: "<="
+      offset: "25"
+"#;
+        let config = TestConfig::from_yaml(yaml).unwrap();
+        let contract = address!("1111111111111111111111111111111111111111");
+        assert!(matches!(
+            config.validity.priority_lead_payload,
+            Some(TxTypeConfig::RevertArb { contract: c, gas_limit: 2_000_000 }) if c == contract
+        ));
+
+        let load = config.to_load_config(Some(1337)).unwrap();
+        load.validate().unwrap();
+        assert!(matches!(
+            load.validity_priority_lead_payload,
+            Some(TxType::RevertArb { contract: c, gas_limit: 2_000_000 }) if c == contract
+        ));
+        assert!(
+            matches!(load.transactions[0].tx_type, TxType::DoubleCounter { .. }),
+            "the weighted mix stays on the regular payload"
+        );
+    }
+
+    #[test]
+    fn revert_arb_gas_limit_defaults_and_rejects_out_of_range_values() {
+        let yaml = config_yaml(
+            r#"
+transactions:
+  - weight: 100
+    type: revert_arb
+    contract: "0x1111111111111111111111111111111111111111"
+"#,
+        );
+        let load = TestConfig::from_yaml(&yaml).unwrap().to_load_config(Some(1337)).unwrap();
+        assert!(matches!(
+            load.transactions[0].tx_type,
+            TxType::RevertArb { gas_limit: DEFAULT_REVERT_ARB_GAS_LIMIT, .. }
+        ));
+
+        let yaml = config_yaml(
+            r#"
+transactions:
+  - weight: 100
+    type: revert_arb
+    contract: "0x1111111111111111111111111111111111111111"
+    gas_limit: 21100
+"#,
+        );
+        let error = TestConfig::from_yaml(&yaml).unwrap().to_load_config(Some(1337)).unwrap_err();
+        assert!(error.to_string().contains("revert_arb gas_limit must be within"), "{error}");
+
+        let yaml = config_yaml(
+            r#"
+transactions:
+  - weight: 100
+    type: revert_arb
+    contract: "0x1111111111111111111111111111111111111111"
+    gas_limit: 16777217
+"#,
+        );
+        let error = TestConfig::from_yaml(&yaml).unwrap().to_load_config(Some(1337)).unwrap_err();
+        assert!(error.to_string().contains("revert_arb gas_limit must be within"), "{error}");
+    }
+
+    #[test]
+    fn priority_lead_payload_requires_a_lead_cohort() {
+        let yaml = config_yaml(
+            r#"
+validity:
+  ratio: 1.0
+  priority_lead_payload:
+    type: transfer
+  predicates:
+    - type: block_number
+      op: "<="
+      offset: "25"
+"#,
+        );
+        let error = TestConfig::from_yaml(&yaml).unwrap_err();
+        assert!(error.to_string().contains("priority_lead_payload"), "{error}");
     }
 
     #[test]

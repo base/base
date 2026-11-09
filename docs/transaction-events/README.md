@@ -16,7 +16,7 @@ not the long-term archive. Events are partitioned by retention class and UTC
 day of `event_time`, and a background worker drops whole day partitions once
 they age out: high-volume proxy and builder-decision events default to 3 days,
 ingress and forwarding events default to 7 days, and failures, drops,
-inclusion, and flashblock events default to 30 days. Ingest rejects events
+inclusion, and legacy flashblock events default to 30 days. Ingest rejects events
 whose `event_time` is already outside its window or more than an hour in the
 future. A retried `event_id` dedupes only within the same UTC hour of its
 `event_time`. `TXPOOL_SEND_RAW_TRANSACTION_VALIDITY` uses the same warm window as
@@ -202,8 +202,9 @@ transaction is decoded and before sequencer forwarding or pool insertion.
 `tx_hash` is the join key. They are distinct from `TXPOOL_PENDING` /
 `TXPOOL_QUEUED`, which record later subpool membership.
 `TXPOOL_SEND_RAW_TRANSACTION_VALIDITY` is the **only** event that records
-`data.validity_predicates` (the serialized `balance`, `storage`,
-`block_number`, and `flashblock_index` list). Downstream lifecycle events —
+`data.validity_predicates` (the serialized `balance`, `storage`, and `block_number`
+list; `flashblock_index` predicates are rejected before this
+event). Downstream lifecycle events —
 including `BUILDER_DEFERRED`, `BUILDER_EXPIRED`, `BUILDER_ACCEPTED`, and
 `BUILDER_INCLUDED` — must not repeat that list; join them back by `tx_hash`. A
 replacement is a fresh admission with its own `tx_hash` and/or predicate list;
@@ -250,33 +251,51 @@ Builder:
 - `BUILDER_EXPIRED`
 - `BUILDER_INCLUDED`
 - `BUILDER_PAYLOAD_FINALIZED`
-- `BUILDER_FLASHBLOCK_STARTED`
-- `BUILDER_FLASHBLOCK_PUBLISHED`
-- `BUILDER_FLASHBLOCK_BUILD_STOPPED`
+- `BUILDER_FLASHBLOCK_STARTED` (legacy)
+- `BUILDER_FLASHBLOCK_PUBLISHED` (legacy)
+- `BUILDER_FLASHBLOCK_BUILD_STOPPED` (legacy)
+
+The three `BUILDER_FLASHBLOCK_*` types are legacy events from the retired
+Flashblocks builder: they stay in the schema so historical journals still parse,
+and no current builder emits them.
 
 Builder caveat: `BUILDER_ACCEPTED`, `BUILDER_REJECTED`, `BUILDER_DEFERRED`,
 and `BUILDER_EXPIRED` are emitted per payload-building attempt and include
-`payload_id`, `block_number`, and `flashblock_index` when applicable. The same
-transaction can therefore produce multiple decision events across flashblocks.
-Neither builder emits `BUILDER_CONSIDERED`: every candidate gets one of the
-decision events above, which carries the same budget and position fields. The
+`payload_id` and `block_number`. The same transaction can therefore produce
+multiple decision events across build attempts. The builder does not emit
+`BUILDER_CONSIDERED`: every candidate gets one of the decision events above. The
 native builder journals only validity-gated candidates; a candidate whose
 predicates pass but which is then skipped (block limits, resource metering,
 coinbase tip, nonce or EVM validation) gets `BUILDER_REJECTED`. A parked
-transaction is parked again on every later flashblock and after every
-promote-and-repark, but both builders emit `BUILDER_DEFERRED` only the first
-time they defer a transaction in a block build and again when the
-`defer_reason` changes; its `flashblock_index` and `ordering_position` are
-those of that deferral. The native builder tracks this per build attempt, so
-pre-Denim rebuilds of the same payload report a deferral again. Reindexing an already-parked
+transaction is parked again on every later build attempt and after every
+promote-and-repark, but the builder emits `BUILDER_DEFERRED` only the first
+time it defers a transaction in a block build and again when the
+`defer_reason` changes. The native builder tracks this per build attempt, so
+rebuilds of the same payload report a deferral again. Reindexing an already-parked
 transaction when its blocker changes does not emit another
 `BUILDER_DEFERRED`. `BUILDER_EXPIRED` is the terminal discard for builder-side
 windows that can never become valid again, such as an expired bundle validity
 window or an expired position predicate. `BUILDER_ACCEPTED` and
 `BUILDER_INCLUDED` are unchanged; correlate a deferral with a later
-accept/include by `tx_hash` within the same `payload_id`/flashblock window. A
+accept/include by `tx_hash` within the same `payload_id`. A
 parking-capacity miss stays `BUILDER_REJECTED` with
 `validity_predicate_not_satisfied`.
+`BUILDER_ACCEPTED` carries three gas figures for the transaction it executed:
+`data.tx_gas_limit` is the declared limit; `data.gas_used` is the gas the
+transaction was billed and its receipt reports; `data.metered_gas_used` is the
+gas it actually consumed, defined as the gas it would have been billed without
+gas-limit billing (gas spent less the EIP-3529-capped refund, raised to the
+EIP-7623 floor; for EIP-8130, sender gas plus payer authentication with the
+floor applied to the total). Before the gas-limit billing feature (Everest)
+`metered_gas_used == gas_used`; after it, `gas_used` is `tx_gas_limit` for
+standard transactions and `tx_gas_limit + payer_auth_gas_reserved` for EIP-8130, where
+`data.payer_auth_gas_reserved` (`null` for every other transaction type) is the
+payer-authentication gas reserved on top of the sender's limit. The column is
+continuous across the activation, so `tx_gas_limit / metered_gas_used` measures
+how limits relate to consumption on both sides of it. The builder reads the
+metered value from the EVM right after execution; if the EVM published none,
+both metered fields are `null` rather than guessed. No receipt, header, state
+root, or RPC response changes.
 `BUILDER_INCLUDED` is emitted when the builder finalizes the payload it can
 serve via `engine_getPayload` and includes
 `data.inclusion_signal = "builder_finalized_payload"`. The payload loop emits
@@ -286,14 +305,14 @@ built payload and links `payload_id` to the builder's block hash and number even
 when the payload contains no user transactions. It includes `data.parent_hash`,
 `data.transaction_count`, `data.gas_used`, `data.gas_limit`, and
 `data.timestamp`.
-`BUILDER_FLASHBLOCK_STARTED`, `BUILDER_FLASHBLOCK_PUBLISHED`, and
-`BUILDER_FLASHBLOCK_BUILD_STOPPED` are payload/flashblock-scoped events. They
-include top-level `payload_id` and `block_number`, plus `data.parent_hash`,
-`data.flashblock_index`, and `data.target_flashblock_count`. Published events
-also include top-level `block_hash`, `data.transaction_count`, `data.byte_size`,
-and `data.build_duration_ms`. Build-stopped events use `data.reason` to
-distinguish control-flow stops such as payload resolution winning before
-publish.
+The legacy `BUILDER_FLASHBLOCK_STARTED`, `BUILDER_FLASHBLOCK_PUBLISHED`, and
+`BUILDER_FLASHBLOCK_BUILD_STOPPED` events in historical journals are
+payload/flashblock-scoped. They include top-level `payload_id` and
+`block_number`, plus `data.parent_hash`, `data.flashblock_index`, and
+`data.target_flashblock_count`. Published events also include top-level
+`block_hash`, `data.transaction_count`, `data.byte_size`, and
+`data.build_duration_ms`. Build-stopped events use `data.reason` to distinguish
+control-flow stops such as payload resolution winning before publish.
 
 Canonicality caveat: builder events are local payload construction signals, not
 canonical-chain or consensus-finality observations. A builder event with
@@ -423,7 +442,7 @@ Join later park, expiry, accept, and include events by `tx_hash`:
 }
 ```
 
-Parked (recoverable predicate, held for a later position or flashblock).
+Parked (recoverable predicate, held for a later build attempt).
 Emitted once per block per defer reason, and does not repeat the predicate
 list:
 
@@ -441,9 +460,9 @@ list:
   "payload_id": "0x0102030405060708",
   "request_id": null,
   "data": {
-    "builder_mode": "flashblocks",
-    "flashblock_index": 2,
-    "ordering_position": 4,
+    "builder_mode": "native",
+    "source_queue": "txpool_best",
+    "parent_hash": "0x5555555555555555555555555555555555555555555555555555555555555555",
     "defer_reason": "validity_predicate_not_satisfied",
     "defer_detail": "a validity predicate is not satisfied by the current build state"
   }
@@ -467,11 +486,40 @@ with `validity_predicate_not_satisfied` instead:
   "payload_id": "0x0102030405060708",
   "request_id": null,
   "data": {
-    "builder_mode": "flashblocks",
-    "flashblock_index": 0,
-    "ordering_position": 1,
+    "builder_mode": "native",
+    "source_queue": "txpool_best",
+    "parent_hash": "0x5555555555555555555555555555555555555555555555555555555555555555",
     "expire_reason": "validity_predicate_expired",
-    "expire_detail": "a validity predicate can no longer be satisfied at or after the current build position"
+    "expire_detail": "a validity predicate can no longer be satisfied at or after the current block"
+  }
+}
+```
+
+Accepted under gas-limit billing. `gas_used` is the billed gas (here the
+declared `tx_gas_limit`) and `metered_gas_used` the gas the transfer consumed;
+`payer_auth_gas_reserved` is non-null only for EIP-8130 transactions:
+
+```json
+{
+  "schema_version": "transaction-event/v1",
+  "event_id": "0x7f90...",
+  "event_time": "2026-06-02T00:00:00.600000000Z",
+  "producer": "base-builder",
+  "event_type": "BUILDER_ACCEPTED",
+  "network": "base-mainnet",
+  "tx_hash": "0x3333333333333333333333333333333333333333333333333333333333333333",
+  "block_hash": null,
+  "block_number": 123,
+  "payload_id": "0x0102030405060708",
+  "request_id": null,
+  "data": {
+    "builder_mode": "native",
+    "source_queue": "txpool_best",
+    "parent_hash": "0x5555555555555555555555555555555555555555555555555555555555555555",
+    "tx_gas_limit": 100000,
+    "gas_used": 100000,
+    "metered_gas_used": 21000,
+    "payer_auth_gas_reserved": null
   }
 }
 ```

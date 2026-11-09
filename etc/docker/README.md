@@ -189,19 +189,23 @@ empty value to leave Denim unscheduled.
 To exercise validity transactions on the native payload builder, the deployment must schedule Denim and configure both sides
 of the forwarding path:
 
-- builder: `--builder.payload-builder-cutover`. The builder always registers
-  `base_sendRawTransactionValidity` for direct submission.
+- builder: always registers `base_sendRawTransactionValidity` for direct
+  submission.
 - mempool/client: `--enable-tx-forwarding` and a `--builder-rpc-urls` endpoint
   targeting the builder
 
 The default devnet compose files include these flags and schedule Cobalt at
 block 22 and Denim at block 25. Builder selection and block cadence change at
 Denim. Native payload building supports balance,
-storage, and block-number predicates; `flashblock_index` predicates remain specific
-to the Flashblocks builder and are rejected after the Denim cutover.
+storage, and block-number predicates; `flashblock_index` predicates are rejected.
 
-Everest enables EIP-8130 account-abstraction transactions. Everest mode additionally
-activates Everest at block 100:
+Everest enables EIP-8130 account-abstraction transactions and gas-limit fee billing, which bills
+every non-deposit transaction for its reserved gas (see `crates/common/evm/README.md`): receipts
+report `gasUsed` equal to the gas limit, or to `gas_limit + payer_floor` for EIP-8130, while
+`eth_estimateGas` keeps returning the metered need. For a sponsored EIP-8130 request the estimate
+is the sender's budget only: settlement adds payer authentication on top. Everest mode additionally
+activates Everest at
+block 100:
 
 ```bash
 just devnet up everest

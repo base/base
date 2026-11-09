@@ -54,8 +54,10 @@ The crate keeps the protocol stages explicit while avoiding crate sprawl:
 - **Orchestration** composes the final sender/payer signatures with the
   transaction's ordered account-configuration changes — advancing each channel
   sequence per applied entry — into one authorization verdict (`TransactionAuthorizer`),
-  shared by mempool admission and block inclusion. It reads state but never
-  mutates it; nonce, gas, and fee/balance checks remain separate stages.
+  shared by mempool admission and block inclusion. It writes the account
+  changes through the storage provider it is given (the journal at inclusion, a
+  discarded overlay in the pool); nonce, gas, and fee/balance checks remain
+  separate stages.
 - **Protocol logs** inject `ActorAuthorized` / `ActorRevoked` / `AccountCreated`
   into the journal from the enshrined apply path
   (`AccountConfigurationEvents`), matching the `IAccountConfiguration` event ABIs
@@ -116,7 +118,11 @@ metered_gas  = max(sender_intrinsic + execution_gas_used + payer_auth_cost,
 `sender_floor >= sender_intrinsic`, so a `gas_limit` below the floor is rejected
 at mempool acceptance and at inclusion. The `payer_auth` bytes follow the same
 rule as the sender's: they settle at the standard rate (`payer_auth_cost`) unless
-the floor binds, and the payer is pre-charged at the floor rate (`payer_floor`). The `10`-per-token rate is normative structure: an L2-profile
+the floor binds, and the payer is pre-charged at the floor rate (`payer_floor`).
+From Everest, gas-limit billing settles the whole reservation instead:
+`gas_limit + payer_floor`, with no refund (see
+[`docs/guides/GAS_LIMIT_BILLING.md`](../../../docs/guides/GAS_LIMIT_BILLING.md)).
+The `10`-per-token rate is normative structure: an L2-profile
 chain may reprice `TX_TOTAL_COST_FLOOR_PER_TOKEN` but must not set it below the
 standard `4` or drop the floor.
 
@@ -141,10 +147,11 @@ caught here rather than silently diverging.
 ## Fees and balance
 
 `FeeCheck` validates the EIP-1559 fee caps against the block base fee and bounds
-the payer's worst-case ETH debit at `(gas_limit + payer_auth_cost) ·
-max_fee_per_gas` — `payer_auth_cost` is added because payer authentication is
-charged on top of `gas_limit`. For self-pay the payer is the sender and
-`payer_auth_cost` is `0`. `validate_gas_and_tip` extends that check with a
+the payer's worst-case ETH debit at `(gas_limit + payer_floor) ·
+max_fee_per_gas` — `payer_floor` (the payer authentication bytes at the EIP-7623
+floor rate) is added because payer authentication is charged on top of
+`gas_limit`. For self-pay the payer is the sender and `payer_floor` is `0`.
+`validate_gas_and_tip` extends that check with a
 declared coinbase tip: self-pay must cover gas and tip from one balance, while
 sponsored payment requires the payer to cover gas and the sender to cover the
 tip.

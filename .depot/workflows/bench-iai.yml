@@ -4,15 +4,22 @@ name: Benchmarks (iai · deterministic)
 # under Valgrind's Cachegrind simulator. Counts are identical run-to-run, so a
 # base-vs-head delta reflects a code change, not machine noise — unlike the
 # wall-clock advisory job, which cannot reliably read these per PR. It posts a
-# single comment. Every bench is advisory except `build_loop/mainnet_block`
-# (the builder's whole-block selection loop, Off and Enforce modes), whose
+# single comment. Every bench is advisory except `native_build_loop/resting_predicates`
+# (the native builder's selection loop across blocks with resting predicates), whose
 # instruction count fails the job if it rises 3% or more over the base commit,
-# or if it stops producing a result. On PRs it runs only when a path that can
-# move its numbers changed (see the prepare step). Its counts vary by about
-# 0.04% run-to-run (randomly seeded hashing), far below the 3% gate. The bench
+# or if it stops producing a result. It runs after merge on every push to main,
+# comparing against the previous main commit, so a regression is fixed after the
+# fact. On PRs it runs only with the ci:perf or ci:full label, read on the next
+# push or reopen. The gate itself
+# runs only when a path that can move its numbers changed (see the prepare step).
+# Its counts vary by about 0.04% run-to-run (randomly seeded hashing), far below
+# the 3% gate. The bench
 # also pins the block's selection counts, so a selection change fails it outright.
 on:
+  push:
+    branches: [main]
   pull_request:
+    types: [opened, reopened, synchronize]
   workflow_dispatch:
 
 concurrency:
@@ -30,14 +37,19 @@ permissions:
 jobs:
   bench-iai:
     name: Benchmarks (iai · deterministic)
+    if: >-
+      github.event_name != 'pull_request' ||
+      contains(github.event.pull_request.labels.*.name, 'ci:perf') ||
+      contains(github.event.pull_request.labels.*.name, 'ci:full')
     runs-on: depot-ubuntu-24.04-8
     timeout-minutes: 60
     env:
       # For pull_request, github.sha is the merge commit and base.sha is the base
-      # branch tip. For push/workflow_dispatch there is no base; the prepare step
-      # below compares against the current tip of origin/main.
+      # branch tip. For push, the base is the previous main commit. For
+      # workflow_dispatch there is no base; the prepare step below compares
+      # against the current tip of origin/main.
       HEAD_SHA: ${{ github.sha }}
-      BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
+      BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before || '' }}
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
@@ -107,26 +119,24 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # pull_request supplies the base tip directly. For push/workflow_dispatch
+          # pull_request and push supply the base directly. For workflow_dispatch
           # there is no base event, so compare against the current tip of main.
           if [ -z "$BASE_SHA" ]; then
             git fetch --no-tags --depth 1 origin main
             BASE_SHA="$(git rev-parse FETCH_HEAD)"
           fi
           git fetch --no-tags --depth 1 origin "$BASE_SHA"
-          # The build_loop perf gate doubles the job's build, so on PRs it runs only
-          # when a path that can move its numbers changed. A failed diff runs it.
+          # The native_build_loop perf gate doubles the job's build, so on PRs and pushes it
+          # runs only when a path that can move its numbers changed. A failed diff runs it.
           RUN_GATE=true
-          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
-            # base-builder-core's workspace dep closure (normal/build/optional/dev, via `cargo metadata`).
+          if [ "$GITHUB_EVENT_NAME" != workflow_dispatch ]; then
+            # base-execution-payload-builder's workspace dep closure (normal/build/optional/dev, via `cargo metadata`).
             gate_paths=(
-              crates/builder/
               crates/common/bundles/
               crates/common/chains/
               crates/common/consensus/
               crates/common/eip8130/
               crates/common/evm/
-              crates/common/flashblocks/
               crates/common/flz/
               crates/common/genesis/
               crates/common/l1-fees/
@@ -138,6 +148,7 @@ jobs:
               crates/common/rpc-types/
               crates/common/rpc-types-engine/
               crates/consensus/protocol/
+              crates/consensus/upgrades/
               crates/execution/chainspec/
               crates/execution/consensus/
               crates/execution/eip8130/
@@ -146,13 +157,10 @@ jobs:
               crates/execution/node/
               crates/execution/payload/
               crates/execution/rpc/
-              crates/execution/runner/
               crates/execution/trie/
               crates/execution/txpool/
-              crates/execution/txpool-rpc/
               crates/utilities/metrics/
               crates/utilities/retry/
-              crates/utilities/ring-buffer/
               crates/utilities/test-utils/
               crates/utilities/upgrade-signal/
               Cargo.toml Cargo.lock rust-toolchain.toml .cargo/ .depot/actions/setup/
@@ -208,7 +216,7 @@ jobs:
           # The gate result is held until the comment is posted, so a failing gate
           # still shows its numbers on the PR.
           gate_failed=false
-          gate_args=(--gate build_loop/mainnet_block/off --gate build_loop/mainnet_block/enforce)
+          gate_args=(--gate native_build_loop/resting_predicates/enforce)
           [ "$RUN_GATE" = true ] || gate_args=()
           python3 "$RUNNER_TEMP/iai_compare.py" \
             --base "$RUNNER_TEMP/base.txt" \
@@ -243,7 +251,7 @@ jobs:
         if: always() && steps.render.outputs.gate_failed == 'true'
         shell: bash
         run: |
-          echo "::error title=Benchmark gate::build_loop/mainnet_block regressed or produced no result; see the comparison above."
+          echo "::error title=Benchmark gate::native_build_loop/resting_predicates regressed or produced no result; see the comparison above."
           exit 1
 
       # If any earlier step failed the in-progress comment would otherwise hang on

@@ -15,7 +15,7 @@ use alloy_rpc_types_debug::ExecutionWitness;
 use alloy_rpc_types_engine::PayloadId;
 use base_common_chains::{BaseFeature, Upgrades};
 use base_common_consensus::{BaseTransaction, DepositReceiptExt, Predeploys};
-use base_common_evm::{BaseSpecId, L1BlockInfo};
+use base_common_evm::{BaseSpecId, L1BlockInfo, MeteredGas};
 use base_execution_eip8130::IntrinsicGas;
 use base_execution_txpool::{
     BasePooledTx, GuardMetrics, ParkableTransactionPool, PredicateContext,
@@ -364,8 +364,8 @@ fn job_interrupt(cancel: &Arc<CancelOnDrop>) -> HoldInterrupt {
     Arc::new(move || cancel.upgrade().is_none_or(|cancel| cancel.is_interrupted()))
 }
 
-/// Creates the candidate iterator of one build from the fee attributes and, for an enforcing
-/// build, the resting set whose hold the iterator parks members with.
+/// Creates the candidate iterator of one build from the fee attributes and, when the build carries
+/// resting transactions, the resting set whose hold the iterator parks members with.
 pub type BestTransactionsFactory<'a, Txs> =
     dyn FnOnce(BestTransactionsAttributes, Option<&SharedRestingPredicates>) -> Txs + 'a;
 
@@ -392,7 +392,7 @@ pub struct Builder<'a, Txs> {
     /// Permanently removes mempool transactions that exceeded a per-transaction resource limit.
     #[debug(skip)]
     evict_permanently_rejected: Box<dyn FnOnce(Vec<TxHash>) + 'a>,
-    /// Carries resting validity transactions between builds when the carried mode is enabled.
+    /// Carries resting validity transactions between builds; used from Denim on.
     resting_predicates: Option<RestingPredicateStore>,
 }
 
@@ -483,10 +483,7 @@ impl<Txs> Builder<'_, Txs> {
             // Without flashblocks, resting transactions only carry across blocks, from Denim on.
             resting = resting_predicates
                 .as_ref()
-                .filter(|_| {
-                    ctx.builder_config.resting_predicate_mode.is_enabled()
-                        && ctx.is_one_shot_building_active()
-                })
+                .filter(|_| ctx.is_one_shot_building_active())
                 .map(|store| {
                     let start = Instant::now();
                     let mut resting = store.take(
@@ -504,12 +501,8 @@ impl<Txs> Builder<'_, Txs> {
                     SharedRestingPredicates::new(resting)
                         .with_interrupt(job_interrupt(&cancel_watch))
                 });
-            // Only an enforcing build hands the pool iterator a hold; a shadow build evaluates
-            // resting members to count mismatches.
-            let hold = resting
-                .as_ref()
-                .filter(|_| ctx.builder_config.resting_predicate_mode.is_enforced());
-            let best_txs = best(ctx.best_transaction_attributes(builder.evm_mut().block()), hold);
+            let best_txs =
+                best(ctx.best_transaction_attributes(builder.evm_mut().block()), resting.as_ref());
             let cancelled =
                 ctx.execute_best_transactions(&mut info, &mut builder, best_txs, resting.as_ref())?;
             if !info.permanently_rejected_txs.is_empty() {
@@ -703,6 +696,8 @@ pub struct ExecutionInfo {
     pub cumulative_gas_used: u64,
     /// Estimated DA size
     pub cumulative_da_bytes_used: u64,
+    /// Uncompressed (EIP-2718 encoded) bytes of the transactions included so far.
+    pub cumulative_uncompressed_bytes: u64,
     /// Tracks fees from executed mempool transactions
     pub total_fees: U256,
     /// Inclusion and fee revenue from executed mempool transactions.
@@ -720,6 +715,7 @@ impl ExecutionInfo {
         Self {
             cumulative_gas_used: 0,
             cumulative_da_bytes_used: 0,
+            cumulative_uncompressed_bytes: 0,
             total_fees: U256::ZERO,
             inclusion: InclusionTracker::default(),
             resource_metering_usage: Vec::new(),
@@ -765,6 +761,18 @@ impl ExecutionInfo {
         }
 
         self.cumulative_gas_used.saturating_add(tx_reserved_gas) > block_gas_limit
+    }
+
+    /// Returns true if adding a transaction of `tx_uncompressed_size` EIP-2718 encoded bytes
+    /// would push the block past `block_uncompressed_limit`, when one is configured.
+    pub fn is_tx_over_uncompressed_limit(
+        &self,
+        tx_uncompressed_size: u64,
+        block_uncompressed_limit: Option<u64>,
+    ) -> bool {
+        block_uncompressed_limit.is_some_and(|limit| {
+            self.cumulative_uncompressed_bytes.saturating_add(tx_uncompressed_size) > limit
+        })
     }
 }
 
@@ -931,6 +939,8 @@ where
                 ));
             }
 
+            let tx_uncompressed_size = sequencer_tx.encoded_bytes().len() as u64;
+
             // Convert the transaction to a [RecoveredTx]. This is
             // purely for the purposes of utilizing the `evm_config.tx_env`` function.
             // Deposit transactions do not have signatures, so if the tx is a deposit, this
@@ -984,6 +994,9 @@ where
             };
 
             info.cumulative_gas_used += gas_output.tx_gas_used();
+            // Sequencer transactions cannot be skipped, so they count toward the uncompressed
+            // block size even when they alone exceed the limit.
+            info.cumulative_uncompressed_bytes += tx_uncompressed_size;
             if let Some(usage) = pending_resource_usage {
                 resource_metering.apply_accounted_usage(
                     &tx_hash,
@@ -1001,8 +1014,7 @@ where
     /// [`ExecutionInfo::permanently_rejected_txs`] for the payload job to remove from the
     /// pool and insert into [`crate::config::BaseBuilderConfig::rejection_cache`] after this scan.
     /// Later jobs sharing that cache skip the hash even if the pool has it again.
-    /// Nonce-lane descendants are skipped for this scan via `mark_invalid`;
-    /// skipping those descendants across later jobs is Flashblocks-only.
+    /// Nonce-lane descendants are skipped for this scan via `mark_invalid`.
     /// Block-scope excludes only skip the current iterator.
     ///
     /// Returns `Ok(Some(()))` if the job was cancelled.
@@ -1030,6 +1042,7 @@ where
             .map_or(gas_limit, |cfg| cfg.min(gas_limit));
         let block_da_limit = self.builder_config.da_config.max_da_block_size();
         let tx_da_limit = self.builder_config.da_config.max_da_tx_size();
+        let block_uncompressed_limit = self.builder_config.max_uncompressed_block_size;
         let base_fee = builder.evm_mut().block().basefee();
         let block_number =
             builder.evm_mut().block().number().try_into().expect("block number must fit in u64");
@@ -1048,9 +1061,6 @@ where
         let mut validity_candidates_evaluated = 0_u64;
         let mut validity_candidates_deferred = 0_u64;
         let mut predicate_eval_cutoff_hit = false;
-        let resting_mode = self.builder_config.resting_predicate_mode;
-        // Counted locally and recorded once per build, so the loop does no metric lookups.
-        let mut carried_shadow_mismatches = 0_u64;
 
         let block_timestamp = self.attributes().timestamp();
         let mut coinbase_tip_affordability = CoinbaseTipAffordability::load(
@@ -1182,13 +1192,6 @@ where
                             expired: false,
                             ..
                         }) => resting.rest(tx_hash, predicate.clone()),
-                        Ok(ValidityPredicateEvaluation::Matched)
-                            if !resting_mode.is_enforced()
-                                && resting.member(tx_hash, tx.validity_conditions()).is_some() =>
-                        {
-                            carried_shadow_mismatches += 1;
-                            resting.remove(tx_hash);
-                        }
                         _ => {
                             resting.remove(tx_hash);
                         }
@@ -1306,6 +1309,7 @@ where
             }
 
             let tx_da_size = tx.estimated_da_size();
+            let tx_uncompressed_size = tx.encoded_length() as u64;
 
             // EIP-8130 meters payer authentication gas on top of the declared gas limit, so it must
             // be reserved against the block gas budget in addition to `gas_limit`. Reserve a
@@ -1412,6 +1416,20 @@ where
                         validity_consideration_index,
                         "block_limits_exceeded",
                         "transaction does not fit the remaining block gas or DA budget",
+                        false,
+                    );
+                }
+                Self::skip_current(&mut best_txs, tx.sender(), tx.nonce(), replay_independent);
+                continue;
+            }
+
+            if info.is_tx_over_uncompressed_limit(tx_uncompressed_size, block_uncompressed_limit) {
+                if has_validity_predicates {
+                    self.emit_validity_rejection(
+                        tx_hash,
+                        validity_consideration_index,
+                        "block_uncompressed_size_exceeded",
+                        "transaction does not fit the remaining uncompressed block size budget",
                         false,
                     );
                 }
@@ -1539,9 +1557,16 @@ where
                     return Err(PayloadBuilderError::EvmExecutionError(Box::new(err)));
                 }
             };
+            // Taken right after `transact` returns and before anything else executes on this
+            // thread: the gas this transaction metered, for the accepted event. `None` only if the
+            // transaction never reached settlement, which an included user transaction always
+            // does; the event then reports `null` rather than a figure that would pass for a
+            // transaction using its whole limit.
+            let metered_gas = MeteredGas::take();
 
             info.cumulative_gas_used += gas_output.tx_gas_used();
             info.cumulative_da_bytes_used += tx_da_size;
+            info.cumulative_uncompressed_bytes += tx_uncompressed_size;
             if let Some(usage) = pending_resource_usage {
                 resource_metering.apply_accounted_usage(
                     &tx_hash,
@@ -1657,13 +1682,24 @@ where
                 miner_fee as f64,
             );
             if has_validity_predicates {
+                if metered_gas.is_none() {
+                    warn!(
+                        target: "payload_builder",
+                        tx_hash = %tx_hash,
+                        "executed transaction published no metered gas"
+                    );
+                }
                 emit_native_validity_event!(
                     self,
                     TransactionEventType::BuilderAccepted,
                     tx_hash,
                     validity_consideration_index,
                     {
-                        "gas_used" => gas_output.tx_gas_used(),
+                        "tx_gas_limit" => tx.gas_limit(),
+                        "gas_used" => gas_used,
+                        "metered_gas_used" => metered_gas.map(|metered| metered.gas_used),
+                        "payer_auth_gas_reserved" =>
+                            metered_gas.and_then(|metered| metered.payer_auth_gas_reserved),
                     }
                 );
             }
@@ -1689,10 +1725,6 @@ where
             ValidityMetrics::resting_predicate_carried_parked_total()
                 .increment(stats.carried_parked);
             ValidityMetrics::record_resting_hold_duration(stats.duration);
-        }
-        if carried_shadow_mismatches > 0 {
-            ValidityMetrics::resting_predicate_shadow_mismatches_total()
-                .increment(carried_shadow_mismatches);
         }
         if resource_throttled > 0 {
             info!(
@@ -1755,13 +1787,10 @@ mod tests {
         PoolTransaction, TransactionOrigin, ValidPoolTransaction, identifier::TransactionId,
     };
     use reth_trie_common::{HashedPostState, updates::TrieUpdates};
-    use reth_trie_parallel::{
-        error::StateRootTaskError,
-        state_root_task::{
-            PayloadStateRootHandle, StateRootComputeOutcome, StateRootSink, StateRootUpdateStream,
-        },
+    use reth_trie_parallel::state_root_task::{
+        PayloadStateRootHandle, StateRootComputeOutcome, StateRootHandle, StateRootTaskCancelGuard,
     };
-    use revm::{Database, database::TransitionState, state::EvmState};
+    use revm::{Database, database::TransitionState};
 
     use super::{
         BasePayloadBuilderCtx, Builder, ExecutionInfo, RESTING_SWEEP_WAIT_LIMIT, job_interrupt,
@@ -1770,34 +1799,24 @@ mod tests {
         BasePayloadBuilderAttributes, DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD, MeteringProvider,
         NoopMeteringProvider, ParkablePayloadTransactions, ResourceMeteringConfig,
         ResourceMeteringDimension, ResourceMeteringOperation, ResourceMeteringSchedule,
-        RestingPredicateMode, RestingPredicateStore, SharedMeteringProvider,
-        SharedRestingPredicates, config::BaseBuilderConfig, payload::EthPayloadBuilderAttributes,
+        RestingPredicateStore, SharedMeteringProvider, SharedRestingPredicates,
+        config::BaseBuilderConfig, payload::EthPayloadBuilderAttributes,
     };
 
-    #[derive(Debug)]
-    struct TestStateRootSink {
-        result: std::sync::mpsc::Sender<Result<StateRootComputeOutcome, StateRootTaskError>>,
-    }
-
-    impl StateRootSink for TestStateRootSink {
-        fn on_state_update(&self, _state: EvmState) {}
-
-        fn on_hashed_state_update(&self, _state: HashedPostState) {}
-
-        fn on_updates_finished(&self) {
-            _ = self.result.send(Ok(StateRootComputeOutcome {
+    fn state_root_handle() -> PayloadStateRootHandle {
+        let (updates_tx, _updates_rx) = crossbeam_channel::unbounded();
+        let (cancel_guard, _cancel_rx) = StateRootTaskCancelGuard::channel();
+        let (result_tx, result_rx) = std::sync::mpsc::channel();
+        let (_hashed_state_tx, hashed_state_rx) = std::sync::mpsc::channel();
+        result_tx
+            .send(Ok(StateRootComputeOutcome {
                 state_root: B256::repeat_byte(0x42),
                 trie_updates: Arc::new(TrieUpdates::default()),
                 hashed_state: Arc::new(HashedPostState::default()),
-            }));
-        }
-    }
-
-    fn state_root_handle() -> PayloadStateRootHandle {
-        let (result_tx, result_rx) = std::sync::mpsc::channel();
-        let hook = StateRootUpdateStream::new(Arc::new(TestStateRootSink { result: result_tx }))
-            .into_state_hook();
-        PayloadStateRootHandle::new("test", Some(hook), result_rx, None)
+            }))
+            .unwrap();
+        StateRootHandle::new(B256::ZERO, updates_tx, cancel_guard, result_rx, hashed_state_rx)
+            .into_payload_state_root_handle()
     }
 
     fn build_empty_payload(state_root_handle: PayloadStateRootHandle) -> B256 {
@@ -1857,6 +1876,50 @@ mod tests {
 
         // payer_auth metered on top (reserved = 21_000 + 2_100) pushes over the block limit.
         assert!(info.is_tx_over_limits(0, block_gas_limit, None, None, 21_000 + 2_100, None));
+    }
+
+    #[test]
+    fn is_tx_over_uncompressed_limit_counts_cumulative_bytes() {
+        let mut info = ExecutionInfo::new();
+        info.cumulative_uncompressed_bytes = 90_000;
+
+        assert!(!info.is_tx_over_uncompressed_limit(u64::MAX, None));
+        assert!(!info.is_tx_over_uncompressed_limit(10_000, Some(100_000)));
+        assert!(info.is_tx_over_uncompressed_limit(10_001, Some(100_000)));
+    }
+
+    /// Pool transactions that would push the block past the uncompressed size limit are left
+    /// out, and the block still includes the transactions that fit. Sequencer transactions count
+    /// toward the limit and are never left out.
+    #[test]
+    fn native_builder_enforces_max_uncompressed_block_size() {
+        // Distinct recipients give each transaction its own recovered sender at nonce zero.
+        let transactions: Vec<_> =
+            (1..=4).map(|i| pool_transaction_to(0, Address::repeat_byte(i), U256::ZERO)).collect();
+        let senders: Vec<_> = transactions.iter().map(|tx| tx.sender()).collect();
+        let tx_size = transactions[0].encoded_length() as u64;
+        let (sequencer, pool) = transactions.split_first().expect("four transactions");
+        let build = |limit, with_sequencer: bool| {
+            let mut ctx = pool_payload_context(DENIM_TIMESTAMP);
+            ctx.builder_config.max_uncompressed_block_size = limit;
+            if with_sequencer {
+                ctx.config.attributes.transactions = vec![sequencer_attribute_tx(sequencer)];
+            }
+            included_tx_count(build_parkable_pool_payload(
+                ctx,
+                TestParkableTransactions::new(pool.to_vec()),
+                &senders,
+            ))
+        };
+
+        assert_eq!(build(None, false), 3);
+        assert_eq!(build(Some(2 * tx_size), false), 2);
+        assert_eq!(build(Some(tx_size - 1), false), 0);
+        // The sequencer transaction takes one of the three slots, leaving room for two pool
+        // transactions.
+        assert_eq!(build(Some(3 * tx_size), true), 3);
+        // A sequencer transaction over the limit is still included, and no pool transaction fits.
+        assert_eq!(build(Some(tx_size - 1), true), 1);
     }
 
     #[test]
@@ -2466,17 +2529,13 @@ mod tests {
         store
     }
 
-    /// Builds one block at `timestamp` with the resting `mode`, returning the included hashes and
-    /// the block hash.
+    /// Builds one block at `timestamp`, returning the included hashes and the block hash.
     fn build_carrying_resting_at(
         timestamp: u64,
-        mode: RestingPredicateMode,
         store: &RestingPredicateStore,
         transactions: Vec<BasePooledTransaction>,
     ) -> (Vec<TxHash>, B256) {
-        let mut ctx = pool_payload_context(timestamp);
-        ctx.builder_config.resting_predicate_mode = mode;
-        build_carrying_resting_with(ctx, store, transactions)
+        build_carrying_resting_with(pool_payload_context(timestamp), store, transactions)
     }
 
     /// Builds one block with `ctx`, returning the included hashes and the block hash.
@@ -2508,14 +2567,12 @@ mod tests {
         (included, payload.block().hash())
     }
 
-    /// Builds one Denim block with the resting `mode`, returning the included hashes and the
-    /// block hash.
+    /// Builds one Denim block, returning the included hashes and the block hash.
     fn build_carrying_resting(
-        mode: RestingPredicateMode,
         store: &RestingPredicateStore,
         transactions: Vec<BasePooledTransaction>,
     ) -> (Vec<TxHash>, B256) {
-        build_carrying_resting_at(DENIM_TIMESTAMP, mode, store, transactions)
+        build_carrying_resting_at(DENIM_TIMESTAMP, store, transactions)
     }
 
     fn pool_parent_hash() -> B256 {
@@ -2525,7 +2582,7 @@ mod tests {
     /// The set records `gated` as resting although its predicate holds, so whether it is included
     /// shows whether the build evaluated it.
     #[test]
-    fn native_builder_skips_evaluating_carried_resting_transactions_only_when_enforced() {
+    fn native_builder_skips_evaluating_carried_resting_transactions() {
         let watched_address = Address::repeat_byte(0x47);
         let holds = ValidityPredicate::Balance {
             address: watched_address,
@@ -2536,19 +2593,17 @@ mod tests {
             .with_validity_predicates(vec![holds.clone()]);
         let gated_hash = *gated.hash();
 
-        for (mode, evaluated) in [
-            (RestingPredicateMode::Off, true),
-            (RestingPredicateMode::Shadow, true),
-            (RestingPredicateMode::Enforce, false),
-        ] {
-            let store = resting_store(pool_parent_hash(), &gated, holds.clone());
-            let (included, _) = build_carrying_resting(mode, &store, vec![gated.clone()]);
-            assert_eq!(included.contains(&gated_hash), evaluated, "mode {mode:?}");
-        }
+        let (included, _) =
+            build_carrying_resting(&RestingPredicateStore::default(), vec![gated.clone()]);
+        assert_eq!(included, [gated_hash], "an uncarried transaction is evaluated");
+
+        let store = resting_store(pool_parent_hash(), &gated, holds);
+        let (included, _) = build_carrying_resting(&store, vec![gated]);
+        assert!(included.is_empty(), "a carried resting transaction is held back");
     }
 
     /// A stale carried member that a concurrent build rejected stays excluded: held back while it
-    /// rests, and skipped by the rejection cache once released or when resting is off.
+    /// rests, and skipped by the rejection cache when it is not carried.
     #[test]
     fn native_builder_excludes_a_rejected_resting_transaction() {
         let watched_address = Address::repeat_byte(0x4b);
@@ -2560,13 +2615,16 @@ mod tests {
         let gated = pool_transaction_to(0, Address::repeat_byte(0x5c), U256::ZERO)
             .with_validity_predicates(vec![holds.clone()]);
 
-        for mode in [RestingPredicateMode::Off, RestingPredicateMode::Enforce] {
-            let store = resting_store(pool_parent_hash(), &gated, holds.clone());
-            let mut ctx = pool_payload_context(DENIM_TIMESTAMP);
-            ctx.builder_config.resting_predicate_mode = mode;
+        for carried in [false, true] {
+            let store = if carried {
+                resting_store(pool_parent_hash(), &gated, holds.clone())
+            } else {
+                RestingPredicateStore::default()
+            };
+            let ctx = pool_payload_context(DENIM_TIMESTAMP);
             ctx.builder_config.rejection_cache.insert(*gated.hash());
             let (included, _) = build_carrying_resting_with(ctx, &store, vec![gated.clone()]);
-            assert!(included.is_empty(), "mode {mode:?}");
+            assert!(included.is_empty(), "carried {carried}");
         }
     }
 
@@ -2583,8 +2641,7 @@ mod tests {
         let gated_hash = *gated.hash();
         let store = resting_store(B256::repeat_byte(0x99), &gated, holds);
 
-        let (included, _) =
-            build_carrying_resting(RestingPredicateMode::Enforce, &store, vec![gated]);
+        let (included, _) = build_carrying_resting(&store, vec![gated]);
 
         assert_eq!(included, [gated_hash]);
     }
@@ -2604,11 +2661,15 @@ mod tests {
         let trigger = pool_transaction_to(0, watched_address, U256::ONE);
         let expected = vec![*trigger.hash(), *gated.hash()];
 
-        for mode in [RestingPredicateMode::Off, RestingPredicateMode::Enforce] {
-            let store = resting_store(pool_parent_hash(), &gated, blocker.clone());
+        for carried in [false, true] {
+            let store = if carried {
+                resting_store(pool_parent_hash(), &gated, blocker.clone())
+            } else {
+                RestingPredicateStore::default()
+            };
             let (included, _) =
-                build_carrying_resting(mode, &store, vec![gated.clone(), trigger.clone()]);
-            assert_eq!(included, expected, "mode {mode:?}");
+                build_carrying_resting(&store, vec![gated.clone(), trigger.clone()]);
+            assert_eq!(included, expected, "carried {carried}");
         }
     }
 
@@ -2624,8 +2685,7 @@ mod tests {
             .with_validity_predicates(vec![blocker]);
         let store = RestingPredicateStore::default();
 
-        let (included, block_hash) =
-            build_carrying_resting(RestingPredicateMode::Enforce, &store, vec![gated.clone()]);
+        let (included, block_hash) = build_carrying_resting(&store, vec![gated.clone()]);
 
         assert!(included.is_empty());
         let mut resting =
@@ -2637,7 +2697,7 @@ mod tests {
 
     /// Without flashblocks, resting transactions only carry across blocks, which needs Denim.
     #[test]
-    fn native_builder_ignores_the_resting_set_when_off_or_before_denim() {
+    fn native_builder_ignores_the_resting_set_before_denim() {
         let watched_address = Address::repeat_byte(0x4b);
         let blocker = ValidityPredicate::Balance {
             address: watched_address,
@@ -2647,19 +2707,13 @@ mod tests {
         let gated = pool_transaction_to(0, Address::repeat_byte(0x5c), U256::ZERO)
             .with_validity_predicates(vec![blocker]);
 
-        for (timestamp, mode) in [
-            (DENIM_TIMESTAMP, RestingPredicateMode::Off),
-            (DENIM_TIMESTAMP - 1, RestingPredicateMode::Enforce),
-        ] {
-            let store = RestingPredicateStore::default();
-            build_carrying_resting_at(timestamp, mode, &store, vec![gated.clone()]);
-            assert!(
-                store
-                    .take(DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD, RESTING_SWEEP_WAIT_LIMIT)
-                    .is_empty(),
-                "timestamp {timestamp}, mode {mode:?}"
-            );
-        }
+        let store = RestingPredicateStore::default();
+        build_carrying_resting_at(DENIM_TIMESTAMP - 1, &store, vec![gated]);
+        assert!(
+            store
+                .take(DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD, RESTING_SWEEP_WAIT_LIMIT)
+                .is_empty()
+        );
     }
 
     /// Builds a gated transaction, a predicate-matching transaction, and a trigger that wakes the

@@ -6,9 +6,8 @@
 use std::sync::Arc;
 
 use base_builder_cli::Args;
-use base_builder_core::BuilderApiExtension;
+use base_builder_core::{BuilderApiExtension, NativePayloadServiceBuilder};
 use base_builder_metering::MeteringStoreExtension;
-use base_builder_multiplex::MultiplexingServiceBuilder;
 use base_execution_cli::{Cli, StandardBaseRethNode};
 use base_node_runner::BaseNodeRunner;
 use base_observability_events::GlobalTransactionEventWriter;
@@ -31,6 +30,7 @@ fn main() {
     base_cli_utils::init_common!();
     base_reth_cli::init_reth!();
     base_reth_cli::init_snapshots!();
+    base_reth_cli::init_engine!();
 
     let cli = base_cli_utils::parse_cli!(BuilderCli);
 
@@ -48,8 +48,6 @@ fn main() {
 
         let builder_api_config = builder_args.builder_api_config();
         let shadow_indexer_config = ShadowIndexerConfig::try_from(&builder_args.shadow_indexer)?;
-        let payload_builder_cutover = builder_args.payload_builder_cutover;
-        let basic_payload_builder = builder_args.basic_payload_builder;
         let builder_config = builder_args.into_builder_config(Arc::clone(&metering_provider))?;
         let da_config = builder_config.da_config.clone();
         let gas_limit_config = builder_config.gas_limit_config.clone();
@@ -59,11 +57,7 @@ fn main() {
             .with_da_config(da_config)
             .with_gas_limit_config(gas_limit_config)
             .with_manifest_precheck_enabled(manifest_precheck_enabled)
-            .with_service_builder(
-                MultiplexingServiceBuilder::new(builder_config)
-                    .with_cutover_enabled(payload_builder_cutover)
-                    .with_basic_only(basic_payload_builder),
-            );
+            .with_service_builder(NativePayloadServiceBuilder::new(builder_config));
         runner.install_ext::<MeteringStoreExtension>(Arc::clone(&metering_provider));
         runner.install_ext::<TxPoolRpcExtension>(TxPoolRpcConfig::default());
         runner.install_ext::<BuilderApiExtension>(

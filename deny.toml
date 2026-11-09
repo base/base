@@ -160,8 +160,6 @@ skip = [
     # wasm-streams version mismatch from transitive deps
     "wasm-streams",
 
-    "discv5",
-
     # libp2p dependency chain version mismatch
     "hickory-proto",
     "hickory-resolver",
@@ -200,6 +198,8 @@ skip = [
     # toml/serde stack version mismatches from upstream deps
     "serde_spanned",
     "syn",
+    # revm-inspectors -> boa -> icu -> yoke-derive needs 0.14; x509-parser -> asn1-rs-derive needs 0.13
+    "synstructure",
     "toml",
     "toml_datetime",
     "toml_edit",
@@ -286,4 +286,5 @@ allow-git = [
     "https://github.com/op-rs/op-reth",
     "https://github.com/ethereum-optimism/optimism",
     "https://github.com/alloy-rs/evm2",
+    "https://github.com/sigp/discv5",
 ]

@@ -9,8 +9,7 @@ use std::{any::Any, path::PathBuf, sync::Arc, time::Duration};
 
 use alloy_primitives::hex::ToHexExt;
 use alloy_rpc_types_engine::JwtSecret;
-use base_builder_core::{BuilderConfig, RestingPredicateMode};
-use base_builder_multiplex::MultiplexingServiceBuilder;
+use base_builder_core::{BuilderConfig, NativePayloadServiceBuilder};
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_txpool::{
     BasePooledTransaction, BuilderApiImpl, BuilderApiServer, DEFAULT_MAX_VALIDITY_PREDICATES,
@@ -59,24 +58,15 @@ pub struct InProcessBuilderConfig {
     pub auth_port: Option<u16>,
     /// Optional fixed P2P port (uses random if None).
     pub p2p_port: Option<u16>,
-    /// Optional fixed Flashblocks port (uses random if None).
-    pub flashblocks_port: Option<u16>,
     /// Optional fixed Prometheus metrics port (uses random if None).
     pub metrics_port: Option<u16>,
-    /// Whether to run both payload builders and cut over to basic at Denim.
-    pub payload_builder_cutover: bool,
     /// Staged signature policy used by both validity-bearing RPC endpoints.
     pub validity_signature_mode: ValiditySignatureMode,
-    /// How the native payload builder tracks validity transactions whose predicates did not
-    /// match. `Off` evaluates every candidate on every flashblock.
-    pub resting_predicate_mode: RestingPredicateMode,
     /// Additional node extensions installed after the builder's built-in RPC wiring.
     ///
     /// Lets downstream consumers layer their own [`BaseNodeExtension`] onto the standard
     /// in-process builder wiring without forking this crate.
     pub extra_extensions: Vec<Box<dyn BaseNodeExtension>>,
-    /// Interval used by the payload builder.
-    pub block_time: Duration,
     /// Optional canonical block persistence threshold.
     pub persistence_threshold: Option<u64>,
     /// Optional number of unpersisted blocks allowed before Engine API intake is stalled.
@@ -111,7 +101,6 @@ pub struct InProcessBuilder {
     ws_api_addr: SocketAddr,
     engine_addr: SocketAddr,
     metrics_addr: SocketAddr,
-    flashblocks_port: u16,
     p2p_port: u16,
     data_dir: PathBuf,
     _node_exit_future: NodeExitFuture,
@@ -129,7 +118,6 @@ impl std::fmt::Debug for InProcessBuilder {
             .field("ws_api_addr", &self.ws_api_addr)
             .field("engine_addr", &self.engine_addr)
             .field("metrics_addr", &self.metrics_addr)
-            .field("flashblocks_port", &self.flashblocks_port)
             .field("p2p_port", &self.p2p_port)
             .finish_non_exhaustive()
     }
@@ -158,21 +146,11 @@ impl InProcessBuilder {
 
         let chain_spec = Arc::clone(&config.chain_spec);
 
-        let flashblocks_port = config.flashblocks_port.unwrap_or_else(|| ports.claim());
         let metrics_addr = SocketAddr::new(
             Ipv4Addr::LOCALHOST.into(),
             config.metrics_port.unwrap_or_else(|| ports.claim()),
         );
-        let builder_config = BuilderConfig {
-            block_time: config.block_time,
-            block_time_leeway: Duration::from_secs(20),
-            flashblocks_ws_addr: SocketAddr::new(Ipv4Addr::LOCALHOST.into(), flashblocks_port),
-            flashblocks_interval: Duration::from_millis(200),
-            resting_predicate_mode: config.resting_predicate_mode,
-            ..Default::default()
-        };
-
-        let flashblocks_ws_addr = builder_config.flashblocks_ws_addr;
+        let builder_config = BuilderConfig { ..Default::default() };
 
         let da_config = builder_config.da_config.clone();
         let gas_limit_config = builder_config.gas_limit_config.clone();
@@ -241,10 +219,10 @@ impl InProcessBuilder {
             .apply_to(
                 node_builder
                     .with_components(
-                        base_node.components().pool(pool_component(&rollup_args)).payload(
-                            MultiplexingServiceBuilder::new(builder_config)
-                                .with_cutover_enabled(config.payload_builder_cutover),
-                        ),
+                        base_node
+                            .components()
+                            .pool(pool_component(&rollup_args))
+                            .payload(NativePayloadServiceBuilder::new(builder_config)),
                     )
                     .with_add_ons(addons)
                     .on_component_initialized(move |_ctx| Ok(())),
@@ -273,7 +251,6 @@ impl InProcessBuilder {
             ws_api_addr,
             engine_addr,
             metrics_addr,
-            flashblocks_port: flashblocks_ws_addr.port(),
             p2p_port,
             data_dir: data_path,
             _node_exit_future: node_exit_future,
@@ -312,11 +289,6 @@ impl InProcessBuilder {
     /// Returns the WebSocket URL.
     pub fn ws_url(&self) -> Result<Url> {
         Url::parse(&format!("ws://{}", self.ws_api_addr)).wrap_err("Failed to parse WebSocket URL")
-    }
-
-    /// Returns the Flashblocks WebSocket URL.
-    pub fn flashblocks_url(&self) -> String {
-        format!("ws://127.0.0.1:{}/", self.flashblocks_port)
     }
 
     /// Returns the Prometheus metrics URL.
@@ -379,11 +351,6 @@ impl InProcessBuilder {
     /// Returns the P2P enode URL for Docker containers using testcontainers host port exposure.
     pub fn host_p2p_enode(&self) -> String {
         format!("enode://{BUILDER_ENODE_ID}@{}:{}", crate::host::host_address(), self.p2p_port)
-    }
-
-    /// Returns the Flashblocks URL for Docker containers using testcontainers host port exposure.
-    pub fn host_flashblocks_url(&self) -> String {
-        format!("ws://{}:{}/", crate::host::host_address(), self.flashblocks_port)
     }
 }
 

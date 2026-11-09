@@ -231,7 +231,6 @@ impl ReplayBenchmarkArgs {
             datadir: Some(self.datadir.clone()),
             jwt_secret,
             builder_rpc_url: UNUSED_SEQUENCER_URL.to_string(),
-            builder_flashblocks_url: None,
             builder_p2p_enode: UNREACHABLE_PEER_ENODE.to_string(),
             http_port: None,
             ws_port: None,

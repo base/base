@@ -18,7 +18,6 @@ use alloy_primitives::{Address, B256};
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types_eth::BlockNumberOrTag;
 use alloy_signer_local::PrivateKeySigner;
-use base_builder_core::RestingPredicateMode;
 use base_common_network::Base;
 use base_common_precompiles::ActivationFeature;
 use base_load_tests::{
@@ -174,7 +173,7 @@ pub struct SnapshotBenchmarkArgs {
     /// no follow-client validation or validator metrics are produced.
     #[arg(long, env = "BASE_SNAPSHOT_CLIENT_DATADIR")]
     pub client_datadir: Option<PathBuf>,
-    /// Load-test YAML. RPC and Flashblocks URLs are replaced with launched endpoints.
+    /// Load-test YAML. RPC URLs are replaced with launched endpoints.
     #[arg(long)]
     pub load_test_config: PathBuf,
     /// Required benchmark artifact directory.
@@ -217,17 +216,6 @@ pub struct SnapshotBenchmarkArgs {
     /// Opt-in state sharing for the snapshot's native payload builder.
     #[command(flatten)]
     pub builder_engine: crate::BuilderEngineSharingConfig,
-    /// How the snapshot's native payload builder tracks validity transactions whose predicates
-    /// did not match: `off` evaluates every candidate on every flashblock, `shadow` tracks
-    /// resting transactions while still evaluating them, `enforce` parks them until a state
-    /// change can satisfy their predicate.
-    #[arg(
-        long,
-        env = "BASE_BENCH_RESTING_PREDICATE_MODE",
-        value_enum,
-        default_value_t = RestingPredicateMode::Off
-    )]
-    pub resting_predicate_mode: RestingPredicateMode,
     /// Pause between `DoubleCounter.increment()` calls from the fixture's mutator account while
     /// the load test runs, measured from the previous call's receipt (or its timeout), flipping
     /// slot 0 so parity-gated validity transactions swap between matching and resting. Only used
@@ -331,16 +319,9 @@ impl LocalBenchmarkArgs {
         let run_result: Result<LocalBenchmarkResult> = async {
             let builder_rpc = stack.l2_rpc_url()?;
             let client_rpc = stack.l2_client_rpc_url()?;
-            let flashblocks_ws = stack
-                .l2_stack()
-                .builder()
-                .flashblocks_url()
-                .parse()
-                .wrap_err("invalid fresh-devnet Flashblocks URL")?;
             test_config.transaction_submission_rpcs = vec![builder_rpc.clone()];
             test_config.query_rpc = Some(client_rpc);
             test_config.txpool_nodes.clear();
-            test_config.flashblocks_ws = Some(flashblocks_ws);
             test_config.chain_id = Some(chain_id);
 
             if deploy_devnet_swap_harness {
@@ -646,6 +627,7 @@ impl LocalBenchmarkArgs {
                 | TxTypeConfig::Erc20 { .. }
                 | TxTypeConfig::Storage { .. }
                 | TxTypeConfig::DoubleCounter { .. }
+                | TxTypeConfig::RevertArb { .. }
                 | TxTypeConfig::AaBundle { .. }
                 | TxTypeConfig::Precompile { .. }
                 | TxTypeConfig::Osaka { .. }
@@ -1013,7 +995,6 @@ impl SnapshotBenchmarkArgs {
         snapshot.block_gas_limit = self.block_gas_limit.map(NonZeroU64::get);
         snapshot.eip1559_elasticity_override = Some(SNAPSHOT_BENCHMARK_EIP1559_ELASTICITY);
         snapshot.builder_engine = self.builder_engine;
-        snapshot.resting_predicate_mode = self.resting_predicate_mode;
         snapshot.prefund =
             Some(DevnetPrefund { address: funder_key.address(), amount: PREFUND_AMOUNT_WEI });
 
@@ -1162,9 +1143,6 @@ impl SnapshotBenchmarkArgs {
         // is not persisted in the snapshot datadir. Do not require optional admin
         // txpool RPC wiring during setup; nonce recovery remains load-test-owned.
         test_config.txpool_nodes.clear();
-        test_config.flashblocks_ws = (block_interval == DevnetBlockInterval::TwoSeconds)
-            .then(|| stack.builder_flashblocks_url())
-            .transpose()?;
         test_config.chain_id = Some(stack.chain_id());
         let mut load_config = test_config.to_load_config(None)?;
         load_config.canonical_heads_ws = Some(stack.builder_ws_url()?);
@@ -1778,7 +1756,6 @@ benchmark_workloads:
     transaction_submission_rpcs: http://localhost:8545
     query_rpc: http://localhost:8545
     txpool_nodes: []
-    flashblocks_ws: ws://localhost:7111
     sender_count: 10
     in_flight_per_sender: 16
     transactions:
@@ -1831,7 +1808,6 @@ benchmark_workloads:
         let yaml = r#"
 transaction_submission_rpcs: http://localhost:8545
 query_rpc: http://localhost:8545
-flashblocks_ws: ws://localhost:7111
 transactions:
   - weight: 40
     type: uniswap_v3

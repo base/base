@@ -613,6 +613,7 @@ impl LoadRunner {
                 | TxType::Storage { .. }
                 | TxType::DoubleCounter { .. }
                 | TxType::AaBundle { .. }
+                | TxType::RevertArb { .. }
                 | TxType::B20
                 | TxType::Precompile { .. }
                 | TxType::Osaka { .. }
@@ -646,6 +647,7 @@ impl LoadRunner {
                 | TxType::Storage { .. }
                 | TxType::DoubleCounter { .. }
                 | TxType::AaBundle { .. }
+                | TxType::RevertArb { .. }
                 | TxType::B20
                 | TxType::Precompile { .. }
                 | TxType::Osaka { .. } => {}

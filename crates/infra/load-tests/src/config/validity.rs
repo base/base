@@ -2,7 +2,7 @@ use alloy_primitives::U256;
 use base_execution_txpool::{DEFAULT_MAX_VALIDITY_PREDICATES, ValidityOperator};
 use serde::{Deserialize, Serialize};
 
-use super::parsing::parse_address;
+use super::{TxTypeConfig, parsing::parse_address};
 use crate::{
     runner::{
         BlockNumberBound, PredicateAddress, PredicateValue, SlotTemplate, ValidityPredicateTemplate,
@@ -49,6 +49,14 @@ pub struct ValidityConfig {
     /// Priority-tip divisor for validity-cohort measured transactions.
     pub priority_fee_divisor: u128,
 
+    /// Payload generated for every priority-lead sender instead of the weighted `transactions`
+    /// mix, so the lead cohort can send a different transaction shape (for example
+    /// `revert_arb`) at a higher tip than the bulk. Requires `priority_lead_ratio > 0`.
+    /// Chain preparation never runs for this slot, so payloads that depend on it (B-20, swaps,
+    /// x402, token moves, AA bundles, `storage` without an explicit contract) are rejected, as is
+    /// `eip8430_transfer`, whose native envelope cannot carry validity predicates.
+    pub priority_lead_payload: Option<TxTypeConfig>,
+
     /// Predicate templates attached to each validity-bearing transaction.
     ///
     /// Must be non-empty when `ratio > 0`, and must contain at most
@@ -64,6 +72,7 @@ impl Default for ValidityConfig {
             priority_lead_ratio: 0.0,
             priority_lead_multiplier: 1,
             priority_fee_divisor: 1,
+            priority_lead_payload: None,
             predicates: Vec::new(),
         }
     }
@@ -126,13 +135,6 @@ pub enum ValidityPredicateConfig {
         /// Mutually exclusive with `value`.
         #[serde(default)]
         offset: Option<U256>,
-    },
-    /// Compares the index of the flashblock being built with a value.
-    FlashblockIndex {
-        /// Comparison operator (`<`, `<=`, `=`, `!=`, `>`, `>=`).
-        op: String,
-        /// Right-hand comparison value.
-        value: U256,
     },
 }
 
@@ -254,6 +256,26 @@ impl ValidityConfig {
                 "validity.predicates must be non-empty when validity.ratio > 0".into(),
             ));
         }
+        if let Some(payload) = &self.priority_lead_payload {
+            if self.ratio <= 0.0 || self.priority_lead_ratio <= 0.0 {
+                return Err(BaselineError::Config(
+                    "validity.priority_lead_payload requires validity.ratio > 0 and validity.priority_lead_ratio > 0"
+                        .into(),
+                ));
+            }
+            if payload.requires_chain_preparation() {
+                return Err(BaselineError::Config(
+                    "validity.priority_lead_payload must not need chain preparation (b20, swaps, x402, token_move, aa_bundle, storage without a contract): the lead cohort is never prepared"
+                        .into(),
+                ));
+            }
+            if matches!(payload, TxTypeConfig::Eip8430Transfer) {
+                return Err(BaselineError::Config(
+                    "validity.priority_lead_payload cannot be eip8430_transfer: native EIP-8430 envelopes do not carry validity predicates"
+                        .into(),
+                ));
+            }
+        }
         // Surface parse errors (operators, addresses, values) eagerly.
         for predicate in &self.predicates {
             predicate.to_template()?;
@@ -304,10 +326,6 @@ impl ValidityPredicateConfig {
                 };
                 Ok(ValidityPredicateTemplate::BlockNumber { op: parse_operator(op)?, bound })
             }
-            Self::FlashblockIndex { op, value } => Ok(ValidityPredicateTemplate::FlashblockIndex {
-                op: parse_operator(op)?,
-                value: *value,
-            }),
         }
     }
 }
@@ -354,6 +372,8 @@ pub(super) fn parse_operator(s: &str) -> Result<ValidityOperator> {
 
 #[cfg(test)]
 mod tests {
+    use alloy_primitives::Address;
+
     use super::*;
 
     #[test]
@@ -560,19 +580,6 @@ mod tests {
     }
 
     #[test]
-    fn flashblock_index_predicate_to_template() {
-        let config =
-            ValidityPredicateConfig::FlashblockIndex { op: "=".into(), value: U256::from(2) };
-        match config.to_template().unwrap() {
-            ValidityPredicateTemplate::FlashblockIndex { op, value } => {
-                assert_eq!(op, ValidityOperator::Equal);
-                assert_eq!(value, U256::from(2));
-            }
-            other => panic!("expected flashblock_index template, got {other:?}"),
-        }
-    }
-
-    #[test]
     fn position_predicate_surfaces_bad_operator() {
         let config = ValidityPredicateConfig::BlockNumber {
             op: "==".into(),
@@ -614,10 +621,67 @@ mod tests {
             priority_lead_ratio: 0.0,
             priority_lead_multiplier: 1,
             priority_fee_divisor: 1,
+            priority_lead_payload: None,
             predicates: vec![predicate; DEFAULT_MAX_VALIDITY_PREDICATES + 1],
         };
         let err = config.validate().unwrap_err();
         assert!(err.to_string().contains("exceeding the maximum"));
+    }
+
+    #[test]
+    fn validate_rejects_lead_payload_without_lead_ratio() {
+        let predicate = ValidityPredicateConfig::Balance {
+            address: PredicateAddressConfig::Sender,
+            op: ">=".into(),
+            value: U256::ZERO,
+        };
+        let mut config = ValidityConfig {
+            ratio: 1.0,
+            priority_lead_payload: Some(TxTypeConfig::Transfer),
+            predicates: vec![predicate],
+            ..Default::default()
+        };
+        let err = config.validate().unwrap_err();
+        assert!(err.to_string().contains("priority_lead_payload requires"));
+
+        config.priority_lead_ratio = 0.25;
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_lead_payload_that_needs_chain_preparation() {
+        let predicate = ValidityPredicateConfig::Balance {
+            address: PredicateAddressConfig::Sender,
+            op: ">=".into(),
+            value: U256::ZERO,
+        };
+        let mut config = ValidityConfig {
+            ratio: 1.0,
+            priority_lead_ratio: 0.25,
+            predicates: vec![predicate],
+            ..Default::default()
+        };
+        for payload in [
+            TxTypeConfig::B20,
+            TxTypeConfig::X402,
+            TxTypeConfig::AaBundle { ops_per_bundle: 1, padding_bytes: 0 },
+            TxTypeConfig::Storage { contract: None, slots_per_tx: 4, new_slot_ratio: 1.0 },
+        ] {
+            config.priority_lead_payload = Some(payload);
+            let err = config.validate().unwrap_err();
+            assert!(err.to_string().contains("must not need chain preparation"), "{err}");
+        }
+
+        config.priority_lead_payload = Some(TxTypeConfig::Storage {
+            contract: Some(Address::repeat_byte(0x11)),
+            slots_per_tx: 4,
+            new_slot_ratio: 1.0,
+        });
+        assert!(config.validate().is_ok(), "an explicit contract needs no deployment");
+
+        config.priority_lead_payload = Some(TxTypeConfig::Eip8430Transfer);
+        let err = config.validate().unwrap_err();
+        assert!(err.to_string().contains("cannot be eip8430_transfer"), "{err}");
     }
 
     #[test]
@@ -628,6 +692,7 @@ mod tests {
             priority_lead_ratio: 0.0,
             priority_lead_multiplier: 1,
             priority_fee_divisor: 1,
+            priority_lead_payload: None,
             predicates: vec![ValidityPredicateConfig::Balance {
                 address: PredicateAddressConfig::Sender,
                 op: "==".into(),

@@ -15,7 +15,7 @@ on:
       base_anvil_ref:
         description: "base/base-anvil ref to build from"
         required: false
-        default: 541626fd743b1fddc1186f30d8b5f7f3121b227f
+        default: c039bb735ab71c760a524ac5399b69c67373b96a
       base_std_ref:
         description: "base/base-std ref to smoke test against"
         required: false
@@ -28,7 +28,7 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
 env:
-  BASE_ANVIL_REF: ${{ github.event.inputs.base_anvil_ref || '541626fd743b1fddc1186f30d8b5f7f3121b227f' }}
+  BASE_ANVIL_REF: ${{ github.event.inputs.base_anvil_ref || 'c039bb735ab71c760a524ac5399b69c67373b96a' }}
   BASE_STD_REF: ${{ github.event.inputs.base_std_ref || 'main' }}
   BASE_UPGRADE: ${{ github.event.inputs.base_upgrade || 'denim' }}
   CARGO_TERM_COLOR: always
@@ -326,7 +326,7 @@ jobs:
           primary_tag="sha-$GITHUB_SHA"
           tags=("$REGISTRY_IMAGE:$primary_tag")
 
-          if [[ "$GITHUB_REF_NAME" == "main" && "$BASE_ANVIL_REF" == "541626fd743b1fddc1186f30d8b5f7f3121b227f" && "$BASE_STD_REF" == "main" && "$BASE_UPGRADE" == "denim" ]]; then
+          if [[ "$GITHUB_REF_NAME" == "main" && "$BASE_ANVIL_REF" == "c039bb735ab71c760a524ac5399b69c67373b96a" && "$BASE_STD_REF" == "main" && "$BASE_UPGRADE" == "denim" ]]; then
             tags+=("$REGISTRY_IMAGE:main")
             tags+=("$REGISTRY_IMAGE:main-$commit_date-$short_sha")
           else

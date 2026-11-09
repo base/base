@@ -16,9 +16,6 @@ txpool_nodes:
   - "http://localhost:7545"
   - "http://localhost:8545"
 
-# Optional early inclusion source; canonical polling remains the fallback.
-flashblocks_ws: "ws://localhost:7111"
-
 # Number of sender accounts
 sender_count: 100
 block_time: "2s"

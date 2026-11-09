@@ -1,5 +1,3 @@
-use std::ops::Range;
-
 use arboard::Clipboard;
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
@@ -22,7 +20,7 @@ use crate::{
 pub struct TransactionPane {
     /// The block number whose transactions are displayed.
     pub block_number: u64,
-    /// Display title (e.g. "Block 123" or "Flashblock `123::2`").
+    /// Display title (e.g. "Block 123").
     title_prefix: String,
     transactions: Vec<TxSummary>,
     table_state: TableState,
@@ -30,8 +28,6 @@ pub struct TransactionPane {
     load_error: Option<String>,
     rx: Option<mpsc::Receiver<Result<Vec<TxSummary>, String>>>,
     abort_handle: Option<tokio::task::AbortHandle>,
-    /// Optional range to slice the fetched transactions (for flashblock-specific views).
-    tx_range: Option<Range<usize>>,
     /// Block explorer base URL for opening transactions in a browser (e.g.
     /// `https://basescan.org`).
     explorer_base_url: Option<String>,
@@ -47,17 +43,9 @@ impl TransactionPane {
         }
     }
 
-    /// Creates a new pane that immediately begins fetching transactions for `block_number`.
-    ///
-    /// If `tx_range` is provided, only the specified slice of the block's transactions
-    /// will be displayed (used for flashblock-specific views).
-    pub fn new(
-        block_number: u64,
-        title_prefix: String,
-        l2_rpc: &str,
-        tx_range: Option<Range<usize>>,
-        explorer_base_url: Option<&str>,
-    ) -> Self {
+    /// Creates a pane that immediately begins fetching the full block's
+    /// transactions for `block_number` from the authoritative L2 RPC.
+    pub fn for_block(block_number: u64, l2_rpc: &str, explorer_base_url: Option<&str>) -> Self {
         let (tx, rx) = mpsc::channel(1);
         let rpc = l2_rpc.to_string();
         let handle = tokio::spawn(async move {
@@ -70,50 +58,15 @@ impl TransactionPane {
 
         Self {
             block_number,
-            title_prefix,
+            title_prefix: format!("Block {block_number}"),
             transactions: Vec::new(),
             table_state,
             loading: true,
             load_error: None,
             rx: Some(rx),
             abort_handle,
-            tx_range,
             explorer_base_url: explorer_base_url.map(String::from),
         }
-    }
-
-    /// Creates a pane with pre-decoded transaction data.
-    pub fn with_data(
-        block_number: u64,
-        title_prefix: String,
-        transactions: Vec<TxSummary>,
-        explorer_base_url: Option<&str>,
-    ) -> Self {
-        let mut table_state = TableState::default();
-        table_state.select(Some(0));
-
-        Self {
-            block_number,
-            title_prefix,
-            transactions,
-            table_state,
-            loading: false,
-            load_error: None,
-            rx: None,
-            abort_handle: None,
-            tx_range: None,
-            explorer_base_url: explorer_base_url.map(String::from),
-        }
-    }
-
-    /// Creates a pane for a full block using an authoritative RPC fetch.
-    ///
-    /// DA block inspection intentionally avoids relying on streamed flashblock
-    /// caches, which may be incomplete after reconnects or message gaps.
-    pub fn for_block(block_number: u64, l2_rpc: &str, explorer_base_url: Option<&str>) -> Self {
-        // DA block inspection should default to authoritative RPC data.
-        // Streamed flashblock caches can be incomplete during reconnects or gaps.
-        Self::new(block_number, format!("Block {block_number}"), l2_rpc, None, explorer_base_url)
     }
 
     /// Polls background fetch channels for results.
@@ -123,12 +76,7 @@ impl TransactionPane {
         {
             match txns {
                 Ok(txns) => {
-                    self.transactions = match &self.tx_range {
-                        Some(range) => {
-                            txns.into_iter().skip(range.start).take(range.len()).collect()
-                        }
-                        None => txns,
-                    };
+                    self.transactions = txns;
                     self.load_error = None;
                 }
                 Err(error) => {

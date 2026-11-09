@@ -23,7 +23,7 @@ pub trait BaseApiExt {
 
     /// Operator runtime override that enables or disables reads from the shared
     /// [`MeteringStore`](crate::MeteringStore) (simulated bundle lookups and
-    /// the Flashblocks builder's use of stored metering data) in memory;
+    /// the payload builder's use of stored metering data) in memory;
     /// `base_setMeteringInformation` writes are still accepted while disabled,
     /// and only reads return nothing. Because the native payload builder shares
     /// this store, `setMeteringEnabled(false)` also makes native
