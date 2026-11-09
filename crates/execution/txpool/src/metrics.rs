@@ -111,6 +111,25 @@ base_metrics::define_metrics! {
     pool_transactions: gauge,
     #[describe("Summed size of transactions currently held by the validity pool, in bytes")]
     pool_bytes: gauge,
+    #[describe("Validity transactions currently kept out of builds as dormant")]
+    dormant_transactions: gauge,
+    #[describe("Validity transactions the dormancy index woke during each build")]
+    dormant_wakes: histogram,
+    #[describe("Times the validity pool discarded its dormancy index, making every dormant transaction ready, labeled by reason")]
+    #[label(
+        name = "reason",
+        default = [
+            "parent_mismatch",
+            "abandoned",
+            "canonical_mismatch",
+            "reorg",
+            "feed_gap"
+        ]
+    )]
+    dormancy_discards: counter,
+    #[describe("Builds that ran without the dormancy index, as with dormancy off, because another build owned it")]
+    #[label(name = "reason", default = ["build_active"])]
+    dormancy_fallback_builds: counter,
 }
 
 impl ValidityPoolMetrics {

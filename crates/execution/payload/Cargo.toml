@@ -66,16 +66,20 @@ metrics = { workspace = true, optional = true }
 moka = { workspace = true, features = ["sync"] }
 
 [dev-dependencies]
-reth-provider.workspace = true
+tempfile.workspace = true
+criterion.workspace = true
+alloy-signer.workspace = true
+base-test-utils.workspace = true
+iai-callgrind.workspace = true
+alloy-signer-local.workspace = true
 crossbeam-channel.workspace = true
 reth-ethereum-forks.workspace = true
 base-execution-chainspec.workspace = true
 metrics-exporter-prometheus.workspace = true
 reth-revm = { workspace = true, features = ["test-utils"] }
+reth-provider = { workspace = true, features = ["test-utils"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 base-observability-events = { workspace = true, features = ["test-utils"] }
-criterion.workspace = true
-tempfile.workspace = true
-iai-callgrind.workspace = true
 
 [[bench]]
 name = "resource_metering"

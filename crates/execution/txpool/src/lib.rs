@@ -49,6 +49,20 @@ pub use validity::{
     ValidityPredicateKind, deserialize_bounded_predicates,
 };
 
+mod predicate_index;
+#[cfg(test)]
+pub use predicate_index::test_utils;
+pub use predicate_index::{
+    DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD, ParkedPredicateIndex, StateChangeEffects,
+    ValidityPredicateEvaluation, ValidityPredicateKey, WrittenLocation,
+};
+
+mod dormancy;
+pub use dormancy::{
+    DORMANCY_CLASSIFICATION_BUDGET, DORMANCY_CLASSIFICATION_CHUNK, DORMANCY_FENCE_CAPACITY,
+    DormancyClassification, DormancyDiscardReason, ValidityDormancyMode,
+};
+
 mod block_expiry;
 pub use block_expiry::BlockExpiryIndex;
 
@@ -66,12 +80,13 @@ pub use ordering::{
 
 mod parking;
 pub use parking::{
-    BestTransactionLane, BestTransactionLaneState, BestTransactionsHold, HOLD_INTERRUPT_INTERVAL,
-    ParkableBestTransactions, ParkableTransactionPool, ParkedBestTransactions,
+    BestTransactionLane, BestTransactionLaneState, BestTransactionsHold, BuildDormancy,
+    DormancyBuild, HOLD_INTERRUPT_INTERVAL, ParkableBestTransactions, ParkableTransactionPool,
+    ParkedBestTransactions, WokenTransaction,
 };
 
 mod pool;
-pub use pool::{AccountStateDiff, BaseTransactionPool};
+pub use pool::{AccountStateDiff, BaseTransactionPool, PoolBuildDormancy, PoolBuildSnapshot};
 
 mod state_diff_maintain;
 pub use state_diff_maintain::{
