@@ -162,7 +162,7 @@ durable journal when `--enable-transaction-event-journal` and
 
 Edge/proxy:
 
-- `PROXY_RECEIVED`
+- `PROXY_RECEIVED` (retired; see below)
 - `PROXY_REJECTED`
 - `PROXY_VALIDATION_ACCEPTED`
 - `PROXY_VALIDATION_REJECTED`
@@ -172,6 +172,16 @@ Edge/proxy:
 - `PROXY_INGRESS_RPC_ATTEMPT` (retired)
 - `PROXY_INGRESS_RPC_SUCCESS` (retired)
 - `PROXY_INGRESS_RPC_FAILURE` (retired)
+
+proxyd emits exactly one terminal event per `eth_sendRawTransaction` it
+decodes: `PROXY_REJECTED` when proxyd refuses the transaction itself, otherwise
+`PROXY_BACKEND_SUCCESS` or `PROXY_BACKEND_FAILURE` per backend attempt.
+`PROXY_BACKEND_FAILURE` covers both transport failures and backends that answer
+with a JSON-RPC error (`nonce too low`, `already known`, ...); the latter carry
+`rpc_error_code` and `rpc_error_message_class` in `data`. Terminal events carry
+`received_at` (Unix milliseconds) in `data`, the time proxyd decoded the
+transaction, which is why the separate `PROXY_RECEIVED` event was retired. It
+is retained in the vocabulary so historical rows remain readable.
 
 Ingress/audit (retired producer; retained so historical events remain readable):
 
@@ -363,7 +373,7 @@ producer implementation and include enough fields in `data` for
 
 ## proxyd Examples
 
-Received raw transaction request:
+Backend rejected the transaction with a JSON-RPC error:
 
 ```json
 {
@@ -371,7 +381,7 @@ Received raw transaction request:
   "event_id": "0x1f3f...",
   "event_time": "2026-06-02T00:00:00.000000000Z",
   "producer": "base-routing/proxyd",
-  "event_type": "PROXY_RECEIVED",
+  "event_type": "PROXY_BACKEND_FAILURE",
   "network": "base-mainnet",
   "tx_hash": "0x2222222222222222222222222222222222222222222222222222222222222222",
   "block_hash": null,
@@ -379,7 +389,14 @@ Received raw transaction request:
   "payload_id": null,
   "request_id": "req-abc",
   "data": {
-    "rpc_method": "eth_sendRawTransaction"
+    "rpc_method": "eth_sendRawTransaction",
+    "received_at": 1780444799987,
+    "backend_group": "main",
+    "backend": "reth-mainnet-0",
+    "attempt": 0,
+    "latency_ms": 13,
+    "rpc_error_code": -32000,
+    "rpc_error_message_class": "nonce_too_low"
   }
 }
 ```

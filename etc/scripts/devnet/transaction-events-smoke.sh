@@ -43,7 +43,10 @@ for attempt in $(seq 1 60); do
           and .producer == $producer
           and (.event_type as $event_type | $event_types | index($event_type)));
 
-      has_event("base-routing/proxyd"; ["PROXY_RECEIVED"])
+      has_event("base-routing/proxyd"; [
+        "PROXY_BACKEND_SUCCESS",
+        "PROXY_BACKEND_FAILURE"
+      ])
       and has_event("base-reth-node"; [
         "TXPOOL_PENDING",
         "TXPOOL_QUEUED"
