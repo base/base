@@ -128,7 +128,10 @@ metered_gas  = max(sender_intrinsic + execution_gas_used, sender_floor)
 A `gas_limit` below either `sender_floor` or `sender_intrinsic` is rejected at
 mempool acceptance and at inclusion. Metered `payer_auth` bytes are already
 priced at the floor rate inside `payer_auth_cost`, so the payer has no
-separate floor. The `10`-per-token rate is normative structure: an L2-profile
+separate floor. From Everest, gas-limit billing settles the whole reservation
+instead: `gas_limit + payer_auth_cost`, with no refund (see
+[`docs/guides/GAS_LIMIT_BILLING.md`](../../../docs/guides/GAS_LIMIT_BILLING.md)).
+The `10`-per-token rate is normative structure: an L2-profile
 chain may reprice `TX_TOTAL_COST_FLOOR_PER_TOKEN` but must not set it below the
 standard `4` or drop the floor.
 

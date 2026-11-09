@@ -125,7 +125,6 @@ impl Default for NonceSummary {
 pub struct EventLog {
     pub(crate) mempool_time: Instant,
     pub(crate) pending_time: Option<Instant>,
-    pub(crate) fb_included: bool,
     pub(crate) flow: TxFlow,
     pub(crate) events: Vec<(DateTime<Local>, TxEvent)>,
     pub(crate) limit: usize,
@@ -139,7 +138,6 @@ impl EventLog {
         Self {
             mempool_time: now,
             pending_time,
-            fb_included: false,
             flow: TxFlow::Standard,
             events: vec![(t, event)],
             limit: 10,

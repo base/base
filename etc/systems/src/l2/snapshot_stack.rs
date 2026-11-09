@@ -90,14 +90,10 @@ impl SnapshotL2Stack {
             ws_port: container.and_then(|value| value.builder_ws_port),
             auth_port: container.and_then(|value| value.builder_auth_port),
             p2p_port: container.and_then(|value| value.builder_p2p_port),
-            flashblocks_port: container.and_then(|value| value.builder_flashblocks_port),
             metrics_port: None,
-            block_time: block_interval.duration(),
-            payload_builder_cutover: block_interval == DevnetBlockInterval::TwoHundredMilliseconds,
             extra_extensions: Vec::new(),
             validity_signature_mode: ValiditySignatureMode::Off,
             persistence_threshold: Some(0),
-            resting_predicate_mode: config.snapshot.resting_predicate_mode,
             persistence_backpressure_threshold: Some(
                 block_interval.snapshot_persistence_backpressure_threshold(),
             ),
@@ -140,8 +136,6 @@ impl SnapshotL2Stack {
             datadir: Some(datadir),
             jwt_secret,
             builder_rpc_url,
-            // Snapshot validation replays canonical payloads only after sequencing finishes.
-            builder_flashblocks_url: None,
             builder_p2p_enode: builder.p2p_enode(),
             http_port: container.and_then(|value| value.client_http_port),
             ws_port: container.and_then(|value| value.client_ws_port),
@@ -438,11 +432,6 @@ impl SnapshotL2Stack {
     /// Returns the client Prometheus metrics URL.
     pub fn client_metrics_url(&self) -> Result<Url> {
         self.client()?.metrics_url()
-    }
-
-    /// Returns the builder Flashblocks WebSocket URL.
-    pub fn builder_flashblocks_url(&self) -> Result<Url> {
-        Url::parse(&self.builder.flashblocks_url()).wrap_err("invalid builder Flashblocks URL")
     }
 
     /// Reads the builder's current head using the same boundary decoder as startup preflight.

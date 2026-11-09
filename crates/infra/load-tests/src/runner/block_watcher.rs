@@ -312,7 +312,7 @@ impl BlockWatcher {
             };
             if self
                 .pulse_tx
-                .send(InclusionPulse::canonical(block_pulse, block_match.released_gas))
+                .send(InclusionPulse::canonical(block_pulse, block_match.included_gas))
                 .await
                 .is_err()
             {
@@ -398,15 +398,8 @@ impl BlockWatcher {
                             ) => result,
                         };
                         match result {
-                            Ok(Some((number, timestamp_ms, hashes))) => {
-                                results_tracker.on_new_block_hashes(
-                                    BlockObservation {
-                                        number,
-                                        observed_at: Instant::now(),
-                                        timestamp_ms,
-                                    },
-                                    hashes,
-                                );
+                            Ok(Some((observation, hashes))) => {
+                                results_tracker.on_new_block_hashes(observation, hashes);
                             }
                             Ok(None) => {}
                             Err(error) => {
@@ -480,17 +473,19 @@ impl BlockWatcher {
         };
         let observed_at = Instant::now();
 
+        let base_fee = u128::from(block.header.base_fee_per_gas.unwrap_or_default());
         Ok(Some(ObservedBlock {
             observation: BlockObservation {
                 number: block.header.number,
                 observed_at,
                 // Second-resolution fallbacks would put up to 999 ms of error into 10 ms buckets.
                 timestamp_ms: block.header.timestamp_ms,
+                base_fee,
             },
             tx_hashes: block.transactions.hashes().collect(),
             gas_used: block.header.gas_used,
             gas_limit: block.header.gas_limit,
-            base_fee: u128::from(block.header.base_fee_per_gas.unwrap_or_default()),
+            base_fee,
             timestamp_ms: Self::block_timestamp_ms(&block),
         }))
     }
@@ -500,10 +495,11 @@ impl BlockWatcher {
         block.header.timestamp_ms.unwrap_or_else(|| block.header.timestamp.saturating_mul(1_000))
     }
 
+    /// Fetches one canonical block's observation and transaction hashes for catch-up scans.
     async fn fetch_block_hashes(
         provider: &RootProvider<Base>,
         block: BlockNumberOrTag,
-    ) -> std::result::Result<Option<(u64, Option<u64>, Vec<TxHash>)>, String> {
+    ) -> std::result::Result<Option<(BlockObservation, Vec<TxHash>)>, String> {
         let block = tokio::time::timeout(BLOCK_RPC_TIMEOUT, async {
             provider.get_block_by_number(block).hashes().await
         })
@@ -515,8 +511,12 @@ impl BlockWatcher {
             return Ok(None);
         };
         Ok(Some((
-            block.header.number,
-            block.header.timestamp_ms,
+            BlockObservation {
+                number: block.header.number,
+                observed_at: Instant::now(),
+                timestamp_ms: block.header.timestamp_ms,
+                base_fee: u128::from(block.header.base_fee_per_gas.unwrap_or_default()),
+            },
             block.transactions.hashes().collect(),
         )))
     }

@@ -33,6 +33,36 @@ alloy_sol_types::sol! {
     function timestampMs() external view returns (uint64);
 }
 
+/// Time budget for the cadence walk; it runs concurrently with the other groups.
+const CADENCE_BUDGET: Duration = Duration::from_secs(30);
+/// Time budget for the HTTP timestamp and log field checks.
+const WIRE_BUDGET: Duration = Duration::from_secs(30);
+/// Time budget for the WebSocket subscription checks, including connect.
+const SUBSCRIPTION_BUDGET: Duration = Duration::from_secs(8);
+/// How long subscriptions collect events once requested.
+const SUBSCRIPTION_WINDOW: Duration = Duration::from_secs(4);
+
+const WIRE_CHECKS: [&str; 12] = [
+    "rpc_eth_getBlockByHash_timestampMs",
+    "rpc_eth_getBlockByNumber_timestampMs",
+    "rpc_eth_getHeaderByHash_timestampMs",
+    "rpc_eth_getHeaderByNumber_timestampMs",
+    "rpc_eth_getTransactionByHash_blockTimestampMs",
+    "rpc_eth_getTransactionByBlockHashAndIndex_blockTimestampMs",
+    "rpc_eth_getTransactionByBlockNumberAndIndex_blockTimestampMs",
+    "rpc_eth_getLogs_blockTimestampMs",
+    "rpc_eth_getFilterChanges_blockTimestampMs",
+    "rpc_eth_getFilterLogs_blockTimestampMs",
+    "rpc_eth_getTransactionReceipt_logs_blockTimestampMs",
+    "rpc_eth_getBlockReceipts_logs_blockTimestampMs",
+];
+
+const SUBSCRIPTIONS: [(&str, &str); 3] = [
+    ("rpc_eth_subscribe_newHeads_timestampMs", "newHeads"),
+    ("rpc_eth_subscribe_logs_blockTimestampMs", "logs"),
+    ("rpc_eth_subscribe_transactionReceipts_logs_blockTimestampMs", "transactionReceipts"),
+];
+
 /// Snapshot selection for a Denim check.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DenimCheckTarget {
@@ -314,17 +344,48 @@ impl DenimChecker {
             getter_timestamp_ms,
             getter_timestamp_ms_error,
         });
-        let cadence_complete = append_cadence_check(&provider, &mut report, target, previous).await;
+        // Independent check groups run concurrently, each with its own budget, so a
+        // slow or stalled group cannot delay the others.
+        let mut cadence = report.clone();
+        cadence.checks.clear();
+        let mut wire = cadence.clone();
+        let mut subscriptions = cadence.clone();
+        let (cadence_done, wire_done, subscriptions_done) = tokio::join!(
+            tokio::time::timeout(
+                CADENCE_BUDGET,
+                append_cadence_check(&provider, &mut cadence, target, previous),
+            ),
+            tokio::time::timeout(WIRE_BUDGET, append_wire_checks(&provider, &mut wire, &full_hash)),
+            tokio::time::timeout(
+                SUBSCRIPTION_BUDGET,
+                append_subscription_checks(&provider, &mut subscriptions, el_ws_rpc, target),
+            ),
+        );
+        let cadence_complete = cadence_done.as_ref().is_ok_and(|complete| *complete);
+        merge_group(
+            &mut report,
+            cadence_done.is_ok().then_some(cadence),
+            &["cadence_200ms"],
+            CADENCE_BUDGET,
+        );
+        merge_group(&mut report, wire_done.ok().map(|()| wire), &WIRE_CHECKS, WIRE_BUDGET);
+        merge_group(
+            &mut report,
+            subscriptions_done.ok().map(|()| subscriptions),
+            &SUBSCRIPTIONS.map(|(name, _)| name),
+            SUBSCRIPTION_BUDGET,
+        );
         let cadence_passed = report
             .checks
             .iter()
             .find(|check| check.name == "cadence_200ms")
             .is_some_and(|check| check.status == DenimCheckStatus::Pass);
-        report.cursor = (cadence_complete && cadence_passed).then_some(DenimCheckCursor {
-            block_number: report.block_number,
-            block_hash: report.block_hash,
-        });
-        append_wire_checks(&provider, &mut report, &full_hash, el_ws_rpc, target).await;
+        // After a timeout, re-anchor at this snapshot: walking from the old cursor
+        // again would cover even more blocks and time out on every later run.
+        let cadence_timed_out = cadence_done.is_err();
+        report.cursor = (cadence_timed_out || (cadence_complete && cadence_passed)).then_some(
+            DenimCheckCursor { block_number: report.block_number, block_hash: report.block_hash },
+        );
         Ok(report)
     }
 }
@@ -555,6 +616,10 @@ async fn append_cadence_check<P: Provider<Base>>(
                 status = edge;
             }
         }
+        // A failure is final; stop so a later timeout cannot hide it.
+        if status == DenimCheckStatus::Fail {
+            break;
+        }
         if stop.is_some_and(|cursor| {
             cursor.block_number == block.header.number && cursor.block_hash == block.header.hash
         }) {
@@ -607,8 +672,6 @@ async fn append_wire_checks<P: Provider<Base>>(
     provider: &P,
     report: &mut DenimReport,
     block: &<Base as Network>::BlockResponse,
-    el_ws_rpc: Option<&Url>,
-    target: DenimCheckTarget,
 ) {
     let transactions =
         block.transactions.txns().take(2).map(|tx| tx.as_ref().clone()).collect::<Vec<_>>();
@@ -717,7 +780,6 @@ async fn append_wire_checks<P: Provider<Base>>(
     };
     if report.schedule != DenimSchedule::Active {
         add_indeterminate_log_checks(report, "Denim is not active at the snapshot");
-        append_subscription_checks(provider, report, el_ws_rpc, target).await;
         return;
     }
 
@@ -788,7 +850,6 @@ async fn append_wire_checks<P: Provider<Base>>(
     let Some((evidence_number, evidence_tx_index, evidence_hash, evidence_tx_hash)) = evidence
     else {
         add_indeterminate_log_checks(report, &discovery_reason);
-        append_subscription_checks(provider, report, el_ws_rpc, target).await;
         return;
     };
     let evidence_block = match provider.get_block(BlockId::Hash(evidence_hash.into())).full().await
@@ -796,12 +857,10 @@ async fn append_wire_checks<P: Provider<Base>>(
         Ok(Some(block)) => block,
         Ok(None) => {
             add_indeterminate_log_checks(report, "log evidence block unavailable");
-            append_subscription_checks(provider, report, el_ws_rpc, target).await;
             return;
         }
         Err(error) => {
             add_indeterminate_log_checks(report, &error.to_string());
-            append_subscription_checks(provider, report, el_ws_rpc, target).await;
             return;
         }
     };
@@ -838,7 +897,6 @@ async fn append_wire_checks<P: Provider<Base>>(
             "log evidence block has invalid BaseTime metadata"
         };
         add_indeterminate_log_checks(report, reason);
-        append_subscription_checks(provider, report, el_ws_rpc, target).await;
         return;
     };
 
@@ -954,13 +1012,36 @@ async fn append_wire_checks<P: Provider<Base>>(
         evidence_timestamp_ms,
         &hash,
     );
-    append_subscription_checks(provider, report, el_ws_rpc, target).await;
+}
+
+/// Moves a finished group's checks into `report`. A group that ran out of time
+/// may hold partial results (e.g. filter checks whose cleanup never ran), so
+/// all of its checks are reported as timed out instead.
+fn merge_group(
+    report: &mut DenimReport,
+    group: Option<DenimReport>,
+    names: &[&str],
+    budget: Duration,
+) {
+    let Some(group) = group else {
+        for name in names {
+            report.add_check(
+                name,
+                DenimCheckStatus::Indeterminate,
+                "check completes within its time budget",
+                format!("timed out after {}s", budget.as_secs()),
+            );
+        }
+        return;
+    };
+    report.checks.extend(group.checks);
 }
 
 async fn subscription_event_result<P: Provider<Base>>(
     provider: &P,
     kind: &str,
     notification: &Value,
+    blocks: &mut HashMap<B256, (u64, Option<u64>)>,
 ) -> (DenimCheckStatus, String) {
     let Some(result) = notification.pointer("/params/result") else {
         return (DenimCheckStatus::Fail, "notification has no result".into());
@@ -979,17 +1060,27 @@ async fn subscription_event_result<P: Provider<Base>>(
     let Some(hash) = block_hash.and_then(|hash| hash.parse::<B256>().ok()) else {
         return (DenimCheckStatus::Fail, "event has no valid block hash".into());
     };
-    let block = match provider.get_block(BlockId::Hash(hash.into())).full().await {
-        Ok(Some(block)) if block.header.hash == hash => block,
-        _ => return (DenimCheckStatus::Indeterminate, "event block unavailable".into()),
+    // Many events share a block, so fetch each block once per run.
+    let (number, expected) = match blocks.get(&hash) {
+        Some(&cached) => cached,
+        None => {
+            let block = match provider.get_block(BlockId::Hash(hash.into())).full().await {
+                Ok(Some(block)) if block.header.hash == hash => block,
+                _ => return (DenimCheckStatus::Indeterminate, "event block unavailable".into()),
+            };
+            let transactions =
+                block.transactions.txns().take(2).map(|tx| tx.as_ref().clone()).collect::<Vec<_>>();
+            let expected =
+                BaseTimeUpdateTx::extract_from_transactions(&transactions, block.header.number)
+                    .ok()
+                    .map(|metadata| {
+                        block.header.timestamp * 1_000 + u64::from(metadata.timestamp_millis_part())
+                    });
+            blocks.insert(hash, (block.header.number, expected));
+            (block.header.number, expected)
+        }
     };
-    let transactions =
-        block.transactions.txns().take(2).map(|tx| tx.as_ref().clone()).collect::<Vec<_>>();
-    let Some(expected) =
-        BaseTimeUpdateTx::extract_from_transactions(&transactions, block.header.number).ok().map(
-            |metadata| block.header.timestamp * 1_000 + u64::from(metadata.timestamp_millis_part()),
-        )
-    else {
+    let Some(expected) = expected else {
         return (DenimCheckStatus::Indeterminate, "event block metadata unavailable".into());
     };
     if kind == "transactionReceipts" {
@@ -1003,7 +1094,7 @@ async fn subscription_event_result<P: Provider<Base>>(
                 .and_then(|value| value.parse::<B256>().ok())
                 == Some(hash)
                 && receipt.get("blockNumber").and_then(Value::as_str).and_then(parse_quantity)
-                    == Some(block.header.number)
+                    == Some(number)
                 && receipt.get("logs").is_some_and(Value::is_array)
         }) {
             return (DenimCheckStatus::Fail, "malformed or mismatched receipt event".into());
@@ -1060,11 +1151,18 @@ async fn append_subscription_checks<P: Provider<Base>>(
     el_ws_rpc: Option<&Url>,
     target: DenimCheckTarget,
 ) {
-    const SUBSCRIPTIONS: [(&str, &str); 3] = [
-        ("rpc_eth_subscribe_newHeads_timestampMs", "newHeads"),
-        ("rpc_eth_subscribe_logs_blockTimestampMs", "logs"),
-        ("rpc_eth_subscribe_transactionReceipts_logs_blockTimestampMs", "transactionReceipts"),
-    ];
+    if report.schedule != DenimSchedule::Active {
+        // Events cannot carry Denim timestamps before activation; skip the socket.
+        for (name, _) in SUBSCRIPTIONS {
+            report.add_check(
+                name,
+                DenimCheckStatus::Indeterminate,
+                "matching timestamped WebSocket event",
+                "Denim is not active at the snapshot",
+            );
+        }
+        return;
+    }
     let Some(el_ws_rpc) = el_ws_rpc else {
         for (name, _) in SUBSCRIPTIONS {
             report.add_check(
@@ -1119,8 +1217,11 @@ async fn append_subscription_checks<P: Provider<Base>>(
     let mut subscriptions: HashMap<String, (&str, &str)> = HashMap::new();
     let mut completed = HashSet::new();
     let mut indeterminate = HashMap::new();
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(4);
-    while completed.len() < SUBSCRIPTIONS.len() {
+    let mut blocks = HashMap::new();
+    let deadline = tokio::time::Instant::now() + SUBSCRIPTION_WINDOW;
+    // `timeout_at` yields an already-buffered message even after the deadline, so
+    // check the deadline explicitly to bound busy chains.
+    while completed.len() < SUBSCRIPTIONS.len() && tokio::time::Instant::now() < deadline {
         let message = match tokio::time::timeout_at(deadline, socket.next()).await {
             Ok(Some(Ok(message))) => message,
             _ => break,
@@ -1165,7 +1266,14 @@ async fn append_subscription_checks<P: Provider<Base>>(
         if completed.contains(name) {
             continue;
         }
-        let (status, observed) = subscription_event_result(provider, kind, &value).await;
+        let Ok((status, observed)) = tokio::time::timeout_at(
+            deadline,
+            subscription_event_result(provider, kind, &value, &mut blocks),
+        )
+        .await
+        else {
+            break;
+        };
         if status == DenimCheckStatus::Indeterminate {
             indeterminate.insert(name, observed);
             continue;
@@ -1913,7 +2021,7 @@ mod tests {
             ..observations(Some(0), 10)
         });
 
-        append_wire_checks(&provider, &mut report, &block, None, DenimCheckTarget::Latest).await;
+        append_wire_checks(&provider, &mut report, &block).await;
 
         for name in [
             "rpc_eth_getLogs_blockTimestampMs",
@@ -1981,5 +2089,99 @@ mod tests {
         }
         http_server.abort();
         ws_server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn inactive_snapshot_skips_subscriptions() {
+        let provider = ProviderBuilder::new()
+            .disable_recommended_fillers()
+            .network::<Base>()
+            .connect_http(Url::parse("http://127.0.0.1:1").unwrap());
+        let ws_url = Url::parse("ws://127.0.0.1:1").unwrap();
+        let mut report = DenimReport::evaluate(observations(Some(100), 10));
+
+        append_subscription_checks(&provider, &mut report, Some(&ws_url), DenimCheckTarget::Latest)
+            .await;
+
+        for (name, _) in SUBSCRIPTIONS {
+            let check = report.checks.iter().find(|check| check.name == name).unwrap();
+            assert_eq!(check.status, DenimCheckStatus::Indeterminate, "{check:?}");
+            assert_eq!(check.observed, "Denim is not active at the snapshot");
+        }
+    }
+
+    async fn slow_rpc_fixture(
+        state: State<Arc<Mutex<Vec<Value>>>>,
+        request: Json<Value>,
+    ) -> Json<Value> {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        denim_log_rpc_fixture(state, request).await
+    }
+
+    async fn flooding_ws_fixture(listener: TcpListener) {
+        let (stream, _) = listener.accept().await.unwrap();
+        let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
+        for _ in 0..3 {
+            let request = socket.next().await.unwrap().unwrap();
+            let request: Value = serde_json::from_str(request.to_text().unwrap()).unwrap();
+            let id = request["id"].as_u64().unwrap();
+            let response = json!({"jsonrpc":"2.0","id":id,"result":format!("0x{id:x}")});
+            socket.send(Message::Text(response.to_string().into())).await.unwrap();
+        }
+        // Each event names a block the RPC cannot serve, so every one is
+        // indeterminate and costs a slow lookup.
+        for index in 0..1_000u64 {
+            let notification = json!({
+                "jsonrpc": "2.0",
+                "method": "eth_subscription",
+                "params": {"subscription":"0x1","result":{
+                    "hash": B256::from(U256::from(index + 1_000)),
+                    "timestampMs": "0x0"
+                }}
+            });
+            if socket.send(Message::Text(notification.to_string().into())).await.is_err() {
+                return;
+            }
+        }
+        while let Some(Ok(message)) = socket.next().await {
+            if message.is_close() {
+                break;
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn buffered_event_flood_respects_subscription_window() {
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let http_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let http_address = http_listener.local_addr().unwrap();
+        let router =
+            Router::new().route("/", post(slow_rpc_fixture)).with_state(Arc::clone(&requests));
+        let http_server =
+            tokio::spawn(async move { axum::serve(http_listener, router).await.unwrap() });
+        let ws_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let ws_address = ws_listener.local_addr().unwrap();
+        let ws_server = tokio::spawn(flooding_ws_fixture(ws_listener));
+        let provider = ProviderBuilder::new()
+            .disable_recommended_fillers()
+            .network::<Base>()
+            .connect_http(Url::parse(&format!("http://{http_address}")).unwrap());
+        let ws_url = Url::parse(&format!("ws://{ws_address}")).unwrap();
+        let mut report = DenimReport::evaluate(observations(Some(0), 10));
+
+        let started = std::time::Instant::now();
+        append_subscription_checks(&provider, &mut report, Some(&ws_url), DenimCheckTarget::Latest)
+            .await;
+
+        // 1,000 events x 20ms would take 20s if the window were not enforced.
+        assert!(started.elapsed() < SUBSCRIPTION_WINDOW + Duration::from_secs(2));
+        let check = report
+            .checks
+            .iter()
+            .find(|check| check.name == "rpc_eth_subscribe_newHeads_timestampMs")
+            .unwrap();
+        assert_eq!(check.status, DenimCheckStatus::Indeterminate, "{check:?}");
+        http_server.abort();
+        ws_server.abort();
     }
 }

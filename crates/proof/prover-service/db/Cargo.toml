@@ -18,6 +18,7 @@ sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "uuid", "chr
 # serialization
 serde_json.workspace = true
 serde = { workspace = true, features = ["derive"] }
+strum = { workspace = true, features = ["derive"] }
 chrono = { workspace = true, features = ["serde"] }
 uuid = { workspace = true, features = ["v4", "serde"] }
 

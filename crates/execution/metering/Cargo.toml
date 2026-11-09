@@ -15,7 +15,6 @@ workspace = true
 # workspace
 base-bundles.workspace = true
 base-protocol.workspace = true
-base-flashblocks.workspace = true
 base-node-runner.workspace = true
 base-common-genesis.workspace = true
 base-common-precompiles.workspace = true
@@ -55,7 +54,6 @@ tracing = { workspace = true, features = ["std"] }
 # workspace
 base-test-utils = { workspace = true, features = ["contracts"] }
 base-common-chains.workspace = true
-base-common-flashblocks.workspace = true
 base-node-runner = { workspace = true, features = ["test-utils"] }
 
 # reth
@@ -82,7 +80,6 @@ alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 base-common-rpc-types.workspace = true
 
 # misc
-url.workspace = true
 rand.workspace = true
 tokio.workspace = true
 serde_json.workspace = true

@@ -14,9 +14,8 @@ use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
 use base_execution_evm::BaseEvmConfig;
 use base_execution_payload_builder::{
     BasePayloadBuilderAttributes, ParkableBestPayloadTransactions, REJECTION_CACHE_MAX_CAPACITY,
-    REJECTION_CACHE_TTL, RejectionCache, RestingPredicateMode, SharedRestingPredicates,
-    builder::BasePayloadBuilderCtx, config::BaseBuilderConfig,
-    payload::EthPayloadBuilderAttributes,
+    REJECTION_CACHE_TTL, RejectionCache, SharedRestingPredicates, builder::BasePayloadBuilderCtx,
+    config::BaseBuilderConfig, payload::EthPayloadBuilderAttributes,
 };
 use base_execution_txpool::{
     BaseOrdering, BasePooledTransaction, ParkedBestTransactions, ValidityOperator,
@@ -142,7 +141,7 @@ pub(crate) fn populated_rejection_cache(rejected: usize) -> RejectionCache {
 }
 
 /// A Denim payload context whose gas limit fits exactly one block of filler.
-pub(crate) fn payload_context(mode: RestingPredicateMode, rejection_cache: RejectionCache) -> Ctx {
+pub(crate) fn payload_context(rejection_cache: RejectionCache) -> Ctx {
     let chain_spec = Arc::new(
         BaseChainSpecBuilder::base_mainnet()
             .with_fork(BaseUpgrade::Denim, ForkCondition::Timestamp(DENIM_TIMESTAMP))
@@ -164,10 +163,7 @@ pub(crate) fn payload_context(mode: RestingPredicateMode, rejection_cache: Rejec
     };
     BasePayloadBuilderCtx {
         evm_config: BaseEvmConfig::base(Arc::clone(&chain_spec)),
-        builder_config: BaseBuilderConfig {
-            rejection_cache,
-            ..BaseBuilderConfig::default().with_resting_predicate_mode(mode)
-        },
+        builder_config: BaseBuilderConfig { rejection_cache, ..BaseBuilderConfig::default() },
         chain_spec,
         config: PayloadConfig::new(parent, attributes, payload_id),
         cancel: Default::default(),

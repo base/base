@@ -54,8 +54,8 @@ type BoxExExFactory = Box<
 
 /// A type alias for any configured builder whose components match the canonical Base types.
 ///
-/// This is generic over the `NodeComponentsBuilder` (`CB`) so that both the default payload and
-/// the flashblocks payload service can be used interchangeably.
+/// This is generic over the `NodeComponentsBuilder` (`CB`) so that the default payload service and
+/// the native block-builder payload service can be used interchangeably.
 pub type RethNodeBuilder<CB> =
     WithLaunchContext<NodeBuilderWithComponents<BaseNodeTypes, CB, ConcreteBaseAddOns>>;
 

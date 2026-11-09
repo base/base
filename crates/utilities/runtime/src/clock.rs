@@ -51,4 +51,20 @@ pub trait Clock: Send + Sync + 'static {
             .expect("system clock before UNIX epoch")
             .as_secs()
     }
+
+    /// Returns the current wall-clock time as milliseconds since the Unix epoch.
+    ///
+    /// Use it instead of [`wall_clock_unix_secs`](Clock::wall_clock_unix_secs)
+    /// when a duration measured against an on-chain Unix timestamp needs
+    /// sub-second precision.
+    ///
+    /// The default implementation calls [`std::time::SystemTime::now`].
+    /// The deterministic test runtime overrides this to return a value
+    /// derived from virtual time.
+    fn wall_clock_unix_millis(&self) -> u64 {
+        let since_epoch = std::time::SystemTime::now()
+            .duration_since(std::time::SystemTime::UNIX_EPOCH)
+            .expect("system clock before UNIX epoch");
+        u64::try_from(since_epoch.as_millis()).unwrap_or(u64::MAX)
+    }
 }

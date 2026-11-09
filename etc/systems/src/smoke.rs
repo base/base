@@ -18,7 +18,6 @@ use alloy_provider::RootProvider;
 use alloy_rpc_client::RpcClient;
 use alloy_rpc_types_engine::JwtSecret;
 use alloy_signer_local::PrivateKeySigner;
-use base_builder_core::RestingPredicateMode;
 #[cfg(feature = "upgrade-signal")]
 use base_common_genesis::{BaseUpgrade, RollupConfig, RuntimeUpgradeRegistry, UpgradeActivation};
 use base_common_network::Base;
@@ -398,8 +397,6 @@ pub struct SystemTestStackBuilder {
     output_dir: Option<PathBuf>,
     tx_forwarding_config: Option<TxForwardingConfig>,
     validity_signature_mode: ValiditySignatureMode,
-    resting_predicate_mode: RestingPredicateMode,
-    payload_builder_cutover: bool,
     verifier_l1_confs: u64,
     force_batch_submission: bool,
     client_consensus_mode: L2ClientConsensusMode,
@@ -534,12 +531,6 @@ impl SystemTestStackBuilder {
         self
     }
 
-    /// Runs both payload builders and cuts selection from flashblocks to basic at Denim.
-    pub const fn with_payload_builder_cutover(mut self) -> Self {
-        self.payload_builder_cutover = true;
-        self
-    }
-
     /// Backs the L1 container datadirs (reth, lighthouse) with tmpfs.
     ///
     /// reth's mdbx and lighthouse's database need a writable `MAP_SHARED` mmap, which some
@@ -615,12 +606,6 @@ impl SystemTestStackBuilder {
         self
     }
 
-    /// Sets how the builder tracks validity transactions whose predicates did not match.
-    pub const fn with_resting_predicate_mode(mut self, mode: RestingPredicateMode) -> Self {
-        self.resting_predicate_mode = mode;
-        self
-    }
-
     /// Registers an additional node extension on the L2 builder, installed after its built-in
     /// RPC wiring.
     ///
@@ -677,7 +662,6 @@ impl SystemTestStackBuilder {
                 builder_ws_port: Some(ports.l2_builder_ws),
                 builder_auth_port: Some(ports.l2_builder_auth),
                 builder_p2p_port: Some(ports.l2_builder_p2p),
-                builder_flashblocks_port: Some(ports.l2_builder_flashblocks),
                 client_http_port: Some(ports.l2_client_http),
                 client_ws_port: Some(ports.l2_client_ws),
                 client_auth_port: Some(ports.l2_client_auth),
@@ -820,7 +804,6 @@ impl SystemTestStackBuilder {
                 builder_ws_port: Some(config.ports.l2_builder_ws),
                 builder_auth_port: Some(config.ports.l2_builder_auth),
                 builder_p2p_port: Some(config.ports.l2_builder_p2p),
-                builder_flashblocks_port: Some(config.ports.l2_builder_flashblocks),
                 client_http_port: Some(config.ports.l2_client_http),
                 client_ws_port: Some(config.ports.l2_client_ws),
                 client_auth_port: Some(config.ports.l2_client_auth),
@@ -946,8 +929,6 @@ impl SystemTestStackBuilder {
             container_config: l2_container_config,
             tx_forwarding_config: self.tx_forwarding_config,
             validity_signature_mode: self.validity_signature_mode,
-            resting_predicate_mode: self.resting_predicate_mode,
-            payload_builder_cutover: self.payload_builder_cutover,
             verifier_l1_confs: self.verifier_l1_confs,
             force_batch_submission: self.force_batch_submission,
             client_consensus_mode: self.client_consensus_mode,

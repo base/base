@@ -12,7 +12,6 @@ transaction_submission_rpcs:
   - "http://127.0.0.1:8545"
 query_rpc: "http://127.0.0.1:8545"
 txpool_nodes: []
-flashblocks_ws: "ws://127.0.0.1:7111"
 
 chain_id: 8453
 sender_count: 10

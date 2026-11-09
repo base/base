@@ -43,13 +43,12 @@ pub use metrics::{
 };
 
 mod deferrals;
-pub use deferrals::{BlockDeferrals, DeferralJournal};
+pub use deferrals::BlockDeferrals;
 
 mod resting;
 pub use resting::{
     FinishingRestingPredicates, HoldInterrupt, RESTING_UNSEEN_RETAINED_BLOCKS, RestingCarryOver,
-    RestingMember, RestingPredicateMode, RestingPredicateStore, RestingPredicates, RestingStats,
-    SharedRestingPredicates,
+    RestingMember, RestingPredicateStore, RestingPredicates, RestingStats, SharedRestingPredicates,
 };
 
 mod inclusion;

@@ -1,18 +1,17 @@
 //! Deterministic instruction-count benchmark for the native payload builder's selection loop
 //! across consecutive blocks.
 //!
-//! The `iai-callgrind` counterpart to the `resting=*/mode=Off` and `mode=Enforce` arms of
-//! `native_build_loop.rs`, over the same fixture at a callgrind-sized scale: [`BLOCKS`] one-shot
-//! blocks, the post-Denim shape, through `BasePayloadBuilderCtx::execute_best_transactions`, with
-//! [`RESTING`] never-satisfied validity transactions ahead of a block of filler transfers and
-//! transaction events enabled, as in production. The native builder is the production block
+//! The `iai-callgrind` counterpart to `native_build_loop.rs`, over the same fixture at a
+//! callgrind-sized scale: [`BLOCKS`] one-shot blocks, the post-Denim shape, through
+//! `BasePayloadBuilderCtx::execute_best_transactions`, with [`RESTING`] never-satisfied validity
+//! transactions ahead of a block of filler transfers and transaction events enabled, as in
+//! production. The native builder is the production block
 //! builder after the Denim network upgrade; its loop body runs once per candidate in every 200 ms
 //! block (about 10^9 candidates a day; see `docs/guides/HOT_PATH_PERFORMANCE_REVIEW.md`), and
 //! carried resting candidates make up most of a block's validity candidates.
 //!
-//! - `off`: every block re-evaluates every resting transaction and parks it again.
-//! - `enforce`: the first block evaluates them; later blocks' pool iterators hold the carried
-//!   members back at the source, so the build loop never sees them.
+//! The first block evaluates the resting transactions; later blocks' pool iterators hold the
+//! carried members back at the source, so the build loop never sees them.
 //!
 //! Building the pool, each block's state and block builder, and starting the event writer,
 //! happens in iai's unmeasured setup, and the blocks' state is handed back so it drops outside
@@ -24,12 +23,11 @@
 //! because callgrind's slowdown would otherwise cut evaluation off at a timing-dependent
 //! candidate; natively these evaluations fit well within it.
 //!
-//! The teardown pins each mode's candidates considered, transactions included, candidates
-//! deferred (parked by the build loop), and resting members carried into later blocks. Enforced,
-//! carried members are held by the pool iterators, so they appear in neither the considered nor
-//! the deferred count. They are fixed by the
-//! workload, so a mismatch means the builder now selects or carries differently, and the
-//! instruction count is not comparable with the base commit's.
+//! The teardown pins the candidates considered, transactions included, candidates deferred
+//! (parked by the build loop), and resting members carried into later blocks. Carried members are
+//! held by the pool iterators, so they appear in neither the considered nor the deferred count.
+//! They are fixed by the workload, so a mismatch means the builder now selects or carries
+//! differently, and the instruction count is not comparable with the base commit's.
 
 // iai-callgrind's `library_benchmark` / `library_benchmark_group` macros expand to
 // undocumented modules, functions, and constants that `-D warnings` rejects. Benches
@@ -46,7 +44,7 @@ use alloy_primitives::{Address, B256, TxHash, U256};
 use base_common_consensus::Predeploys;
 use base_execution_payload_builder::{
     DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD, ParkableBestPayloadTransactions,
-    ParkablePayloadTransactions, RestingPredicateMode, RestingPredicates, SharedRestingPredicates,
+    ParkablePayloadTransactions, RestingPredicates, SharedRestingPredicates,
     builder::ExecutionInfo,
 };
 use base_execution_txpool::BasePooledTransaction;
@@ -136,7 +134,7 @@ type Blocks = Box<dyn FnOnce() -> (BlockTotals, Box<dyn Any>)>;
 
 /// Builds the pool, every block's state and builder, and the event writer outside the counted
 /// region.
-fn setup(mode: RestingPredicateMode) -> (RestingPredicateMode, Blocks) {
+fn setup() -> Blocks {
     // The writer thread appends here; the directory is removed with the returned state.
     let events = tempfile::tempdir().expect("temporary event directory");
     GlobalTransactionEventWriter::init(Some(TransactionEventWriterConfig {
@@ -153,7 +151,7 @@ fn setup(mode: RestingPredicateMode) -> (RestingPredicateMode, Blocks) {
     let (pool, db) = resting_pool(RESTING);
     // Each block builder borrows the context and its state, and the prepared run must own the
     // builders, so both are leaked for the life of the single-run bench process.
-    let mut ctx = payload_context(mode, populated_rejection_cache(0));
+    let mut ctx = payload_context(populated_rejection_cache(0));
     // Callgrind runs tens of times slower than native code, so the wall-clock predicate
     // evaluation budget would stop evaluation at a timing-dependent candidate. Natively this
     // workload evaluates every resting transaction within the budget, so lift it to match.
@@ -183,11 +181,10 @@ fn setup(mode: RestingPredicateMode) -> (RestingPredicateMode, Blocks) {
             carried +=
                 resting.begin_block(parent, block, Some(&TransitionState::default())).carried;
             let shared = SharedRestingPredicates::new(resting);
-            let enabled = mode.is_enabled().then_some(&shared);
             let transactions =
-                Counted { inner: parkable(&pool, enabled), lifecycle: Rc::clone(&lifecycle) };
+                Counted { inner: parkable(&pool, Some(&shared)), lifecycle: Rc::clone(&lifecycle) };
             black_box(
-                ctx.execute_best_transactions(&mut info, &mut builder, transactions, enabled)
+                ctx.execute_best_transactions(&mut info, &mut builder, transactions, Some(&shared))
                     .expect("in-memory execution cannot fail"),
             );
             included += builder.executor().receipts().len();
@@ -204,40 +201,32 @@ fn setup(mode: RestingPredicateMode) -> (RestingPredicateMode, Blocks) {
         };
         (totals, Box::new((finished, resting, pool, events)))
     });
-    (mode, run)
+    run
 }
 
 /// Checks the run's outcomes against the workload's documented counts.
-fn check_outcomes((mode, totals, _): (RestingPredicateMode, BlockTotals, Box<dyn Any>)) {
+fn check_outcomes((totals, _): (BlockTotals, Box<dyn Any>)) {
     let blocks = BLOCKS as usize;
-    // Every block includes the filler. With resting predicates off, every block yields and
-    // evaluates every resting transaction, and the build loop parks it. Enforced, only the first
-    // block does; every later block's pool iterator holds every carried member at the source.
-    let (yielded_resting, carried) = match mode {
-        RestingPredicateMode::Off => (RESTING * blocks, 0),
-        RestingPredicateMode::Enforce => (RESTING, RESTING * (blocks - 1)),
-        RestingPredicateMode::Shadow => unimplemented!("the build loop measures Off and Enforce"),
-    };
+    // Every block includes the filler. Only the first block yields and evaluates every resting
+    // transaction, and the build loop parks it; every later block's pool iterator holds every
+    // carried member at the source.
     assert_eq!(
         totals,
         BlockTotals {
-            considered: yielded_resting + FILLER_PER_BLOCK * blocks,
+            considered: RESTING + FILLER_PER_BLOCK * blocks,
             included: FILLER_PER_BLOCK * blocks,
-            deferred: yielded_resting,
-            carried,
+            deferred: RESTING,
+            carried: RESTING * (blocks - 1),
         },
-        "native_build_loop mode={mode:?} outcomes changed"
+        "native_build_loop outcomes changed"
     );
 }
 
 #[library_benchmark]
-#[bench::off(args = (RestingPredicateMode::Off), setup = setup, teardown = check_outcomes)]
-#[bench::enforce(args = (RestingPredicateMode::Enforce), setup = setup, teardown = check_outcomes)]
-fn resting_predicates(
-    (mode, run): (RestingPredicateMode, Blocks),
-) -> (RestingPredicateMode, BlockTotals, Box<dyn Any>) {
+#[bench::enforce(setup = setup, teardown = check_outcomes)]
+fn resting_predicates(run: Blocks) -> (BlockTotals, Box<dyn Any>) {
     let (totals, state) = run();
-    (mode, black_box(totals), state)
+    (black_box(totals), state)
 }
 
 library_benchmark_group!(

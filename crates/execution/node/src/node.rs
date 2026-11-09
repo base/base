@@ -1106,13 +1106,13 @@ where
                 BaseBuilderConfig {
                     da_config: self.da_config,
                     gas_limit_config: self.gas_limit_config,
+                    max_uncompressed_block_size: None,
                     manifest_precheck_enabled: self.manifest_precheck_enabled,
                     predicate_eval_hard_cutoff: self.predicate_eval_hard_cutoff,
                     predicate_bucket_ordered_threshold: self.predicate_bucket_ordered_threshold,
                     resource_metering: self.resource_metering,
                     rejection_cache: self.rejection_cache,
                     state_provider_metrics: ctx.config().engine.state_provider_metrics,
-                    resting_predicate_mode: Default::default(),
                 },
             )
             .with_task_executor(ctx.task_executor().clone());

@@ -16,7 +16,6 @@ use super::{
     DEFAULT_DENOMINATOR, DEFAULT_ELASTICITY, DEFAULT_GAS_LIMIT, EngineApi, ExternalNode, Ipc,
     LocalInstance, PrivateKeySigner, Protocol, TransactionBuilder, sign_base_tx,
 };
-use crate::BuilderConfig;
 
 /// The `ChainDriver` is a type that allows driving the Base builder node to build new blocks manually.
 /// by calling the `build_new_block` method. It uses the Engine API to interact with the node
@@ -27,13 +26,14 @@ pub struct ChainDriver<RpcProtocol: Protocol = Ipc> {
     provider: RootProvider<Base>,
     signer: Option<PrivateKeySigner>,
     gas_limit: Option<u64>,
-    builder_config: BuilderConfig,
     validation_nodes: Vec<ExternalNode>,
 }
 
 // instantiation and configuration
 impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
-    const MIN_BLOCK_TIME: Duration = Duration::from_secs(1);
+    /// How long each built block waits for the payload job before it is resolved, and how far
+    /// ahead of the parent its timestamp is set.
+    pub const BLOCK_TIME: Duration = Duration::from_secs(1);
 
     /// Creates a new `ChainDriver` instance for a local instance of `RBuilder` running in-process
     /// communicating over IPC.
@@ -43,7 +43,6 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
             provider: instance.provider().await?,
             signer: Default::default(),
             gas_limit: None,
-            builder_config: instance.builder_config().clone(),
             validation_nodes: vec![],
         })
     }
@@ -55,7 +54,6 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
             provider,
             signer: Default::default(),
             gas_limit: None,
-            builder_config: BuilderConfig::default(),
             validation_nodes: vec![],
         }
     }
@@ -151,8 +149,7 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
             || {
                 let latest_timestamp = (chrono::Utc::now().timestamp() + 1) as u64;
                 wait_until = Some(latest_timestamp);
-                latest_timestamp
-                    + self.builder_config.block_time.as_secs().max(Self::MIN_BLOCK_TIME.as_secs())
+                latest_timestamp + Self::BLOCK_TIME.as_secs()
             },
             |ts| ts.as_secs(),
         );
@@ -199,15 +196,9 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
 
         // wait for the block to be built for the specified chain block time
         if let Some(timestamp_jitter) = timestamp_jitter {
-            tokio::time::sleep(
-                self.builder_config
-                    .block_time
-                    .max(Self::MIN_BLOCK_TIME)
-                    .saturating_sub(timestamp_jitter),
-            )
-            .await;
+            tokio::time::sleep(Self::BLOCK_TIME.saturating_sub(timestamp_jitter)).await;
         } else {
-            tokio::time::sleep(self.builder_config.block_time.max(Self::MIN_BLOCK_TIME)).await;
+            tokio::time::sleep(Self::BLOCK_TIME).await;
         }
 
         let payload = self.engine_api.get_payload(payload_id).await?.execution_payload;
@@ -258,11 +249,9 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
         // latest_timestamp must be in the future
         latest_timestamp =
             latest_timestamp.max(Duration::from_secs(Utc::now().timestamp() as u64 + 1));
-        // Use block_time for timestamp calculation to ensure the payload doesn't expire
-        // before we can retrieve it. The sleep in build_new_block_with_txs_timestamp uses
-        // block_time, so the timestamp must also be block_time ahead.
-        let block_timestamp =
-            latest_timestamp + self.builder_config.block_time.max(Self::MIN_BLOCK_TIME);
+        // The timestamp must be at least `BLOCK_TIME` ahead so the payload does not expire
+        // during the `BLOCK_TIME` wait in `build_new_block_with_txs_timestamp`.
+        let block_timestamp = latest_timestamp + Self::BLOCK_TIME;
 
         self.build_new_block_with_txs_timestamp(txs, None, Some(block_timestamp), None, Some(0))
             .await

@@ -1,7 +1,6 @@
 use core::{
     any::Any,
     future::Future,
-    net::Ipv4Addr,
     pin::Pin,
     task::{Context, Poll},
     time::Duration,
@@ -11,10 +10,9 @@ use std::{
     sync::{Arc, LazyLock},
 };
 
-use alloy_primitives::B256;
 use alloy_provider::{Identity, ProviderBuilder, RootProvider};
 use async_trait::async_trait;
-use base_common_flashblocks::FlashblocksPayloadV1;
+use base_common_evm::BaseUpgrade;
 use base_common_network::Base;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_txpool::BasePooledTransaction;
@@ -23,8 +21,8 @@ use base_node_runner::{
     BaseNode, BaseNodeExtension, FromExtensionConfig, NodeHooks,
     PayloadServiceBuilder as BasePayloadServiceBuilder, test_utils::init_silenced_tracing,
 };
-use futures::{FutureExt, StreamExt};
-use parking_lot::Mutex;
+use futures::FutureExt;
+use reth_chainspec::ForkCondition;
 use reth_node_builder::{Node, NodeBuilder, NodeConfig};
 use reth_node_core::{
     args::{DatadirArgs, NetworkArgs, RpcServerArgs},
@@ -33,14 +31,11 @@ use reth_node_core::{
 use reth_provider::providers::BlockchainProvider;
 use reth_tasks::{Runtime, RuntimeBuilder, RuntimeConfig};
 use reth_transaction_pool::{AllTransactionsEvents, TransactionPool};
-use tokio::{sync::oneshot, task::JoinHandle};
-use tokio_tungstenite::{connect_async, tungstenite::Message};
-use tokio_util::sync::CancellationToken;
+use tokio::sync::oneshot;
 use uuid::Uuid;
 
 use crate::{
-    BuilderConfig, SharedMeteringProvider,
-    flashblocks::FlashblocksServiceBuilder,
+    BuilderConfig, NativePayloadServiceBuilder, SharedMeteringProvider,
     test_utils::{
         EngineApi, Ipc, TransactionPoolObserver, create_test_db_env, driver::ChainDriver,
     },
@@ -216,7 +211,7 @@ impl LocalInstance {
             .with_da_config(da_config)
             .with_gas_limit_config(gas_limit_config);
 
-        let service_builder = FlashblocksServiceBuilder::new(builder_config.clone());
+        let service_builder = NativePayloadServiceBuilder::new(builder_config.clone());
         let components = service_builder.build_components(&base_node);
 
         let (txpool_ready_tx, txpool_ready_rx) =
@@ -272,13 +267,6 @@ impl LocalInstance {
         })
     }
 
-    /// Creates a new local instance of the builder node with the flashblocks builder configuration.
-    /// This method prefunds the default accounts with 1 ETH each.
-    pub async fn flashblocks() -> eyre::Result<Self> {
-        clear_otel_env_vars();
-        Self::new(BuilderConfig::for_tests()).await
-    }
-
     /// Returns the Reth node configuration.
     pub const fn node_config(&self) -> &NodeConfig<BaseChainSpec> {
         &self.node_config
@@ -287,23 +275,6 @@ impl LocalInstance {
     /// Returns the builder configuration.
     pub const fn builder_config(&self) -> &BuilderConfig {
         &self.builder_config
-    }
-
-    /// Returns the WebSocket URL for the flashblocks publisher.
-    pub fn flashblocks_ws_url(&self) -> String {
-        let ipaddr = self.builder_config.flashblocks_ws_addr.ip();
-        let ipaddr = if ipaddr.is_unspecified() {
-            std::net::IpAddr::V4(Ipv4Addr::LOCALHOST)
-        } else {
-            ipaddr
-        };
-        let port = self.builder_config.flashblocks_ws_addr.port();
-        format!("ws://{ipaddr}:{port}/")
-    }
-
-    /// Spawns a background task that listens for flashblock payloads over WebSocket.
-    pub fn spawn_flashblocks_listener(&self) -> FlashblocksListener {
-        FlashblocksListener::new(self.flashblocks_ws_url())
     }
 
     /// Returns the IPC socket path for the regular JSON-RPC server.
@@ -413,23 +384,20 @@ pub fn chain_spec() -> Arc<BaseChainSpec> {
     CHAIN_SPEC.clone()
 }
 
-/// Returns a chain spec identical to the default test chain spec but with
-/// `BaseUpgrade::Azul` activated at genesis (timestamp 0).
-pub fn chain_spec_with_azul() -> Arc<BaseChainSpec> {
-    use base_common_evm::BaseUpgrade;
-    use reth_chainspec::ForkCondition;
-
+/// Returns a chain spec identical to the default test chain spec but with `upgrade`
+/// activated at genesis (timestamp 0).
+pub fn chain_spec_with_upgrade(upgrade: BaseUpgrade) -> Arc<BaseChainSpec> {
     let genesis = include_str!("./artifacts/genesis.json.tmpl");
     let genesis = serde_json::from_str(genesis).expect("invalid genesis JSON");
     let mut spec = BaseChainSpec::from_genesis(genesis);
-    spec.inner.hardforks.insert(BaseUpgrade::Azul, ForkCondition::Timestamp(0));
+    spec.inner.hardforks.insert(upgrade, ForkCondition::Timestamp(0));
     Arc::new(spec)
 }
 
 /// Returns a node config using a chain spec with `BaseUpgrade::Azul` activated
 /// at genesis.
 pub fn default_node_config_with_azul() -> NodeConfig<BaseChainSpec> {
-    node_config_with_chain_spec(chain_spec_with_azul())
+    node_config_with_chain_spec(chain_spec_with_upgrade(BaseUpgrade::Azul))
 }
 
 /// Builds a [`LocalInstance`]-style Reth node configuration for the given chain spec.
@@ -474,79 +442,4 @@ pub fn node_config_with_chain_spec(spec: Arc<BaseChainSpec>) -> NodeConfig<BaseC
         .with_datadir_args(datadir)
         .with_rpc(rpc)
         .with_network(network)
-}
-
-/// A utility for listening to flashblocks WebSocket messages during tests.
-///
-/// This provides a reusable way to capture and inspect flashblocks that are produced
-/// during test execution, eliminating the need for duplicate WebSocket listening code.
-#[derive(Debug)]
-pub struct FlashblocksListener {
-    /// All flashblock payloads received so far.
-    pub flashblocks: Arc<Mutex<Vec<FlashblocksPayloadV1>>>,
-    /// Token used to signal the listener task to stop.
-    pub cancellation_token: CancellationToken,
-    /// Handle to the spawned listener task.
-    pub handle: JoinHandle<eyre::Result<()>>,
-}
-
-impl FlashblocksListener {
-    /// Create a new flashblocks listener that connects to the given WebSocket URL.
-    ///
-    /// The listener will automatically parse incoming messages as `FlashblocksPayloadV1`.
-    fn new(flashblocks_ws_url: String) -> Self {
-        let flashblocks = Arc::new(Mutex::new(Vec::new()));
-        let cancellation_token = CancellationToken::new();
-
-        let flashblocks_clone = Arc::clone(&flashblocks);
-        let cancellation_token_clone = cancellation_token.clone();
-
-        let handle = tokio::spawn(async move {
-            let (ws_stream, _) = connect_async(flashblocks_ws_url).await?;
-            let (_, mut read) = ws_stream.split();
-
-            loop {
-                tokio::select! {
-                    _ = cancellation_token_clone.cancelled() => {
-                        break Ok(());
-                    }
-                    Some(Ok(Message::Text(text))) = read.next() => {
-                        let fb = serde_json::from_str(&text).unwrap();
-                        flashblocks_clone.lock().push(fb);
-                    }
-                }
-            }
-        });
-
-        Self { flashblocks, cancellation_token, handle }
-    }
-
-    /// Get a snapshot of all received flashblocks
-    pub fn get_flashblocks(&self) -> Vec<FlashblocksPayloadV1> {
-        self.flashblocks.lock().clone()
-    }
-
-    /// Find a flashblock by index
-    pub fn find_flashblock(&self, index: u64) -> Option<FlashblocksPayloadV1> {
-        self.flashblocks.lock().iter().find(|fb| fb.index == index).cloned()
-    }
-
-    /// Check if any flashblock contains the given transaction hash
-    pub fn contains_transaction(&self, tx_hash: &B256) -> bool {
-        let tx_hash_str = format!("{tx_hash:#x}");
-        self.flashblocks.lock().iter().any(|fb| {
-            if let Some(receipts) = fb.metadata.get("receipts")
-                && let Some(receipts_obj) = receipts.as_object()
-            {
-                return receipts_obj.contains_key(&tx_hash_str);
-            }
-            false
-        })
-    }
-
-    /// Stop the listener and wait for it to complete
-    pub async fn stop(self) -> eyre::Result<()> {
-        self.cancellation_token.cancel();
-        self.handle.await?
-    }
 }

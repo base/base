@@ -106,9 +106,11 @@ just devnet tests
 which runs `cargo nextest run -p base-system-tests` after building test contracts. See
 [`etc/systems/README.md`](../../etc/systems/README.md) for the crate itself.
 
-System tests require Docker and are **not** run on every pull request (see
-[CI Pipeline](#ci-pipeline) below) because of their cost. They run as the required
-`ci / System Tests` check on the merge queue, so a commit cannot reach `main` unless they pass.
+System tests require Docker and do **not** run on pull requests (see
+[CI Pipeline](#ci-pipeline) below) because of their cost. They run on every merge-queue entry
+(`system-tests.yml`) instead. Add the `ci:system` or `ci:full` label to run them on a pull request
+before it is queued, then push a commit (or close and reopen the PR); labels are not picked up when
+added.
 
 
 ### Fuzz Tests
@@ -151,23 +153,26 @@ CI runs a different subset of checks depending on where a change is in its lifec
 | Stage | Trigger | Workflow | Scope |
 |---|---|---|---|
 | Pull request | `pull_request` | `ci-pr.yml` → `ci-core.yml` | Build/clippy/test scoped to **affected crates only** vs. base branch |
-| Pull request | `pull_request` | `no-std.yml`, `zepter.yml`, `lychee.yml`, `action-tests.yml`, `base-std-fork-tests.yml` | Full workspace (these checks are already fast) |
-| Merge queue | `merge_group` | `ci-merge-queue.yml` → `ci-core.yml` | **Full** workspace build/clippy/test, plus **system tests** |
-| Push to `main` | `push` | `ci-main-cache.yml` | Warms the shared Rust build cache |
+| Pull request | `pull_request` | `no-std.yml`, `zepter.yml`, `lychee.yml` | Full workspace (these checks are already fast) |
+| Merge queue | `merge_group` | `ci-merge-queue.yml` → `ci-core.yml` | **Full** workspace build/clippy/test |
+| Merge queue | `merge_group` | `system-tests.yml`, `action-tests.yml`, `base-std-fork-tests.yml` | System tests and action tests on every entry; Base Std fork tests when an entry touches their inputs |
+| Push to `main` | `push` | `bench-iai.yml`, `bench-storage.yml` | Benchmarks against the previous `main` commit; regressions are fixed after merge |
 | Nightly | `schedule` (07:00 UTC) | `fuzz-nightly.yml` | Sharded sync-parity fuzzing |
 | Nightly | `schedule` (13:00 UTC) | `udeps-report.yml` | Unused-dependency report, files a GitHub issue on findings |
 | Release | manual / push to `releases/v*` | see [RELEASE.md](RELEASE.md) | Release builds, RC tags, Docker images |
 
 The affected-crates scoping on pull requests (via `etc/scripts/local/affected-crates.py`) is why
 `just pr` locally mirrors PR CI, while `just ci` mirrors what the merge queue ultimately requires —
-every affected crate, workspace-wide, before a change reaches `main`. System tests stay on the
-merge queue (not pull requests) so PR feedback stays fast; they are a required status check, so
-the queue will not merge if they fail.
+every affected crate, workspace-wide, before a change reaches `main`. System tests, action tests, and Base Std
+fork tests run in the merge queue rather than on every PR push, and benchmarks run only after merge,
+on `main`, where a regression is fixed in a follow-up PR. Add `ci:system`, `ci:base-std`, `ci:perf`, or `ci:full` to a pull request
+to run the matching suite before merge. The label takes effect on the next push or reopen, not when
+it is added.
 
 `action-tests.yml`, despite the name, is unrelated to testing GitHub Actions workflows — it runs
 the [action tests](#action-tests) described above (`just actions::lint-ci` and
-`just actions::test-ci`) on every PR and merge-queue run. Action tests are also a required
-status check.
+`just actions::test-ci`) on every merge-queue run. It is a required status check; on PRs the job is
+skipped (which satisfies the check) unless the PR has the `ci:full` label.
 
 
 ## Guidelines

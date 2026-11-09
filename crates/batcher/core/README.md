@@ -55,7 +55,7 @@ with the DA backlog on every iteration and never waits on the block builders. Pu
 over `miner_setMaxDASize` is up to the subscribers, which `base-batcher-service` provides.
 
 This crate does not perform frame or blob encoding — those are handled by `base-batcher-encoder`
-and `base-blobs`. It does not implement L2 block sourcing or L1 head tracking — those come from
+and `base-common-blobs`. It does not implement L2 block sourcing or L1 head tracking — those come from
 `base-batcher-source`. Transaction signing, gas estimation, and confirmation polling belong to
 `base-tx-manager`. Service configuration and process startup live in `base-batcher-service`.
 

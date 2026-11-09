@@ -73,8 +73,8 @@ simulation nodes.
 
 ## `base sequencer`
 
-`base sequencer` starts a sequencing node by launching an embedded execution node, embedded
-Flashblocks builder, and embedded consensus node in the same process. The consensus node calls the
+`base sequencer` starts a sequencing node by launching an embedded execution node, embedded block
+builder, and embedded consensus node in the same process. The consensus node calls the
 execution node's Engine API handlers in memory, with no socket, IPC, or JWT in between. Engine API
 calls also skip JSON-RPC encoding; L2 reads are still dispatched as JSON-RPC into the auth module.
 
@@ -97,7 +97,6 @@ Useful sequencer-specific flags include:
 - `--sequencer.recover` enables recovery mode and forces empty block production.
 - `--conductor.rpc` enables conductor-backed leader checks.
 - `--conductor.binary-commit` uses the conductor binary commit endpoint.
-- `--flashblocks.port` selects the Flashblocks websocket port.
 
 ## `base dev`
 
@@ -209,11 +208,6 @@ Its receipt has type `0x7e`, `effectiveGasPrice` zero, and `from` set to the imp
 and each request increments that account's nonce. Use signed transactions to test admission and
 fees. The dev chain keeps the snapshot's chain ID, so a transaction signed here is also valid on that
 network: act as real accounts through impersonation and sign only with throwaway keys.
-
-**The receipt's `contractAddress` is wrong for impersonated contract creations.** The code is
-deployed at `create(from, nonce)`, using the sender's nonce before the request, but the receipt
-reports the address for nonce zero. Read the nonce first (`cast nonce <from>`), then compute the
-address with `cast compute-address <from> --nonce <nonce>`.
 
 A returned hash means the request is queued, not mined. Requests are added in order after the
 system deposits of the next block with enough gas, alongside ordinary pool transactions. Poll

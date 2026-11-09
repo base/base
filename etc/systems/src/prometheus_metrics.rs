@@ -16,12 +16,9 @@ use url::Url;
 
 /// Prometheus metrics rendered by the snapshot benchmark visualizer.
 const VISUALIZER_METRICS: &[&str] = &[
-    "reth_base_builder_flashblock_build_duration_avg",
-    "reth_base_builder_flashblock_count",
     "reth_base_builder_native_payload_build_duration_avg",
     "reth_base_builder_native_payload_execution_duration_avg",
     "reth_base_builder_native_payload_state_root_duration_avg",
-    "reth_base_builder_payload_num_tx_gauge",
     "reth_base_builder_predicate_accounts_loaded_total_avg",
     "reth_base_builder_predicate_accounts_loaded_unique_avg",
     "reth_base_builder_predicate_bucket_depth_avg",
@@ -35,7 +32,6 @@ const VISUALIZER_METRICS: &[&str] = &[
     "reth_base_builder_resting_predicate_carry_released_total_reason_unseen",
     "reth_base_builder_resting_predicate_carry_resets_total",
     "reth_base_builder_resting_predicate_parked_total",
-    "reth_base_builder_resting_predicate_shadow_mismatches_total",
     "reth_base_builder_payload_transaction_simulation_duration_avg",
     "reth_base_builder_sequencer_tx_duration_avg",
     "reth_base_builder_state_root_calculation_duration_avg",
@@ -45,7 +41,6 @@ const VISUALIZER_METRICS: &[&str] = &[
     "reth_base_builder_tx_gas_used_per_block_flow_validity_avg",
     "reth_base_builder_txs_included_per_block_flow_standard_avg",
     "reth_base_builder_txs_included_per_block_flow_validity_avg",
-    "reth_base_builder_validity_candidate_handling_duration_avg",
     "reth_base_builder_validity_predicate_candidates_deferred_per_build_avg",
     "reth_base_builder_validity_predicate_candidates_evaluated_per_build_avg",
     "reth_base_builder_validity_predicate_eval_cutoff_builds_total",
@@ -68,8 +63,6 @@ const VISUALIZER_METRICS: &[&str] = &[
     "reth_consensus_engine_persistence_save_blocks_batch_size_avg",
     "reth_consensus_engine_persistence_save_blocks_duration_seconds_avg",
     "reth_db_freelist",
-    "reth_op_rbuilder_flashblock_build_duration",
-    "reth_op_rbuilder_flashblock_count",
     "reth_op_rbuilder_payload_tx_simulation_duration",
     "reth_op_rbuilder_sequencer_tx_duration",
     "reth_op_rbuilder_state_root_calculation_duration",
@@ -365,7 +358,7 @@ impl PrometheusBlockCollector {
     /// Returns whether a flattened metric is rendered by the benchmark visualizer.
     ///
     /// This intentionally uses exact metric names rather than broad metric-family prefixes. The
-    /// latter pull in one sample for every flashblock, gas bucket, and label combination, even
+    /// latter pull in one sample for every gas bucket and label combination, even
     /// though the report UI cannot display them. Keep this list in sync with the metrics rendered
     /// by `base/benchmark`'s `ChartGrid`, including its compatibility aliases.
     pub fn is_visualizer_metric(name: &str) -> bool {
@@ -453,10 +446,10 @@ build_duration_count{stage="execution"} 4
             "reth_tree_root_sparse_trie_final_update_duration_histogram"
         ));
         assert!(PrometheusBlockCollector::is_visualizer_metric(
-            "reth_op_rbuilder_flashblock_count"
+            "reth_op_rbuilder_total_block_built_duration"
         ));
         assert!(!PrometheusBlockCollector::is_visualizer_metric(
-            "reth_base_builder_flashblock_gas_headroom_flashblock_index_1_avg"
+            "reth_base_builder_tx_gas_used_per_block_flow_standard_sum"
         ));
         assert!(!PrometheusBlockCollector::is_visualizer_metric(
             "reth_consensus_engine_beacon_new_payload_thread_user_cpu_seconds_avg"
@@ -513,9 +506,6 @@ reth_base_builder_resting_predicate_carry_released_total{reason="pre_block_state
 # TYPE reth_base_builder_resting_predicate_carried histogram
 reth_base_builder_resting_predicate_carried_sum 90
 reth_base_builder_resting_predicate_carried_count 2
-# TYPE reth_base_builder_validity_candidate_handling_duration histogram
-reth_base_builder_validity_candidate_handling_duration_sum 0.03
-reth_base_builder_validity_candidate_handling_duration_count 10
 "#,
         );
         let delta = current.delta(&previous);
@@ -529,7 +519,6 @@ reth_base_builder_validity_candidate_handling_duration_count 10
                 2.0,
             ),
             ("reth_base_builder_resting_predicate_carried_avg", 45.0),
-            ("reth_base_builder_validity_candidate_handling_duration_avg", 0.003),
         ];
         for (name, value) in expected {
             assert!(
