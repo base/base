@@ -3201,6 +3201,7 @@ dependencies = [
  "rstest",
  "tempfile",
  "tracing",
+ "url",
 ]
 
 [[package]]

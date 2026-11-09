@@ -5,7 +5,8 @@ use std::{path::PathBuf, sync::Arc};
 
 use base_builder_core::{
     BuilderApiExtensionConfig, BuilderConfig, DEFAULT_MAX_VALIDITY_PREDICATES, RejectionCache,
-    ResourceMeteringConfig, SharedMeteringProvider, ValiditySignatureMode,
+    ResourceMeteringConfig, SequencerLeadershipConfig, SharedMeteringProvider,
+    ValiditySignatureMode,
 };
 use base_builder_metering::MeteringStore;
 use base_execution_cli::ShadowIndexerArgs;
@@ -16,6 +17,7 @@ use base_observability_events::{
 };
 use eyre::WrapErr;
 use tracing::{info, warn};
+use url::Url;
 
 /// Dedicated transaction event journal configuration.
 #[derive(Debug, Clone, PartialEq, Eq, clap::Args)]
@@ -63,6 +65,24 @@ pub struct TransactionEventsArgs {
         default_value = "unknown"
     )]
     pub network: String,
+
+    /// RPC URL of the consensus node whose `admin_sequencerActive` answer decides whether this
+    /// builder journals transaction events. Unset, every event is journaled regardless of
+    /// leadership.
+    #[arg(
+        long = "builder.transaction-events.consensus-url",
+        env = "BUILDER_TRANSACTION_EVENTS_CONSENSUS_URL"
+    )]
+    pub consensus_url: Option<Url>,
+
+    /// Milliseconds between two `admin_sequencerActive` requests.
+    #[arg(
+        long = "builder.transaction-events.leader-poll-interval-ms",
+        env = "BUILDER_TRANSACTION_EVENTS_LEADER_POLL_INTERVAL_MS",
+        default_value_t = SequencerLeadershipConfig::DEFAULT_POLL_INTERVAL.as_millis() as u64,
+        value_parser = clap::value_parser!(u64).range(1..)
+    )]
+    pub leader_poll_interval_ms: u64,
 }
 
 impl Default for TransactionEventsArgs {
@@ -75,6 +95,9 @@ impl Default for TransactionEventsArgs {
             max_files: DEFAULT_MAX_FILES,
             required: false,
             network: "unknown".to_string(),
+            consensus_url: None,
+            leader_poll_interval_ms: SequencerLeadershipConfig::DEFAULT_POLL_INTERVAL.as_millis()
+                as u64,
         }
     }
 }
@@ -92,6 +115,14 @@ impl TransactionEventsArgs {
             producer: TransactionEventProducer::BaseBuilder,
             network: self.network.clone(),
         }
+    }
+
+    /// Returns the leadership probe config when a consensus node URL is configured.
+    pub fn leadership_config(&self) -> Option<SequencerLeadershipConfig> {
+        self.consensus_url.clone().map(|consensus_url| SequencerLeadershipConfig {
+            poll_interval: Duration::from_millis(self.leader_poll_interval_ms),
+            ..SequencerLeadershipConfig::new(consensus_url)
+        })
     }
 }
 
@@ -337,6 +368,35 @@ mod tests {
     fn convert(args: Args) -> BuilderConfig {
         let metering_provider: SharedMeteringProvider = Arc::new(NoopMeteringProvider);
         args.into_builder_config(metering_provider).expect("conversion should succeed")
+    }
+
+    #[test]
+    fn consensus_url_enables_the_leadership_probe() {
+        let parsed = CommandParser::try_parse_from([
+            "builder",
+            "--builder.transaction-events.consensus-url",
+            "http://localhost:9545",
+            "--builder.transaction-events.leader-poll-interval-ms",
+            "250",
+        ])
+        .unwrap();
+        assert_eq!(
+            parsed.args.transaction_events.leadership_config(),
+            Some(SequencerLeadershipConfig {
+                poll_interval: Duration::from_millis(250),
+                ..SequencerLeadershipConfig::new("http://localhost:9545".parse().unwrap())
+            })
+        );
+
+        let unset = CommandParser::try_parse_from(["builder"]).unwrap();
+        assert_eq!(unset.args.transaction_events.leadership_config(), None);
+
+        let zero = CommandParser::try_parse_from([
+            "builder",
+            "--builder.transaction-events.leader-poll-interval-ms",
+            "0",
+        ]);
+        assert!(zero.is_err(), "a zero poll interval must be rejected at parse time");
     }
 
     #[test]

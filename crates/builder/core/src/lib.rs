@@ -13,6 +13,9 @@ pub use config::BuilderConfig;
 mod metrics;
 pub use metrics::BuilderMetrics;
 
+mod leadership;
+pub use leadership::{SequencerLeadershipConfig, SequencerLeadershipProbe};
+
 mod traits;
 pub use base_execution_payload_builder::{
     MeteringProvider, NoopMeteringProvider, RejectionCache, ResourceMeteringConfig,
