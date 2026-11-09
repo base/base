@@ -20,8 +20,8 @@ pub use follow::{FollowError, RemoteClient, RemoteL2Client, RemoteL2ClientError}
 
 mod standalone;
 pub use standalone::{
-    StandaloneAttributesBuilder, StandaloneDenimSchedule, StandaloneDerivationClient,
-    StandaloneOriginSelector, StandalonePrefund, StandaloneScheduleError, StandaloneSequencerNode,
+    StandaloneAttributesBuilder, StandaloneDerivationClient, StandaloneOriginSelector,
+    StandalonePrefund, StandaloneSequencerNode,
 };
 
 mod standalone_impersonation;
@@ -31,7 +31,7 @@ pub use standalone_impersonation::{
 };
 
 mod standalone_dev;
-pub use standalone_dev::{StandaloneDevChain, StandaloneDevError, StandaloneDevState};
+pub use standalone_dev::{StandaloneDevChain, StandaloneDevError};
 
 mod actors;
 pub use actors::{
