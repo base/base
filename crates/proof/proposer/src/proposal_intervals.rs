@@ -12,13 +12,13 @@ use base_proof_contracts::{
     AggregateVerifierClient, DisputeGameFactoryClient, game_lookup_blocks, resolve_intervals,
 };
 
-use crate::error::ProposerError;
+use crate::{error::ProposerError, proof_target::ProofTarget};
 
 /// The checkpoint intervals a game starting at a given block is created with.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Intervals {
     /// Number of L2 blocks covered by one proposal.
-    pub block_interval: u64,
+    pub block_interval: NonZeroU64,
     /// Number of L2 blocks between intermediate output root checkpoints.
     pub intermediate_block_interval: NonZeroU64,
 }
@@ -32,7 +32,7 @@ impl Intervals {
     ) -> Result<Vec<u64>, ProposerError> {
         game_lookup_blocks(
             starting_block_number,
-            self.block_interval,
+            self.block_interval.get(),
             self.intermediate_block_interval.get(),
         )
         .map_err(|e| ProposerError::Config(e.to_string()))
@@ -94,6 +94,9 @@ impl IntervalResolver {
                 "interval lookup for block {starting_block} failed: {e}"
             ))
         })?;
+        let block_interval = NonZeroU64::new(block_interval).ok_or_else(|| {
+            ProposerError::Contract(format!("block interval for block {starting_block} is zero"))
+        })?;
         let intermediate_block_interval =
             NonZeroU64::new(intermediate_block_interval).ok_or_else(|| {
                 ProposerError::Contract(format!(
@@ -102,5 +105,48 @@ impl IntervalResolver {
             })?;
 
         Ok(Intervals { block_interval, intermediate_block_interval })
+    }
+
+    /// Returns the proposal that follows a game chain ending at `current_block`, or `None`
+    /// when its target block would be past `finalized_head`.
+    pub async fn next_target(
+        &self,
+        current_block: u64,
+        finalized_head: u64,
+    ) -> Result<Option<ProofTarget>, ProposerError> {
+        let intervals = self.for_starting_block(current_block).await?;
+        Ok(current_block
+            .checked_add(intervals.block_interval.get())
+            .filter(|block| *block <= finalized_head)
+            .map(|block| ProofTarget { block, intervals }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{ProposerError, test_utils::test_fixed_interval_resolver};
+
+    #[tokio::test]
+    async fn next_target_stops_at_finalized_head() {
+        let resolver = test_fixed_interval_resolver(100, 50);
+        for (current_block, finalized_head, expected) in [
+            (100, 300, Some(200)),
+            (100, 200, Some(200)),
+            (100, 199, None),
+            (u64::MAX - 10, u64::MAX, None),
+        ] {
+            let target = resolver.next_target(current_block, finalized_head).await.unwrap();
+            assert_eq!(
+                target.map(|target| target.block),
+                expected,
+                "next_target({current_block}, {finalized_head})"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn zero_block_interval_is_rejected() {
+        let result = test_fixed_interval_resolver(0, 50).next_target(100, 300).await;
+        assert!(matches!(result, Err(ProposerError::Contract(_))));
     }
 }

@@ -168,6 +168,9 @@ metrics-exporter-prometheus.workspace = true
 # alloy
 alloy-provider = { workspace = true, default-features = true, features = ["txpool-api"] }
 
+# rpc
+jsonrpsee = { workspace = true, features = ["server"] }
+
 # misc
 ctor.workspace = true
 hyper.workspace = true

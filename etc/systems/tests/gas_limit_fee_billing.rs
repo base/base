@@ -408,7 +408,7 @@ async fn everest_bills_sponsored_eip8130_for_its_reserved_budget() -> Result<()>
 
     let nonce_sequence = builder.get_transaction_count(sender.address()).await?;
     let signed = sponsored_eip8130(&sender, &payer, nonce_sequence, EIP8130_GAS_LIMIT)?;
-    let reserved_gas = EIP8130_GAS_LIMIT + IntrinsicGas::max_payer_auth_cost(&signed)?;
+    let reserved_gas = EIP8130_GAS_LIMIT + IntrinsicGas::payer_auth_cost_of(&signed)?;
     assert!(reserved_gas > EIP8130_GAS_LIMIT, "payer authentication must reserve gas");
     let raw: Bytes = signed.encoded_2718().into();
 
@@ -477,7 +477,7 @@ async fn everest_bills_sponsored_eip8130_for_its_reserved_budget() -> Result<()>
         "estimate {estimate} must be below the over-provisioned limit"
     );
     let signed = sponsored_eip8130(&sender, &payer, nonce_sequence + 1, estimate)?;
-    let payer_auth = IntrinsicGas::max_payer_auth_cost(&signed)?;
+    let payer_auth = IntrinsicGas::payer_auth_cost_of(&signed)?;
     assert!(
         estimate < self_pay_estimate + payer_auth,
         "the sponsored estimate ({estimate}) must exclude payer authentication \

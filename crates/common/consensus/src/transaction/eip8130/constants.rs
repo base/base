@@ -34,9 +34,6 @@ impl Eip8130Constants {
     /// Pinned to the EIP-8130 constant-table value `AA_PAYER_TYPE = 0x7A`.
     pub const EIP8130_PAYER_TYPE: u8 = 0x7A;
 
-    /// Base intrinsic gas cost for any AA transaction (`EIP8130_BASE_COST`).
-    pub const EIP8130_BASE_COST: u64 = 15_000;
-
     /// Sentinel `nonce_key` value selecting nonce-free mode (`NONCE_KEY_MAX`).
     ///
     /// When `nonce_key == NONCE_KEY_MAX`, no nonce state is read or written

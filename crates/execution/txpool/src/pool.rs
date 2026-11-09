@@ -804,7 +804,7 @@ where
             return Ok(());
         };
         let gas_limit = transaction.gas_limit();
-        let reserved_gas = IntrinsicGas::max_payer_auth_cost(signed)
+        let reserved_gas = IntrinsicGas::payer_auth_cost_of(signed)
             .map_or(u64::MAX, |payer_auth| FeeCheck::max_chargeable_gas(gas_limit, payer_auth));
         let block_gas_limit = self.protocol_pool.block_info().block_gas_limit;
         if reserved_gas <= block_gas_limit {
@@ -3942,7 +3942,7 @@ mod tests {
             };
             let transaction = sign_sponsored_8130(signer, payer, tx);
             let signed = transaction.as_eip8130().expect("EIP-8130 transaction");
-            let payer_auth = IntrinsicGas::max_payer_auth_cost(signed).unwrap();
+            let payer_auth = IntrinsicGas::payer_auth_cost_of(signed).unwrap();
             assert!(payer_auth > 0);
             if gas_limit + payer_auth == reserved_gas {
                 return transaction;
@@ -4099,7 +4099,7 @@ mod tests {
             let transaction = sponsored_eoa_8130(&signer, &payer, nonce_key, POLICY_MAX_FEE);
             let signed = transaction.as_eip8130().expect("EIP-8130 transaction");
             assert_eq!(signed.tx().gas_limit, SPONSORED_GAS_LIMIT);
-            let payer_auth = IntrinsicGas::max_payer_auth_cost(signed).unwrap();
+            let payer_auth = IntrinsicGas::payer_auth_cost_of(signed).unwrap();
             assert!(payer_auth > 0);
 
             let error = pool
