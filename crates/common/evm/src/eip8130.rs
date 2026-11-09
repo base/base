@@ -1952,9 +1952,9 @@ impl Eip8130Executor {
     }
 
     /// The gas an EIP-8130 transaction metered: sender-intrinsic plus the gas its
-    /// `calls` consumed, less the EIP-3529-capped refund, plus payer
-    /// authentication, with the EIP-7623 floor applied to the total. This is the
-    /// pre-gas-limit-billing charge (see [`Self::billable_gas`]) and what a
+    /// `calls` consumed, less the EIP-3529-capped refund, raised to the sender's
+    /// EIP-7623 floor, plus payer authentication (see [`Eip8130Outcome::metered_gas`]).
+    /// This is the pre-gas-limit-billing charge (see [`Self::billable_gas`]) and what a
     /// fee-charge-disabled execution reports as its gas used.
     fn metered_gas_used(outcome: &Eip8130Outcome, calls: &CallsResult) -> u64 {
         let gross_used = outcome.sender_intrinsic.saturating_add(calls.call_gas_spent);
