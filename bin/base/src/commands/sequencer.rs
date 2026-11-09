@@ -27,6 +27,7 @@ use base_upgrade_signal::UpgradeSignalStartupMode;
 use clap::Args;
 use reth_cli_runner::CliRunner;
 use tokio_util::sync::CancellationToken;
+use tracing::warn;
 
 use crate::config::ResolvedChainConfig;
 
@@ -72,6 +73,17 @@ impl SequencerCommand {
         let leadership_config = transaction_events
             .leadership_config(consensus_config.rpc_flags.local_admin_url())
             .filter(|_| transaction_events.enabled);
+        if transaction_events.enabled && leadership_config.is_none() {
+            // Journaling must not keep a sequencer from starting, but an ungated journal on a
+            // standby repeats the leader's rows, so say so where the operator will see it.
+            warn!(
+                rpc_disabled = consensus_config.rpc_flags.rpc_disabled,
+                enable_admin = consensus_config.rpc_flags.enable_admin,
+                "transaction event journal is not gated on sequencer leadership: the embedded \
+                 consensus admin RPC is unavailable and no consensus URL is configured; every \
+                 sequencer, standbys included, journals"
+            );
+        }
         let consensus_args = ConsensusNodeArgs::new(consensus_chain, consensus_config);
         let mut rollup_config = consensus_args.load_rollup_config()?;
         Arc::make_mut(&mut execution_chain).block_time = Some(rollup_config.block_time);
