@@ -164,10 +164,8 @@ declared coinbase tip: self-pay must cover gas and tip from one balance, while
 sponsored payment requires the payer to cover gas and the sender to cover the
 tip.
 
-The gas and fee layer is pure accounting: it reads no state and runs no EVM. The
-state-derived inputs (whether the nonce channel is first-use and whether
-the sender actor is policy-gated) are supplied
-by the caller via `IntrinsicGasInput`. It does
-not advance nonces, debit balances, or execute calls; cold/warm and set/reset
-refinements that depend on intra-transaction access order are finalized by the
-execution metering layer.
+The gas and fee layer is pure accounting: it reads no state and runs no EVM.
+Intrinsic gas depends only on the signed transaction and its resolved sender,
+so the pool, the builder and execution derive the same value. It does not
+advance nonces, debit balances, or execute calls; the access costs of the
+dispatched calls are charged by the execution metering layer.

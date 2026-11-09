@@ -1995,13 +1995,10 @@ impl Eip8130Executor {
                     created_effect = Some((created.address, created.code));
                 }
                 AccountChange::ConfigChange(cc) => {
-                    // Estimation prices revokes at the worst-case three-reset cost
-                    // (a zero revoke discount is pinned), so the resolved
-                    // empty-slot count is applied but not needed here. `now` is the
-                    // block timestamp (Unix seconds) so the JIT expiry skip matches
-                    // consensus: a lapsed unsequenced grant is dropped in both the
-                    // estimate and at inclusion, keeping the post-change state (and
-                    // therefore the simulated `calls`) aligned.
+                    // `now` is the block timestamp (Unix seconds) so the JIT expiry
+                    // skip matches consensus: a lapsed unsequenced grant is dropped in
+                    // both the estimate and at inclusion, keeping the post-change state
+                    // (and therefore the simulated `calls`) aligned.
                     AccountChangeApplier::apply_config_change(
                         &mut acc_mut,
                         sender,
