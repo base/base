@@ -100,8 +100,10 @@ Useful sequencer-specific flags include:
 - `--builder.transaction-events.enabled` journals the builder's transaction events. Because the
   consensus node runs in the same process, the journal is gated on its own `admin_sequencerActive`
   (requires `--rpc.enable-admin`) without setting `--builder.transaction-events.consensus-url`.
-  With the admin API or RPC server disabled and no explicit URL, startup logs a warning and every
-  sequencer journals, standbys included.
+  With the admin API or RPC server disabled, an ephemeral `--rpc.port 0`, and no explicit URL,
+  startup logs a warning and every sequencer journals, standbys included. The gate covers every
+  event the process journals, including `TXPOOL_SEND_RAW_TRANSACTION*` for transactions submitted
+  to the sequencer directly.
 
 ## `base dev`
 

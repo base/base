@@ -129,11 +129,12 @@ impl Default for EmbeddedRpcArgs {
 
 impl RpcArgs {
     /// Returns the HTTP URL at which a client in this process reaches the admin API, or `None`
-    /// when the server or its admin namespace is disabled.
+    /// when the server or its admin namespace is disabled, or the port is ephemeral (`0`) and
+    /// therefore unknown until the server binds.
     ///
     /// A server bound to an unspecified address (`0.0.0.0`, `::`) is reached over loopback.
     pub fn local_admin_url(&self) -> Option<Url> {
-        if self.rpc_disabled || !self.enable_admin {
+        if self.rpc_disabled || !self.enable_admin || self.listen_port == 0 {
             return None;
         }
         let host = if self.listen_addr.is_unspecified() {
@@ -197,6 +198,7 @@ mod tests {
     #[case::bound_address("10.0.0.7", 7545, true, false, Some("http://10.0.0.7:7545/"))]
     #[case::admin_disabled("0.0.0.0", 9545, false, false, None)]
     #[case::rpc_disabled("0.0.0.0", 9545, true, true, None)]
+    #[case::ephemeral_port("0.0.0.0", 0, true, false, None)]
     fn local_admin_url_points_a_local_client_at_the_admin_api(
         #[case] addr: &str,
         #[case] port: u16,

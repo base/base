@@ -67,8 +67,8 @@ pub struct TransactionEventsArgs {
     pub network: String,
 
     /// RPC URL of the consensus node whose `admin_sequencerActive` answer decides whether this
-    /// builder journals transaction events. Unset, every event is journaled regardless of
-    /// leadership.
+    /// builder journals transaction events. Unset, the standalone builder journals regardless of
+    /// leadership, while `base sequencer` asks the consensus node running in its own process.
     #[arg(
         long = "builder.transaction-events.consensus-url",
         env = "BUILDER_TRANSACTION_EVENTS_CONSENSUS_URL"
