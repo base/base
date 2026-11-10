@@ -1120,8 +1120,10 @@ where
     ///
     /// A version whose replacement would pass the upper bound of
     /// [`BlobFeePolicy`] is not replaced and stays valid at its last fees. When a
-    /// version rejected for its fees cannot be replaced and no earlier version was
-    /// published, the send fails with the rejection. When the
+    /// version rejected for its fees reaches that bound and no earlier version was
+    /// published, the send fails with the rejection. When its replacement fails for a
+    /// transient reason, such as an L1 price read error, it is published again after
+    /// `resubmission_timeout`. When the
     /// transaction is confirmed, the policy and the metrics record the
     /// `max_priority_fee_per_gas` of the version that landed.
     async fn send_blob_event_loop(
@@ -1163,14 +1165,20 @@ where
                         | TxManagerError::FeeTooLow
                         | TxManagerError::MaxFeePerGasTooLow),
                     ) => match self.replace_blob_tx(candidate, &current, blob_count).await {
-                        Some(replacement) => {
+                        Ok(Some(replacement)) => {
                             current = replacement;
                             replacements += 1;
                         }
                         // No published version can land, so the send fails.
-                        None if !send_state.has_published() => return Err(error),
+                        Ok(None) if !send_state.has_published() => return Err(error),
                         // Wait for a version published earlier.
-                        None => unpublished = false,
+                        Ok(None) => unpublished = false,
+                        Err(error) if !send_state.has_published() && !error.is_retryable() => {
+                            return Err(error);
+                        }
+                        // Published again, and replaced if rejected again, after the
+                        // resubmission timeout.
+                        Err(_) => break,
                     },
                     Err(error) if !send_state.has_published() && !error.is_retryable() => {
                         return Err(error);
@@ -1203,7 +1211,9 @@ where
                 info!("skipping fee bump, a published tx is already mined and awaits confirmation");
                 continue;
             }
-            if let Some(replacement) = self.replace_blob_tx(candidate, &current, blob_count).await {
+            if let Ok(Some(replacement)) =
+                self.replace_blob_tx(candidate, &current, blob_count).await
+            {
                 current = replacement;
                 unpublished = true;
                 replacements += 1;
@@ -1215,27 +1225,28 @@ where
     /// `blob_count` blobs, priced by [`BlobFeePolicy::replacement`] at the current L1
     /// prices.
     ///
-    /// Returns `None` when the replacement would pass the upper bound of the policy, or
-    /// when it could not be built, in which case the error is logged.
+    /// Returns `Ok(None)` when the replacement would pass the upper bound of the policy.
+    ///
+    /// # Errors
+    ///
+    /// Returns, and logs, the error of the L1 price read or of the preparation when the
+    /// replacement could not be built.
     async fn replace_blob_tx(
         &self,
         candidate: &TxCandidate,
         current: &PreparedTx,
         blob_count: u128,
-    ) -> Option<PreparedTx> {
+    ) -> TxManagerResult<Option<PreparedTx>> {
         let old = BlobFees {
             max_priority_fee_per_gas: current.gas_tip_cap,
             max_fee_per_gas: current.gas_fee_cap,
             // Always set on a blob transaction.
             max_fee_per_blob_gas: current.blob_fee_cap.unwrap_or_default(),
         };
-        let (base_fee, blob_base_fee) = match self.blob_base_fees().await {
-            Ok(fees) => fees,
-            Err(error) => {
-                warn!(error = %error, "blob fee bump failed, will retry next tick");
-                return None;
-            }
-        };
+        let (base_fee, blob_base_fee) = self
+            .blob_base_fees()
+            .await
+            .inspect_err(|error| warn!(error = %error, "blob tx replacement failed"))?;
         let Some(fees) =
             self.blob_fee_policy.replacement(&old, blob_count, base_fee, blob_base_fee)
         else {
@@ -1243,7 +1254,7 @@ where
                 max_priority_fee_per_gas = %old.max_priority_fee_per_gas,
                 "not replacing the blob tx, its max_priority_fee_per_gas cannot double within the upper bound",
             );
-            return None;
+            return Ok(None);
         };
 
         // The replacement fees are also the floor of the fresh fees a retry of
@@ -1259,26 +1270,19 @@ where
                 Some(current.nonce),
                 current.sidecar.clone(),
             )
-            .await;
-        match prepared {
-            Ok(prepared) => {
-                self.metrics.record_gas_bump();
-                info!(
-                    old_max_priority_fee_per_gas = %old.max_priority_fee_per_gas,
-                    new_max_priority_fee_per_gas = %prepared.gas_tip_cap,
-                    old_max_fee_per_gas = %old.max_fee_per_gas,
-                    new_max_fee_per_gas = %prepared.gas_fee_cap,
-                    old_max_fee_per_blob_gas = %old.max_fee_per_blob_gas,
-                    new_max_fee_per_blob_gas = ?prepared.blob_fee_cap,
-                    "blob tx replacement signed",
-                );
-                Some(prepared)
-            }
-            Err(error) => {
-                warn!(error = %error, "blob fee bump failed, will retry next tick");
-                None
-            }
-        }
+            .await
+            .inspect_err(|error| warn!(error = %error, "blob tx replacement failed"))?;
+        self.metrics.record_gas_bump();
+        info!(
+            old_max_priority_fee_per_gas = %old.max_priority_fee_per_gas,
+            new_max_priority_fee_per_gas = %prepared.gas_tip_cap,
+            old_max_fee_per_gas = %old.max_fee_per_gas,
+            new_max_fee_per_gas = %prepared.gas_fee_cap,
+            old_max_fee_per_blob_gas = %old.max_fee_per_blob_gas,
+            new_max_fee_per_blob_gas = ?prepared.blob_fee_cap,
+            "blob tx replacement signed",
+        );
+        Ok(Some(prepared))
     }
 
     /// Waits for a confirmed receipt or for `resubmission_timeout` to elapse.
@@ -2911,6 +2915,39 @@ mod tests {
 
             assert!(matches!(result, Err(TxManagerError::ReplacementUnderpriced)), "{result:?}");
             assert_eq!(ctx.now(), Duration::ZERO);
+            assert!(asserter.read_q().is_empty(), "every mocked response should be used");
+        });
+    }
+
+    /// A first blob tx version the node rejects for its fees, whose replacement fails to read
+    /// the L1 prices, is published again after the resubmission timeout instead of failing
+    /// the send.
+    #[test]
+    fn a_first_blob_tx_rejected_for_its_fees_whose_replacement_fails_is_published_again() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let asserter = Asserter::new();
+            asserter.push_success(&1u64);
+            push_blob_pricing(&asserter);
+            asserter.push_success(&0u64);
+            asserter.push_failure_msg("replacement transaction underpriced");
+            // The L1 prices the replacement reads: the latest block fails.
+            asserter.push_failure_msg("service unavailable");
+            asserter.push_success(&1_000_000_000u128);
+            // The same version published again, and the first receipt poll.
+            asserter.push_success(&B256::with_last_byte(1));
+            asserter.push_success(&1u64);
+            asserter.push_success(&Option::<TransactionReceipt>::None);
+            let mut metrics = blob_send_metrics();
+            metrics.expect_record_gas_bump().never();
+            let manager =
+                blob_manager(&ctx, asserter.clone(), (10_000_000, 10_000_000_000), metrics).await;
+            let mut send = Box::pin(manager.send(blob_candidate()));
+            assert!(futures::poll!(&mut send).is_pending());
+            assert_eq!(asserter.read_q().len(), 3);
+
+            ctx.sleep(BLOB_RESUBMISSION_TIMEOUT + Duration::from_nanos(1)).await;
+            assert!(futures::poll!(&mut send).is_pending());
+            ctx.sleep(Duration::from_nanos(1)).await;
             assert!(asserter.read_q().is_empty(), "every mocked response should be used");
         });
     }

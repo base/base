@@ -62,13 +62,13 @@ confirmation.
 
 - **`SendState`** — state machine tracking mined hashes, nonce errors, fee bumps, and
   mempool deadlines to decide whether to retry, bump, or abort.
+- **`SendHandle`** — future returned by `send_async` that resolves to a `SendResponse`.
+- **`SendResponse`** — type alias for `TxManagerResult<TransactionReceipt>`.
 
 The send loop replaces a pending transaction after `resubmission_timeout`. A blob
 transaction is also replaced right away when the node answers that its fees are too
 low, and is published again unchanged, without raising any fee, after any other
 publication failure, such as a network error.
-- **`SendHandle`** — future returned by `send_async` that resolves to a `SendResponse`.
-- **`SendResponse`** — type alias for `TxManagerResult<TransactionReceipt>`.
 
 ### Blob support
 
