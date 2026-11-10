@@ -226,8 +226,6 @@ pub enum ValidityEvaluationOutcome {
     BudgetExhausted,
     /// Primary scan: a predicate can no longer be satisfied (native builder).
     Expired,
-    /// Primary scan: rejected unevaluated because of an unsupported predicate (native builder).
-    Unsupported,
     /// Rescan: every predicate held.
     RescanMatched,
     /// Rescan: a predicate did not hold.
@@ -240,13 +238,12 @@ pub enum ValidityEvaluationOutcome {
 
 impl ValidityEvaluationOutcome {
     /// Every variant in declaration order; its length sizes [`ValidityEvaluationCounters`].
-    const ALL: [Self; 10] = [
+    const ALL: [Self; 9] = [
         Self::Matched,
         Self::NotSatisfied,
         Self::ReadError,
         Self::BudgetExhausted,
         Self::Expired,
-        Self::Unsupported,
         Self::RescanMatched,
         Self::RescanNotSatisfied,
         Self::RescanReadError,
@@ -262,7 +259,6 @@ impl ValidityEvaluationOutcome {
             Self::ReadError => "read_error",
             Self::BudgetExhausted => "budget_exhausted",
             Self::Expired => "expired",
-            Self::Unsupported => "unsupported",
             Self::RescanMatched => "rescan_matched",
             Self::RescanNotSatisfied => "rescan_not_satisfied",
             Self::RescanReadError => "rescan_read_error",

@@ -21,8 +21,6 @@
 //! to four state predicates rotating through balance, nonce, and storage, with the expiry at a
 //! varying wire position. Balance and nonce predicates read the candidate's own accounts; storage
 //! predicates read distinct slots of one shared contract, as watchers of a popular protocol do.
-//! Flashblock-index predicates are omitted because the native builder rejects them before
-//! evaluation.
 //!
 //! The teardowns pin the evaluation outcomes and the predicate read footprint, or the compiled
 //! predicate counts. They are fixed by the workload, so a mismatch means evaluation or
