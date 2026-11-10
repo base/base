@@ -13,7 +13,9 @@ mod p2p;
 pub use p2p::{P2pClInfoJson, P2pElInfoJson, P2pInfoJson, P2pInfoTable};
 
 mod render;
-pub use render::{L1BlocksTableParams, render_da_backlog_bar, render_l1_blocks_table};
+pub use render::{
+    L1BlocksTableParams, build_gas_bar, render_da_backlog_bar, render_l1_blocks_table,
+};
 
 mod table;
 pub use table::KeyValueTable;

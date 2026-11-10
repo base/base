@@ -22,30 +22,6 @@ pub const RATE_WINDOW_5M: Duration = Duration::from_secs(300);
 /// Number of recent L1 blocks used for blob share and target usage calculations.
 pub const L1_BLOCK_WINDOW: usize = 10;
 
-/// An L2 block's data availability contribution.
-#[derive(Clone, Debug)]
-pub struct BlockContribution {
-    /// L2 block number.
-    pub block_number: u64,
-    /// DA bytes contributed by this block.
-    pub da_bytes: u64,
-    /// Unix timestamp of the block.
-    pub timestamp: u64,
-    /// Number of transactions in the block, or zero until the full block has been fetched.
-    pub tx_count: usize,
-}
-
-impl BlockContribution {
-    /// Returns the age of this block in seconds since its timestamp.
-    pub fn age_seconds(&self) -> u64 {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-        now.saturating_sub(self.timestamp)
-    }
-}
-
 /// An L1 block with blob and attribution data.
 #[derive(Clone, Debug)]
 pub struct L1Block {
@@ -226,7 +202,7 @@ pub struct DaTracker {
     /// Total DA bytes in the backlog (unsafe minus safe).
     pub da_backlog_bytes: u64,
     /// Per-block DA byte contributions, newest first.
-    pub block_contributions: VecDeque<BlockContribution>,
+    pub block_contributions: VecDeque<BlockDaInfo>,
     /// Recent L1 blocks with blob information, newest first.
     pub l1_blocks: VecDeque<L1Block>,
     /// Tracks DA growth rate (bytes added from new L2 blocks).
@@ -271,9 +247,8 @@ impl DaTracker {
 
     /// Prepends a block contribution, evicting the oldest past `MAX_HISTORY`.
     /// Does not update backlog totals or growth samples.
-    pub fn add_backlog_block(&mut self, block_number: u64, da_bytes: u64, timestamp: u64) {
-        let contribution = BlockContribution { block_number, da_bytes, timestamp, tx_count: 0 };
-        self.block_contributions.push_front(contribution);
+    pub fn add_backlog_block(&mut self, info: BlockDaInfo) {
+        self.block_contributions.push_front(info);
         if self.block_contributions.len() > MAX_HISTORY {
             self.block_contributions.pop_back();
         }
@@ -286,13 +261,12 @@ impl DaTracker {
     /// position and, when it is still unsafe, adds its bytes to the backlog and
     /// the growth rate.
     pub fn update_block_info(&mut self, info: BlockDaInfo) {
-        let BlockDaInfo { block_number, da_bytes, timestamp, tx_count } = info;
+        let block_number = info.block_number;
+        let da_bytes = info.da_bytes;
         for contrib in &mut self.block_contributions {
             if contrib.block_number == block_number {
                 let diff = da_bytes as i64 - contrib.da_bytes as i64;
-                contrib.da_bytes = da_bytes;
-                contrib.timestamp = timestamp;
-                contrib.tx_count = tx_count;
+                *contrib = info;
 
                 if block_number > self.safe_l2_block {
                     if diff > 0 {
@@ -306,8 +280,6 @@ impl DaTracker {
             }
         }
 
-        let contribution = BlockContribution { block_number, da_bytes, timestamp, tx_count };
-
         if block_number > self.safe_l2_block {
             self.da_backlog_bytes = self.da_backlog_bytes.saturating_add(da_bytes);
             self.growth_tracker.add_sample(da_bytes);
@@ -318,7 +290,7 @@ impl DaTracker {
             .iter()
             .position(|c| c.block_number < block_number)
             .unwrap_or(self.block_contributions.len());
-        self.block_contributions.insert(insert_pos, contribution);
+        self.block_contributions.insert(insert_pos, info);
 
         if self.block_contributions.len() > MAX_HISTORY {
             self.block_contributions.pop_back();
