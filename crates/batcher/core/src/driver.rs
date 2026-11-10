@@ -240,12 +240,15 @@ where
         let flushed = self.pipeline.flush().inspect_err(|error| {
             warn!(error = %error, "flush failed during shutdown");
         });
-        let worked = self.work().await;
+        let encoded = self.drain_encoding();
+        // Submit what is ready even if encoding fails again, so the flushed channel still goes out.
+        let submitted = self.submissions.submit_pending(&mut self.pipeline).await;
 
         self.submissions.drain(&mut self.pipeline, self.runtime.sleep(self.drain_timeout)).await;
 
         flushed?;
-        worked?;
+        encoded?;
+        submitted?;
         Ok(())
     }
 
@@ -543,6 +546,38 @@ mod tests {
                 driver.run().await,
                 Err(BatchDriverError::Step(StepError::BlockExceedsChannelLimit { .. }))
             ));
+        });
+    }
+
+    /// A step error that recurs on every attempt still lets shutdown submit what is ready, so
+    /// the channel flushed on the way out is sent.
+    #[test]
+    fn run_submits_ready_output_when_a_step_error_recurs() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let mut pipeline = TrackingPipeline::new().with_recurring_step_error(|| {
+                StepError::BlockExceedsChannelLimit {
+                    cursor: 0,
+                    limit: ChannelLimit::RlpBytes { required: 1, maximum: 0 },
+                }
+            });
+            pipeline.submissions.push_back(SubmissionStub::stub());
+            let recorded = pipeline.recorded();
+            let (driver, _handles) =
+                DriverFixture::new(ctx, pipeline, ScriptedTxManager::confirming_at(1)).build();
+
+            assert!(matches!(
+                driver.run().await,
+                Err(BatchDriverError::Step(StepError::BlockExceedsChannelLimit { .. }))
+            ));
+            assert!(
+                recorded
+                    .lock()
+                    .unwrap()
+                    .calls
+                    .iter()
+                    .any(|c| matches!(c, PipelineCall::Dequeue(_))),
+                "the ready submission must be sent during shutdown"
+            );
         });
     }
 
