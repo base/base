@@ -36,10 +36,10 @@ mod app;
 pub use app::{
     Action, ActionMenuItem, App, BLOB_SIZE, CommandCenterView, ConductorState, ConductorView,
     ConfigView, ConfirmButton, DaMonitorView, DaState, DaTracker, EVENT_POLL_TIMEOUT, HomeView,
-    L1_BLOCK_WINDOW, L1Block, L1BlockFilter, LoadingState, MAX_HISTORY, Overlay, PendingAction,
-    PodsState, PodsView, ProofsState, ProofsView, RATE_WINDOW_2M, RATE_WINDOW_5M, RATE_WINDOW_30S,
-    RateTracker, Resources, Router, SourceLabel, TransactionPane, UpgradesView, ValidatorState,
-    View, ViewId, create_view, run_app, start_background_services,
+    L1_BLOCK_WINDOW, L1Block, L1BlockFilter, LoadingState, MAX_HISTORY, MAX_TRACKED_BLOCKS,
+    Overlay, PendingAction, PodsState, PodsView, ProofsState, ProofsView, RATE_WINDOW_2M,
+    RATE_WINDOW_5M, RATE_WINDOW_30S, RateTracker, Resources, Router, SourceLabel, TransactionPane,
+    UpgradesView, ValidatorState, View, ViewId, create_view, run_app, start_background_services,
 };
 
 mod output;

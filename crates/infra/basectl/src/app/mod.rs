@@ -20,7 +20,8 @@ pub use runner::{run_app, start_background_services};
 mod state;
 pub use state::{
     BLOB_SIZE, DaTracker, EVENT_POLL_TIMEOUT, L1_BLOCK_WINDOW, L1Block, L1BlockFilter,
-    LoadingState, MAX_HISTORY, RATE_WINDOW_2M, RATE_WINDOW_5M, RATE_WINDOW_30S, RateTracker,
+    LoadingState, MAX_HISTORY, MAX_TRACKED_BLOCKS, RATE_WINDOW_2M, RATE_WINDOW_5M, RATE_WINDOW_30S,
+    RateTracker,
 };
 
 mod view;
