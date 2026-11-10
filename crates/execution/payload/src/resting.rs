@@ -151,7 +151,7 @@ impl RestingPredicates {
     /// dropped and the rest are re-filed under the block that last saw them. Run every block, it
     /// costs about the members rested or re-filed in one block rather than the whole set.
     /// Builders run it through [`RestingPredicateStore::finish`], off the path between the
-    /// forkchoice update and flashblock scheduling.
+    /// forkchoice update and the start of the next build.
     pub fn sweep_unseen(&mut self) -> usize {
         let Some(due) = self.due_generation() else { return 0 };
         let span = debug_span!(
@@ -541,7 +541,7 @@ impl RestingPredicateStore {
     /// Finishes the selection loop of the block being built.
     ///
     /// When an unseen sweep is due it runs on the task executor, so it overlaps the state root and
-    /// the leeway before the next build instead of delaying that build's flashblocks. Hand the
+    /// the leeway before the next build instead of delaying that build. Hand the
     /// result to [`Self::put`] once the block is sealed.
     pub fn finish(&self, mut resting: RestingPredicates) -> FinishingRestingPredicates {
         if resting.is_empty() {

@@ -5979,10 +5979,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-ring-buffer"
-version = "0.0.0"
-
-[[package]]
 name = "base-roxy"
 version = "0.0.0"
 dependencies = [
