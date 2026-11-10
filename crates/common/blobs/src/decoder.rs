@@ -53,7 +53,6 @@ impl BlobDecoder {
     pub fn decode(blob: &Blob) -> Result<Bytes, BlobDecodeError> {
         let data: &[u8; BYTES_PER_BLOB] = blob.as_ref();
 
-        // Validate encoding version.
         let version = data[VERSIONED_HASH_VERSION_KZG as usize];
         if version != BlobEncoder::BLOB_ENCODING_VERSION {
             return Err(BlobDecodeError::InvalidEncodingVersion { version });

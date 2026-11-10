@@ -3575,21 +3575,15 @@ mod tests {
     fn simulate_estimate_covers_gross_gas_when_sstore_refund_earned() {
         // Proof that the estimate returns the GROSS call spend, not the net
         // billable charge. The target contract clears storage slot 0 (pre-seeded
-        // to 1), earning an EIP-3529 SSTORE_CLEARS refund (~4800 gas). The old
-        // code returned `billable_gas` (call_gas_spent − capped_refund) as the
-        // estimate; using that as gas_limit leaves the call pool one refund-unit
-        // short, causing OOG. The fixed estimate returns the gross amount
-        // (intrinsic + call_gas_spent, no refund subtracted). Assertions:
+        // to 1), earning an EIP-3529 SSTORE_CLEARS refund (~4800 gas). The net
+        // charge `charge_gas` (gross less the refund, raised to the EIP-7623 floor
+        // so the limit is admissible) as gas_limit leaves the call pool one
+        // refund-unit short; the refund swamps any calldata-encoding
+        // variance between the two gas-limit values (~16 gas), so that run
+        // reliably OOGs. Assertions:
         //   - estimate_gas >= the metered gross charge, and > charge_gas
         //   - executing at gas_limit = charge_gas reverts (pool too small)
         //   - executing at gas_limit = estimate_gas succeeds
-        //
-        // Note: `charge_gas` is the net charge the old code wrongly used as the
-        // estimate: the metered gross charge (from the `eth_call` path) less the
-        // EIP-3529 SSTORE_CLEARS refund, raised to the EIP-7623 floor so the
-        // limit is admissible. The refund (4800 gas) swamps any
-        // calldata-encoding variance between the two gas-limit values (~16 gas),
-        // so the `charge_gas` run reliably OOGs.
         //
         // Target bytecode: PUSH1 0, PUSH1 0, SSTORE (slot 0 ← 0), STOP.
         let key = signing_key(0x7b);
