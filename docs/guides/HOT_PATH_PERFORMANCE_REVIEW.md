@@ -23,7 +23,7 @@ builder changes at their post-Denim rate.
 | Native block assembly | `crates/execution/payload/src/builder.rs` `build_payload`/`try_build`, sealing, state root | block | ~4×10^5/day after Denim |
 | Best-transaction iteration and parking | `crates/execution/payload/src/parkable.rs`, `crates/execution/txpool` ordering and validity predicates | candidate transaction | same order as above |
 | Best-transaction snapshot | `crates/execution/txpool/src/pool.rs` `merged_best_transactions`, reth's pending snapshot, `TwoDNoncePool::best_transactions` for the sidecar and the validity pool | block | ~4×10^5/day; `cargo bench -p base-execution-txpool --bench best_transactions` |
-| Transaction pool admission | `crates/execution/txpool` validation, RPC `eth_sendRawTransaction` | submitted transaction | ~10^8/day; `cargo bench -p base-execution-txpool --bench admission` |
+| Transaction pool admission | `crates/execution/txpool` validation and insertion into each store, RPC `eth_sendRawTransaction` | submitted transaction | ~10^8/day; `cargo bench -p base-execution-txpool --bench admission` |
 | Block execution and state root | `crates/execution/*` executor, trie | block and touched account/slot | ~4×10^4 blocks/day, ~4×10^5 after Denim |
 
 Code is on a hot path when it runs inside one of these loops, including through
@@ -36,6 +36,19 @@ After Denim the sequencer requests each native block about 150 ms into its
 1 µs per candidate at 10^9 candidates/day is ~17 CPU-minutes per day spent inside
 the latency-critical build loop and directly steals transactions from blocks.
 
+## Review procedure
+
+1. Find how often each changed function runs, using the registry. Then read the
+   full body of every function and data structure it calls, changed or not.
+   Existing code becomes hot when a PR calls it from a hotter loop or feeds it a
+   much larger collection.
+2. Multiply the work inside a loop by how often the loop runs. Bound each
+   collection by its worst case, not by a comment or PR description that says
+   it stays small.
+3. Before trusting a PR's benchmark, check that its inputs reach the worst case.
+   Prices, nonces, and lane lengths that let each candidate win at once can hide
+   super-linear cost.
+
 ## What to flag
 
 On a hot path, flag any added per-unit work that block building does not need,
@@ -44,7 +57,8 @@ with the per-unit cost and the multiplier:
 - Serialization or formatting: `serde_json`, `to_value`, `format!`, `to_string`,
   `{:#x}` hex encoding, building `Map<String, Value>`.
 - Heap allocation and cloning: `Vec`/`String`/`Map` construction, `clone()` of
-  non-`Copy` data, `Arc` churn, boxing closures.
+  non-`Copy` data, `Arc` churn, boxing closures, and collecting a whole store
+  only to count, sum, or truncate it.
 - Observability done eagerly: events, logs, and metrics whose fields are built
   before the level or enabled check, and metrics labels allocated per call.
   Deferring to a background thread still pays the allocation and moves the data;
@@ -54,9 +68,12 @@ with the per-unit cost and the multiplier:
   looks it up in the recorder on every call. Resolve handles once per loop.
 - Locks, channel sends, syscalls, file or network I/O.
 - Repeated work: recomputing per candidate what is fixed per block,
-  re-emitting identical records for the same transaction.
-- Super-linear behavior in the number of candidates, parked transactions, or
-  predicates.
+  re-emitting identical records for the same transaction, and copying or
+  re-indexing a pool-sized collection on every build instead of keeping it up
+  to date on insert and remove.
+- Super-linear behavior in the number of candidates, parked transactions,
+  predicates, or transactions per sender, including a scan on every candidate
+  of a collection that persists across candidates.
 
 **Evaluate default-off features as enabled.** Production enables features that
 default off in tests, benchmarks, and devnet (for example
