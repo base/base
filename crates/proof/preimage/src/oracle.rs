@@ -32,7 +32,10 @@ where
         // Read the length prefix and reset the cursor.
         let mut length_buffer = [0u8; 8];
         self.channel.read_exact(&mut length_buffer).await?;
-        Ok(u64::from_be_bytes(length_buffer) as usize)
+        let length = u64::from_be_bytes(length_buffer);
+        usize::try_from(length).map_err(|_| {
+            PreimageOracleError::Other(alloc::format!("preimage length {length} exceeds usize"))
+        })
     }
 }
 
