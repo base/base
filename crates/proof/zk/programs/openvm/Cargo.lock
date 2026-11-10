@@ -1197,6 +1197,8 @@ dependencies = [
  "base-proof",
  "base-proof-zk-utils",
  "openvm",
+ "openvm-kzg",
+ "revm-precompile",
  "rkyv",
  "tracing",
  "tracing-subscriber",
@@ -1311,6 +1313,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2af50177e190e07a26ab74f8b1efbfe2ef87da2116221318cb1c2e82baf7de06"
 
 [[package]]
+name = "bincode"
+version = "1.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b1f45e9417d87227c7a56d22e471c6206462cba514c7590c09aff4cf6d1ddcad"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "bitcoin-consensus-encoding"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1382,6 +1393,19 @@ checksum = "3560a7b1951efe814fcd721938313adc56753ca39f4b23847d7e9a2402f5dbff"
 dependencies = [
  "arrayvec",
  "constant_time_eq",
+]
+
+[[package]]
+name = "blake3"
+version = "1.8.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6d9e454fc11f76977dc803893aff6304ed33d6a26efae8696573bea74baa27ae"
+dependencies = [
+ "arrayvec",
+ "cc",
+ "cfg-if",
+ "constant_time_eq",
+ "cpufeatures 0.3.1",
 ]
 
 [[package]]
@@ -2012,6 +2036,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "elf"
+version = "0.7.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4445909572dbd556c457c849c4ca58623d84b27c8fff1e74b0b4227d8b90d17b"
+
+[[package]]
 name = "elliptic-curve"
 version = "0.13.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2200,6 +2230,12 @@ dependencies = [
  "pin-project-lite",
  "slab",
 ]
+
+[[package]]
+name = "gcd"
+version = "2.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1d758ba1b47b00caf47f24925c0074ecb20d6dfcffe7f6d53395c0465674841a"
 
 [[package]]
 name = "generic-array"
@@ -2484,6 +2520,15 @@ dependencies = [
 
 [[package]]
 name = "itertools"
+version = "0.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ba291022dbbd398a455acf126c1e341954079855bc60dfdda641363bd6922569"
+dependencies = [
+ "either",
+]
+
+[[package]]
+name = "itertools"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "413ee7dfc52ee1a4949ceeb7dbc8a33f2d6c088194d9f922fb8318faf1f01186"
@@ -2584,7 +2629,7 @@ dependencies = [
 [[package]]
 name = "k256"
 version = "0.13.4"
-source = "git+https://github.com/openvm-org/openvm.git?tag=v2.0.2#59a69b8b0cbee7011ac978e4cc07707ee3681944"
+source = "git+https://github.com/openvm-org/openvm.git?tag=v2.1.0#05f3b73e7294fbb6d38155abafc98f1fe2bcfb73"
 dependencies = [
  "ecdsa",
  "elliptic-curve",
@@ -2971,8 +3016,8 @@ dependencies = [
 
 [[package]]
 name = "openvm"
-version = "2.0.2"
-source = "git+https://github.com/openvm-org/openvm.git?tag=v2.0.2#59a69b8b0cbee7011ac978e4cc07707ee3681944"
+version = "2.1.0"
+source = "git+https://github.com/openvm-org/openvm.git?tag=v2.1.0#05f3b73e7294fbb6d38155abafc98f1fe2bcfb73"
 dependencies = [
  "bytemuck",
  "getrandom 0.2.17",
@@ -2986,8 +3031,8 @@ dependencies = [
 
 [[package]]
 name = "openvm-algebra-complex-macros"
-version = "2.0.2"
-source = "git+https://github.com/openvm-org/openvm.git?tag=v2.0.2#59a69b8b0cbee7011ac978e4cc07707ee3681944"
+version = "2.1.0"
+source = "git+https://github.com/openvm-org/openvm.git?tag=v2.1.0#05f3b73e7294fbb6d38155abafc98f1fe2bcfb73"
 dependencies = [
  "openvm-macros-common",
  "quote",
@@ -2996,8 +3041,8 @@ dependencies = [
 
 [[package]]
 name = "openvm-algebra-guest"
-version = "2.0.2"
-source = "git+https://github.com/openvm-org/openvm.git?tag=v2.0.2#59a69b8b0cbee7011ac978e4cc07707ee3681944"
+version = "2.1.0"
+source = "git+https://github.com/openvm-org/openvm.git?tag=v2.1.0#05f3b73e7294fbb6d38155abafc98f1fe2bcfb73"
 dependencies = [
  "halo2curves-axiom",
  "num-bigint 0.4.8",
@@ -3012,8 +3057,8 @@ dependencies = [
 
 [[package]]
 name = "openvm-algebra-moduli-macros"
-version = "2.0.2"
-source = "git+https://github.com/openvm-org/openvm.git?tag=v2.0.2#59a69b8b0cbee7011ac978e4cc07707ee3681944"
+version = "2.1.0"
+source = "git+https://github.com/openvm-org/openvm.git?tag=v2.1.0#05f3b73e7294fbb6d38155abafc98f1fe2bcfb73"
 dependencies = [
  "num-bigint 0.4.8",
  "num-prime",
@@ -3024,8 +3069,8 @@ dependencies = [
 
 [[package]]
 name = "openvm-custom-insn"
-version = "2.0.2"
-source = "git+https://github.com/openvm-org/openvm.git?tag=v2.0.2#59a69b8b0cbee7011ac978e4cc07707ee3681944"
+version = "2.1.0"
+source = "git+https://github.com/openvm-org/openvm.git?tag=v2.1.0#05f3b73e7294fbb6d38155abafc98f1fe2bcfb73"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3034,8 +3079,8 @@ dependencies = [
 
 [[package]]
 name = "openvm-ecc-guest"
-version = "2.0.2"
-source = "git+https://github.com/openvm-org/openvm.git?tag=v2.0.2#59a69b8b0cbee7011ac978e4cc07707ee3681944"
+version = "2.1.0"
+source = "git+https://github.com/openvm-org/openvm.git?tag=v2.1.0#05f3b73e7294fbb6d38155abafc98f1fe2bcfb73"
 dependencies = [
  "ecdsa",
  "elliptic-curve",
@@ -3053,8 +3098,8 @@ dependencies = [
 
 [[package]]
 name = "openvm-ecc-sw-macros"
-version = "2.0.2"
-source = "git+https://github.com/openvm-org/openvm.git?tag=v2.0.2#59a69b8b0cbee7011ac978e4cc07707ee3681944"
+version = "2.1.0"
+source = "git+https://github.com/openvm-org/openvm.git?tag=v2.1.0#05f3b73e7294fbb6d38155abafc98f1fe2bcfb73"
 dependencies = [
  "openvm-macros-common",
  "quote",
@@ -3063,8 +3108,8 @@ dependencies = [
 
 [[package]]
 name = "openvm-keccak256"
-version = "2.0.2"
-source = "git+https://github.com/openvm-org/openvm.git?tag=v2.0.2#59a69b8b0cbee7011ac978e4cc07707ee3681944"
+version = "2.1.0"
+source = "git+https://github.com/openvm-org/openvm.git?tag=v2.1.0#05f3b73e7294fbb6d38155abafc98f1fe2bcfb73"
 dependencies = [
  "openvm-keccak256-guest",
  "spin 0.10.1",
@@ -3072,24 +3117,41 @@ dependencies = [
 
 [[package]]
 name = "openvm-keccak256-guest"
-version = "2.0.2"
-source = "git+https://github.com/openvm-org/openvm.git?tag=v2.0.2#59a69b8b0cbee7011ac978e4cc07707ee3681944"
+version = "2.1.0"
+source = "git+https://github.com/openvm-org/openvm.git?tag=v2.1.0#05f3b73e7294fbb6d38155abafc98f1fe2bcfb73"
 dependencies = [
  "openvm-platform",
 ]
 
 [[package]]
+name = "openvm-kzg"
+version = "0.2.0-alpha"
+source = "git+https://github.com/mw2000/openvm-kzg.git?rev=5f83ed6ea86610a18c8b5b6c367bedfdbc679953#5f83ed6ea86610a18c8b5b6c367bedfdbc679953"
+dependencies = [
+ "bls12_381",
+ "hex",
+ "hex-literal",
+ "openvm-algebra-guest",
+ "openvm-ecc-guest",
+ "openvm-pairing",
+ "openvm-sha2",
+ "serde",
+ "serde-big-array",
+ "spin 0.10.1",
+]
+
+[[package]]
 name = "openvm-macros-common"
-version = "2.0.2"
-source = "git+https://github.com/openvm-org/openvm.git?tag=v2.0.2#59a69b8b0cbee7011ac978e4cc07707ee3681944"
+version = "2.1.0"
+source = "git+https://github.com/openvm-org/openvm.git?tag=v2.1.0#05f3b73e7294fbb6d38155abafc98f1fe2bcfb73"
 dependencies = [
  "syn 2.0.119",
 ]
 
 [[package]]
 name = "openvm-pairing"
-version = "2.0.2"
-source = "git+https://github.com/openvm-org/openvm.git?tag=v2.0.2#59a69b8b0cbee7011ac978e4cc07707ee3681944"
+version = "2.1.0"
+source = "git+https://github.com/openvm-org/openvm.git?tag=v2.1.0#05f3b73e7294fbb6d38155abafc98f1fe2bcfb73"
 dependencies = [
  "group",
  "hex-literal",
@@ -3111,8 +3173,8 @@ dependencies = [
 
 [[package]]
 name = "openvm-pairing-guest"
-version = "2.0.2"
-source = "git+https://github.com/openvm-org/openvm.git?tag=v2.0.2#59a69b8b0cbee7011ac978e4cc07707ee3681944"
+version = "2.1.0"
+source = "git+https://github.com/openvm-org/openvm.git?tag=v2.1.0#05f3b73e7294fbb6d38155abafc98f1fe2bcfb73"
 dependencies = [
  "hex-literal",
  "itertools 0.14.0",
@@ -3130,8 +3192,8 @@ dependencies = [
 
 [[package]]
 name = "openvm-platform"
-version = "2.0.2"
-source = "git+https://github.com/openvm-org/openvm.git?tag=v2.0.2#59a69b8b0cbee7011ac978e4cc07707ee3681944"
+version = "2.1.0"
+source = "git+https://github.com/openvm-org/openvm.git?tag=v2.1.0#05f3b73e7294fbb6d38155abafc98f1fe2bcfb73"
 dependencies = [
  "critical-section",
  "embedded-alloc",
@@ -3142,17 +3204,34 @@ dependencies = [
 
 [[package]]
 name = "openvm-rv32im-guest"
-version = "2.0.2"
-source = "git+https://github.com/openvm-org/openvm.git?tag=v2.0.2#59a69b8b0cbee7011ac978e4cc07707ee3681944"
+version = "2.1.0"
+source = "git+https://github.com/openvm-org/openvm.git?tag=v2.1.0#05f3b73e7294fbb6d38155abafc98f1fe2bcfb73"
 dependencies = [
  "openvm-custom-insn",
  "strum_macros 0.26.4",
 ]
 
 [[package]]
+name = "openvm-sha2"
+version = "2.1.0"
+source = "git+https://github.com/openvm-org/openvm.git?tag=v2.1.0#05f3b73e7294fbb6d38155abafc98f1fe2bcfb73"
+dependencies = [
+ "openvm-sha2-guest",
+ "sha2 0.10.9",
+]
+
+[[package]]
+name = "openvm-sha2-guest"
+version = "2.1.0"
+source = "git+https://github.com/openvm-org/openvm.git?tag=v2.1.0#05f3b73e7294fbb6d38155abafc98f1fe2bcfb73"
+dependencies = [
+ "openvm-platform",
+]
+
+[[package]]
 name = "p256"
 version = "0.13.2"
-source = "git+https://github.com/openvm-org/openvm.git?tag=v2.0.2#59a69b8b0cbee7011ac978e4cc07707ee3681944"
+source = "git+https://github.com/openvm-org/openvm.git?tag=v2.1.0#05f3b73e7294fbb6d38155abafc98f1fe2bcfb73"
 dependencies = [
  "ecdsa",
  "elliptic-curve",
@@ -3164,6 +3243,149 @@ dependencies = [
  "openvm-algebra-moduli-macros",
  "openvm-ecc-guest",
  "openvm-ecc-sw-macros",
+ "serde",
+]
+
+[[package]]
+name = "p3-bn254-fr"
+version = "0.4.3-succinct"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2077757c7cb514202ccb5368f521f23f5709c720599e6545c683c66e0a52d2d8"
+dependencies = [
+ "ff",
+ "num-bigint 0.4.8",
+ "p3-field",
+ "p3-poseidon2",
+ "p3-symmetric",
+ "rand 0.8.8",
+ "serde",
+]
+
+[[package]]
+name = "p3-challenger"
+version = "0.4.3-succinct"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b6a908924d43e4cfb93fb41c8346cac211b70314385a9037e9241f5b7f3eaf77"
+dependencies = [
+ "p3-field",
+ "p3-maybe-rayon",
+ "p3-symmetric",
+ "p3-util",
+ "serde",
+ "tracing",
+]
+
+[[package]]
+name = "p3-dft"
+version = "0.4.3-succinct"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "be6408b10a2c27eb13a7d5580c546c2179a8dc7dbc10a990657311891f9b41c0"
+dependencies = [
+ "p3-field",
+ "p3-matrix",
+ "p3-maybe-rayon",
+ "p3-util",
+ "tracing",
+]
+
+[[package]]
+name = "p3-field"
+version = "0.4.3-succinct"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3dc75969ca3ac847f43e632ab979d59ff7a68f9eac8dbf8edcbba47fc2e1d3aa"
+dependencies = [
+ "itertools 0.12.1",
+ "num-bigint 0.4.8",
+ "num-traits",
+ "p3-util",
+ "rand 0.8.8",
+ "serde",
+]
+
+[[package]]
+name = "p3-koala-bear"
+version = "0.4.3-succinct"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3a9683cd0ef68100df7c62490533047bcf19c04c4a0fa1efc9d7c1e03e31f6b3"
+dependencies = [
+ "cfg-if",
+ "num-bigint 0.4.8",
+ "p3-field",
+ "p3-mds",
+ "p3-poseidon2",
+ "p3-symmetric",
+ "rand 0.8.8",
+ "rustc_version 0.4.1",
+ "serde",
+]
+
+[[package]]
+name = "p3-matrix"
+version = "0.4.3-succinct"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "75c3f150ceb90e09539413bf481e618d05ee19210b4e467d2902eb82d2e15281"
+dependencies = [
+ "itertools 0.12.1",
+ "p3-field",
+ "p3-maybe-rayon",
+ "p3-util",
+ "rand 0.8.8",
+ "serde",
+ "tracing",
+]
+
+[[package]]
+name = "p3-maybe-rayon"
+version = "0.4.3-succinct"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e0641952b42da45e1dfa2d4a2a3163e330f944ad9740942f35026c0a71a605f1"
+
+[[package]]
+name = "p3-mds"
+version = "0.4.3-succinct"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aa4a5f250e174dcfca5cbeac6ad75713924e7e7320e0a335e3c50b8b1f4fe8ec"
+dependencies = [
+ "itertools 0.12.1",
+ "p3-dft",
+ "p3-field",
+ "p3-matrix",
+ "p3-symmetric",
+ "p3-util",
+ "rand 0.8.8",
+]
+
+[[package]]
+name = "p3-poseidon2"
+version = "0.4.3-succinct"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "522986377b2164c5f94f2dae88e0e0a3d169cc6239202ef4aeb4322d60feffd0"
+dependencies = [
+ "gcd",
+ "p3-field",
+ "p3-mds",
+ "p3-symmetric",
+ "rand 0.8.8",
+ "serde",
+]
+
+[[package]]
+name = "p3-symmetric"
+version = "0.4.3-succinct"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9047ce85c086a9b3f118e10078f10636f7bfeed5da871a04da0b61400af8793a"
+dependencies = [
+ "itertools 0.12.1",
+ "p3-field",
+ "serde",
+]
+
+[[package]]
+name = "p3-util"
+version = "0.4.3-succinct"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cff962f8eaa5f36e0447cee7c241f6b4b475fadf3ee61f154327a26bb4e009ba"
+dependencies = [
  "serde",
 ]
 
@@ -4339,6 +4561,83 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
 
 [[package]]
+name = "slop-algebra"
+version = "6.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6b44536b0d3267951634cd7f768c3ba73e0b64e05b2ca4783616d4e54cbf324d"
+dependencies = [
+ "itertools 0.14.0",
+ "p3-field",
+ "serde",
+]
+
+[[package]]
+name = "slop-bn254"
+version = "6.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ae41b4d69a3cd4848f91f21e768cf4e623529dab91b0eb85d0fe80455c7a0d4e"
+dependencies = [
+ "ff",
+ "p3-bn254-fr",
+ "serde",
+ "slop-algebra",
+ "slop-challenger",
+ "slop-poseidon2",
+ "slop-symmetric",
+]
+
+[[package]]
+name = "slop-challenger"
+version = "6.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aebbf4fde396e40eeb534981be75547ab89b4a348c4136961627c06d0cbcd51f"
+dependencies = [
+ "p3-challenger",
+ "serde",
+ "slop-algebra",
+ "slop-symmetric",
+]
+
+[[package]]
+name = "slop-koala-bear"
+version = "6.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "627eb3ed4c0918f2dd2e70d2a1d312049ec3d2aa57fa0f7dbe2c3d9cd94993e4"
+dependencies = [
+ "lazy_static",
+ "p3-koala-bear",
+ "serde",
+ "slop-algebra",
+ "slop-challenger",
+ "slop-poseidon2",
+ "slop-symmetric",
+]
+
+[[package]]
+name = "slop-poseidon2"
+version = "6.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "51676e05a2891b15cd624b74c8aaa03cc10d5eb51542eeab5019294ad47c21fb"
+dependencies = [
+ "p3-poseidon2",
+]
+
+[[package]]
+name = "slop-primitives"
+version = "6.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "91992a8acf6a9a4c52dee00142840d30c8cc9bbb3ff30ca3d56dcde428a591dd"
+
+[[package]]
+name = "slop-symmetric"
+version = "6.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9cb116ad23028ab41fe5228905a17bbeaf7b5fb7ec6790163bb8e8fef7092ffc"
+dependencies = [
+ "p3-symmetric",
+]
+
+[[package]]
 name = "smallvec"
 version = "1.16.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4348,13 +4647,52 @@ dependencies = [
 ]
 
 [[package]]
+name = "sp1-lib"
+version = "6.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e8a36aae1b35d6eae35b479d23c818bb32c22e7c0e34cc1e1bc7c68319c94368"
+dependencies = [
+ "bincode",
+ "serde",
+ "sp1-primitives",
+]
+
+[[package]]
+name = "sp1-primitives"
+version = "6.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f2ad891be0e48ab9ca110486f122cf799a707e5ca327a75669cfc2792b086882"
+dependencies = [
+ "bincode",
+ "blake3",
+ "elf",
+ "hex",
+ "itertools 0.14.0",
+ "lazy_static",
+ "num-bigint 0.4.8",
+ "serde",
+ "sha2 0.10.9",
+ "slop-algebra",
+ "slop-bn254",
+ "slop-challenger",
+ "slop-koala-bear",
+ "slop-poseidon2",
+ "slop-primitives",
+ "slop-symmetric",
+]
+
+[[package]]
 name = "sp1_bls12_381"
 version = "0.8.0-sp1-6.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9b2ad1e32db3c05d37e4385e3e48795f14d687a5797bf2eee0a7753d7eaa9661"
 dependencies = [
- "bls12_381",
- "openvm-algebra-guest",
- "openvm-ecc-guest",
- "openvm-pairing",
+ "cfg-if",
+ "ff",
+ "group",
+ "pairing",
+ "rand_core 0.6.4",
+ "sp1-lib",
  "subtle",
 ]
 

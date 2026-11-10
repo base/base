@@ -11,6 +11,9 @@ use base_proof_zk_utils::{
 };
 use openvm::io::reveal_bytes32;
 
+mod kzg;
+pub use kzg::OpenVmKzg;
+
 /// Sets up tracing for the range program
 #[cfg(feature = "tracing-subscriber")]
 pub fn setup_tracing() {
@@ -31,7 +34,7 @@ pub fn public_values_digest(boot: &BootInfoStruct) -> [u8; 32] {
 
 /// Runs the range program.
 pub async fn run_range_program(oracle: Arc<WitnessOracle>, beacon: BlobStore) {
-    let executor = WitnessExecutor::<WitnessOracle, BlobStore>::new();
+    let executor = WitnessExecutor::<WitnessOracle, BlobStore, OpenVmKzg>::new();
 
     let (boot_info, input, l2_pre_block_number) =
         get_inputs_for_pipeline(Arc::clone(&oracle)).await.unwrap();

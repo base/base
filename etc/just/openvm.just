@@ -9,7 +9,7 @@ default:
 require-cargo-openvm:
     #!/usr/bin/env bash
     if ! cargo openvm --version >/dev/null 2>&1; then
-        echo "cargo-openvm v2.0.2 is not installed; see the Prerequisites section of crates/proof/zk/programs/openvm/README.md" >&2
+        echo "cargo-openvm v2.1.0 is not installed; see the Prerequisites section of crates/proof/zk/programs/openvm/README.md" >&2
         exit 1
     fi
 

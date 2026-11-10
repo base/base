@@ -4,9 +4,9 @@
 //! `base-proof-zk-utils` STF; I/O goes through `openvm::io` instead of
 //! `sp1_zkvm::io`.
 
-use base_proof_openvm_range_utils::run_range_program;
 #[cfg(feature = "tracing-subscriber")]
 use base_proof_openvm_range_utils::setup_tracing;
+use base_proof_openvm_range_utils::{OpenVmKzg, run_range_program};
 use base_proof_zk_utils::witness::{DefaultWitnessData, WitnessData};
 // std guests use a normal `fn main()`. `openvm::entry!` is a no-op when std is
 // on; `#![no_main]` then leaves RISC-V `_start` with no `main` symbol.
@@ -29,7 +29,7 @@ fn main() {
             .expect("Failed to deserialize witness data.");
 
         let (oracle, beacon) = witness_data
-            .get_oracle_and_blob_provider()
+            .get_oracle_and_blob_provider::<OpenVmKzg>()
             .await
             .expect("Failed to load oracle and blob provider");
 

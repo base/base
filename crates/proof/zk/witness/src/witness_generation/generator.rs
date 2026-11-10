@@ -8,9 +8,12 @@ use std::{
 use anyhow::Result;
 use base_proof::{CachingOracle, OracleBlobProvider};
 use base_proof_preimage::{HintWriter, NativeChannel, OracleReader};
-use base_proof_zk_utils::witness::{
-    BlobData, DefaultWitnessData, WitnessData, WitnessExecutor, executor::get_inputs_for_pipeline,
-    preimage_store::PreimageStore,
+use base_proof_zk_utils::{
+    precompiles::CustomCrypto,
+    witness::{
+        BlobData, DefaultWitnessData, WitnessData, WitnessExecutor,
+        executor::get_inputs_for_pipeline, preimage_store::PreimageStore,
+    },
 };
 
 use crate::witness_generation::{OnlineBlobStore, PreimageWitnessCollector};
@@ -55,7 +58,7 @@ impl WitnessGenerator {
             get_inputs_for_pipeline(Arc::clone(&oracle)).await?;
         let rollup_config = Arc::new(boot_info.rollup_config.clone());
         let l1_config = Arc::new(boot_info.l1_config.clone());
-        let executor = WitnessExecutor::new();
+        let executor = WitnessExecutor::<_, _, CustomCrypto>::new();
         let pipeline = executor
             .create_pipeline(
                 rollup_config,

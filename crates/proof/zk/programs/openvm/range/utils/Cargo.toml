@@ -14,6 +14,8 @@ tracing.workspace = true
 alloy-sol-types.workspace = true
 alloy-primitives.workspace = true
 openvm = { workspace = true, features = ["std"] }
+openvm-kzg.workspace = true
+revm-precompile.workspace = true
 
 # base-consensus / base-proof
 base-proof.workspace = true

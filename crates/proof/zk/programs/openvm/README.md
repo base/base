@@ -22,9 +22,9 @@ openvm/
 ## Prerequisites
 
 ```bash
-rustup install nightly-2026-01-18
-rustup component add rust-src --toolchain nightly-2026-01-18
-cargo +1.91 install --locked --git https://github.com/openvm-org/openvm.git --tag v2.0.2 cargo-openvm
+rustup install nightly-2026-02-28
+rustup component add rust-src --toolchain nightly-2026-02-28
+cargo +1.91 install --locked --git https://github.com/openvm-org/openvm.git --tag v2.1.0 cargo-openvm
 ```
 
 ## Build
