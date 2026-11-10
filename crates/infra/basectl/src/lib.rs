@@ -76,9 +76,9 @@ pub use rpc::{
     BacklogBlock, BacklogFetchResult, BacklogProgress, BaseTxpoolContent, BaseTxpoolContentFrom,
     BatcherClient, BatcherStatus, BlockDaInfo, ClInfoReport, ClNodeIdentity,
     ConductorClusterSnapshot, ConductorControl, ConductorFanoutAction, ConductorFanoutReport,
-    ConductorNodeFailure, ConductorNodeStatus, ConductorPollUpdate, DiscoveryInfo,
+    ConductorNodeFailure, ConductorNodeStatus, ConductorPollUpdate, ConnectionMode, DiscoveryInfo,
     EXPECTED_RESOLUTION_NEVER, ElInfoReport, ElNodeIdentity, GameDetails, GameListFilter,
-    GameStatus, GameSummary, GamesClient, InitialBacklog, L1BlockInfo, L1ConnectionMode,
+    GameStatus, GameSummary, GamesClient, HeadCursor, InitialBacklog, L1BlockInfo, L2HeadFeed,
     LatestProposal, NodeEndpoint, NodeInfoReport, PausedPeers, PeerDirection, PeerListReport,
     PeerStatsReport, PeerSummary, PodGroupStatus, PodStatus, PodsPoller, PodsSnapshot,
     ProofProposeRequest, ProofsClient, ProofsSnapshot, ProposalProofSubmitter, RawInfoReport,
@@ -95,10 +95,10 @@ pub use rpc::{
     fetch_l2_chain_id, fetch_raw_info, fetch_raw_peers, fetch_safe_and_latest,
     fetch_sequencer_active, fetch_sync_status, fetch_upgrade_readiness, list_banned_peers,
     pause_sequencer_node, remove_peer, restart_conductor_node, run_block_fetcher,
-    run_conductor_poller, run_l1_blob_watcher, run_latest_head_poller, run_pods_poller,
-    run_proofs_poller, run_rollup_config_poller, run_safe_head_poller, run_validator_poller,
-    start_sequencer, start_sequencer_node, stop_sequencer, stop_sequencer_node,
-    transfer_conductor_leader, unban_el_peer, unban_peer, unpause_sequencer_node,
+    run_conductor_poller, run_l1_blob_watcher, run_pods_poller, run_proofs_poller,
+    run_rollup_config_poller, run_safe_head_poller, run_validator_poller, start_sequencer,
+    start_sequencer_node, stop_sequencer, stop_sequencer_node, transfer_conductor_leader,
+    unban_el_peer, unban_peer, unpause_sequencer_node,
 };
 
 mod tui;

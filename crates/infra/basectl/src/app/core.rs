@@ -341,6 +341,10 @@ impl App {
         config.rpc = rpc.clone();
         self.resources = Resources::new(config.clone());
         self.resources.configured_rpc = configured_rpc;
+        // `el_ws_rpc` belongs to the configured node; derive the WebSocket from the public RPC.
+        if using_public_rpc {
+            config.el_ws_rpc = None;
+        }
         start_background_services(&config, &mut self.resources, self.conductor_rpc.clone());
         self.view_cache.clear();
         *current_view = view_factory(self.router.current());

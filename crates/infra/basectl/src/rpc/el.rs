@@ -1,4 +1,8 @@
-use std::{sync::Arc, time::Duration};
+use std::{
+    ops::{ControlFlow, RangeInclusive},
+    sync::Arc,
+    time::Duration,
+};
 
 use alloy_consensus::Transaction;
 use alloy_eips::{BlockId, eip2718::Encodable2718};
@@ -8,17 +12,20 @@ use alloy_rpc_client::RpcClient;
 use alloy_rpc_types_eth::BlockNumberOrTag;
 use alloy_transport_http::Http;
 use anyhow::{Context, Result, anyhow};
+use base_common_genesis::DenimTimestampSchedule;
 use base_common_network::Base;
 use futures::{StreamExt, stream};
-use tokio::sync::mpsc;
-use tracing::warn;
+use tokio::{
+    sync::mpsc,
+    time::{Instant, MissedTickBehavior},
+};
+use tracing::{debug, warn};
 use url::Url;
 
-use super::fetch_safe_and_latest;
+use super::{ConnectionMode, fetch_safe_and_latest};
 use crate::tui::Toast;
 
 const CONCURRENT_BLOCK_FETCHES: usize = 16;
-const LATEST_HEAD_POLL_INTERVAL: Duration = Duration::from_secs(1);
 
 /// Fetches a single L2 block via `eth_getBlockByHash` or `eth_getBlockByNumber`.
 ///
@@ -150,47 +157,179 @@ async fn fetch_raw_block_info<P: Provider<Base>>(
     })
 }
 
-/// Polls the latest L2 block number and requests every newly produced block.
-///
-/// Each block number from the previously seen head (exclusive) to the current
-/// head (inclusive) is sent on `request_tx`, so a consumer such as
-/// [`run_block_fetcher`] sees every block exactly once and in order. The first
-/// poll only requests the current head.
-pub async fn run_latest_head_poller(
-    l2_rpc: String,
-    request_tx: mpsc::Sender<u64>,
-    toast_tx: mpsc::Sender<Toast>,
-) {
-    let provider = match ProviderBuilder::new()
-        .disable_recommended_fillers()
-        .network::<Base>()
-        .connect(&l2_rpc)
-        .await
-    {
-        Ok(p) => p,
-        Err(e) => {
-            warn!(error = %e, "Failed to connect to L2 RPC for latest head polling");
-            let _ = toast_tx.try_send(Toast::warning("Latest head poller connection failed"));
-            return;
-        }
-    };
+/// Tracks the newest L2 head seen so each block number is requested once, in order.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct HeadCursor {
+    last_seen: Option<u64>,
+}
 
-    let mut interval = tokio::time::interval(LATEST_HEAD_POLL_INTERVAL);
-    let mut last_seen: Option<u64> = None;
-    loop {
-        interval.tick().await;
-        let Ok(latest) = provider.get_block_number().await else { continue };
-        let first = last_seen.map_or(latest, |seen| seen + 1);
-        for block_num in first..=latest {
-            if request_tx.send(block_num).await.is_err() {
-                return;
-            }
-        }
-        last_seen = Some(last_seen.map_or(latest, |seen| seen.max(latest)));
+impl HeadCursor {
+    /// Returns the block numbers to request for a newly observed head and advances past it.
+    ///
+    /// The first head requests only itself, a head that skips ahead also requests the
+    /// skipped blocks, and a head at or below the newest seen requests nothing.
+    pub fn advance(&mut self, head: u64) -> RangeInclusive<u64> {
+        let first = self.last_seen.map_or(head, |seen| seen + 1);
+        self.last_seen = Some(self.last_seen.map_or(head, |seen| seen.max(head)));
+        first..=head
     }
 }
 
-/// Fetches DA info for requested block numbers and sends results back.
+/// Follows new L2 heads and requests each new block number from [`run_block_fetcher`].
+///
+/// Prefers an `eth_subscribe("newHeads")` WebSocket subscription. When the
+/// WebSocket is unavailable or drops, it polls `eth_blockNumber` over HTTP at
+/// the block interval and retries the WebSocket every [`Self::WS_RETRY_INTERVAL`].
+/// A shared [`HeadCursor`] backfills any blocks missed across reconnects.
+#[derive(Debug)]
+pub struct L2HeadFeed {
+    /// WebSocket endpoint to subscribe on, if any.
+    pub ws_url: Option<Url>,
+    /// HTTP endpoint polled while the WebSocket is unavailable.
+    pub http_url: Url,
+    /// Receives each new block number.
+    pub request_tx: mpsc::Sender<u64>,
+    /// Receives the connection mode whenever it changes.
+    pub mode_tx: mpsc::Sender<ConnectionMode>,
+    /// Receives user-facing connection notices.
+    pub toast_tx: mpsc::Sender<Toast>,
+    cursor: HeadCursor,
+    mode: Option<ConnectionMode>,
+}
+
+impl L2HeadFeed {
+    /// HTTP polling cadence, matching the Denim block interval.
+    pub const POLL_INTERVAL: Duration =
+        Duration::from_millis(DenimTimestampSchedule::DENIM_BLOCK_INTERVAL_MILLIS);
+    /// Upper bound on establishing the WebSocket before falling back to polling.
+    pub const WS_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+    /// How long to poll over HTTP before trying the WebSocket again.
+    pub const WS_RETRY_INTERVAL: Duration = Duration::from_secs(30);
+
+    /// Creates a feed that has not seen any head yet.
+    pub fn new(
+        ws_url: Option<Url>,
+        http_url: Url,
+        request_tx: mpsc::Sender<u64>,
+        mode_tx: mpsc::Sender<ConnectionMode>,
+        toast_tx: mpsc::Sender<Toast>,
+    ) -> Self {
+        Self {
+            ws_url,
+            http_url,
+            request_tx,
+            mode_tx,
+            toast_tx,
+            cursor: HeadCursor::default(),
+            mode: None,
+        }
+    }
+
+    /// Runs until the block request receiver is dropped.
+    pub async fn run(mut self) {
+        loop {
+            if let Some(ws_url) = self.ws_url.clone()
+                && self.follow_ws(&ws_url).await.is_break()
+            {
+                return;
+            }
+            let retry_ws_at =
+                self.ws_url.is_some().then(|| Instant::now() + Self::WS_RETRY_INTERVAL);
+            if self.poll_http(retry_ws_at).await.is_break() {
+                return;
+            }
+        }
+    }
+
+    async fn follow_ws(&mut self, ws_url: &Url) -> ControlFlow<()> {
+        let connect = ProviderBuilder::new()
+            .disable_recommended_fillers()
+            .network::<Base>()
+            .connect(ws_url.as_str());
+        let provider = match tokio::time::timeout(Self::WS_CONNECT_TIMEOUT, connect).await {
+            Ok(Ok(provider)) => provider,
+            Ok(Err(error)) => {
+                debug!(error = %error, url = %ws_url, "L2 WebSocket connection failed");
+                return ControlFlow::Continue(());
+            }
+            Err(_) => {
+                debug!(url = %ws_url, "L2 WebSocket connection timed out");
+                return ControlFlow::Continue(());
+            }
+        };
+        let subscription = match provider.subscribe_blocks().await {
+            Ok(subscription) => subscription,
+            Err(error) => {
+                warn!(error = %error, url = %ws_url, "L2 newHeads subscription failed");
+                return ControlFlow::Continue(());
+            }
+        };
+
+        self.set_mode(ConnectionMode::WebSocket).await;
+        let mut heads = subscription.into_stream();
+        while let Some(header) = heads.next().await {
+            self.request(header.number).await?;
+        }
+
+        warn!(url = %ws_url, "L2 WebSocket stream ended");
+        let _ = self.toast_tx.try_send(Toast::warning("L2 WebSocket disconnected"));
+        ControlFlow::Continue(())
+    }
+
+    /// Polls until `until`, or forever when it is `None`.
+    async fn poll_http(&mut self, until: Option<Instant>) -> ControlFlow<()> {
+        let provider = match ProviderBuilder::new()
+            .disable_recommended_fillers()
+            .network::<Base>()
+            .connect(self.http_url.as_str())
+            .await
+        {
+            Ok(provider) => provider,
+            Err(error) => {
+                warn!(error = %error, url = %self.http_url, "L2 RPC connection failed");
+                let _ = self.toast_tx.try_send(Toast::warning("L2 head feed connection failed"));
+                tokio::time::sleep(Self::WS_RETRY_INTERVAL).await;
+                return ControlFlow::Continue(());
+            }
+        };
+
+        self.set_mode(ConnectionMode::Polling).await;
+        let mut interval = tokio::time::interval(Self::POLL_INTERVAL);
+        interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
+        while until.is_none_or(|until| Instant::now() < until) {
+            interval.tick().await;
+            if let Ok(head) = provider.get_block_number().await {
+                self.request(head).await?;
+            }
+        }
+        ControlFlow::Continue(())
+    }
+
+    async fn request(&mut self, head: u64) -> ControlFlow<()> {
+        for block_number in self.cursor.advance(head) {
+            if self.request_tx.send(block_number).await.is_err() {
+                return ControlFlow::Break(());
+            }
+        }
+        ControlFlow::Continue(())
+    }
+
+    async fn set_mode(&mut self, mode: ConnectionMode) {
+        if self.mode == Some(mode) {
+            return;
+        }
+        if mode == ConnectionMode::Polling && self.ws_url.is_some() {
+            let _ = self.toast_tx.try_send(Toast::info("L2 head feed fell back to HTTP polling"));
+        }
+        self.mode = Some(mode);
+        let _ = self.mode_tx.send(mode).await;
+    }
+}
+
+/// Fetches DA info for requested block numbers and sends results back in request order.
+///
+/// Up to [`CONCURRENT_BLOCK_FETCHES`] fetches run at once so a remote RPC keeps up
+/// with sub-second blocks.
 pub async fn run_block_fetcher(
     l2_rpc: String,
     mut request_rx: mpsc::Receiver<u64>,
@@ -211,8 +350,11 @@ pub async fn run_block_fetcher(
         }
     };
 
-    while let Some(block_num) = request_rx.recv().await {
-        if let Some(info) = fetch_raw_block_info(&provider, block_num).await
+    let mut fetched = stream::poll_fn(|cx| request_rx.poll_recv(cx))
+        .map(|block_num| fetch_raw_block_info(&provider, block_num))
+        .buffered(CONCURRENT_BLOCK_FETCHES);
+    while let Some(info) = fetched.next().await {
+        if let Some(info) = info
             && result_tx.send(info).await.is_err()
         {
             break;
@@ -379,7 +521,20 @@ pub async fn fetch_block_transactions(
 
 #[cfg(test)]
 mod tests {
-    use super::effective_priority_fee_per_gas;
+    use super::{HeadCursor, effective_priority_fee_per_gas};
+
+    #[test]
+    fn head_cursor_requests_each_new_block_once_in_order() {
+        let mut cursor = HeadCursor::default();
+        assert_eq!(cursor.advance(100).collect::<Vec<_>>(), [100]);
+        assert_eq!(cursor.advance(101).collect::<Vec<_>>(), [101]);
+        // A skipped head backfills the gap.
+        assert_eq!(cursor.advance(104).collect::<Vec<_>>(), [102, 103, 104]);
+        // Repeated or older heads (reorgs, overlapping sources) request nothing.
+        assert_eq!(cursor.advance(104).count(), 0);
+        assert_eq!(cursor.advance(103).count(), 0);
+        assert_eq!(cursor.advance(105).collect::<Vec<_>>(), [105]);
+    }
 
     #[test]
     fn priority_fee_uses_effective_gas_price_when_base_fee_known() {

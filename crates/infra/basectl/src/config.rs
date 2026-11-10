@@ -453,6 +453,25 @@ impl MonitoringConfig {
         }
     }
 
+    /// Returns the L2 WebSocket endpoint for block subscriptions.
+    ///
+    /// Uses `el_ws_rpc` when set, otherwise `rpc` with its scheme switched to
+    /// WebSocket for nodes that serve both on one port.
+    pub fn l2_ws_rpc(&self) -> Option<Url> {
+        if let Some(url) = &self.el_ws_rpc {
+            return Some(url.clone());
+        }
+        let scheme = match self.rpc.scheme() {
+            "http" => "ws",
+            "https" => "wss",
+            "ws" | "wss" => return Some(self.rpc.clone()),
+            _ => return None,
+        };
+        let mut url = self.rpc.clone();
+        url.set_scheme(scheme).ok()?;
+        Some(url)
+    }
+
     /// Returns the L1 explorer base URL for this chain, if known.
     pub fn l1_explorer_base_url(&self) -> Option<&'static str> {
         match self.name.as_str() {
@@ -945,6 +964,17 @@ mod tests {
         let custom: MonitoringConfig =
             serde_yaml::from_str(&format!("{yaml}el_ws_rpc: ws://localhost:9546\n")).unwrap();
         assert_eq!(custom.el_ws_rpc.unwrap().as_str(), "ws://localhost:9546/");
+    }
+
+    #[test]
+    fn l2_ws_rpc_prefers_el_ws_rpc_then_derives_from_rpc() {
+        let devnet = MonitoringConfig::devnet_base();
+        assert_eq!(devnet.l2_ws_rpc().unwrap().as_str(), "ws://localhost:7546/");
+
+        let mut config = MonitoringConfig::mainnet();
+        assert_eq!(config.l2_ws_rpc().unwrap().as_str(), "ws://127.0.0.1:8545/");
+        config.rpc = Url::parse("https://mainnet.base.org").unwrap();
+        assert_eq!(config.l2_ws_rpc().unwrap().as_str(), "wss://mainnet.base.org/");
     }
 
     #[test]

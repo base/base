@@ -8,7 +8,7 @@ use ratatui::{
 use crate::{
     app::{DaTracker, L1Block, L1BlockFilter, LoadingState},
     output::{COLOR_BASE_BLUE, COLOR_ROW_SELECTED, Format},
-    rpc::L1ConnectionMode,
+    rpc::ConnectionMode,
 };
 
 /// Parameters for rendering the L1 blocks table.
@@ -25,7 +25,7 @@ pub struct L1BlocksTableParams<'a, I: Iterator<Item = &'a L1Block>> {
     /// Title displayed in the panel border.
     pub title: &'a str,
     /// Current L1 connection mode indicator.
-    pub connection_mode: Option<L1ConnectionMode>,
+    pub connection_mode: Option<ConnectionMode>,
 }
 
 /// Renders the L1 blocks table panel.
@@ -39,11 +39,7 @@ pub fn render_l1_blocks_table<'a>(
     let border_color = if is_active { Color::Rgb(255, 100, 100) } else { Color::Red };
 
     let filter_label = filter.label();
-    let mode_label = match connection_mode {
-        Some(L1ConnectionMode::WebSocket) => " WS",
-        Some(L1ConnectionMode::Polling) => " Poll",
-        None => "",
-    };
+    let mode_label = connection_mode.map_or("", ConnectionMode::title_suffix);
     let block = Block::default()
         .title(format!(" {title} [{filter_label}]{mode_label} "))
         .borders(Borders::ALL)

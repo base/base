@@ -14,6 +14,7 @@ use tokio::sync::mpsc;
 use tracing::warn;
 use url::Url;
 
+use super::ConnectionMode;
 use crate::tui::Toast;
 
 sol! {
@@ -119,15 +120,6 @@ pub struct L1BlockInfo {
     pub base_blobs: u64,
 }
 
-/// How the L1 watcher connects to the L1 node.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum L1ConnectionMode {
-    /// Connected via WebSocket subscription.
-    WebSocket,
-    /// Connected via HTTP polling.
-    Polling,
-}
-
 fn http_to_ws(url: &str) -> String {
     url.replacen("http://", "ws://", 1).replacen("https://", "wss://", 1)
 }
@@ -137,7 +129,7 @@ pub async fn run_l1_blob_watcher(
     l1_rpc: String,
     batcher_address: Address,
     result_tx: mpsc::Sender<L1BlockInfo>,
-    mode_tx: mpsc::Sender<L1ConnectionMode>,
+    mode_tx: mpsc::Sender<ConnectionMode>,
     toast_tx: mpsc::Sender<Toast>,
 ) {
     let ws_url = http_to_ws(&l1_rpc);
@@ -146,7 +138,7 @@ pub async fn run_l1_blob_watcher(
         run_l1_blob_watcher_ws(&ws_url, batcher_address, result_tx.clone(), &mode_tx, &toast_tx)
             .await
     {
-        let _ = mode_tx.send(L1ConnectionMode::Polling).await;
+        let _ = mode_tx.send(ConnectionMode::Polling).await;
         let _ = toast_tx.try_send(Toast::info("L1 watcher fell back to HTTP polling"));
         run_l1_blob_watcher_poll(&l1_rpc, batcher_address, result_tx, &toast_tx).await;
     }
@@ -156,7 +148,7 @@ async fn run_l1_blob_watcher_ws(
     ws_url: &str,
     batcher_address: Address,
     result_tx: mpsc::Sender<L1BlockInfo>,
-    mode_tx: &mpsc::Sender<L1ConnectionMode>,
+    mode_tx: &mpsc::Sender<ConnectionMode>,
     toast_tx: &mpsc::Sender<Toast>,
 ) -> Result<(), ()> {
     let provider = ProviderBuilder::new().connect(ws_url).await.map_err(|e| {
@@ -170,7 +162,7 @@ async fn run_l1_blob_watcher_ws(
     })?;
     let mut stream = sub.into_stream();
 
-    let _ = mode_tx.send(L1ConnectionMode::WebSocket).await;
+    let _ = mode_tx.send(ConnectionMode::WebSocket).await;
 
     let mut last_block: Option<u64> = None;
 
