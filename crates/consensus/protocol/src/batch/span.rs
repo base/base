@@ -704,7 +704,8 @@ impl SpanBatch {
         }
 
         // Filter out batches that were included too late.
-        if starting_epoch_num + cfg.seq_window_size < inclusion_block.number {
+        // Wraps like op-node's Go uint64 math, so a wrapped epoch from a malformed prefix drops here.
+        if starting_epoch_num.wrapping_add(cfg.seq_window_size) < inclusion_block.number {
             warn!(target: "batch_span", "batch was included too late, sequence window expired");
             return (BatchValidity::Drop(BatchDropReason::IncludedTooLate), None);
         }
@@ -1390,6 +1391,16 @@ mod tests {
         Scenario {
             cfg: RollupConfig { seq_window_size: 0, ..cfg() },
             l1_blocks: vec![l1_block(10)],
+            ..Default::default()
+        },
+        BatchValidity::Drop(BatchDropReason::IncludedTooLate),
+        Some((Level::WARN, &["batch was included too late, sequence window expired"][..]))
+    )]
+    #[case::wrapped_starting_epoch(
+        Scenario {
+            cfg: RollupConfig { seq_window_size: 10, ..cfg() },
+            l1_blocks: vec![l1_block(10)],
+            batch: batch(vec![element(u64::MAX, 20)]),
             ..Default::default()
         },
         BatchValidity::Drop(BatchDropReason::IncludedTooLate),

@@ -112,7 +112,8 @@ impl SingleBatch {
         }
 
         // Filter out batches that were included too late.
-        if self.epoch_num + cfg.seq_window_size < inclusion_block.number {
+        // Wraps like op-node's Go uint64 math, so an out-of-range epoch drops here.
+        if self.epoch_num.wrapping_add(cfg.seq_window_size) < inclusion_block.number {
             return BatchValidity::Drop(BatchDropReason::IncludedTooLate);
         }
 
