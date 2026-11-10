@@ -318,6 +318,12 @@ the first block's timestamp, where 200ms runs activate Denim), starts one execut
 return `VALID`. By default blocks are sent as fast as the node accepts them; `--paced` sends each
 block at its recorded offset from the first block and records how late it was.
 
+The node runs with `--engine.state-root-task-compare-updates`: each block's sparse-trie updates
+are checked against a serial state root computation, and differences are logged even when the
+state root matches. `--no-compare-updates` turns the check off; `compareUpdates` in the result
+records which ran. The serial computation runs inside every `newPayload`, so latency and blocks
+per second with the check on are not comparable with runs that have it off.
+
 `<output-dir>/replay-result.json` holds the manifest, mode, block count, wall time, blocks per
 second, `newPayload` and forkchoice latency (mean, p50, p99, max), paced lag, the node's final
 hash and state root, `match`, and per-block timings. A complete replay also writes
@@ -325,6 +331,13 @@ hash and state root, `match`, and per-block timings. A complete replay also writ
 land in one scrape, so its counter deltas are averages across those blocks. The command exits
 nonzero if any block is rejected or the final hash or state root differs from the manifest. The
 replay mutates `--datadir`; restore it again before another run.
+
+When a call returns a status other than `VALID`, the replay also writes
+`<output-dir>/first-divergence.json`: the engine call, the returned status with its validation
+error, the exported block with its engine payload, and the files Reth's witness invalid-block hook
+wrote for that block, copied from `<datadir>/invalid_block_hooks/witness/` to
+`<output-dir>/invalid-block-hooks/`. The hook runs only for blocks the node executed, so a block
+rejected before execution (for example on a hash mismatch) has none.
 
 `base-bench export` writes the same format from canonical blocks in a node datadir, opened
 read-only, with no running node or RPC:

@@ -151,7 +151,7 @@ impl RestingPredicates {
     /// dropped and the rest are re-filed under the block that last saw them. Run every block, it
     /// costs about the members rested or re-filed in one block rather than the whole set.
     /// Builders run it through [`RestingPredicateStore::finish`], off the path between the
-    /// forkchoice update and flashblock scheduling.
+    /// forkchoice update and the start of the next build.
     pub fn sweep_unseen(&mut self) -> usize {
         let Some(due) = self.due_generation() else { return 0 };
         let span = debug_span!(
@@ -192,13 +192,7 @@ impl RestingPredicates {
 
     /// Records that `predicate` was unsatisfied for `transaction_hash` at the current build
     /// position.
-    ///
-    /// Flashblock-index predicates are not recorded because the index changes without any state
-    /// change.
     pub fn rest(&mut self, transaction_hash: TxHash, predicate: ValidityPredicate) {
-        if matches!(predicate, ValidityPredicate::FlashblockIndex { .. }) {
-            return;
-        }
         // A member resting again in the block that filed it is already listed in that block's
         // generation; listing it twice would only give the sweep a stale entry to skip.
         let filed = self
@@ -274,7 +268,7 @@ impl RestingPredicates {
     ) -> bool {
         conditions.contains(predicate)
             && (member.rested_block == block_number
-                || !conditions.is_expired(&PredicateContext { block_number, flashblock_index: 0 }))
+                || !conditions.is_expired(&PredicateContext { block_number }))
     }
 
     /// Returns members whose predicate may have changed in `state`, one committed transaction's
@@ -541,7 +535,7 @@ impl RestingPredicateStore {
     /// Finishes the selection loop of the block being built.
     ///
     /// When an unseen sweep is due it runs on the task executor, so it overlaps the state root and
-    /// the leeway before the next build instead of delaying that build's flashblocks. Hand the
+    /// the leeway before the next build instead of delaying that build. Hand the
     /// result to [`Self::put`] once the block is sealed.
     pub fn finish(&self, mut resting: RestingPredicates) -> FinishingRestingPredicates {
         if resting.is_empty() {
@@ -816,7 +810,7 @@ mod tests {
         let mut resting = rested_in_parent(&[balance_at_least(WATCHED, 1)]);
         let block = 2 * RESTING_UNSEEN_RETAINED_BLOCKS;
         // The member was last seen in block 1, long enough ago to be swept, but block start is on
-        // the path to flashblock scheduling and must leave the sweep to the end of a block.
+        // the build's critical path and must leave the sweep to the end of a block.
         let carry_over = resting.begin_block(PARENT, block, Some(&TransitionState::default()));
         assert_eq!(carry_over, RestingCarryOver { carried: 1, ..Default::default() });
         assert!(resting.sweep_due());
@@ -909,16 +903,6 @@ mod tests {
         account.info.balance = U256::from(3);
 
         assert_eq!(resting.woken_by_state(&EvmState::from_iter([(WATCHED, account)])), [hash(0)]);
-    }
-
-    #[test]
-    fn flashblock_index_predicates_do_not_rest() {
-        let mut resting = RestingPredicates::new(32);
-        resting.rest(
-            hash(0),
-            ValidityPredicate::FlashblockIndex { op: ValidityOperator::Equal, value: U256::ONE },
-        );
-        assert!(resting.is_empty());
     }
 
     #[test]

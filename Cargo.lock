@@ -2888,6 +2888,7 @@ dependencies = [
  "base-execution-evm",
  "base-node-core",
  "base-node-runner",
+ "base-observability-events",
  "base-reth-cli",
  "base-shadow-indexer",
  "base-txpool-rpc",
@@ -3201,6 +3202,7 @@ dependencies = [
  "rstest",
  "tempfile",
  "tracing",
+ "url",
 ]
 
 [[package]]
@@ -6252,6 +6254,7 @@ dependencies = [
  "base-consensus-sources",
  "base-execution-chainspec",
  "base-execution-cli",
+ "base-execution-eip8130-rpc-node",
  "base-execution-rpc",
  "base-execution-txpool",
  "base-load-tests",
@@ -6457,6 +6460,7 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "tracing",
+ "tracing-subscriber",
  "url",
 ]
 

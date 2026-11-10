@@ -17,6 +17,8 @@ base_metrics::define_metrics! {
     #[describe("Retryable Postgres lock errors on transaction observability INSERT")]
     #[label(name = "reason", default = ["deadlock", "serialization", "lock_timeout"])]
     transaction_events_persist_retries: counter,
+    #[describe("Transaction observability HTTP ingest requests rejected with 503 at the in-flight limit")]
+    transaction_event_requests_shed: counter,
     #[describe("Transaction observability HTTP ingest batch size")]
     transaction_event_batch_size: histogram,
     #[describe("Duration of transaction observability Postgres batch writes")]

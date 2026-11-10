@@ -285,8 +285,9 @@ impl<R: ForwardRequest> DestinationForwarder<R> {
         let tx_count = batch.len() as u64;
         let overall_start = Instant::now();
         for attempt in 0..=self.config.max_retries {
-            // The first attempt is not journaled: every send ends in a failure or drop event here
-            // or a builder-side insert event. Only retries add information.
+            // The first attempt is not journaled: a send that reaches the builder ends in that
+            // builder's own insert event, and one that does not ends in a drop event here. Only
+            // retries add information.
             if attempt > 0 {
                 for (tx_hash, method) in tx_hashes.iter().zip(&methods) {
                     self.emit_forward_event(
@@ -313,11 +314,12 @@ impl<R: ForwardRequest> DestinationForwarder<R> {
                     let mut err_count = 0u64;
                     for (idx, res) in response.into_iter().enumerate() {
                         let tx_hash = tx_hashes.get(idx).copied().flatten();
-                        let method = methods.get(idx).copied().unwrap_or_default();
                         match res {
-                            // Delivery is journaled by the destination as
-                            // `TXPOOL_VALIDATED_INSERT_ACCEPTED`; a node-side success event per
-                            // destination would duplicate it.
+                            // The destination journals its own verdict as
+                            // `TXPOOL_VALIDATED_INSERT_ACCEPTED` or `_REJECTED` while it is the
+                            // active sequencer. A node-side row per destination would duplicate
+                            // the leader's and add standby and canary verdicts that never decide
+                            // inclusion; the rejection metric below covers them in aggregate.
                             Ok(()) => ok_count += 1,
                             Err(e) => {
                                 debug!(
@@ -329,17 +331,6 @@ impl<R: ForwardRequest> DestinationForwarder<R> {
                                     self.report_failure(tx_hash);
                                 }
                                 err_count += 1;
-                                self.emit_forward_event(
-                                    TransactionEventType::TxpoolBuilderForwardFailure,
-                                    tx_hash,
-                                    method,
-                                    Some(attempt),
-                                    Map::from_iter([
-                                        ("attempt".to_string(), json!(attempt)),
-                                        ("batch_size".to_string(), json!(tx_count)),
-                                        ("error".to_string(), json!(e.to_string())),
-                                    ]),
-                                );
                             }
                         }
                     }

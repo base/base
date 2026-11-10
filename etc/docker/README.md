@@ -201,7 +201,7 @@ storage, and block-number predicates; `flashblock_index` predicates are rejected
 
 Everest enables EIP-8130 account-abstraction transactions and gas-limit fee billing, which bills
 every non-deposit transaction for its reserved gas (see `crates/common/evm/README.md`): receipts
-report `gasUsed` equal to the gas limit, or to `gas_limit + payer_floor` for EIP-8130, while
+report `gasUsed` equal to the gas limit, or to `gas_limit + payer_auth_cost` for EIP-8130, while
 `eth_estimateGas` keeps returning the metered need. For a sponsored EIP-8130 request the estimate
 is the sender's budget only: settlement adds payer authentication on top. Everest mode additionally
 activates Everest at

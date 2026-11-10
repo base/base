@@ -3,21 +3,39 @@
 use alloc::string::String;
 
 use alloy_primitives::Address;
-use serde::{Deserialize, Deserializer, de};
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 
 use super::Eip8130Constants;
 
-/// Deserializes an optional EIP-8130 `payer`.
+/// Serializes and deserializes an optional EIP-8130 `payer` in the same form
+/// as its wire encoding.
 ///
-/// A payer is a 20-byte address. Open payer mode is the zero address, written
-/// either in full or as a short all-zero hex string such as `"0x00"`, matching
-/// its one-byte wire form.
+/// `null` (or an absent field) is self-pay, `"0x00"` is open payer mode, and a
+/// 20-byte address is that named payer. The zero address is rejected: open
+/// mode is only `"0x00"`, and a named zero-address payer could never
+/// authenticate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Eip8130PayerSerde;
 
 impl Eip8130PayerSerde {
-    /// Deserializes `null` as no payer, a full address as that payer, and a
-    /// short all-zero hex string as [`Eip8130Constants::OPEN_PAYER`].
+    /// JSON form of [`Eip8130Constants::OPEN_PAYER`], matching its one-byte
+    /// wire encoding.
+    pub const OPEN_PAYER_JSON: &'static str = "0x00";
+
+    /// Serializes `None` as `null`, [`Eip8130Constants::OPEN_PAYER`] as
+    /// [`Self::OPEN_PAYER_JSON`], and any other address as that address.
+    pub fn serialize<S>(payer: &Option<Address>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match payer {
+            Some(Eip8130Constants::OPEN_PAYER) => serializer.serialize_str(Self::OPEN_PAYER_JSON),
+            payer => payer.serialize(serializer),
+        }
+    }
+
+    /// Deserializes `null` as no payer, [`Self::OPEN_PAYER_JSON`] as
+    /// [`Eip8130Constants::OPEN_PAYER`], and a non-zero address as that payer.
     pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<Address>, D::Error>
     where
         D: Deserializer<'de>,
@@ -25,17 +43,14 @@ impl Eip8130PayerSerde {
         let Some(raw) = Option::<String>::deserialize(deserializer)? else {
             return Ok(None);
         };
-        let digits = raw
-            .strip_prefix("0x")
-            .or_else(|| raw.strip_prefix("0X"))
-            .ok_or_else(|| de::Error::custom("payer must be 0x-prefixed hex"))?;
-        if !digits.is_empty()
-            && digits.len() < 2 * Address::len_bytes()
-            && digits.bytes().all(|digit| digit == b'0')
-        {
+        if raw == Self::OPEN_PAYER_JSON {
             return Ok(Some(Eip8130Constants::OPEN_PAYER));
         }
-        raw.parse::<Address>().map(Some).map_err(de::Error::custom)
+        let payer = raw.parse::<Address>().map_err(de::Error::custom)?;
+        if payer == Eip8130Constants::OPEN_PAYER {
+            return Err(de::Error::custom("open payer mode is \"0x00\", not the zero address"));
+        }
+        Ok(Some(payer))
     }
 }
 
@@ -46,9 +61,13 @@ mod tests {
 
     use super::*;
 
-    #[derive(Deserialize)]
+    #[derive(Debug, PartialEq, Serialize, Deserialize)]
     struct Payer {
-        #[serde(default, deserialize_with = "Eip8130PayerSerde::deserialize")]
+        #[serde(
+            default,
+            serialize_with = "Eip8130PayerSerde::serialize",
+            deserialize_with = "Eip8130PayerSerde::deserialize"
+        )]
         payer: Option<Address>,
     }
 
@@ -57,11 +76,12 @@ mod tests {
     }
 
     #[test]
-    fn open_payer_accepts_short_and_full_zero() {
-        for zero in ["0x00", "0x0", "0x0000000000000000000000000000000000000000"] {
-            assert_eq!(
-                parse(&format!(r#"{{"payer":"{zero}"}}"#)).unwrap(),
-                Some(Eip8130Constants::OPEN_PAYER)
+    fn open_payer_is_only_the_one_byte_form() {
+        assert_eq!(parse(r#"{"payer":"0x00"}"#).unwrap(), Some(Eip8130Constants::OPEN_PAYER));
+        for other in ["0x0", "0x000", "0X00", "0x0000000000000000000000000000000000000000"] {
+            assert!(
+                parse(&format!(r#"{{"payer":"{other}"}}"#)).is_err(),
+                "{other} must be rejected"
             );
         }
     }
@@ -74,5 +94,19 @@ mod tests {
         assert_eq!(parse("{}").unwrap(), None);
         assert!(parse(r#"{"payer":"0x01"}"#).is_err(), "a short non-zero payer is not an address");
         assert!(parse(r#"{"payer":"0x"}"#).is_err());
+    }
+
+    #[test]
+    fn every_payer_round_trips_through_its_canonical_form() {
+        let named = address!("0x00000000000000000000000000000000000000b2");
+        for (payer, json) in [
+            (None, serde_json::Value::Null),
+            (Some(Eip8130Constants::OPEN_PAYER), "0x00".into()),
+            (Some(named), serde_json::to_value(named).unwrap()),
+        ] {
+            let encoded = serde_json::to_value(Payer { payer }).unwrap();
+            assert_eq!(encoded["payer"], json);
+            assert_eq!(serde_json::from_value::<Payer>(encoded).unwrap().payer, payer);
+        }
     }
 }

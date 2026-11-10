@@ -159,7 +159,8 @@ features! {
         RepricedP256Precompile,
         /// Configure the Osaka per-transaction gas limit cap in Base EVM environments.
         TransactionGasLimitCap,
-        /// Omit receipt and balance metadata from published flashblocks.
+        /// Legacy: omitted receipt and balance metadata from published flashblocks. Kept so the
+        /// Azul feature set stays unchanged.
         CompactFlashblockMetadata,
         /// Request V5 payload envelopes from the execution engine.
         EngineApiV5,

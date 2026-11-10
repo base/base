@@ -19,8 +19,12 @@ sol! {
         /// Nonce key `0` is the protocol nonce and is not served by this precompile.
         error ProtocolNonceNotSupported();
 
-        /// Nonce key `0` is reserved for the protocol nonce and cannot be incremented here.
+        /// Nonce key `0` (the protocol nonce) or `NONCE_KEY_MAX` (nonce-free mode)
+        /// has no sequence to increment here.
         error InvalidNonceKey();
+
+        /// A nonce-free replay identifier is zero, the replay ring's empty-slot sentinel.
+        error InvalidReplayId();
 
         /// The 2D nonce for the `(account, nonceKey)` channel is already at its maximum.
         error NonceOverflow();
