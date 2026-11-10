@@ -241,9 +241,9 @@ impl HeadCursor {
 /// Prefers an `eth_subscribe("newHeads")` WebSocket subscription. When the
 /// WebSocket is unavailable or drops, it polls `eth_blockNumber` over HTTP at
 /// the block interval and retries the WebSocket every [`Self::WS_RETRY_INTERVAL`].
-/// A shared [`HeadCursor`] backfills any blocks missed across reconnects, and
-/// starts right after the initial backlog's latest block when that is known by
-/// the first head, so no block falls between the backlog and the live feed.
+/// A shared [`HeadCursor`] backfills any blocks missed across reconnects. The
+/// feed also requests every block between the initial backlog's latest block
+/// and its own first head, so none fall between the two.
 #[derive(Debug)]
 pub struct L2HeadFeed {
     /// WebSocket endpoint to subscribe on, if any.
@@ -258,6 +258,7 @@ pub struct L2HeadFeed {
     pub toast_tx: mpsc::Sender<Toast>,
     cursor: HeadCursor,
     backlog_head_rx: Option<oneshot::Receiver<u64>>,
+    first_head: Option<u64>,
     mode: Option<ConnectionMode>,
 }
 
@@ -293,6 +294,7 @@ impl L2HeadFeed {
             toast_tx,
             cursor: HeadCursor::default(),
             backlog_head_rx: Some(backlog_head_rx),
+            first_head: None,
             mode: None,
         }
     }
@@ -394,13 +396,27 @@ impl L2HeadFeed {
     }
 
     async fn request(&mut self, head: u64) -> ControlFlow<()> {
-        // The backlog reports its latest block before fetching anything, so a gap
-        // can only exist if that report has arrived by the first head.
-        if let Some(mut backlog_head_rx) = self.backlog_head_rx.take()
-            && let Ok(backlog_head) = backlog_head_rx.try_recv()
-        {
-            self.cursor.start_after(backlog_head);
+        if let Some(backlog_head_rx) = self.backlog_head_rx.as_mut() {
+            match backlog_head_rx.try_recv() {
+                Ok(backlog_head) => {
+                    self.backlog_head_rx = None;
+                    match self.first_head {
+                        None => self.cursor.start_after(backlog_head),
+                        // The report came after live heads started; fetch any blocks between.
+                        Some(first_head) => {
+                            for block_number in backlog_head.saturating_add(1)..first_head {
+                                if self.request_tx.send(block_number).await.is_err() {
+                                    return ControlFlow::Break(());
+                                }
+                            }
+                        }
+                    }
+                }
+                Err(oneshot::error::TryRecvError::Empty) => {}
+                Err(oneshot::error::TryRecvError::Closed) => self.backlog_head_rx = None,
+            }
         }
+        self.first_head.get_or_insert(head);
         for block_number in self.cursor.advance(head) {
             if self.request_tx.send(block_number).await.is_err() {
                 return ControlFlow::Break(());
@@ -629,10 +645,11 @@ mod tests {
 
     use alloy_provider::{Network, ProviderBuilder, mock::Asserter};
     use base_common_network::Base;
-    use tokio::sync::mpsc;
+    use tokio::sync::{mpsc, oneshot};
+    use url::Url;
 
     use super::{
-        BacklogFetchResult, HeadCursor, effective_priority_fee_per_gas,
+        BacklogFetchResult, HeadCursor, L2HeadFeed, effective_priority_fee_per_gas,
         fetch_initial_backlog_with_progress, fetch_raw_block_info,
     };
 
@@ -685,6 +702,46 @@ mod tests {
         assert_eq!(info.block_number, 42);
         assert_eq!(info.gas_used, 21_000);
         assert_eq!(stalls.load(Ordering::Relaxed), 0);
+    }
+
+    fn feed_with_backlog_report() -> (L2HeadFeed, mpsc::Receiver<u64>, oneshot::Sender<u64>) {
+        let (request_tx, request_rx) = mpsc::channel(100);
+        let (mode_tx, _mode_rx) = mpsc::channel(1);
+        let (toast_tx, _toast_rx) = mpsc::channel(1);
+        let (backlog_head_tx, backlog_head_rx) = oneshot::channel();
+        let feed = L2HeadFeed::new(
+            None,
+            Url::parse("http://127.0.0.1:1").unwrap(),
+            request_tx,
+            mode_tx,
+            toast_tx,
+            backlog_head_rx,
+        );
+        (feed, request_rx, backlog_head_tx)
+    }
+
+    fn drain(rx: &mut mpsc::Receiver<u64>) -> Vec<u64> {
+        std::iter::from_fn(|| rx.try_recv().ok()).collect()
+    }
+
+    #[tokio::test]
+    async fn feed_requests_blocks_between_backlog_and_first_head() {
+        let (mut feed, mut requests, backlog_head_tx) = feed_with_backlog_report();
+        backlog_head_tx.send(100).unwrap();
+
+        assert!(feed.request(103).await.is_continue());
+        assert_eq!(drain(&mut requests), [101, 102, 103]);
+    }
+
+    #[tokio::test]
+    async fn feed_backfills_when_backlog_reports_after_the_first_head() {
+        let (mut feed, mut requests, backlog_head_tx) = feed_with_backlog_report();
+
+        assert!(feed.request(104).await.is_continue());
+        backlog_head_tx.send(100).unwrap();
+        assert!(feed.request(105).await.is_continue());
+
+        assert_eq!(drain(&mut requests), [104, 101, 102, 103, 105]);
     }
 
     #[test]
