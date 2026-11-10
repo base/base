@@ -41,3 +41,6 @@ pub use metrics::{BaseTxMetrics, NoopTxMetrics, SendOutcome, TxManagerMetrics, T
 
 mod blob;
 pub use blob::{BlobTxBuilder, MAX_BLOBS_PER_TX};
+
+mod blob_fee_policy;
+pub use blob_fee_policy::{BlobFeePolicy, BlobFees};

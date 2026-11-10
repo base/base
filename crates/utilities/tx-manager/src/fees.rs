@@ -201,8 +201,6 @@ pub struct BumpedFees {
     pub gas_tip_cap: u128,
     /// Bumped maximum total fee per gas (base fee + tip).
     pub gas_fee_cap: u128,
-    /// Bumped blob fee cap (for EIP-4844 txs). `None` for non-blob txs.
-    pub blob_fee_cap: Option<u128>,
     /// Fresh [`GasPriceCaps`] from the network, carried so that callers
     /// can reuse them without a redundant provider query.
     pub caps: GasPriceCaps,
@@ -215,10 +213,8 @@ impl BumpedFees {
     /// `gas_limit_floor` prevents the gas limit from decreasing across
     /// replacement attempts.
     #[must_use]
-    pub fn to_fee_override(&self, gas_limit_floor: u64) -> FeeOverride {
-        let fo = FeeOverride::new(self.gas_tip_cap, self.gas_fee_cap)
-            .with_gas_limit_floor(gas_limit_floor);
-        self.blob_fee_cap.map_or(fo, |blob_cap| fo.with_blob_fee_cap(blob_cap))
+    pub const fn to_fee_override(&self, gas_limit_floor: u64) -> FeeOverride {
+        FeeOverride::new(self.gas_tip_cap, self.gas_fee_cap).with_gas_limit_floor(gas_limit_floor)
     }
 }
 
@@ -238,15 +234,11 @@ pub struct GasPriceCaps {
     ///
     /// Used as the `suggested` baseline in [`FeeCalculator::check_limits`]
     /// so the fee ceiling reflects inflation caused by our enforced minimums.
+    /// Blob transactions are priced by [`BlobFeePolicy`](crate::BlobFeePolicy)
+    /// instead, without this check, and leave it at `0`.
     pub raw_gas_fee_cap: u128,
     /// Maximum blob fee per gas (for EIP-4844 txs). `None` for non-blob txs.
     pub blob_fee_cap: Option<u128>,
-    /// Blob fee cap computed from the raw provider blob base fee before
-    /// enforcing configured minimums (`min_blob_fee`).
-    ///
-    /// Used as the `suggested` baseline in [`FeeCalculator::check_limits`]
-    /// so the blob fee ceiling mirrors the gas fee ceiling behaviour.
-    pub raw_blob_fee_cap: Option<u128>,
 }
 
 #[cfg(test)]
@@ -266,7 +258,6 @@ mod tests {
         assert_eq!(caps.gas_fee_cap, 0);
         assert_eq!(caps.raw_gas_fee_cap, 0);
         assert!(caps.blob_fee_cap.is_none());
-        assert!(caps.raw_blob_fee_cap.is_none());
     }
 
     #[test]

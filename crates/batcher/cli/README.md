@@ -56,10 +56,15 @@ their highest. For
 calldata configurations, `--no-force-blobs-when-throttling` disables the
 throttle-driven blob override. `--network-timeout` bounds the RPC calls to L1,
 the sequencers and the parity validator, so an endpoint that stops answering
-never blocks the batcher. `--min-tip-cap` and `--min-basefee` set, in gwei, the
-lowest L1 priority fee and base fee the batcher prices its transactions with,
-in place of lower values from the L1 node (default 0, no minimum). The
-corresponding environment variables use the `BASE_BATCHER_` prefix.
+never blocks the batcher. Blob transactions are priced per blob: each starts at
+the `max_priority_fee_per_gas` per blob of the previous one lowered by 10%,
+doubles it on each replacement after `--resubmission-timeout`, and stays between
+`--max-priority-fee-per-gas-per-blob-lower-bound` and
+`--max-priority-fee-per-gas-per-blob-upper-bound` (default 0.01 and 10 gwei).
+`--min-tip-cap` and `--min-basefee` set, in gwei, the lowest L1 priority fee and
+base fee the batcher prices its calldata transactions with, in place of lower
+values from the L1 node (default 0, no minimum). The corresponding environment
+variables use the `BASE_BATCHER_` prefix.
 
 ## Shadow mode
 

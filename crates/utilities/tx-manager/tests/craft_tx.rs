@@ -5,10 +5,10 @@ mod common;
 use std::sync::Arc;
 
 use alloy_consensus::{TxEip1559, TxEip4844Variant, TxEnvelope};
-use alloy_eips::{eip4844::Blob, eip7594::CELLS_PER_EXT_BLOB};
+use alloy_eips::{BlockNumberOrTag, eip4844::Blob, eip7594::CELLS_PER_EXT_BLOB};
 use alloy_node_bindings::Anvil;
 use alloy_primitives::{Bytes, TxKind, U256};
-use alloy_provider::RootProvider;
+use alloy_provider::{Provider, RootProvider};
 use alloy_signer_local::PrivateKeySigner;
 use base_tx_manager::{
     FeeCalculator, FeeOverride, NoopTxMetrics, PreparedTx, SignerConfig, SimpleTxManager,
@@ -527,7 +527,7 @@ async fn increase_gas_price_bumps_above_threshold() {
     let initial_fee_cap = prepared.gas_fee_cap;
 
     let bumped = manager
-        .increase_gas_price(&candidate, initial_tip, initial_fee_cap, None)
+        .increase_gas_price(initial_tip, initial_fee_cap)
         .await
         .expect("should compute bumped fees");
 
@@ -546,7 +546,6 @@ async fn increase_gas_price_bumps_above_threshold() {
         bumped.gas_fee_cap,
         threshold_fee_cap,
     );
-    assert!(bumped.blob_fee_cap.is_none(), "blob_fee_cap should be None for non-blob tx");
 }
 
 #[tokio::test]
@@ -559,8 +558,6 @@ async fn increase_gas_price_fee_limit_exceeded() {
 
     let (manager, _anvil) = setup_with_config(config).await;
 
-    let candidate = value_transfer(1_000);
-
     // Use high old fees that will bump above the ceiling. The 10% bump
     // on a fee_cap of 500 gwei will produce ~550 gwei, which exceeds
     // `1 × raw_gas_fee_cap` (Anvil's ~3 gwei).
@@ -568,7 +565,7 @@ async fn increase_gas_price_fee_limit_exceeded() {
     let old_fee_cap = 500_000_000_000u128; // 500 gwei
 
     let err = manager
-        .increase_gas_price(&candidate, old_tip, old_fee_cap, None)
+        .increase_gas_price(old_tip, old_fee_cap)
         .await
         .expect_err("should exceed fee limit");
 
@@ -578,118 +575,40 @@ async fn increase_gas_price_fee_limit_exceeded() {
     );
 }
 
+/// A blob transaction is priced per blob by the blob fee policy, from the base fee and blob
+/// base fee of L1, and is not held to the fee limit of regular transactions.
 #[tokio::test]
-async fn increase_gas_price_bumps_blob_fee_cap() {
-    let (manager, _anvil) = setup().await;
-
-    let candidate = single_blob_candidate();
-
-    // Use craft_tx to get valid initial fees for a blob transaction.
-    let initial = manager.craft_tx(&candidate, None).await.expect("should craft initial blob tx");
-    let old_blob_fee_cap = initial.blob_fee_cap.expect("blob tx should have blob_fee_cap");
-
-    let bumped = manager
-        .increase_gas_price(
-            &candidate,
-            initial.gas_tip_cap,
-            initial.gas_fee_cap,
-            Some(old_blob_fee_cap),
-        )
-        .await
-        .expect("should compute bumped fees with blob fee cap");
-
-    assert!(
-        bumped.blob_fee_cap.is_some(),
-        "blob_fee_cap should be Some when old_blob_fee_cap is Some"
+async fn craft_tx_prices_blob_txs_per_blob_without_fee_limit() {
+    let lower_bound = 20_000_000;
+    let config = TxManagerConfig {
+        fee_limit_multiplier: 1,
+        fee_limit_threshold: 0,
+        max_priority_fee_per_gas_per_blob_lower_bound: lower_bound,
+        ..TxManagerConfig::default()
+    };
+    let (manager, _anvil) = setup_with_config(config).await;
+    let base_fee = u128::from(
+        manager
+            .provider()
+            .get_block_by_number(BlockNumberOrTag::Latest)
+            .await
+            .expect("should fetch the latest block")
+            .expect("latest block exists")
+            .header
+            .base_fee_per_gas
+            .expect("base fee"),
     );
+    let blob_base_fee = manager.provider().get_blob_base_fee().await.expect("blob base fee");
+    let candidate = TxCandidate {
+        blobs: Arc::from(vec![Box::<Blob>::default(), Box::<Blob>::default()]),
+        ..single_blob_candidate()
+    };
 
-    let threshold = FeeCalculator::calc_threshold_value(old_blob_fee_cap, true);
-    assert!(
-        bumped.blob_fee_cap.unwrap() >= threshold,
-        "bumped blob_fee_cap {} should be >= 100% threshold {}",
-        bumped.blob_fee_cap.unwrap(),
-        threshold,
-    );
-}
+    let prepared = manager.craft_tx(&candidate, None).await.expect("should craft blob tx");
 
-#[tokio::test]
-async fn increase_gas_price_rejects_blob_fee_cap_mismatch() {
-    let (manager, _anvil) = setup().await;
-
-    // Non-blob candidate with old_blob_fee_cap = Some should be rejected.
-    let non_blob_candidate = value_transfer(0);
-
-    let err = manager
-        .increase_gas_price(&non_blob_candidate, 1_000, 2_000, Some(500))
-        .await
-        .expect_err("should reject blob fee cap on non-blob tx");
-
-    assert!(
-        matches!(err, TxManagerError::Unsupported(_)),
-        "expected TxManagerError::Unsupported, got {err:?}",
-    );
-}
-
-#[tokio::test]
-async fn blob_fee_bump_round_trip() {
-    let (manager, _anvil) = setup().await;
-
-    let candidate = single_blob_candidate();
-
-    let initial = manager.craft_tx(&candidate, None).await.expect("should craft initial blob tx");
-    let initial_blob_fee = initial.blob_fee_cap.expect("initial tx should have blob_fee_cap");
-    assert!(initial_blob_fee > 0, "initial blob_fee_cap should be non-zero");
-
-    let bumped = manager
-        .increase_gas_price(
-            &candidate,
-            initial.gas_tip_cap,
-            initial.gas_fee_cap,
-            Some(initial_blob_fee),
-        )
-        .await
-        .expect("should compute bumped fees");
-
-    let bumped_blob_fee = bumped.blob_fee_cap.expect("bumped fees should have blob_fee_cap");
-    assert!(
-        bumped_blob_fee >= initial_blob_fee,
-        "bumped blob_fee_cap {bumped_blob_fee} should be >= initial {initial_blob_fee}",
-    );
-
-    let fee_override = FeeOverride::new(bumped.gas_tip_cap, bumped.gas_fee_cap)
-        .with_blob_fee_cap(bumped_blob_fee)
-        .with_gas_limit_floor(initial.gas_limit);
-
-    let replacement = manager
-        .craft_tx(&candidate, Some(fee_override))
-        .await
-        .expect("should craft replacement blob tx");
-
-    let replacement_blob_fee =
-        replacement.blob_fee_cap.expect("replacement tx should have blob_fee_cap");
-    assert!(
-        replacement_blob_fee >= bumped_blob_fee,
-        "replacement blob_fee_cap {replacement_blob_fee} should be >= bumped {bumped_blob_fee}",
-    );
-    assert!(
-        replacement.gas_limit >= initial.gas_limit,
-        "replacement gas_limit {} should be >= initial {}",
-        replacement.gas_limit,
-        initial.gas_limit,
-    );
-    assert!(
-        replacement.gas_tip_cap >= bumped.gas_tip_cap,
-        "replacement tip {} should be >= bumped tip {}",
-        replacement.gas_tip_cap,
-        bumped.gas_tip_cap,
-    );
-
-    let envelope = replacement.to_envelope().expect("should decode replacement TxEnvelope");
-    assert!(envelope.is_eip4844(), "replacement should be EIP-4844");
-
-    let signed = envelope.as_eip4844().expect("should be EIP-4844");
-    assert!(
-        matches!(signed.tx(), TxEip4844Variant::TxEip4844WithSidecar(_)),
-        "replacement should have sidecar attached",
-    );
+    let envelope = prepared.to_envelope().expect("should decode TxEnvelope");
+    let tx = envelope.as_eip4844().expect("should be EIP-4844").tx().tx();
+    assert_eq!(tx.max_priority_fee_per_gas, 2 * lower_bound);
+    assert_eq!(tx.max_fee_per_gas, 2 * lower_bound + 2 * base_fee);
+    assert_eq!(tx.max_fee_per_blob_gas, 2 * blob_base_fee);
 }

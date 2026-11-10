@@ -12,8 +12,8 @@
 /// );
 /// ```
 ///
-/// The generated struct exposes confirmations, fee limits, timeouts, polling
-/// intervals, and blob fee controls. Each env-backed field uses
+/// The generated struct exposes confirmations, fee limits, timeouts, and polling
+/// intervals. Each env-backed field uses
 /// `concat!($prefix, "_", "FIELD_NAME")` — e.g., with prefix
 /// `"BASE_CHALLENGER_TX_MANAGER"` the num-confirmations field reads from
 /// `BASE_CHALLENGER_TX_MANAGER_NUM_CONFIRMATIONS`.
@@ -21,7 +21,8 @@
 /// The macro also generates:
 /// - `impl Default for TxManagerCli` derived from clap's default values
 /// - `impl TryFrom<TxManagerCli> for TxManagerConfig` that parses gwei fields
-///   and validates the result
+///   and validates the result. The blob fee bounds keep their defaults, since
+///   the services built on this macro send no blob transactions.
 ///
 /// # Required downstream dependencies
 ///
@@ -172,17 +173,6 @@ macro_rules! define_tx_manager_cli {
                 value_parser = ::humantime::parse_duration
             )]
             pub tx_not_in_mempool_timeout: ::std::time::Duration,
-
-            /// Minimum blob base fee (in gwei) to use for blob transactions.
-            /// Accepts decimal strings (e.g. `"1"`, `"0.5"`).
-            /// Stored as wei after parsing.
-            #[arg(
-                long = "tx-manager.min-blob-fee",
-                env = concat!($prefix, "_", "MIN_BLOB_FEE"),
-                default_value = "1",
-                value_parser = $crate::GweiParser::parse_value
-            )]
-            pub min_blob_fee: u128,
         }
 
         impl Default for TxManagerCli {
@@ -209,7 +199,7 @@ macro_rules! define_tx_manager_cli {
                     receipt_query_interval: cli.receipt_query_interval,
                     tx_send_timeout: cli.tx_send_timeout,
                     tx_not_in_mempool_timeout: cli.tx_not_in_mempool_timeout,
-                    min_blob_fee: cli.min_blob_fee,
+                    ..$crate::TxManagerConfig::default()
                 };
                 config.validate()?;
                 Ok(config)

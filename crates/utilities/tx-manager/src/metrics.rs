@@ -46,6 +46,12 @@ base_metrics::define_metrics! {
     )]
     #[label(name)]
     tx_failed_total: counter,
+    #[describe("max_priority_fee_per_gas per blob, in gwei, of each landed blob transaction")]
+    #[label(name)]
+    blob_tx_max_priority_fee_per_gas_per_blob_gwei: histogram,
+    #[describe("Number of replacements, each with doubled fees, signed for each landed blob transaction")]
+    #[label(name)]
+    blob_tx_replacements: histogram,
 }
 
 /// How a send loop ended.
@@ -120,6 +126,11 @@ pub trait TxMetrics: Send + Sync + Debug + 'static {
     /// attempts that did not return a confirmed receipt," not definitive
     /// on-chain failures.
     fn record_tx_failed(&self);
+
+    /// Record a landed blob transaction: the `max_priority_fee_per_gas` per blob, in gwei,
+    /// of the version that landed, and the number of replacements, each with doubled fees,
+    /// signed before it landed.
+    fn record_landed_blob_tx(&self, max_priority_fee_per_gas_per_blob_gwei: f64, replacements: u64);
 }
 
 /// No-op [`TxMetrics`] implementation.
@@ -142,6 +153,12 @@ impl TxMetrics for NoopTxMetrics {
     fn record_rpc_error(&self) {}
     fn record_tx_confirmed(&self) {}
     fn record_tx_failed(&self) {}
+    fn record_landed_blob_tx(
+        &self,
+        _max_priority_fee_per_gas_per_blob_gwei: f64,
+        _replacements: u64,
+    ) {
+    }
 }
 
 /// Production [`TxMetrics`] implementation backed by the [`metrics`] crate.
@@ -228,6 +245,16 @@ impl TxMetrics for BaseTxMetrics {
     fn record_tx_failed(&self) {
         TxManagerMetrics::tx_failed_total(self.name).increment(1);
     }
+
+    fn record_landed_blob_tx(
+        &self,
+        max_priority_fee_per_gas_per_blob_gwei: f64,
+        replacements: u64,
+    ) {
+        TxManagerMetrics::blob_tx_max_priority_fee_per_gas_per_blob_gwei(self.name)
+            .record(max_priority_fee_per_gas_per_blob_gwei);
+        TxManagerMetrics::blob_tx_replacements(self.name).record(replacements as f64);
+    }
 }
 
 #[cfg(test)]
@@ -249,5 +276,6 @@ mod tests {
         m.record_rpc_error();
         m.record_tx_confirmed();
         m.record_tx_failed();
+        m.record_landed_blob_tx(0.576, 6);
     }
 }
