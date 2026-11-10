@@ -47,7 +47,7 @@ pub use output::{
     COLOR_ACTIVE_BORDER, COLOR_BASE_BLUE, COLOR_BURN, COLOR_GROWTH, COLOR_ROW_HIGHLIGHTED,
     COLOR_ROW_SELECTED, Format, JsonOutput, KeyValueTable, L1BlocksTableParams, P2pClInfoJson,
     P2pElInfoJson, P2pInfoJson, P2pInfoTable, TimestampJson, build_gas_bar, render_da_backlog_bar,
-    render_l1_blocks_table,
+    render_l1_blocks_table, table_rows_to_build,
 };
 
 mod config;

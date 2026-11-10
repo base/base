@@ -16,6 +16,7 @@ use crate::{
     output::{
         COLOR_BASE_BLUE, COLOR_BURN, COLOR_GROWTH, COLOR_ROW_HIGHLIGHTED, COLOR_ROW_SELECTED,
         Format, L1BlocksTableParams, build_gas_bar, render_da_backlog_bar, render_l1_blocks_table,
+        table_rows_to_build,
     },
     rpc::{BlockDaInfo, ConnectionMode},
     tui::{Browser, Keybinding, Toast},
@@ -615,6 +616,7 @@ fn render_da_panel(
         .block_contributions
         .iter()
         .skip(paused_hidden_blocks.unwrap_or(0))
+        .take(table_rows_to_build(table_state, inner.height))
         .enumerate()
         .map(|(idx, contrib)| {
             let is_selected = is_active && selected_row == Some(idx);
@@ -709,6 +711,7 @@ fn render_blocks_panel(
     let rows: Vec<Row<'_>> = blocks
         .iter()
         .skip(hidden)
+        .take(table_rows_to_build(table_state, inner.height))
         .enumerate()
         .map(|(idx, info)| {
             let style = if is_active && selected_row == Some(idx) {
