@@ -75,6 +75,13 @@ pub fn build_gas_bar(
     Line::from(spans)
 }
 
+/// Returns how many rows a table must build to show its selection: the selected
+/// row plus one screen. Building only these keeps redraws cheap when the
+/// backing list holds thousands of blocks.
+pub fn table_rows_to_build(table_state: &TableState, visible_rows: u16) -> usize {
+    table_state.selected().unwrap_or(0).saturating_add(usize::from(visible_rows))
+}
+
 /// Parameters for rendering the L1 blocks table.
 #[derive(Debug)]
 pub struct L1BlocksTableParams<'a, I: Iterator<Item = &'a L1Block>> {
@@ -287,9 +294,15 @@ pub fn render_da_backlog_bar(
 
 #[cfg(test)]
 mod tests {
-    use ratatui::style::Color;
+    use ratatui::{style::Color, widgets::TableState};
 
-    use super::{COLOR_GAS_FILL, build_gas_bar};
+    use super::{COLOR_GAS_FILL, build_gas_bar, table_rows_to_build};
+
+    #[test]
+    fn table_builds_rows_through_one_screen_past_the_selection() {
+        assert_eq!(table_rows_to_build(&TableState::default(), 20), 20);
+        assert_eq!(table_rows_to_build(&TableState::default().with_selected(Some(500)), 20), 520);
+    }
 
     fn bar_text(gas_used: u64, gas_target: Option<u64>) -> String {
         build_gas_bar(gas_used, 1_000, gas_target, 10).to_string()

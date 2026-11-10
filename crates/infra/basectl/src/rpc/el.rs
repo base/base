@@ -253,6 +253,9 @@ impl L2HeadFeed {
         Duration::from_millis(DenimTimestampSchedule::DENIM_BLOCK_INTERVAL_MILLIS);
     /// Longest delay between HTTP polls after consecutive failures.
     pub const MAX_POLL_BACKOFF: Duration = Duration::from_secs(5);
+    /// Longest wait for the next head on an open WebSocket (50 Denim block intervals)
+    /// before treating the connection as dead.
+    pub const WS_HEAD_TIMEOUT: Duration = Duration::from_secs(10);
     /// Upper bound on establishing the WebSocket before falling back to polling.
     pub const WS_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
     /// How long to poll over HTTP before trying the WebSocket again.
@@ -319,11 +322,20 @@ impl L2HeadFeed {
 
         self.set_mode(ConnectionMode::WebSocket).await;
         let mut heads = subscription.into_stream();
-        while let Some(header) = heads.next().await {
-            self.request(header.number).await?;
+        loop {
+            match tokio::time::timeout(Self::WS_HEAD_TIMEOUT, heads.next()).await {
+                Ok(Some(header)) => self.request(header.number).await?,
+                Ok(None) => {
+                    warn!(url = %ws_url, "L2 WebSocket stream ended");
+                    break;
+                }
+                // A half-open socket or a proxy that stops forwarding never closes the stream.
+                Err(_) => {
+                    warn!(url = %ws_url, "No L2 head over WebSocket; falling back to polling");
+                    break;
+                }
+            }
         }
-
-        warn!(url = %ws_url, "L2 WebSocket stream ended");
         let _ = self.toast_tx.try_send(Toast::warning("L2 WebSocket disconnected"));
         ControlFlow::Continue(())
     }
