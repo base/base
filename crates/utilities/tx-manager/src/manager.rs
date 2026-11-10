@@ -867,13 +867,7 @@ where
         )
         .await
         .map_err(|_| self.rpc_error("estimate_gas timed out"))?
-        .map_err(|e| {
-            let err = self.classify_and_record_rpc(&e);
-            if matches!(err, TxManagerError::ExecutionReverted { .. }) {
-                error!(error = %err, "gas estimation reverted");
-            }
-            err
-        })?;
+        .map_err(|e| self.classify_and_record_rpc(&e))?;
         tx_request.sidecar = sidecar_stash;
         let gas_floor = fee_overrides.as_ref().map_or(0, |fo| fo.gas_limit_floor);
         let gas_limit = candidate.gas_limit.max(gas_floor).max(estimated);
@@ -1119,8 +1113,16 @@ where
         // so it runs to completion before entering the select loop.
         // The returned PreparedTx carries the actual on-wire fees, eliminating
         // the need for a separate suggest_gas_price_caps() call.
-        let prepared =
-            self.prepare_with_initial_caps(candidate, None, None, nonce_override, None).await?;
+        // A revert is only an error here. During a fee bump it usually means a published
+        // version already executed, and `try_fee_bump` reports it as a warning.
+        let prepared = self
+            .prepare_with_initial_caps(candidate, None, None, nonce_override, None)
+            .await
+            .inspect_err(|error| {
+                if matches!(error, TxManagerError::ExecutionReverted { .. }) {
+                    error!(error = %error, "gas estimation reverted");
+                }
+            })?;
         send_state.record_assigned_nonce(prepared.nonce);
         let tx_hash = self.publish_tx_with_nonce_retry(send_state, &prepared.raw_tx).await?;
         let mut bump = BumpState::from_prepared(prepared, tx_hash);
@@ -1205,7 +1207,7 @@ where
         // on-chain, skip the fee bump entirely. This avoids a race where
         // `estimate_gas` on the replacement tx reverts because the
         // calldata has already executed (e.g. `GameAlreadyExists`),
-        // producing noisy error logs even though the proposal will succeed.
+        // producing a noisy warning even though the proposal will succeed.
         if send_state.is_waiting_for_confirmation() {
             info!("skipping fee bump, a published tx is already mined and awaits confirmation");
             return;
@@ -1787,7 +1789,10 @@ mod tests {
     //! cannot construct, to reject confirmation under an RPC-supplied hash.
 
     use std::{
-        sync::{Arc, atomic::AtomicBool},
+        sync::{
+            Arc,
+            atomic::{AtomicBool, AtomicUsize, Ordering},
+        },
         time::Duration,
     };
 
@@ -1814,6 +1819,11 @@ mod tests {
         io::{AsyncReadExt, AsyncWriteExt},
         net::TcpListener,
         sync::mpsc,
+    };
+    use tracing::{Event, Level, Subscriber};
+    use tracing_subscriber::{
+        Layer, Registry,
+        layer::{Context as LayerContext, SubscriberExt},
     };
 
     use super::{PreparedTx, SimpleTxManager, TxEnvelope};
@@ -2474,6 +2484,90 @@ mod tests {
                 ctx.sleep(Duration::from_nanos(1)).await;
             }
         });
+    }
+
+    /// Counts ERROR events, which tracing exporters use to mark the caller's span failed.
+    struct ErrorEventCounter(Arc<AtomicUsize>);
+
+    impl<S: Subscriber> Layer<S> for ErrorEventCounter {
+        fn on_event(&self, event: &Event<'_>, _ctx: LayerContext<'_, S>) {
+            if *event.metadata().level() == Level::ERROR {
+                self.0.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+    }
+
+    /// Gas estimation that reverts on the initial send fails the send with an ERROR. When
+    /// it reverts on a fee bump, because the published version already executed, the send
+    /// still confirms that version and logs no ERROR.
+    #[rstest]
+    #[case::initial_send(false)]
+    #[case::fee_bump(true)]
+    fn gas_estimation_revert_is_an_error_only_on_the_initial_send(#[case] on_fee_bump: bool) {
+        let errors = Arc::new(AtomicUsize::new(0));
+        let subscriber = Registry::default().with(ErrorEventCounter(Arc::clone(&errors)));
+        let result = tracing::subscriber::with_default(subscriber, || {
+            Runner::start(Config::seeded(0), move |ctx| async move {
+                let tx_hash = B256::with_last_byte(1);
+                let (receipt, block) = mined_receipt(tx_hash, 10);
+                let mut latest: Block = Block::default();
+                latest.header.base_fee_per_gas = Some(1_000_000_000);
+                let asserter = Asserter::new();
+                asserter.push_success(&1u64);
+                asserter.push_success(&1_000_000_000u128);
+                asserter.push_success(&Some(&latest));
+                if on_fee_bump {
+                    asserter.push_success(&21_000u64);
+                    asserter.push_success(&0u64);
+                    asserter.push_success(&tx_hash);
+                    // The receipt poller misses the transaction before the bump at 10 s.
+                    asserter.push_success(&9u64);
+                    asserter.push_success(&Option::<TransactionReceipt>::None);
+                    asserter.push_success(&1_000_000_000u128);
+                    asserter.push_success(&Some(&latest));
+                    asserter.push_failure_msg("execution reverted");
+                    // It sees the transaction mined on its next poll at 15 s.
+                    asserter.push_success(&10u64);
+                    asserter.push_success(&Some(&receipt));
+                    asserter.push_success(&Some(&block));
+                } else {
+                    asserter.push_failure_msg("execution reverted");
+                }
+                let manager = SimpleTxManager::from_wallet_with_runtime(
+                    ctx.clone(),
+                    ProviderBuilder::new().connect_mocked_client(asserter.clone()),
+                    EthereumWallet::from(PrivateKeySigner::random()),
+                    TxManagerConfig {
+                        num_confirmations: 1,
+                        resubmission_timeout: Duration::from_secs(10),
+                        receipt_query_interval: Duration::from_secs(15),
+                        ..TxManagerConfig::default()
+                    },
+                    1,
+                    Arc::new(NoopTxMetrics),
+                )
+                .await
+                .expect("should construct manager");
+
+                let result = manager
+                    .send(TxCandidate {
+                        to: Some(Address::with_last_byte(0x42)),
+                        ..Default::default()
+                    })
+                    .await;
+
+                assert!(asserter.read_q().is_empty(), "every mocked response should be used");
+                result.map(|receipt| receipt.transaction_hash)
+            })
+        });
+
+        if on_fee_bump {
+            assert_eq!(result, Ok(B256::with_last_byte(1)));
+            assert_eq!(errors.load(Ordering::Relaxed), 0, "a bump revert must not log an error");
+        } else {
+            assert_eq!(result, Err(TxManagerError::ExecutionReverted { reason: None, data: None }));
+            assert_eq!(errors.load(Ordering::Relaxed), 1, "an initial revert must log an error");
+        }
     }
 
     /// A confirmed send records its inclusion latency together with its send latency,
