@@ -1,31 +1,38 @@
-//! Shared, cross-job cache of permanently rejected transaction hashes.
+//! Shared, cross-job cache of permanently rejected transaction encodings.
 
 use std::time::Duration;
 
-use alloy_primitives::{TxHash, map::FbBuildHasher};
+use alloy_primitives::{B256, map::FbBuildHasher};
 use moka::sync::Cache;
 
-/// Default maximum number of cached permanently rejected transaction hashes.
+/// Default maximum number of cached permanently rejected transaction encodings.
 pub const REJECTION_CACHE_MAX_CAPACITY: u64 = 100_000;
 
-/// Time-to-live for cached permanently rejected transaction hashes.
+/// Time-to-live for cached permanently rejected transaction encodings.
 ///
 /// Entries expire so metering predictions and operator limits can change
-/// without locking a hash out indefinitely.
+/// without locking an encoding out indefinitely.
 pub const REJECTION_CACHE_TTL: Duration = Duration::from_secs(30 * 60);
 
-/// Shared, cross-job cache of permanently rejected transaction hashes.
+/// Shared, cross-job cache of permanently rejected transaction encodings.
+///
+/// Keys are the hash of the exact EIP-2718 encoding ([`Encodable2718::trie_hash`]), which is the
+/// transaction hash for every type except EIP-8130. EIP-8130 encodings that differ only in
+/// authorization share a transaction hash but can execute and meter differently, so rejecting one
+/// must not skip the others.
 ///
 /// Backed by [`moka::sync::Cache`] with a TTL so entries expire if metering
 /// predictions or operator limits change. Native payload jobs skip cached
-/// hashes even if the transaction is re-gossiped into the pool. Nonce-lane
+/// encodings even if the transaction is re-gossiped into the pool. Nonce-lane
 /// descendants are skipped for the **current** scan via
 /// `PayloadTransactions::mark_invalid`.
 ///
 /// Builders look up every candidate, so keys are hashed with the seeded fixed-bytes hasher the
 /// other per-candidate hash sets use rather than the default `SipHash`.
+///
+/// [`Encodable2718::trie_hash`]: alloy_eips::eip2718::Encodable2718::trie_hash
 #[derive(Clone)]
-pub struct RejectionCache(Cache<TxHash, (), FbBuildHasher<32>>);
+pub struct RejectionCache(Cache<B256, (), FbBuildHasher<32>>);
 
 impl std::fmt::Debug for RejectionCache {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -50,26 +57,27 @@ impl RejectionCache {
         )
     }
 
-    /// Returns `true` if `hash` is cached as permanently rejected.
-    pub fn is_rejected(&self, hash: &TxHash) -> bool {
-        self.contains_key(hash)
+    /// Returns `true` if the encoding with hash `encoded_hash` is cached as permanently rejected.
+    pub fn is_rejected(&self, encoded_hash: &B256) -> bool {
+        self.contains_key(encoded_hash)
     }
 
-    /// Checks if a transaction hash is in the cache.
-    pub fn contains_key(&self, hash: &TxHash) -> bool {
-        self.0.contains_key(hash)
+    /// Checks if an encoding hash is in the cache.
+    pub fn contains_key(&self, encoded_hash: &B256) -> bool {
+        self.0.contains_key(encoded_hash)
     }
 
-    /// Records `hashes` as permanently rejected for later payload jobs.
-    pub fn mark_rejected(&self, hashes: &[TxHash]) {
-        for hash in hashes {
-            self.insert(*hash);
+    /// Records the encodings with hashes `encoded_hashes` as permanently rejected for later
+    /// payload jobs.
+    pub fn mark_rejected(&self, encoded_hashes: &[B256]) {
+        for encoded_hash in encoded_hashes {
+            self.insert(*encoded_hash);
         }
     }
 
-    /// Adds a transaction hash to the cache.
-    pub fn insert(&self, hash: TxHash) {
-        self.0.insert(hash, ());
+    /// Adds an encoding hash to the cache.
+    pub fn insert(&self, encoded_hash: B256) {
+        self.0.insert(encoded_hash, ());
     }
 
     /// Returns the number of cached entries.
@@ -85,7 +93,7 @@ impl RejectionCache {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::TxHash;
+    use alloy_primitives::B256;
 
     use super::{REJECTION_CACHE_MAX_CAPACITY, REJECTION_CACHE_TTL, RejectionCache};
 
@@ -98,8 +106,8 @@ mod tests {
     #[test]
     fn mark_rejected_is_visible_to_later_lookups() {
         let cache = RejectionCache::default();
-        let hash = TxHash::repeat_byte(0x11);
-        let other = TxHash::repeat_byte(0x22);
+        let hash = B256::repeat_byte(0x11);
+        let other = B256::repeat_byte(0x22);
 
         cache.mark_rejected(&[hash]);
 
