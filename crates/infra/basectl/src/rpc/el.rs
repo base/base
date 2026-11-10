@@ -25,6 +25,8 @@ use crate::tui::Toast;
 const CONCURRENT_BLOCK_FETCHES: usize = 16;
 const STALLED_FETCH_TOAST_INTERVAL: Duration = Duration::from_secs(30);
 const BACKLOG_SETUP_RETRY_INTERVAL: Duration = Duration::from_secs(5);
+/// Attempts to read the safe and latest heads before giving up on the backlog.
+const BACKLOG_SETUP_ATTEMPTS: u32 = 3;
 
 /// Fetches a single L2 block via `eth_getBlockByHash` or `eth_getBlockByNumber`.
 ///
@@ -135,8 +137,13 @@ pub enum BacklogFetchResult {
     Progress(BacklogProgress),
     /// A single fetched block.
     Block(BlockDaInfo),
-    /// Backlog fetch completed with every block in the range.
+    /// Backlog fetch completed. Every block in the range is included except any
+    /// whose response could not be decoded, which are logged and skipped.
     Complete(InitialBacklog),
+    /// The safe and latest heads could not be read after
+    /// [`BACKLOG_SETUP_ATTEMPTS`] tries (for example a node with no safe head), so
+    /// DA tracking starts from live blocks only.
+    Unavailable,
 }
 
 /// First delay before retrying an L2 block fetch; it doubles up to [`BLOCK_FETCH_MAX_DELAY`].
@@ -150,21 +157,26 @@ const BLOCK_FETCH_STALL_ATTEMPTS: u32 = 5;
 
 /// Fetches a single L2 block and summarizes its DA and gas usage.
 ///
-/// DA totals are only correct when no block is skipped, so errors and
+/// DA totals are only correct when no block is skipped, so RPC errors and
 /// not-yet-visible blocks are retried with backoff until the fetch succeeds.
 /// `on_stall` runs once if the block is still failing after
-/// [`BLOCK_FETCH_STALL_ATTEMPTS`] attempts.
+/// [`BLOCK_FETCH_STALL_ATTEMPTS`] attempts. Returns `None` only when the
+/// response cannot be decoded, which retrying would not fix.
 async fn fetch_raw_block_info<P: Provider<Base>>(
     provider: &P,
     block_num: u64,
     on_stall: &(dyn Fn() + Sync),
-) -> BlockDaInfo {
+) -> Option<BlockDaInfo> {
     let mut delay = BLOCK_FETCH_MIN_DELAY;
     let mut attempts = 0u32;
     let block = loop {
         match provider.get_block_by_number(BlockNumberOrTag::Number(block_num)).full().await {
             Ok(Some(block)) => break block,
             Ok(None) => debug!(block = block_num, "L2 block not found yet"),
+            Err(error) if error.is_deser_error() || error.is_ser_error() => {
+                warn!(error = %error, block = block_num, "Skipping L2 block that cannot be decoded");
+                return None;
+            }
             Err(error) => debug!(error = %error, block = block_num, "L2 block fetch failed"),
         }
         attempts += 1;
@@ -184,7 +196,7 @@ async fn fetch_raw_block_info<P: Provider<Base>>(
         .map(|tx| tx.inner.inner.encode_2718_len() as u64)
         .sum();
 
-    BlockDaInfo {
+    Some(BlockDaInfo {
         block_number: block_num,
         da_bytes,
         timestamp: block.header.timestamp,
@@ -192,7 +204,7 @@ async fn fetch_raw_block_info<P: Provider<Base>>(
         gas_used: block.header.gas_used,
         gas_limit: block.header.gas_limit,
         base_fee_per_gas: block.header.base_fee_per_gas,
-    }
+    })
 }
 
 /// Tracks the newest L2 head seen so each block number is requested once, in order.
@@ -409,6 +421,11 @@ pub async fn run_block_fetcher(
         .map(|block_num| fetch_raw_block_info(&provider, block_num, &on_stall))
         .buffered(CONCURRENT_BLOCK_FETCHES);
     while let Some(info) = fetched.next().await {
+        let Some(info) = info else {
+            let _ =
+                toast_tx.try_send(Toast::warning("Skipped an L2 block that could not be decoded"));
+            continue;
+        };
         if result_tx.send(info).await.is_err() {
             break;
         }
@@ -418,12 +435,14 @@ pub async fn run_block_fetcher(
 /// Fetches every block between the safe and latest heads, sending progress updates
 /// and block data, then [`BacklogFetchResult::Complete`].
 ///
-/// Failures are retried rather than reported, so `Complete` always means the
-/// backlog total includes every block.
+/// Block fetch failures are retried, so `Complete` means the backlog total
+/// includes every decodable block. If the heads cannot be read after
+/// [`BACKLOG_SETUP_ATTEMPTS`] tries, sends [`BacklogFetchResult::Unavailable`].
 pub async fn fetch_initial_backlog_with_progress(
     l2_rpc: String,
     progress_tx: mpsc::Sender<BacklogFetchResult>,
 ) {
+    let mut attempts = 0u32;
     let (provider, safe_block, unsafe_block) = loop {
         let setup = async {
             let (safe_block, unsafe_block) = fetch_safe_and_latest(&l2_rpc).await?;
@@ -437,6 +456,12 @@ pub async fn fetch_initial_backlog_with_progress(
         match setup.await {
             Ok(setup) => break setup,
             Err(error) => {
+                attempts += 1;
+                if attempts == BACKLOG_SETUP_ATTEMPTS {
+                    warn!(error = %error, "Backlog fetch setup failed; tracking live blocks only");
+                    let _ = progress_tx.send(BacklogFetchResult::Unavailable).await;
+                    return;
+                }
                 warn!(error = %error, "Backlog fetch setup failed; retrying");
                 tokio::time::sleep(BACKLOG_SETUP_RETRY_INTERVAL).await;
             }
@@ -446,19 +471,23 @@ pub async fn fetch_initial_backlog_with_progress(
     let total_blocks = unsafe_block.saturating_sub(safe_block);
     let mut total_da_bytes: u64 = 0;
     let mut blocks: Vec<BlockDaInfo> = Vec::with_capacity(total_blocks as usize);
+    let mut blocks_fetched: u64 = 0;
 
     let mut fetch_stream = stream::iter((safe_block + 1)..=unsafe_block)
         .map(|block_num| fetch_raw_block_info(&provider, block_num, &|| {}))
         .buffer_unordered(CONCURRENT_BLOCK_FETCHES);
 
     while let Some(block) = fetch_stream.next().await {
-        total_da_bytes = total_da_bytes.saturating_add(block.da_bytes);
-        blocks.push(block);
+        blocks_fetched += 1;
+        if let Some(block) = block {
+            total_da_bytes = total_da_bytes.saturating_add(block.da_bytes);
+            blocks.push(block);
+        }
 
-        if (blocks.len() as u64).is_multiple_of(10) {
+        if blocks_fetched.is_multiple_of(10) {
             let _ = progress_tx
                 .send(BacklogFetchResult::Progress(BacklogProgress {
-                    current_block: blocks.len() as u64,
+                    current_block: blocks_fetched,
                     total_blocks,
                 }))
                 .await;
@@ -559,8 +588,32 @@ mod tests {
 
     use alloy_provider::{Network, ProviderBuilder, mock::Asserter};
     use base_common_network::Base;
+    use tokio::sync::mpsc;
 
-    use super::{HeadCursor, effective_priority_fee_per_gas, fetch_raw_block_info};
+    use super::{
+        BacklogFetchResult, HeadCursor, effective_priority_fee_per_gas,
+        fetch_initial_backlog_with_progress, fetch_raw_block_info,
+    };
+
+    #[tokio::test]
+    async fn block_fetch_skips_a_block_that_cannot_be_decoded() {
+        let asserter = Asserter::new();
+        let provider =
+            ProviderBuilder::new().network::<Base>().connect_mocked_client(asserter.clone());
+        asserter.push_success(&"not a block");
+
+        assert!(fetch_raw_block_info(&provider, 42, &|| {}).await.is_none());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn backlog_reports_unavailable_when_heads_cannot_be_read() {
+        let (progress_tx, mut progress_rx) = mpsc::channel(10);
+
+        // Nothing listens on port 1, so every setup attempt fails.
+        fetch_initial_backlog_with_progress("http://127.0.0.1:1".to_string(), progress_tx).await;
+
+        assert!(matches!(progress_rx.recv().await, Some(BacklogFetchResult::Unavailable)));
+    }
 
     #[tokio::test]
     async fn block_fetch_retries_errors_and_missing_blocks_until_it_succeeds() {
@@ -578,7 +631,8 @@ mod tests {
         let info = fetch_raw_block_info(&provider, 42, &|| {
             stalls.fetch_add(1, Ordering::Relaxed);
         })
-        .await;
+        .await
+        .unwrap();
 
         assert_eq!(info.block_number, 42);
         assert_eq!(info.gas_used, 21_000);
