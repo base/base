@@ -62,7 +62,8 @@ impl RawSpanBatch {
                 == 1
                 && i > 0
             {
-                l1_origin_number -= 1;
+                // Wraps like op-node's Go uint64 math; check_batch drops the resulting epoch.
+                l1_origin_number = l1_origin_number.wrapping_sub(1);
             }
         }
 
@@ -79,7 +80,10 @@ impl RawSpanBatch {
                 });
             acc.push(SpanBatchElement {
                 epoch_num: block_origin_nums[i as usize],
-                timestamp: genesis_time + self.prefix.rel_timestamp + block_time * i,
+                // Wraps like op-node's Go uint64 math; check_batch rejects the resulting timestamp.
+                timestamp: genesis_time
+                    .wrapping_add(self.prefix.rel_timestamp)
+                    .wrapping_add(block_time.wrapping_mul(i)),
                 transactions: transactions.into_iter().map(|v| v.into()).collect(),
             });
             acc
@@ -97,6 +101,7 @@ impl RawSpanBatch {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::SpanBatchBits;
 
     #[test]
     fn test_decode_encode_raw_span_batch() {
@@ -107,5 +112,27 @@ mod tests {
         let mut encoding_buf = Vec::new();
         raw_span_batch.encode(&mut encoding_buf).unwrap();
         assert_eq!(encoding_buf, raw_span_batch_hex);
+    }
+
+    #[test]
+    fn test_derive_wraps_malformed_prefix_like_op_node() {
+        let mut origin_bits = SpanBatchBits::default();
+        origin_bits.set_bit(1, true);
+        let mut raw_span_batch = RawSpanBatch {
+            prefix: SpanBatchPrefix { rel_timestamp: u64::MAX, ..Default::default() },
+            payload: SpanBatchPayload {
+                block_count: 2,
+                origin_bits,
+                block_tx_counts: vec![0, 0],
+                ..Default::default()
+            },
+        };
+
+        let span_batch = raw_span_batch.derive(2, 1, 0).unwrap();
+
+        let epochs: Vec<_> = span_batch.batches.iter().map(|b| b.epoch_num).collect();
+        let timestamps: Vec<_> = span_batch.batches.iter().map(|b| b.timestamp).collect();
+        assert_eq!(epochs, [u64::MAX, 0]);
+        assert_eq!(timestamps, [0, 2]);
     }
 }
