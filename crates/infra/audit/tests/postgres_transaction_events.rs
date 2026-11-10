@@ -356,7 +356,7 @@ async fn postgres_fresh_database_runs_partitioned_migrations() -> anyhow::Result
         sqlx::query_scalar("SELECT version FROM _sqlx_migrations ORDER BY version")
             .fetch_all(&pool)
             .await?;
-    assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7, 8]);
+    assert_eq!(versions, (1..=10).collect::<Vec<i64>>());
 
     Ok(())
 }
@@ -383,7 +383,7 @@ async fn postgres_migrations_skip_io_concurrency_without_database_ownership() ->
         sqlx::query_scalar("SELECT version FROM _sqlx_migrations WHERE success ORDER BY version")
             .fetch_all(&migration)
             .await?;
-    assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7, 8]);
+    assert_eq!(versions, (1..=10).collect::<Vec<i64>>());
     let io_concurrency: String =
         sqlx::query_scalar("SHOW effective_io_concurrency").fetch_one(&migration).await?;
     assert_eq!(io_concurrency, "1");

@@ -2,9 +2,10 @@
 -- serves lookups by hash. Dropping the partitioned index drops its leaf
 -- indexes on every day partition.
 --
--- Partitions populated before 009 are left with no hash index. Lookups skip
--- those days instead of scanning them, so events stored before 009 stop being
--- findable by hash until retention drops their partitions.
+-- Day partitions that held rows when 009 ran are left with no hash index.
+-- Lookups skip those days instead of scanning them, so no event on those days
+-- is findable by hash until retention drops their partitions. That includes
+-- the rest of the day 009 ran on, since that day's partitions were populated.
 --
 -- DROP INDEX takes an ACCESS EXCLUSIVE lock on the parents and every day
 -- partition. A long reader, such as a DataPilot extraction run, holds a lock

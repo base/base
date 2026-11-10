@@ -22,7 +22,8 @@ prefetch and vacuum truncation. `008` adds the btree index on
 instead of the heap. `009` adds an `(event_hour, tx_hash)` index for lookups
 by transaction hash, whose inserts stay within the current hour's slice of the
 index, and `010` drops the `(tx_hash, event_time)` index it replaces. Day
-partitions populated before `009` have no hash index, and lookups skip them.
+partitions that held rows when `009` ran, including that whole day, have no
+hash index, and lookups skip them.
 `schema.sql` is a committed
 `pg_dump` of the schema those migrations produce, without dated day partitions.
 The Postgres integration tests fail if a fresh or upgraded database differs

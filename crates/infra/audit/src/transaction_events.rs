@@ -1092,9 +1092,10 @@ impl PgTransactionEventSink {
     /// Returns events for one transaction hash sorted by event time.
     ///
     /// Searches every hour of the day partitions that carry the hour-leading
-    /// hash index from migration 009. Days populated before that migration
-    /// have no hash index; they are skipped rather than scanned, so their
-    /// events are not returned. Until 009 is applied, the lookup uses the
+    /// hash index from migration 009. A day whose partitions already held
+    /// rows when 009 ran has no hash index, so it is skipped rather than
+    /// scanned, and none of its events are returned, including events
+    /// ingested later that day. Until 009 is applied, the lookup uses the
     /// hash-leading index instead.
     pub async fn events_by_transaction_hash(
         &self,
