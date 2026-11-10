@@ -102,7 +102,8 @@ where
         {
             warn!(
                 target: "channel_bank",
-                "Channel (ID: {}) timed out", hex::encode(frame.id)
+                channel_id = %hex::encode(frame.id),
+                "Channel timed out"
             );
             return Ok(());
         }
@@ -137,7 +138,8 @@ where
         {
             warn!(
                 target: "channel_bank",
-                "Channel (ID: {}) timed out", hex::encode(first)
+                channel_id = %hex::encode(first),
+                "Channel timed out"
             );
             self.channels.remove(&first);
             self.channel_queue.pop_front();

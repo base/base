@@ -187,8 +187,10 @@ where
         // that we can, so we can advance to the next epoch.
         debug!(
             target: "batch_validator",
-            "Advancing batch validator epoch: {}, timestamp: {}, epoch timestamp: {}",
-            next_epoch.number, next_timestamp, next_epoch.timestamp
+            epoch = next_epoch.number,
+            timestamp = next_timestamp,
+            epoch_timestamp = next_epoch.timestamp,
+            "Advancing batch validator epoch"
         );
         self.l1_blocks.remove(0);
         Err(PipelineError::Eof.temp())
