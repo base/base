@@ -21,4 +21,4 @@ tokio = { workspace = true, features = ["sync", "time"] }
 
 [dev-dependencies]
 alloy-node-bindings.workspace = true
-tokio = { workspace = true, features = ["macros", "rt"] }
+tokio = { workspace = true, features = ["macros", "rt", "net"] }
