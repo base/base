@@ -105,9 +105,9 @@ pub struct TxManagerConfig {
     pub fee_limit_multiplier: u64,
     /// Minimum suggested fee (in wei) at which the fee-limit check activates.
     pub fee_limit_threshold: u128,
-    /// Minimum tip cap (in wei) to use for transactions.
+    /// Minimum tip cap (in wei) to use for regular (non-blob) transactions.
     pub min_tip_cap: u128,
-    /// Minimum basefee (in wei) to use for transactions.
+    /// Minimum basefee (in wei) to use for regular (non-blob) transactions.
     pub min_basefee: u128,
     /// Network request timeout.
     pub network_timeout: Duration,
@@ -123,8 +123,12 @@ pub struct TxManagerConfig {
     pub tx_send_timeout: Duration,
     /// Mempool appearance timeout (zero = disabled).
     pub tx_not_in_mempool_timeout: Duration,
-    /// Minimum blob base fee (in wei) to use for blob transactions.
-    pub min_blob_fee: u128,
+    /// Lowest `max_priority_fee_per_gas` per blob (in wei) of blob transactions, which the
+    /// first blob transaction starts at. See [`BlobFeePolicy`](crate::BlobFeePolicy).
+    pub max_priority_fee_per_gas_per_blob_lower_bound: u128,
+    /// Highest `max_priority_fee_per_gas` per blob (in wei) of blob transactions. See
+    /// [`BlobFeePolicy`](crate::BlobFeePolicy).
+    pub max_priority_fee_per_gas_per_blob_upper_bound: u128,
 }
 
 impl Default for TxManagerConfig {
@@ -143,7 +147,8 @@ impl Default for TxManagerConfig {
             receipt_query_interval: Duration::from_secs(12),
             tx_send_timeout: Duration::ZERO,
             tx_not_in_mempool_timeout: Duration::from_secs(120),
-            min_blob_fee: 1_000_000_000, // 1 gwei
+            max_priority_fee_per_gas_per_blob_lower_bound: 10_000_000, // 0.01 gwei
+            max_priority_fee_per_gas_per_blob_upper_bound: 10_000_000_000, // 10 gwei
         }
     }
 }
@@ -157,7 +162,8 @@ impl TxManagerConfig {
     /// - `num_confirmations` must be >= 1
     /// - `safe_abort_nonce_too_low_count` must be >= 1
     /// - `fee_limit_multiplier` must be >= 1
-    /// - `min_blob_fee` must be >= 1
+    /// - `max_priority_fee_per_gas_per_blob_lower_bound` must be >= 1
+    /// - `max_priority_fee_per_gas_per_blob_upper_bound` must be >= the lower bound
     /// - `network_timeout` must be > 0
     /// - `resubmission_timeout` must be > 0
     /// - `publish_max_retries` must be >= 1
@@ -203,7 +209,16 @@ impl TxManagerConfig {
             publish_retry_delay,
             receipt_query_interval,
         );
-        reject_zero!(min_blob_fee);
+        reject_zero!(max_priority_fee_per_gas_per_blob_lower_bound);
+        if self.max_priority_fee_per_gas_per_blob_upper_bound
+            < self.max_priority_fee_per_gas_per_blob_lower_bound
+        {
+            return Err(ConfigError::OutOfRange {
+                field: "max_priority_fee_per_gas_per_blob_upper_bound",
+                constraint: ">= max_priority_fee_per_gas_per_blob_lower_bound",
+                value: self.max_priority_fee_per_gas_per_blob_upper_bound.to_string(),
+            });
+        }
         let refusals_before_abort =
             u32::try_from(self.safe_abort_nonce_too_low_count - 1).unwrap_or(u32::MAX);
         if self.resubmission_timeout.saturating_mul(refusals_before_abort)
@@ -309,8 +324,10 @@ mod tests {
     }
 
     #[test]
-    fn default_min_blob_fee_is_one_gwei() {
-        assert_eq!(TxManagerConfig::default().min_blob_fee, 1_000_000_000);
+    fn default_blob_bounds_are_a_hundredth_and_ten_gwei_per_blob() {
+        let config = TxManagerConfig::default();
+        assert_eq!(config.max_priority_fee_per_gas_per_blob_lower_bound, 10_000_000);
+        assert_eq!(config.max_priority_fee_per_gas_per_blob_upper_bound, 10_000_000_000);
     }
 
     #[rstest]
@@ -342,14 +359,24 @@ mod tests {
         }
     }
 
-    #[test]
-    fn validation_rejects_zero_min_blob_fee() {
-        let config = TxManagerConfig { min_blob_fee: 0, ..TxManagerConfig::default() };
-        let err = config.validate().unwrap_err();
-        assert!(
-            matches!(err, ConfigError::OutOfRange { field: "min_blob_fee", .. }),
-            "expected OutOfRange for min_blob_fee, got: {err}"
-        );
+    #[rstest]
+    #[case::zero_lower_bound(0, 10, Some("max_priority_fee_per_gas_per_blob_lower_bound"))]
+    #[case::upper_below_lower(10, 9, Some("max_priority_fee_per_gas_per_blob_upper_bound"))]
+    #[case::equal_bounds(10, 10, None)]
+    fn validation_checks_the_blob_bounds(
+        #[case] lower_bound: u128,
+        #[case] upper_bound: u128,
+        #[case] rejected_field: Option<&str>,
+    ) {
+        let config = TxManagerConfig {
+            max_priority_fee_per_gas_per_blob_lower_bound: lower_bound,
+            max_priority_fee_per_gas_per_blob_upper_bound: upper_bound,
+            ..TxManagerConfig::default()
+        };
+        match config.validate() {
+            Err(ConfigError::OutOfRange { field, .. }) => assert_eq!(Some(field), rejected_field),
+            result => assert!(result.is_ok() && rejected_field.is_none(), "{result:?}"),
+        }
     }
 
     #[test]

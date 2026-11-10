@@ -210,6 +210,19 @@ impl TxManagerError {
         )
     }
 
+    /// Returns `true` when the node refused the transaction for its fees, which a
+    /// replacement with higher fees can clear.
+    #[must_use]
+    pub const fn is_fee_rejection(&self) -> bool {
+        matches!(
+            self,
+            Self::Underpriced
+                | Self::ReplacementUnderpriced
+                | Self::FeeTooLow
+                | Self::MaxFeePerGasTooLow
+        )
+    }
+
     /// Returns `true` only for [`TxManagerError::AlreadyKnown`].
     ///
     /// The send loop uses this to distinguish "already in mempool" (a
@@ -290,7 +303,11 @@ impl RpcErrorClassifier {
         if lowered.contains("replacement transaction underpriced") {
             return TxManagerError::ReplacementUnderpriced;
         }
-        if lowered.contains("transaction underpriced") {
+        // Geth refuses a priority fee below its admission floor with "transaction gas
+        // price below minimum".
+        if lowered.contains("transaction underpriced")
+            || lowered.contains("gas price below minimum")
+        {
             return TxManagerError::Underpriced;
         }
         if lowered.contains("nonce too low") {
@@ -380,6 +397,10 @@ mod tests {
         TxManagerError::ReplacementUnderpriced
     )]
     #[case::underpriced("transaction underpriced", TxManagerError::Underpriced)]
+    #[case::below_minimum_price(
+        "transaction gas price below minimum: gas tip cap 1, minimum needed 2",
+        TxManagerError::Underpriced
+    )]
     #[case::nonce_too_low("nonce too low", TxManagerError::NonceTooLow)]
     #[case::nonce_too_high("nonce too high", TxManagerError::NonceTooHigh)]
     #[case::insufficient_funds("insufficient funds", TxManagerError::InsufficientFunds)]
@@ -451,6 +472,20 @@ mod tests {
     #[case::rpc(TxManagerError::Rpc("any error".to_string()), true)]
     fn is_retryable(#[case] error: TxManagerError, #[case] expected: bool) {
         assert_eq!(error.is_retryable(), expected);
+    }
+
+    // ── is_fee_rejection ────────────────────────────────────────────────
+
+    #[rstest]
+    #[case::underpriced(TxManagerError::Underpriced, true)]
+    #[case::replacement_underpriced(TxManagerError::ReplacementUnderpriced, true)]
+    #[case::fee_too_low(TxManagerError::FeeTooLow, true)]
+    #[case::max_fee_too_low(TxManagerError::MaxFeePerGasTooLow, true)]
+    #[case::already_known(TxManagerError::AlreadyKnown, false)]
+    #[case::rpc(TxManagerError::Rpc("connection reset".to_string()), false)]
+    #[case::fee_limit_exceeded(TxManagerError::FeeLimitExceeded { fee: 2, ceiling: 1 }, false)]
+    fn is_fee_rejection(#[case] error: TxManagerError, #[case] expected: bool) {
+        assert_eq!(error.is_fee_rejection(), expected);
     }
 
     // ── is_already_known ────────────────────────────────────────────────

@@ -152,6 +152,10 @@ impl FeeCalculator {
 /// for each component so the resulting transaction is guaranteed to meet
 /// the override thresholds even if network fees have dropped.
 ///
+/// A blob transaction is signed with the override's fees as they are, since
+/// [`BlobFeePolicy`](crate::BlobFeePolicy) already computed them from current
+/// L1 prices. Without an override, it is priced by that policy.
+///
 /// Field names mirror [`GasPriceCaps`] for consistency.
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, Default)]
@@ -160,7 +164,7 @@ pub struct FeeOverride {
     pub gas_tip_cap: u128,
     /// Minimum acceptable maximum total fee per gas (base fee + tip).
     pub gas_fee_cap: u128,
-    /// Minimum acceptable blob fee cap (for EIP-4844 txs). `None` = no override.
+    /// Blob fee cap (for EIP-4844 txs). `None` = no override.
     pub blob_fee_cap: Option<u128>,
     /// Minimum gas limit (floor). Used during fee bumps so the gas limit
     /// never decreases across replacement attempts. `0` = no override.
@@ -201,8 +205,6 @@ pub struct BumpedFees {
     pub gas_tip_cap: u128,
     /// Bumped maximum total fee per gas (base fee + tip).
     pub gas_fee_cap: u128,
-    /// Bumped blob fee cap (for EIP-4844 txs). `None` for non-blob txs.
-    pub blob_fee_cap: Option<u128>,
     /// Fresh [`GasPriceCaps`] from the network, carried so that callers
     /// can reuse them without a redundant provider query.
     pub caps: GasPriceCaps,
@@ -215,17 +217,16 @@ impl BumpedFees {
     /// `gas_limit_floor` prevents the gas limit from decreasing across
     /// replacement attempts.
     #[must_use]
-    pub fn to_fee_override(&self, gas_limit_floor: u64) -> FeeOverride {
-        let fo = FeeOverride::new(self.gas_tip_cap, self.gas_fee_cap)
-            .with_gas_limit_floor(gas_limit_floor);
-        self.blob_fee_cap.map_or(fo, |blob_cap| fo.with_blob_fee_cap(blob_cap))
+    pub const fn to_fee_override(&self, gas_limit_floor: u64) -> FeeOverride {
+        FeeOverride::new(self.gas_tip_cap, self.gas_fee_cap).with_gas_limit_floor(gas_limit_floor)
     }
 }
 
-/// Intermediate fee estimates computed during gas price suggestion.
+/// Intermediate fee estimates of a regular (non-blob) transaction, computed
+/// during gas price suggestion.
 ///
 /// Used between fee calculation and transaction construction to carry
-/// the tip cap, base fee cap, and optional blob fee cap.
+/// the tip cap and base fee cap.
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, Default)]
 pub struct GasPriceCaps {
@@ -239,14 +240,6 @@ pub struct GasPriceCaps {
     /// Used as the `suggested` baseline in [`FeeCalculator::check_limits`]
     /// so the fee ceiling reflects inflation caused by our enforced minimums.
     pub raw_gas_fee_cap: u128,
-    /// Maximum blob fee per gas (for EIP-4844 txs). `None` for non-blob txs.
-    pub blob_fee_cap: Option<u128>,
-    /// Blob fee cap computed from the raw provider blob base fee before
-    /// enforcing configured minimums (`min_blob_fee`).
-    ///
-    /// Used as the `suggested` baseline in [`FeeCalculator::check_limits`]
-    /// so the blob fee ceiling mirrors the gas fee ceiling behaviour.
-    pub raw_blob_fee_cap: Option<u128>,
 }
 
 #[cfg(test)]
@@ -265,8 +258,6 @@ mod tests {
         assert_eq!(caps.gas_tip_cap, 0);
         assert_eq!(caps.gas_fee_cap, 0);
         assert_eq!(caps.raw_gas_fee_cap, 0);
-        assert!(caps.blob_fee_cap.is_none());
-        assert!(caps.raw_blob_fee_cap.is_none());
     }
 
     #[test]

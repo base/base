@@ -13,6 +13,9 @@
 //! and the actual fees that were applied, eliminating the need for callers to
 //! re-query gas prices after transaction construction.
 //!
+//! Blob transactions are priced by [`BlobFeePolicy`] instead of the provider's
+//! suggested priority fee, and skip the fee limit check.
+//!
 //! The [`send_tx`] method drives a signed transaction from publication through
 //! mempool to onchain confirmation via a `tokio::select!` event loop that
 //! coordinates fee bumping, receipt polling, and critical error detection.
@@ -24,6 +27,7 @@
 //! alloy fillers or `PendingTransactionBuilder` are used.
 //!
 //! [`TxCandidate`]: crate::TxCandidate
+//! [`BlobFeePolicy`]: crate::BlobFeePolicy
 //! [`suggest_gas_price_caps`]: SimpleTxManager::suggest_gas_price_caps
 //! [`FeeCalculator::check_limits`]: crate::FeeCalculator::check_limits
 //! [`NonceManager`]: crate::NonceManager
@@ -45,7 +49,7 @@ use alloy_network::{
 };
 use alloy_primitives::{Address, B256, Bytes, keccak256};
 use alloy_provider::Provider;
-use alloy_rpc_types_eth::{TransactionReceipt, TransactionRequest};
+use alloy_rpc_types_eth::{Block, TransactionReceipt, TransactionRequest};
 use alloy_transport::TransportError;
 use backon::{ConstantBuilder, Retryable};
 use base_runtime::{Runtime, RuntimeTimeout, TokioRuntime};
@@ -55,9 +59,10 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
 use crate::{
-    BlobTxBuilder, BumpedFees, FeeCalculator, FeeOverride, GasPriceCaps, NonceManager,
-    RpcErrorClassifier, SendHandle, SendOutcome, SendResponse, SendState, SignerConfig,
-    TxCandidate, TxManager, TxManagerConfig, TxManagerError, TxManagerResult, TxMetrics,
+    BlobFeePolicy, BlobTxBuilder, BumpedFees, FeeCalculator, FeeOverride, GasPriceCaps,
+    NonceManager, RpcErrorClassifier, SendHandle, SendOutcome, SendResponse, SendState,
+    SignerConfig, TxCandidate, TxManager, TxManagerConfig, TxManagerError, TxManagerResult,
+    TxMetrics,
 };
 
 /// Number of wei in one gwei (10^9), as `f64` for fractional-precision
@@ -124,36 +129,26 @@ pub struct ConfirmedTx {
 /// successful fee bump so they can be passed as a single argument.
 #[derive(Debug)]
 struct BumpState {
-    /// Current maximum priority fee per gas (tip).
-    tip: u128,
-    /// Current maximum total fee per gas (base fee + tip).
-    fee_cap: u128,
-    /// Current blob fee cap. `None` for non-blob txs.
-    blob_fee_cap: Option<u128>,
-    /// Current gas limit.
-    gas_limit: u64,
+    /// Most recently published transaction, whose fees the next bump starts from.
+    prepared: PreparedTx,
     /// Hash of the most recently published transaction.
     tx_hash: B256,
-    /// Nonce used in the most recently published transaction.
-    nonce: u64,
-    /// Cached blob sidecar. See [`PreparedTx::sidecar`] for rationale on
-    /// the `Arc` wrapper.
-    sidecar: Option<Arc<BlobTransactionSidecarEip7594>>,
+    /// Hash and `max_priority_fee_per_gas` of every published version, any of
+    /// which may land.
+    published: Vec<(B256, u128)>,
 }
 
 impl BumpState {
-    /// Constructs a [`BumpState`] from a [`PreparedTx`] and the hash of the
-    /// published transaction.
-    fn from_prepared(prepared: PreparedTx, tx_hash: B256) -> Self {
-        Self {
-            tip: prepared.gas_tip_cap,
-            fee_cap: prepared.gas_fee_cap,
-            blob_fee_cap: prepared.blob_fee_cap,
-            gas_limit: prepared.gas_limit,
-            tx_hash,
-            nonce: prepared.nonce,
-            sidecar: prepared.sidecar,
-        }
+    /// Constructs a [`BumpState`] from the first published version.
+    fn new(prepared: PreparedTx, tx_hash: B256) -> Self {
+        Self { published: vec![(tx_hash, prepared.gas_tip_cap)], prepared, tx_hash }
+    }
+
+    /// Records a published replacement.
+    fn replace(&mut self, prepared: PreparedTx, tx_hash: B256) {
+        self.published.push((tx_hash, prepared.gas_tip_cap));
+        self.prepared = prepared;
+        self.tx_hash = tx_hash;
     }
 }
 
@@ -184,6 +179,9 @@ pub struct SimpleTxManager<P, R = TokioRuntime> {
     closed: CancellationToken,
     /// Metrics collector for transaction lifecycle events.
     metrics: Arc<dyn TxMetrics>,
+    /// Prices blob transactions. Shared by clones of the manager, so each blob
+    /// transaction starts from the fees of the previous ones.
+    blob_fee_policy: BlobFeePolicy,
 }
 
 impl<P> SimpleTxManager<P, TokioRuntime>
@@ -305,6 +303,10 @@ where
             address,
             config.network_timeout,
         );
+        let blob_fee_policy = BlobFeePolicy::new(
+            config.max_priority_fee_per_gas_per_blob_lower_bound,
+            config.max_priority_fee_per_gas_per_blob_upper_bound,
+        );
         Ok(Self {
             provider,
             runtime,
@@ -314,6 +316,7 @@ where
             chain_id,
             closed: CancellationToken::new(),
             metrics,
+            blob_fee_policy,
         })
     }
 
@@ -403,31 +406,6 @@ where
         )
     }
 
-    /// Checks both gas and blob fee ceilings relative to the raw provider
-    /// estimates in `caps`.
-    ///
-    /// Calls [`check_fee_limit`](Self::check_fee_limit) for the gas fee cap,
-    /// and when `blob_fee_cap` is `Some`, also checks the blob fee cap
-    /// against `caps.raw_blob_fee_cap`.
-    fn check_fee_limits(
-        &self,
-        fee_cap: u128,
-        blob_fee_cap: Option<u128>,
-        caps: &GasPriceCaps,
-    ) -> TxManagerResult<()> {
-        self.check_fee_limit(fee_cap, caps.raw_gas_fee_cap)?;
-        if let Some(blob_cap) = blob_fee_cap {
-            // A missing raw blob baseline is a caller bug on the blob transaction path.
-            let baseline = caps.raw_blob_fee_cap.ok_or_else(|| {
-                TxManagerError::Unsupported(
-                    "raw_blob_fee_cap missing on blob transaction path".into(),
-                )
-            })?;
-            self.check_fee_limit(blob_cap, baseline)?;
-        }
-        Ok(())
-    }
-
     /// Constructs and signs a transaction, retrying on transient errors.
     ///
     /// Wraps [`craft_tx`](Self::craft_tx) in a retry loop with up to
@@ -440,7 +418,8 @@ where
     /// so the resulting transaction is guaranteed to meet the override
     /// thresholds. Pass `None` for the initial send; pass the bumped fees
     /// during fee-bump iterations to ensure replacement transactions
-    /// satisfy geth's replacement rules.
+    /// satisfy geth's replacement rules. A blob transaction is signed with the
+    /// override's fees as they are (see [`FeeOverride`]).
     ///
     /// # Cancellation safety
     ///
@@ -511,81 +490,38 @@ where
         .await
     }
 
-    /// Queries the provider for current gas price estimates.
+    /// Queries the provider for current gas price estimates of a regular
+    /// (non-blob) transaction.
     ///
-    /// Returns a [`GasPriceCaps`] for **non-blob** (EIP-1559) transactions only:
-    /// `blob_fee_cap` and `raw_blob_fee_cap` will always be `None`.
+    /// Returns a [`GasPriceCaps`] containing:
+    /// - `gas_tip_cap`: maximum priority fee (enforced >= `config.min_tip_cap`)
+    /// - `gas_fee_cap`: `tip + 2 * base_fee` via [`FeeCalculator::calc_gas_fee_cap`],
+    ///   with the base fee enforced >= `config.min_basefee`
+    /// - `raw_gas_fee_cap`: fee cap from the raw provider values before
+    ///   enforcing minimums, used as the `suggested` baseline in
+    ///   [`FeeCalculator::check_limits`]
     ///
-    /// Blob fee estimation is performed internally by
-    /// [`craft_tx`](Self::craft_tx) and [`prepare`](Self::prepare) when the
-    /// [`TxCandidate`] carries blobs — there is no need to call this method
-    /// separately for blob transactions.
+    /// Blob transactions are priced by [`BlobFeePolicy`] instead, inside
+    /// [`craft_tx`](Self::craft_tx) and [`prepare`](Self::prepare).
     ///
     /// # Errors
     ///
     /// Returns [`TxManagerError::Rpc`] if any provider call fails.
     pub async fn suggest_gas_price_caps(&self) -> TxManagerResult<GasPriceCaps> {
-        self.suggest_gas_price_caps_for(false).await
-    }
-
-    /// Queries the provider for current gas price estimates.
-    ///
-    /// When `is_blob` is `true`, also fetches the blob base fee and computes
-    /// a blob fee cap via [`FeeCalculator::calc_blob_fee_cap`], enforcing the
-    /// configured `min_blob_fee` floor.
-    ///
-    /// Returns a [`GasPriceCaps`] containing:
-    /// - `gas_tip_cap`: maximum priority fee (enforced >= `config.min_tip_cap`)
-    /// - `gas_fee_cap`: `tip + 2 * base_fee` via [`FeeCalculator::calc_gas_fee_cap`]
-    /// - `raw_gas_fee_cap`: fee cap from the raw provider values before
-    ///   enforcing minimums, used as the `suggested` baseline in
-    ///   [`FeeCalculator::check_limits`]
-    /// - `blob_fee_cap`: `Some(2 × blob_base_fee)` when `is_blob`, else `None`
-    ///
-    /// # Errors
-    ///
-    /// Returns [`TxManagerError::Rpc`] if any provider call fails.
-    async fn suggest_gas_price_caps_for(&self, is_blob: bool) -> TxManagerResult<GasPriceCaps> {
-        // Query tip cap, latest block, and (optionally) blob base fee concurrently.
-        let tip_fut = RuntimeTimeout::run(
-            &self.runtime,
-            self.config.network_timeout,
-            self.provider.get_max_priority_fee_per_gas(),
-        );
-        let block_fut = RuntimeTimeout::run(
-            &self.runtime,
-            self.config.network_timeout,
-            self.provider.get_block_by_number(BlockNumberOrTag::Latest),
-        );
-
-        let (tip_result, block_result, blob_fee_result) = if is_blob {
-            let blob_fut = RuntimeTimeout::run(
+        // Query tip cap and latest block concurrently.
+        let (tip_result, block_result) = tokio::join!(
+            RuntimeTimeout::run(
                 &self.runtime,
                 self.config.network_timeout,
-                self.provider.get_blob_base_fee(),
-            );
-            let (t, b, bf) = tokio::join!(tip_fut, block_fut, blob_fut);
-            (t, b, Some(bf))
-        } else {
-            let (t, b) = tokio::join!(tip_fut, block_fut);
-            (t, b, None)
-        };
+                self.provider.get_max_priority_fee_per_gas(),
+            ),
+            self.latest_block(),
+        );
 
         let raw_tip_cap = tip_result
             .map_err(|_| self.rpc_error("get_max_priority_fee_per_gas timed out"))?
             .map_err(|e| self.classify_and_record_rpc(&e))?;
-
-        let latest_block = block_result
-            .map_err(|_| self.rpc_error("get_block_by_number timed out"))?
-            .map_err(|e| self.classify_and_record_rpc(&e))?
-            .ok_or_else(|| self.rpc_error("latest block not found"))?;
-
-        let raw_base_fee = u128::from(
-            latest_block
-                .header
-                .base_fee_per_gas
-                .ok_or_else(|| self.rpc_error("base fee not available"))?,
-        );
+        let raw_base_fee = self.base_fee(block_result?)?;
 
         // Compute raw gas fee cap from provider values before enforcing minimums.
         let raw_gas_fee_cap = FeeCalculator::calc_gas_fee_cap(raw_base_fee, raw_tip_cap);
@@ -601,40 +537,62 @@ where
         self.metrics.record_basefee(base_fee as f64 / WEI_PER_GWEI);
         self.metrics.record_tipcap(tip_cap as f64 / WEI_PER_GWEI);
 
-        // Compute blob fee cap when this is a blob transaction.
-        let (blob_fee_cap, raw_blob_fee_cap) = match blob_fee_result {
-            Some(result) => {
-                let raw_blob_base_fee = result
-                    .map_err(|_| self.rpc_error("get_blob_base_fee timed out"))?
-                    .map_err(|e| self.classify_and_record_rpc(&e))?;
-                let raw_blob_cap = FeeCalculator::calc_blob_fee_cap(raw_blob_base_fee);
-                let blob_base_fee = raw_blob_base_fee.max(self.config.min_blob_fee);
-                let blob_cap = FeeCalculator::calc_blob_fee_cap(blob_base_fee);
-                self.metrics.record_blob_fee_cap(blob_cap as f64 / WEI_PER_GWEI);
-                (Some(blob_cap), Some(raw_blob_cap))
-            }
-            None => (None, None),
-        };
-
-        Ok(GasPriceCaps {
-            gas_tip_cap: tip_cap,
-            gas_fee_cap,
-            raw_gas_fee_cap,
-            blob_fee_cap,
-            raw_blob_fee_cap,
-        })
+        Ok(GasPriceCaps { gas_tip_cap: tip_cap, gas_fee_cap, raw_gas_fee_cap })
     }
 
-    /// Computes bumped fee parameters for a replacement transaction.
+    /// Queries the provider for the base fee and the blob base fee that
+    /// [`BlobFeePolicy`] prices blob transactions from.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TxManagerError::Rpc`] if any provider call fails.
+    async fn blob_base_fees(&self) -> TxManagerResult<(u128, u128)> {
+        let (block_result, blob_base_fee_result) = tokio::join!(
+            self.latest_block(),
+            RuntimeTimeout::run(
+                &self.runtime,
+                self.config.network_timeout,
+                self.provider.get_blob_base_fee(),
+            ),
+        );
+        let base_fee = self.base_fee(block_result?)?;
+        let blob_base_fee = blob_base_fee_result
+            .map_err(|_| self.rpc_error("get_blob_base_fee timed out"))?
+            .map_err(|e| self.classify_and_record_rpc(&e))?;
+        self.metrics.record_basefee(base_fee as f64 / WEI_PER_GWEI);
+        Ok((base_fee, blob_base_fee))
+    }
+
+    /// Fetches the latest block.
+    async fn latest_block(&self) -> TxManagerResult<Option<Block>> {
+        RuntimeTimeout::run(
+            &self.runtime,
+            self.config.network_timeout,
+            self.provider.get_block_by_number(BlockNumberOrTag::Latest),
+        )
+        .await
+        .map_err(|_| self.rpc_error("get_block_by_number timed out"))?
+        .map_err(|e| self.classify_and_record_rpc(&e))
+    }
+
+    /// Returns the base fee of the latest block.
+    fn base_fee(&self, latest_block: Option<Block>) -> TxManagerResult<u128> {
+        latest_block
+            .ok_or_else(|| self.rpc_error("latest block not found"))?
+            .header
+            .base_fee_per_gas
+            .map(u128::from)
+            .ok_or_else(|| self.rpc_error("base fee not available"))
+    }
+
+    /// Computes bumped fee parameters for a replacement of a regular (non-blob)
+    /// transaction.
     ///
     /// Given the previous on-wire fees, applies
     /// [`FeeCalculator::update_fees`] to satisfy geth's tx-replacement
     /// rules and enforces the configured fee ceiling via
-    /// [`FeeCalculator::check_limits`].
-    ///
-    /// For blob transactions (`old_blob_fee_cap` is `Some`), the blob fee
-    /// cap is bumped separately with a 100 % minimum increase via
-    /// [`FeeCalculator::calc_threshold_value`].
+    /// [`FeeCalculator::check_limits`]. Blob transactions are replaced with
+    /// [`BlobFeePolicy::replacement`] instead.
     ///
     /// The returned [`BumpedFees`] carries the fresh [`GasPriceCaps`] so
     /// callers can forward them to the internal preparation path without a
@@ -650,57 +608,25 @@ where
     /// estimation fails.
     pub async fn increase_gas_price(
         &self,
-        candidate: &TxCandidate,
         old_tip: u128,
         old_fee_cap: u128,
-        old_blob_fee_cap: Option<u128>,
     ) -> TxManagerResult<BumpedFees> {
-        let is_blob = candidate.is_blob();
-
-        // Validate consistency: old_blob_fee_cap must be Some for blob txs
-        // and None for non-blob txs.
-        if old_blob_fee_cap.is_some() != is_blob {
-            return Err(TxManagerError::Unsupported(
-                "old_blob_fee_cap must be Some for blob transactions and None for non-blob transactions"
-                    .into(),
-            ));
-        }
-
         // Step 1: Fetch fresh network fees.
-        let caps = self.suggest_gas_price_caps_for(is_blob).await?;
+        let caps = self.suggest_gas_price_caps().await?;
 
         // Step 2: Derive effective base fee from the caps.
         let new_base_fee = FeeCalculator::base_fee_from_caps(caps.gas_fee_cap, caps.gas_tip_cap);
 
         // Step 3: Compute bumped tip and fee cap.
-        let (bumped_tip, bumped_fee_cap) = FeeCalculator::update_fees(
-            old_tip,
-            old_fee_cap,
-            caps.gas_tip_cap,
-            new_base_fee,
-            is_blob,
-        );
+        let (bumped_tip, bumped_fee_cap) =
+            FeeCalculator::update_fees(old_tip, old_fee_cap, caps.gas_tip_cap, new_base_fee, false);
 
-        // Step 4: Bump blob fee cap separately with 100% minimum.
-        let blob_fee_cap = old_blob_fee_cap.map(|old_blob| {
-            let threshold = FeeCalculator::calc_threshold_value(old_blob, true);
-            caps.blob_fee_cap.map_or(threshold, |network_blob| threshold.max(network_blob))
-        });
+        // Step 4: Enforce the fee ceiling.
+        self.check_fee_limit(bumped_fee_cap, caps.raw_gas_fee_cap)?;
 
-        // Step 5: Enforce fee ceilings on gas and blob fee caps.
-        self.check_fee_limits(bumped_fee_cap, blob_fee_cap, &caps)?;
+        info!(%old_tip, %old_fee_cap, %bumped_tip, %bumped_fee_cap, "gas price increase computed");
 
-        info!(
-            %old_tip,
-            %old_fee_cap,
-            %bumped_tip,
-            %bumped_fee_cap,
-            old_blob_fee_cap = ?old_blob_fee_cap,
-            blob_fee_cap = ?blob_fee_cap,
-            "gas price increase computed",
-        );
-
-        Ok(BumpedFees { gas_tip_cap: bumped_tip, gas_fee_cap: bumped_fee_cap, blob_fee_cap, caps })
+        Ok(BumpedFees { gas_tip_cap: bumped_tip, gas_fee_cap: bumped_fee_cap, caps })
     }
 
     /// Constructs and signs a single transaction from a [`TxCandidate`].
@@ -709,6 +635,10 @@ where
     /// 1. Query gas price caps via [`suggest_gas_price_caps`](Self::suggest_gas_price_caps)
     /// 2. Apply fee overrides as a floor (`max(network_fee, override)`)
     /// 3. Check fee limits via [`FeeCalculator::check_limits`]
+    ///
+    ///    A blob transaction replaces steps 1 to 3: it is signed with the fee
+    ///    overrides as they are, or else priced by [`BlobFeePolicy::fees`]
+    ///    from the current base fee and blob base fee.
     /// 4. Build a [`TransactionRequest`] with all fields set manually
     /// 5. Estimate gas via the provider; use `max(estimate, candidate.gas_limit)` as floor
     /// 6. Assign nonce via [`NonceManager::next_nonce`]
@@ -774,45 +704,56 @@ where
             )));
         }
 
-        // Step 1: Get fee estimates (includes blob base fee when is_blob).
-        let caps = match caps {
-            Some(caps) => caps,
-            None => self.suggest_gas_price_caps_for(is_blob).await?,
-        };
-
-        // Step 2: Apply fee overrides as a floor.
-        //
-        // During fee bumps the caller passes the bumped (tip, fee_cap)
-        // as overrides. We take the max of the fresh network estimate
-        // and the override so the replacement transaction is guaranteed
-        // to satisfy geth's replacement rules even if network fees have
-        // dropped since the bump was calculated.
-        let (tip_cap, fee_cap) =
-            fee_overrides.as_ref().map_or((caps.gas_tip_cap, caps.gas_fee_cap), |fo| {
-                (caps.gas_tip_cap.max(fo.gas_tip_cap), caps.gas_fee_cap.max(fo.gas_fee_cap))
-            });
-
-        // Step 3: Compute blob fee cap with config minimum and override floor.
-        let blob_fee_cap = if is_blob {
-            let network = caps.blob_fee_cap.ok_or_else(|| {
-                TxManagerError::Unsupported(
-                    "blob_fee_cap missing from fee caps on blob transaction path".into(),
-                )
+        let (tip_cap, fee_cap, blob_fee_cap) = if is_blob {
+            // Blob transactions: the replacement fees the send loop computed, or the
+            // policy's fees for a new transaction. The policy bounds them, so no fee
+            // limit applies.
+            let fees = match fee_overrides {
+                Some(fees) => fees,
+                None => {
+                    let (base_fee, blob_base_fee) = self.blob_base_fees().await?;
+                    self.blob_fee_policy.fees(
+                        candidate.blobs.len() as u128,
+                        base_fee,
+                        blob_base_fee,
+                    )
+                }
+            };
+            let blob_fee_cap = fees.blob_fee_cap.ok_or_else(|| {
+                TxManagerError::Unsupported("blob fee override without a blob fee cap".into())
             })?;
-            let floor = fee_overrides.as_ref().and_then(|fo| fo.blob_fee_cap).unwrap_or(0);
-            Some(network.max(floor))
+            self.metrics.record_tipcap(fees.gas_tip_cap as f64 / WEI_PER_GWEI);
+            self.metrics.record_blob_fee_cap(blob_fee_cap as f64 / WEI_PER_GWEI);
+            (fees.gas_tip_cap, fees.gas_fee_cap, Some(blob_fee_cap))
         } else {
-            None
-        };
+            // Step 1: Get fee estimates.
+            let caps = match caps {
+                Some(caps) => caps,
+                None => self.suggest_gas_price_caps().await?,
+            };
 
-        // Step 3b: Check fee limits.
-        //
-        // The `suggested` parameter is the raw gas_fee_cap computed from
-        // the provider's values before enforcing our configured minimums
-        // (`min_tip_cap`, `min_basefee`). This detects when enforced
-        // minimums or fee overrides inflate the fee cap beyond
-        // `fee_limit_multiplier × raw_provider_fee_cap`.
-        self.check_fee_limits(fee_cap, blob_fee_cap, &caps)?;
+            // Step 2: Apply fee overrides as a floor.
+            //
+            // During fee bumps the caller passes the bumped (tip, fee_cap)
+            // as overrides. We take the max of the fresh network estimate
+            // and the override so the replacement transaction is guaranteed
+            // to satisfy geth's replacement rules even if network fees have
+            // dropped since the bump was calculated.
+            let (tip_cap, fee_cap) =
+                fee_overrides.as_ref().map_or((caps.gas_tip_cap, caps.gas_fee_cap), |fo| {
+                    (caps.gas_tip_cap.max(fo.gas_tip_cap), caps.gas_fee_cap.max(fo.gas_fee_cap))
+                });
+
+            // Step 3: Check fee limits.
+            //
+            // The `suggested` parameter is the raw gas_fee_cap computed from
+            // the provider's values before enforcing our configured minimums
+            // (`min_tip_cap`, `min_basefee`). This detects when enforced
+            // minimums or fee overrides inflate the fee cap beyond
+            // `fee_limit_multiplier × raw_provider_fee_cap`.
+            self.check_fee_limit(fee_cap, caps.raw_gas_fee_cap)?;
+            (tip_cap, fee_cap, None)
+        };
 
         // Step 4: Build TransactionRequest.
         let from =
@@ -1103,6 +1044,9 @@ where
     /// [`prepare_with_initial_caps`](Self::prepare_with_initial_caps) call.
     /// Fee bump paths reuse the original nonce via their own `nonce_override`
     /// to avoid corrupting concurrent `send_async` reservations.
+    ///
+    /// When a blob transaction lands, [`BlobFeePolicy`] and the metrics record the
+    /// `max_priority_fee_per_gas` of the version that landed.
     async fn send_event_loop(
         &self,
         candidate: &TxCandidate,
@@ -1124,8 +1068,9 @@ where
                 }
             })?;
         send_state.record_assigned_nonce(prepared.nonce);
-        let tx_hash = self.publish_tx_with_nonce_retry(send_state, &prepared.raw_tx).await?;
-        let mut bump = BumpState::from_prepared(prepared, tx_hash);
+        let (prepared, tx_hash) =
+            self.publish_version(candidate, send_state, prepared, None).await?;
+        let mut bump = BumpState::new(prepared, tx_hash);
 
         // Receipt delivery channel — mpsc because fee bumps may spawn
         // new wait tasks with different tx hashes.
@@ -1139,7 +1084,7 @@ where
         // Consume the first immediate tick.
         bump_ticker.next().await;
 
-        loop {
+        let confirmed = loop {
             // Check shutdown and critical errors before blocking.
             if self.is_closed() {
                 return Err(TxManagerError::ChannelClosed);
@@ -1152,13 +1097,7 @@ where
             // If a receipt is already waiting, return it immediately
             // instead of performing a wasted fee bump.
             if let Ok(confirmed) = receipt_rx.try_recv() {
-                info!(
-                    tx_hash = %confirmed.receipt.transaction_hash,
-                    block = ?confirmed.receipt.block_number,
-                    status = %confirmed.receipt.inner.status(),
-                    "transaction receipt received",
-                );
-                return Ok(confirmed);
+                break confirmed;
             }
 
             // Preparation is not cancellation-safe, so fee bump work must run
@@ -1167,15 +1106,7 @@ where
                 biased;
                 result = receipt_rx.recv() => {
                     match result {
-                        Some(confirmed) => {
-                            info!(
-                                tx_hash = %confirmed.receipt.transaction_hash,
-                                block = ?confirmed.receipt.block_number,
-                                status = %confirmed.receipt.inner.status(),
-                                "transaction receipt received",
-                            );
-                            return Ok(confirmed);
-                        }
+                        Some(confirmed) => break confirmed,
                         None => {
                             // All senders dropped — should not happen in normal flow.
                             return Err(TxManagerError::ChannelClosed);
@@ -1190,7 +1121,28 @@ where
             // Even a failed publication must wait a full interval before another bump.
             bump_ticker = self.runtime.interval(self.config.resubmission_timeout);
             bump_ticker.next().await;
+        };
+
+        info!(
+            tx_hash = %confirmed.receipt.transaction_hash,
+            block = ?confirmed.receipt.block_number,
+            status = %confirmed.receipt.inner.status(),
+            "transaction receipt received",
+        );
+        if candidate.is_blob() {
+            let blob_count = candidate.blobs.len() as u128;
+            let max_priority_fee_per_gas = bump
+                .published
+                .iter()
+                .find(|(tx_hash, _)| *tx_hash == confirmed.receipt.transaction_hash)
+                .map_or(bump.prepared.gas_tip_cap, |(_, fee)| *fee);
+            self.blob_fee_policy.record_landed(max_priority_fee_per_gas, blob_count);
+            self.metrics.record_blob_tx_landed(
+                max_priority_fee_per_gas as f64 / blob_count as f64 / WEI_PER_GWEI,
+                bump.published.len() as u64 - 1,
+            );
         }
+        Ok(confirmed)
     }
 
     /// Performs a fee bump attempt and applies the result to the tracked state.
@@ -1215,59 +1167,61 @@ where
         }
 
         match self.handle_fee_bump(candidate, send_state, receipt_tx, state).await {
-            Ok(new_state) => *state = new_state,
+            Ok((prepared, tx_hash)) => state.replace(prepared, tx_hash),
             Err(error) => warn!(error = %error, "fee bump failed, will retry next tick"),
         }
     }
 
     /// Handles a single fee bump iteration.
     ///
-    /// Delegates fee computation to [`increase_gas_price`](Self::increase_gas_price),
-    /// rebuilds the transaction reusing the same nonce via `nonce_override`,
-    /// re-publishes it, and spawns a new receipt polling task.
+    /// Computes the replacement fees, rebuilds the transaction reusing the same
+    /// nonce via `nonce_override`, re-publishes it, and spawns a new receipt
+    /// polling task.
     ///
-    /// The bumped fee values are passed as fee overrides to
-    /// [`prepare_with_initial_caps`](Self::prepare_with_initial_caps),
-    /// which forwards them to [`craft_tx_with_caps`](Self::craft_tx_with_caps).
-    /// There, each override is used as a floor via `max(network_fee, override)`,
+    /// A regular transaction is bumped with
+    /// [`increase_gas_price`](Self::increase_gas_price), whose fees are passed
+    /// as fee overrides to
+    /// [`prepare_with_initial_caps`](Self::prepare_with_initial_caps). There,
+    /// each override is used as a floor via `max(network_fee, override)`,
     /// guaranteeing the replacement transaction meets geth's replacement
     /// thresholds even if network fees have dropped since the bump was
-    /// calculated.
+    /// calculated. A blob transaction is replaced by
+    /// [`replace_blob_tx`](Self::replace_blob_tx).
     ///
-    /// Returns the updated [`BumpState`] on success. The fee values are
-    /// taken directly from the [`PreparedTx`] returned by `prepare()`,
-    /// reflecting the *actual* on-wire fees (which are guaranteed >= the
-    /// bumped values) so that subsequent bump iterations use an accurate
-    /// baseline.
+    /// Returns the published replacement and its hash. Its fee values are the
+    /// *actual* on-wire fees (which are guaranteed >= the bumped values), so
+    /// that subsequent bump iterations use an accurate baseline.
     async fn handle_fee_bump(
         &self,
         candidate: &TxCandidate,
         send_state: &Arc<SendState>,
         receipt_tx: &mpsc::Sender<ConfirmedTx>,
         old: &BumpState,
-    ) -> TxManagerResult<BumpState> {
-        let bumped =
-            self.increase_gas_price(candidate, old.tip, old.fee_cap, old.blob_fee_cap).await?;
+    ) -> TxManagerResult<(PreparedTx, B256)> {
+        let old_tx = &old.prepared;
+        let prepared = if candidate.is_blob() {
+            self.replace_blob_tx(candidate, old_tx).await?
+        } else {
+            let bumped = self.increase_gas_price(old_tx.gas_tip_cap, old_tx.gas_fee_cap).await?;
 
-        let fee_override = bumped.to_fee_override(old.gas_limit);
-
-        // Rebuild transaction with bumped fees as overrides and the fresh
-        // caps to avoid a redundant provider round-trip.
-        // Reuse the exact nonce from the transaction being replaced via
-        // nonce_override, rather than resetting the nonce manager.
-        // Resetting would corrupt nonces pre-reserved by concurrent
-        // send_async() tasks.
-        let prepared = self
-            .prepare_with_initial_caps(
+            // Rebuild transaction with bumped fees as overrides and the fresh
+            // caps to avoid a redundant provider round-trip.
+            // Reuse the exact nonce from the transaction being replaced via
+            // nonce_override, rather than resetting the nonce manager.
+            // Resetting would corrupt nonces pre-reserved by concurrent
+            // send_async() tasks.
+            self.prepare_with_initial_caps(
                 candidate,
-                Some(fee_override),
+                Some(bumped.to_fee_override(old_tx.gas_limit)),
                 Some(bumped.caps),
-                Some(old.nonce),
-                old.sidecar.clone(),
+                Some(old_tx.nonce),
+                None,
             )
-            .await?;
+            .await?
+        };
 
-        let new_hash = self.publish_tx(send_state, &prepared.raw_tx, Some(old.tx_hash)).await?;
+        let (prepared, new_hash) =
+            self.publish_version(candidate, send_state, prepared, Some(old.tx_hash)).await?;
 
         // Record the bump and log only after the transaction has been
         // successfully published to avoid inflating the count on failure.
@@ -1275,13 +1229,13 @@ where
         self.metrics.record_gas_bump();
         info!(
             bump_count = %bump_count,
-            old_tip = %old.tip,
+            old_tip = %old_tx.gas_tip_cap,
             new_tip = %prepared.gas_tip_cap,
-            old_fee_cap = %old.fee_cap,
+            old_fee_cap = %old_tx.gas_fee_cap,
             new_fee_cap = %prepared.gas_fee_cap,
-            old_blob_fee_cap = ?old.blob_fee_cap,
+            old_blob_fee_cap = ?old_tx.blob_fee_cap,
             new_blob_fee_cap = ?prepared.blob_fee_cap,
-            old_gas_limit = %old.gas_limit,
+            old_gas_limit = %old_tx.gas_limit,
             new_gas_limit = %prepared.gas_limit,
             "fee bump applied",
         );
@@ -1289,7 +1243,97 @@ where
         // Spawn a new receipt polling task for the bumped tx.
         self.spawn_wait_for_tx(Arc::clone(send_state), new_hash, receipt_tx.clone());
 
-        Ok(BumpState::from_prepared(prepared, new_hash))
+        Ok((prepared, new_hash))
+    }
+
+    /// Publishes `prepared`, a version of `candidate`, and returns the version that
+    /// was published with its hash.
+    ///
+    /// The first version of a send (`last_tx_hash` is `None`) is published with
+    /// [`publish_tx_with_nonce_retry`](Self::publish_tx_with_nonce_retry), a
+    /// replacement with [`publish_tx`](Self::publish_tx).
+    ///
+    /// A blob transaction that the node refuses for its fees is replaced right
+    /// away by [`replace_blob_tx`](Self::replace_blob_tx), from the refused fees,
+    /// until a version is accepted or no replacement exists within the upper bound
+    /// of [`BlobFeePolicy`]. A first blob version the node already knows is
+    /// published. Every other error, such as a network error, is returned without
+    /// raising any fee. Each published blob replacement raises the fees the next
+    /// blob transactions start from.
+    async fn publish_version(
+        &self,
+        candidate: &TxCandidate,
+        send_state: &SendState,
+        mut prepared: PreparedTx,
+        last_tx_hash: Option<B256>,
+    ) -> TxManagerResult<(PreparedTx, B256)> {
+        let mut is_replacement = last_tx_hash.is_some();
+        loop {
+            let result = match last_tx_hash {
+                Some(_) => self.publish_tx(send_state, &prepared.raw_tx, last_tx_hash).await,
+                None => self.publish_tx_with_nonce_retry(send_state, &prepared.raw_tx).await,
+            };
+            if !candidate.is_blob() {
+                return result.map(|tx_hash| (prepared, tx_hash));
+            }
+            let tx_hash = match result {
+                Ok(tx_hash) => tx_hash,
+                // `publish_tx` already accepts it once a version was published. A first
+                // version the node knows is the same signed transaction, in its mempool.
+                Err(TxManagerError::AlreadyKnown) => {
+                    let tx_hash = *prepared
+                        .to_envelope()
+                        .map_err(|error| TxManagerError::Sign(error.to_string()))?
+                        .tx_hash();
+                    send_state.record_successful_publish();
+                    info!(tx_hash = %tx_hash, "blob transaction already known in mempool");
+                    tx_hash
+                }
+                Err(error) if error.is_fee_rejection() => {
+                    info!(error = %error, "blob transaction refused for its fees, replacing it");
+                    prepared = self.replace_blob_tx(candidate, &prepared).await?;
+                    is_replacement = true;
+                    continue;
+                }
+                Err(error) => return Err(error),
+            };
+            if is_replacement {
+                self.blob_fee_policy
+                    .record_replacement(prepared.gas_tip_cap, candidate.blobs.len() as u128);
+            }
+            return Ok((prepared, tx_hash));
+        }
+    }
+
+    /// Signs the replacement of `old`, a version of the blob transaction
+    /// `candidate`, with the fees of [`BlobFeePolicy::replacement`] at the current
+    /// L1 prices, the same nonce and a gas limit no lower than `old`'s.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TxManagerError::FeeLimitExceeded`] when no replacement exists within
+    /// the upper bound of the policy, or the error of the L1 price read or of the
+    /// preparation.
+    async fn replace_blob_tx(
+        &self,
+        candidate: &TxCandidate,
+        old: &PreparedTx,
+    ) -> TxManagerResult<PreparedTx> {
+        let (base_fee, blob_base_fee) = self.blob_base_fees().await?;
+        let fees = self.blob_fee_policy.replacement(
+            old,
+            candidate.blobs.len() as u128,
+            base_fee,
+            blob_base_fee,
+        )?;
+        self.prepare_with_initial_caps(
+            candidate,
+            Some(fees.with_gas_limit_floor(old.gas_limit)),
+            None,
+            Some(old.nonce),
+            old.sidecar.clone(),
+        )
+        .await
     }
 
     /// Publishes the initial transaction, retrying a transient nonce gap.
@@ -1791,7 +1835,7 @@ mod tests {
 
     use std::{
         sync::{
-            Arc,
+            Arc, Mutex,
             atomic::{AtomicUsize, Ordering},
         },
         task::Poll,
@@ -1813,7 +1857,7 @@ mod tests {
     use alloy_transport::mock::Asserter;
     use base_runtime::{
         Clock,
-        deterministic::{Config, Runner},
+        deterministic::{Config, Context, Runner},
     };
     use mockall::predicate::eq;
     use rstest::rstest;
@@ -1831,8 +1875,8 @@ mod tests {
 
     use super::{PreparedTx, SimpleTxManager, TxEnvelope};
     use crate::{
-        BlobTxBuilder, GasPriceCaps, NonceManager, NoopTxMetrics, SendOutcome, SendState,
-        TxCandidate, TxManager, TxManagerConfig, TxManagerError, metrics::MockTxMetrics,
+        BlobFeePolicy, BlobTxBuilder, GasPriceCaps, NonceManager, NoopTxMetrics, SendOutcome,
+        SendState, TxCandidate, TxManager, TxManagerConfig, TxManagerError, metrics::MockTxMetrics,
     };
 
     async fn setup() -> (SimpleTxManager<RootProvider>, alloy_node_bindings::AnvilInstance) {
@@ -2315,6 +2359,7 @@ mod tests {
                 chain_id: 1,
                 closed: CancellationToken::new(),
                 metrics: Arc::new(NoopTxMetrics),
+                blob_fee_policy: BlobFeePolicy::new(1, 1),
             };
 
             let confirmed = SimpleTxManager::<_>::wait_mined_using_runtime(
@@ -2404,6 +2449,7 @@ mod tests {
                 chain_id: 1,
                 closed: CancellationToken::new(),
                 metrics: Arc::new(NoopTxMetrics),
+                blob_fee_policy: BlobFeePolicy::new(1, 1),
             };
             let send_state = Arc::new(SendState::new(3).expect("send state should be valid"));
             let (receipt_tx, receipt_rx) = mpsc::channel(1);
@@ -2676,6 +2722,360 @@ mod tests {
         });
     }
 
+    // ── blob fee policy ────────────────────────────────────────────────
+
+    const BLOB_RESUBMISSION_TIMEOUT: Duration = Duration::from_secs(10);
+
+    /// A one-blob candidate.
+    fn blob_candidate() -> TxCandidate {
+        TxCandidate {
+            to: Some(Address::with_last_byte(0x42)),
+            blobs: Arc::from(vec![Box::<Blob>::default()]),
+            ..Default::default()
+        }
+    }
+
+    /// Pushes the L1 prices a blob tx version is priced from: the latest block, with a 1 gwei
+    /// base fee, and a 1 gwei blob base fee.
+    fn push_blob_prices(asserter: &Asserter) {
+        let mut block: Block = Block::default();
+        block.header.base_fee_per_gas = Some(1_000_000_000);
+        asserter.push_success(&Some(&block));
+        asserter.push_success(&1_000_000_000u128);
+    }
+
+    /// Pushes the responses that price and sign a blob tx version: its L1 prices and its gas
+    /// estimate.
+    fn push_blob_pricing(asserter: &Asserter) {
+        push_blob_prices(asserter);
+        asserter.push_success(&21_000u64);
+    }
+
+    /// Metrics that accept every record a blob send makes, except the landed blob tx and the
+    /// fee bumps, which each test sets.
+    fn blob_send_metrics() -> MockTxMetrics {
+        let mut metrics = MockTxMetrics::new();
+        metrics.expect_record_basefee().return_const(());
+        metrics.expect_record_tipcap().return_const(());
+        metrics.expect_record_blob_fee_cap().return_const(());
+        metrics.expect_record_tx_max_fee().return_const(());
+        metrics.expect_record_current_nonce().return_const(());
+        metrics.expect_record_publish_error().return_const(());
+        metrics.expect_record_rpc_error().return_const(());
+        metrics.expect_record_send_latency().return_const(());
+        metrics.expect_record_inclusion_latency().return_const(());
+        metrics.expect_record_tx_confirmed().return_const(());
+        metrics
+    }
+
+    /// A mocked provider over `asserter`.
+    fn mocked(asserter: &Asserter) -> RootProvider {
+        ProviderBuilder::default().connect_mocked_client(asserter.clone())
+    }
+
+    /// A manager over `provider`, whose first response must be the chain ID, with one
+    /// confirmation, a 60 s receipt polling interval and the given blob bounds, in wei.
+    async fn blob_manager<P: Provider + Clone + std::fmt::Debug + 'static>(
+        ctx: &Context,
+        provider: P,
+        bounds: (u128, u128),
+        metrics: MockTxMetrics,
+    ) -> SimpleTxManager<P, Context> {
+        SimpleTxManager::from_wallet_with_runtime(
+            ctx.clone(),
+            provider,
+            EthereumWallet::from(PrivateKeySigner::random()),
+            TxManagerConfig {
+                num_confirmations: 1,
+                resubmission_timeout: BLOB_RESUBMISSION_TIMEOUT,
+                receipt_query_interval: Duration::from_secs(60),
+                safe_abort_nonce_too_low_count: 10,
+                max_priority_fee_per_gas_per_blob_lower_bound: bounds.0,
+                max_priority_fee_per_gas_per_blob_upper_bound: bounds.1,
+                ..TxManagerConfig::default()
+            },
+            1,
+            Arc::new(metrics),
+        )
+        .await
+        .expect("should construct manager")
+    }
+
+    /// A provider over a mocked client that answers receipt queries itself, under the hashes
+    /// the manager signed: the version published at position `landing` (from 0) is mined at
+    /// block 10 once a replacement has been published, and every other version is pending.
+    /// Versions are numbered in the order their receipts are first polled, which is the
+    /// order they are published in.
+    #[derive(Debug, Clone)]
+    struct LandingProvider {
+        inner: RootProvider,
+        landing: usize,
+        polled: Arc<Mutex<Vec<B256>>>,
+    }
+
+    impl Provider for LandingProvider {
+        fn root(&self) -> &RootProvider {
+            &self.inner
+        }
+
+        fn get_transaction_receipt(
+            &self,
+            hash: B256,
+        ) -> ProviderCall<(B256,), Option<TransactionReceipt>> {
+            let mut polled = self.polled.lock().unwrap();
+            if !polled.contains(&hash) {
+                polled.push(hash);
+            }
+            let mined = polled.len() > 1 && polled[self.landing] == hash;
+            ProviderCall::ready(Ok(mined.then(|| mined_receipt(hash, 10).0)))
+        }
+    }
+
+    /// A blob tx still pending after the resubmission timeout is replaced with doubled fees,
+    /// which raises the fees the next blob txs start from. Whichever version lands, the
+    /// replacement or the first version, the next blob tx then starts at 90% of the
+    /// `max_priority_fee_per_gas` per blob that version paid, and the metrics record that
+    /// value and the replacement.
+    #[rstest]
+    #[case::the_replacement_lands(1, 0.02, 18_000_000)]
+    #[case::the_first_version_lands(0, 0.01, 10_000_000)]
+    fn a_stuck_blob_tx_is_replaced_on_the_timer_and_the_landed_fees_carry_to_the_next_one(
+        #[case] landing: usize,
+        #[case] landed_max_priority_fee_per_gas_per_blob_gwei: f64,
+        #[case] next_max_priority_fee_per_gas_per_blob: u128,
+    ) {
+        Runner::start(Config::seeded(0), move |ctx| async move {
+            // The receipt of each version is polled when it is published, and again 15 s later.
+            let receipt_query_interval = BLOB_RESUBMISSION_TIMEOUT + Duration::from_secs(5);
+            let (_, block) = mined_receipt(B256::ZERO, 10);
+            let asserter = Asserter::new();
+            asserter.push_success(&1u64);
+            push_blob_pricing(&asserter);
+            asserter.push_success(&0u64);
+            asserter.push_success(&B256::ZERO);
+            asserter.push_success(&1u64);
+            // The replacement, signed at the resubmission timeout, and its first poll.
+            push_blob_pricing(&asserter);
+            asserter.push_success(&B256::ZERO);
+            asserter.push_success(&10u64);
+            if landing == 0 {
+                // The first version, polled again.
+                asserter.push_success(&10u64);
+            }
+            // The canonical block of the landed version.
+            asserter.push_success(&Some(&block));
+            let mut metrics = blob_send_metrics();
+            metrics.expect_record_gas_bump().times(1).return_const(());
+            metrics
+                .expect_record_blob_tx_landed()
+                .with(eq(landed_max_priority_fee_per_gas_per_blob_gwei), eq(1))
+                .times(1)
+                .return_const(());
+            let polled = Arc::new(Mutex::new(Vec::new()));
+            let provider =
+                LandingProvider { inner: mocked(&asserter), landing, polled: Arc::clone(&polled) };
+            let mut manager =
+                blob_manager(&ctx, provider, (10_000_000, 10_000_000_000), metrics).await;
+            manager.config.receipt_query_interval = receipt_query_interval;
+            let mut send = Box::pin(manager.send(blob_candidate()));
+            assert!(futures::poll!(&mut send).is_pending());
+            ctx.sleep(BLOB_RESUBMISSION_TIMEOUT - Duration::from_nanos(1)).await;
+            assert_eq!(manager.blob_fee_policy.max_priority_fee_per_gas_per_blob(), 10_000_000);
+            if landing == 0 {
+                // Published, the replacement raises the next blob txs before anything lands.
+                ctx.sleep(Duration::from_nanos(2)).await;
+                assert!(futures::poll!(&mut send).is_pending());
+                assert_eq!(manager.blob_fee_policy.max_priority_fee_per_gas_per_blob(), 20_000_000);
+            }
+
+            let confirmed = send.await.expect("the send should confirm");
+
+            let polled = polled.lock().unwrap().clone();
+            assert_eq!(polled.len(), 2, "the first version and its replacement are published");
+            assert_eq!(confirmed.transaction_hash, polled[landing]);
+            assert_eq!(
+                ctx.now(),
+                if landing == 0 { receipt_query_interval } else { BLOB_RESUBMISSION_TIMEOUT }
+            );
+            assert!(asserter.read_q().is_empty(), "every mocked response should be used");
+            assert_eq!(
+                manager.blob_fee_policy.max_priority_fee_per_gas_per_blob(),
+                next_max_priority_fee_per_gas_per_blob
+            );
+        });
+    }
+
+    /// A first blob tx version the node refuses for its fees, as when a version signed
+    /// before a restart holds its nonce or its priority fee is below the node's minimum, is
+    /// replaced right away instead of failing the send.
+    #[rstest]
+    #[case::replacement_underpriced("replacement transaction underpriced")]
+    #[case::below_minimum_price(
+        "transaction gas price below minimum: gas tip cap 10000000, minimum needed 15000000"
+    )]
+    fn a_first_blob_tx_refused_for_its_fees_is_replaced_right_away(
+        #[case] rejection: &'static str,
+    ) {
+        Runner::start(Config::seeded(0), move |ctx| async move {
+            let tx_hash = B256::with_last_byte(1);
+            let (receipt, block) = mined_receipt(tx_hash, 10);
+            let asserter = Asserter::new();
+            asserter.push_success(&1u64);
+            push_blob_pricing(&asserter);
+            asserter.push_success(&0u64);
+            asserter.push_failure_msg(rejection);
+            push_blob_pricing(&asserter);
+            asserter.push_success(&tx_hash);
+            asserter.push_success(&10u64);
+            asserter.push_success(&Some(&receipt));
+            asserter.push_success(&Some(&block));
+            let mut metrics = blob_send_metrics();
+            metrics.expect_record_gas_bump().never();
+            metrics.expect_record_blob_tx_landed().with(eq(0.02), eq(0)).times(1).return_const(());
+            let manager =
+                blob_manager(&ctx, mocked(&asserter), (10_000_000, 10_000_000_000), metrics).await;
+
+            manager.send(blob_candidate()).await.expect("the send should confirm");
+
+            assert_eq!(ctx.now(), Duration::ZERO);
+            assert!(asserter.read_q().is_empty(), "every mocked response should be used");
+        });
+    }
+
+    /// A blob tx replacement the node refuses for its fees, as when a version whose
+    /// publication got no answer reached the mempool, is replaced right away from the
+    /// refused fees.
+    #[test]
+    fn a_blob_replacement_refused_for_its_fees_is_replaced_right_away() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let tx_hash = B256::with_last_byte(3);
+            let (receipt, block) = mined_receipt(tx_hash, 10);
+            let asserter = Asserter::new();
+            asserter.push_success(&1u64);
+            push_blob_pricing(&asserter);
+            asserter.push_success(&0u64);
+            asserter.push_success(&B256::with_last_byte(1));
+            asserter.push_success(&1u64);
+            asserter.push_success(&Option::<TransactionReceipt>::None);
+            // At the resubmission timeout, the replacement is refused and replaced again.
+            push_blob_pricing(&asserter);
+            asserter.push_failure_msg("replacement transaction underpriced");
+            push_blob_pricing(&asserter);
+            asserter.push_success(&tx_hash);
+            asserter.push_success(&10u64);
+            asserter.push_success(&Some(&receipt));
+            asserter.push_success(&Some(&block));
+            let mut metrics = blob_send_metrics();
+            metrics.expect_record_gas_bump().times(1).return_const(());
+            metrics.expect_record_blob_tx_landed().with(eq(0.04), eq(1)).times(1).return_const(());
+            let manager =
+                blob_manager(&ctx, mocked(&asserter), (10_000_000, 10_000_000_000), metrics).await;
+
+            manager.send(blob_candidate()).await.expect("the send should confirm");
+
+            assert_eq!(ctx.now(), BLOB_RESUBMISSION_TIMEOUT);
+            assert!(asserter.read_q().is_empty(), "every mocked response should be used");
+            assert_eq!(manager.blob_fee_policy.max_priority_fee_per_gas_per_blob(), 36_000_000);
+        });
+    }
+
+    /// A first blob tx version the node already knows, as when the same signed version was
+    /// sent before without an answer, is published as it is: no fee is raised.
+    #[test]
+    fn a_first_blob_tx_already_known_is_published() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let tx_hash = B256::with_last_byte(1);
+            let (receipt, block) = mined_receipt(tx_hash, 10);
+            let asserter = Asserter::new();
+            asserter.push_success(&1u64);
+            push_blob_pricing(&asserter);
+            asserter.push_success(&0u64);
+            asserter.push_failure_msg("already known");
+            asserter.push_success(&10u64);
+            asserter.push_success(&Some(&receipt));
+            asserter.push_success(&Some(&block));
+            let mut metrics = blob_send_metrics();
+            metrics.expect_record_gas_bump().never();
+            metrics.expect_record_blob_tx_landed().with(eq(0.01), eq(0)).times(1).return_const(());
+            let manager =
+                blob_manager(&ctx, mocked(&asserter), (10_000_000, 10_000_000_000), metrics).await;
+
+            manager.send(blob_candidate()).await.expect("the send should confirm");
+
+            assert!(asserter.read_q().is_empty(), "every mocked response should be used");
+        });
+    }
+
+    /// A blob tx whose doubled `max_priority_fee_per_gas` would pass the upper bound is not
+    /// replaced: each resubmission timeout reads the L1 prices, and nothing is signed or
+    /// published.
+    #[test]
+    fn a_blob_tx_at_the_upper_bound_is_not_replaced() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let asserter = Asserter::new();
+            asserter.push_success(&1u64);
+            push_blob_pricing(&asserter);
+            asserter.push_success(&0u64);
+            asserter.push_success(&B256::with_last_byte(1));
+            asserter.push_success(&1u64);
+            asserter.push_success(&Option::<TransactionReceipt>::None);
+            // The L1 prices read at each of the three timeouts, and the gas estimate a
+            // replacement would need.
+            for _ in 0..3 {
+                push_blob_prices(&asserter);
+            }
+            asserter.push_success(&21_000u64);
+            let mut metrics = blob_send_metrics();
+            metrics.expect_record_gas_bump().never();
+            let manager =
+                blob_manager(&ctx, mocked(&asserter), (1_000_000_000, 1_000_000_000), metrics)
+                    .await;
+            let mut send = Box::pin(manager.send(blob_candidate()));
+            assert!(futures::poll!(&mut send).is_pending());
+
+            for _ in 0..3 {
+                ctx.sleep(BLOB_RESUBMISSION_TIMEOUT + Duration::from_nanos(1)).await;
+                assert!(futures::poll!(&mut send).is_pending());
+            }
+
+            assert_eq!(asserter.read_q().len(), 1, "no replacement should be signed");
+            assert_eq!(manager.blob_fee_policy.max_priority_fee_per_gas_per_blob(), 1_000_000_000);
+        });
+    }
+
+    /// A first blob tx version the node refuses for its fees, and whose replacement would
+    /// pass the upper bound, fails the send: nothing was published, so no receipt can come.
+    #[test]
+    fn a_first_blob_tx_refused_for_its_fees_at_the_upper_bound_fails_the_send() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let asserter = Asserter::new();
+            asserter.push_success(&1u64);
+            push_blob_pricing(&asserter);
+            asserter.push_success(&0u64);
+            asserter.push_failure_msg("replacement transaction underpriced");
+            push_blob_prices(&asserter);
+            let mut metrics = blob_send_metrics();
+            metrics.expect_record_gas_bump().never();
+            metrics.expect_record_blob_tx_landed().never();
+            metrics.expect_record_tx_failed().times(1).return_const(());
+            let manager =
+                blob_manager(&ctx, mocked(&asserter), (1_000_000_000, 1_000_000_000), metrics)
+                    .await;
+
+            let result = manager.send(blob_candidate()).await;
+
+            assert_eq!(
+                result.map(|receipt| receipt.transaction_hash),
+                Err(TxManagerError::FeeLimitExceeded {
+                    fee: 2_000_000_000,
+                    ceiling: 1_000_000_000
+                })
+            );
+            assert_eq!(ctx.now(), Duration::ZERO);
+            assert!(asserter.read_q().is_empty(), "every mocked response should be used");
+        });
+    }
+
     // ── should_reset_nonce_on_send_error ───────────────────────────────
 
     #[rstest]
@@ -2770,8 +3170,6 @@ mod tests {
             gas_tip_cap: 5_000_000_000_000,
             gas_fee_cap: 15_000_000_000_000,
             raw_gas_fee_cap: 15_000_000_000_000,
-            blob_fee_cap: None,
-            raw_blob_fee_cap: None,
         };
 
         let prepared = manager
