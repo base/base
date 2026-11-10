@@ -628,7 +628,11 @@ fn render_da_panel(
     f.render_stateful_widget(table, inner, &mut table_state.clone());
 }
 
-const GAS_BAR_CHARS: usize = 20;
+/// Narrowest and widest the gas bar gets as the panel resizes.
+const MIN_GAS_BAR_CHARS: u16 = 10;
+const MAX_GAS_BAR_CHARS: u16 = 60;
+/// Width of every blocks-panel column except the gas bar, plus column spacing.
+const BLOCKS_PANEL_OTHER_COLS_WIDTH: u16 = 10 + 4 + 12 + 3;
 
 fn render_blocks_panel(
     f: &mut Frame<'_>,
@@ -650,7 +654,11 @@ fn render_blocks_panel(
     let inner = block.inner(area);
     f.render_widget(block, area);
 
-    let fixed_cols_width = 4 + (GAS_BAR_CHARS as u16 + 2) + 14 + 3;
+    let gas_bar_chars = inner
+        .width
+        .saturating_sub(BLOCKS_PANEL_OTHER_COLS_WIDTH)
+        .clamp(MIN_GAS_BAR_CHARS, MAX_GAS_BAR_CHARS);
+    let fixed_cols_width = 4 + gas_bar_chars + 12 + 3;
     let block_col_width = inner.width.saturating_sub(fixed_cols_width).clamp(4, 10) as usize;
     let elasticity = resources
         .system_config
@@ -701,7 +709,12 @@ fn render_blocks_panel(
                 Cell::from(Format::truncate_block_number(info.block_number, block_col_width))
                     .style(Style::default().fg(Format::block_color(info.block_number))),
                 Cell::from(info.tx_count.to_string()),
-                Cell::from(build_gas_bar(info.gas_used, info.gas_limit, gas_target, GAS_BAR_CHARS)),
+                Cell::from(build_gas_bar(
+                    info.gas_used,
+                    info.gas_limit,
+                    gas_target,
+                    gas_bar_chars as usize,
+                )),
                 Cell::from(base_fee).style(base_fee_style),
             ])
             .style(style)
@@ -711,8 +724,8 @@ fn render_blocks_panel(
     let widths = [
         Constraint::Max(10),
         Constraint::Length(4),
-        Constraint::Length(GAS_BAR_CHARS as u16 + 2),
-        Constraint::Min(14),
+        Constraint::Length(gas_bar_chars),
+        Constraint::Min(12),
     ];
     let table = Table::new(rows, widths).header(header);
     f.render_stateful_widget(table, inner, &mut table_state.clone());
