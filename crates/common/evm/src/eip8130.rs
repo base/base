@@ -2743,6 +2743,41 @@ mod tests {
         assert_eq!(journal_account_code(&mut evm, sender), ordinary_code);
     }
 
+    /// A delegation must consume the protocol nonce: inclusion accepts it on
+    /// nonce key 0, leaving the delegated account with a non-zero nonce, and
+    /// rejects it on a 2D nonce lane or nonce-free.
+    #[test]
+    fn delegation_requires_protocol_nonce() {
+        let key = signing_key(0x27);
+        let sender = eoa_address(&key);
+        let target = address!("0x00000000000000000000000000000000000000dd");
+        let transact = |nonce_key: U256| {
+            let mut tx = base_tx();
+            tx.nonce_key = nonce_key;
+            tx.account_changes = vec![AccountChange::Delegation(Delegation { target })];
+            let signed = eoa_signed(tx, &key);
+            let mut evm = evm_with(U256::from(10u64).pow(U256::from(18u64)), sender);
+            evm.transact_raw(into_base_tx(&signed))
+        };
+
+        let outcome = transact(U256::ZERO).expect("delegation on the protocol nonce executes");
+        assert!(outcome.result.is_success());
+        let sender_acc = outcome.state.get(&sender).expect("sender in state");
+        assert_eq!(sender_acc.info.nonce, 1);
+        assert!(!sender_acc.info.is_empty_code_hash(), "delegation indicator must be installed");
+
+        for nonce_key in [U256::from(7), Eip8130Constants::NONCE_KEY_MAX] {
+            let error = transact(nonce_key).unwrap_err();
+            let EVMError::Transaction(BaseTransactionError::Eip8130(reason)) = error else {
+                panic!("a delegation off the protocol nonce must reject inclusion, got {error:?}");
+            };
+            assert!(
+                reason.contains("must use the protocol nonce"),
+                "unexpected rejection: {reason}"
+            );
+        }
+    }
+
     #[test]
     fn explicit_zero_delegation_remains_cleared() {
         let key = signing_key(0x24);

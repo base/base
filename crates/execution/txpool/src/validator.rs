@@ -1783,6 +1783,9 @@ where
                 Self::eip8130_error("nonce-free transaction has a non-zero nonce sequence")
             }
             NonceError::SequenceSaturated => Self::eip8130_error("nonce sequence is saturated"),
+            NonceError::DelegationRequiresProtocolNonce => {
+                Self::eip8130_error("delegation requires the protocol nonce")
+            }
             NonceError::Storage(_) => Self::eip8130_error("nonce state read failed"),
         }
     }
@@ -4046,6 +4049,31 @@ mod tests {
         assert_eq!(state.payer, sender);
         assert_eq!(state.sender_bytecode_hash, None);
         assert!(state.watch_set.iter().any(|key| *key == InvalidationKey::CodeHash(sender)));
+    }
+
+    /// Admission applies the same rule as inclusion: a delegation must use the
+    /// protocol nonce, so it is rejected on a 2D nonce lane (here at the lane's
+    /// current sequence) and nonce-free (here within its validity window).
+    #[test]
+    fn rejects_delegation_off_protocol_nonce() {
+        let now_ms = 1_700_000_000_000;
+        for (nonce_key, valid_before) in
+            [(U256::from(7), 0), (Eip8130Constants::NONCE_KEY_MAX, now_ms + 10_000)]
+        {
+            let signer = PrivateKeySigner::random();
+            let (validator, signed, _) = delegation_validation_fixture(&signer, None);
+            let header =
+                alloy_consensus::Header { timestamp: now_ms / 1_000, ..Default::default() };
+            validator.update_l1_block_info::<_, TxEip1559>(&header, &[]);
+            let tx = TxEip8130 { nonce_key, valid_before, ..signed.tx().clone() };
+            let sender_auth = k1_auth_blob(&signer, tx.sender_signature_hash()).slice(20..);
+            let signed = Eip8130Signed::new(tx, sender_auth, Bytes::new());
+
+            assert_eip8130_validation_reason(
+                validator.validate_eip8130_full(&signed),
+                "delegation requires the protocol nonce",
+            );
+        }
     }
 
     #[test]
