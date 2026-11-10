@@ -17,7 +17,7 @@ Global options:
 
 | Flag                    | Default   | Description                                                                                                                                                                                                                                                                 |
 | ----------------------- | --------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `-c, --config <CONFIG>` | `mainnet` | Chain config: `mainnet`, `sepolia`, `devnet`, or a path to a config file                                                                                                                                                                                                    |
+| `-c, --config <CONFIG>` | `mainnet` | Chain config: `mainnet`, `sepolia`, `devnet`, or a path to a config file. Set via `BASECTL_CONFIG`.                                                                                                                                                                                                    |
 | `--conductor-rpc <URL>` |           | Bootstrap conductor JSON-RPC URL for runtime cluster discovery when the chain config has no hardcoded conductor list. Used by `basectl conductor` and `basectl sequencer`. If omitted, basectl uses `discovery.bootstrap_rpc` from config. Set via `BASECTL_CONDUCTOR_RPC`. |
 
 The built-in mainnet and Sepolia configs target a local node at
