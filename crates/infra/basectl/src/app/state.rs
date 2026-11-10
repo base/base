@@ -10,6 +10,9 @@ use crate::rpc::{BlockDaInfo, L1BlockInfo};
 pub const BLOB_SIZE: u64 = 128 * 1024;
 /// Maximum number of L1 blocks, and of already-safe L2 blocks, retained in history buffers.
 pub const MAX_HISTORY: usize = 1000;
+/// Most L2 blocks kept in DA history, safe or not: about 33 minutes at 200ms
+/// blocks. Bounds memory and per-block work when the safe head stalls or is unknown.
+pub const MAX_TRACKED_BLOCKS: usize = 10_000;
 
 /// Timeout for terminal event polling.
 pub const EVENT_POLL_TIMEOUT: Duration = Duration::from_millis(100);
@@ -215,6 +218,11 @@ pub struct DaTracker {
     ///
     /// Used to compute the delta of L2 blocks to attribute to the next L1 blob block.
     last_attributed_safe_l2: u64,
+    /// DA bytes of unsafe blocks evicted past [`MAX_TRACKED_BLOCKS`], still counted
+    /// in `da_backlog_bytes` until the safe head passes them all.
+    evicted_unsafe_bytes: u64,
+    /// Newest block whose bytes are in `evicted_unsafe_bytes`.
+    evicted_unsafe_through: u64,
 }
 
 impl Default for DaTracker {
@@ -235,6 +243,8 @@ impl DaTracker {
             burn_tracker: RateTracker::new(),
             last_base_blob_time: None,
             last_attributed_safe_l2: 0,
+            evicted_unsafe_bytes: 0,
+            evicted_unsafe_through: 0,
         }
     }
 
@@ -248,16 +258,25 @@ impl DaTracker {
     /// Prepends a block contribution. Does not update backlog totals or growth samples.
     pub fn add_backlog_block(&mut self, info: BlockDaInfo) {
         self.block_contributions.push_front(info);
-        self.evict_safe_history();
+        self.evict_history();
     }
 
-    /// Drops the oldest blocks past `MAX_HISTORY`, but never an unsafe one: the
-    /// backlog total subtracts each block's bytes when it becomes safe.
-    fn evict_safe_history(&mut self) {
+    /// Drops the oldest safe blocks past `MAX_HISTORY`, keeping unsafe ones so the
+    /// backlog total can subtract each block's bytes when it becomes safe. Past
+    /// `MAX_TRACKED_BLOCKS`, unsafe blocks are dropped too and their bytes kept as
+    /// one sum that [`Self::update_safe_head`] releases once it passes them all.
+    fn evict_history(&mut self) {
         while self.block_contributions.len() > MAX_HISTORY
             && self.block_contributions.back().is_some_and(|b| b.block_number <= self.safe_l2_block)
         {
             self.block_contributions.pop_back();
+        }
+        while self.block_contributions.len() > MAX_TRACKED_BLOCKS {
+            let Some(evicted) = self.block_contributions.pop_back() else { break };
+            if evicted.block_number > self.safe_l2_block {
+                self.evicted_unsafe_bytes += evicted.da_bytes;
+                self.evicted_unsafe_through = self.evicted_unsafe_through.max(evicted.block_number);
+            }
         }
     }
 
@@ -298,7 +317,7 @@ impl DaTracker {
             .position(|c| c.block_number < block_number)
             .unwrap_or(self.block_contributions.len());
         self.block_contributions.insert(insert_pos, info);
-        self.evict_safe_history();
+        self.evict_history();
     }
 
     /// Updates the safe head and subtracts newly safe block bytes from the backlog.
@@ -310,18 +329,23 @@ impl DaTracker {
         let old_safe = self.safe_l2_block;
         self.safe_l2_block = safe_block;
 
-        let submitted_bytes: u64 = self
+        let mut submitted_bytes: u64 = self
             .block_contributions
             .iter()
             .filter(|c| c.block_number > old_safe && c.block_number <= safe_block)
             .map(|c| c.da_bytes)
             .sum();
 
+        // Evicted unsafe bytes are only known as a sum, so release them all at once.
+        if self.evicted_unsafe_bytes > 0 && safe_block >= self.evicted_unsafe_through {
+            submitted_bytes += std::mem::take(&mut self.evicted_unsafe_bytes);
+        }
+
         self.da_backlog_bytes = self.da_backlog_bytes.saturating_sub(submitted_bytes);
         self.burn_tracker.add_sample(submitted_bytes);
 
         self.try_attribute_l2_to_l1();
-        self.evict_safe_history();
+        self.evict_history();
     }
 
     /// Records a new L1 block and attempts to attribute L2 blocks to it.
@@ -462,7 +486,7 @@ impl DaTracker {
 
 #[cfg(test)]
 mod tests {
-    use super::{DaTracker, MAX_HISTORY};
+    use super::{DaTracker, MAX_HISTORY, MAX_TRACKED_BLOCKS};
     use crate::rpc::BlockDaInfo;
 
     #[test]
@@ -484,5 +508,27 @@ mod tests {
 
         assert_eq!(tracker.da_backlog_bytes, 0);
         assert_eq!(tracker.block_contributions.len(), MAX_HISTORY);
+    }
+
+    #[test]
+    fn history_is_capped_without_a_safe_head_and_keeps_an_exact_backlog() {
+        let mut tracker = DaTracker::new();
+        let blocks = MAX_TRACKED_BLOCKS as u64 + 5;
+        for block_number in 1..=blocks {
+            tracker.update_block_info(BlockDaInfo {
+                block_number,
+                da_bytes: 10,
+                ..Default::default()
+            });
+        }
+        assert_eq!(tracker.block_contributions.len(), MAX_TRACKED_BLOCKS);
+        assert_eq!(tracker.da_backlog_bytes, blocks * 10);
+
+        // Inside the evicted range only the tracked bytes are known, so they alone drain.
+        tracker.update_safe_head(3);
+        assert_eq!(tracker.da_backlog_bytes, blocks * 10);
+
+        tracker.update_safe_head(blocks);
+        assert_eq!(tracker.da_backlog_bytes, 0);
     }
 }
