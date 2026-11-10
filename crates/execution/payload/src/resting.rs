@@ -274,7 +274,7 @@ impl RestingPredicates {
     ) -> bool {
         conditions.contains(predicate)
             && (member.rested_block == block_number
-                || !conditions.is_expired(&PredicateContext { block_number, flashblock_index: 0 }))
+                || !conditions.is_expired(&PredicateContext { block_number }))
     }
 
     /// Returns members whose predicate may have changed in `state`, one committed transaction's

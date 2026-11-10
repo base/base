@@ -18,7 +18,7 @@ use base_common_consensus::{BaseTransaction, DepositReceiptExt, Predeploys};
 use base_common_evm::{BaseSpecId, L1BlockInfo, MeteredGas};
 use base_execution_eip8130::IntrinsicGas;
 use base_execution_txpool::{
-    BasePooledTx, GuardMetrics, ParkableTransactionPool, PredicateContext,
+    BasePooledTx, GuardMetrics, ParkableTransactionPool, PredicateContext, ValidityPredicate,
     estimated_da_size::DataAvailabilitySized,
 };
 use base_observability_events::{
@@ -1046,7 +1046,7 @@ where
         let base_fee = builder.evm_mut().block().basefee();
         let block_number =
             builder.evm_mut().block().number().try_into().expect("block number must fit in u64");
-        let predicate_context = PredicateContext { block_number, flashblock_index: 0 };
+        let predicate_context = PredicateContext { block_number };
         let mut predicate_index =
             ParkedPredicateIndex::new(self.builder_config.predicate_bucket_ordered_threshold);
         let mut predicate_loads = PredicateLoadTracker::default();
@@ -1117,7 +1117,11 @@ where
             if has_validity_predicates {
                 validity_consideration_index += 1;
             }
-            if tx.validity_conditions().flashblock().is_present() {
+            if tx
+                .validity_conditions()
+                .submitted()
+                .any(|predicate| matches!(predicate, ValidityPredicate::FlashblockIndex { .. }))
+            {
                 evaluation_counters.increment(ValidityEvaluationOutcome::Unsupported, 1);
                 emit_native_validity_event!(
                     self,
