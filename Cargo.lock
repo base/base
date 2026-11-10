@@ -3787,6 +3787,7 @@ dependencies = [
  "base-common-chains",
  "base-common-genesis",
  "base-common-network",
+ "base-common-rpc-types-engine",
  "base-consensus-derive",
  "base-consensus-disc",
  "base-consensus-engine",
@@ -4541,6 +4542,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror 2.0.21",
+ "tokio",
  "tracing",
 ]
 

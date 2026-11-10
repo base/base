@@ -54,6 +54,27 @@ impl FromExtensionConfig for MyExtension {
 }
 ```
 
+## Frozen payload notifications
+
+`LaunchedBaseNode::payload_ready` is a bounded, in-process EL-to-CL channel carrying
+`PayloadReady { payload_id, parent_hash }`. The default payload builder sends a hint only
+after a sequencer build returns `Freeze`, including completed state-root computation.
+Pre-Denim improvements, failed or cancelled builds, and `no_tx_pool` replay builds do not
+send hints. Custom payload services must explicitly wire `BaseNode::payload_ready` if
+they support this contract.
+
+The receiver exists before node launch so fast builds cannot race subscription. Sending
+never waits for the consumer. The channel retains 16 hints; receivers must handle lag or
+closure by retaining their normal seal deadline, and must match both identifiers against
+the active build before acting. `getPayload` awaits the completed build even if the hint
+arrives just before reth installs its result into the payload job.
+
+The unified sequencer matches these hints against its active Denim build and calls
+`getPayload` through the existing seal path immediately. Conductor commit, gossip, and
+local insertion keep their existing order. The scheduled seal remains the fallback, and
+the next block's build still waits for its parent's scheduled timestamp. Split EL/CL
+deployments have no IPC/WS subscription and continue using the scheduled seal.
+
 ## License
 
 Licensed under the [MIT License](https://github.com/base/base/blob/main/LICENSE).
