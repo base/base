@@ -463,52 +463,57 @@ fn render_config_panel(f: &mut Frame<'_>, area: Rect, resources: &Resources) {
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Magenta));
 
-    let content = resources.system_config.as_ref().map_or_else(
-        || vec![Line::from(Span::styled("Loading...", Style::default().fg(Color::DarkGray)))],
-        |sys| {
-            // Show per-block values: after Denim the L2 applies the L1 values scaled.
-            let newest_block_time = resources.da.tracker.block_contributions.front().map_or_else(
-                || chrono::Utc::now().timestamp().max(0) as u64,
-                |block| block.timestamp,
-            );
-            let scaling = resources.config.denim_gas_scaling(newest_block_time);
-            let gas_limit = sys.gas_limit / u64::from(scaling);
-            let elasticity = sys.eip1559_elasticity.unwrap_or(0) as u64;
-            let gas_target = gas_limit.checked_div(elasticity).unwrap_or(0);
-            let denominator = sys.eip1559_denominator.unwrap_or(0).saturating_mul(scaling);
+    // Gas parameters come from the newest L2 header: the L2 applies its own values,
+    // which can differ from the L1 `SystemConfig` (Denim scaled them once at activation).
+    let gas_line = resources.da.tracker.block_contributions.front().map_or_else(
+        || Line::from(Span::styled("Waiting for blocks...", Style::default().fg(Color::DarkGray))),
+        |block| {
+            let elasticity = block.eip1559_elasticity.filter(|&e| e > 0);
+            let gas_target = elasticity.map(|e| block.gas_limit / u64::from(e));
+            let param = |value: Option<String>| value.unwrap_or_else(|| "-".to_string());
+            Line::from(vec![
+                Span::styled("Target: ", Style::default().fg(Color::DarkGray)),
+                Span::styled(
+                    param(gas_target.map(format_gas_value)),
+                    Style::default().fg(Color::Green),
+                ),
+                Span::raw("  "),
+                Span::styled("Limit: ", Style::default().fg(Color::DarkGray)),
+                Span::styled(format_gas_value(block.gas_limit), Style::default().fg(Color::Cyan)),
+                Span::raw("  "),
+                Span::styled("E/D: ", Style::default().fg(Color::DarkGray)),
+                Span::styled(
+                    format!(
+                        "{}/{}",
+                        param(block.eip1559_elasticity.map(|e| e.to_string())),
+                        param(block.eip1559_denominator.map(|d| d.to_string()))
+                    ),
+                    Style::default().fg(Color::Cyan),
+                ),
+            ])
+        },
+    );
 
+    let scalars_line = resources.system_config.as_ref().map_or_else(
+        || Line::from(Span::styled("Loading...", Style::default().fg(Color::DarkGray))),
+        |sys| {
             let basefee_scalar =
                 sys.base_fee_scalar.map(|s| s.to_string()).unwrap_or_else(|| "-".to_string());
             let blobbasefee_scalar =
                 sys.blob_base_fee_scalar.map(|s| s.to_string()).unwrap_or_else(|| "-".to_string());
 
-            vec![
-                Line::from(vec![
-                    Span::styled("Target: ", Style::default().fg(Color::DarkGray)),
-                    Span::styled(format_gas_value(gas_target), Style::default().fg(Color::Green)),
-                    Span::raw("  "),
-                    Span::styled("Limit: ", Style::default().fg(Color::DarkGray)),
-                    Span::styled(format_gas_value(gas_limit), Style::default().fg(Color::Cyan)),
-                    Span::raw("  "),
-                    Span::styled("E/D: ", Style::default().fg(Color::DarkGray)),
-                    Span::styled(
-                        format!("{elasticity}/{denominator}"),
-                        Style::default().fg(Color::Cyan),
-                    ),
-                ]),
-                Line::from(vec![
-                    Span::styled("DA Scalars: ", Style::default().fg(Color::DarkGray)),
-                    Span::styled("base=", Style::default().fg(Color::DarkGray)),
-                    Span::styled(basefee_scalar, Style::default().fg(Color::Yellow)),
-                    Span::raw(" "),
-                    Span::styled("blob=", Style::default().fg(Color::DarkGray)),
-                    Span::styled(blobbasefee_scalar, Style::default().fg(Color::Yellow)),
-                ]),
-            ]
+            Line::from(vec![
+                Span::styled("DA Scalars: ", Style::default().fg(Color::DarkGray)),
+                Span::styled("base=", Style::default().fg(Color::DarkGray)),
+                Span::styled(basefee_scalar, Style::default().fg(Color::Yellow)),
+                Span::raw(" "),
+                Span::styled("blob=", Style::default().fg(Color::DarkGray)),
+                Span::styled(blobbasefee_scalar, Style::default().fg(Color::Yellow)),
+            ])
         },
     );
 
-    let para = Paragraph::new(content).block(block);
+    let para = Paragraph::new(vec![gas_line, scalars_line]).block(block);
     f.render_widget(para, area);
 }
 
@@ -691,13 +696,6 @@ fn render_blocks_panel(
         .clamp(MIN_GAS_BAR_CHARS, MAX_GAS_BAR_CHARS);
     let fixed_cols_width = 4 + gas_bar_chars + 12 + 3;
     let block_col_width = inner.width.saturating_sub(fixed_cols_width).clamp(4, 10) as usize;
-    let elasticity = resources
-        .system_config
-        .as_ref()
-        .and_then(|sys| sys.eip1559_elasticity)
-        .filter(|&e| e > 0)
-        .map(u64::from);
-
     let header_style = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
     let header = Row::new(vec![
         Cell::from("Block").style(header_style),
@@ -736,7 +734,8 @@ fn render_blocks_panel(
                 .base_fee_per_gas
                 .map_or_else(|| "-".to_string(), |fee| Format::fee_per_gas(u128::from(fee)));
 
-            let gas_target = elasticity.map(|e| info.gas_limit / e);
+            let gas_target =
+                info.eip1559_elasticity.filter(|&e| e > 0).map(|e| info.gas_limit / u64::from(e));
 
             Row::new(vec![
                 Cell::from(Format::truncate_block_number(info.block_number, block_col_width))
