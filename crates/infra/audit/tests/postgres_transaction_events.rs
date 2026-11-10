@@ -629,6 +629,81 @@ async fn postgres_ingested_at_btree_covers_extraction_planning() -> anyhow::Resu
     Ok(())
 }
 
+/// Migration 009 indexes only empty day partitions, 010 drops the hash-leading
+/// index, and lookups by hash skip the partitions populated before 009.
+#[tokio::test]
+async fn postgres_tx_hash_lookup_uses_hour_leading_index() -> anyhow::Result<()> {
+    const INDEXED_PARTITIONS_SQL: &str = "SELECT c.relname::text FROM pg_index x \
+         JOIN pg_class c ON c.oid = x.indrelid \
+         JOIN pg_inherits i ON i.inhrelid = x.indexrelid \
+         WHERE i.inhparent = 'transaction_events_v2_hot_event_hour_tx_hash_idx'::regclass \
+         ORDER BY 1";
+    const TX_HASH: &str = "0x1111111111111111111111111111111111111111111111111111111111111111";
+
+    let harness = PostgresHarness::new().await?;
+    harness.create_grantee_roles().await?;
+    let pool = PgPoolOptions::new().max_connections(1).connect(&harness.database_url).await?;
+    Migrator::new(migrations_through(8)?).await?.run(&pool).await?;
+    let sink = PgTransactionEventSink::connect(&harness.database_url, 1).await?;
+    let before = unique_event_id();
+    sink.insert_events(&[event(&before)]).await?;
+    let ids = |records: Vec<TransactionEventRecord>| {
+        records.into_iter().map(|record| record.event.event_id).collect::<Vec<_>>()
+    };
+    assert_eq!(
+        ids(sink.events_by_transaction_hash(TX_HASH, 10).await?),
+        vec![before],
+        "before 009 the lookup uses the hash-leading index"
+    );
+
+    let today_partition =
+        format!("transaction_events_v2_hot_{}", Utc::now().date_naive().format("%Y%m%d"));
+    let seeded_partitions = hot_partitions(&pool).await?;
+    assert!(seeded_partitions.contains(&today_partition));
+
+    PgTransactionEventSink::migrate(&harness.database_url).await?;
+    let indexed: Vec<String> = sqlx::query_scalar(INDEXED_PARTITIONS_SQL).fetch_all(&pool).await?;
+    let expected: Vec<String> =
+        seeded_partitions.iter().filter(|name| **name != today_partition).cloned().collect();
+    assert_eq!(indexed, expected, "only empty seeded partitions are indexed");
+    let old_index: Option<String> = sqlx::query_scalar(
+        "SELECT to_regclass('public.transaction_events_v2_tx_hash_event_time_idx')::text",
+    )
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(old_index, None, "010 drops the hash-leading index");
+    assert!(
+        sink.events_by_transaction_hash(TX_HASH, 10).await?.is_empty(),
+        "the lookup skips the partition populated before 009"
+    );
+
+    let new_day = Utc::now().date_naive() + chrono::Duration::days(30);
+    let created: bool =
+        sqlx::query_scalar("SELECT public.transaction_events_v2_create_partition('hot', $1)")
+            .bind(new_day)
+            .fetch_one(&pool)
+            .await?;
+    assert!(created);
+    let new_partition = format!("transaction_events_v2_hot_{}", new_day.format("%Y%m%d"));
+    let indexed: Vec<String> = sqlx::query_scalar(INDEXED_PARTITIONS_SQL).fetch_all(&pool).await?;
+    assert!(indexed.contains(&new_partition), "{new_partition} has no hash index");
+
+    let mut conn = pool.acquire().await?;
+    conn.execute("SET enable_seqscan = off").await?;
+    let hour = new_day.and_hms_opt(5, 0, 0).unwrap().and_utc();
+    let plan: Vec<String> = sqlx::query_scalar(&format!(
+        "EXPLAIN SELECT event_id FROM public.{new_partition} \
+         WHERE tx_hash = '{TX_HASH}' AND event_hour = ANY(ARRAY['{}'::timestamptz])",
+        hour.to_rfc3339()
+    ))
+    .fetch_all(&mut *conn)
+    .await?;
+    let plan = plan.join("\n");
+    assert!(plan.contains("event_hour_tx_hash_idx"), "hash lookup does not use the index:\n{plan}");
+
+    Ok(())
+}
+
 #[tokio::test]
 async fn postgres_rejected_index_includes_builder_expired() -> anyhow::Result<()> {
     let harness = PostgresHarness::new().await?;

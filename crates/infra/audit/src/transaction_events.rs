@@ -18,7 +18,7 @@ use axum::{
     routing::post,
 };
 use base_observability_events::{TransactionEvent, TransactionEventProducer, TransactionEventType};
-use chrono::{DateTime, Duration, DurationRound, NaiveDate, Utc};
+use chrono::{DateTime, Duration, DurationRound, NaiveDate, NaiveTime, Utc};
 use serde::{
     Deserialize, Serialize,
     de::{
@@ -1090,17 +1090,41 @@ impl PgTransactionEventSink {
     }
 
     /// Returns events for one transaction hash sorted by event time.
+    ///
+    /// Searches every hour of the day partitions that carry the hour-leading
+    /// hash index from migration 009. Days populated before that migration
+    /// have no hash index; they are skipped rather than scanned, so their
+    /// events are not returned. Until 009 is applied, the lookup uses the
+    /// hash-leading index instead.
     pub async fn events_by_transaction_hash(
         &self,
         tx_hash: &str,
         limit: i64,
     ) -> Result<Vec<TransactionEventRecord>> {
         let limit = normalize_limit(limit);
-        let rows = sqlx::query(&oldest_first_sql("tx_hash = $1"))
-            .bind(canonical_hash_key(tx_hash))
-            .bind(limit)
-            .fetch_all(&self.pool)
-            .await?;
+        let Some(tx_hash) = canonical_hash_key(tx_hash) else {
+            return Ok(Vec::new());
+        };
+        let indexed: (bool, Option<NaiveDate>, Option<NaiveDate>) =
+            sqlx::query_as(TX_HASH_INDEXED_DAYS_SQL).fetch_one(&self.pool).await?;
+        let rows = match indexed {
+            (false, _, _) => {
+                sqlx::query(&oldest_first_sql("tx_hash = $1"))
+                    .bind(tx_hash)
+                    .bind(limit)
+                    .fetch_all(&self.pool)
+                    .await?
+            }
+            (true, Some(first_day), Some(last_day)) => {
+                sqlx::query(&oldest_first_sql("tx_hash = $1 AND event_hour = ANY($3)"))
+                    .bind(tx_hash)
+                    .bind(limit)
+                    .bind(hours_of_days(first_day, last_day))
+                    .fetch_all(&self.pool)
+                    .await?
+            }
+            (true, _, _) => return Ok(Vec::new()),
+        };
         rows.into_iter().map(record_from_row).collect()
     }
 
@@ -1212,6 +1236,42 @@ const READ_COLUMNS: &str = "event_id, schema_version, event_time, ingested_at, p
 /// Event types served by the rejected-events list.
 const REJECTED_EVENT_TYPES_SQL: &str =
     "event_type IN ('SIMULATION_FAILED', 'BUILDER_REJECTED', 'BUILDER_EXPIRED')";
+
+/// Whether migration 009's hour-leading hash index exists, and the first and
+/// last day whose partitions carry it.
+///
+/// The first day is the day after the newest day partition without the index,
+/// so a lookup never reaches a partition it would have to scan. Day
+/// partitions are named `<class parent>_YYYYMMDD`.
+const TX_HASH_INDEXED_DAYS_SQL: &str = "\
+    WITH days AS ( \
+        SELECT to_date(right(c.relname, 8), 'YYYYMMDD') AS day, \
+               EXISTS ( \
+                   SELECT 1 FROM pg_inherits ii \
+                   JOIN pg_index x ON x.indexrelid = ii.inhrelid \
+                   WHERE x.indrelid = c.oid \
+                     AND ii.inhparent = \
+                         to_regclass('public.' || p.relname || '_event_hour_tx_hash_idx') \
+               ) AS indexed \
+        FROM pg_inherits i \
+        JOIN pg_class p ON p.oid = i.inhparent \
+        JOIN pg_class c ON c.oid = i.inhrelid \
+        WHERE p.relname IN ('transaction_events_v2_hot', 'transaction_events_v2_warm', \
+                            'transaction_events_v2_cold') \
+    ) \
+    SELECT to_regclass('public.transaction_events_v2_event_hour_tx_hash_idx') IS NOT NULL, \
+           GREATEST(min(day) FILTER (WHERE indexed), max(day) FILTER (WHERE NOT indexed) + 1), \
+           max(day) FILTER (WHERE indexed) \
+    FROM days";
+
+/// Every UTC hour from the start of `first_day` to the end of `last_day`.
+fn hours_of_days(first_day: NaiveDate, last_day: NaiveDate) -> Vec<DateTime<Utc>> {
+    let start = first_day.and_time(NaiveTime::MIN).and_utc();
+    let end = last_day.and_time(NaiveTime::MIN).and_utc() + Duration::days(1);
+    std::iter::successors(Some(start), |hour| Some(*hour + Duration::hours(1)))
+        .take_while(|hour| *hour < end)
+        .collect()
+}
 
 /// Oldest-first rows matching `filter`, limited by the `$2` bind.
 fn oldest_first_sql(filter: &str) -> String {
