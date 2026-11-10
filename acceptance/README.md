@@ -161,13 +161,6 @@ cargo run -p base-acceptance-cli -- aggregate --expected expected.json \
   --results downloaded-results --output target/acceptance/aggregate
 ```
 
-The CI-only `publish` command validates aggregate artifacts and safely updates the
-marker-owned PR comment. Its `GitHub` credentials and provenance inputs are supplied
-by the trusted-base publication job; it is not part of the local runner workflow.
-It accepts `--event`, `--result`, `--expected`, `--run-id`, `--attempt`, and
-`--started-at`, with `GITHUB_TOKEN`, `GITHUB_REPOSITORY`, `TESTED_SHA`, and optional
-`BOT_LOGIN` in the environment.
-
 If a managed process is killed before cleanup, recover only the resources named
 by its private ownership manifest:
 
@@ -203,19 +196,7 @@ Check and lifecycle statuses are `passed`, `failed`, `error`, `blocked`, and
 means invalid invocation/configuration, and 3 means infrastructure prevented a
 complete evaluation. Infrastructure takes precedence when outcomes are mixed.
 
-The advisory Depot workflow validates scenarios, runs one selected shard, uploads
-its report bundle, and strictly aggregates expected results. Reports are artifacts;
-PR publication is available only when the trusted base revision contains the
-publisher. Same-repository PRs run smoke automatically; manual dispatch selects
-any checked-in scenario. The publisher updates only its marker-owned
-`depot-code-access[bot]` comment (override with the `BOT_LOGIN` repository variable
-for a different bot). Reports remain artifact-only on the first introduction PR.
-
-The publisher treats artifacts as data and validates their identity, schema, and
-expected check sets. Both the results and expected manifest come from PR-controlled
-code: a passing advisory comment is not an independent attestation that tests ran.
-Trusted rendering protects the publisher's credentials, not the truth of those
-observations; review the scenario and runner changes alongside the results.
+No CI workflow currently runs acceptance scenarios; run them locally.
 
 ## Testing the runner and report
 
