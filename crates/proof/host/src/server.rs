@@ -30,19 +30,25 @@ where
 
     /// Starts the [`PreimageServer`] and waits for incoming requests.
     pub async fn start(self) -> Result<(), HostError> {
-        let server = spawn(
+        let mut server = spawn(
             Self::start_oracle_server(self.oracle_server, Arc::clone(&self.backend))
                 .instrument(info_span!("oracle_server_loop")),
         );
-        let hint_router = spawn(
+        let mut hint_router = spawn(
             Self::start_hint_router(self.hint_reader, Arc::clone(&self.backend))
                 .instrument(info_span!("hint_router_loop")),
         );
 
-        tokio::select! {
-            s = server => s.map_err(|e| HostError::Custom(e.to_string()))?,
-            h = hint_router => h.map_err(|e| HostError::Custom(e.to_string()))?,
-        }
+        let (finished, sibling) = tokio::select! {
+            s = &mut server => (s, hint_router),
+            h = &mut hint_router => (h, server),
+        };
+        sibling.abort();
+        // The sibling's outcome is irrelevant once the first task has finished; awaiting it only
+        // ensures it no longer holds the channels or the backend when `start` returns.
+        let _ = sibling.await;
+
+        finished.map_err(|e| HostError::Custom(e.to_string()))?
     }
 
     async fn start_oracle_server(oracle_server: P, backend: Arc<B>) -> Result<(), HostError> {
@@ -71,5 +77,75 @@ where
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use async_trait::async_trait;
+    use base_proof_preimage::{
+        HintRouter, PreimageFetcher, PreimageKey,
+        errors::{ChannelError, PreimageOracleResult},
+    };
+    use tokio::sync::oneshot;
+
+    use super::*;
+
+    /// Oracle server whose client has already disconnected.
+    struct DisconnectedOracleServer;
+
+    #[async_trait]
+    impl PreimageOracleServer for DisconnectedOracleServer {
+        async fn next_preimage_request<F>(&self, _: &F) -> PreimageOracleResult<()>
+        where
+            F: PreimageFetcher + Send + Sync,
+        {
+            Err(PreimageOracleError::IOError(ChannelError::Closed))
+        }
+    }
+
+    /// Hint reader that never receives a hint and reports when it is dropped.
+    struct IdleHintReader {
+        _dropped: oneshot::Sender<()>,
+    }
+
+    #[async_trait]
+    impl HintReaderServer for IdleHintReader {
+        async fn next_hint<R>(&self, _: &R) -> PreimageOracleResult<()>
+        where
+            R: HintRouter + Send + Sync,
+        {
+            std::future::pending().await
+        }
+    }
+
+    struct UnusedBackend;
+
+    #[async_trait]
+    impl PreimageFetcher for UnusedBackend {
+        async fn get_preimage(&self, _: PreimageKey) -> PreimageOracleResult<Vec<u8>> {
+            Err(PreimageOracleError::KeyNotFound)
+        }
+    }
+
+    #[async_trait]
+    impl HintRouter for UnusedBackend {
+        async fn route_hint(&self, _: String) -> PreimageOracleResult<()> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn start_stops_hint_router_when_oracle_server_finishes() {
+        let (dropped_tx, mut dropped_rx) = oneshot::channel();
+        let server = PreimageServer::new(
+            DisconnectedOracleServer,
+            IdleHintReader { _dropped: dropped_tx },
+            Arc::new(UnusedBackend),
+        );
+
+        server.start().await.expect("oracle server disconnect is a clean shutdown");
+
+        assert_eq!(dropped_rx.try_recv(), Err(oneshot::error::TryRecvError::Closed));
     }
 }
