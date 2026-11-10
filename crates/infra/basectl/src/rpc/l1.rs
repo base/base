@@ -228,8 +228,9 @@ impl<'a, P: Provider> L1BlobScanner<'a, P> {
     /// Sends blob info for every block after the last one scanned, up to `head`.
     ///
     /// Stops at the first block that fails to fetch without moving past it, so
-    /// the next call retries that block instead of losing its blobs. Breaks when
-    /// `result_tx` is closed.
+    /// the next call retries that block instead of losing its blobs. A block
+    /// whose response cannot be decoded is skipped, since retrying would not fix
+    /// it. Breaks when `result_tx` is closed.
     pub async fn scan_to(
         &mut self,
         head: u64,
@@ -247,6 +248,11 @@ impl<'a, P: Provider> L1BlobScanner<'a, P> {
                 Ok(None) => {
                     debug!(block = block_num, "L1 block not found yet");
                     return ControlFlow::Continue(());
+                }
+                Err(error) if error.is_deser_error() || error.is_ser_error() => {
+                    warn!(error = %error, block = block_num, "Skipping L1 block that cannot be decoded");
+                    self.last_scanned = Some(block_num);
+                    continue;
                 }
                 Err(error) => {
                     debug!(error = %error, block = block_num, "L1 block fetch failed");
@@ -325,5 +331,24 @@ mod tests {
         let scanned: Vec<u64> =
             std::iter::from_fn(|| result_rx.try_recv().ok()).map(|b| b.block_number).collect();
         assert_eq!(scanned, [10, 11, 12]);
+    }
+
+    #[tokio::test]
+    async fn scanner_skips_a_block_that_cannot_be_decoded() {
+        let asserter = Asserter::new();
+        let provider = ProviderBuilder::new().connect_mocked_client(asserter.clone());
+        let mut scanner = L1BlobScanner::new(&provider, Address::ZERO);
+        let (result_tx, mut result_rx) = mpsc::channel(10);
+
+        asserter.push_success(&block(10));
+        assert!(scanner.scan_to(10, &result_tx).await.is_continue());
+
+        asserter.push_success(&"not a block");
+        asserter.push_success(&block(12));
+        assert!(scanner.scan_to(12, &result_tx).await.is_continue());
+
+        let scanned: Vec<u64> =
+            std::iter::from_fn(|| result_rx.try_recv().ok()).map(|b| b.block_number).collect();
+        assert_eq!(scanned, [10, 12]);
     }
 }
