@@ -1,4 +1,4 @@
-#![allow(missing_docs)]
+//! Integration tests for builder transaction ordering.
 
 use alloy_consensus::Transaction as _;
 use alloy_eips::eip2718::Encodable2718;

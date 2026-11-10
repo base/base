@@ -1,4 +1,4 @@
-#![allow(missing_docs)]
+//! Smoke tests that a builder instance starts and produces blocks.
 
 use core::{
     sync::atomic::{AtomicBool, Ordering},

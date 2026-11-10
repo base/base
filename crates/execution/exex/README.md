@@ -35,7 +35,7 @@ base-reth-node
 └── RPC overrides (eth_getProof, debug_executePayload, debug_executionWitness)
 ```
 
-The versioned store lives in a **separate MDBX database** and maintains four history tables:
+The versioned store lives in a **separate database** (`MDBX` by default, or `RocksDB`) and maintains four history tables:
 
 | Table                  | Contents                                                |
 | ---------------------- | ------------------------------------------------------- |

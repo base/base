@@ -1,4 +1,4 @@
-#![allow(missing_docs)]
+//! Integration tests for builder behavior under the Jovian network upgrade.
 
 use std::time::Duration;
 
