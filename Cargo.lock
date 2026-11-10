@@ -5504,6 +5504,7 @@ dependencies = [
  "alloy-rpc-types-eth 2.5.0",
  "alloy-signer 2.5.0",
  "alloy-sol-types",
+ "alloy-transport",
  "async-trait",
  "aws-config",
  "aws-sdk-ec2",
