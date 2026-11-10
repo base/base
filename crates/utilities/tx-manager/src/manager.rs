@@ -1119,7 +1119,9 @@ where
     ///   if it is not included after `resubmission_timeout`.
     ///
     /// A version whose replacement would pass the upper bound of
-    /// [`BlobFeePolicy`] is not replaced and stays valid at its last fees. When the
+    /// [`BlobFeePolicy`] is not replaced and stays valid at its last fees. When a
+    /// version rejected for its fees cannot be replaced and no earlier version was
+    /// published, the send fails with the rejection. When the
     /// transaction is confirmed, the policy and the metrics record the
     /// `max_priority_fee_per_gas` of the version that landed.
     async fn send_blob_event_loop(
@@ -1156,15 +1158,18 @@ where
                         self.spawn_wait_for_tx(Arc::clone(send_state), tx_hash, receipt_tx.clone());
                     }
                     Err(
-                        TxManagerError::Underpriced
+                        error @ (TxManagerError::Underpriced
                         | TxManagerError::ReplacementUnderpriced
                         | TxManagerError::FeeTooLow
-                        | TxManagerError::MaxFeePerGasTooLow,
+                        | TxManagerError::MaxFeePerGasTooLow),
                     ) => match self.replace_blob_tx(candidate, &current, blob_count).await {
                         Some(replacement) => {
                             current = replacement;
                             replacements += 1;
                         }
+                        // No published version can land, so the send fails.
+                        None if !send_state.has_published() => return Err(error),
+                        // Wait for a version published earlier.
                         None => unpublished = false,
                     },
                     Err(error) if !send_state.has_published() && !error.is_retryable() => {
@@ -1211,8 +1216,7 @@ where
     /// prices.
     ///
     /// Returns `None` when the replacement would pass the upper bound of the policy, or
-    /// when it could not be built, in which case the error is logged and the send keeps
-    /// waiting for a version published earlier.
+    /// when it could not be built, in which case the error is logged.
     async fn replace_blob_tx(
         &self,
         candidate: &TxCandidate,
@@ -2877,6 +2881,37 @@ mod tests {
 
             assert_eq!(asserter.read_q().len(), 1, "no replacement should be signed");
             assert_eq!(manager.blob_fee_policy.max_priority_fee_per_gas_per_blob(), 1_000_000_000);
+        });
+    }
+
+    /// A first blob tx version the node rejects for its fees, and whose replacement would
+    /// pass the upper bound, fails the send with the rejection: nothing was published, so
+    /// no receipt can come.
+    #[test]
+    fn a_first_blob_tx_rejected_for_its_fees_at_the_upper_bound_fails_the_send() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let asserter = Asserter::new();
+            asserter.push_success(&1u64);
+            push_blob_pricing(&asserter);
+            asserter.push_success(&0u64);
+            asserter.push_failure_msg("replacement transaction underpriced");
+            // The L1 prices the replacement reads before it hits the upper bound.
+            let mut block: Block = Block::default();
+            block.header.base_fee_per_gas = Some(1_000_000_000);
+            asserter.push_success(&Some(&block));
+            asserter.push_success(&1_000_000_000u128);
+            let mut metrics = blob_send_metrics();
+            metrics.expect_record_gas_bump().never();
+            metrics.expect_record_landed_blob_tx().never();
+            metrics.expect_record_tx_failed().times(1).return_const(());
+            let manager =
+                blob_manager(&ctx, asserter.clone(), (1_000_000_000, 1_000_000_000), metrics).await;
+
+            let result = manager.send(blob_candidate()).await;
+
+            assert!(matches!(result, Err(TxManagerError::ReplacementUnderpriced)), "{result:?}");
+            assert_eq!(ctx.now(), Duration::ZERO);
+            assert!(asserter.read_q().is_empty(), "every mocked response should be used");
         });
     }
 
