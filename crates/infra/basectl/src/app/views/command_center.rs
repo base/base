@@ -433,17 +433,23 @@ impl View for CommandCenterView {
 
 fn render_config_panel(f: &mut Frame<'_>, area: Rect, resources: &Resources) {
     let block = Block::default()
-        .title(" L1 Config ")
+        .title(" Gas Config ")
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Magenta));
 
     let content = resources.system_config.as_ref().map_or_else(
         || vec![Line::from(Span::styled("Loading...", Style::default().fg(Color::DarkGray)))],
         |sys| {
-            let gas_limit = sys.gas_limit;
+            // Show per-block values: after Denim the L2 applies the L1 values scaled.
+            let newest_block_time = resources.da.tracker.block_contributions.front().map_or_else(
+                || chrono::Utc::now().timestamp().max(0) as u64,
+                |block| block.timestamp,
+            );
+            let scaling = resources.config.denim_gas_scaling(newest_block_time);
+            let gas_limit = sys.gas_limit / u64::from(scaling);
             let elasticity = sys.eip1559_elasticity.unwrap_or(0) as u64;
             let gas_target = gas_limit.checked_div(elasticity).unwrap_or(0);
-            let denominator = sys.eip1559_denominator.unwrap_or(0);
+            let denominator = sys.eip1559_denominator.unwrap_or(0).saturating_mul(scaling);
 
             let basefee_scalar =
                 sys.base_fee_scalar.map(|s| s.to_string()).unwrap_or_else(|| "-".to_string());
@@ -687,7 +693,7 @@ fn render_blocks_panel(
             };
             let base_fee = info
                 .base_fee_per_gas
-                .map_or_else(|| "-".to_string(), |fee| Format::gwei(u128::from(fee)));
+                .map_or_else(|| "-".to_string(), |fee| Format::fee_per_gas(u128::from(fee)));
 
             let gas_target = elasticity.map(|e| info.gas_limit / e);
 

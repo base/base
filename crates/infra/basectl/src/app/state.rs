@@ -8,7 +8,7 @@ use crate::rpc::{BlockDaInfo, L1BlockInfo};
 
 /// Size of a single blob in bytes (128 `KiB`).
 pub const BLOB_SIZE: u64 = 128 * 1024;
-/// Maximum number of entries retained in history buffers.
+/// Maximum number of L1 blocks, and of already-safe L2 blocks, retained in history buffers.
 pub const MAX_HISTORY: usize = 1000;
 
 /// Timeout for terminal event polling.
@@ -245,11 +245,18 @@ impl DaTracker {
         self.last_attributed_safe_l2 = safe_block;
     }
 
-    /// Prepends a block contribution, evicting the oldest past `MAX_HISTORY`.
-    /// Does not update backlog totals or growth samples.
+    /// Prepends a block contribution. Does not update backlog totals or growth samples.
     pub fn add_backlog_block(&mut self, info: BlockDaInfo) {
         self.block_contributions.push_front(info);
-        if self.block_contributions.len() > MAX_HISTORY {
+        self.evict_safe_history();
+    }
+
+    /// Drops the oldest blocks past `MAX_HISTORY`, but never an unsafe one: the
+    /// backlog total subtracts each block's bytes when it becomes safe.
+    fn evict_safe_history(&mut self) {
+        while self.block_contributions.len() > MAX_HISTORY
+            && self.block_contributions.back().is_some_and(|b| b.block_number <= self.safe_l2_block)
+        {
             self.block_contributions.pop_back();
         }
     }
@@ -291,10 +298,7 @@ impl DaTracker {
             .position(|c| c.block_number < block_number)
             .unwrap_or(self.block_contributions.len());
         self.block_contributions.insert(insert_pos, info);
-
-        if self.block_contributions.len() > MAX_HISTORY {
-            self.block_contributions.pop_back();
-        }
+        self.evict_safe_history();
     }
 
     /// Updates the safe head and subtracts newly safe block bytes from the backlog.
@@ -317,6 +321,7 @@ impl DaTracker {
         self.burn_tracker.add_sample(submitted_bytes);
 
         self.try_attribute_l2_to_l1();
+        self.evict_safe_history();
     }
 
     /// Records a new L1 block and attempts to attribute L2 blocks to it.
@@ -452,5 +457,32 @@ impl DaTracker {
         let total_blobs: u64 = blocks.iter().map(|b| b.total_blobs).sum();
         let expected = blocks.len() as f64 * l1_blob_target as f64;
         Some(total_blobs as f64 / expected)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DaTracker, MAX_HISTORY};
+    use crate::rpc::BlockDaInfo;
+
+    #[test]
+    fn backlog_drains_fully_when_more_than_max_history_blocks_become_safe() {
+        let mut tracker = DaTracker::new();
+        tracker.set_initial_backlog(100, 0);
+        let unsafe_blocks = MAX_HISTORY as u64 + 10;
+        for block_number in 101..=100 + unsafe_blocks {
+            tracker.update_block_info(BlockDaInfo {
+                block_number,
+                da_bytes: 10,
+                ..Default::default()
+            });
+        }
+        assert_eq!(tracker.block_contributions.len(), unsafe_blocks as usize);
+        assert_eq!(tracker.da_backlog_bytes, unsafe_blocks * 10);
+
+        tracker.update_safe_head(100 + unsafe_blocks);
+
+        assert_eq!(tracker.da_backlog_bytes, 0);
+        assert_eq!(tracker.block_contributions.len(), MAX_HISTORY);
     }
 }
