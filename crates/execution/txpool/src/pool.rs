@@ -2830,9 +2830,9 @@ mod tests {
     use alloy_signer_local::PrivateKeySigner;
     use base_common_chains::ChainConfig;
     use base_common_consensus::{
-        BaseBlock, BasePooledTransaction as ConsensusPooledTransaction, BasePrimitives,
-        BaseTransactionSigned, BaseTxEnvelope, Call, Eip8130Constants, Eip8130Signed, Predeploys,
-        TxDeposit, TxEip8130,
+        AccountChange, BaseBlock, BasePooledTransaction as ConsensusPooledTransaction,
+        BasePrimitives, BaseTransactionSigned, BaseTxEnvelope, Call, Delegation, Eip8130Constants,
+        Eip8130Signed, Predeploys, TxDeposit, TxEip8130,
     };
     use base_common_evm::BaseSpecId;
     use base_execution_chainspec::BaseChainSpec;
@@ -2844,8 +2844,11 @@ mod tests {
     use reth_tasks::Runtime;
     use reth_transaction_pool::{
         CanonicalStateUpdate, PoolConfig, PoolUpdateKind, PriceBumpConfig, SubPoolLimit,
-        TransactionOrigin, blobstore::InMemoryBlobStore, error::PoolErrorKind,
-        identifier::TransactionId, validate::EthTransactionValidatorBuilder,
+        TransactionOrigin,
+        blobstore::InMemoryBlobStore,
+        error::{Eip7702PoolTransactionError, PoolErrorKind},
+        identifier::TransactionId,
+        validate::EthTransactionValidatorBuilder,
     };
 
     use super::*;
@@ -6718,6 +6721,28 @@ mod tests {
         BasePooledTransaction::new(recovered, envelope.encode_2718_len())
     }
 
+    /// A self-paid EIP-8130 transaction on the protocol nonce that delegates its sender.
+    fn delegation_8130(signer: &PrivateKeySigner, nonce: u64) -> BasePooledTransaction {
+        let tx = TxEip8130 {
+            chain_id: test_chain_id(),
+            sender: None,
+            nonce_key: U256::ZERO,
+            nonce_sequence: nonce,
+            valid_after: 0,
+            valid_before: 0,
+            max_priority_fee_per_gas: 0,
+            max_fee_per_gas: 1_000,
+            gas_limit: 1_000_000,
+            account_changes: vec![AccountChange::Delegation(Delegation {
+                target: Address::repeat_byte(0xDE),
+            })],
+            calls: Vec::new(),
+            metadata: Bytes::new(),
+            payer: None,
+        };
+        sign_eoa_8130(signer, tx)
+    }
+
     fn is_delegated_validity_rejection(error: &PoolErrorKind) -> bool {
         matches!(error, PoolErrorKind::InvalidTransaction(_))
             && format!("{error:?}").contains("DelegatedValidityTransaction")
@@ -6747,6 +6772,45 @@ mod tests {
         let error = add_err(&pool, transaction).await;
         assert!(is_delegated_validity_rejection(&error), "{error:?}");
         assert_eq!(pool.validity_pool_occupancy().0, 0);
+    }
+
+    #[tokio::test]
+    async fn an_eip8130_delegation_cannot_carry_validity_predicates() {
+        let (pool, client) = build_integration_pool();
+        let signer = funded_signer(&client);
+        let transaction =
+            delegation_8130(&signer, 0).with_validity_predicates(resting_predicates());
+
+        let error = add_err(&pool, transaction).await;
+        assert!(is_delegated_validity_rejection(&error), "{error:?}");
+        assert_eq!(pool.validity_pool_occupancy().0, 0);
+    }
+
+    /// Reth limits an account with a pending delegation to one in-flight
+    /// transaction. An EIP-8130 delegation reserves its sender as an EIP-7702
+    /// authorization does.
+    #[tokio::test]
+    async fn an_eip8130_delegation_reserves_its_sender_like_an_eip7702_authorization() {
+        let (pool, client) = build_integration_pool();
+        let signer = funded_signer(&client);
+        let delegation = add(&pool, delegation_8130(&signer, 0)).await;
+        assert_store(&pool, delegation, PoolStore::Protocol);
+
+        let error = add_err(&pool, signed_1559(&signer, 1)).await;
+        assert!(
+            matches!(
+                error,
+                PoolErrorKind::InvalidTransaction(InvalidPoolTransactionError::Eip7702(
+                    Eip7702PoolTransactionError::InflightTxLimitReached
+                ))
+            ),
+            "{error:?}"
+        );
+
+        // Without a delegation entry the same sender may stack transactions.
+        let other = funded_signer(&client);
+        add(&pool, self_paid_eoa_8130(&other, U256::ZERO, 0, 0, 1_000)).await;
+        add(&pool, signed_1559(&other, 1)).await;
     }
 
     #[tokio::test]

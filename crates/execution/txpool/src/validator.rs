@@ -14,8 +14,8 @@ use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, B256, LogData, U256, map::AddressSet};
 use base_common_chains::{BaseFeature, Upgrades};
 use base_common_consensus::{
-    BaseTimeUpdateTx, Eip8130Constants, Eip8130Contracts, Eip8130Signed, Eip8130StructuralError,
-    Eip8130Structure, Eip8130TimestampError,
+    AccountChange, BaseTimeUpdateTx, Eip8130Constants, Eip8130Contracts, Eip8130Signed,
+    Eip8130StructuralError, Eip8130Structure, Eip8130TimestampError,
 };
 use base_common_evm::{BaseSpecId, L1BlockInfo};
 use base_common_genesis::DaFootprintGasScalarUpdate;
@@ -1010,9 +1010,13 @@ where
             );
         }
 
-        if transaction.as_eip8130().is_some() {
+        if let Some(signed) = transaction.as_eip8130() {
+            let delegates = signed
+                .tx()
+                .account_changes
+                .iter()
+                .any(|change| matches!(change, AccountChange::Delegation(_)));
             let validation = {
-                let signed = transaction.as_eip8130().expect("checked above");
                 self.validate_eip8130_structural(signed)
                     .and_then(|()| {
                         self.validate_eip8130_pool_policy(origin, transaction.sender(), signed)
@@ -1048,9 +1052,11 @@ where
                 propagate,
                 bytecode_hash: state.sender_bytecode_hash,
                 // Reth reserves authorities under its EIP-7702 delegation slot
-                // limit. A payer installs no delegation; the payer-keyed guard
-                // bounds what it sponsors.
-                authorities: None,
+                // limit. A delegation entry delegates the sender, like a 7702
+                // authorization, and always uses the protocol nonce, so it lands
+                // in reth's pool. A payer installs no delegation; the
+                // payer-keyed guard bounds what it sponsors.
+                authorities: delegates.then(|| vec![state.sender]),
             };
             return self.apply_base_checks(Self::reject_delegated_validity(outcome), false);
         }
@@ -1058,8 +1064,9 @@ where
         self.apply_base_checks(Self::reject_delegated_validity(outcome), true)
     }
 
-    /// Rejects a transaction with validity predicates that is an EIP-7702
-    /// transaction or whose sender is EIP-7702 delegated.
+    /// Rejects a transaction with validity predicates that delegates an account
+    /// (an EIP-7702 authorization list or an EIP-8130 delegation entry, both
+    /// reported as `authorities`) or whose sender is EIP-7702 delegated.
     ///
     /// Validity transactions live in their own pool, which does not enforce
     /// reth's in-flight limits for delegated accounts and pending
@@ -1071,10 +1078,11 @@ where
         outcome: TransactionValidationOutcome<Tx>,
     ) -> TransactionValidationOutcome<Tx> {
         match outcome {
-            TransactionValidationOutcome::Valid { transaction, bytecode_hash, .. }
-                if !transaction.transaction().validity_conditions().is_empty()
-                    && (transaction.transaction().authorization_list().is_some()
-                        || bytecode_hash.is_some_and(|hash| hash != KECCAK_EMPTY)) =>
+            TransactionValidationOutcome::Valid {
+                transaction, bytecode_hash, authorities, ..
+            } if !transaction.transaction().validity_conditions().is_empty()
+                && (authorities.is_some()
+                    || bytecode_hash.is_some_and(|hash| hash != KECCAK_EMPTY)) =>
             {
                 TransactionValidationOutcome::Invalid(
                     transaction.into_transaction(),
