@@ -47,7 +47,8 @@ use reth_revm::{database::StateProviderDatabase, db::State, witness::ExecutionWi
 use reth_storage_api::{BlockReader, StateProvider, StateProviderFactory, errors::ProviderError};
 use reth_tasks::{CancelOnDrop, Runtime};
 use reth_transaction_pool::{
-    BestTransactionsAttributes, PoolTransaction, TransactionPool, ValidPoolTransaction,
+    BestTransactions, BestTransactionsAttributes, PoolTransaction, TransactionPool,
+    ValidPoolTransaction,
 };
 use reth_trie_common::ExecutionWitnessMode;
 use reth_trie_parallel::state_root_task::PayloadStateRootHandle;
@@ -317,12 +318,15 @@ where
         args: BuildArguments<Self::Attributes, Self::BuiltPayload>,
     ) -> Result<BuildOutcome<Self::BuiltPayload>, PayloadBuilderError> {
         self.build_payload(args, |attrs, resting| {
-            ParkableBestPayloadTransactions::new(
-                self.pool.best_transactions_with_attributes_and_parking(
-                    attrs,
-                    resting.map(SharedRestingPredicates::iterator_hold),
-                ),
-            )
+            let mut best = self.pool.best_transactions_with_attributes_and_parking(
+                attrs,
+                resting.map(SharedRestingPredicates::iterator_hold),
+            );
+            // Snapshot every store at build start: a transaction that arrives
+            // mid-build waits for the next block instead of joining this one, so
+            // inclusion timing is discrete and ordering within a block is by fee.
+            best.no_updates();
+            ParkableBestPayloadTransactions::new(best)
         })
     }
 
