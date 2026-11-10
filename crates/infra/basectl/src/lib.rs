@@ -34,20 +34,19 @@ pub use confirm::Confirm;
 
 mod app;
 pub use app::{
-    Action, ActionMenuItem, App, BLOB_SIZE, BlockContribution, CommandCenterView, ConductorState,
-    ConductorView, ConfigView, ConfirmButton, DaMonitorView, DaState, DaTracker,
-    EVENT_POLL_TIMEOUT, HomeView, L1_BLOCK_WINDOW, L1Block, L1BlockFilter, LoadingState,
-    MAX_HISTORY, Overlay, PendingAction, PodsState, PodsView, ProofsState, ProofsView,
-    RATE_WINDOW_2M, RATE_WINDOW_5M, RATE_WINDOW_30S, RateTracker, Resources, Router, SourceLabel,
-    TransactionPane, UpgradesView, ValidatorState, View, ViewId, create_view, run_app,
-    start_background_services,
+    Action, ActionMenuItem, App, BLOB_SIZE, CommandCenterView, ConductorState, ConductorView,
+    ConfigView, ConfirmButton, DaMonitorView, DaState, DaTracker, EVENT_POLL_TIMEOUT, HomeView,
+    L1_BLOCK_WINDOW, L1Block, L1BlockFilter, LoadingState, MAX_HISTORY, Overlay, PendingAction,
+    PodsState, PodsView, ProofsState, ProofsView, RATE_WINDOW_2M, RATE_WINDOW_5M, RATE_WINDOW_30S,
+    RateTracker, Resources, Router, SourceLabel, TransactionPane, UpgradesView, ValidatorState,
+    View, ViewId, create_view, run_app, start_background_services,
 };
 
 mod output;
 pub use output::{
     COLOR_ACTIVE_BORDER, COLOR_BASE_BLUE, COLOR_BURN, COLOR_GROWTH, COLOR_ROW_HIGHLIGHTED,
     COLOR_ROW_SELECTED, Format, JsonOutput, KeyValueTable, L1BlocksTableParams, P2pClInfoJson,
-    P2pElInfoJson, P2pInfoJson, P2pInfoTable, TimestampJson, render_da_backlog_bar,
+    P2pElInfoJson, P2pInfoJson, P2pInfoTable, TimestampJson, build_gas_bar, render_da_backlog_bar,
     render_l1_blocks_table,
 };
 
@@ -73,10 +72,10 @@ pub use errors::{
 
 mod rpc;
 pub use rpc::{
-    BacklogBlock, BacklogFetchResult, BacklogProgress, BaseTxpoolContent, BaseTxpoolContentFrom,
-    BatcherClient, BatcherStatus, BlockDaInfo, ClInfoReport, ClNodeIdentity,
-    ConductorClusterSnapshot, ConductorControl, ConductorFanoutAction, ConductorFanoutReport,
-    ConductorNodeFailure, ConductorNodeStatus, ConductorPollUpdate, ConnectionMode, DiscoveryInfo,
+    BacklogFetchResult, BacklogProgress, BaseTxpoolContent, BaseTxpoolContentFrom, BatcherClient,
+    BatcherStatus, BlockDaInfo, ClInfoReport, ClNodeIdentity, ConductorClusterSnapshot,
+    ConductorControl, ConductorFanoutAction, ConductorFanoutReport, ConductorNodeFailure,
+    ConductorNodeStatus, ConductorPollUpdate, ConnectionMode, DiscoveryInfo,
     EXPECTED_RESOLUTION_NEVER, ElInfoReport, ElNodeIdentity, GameDetails, GameListFilter,
     GameStatus, GameSummary, GamesClient, HeadCursor, InitialBacklog, L1BlockInfo, L2HeadFeed,
     LatestProposal, NodeEndpoint, NodeInfoReport, PausedPeers, PeerDirection, PeerListReport,

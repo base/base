@@ -361,11 +361,7 @@ impl DaState {
                     });
                 }
                 BacklogFetchResult::Block(block) => {
-                    self.tracker.add_backlog_block(
-                        block.block_number,
-                        block.da_bytes,
-                        block.timestamp,
-                    );
+                    self.tracker.add_backlog_block(block);
                 }
                 BacklogFetchResult::Complete(initial) => {
                     self.tracker.set_initial_backlog(initial.safe_block, initial.da_bytes);
@@ -494,7 +490,13 @@ mod tests {
         state.set_channels(sync_rx, backlog_rx, block_res_rx, l1_block_rx);
 
         block_res_tx
-            .try_send(BlockDaInfo { block_number: 101, da_bytes: 700, timestamp: 1, tx_count: 3 })
+            .try_send(BlockDaInfo {
+                block_number: 101,
+                da_bytes: 700,
+                timestamp: 1,
+                tx_count: 3,
+                ..Default::default()
+            })
             .unwrap();
         state.poll();
 

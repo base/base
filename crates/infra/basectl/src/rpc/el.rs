@@ -15,10 +15,7 @@ use anyhow::{Context, Result, anyhow};
 use base_common_genesis::DenimTimestampSchedule;
 use base_common_network::Base;
 use futures::{StreamExt, stream};
-use tokio::{
-    sync::mpsc,
-    time::{Instant, MissedTickBehavior},
-};
+use tokio::{sync::mpsc, time::Instant};
 use tracing::{debug, warn};
 use url::Url;
 
@@ -26,6 +23,7 @@ use super::{ConnectionMode, fetch_safe_and_latest};
 use crate::tui::Toast;
 
 const CONCURRENT_BLOCK_FETCHES: usize = 16;
+const DROPPED_BLOCK_TOAST_INTERVAL: Duration = Duration::from_secs(30);
 
 /// Fetches a single L2 block via `eth_getBlockByHash` or `eth_getBlockByNumber`.
 ///
@@ -82,7 +80,7 @@ async fn connect_l2_provider(rpc: &Url) -> Result<impl Provider<Base>> {
 }
 
 /// DA and gas information for a single L2 block.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct BlockDaInfo {
     /// L2 block number.
     pub block_number: u64,
@@ -92,6 +90,23 @@ pub struct BlockDaInfo {
     pub timestamp: u64,
     /// Number of transactions in the block.
     pub tx_count: usize,
+    /// Gas used by the block.
+    pub gas_used: u64,
+    /// Block gas limit.
+    pub gas_limit: u64,
+    /// Base fee per gas in wei, if the block has one.
+    pub base_fee_per_gas: Option<u64>,
+}
+
+impl BlockDaInfo {
+    /// Returns the age of this block in seconds since its timestamp.
+    pub fn age_seconds(&self) -> u64 {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        now.saturating_sub(self.timestamp)
+    }
 }
 
 /// Summary of the initial DA backlog between safe and latest blocks.
@@ -112,39 +127,46 @@ pub struct BacklogProgress {
     pub total_blocks: u64,
 }
 
-/// Individual block data from backlog fetch.
-#[derive(Debug, Clone)]
-pub struct BacklogBlock {
-    /// L2 block number.
-    pub block_number: u64,
-    /// DA bytes contributed by this block.
-    pub da_bytes: u64,
-    /// Unix timestamp of the block.
-    pub timestamp: u64,
-}
-
 /// Result of initial backlog fetch - either progress or complete.
 #[derive(Debug, Clone)]
 pub enum BacklogFetchResult {
     /// Incremental progress update.
     Progress(BacklogProgress),
     /// A single fetched block.
-    Block(BacklogBlock),
+    Block(BlockDaInfo),
     /// Backlog fetch completed successfully.
     Complete(InitialBacklog),
     /// Backlog fetch failed.
     Error,
 }
 
-/// Fetches a single L2 block and returns its number, DA bytes, and timestamp.
+/// Backoff between attempts to fetch one L2 block. Public RPCs rate limit
+/// bursts, and a load-balanced node can briefly lag the head that was announced.
+const BLOCK_FETCH_RETRY_DELAYS: [Duration; 5] = [
+    Duration::from_millis(250),
+    Duration::from_millis(500),
+    Duration::from_secs(1),
+    Duration::from_secs(2),
+    Duration::from_secs(4),
+];
+
+/// Fetches a single L2 block and summarizes its DA and gas usage.
 ///
-/// Returns `None` if the RPC call fails or the block does not exist.
+/// Retries errors and missing blocks with [`BLOCK_FETCH_RETRY_DELAYS`], then
+/// returns `None`.
 async fn fetch_raw_block_info<P: Provider<Base>>(
     provider: &P,
     block_num: u64,
 ) -> Option<BlockDaInfo> {
-    let block =
-        provider.get_block_by_number(BlockNumberOrTag::Number(block_num)).full().await.ok()??;
+    let mut retry_delays = BLOCK_FETCH_RETRY_DELAYS.into_iter();
+    let block = loop {
+        match provider.get_block_by_number(BlockNumberOrTag::Number(block_num)).full().await {
+            Ok(Some(block)) => break block,
+            Ok(None) => debug!(block = block_num, "L2 block not found yet"),
+            Err(error) => debug!(error = %error, block = block_num, "L2 block fetch failed"),
+        }
+        tokio::time::sleep(retry_delays.next()?).await;
+    };
 
     let da_bytes: u64 =
         block.transactions.txns().map(|tx| tx.inner.inner.encode_2718_len() as u64).sum();
@@ -154,6 +176,9 @@ async fn fetch_raw_block_info<P: Provider<Base>>(
         da_bytes,
         timestamp: block.header.timestamp,
         tx_count: block.transactions.len(),
+        gas_used: block.header.gas_used,
+        gas_limit: block.header.gas_limit,
+        base_fee_per_gas: block.header.base_fee_per_gas,
     })
 }
 
@@ -201,6 +226,8 @@ impl L2HeadFeed {
     /// HTTP polling cadence, matching the Denim block interval.
     pub const POLL_INTERVAL: Duration =
         Duration::from_millis(DenimTimestampSchedule::DENIM_BLOCK_INTERVAL_MILLIS);
+    /// Longest delay between HTTP polls after consecutive failures.
+    pub const MAX_POLL_BACKOFF: Duration = Duration::from_secs(5);
     /// Upper bound on establishing the WebSocket before falling back to polling.
     pub const WS_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
     /// How long to poll over HTTP before trying the WebSocket again.
@@ -294,12 +321,19 @@ impl L2HeadFeed {
         };
 
         self.set_mode(ConnectionMode::Polling).await;
-        let mut interval = tokio::time::interval(Self::POLL_INTERVAL);
-        interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
+        let mut delay = Self::POLL_INTERVAL;
         while until.is_none_or(|until| Instant::now() < until) {
-            interval.tick().await;
-            if let Ok(head) = provider.get_block_number().await {
-                self.request(head).await?;
+            tokio::time::sleep(delay).await;
+            match provider.get_block_number().await {
+                Ok(head) => {
+                    delay = Self::POLL_INTERVAL;
+                    self.request(head).await?;
+                }
+                // Back off so a rate-limited endpoint can recover instead of being hammered.
+                Err(error) => {
+                    debug!(error = %error, "L2 head poll failed");
+                    delay = (delay * 2).min(Self::MAX_POLL_BACKOFF);
+                }
             }
         }
         ControlFlow::Continue(())
@@ -353,10 +387,17 @@ pub async fn run_block_fetcher(
     let mut fetched = stream::poll_fn(|cx| request_rx.poll_recv(cx))
         .map(|block_num| fetch_raw_block_info(&provider, block_num))
         .buffered(CONCURRENT_BLOCK_FETCHES);
+    let mut last_drop_toast: Option<Instant> = None;
     while let Some(info) = fetched.next().await {
-        if let Some(info) = info
-            && result_tx.send(info).await.is_err()
-        {
+        let Some(info) = info else {
+            warn!("Dropped L2 block after exhausting fetch retries");
+            if last_drop_toast.is_none_or(|at| at.elapsed() >= DROPPED_BLOCK_TOAST_INTERVAL) {
+                last_drop_toast = Some(Instant::now());
+                let _ = toast_tx.try_send(Toast::warning("L2 RPC failing or rate limited"));
+            }
+            continue;
+        };
+        if result_tx.send(info).await.is_err() {
             break;
         }
     }
@@ -387,20 +428,15 @@ pub async fn fetch_initial_backlog_with_progress(
 
         let mut total_da_bytes: u64 = 0;
         let mut blocks_fetched: u64 = 0;
-        let mut blocks: Vec<BacklogBlock> = Vec::with_capacity(block_numbers.len());
+        let mut blocks: Vec<BlockDaInfo> = Vec::with_capacity(block_numbers.len());
 
         let mut fetch_stream = stream::iter(block_numbers)
             .map(|block_num| {
                 let provider = Arc::clone(&provider);
                 async move {
-                    fetch_raw_block_info(&*provider, block_num).await.map_or(
-                        BacklogBlock { block_number: block_num, da_bytes: 0, timestamp: 0 },
-                        |info| BacklogBlock {
-                            block_number: info.block_number,
-                            da_bytes: info.da_bytes,
-                            timestamp: info.timestamp,
-                        },
-                    )
+                    fetch_raw_block_info(&*provider, block_num).await.unwrap_or_else(|| {
+                        BlockDaInfo { block_number: block_num, ..Default::default() }
+                    })
                 }
             })
             .buffer_unordered(CONCURRENT_BLOCK_FETCHES);

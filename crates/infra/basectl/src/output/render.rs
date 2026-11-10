@@ -11,6 +11,50 @@ use crate::{
     rpc::ConnectionMode,
 };
 
+const COLOR_GAS_FILL: Color = Color::Rgb(100, 180, 255);
+const COLOR_GAS_OVER_TARGET: Color = Color::Rgb(255, 120, 60);
+const COLOR_GAS_TARGET: Color = Color::Rgb(255, 200, 100);
+
+/// Builds a `width`-character bar of one block's gas used relative to its gas limit.
+///
+/// Gas up to `gas_target` is drawn blue and gas above it orange; when the block
+/// stays under target, a `│` marks where the target is.
+pub fn build_gas_bar(
+    gas_used: u64,
+    gas_limit: u64,
+    gas_target: Option<u64>,
+    width: usize,
+) -> Line<'static> {
+    if gas_limit == 0 {
+        return Line::from("-");
+    }
+    let to_chars = |gas: u64| {
+        (u128::from(gas.min(gas_limit)) * width as u128 / u128::from(gas_limit)) as usize
+    };
+    // Round partially filled cells up so any gas usage is visible.
+    let filled = (u128::from(gas_used.min(gas_limit)) * width as u128)
+        .div_ceil(u128::from(gas_limit)) as usize;
+    let target = gas_target.map(to_chars);
+
+    let spans: Vec<Span<'static>> = (0..width)
+        .map(|i| {
+            if i < filled {
+                let color = if target.is_some_and(|t| i >= t) {
+                    COLOR_GAS_OVER_TARGET
+                } else {
+                    COLOR_GAS_FILL
+                };
+                Span::styled("█", Style::default().fg(color))
+            } else if target == Some(i) {
+                Span::styled("│", Style::default().fg(COLOR_GAS_TARGET))
+            } else {
+                Span::styled("·", Style::default().fg(Color::DarkGray))
+            }
+        })
+        .collect();
+    Line::from(spans)
+}
+
 /// Parameters for rendering the L1 blocks table.
 #[derive(Debug)]
 pub struct L1BlocksTableParams<'a, I: Iterator<Item = &'a L1Block>> {
@@ -212,4 +256,34 @@ pub fn render_da_backlog_bar(
     let line = Line::from(spans);
     let para = Paragraph::new(line);
     f.render_widget(para, inner);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::build_gas_bar;
+
+    fn bar_text(gas_used: u64, gas_target: Option<u64>) -> String {
+        build_gas_bar(gas_used, 1_000, gas_target, 10).to_string()
+    }
+
+    #[test]
+    fn gas_bar_fills_proportionally_to_gas_limit() {
+        assert_eq!(bar_text(0, None), "··········");
+        assert_eq!(bar_text(500, None), "█████·····");
+        assert_eq!(bar_text(1_000, None), "██████████");
+        // Gas beyond the limit is clamped and tiny usage still shows one cell.
+        assert_eq!(bar_text(5_000, None), "██████████");
+        assert_eq!(bar_text(1, None), "█·········");
+    }
+
+    #[test]
+    fn gas_bar_marks_target_until_filled_past_it() {
+        assert_eq!(bar_text(100, Some(500)), "█····│····");
+        assert_eq!(bar_text(800, Some(500)), "████████··");
+    }
+
+    #[test]
+    fn gas_bar_without_gas_limit_is_a_placeholder() {
+        assert_eq!(build_gas_bar(10, 0, Some(5), 10).to_string(), "-");
+    }
 }

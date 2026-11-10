@@ -22,10 +22,9 @@ pub use connection::ConnectionMode;
 
 mod el;
 pub use el::{
-    BacklogBlock, BacklogFetchResult, BacklogProgress, BlockDaInfo, HeadCursor, InitialBacklog,
-    L2HeadFeed, TxSummary, fetch_block, fetch_block_transactions,
-    fetch_initial_backlog_with_progress, fetch_l2_block_number, fetch_l2_chain_id,
-    run_block_fetcher,
+    BacklogFetchResult, BacklogProgress, BlockDaInfo, HeadCursor, InitialBacklog, L2HeadFeed,
+    TxSummary, fetch_block, fetch_block_transactions, fetch_initial_backlog_with_progress,
+    fetch_l2_block_number, fetch_l2_chain_id, run_block_fetcher,
 };
 
 mod games;

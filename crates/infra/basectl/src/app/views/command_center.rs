@@ -15,7 +15,7 @@ use crate::{
     },
     output::{
         COLOR_BASE_BLUE, COLOR_BURN, COLOR_GROWTH, COLOR_ROW_HIGHLIGHTED, COLOR_ROW_SELECTED,
-        Format, L1BlocksTableParams, render_da_backlog_bar, render_l1_blocks_table,
+        Format, L1BlocksTableParams, build_gas_bar, render_da_backlog_bar, render_l1_blocks_table,
     },
     rpc::ConnectionMode,
     tui::{Browser, Keybinding, Toast},
@@ -24,7 +24,7 @@ use crate::{
 const KEYBINDINGS: &[Keybinding] = &[
     Keybinding { key: "Esc", description: "Back to home" },
     Keybinding { key: "?", description: "Toggle help" },
-    Keybinding { key: "←/→/Tab/1-2", description: "Switch panel" },
+    Keybinding { key: "←/→/Tab/1-3", description: "Switch panel" },
     Keybinding { key: "↑/k", description: "Move up" },
     Keybinding { key: "↓/j", description: "Move down" },
     Keybinding { key: "g/G", description: "Top/Bottom" },
@@ -36,15 +36,17 @@ const KEYBINDINGS: &[Keybinding] = &[
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Panel {
+    Blocks,
     Da,
     L1Blocks,
     Txns,
 }
 
-/// Combined monitoring view with DA and L1 block panels.
+/// Combined monitoring view with L2 gas, DA, and L1 block panels.
 #[derive(Debug)]
 pub struct CommandCenterView {
     focused_panel: Panel,
+    blocks_table_state: TableState,
     da_table_state: TableState,
     l1_table_state: TableState,
     highlighted_block: Option<u64>,
@@ -62,12 +64,15 @@ impl Default for CommandCenterView {
 impl CommandCenterView {
     /// Creates a new command center view with default panel selection.
     pub fn new() -> Self {
+        let mut blocks_table_state = TableState::default();
+        blocks_table_state.select(Some(0));
         let mut da_table_state = TableState::default();
         da_table_state.select(Some(0));
         let mut l1_table_state = TableState::default();
         l1_table_state.select(Some(0));
         Self {
-            focused_panel: Panel::Da,
+            focused_panel: Panel::Blocks,
+            blocks_table_state,
             da_table_state,
             l1_table_state,
             highlighted_block: None,
@@ -79,27 +84,29 @@ impl CommandCenterView {
 
     const fn next_panel(&mut self) {
         self.focused_panel = match self.focused_panel {
+            Panel::Blocks => Panel::Da,
             Panel::Da => Panel::L1Blocks,
             Panel::L1Blocks => {
                 if self.tx_pane.is_some() {
                     Panel::Txns
                 } else {
-                    Panel::Da
+                    Panel::Blocks
                 }
             }
-            Panel::Txns => Panel::Da,
+            Panel::Txns => Panel::Blocks,
         };
     }
 
     const fn prev_panel(&mut self) {
         self.focused_panel = match self.focused_panel {
-            Panel::Da => {
+            Panel::Blocks => {
                 if self.tx_pane.is_some() {
                     Panel::Txns
                 } else {
                     Panel::L1Blocks
                 }
             }
+            Panel::Da => Panel::Blocks,
             Panel::L1Blocks => Panel::Da,
             Panel::Txns => Panel::L1Blocks,
         };
@@ -107,6 +114,7 @@ impl CommandCenterView {
 
     const fn active_table_state(&mut self) -> &mut TableState {
         match self.focused_panel {
+            Panel::Blocks => &mut self.blocks_table_state,
             Panel::Da | Panel::Txns => &mut self.da_table_state,
             Panel::L1Blocks => &mut self.l1_table_state,
         }
@@ -114,6 +122,7 @@ impl CommandCenterView {
 
     fn selected_row(&self, panel: Panel) -> usize {
         match panel {
+            Panel::Blocks => self.blocks_table_state.selected().unwrap_or(0),
             Panel::Da | Panel::Txns => self.da_table_state.selected().unwrap_or(0),
             Panel::L1Blocks => self.l1_table_state.selected().unwrap_or(0),
         }
@@ -122,7 +131,9 @@ impl CommandCenterView {
     fn update_highlighted_block(&mut self, resources: &Resources) {
         let row = self.selected_row(self.focused_panel);
         self.highlighted_block = match self.focused_panel {
-            Panel::Da => resources.da.tracker.block_contributions.get(row).map(|c| c.block_number),
+            Panel::Blocks | Panel::Da => {
+                resources.da.tracker.block_contributions.get(row).map(|c| c.block_number)
+            }
             Panel::Txns => self.tx_pane.as_ref().map(|p| p.block_number),
             Panel::L1Blocks => None,
         };
@@ -131,7 +142,7 @@ impl CommandCenterView {
     fn get_copyable_block(&self, resources: &Resources) -> Option<String> {
         let row = self.selected_row(self.focused_panel);
         match self.focused_panel {
-            Panel::Da => resources
+            Panel::Blocks | Panel::Da => resources
                 .da
                 .tracker
                 .block_contributions
@@ -150,14 +161,16 @@ impl CommandCenterView {
     fn open_selected_block_in_explorer(&self, resources: &mut Resources) {
         let row = self.selected_row(self.focused_panel);
         let url = match self.focused_panel {
-            Panel::Da => resources.config.explorer_base_url().and_then(|base_url| {
-                resources
-                    .da
-                    .tracker
-                    .block_contributions
-                    .get(row)
-                    .map(|c| format!("{base_url}/block/{}", c.block_number))
-            }),
+            Panel::Blocks | Panel::Da => {
+                resources.config.explorer_base_url().and_then(|base_url| {
+                    resources
+                        .da
+                        .tracker
+                        .block_contributions
+                        .get(row)
+                        .map(|c| format!("{base_url}/block/{}", c.block_number))
+                })
+            }
             Panel::Txns => resources.config.explorer_base_url().and_then(|base_url| {
                 self.tx_pane.as_ref().map(|p| format!("{base_url}/block/{}", p.block_number))
             }),
@@ -203,11 +216,16 @@ impl View for CommandCenterView {
                 Action::None
             }
             KeyCode::Char('1') => {
-                self.focused_panel = Panel::Da;
+                self.focused_panel = Panel::Blocks;
                 self.update_highlighted_block(resources);
                 Action::None
             }
             KeyCode::Char('2') => {
+                self.focused_panel = Panel::Da;
+                self.update_highlighted_block(resources);
+                Action::None
+            }
+            KeyCode::Char('3') => {
                 self.focused_panel = Panel::L1Blocks;
                 self.update_highlighted_block(resources);
                 Action::None
@@ -219,7 +237,7 @@ impl View for CommandCenterView {
                 });
                 if should_close {
                     self.tx_pane = None;
-                    self.focused_panel = self.tx_origin_panel.take().unwrap_or(Panel::Da);
+                    self.focused_panel = self.tx_origin_panel.take().unwrap_or(Panel::Blocks);
                 }
                 Action::None
             }
@@ -240,6 +258,10 @@ impl View for CommandCenterView {
             }
             KeyCode::Down | KeyCode::Char('j') => {
                 let (state, max) = match self.focused_panel {
+                    Panel::Blocks => (
+                        &mut self.blocks_table_state,
+                        resources.da.tracker.block_contributions.len().saturating_sub(1),
+                    ),
                     Panel::Da | Panel::Txns => (
                         &mut self.da_table_state,
                         resources.da.tracker.block_contributions.len().saturating_sub(1),
@@ -269,7 +291,9 @@ impl View for CommandCenterView {
             }
             KeyCode::Char('G') => {
                 let max = match self.focused_panel {
-                    Panel::Da | Panel::Txns => resources.da.tracker.block_contributions.len(),
+                    Panel::Blocks | Panel::Da | Panel::Txns => {
+                        resources.da.tracker.block_contributions.len()
+                    }
                     Panel::L1Blocks => {
                         resources.da.tracker.filtered_l1_blocks(self.l1_filter).count()
                     }
@@ -293,15 +317,16 @@ impl View for CommandCenterView {
                 Action::None
             }
             KeyCode::Enter => {
-                if self.focused_panel == Panel::Da {
-                    let row = self.selected_row(Panel::Da);
+                let origin = self.focused_panel;
+                if matches!(origin, Panel::Blocks | Panel::Da) {
+                    let row = self.selected_row(origin);
                     if let Some(contrib) = resources.da.tracker.block_contributions.get(row) {
                         self.tx_pane = Some(TransactionPane::for_block(
                             contrib.block_number,
                             resources.config.rpc.as_str(),
                             resources.config.explorer_base_url(),
                         ));
-                        self.tx_origin_panel = Some(Panel::Da);
+                        self.tx_origin_panel = Some(origin);
                         self.focused_panel = Panel::Txns;
                     }
                 }
@@ -350,23 +375,37 @@ impl View for CommandCenterView {
                 .direction(Direction::Horizontal)
                 .constraints([
                     Constraint::Percentage(25),
-                    Constraint::Percentage(25),
+                    Constraint::Percentage(12),
+                    Constraint::Percentage(13),
                     Constraint::Percentage(50),
                 ])
                 .split(main_chunks[2]);
-            let tx_pane_area = chunks[2];
+            let tx_pane_area = chunks[3];
             (chunks, Some(tx_pane_area))
         } else {
             let chunks = Layout::default()
                 .direction(Direction::Horizontal)
-                .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+                .constraints([
+                    Constraint::Percentage(40),
+                    Constraint::Percentage(30),
+                    Constraint::Percentage(30),
+                ])
                 .split(main_chunks[2]);
             (chunks, None)
         };
 
-        render_da_panel(
+        render_blocks_panel(
             frame,
             panel_chunks[0],
+            resources,
+            self.focused_panel == Panel::Blocks,
+            &self.blocks_table_state,
+            self.highlighted_block,
+        );
+
+        render_da_panel(
+            frame,
+            panel_chunks[1],
             resources,
             self.focused_panel == Panel::Da,
             &self.da_table_state,
@@ -375,7 +414,7 @@ impl View for CommandCenterView {
 
         render_l1_blocks_table(
             frame,
-            panel_chunks[1],
+            panel_chunks[2],
             L1BlocksTableParams {
                 l1_blocks: resources.da.tracker.filtered_l1_blocks(self.l1_filter),
                 is_active: self.focused_panel == Panel::L1Blocks,
@@ -579,6 +618,96 @@ fn render_da_panel(
 
     let widths =
         [Constraint::Max(10), Constraint::Length(5), Constraint::Length(8), Constraint::Min(6)];
+    let table = Table::new(rows, widths).header(header);
+    f.render_stateful_widget(table, inner, &mut table_state.clone());
+}
+
+const GAS_BAR_CHARS: usize = 20;
+
+fn render_blocks_panel(
+    f: &mut Frame<'_>,
+    area: Rect,
+    resources: &Resources,
+    is_active: bool,
+    table_state: &TableState,
+    highlighted_block: Option<u64>,
+) {
+    let blocks = &resources.da.tracker.block_contributions;
+    let border_color = if is_active { Color::Rgb(100, 180, 255) } else { COLOR_BASE_BLUE };
+    let mode_label = resources.da.l2_connection_mode.map_or("", ConnectionMode::title_suffix);
+
+    let block = Block::default()
+        .title(format!(" L2 Blocks (Gas){mode_label} "))
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(border_color));
+
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    let fixed_cols_width = 4 + (GAS_BAR_CHARS as u16 + 2) + 14 + 3;
+    let block_col_width = inner.width.saturating_sub(fixed_cols_width).clamp(4, 10) as usize;
+    let elasticity = resources
+        .system_config
+        .as_ref()
+        .and_then(|sys| sys.eip1559_elasticity)
+        .filter(|&e| e > 0)
+        .map(u64::from);
+
+    let header_style = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
+    let header = Row::new(vec![
+        Cell::from("Block").style(header_style),
+        Cell::from("Txs").style(header_style),
+        Cell::from("Gas").style(header_style),
+        Cell::from("Base Fee").style(header_style),
+    ]);
+
+    let selected_row = table_state.selected();
+
+    let rows: Vec<Row<'_>> = blocks
+        .iter()
+        .enumerate()
+        .map(|(idx, info)| {
+            let style = if is_active && selected_row == Some(idx) {
+                Style::default().fg(Color::White).bg(COLOR_ROW_SELECTED)
+            } else if highlighted_block == Some(info.block_number) {
+                Style::default().fg(Color::White).bg(COLOR_ROW_HIGHLIGHTED)
+            } else {
+                Style::default().fg(Color::White)
+            };
+
+            // Rows are newest first, so the parent block is the next row when present.
+            let parent_base_fee = blocks
+                .get(idx + 1)
+                .filter(|parent| parent.block_number + 1 == info.block_number)
+                .and_then(|parent| parent.base_fee_per_gas);
+            let base_fee_style = match (info.base_fee_per_gas, parent_base_fee) {
+                (Some(fee), Some(parent)) if fee > parent => Style::default().fg(Color::Red),
+                (Some(fee), Some(parent)) if fee < parent => Style::default().fg(Color::Green),
+                _ => Style::default().fg(Color::White),
+            };
+            let base_fee = info
+                .base_fee_per_gas
+                .map_or_else(|| "-".to_string(), |fee| Format::gwei(u128::from(fee)));
+
+            let gas_target = elasticity.map(|e| info.gas_limit / e);
+
+            Row::new(vec![
+                Cell::from(Format::truncate_block_number(info.block_number, block_col_width))
+                    .style(Style::default().fg(Format::block_color(info.block_number))),
+                Cell::from(info.tx_count.to_string()),
+                Cell::from(build_gas_bar(info.gas_used, info.gas_limit, gas_target, GAS_BAR_CHARS)),
+                Cell::from(base_fee).style(base_fee_style),
+            ])
+            .style(style)
+        })
+        .collect();
+
+    let widths = [
+        Constraint::Max(10),
+        Constraint::Length(4),
+        Constraint::Length(GAS_BAR_CHARS as u16 + 2),
+        Constraint::Min(14),
+    ];
     let table = Table::new(rows, widths).header(header);
     f.render_stateful_widget(table, inner, &mut table_state.clone());
 }
