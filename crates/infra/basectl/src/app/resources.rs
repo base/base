@@ -368,6 +368,10 @@ impl DaState {
                     self.flush_buffers();
                     self.loaded = true;
                 }
+                BacklogFetchResult::Unavailable => {
+                    self.flush_buffers();
+                    self.loaded = true;
+                }
             }
         }
 
