@@ -12,8 +12,9 @@ use std::{
 use alloy_provider::RootProvider;
 use base_common_network::Base;
 use base_optimism_rpc::OptimismRollupProviderExt;
-use base_proof_zk_backend::{L1HeadSource, OpSuccinctWitnessProvider, WitnessParams};
+use base_proof_zk_backend::OpSuccinctWitnessProvider;
 use base_proof_zk_witness::fetcher::{OPSuccinctDataFetcher, RPCConfig};
+use base_prover_service_protocol::{ZkBackend, ZkProofRequest, ZkVm};
 use clap::Parser;
 use eyre::{Result, WrapErr, ensure};
 use tempfile::TempDir;
@@ -22,6 +23,9 @@ use url::Url;
 
 /// `BabyBear` modulus, `2^31 - 2^27 + 1`.
 const BABY_BEAR_MODULUS: u64 = 0x7800_0001;
+
+/// The dump pins the L1 head, so the provider never derives one from a sequence window.
+const UNUSED_SEQUENCE_WINDOW: u64 = 0;
 
 /// Dump a 1-block `OpenVM` range witness from live RPCs.
 #[derive(Debug, Clone, Parser)]
@@ -91,18 +95,28 @@ impl OpenVmRangeDump {
         })
         .await
         .map_err(|error| eyre::eyre!("failed to initialize Succinct data fetcher: {error}"))?;
-        let stdin = OpSuccinctWitnessProvider::new(Arc::new(fetcher))
-            .generate_witness(WitnessParams {
-                start_block,
-                end_block,
-                l1_head: L1HeadSource::Pinned(l1_head),
-                schedule_l2_block_number: None,
-                // Commit only the range's final output root.
-                intermediate_block_interval: NonZeroU64::new(end_block - start_block)
-                    .ok_or_else(|| eyre::eyre!("block range is empty"))?,
-            })
-            .await
-            .map_err(|error| eyre::eyre!("failed to generate range witness: {error}"))?;
+        let number_of_blocks_to_prove = end_block - start_block;
+        let request = ZkProofRequest {
+            start_block_number: start_block,
+            number_of_blocks_to_prove,
+            sequence_window: None,
+            l1_head: Some(l1_head),
+            schedule_l2_block_number: None,
+            // Commit only the range's final output root.
+            intermediate_block_interval: NonZeroU64::new(number_of_blocks_to_prove)
+                .ok_or_else(|| eyre::eyre!("block range is empty"))?,
+            zk_vm: ZkVm::Sp1,
+            zk_backend: ZkBackend::default(),
+        };
+        let stdin = OpSuccinctWitnessProvider::new(
+            Arc::new(fetcher),
+            UNUSED_SEQUENCE_WINDOW,
+            self.l1_rpc.to_string(),
+            self.l2_node_rpc.to_string(),
+        )
+        .generate_range_witness(&request)
+        .await
+        .map_err(|error| eyre::eyre!("failed to generate range witness: {error}"))?;
         let rkyv = stdin.buffer.first().filter(|rkyv| !rkyv.is_empty());
         let rkyv = rkyv.ok_or_else(|| eyre::eyre!("generated rkyv witness was empty"))?;
 

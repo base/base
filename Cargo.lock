@@ -5102,6 +5102,7 @@ dependencies = [
  "base-optimism-rpc",
  "base-proof-zk-backend",
  "base-proof-zk-witness",
+ "base-prover-service-protocol",
  "clap",
  "eyre",
  "serde_json",

@@ -24,6 +24,7 @@ base-common-network.workspace = true
 base-optimism-rpc.workspace = true
 base-proof-zk-backend.workspace = true
 base-proof-zk-witness.workspace = true
+base-prover-service-protocol.workspace = true
 
 # misc
 url.workspace = true
