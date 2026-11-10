@@ -105,12 +105,12 @@ impl SuccinctHost {
 
         let server_task = args.start_server(hint.host, preimage.host).await?;
 
-        let witness = self.witness_generator.run(preimage.client, hint.client).await?;
+        let witness = self.witness_generator.run(preimage.client, hint.client).await;
         // Unlike the upstream, manually abort the server task, as it will hang if you wait for both
         // tasks to complete.
         server_task.abort();
 
-        Ok(witness)
+        witness
     }
 
     /// Get the finalized L2 block number. This is used to determine the highest block that can be
