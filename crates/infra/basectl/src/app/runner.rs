@@ -2,7 +2,7 @@ use std::time::Instant;
 
 use anyhow::Result;
 use base_common_genesis::SystemConfig;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 use url::Url;
 
 use super::{App, Resources, SourceLabel, ViewId, views::create_view};
@@ -66,6 +66,7 @@ pub fn start_background_services(
     resources.toasts.set_channel(toast_rx);
 
     let (l2_mode_tx, l2_mode_rx) = mpsc::channel::<ConnectionMode>(1);
+    let (backlog_head_tx, backlog_head_rx) = oneshot::channel::<u64>();
     resources.da.set_l2_mode_channel(l2_mode_rx);
     let head_feed = L2HeadFeed::new(
         config.l2_ws_rpc(),
@@ -73,6 +74,7 @@ pub fn start_background_services(
         block_req_tx,
         l2_mode_tx,
         toast_tx.clone(),
+        backlog_head_rx,
     );
     background_tasks.push(tokio::spawn(head_feed.run()).abort_handle());
 
@@ -102,8 +104,12 @@ pub fn start_background_services(
     }
 
     background_tasks.push(
-        tokio::spawn(fetch_initial_backlog_with_progress(config.rpc.to_string(), backlog_tx))
-            .abort_handle(),
+        tokio::spawn(fetch_initial_backlog_with_progress(
+            config.rpc.to_string(),
+            backlog_tx,
+            backlog_head_tx,
+        ))
+        .abort_handle(),
     );
 
     let proofs_toast_tx = toast_tx.clone();

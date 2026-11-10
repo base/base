@@ -15,7 +15,10 @@ use anyhow::{Context, Result, anyhow};
 use base_common_genesis::DenimTimestampSchedule;
 use base_common_network::Base;
 use futures::{StreamExt, stream};
-use tokio::{sync::mpsc, time::Instant};
+use tokio::{
+    sync::{mpsc, oneshot},
+    time::Instant,
+};
 use tracing::{debug, warn};
 use url::Url;
 
@@ -214,6 +217,14 @@ pub struct HeadCursor {
 }
 
 impl HeadCursor {
+    /// Treats `block` as already seen when no head has been, so the next head
+    /// requests everything after it. Does nothing once a head has been seen.
+    pub const fn start_after(&mut self, block: u64) {
+        if self.last_seen.is_none() {
+            self.last_seen = Some(block);
+        }
+    }
+
     /// Returns the block numbers to request for a newly observed head and advances past it.
     ///
     /// The first head requests only itself, a head that skips ahead also requests the
@@ -230,7 +241,9 @@ impl HeadCursor {
 /// Prefers an `eth_subscribe("newHeads")` WebSocket subscription. When the
 /// WebSocket is unavailable or drops, it polls `eth_blockNumber` over HTTP at
 /// the block interval and retries the WebSocket every [`Self::WS_RETRY_INTERVAL`].
-/// A shared [`HeadCursor`] backfills any blocks missed across reconnects.
+/// A shared [`HeadCursor`] backfills any blocks missed across reconnects, and
+/// starts right after the initial backlog's latest block when that is known by
+/// the first head, so no block falls between the backlog and the live feed.
 #[derive(Debug)]
 pub struct L2HeadFeed {
     /// WebSocket endpoint to subscribe on, if any.
@@ -244,6 +257,7 @@ pub struct L2HeadFeed {
     /// Receives user-facing connection notices.
     pub toast_tx: mpsc::Sender<Toast>,
     cursor: HeadCursor,
+    backlog_head_rx: Option<oneshot::Receiver<u64>>,
     mode: Option<ConnectionMode>,
 }
 
@@ -261,13 +275,15 @@ impl L2HeadFeed {
     /// How long to poll over HTTP before trying the WebSocket again.
     pub const WS_RETRY_INTERVAL: Duration = Duration::from_secs(30);
 
-    /// Creates a feed that has not seen any head yet.
+    /// Creates a feed that has not seen any head yet. `backlog_head_rx` receives
+    /// the latest block the initial backlog covers.
     pub fn new(
         ws_url: Option<Url>,
         http_url: Url,
         request_tx: mpsc::Sender<u64>,
         mode_tx: mpsc::Sender<ConnectionMode>,
         toast_tx: mpsc::Sender<Toast>,
+        backlog_head_rx: oneshot::Receiver<u64>,
     ) -> Self {
         Self {
             ws_url,
@@ -276,6 +292,7 @@ impl L2HeadFeed {
             mode_tx,
             toast_tx,
             cursor: HeadCursor::default(),
+            backlog_head_rx: Some(backlog_head_rx),
             mode: None,
         }
     }
@@ -377,6 +394,13 @@ impl L2HeadFeed {
     }
 
     async fn request(&mut self, head: u64) -> ControlFlow<()> {
+        // The backlog reports its latest block before fetching anything, so a gap
+        // can only exist if that report has arrived by the first head.
+        if let Some(mut backlog_head_rx) = self.backlog_head_rx.take()
+            && let Ok(backlog_head) = backlog_head_rx.try_recv()
+        {
+            self.cursor.start_after(backlog_head);
+        }
         for block_number in self.cursor.advance(head) {
             if self.request_tx.send(block_number).await.is_err() {
                 return ControlFlow::Break(());
@@ -450,9 +474,12 @@ pub async fn run_block_fetcher(
 /// Block fetch failures are retried, so `Complete` means the backlog total
 /// includes every decodable block. If the heads cannot be read after
 /// [`BACKLOG_SETUP_ATTEMPTS`] tries, sends [`BacklogFetchResult::Unavailable`].
+/// The latest block it covers goes to `latest_tx` as soon as it is read, so
+/// [`L2HeadFeed`] can start right after it.
 pub async fn fetch_initial_backlog_with_progress(
     l2_rpc: String,
     progress_tx: mpsc::Sender<BacklogFetchResult>,
+    latest_tx: oneshot::Sender<u64>,
 ) {
     let mut attempts = 0u32;
     let (provider, safe_block, unsafe_block) = loop {
@@ -479,6 +506,8 @@ pub async fn fetch_initial_backlog_with_progress(
             }
         }
     };
+
+    let _ = latest_tx.send(unsafe_block);
 
     let total_blocks = unsafe_block.saturating_sub(safe_block);
     let mut total_da_bytes: u64 = 0;
@@ -622,9 +651,16 @@ mod tests {
         let (progress_tx, mut progress_rx) = mpsc::channel(10);
 
         // Nothing listens on port 1, so every setup attempt fails.
-        fetch_initial_backlog_with_progress("http://127.0.0.1:1".to_string(), progress_tx).await;
+        let (latest_tx, latest_rx) = tokio::sync::oneshot::channel();
+        fetch_initial_backlog_with_progress(
+            "http://127.0.0.1:1".to_string(),
+            progress_tx,
+            latest_tx,
+        )
+        .await;
 
         assert!(matches!(progress_rx.recv().await, Some(BacklogFetchResult::Unavailable)));
+        assert!(latest_rx.await.is_err());
     }
 
     #[tokio::test]
@@ -649,6 +685,17 @@ mod tests {
         assert_eq!(info.block_number, 42);
         assert_eq!(info.gas_used, 21_000);
         assert_eq!(stalls.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn head_cursor_started_after_the_backlog_fills_the_gap_to_the_first_head() {
+        let mut cursor = HeadCursor::default();
+        cursor.start_after(100);
+        assert_eq!(cursor.advance(104).collect::<Vec<_>>(), [101, 102, 103, 104]);
+
+        // Once a head has been seen, a late backlog report changes nothing.
+        cursor.start_after(50);
+        assert_eq!(cursor.advance(105).collect::<Vec<_>>(), [105]);
     }
 
     #[test]
