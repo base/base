@@ -828,10 +828,12 @@ mod tests {
     }
 
     #[test]
-    fn named_sender_hash_equals_sender_signature_hash() {
+    fn named_sender_hash_is_not_a_signing_hash() {
         let signed = sample_signed_8130(true);
-        assert!(signed.explicit_sender().is_some());
-        assert_eq!(*signed.hash(), signed.tx().sender_signature_hash());
+        let sender = signed.explicit_sender().unwrap();
+        assert_eq!(*signed.hash(), signed.tx().transaction_hash(sender));
+        assert_ne!(*signed.hash(), signed.tx().sender_signature_hash());
+        assert_ne!(*signed.hash(), signed.tx().payer_signature_hash(sender));
     }
 
     #[test]
