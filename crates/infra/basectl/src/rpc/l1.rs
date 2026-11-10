@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{ops::ControlFlow, time::Duration};
 
 use alloy_consensus::Transaction;
 use alloy_primitives::Address;
@@ -11,7 +11,7 @@ use anyhow::{Context, Result};
 use base_common_genesis::SystemConfig;
 use futures::StreamExt;
 use tokio::sync::mpsc;
-use tracing::warn;
+use tracing::{debug, warn};
 use url::Url;
 
 use super::ConnectionMode;
@@ -164,42 +164,17 @@ async fn run_l1_blob_watcher_ws(
 
     let _ = mode_tx.send(ConnectionMode::WebSocket).await;
 
-    let mut last_block: Option<u64> = None;
-
-    if let Ok(Some(block)) = provider.get_block_by_number(BlockNumberOrTag::Latest).full().await {
-        let info = extract_l1_block_info(&block, batcher_address);
-        last_block = Some(block.header.number);
-        if result_tx.send(info).await.is_err() {
-            return Ok(());
-        }
+    let mut scanner = L1BlobScanner::new(&provider, batcher_address);
+    if let Ok(head) = provider.get_block_number().await
+        && scanner.scan_to(head, &result_tx).await.is_break()
+    {
+        return Ok(());
     }
 
     while let Some(header) = stream.next().await {
-        let block_num = header.number;
-
-        let start = last_block.map_or(block_num, |last| last + 1);
-        for gap_num in start..block_num {
-            if let Ok(Some(block)) =
-                provider.get_block_by_number(BlockNumberOrTag::Number(gap_num)).full().await
-            {
-                let info = extract_l1_block_info(&block, batcher_address);
-                if result_tx.send(info).await.is_err() {
-                    return Ok(());
-                }
-            }
+        if scanner.scan_to(header.number, &result_tx).await.is_break() {
+            return Ok(());
         }
-
-        if block_num > last_block.unwrap_or(0)
-            && let Ok(Some(block)) =
-                provider.get_block_by_number(BlockNumberOrTag::Number(block_num)).full().await
-        {
-            let info = extract_l1_block_info(&block, batcher_address);
-            if result_tx.send(info).await.is_err() {
-                return Ok(());
-            }
-        }
-
-        last_block = Some(block_num);
     }
 
     warn!("L1 WebSocket stream ended");
@@ -223,31 +198,67 @@ async fn run_l1_blob_watcher_poll(
         }
     };
 
-    let mut last_block: Option<u64> = None;
+    let mut scanner = L1BlobScanner::new(&provider, batcher_address);
     let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
 
     loop {
         interval.tick().await;
 
-        let latest = match provider.get_block_number().await {
-            Ok(n) => n,
-            Err(_) => continue,
-        };
-
-        let start_block = last_block.map_or(latest, |b| b + 1);
-
-        for block_num in start_block..=latest {
-            if let Ok(Some(block)) =
-                provider.get_block_by_number(BlockNumberOrTag::Number(block_num)).full().await
-            {
-                let info = extract_l1_block_info(&block, batcher_address);
-                if result_tx.send(info).await.is_err() {
-                    return;
-                }
-            }
+        let Ok(latest) = provider.get_block_number().await else { continue };
+        if scanner.scan_to(latest, &result_tx).await.is_break() {
+            return;
         }
+    }
+}
 
-        last_block = Some(latest);
+/// Reads L1 blocks in order and reports each one's blob counts exactly once.
+#[derive(Debug)]
+pub struct L1BlobScanner<'a, P> {
+    provider: &'a P,
+    batcher_address: Address,
+    last_scanned: Option<u64>,
+}
+
+impl<'a, P: Provider> L1BlobScanner<'a, P> {
+    /// Creates a scanner that starts at the first head it is given.
+    pub const fn new(provider: &'a P, batcher_address: Address) -> Self {
+        Self { provider, batcher_address, last_scanned: None }
+    }
+
+    /// Sends blob info for every block after the last one scanned, up to `head`.
+    ///
+    /// Stops at the first block that fails to fetch without moving past it, so
+    /// the next call retries that block instead of losing its blobs. Breaks when
+    /// `result_tx` is closed.
+    pub async fn scan_to(
+        &mut self,
+        head: u64,
+        result_tx: &mpsc::Sender<L1BlockInfo>,
+    ) -> ControlFlow<()> {
+        let first = self.last_scanned.map_or(head, |last| last + 1);
+        for block_num in first..=head {
+            let block = match self
+                .provider
+                .get_block_by_number(BlockNumberOrTag::Number(block_num))
+                .full()
+                .await
+            {
+                Ok(Some(block)) => block,
+                Ok(None) => {
+                    debug!(block = block_num, "L1 block not found yet");
+                    return ControlFlow::Continue(());
+                }
+                Err(error) => {
+                    debug!(error = %error, block = block_num, "L1 block fetch failed");
+                    return ControlFlow::Continue(());
+                }
+            };
+            if result_tx.send(extract_l1_block_info(&block, self.batcher_address)).await.is_err() {
+                return ControlFlow::Break(());
+            }
+            self.last_scanned = Some(block_num);
+        }
+        ControlFlow::Continue(())
     }
 }
 
@@ -273,5 +284,46 @@ fn extract_l1_block_info(
         timestamp: block.header.timestamp,
         total_blobs,
         base_blobs,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy_provider::{ProviderBuilder, mock::Asserter};
+    use alloy_rpc_types_eth::{Block, Header};
+    use tokio::sync::mpsc;
+
+    use super::*;
+
+    fn block(number: u64) -> Block {
+        Block {
+            header: Header {
+                inner: alloy_consensus::Header { number, ..Default::default() },
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn scanner_retries_a_failed_block_instead_of_skipping_it() {
+        let asserter = Asserter::new();
+        let provider = ProviderBuilder::new().connect_mocked_client(asserter.clone());
+        let mut scanner = L1BlobScanner::new(&provider, Address::ZERO);
+        let (result_tx, mut result_rx) = mpsc::channel(10);
+
+        asserter.push_success(&block(10));
+        assert!(scanner.scan_to(10, &result_tx).await.is_continue());
+
+        asserter.push_success(&block(11));
+        asserter.push_failure_msg("rate limited");
+        assert!(scanner.scan_to(12, &result_tx).await.is_continue());
+
+        asserter.push_success(&block(12));
+        assert!(scanner.scan_to(12, &result_tx).await.is_continue());
+
+        let scanned: Vec<u64> =
+            std::iter::from_fn(|| result_rx.try_recv().ok()).map(|b| b.block_number).collect();
+        assert_eq!(scanned, [10, 11, 12]);
     }
 }

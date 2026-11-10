@@ -33,7 +33,10 @@ pub use games::{
 };
 
 mod l1;
-pub use l1::{L1BlockInfo, fetch_full_system_config, fetch_l1_block_number, run_l1_blob_watcher};
+pub use l1::{
+    L1BlobScanner, L1BlockInfo, fetch_full_system_config, fetch_l1_block_number,
+    run_l1_blob_watcher,
+};
 
 mod p2p;
 pub use p2p::{

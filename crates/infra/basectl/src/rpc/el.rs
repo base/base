@@ -1,6 +1,6 @@
 use std::{
     ops::{ControlFlow, RangeInclusive},
-    sync::Arc,
+    sync::{Arc, Mutex},
     time::Duration,
 };
 
@@ -23,7 +23,8 @@ use super::{ConnectionMode, fetch_safe_and_latest};
 use crate::tui::Toast;
 
 const CONCURRENT_BLOCK_FETCHES: usize = 16;
-const DROPPED_BLOCK_TOAST_INTERVAL: Duration = Duration::from_secs(30);
+const STALLED_FETCH_TOAST_INTERVAL: Duration = Duration::from_secs(30);
+const BACKLOG_SETUP_RETRY_INTERVAL: Duration = Duration::from_secs(5);
 
 /// Fetches a single L2 block via `eth_getBlockByHash` or `eth_getBlockByNumber`.
 ///
@@ -134,38 +135,45 @@ pub enum BacklogFetchResult {
     Progress(BacklogProgress),
     /// A single fetched block.
     Block(BlockDaInfo),
-    /// Backlog fetch completed successfully.
+    /// Backlog fetch completed with every block in the range.
     Complete(InitialBacklog),
-    /// Backlog fetch failed.
-    Error,
 }
 
-/// Backoff between attempts to fetch one L2 block. Public RPCs rate limit
-/// bursts, and a load-balanced node can briefly lag the head that was announced.
-const BLOCK_FETCH_RETRY_DELAYS: [Duration; 5] = [
-    Duration::from_millis(250),
-    Duration::from_millis(500),
-    Duration::from_secs(1),
-    Duration::from_secs(2),
-    Duration::from_secs(4),
-];
+/// First delay before retrying an L2 block fetch; it doubles up to [`BLOCK_FETCH_MAX_DELAY`].
+/// Public RPCs rate limit bursts, and a load-balanced node can briefly lag the
+/// head that was announced.
+const BLOCK_FETCH_MIN_DELAY: Duration = Duration::from_millis(250);
+/// Longest delay between attempts to fetch one L2 block.
+const BLOCK_FETCH_MAX_DELAY: Duration = Duration::from_secs(4);
+/// Failed attempts after which a block fetch counts as stalled (about 8 seconds).
+const BLOCK_FETCH_STALL_ATTEMPTS: u32 = 5;
 
 /// Fetches a single L2 block and summarizes its DA and gas usage.
 ///
-/// Retries errors and missing blocks with [`BLOCK_FETCH_RETRY_DELAYS`], then
-/// returns `None`.
+/// DA totals are only correct when no block is skipped, so errors and
+/// not-yet-visible blocks are retried with backoff until the fetch succeeds.
+/// `on_stall` runs once if the block is still failing after
+/// [`BLOCK_FETCH_STALL_ATTEMPTS`] attempts.
 async fn fetch_raw_block_info<P: Provider<Base>>(
     provider: &P,
     block_num: u64,
-) -> Option<BlockDaInfo> {
-    let mut retry_delays = BLOCK_FETCH_RETRY_DELAYS.into_iter();
+    on_stall: &(dyn Fn() + Sync),
+) -> BlockDaInfo {
+    let mut delay = BLOCK_FETCH_MIN_DELAY;
+    let mut attempts = 0u32;
     let block = loop {
         match provider.get_block_by_number(BlockNumberOrTag::Number(block_num)).full().await {
             Ok(Some(block)) => break block,
             Ok(None) => debug!(block = block_num, "L2 block not found yet"),
             Err(error) => debug!(error = %error, block = block_num, "L2 block fetch failed"),
         }
-        tokio::time::sleep(retry_delays.next()?).await;
+        attempts += 1;
+        if attempts == BLOCK_FETCH_STALL_ATTEMPTS {
+            warn!(block = block_num, "L2 block fetch still failing; retrying");
+            on_stall();
+        }
+        tokio::time::sleep(delay).await;
+        delay = (delay * 2).min(BLOCK_FETCH_MAX_DELAY);
     };
 
     // Deposits are derived from L1, so the batcher never posts them.
@@ -176,7 +184,7 @@ async fn fetch_raw_block_info<P: Provider<Base>>(
         .map(|tx| tx.inner.inner.encode_2718_len() as u64)
         .sum();
 
-    Some(BlockDaInfo {
+    BlockDaInfo {
         block_number: block_num,
         da_bytes,
         timestamp: block.header.timestamp,
@@ -184,7 +192,7 @@ async fn fetch_raw_block_info<P: Provider<Base>>(
         gas_used: block.header.gas_used,
         gas_limit: block.header.gas_limit,
         base_fee_per_gas: block.header.base_fee_per_gas,
-    })
+    }
 }
 
 /// Tracks the newest L2 head seen so each block number is requested once, in order.
@@ -389,96 +397,81 @@ pub async fn run_block_fetcher(
         }
     };
 
+    let last_stall_toast: Mutex<Option<Instant>> = Mutex::new(None);
+    let on_stall = || {
+        let mut last = last_stall_toast.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if last.is_none_or(|at| at.elapsed() >= STALLED_FETCH_TOAST_INTERVAL) {
+            *last = Some(Instant::now());
+            let _ = toast_tx.try_send(Toast::warning("L2 RPC failing or rate limited"));
+        }
+    };
     let mut fetched = stream::poll_fn(|cx| request_rx.poll_recv(cx))
-        .map(|block_num| fetch_raw_block_info(&provider, block_num))
+        .map(|block_num| fetch_raw_block_info(&provider, block_num, &on_stall))
         .buffered(CONCURRENT_BLOCK_FETCHES);
-    let mut last_drop_toast: Option<Instant> = None;
     while let Some(info) = fetched.next().await {
-        let Some(info) = info else {
-            warn!("Dropped L2 block after exhausting fetch retries");
-            if last_drop_toast.is_none_or(|at| at.elapsed() >= DROPPED_BLOCK_TOAST_INTERVAL) {
-                last_drop_toast = Some(Instant::now());
-                let _ = toast_tx.try_send(Toast::warning("L2 RPC failing or rate limited"));
-            }
-            continue;
-        };
         if result_tx.send(info).await.is_err() {
             break;
         }
     }
 }
 
-/// Fetches the initial DA backlog, sending progress updates and block data.
+/// Fetches every block between the safe and latest heads, sending progress updates
+/// and block data, then [`BacklogFetchResult::Complete`].
+///
+/// Failures are retried rather than reported, so `Complete` always means the
+/// backlog total includes every block.
 pub async fn fetch_initial_backlog_with_progress(
     l2_rpc: String,
-    progress_tx: tokio::sync::mpsc::Sender<BacklogFetchResult>,
+    progress_tx: mpsc::Sender<BacklogFetchResult>,
 ) {
-    let result = async {
-        let (safe_block, unsafe_block) = fetch_safe_and_latest(&l2_rpc).await?;
-
-        if unsafe_block <= safe_block {
-            return Ok(InitialBacklog { safe_block, da_bytes: 0 });
-        }
-
-        let total_blocks = unsafe_block - safe_block;
-        let provider = Arc::new(
-            ProviderBuilder::new()
+    let (provider, safe_block, unsafe_block) = loop {
+        let setup = async {
+            let (safe_block, unsafe_block) = fetch_safe_and_latest(&l2_rpc).await?;
+            let provider = ProviderBuilder::new()
                 .disable_recommended_fillers()
                 .network::<Base>()
                 .connect(&l2_rpc)
-                .await?,
-        );
-
-        let block_numbers: Vec<u64> = ((safe_block + 1)..=unsafe_block).collect();
-
-        let mut total_da_bytes: u64 = 0;
-        let mut blocks_fetched: u64 = 0;
-        let mut blocks: Vec<BlockDaInfo> = Vec::with_capacity(block_numbers.len());
-
-        let mut fetch_stream = stream::iter(block_numbers)
-            .map(|block_num| {
-                let provider = Arc::clone(&provider);
-                async move {
-                    fetch_raw_block_info(&*provider, block_num).await.unwrap_or_else(|| {
-                        BlockDaInfo { block_number: block_num, ..Default::default() }
-                    })
-                }
-            })
-            .buffer_unordered(CONCURRENT_BLOCK_FETCHES);
-
-        while let Some(block) = fetch_stream.next().await {
-            total_da_bytes = total_da_bytes.saturating_add(block.da_bytes);
-            blocks.push(block);
-            blocks_fetched += 1;
-
-            if blocks_fetched.is_multiple_of(10) {
-                let _ = progress_tx
-                    .send(BacklogFetchResult::Progress(BacklogProgress {
-                        current_block: blocks_fetched,
-                        total_blocks,
-                    }))
-                    .await;
+                .await?;
+            Ok::<_, anyhow::Error>((provider, safe_block, unsafe_block))
+        };
+        match setup.await {
+            Ok(setup) => break setup,
+            Err(error) => {
+                warn!(error = %error, "Backlog fetch setup failed; retrying");
+                tokio::time::sleep(BACKLOG_SETUP_RETRY_INTERVAL).await;
             }
         }
+    };
 
-        blocks.sort_by_key(|b| b.block_number);
-        for block in blocks {
-            let _ = progress_tx.send(BacklogFetchResult::Block(block)).await;
+    let total_blocks = unsafe_block.saturating_sub(safe_block);
+    let mut total_da_bytes: u64 = 0;
+    let mut blocks: Vec<BlockDaInfo> = Vec::with_capacity(total_blocks as usize);
+
+    let mut fetch_stream = stream::iter((safe_block + 1)..=unsafe_block)
+        .map(|block_num| fetch_raw_block_info(&provider, block_num, &|| {}))
+        .buffer_unordered(CONCURRENT_BLOCK_FETCHES);
+
+    while let Some(block) = fetch_stream.next().await {
+        total_da_bytes = total_da_bytes.saturating_add(block.da_bytes);
+        blocks.push(block);
+
+        if (blocks.len() as u64).is_multiple_of(10) {
+            let _ = progress_tx
+                .send(BacklogFetchResult::Progress(BacklogProgress {
+                    current_block: blocks.len() as u64,
+                    total_blocks,
+                }))
+                .await;
         }
-
-        Ok::<_, anyhow::Error>(InitialBacklog { safe_block, da_bytes: total_da_bytes })
     }
-    .await;
 
-    match result {
-        Ok(backlog) => {
-            let _ = progress_tx.send(BacklogFetchResult::Complete(backlog)).await;
-        }
-        Err(e) => {
-            warn!(error = %e, "Backlog fetch failed");
-            let _ = progress_tx.send(BacklogFetchResult::Error).await;
-        }
+    blocks.sort_by_key(|b| b.block_number);
+    for block in blocks {
+        let _ = progress_tx.send(BacklogFetchResult::Block(block)).await;
     }
+    let _ = progress_tx
+        .send(BacklogFetchResult::Complete(InitialBacklog { safe_block, da_bytes: total_da_bytes }))
+        .await;
 }
 
 /// Summary of a single transaction within a block.
@@ -562,7 +555,35 @@ pub async fn fetch_block_transactions(
 
 #[cfg(test)]
 mod tests {
-    use super::{HeadCursor, effective_priority_fee_per_gas};
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    use alloy_provider::{Network, ProviderBuilder, mock::Asserter};
+    use base_common_network::Base;
+
+    use super::{HeadCursor, effective_priority_fee_per_gas, fetch_raw_block_info};
+
+    #[tokio::test]
+    async fn block_fetch_retries_errors_and_missing_blocks_until_it_succeeds() {
+        let asserter = Asserter::new();
+        let provider =
+            ProviderBuilder::new().network::<Base>().connect_mocked_client(asserter.clone());
+        let mut block = <Base as Network>::BlockResponse::default();
+        block.header.inner.inner.number = 42;
+        block.header.inner.inner.gas_used = 21_000;
+        asserter.push_failure_msg("rate limited");
+        asserter.push_success(&Option::<<Base as Network>::BlockResponse>::None);
+        asserter.push_success(&block);
+
+        let stalls = AtomicU32::new(0);
+        let info = fetch_raw_block_info(&provider, 42, &|| {
+            stalls.fetch_add(1, Ordering::Relaxed);
+        })
+        .await;
+
+        assert_eq!(info.block_number, 42);
+        assert_eq!(info.gas_used, 21_000);
+        assert_eq!(stalls.load(Ordering::Relaxed), 0);
+    }
 
     #[test]
     fn head_cursor_requests_each_new_block_once_in_order() {
