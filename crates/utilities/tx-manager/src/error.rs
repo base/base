@@ -290,7 +290,11 @@ impl RpcErrorClassifier {
         if lowered.contains("replacement transaction underpriced") {
             return TxManagerError::ReplacementUnderpriced;
         }
-        if lowered.contains("transaction underpriced") {
+        // Geth rejects a priority fee below its minimum with "transaction gas price below
+        // minimum".
+        if lowered.contains("transaction underpriced")
+            || lowered.contains("gas price below minimum")
+        {
             return TxManagerError::Underpriced;
         }
         if lowered.contains("nonce too low") {
@@ -380,6 +384,10 @@ mod tests {
         TxManagerError::ReplacementUnderpriced
     )]
     #[case::underpriced("transaction underpriced", TxManagerError::Underpriced)]
+    #[case::below_minimum_tip(
+        "transaction gas price below minimum: gas tip cap 1, minimum needed 2",
+        TxManagerError::Underpriced
+    )]
     #[case::nonce_too_low("nonce too low", TxManagerError::NonceTooLow)]
     #[case::nonce_too_high("nonce too high", TxManagerError::NonceTooHigh)]
     #[case::insufficient_funds("insufficient funds", TxManagerError::InsufficientFunds)]

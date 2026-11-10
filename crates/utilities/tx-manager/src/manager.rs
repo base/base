@@ -1928,7 +1928,7 @@ mod tests {
     //! cannot construct, to reject confirmation under an RPC-supplied hash.
 
     use std::{
-        sync::{Arc, atomic::AtomicBool},
+        sync::{Arc, Mutex, atomic::AtomicBool},
         time::Duration,
     };
 
@@ -2721,17 +2721,22 @@ mod tests {
         metrics
     }
 
-    /// A manager over `asserter`, whose first response must be the chain ID, with one
+    /// A mocked provider over `asserter`.
+    fn mocked(asserter: &Asserter) -> RootProvider {
+        ProviderBuilder::default().connect_mocked_client(asserter.clone())
+    }
+
+    /// A manager over `provider`, whose first response must be the chain ID, with one
     /// confirmation, a 60 s receipt polling interval and the given blob bounds.
-    async fn blob_manager(
+    async fn blob_manager<P: Provider + Clone + std::fmt::Debug + 'static>(
         ctx: &Context,
-        asserter: Asserter,
+        provider: P,
         bounds: (u128, u128),
         metrics: MockTxMetrics,
-    ) -> SimpleTxManager<impl Provider + Clone + std::fmt::Debug + 'static, Context> {
+    ) -> SimpleTxManager<P, Context> {
         SimpleTxManager::from_wallet_with_runtime(
             ctx.clone(),
-            ProviderBuilder::new().connect_mocked_client(asserter),
+            provider,
             EthereumWallet::from(PrivateKeySigner::random()),
             TxManagerConfig {
                 num_confirmations: 1,
@@ -2749,54 +2754,116 @@ mod tests {
         .expect("should construct manager")
     }
 
+    /// A provider over a mocked client that answers receipt queries itself: the version of a
+    /// blob tx published at position `landing` (from 0) is mined at block 10 once a
+    /// replacement has been published, and every other version is pending. Versions are
+    /// numbered in the order their receipts are first polled, which is the order they are
+    /// published in.
+    #[derive(Debug, Clone)]
+    struct LandingProvider {
+        inner: RootProvider,
+        landing: usize,
+        polled: Arc<Mutex<Vec<B256>>>,
+    }
+
+    impl Provider for LandingProvider {
+        fn root(&self) -> &RootProvider {
+            &self.inner
+        }
+
+        fn get_transaction_receipt(
+            &self,
+            hash: B256,
+        ) -> ProviderCall<(B256,), Option<TransactionReceipt>> {
+            let mut polled = self.polled.lock().unwrap();
+            if !polled.contains(&hash) {
+                polled.push(hash);
+            }
+            let mined = polled.len() > 1 && polled[self.landing] == hash;
+            ProviderCall::ready(Ok(mined.then(|| mined_receipt(hash, 10).0)))
+        }
+    }
+
     /// A blob tx still pending after the resubmission timeout is replaced with doubled fees.
-    /// Once it lands, the next blob tx starts at 90% of its `max_priority_fee_per_gas` per
-    /// blob, and the metrics record that value and the replacement.
-    #[test]
-    fn a_stuck_blob_tx_is_replaced_on_the_timer_and_its_fees_carry_to_the_next_one() {
-        Runner::start(Config::seeded(0), |ctx| async move {
-            let tx_hash = B256::with_last_byte(1);
-            let (receipt, block) = mined_receipt(tx_hash, 10);
+    /// Whichever version lands, the replacement or the first version, the next blob tx
+    /// starts at 90% of the `max_priority_fee_per_gas` per blob that version paid, and the
+    /// metrics record that value and the replacement.
+    #[rstest]
+    #[case::the_replacement_lands(1, 0.02, 18_000_000)]
+    #[case::the_first_version_lands(0, 0.01, 10_000_000)]
+    fn a_stuck_blob_tx_is_replaced_on_the_timer_and_the_landed_fees_carry_to_the_next_one(
+        #[case] landing: usize,
+        #[case] landed_max_priority_fee_per_gas_per_blob_gwei: f64,
+        #[case] next_max_priority_fee_per_gas_per_blob: u128,
+    ) {
+        Runner::start(Config::seeded(0), move |ctx| async move {
+            // The receipt of each version is polled when it is published, and again 15 s later.
+            let receipt_query_interval = BLOB_RESUBMISSION_TIMEOUT + Duration::from_secs(5);
+            let (_, block) = mined_receipt(B256::ZERO, 10);
             let asserter = Asserter::new();
             asserter.push_success(&1u64);
             push_blob_pricing(&asserter);
             asserter.push_success(&0u64);
-            asserter.push_success(&tx_hash);
+            asserter.push_success(&B256::ZERO);
             asserter.push_success(&1u64);
-            asserter.push_success(&Option::<TransactionReceipt>::None);
-            // The replacement, and the receipt of the transaction.
+            // The replacement, signed at the resubmission timeout, and its first poll.
             push_blob_pricing(&asserter);
-            asserter.push_success(&tx_hash);
+            asserter.push_success(&B256::ZERO);
             asserter.push_success(&10u64);
-            asserter.push_success(&Some(&receipt));
+            if landing == 0 {
+                // The first version, polled again.
+                asserter.push_success(&10u64);
+            }
+            // The canonical block of the landed version.
             asserter.push_success(&Some(&block));
             let mut metrics = blob_send_metrics();
             metrics.expect_record_gas_bump().times(1).return_const(());
-            // 0.01 gwei, doubled once.
-            metrics.expect_record_landed_blob_tx().with(eq(0.02), eq(1)).times(1).return_const(());
-            let manager =
-                blob_manager(&ctx, asserter.clone(), (10_000_000, 10_000_000_000), metrics).await;
+            metrics
+                .expect_record_landed_blob_tx()
+                .with(eq(landed_max_priority_fee_per_gas_per_blob_gwei), eq(1))
+                .times(1)
+                .return_const(());
+            let polled = Arc::new(Mutex::new(Vec::new()));
+            let provider =
+                LandingProvider { inner: mocked(&asserter), landing, polled: Arc::clone(&polled) };
+            let mut manager =
+                blob_manager(&ctx, provider, (10_000_000, 10_000_000_000), metrics).await;
+            manager.config.receipt_query_interval = receipt_query_interval;
 
-            manager.send(blob_candidate()).await.expect("the send should confirm");
+            let confirmed = manager.send(blob_candidate()).await.expect("the send should confirm");
 
-            assert_eq!(ctx.now(), BLOB_RESUBMISSION_TIMEOUT);
+            let polled = polled.lock().unwrap().clone();
+            assert_eq!(polled.len(), 2, "the first version and its replacement are published");
+            assert_eq!(confirmed.transaction_hash, polled[landing]);
+            assert_eq!(
+                ctx.now(),
+                if landing == 0 { receipt_query_interval } else { BLOB_RESUBMISSION_TIMEOUT }
+            );
             assert!(asserter.read_q().is_empty(), "every mocked response should be used");
-            assert_eq!(manager.blob_fee_policy.max_priority_fee_per_gas_per_blob(), 18_000_000);
+            assert_eq!(
+                manager.blob_fee_policy.max_priority_fee_per_gas_per_blob(),
+                next_max_priority_fee_per_gas_per_blob
+            );
         });
     }
 
     /// A blob tx the node rejects for its fees, as when a version signed before a restart
-    /// holds its nonce, is replaced right away instead of after the resubmission timeout.
-    #[test]
-    fn a_blob_tx_rejected_for_its_fees_is_replaced_right_away() {
-        Runner::start(Config::seeded(0), |ctx| async move {
+    /// holds its nonce or its priority fee is below the node's minimum, is replaced right
+    /// away instead of after the resubmission timeout.
+    #[rstest]
+    #[case::replacement_underpriced("replacement transaction underpriced")]
+    #[case::below_minimum_tip(
+        "transaction gas price below minimum: gas tip cap 10000000, minimum needed 15000000"
+    )]
+    fn a_blob_tx_rejected_for_its_fees_is_replaced_right_away(#[case] rejection: &'static str) {
+        Runner::start(Config::seeded(0), move |ctx| async move {
             let tx_hash = B256::with_last_byte(1);
             let (receipt, block) = mined_receipt(tx_hash, 10);
             let asserter = Asserter::new();
             asserter.push_success(&1u64);
             push_blob_pricing(&asserter);
             asserter.push_success(&0u64);
-            asserter.push_failure_msg("replacement transaction underpriced");
+            asserter.push_failure_msg(rejection);
             push_blob_pricing(&asserter);
             asserter.push_success(&tx_hash);
             asserter.push_success(&10u64);
@@ -2806,7 +2873,7 @@ mod tests {
             metrics.expect_record_gas_bump().times(1).return_const(());
             metrics.expect_record_landed_blob_tx().with(eq(0.02), eq(1)).times(1).return_const(());
             let manager =
-                blob_manager(&ctx, asserter.clone(), (10_000_000, 10_000_000_000), metrics).await;
+                blob_manager(&ctx, mocked(&asserter), (10_000_000, 10_000_000_000), metrics).await;
 
             manager.send(blob_candidate()).await.expect("the send should confirm");
 
@@ -2832,7 +2899,7 @@ mod tests {
             let mut metrics = blob_send_metrics();
             metrics.expect_record_gas_bump().never();
             let manager =
-                blob_manager(&ctx, asserter.clone(), (10_000_000, 10_000_000_000), metrics).await;
+                blob_manager(&ctx, mocked(&asserter), (10_000_000, 10_000_000_000), metrics).await;
             let mut send = Box::pin(manager.send(blob_candidate()));
             assert!(futures::poll!(&mut send).is_pending());
             ctx.sleep(Duration::from_nanos(1)).await;
@@ -2874,7 +2941,8 @@ mod tests {
             let mut metrics = blob_send_metrics();
             metrics.expect_record_gas_bump().never();
             let manager =
-                blob_manager(&ctx, asserter.clone(), (1_000_000_000, 1_000_000_000), metrics).await;
+                blob_manager(&ctx, mocked(&asserter), (1_000_000_000, 1_000_000_000), metrics)
+                    .await;
             let mut send = Box::pin(manager.send(blob_candidate()));
             assert!(futures::poll!(&mut send).is_pending());
 
@@ -2909,7 +2977,8 @@ mod tests {
             metrics.expect_record_landed_blob_tx().never();
             metrics.expect_record_tx_failed().times(1).return_const(());
             let manager =
-                blob_manager(&ctx, asserter.clone(), (1_000_000_000, 1_000_000_000), metrics).await;
+                blob_manager(&ctx, mocked(&asserter), (1_000_000_000, 1_000_000_000), metrics)
+                    .await;
 
             let result = manager.send(blob_candidate()).await;
 
@@ -2940,7 +3009,7 @@ mod tests {
             let mut metrics = blob_send_metrics();
             metrics.expect_record_gas_bump().never();
             let manager =
-                blob_manager(&ctx, asserter.clone(), (10_000_000, 10_000_000_000), metrics).await;
+                blob_manager(&ctx, mocked(&asserter), (10_000_000, 10_000_000_000), metrics).await;
             let mut send = Box::pin(manager.send(blob_candidate()));
             assert!(futures::poll!(&mut send).is_pending());
             assert_eq!(asserter.read_q().len(), 3);
