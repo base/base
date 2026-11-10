@@ -235,6 +235,7 @@ impl Discv5Driver {
             };
 
             // Step 4: Run the core driver loop.
+            let mut events_open = true;
             loop {
                 tokio::select! {
                     msg = req_recv.recv() => {
@@ -284,9 +285,12 @@ impl Discv5Driver {
                             }
                         }
                     }
-                    event = event_stream.recv() => {
+                    event = event_stream.recv(), if events_open => {
                         let Some(event) = event else {
-                            trace!(target: "discovery", "Received `None` event");
+                            // Stop polling the closed stream instead of spinning on it; requests
+                            // and shutdown are still served.
+                            warn!(target: "discovery", "discv5 event stream closed");
+                            events_open = false;
                             continue;
                         };
                         match event {
