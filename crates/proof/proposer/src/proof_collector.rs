@@ -277,9 +277,14 @@ where
     }
 
     #[tracing::instrument(
-        name = "proposer.collect_submit",
+        name = "proposer.submit_proof",
         skip_all,
-        fields(target_block = target_block, session_id = %session_id)
+        fields(
+            starting_block_number = starting_block,
+            target_block = target_block,
+            parent_address = %parent_address,
+            session_id = %session_id,
+        )
     )]
     async fn submit_proof(
         &self,
