@@ -37,6 +37,12 @@ non-input view to switch the EL between the configured `rpc` and `public_rpc`;
 the CL endpoint is unchanged. Switching rebuilds the active monitors so their
 background requests reconnect to the selected EL endpoint.
 
+The command center and DA monitor follow new L2 blocks with an
+`eth_subscribe("newHeads")` WebSocket subscription on `el_ws_rpc`, or on `rpc`
+with a `ws://`/`wss://` scheme when `el_ws_rpc` is unset. If the WebSocket is
+unavailable they poll `eth_blockNumber` over HTTP every 200ms and retry the
+WebSocket every 30 seconds. The L2 blocks panel title shows `WS` or `Poll`.
+
 | Command                  | Alias | Description                                      |
 | ------------------------ | ----- | ------------------------------------------------ |
 | `monitor`                |       | TUI Home view                                    |

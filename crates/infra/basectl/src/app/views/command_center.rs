@@ -17,6 +17,7 @@ use crate::{
         COLOR_BASE_BLUE, COLOR_BURN, COLOR_GROWTH, COLOR_ROW_HIGHLIGHTED, COLOR_ROW_SELECTED,
         Format, L1BlocksTableParams, render_da_backlog_bar, render_l1_blocks_table,
     },
+    rpc::ConnectionMode,
     tui::{Browser, Keybinding, Toast},
 };
 
@@ -517,8 +518,9 @@ fn render_da_panel(
     let tracker = &resources.da.tracker;
     let border_color = if is_active { Color::Rgb(100, 255, 100) } else { Color::Green };
 
+    let mode_label = resources.da.l2_connection_mode.map_or("", ConnectionMode::title_suffix);
     let block = Block::default()
-        .title(" L2 Blocks (DA↑) ")
+        .title(format!(" L2 Blocks (DA↑){mode_label} "))
         .borders(Borders::ALL)
         .border_style(Style::default().fg(border_color));
 
