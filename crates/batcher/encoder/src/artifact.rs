@@ -76,7 +76,7 @@ impl DaArtifact {
 
 /// Retained artifact counts for one channel.
 #[derive(Debug, Default, Clone, Copy)]
-pub struct ChannelArtifactCounts {
+struct ChannelArtifactCounts {
     /// Retained artifacts carrying the channel's frames.
     retained: usize,
     /// Retained artifacts not yet confirmed.
