@@ -14,15 +14,15 @@ use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, B256, LogData, U256, map::AddressSet};
 use base_common_chains::{BaseFeature, Upgrades};
 use base_common_consensus::{
-    BaseTimeUpdateTx, Eip8130Constants, Eip8130Contracts, Eip8130Signed, Eip8130StructuralError,
-    Eip8130Structure, Eip8130TimestampError,
+    AccountChange, BaseTimeUpdateTx, Eip8130Constants, Eip8130Contracts, Eip8130Signed,
+    Eip8130StructuralError, Eip8130Structure, Eip8130TimestampError,
 };
 use base_common_evm::{BaseSpecId, L1BlockInfo};
 use base_common_genesis::DaFootprintGasScalarUpdate;
 use base_common_precompiles::NonceManagerStorage;
 use base_execution_eip8130::{
     AccountConfigurationStorage, AccountState, ApplyError, AuthorizeError, FeeCheck, IntrinsicGas,
-    IntrinsicGasError, IntrinsicGasInput, LockStatus, NonceError, NonceMode, NonceValidator,
+    IntrinsicGasError, LockStatus, NonceError, NonceMode, NonceValidator, ResolvedSender,
     TransactionAuthorizer, TxAuthError,
 };
 use base_precompile_storage::{
@@ -1010,9 +1010,13 @@ where
             );
         }
 
-        if transaction.as_eip8130().is_some() {
+        if let Some(signed) = transaction.as_eip8130() {
+            let delegates = signed
+                .tx()
+                .account_changes
+                .iter()
+                .any(|change| matches!(change, AccountChange::Delegation(_)));
             let validation = {
-                let signed = transaction.as_eip8130().expect("checked above");
                 self.validate_eip8130_structural(signed)
                     .and_then(|()| {
                         self.validate_eip8130_pool_policy(origin, transaction.sender(), signed)
@@ -1048,9 +1052,11 @@ where
                 propagate,
                 bytecode_hash: state.sender_bytecode_hash,
                 // Reth reserves authorities under its EIP-7702 delegation slot
-                // limit. A payer installs no delegation; the payer-keyed guard
-                // bounds what it sponsors.
-                authorities: None,
+                // limit. A delegation entry delegates the sender, like a 7702
+                // authorization, and always uses the protocol nonce, so it lands
+                // in reth's pool. A payer installs no delegation; the
+                // payer-keyed guard bounds what it sponsors.
+                authorities: delegates.then(|| vec![state.sender]),
             };
             return self.apply_base_checks(Self::reject_delegated_validity(outcome), false);
         }
@@ -1058,8 +1064,9 @@ where
         self.apply_base_checks(Self::reject_delegated_validity(outcome), true)
     }
 
-    /// Rejects a transaction with validity predicates that is an EIP-7702
-    /// transaction or whose sender is EIP-7702 delegated.
+    /// Rejects a transaction with validity predicates that delegates an account
+    /// (an EIP-7702 authorization list or an EIP-8130 delegation entry, both
+    /// reported as `authorities`) or whose sender is EIP-7702 delegated.
     ///
     /// Validity transactions live in their own pool, which does not enforce
     /// reth's in-flight limits for delegated accounts and pending
@@ -1071,10 +1078,11 @@ where
         outcome: TransactionValidationOutcome<Tx>,
     ) -> TransactionValidationOutcome<Tx> {
         match outcome {
-            TransactionValidationOutcome::Valid { transaction, bytecode_hash, .. }
-                if !transaction.transaction().validity_conditions().is_empty()
-                    && (transaction.transaction().authorization_list().is_some()
-                        || bytecode_hash.is_some_and(|hash| hash != KECCAK_EMPTY)) =>
+            TransactionValidationOutcome::Valid {
+                transaction, bytecode_hash, authorities, ..
+            } if !transaction.transaction().validity_conditions().is_empty()
+                && (authorities.is_some()
+                    || bytecode_hash.is_some_and(|hash| hash != KECCAK_EMPTY)) =>
             {
                 TransactionValidationOutcome::Invalid(
                     transaction.into_transaction(),
@@ -1154,16 +1162,18 @@ where
         ));
         let auth_start = Instant::now();
         let auth_result = StorageCtx::enter(&mut storage, |ctx| {
+            let resolved_sender = ResolvedSender::resolve(signed)?;
             let applied = if keystore {
                 let mut account_config = AccountConfigurationStorage::new(ctx);
                 TransactionAuthorizer::authorize_and_apply(
                     signed,
+                    resolved_sender,
                     &mut account_config,
                     local_chain_id,
                     now,
                 )?
             } else {
-                TransactionAuthorizer::authorize_without_keystore(signed)?
+                TransactionAuthorizer::authorize_without_keystore(signed, resolved_sender)?
             };
             if let Some(delegation) = applied.applied.delegation {
                 delegation.install(ctx).map_err(TxAuthError::from)?;
@@ -1226,25 +1236,22 @@ where
             .map_err(Self::map_nonce_error)
         })?;
 
-        let (nonce_key_first_use, sender_nonce) =
-            self.eip8130_nonce_state(&*state, local_chain_id, now, signed, sender, protocol_nonce)?;
-        let encoded = self.eip8130_encoded(signed);
-        // Admission uses the same safe ceiling as `eth_estimateGas`, so a tx whose
-        // `gas_limit` was set from the estimate is never rejected here and can
-        // never be admitted only to OOG at inclusion. The non-monotonic,
-        // state-dependent costs are pinned to their worst case: the sender's policy
-        // gate charged (from Zenith; there are none before) and zero revoke discount.
-        // Execution reprices them precisely.
-        let intrinsic = IntrinsicGas::compute(
+        let sender_nonce = self.eip8130_sender_nonce(
+            &*state,
+            local_chain_id,
+            now,
             signed,
-            encoded.as_ref(),
-            &IntrinsicGasInput::worst_case(sender, nonce_key_first_use, keystore),
-        )
-        .map_err(Self::map_intrinsic_gas_error)?;
+            sender,
+            protocol_nonce,
+        )?;
+        let encoded = self.eip8130_encoded(signed);
+        // Intrinsic gas is a pure function of the transaction, so admission,
+        // `eth_estimateGas` and execution all charge the same amount.
+        let intrinsic =
+            IntrinsicGas::compute(signed, sender).map_err(Self::map_intrinsic_gas_error)?;
         // EIP-7623 calldata floor: a `gas_limit` below the floor branch is
-        // invalid. Sender-intrinsic gas is checked too, matching execution, so
-        // a floor rate repriced below the standard data rate cannot admit an
-        // underfunded transaction.
+        // invalid. Sender-intrinsic gas is checked too, matching execution,
+        // since the floor excludes the state-dependent costs.
         if signed.tx().gas_limit < intrinsic.sender_floor()
             || intrinsic.execution_gas_available(signed.tx().gas_limit).is_none()
         {
@@ -1256,7 +1263,7 @@ where
         if self
             .chain_spec()
             .is_feature_active_at_timestamp(BaseFeature::TransactionGasLimitCap, now)
-            && FeeCheck::max_chargeable_gas(signed.tx().gas_limit, intrinsic.payer_floor)
+            && FeeCheck::max_chargeable_gas(signed.tx().gas_limit, intrinsic.payer_auth_cost)
                 > MAX_TX_GAS_LIMIT_OSAKA
         {
             return Err(InvalidTransactionError::GasLimitTooHigh.into());
@@ -1269,7 +1276,7 @@ where
         FeeCheck::validate_balance(
             payer_account.balance,
             signed.tx().gas_limit,
-            intrinsic.payer_floor,
+            intrinsic.payer_auth_cost,
             signed.tx().max_fee_per_gas,
         )
         .map_err(|_| {
@@ -1278,7 +1285,7 @@ where
                     got: payer_account.balance,
                     expected: FeeCheck::max_fee_charge(
                         signed.tx().gas_limit,
-                        intrinsic.payer_floor,
+                        intrinsic.payer_auth_cost,
                         signed.tx().max_fee_per_gas,
                     ),
                 }
@@ -1385,7 +1392,7 @@ where
 
         let gas_charge = FeeCheck::max_fee_charge(
             signed.tx().gas_limit,
-            intrinsic.payer_floor,
+            intrinsic.payer_auth_cost,
             signed.tx().max_fee_per_gas,
         );
         let additional_fee = if self.requires_l1_data_gas_fee() {
@@ -1395,7 +1402,7 @@ where
                 &encoded,
                 U256::from(FeeCheck::max_chargeable_gas(
                     signed.tx().gas_limit,
-                    intrinsic.payer_floor,
+                    intrinsic.payer_auth_cost,
                 )),
                 spec_id,
             )
@@ -1635,7 +1642,7 @@ where
         Ok(())
     }
 
-    fn eip8130_nonce_state(
+    fn eip8130_sender_nonce(
         &self,
         state: &dyn StateProvider,
         local_chain_id: u64,
@@ -1643,19 +1650,15 @@ where
         signed: &Eip8130Signed,
         sender: Address,
         protocol_nonce: u64,
-    ) -> Result<(bool, u64), InvalidPoolTransactionError> {
+    ) -> Result<u64, InvalidPoolTransactionError> {
         let nonce_key = signed.tx().nonce_key;
-        if nonce_key == Eip8130Constants::NONCE_KEY_MAX {
-            return Ok((false, protocol_nonce));
-        }
-        if nonce_key.is_zero() {
-            return Ok((protocol_nonce == 0, protocol_nonce));
+        if nonce_key == Eip8130Constants::NONCE_KEY_MAX || nonce_key.is_zero() {
+            return Ok(protocol_nonce);
         }
         let mut storage = StateProviderPrecompileStorage::new(state, local_chain_id, now);
         StorageCtx::enter(&mut storage, |ctx| {
             NonceManagerStorage::new(ctx)
                 .get_nonce(sender, nonce_key)
-                .map(|nonce| (nonce == 0, nonce))
                 .map_err(|error| Self::precompile_storage_error(error, "nonce manager read failed"))
         })
     }
@@ -1720,6 +1723,7 @@ where
             }
             TxAuthError::SenderRecovery => "EOA sender recovery failed",
             TxAuthError::PayerRecovery => "open payer recovery failed",
+            TxAuthError::ResolvedSenderMismatch => "sender resolved from a different transaction",
             TxAuthError::UnexpectedPayerAuth => "self-paid transaction carries a payer_auth",
             TxAuthError::Scope { .. } => "actor scope insufficient",
             TxAuthError::AccountIsLocked => "account is locked",
@@ -1787,6 +1791,9 @@ where
                 Self::eip8130_error("nonce-free transaction has a non-zero nonce sequence")
             }
             NonceError::SequenceSaturated => Self::eip8130_error("nonce sequence is saturated"),
+            NonceError::DelegationRequiresProtocolNonce => {
+                Self::eip8130_error("delegation requires the protocol nonce")
+            }
             NonceError::Storage(_) => Self::eip8130_error("nonce state read failed"),
         }
     }
@@ -1970,7 +1977,7 @@ where
     ) -> Result<(), InvalidPoolTransactionError> {
         let tx = signed.tx();
         let payer_auth =
-            IntrinsicGas::max_payer_auth_cost(signed).map_err(Self::map_intrinsic_gas_error)?;
+            IntrinsicGas::payer_auth_cost_of(signed).map_err(Self::map_intrinsic_gas_error)?;
         let reserved_gas = FeeCheck::max_chargeable_gas(tx.gas_limit, payer_auth);
 
         let block_gas_limit = self.inner.block_gas_limit();
@@ -2734,7 +2741,10 @@ mod tests {
         let validator = build_test_validator();
         let tx = TxEip8130 { gas_limit: 0, ..minimal_valid_eoa_tx() };
         let signed = sign_eoa_eip8130(tx);
-        assert_unsupported(validator.validate_eip8130_structural(&signed));
+        assert!(matches!(
+            validator.validate_eip8130_structural(&signed),
+            Err(InvalidPoolTransactionError::Consensus(InvalidTransactionError::GasTooLow))
+        ));
     }
 
     #[test]
@@ -2742,7 +2752,10 @@ mod tests {
         let validator = build_test_validator();
         let tx = TxEip8130 { max_fee_per_gas: 0, ..minimal_valid_eoa_tx() };
         let signed = sign_eoa_eip8130(tx);
-        assert_unsupported(validator.validate_eip8130_structural(&signed));
+        assert!(matches!(
+            validator.validate_eip8130_structural(&signed),
+            Err(InvalidPoolTransactionError::Consensus(InvalidTransactionError::FeeCapTooLow))
+        ));
     }
 
     #[test]
@@ -3671,9 +3684,7 @@ mod tests {
         let chain_spec = everest_chain_spec();
         let signer = PrivateKeySigner::random();
         let sender = signer.address();
-        // Headroom above the worst-case intrinsic: admission pins the sender policy
-        // gate on, which the tight 50k fixture limit no longer covers.
-        let tx = TxEip8130 { gas_limit: 100_000, ..minimal_valid_eoa_tx() };
+        let tx = minimal_valid_eoa_tx();
         let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
         let signed =
             Eip8130Signed::new(tx, Bytes::from(signature.as_bytes().to_vec()), Bytes::new());
@@ -4046,6 +4057,31 @@ mod tests {
         assert_eq!(state.payer, sender);
         assert_eq!(state.sender_bytecode_hash, None);
         assert!(state.watch_set.iter().any(|key| *key == InvalidationKey::CodeHash(sender)));
+    }
+
+    /// Admission applies the same rule as inclusion: a delegation must use the
+    /// protocol nonce, so it is rejected on a 2D nonce lane (here at the lane's
+    /// current sequence) and nonce-free (here within its validity window).
+    #[test]
+    fn rejects_delegation_off_protocol_nonce() {
+        let now_ms = 1_700_000_000_000;
+        for (nonce_key, valid_before) in
+            [(U256::from(7), 0), (Eip8130Constants::NONCE_KEY_MAX, now_ms + 10_000)]
+        {
+            let signer = PrivateKeySigner::random();
+            let (validator, signed, _) = delegation_validation_fixture(&signer, None);
+            let header =
+                alloy_consensus::Header { timestamp: now_ms / 1_000, ..Default::default() };
+            validator.update_l1_block_info::<_, TxEip1559>(&header, &[]);
+            let tx = TxEip8130 { nonce_key, valid_before, ..signed.tx().clone() };
+            let sender_auth = k1_auth_blob(&signer, tx.sender_signature_hash()).slice(20..);
+            let signed = Eip8130Signed::new(tx, sender_auth, Bytes::new());
+
+            assert_eip8130_validation_reason(
+                validator.validate_eip8130_full(&signed),
+                "delegation requires the protocol nonce",
+            );
+        }
     }
 
     #[test]

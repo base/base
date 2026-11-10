@@ -58,6 +58,11 @@ pub struct Eip8130Signed {
     payer_auth: Bytes,
     /// Cached EIP-2718 transaction hash (`keccak256(encode_2718(self))`).
     hash: B256,
+    /// Length of [`TxEip8130::encode_metered_payload`].
+    metered_payload_len: usize,
+    /// Zero bytes in [`TxEip8130::encode_metered_payload`], counted from the
+    /// hashing encoding so intrinsic gas never re-encodes the payload.
+    metered_payload_zero_bytes: usize,
 }
 
 /// JSON is flat, like every other transaction type: the [`TxEip8130`] fields
@@ -137,9 +142,12 @@ pub enum Eip8130StaticError {
     /// Priority fee exceeds the maximum fee.
     #[error("max priority fee per gas exceeds max fee per gas")]
     TipAboveFeeCap,
-    /// Gas limit or maximum fee is zero.
-    #[error("gas limit and max fee per gas must be non-zero")]
-    ZeroGasOrFee,
+    /// Gas limit is zero.
+    #[error("gas limit must be non-zero")]
+    ZeroGasLimit,
+    /// Maximum fee per gas is zero.
+    #[error("max fee per gas must be non-zero")]
+    ZeroMaxFee,
 }
 
 /// Why an [`Eip8130Signed`] failed the timestamp-sensitive admission rules in
@@ -194,8 +202,24 @@ impl Eip8130Signed {
     /// Constructs a new [`Eip8130Signed`] from its parts, computing and caching
     /// the EIP-2718 transaction hash.
     pub fn new(tx: TxEip8130, sender_auth: Bytes, payer_auth: Bytes) -> Self {
-        let mut this = Self { tx, sender_auth, payer_auth, hash: B256::ZERO };
-        this.hash = this.recompute_hash();
+        let mut this = Self {
+            tx,
+            sender_auth,
+            payer_auth,
+            hash: B256::ZERO,
+            metered_payload_len: 0,
+            metered_payload_zero_bytes: 0,
+        };
+        let mut encoded = Vec::with_capacity(this.encode_2718_len());
+        this.encode_2718(&mut encoded);
+        this.hash = keccak256(&encoded);
+
+        let start = 1 + this.rlp_header().length() + this.tx.metered_payload_offset();
+        this.metered_payload_len = this.tx.metered_payload_length();
+        this.metered_payload_zero_bytes = encoded[start..start + this.metered_payload_len]
+            .iter()
+            .filter(|byte| **byte == 0)
+            .count();
         this
     }
 
@@ -224,6 +248,16 @@ impl Eip8130Signed {
         &self.hash
     }
 
+    /// Length of the metered payload ([`TxEip8130::encode_metered_payload`]).
+    pub const fn metered_payload_len(&self) -> usize {
+        self.metered_payload_len
+    }
+
+    /// Zero bytes in the metered payload ([`TxEip8130::encode_metered_payload`]).
+    pub const fn metered_payload_zero_bytes(&self) -> usize {
+        self.metered_payload_zero_bytes
+    }
+
     /// Validates static admission rules without node-specific dependencies.
     pub const fn validate_admission_static(
         &self,
@@ -236,8 +270,11 @@ impl Eip8130Signed {
         if tx.max_fee_per_gas < tx.max_priority_fee_per_gas {
             return Err(Eip8130StaticError::TipAboveFeeCap);
         }
-        if tx.gas_limit == 0 || tx.max_fee_per_gas == 0 {
-            return Err(Eip8130StaticError::ZeroGasOrFee);
+        if tx.gas_limit == 0 {
+            return Err(Eip8130StaticError::ZeroGasLimit);
+        }
+        if tx.max_fee_per_gas == 0 {
+            return Err(Eip8130StaticError::ZeroMaxFee);
         }
         Ok(())
     }
@@ -254,9 +291,8 @@ impl Eip8130Signed {
                 Err(InvalidTransactionError::ChainIdMismatch)
             }
             Err(Eip8130StaticError::TipAboveFeeCap) => Err(InvalidTransactionError::TipAboveFeeCap),
-            Err(Eip8130StaticError::ZeroGasOrFee) => {
-                Err(InvalidTransactionError::TxTypeNotSupported)
-            }
+            Err(Eip8130StaticError::ZeroGasLimit) => Err(InvalidTransactionError::GasTooLow),
+            Err(Eip8130StaticError::ZeroMaxFee) => Err(InvalidTransactionError::FeeCapTooLow),
         }
     }
 
@@ -313,12 +349,6 @@ impl Eip8130Signed {
             }
         }
         Ok(())
-    }
-
-    fn recompute_hash(&self) -> B256 {
-        let mut buf = Vec::with_capacity(self.encode_2718_len());
-        self.encode_2718(&mut buf);
-        keccak256(&buf)
     }
 
     /// Returns the sender address if it is explicitly provided by the
@@ -477,139 +507,6 @@ impl Eip8130Signed {
         self.payer_auth.encode(out);
     }
 
-    /// EIP-2718 encoding with `payer_auth` replaced by the empty string: the
-    /// bytes `tx_payload_cost` bills to the sender.
-    #[must_use]
-    pub fn encoded_2718_without_payer_auth(&self) -> Vec<u8> {
-        let empty = Bytes::new();
-        let payload_length =
-            self.tx.rlp_encoded_fields_length() + self.sender_auth.length() + empty.length();
-        let mut out = Vec::with_capacity(1 + length_of_length(payload_length) + payload_length);
-        out.put_u8(Eip8130Constants::EIP8130_TX_TYPE);
-        Header { list: true, payload_length }.encode(&mut out);
-        self.tx.rlp_encode_fields(&mut out);
-        self.sender_auth.encode(&mut out);
-        empty.encode(&mut out);
-        out
-    }
-
-    /// Folds `fold_byte` over the sender-billed EIP-2718 encoding: this
-    /// transaction with `payer_auth` replaced by the empty string.
-    ///
-    /// When `encoded_2718` is this transaction's network encoding, the fold
-    /// rewrites only the list header and the `payer_auth` suffix. The
-    /// transaction body is not re-serialized. A mismatched `encoded_2718`
-    /// falls back to [`Self::encoded_2718_without_payer_auth`].
-    pub fn fold_sender_billed_bytes<T>(
-        &self,
-        encoded_2718: &[u8],
-        init: T,
-        mut fold_byte: impl FnMut(T, u8) -> T,
-    ) -> T {
-        if self.payer_auth.is_empty() {
-            return encoded_2718.iter().copied().fold(init, fold_byte);
-        }
-        match self.try_fold_sender_billed(encoded_2718, init, &mut fold_byte) {
-            Ok(total) => total,
-            Err(init) => {
-                self.encoded_2718_without_payer_auth().iter().copied().fold(init, fold_byte)
-            }
-        }
-    }
-
-    /// Sender-billed fold of a verified EIP-2718 encoding. `Err(init)` when
-    /// `encoded_2718` is not this transaction, so the caller can fall back
-    /// without dropping the accumulator.
-    fn try_fold_sender_billed<T>(
-        &self,
-        encoded_2718: &[u8],
-        init: T,
-        fold_byte: &mut impl FnMut(T, u8) -> T,
-    ) -> Result<T, T> {
-        let Some((type_byte, header_buf, header_len, body)) =
-            self.sender_billed_parts(encoded_2718)
-        else {
-            return Err(init);
-        };
-
-        let mut total = fold_byte(init, type_byte);
-        for &byte in &header_buf[..header_len] {
-            total = fold_byte(total, byte);
-        }
-        for &byte in body {
-            total = fold_byte(total, byte);
-        }
-        Ok(fold_byte(total, 0x80))
-    }
-
-    /// Header rewrite and body slice for the sender-billed encoding.
-    /// `None` when `encoded_2718` is not this transaction.
-    fn sender_billed_parts<'a>(
-        &self,
-        encoded_2718: &'a [u8],
-    ) -> Option<(u8, [u8; 9], usize, &'a [u8])> {
-        let (&type_byte, rest) = encoded_2718.split_first()?;
-        if type_byte != Eip8130Constants::EIP8130_TX_TYPE {
-            return None;
-        }
-        let mut payload = rest;
-        let header = Header::decode(&mut payload).ok()?;
-        if !header.list || payload.len() != header.payload_length {
-            return None;
-        }
-        let payer_len = self.payer_auth.length();
-        if payload.len() < payer_len {
-            return None;
-        }
-        let (body, payer_suffix) = payload.split_at(payload.len() - payer_len);
-        if !Self::is_rlp_bytes(self.payer_auth.as_ref(), payer_suffix) {
-            return None;
-        }
-        // Empty `payer_auth` is the one-byte RLP string `0x80`.
-        let new_payload_len = body.len().checked_add(1)?;
-        let mut header_buf = [0u8; 9];
-        let remaining = {
-            let mut cursor: &mut [u8] = &mut header_buf;
-            Header { list: true, payload_length: new_payload_len }.encode(&mut cursor);
-            cursor.len()
-        };
-        let header_len = header_buf.len() - remaining;
-        Some((type_byte, header_buf, header_len, body))
-    }
-
-    /// Whether `encoded` is the canonical RLP string for `raw`.
-    fn is_rlp_bytes(raw: &[u8], encoded: &[u8]) -> bool {
-        if raw.is_empty() {
-            return encoded == [0x80];
-        }
-        if raw.len() == 1 && raw[0] < 0x80 {
-            return encoded == raw;
-        }
-        if raw.len() < 56 {
-            let Ok(len) = u8::try_from(raw.len()) else {
-                return false;
-            };
-            return encoded.len() == raw.len() + 1
-                && encoded[0] == 0x80 + len
-                && &encoded[1..] == raw;
-        }
-        let len_of_len = raw.len().to_be_bytes().iter().skip_while(|&&byte| byte == 0).count();
-        if encoded.len() != 1 + len_of_len + raw.len() {
-            return false;
-        }
-        let Ok(len_of_len_byte) = u8::try_from(len_of_len) else {
-            return false;
-        };
-        if encoded[0] != 0xb7 + len_of_len_byte {
-            return false;
-        }
-        let mut declared = 0usize;
-        for &byte in &encoded[1..1 + len_of_len] {
-            declared = declared.saturating_mul(256).saturating_add(usize::from(byte));
-        }
-        declared == raw.len() && &encoded[1 + len_of_len..] == raw
-    }
-
     fn rlp_encoded_signed_length(&self) -> usize {
         let payload = self.rlp_payload_length();
         length_of_length(payload) + payload
@@ -752,7 +649,10 @@ impl Decodable2718 for Eip8130Signed {
 
 impl InMemorySize for Eip8130Signed {
     fn size(&self) -> usize {
-        InMemorySize::size(&self.tx) + self.sender_auth.len() + self.payer_auth.len()
+        size_of::<Self>() - size_of::<TxEip8130>()
+            + InMemorySize::size(&self.tx)
+            + self.sender_auth.len()
+            + self.payer_auth.len()
     }
 }
 
@@ -835,6 +735,23 @@ mod tests {
 
     use super::*;
     use crate::test_utils::sample_signed_8130;
+
+    #[rstest]
+    #[case::self_pay(false)]
+    #[case::sponsored(true)]
+    fn metered_payload_counts_match_its_encoding(#[case] payer_present: bool) {
+        let mut tx = sample_signed_8130(payer_present).into_tx();
+        tx.calls[0][0].data = (0..300u16).map(|i| (i % 3) as u8).collect();
+        let signed = Eip8130Signed::new(tx, Bytes::new(), Bytes::new());
+
+        let mut metered = Vec::new();
+        signed.tx().encode_metered_payload(&mut metered);
+        assert_eq!(signed.metered_payload_len(), metered.len());
+        assert_eq!(
+            signed.metered_payload_zero_bytes(),
+            metered.iter().filter(|byte| **byte == 0).count()
+        );
+    }
 
     #[rstest]
     #[case::self_pay(false)]
@@ -930,11 +847,19 @@ mod tests {
             Err(Eip8130StaticError::TipAboveFeeCap)
         );
 
-        let mut tx = signed.into_tx();
+        let mut tx = signed.clone().into_tx();
         tx.gas_limit = 0;
         assert_eq!(
             Eip8130Signed::new(tx, Bytes::new(), Bytes::new()).validate_admission_static(8453),
-            Err(Eip8130StaticError::ZeroGasOrFee)
+            Err(Eip8130StaticError::ZeroGasLimit)
+        );
+
+        let mut tx = signed.into_tx();
+        tx.max_fee_per_gas = 0;
+        tx.max_priority_fee_per_gas = 0;
+        assert_eq!(
+            Eip8130Signed::new(tx, Bytes::new(), Bytes::new()).validate_admission_static(8453),
+            Err(Eip8130StaticError::ZeroMaxFee)
         );
     }
 
@@ -1168,5 +1093,18 @@ mod tests {
         let decoded: Eip8130Signed = serde_json::from_value(value).unwrap();
         assert_eq!(*decoded.hash(), *signed.hash());
         assert_ne!(*decoded.hash(), B256::ZERO);
+    }
+
+    #[rstest]
+    #[case::self_paid(false)]
+    #[case::sponsored(true)]
+    fn in_memory_size_counts_every_cached_field(#[case] payer_present: bool) {
+        let signed = sample_signed_8130(payer_present);
+        assert!(
+            InMemorySize::size(&signed)
+                >= size_of::<Eip8130Signed>()
+                    + signed.sender_auth().len()
+                    + signed.payer_auth().len()
+        );
     }
 }

@@ -217,7 +217,7 @@
             "uid": "PBFA97CFB590B2093"
           },
           "editorMode": "code",
-          "expr": "sum(rate(reth_base_builder_total_block_built_duration_count{job=\"l2_builder\"}[$window]))",
+          "expr": "sum(rate(reth_base_builder_native_payload_build_duration_count{job=\"l2_builder\"}[$window]))",
           "legendFormat": "blocks / s",
           "range": true,
           "refId": "A"
@@ -342,76 +342,6 @@
         }
       ],
       "title": "Validity Included",
-      "type": "stat"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "PBFA97CFB590B2093"
-      },
-      "description": "Invalid blocks built during the selected rate window. Any non-zero result requires immediate builder log and trace inspection.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "decimals": 0,
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "#3BD671",
-                "value": null
-              },
-              {
-                "color": "#F2495C",
-                "value": 1
-              }
-            ]
-          },
-          "unit": "short"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 5,
-        "w": 4,
-        "x": 16,
-        "y": 4
-      },
-      "id": 5,
-      "options": {
-        "colorMode": "background",
-        "graphMode": "none",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "showPercentChange": false,
-        "textMode": "value_and_name",
-        "wideLayout": true
-      },
-      "pluginVersion": "10.4.1",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "PBFA97CFB590B2093"
-          },
-          "editorMode": "code",
-          "expr": "sum(increase(reth_base_builder_invalid_built_blocks_count{job=\"l2_builder\"}[$window])) or vector(0)",
-          "legendFormat": "invalid blocks",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "Invalid Blocks",
       "type": "stat"
     },
     {
@@ -1522,7 +1452,7 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "description": "Raw supported primary-scan validity candidate counts per build. New builders show the selected per-build quantile; older builders fall back to the window mean derived from outcome counters. Any deferred value above zero means the 10 ms predicate-evaluation cutoff blocked work.",
+          "description": "Raw supported primary-scan validity candidate counts per build. Shows the selected per-build quantile. Any deferred value above zero means the 10 ms predicate-evaluation cutoff blocked work.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -1607,8 +1537,8 @@
                 "uid": "PBFA97CFB590B2093"
               },
               "editorMode": "code",
-              "expr": "reth_base_builder_validity_predicate_candidates_evaluated_per_build{job=\"l2_builder\",quantile=\"$quantile\"} or on() (sum(rate(reth_base_builder_validity_predicate_evaluations_total{job=\"l2_builder\",outcome=~\"matched|not_satisfied|expired|read_error\"}[$window])) / sum(rate(reth_base_builder_total_block_built_duration_count{job=\"l2_builder\"}[$window])))",
-              "legendFormat": "evaluated · p$quantile / mean fallback",
+              "expr": "reth_base_builder_validity_predicate_candidates_evaluated_per_build{job=\"l2_builder\",quantile=\"$quantile\"}",
+              "legendFormat": "evaluated · p$quantile",
               "range": true,
               "refId": "A"
             },
@@ -1618,8 +1548,8 @@
                 "uid": "PBFA97CFB590B2093"
               },
               "editorMode": "code",
-              "expr": "reth_base_builder_validity_predicate_candidates_deferred_per_build{job=\"l2_builder\",quantile=\"$quantile\"} or on() ((sum(rate(reth_base_builder_validity_predicate_evaluations_total{job=\"l2_builder\",outcome=\"budget_exhausted\"}[$window])) or vector(0)) / sum(rate(reth_base_builder_total_block_built_duration_count{job=\"l2_builder\"}[$window])))",
-              "legendFormat": "deferred · p$quantile / mean fallback",
+              "expr": "reth_base_builder_validity_predicate_candidates_deferred_per_build{job=\"l2_builder\",quantile=\"$quantile\"}",
+              "legendFormat": "deferred · p$quantile",
               "range": true,
               "refId": "B"
             }
@@ -2335,7 +2265,7 @@
                 "uid": "PBFA97CFB590B2093"
               },
               "editorMode": "code",
-              "expr": "(reth_base_builder_native_payload_build_duration{job=\"l2_builder\",quantile=\"$quantile\"} or reth_base_builder_total_block_built_duration{job=\"l2_builder\",quantile=\"$quantile\"}) / 0.2 * 100",
+              "expr": "reth_base_builder_native_payload_build_duration{job=\"l2_builder\",quantile=\"$quantile\"} / 0.2 * 100",
               "legendFormat": "budget used · p$quantile",
               "range": true,
               "refId": "A"
@@ -2402,7 +2332,7 @@
                 "uid": "PBFA97CFB590B2093"
               },
               "editorMode": "code",
-              "expr": "sum(rate(reth_base_builder_total_block_built_duration_count{job=\"l2_builder\"}[$window]))",
+              "expr": "sum(rate(reth_base_builder_native_payload_build_duration_count{job=\"l2_builder\"}[$window]))",
               "legendFormat": "blocks / s",
               "range": true,
               "refId": "A"
@@ -2489,7 +2419,7 @@
                 "uid": "PBFA97CFB590B2093"
               },
               "editorMode": "code",
-              "expr": "reth_base_builder_native_payload_build_duration{job=\"l2_builder\",quantile=\"$quantile\"} or reth_base_builder_total_block_built_duration{job=\"l2_builder\",quantile=\"$quantile\"}",
+              "expr": "reth_base_builder_native_payload_build_duration{job=\"l2_builder\",quantile=\"$quantile\"}",
               "legendFormat": "total build · p$quantile",
               "range": true,
               "refId": "A"
@@ -2500,7 +2430,7 @@
                 "uid": "PBFA97CFB590B2093"
               },
               "editorMode": "code",
-              "expr": "reth_base_builder_native_payload_state_root_duration{job=\"l2_builder\",quantile=\"$quantile\"} or reth_base_builder_state_root_calculation_duration{job=\"l2_builder\",quantile=\"$quantile\"}",
+              "expr": "reth_base_builder_native_payload_state_root_duration{job=\"l2_builder\",quantile=\"$quantile\"}",
               "legendFormat": "state root · p$quantile",
               "range": true,
               "refId": "B"
@@ -2525,7 +2455,7 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "description": "Exceptional events in the selected window: invalid built blocks and enforced resource-metering throttles. Zero is healthy; either series becoming non-zero is immediately actionable.",
+          "description": "Enforced resource-metering throttles in the selected window. Zero is healthy; a non-zero value is immediately actionable.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -2609,17 +2539,6 @@
                 "uid": "PBFA97CFB590B2093"
               },
               "editorMode": "code",
-              "expr": "sum(increase(reth_base_builder_invalid_built_blocks_count{job=\"l2_builder\"}[$window])) or on() (0 * sum(up{job=\"l2_builder\"}))",
-              "legendFormat": "invalid blocks",
-              "range": true,
-              "refId": "A"
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "PBFA97CFB590B2093"
-              },
-              "editorMode": "code",
               "expr": "sum(increase(reth_base_payload_resource_metering_throttled_total{job=\"l2_builder\"}[$window])) or on() (0 * sum(up{job=\"l2_builder\"}))",
               "legendFormat": "resource throttles",
               "range": true,
@@ -2648,93 +2567,7 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "description": "Share of observed transactions with external execution-metering information. INACTIVE means no metering decisions occurred in the selected window; pending skips and late arrivals expose delivery races.",
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "thresholds"
-              },
-              "decimals": 1,
-              "mappings": [
-                {
-                  "options": {
-                    "-1": {
-                      "color": "#8A95A5",
-                      "text": "INACTIVE"
-                    }
-                  },
-                  "type": "value"
-                }
-              ],
-              "max": 1,
-              "min": -1,
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  {
-                    "color": "#F2495C",
-                    "value": null
-                  },
-                  {
-                    "color": "#F2B84B",
-                    "value": 0.95
-                  },
-                  {
-                    "color": "#3BD671",
-                    "value": 0.99
-                  }
-                ]
-              },
-              "unit": "percentunit"
-            },
-            "overrides": []
-          },
-          "gridPos": {
-            "h": 7,
-            "w": 6,
-            "x": 0,
-            "y": 54
-          },
-          "id": 25,
-          "options": {
-            "colorMode": "background",
-            "graphMode": "area",
-            "justifyMode": "auto",
-            "orientation": "auto",
-            "reduceOptions": {
-              "calcs": [
-                "lastNotNull"
-              ],
-              "fields": "",
-              "values": false
-            },
-            "showPercentChange": false,
-            "textMode": "value_and_name",
-            "wideLayout": true
-          },
-          "pluginVersion": "10.4.1",
-          "targets": [
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "PBFA97CFB590B2093"
-              },
-              "editorMode": "code",
-              "expr": "(((sum(rate((reth_base_builder_metering_known_transaction{job=\"l2_builder\"} * 1)[$window:])) / (sum(rate((reth_base_builder_metering_known_transaction{job=\"l2_builder\"} * 1)[$window:])) + sum(rate((reth_base_builder_metering_unknown_transaction{job=\"l2_builder\"} * 1)[$window:])))) and on() ((sum(rate((reth_base_builder_metering_known_transaction{job=\"l2_builder\"} * 1)[$window:])) + sum(rate((reth_base_builder_metering_unknown_transaction{job=\"l2_builder\"} * 1)[$window:]))) > 0))) or on() (-1 * max(up{job=\"l2_builder\"}))",
-              "legendFormat": "known share",
-              "range": true,
-              "refId": "A"
-            }
-          ],
-          "title": "Metering Coverage",
-          "type": "stat"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "PBFA97CFB590B2093"
-          },
-          "description": "Rates of known/unknown external metering decisions, pending skips, and late arrivals. Explicit zero baselines mean the builder is healthy but the corresponding counter has not fired.",
+          "description": "Rate of external metering data arriving after its transaction was included. An explicit zero baseline means the builder is healthy but the counter has not fired.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -2759,8 +2592,8 @@
           },
           "gridPos": {
             "h": 7,
-            "w": 18,
-            "x": 6,
+            "w": 24,
+            "x": 0,
             "y": 54
           },
           "id": 26,
@@ -2781,39 +2614,6 @@
           },
           "pluginVersion": "10.4.1",
           "targets": [
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "PBFA97CFB590B2093"
-              },
-              "editorMode": "code",
-              "expr": "sum(rate((reth_base_builder_metering_known_transaction{job=\"l2_builder\"} * 1)[$window:])) or on() (0 * max(up{job=\"l2_builder\"}))",
-              "legendFormat": "known",
-              "range": true,
-              "refId": "A"
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "PBFA97CFB590B2093"
-              },
-              "editorMode": "code",
-              "expr": "sum(rate((reth_base_builder_metering_unknown_transaction{job=\"l2_builder\"} * 1)[$window:])) or on() (0 * max(up{job=\"l2_builder\"}))",
-              "legendFormat": "unknown",
-              "range": true,
-              "refId": "B"
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "PBFA97CFB590B2093"
-              },
-              "editorMode": "code",
-              "expr": "sum(rate((reth_base_builder_metering_data_pending_skip{job=\"l2_builder\"} * 1)[$window:])) or on() (0 * max(up{job=\"l2_builder\"}))",
-              "legendFormat": "pending skip",
-              "range": true,
-              "refId": "C"
-            },
             {
               "datasource": {
                 "type": "prometheus",
@@ -2859,7 +2659,7 @@
           },
           "gridPos": {
             "h": 8,
-            "w": 12,
+            "w": 24,
             "x": 0,
             "y": 61
           },
@@ -2905,95 +2705,6 @@
             }
           ],
           "title": "Resource Metering Decisions",
-          "type": "timeseries"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "PBFA97CFB590B2093"
-          },
-          "description": "Selected local summary quantile for predicted execution time, signed prediction error, and actual execution time of unmetered transactions. Zero baselines mean no samples were observed in the selected execution path.",
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "palette-classic"
-              },
-              "custom": {
-                "drawStyle": "line",
-                "fillOpacity": 15,
-                "lineWidth": 2,
-                "showPoints": "never",
-                "spanNulls": false,
-                "stacking": {
-                  "group": "A",
-                  "mode": "none"
-                }
-              },
-              "decimals": 1,
-              "mappings": [],
-              "unit": "µs"
-            },
-            "overrides": []
-          },
-          "gridPos": {
-            "h": 8,
-            "w": 12,
-            "x": 12,
-            "y": 61
-          },
-          "id": 28,
-          "options": {
-            "legend": {
-              "calcs": [
-                "lastNotNull",
-                "max"
-              ],
-              "displayMode": "table",
-              "placement": "right",
-              "showLegend": true
-            },
-            "tooltip": {
-              "mode": "multi",
-              "sort": "desc"
-            }
-          },
-          "pluginVersion": "10.4.1",
-          "targets": [
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "PBFA97CFB590B2093"
-              },
-              "editorMode": "code",
-              "expr": "reth_base_builder_tx_predicted_execution_time_us{job=\"l2_builder\",quantile=\"$quantile\"} or on() (0 * max(up{job=\"l2_builder\"}))",
-              "legendFormat": "predicted · p$quantile",
-              "range": true,
-              "refId": "A"
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "PBFA97CFB590B2093"
-              },
-              "editorMode": "code",
-              "expr": "reth_base_builder_execution_time_prediction_error_us{job=\"l2_builder\",quantile=\"$quantile\"} or on() (0 * max(up{job=\"l2_builder\"}))",
-              "legendFormat": "prediction error · p$quantile",
-              "range": true,
-              "refId": "B"
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "PBFA97CFB590B2093"
-              },
-              "editorMode": "code",
-              "expr": "reth_base_builder_unmetered_tx_actual_execution_time_us{job=\"l2_builder\",quantile=\"$quantile\"} or on() (0 * max(up{job=\"l2_builder\"}))",
-              "legendFormat": "unmetered actual · p$quantile",
-              "range": true,
-              "refId": "C"
-            }
-          ],
-          "title": "Execution Metering Prediction · p$quantile",
           "type": "timeseries"
         }
       ],

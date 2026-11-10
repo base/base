@@ -8,8 +8,8 @@ use serde_json::{Map, Value};
 use tracing::debug;
 
 use crate::{
-    EventIdBuilder, TransactionEvent, TransactionEventProducer, TransactionEventType,
-    TransactionEventWriter, TransactionEventWriterConfig, WriteEventError,
+    EventIdBuilder, TransactionEvent, TransactionEventGate, TransactionEventProducer,
+    TransactionEventType, TransactionEventWriter, TransactionEventWriterConfig, WriteEventError,
 };
 
 static GLOBAL_TRANSACTION_EVENT_WRITER: OnceLock<TransactionEventWriter> = OnceLock::new();
@@ -40,9 +40,20 @@ pub enum TransactionEventEmitOutcome {
 pub struct GlobalTransactionEventWriter;
 
 impl GlobalTransactionEventWriter {
-    /// Initializes the process-global transaction event writer.
+    /// Initializes the process-global transaction event writer with an always-open gate.
     pub fn init(
         config: Option<TransactionEventWriterConfig>,
+    ) -> eyre::Result<GlobalTransactionEventWriterInitStatus> {
+        Self::init_gated(config, TransactionEventGate::default())
+    }
+
+    /// Initializes the process-global transaction event writer behind `gate`.
+    ///
+    /// While the gate is closed, [`Self::get`] returns `None` and process-global emission
+    /// skips building events. Explicit writer handles are not gated.
+    pub fn init_gated(
+        config: Option<TransactionEventWriterConfig>,
+        gate: TransactionEventGate,
     ) -> eyre::Result<GlobalTransactionEventWriterInitStatus> {
         let Some(config) = config else {
             return Ok(GlobalTransactionEventWriterInitStatus::NotConfigured);
@@ -62,16 +73,16 @@ impl GlobalTransactionEventWriter {
             return Ok(GlobalTransactionEventWriterInitStatus::AlreadyInitialized);
         }
 
-        let writer = TransactionEventWriter::from_config(config)?;
+        let writer = TransactionEventWriter::from_config(config)?.with_gate(gate);
         match GLOBAL_TRANSACTION_EVENT_WRITER.set(writer) {
             Ok(()) => Ok(GlobalTransactionEventWriterInitStatus::Initialized),
             Err(_) => Ok(GlobalTransactionEventWriterInitStatus::AlreadyInitialized),
         }
     }
 
-    /// Returns the process-global transaction event writer, if configured.
+    /// Returns the process-global transaction event writer, if configured and its gate is open.
     pub fn get() -> Option<&'static TransactionEventWriter> {
-        GLOBAL_TRANSACTION_EVENT_WRITER.get()
+        GLOBAL_TRANSACTION_EVENT_WRITER.get().and_then(TransactionEventWriter::open)
     }
 
     /// Returns the process-global writer, storing `writer` if the slot is empty.
@@ -599,6 +610,43 @@ mod tests {
         assert!(
             capture.events().is_empty(),
             "a later capture should not see events from the previous install"
+        );
+    }
+
+    /// A closed gate hides the global writer, so the macro neither builds nor journals the
+    /// event; opening it resumes journaling without reinitializing the writer.
+    #[test]
+    fn closed_gate_skips_global_emission_until_reopened() {
+        let capture = crate::TransactionEventCapture::install();
+        let evaluated = std::cell::Cell::new(0);
+        let count = || {
+            evaluated.set(evaluated.get() + 1);
+            "value"
+        };
+
+        capture.gate().set_open(false);
+        let gated = transaction_event!(
+            producer: TransactionEventProducer::BaseBuilder,
+            event_type: TransactionEventType::TxpoolValidatedInsertAccepted,
+            tx_hash: TxHash::repeat_byte(0x44),
+            data: { "field" => count() },
+        );
+        assert_eq!(gated.unwrap(), TransactionEventEmitOutcome::NotConfigured);
+        assert_eq!(evaluated.get(), 0, "a gated event must not be built");
+        assert!(capture.events().is_empty());
+
+        capture.gate().set_open(true);
+        let emitted = transaction_event!(
+            producer: TransactionEventProducer::BaseBuilder,
+            event_type: TransactionEventType::TxpoolValidatedInsertAccepted,
+            tx_hash: TxHash::repeat_byte(0x45),
+            data: { "field" => count() },
+        );
+        assert_eq!(emitted.unwrap(), TransactionEventEmitOutcome::Emitted);
+        assert_eq!(evaluated.get(), 1);
+        assert_eq!(
+            capture.events().iter().map(|event| event.tx_hash).collect::<Vec<_>>(),
+            [Some(TxHash::repeat_byte(0x45))]
         );
     }
 }

@@ -113,13 +113,6 @@ impl SuccinctHost {
         Ok(witness)
     }
 
-    /// Get the finalized L2 block number. This is used to determine the highest block that can be
-    /// included in a range proof.
-    pub async fn get_finalized_l2_block_number(&self) -> Result<u64> {
-        let finalized_l2_block = self.fetcher.get_l2_header(BlockId::finalized()).await?;
-        Ok(finalized_l2_block.number)
-    }
-
     /// Calculate a safe L1 head hash for the given L2 end block.
     pub async fn calculate_safe_l1_head(
         &self,

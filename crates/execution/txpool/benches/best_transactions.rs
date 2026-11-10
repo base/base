@@ -1,8 +1,8 @@
 //! Per-build cost of `best_transactions` on a large `BaseTransactionPool`.
 //!
-//! The builder creates one merged best-transactions iterator per flashblock (about 10 per block)
-//! and per native block after Denim. Each arm measures that path with reth's pending and queued
-//! subpools and the validity pool filled to the order of their configured limits:
+//! The native builder creates one merged best-transactions iterator per block build. Each arm
+//! measures that path with reth's pending and queued subpools and the validity pool filled to the
+//! order of their configured limits:
 //!
 //! - `snapshot`: creating the iterator, which includes the cross-store lane bookkeeping the
 //!   merge needs (validity lanes riding a standard run, standard transactions queued behind a

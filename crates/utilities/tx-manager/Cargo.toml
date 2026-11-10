@@ -48,6 +48,7 @@ async-trait.workspace = true
 alloy-signer.workspace = true
 alloy-json-rpc.workspace = true
 alloy-node-bindings.workspace = true
+tracing-subscriber.workspace = true
 clap = { workspace = true, features = ["derive", "env"] }
 base-runtime = { workspace = true, features = ["test-utils"] }
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "rt-multi-thread"] }
