@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{collections::VecDeque, time::Duration};
 
 use arboard::Clipboard;
 use crossterm::event::{KeyCode, KeyEvent};
@@ -52,8 +52,9 @@ pub struct CommandCenterView {
     da_table_state: TableState,
     l1_table_state: TableState,
     highlighted_block: Option<u64>,
-    /// Newest L2 block shown while the block lists are paused; newer rows stay hidden.
-    paused_at: Option<u64>,
+    /// Copy of the L2 block list taken when the lists were paused. Rendering from
+    /// a copy keeps the frozen rows even as the tracker evicts old blocks.
+    paused_blocks: Option<VecDeque<BlockDaInfo>>,
     l1_filter: L1BlockFilter,
     tx_pane: Option<TransactionPane>,
     tx_origin_panel: Option<Panel>,
@@ -80,7 +81,7 @@ impl CommandCenterView {
             da_table_state,
             l1_table_state,
             highlighted_block: None,
-            paused_at: None,
+            paused_blocks: None,
             l1_filter: L1BlockFilter::All,
             tx_pane: None,
             tx_origin_panel: None,
@@ -133,27 +134,38 @@ impl CommandCenterView {
         }
     }
 
-    /// Number of blocks newer than the pause point, hidden above the frozen lists.
-    fn hidden_blocks(&self, resources: &Resources) -> usize {
-        self.paused_at.map_or(0, |paused_at| {
+    /// Returns the L2 blocks the Blocks and DA panels show: the paused copy, or the live list.
+    fn shown_blocks<'a>(&'a self, resources: &'a Resources) -> &'a VecDeque<BlockDaInfo> {
+        self.paused_blocks.as_ref().unwrap_or(&resources.da.tracker.block_contributions)
+    }
+
+    /// Number of live blocks newer than the paused copy, or `None` when not paused.
+    fn blocks_since_pause(&self, resources: &Resources) -> Option<usize> {
+        let paused = self.paused_blocks.as_ref()?;
+        let newest_paused = paused.front().map_or(0, |b| b.block_number);
+        Some(
             resources
                 .da
                 .tracker
                 .block_contributions
                 .iter()
-                .take_while(|b| b.block_number > paused_at)
-                .count()
-        })
+                .take_while(|b| b.block_number > newest_paused)
+                .count(),
+        )
     }
 
     /// Returns the L2 block at `row` of the Blocks and DA panels.
-    fn visible_block<'a>(&self, resources: &'a Resources, row: usize) -> Option<&'a BlockDaInfo> {
-        resources.da.tracker.block_contributions.get(self.hidden_blocks(resources) + row)
+    fn visible_block<'a>(
+        &'a self,
+        resources: &'a Resources,
+        row: usize,
+    ) -> Option<&'a BlockDaInfo> {
+        self.shown_blocks(resources).get(row)
     }
 
     /// Returns how many rows the Blocks and DA panels show.
     fn visible_block_count(&self, resources: &Resources) -> usize {
-        resources.da.tracker.block_contributions.len() - self.hidden_blocks(resources)
+        self.shown_blocks(resources).len()
     }
 
     fn update_highlighted_block(&mut self, resources: &Resources) {
@@ -261,11 +273,9 @@ impl View for CommandCenterView {
                 Action::None
             }
             KeyCode::Char(' ') => {
-                self.paused_at = match self.paused_at {
+                self.paused_blocks = match self.paused_blocks {
                     Some(_) => None,
-                    None => {
-                        resources.da.tracker.block_contributions.front().map(|b| b.block_number)
-                    }
+                    None => Some(resources.da.tracker.block_contributions.clone()),
                 };
                 Action::None
             }
@@ -417,26 +427,9 @@ impl View for CommandCenterView {
             (chunks, None)
         };
 
-        let hidden_blocks = self.paused_at.is_some().then(|| self.hidden_blocks(resources));
-        render_blocks_panel(
-            frame,
-            panel_chunks[0],
-            resources,
-            self.focused_panel == Panel::Blocks,
-            &self.blocks_table_state,
-            self.highlighted_block,
-            hidden_blocks,
-        );
+        render_blocks_panel(frame, panel_chunks[0], resources, self);
 
-        render_da_panel(
-            frame,
-            panel_chunks[1],
-            resources,
-            self.focused_panel == Panel::Da,
-            &self.da_table_state,
-            self.highlighted_block,
-            hidden_blocks,
-        );
+        render_da_panel(frame, panel_chunks[1], resources, self);
 
         render_l1_blocks_table(
             frame,
@@ -583,21 +576,18 @@ fn render_stats_panel(f: &mut Frame<'_>, area: Rect, resources: &Resources) {
     f.render_widget(para, area);
 }
 
-fn render_da_panel(
-    f: &mut Frame<'_>,
-    area: Rect,
-    resources: &Resources,
-    is_active: bool,
-    table_state: &TableState,
-    highlighted_block: Option<u64>,
-    paused_hidden_blocks: Option<usize>,
-) {
+fn render_da_panel(f: &mut Frame<'_>, area: Rect, resources: &Resources, view: &CommandCenterView) {
     let tracker = &resources.da.tracker;
+    let blocks = view.shown_blocks(resources);
+    let is_active = view.focused_panel == Panel::Da;
+    let table_state = &view.da_table_state;
+    let highlighted_block = view.highlighted_block;
+    let blocks_since_pause = view.blocks_since_pause(resources);
     let border_color = if is_active { Color::Rgb(100, 255, 100) } else { Color::Green };
 
     let mode_label = resources.da.l2_connection_mode.map_or("", ConnectionMode::title_suffix);
     let block = Block::default()
-        .title(format!(" L2 Blocks (DA↑){mode_label}{} ", paused_label(paused_hidden_blocks)))
+        .title(format!(" L2 Blocks (DA↑){mode_label}{} ", paused_label(blocks_since_pause)))
         .borders(Borders::ALL)
         .border_style(Style::default().fg(border_color));
 
@@ -617,10 +607,8 @@ fn render_da_panel(
 
     let selected_row = table_state.selected();
 
-    let rows: Vec<Row<'_>> = tracker
-        .block_contributions
+    let rows: Vec<Row<'_>> = blocks
         .iter()
-        .skip(paused_hidden_blocks.unwrap_or(0))
         .take(table_rows_to_build(table_state, inner.height))
         .enumerate()
         .map(|(idx, contrib)| {
@@ -672,18 +660,18 @@ fn render_blocks_panel(
     f: &mut Frame<'_>,
     area: Rect,
     resources: &Resources,
-    is_active: bool,
-    table_state: &TableState,
-    highlighted_block: Option<u64>,
-    paused_hidden_blocks: Option<usize>,
+    view: &CommandCenterView,
 ) {
-    let blocks = &resources.da.tracker.block_contributions;
-    let hidden = paused_hidden_blocks.unwrap_or(0);
+    let blocks = view.shown_blocks(resources);
+    let is_active = view.focused_panel == Panel::Blocks;
+    let table_state = &view.blocks_table_state;
+    let highlighted_block = view.highlighted_block;
+    let blocks_since_pause = view.blocks_since_pause(resources);
     let border_color = if is_active { Color::Rgb(100, 180, 255) } else { COLOR_BASE_BLUE };
     let mode_label = resources.da.l2_connection_mode.map_or("", ConnectionMode::title_suffix);
 
     let block = Block::default()
-        .title(format!(" L2 Blocks (Gas){mode_label}{} ", paused_label(paused_hidden_blocks)))
+        .title(format!(" L2 Blocks (Gas){mode_label}{} ", paused_label(blocks_since_pause)))
         .borders(Borders::ALL)
         .border_style(Style::default().fg(border_color));
 
@@ -708,7 +696,6 @@ fn render_blocks_panel(
 
     let rows: Vec<Row<'_>> = blocks
         .iter()
-        .skip(hidden)
         .take(table_rows_to_build(table_state, inner.height))
         .enumerate()
         .map(|(idx, info)| {
@@ -722,7 +709,7 @@ fn render_blocks_panel(
 
             // Rows are newest first, so the parent block is the next row when present.
             let parent_base_fee = blocks
-                .get(hidden + idx + 1)
+                .get(idx + 1)
                 .filter(|parent| parent.block_number + 1 == info.block_number)
                 .and_then(|parent| parent.base_fee_per_gas);
             let base_fee_style = match (info.base_fee_per_gas, parent_base_fee) {
@@ -763,9 +750,9 @@ fn render_blocks_panel(
     f.render_stateful_widget(table, inner, &mut table_state.clone());
 }
 
-/// Title suffix for a paused L2 block list, counting the newer blocks it hides.
-fn paused_label(hidden_blocks: Option<usize>) -> String {
-    hidden_blocks.map_or_else(String::new, |hidden| format!(" [PAUSED +{hidden}]"))
+/// Title suffix for a paused L2 block list, counting the blocks that arrived since.
+fn paused_label(blocks_since_pause: Option<usize>) -> String {
+    blocks_since_pause.map_or_else(String::new, |count| format!(" [PAUSED +{count}]"))
 }
 
 #[cfg(test)]
@@ -776,7 +763,7 @@ mod tests {
     use super::CommandCenterView;
     use crate::{
         MonitoringConfig,
-        app::{Resources, View},
+        app::{MAX_HISTORY, Resources, View},
         rpc::BlockDaInfo,
     };
 
@@ -807,5 +794,26 @@ mod tests {
         let resumed = render(&mut view, &resources);
         assert!(resumed.contains("55000101"));
         assert!(!resumed.contains("PAUSED"));
+    }
+
+    #[tokio::test]
+    async fn paused_rows_survive_history_eviction() {
+        let mut resources = Resources::new(MonitoringConfig::mainnet());
+        let mut view = CommandCenterView::new();
+        add_block(&mut resources, 55_000_100);
+
+        view.handle_key(KeyEvent::from(KeyCode::Char(' ')), &mut resources);
+        let newest = 55_000_100 + MAX_HISTORY as u64 + 5;
+        for block_number in 55_000_101..=newest {
+            add_block(&mut resources, block_number);
+        }
+        resources.da.tracker.update_safe_head(newest);
+        assert!(
+            resources.da.tracker.block_contributions.iter().all(|b| b.block_number != 55_000_100)
+        );
+
+        let paused = render(&mut view, &resources);
+        assert!(paused.contains("55000100"));
+        assert!(paused.contains(&format!("[PAUSED +{MAX_HISTORY}]")));
     }
 }
