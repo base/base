@@ -50,8 +50,9 @@ pub struct TxEip8130 {
     pub chain_id: ChainId,
     /// Explicit sender account address, or `None` for the EOA path.
     pub sender: Option<Address>,
-    /// High 192 bits of the compound nonce; with `nonce_sequence` forms the
-    /// per-account replay protection key.
+    /// Nonce channel: `0` is the account nonce, `1` through `NONCE_KEY_MAX - 1`
+    /// are Nonce Manager sequences, and `NONCE_KEY_MAX` selects nonce-free mode.
+    /// With `nonce_sequence` it forms the per-account replay protection key.
     pub nonce_key: U256,
     /// Sequence number within the nonce key. Named `nonce` in JSON, like every
     /// other transaction type; `nonceSequence` is also accepted.
@@ -100,12 +101,17 @@ pub struct TxEip8130 {
     /// wire body between `calls` and `payer` and committed to by both the
     /// sender and payer signatures, but otherwise uninterpreted by the protocol.
     pub metadata: Bytes,
-    /// Optional payer; `None` means the resolved sender pays gas, and
+    /// Optional payer; `None` means the resolved sender pays gas,
     /// [`Eip8130Constants::OPEN_PAYER`] means the payer is recovered from
-    /// `payer_auth`.
+    /// `payer_auth`, and any other address is the named payer that `payer_auth`
+    /// must authenticate.
     #[cfg_attr(
         feature = "serde",
-        serde(default, deserialize_with = "super::Eip8130PayerSerde::deserialize")
+        serde(
+            default,
+            serialize_with = "super::Eip8130PayerSerde::serialize",
+            deserialize_with = "super::Eip8130PayerSerde::deserialize"
+        )
     )]
     pub payer: Option<Address>,
 }
@@ -1123,8 +1129,8 @@ mod tests {
 
     /// The JSON is flat and uses hex quantities for every integer, with the
     /// standard `nonce` / `gas` names and single-call fields generic tooling
-    /// reads. The EIP field names `nonceSequence` / `gasLimit` and a short
-    /// `"0x00"` open payer are also accepted.
+    /// reads. An open payer is `"0x00"`, its wire form. The EIP field names
+    /// `nonceSequence` / `gasLimit` are also accepted.
     #[cfg(feature = "serde")]
     #[test]
     fn eip8130_json_is_a_standard_transaction_shape() {
@@ -1154,6 +1160,7 @@ mod tests {
         assert_eq!(json["value"], "0x0");
         assert_eq!(json["input"], "0x");
         assert_eq!(json["senderAuth"], "0xab");
+        assert_eq!(json["payer"], "0x00");
         assert!(json.get("tx").is_none(), "the transaction fields are not nested");
         assert_eq!(serde_json::from_value::<BaseTxEnvelope>(json.clone()).unwrap(), envelope);
 
@@ -1163,7 +1170,6 @@ mod tests {
         let gas = fields.remove("gas").unwrap();
         fields.insert("nonceSequence".into(), nonce);
         fields.insert("gasLimit".into(), gas);
-        fields.insert("payer".into(), "0x00".into());
         assert_eq!(serde_json::from_value::<BaseTxEnvelope>(eip_names).unwrap(), envelope);
     }
 

@@ -509,7 +509,7 @@ mod tests {
         let tx = sim_tx(json!({
             "sender": SENDER,
             "calls": [],
-            "payer": Eip8130Constants::OPEN_PAYER,
+            "payer": "0x00",
         }));
         let s = signed(&tx);
         assert_eq!(s.tx().payer, Some(Eip8130Constants::OPEN_PAYER));
@@ -519,7 +519,7 @@ mod tests {
         let tx = sim_tx(json!({
             "sender": SENDER,
             "calls": [],
-            "payer": Eip8130Constants::OPEN_PAYER,
+            "payer": "0x00",
             "payerAuth": blob(None, 65),
         }));
         assert_eq!(signed(&tx).payer_auth().len(), 65, "the supplied signature is used verbatim");
