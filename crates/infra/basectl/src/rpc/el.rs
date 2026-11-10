@@ -84,7 +84,7 @@ async fn connect_l2_provider(rpc: &Url) -> Result<impl Provider<Base>> {
 pub struct BlockDaInfo {
     /// L2 block number.
     pub block_number: u64,
-    /// Total DA bytes from all transactions.
+    /// EIP-2718 encoded bytes of the non-deposit transactions the batcher must post.
     pub da_bytes: u64,
     /// Unix timestamp of the block.
     pub timestamp: u64,
@@ -168,8 +168,13 @@ async fn fetch_raw_block_info<P: Provider<Base>>(
         tokio::time::sleep(retry_delays.next()?).await;
     };
 
-    let da_bytes: u64 =
-        block.transactions.txns().map(|tx| tx.inner.inner.encode_2718_len() as u64).sum();
+    // Deposits are derived from L1, so the batcher never posts them.
+    let da_bytes: u64 = block
+        .transactions
+        .txns()
+        .filter(|tx| !tx.inner.inner.is_deposit())
+        .map(|tx| tx.inner.inner.encode_2718_len() as u64)
+        .sum();
 
     Some(BlockDaInfo {
         block_number: block_num,

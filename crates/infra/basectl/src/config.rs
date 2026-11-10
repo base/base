@@ -453,6 +453,17 @@ impl MonitoringConfig {
         }
     }
 
+    /// Returns the factor Denim divides the L1 `SystemConfig` gas limit by (and
+    /// multiplies the EIP-1559 denominator by) for an L2 block at `timestamp`.
+    pub fn denim_gas_scaling(&self, timestamp: u64) -> u32 {
+        let denim_active = self
+            .upgrades
+            .as_ref()
+            .and_then(|upgrades| upgrades.base.denim)
+            .is_some_and(|activation| timestamp >= activation);
+        if denim_active { RollupConfig::DENIM_GAS_PARAMETER_SCALING_FACTOR } else { 1 }
+    }
+
     /// Returns the L2 WebSocket endpoint for block subscriptions.
     ///
     /// Uses `el_ws_rpc` when set, otherwise `rpc` with its scheme switched to
@@ -867,6 +878,7 @@ impl MonitoringConfig {
 
 #[cfg(test)]
 mod tests {
+    use base_common_genesis::BaseUpgradeConfig;
     use base_consensus_rpc::{ClusterMembership, ServerInfo, ServerSuffrage};
 
     use super::*;
@@ -975,6 +987,23 @@ mod tests {
         assert_eq!(config.l2_ws_rpc().unwrap().as_str(), "ws://127.0.0.1:8545/");
         config.rpc = Url::parse("https://mainnet.base.org").unwrap();
         assert_eq!(config.l2_ws_rpc().unwrap().as_str(), "wss://mainnet.base.org/");
+    }
+
+    #[test]
+    fn denim_gas_scaling_applies_from_activation() {
+        let mut config = MonitoringConfig::mainnet();
+        config.upgrades = Some(UpgradeConfig {
+            base: BaseUpgradeConfig { denim: Some(1_000), ..Default::default() },
+            ..Default::default()
+        });
+        assert_eq!(config.denim_gas_scaling(999), 1);
+        assert_eq!(
+            config.denim_gas_scaling(1_000),
+            RollupConfig::DENIM_GAS_PARAMETER_SCALING_FACTOR
+        );
+
+        config.upgrades = None;
+        assert_eq!(config.denim_gas_scaling(1_000), 1);
     }
 
     #[test]

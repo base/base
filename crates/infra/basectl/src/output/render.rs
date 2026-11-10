@@ -213,16 +213,23 @@ pub fn render_da_backlog_bar(
     }
 
     let total_backlog = tracker.da_backlog_bytes;
+    let drawn_bytes: u64 = backlog_blocks.iter().map(|c| c.da_bytes).sum();
+    // Place each block by cumulative bytes so hundreds of sub-second blocks keep
+    // their true proportions instead of each claiming at least one cell.
+    let cells_for = |bytes: u64| {
+        (u128::from(bytes) * bar_width as u128).checked_div(u128::from(drawn_bytes)).unwrap_or(0)
+            as usize
+    };
     let mut spans: Vec<Span<'_>> = Vec::new();
     let mut chars_used = 0usize;
+    let mut cumulative_bytes = 0u64;
 
     for contrib in backlog_blocks.iter().rev() {
         let color = Format::block_color(contrib.block_number);
         let is_highlighted = highlighted_block == Some(contrib.block_number);
 
-        let proportion = contrib.da_bytes as f64 / total_backlog as f64;
-        let char_count = ((proportion * bar_width as f64).round() as usize).max(1);
-        let char_count = char_count.min(bar_width - chars_used);
+        cumulative_bytes += contrib.da_bytes;
+        let char_count = cells_for(cumulative_bytes).min(bar_width).saturating_sub(chars_used);
 
         if char_count > 0 {
             let style = if is_highlighted {

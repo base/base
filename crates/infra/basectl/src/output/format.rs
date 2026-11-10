@@ -113,10 +113,18 @@ impl Format {
         }
     }
 
-    /// Formats a wei value as gwei with appropriate precision.
-    pub fn gwei(wei: u128) -> String {
-        let gwei = wei as f64 / 1_000_000_000.0;
-        if gwei >= 1.0 { format!("{gwei:.2} gwei") } else { format!("{gwei:.4} gwei") }
+    /// Formats a per-gas fee in the largest unit (gwei, mwei, or wei) that keeps it at
+    /// least 1, so fees near Base's 5 mwei minimum still show block-to-block changes.
+    pub fn fee_per_gas(wei: u128) -> String {
+        const GWEI: u128 = 1_000_000_000;
+        const MWEI: u128 = 1_000_000;
+        if wei >= GWEI {
+            format!("{:.2} gwei", wei as f64 / GWEI as f64)
+        } else if wei >= MWEI {
+            format!("{:.4} mwei", wei as f64 / MWEI as f64)
+        } else {
+            format!("{wei} wei")
+        }
     }
 
     /// Returns a color indicating backlog severity based on byte count.
@@ -158,5 +166,18 @@ impl Format {
             .ok()
             .and_then(|s| DateTime::from_timestamp(s, 0))
             .map_or_else(|| secs.to_string(), |t| t.format("%Y-%m-%d %H:%M:%S UTC").to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Format;
+
+    #[test]
+    fn fee_per_gas_picks_largest_unit_at_least_one() {
+        assert_eq!(Format::fee_per_gas(2_500_000_000), "2.50 gwei");
+        assert_eq!(Format::fee_per_gas(5_000_000), "5.0000 mwei");
+        assert_eq!(Format::fee_per_gas(5_012_345), "5.0123 mwei");
+        assert_eq!(Format::fee_per_gas(999_999), "999999 wei");
     }
 }
