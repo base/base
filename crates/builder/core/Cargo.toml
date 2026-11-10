@@ -149,6 +149,7 @@ tikv-jemallocator = { workspace = true, optional = true }
 
 [dev-dependencies]
 # workspace
+base-protocol.workspace = true
 base-test-utils.workspace = true
 base-txpool-rpc.workspace = true
 base-builder-core = { path = ".", features = ["test-utils"] }
