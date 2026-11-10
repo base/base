@@ -133,6 +133,7 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager> Driver<L2, P, T> {
     }
 
     /// Executes a single scan-validate-prove-submit cycle.
+    #[tracing::instrument(name = "challenger.step", skip_all)]
     pub async fn step(&mut self) -> eyre::Result<()> {
         self.proof_manager.poll_pending_proofs(&self.submitter).await;
         if let Some(bond_manager) = &mut self.bond_manager

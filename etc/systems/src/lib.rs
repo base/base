@@ -47,8 +47,8 @@ pub use da_cli::{DA_RESULT_FILE, DaBenchmarkArgs, DaResult};
 
 mod replay_cli;
 pub use replay_cli::{
-    LatencySummary, REPLAY_METRICS_FILE, REPLAY_RESULT_FILE, ReplayBenchmarkArgs,
-    ReplayBlockTiming, ReplayMode, ReplayResult,
+    FIRST_DIVERGENCE_FILE, FirstDivergence, LatencySummary, REPLAY_METRICS_FILE,
+    REPLAY_RESULT_FILE, ReplayBenchmarkArgs, ReplayBlockTiming, ReplayMode, ReplayResult,
 };
 
 mod replay_proofs;

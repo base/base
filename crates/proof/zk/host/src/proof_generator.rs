@@ -33,7 +33,7 @@ use crate::{
 pub const MIN_PROOF_GENERATOR_POLL_INTERVAL: Duration = Duration::from_millis(1);
 
 /// Default delay between backend session polls while waiting for a proof.
-pub const DEFAULT_PROOF_GENERATOR_POLL_INTERVAL: Duration = Duration::from_secs(30);
+pub const DEFAULT_PROOF_GENERATOR_POLL_INTERVAL: Duration = Duration::from_secs(5);
 
 /// Maximum time to wait for generation cleanup after heartbeat failure.
 pub const DEFAULT_PROOF_GENERATOR_HEARTBEAT_FAILURE_DRAIN_TIMEOUT: Duration =

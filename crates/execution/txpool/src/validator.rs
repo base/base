@@ -22,8 +22,8 @@ use base_common_genesis::DaFootprintGasScalarUpdate;
 use base_common_precompiles::NonceManagerStorage;
 use base_execution_eip8130::{
     AccountConfigurationStorage, AccountState, ApplyError, AuthorizeError, FeeCheck, IntrinsicGas,
-    IntrinsicGasError, LockStatus, NonceError, NonceMode, NonceValidator, TransactionAuthorizer,
-    TxAuthError,
+    IntrinsicGasError, LockStatus, NonceError, NonceMode, NonceValidator, ResolvedSender,
+    TransactionAuthorizer, TxAuthError,
 };
 use base_precompile_storage::{
     BasePrecompileError, PrecompileStorageProvider, StorageCtx, validate_loaded_code_presence,
@@ -1177,16 +1177,18 @@ where
         ));
         let auth_start = Instant::now();
         let auth_result = StorageCtx::enter(&mut storage, |ctx| {
+            let resolved_sender = ResolvedSender::resolve(signed)?;
             let applied = if keystore {
                 let mut account_config = AccountConfigurationStorage::new(ctx);
                 TransactionAuthorizer::authorize_and_apply(
                     signed,
+                    resolved_sender,
                     &mut account_config,
                     local_chain_id,
                     now,
                 )?
             } else {
-                TransactionAuthorizer::authorize_without_keystore(signed)?
+                TransactionAuthorizer::authorize_without_keystore(signed, resolved_sender)?
             };
             if let Some(delegation) = applied.applied.delegation {
                 delegation.install(ctx).map_err(TxAuthError::from)?;
@@ -1754,6 +1756,7 @@ where
             }
             TxAuthError::SenderRecovery => "EOA sender recovery failed",
             TxAuthError::PayerRecovery => "open payer recovery failed",
+            TxAuthError::ResolvedSenderMismatch => "sender resolved from a different transaction",
             TxAuthError::UnexpectedPayerAuth => "self-paid transaction carries a payer_auth",
             TxAuthError::Scope { .. } => "actor scope insufficient",
             TxAuthError::AccountIsLocked => "account is locked",
@@ -2964,7 +2967,10 @@ mod tests {
         let validator = build_test_validator();
         let tx = TxEip8130 { gas_limit: 0, ..minimal_valid_eoa_tx() };
         let signed = sign_eoa_eip8130(tx);
-        assert_unsupported(validator.validate_eip8130_structural(&signed));
+        assert!(matches!(
+            validator.validate_eip8130_structural(&signed),
+            Err(InvalidPoolTransactionError::Consensus(InvalidTransactionError::GasTooLow))
+        ));
     }
 
     #[test]
@@ -2972,7 +2978,10 @@ mod tests {
         let validator = build_test_validator();
         let tx = TxEip8130 { max_fee_per_gas: 0, ..minimal_valid_eoa_tx() };
         let signed = sign_eoa_eip8130(tx);
-        assert_unsupported(validator.validate_eip8130_structural(&signed));
+        assert!(matches!(
+            validator.validate_eip8130_structural(&signed),
+            Err(InvalidPoolTransactionError::Consensus(InvalidTransactionError::FeeCapTooLow))
+        ));
     }
 
     #[test]

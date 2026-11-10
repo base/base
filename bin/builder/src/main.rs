@@ -53,7 +53,7 @@ fn main() {
         // consensus node reports this sequencer as inactive. Lives until the node stops.
         let _leadership_probe = builder_args
             .transaction_events
-            .leadership_config()
+            .leadership_config(None)
             .filter(|_| transaction_events_enabled)
             .map(|config| SequencerLeadershipProbe::spawn(config, transaction_event_gate))
             .transpose()?;

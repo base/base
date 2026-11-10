@@ -25,7 +25,6 @@ use base_proof_zk_utils::boot::BootInfoStruct;
 use base_protocol::L2BlockInfo;
 use futures::{StreamExt, stream};
 use reqwest::Url;
-use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::{
@@ -147,21 +146,6 @@ pub fn get_rpcs_from_env() -> RPCConfig {
     }
 }
 
-/// The info to fetch for a block.
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct BlockInfo {
-    /// Block number.
-    pub block_number: u64,
-    /// Transaction count.
-    pub transaction_count: u64,
-    /// Gas used.
-    pub gas_used: u64,
-    /// Total L1 fees.
-    pub total_l1_fees: u128,
-    /// Total transaction fees.
-    pub total_tx_fees: u128,
-}
-
 /// The fee data for a block.
 #[derive(Debug)]
 pub struct FeeData {
@@ -252,49 +236,6 @@ impl OPSuccinctDataFetcher {
         } else {
             bail!("Failed to get L2 head");
         }
-    }
-
-    /// Get the aggregate block statistics for a range of blocks exclusive of the start block.
-    ///
-    /// When proving a range with Succinct, we are proving the transition from the block hash
-    /// of the start block to the block hash of the end block. This means that we don't expend
-    /// resources to "prove" the start block. This is why the start block is not included in the
-    /// range for which we fetch block data.
-    pub async fn get_l2_block_data_range(&self, start: u64, end: u64) -> Result<Vec<BlockInfo>> {
-        use futures::stream::{self, StreamExt};
-
-        let block_data = stream::iter(start + 1..=end)
-            .map(|block_number| async move {
-                let block =
-                    self.l2_provider.get_block_by_number(block_number.into()).await?.unwrap();
-                let receipts =
-                    self.l2_provider.get_block_receipts(block_number.into()).await?.unwrap();
-                let total_l1_fees: u128 =
-                    receipts.iter().map(|tx| tx.l1_block_info.l1_fee.unwrap_or(0)).sum();
-                let total_tx_fees: u128 = receipts
-                    .iter()
-                    .map(|tx| {
-                        // tx.inner.effective_gas_price * tx.inner.gas_used +
-                        // tx.l1_block_info.l1_fee is the total fee for the transaction.
-                        // tx.inner.effective_gas_price * tx.inner.gas_used is the tx fee on L2.
-                        tx.inner.effective_gas_price * tx.inner.gas_used as u128
-                            + tx.l1_block_info.l1_fee.unwrap_or(0)
-                    })
-                    .sum();
-
-                Ok(BlockInfo {
-                    block_number,
-                    transaction_count: block.transactions.len() as u64,
-                    gas_used: block.header.gas_used,
-                    total_l1_fees,
-                    total_tx_fees,
-                })
-            })
-            .buffered(10)
-            .collect::<Vec<Result<BlockInfo>>>()
-            .await;
-
-        block_data.into_iter().collect()
     }
 
     /// Fetch an L1 block header by ID.

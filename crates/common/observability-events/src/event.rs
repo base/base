@@ -52,7 +52,9 @@ impl fmt::Display for TransactionEventProducer {
 /// Versioned transaction event vocabulary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, strum::EnumIter)]
 pub enum TransactionEventType {
-    /// Proxyd accepted a transaction request from a client.
+    /// Proxyd accepted a transaction request from a client. Retired: proxyd
+    /// now carries the receive time as `received_at` on its terminal events.
+    /// Retained so historical events remain readable.
     #[serde(rename = "PROXY_RECEIVED")]
     ProxyReceived,
     /// Proxyd rejected a transaction request before backend routing.
@@ -136,6 +138,9 @@ pub enum TransactionEventType {
     #[serde(rename = "TXPOOL_BUILDER_FORWARD_SUCCESS")]
     TxpoolBuilderForwardSuccess,
     /// Txpool failed to forward a transaction to the builder.
+    ///
+    /// No longer emitted: the receiving builder journals the same rejection as
+    /// [`Self::TxpoolValidatedInsertRejected`]. Retained so historical events remain readable.
     #[serde(rename = "TXPOOL_BUILDER_FORWARD_FAILURE")]
     TxpoolBuilderForwardFailure,
     /// Txpool dropped a queued builder forward for a transaction.

@@ -37,6 +37,11 @@ pub enum TxAuthError {
     #[error("open payer signature could not be recovered")]
     PayerRecovery,
 
+    /// The [`crate::ResolvedSender`] passed to the authorizer was resolved from
+    /// a different transaction.
+    #[error("sender was resolved from a different transaction")]
+    ResolvedSenderMismatch,
+
     /// A self-paid transaction (`payer == None`) carries a non-empty
     /// `payer_auth`. The sender's signature does not cover `payer_auth`, so
     /// accepting one would let a relayer change the transaction hash and raise
