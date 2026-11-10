@@ -12,6 +12,7 @@ use alloy_rpc_client::RpcClient;
 use alloy_rpc_types_eth::BlockNumberOrTag;
 use alloy_transport_http::Http;
 use anyhow::{Context, Result, anyhow};
+use base_common_consensus::{HoloceneExtraData, JovianExtraData};
 use base_common_genesis::DenimTimestampSchedule;
 use base_common_network::Base;
 use futures::{StreamExt, stream};
@@ -102,6 +103,10 @@ pub struct BlockDaInfo {
     pub gas_limit: u64,
     /// Base fee per gas in wei, if the block has one.
     pub base_fee_per_gas: Option<u64>,
+    /// EIP-1559 elasticity multiplier from the header's Holocene or Jovian `extra_data`.
+    pub eip1559_elasticity: Option<u32>,
+    /// EIP-1559 base fee max change denominator from the header's `extra_data`.
+    pub eip1559_denominator: Option<u32>,
 }
 
 impl BlockDaInfo {
@@ -199,6 +204,14 @@ async fn fetch_raw_block_info<P: Provider<Base>>(
         .map(|tx| tx.inner.inner.encode_2718_len() as u64)
         .sum();
 
+    // The header holds the parameters the L2 actually applied, which can differ
+    // from the L1 `SystemConfig` values (Denim scaled them once at activation).
+    let extra_data = &block.header.extra_data;
+    let eip1559_params = JovianExtraData::decode(extra_data)
+        .map(|(elasticity, denominator, _)| (elasticity, denominator))
+        .or_else(|_| HoloceneExtraData::decode(extra_data))
+        .ok();
+
     Some(BlockDaInfo {
         block_number: block_num,
         da_bytes,
@@ -207,6 +220,8 @@ async fn fetch_raw_block_info<P: Provider<Base>>(
         gas_used: block.header.gas_used,
         gas_limit: block.header.gas_limit,
         base_fee_per_gas: block.header.base_fee_per_gas,
+        eip1559_elasticity: eip1559_params.map(|(elasticity, _)| elasticity),
+        eip1559_denominator: eip1559_params.map(|(_, denominator)| denominator),
     })
 }
 
@@ -688,6 +703,12 @@ mod tests {
         let mut block = <Base as Network>::BlockResponse::default();
         block.header.inner.inner.number = 42;
         block.header.inner.inner.gas_used = 21_000;
+        // Jovian extra data: version 1, denominator 1000, elasticity 5, min base fee 5 mwei.
+        let mut extra_data = vec![1];
+        extra_data.extend_from_slice(&1_000u32.to_be_bytes());
+        extra_data.extend_from_slice(&5u32.to_be_bytes());
+        extra_data.extend_from_slice(&5_000_000u64.to_be_bytes());
+        block.header.inner.inner.extra_data = extra_data.into();
         asserter.push_failure_msg("rate limited");
         asserter.push_success(&Option::<<Base as Network>::BlockResponse>::None);
         asserter.push_success(&block);
@@ -701,6 +722,8 @@ mod tests {
 
         assert_eq!(info.block_number, 42);
         assert_eq!(info.gas_used, 21_000);
+        assert_eq!(info.eip1559_elasticity, Some(5));
+        assert_eq!(info.eip1559_denominator, Some(1_000));
         assert_eq!(stalls.load(Ordering::Relaxed), 0);
     }
 
