@@ -43,9 +43,9 @@ pub enum TxAuthError {
     ResolvedSenderMismatch,
 
     /// A self-paid transaction (`payer == None`) carries a non-empty
-    /// `payer_auth`. The sender's signature does not cover `payer_auth`, so
-    /// accepting one would let a relayer change the transaction hash and raise
-    /// the sender's L1 data fee.
+    /// `payer_auth`. Neither the sender's signature nor the transaction hash
+    /// covers `payer_auth`, so accepting one would let a relayer raise the
+    /// sender's L1 data fee.
     #[error("self-paid transaction carries a payer_auth")]
     UnexpectedPayerAuth,
 
