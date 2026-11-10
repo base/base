@@ -12,7 +12,8 @@
 //! hands to gossip, and models the network between sequencer and searcher as a fixed delay.
 
 use std::{
-    sync::Arc,
+    collections::HashMap,
+    sync::{Arc, Mutex},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -74,8 +75,16 @@ const SEARCHER_ROUND_TRIP: Duration = Duration::from_millis(85);
 /// Interval between Denim blocks: the build of block B+1 starts this long after block B's.
 const BLOCK_INTERVAL: Duration =
     Duration::from_millis(RollupConfig::NATIVE_SUBSECOND_BLOCK_INTERVAL_MILLIS);
-/// Opportunities the searcher reacts to in each scenario.
-const REACTIONS: u64 = 3;
+/// Longest the test host may add to [`SEARCHER_ROUND_TRIP`] before a reaction no longer models
+/// the searcher.
+const SEARCHER_ROUND_TRIP_SLACK: Duration = Duration::from_millis(25);
+/// Latest a block may freeze after its build starts and still be the block the design describes:
+/// its mainnet p50 build time.
+const FREEZE_BUDGET: Duration = Duration::from_millis(65);
+/// Reactions each scenario asserts on.
+const REACTIONS: usize = 3;
+/// Opportunities the searcher may submit to collect [`REACTIONS`] on a busy host.
+const MAX_OPPORTUNITIES: u64 = 20;
 
 /// One searcher reaction to a block carrying an opportunity.
 #[derive(Debug)]
@@ -84,16 +93,33 @@ struct Reaction {
     opportunity_block: u64,
     /// Block that included the searcher's reaction.
     landed_block: u64,
+    /// When the execution layer froze block B, measured from the scheduled start of its build.
+    /// `None` if the freeze had not been observed by the time the block was gossiped.
+    froze_after: Option<Duration>,
     /// When block B was gossiped, measured from the scheduled start of its build.
     gossiped_after: Duration,
     /// When the reaction reached the sequencer, measured from the same instant.
     reached_sequencer_after: Duration,
 }
 
+impl Reaction {
+    /// Whether the test host kept to the scenario's timing: block B froze early and was sealed
+    /// in its own slot, and the reaction took the modelled round trip. A stalled host breaks
+    /// these however the sequencer seals, and shifts the reaction into a later block.
+    fn models_scenario(&self) -> bool {
+        self.froze_after.is_some_and(|froze_after| froze_after <= FREEZE_BUDGET)
+            && self.gossiped_after < BLOCK_INTERVAL
+            && self.reached_sequencer_after.saturating_sub(self.gossiped_after)
+                <= SEARCHER_ROUND_TRIP + SEARCHER_ROUND_TRIP_SLACK
+    }
+}
+
 /// A searcher that reacts to opportunities it sees in gossiped blocks.
 struct Searcher {
     rpc: RootProvider<Base>,
     gossip: mpsc::Receiver<BaseExecutionPayloadEnvelope>,
+    /// When the execution layer froze each payload, keyed by the payload's parent.
+    frozen_at: Arc<Mutex<HashMap<B256, SystemTime>>>,
     rollup_config: Arc<RollupConfig>,
     chain_id: u64,
 }
@@ -125,14 +151,21 @@ impl Searcher {
     async fn react(&mut self, nonce: u64) -> Result<Reaction> {
         let opportunity = transfer(&ANVIL_ACCOUNT_1.private_key, nonce, self.chain_id)?;
         let _pending = self.rpc.send_raw_transaction(&opportunity).await?;
-        let opportunity_block = loop {
+        let payload = loop {
             let payload = self.next_gossiped_block().await?.execution_payload;
             if payload.transactions().contains(&opportunity) {
-                break payload.block_number();
+                break payload;
             }
         };
+        let opportunity_block = payload.block_number();
         let build_start = self.build_start(opportunity_block);
         let gossiped_after = SystemTime::now().duration_since(build_start)?;
+        let froze_after = self
+            .frozen_at
+            .lock()
+            .expect("freeze log lock poisoned")
+            .get(&payload.parent_hash())
+            .and_then(|frozen_at| frozen_at.duration_since(build_start).ok());
 
         tokio::time::sleep(SEARCHER_ROUND_TRIP).await;
         let reaction = transfer(&ANVIL_ACCOUNT_2.private_key, nonce, self.chain_id)?;
@@ -149,7 +182,13 @@ impl Searcher {
             }
         })
         .await??;
-        Ok(Reaction { opportunity_block, landed_block, gossiped_after, reached_sequencer_after })
+        Ok(Reaction {
+            opportunity_block,
+            landed_block,
+            froze_after,
+            gossiped_after,
+            reached_sequencer_after,
+        })
     }
 }
 
@@ -362,26 +401,52 @@ async fn searcher_reactions(early_broadcast: bool) -> Result<Vec<Reaction>> {
         // Without hints the sequencer seals on its deadline, as it did before early broadcast.
         payload_ready: early_broadcast.then(|| payload_ready.resubscribe()),
     };
+    // The execution layer publishes every freeze, whether or not the sequencer listens.
+    let frozen_at = Arc::new(Mutex::new(HashMap::new()));
+    let freeze_log = tokio::spawn({
+        let frozen_at = Arc::clone(&frozen_at);
+        let mut frozen = payload_ready;
+        async move {
+            while let Ok(ready) = frozen.recv().await {
+                frozen_at
+                    .lock()
+                    .expect("freeze log lock poisoned")
+                    .insert(ready.parent_hash, SystemTime::now());
+            }
+        }
+    });
     let mut engine_actor = tokio::spawn(engine_actor.start(()));
     let mut sequencer_actor = tokio::spawn(sequencer_actor.start(()));
 
-    let mut searcher = Searcher { rpc, gossip, rollup_config, chain_id };
+    let mut searcher = Searcher { rpc, gossip, frozen_at, rollup_config, chain_id };
     let reactions = tokio::select! {
         exit = &mut engine_actor => bail!("engine actor stopped: {exit:?}"),
         exit = &mut sequencer_actor => bail!("sequencer actor stopped: {exit:?}"),
         reactions = async {
             searcher.await_scheduled_cadence().await?;
             let mut reactions = Vec::new();
-            for nonce in 0..REACTIONS {
+            for nonce in 0..MAX_OPPORTUNITIES {
                 let reaction = searcher.react(nonce).await?;
-                info!(early_broadcast, reaction = ?reaction, "searcher reacted to gossiped block");
-                reactions.push(reaction);
+                let models_scenario = reaction.models_scenario();
+                info!(
+                    early_broadcast,
+                    models_scenario,
+                    reaction = ?reaction,
+                    "searcher reacted to gossiped block"
+                );
+                if models_scenario {
+                    reactions.push(reaction);
+                }
+                if reactions.len() == REACTIONS {
+                    return Ok(reactions);
+                }
             }
-            Ok::<_, eyre::Report>(reactions)
+            bail!("test host too slow to model the scenario: {reactions:?}")
         } => reactions?,
     };
 
     cancellation.cancel();
+    freeze_log.abort();
     let _ = tokio::join!(engine_actor, sequencer_actor);
     timeout(STEP_TIMEOUT, runtime.initiate_graceful_shutdown()?.ignore_guard()).await?;
     handle.node_exit_future.await?;
