@@ -149,12 +149,14 @@ transactions. A burst of conditional transactions therefore cannot push standard
 user transactions out of reth's pending subpool, and reth's own eviction cannot
 drop resting validity transactions.
 
-EIP-7702 delegation and validity predicates do not mix. The validator rejects a
-transaction with validity predicates that is an EIP-7702 transaction or comes
-from a delegated sender, and a state diff that changes an account's code drops
-that account's validity transactions. The validity pool therefore never needs
-reth's in-flight limits for delegated accounts and pending authorizations, which
-apply only inside reth.
+Delegation and validity predicates do not mix. The validator rejects a
+transaction with validity predicates that is an EIP-7702 transaction, carries an
+EIP-8130 delegation entry, or comes from a delegated sender, and a state diff that
+changes an account's code drops that account's validity transactions. The
+validity pool therefore never needs reth's in-flight limits for delegated
+accounts and pending authorizations, which apply only inside reth. An EIP-8130
+delegation always uses the protocol nonce, so it lands in reth, which counts its
+sender as a pending authority, as for an EIP-7702 authorization.
 
 `PoolStore::of` picks the store. A nonce slot `(sender, nonce key, nonce)`, or a
 nonce-free replay id, is held by at most one store at a time: a newcomer bound for

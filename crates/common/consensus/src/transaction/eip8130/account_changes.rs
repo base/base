@@ -277,6 +277,10 @@ pub struct SignedAccountChanges {
 
 /// Body of an [`AccountChange::Delegation`] entry.
 ///
+/// A transaction carrying a delegation must use the protocol nonce
+/// (`nonce_key == 0`), so the delegated account always ends with a non-zero
+/// account nonce, as with EIP-7702.
+///
 /// This struct has no standalone RLP codec: on the wire a delegation entry is a
 /// single flat list `rlp([type_byte, target])`, encoded by [`AccountChange`]. See
 /// that type for the wire format.

@@ -14,8 +14,8 @@ use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, B256, LogData, U256, map::AddressSet};
 use base_common_chains::{BaseFeature, Upgrades};
 use base_common_consensus::{
-    BaseTimeUpdateTx, Eip8130Constants, Eip8130Contracts, Eip8130Signed, Eip8130StructuralError,
-    Eip8130Structure, Eip8130TimestampError,
+    AccountChange, BaseTimeUpdateTx, Eip8130Constants, Eip8130Contracts, Eip8130Signed,
+    Eip8130StructuralError, Eip8130Structure, Eip8130TimestampError,
 };
 use base_common_evm::{BaseSpecId, L1BlockInfo};
 use base_common_genesis::DaFootprintGasScalarUpdate;
@@ -1010,9 +1010,13 @@ where
             );
         }
 
-        if transaction.as_eip8130().is_some() {
+        if let Some(signed) = transaction.as_eip8130() {
+            let delegates = signed
+                .tx()
+                .account_changes
+                .iter()
+                .any(|change| matches!(change, AccountChange::Delegation(_)));
             let validation = {
-                let signed = transaction.as_eip8130().expect("checked above");
                 self.validate_eip8130_structural(signed)
                     .and_then(|()| {
                         self.validate_eip8130_pool_policy(origin, transaction.sender(), signed)
@@ -1048,9 +1052,11 @@ where
                 propagate,
                 bytecode_hash: state.sender_bytecode_hash,
                 // Reth reserves authorities under its EIP-7702 delegation slot
-                // limit. A payer installs no delegation; the payer-keyed guard
-                // bounds what it sponsors.
-                authorities: None,
+                // limit. A delegation entry delegates the sender, like a 7702
+                // authorization, and always uses the protocol nonce, so it lands
+                // in reth's pool. A payer installs no delegation; the
+                // payer-keyed guard bounds what it sponsors.
+                authorities: delegates.then(|| vec![state.sender]),
             };
             return self.apply_base_checks(Self::reject_delegated_validity(outcome), false);
         }
@@ -1058,8 +1064,9 @@ where
         self.apply_base_checks(Self::reject_delegated_validity(outcome), true)
     }
 
-    /// Rejects a transaction with validity predicates that is an EIP-7702
-    /// transaction or whose sender is EIP-7702 delegated.
+    /// Rejects a transaction with validity predicates that delegates an account
+    /// (an EIP-7702 authorization list or an EIP-8130 delegation entry, both
+    /// reported as `authorities`) or whose sender is EIP-7702 delegated.
     ///
     /// Validity transactions live in their own pool, which does not enforce
     /// reth's in-flight limits for delegated accounts and pending
@@ -1071,10 +1078,11 @@ where
         outcome: TransactionValidationOutcome<Tx>,
     ) -> TransactionValidationOutcome<Tx> {
         match outcome {
-            TransactionValidationOutcome::Valid { transaction, bytecode_hash, .. }
-                if !transaction.transaction().validity_conditions().is_empty()
-                    && (transaction.transaction().authorization_list().is_some()
-                        || bytecode_hash.is_some_and(|hash| hash != KECCAK_EMPTY)) =>
+            TransactionValidationOutcome::Valid {
+                transaction, bytecode_hash, authorities, ..
+            } if !transaction.transaction().validity_conditions().is_empty()
+                && (authorities.is_some()
+                    || bytecode_hash.is_some_and(|hash| hash != KECCAK_EMPTY)) =>
             {
                 TransactionValidationOutcome::Invalid(
                     transaction.into_transaction(),
@@ -1783,6 +1791,9 @@ where
                 Self::eip8130_error("nonce-free transaction has a non-zero nonce sequence")
             }
             NonceError::SequenceSaturated => Self::eip8130_error("nonce sequence is saturated"),
+            NonceError::DelegationRequiresProtocolNonce => {
+                Self::eip8130_error("delegation requires the protocol nonce")
+            }
             NonceError::Storage(_) => Self::eip8130_error("nonce state read failed"),
         }
     }
@@ -4046,6 +4057,31 @@ mod tests {
         assert_eq!(state.payer, sender);
         assert_eq!(state.sender_bytecode_hash, None);
         assert!(state.watch_set.iter().any(|key| *key == InvalidationKey::CodeHash(sender)));
+    }
+
+    /// Admission applies the same rule as inclusion: a delegation must use the
+    /// protocol nonce, so it is rejected on a 2D nonce lane (here at the lane's
+    /// current sequence) and nonce-free (here within its validity window).
+    #[test]
+    fn rejects_delegation_off_protocol_nonce() {
+        let now_ms = 1_700_000_000_000;
+        for (nonce_key, valid_before) in
+            [(U256::from(7), 0), (Eip8130Constants::NONCE_KEY_MAX, now_ms + 10_000)]
+        {
+            let signer = PrivateKeySigner::random();
+            let (validator, signed, _) = delegation_validation_fixture(&signer, None);
+            let header =
+                alloy_consensus::Header { timestamp: now_ms / 1_000, ..Default::default() };
+            validator.update_l1_block_info::<_, TxEip1559>(&header, &[]);
+            let tx = TxEip8130 { nonce_key, valid_before, ..signed.tx().clone() };
+            let sender_auth = k1_auth_blob(&signer, tx.sender_signature_hash()).slice(20..);
+            let signed = Eip8130Signed::new(tx, sender_auth, Bytes::new());
+
+            assert_eip8130_validation_reason(
+                validator.validate_eip8130_full(&signed),
+                "delegation requires the protocol nonce",
+            );
+        }
     }
 
     #[test]
