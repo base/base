@@ -149,9 +149,9 @@ where
     /// a failed submission is resent before anything a block ready at the same wait releases. A
     /// stopped batcher does not poll its source at all.
     ///
-    /// Cancellation or a failed CPU phase ends the loop with a bounded drain of the in-flight
-    /// submissions; see `shutdown`. After a failed CPU phase, the driver returns that phase's
-    /// error once the drain is done.
+    /// Cancellation or any fatal error ends the loop with a bounded drain of the in-flight
+    /// submissions; see `shutdown`. After a fatal error, the driver returns that error once the
+    /// drain is done.
     pub async fn run(mut self) -> Result<(), BatchDriverError> {
         if self.stopped {
             info!(
@@ -171,11 +171,15 @@ where
 
                 _ = self.runtime.cancelled() => break None,
 
-                Some(cmd) = self.admin_rx.recv() => self.on_admin(cmd)?,
+                Some(cmd) = self.admin_rx.recv() => {
+                    if let Err(error) = self.on_admin(cmd) {
+                        break Some(error);
+                    }
+                }
 
                 status = self.derivation_status_rx.recv() => match status {
                     Some(status) => self.on_derivation_status(status),
-                    None => return Err(BatchDriverError::DerivationStatusSourceClosed),
+                    None => break Some(BatchDriverError::DerivationStatusSourceClosed),
                 },
 
                 Some((id, outcome)) = self.submissions.next_settled() => {
@@ -590,6 +594,28 @@ mod tests {
             ctx.cancel();
             drop(handles);
             assert!(driver.run().await.is_ok());
+        });
+    }
+
+    /// Losing the derivation-status source halts the driver, but only after the transactions
+    /// already sent have had the drain timeout to settle.
+    #[test]
+    fn run_drains_in_flight_submissions_when_derivation_status_closes() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let mut pipeline = TrackingPipeline::new();
+            pipeline.submissions.push_back(SubmissionStub::stub());
+            let (driver, handles) =
+                DriverFixture::new(ctx.clone(), pipeline, ScriptedTxManager::new([])).build();
+            drop(handles);
+
+            let started_at = ctx.now();
+            let result = driver.run().await;
+
+            assert!(
+                matches!(result, Err(BatchDriverError::DerivationStatusSourceClosed)),
+                "got {result:?}"
+            );
+            assert_eq!(ctx.now() - started_at, DRAIN_TIMEOUT);
         });
     }
 
