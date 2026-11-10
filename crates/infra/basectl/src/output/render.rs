@@ -11,6 +11,11 @@ use crate::{
     rpc::ConnectionMode,
 };
 
+/// Gas below target fades from cool at zero to bright at the target, staying
+/// readable on dark terminals at low usage.
+const GAS_COLOR_COOL: (u8, u8, u8) = (40, 90, 200);
+const GAS_COLOR_BRIGHT: (u8, u8, u8) = (120, 200, 255);
+/// Fill color when the gas target is unknown.
 const COLOR_GAS_FILL: Color = Color::Rgb(100, 180, 255);
 /// Gas above target fades from warm at the target to hot at the gas limit.
 const GAS_COLOR_WARM: (u8, u8, u8) = (255, 200, 80);
@@ -23,8 +28,9 @@ const EIGHTH_BLOCKS: [&str; 7] = ["▏", "▎", "▍", "▌", "▋", "▊", "▉
 /// Builds a `width`-character bar of one block's gas used relative to its gas limit.
 ///
 /// Each cell resolves eighths using partial block glyphs. Gas up to `gas_target`
-/// is drawn blue; gas above it fades from warm yellow at the target to hot red at
-/// the limit. While the bar has not reached the target's cell, a `│` marks it.
+/// fades from cool to bright blue as it approaches `gas_target`, then from warm
+/// yellow at the target to hot red at the limit. While the bar has not reached
+/// the target's cell, a `│` marks it.
 pub fn build_gas_bar(
     gas_used: u64,
     gas_limit: u64,
@@ -51,7 +57,11 @@ pub fn build_gas_bar(
                         let excess = (cell_end - t) as f64 / (units as usize - t).max(1) as f64;
                         Format::lerp_rgb(GAS_COLOR_WARM, GAS_COLOR_HOT, excess.clamp(0.0, 1.0))
                     }
-                    _ => COLOR_GAS_FILL,
+                    Some(t) => {
+                        let progress = cell_end as f64 / t.max(1) as f64;
+                        Format::lerp_rgb(GAS_COLOR_COOL, GAS_COLOR_BRIGHT, progress.clamp(0.0, 1.0))
+                    }
+                    None => COLOR_GAS_FILL,
                 };
                 let glyph = if cell_units == 8 { "█" } else { EIGHTH_BLOCKS[cell_units - 1] };
                 Span::styled(glyph, Style::default().fg(color))
@@ -304,14 +314,22 @@ mod tests {
     }
 
     #[test]
-    fn gas_bar_grades_from_warm_at_target_to_hot_at_limit() {
+    fn gas_bar_grades_cool_to_bright_below_target_and_warm_to_hot_above() {
         let bar = build_gas_bar(1_000, 1_000, Some(500), 10);
         let color = |cell: usize| bar.spans[cell].style.fg;
 
-        assert_eq!(color(4), Some(COLOR_GAS_FILL));
+        // Below target: the first cell is 20% of the way to bright; the target cell is bright.
+        assert_eq!(color(0), Some(Color::Rgb(56, 112, 211)));
+        assert_eq!(color(4), Some(Color::Rgb(120, 200, 255)));
         // One cell past target is 20% of the way from warm to hot; the last cell is hot.
         assert_eq!(color(5), Some(Color::Rgb(255, 172, 76)));
         assert_eq!(color(9), Some(Color::Rgb(255, 60, 60)));
+    }
+
+    #[test]
+    fn gas_bar_without_target_uses_a_single_fill() {
+        let bar = build_gas_bar(1_000, 1_000, None, 10);
+        assert!(bar.spans.iter().all(|span| span.style.fg == Some(COLOR_GAS_FILL)));
     }
 
     #[test]
