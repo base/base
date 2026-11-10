@@ -3,7 +3,7 @@ use std::sync::Arc;
 use base_proof_preimage::{
     HintReaderServer, PreimageOracleServer, PreimageServerBackend, errors::PreimageOracleError,
 };
-use tokio::spawn;
+use tokio::task::JoinSet;
 use tracing::{Instrument, error, info, info_span};
 
 use crate::HostError;
@@ -30,23 +30,20 @@ where
 
     /// Starts the [`PreimageServer`] and waits for incoming requests.
     pub async fn start(self) -> Result<(), HostError> {
-        let mut server = spawn(
+        // Dropping the set, including when `start` itself is cancelled, aborts both loops.
+        let mut tasks = JoinSet::new();
+        tasks.spawn(
             Self::start_oracle_server(self.oracle_server, Arc::clone(&self.backend))
                 .instrument(info_span!("oracle_server_loop")),
         );
-        let mut hint_router = spawn(
+        tasks.spawn(
             Self::start_hint_router(self.hint_reader, Arc::clone(&self.backend))
                 .instrument(info_span!("hint_router_loop")),
         );
 
-        let (finished, sibling) = tokio::select! {
-            s = &mut server => (s, hint_router),
-            h = &mut hint_router => (h, server),
-        };
-        sibling.abort();
-        // The sibling's outcome is irrelevant once the first task has finished; awaiting it only
-        // ensures it no longer holds the channels or the backend when `start` returns.
-        let _ = sibling.await;
+        let finished = tasks.join_next().await.expect("two server loops were spawned");
+        // Stop the other loop so it no longer holds the channels or the backend on return.
+        tasks.shutdown().await;
 
         finished.map_err(|e| HostError::Custom(e.to_string()))?
     }
@@ -104,6 +101,19 @@ mod tests {
         }
     }
 
+    /// Oracle server whose client never sends a request.
+    struct IdleOracleServer;
+
+    #[async_trait]
+    impl PreimageOracleServer for IdleOracleServer {
+        async fn next_preimage_request<F>(&self, _: &F) -> PreimageOracleResult<()>
+        where
+            F: PreimageFetcher + Send + Sync,
+        {
+            std::future::pending().await
+        }
+    }
+
     /// Hint reader that never receives a hint and reports when it is dropped.
     struct IdleHintReader {
         _dropped: oneshot::Sender<()>,
@@ -147,5 +157,23 @@ mod tests {
         server.start().await.expect("oracle server disconnect is a clean shutdown");
 
         assert_eq!(dropped_rx.try_recv(), Err(oneshot::error::TryRecvError::Closed));
+    }
+
+    #[tokio::test]
+    async fn cancelling_start_stops_both_server_loops() {
+        let (dropped_tx, dropped_rx) = oneshot::channel();
+        let server = PreimageServer::new(
+            IdleOracleServer,
+            IdleHintReader { _dropped: dropped_tx },
+            Arc::new(UnusedBackend),
+        );
+        let start = tokio::spawn(server.start());
+        tokio::task::yield_now().await;
+
+        start.abort();
+        let _ = start.await;
+
+        let closed = tokio::time::timeout(std::time::Duration::from_secs(5), dropped_rx).await;
+        assert!(matches!(closed, Ok(Err(_))), "the hint loop must stop when start is cancelled");
     }
 }
