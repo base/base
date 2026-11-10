@@ -24,7 +24,9 @@ mod channel;
 pub use channel::{Channel, ChannelAddOutcome, ChannelCloseReason, ChannelError, ChannelLimit};
 
 mod artifact;
-pub use artifact::{ArtifactId, ArtifactState, DaArtifact, DaArtifactPayload, DaArtifacts};
+pub use artifact::{
+    ArtifactId, ArtifactState, ChannelArtifactCounts, DaArtifact, DaArtifactPayload, DaArtifacts,
+};
 
 mod egress;
 pub use egress::DaEgress;
