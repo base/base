@@ -21,8 +21,8 @@ use reth_chain_state::CanonStateSubscriptions;
 use reth_chainspec::ChainSpecProvider;
 use reth_primitives_traits::{SignedTransaction, SignerRecoverable, WithEncoded};
 use reth_rpc_eth_api::{
-    EthApiTypes as _, FromEthApiError, FromEvmError, RpcConvert, RpcNodeCore, RpcReceipt,
-    TxInfoMapper,
+    EthApiTypes as _, FromEthApiError, FromEvmError, RpcConvert, RpcNodeCore, RpcNodeCoreExt as _,
+    RpcReceipt, TxInfoMapper,
     helpers::{EthTransactions, LoadReceipt, LoadTransaction, SpawnBlocking, spec::SignersForRpc},
 };
 use reth_rpc_eth_types::{EthApiError, TransactionSource, block::convert_transaction_receipt};
@@ -190,7 +190,17 @@ where
         &self,
         hash: B256,
     ) -> Result<Option<TransactionSource<ProviderTx<Self::Provider>>>, Self::Error> {
-        // 1. Try to find the transaction on disk (historical blocks)
+        // 1. Try the RPC cache, which indexes canonical blocks by `tx_hash()`. The provider's
+        // in-memory lookup matches on `trie_hash()`, which for EIP-8130 is the hash of the full
+        // encoding (authentication included), not the transaction hash, so it misses those
+        // transactions until their block is persisted.
+        if let Some(cached) = self.cache().get_transaction_by_hash(hash).await
+            && let Some(source) = cached.to_transaction_source()
+        {
+            return Ok(Some(source));
+        }
+
+        // 2. Try to find the transaction on disk (historical blocks)
         if let Some((tx, meta)) = self
             .spawn_blocking_io(move |this| {
                 this.provider()
@@ -213,7 +223,7 @@ where
             }));
         }
 
-        // 2. check local pool
+        // 3. check local pool
         if let Some(tx) = self.pool().get(&hash).map(|tx| tx.transaction.clone_into_consensus()) {
             return Ok(Some(TransactionSource::Pool(tx)));
         }
