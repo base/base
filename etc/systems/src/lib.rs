@@ -17,8 +17,8 @@ pub use b20::{B20CreateConfig, B20PrecompileClient};
 
 mod block_export;
 pub use block_export::{
-    BlockExportWriter, EXPORT_BLOCKS_FILE, EXPORT_MANIFEST_FILE, ExportedBlock, ReplayManifest,
-    read_export_manifest, read_exported_blocks,
+    BlockExportWriter, EXPORT_BLOCKS_FILE, EXPORT_MANIFEST_FILE, ExportSource, ExportedBlock,
+    ReplayManifest, read_export_manifest, read_exported_blocks,
 };
 
 mod benchmark_cli;
@@ -44,6 +44,9 @@ pub use calibration::{Calibration, TxProfile};
 
 mod da_cli;
 pub use da_cli::{DA_RESULT_FILE, DaBenchmarkArgs, DaResult};
+
+mod export_cli;
+pub use export_cli::ExportBenchmarkArgs;
 
 mod recorded_replay;
 pub use recorded_replay::{

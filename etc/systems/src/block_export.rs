@@ -13,7 +13,7 @@ use std::{
 
 use alloy_consensus::{Block, BlockBody};
 use alloy_primitives::B256;
-use base_common_consensus::BaseTxEnvelope;
+use base_common_consensus::{BaseBlock, BaseTimeUpdateTx, BaseTxEnvelope};
 use base_common_network::Base;
 use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
 use eyre::{Result, WrapErr, ensure};
@@ -49,6 +49,22 @@ pub struct ReplayManifest {
     pub last_state_root: B256,
     /// Exported block count: `last_number - boundary_number`.
     pub block_count: u64,
+    /// Datadir the canonical blocks were read from. Absent for blocks a snapshot run produced,
+    /// whose replay applies the run's local Denim schedule instead of the chain's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<ExportSource>,
+}
+
+/// Datadir an export of canonical blocks was read from.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportSource {
+    /// Datadir path.
+    pub datadir: PathBuf,
+    /// Last fully synced block of the datadir.
+    pub head_number: u64,
+    /// Timestamp in seconds of that block, which dates a snapshot.
+    pub head_timestamp: u64,
 }
 
 /// One produced block as the engine API payload that inserts it.
@@ -80,17 +96,34 @@ impl ExportedBlock {
             .unwrap_or_else(|| block.header.timestamp.saturating_mul(1_000));
         let block = block.map_header(|header| header.into_inner());
         let hash = block.header.hash;
-        let number = block.header.inner.number;
-        let state_root = block.header.inner.state_root;
-        let parent_beacon_block_root = block.header.inner.parent_beacon_block_root;
         let transactions: Vec<BaseTxEnvelope> =
             block.transactions.into_transactions().map(|tx| tx.inner.inner.into_inner()).collect();
         let consensus_block: Block<BaseTxEnvelope> = Block {
             header: block.header.inner,
             body: BlockBody { transactions, ommers: Vec::new(), withdrawals: block.withdrawals },
         };
-        let (execution_payload, _sidecar) =
-            BaseExecutionPayload::from_block_unchecked(hash, &consensus_block);
+        Self::from_block(hash, timestamp_ms, &consensus_block)
+    }
+
+    /// Converts a block read from a node's database into its engine payload, taking the
+    /// millisecond timestamp from its `BaseTime` update deposit the way the RPC does.
+    pub fn from_stored_block(block: &BaseBlock) -> Self {
+        let header = &block.header;
+        let timestamp_ms = BaseTimeUpdateTx::extract_timestamp_ms(
+            &block.body.transactions,
+            header.number,
+            header.timestamp,
+        )
+        .unwrap_or_else(|_| header.timestamp.saturating_mul(1_000));
+        Self::from_block(header.hash_slow(), timestamp_ms, block)
+    }
+
+    /// Converts a block with its hash and millisecond timestamp into its engine payload.
+    pub fn from_block(hash: B256, timestamp_ms: u64, block: &BaseBlock) -> Self {
+        let number = block.header.number;
+        let state_root = block.header.state_root;
+        let parent_beacon_block_root = block.header.parent_beacon_block_root;
+        let (execution_payload, _sidecar) = BaseExecutionPayload::from_block_unchecked(hash, block);
         let payload_version = match execution_payload {
             BaseExecutionPayload::V1(_) => 1,
             BaseExecutionPayload::V2(_) => 2,
@@ -363,6 +396,7 @@ mod tests {
             last_hash: B256::ZERO,
             last_state_root: B256::ZERO,
             block_count: 0,
+            source: None,
         }
     }
 
