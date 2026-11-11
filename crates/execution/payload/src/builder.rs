@@ -340,6 +340,8 @@ where
     ) -> Result<BuildOutcome<Self::BuiltPayload>, PayloadBuilderError> {
         let no_tx_pool = args.config.attributes.no_tx_pool();
         let outcome = self.build_payload(args, |attrs, resting| {
+            // The pool snapshots every store here, so mid-build arrivals wait
+            // for the next block.
             ParkableBestPayloadTransactions::new(
                 self.pool.best_transactions_with_attributes_and_parking(
                     attrs,
