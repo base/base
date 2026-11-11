@@ -356,7 +356,6 @@ pub(super) async fn prepare(ctx: &mut ChainPrepContext<'_>, setup: &RealTokenSet
     .await?;
     pb_allowance.finish_and_clear();
 
-    ctx.outputs.needs_sender_refresh = true;
     ctx.outputs.real_tokens_prepared = true;
 
     info!(accounts = total_accounts, setup_transactions = sent_total, "real-token setup complete");

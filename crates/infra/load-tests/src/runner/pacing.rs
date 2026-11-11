@@ -9,14 +9,12 @@ use std::{
     time::{Duration, Instant},
 };
 
-use alloy_network::Ethereum;
 use alloy_primitives::{Address, TxHash, U256};
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types::BlockNumberOrTag;
 use alloy_signer_local::PrivateKeySigner;
 use base_common_consensus::Eip8130Constants;
 use base_common_network::Base;
-use base_tx_manager::NonceManager;
 use futures::{StreamExt, TryStreamExt, stream};
 use tokio::{
     sync::{mpsc, watch},
@@ -39,7 +37,6 @@ use crate::{
     workload::{KeyStream, SeededRng, SelectedPayload, WorkloadGenerator},
 };
 
-const NONCE_RPC_TIMEOUT: Duration = Duration::from_secs(10);
 const SUBMIT_DRAIN_TIMEOUT: Duration = Duration::from_secs(60);
 const SUBMIT_WORKER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(12);
 const PENDING_CONFIRMATION_TIMEOUT: Duration = Duration::from_secs(200);
@@ -101,7 +98,6 @@ struct PresignConfig {
     /// rejection so stale signed chunks cannot be enqueued after a nonce resync.
     sender_generations: Vec<u64>,
     signers: Arc<HashMap<Address, PrivateKeySigner>>,
-    nonce_managers: Arc<HashMap<Address, NonceManager<RootProvider<Ethereum>>>>,
     chain_id: u64,
     base_fee_rx: watch::Receiver<u128>,
     max_gas_price: u128,
@@ -516,15 +512,6 @@ impl LoadRunner {
             self.probe_validity_endpoint().await?;
         }
 
-        for account in self.accounts.accounts() {
-            if !self.nonce_managers.contains_key(&account.address) {
-                let provider = RootProvider::<Ethereum>::new_http(self.config.query_rpc.clone());
-                let nonce_manager = NonceManager::new(provider, account.address, NONCE_RPC_TIMEOUT)
-                    .with_pending_tag();
-                Arc::make_mut(&mut self.nonce_managers).insert(account.address, nonce_manager);
-            }
-        }
-
         const SUBMIT_CHANNEL_BUFFER: usize = 32_768;
         let (submit_event_tx, mut submit_event_rx) =
             mpsc::channel::<SubmitEvent>(SUBMIT_CHANNEL_BUFFER);
@@ -566,10 +553,6 @@ impl LoadRunner {
 
         info!(
             sender_count = account_count,
-            signer_worker_count = SubmissionPipeline::signer_worker_count(
-                self.submission_batch_rpcs.len(),
-                self.config.max_concurrent_submit_requests,
-            ),
             sender_worker_count = SubmissionPipeline::sender_worker_count(
                 self.submission_batch_rpcs.len(),
                 self.config.max_concurrent_submit_requests,
@@ -588,19 +571,14 @@ impl LoadRunner {
         );
 
         let signers = Arc::clone(&self.signers);
-        let nonce_managers = Arc::clone(&self.nonce_managers);
         let submission_batch_rpcs = Arc::clone(&self.submission_batch_rpcs);
         let mut submission_pipeline = SubmissionPipeline::start(
             signers,
-            nonce_managers,
             submission_batch_rpcs,
             results_tracker.clone(),
             submit_event_tx.clone(),
             PipelineStartConfig {
                 chain_id: self.config.chain_id,
-                max_gas_price: self.config.max_gas_price,
-                validity_priority_lead_multiplier: self.config.validity_priority_lead_multiplier,
-                validity_priority_fee_divisor: self.config.validity_priority_fee_divisor,
                 max_concurrent_submit_requests: self.config.max_concurrent_submit_requests,
                 validity_signing: self.config.validity_signing,
             },
@@ -645,7 +623,7 @@ impl LoadRunner {
             .map(|(index, address)| (address, index))
             .collect();
         let nonce_initialization_started = Instant::now();
-        let sender_start_nonces = self.sender_start_nonces(&sender_addresses).await?;
+        let sender_start_nonces = Self::pending_nonces(&self.client, &sender_addresses).await?;
         let sender_count = sender_addresses.len();
         info!(
             sender_count,
@@ -742,7 +720,6 @@ impl LoadRunner {
                 sender_next_nonces: sender_start_nonces,
                 sender_generations: vec![0; sender_count],
                 signers: Arc::clone(&self.signers),
-                nonce_managers: Arc::clone(&self.nonce_managers),
                 chain_id: self.config.chain_id,
                 base_fee_rx,
                 max_gas_price: self.config.max_gas_price,
@@ -1248,24 +1225,15 @@ impl LoadRunner {
         Ok(summary)
     }
 
-    async fn sender_start_nonces(&self, sender_addresses: &[Address]) -> Result<Vec<u64>> {
-        let nonce_futures = sender_addresses.iter().map(|from| async move {
-            let nonce_manager = self.nonce_managers.get(from).ok_or_else(|| {
-                BaselineError::Transaction(format!("missing nonce manager for sender {from}"))
-            })?;
+    /// Bounded by the query client's [`RPC_TIMEOUT`](crate::rpc::RPC_TIMEOUT).
+    async fn pending_nonce(client: &QueryProvider, sender: Address) -> Result<u64> {
+        client.get_transaction_count(sender).pending().await.map_err(|e| {
+            BaselineError::Rpc(format!("failed to fetch pending nonce for sender {sender}: {e}"))
+        })
+    }
 
-            nonce_manager.reset().await;
-            let nonce_guard = nonce_manager.next_nonce().await.map_err(|e| {
-                BaselineError::Transaction(format!(
-                    "failed to fetch starting nonce for sender {from}: {e}"
-                ))
-            })?;
-            let nonce = nonce_guard.nonce();
-            nonce_guard.rollback();
-            Ok(nonce)
-        });
-
-        stream::iter(nonce_futures)
+    async fn pending_nonces(client: &QueryProvider, senders: &[Address]) -> Result<Vec<u64>> {
+        stream::iter(senders.iter().map(|&sender| Self::pending_nonce(client, sender)))
             .buffered(super::funding::FUNDING_CONCURRENCY)
             .try_collect()
             .await
@@ -1570,23 +1538,9 @@ impl LoadRunner {
                 continue;
             }
 
-            let nonce_manager = config.nonce_managers.get(&reset.address).ok_or_else(|| {
-                BaselineError::Transaction(format!(
-                    "missing nonce manager for sender {} during nonce reset",
-                    reset.address
-                ))
-            })?;
-            // The nonce manager uses the pending tag for load-test senders, so this restarts after
-            // transactions the node already accepted while avoiding the rejected stale tail.
-            nonce_manager.reset().await;
-            let nonce_guard = nonce_manager.next_nonce().await.map_err(|e| {
-                BaselineError::Transaction(format!(
-                    "failed to reset nonce for sender {}: {e}",
-                    reset.address
-                ))
-            })?;
-            let next_nonce = nonce_guard.nonce();
-            nonce_guard.rollback();
+            // The pending nonce restarts after transactions the node already accepted while
+            // avoiding the rejected stale tail.
+            let next_nonce = Self::pending_nonce(&config.query_client, reset.address).await?;
 
             config.sender_next_nonces[reset.sender_index] = next_nonce;
             config.sender_generations[reset.sender_index] = reset.generation;
@@ -2320,7 +2274,6 @@ mod tests {
             sender_next_nonces: vec![7, 9],
             sender_generations: vec![0, 0],
             signers: Arc::clone(&runner.signers),
-            nonce_managers: Arc::clone(&runner.nonce_managers),
             chain_id: config.chain_id,
             base_fee_rx: rx,
             max_gas_price: config.max_gas_price,
@@ -2414,7 +2367,6 @@ mod tests {
             sender_next_nonces: vec![0; addresses.len()],
             sender_generations: vec![0; addresses.len()],
             signers: Arc::clone(&runner.signers),
-            nonce_managers: Arc::clone(&runner.nonce_managers),
             chain_id: config.chain_id,
             base_fee_rx: rx,
             max_gas_price: config.max_gas_price,
@@ -2491,15 +2443,11 @@ mod tests {
     ) -> SubmissionPipeline {
         SubmissionPipeline::start(
             Arc::new(HashMap::new()),
-            Arc::new(HashMap::new()),
             Arc::new(Vec::new()),
             results_tracker.clone(),
             submit_event_tx,
             PipelineStartConfig {
                 chain_id: 1,
-                max_gas_price: u128::MAX,
-                validity_priority_lead_multiplier: 1,
-                validity_priority_fee_divisor: 1,
                 max_concurrent_submit_requests: None,
                 validity_signing: crate::config::ValiditySigningMode::Adaptive,
             },

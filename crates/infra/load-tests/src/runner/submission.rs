@@ -1,4 +1,4 @@
-//! Transaction submission pipeline with preparation, signing, and sending stages.
+//! Transaction submission pipeline: sender workers draining a queue of signed batches.
 
 use std::{
     collections::HashMap,
@@ -12,15 +12,13 @@ use std::{
 
 use alloy_consensus::transaction::SignableTransaction;
 use alloy_eips::Encodable2718;
-use alloy_network::{Ethereum, TransactionBuilder};
+use alloy_network::TransactionBuilder;
 use alloy_primitives::{Address, Bytes, Signature, TxHash, U256};
-use alloy_provider::RootProvider;
 use alloy_rpc_types::TransactionRequest;
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use base_common_consensus::{Call, Eip8130Signed, TxEip8130};
 use base_execution_txpool::{ValidityAuthorization, ValidityPredicate};
-use base_tx_manager::NonceManager;
 use tokio::{
     sync::{Mutex, Semaphore, mpsc},
     task::JoinHandle,
@@ -35,15 +33,11 @@ use crate::{
     rpc::{BatchRpcClient, BatchSendResult, SubmitItem},
 };
 
-/// Number of signer tasks per submission RPC.
-pub const SIGNER_WORKERS_PER_RPC: usize = 10;
 /// Number of sender tasks per submission RPC.
 pub const SENDER_WORKERS_PER_RPC: usize = 10;
-/// Maximum signer task count.
-pub const MAX_SIGNER_WORKER_COUNT: usize = 32;
 /// Maximum sender task count.
 pub const MAX_SENDER_WORKER_COUNT: usize = 64;
-/// Number of queued prepared or signed batches allowed before backpressure.
+/// Number of queued signed batches allowed before backpressure.
 pub const SUBMIT_BATCH_QUEUE_BUFFER: usize = 4096;
 /// Maximum send attempts for signed transaction batches.
 pub const SUBMIT_MAX_ATTEMPTS: u32 = 5;
@@ -215,7 +209,7 @@ pub struct PreparedTransaction {
     pub cohort: SubmitCohort,
 }
 
-/// Submission events emitted by signer and sender stages.
+/// Submission events emitted by sender workers.
 #[derive(Debug)]
 pub enum SubmitEvent {
     /// Transaction was accepted by a submission RPC.
@@ -316,29 +310,6 @@ impl SignedTransaction {
     }
 }
 
-/// A batch of prepared transactions.
-#[derive(Debug)]
-pub struct PreparedBatch {
-    /// Stable batch id used for logging and endpoint sharding.
-    pub id: u64,
-    /// Latest base fee snapshot used to derive `maxFeePerGas` while signing.
-    pub base_fee: u128,
-    /// Prepared transactions.
-    pub txs: Vec<PreparedTransaction>,
-}
-
-impl PreparedBatch {
-    /// Returns the number of transactions in the batch.
-    pub const fn len(&self) -> usize {
-        self.txs.len()
-    }
-
-    /// Returns true when the batch has no transactions.
-    pub const fn is_empty(&self) -> bool {
-        self.txs.is_empty()
-    }
-}
-
 /// A batch of signed transactions.
 #[derive(Debug)]
 pub struct SignedBatch {
@@ -411,42 +382,6 @@ impl<T> PipelineQueue<T> {
     }
 }
 
-/// Shared signer stage context.
-#[derive(Clone)]
-pub struct SignerContext {
-    /// Cached private key signers by address.
-    pub signers: Arc<HashMap<Address, PrivateKeySigner>>,
-    /// Nonce managers by sender address.
-    pub nonce_managers: Arc<HashMap<Address, NonceManager<RootProvider<Ethereum>>>>,
-    /// Events emitted to the runner.
-    pub submit_event_tx: mpsc::Sender<SubmitEvent>,
-    /// Chain ID used for signing.
-    pub chain_id: u64,
-    /// Maximum allowed gas price.
-    pub max_gas_price: u128,
-    /// Priority-tip multiplier for the validity priority-lead cohort.
-    pub validity_priority_lead_multiplier: u128,
-    /// Priority-tip divisor for validity-cohort measured transactions.
-    pub validity_priority_fee_divisor: u128,
-    /// Sender for signed batches.
-    pub signed_batch_tx: mpsc::Sender<SignedBatch>,
-    /// Signed queue accounting.
-    pub signed_queue: Arc<PipelineQueue<SignedBatch>>,
-}
-
-impl fmt::Debug for SignerContext {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("SignerContext")
-            .field("signers", &self.signers.len())
-            .field("nonce_managers", &self.nonce_managers.len())
-            .field("chain_id", &self.chain_id)
-            .field("max_gas_price", &self.max_gas_price)
-            .field("validity_priority_lead_multiplier", &self.validity_priority_lead_multiplier)
-            .field("validity_priority_fee_divisor", &self.validity_priority_fee_divisor)
-            .finish_non_exhaustive()
-    }
-}
-
 /// Shared sender stage context.
 #[derive(Clone)]
 pub struct SenderContext {
@@ -480,28 +415,19 @@ impl fmt::Debug for SenderContext {
 
 /// Running submission pipeline.
 pub struct SubmissionPipeline {
-    prepared_batch_tx: Option<mpsc::Sender<PreparedBatch>>,
     signed_batch_tx: Option<mpsc::Sender<SignedBatch>>,
-    prepared_queue: Arc<PipelineQueue<PreparedBatch>>,
     signed_queue: Arc<PipelineQueue<SignedBatch>>,
     shutdown: CancellationToken,
-    signer_workers: Vec<JoinHandle<()>>,
     sender_workers: Vec<JoinHandle<()>>,
 }
 
-/// Runtime configuration for submission pipeline workers and signing.
+/// Runtime configuration for submission pipeline workers.
 #[derive(Debug, Clone, Copy)]
 pub struct PipelineStartConfig {
     /// Sidecar signing strategy during staged rollout.
     pub validity_signing: ValiditySigningMode,
-    /// Chain ID used for transaction signing.
+    /// Chain ID of the signed transactions, used for validity sidecar authorization.
     pub chain_id: u64,
-    /// Maximum allowed gas price.
-    pub max_gas_price: u128,
-    /// Priority-tip multiplier for the validity priority-lead cohort.
-    pub validity_priority_lead_multiplier: u128,
-    /// Priority-tip divisor for validity-cohort measured transactions.
-    pub validity_priority_fee_divisor: u128,
     /// Optional cap on concurrent outbound submission RPC requests across all
     /// sender workers and per-batch RPC chunks. `None` leaves those requests
     /// unconstrained by a shared semaphore.
@@ -511,61 +437,31 @@ pub struct PipelineStartConfig {
 impl fmt::Debug for SubmissionPipeline {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("SubmissionPipeline")
-            .field("prepared_queue", &self.prepared_queue)
             .field("signed_queue", &self.signed_queue)
-            .field("signer_workers", &self.signer_workers.len())
             .field("sender_workers", &self.sender_workers.len())
             .finish_non_exhaustive()
     }
 }
 
 impl SubmissionPipeline {
-    /// Starts the signer and sender stages.
+    /// Starts the sender workers.
     pub fn start(
         signers: Arc<HashMap<Address, PrivateKeySigner>>,
-        nonce_managers: Arc<HashMap<Address, NonceManager<RootProvider<Ethereum>>>>,
         submission_batch_rpcs: Arc<Vec<BatchRpcClient>>,
         results_tracker: ResultsTracker,
         submit_event_tx: mpsc::Sender<SubmitEvent>,
         config: PipelineStartConfig,
     ) -> Self {
-        let (prepared_batch_tx, prepared_batch_rx) =
-            mpsc::channel::<PreparedBatch>(SUBMIT_BATCH_QUEUE_BUFFER);
         let (signed_batch_tx, signed_batch_rx) =
             mpsc::channel::<SignedBatch>(SUBMIT_BATCH_QUEUE_BUFFER);
-        let prepared_queue = Arc::new(PipelineQueue::new(prepared_batch_rx));
         let signed_queue = Arc::new(PipelineQueue::new(signed_batch_rx));
         let shutdown = CancellationToken::new();
-        let signer_worker_count = Self::signer_worker_count(
-            submission_batch_rpcs.len(),
-            config.max_concurrent_submit_requests,
-        );
         let sender_worker_count = Self::sender_worker_count(
             submission_batch_rpcs.len(),
             config.max_concurrent_submit_requests,
         );
         let submit_request_limiter =
             config.max_concurrent_submit_requests.map(|max| Arc::new(Semaphore::new(max.max(1))));
-
-        let mut signer_workers = Vec::with_capacity(signer_worker_count);
-        for worker_id in 0..signer_worker_count {
-            let ctx = SignerContext {
-                signers: Arc::clone(&signers),
-                nonce_managers: Arc::clone(&nonce_managers),
-                submit_event_tx: submit_event_tx.clone(),
-                chain_id: config.chain_id,
-                max_gas_price: config.max_gas_price,
-                validity_priority_lead_multiplier: config.validity_priority_lead_multiplier,
-                validity_priority_fee_divisor: config.validity_priority_fee_divisor,
-                signed_batch_tx: signed_batch_tx.clone(),
-                signed_queue: Arc::clone(&signed_queue),
-            };
-            let queue = Arc::clone(&prepared_queue);
-            let shutdown = shutdown.clone();
-            signer_workers.push(tokio::spawn(async move {
-                Self::signer_worker(worker_id, ctx, queue, shutdown).await;
-            }));
-        }
 
         let mut sender_workers = Vec::with_capacity(sender_worker_count);
         for _ in 0..sender_worker_count {
@@ -585,27 +481,7 @@ impl SubmissionPipeline {
             }));
         }
 
-        Self {
-            prepared_batch_tx: Some(prepared_batch_tx),
-            signed_batch_tx: Some(signed_batch_tx),
-            prepared_queue,
-            signed_queue,
-            shutdown,
-            signer_workers,
-            sender_workers,
-        }
-    }
-
-    /// Returns signer worker count for a submission RPC count and request limit.
-    pub fn signer_worker_count(
-        submission_rpc_count: usize,
-        max_concurrent_submit_requests: Option<usize>,
-    ) -> usize {
-        let endpoint_workers =
-            (submission_rpc_count * SIGNER_WORKERS_PER_RPC).clamp(1, MAX_SIGNER_WORKER_COUNT);
-        max_concurrent_submit_requests
-            .map_or(endpoint_workers, |request_limit| endpoint_workers.max(request_limit))
-            .clamp(1, MAX_SIGNER_WORKER_COUNT)
+        Self { signed_batch_tx: Some(signed_batch_tx), signed_queue, shutdown, sender_workers }
     }
 
     /// Returns sender worker count for a submission RPC count and request limit.
@@ -618,25 +494,6 @@ impl SubmissionPipeline {
         max_concurrent_submit_requests
             .map_or(endpoint_workers, |request_limit| endpoint_workers.max(request_limit))
             .clamp(1, MAX_SENDER_WORKER_COUNT)
-    }
-
-    /// Enqueues a prepared batch for signing.
-    pub async fn enqueue_prepared(
-        &self,
-        batch: PreparedBatch,
-    ) -> std::result::Result<(), PreparedBatch> {
-        let Some(tx) = &self.prepared_batch_tx else {
-            return Err(batch);
-        };
-
-        self.prepared_queue.pending_batches.fetch_add(1, Ordering::SeqCst);
-        match tx.send(batch).await {
-            Ok(()) => Ok(()),
-            Err(e) => {
-                self.prepared_queue.pending_batches.fetch_sub(1, Ordering::SeqCst);
-                Err(e.0)
-            }
-        }
     }
 
     /// Enqueues a signed batch for sending.
@@ -655,40 +512,21 @@ impl SubmissionPipeline {
         }
     }
 
-    /// Closes direct input to both stages after generation is complete.
-    ///
-    /// Signer workers retain their signed-stage senders until the prepared queue drains, then
-    /// sender workers terminate naturally after the signed queue drains.
+    /// Closes direct input after generation is complete; sender workers terminate naturally
+    /// after the signed queue drains.
     pub fn close_input(&mut self) {
-        self.prepared_batch_tx = None;
         self.signed_batch_tx = None;
     }
 
-    /// Returns queued plus in-progress prepared and signed batch count.
+    /// Returns queued plus in-progress signed batch count.
     pub fn pending_batches(&self) -> u64 {
-        self.prepared_queue.pending_batches() + self.signed_queue.pending_batches()
+        self.signed_queue.pending_batches()
     }
 
-    /// Closes both queues and summarizes queued-but-not-started batch failures.
+    /// Closes the queue and summarizes queued-but-not-started batch failures.
     pub async fn close_and_fail_queued(&self, reason: &'static str) -> QueuedSubmitFailures {
         self.shutdown.cancel();
         let mut failures = QueuedSubmitFailures::new(reason);
-        let abandoned_prepared = {
-            let mut receiver = self.prepared_queue.receiver.lock().await;
-            receiver.close();
-            let mut batches = Vec::new();
-            while let Ok(batch) = receiver.try_recv() {
-                batches.push(batch);
-            }
-            batches
-        };
-        for batch in abandoned_prepared {
-            self.prepared_queue.pending_batches.fetch_sub(1, Ordering::SeqCst);
-            for prepared in batch.txs {
-                failures.record(prepared.from);
-            }
-        }
-
         let abandoned_signed = {
             let mut receiver = self.signed_queue.receiver.lock().await;
             receiver.close();
@@ -712,7 +550,7 @@ impl SubmissionPipeline {
         self.shutdown.cancel();
 
         let deadline = Instant::now() + timeout;
-        for mut worker in self.signer_workers.drain(..).chain(self.sender_workers.drain(..)) {
+        for mut worker in self.sender_workers.drain(..) {
             let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
                 warn!("submission worker shutdown deadline elapsed, aborting");
@@ -799,10 +637,8 @@ impl SubmissionPipeline {
         target.min(max_gas_price)
     }
 
-    /// Signs `prepared` at the given nonce and EIP-1559 [`Fees`], without allocating a
-    /// nonce or touching a [`SignerContext`]. Shared by the batch signer stage
-    /// ([`Self::sign_prepared`]) and any caller building a transaction outside the
-    /// pipeline (e.g. setup/funding/draining flows) so there is exactly one
+    /// Signs `prepared` at the given nonce and EIP-1559 [`Fees`]. Shared by the presign
+    /// producer and setup flows such as gas calibration, so there is exactly one
     /// request-building and signing implementation.
     pub fn sign_at_nonce(
         signer: &PrivateKeySigner,
@@ -893,43 +729,6 @@ impl SubmissionPipeline {
         })
     }
 
-    async fn signer_worker(
-        worker_id: usize,
-        ctx: SignerContext,
-        queue: Arc<PipelineQueue<PreparedBatch>>,
-        shutdown: CancellationToken,
-    ) {
-        loop {
-            let batch = {
-                let mut receiver = queue.receiver.lock().await;
-                tokio::select! {
-                    batch = receiver.recv() => batch,
-                    () = shutdown.cancelled() => None,
-                }
-            };
-
-            let Some(batch) = batch else {
-                break;
-            };
-
-            let batch_id = batch.id;
-            let signed_batch = Self::sign_batch(&ctx, batch).await;
-            queue.pending_batches.fetch_sub(1, Ordering::SeqCst);
-
-            let Some(signed_batch) = signed_batch else {
-                continue;
-            };
-
-            let signed_len = signed_batch.len();
-            ctx.signed_queue.pending_batches.fetch_add(1, Ordering::SeqCst);
-            if let Err(e) = ctx.signed_batch_tx.send(signed_batch).await {
-                ctx.signed_queue.pending_batches.fetch_sub(1, Ordering::SeqCst);
-                warn!(worker_id, batch_id, signed_len, "signed queue closed");
-                Self::fail_signed_batch(&ctx.submit_event_tx, e.0.txs, "signed queue closed").await;
-            }
-        }
-    }
-
     async fn sender_worker(
         ctx: SenderContext,
         queue: Arc<PipelineQueue<SignedBatch>>,
@@ -956,24 +755,6 @@ impl SubmissionPipeline {
                 .send(SubmitEvent::BatchCompleted { id: batch_id, completed_at: Instant::now() })
                 .await;
         }
-    }
-
-    async fn sign_batch(ctx: &SignerContext, batch: PreparedBatch) -> Option<SignedBatch> {
-        let mut signed_txs = Vec::with_capacity(batch.txs.len());
-        for prepared in batch.txs {
-            if let Some(tx) = Self::sign_prepared(ctx, &prepared, batch.base_fee).await {
-                signed_txs.push(tx);
-            } else {
-                Self::release_prepared(&ctx.submit_event_tx, &prepared).await;
-            }
-        }
-
-        (!signed_txs.is_empty()).then_some(SignedBatch {
-            id: batch.id,
-            attempt: 0,
-            measured: true,
-            txs: signed_txs,
-        })
     }
 
     async fn send_batch(
@@ -1312,19 +1093,6 @@ impl SubmissionPipeline {
         }
     }
 
-    async fn release_prepared(
-        submit_event_tx: &mpsc::Sender<SubmitEvent>,
-        prepared: &PreparedTransaction,
-    ) {
-        let _ = submit_event_tx
-            .send(SubmitEvent::Released {
-                from: prepared.from,
-                estimated_gas: prepared.estimated_gas,
-                accepted: false,
-            })
-            .await;
-    }
-
     async fn release_signed(
         submit_event_tx: &mpsc::Sender<SubmitEvent>,
         signed: &SignedTransaction,
@@ -1337,64 +1105,6 @@ impl SubmissionPipeline {
                 accepted,
             })
             .await;
-    }
-
-    async fn sign_prepared(
-        ctx: &SignerContext,
-        prepared: &PreparedTransaction,
-        base_fee: u128,
-    ) -> Option<SignedTransaction> {
-        let fees = GasPricer::new(ctx.max_gas_price).fees_for_cohort(
-            base_fee,
-            prepared.cohort,
-            ctx.validity_priority_fee_divisor,
-            ctx.validity_priority_lead_multiplier,
-        );
-
-        let Some(signer) = ctx.signers.get(&prepared.from) else {
-            warn!(from = %prepared.from, "no signer for sender");
-            let _ = ctx.submit_event_tx.send(SubmitEvent::Failed("no signer".into())).await;
-            return None;
-        };
-
-        let Some(nonce_manager) = ctx.nonce_managers.get(&prepared.from) else {
-            warn!(from = %prepared.from, "no nonce manager for sender");
-            let _ = ctx.submit_event_tx.send(SubmitEvent::Failed("no nonce manager".into())).await;
-            return None;
-        };
-
-        let nonce_guard = match nonce_manager.next_nonce().await {
-            Ok(guard) => guard,
-            Err(e) => {
-                warn!(from = %prepared.from, error = %e, "failed to acquire nonce");
-                let _ = ctx
-                    .submit_event_tx
-                    .send(SubmitEvent::Failed("nonce acquisition failed".into()))
-                    .await;
-                return None;
-            }
-        };
-        let nonce = nonce_guard.nonce();
-
-        let signed = match Self::sign_at_nonce(signer, prepared, ctx.chain_id, nonce, fees) {
-            Ok(signed) => signed,
-            Err(e) => {
-                warn!(from = %prepared.from, nonce, error = %e, "failed to build or sign tx");
-                nonce_guard.rollback();
-                let _ = ctx
-                    .submit_event_tx
-                    .send(SubmitEvent::Failed("tx build or sign failed".into()))
-                    .await;
-                return None;
-            }
-        };
-
-        // Drop the nonce guard immediately after signing. The guard holds
-        // the NonceManager mutex; keeping it alive until after RPC send
-        // would serialize unrelated network latency through nonce allocation.
-        drop(nonce_guard);
-
-        Some(signed)
     }
 
     fn submit_retry_delay(attempt: u32) -> Duration {
@@ -1441,8 +1151,8 @@ mod tests {
 
     use super::{
         BatchTxError, Fees, GasPricer, MAX_FEE_BASE_FEE_MULTIPLIER, MIN_PRIORITY_FEE,
-        PipelineQueue, PipelineStartConfig, PreparedBatch, PreparedTransaction, SignedBatch,
-        SignedTransaction, SubmissionPipeline, SubmitCohort, SubmitEvent,
+        PipelineQueue, PipelineStartConfig, PreparedTransaction, SignedBatch, SignedTransaction,
+        SubmissionPipeline, SubmitCohort, SubmitEvent,
     };
     use crate::{BatchRpcClient, ResultsTracker, config::ValiditySigningMode};
 
@@ -1733,29 +1443,6 @@ mod tests {
             .expect("submit event channel open");
 
         let sender = Address::repeat_byte(0x11);
-        let (prepared_batch_tx, prepared_batch_rx) = mpsc::channel(2);
-        let prepared_queue = Arc::new(PipelineQueue::new(prepared_batch_rx));
-        prepared_queue.pending_batches.fetch_add(1, Ordering::SeqCst);
-        prepared_batch_tx
-            .send(PreparedBatch {
-                id: 0,
-                base_fee: 1,
-                txs: vec![PreparedTransaction {
-                    native: false,
-                    from: sender,
-                    to: None,
-                    value: U256::ZERO,
-                    data: Bytes::new(),
-                    gas_limit: 21_000,
-                    estimated_gas: 21_000,
-                    validity: Vec::new(),
-                    cohort: SubmitCohort::Plain,
-                }],
-            })
-            .await
-            .expect("prepared queue open");
-        drop(prepared_batch_tx);
-
         let (signed_batch_tx, signed_batch_rx) = mpsc::channel(2);
         let signed_queue = Arc::new(PipelineQueue::new(signed_batch_rx));
         signed_queue.pending_batches.fetch_add(1, Ordering::SeqCst);
@@ -1782,12 +1469,9 @@ mod tests {
         drop(signed_batch_tx);
 
         let pipeline = SubmissionPipeline {
-            prepared_batch_tx: None,
             signed_batch_tx: None,
-            prepared_queue,
             signed_queue,
             shutdown: CancellationToken::new(),
-            signer_workers: Vec::new(),
             sender_workers: Vec::new(),
         };
 
@@ -1799,8 +1483,8 @@ mod tests {
         .expect("abandoned queue summary should not block on submit events");
 
         assert_eq!(failures.reason, "submit queue abandoned");
-        assert_eq!(failures.failed_count, 2);
-        assert_eq!(failures.released_by_sender.get(&sender).copied(), Some(2));
+        assert_eq!(failures.failed_count, 1);
+        assert_eq!(failures.released_by_sender.get(&sender).copied(), Some(1));
         assert_eq!(pipeline.pending_batches(), 0);
         assert!(matches!(submit_event_rx.try_recv(), Ok(SubmitEvent::Failed(_))));
         assert!(submit_event_rx.try_recv().is_err());
@@ -1808,9 +1492,7 @@ mod tests {
 
     #[tokio::test]
     async fn close_and_fail_queued_cancels_workers_before_locking_receivers() {
-        let (_prepared_tx, prepared_rx) = mpsc::channel(1);
         let (_signed_tx, signed_rx) = mpsc::channel(1);
-        let prepared_queue = Arc::new(PipelineQueue::new(prepared_rx));
         let signed_queue = Arc::new(PipelineQueue::new(signed_rx));
         let shutdown = CancellationToken::new();
         let queue = Arc::clone(&signed_queue);
@@ -1824,12 +1506,9 @@ mod tests {
         locked_rx.await.expect("receiver holder must start");
 
         let pipeline = SubmissionPipeline {
-            prepared_batch_tx: None,
             signed_batch_tx: None,
-            prepared_queue,
             signed_queue,
             shutdown,
-            signer_workers: Vec::new(),
             sender_workers: Vec::new(),
         };
         tokio::time::timeout(
@@ -1843,17 +1522,13 @@ mod tests {
 
     #[tokio::test]
     async fn shutdown_timeout_is_shared_across_all_workers() {
-        let (_prepared_tx, prepared_rx) = mpsc::channel(1);
         let (_signed_tx, signed_rx) = mpsc::channel(1);
         let blocked_worker = || tokio::spawn(std::future::pending::<()>());
         let mut pipeline = SubmissionPipeline {
-            prepared_batch_tx: None,
             signed_batch_tx: None,
-            prepared_queue: Arc::new(PipelineQueue::new(prepared_rx)),
             signed_queue: Arc::new(PipelineQueue::new(signed_rx)),
             shutdown: CancellationToken::new(),
-            signer_workers: vec![blocked_worker(), blocked_worker()],
-            sender_workers: vec![blocked_worker(), blocked_worker()],
+            sender_workers: (0..4).map(|_| blocked_worker()).collect(),
         };
 
         tokio::time::timeout(
@@ -1874,11 +1549,7 @@ mod tests {
     }
 
     #[test]
-    fn request_limit_expands_submission_worker_pools() {
-        assert_eq!(SubmissionPipeline::signer_worker_count(1, None), 10);
-        assert_eq!(SubmissionPipeline::signer_worker_count(1, Some(32)), 32);
-        assert_eq!(SubmissionPipeline::signer_worker_count(2, Some(8)), 20);
-        assert_eq!(SubmissionPipeline::signer_worker_count(1, Some(128)), 32);
+    fn request_limit_expands_submission_worker_pool() {
         assert_eq!(SubmissionPipeline::sender_worker_count(1, None), 10);
         assert_eq!(SubmissionPipeline::sender_worker_count(1, Some(32)), 32);
         assert_eq!(SubmissionPipeline::sender_worker_count(2, Some(8)), 20);
@@ -1913,16 +1584,12 @@ mod tests {
         let (events, mut receiver) = mpsc::channel(32);
         let mut pipeline = SubmissionPipeline::start(
             Arc::new(std::collections::HashMap::from([(from, signer.clone())])),
-            Arc::new(std::collections::HashMap::new()),
             Arc::new(vec![client.clone()]),
             ResultsTracker::new(&[from]),
             events,
             PipelineStartConfig {
                 validity_signing: mode,
                 chain_id: 8453,
-                max_gas_price: 1_000_000_000,
-                validity_priority_lead_multiplier: 1,
-                validity_priority_fee_divisor: 1,
                 max_concurrent_submit_requests: Some(1),
             },
         );

@@ -380,7 +380,6 @@ impl Payload for UniswapV3LiquidityPayload {
         self.positions
             .set(state)
             .map_err(|_| BaselineError::Config("uniswap_v3_liquidity prepared twice".into()))?;
-        ctx.outputs.needs_sender_refresh = true;
         Ok(())
     }
 
