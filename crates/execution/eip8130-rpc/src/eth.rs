@@ -1,13 +1,12 @@
 //! EIP-8130 `eth_getTransactionCount`, `eth_estimateGas` and `eth_call` overrides.
 
 use alloy_eips::BlockId;
-use alloy_evm::EvmFactory;
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_rpc_types::{
     BlockOverrides,
     state::{EvmOverrides, StateOverride},
 };
-use base_common_evm::BaseTransaction as BaseRevm;
+use base_common_evm2::BaseEvmTypes;
 use base_common_rpc_types::{BaseRpcTypes, BaseTransactionRequest};
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_evm::BaseNextBlockEnvAttributes;
@@ -16,12 +15,11 @@ use jsonrpsee::{
     proc_macros::rpc,
 };
 use reth_chainspec::ChainSpecProvider;
-use reth_evm::{ConfigureEvm, EvmFactoryFor, TxEnvFor};
+use reth_evm::{BlockExecutorFactory, ConfigureEvm};
 use reth_rpc_eth_api::{
     EthApiTypes,
     helpers::{EthCall, EthState, FullEthApi},
 };
-use revm::context::{BlockEnv, TxEnv};
 use tracing::debug;
 
 use crate::{ChannelNonceReader, Eip8130EverestGate, Eip8130GasEstimator};
@@ -106,10 +104,11 @@ impl<Eth: EthApiTypes> Eip8130EthApiExt<Eth> {
 impl<Eth> Eip8130EthApiOverrideServer for Eip8130EthApiExt<Eth>
 where
     Eth: FullEthApi<NetworkTypes = BaseRpcTypes>,
-    Eth::Evm: ConfigureEvm<NextBlockEnvCtx = BaseNextBlockEnvAttributes>,
+    Eth::Evm: ConfigureEvm<
+            NextBlockEnvCtx = BaseNextBlockEnvAttributes,
+            BlockExecutorFactory: BlockExecutorFactory<EvmTypes = BaseEvmTypes>,
+        >,
     Eth::Provider: ChainSpecProvider<ChainSpec = BaseChainSpec>,
-    TxEnvFor<Eth::Evm>: From<BaseRevm<TxEnv>>,
-    EvmFactoryFor<Eth::Evm>: EvmFactory<BlockEnv = BlockEnv>,
     jsonrpsee_types::error::ErrorObject<'static>: From<Eth::Error>,
 {
     async fn get_transaction_count(

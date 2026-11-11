@@ -1,17 +1,45 @@
 //! Precompile entry point for the activation registry.
 
+#[cfg(feature = "revm")]
 use alloy_evm::precompiles::{DynPrecompile, PrecompilesMap};
 use base_common_genesis::BaseUpgrade;
+use base_precompile_storage::{PrecompileResult, StorageCtx};
 
-use crate::{
-    ActivationAdminConfig, ActivationRegistryStorage, NoopPrecompileCallObserver,
-    PrecompileCallObserver, UpgradeGatedStorageFeatures, macros::base_precompile,
-};
+use crate::{ActivationAdminConfig, ActivationRegistryStorage, PrecompileCallObserver};
+#[cfg(feature = "revm")]
+use crate::{NoopPrecompileCallObserver, UpgradeGatedStorageFeatures, macros::base_precompile};
 
 /// Entry point for the activation registry precompile.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct ActivationRegistry;
 
+impl ActivationRegistry {
+    /// Precompile identifier reported to the execution engine.
+    pub const ID: &'static str = "ActivationRegistry";
+
+    /// Observes and dispatches one activation registry call under `admin_config`, gated to the
+    /// version active at `upgrade`.
+    pub fn run<O>(
+        ctx: StorageCtx<'_>,
+        calldata: &[u8],
+        admin_config: ActivationAdminConfig,
+        upgrade: BaseUpgrade,
+        observer: O,
+    ) -> PrecompileResult
+    where
+        O: PrecompileCallObserver,
+    {
+        ActivationRegistryStorage::new(ctx).dispatch_with_observer(
+            ctx,
+            calldata,
+            admin_config,
+            upgrade,
+            observer,
+        )
+    }
+}
+
+#[cfg(feature = "revm")]
 impl ActivationRegistry {
     /// Installs the activation registry precompile with an explicit admin configuration.
     pub fn install_with_config(
@@ -37,7 +65,7 @@ impl ActivationRegistry {
         )));
     }
 
-    /// Creates the EVM precompile wrapper for the activation registry with an observer.
+    /// Creates the revm precompile wrapper for the activation registry with an observer.
     pub fn precompile_with_observer<O>(
         admin_config: ActivationAdminConfig,
         upgrade: BaseUpgrade,
@@ -48,23 +76,14 @@ impl ActivationRegistry {
     {
         let storage_features = UpgradeGatedStorageFeatures::from_upgrade(upgrade);
         base_precompile!(
-            "ActivationRegistry",
+            Self::ID,
             storage_features: storage_features,
-            |ctx, calldata| {
-            let observer = observer.clone();
-            ActivationRegistryStorage::new(ctx).dispatch_with_observer(
-                ctx,
-                calldata,
-                admin_config,
-                upgrade,
-                observer,
-            )
-            }
+            |ctx, calldata| Self::run(ctx, calldata, admin_config, upgrade, observer.clone())
         )
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "revm"))]
 mod tests {
     use alloy_evm::precompiles::PrecompilesMap;
     use alloy_primitives::Address;

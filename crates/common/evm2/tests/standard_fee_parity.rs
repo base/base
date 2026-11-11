@@ -16,9 +16,9 @@ use alloy_consensus::{TxEip1559, transaction::Recovered};
 use alloy_primitives::{Address, Bytes, TxKind, U256};
 use base_common_consensus::Predeploys;
 use base_common_evm::{
-    BaseSpecId as RevmBaseSpecId, BaseTransaction, Builder, DefaultBase, L1BlockInfo,
+    BaseSpecId as RevmBaseSpecId, BaseTransaction, Builder, DefaultBase, L1BlockInfo, MeteredGas,
 };
-use base_common_evm2::{BaseEvmTypes, BaseSpecId, BaseTxEnvelope};
+use base_common_evm2::{BaseEvmExt, BaseEvmTypes, BaseSpecId, BaseTxEnvelope};
 use base_common_genesis::BaseUpgrade;
 use base_common_l1_fees::L1FeeParams;
 use evm2::{Evm, Precompiles, env::BlockEnv, ethereum::TxEnvelope, evm::InMemoryDB};
@@ -42,10 +42,10 @@ const L1_BASE_FEE: u64 = 1_000_000_000;
 const L1_BASE_FEE_SCALAR: u64 = 1_000;
 const OPERATOR_FEE_SCALAR: u64 = 2_000;
 const OPERATOR_FEE_CONSTANT: u64 = 7;
-// Ecotone (linear L1 cost), Fjord (FastLZ-estimated L1 cost), Isthmus (operator fee), and
-// Jovian (operator fee × multiplier) — exercising each distinct fee branch.
-const FORKS: [BaseUpgrade; 4] =
-    [BaseUpgrade::Ecotone, BaseUpgrade::Fjord, BaseUpgrade::Isthmus, BaseUpgrade::Jovian];
+/// The whole execution fork ladder, covering each distinct fee branch: pre-Ecotone (overhead L1
+/// cost), Ecotone (linear L1 cost), Fjord (FastLZ-estimated L1 cost), Isthmus (operator fee), and
+/// Jovian (operator fee × multiplier), plus the Base-specific upgrades after it.
+const FORKS: [BaseUpgrade; 14] = BaseUpgrade::EXECUTION_VARIANTS;
 
 /// Arbitrary EIP-2718-shaped bytes priced for the L1 data fee (same on both engines).
 fn enveloped() -> Bytes {
@@ -63,10 +63,19 @@ const fn fee_accounts() -> [Address; 5] {
     ]
 }
 
+/// Marks the block environment's L1 fee parameters as already loaded for block 0, like the revm
+/// reference's preloaded `L1BlockInfo { l2_block: Some(0), .. }`, so execution prices fees from
+/// them instead of reading the (empty) `L1Block` predeploy.
+fn preloaded_l1_fee_params() -> BaseEvmExt {
+    BaseEvmExt { l1_fee_params_block: Some(U256::ZERO), ..Default::default() }
+}
+
 #[derive(Debug, PartialEq, Eq)]
 struct Outcome {
     success: bool,
     gas_used: u64,
+    /// The gas metered before gas-limit billing, as reported for the builder's events.
+    metered_gas_used: Option<u64>,
     balances: BTreeMap<Address, U256>,
 }
 
@@ -108,6 +117,7 @@ fn build_evm2(upgrade: BaseUpgrade, balance: U256) -> Evm<'static, BaseEvmTypes>
         ..Default::default()
     };
     Evm::new(spec, block, BaseEvmTypes::tx_registry(), db, Precompiles::base(spec.into()))
+        .with_ext(preloaded_l1_fee_params())
 }
 
 /// Runs the EIP-1559 transfer through evm2 at `upgrade` and captures the fee outcome.
@@ -129,7 +139,12 @@ fn run_evm2(upgrade: BaseUpgrade) -> Outcome {
         })
         .collect();
 
-    Outcome { success: result.status, gas_used: result.tx_gas_used(), balances }
+    Outcome {
+        success: result.status,
+        gas_used: result.tx_gas_used(),
+        metered_gas_used: result.ext.metered_gas_used,
+        balances,
+    }
 }
 
 /// Runs the same transfer through the revm reference at `upgrade`.
@@ -171,6 +186,7 @@ fn run_revm(upgrade: BaseUpgrade) -> Outcome {
         .enveloped_tx(Some(enveloped()))
         .build_fill();
     let ResultAndState { result, state } = evm.transact(tx).unwrap();
+    let metered_gas_used = MeteredGas::take().map(|metered| metered.gas_used);
 
     let balances = fee_accounts()
         .into_iter()
@@ -180,7 +196,12 @@ fn run_revm(upgrade: BaseUpgrade) -> Outcome {
         })
         .collect();
 
-    Outcome { success: result.is_success(), gas_used: result.tx_gas_used(), balances }
+    Outcome {
+        success: result.is_success(),
+        gas_used: result.tx_gas_used(),
+        metered_gas_used,
+        balances,
+    }
 }
 
 #[test]
@@ -194,8 +215,8 @@ fn standard_transaction_fee_distribution_matches_revm() {
 
 /// A caller funded for the gas cost but not the additional L1 and operator fees must have its
 /// transaction rejected, matching the revm reference's `LackOfFundForMaxFee`. Without the
-/// affordability check the underfunded caller would wrap through `charge_upfront`'s saturating
-/// subtraction into a spurious balance instead of failing.
+/// affordability check `charge_upfront`'s saturating subtraction would silently drain the
+/// caller's balance instead of failing the transaction.
 #[test]
 fn underfunded_caller_is_rejected_not_wrapped() {
     // Exactly the max gas cost (gas_limit * max_fee), with zero value: enough to clear the

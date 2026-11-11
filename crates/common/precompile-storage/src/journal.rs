@@ -16,15 +16,12 @@
 use alloc::string::{String, ToString};
 
 use alloy_evm::{EvmInternals, EvmInternalsError};
-use alloy_primitives::{Address, B256, Log, LogData, U256};
-use revm::{
-    context::journaled_state::JournalCheckpoint,
-    primitives::keccak256,
-    state::{AccountInfo, Bytecode},
-};
+use alloy_primitives::{Address, B256, Log, LogData, U256, keccak256};
+use revm::context::journaled_state::JournalCheckpoint;
 
 use crate::{
     error::{BasePrecompileError, Result},
+    neutral::{AccountInfo, Bytecode, CheckpointStack, StorageCheckpoint},
     provider::{PrecompileStorageProvider, validate_loaded_code_presence},
 };
 
@@ -52,6 +49,7 @@ pub struct JournalStorageProvider<'a> {
     chain_id: u64,
     beneficiary: Address,
     origin: Address,
+    checkpoints: CheckpointStack<JournalCheckpoint>,
 }
 
 impl<'a> JournalStorageProvider<'a> {
@@ -79,6 +77,7 @@ impl<'a> JournalStorageProvider<'a> {
             chain_id,
             beneficiary,
             origin,
+            checkpoints: CheckpointStack::default(),
         }
     }
 
@@ -121,7 +120,7 @@ impl PrecompileStorageProvider for JournalStorageProvider<'_> {
 
     fn set_code(&mut self, address: Address, code: Bytecode) -> Result<()> {
         self.internals
-            .set_code(address, code)
+            .set_code(address, code.into())
             .map_err(|e| Self::database_failure(&mut self.database_error, e))
     }
 
@@ -130,15 +129,11 @@ impl PrecompileStorageProvider for JournalStorageProvider<'_> {
         address: Address,
         f: &mut dyn FnMut(&AccountInfo),
     ) -> Result<()> {
-        // Pass the journal's borrowed `AccountInfo` straight to the callback. The
-        // callback cannot re-enter the provider (it has no `self` access), so the
-        // outstanding borrow is safe and we avoid cloning the full `AccountInfo`
-        // (including a potentially large `code` `Bytecode`) on every read.
         let state_load = self
             .internals
             .load_account(address)
             .map_err(|e| Self::database_failure(&mut self.database_error, e))?;
-        f(&state_load.data.info);
+        f(&AccountInfo::from(&state_load.data.info));
         Ok(())
     }
 
@@ -155,8 +150,9 @@ impl PrecompileStorageProvider for JournalStorageProvider<'_> {
                 "account code unavailable after successful journal load".to_string(),
             )
         })?;
-        validate_loaded_code_presence(expected_hash, code)?;
-        f(code);
+        let code = Bytecode::from(code);
+        validate_loaded_code_presence(expected_hash, &code)?;
+        f(&code);
         Ok(())
     }
 
@@ -247,16 +243,19 @@ impl PrecompileStorageProvider for JournalStorageProvider<'_> {
         core::mem::replace(&mut self.caller, caller)
     }
 
-    fn checkpoint(&mut self) -> JournalCheckpoint {
-        self.internals.checkpoint()
+    fn checkpoint(&mut self) -> StorageCheckpoint {
+        self.checkpoints.push(self.internals.checkpoint())
     }
 
     fn commit_latest_checkpoint(&mut self) {
+        self.checkpoints.commit_latest();
         self.internals.checkpoint_commit();
     }
 
-    fn checkpoint_revert(&mut self, checkpoint: JournalCheckpoint) {
-        self.internals.checkpoint_revert(checkpoint);
+    fn checkpoint_revert(&mut self, checkpoint: StorageCheckpoint) {
+        if let Some(checkpoint) = self.checkpoints.take(checkpoint) {
+            self.internals.checkpoint_revert(checkpoint);
+        }
     }
 
     fn metered_keccak256(&mut self, data: &[u8]) -> Result<B256> {
@@ -268,10 +267,10 @@ impl PrecompileStorageProvider for JournalStorageProvider<'_> {
 mod tests {
     use alloy_evm::{EvmInternals, eth::EthEvmContext};
     use alloy_primitives::{Address, U256};
-    use revm::{database::EmptyDB, primitives::hardfork::SpecId, state::Bytecode};
+    use revm::{database::EmptyDB, primitives::hardfork::SpecId};
 
     use super::JournalStorageProvider;
-    use crate::provider::PrecompileStorageProvider;
+    use crate::{neutral::Bytecode, provider::PrecompileStorageProvider};
 
     const ADDR: Address = Address::repeat_byte(0x42);
 
@@ -316,7 +315,7 @@ mod tests {
         let mut provider =
             JournalStorageProvider::new(EvmInternals::from_context(&mut ctx), Address::ZERO);
 
-        let code = Bytecode::new_raw([0x60u8, 0x00].as_ref().into());
+        let code = Bytecode::new_legacy([0x60u8, 0x00].as_ref().into());
         let expected_hash = code.hash_slow();
         provider.set_code(ADDR, code).unwrap();
 

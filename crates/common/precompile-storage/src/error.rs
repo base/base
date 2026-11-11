@@ -1,4 +1,4 @@
-use alloc::string::{String, ToString};
+use alloc::string::String;
 use core::result;
 
 use alloy_primitives::{Bytes, U256};
@@ -8,7 +8,6 @@ sol! {
     /// Precompile cannot be executed via delegatecall or callcode.
     error DelegateCallNotAllowed();
 }
-use revm::context::journaled_state::JournalLoadError;
 
 use crate::{
     neutral::{PrecompileError, PrecompileHalt, PrecompileOutput, PrecompileResult},
@@ -61,15 +60,6 @@ pub enum BasePrecompileError {
     #[error("Fatal precompile error: {0:?}")]
     #[from(skip)]
     Fatal(String),
-}
-
-impl From<JournalLoadError<revm::context::ErasedError>> for BasePrecompileError {
-    fn from(value: JournalLoadError<revm::context::ErasedError>) -> Self {
-        match value {
-            JournalLoadError::DBError(e) => Self::Fatal(e.to_string()),
-            JournalLoadError::ColdLoadSkipped => Self::OutOfGas,
-        }
-    }
 }
 
 /// Result type alias for Base native precompile operations.
@@ -159,7 +149,7 @@ pub trait IntoPrecompileResult<T> {
     /// Converts `self` into a [`PrecompileResult`] using `encode_ok` for the success path.
     ///
     /// On success, the accumulated EIP-3529 gas refund (`gas_refunded`) is copied into
-    /// [`PrecompileOutput::gas_refunded`] so revm can include it in transaction-level refund
+    /// [`PrecompileOutput::gas_refunded`] so the engine can include it in transaction-level refund
     /// accounting under the EIP-3529 cap (`gas_used / 5`).
     ///
     /// On error, `gas_refunded` is not propagated: refunds are only meaningful on successful

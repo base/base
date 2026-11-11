@@ -7,7 +7,7 @@ use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{B256, U256};
 use base_bundles::{Bundle, MeterBundleResponse, ParsedBundle};
 use base_common_consensus::BaseBlock;
-use base_common_evm::L1BlockInfo;
+use base_common_l1_fees::L1FeeParams;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_evm::extract_l1_info_from_tx;
 use jsonrpsee::core::{RpcResult, async_trait};
@@ -256,7 +256,7 @@ where
         + 'static,
 {
     /// Get L1 block info from the first transaction of a canonical block.
-    fn get_l1_block_info(&self, block_hash: B256) -> RpcResult<L1BlockInfo> {
+    fn get_l1_block_info(&self, block_hash: B256) -> RpcResult<L1FeeParams> {
         let first_tx = self
             .provider
             .block_by_hash(block_hash)

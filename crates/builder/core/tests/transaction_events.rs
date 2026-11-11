@@ -13,7 +13,7 @@ use base_builder_core::{
         default_node_config, node_config_with_chain_spec,
     },
 };
-use base_common_evm::BaseUpgrade;
+use base_common_chains::BaseUpgrade;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_txpool::{
     TransactionValidity, ValidatedTransaction, ValidityOperator, ValidityPredicate,

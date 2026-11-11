@@ -45,10 +45,7 @@ impl NonceManager {
         let Some(slot) = NonceManagerSlots::nonce_slot(account, nonce_key) else {
             return Ok(None);
         };
-        let value = evm
-            .state_mut()
-            .storage_slot_untracked(&NonceManagerSlots::ADDRESS, &slot)
-            .map_err(HandlerError::Fatal)?;
+        let value = evm.state_mut().storage_slot_untracked(&NonceManagerSlots::ADDRESS, &slot)?;
         Ok(Some(value.saturating_to::<u64>()))
     }
 
@@ -62,8 +59,7 @@ impl NonceManager {
         let slot = NonceManagerSlots::expiring_nonce_seen_slot(replay_id);
         let expiry = evm
             .state_mut()
-            .storage_slot_untracked(&NonceManagerSlots::ADDRESS, &slot)
-            .map_err(HandlerError::Fatal)?
+            .storage_slot_untracked(&NonceManagerSlots::ADDRESS, &slot)?
             .saturating_to::<u64>();
         Ok(expiry != 0 && expiry > now)
     }
@@ -79,10 +75,7 @@ impl NonceManager {
         let Some(slot) = NonceManagerSlots::nonce_slot(account, nonce_key) else {
             return Ok(None);
         };
-        let mut handle = evm
-            .state_mut()
-            .storage_slot(&NonceManagerSlots::ADDRESS, slot, false)
-            .map_err(HandlerError::Fatal)?;
+        let mut handle = evm.state_mut().storage_slot(&NonceManagerSlots::ADDRESS, slot)?;
         let current = handle.current().saturating_to::<u64>();
         let new_nonce =
             current.checked_add(1).ok_or_else(|| HandlerError::external(NonceOverflow))?;
@@ -163,11 +156,8 @@ mod tests {
         // Two increments from zero advance the channel to 1 then 2, each reflected in storage.
         assert_eq!(NonceManager::increment_nonce(&mut evm, ACCOUNT, KEY).unwrap(), Some(1));
         assert_eq!(NonceManager::increment_nonce(&mut evm, ACCOUNT, KEY).unwrap(), Some(2));
-        let stored = evm
-            .state_mut()
-            .storage_slot(&NonceManagerSlots::ADDRESS, slot, false)
-            .unwrap()
-            .current();
+        let stored =
+            evm.state_mut().storage_slot(&NonceManagerSlots::ADDRESS, slot).unwrap().current();
         assert_eq!(stored, U256::from(2u64));
     }
 

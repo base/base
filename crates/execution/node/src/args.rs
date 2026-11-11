@@ -372,7 +372,7 @@ pub struct RollupArgs {
     ///
     /// We raise the default to 4 (matching the EIP-8130 sender cap). Delegated code can move the
     /// account's balance mid-block, so a queued tx can become insolvent before the next canonical
-    /// update; but that case fails fast — revm rejects on the pre-execution balance check before
+    /// update; but that case fails fast — the EVM rejects on the pre-execution balance check before
     /// running any delegated code — so the only cost of a small cap is bounded (linear in the cap)
     /// mempool memory and cheap wasted pre-checks per account per block.
     #[arg(long = "rollup.txpool-max-inflight-delegated-slots", default_value_t = 4)]
