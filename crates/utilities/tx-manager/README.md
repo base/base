@@ -106,12 +106,15 @@ When it lands:
 ```
 
 A blob transaction is replaced when it is not included after `resubmission_timeout`, or
-right away when the node refuses it for its fees. A network error is not a reason to
-raise any fee. Doubling every fee is the minimum L1 nodes accept to replace a blob
-transaction, so a transaction whose doubled `max_priority_fee_per_gas` would pass
-`max_priority_fee_per_gas_per_blob_upper_bound × n` is not replaced any more, and stays
-at its last fees. `p` lives in memory, is shared by clones of the manager, and starts
-again from the lower bound after a restart.
+right away when the node refuses it for its fees. After an RPC error, such as a network
+error, the same signed transaction is sent again every `publish_retry_delay`, up to
+`publish_max_retries` times, without raising any fee. Doubling every fee is the minimum L1
+nodes accept to replace a blob transaction, so a transaction whose doubled
+`max_priority_fee_per_gas` would pass `max_priority_fee_per_gas_per_blob_upper_bound × n`
+is not replaced any more, and stays at its last fees. The bounds apply to
+`max_priority_fee_per_gas` only: `max_fee_per_gas` and `max_fee_per_blob_gas` follow the
+doubling and L1 prices without a limit. `p` lives in memory, is shared by clones of the
+manager, and starts again from the lower bound after a restart.
 
 ## Error Classification
 

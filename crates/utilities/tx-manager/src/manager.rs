@@ -706,8 +706,8 @@ where
 
         let (tip_cap, fee_cap, blob_fee_cap) = if is_blob {
             // Blob transactions: the replacement fees the send loop computed, or the
-            // policy's fees for a new transaction. The policy bounds them, so no fee
-            // limit applies.
+            // policy's fees for a new transaction. No fee limit applies: the policy
+            // bounds their `max_priority_fee_per_gas`.
             let fees = match fee_overrides {
                 Some(fees) => fees,
                 None => {
@@ -1256,10 +1256,12 @@ where
     /// A blob transaction that the node refuses for its fees is replaced right
     /// away by [`replace_blob_tx`](Self::replace_blob_tx), from the refused fees,
     /// until a version is accepted or no replacement exists within the upper bound
-    /// of [`BlobFeePolicy`]. A first blob version the node already knows is
-    /// published. Every other error, such as a network error, is returned without
-    /// raising any fee. Each published blob replacement raises the fees the next
-    /// blob transactions start from.
+    /// of [`BlobFeePolicy`]. A blob version the node already knows is published
+    /// under its own hash. After an RPC error, such as a network error, the same
+    /// signed blob version is sent again every `publish_retry_delay`, up to
+    /// `publish_max_retries` times, without raising any fee. Every other error is
+    /// returned. Each published blob replacement raises the fees the next blob
+    /// transactions start from.
     async fn publish_version(
         &self,
         candidate: &TxCandidate,
@@ -1268,6 +1270,7 @@ where
         last_tx_hash: Option<B256>,
     ) -> TxManagerResult<(PreparedTx, B256)> {
         let mut is_replacement = last_tx_hash.is_some();
+        let mut remaining_retries = self.config.publish_max_retries;
         loop {
             let result = match last_tx_hash {
                 Some(_) => self.publish_tx(send_state, &prepared.raw_tx, last_tx_hash).await,
@@ -1276,18 +1279,19 @@ where
             if !candidate.is_blob() {
                 return result.map(|tx_hash| (prepared, tx_hash));
             }
-            let tx_hash = match result {
-                Ok(tx_hash) => tx_hash,
+            // The hash of this version, also when the node already knows it: `publish_tx`
+            // then returns the hash of the previous version.
+            let tx_hash = *prepared
+                .to_envelope()
+                .map_err(|error| TxManagerError::Sign(error.to_string()))?
+                .tx_hash();
+            match result {
+                Ok(_) => {}
                 // `publish_tx` already accepts it once a version was published. A first
                 // version the node knows is the same signed transaction, in its mempool.
                 Err(TxManagerError::AlreadyKnown) => {
-                    let tx_hash = *prepared
-                        .to_envelope()
-                        .map_err(|error| TxManagerError::Sign(error.to_string()))?
-                        .tx_hash();
                     send_state.record_successful_publish();
                     info!(tx_hash = %tx_hash, "blob transaction already known in mempool");
-                    tx_hash
                 }
                 Err(error) if error.is_fee_rejection() => {
                     info!(error = %error, "blob transaction refused for its fees, replacing it");
@@ -1295,8 +1299,18 @@ where
                     is_replacement = true;
                     continue;
                 }
+                Err(error @ TxManagerError::Rpc(_)) if remaining_retries > 0 => {
+                    remaining_retries -= 1;
+                    warn!(
+                        error = %error,
+                        delay = ?self.config.publish_retry_delay,
+                        "resending the same blob transaction",
+                    );
+                    self.runtime.sleep(self.config.publish_retry_delay).await;
+                    continue;
+                }
                 Err(error) => return Err(error),
-            };
+            }
             if is_replacement {
                 self.blob_fee_policy
                     .record_replacement(prepared.gas_tip_cap, candidate.blobs.len() as u128);
@@ -3002,6 +3016,93 @@ mod tests {
 
             manager.send(blob_candidate()).await.expect("the send should confirm");
 
+            assert!(asserter.read_q().is_empty(), "every mocked response should be used");
+        });
+    }
+
+    /// A blob tx version whose publication fails with an RPC error, such as a network error,
+    /// is sent again as it is after the publish retry delay: nothing is signed again and no
+    /// fee is raised. This holds for a first version and for a version just escalated after a
+    /// fee refusal.
+    #[rstest]
+    #[case::first_version(false, 0.01)]
+    #[case::escalated_version(true, 0.02)]
+    fn a_blob_tx_publication_failing_on_the_network_resends_the_same_version(
+        #[case] escalated: bool,
+        #[case] landed_max_priority_fee_per_gas_per_blob_gwei: f64,
+    ) {
+        Runner::start(Config::seeded(0), move |ctx| async move {
+            let tx_hash = B256::with_last_byte(1);
+            let (receipt, block) = mined_receipt(tx_hash, 10);
+            let asserter = Asserter::new();
+            asserter.push_success(&1u64);
+            push_blob_pricing(&asserter);
+            asserter.push_success(&0u64);
+            if escalated {
+                asserter.push_failure_msg("replacement transaction underpriced");
+                push_blob_pricing(&asserter);
+            }
+            asserter.push_failure_msg("connection reset by peer");
+            asserter.push_success(&tx_hash);
+            asserter.push_success(&10u64);
+            asserter.push_success(&Some(&receipt));
+            asserter.push_success(&Some(&block));
+            let mut metrics = blob_send_metrics();
+            metrics.expect_record_gas_bump().never();
+            metrics
+                .expect_record_blob_tx_landed()
+                .with(eq(landed_max_priority_fee_per_gas_per_blob_gwei), eq(0))
+                .times(1)
+                .return_const(());
+            let manager =
+                blob_manager(&ctx, mocked(&asserter), (10_000_000, 10_000_000_000), metrics).await;
+
+            manager.send(blob_candidate()).await.expect("the send should confirm");
+
+            assert_eq!(ctx.now(), manager.config.publish_retry_delay);
+            assert!(asserter.read_q().is_empty(), "every mocked response should be used");
+        });
+    }
+
+    /// A blob tx replacement sent again after a network error, which the node then already
+    /// knows, is tracked under its own hash, so it is found when it lands.
+    #[test]
+    fn a_blob_replacement_already_known_on_resend_is_tracked_under_its_own_hash() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let (_, block) = mined_receipt(B256::ZERO, 10);
+            let asserter = Asserter::new();
+            asserter.push_success(&1u64);
+            push_blob_pricing(&asserter);
+            asserter.push_success(&0u64);
+            asserter.push_success(&B256::ZERO);
+            asserter.push_success(&1u64);
+            // The replacement, signed at the resubmission timeout, reaches the node although
+            // its publication fails, and its first poll finds it mined.
+            push_blob_pricing(&asserter);
+            asserter.push_failure_msg("connection reset by peer");
+            asserter.push_failure_msg("already known");
+            asserter.push_success(&10u64);
+            asserter.push_success(&Some(&block));
+            let mut metrics = blob_send_metrics();
+            metrics.expect_record_gas_bump().times(1).return_const(());
+            metrics.expect_record_blob_tx_landed().with(eq(0.02), eq(1)).times(1).return_const(());
+            let polled = Arc::new(Mutex::new(Vec::new()));
+            let provider = LandingProvider {
+                inner: mocked(&asserter),
+                landing: 1,
+                polled: Arc::clone(&polled),
+            };
+            let manager = blob_manager(&ctx, provider, (10_000_000, 10_000_000_000), metrics).await;
+
+            // Polled under the hash of the first version only, the send would never confirm.
+            let confirmed = tokio::select! {
+                result = manager.send(blob_candidate()) => result.expect("the send should confirm"),
+                () = ctx.sleep(3 * BLOB_RESUBMISSION_TIMEOUT) => panic!("the replacement should land"),
+            };
+
+            let polled = polled.lock().unwrap().clone();
+            assert_eq!(polled.len(), 2, "the replacement is polled under its own hash");
+            assert_eq!(confirmed.transaction_hash, polled[1]);
             assert!(asserter.read_q().is_empty(), "every mocked response should be used");
         });
     }
