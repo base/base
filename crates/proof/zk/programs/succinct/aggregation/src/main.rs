@@ -14,7 +14,6 @@ use base_proof_zk_utils::{
     types::{AggregationInputs, AggregationOutputs},
 };
 use sha2::{Digest, Sha256};
-use sp1_hypercube::words_to_bytes_be;
 
 /// Aggregation program entry point.
 pub fn main() {
@@ -104,7 +103,8 @@ pub fn main() {
     };
 
     // Convert the range vkey to a B256.
-    let multi_block_vkey_b256 = B256::from(words_to_bytes_be(&agg_inputs.multi_block_vkey));
+    let multi_block_vkey_b256 =
+        B256::from_slice(agg_inputs.multi_block_vkey.map(u32::to_be_bytes).as_flattened());
 
     let agg_outputs = AggregationOutputs {
         proverAddress: agg_inputs.prover_address,
