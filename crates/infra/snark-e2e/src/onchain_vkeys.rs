@@ -24,7 +24,6 @@ use anyhow::{Context, Result, bail};
 use base_proof_contracts::{
     AggregateVerifierContractClient, DisputeGameFactoryClient, DisputeGameFactoryContractClient,
 };
-use base_proof_zk_utils::types::u32_to_u8;
 use sp1_sdk::{HashableKey, SP1VerifyingKey};
 
 /// The two program hashes an `AggregateVerifier` checks ZK proofs against.
@@ -46,7 +45,7 @@ impl ProgramHashes {
             .bytes32()
             .parse::<B256>()
             .context("aggregation verifying key is not a 32-byte hex value")?;
-        let range = B256::from(u32_to_u8(range_vk.hash_u32()));
+        let range = B256::from(range_vk.hash_bytes());
         Ok(Self { aggregate, range })
     }
 

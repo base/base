@@ -6190,7 +6190,6 @@ dependencies = [
  "base-l1-head",
  "base-proof-contracts",
  "base-proof-zk-backend",
- "base-proof-zk-utils",
  "base-prover-service-client",
  "base-prover-service-protocol",
  "bincode 2.0.1",
