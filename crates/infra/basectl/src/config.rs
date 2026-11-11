@@ -4,10 +4,12 @@ use alloy_primitives::Address;
 use alloy_provider::{Provider, ProviderBuilder};
 use anyhow::{Context, Result};
 use base_common_chains::{ChainConfig, rollup_config};
-use base_common_genesis::{RollupConfig, UpgradeConfig};
+use base_common_genesis::UpgradeConfig;
 use serde::{Deserialize, Serialize};
 use tracing::warn;
 use url::Url;
+
+use crate::ConsensusClient;
 
 /// Configuration for one Kubernetes pod group rendered by the pods view.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -717,22 +719,6 @@ impl MonitoringConfig {
         }
     }
 
-    /// Fetches the rollup config from the consensus node via the `optimism_rollupConfig` RPC method.
-    async fn fetch_rollup_config(consensus_node_url: &Url) -> Result<RollupConfig> {
-        let provider =
-            ProviderBuilder::new().connect(consensus_node_url.as_str()).await.with_context(
-                || format!("Failed to connect to consensus node at {consensus_node_url}"),
-            )?;
-
-        let config: RollupConfig =
-            provider
-                .raw_request("optimism_rollupConfig".into(), ())
-                .await
-                .with_context(|| "Failed to fetch rollup config from consensus node")?;
-
-        Ok(config)
-    }
-
     /// Load config by name or path
     ///
     /// Resolution order:
@@ -790,9 +776,10 @@ impl MonitoringConfig {
         let consensus_node_url =
             config.consensus_node_rpc.as_ref().expect("devnet should have consensus_node_rpc");
 
-        let rollup_config = Self::fetch_rollup_config(consensus_node_url).await.with_context(
-            || "Failed to fetch rollup config from consensus node. Is the devnet running?",
-        )?;
+        let rollup_config = ConsensusClient::connect(consensus_node_url)?
+            .rollup_config()
+            .await
+            .context("Failed to fetch rollup config from consensus node. Is the devnet running?")?;
 
         config.system_config = rollup_config.l1_system_config_address;
         config.batcher_address = rollup_config.genesis.system_config.map(|sc| sc.batcher_address);

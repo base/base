@@ -9,14 +9,13 @@ use alloy_transport_http::Http;
 use anyhow::{Context, Result};
 use base_common_genesis::UpgradeConfig;
 use base_common_network::Base;
-use base_consensus_rpc::{BaseApiClient, BaseP2PApiClient, RollupNodeApiClient};
 use base_protocol::SyncStatus;
-use base_upgrade_signal::UpgradeReadiness;
 use jsonrpsee::{core::client::ClientT, http_client::HttpClientBuilder, rpc_params};
 use tokio::sync::mpsc;
 use tracing::warn;
 use url::Url;
 
+use super::ConsensusClient;
 use crate::{
     config::{ProofsConfig, ValidatorNodeConfig},
     tui::Toast,
@@ -49,10 +48,7 @@ pub struct SyncStatusReport {
 /// `eth_syncing` against the execution-layer RPC in parallel; either error
 /// short-circuits the call.
 pub async fn fetch_sync_status(rpc: &Url, cl_rpc: &Url) -> Result<SyncStatusReport> {
-    let cl_client = HttpClientBuilder::default()
-        .request_timeout(Duration::from_secs(10))
-        .build(cl_rpc.as_str())
-        .with_context(|| format!("connecting to consensus node RPC at {cl_rpc}"))?;
+    let cl_client = ConsensusClient::connect(cl_rpc)?;
     let http_client = alloy_transport_http::reqwest::Client::builder()
         .timeout(Duration::from_secs(10))
         .build()
@@ -63,34 +59,12 @@ pub async fn fetch_sync_status(rpc: &Url, cl_rpc: &Url) -> Result<SyncStatusRepo
         .network::<Base>()
         .connect_client(RpcClient::new(transport, false));
     let (cl, el) = tokio::try_join!(
-        async {
-            RollupNodeApiClient::sync_status(&cl_client)
-                .await
-                .with_context(|| format!("fetching optimism_syncStatus from {cl_rpc}"))
-        },
+        async { cl_client.sync_status().await.map_err(anyhow::Error::from) },
         async {
             el_provider.syncing().await.with_context(|| format!("fetching eth_syncing from {rpc}"))
         },
     )?;
     Ok(SyncStatusReport { cl, el })
-}
-
-/// Fetches this node's upgrade readiness from the consensus-node RPC.
-///
-/// Calls the public `base_upgradeReadiness` method. `target_version`, when set, is an announced
-/// `major.minor.patch[-rc.N]` version to check support against before the upgrade is scheduled on L1;
-/// the node parses and validates it.
-pub async fn fetch_upgrade_readiness(
-    cl_rpc: &Url,
-    target_version: Option<String>,
-) -> Result<UpgradeReadiness> {
-    let cl_client = HttpClientBuilder::default()
-        .request_timeout(Duration::from_secs(30))
-        .build(cl_rpc.as_str())
-        .with_context(|| format!("connecting to consensus node RPC at {cl_rpc}"))?;
-    BaseApiClient::upgrade_readiness(&cl_client, target_version)
-        .await
-        .with_context(|| format!("fetching base_upgradeReadiness from {cl_rpc}"))
 }
 
 /// Fetches the safe and latest L2 block numbers.
@@ -182,13 +156,12 @@ pub async fn run_validator_poller(
     let clients: Vec<(String, Option<String>, _, _)> = nodes
         .into_iter()
         .filter_map(|node| {
-            let cl_client = HttpClientBuilder::default()
-                .request_timeout(RPC_TIMEOUT)
-                .build(node.cl_rpc.as_str())
+            let cl_client = ConsensusClient::connect(&node.cl_rpc)
                 .inspect_err(|e| {
-                    warn!(error = %e, node = %node.name, "failed to build validator CL HTTP client");
+                    warn!(error = ?e, node = %node.name, "failed to build validator CL HTTP client");
                 })
-                .ok()?;
+                .ok()?
+                .with_timeout(RPC_TIMEOUT);
             let el_client = node.el_rpc.as_ref().and_then(|url| {
                 HttpClientBuilder::default()
                     .request_timeout(RPC_TIMEOUT)
@@ -211,8 +184,8 @@ pub async fn run_validator_poller(
         let statuses = futures::future::join_all(clients.iter().map(
             |(name, binary, cl_client, el_client)| async move {
                 let (sync, cl_peer_stats, el_block_r, el_syncing_r, el_peers_r) = tokio::join!(
-                    RollupNodeApiClient::sync_status(cl_client),
-                    BaseP2PApiClient::opp2p_peer_stats(cl_client),
+                    cl_client.sync_status(),
+                    cl_client.peer_stats(),
                     async {
                         if let Some(el) = el_client {
                             let r: Result<alloy_primitives::U64, _> =
@@ -498,17 +471,10 @@ pub async fn run_rollup_config_poller(
     tx: mpsc::Sender<UpgradeConfig>,
     toast_tx: mpsc::Sender<Toast>,
 ) {
-    let client = match HttpClientBuilder::default()
-        .request_timeout(ROLLUP_CONFIG_POLL_INTERVAL)
-        .build(consensus_rpc.as_str())
-    {
-        Ok(client) => client,
+    let client = match ConsensusClient::connect(&consensus_rpc) {
+        Ok(client) => client.with_timeout(ROLLUP_CONFIG_POLL_INTERVAL),
         Err(error) => {
-            warn!(
-                error = %error,
-                consensus_rpc = %consensus_rpc,
-                "failed to create consensus RPC client for rollup config polling"
-            );
+            warn!(error = ?error, "failed to create consensus RPC client for rollup config polling");
             let _ = toast_tx.try_send(Toast::warning("Rollup config poller connection failed"));
             return;
         }
@@ -520,14 +486,10 @@ pub async fn run_rollup_config_poller(
 
     loop {
         interval.tick().await;
-        let config = match RollupNodeApiClient::rollup_config(&client).await {
+        let config = match client.rollup_config().await {
             Ok(config) => config,
             Err(error) => {
-                warn!(
-                    error = %error,
-                    consensus_rpc = %consensus_rpc,
-                    "failed to poll live rollup config"
-                );
+                warn!(error = ?error, "failed to poll live rollup config");
                 continue;
             }
         };
