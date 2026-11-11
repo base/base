@@ -3,7 +3,7 @@
 //! Tracks a sealed payload through the commit → gossip → insert pipeline,
 //! retrying the current step on failure without rebuilding the payload.
 
-use std::time::Instant;
+use std::time::{Duration, Instant, SystemTime};
 
 use base_common_rpc_types_engine::BaseExecutionPayloadEnvelope;
 use base_protocol::L2BlockInfo;
@@ -47,6 +47,42 @@ impl SealState {
     }
 }
 
+/// What prompted the sequencer to request a sealed payload from the engine.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SealTrigger {
+    /// The execution layer reported the payload frozen before the seal deadline.
+    ReadyHint,
+    /// The seal deadline elapsed without a usable frozen-payload hint.
+    Deadline,
+}
+
+impl SealTrigger {
+    /// Returns the bounded metrics label for this trigger.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::ReadyHint => "ready_hint",
+            Self::Deadline => "deadline",
+        }
+    }
+}
+
+/// Places a seal within its block's slot, for reporting how early the block leaves the
+/// sequencer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SealSchedule {
+    /// Wall-clock time the block's build was scheduled to start: its parent's timestamp.
+    pub slot_start: SystemTime,
+    /// What prompted the `getPayload` request.
+    pub trigger: SealTrigger,
+}
+
+impl SealSchedule {
+    /// Time elapsed since the slot started, or zero if the slot has not started yet.
+    pub fn offset(&self) -> Duration {
+        SystemTime::now().duration_since(self.slot_start).unwrap_or(Duration::ZERO)
+    }
+}
+
 /// Drives a sealed payload through the commit → gossip → insert pipeline.
 ///
 /// Each call to [`PayloadSealer::step`] performs exactly one async operation
@@ -67,6 +103,9 @@ pub struct PayloadSealer {
     /// Read by the actor on `Ok(true)` to record
     /// [`crate::Metrics::sequencer_seal_pipeline_duration`].
     pub started_at: Instant,
+    /// Slot timing of the seal that produced this payload, set by the actor. When present, the
+    /// gossip step records [`crate::Metrics::sequencer_gossip_offset_seconds`].
+    pub schedule: Option<SealSchedule>,
 }
 
 impl PayloadSealer {
@@ -80,7 +119,13 @@ impl PayloadSealer {
             block_number = block_num,
         );
 
-        Self { envelope, state: SealState::Sealed, seal_span, started_at: Instant::now() }
+        Self {
+            envelope,
+            state: SealState::Sealed,
+            seal_span,
+            started_at: Instant::now(),
+            schedule: None,
+        }
     }
 
     /// Creates a private sealer that skips conductor commit and gossip.
@@ -98,7 +143,13 @@ impl PayloadSealer {
             mode = mode,
         );
 
-        Self { envelope, state: SealState::Private, seal_span, started_at: Instant::now() }
+        Self {
+            envelope,
+            state: SealState::Private,
+            seal_span,
+            started_at: Instant::now(),
+            schedule: None,
+        }
     }
 
     /// Returns whether the engine acknowledged insertion of this sealer's exact payload.
@@ -150,6 +201,10 @@ impl PayloadSealer {
                     .instrument(self.seal_span.clone())
                     .await
                     .map_err(SealStepError::Gossip)?;
+                if let Some(schedule) = self.schedule {
+                    Metrics::sequencer_gossip_offset_seconds(schedule.trigger.as_str())
+                        .record(schedule.offset());
+                }
                 self.state = SealState::Gossiped;
                 Ok(SealStepOutcome::Pending)
             }

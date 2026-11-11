@@ -144,6 +144,29 @@ base_metrics::define_metrics! {
     sequencer_l1_origin_buffer_misses_total: counter,
     #[describe("Pre-built payloads discarded because the unsafe head advanced past their parent")]
     sequencer_stale_build_discarded_total: counter,
+    #[describe("Sealed payloads fetched from the engine, by what prompted the getPayload request: a frozen-payload hint from the execution layer or the seal deadline")]
+    #[label(name = "trigger", default = ["ready_hint", "deadline"])]
+    sequencer_seals_total: counter,
+    #[describe("Time from a block's scheduled build start (its parent's timestamp) until getPayload was requested, by seal trigger")]
+    #[label(name = "trigger", default = ["ready_hint", "deadline"])]
+    sequencer_get_payload_offset_seconds: histogram,
+    #[describe("Time from a block's scheduled build start (its parent's timestamp) until its payload was handed to the network actor for gossip, by seal trigger")]
+    #[label(name = "trigger", default = ["ready_hint", "deadline"])]
+    sequencer_gossip_offset_seconds: histogram,
+    #[describe("Frozen-payload hints from the execution layer that did not trigger a seal, by reason")]
+    #[label(
+        name = "reason",
+        default = [
+            "already_sealing",
+            "inactive",
+            "no_build",
+            "payload_id_mismatch",
+            "parent_mismatch",
+            "pre_denim",
+            "lagged"
+        ]
+    )]
+    sequencer_payload_ready_hints_dropped_total: counter,
     #[describe("Configured verifier L1 confirmation depth")]
     l1_verifier_confs_depth: gauge,
     #[describe("L1 block number forwarded to derivation after verifier confirmation delay")]
