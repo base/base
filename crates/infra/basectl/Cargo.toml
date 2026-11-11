@@ -60,6 +60,6 @@ rstest = { workspace = true }
 tempfile = { workspace = true }
 jsonrpsee = { workspace = true, features = ["server"] }
 axum = { workspace = true, features = ["tokio", "http1", "json"] }
-tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util"] }
 base-proof-submission = { workspace = true, features = ["test-utils"] }
 base-prover-service-protocol = { workspace = true, features = ["rpc-server"] }

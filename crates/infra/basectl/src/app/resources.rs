@@ -9,8 +9,8 @@ use crate::{
     app::{DaTracker, LoadingState},
     config::{ConductorNodeConfig, MonitoringConfig},
     rpc::{
-        BacklogFetchResult, BlockDaInfo, ConductorNodeStatus, ConductorPollUpdate, L1BlockInfo,
-        L1ConnectionMode, PodsSnapshot, ProofsSnapshot, ValidatorNodeStatus,
+        BacklogFetchResult, BlockDaInfo, ConductorNodeStatus, ConductorPollUpdate, ConnectionMode,
+        L1BlockInfo, PodsSnapshot, ProofsSnapshot, ValidatorNodeStatus,
     },
     tui::ToastState,
 };
@@ -201,14 +201,17 @@ pub struct DaState {
     /// Whether the initial backlog has finished loading.
     pub loaded: bool,
     /// Current L1 connection mode (WebSocket or polling).
-    pub l1_connection_mode: Option<L1ConnectionMode>,
+    pub l1_connection_mode: Option<ConnectionMode>,
+    /// Current L2 head feed connection mode (WebSocket or polling).
+    pub l2_connection_mode: Option<ConnectionMode>,
     buffered_blocks: Vec<BlockDaInfo>,
     buffered_safe_heads: Vec<u64>,
     sync_rx: Option<mpsc::Receiver<u64>>,
     backlog_rx: Option<mpsc::Receiver<BacklogFetchResult>>,
     block_res_rx: Option<mpsc::Receiver<BlockDaInfo>>,
     l1_block_rx: Option<mpsc::Receiver<L1BlockInfo>>,
-    l1_mode_rx: Option<mpsc::Receiver<L1ConnectionMode>>,
+    l1_mode_rx: Option<mpsc::Receiver<ConnectionMode>>,
+    l2_mode_rx: Option<mpsc::Receiver<ConnectionMode>>,
 }
 
 impl Resources {
@@ -292,6 +295,7 @@ impl DaState {
             loading: None,
             loaded: false,
             l1_connection_mode: None,
+            l2_connection_mode: None,
             buffered_blocks: Vec::new(),
             buffered_safe_heads: Vec::new(),
             sync_rx: None,
@@ -299,6 +303,7 @@ impl DaState {
             block_res_rx: None,
             l1_block_rx: None,
             l1_mode_rx: None,
+            l2_mode_rx: None,
         }
     }
 
@@ -317,8 +322,13 @@ impl DaState {
     }
 
     /// Sets the channel for receiving L1 connection mode updates.
-    pub fn set_l1_mode_channel(&mut self, rx: mpsc::Receiver<L1ConnectionMode>) {
+    pub fn set_l1_mode_channel(&mut self, rx: mpsc::Receiver<ConnectionMode>) {
         self.l1_mode_rx = Some(rx);
+    }
+
+    /// Sets the channel for receiving L2 head feed connection mode updates.
+    pub fn set_l2_mode_channel(&mut self, rx: mpsc::Receiver<ConnectionMode>) {
+        self.l2_mode_rx = Some(rx);
     }
 
     /// Advances the safe head from the conductor leader's sync status.
@@ -351,18 +361,14 @@ impl DaState {
                     });
                 }
                 BacklogFetchResult::Block(block) => {
-                    self.tracker.add_backlog_block(
-                        block.block_number,
-                        block.da_bytes,
-                        block.timestamp,
-                    );
+                    self.tracker.add_backlog_block(block);
                 }
                 BacklogFetchResult::Complete(initial) => {
                     self.tracker.set_initial_backlog(initial.safe_block, initial.da_bytes);
                     self.flush_buffers();
                     self.loaded = true;
                 }
-                BacklogFetchResult::Error => {
+                BacklogFetchResult::Unavailable => {
                     self.flush_buffers();
                     self.loaded = true;
                 }
@@ -408,6 +414,9 @@ impl DaState {
 
         if let Some(mode) = self.l1_mode_rx.as_mut().and_then(|rx| rx.try_recv().ok()) {
             self.l1_connection_mode = Some(mode);
+        }
+        if let Some(mode) = self.l2_mode_rx.as_mut().and_then(|rx| rx.try_recv().ok()) {
+            self.l2_connection_mode = Some(mode);
         }
     }
 
@@ -481,7 +490,13 @@ mod tests {
         state.set_channels(sync_rx, backlog_rx, block_res_rx, l1_block_rx);
 
         block_res_tx
-            .try_send(BlockDaInfo { block_number: 101, da_bytes: 700, timestamp: 1, tx_count: 3 })
+            .try_send(BlockDaInfo {
+                block_number: 101,
+                da_bytes: 700,
+                timestamp: 1,
+                tx_count: 3,
+                ..Default::default()
+            })
             .unwrap();
         state.poll();
 

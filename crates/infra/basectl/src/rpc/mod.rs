@@ -17,11 +17,14 @@ pub use conductor::{
     conductor_resume_node, restart_conductor_node, run_conductor_poller, transfer_conductor_leader,
 };
 
+mod connection;
+pub use connection::ConnectionMode;
+
 mod el;
 pub use el::{
-    BacklogBlock, BacklogFetchResult, BacklogProgress, BlockDaInfo, InitialBacklog, TxSummary,
-    fetch_block, fetch_block_transactions, fetch_initial_backlog_with_progress,
-    fetch_l2_block_number, fetch_l2_chain_id, run_block_fetcher, run_latest_head_poller,
+    BacklogFetchResult, BacklogProgress, BlockDaInfo, HeadCursor, InitialBacklog, L2HeadFeed,
+    TxSummary, fetch_block, fetch_block_transactions, fetch_initial_backlog_with_progress,
+    fetch_l2_block_number, fetch_l2_chain_id, run_block_fetcher,
 };
 
 mod games;
@@ -31,7 +34,7 @@ pub use games::{
 
 mod l1;
 pub use l1::{
-    L1BlockInfo, L1ConnectionMode, fetch_full_system_config, fetch_l1_block_number,
+    L1BlobScanner, L1BlockInfo, fetch_full_system_config, fetch_l1_block_number,
     run_l1_blob_watcher,
 };
 

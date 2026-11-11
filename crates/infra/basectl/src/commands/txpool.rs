@@ -445,9 +445,10 @@ fn format_destination(to: Option<Address>) -> String {
 }
 
 fn format_transaction_fee(transaction: &TxpoolTransactionRow) -> String {
-    let priority_fee =
-        transaction.max_priority_fee_per_gas_wei.map_or_else(|| "n/a".to_string(), Format::gwei);
-    format!("max={} priority={priority_fee}", Format::gwei(transaction.max_fee_per_gas_wei))
+    let priority_fee = transaction
+        .max_priority_fee_per_gas_wei
+        .map_or_else(|| "n/a".to_string(), Format::fee_per_gas);
+    format!("max={} priority={priority_fee}", Format::fee_per_gas(transaction.max_fee_per_gas_wei))
 }
 
 fn print_clear_action(action: &TxpoolClearJson, json: bool) -> Result<()> {
@@ -594,7 +595,7 @@ mod tests {
         assert!(rendered.contains("to=0x2222222222222222222222222222222222222222"));
         assert!(rendered.contains("value=123 wei"));
         assert!(rendered.contains("gas=21K"));
-        assert!(rendered.contains("fee=max=1.00 gwei priority=0.1000 gwei"));
+        assert!(rendered.contains("fee=max=1.00 gwei priority=100.0000 mwei"));
         assert!(rendered.contains("input=2B"));
     }
 

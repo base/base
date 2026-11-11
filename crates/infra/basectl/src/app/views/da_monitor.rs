@@ -14,8 +14,9 @@ use crate::{
     },
     output::{
         COLOR_BASE_BLUE, COLOR_BURN, COLOR_GROWTH, COLOR_ROW_SELECTED, Format, L1BlocksTableParams,
-        render_da_backlog_bar, render_l1_blocks_table,
+        render_da_backlog_bar, render_l1_blocks_table, table_rows_to_build,
     },
+    rpc::ConnectionMode,
     tui::{Browser, Keybinding},
 };
 
@@ -395,7 +396,11 @@ fn render_blocks_panel(
     let border_color = if is_active { Color::Rgb(100, 255, 100) } else { Color::Green };
 
     let block = Block::default()
-        .title(format!(" L2 Blocks (DA↑) [{}] ", tracker.block_contributions.len()))
+        .title(format!(
+            " L2 Blocks (DA↑) [{}]{} ",
+            tracker.block_contributions.len(),
+            resources.da.l2_connection_mode.map_or("", ConnectionMode::title_suffix)
+        ))
         .borders(Borders::ALL)
         .border_style(Style::default().fg(border_color));
 
@@ -418,6 +423,7 @@ fn render_blocks_panel(
     let rows: Vec<Row<'_>> = tracker
         .block_contributions
         .iter()
+        .take(table_rows_to_build(table_state, inner.height))
         .enumerate()
         .map(|(idx, contrib)| {
             let is_selected = is_active && selected_row == Some(idx);

@@ -2,18 +2,18 @@ use std::time::Instant;
 
 use anyhow::Result;
 use base_common_genesis::SystemConfig;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 use url::Url;
 
 use super::{App, Resources, SourceLabel, ViewId, views::create_view};
 use crate::{
     config::{ConductorSource, MonitoringConfig},
     rpc::{
-        BacklogFetchResult, BlockDaInfo, ConductorPollUpdate, L1BlockInfo, L1ConnectionMode,
-        PodsSnapshot, ProofsSnapshot, ValidatorNodeStatus, fetch_full_system_config,
+        BacklogFetchResult, BlockDaInfo, ConductorPollUpdate, ConnectionMode, L1BlockInfo,
+        L2HeadFeed, PodsSnapshot, ProofsSnapshot, ValidatorNodeStatus, fetch_full_system_config,
         fetch_initial_backlog_with_progress, run_block_fetcher, run_conductor_poller,
-        run_l1_blob_watcher, run_latest_head_poller, run_pods_poller, run_proofs_poller,
-        run_rollup_config_poller, run_safe_head_poller, run_validator_poller,
+        run_l1_blob_watcher, run_pods_poller, run_proofs_poller, run_rollup_config_poller,
+        run_safe_head_poller, run_validator_poller,
     },
     tui::Toast,
 };
@@ -45,7 +45,7 @@ pub async fn run_app(
 
 /// Starts all background data-fetching services, wiring their channels into `resources`.
 ///
-/// Spawns tokio tasks for L2 head and block fetching, L1 blob watching, DA backlog
+/// Spawns tokio tasks for the L2 head feed and block fetching, L1 blob watching, DA backlog
 /// loading, safe-head polling, system config fetching, conductor polling, validator
 /// polling, and proof monitoring. All tasks communicate back through channels stored
 /// in `resources`.
@@ -65,14 +65,18 @@ pub fn start_background_services(
     resources.da.set_channels(sync_rx, backlog_rx, block_res_rx, l1_block_rx);
     resources.toasts.set_channel(toast_rx);
 
-    background_tasks.push(
-        tokio::spawn(run_latest_head_poller(
-            config.rpc.to_string(),
-            block_req_tx,
-            toast_tx.clone(),
-        ))
-        .abort_handle(),
+    let (l2_mode_tx, l2_mode_rx) = mpsc::channel::<ConnectionMode>(1);
+    let (backlog_head_tx, backlog_head_rx) = oneshot::channel::<u64>();
+    resources.da.set_l2_mode_channel(l2_mode_rx);
+    let head_feed = L2HeadFeed::new(
+        config.l2_ws_rpc(),
+        config.rpc.clone(),
+        block_req_tx,
+        l2_mode_tx,
+        toast_tx.clone(),
+        backlog_head_rx,
     );
+    background_tasks.push(tokio::spawn(head_feed.run()).abort_handle());
 
     background_tasks.push(
         tokio::spawn(run_block_fetcher(
@@ -85,7 +89,7 @@ pub fn start_background_services(
     );
 
     if let Some(batcher_addr) = config.batcher_address {
-        let (l1_mode_tx, l1_mode_rx) = mpsc::channel::<L1ConnectionMode>(1);
+        let (l1_mode_tx, l1_mode_rx) = mpsc::channel::<ConnectionMode>(1);
         resources.da.set_l1_mode_channel(l1_mode_rx);
         background_tasks.push(
             tokio::spawn(run_l1_blob_watcher(
@@ -100,8 +104,12 @@ pub fn start_background_services(
     }
 
     background_tasks.push(
-        tokio::spawn(fetch_initial_backlog_with_progress(config.rpc.to_string(), backlog_tx))
-            .abort_handle(),
+        tokio::spawn(fetch_initial_backlog_with_progress(
+            config.rpc.to_string(),
+            backlog_tx,
+            backlog_head_tx,
+        ))
+        .abort_handle(),
     );
 
     let proofs_toast_tx = toast_tx.clone();

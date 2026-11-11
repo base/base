@@ -160,7 +160,7 @@ impl BlockSummaryJson {
             .row("gas_used", Format::gas(header.gas_used))
             .row("gas_limit", Format::gas(header.gas_limit));
         if let Some(base_fee) = header.base_fee_per_gas {
-            table.row("base_fee_per_gas", Format::gwei(u128::from(base_fee)));
+            table.row("base_fee_per_gas", Format::fee_per_gas(u128::from(base_fee)));
         }
         if let Some(size) = header.size
             && let Ok(size_u64) = u64::try_from(size)
