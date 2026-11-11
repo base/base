@@ -3,10 +3,7 @@
 
 use std::{
     collections::{HashMap, VecDeque},
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicUsize, Ordering},
-    },
+    sync::{Arc, Mutex},
     time::Duration,
 };
 
@@ -572,8 +569,8 @@ pub struct MockL2Provider {
     pub header_delay: Option<Duration>,
     /// Block number served for [`BlockNumberOrTag::Finalized`] header requests.
     pub finalized_block_number: Option<u64>,
-    /// Number of `header_by_number` calls received.
-    pub header_requests: AtomicUsize,
+    /// Blocks passed to `header_by_number`, in call order.
+    pub header_requests: Mutex<Vec<BlockNumberOrTag>>,
 }
 
 impl MockL2Provider {
@@ -613,7 +610,7 @@ impl L2Provider for MockL2Provider {
     }
 
     async fn header_by_number(&self, block: BlockNumberOrTag) -> RpcResult<BaseHeader> {
-        self.header_requests.fetch_add(1, Ordering::SeqCst);
+        self.header_requests.lock().unwrap().push(block);
         let block_number = match block {
             BlockNumberOrTag::Number(number) => number,
             BlockNumberOrTag::Finalized => self

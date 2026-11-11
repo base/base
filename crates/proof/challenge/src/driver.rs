@@ -75,7 +75,8 @@ where
     pub validator: OutputValidator<L2>,
     /// Manages proof sessions, retries, submissions, and TEE-to-ZK fallback.
     pub proof_manager: DisputeProofManager<L2, P>,
-    /// Games whose intermediate roots all matched at L2 blocks that were already finalized.
+    /// Games whose intermediate roots all matched at L2 blocks that were finalized before
+    /// validation started.
     ///
     /// Onchain roots are immutable and finalized L2 blocks cannot reorg, so these games are
     /// skipped instead of revalidated every poll. Pruned to the games returned by each scan.
@@ -156,9 +157,24 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager> Driver<L2, P, T> {
             candidates.iter().map(|candidate| candidate.factory.proxy).collect();
         self.valid_games.retain(|game| scanned_games.contains(game));
 
+        // Read before any validation so a cached verdict only covers blocks that were already
+        // finalized when their roots were checked, never ones finalized on a fork mid-validation.
+        let finalized_l2_block = match self
+            .validator
+            .l2_provider
+            .header_by_number(BlockNumberOrTag::Finalized)
+            .await
+        {
+            Ok(header) => Some(header.number),
+            Err(e) => {
+                debug!(error = %e, "failed to fetch L2 finalized head; valid games will be revalidated");
+                None
+            }
+        };
+
         for candidate in candidates {
             let index = candidate.index;
-            if let Err(e) = self.process_candidate(candidate).await {
+            if let Err(e) = self.process_candidate(candidate, finalized_l2_block).await {
                 warn!(error = %e, game_index = index, "failed to process candidate");
             }
         }
@@ -167,7 +183,13 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager> Driver<L2, P, T> {
     }
 
     /// Processes a candidate game according to its [`GameCategory`].
-    async fn process_candidate(&mut self, candidate: CandidateGame) -> eyre::Result<()> {
+    ///
+    /// `finalized_l2_block` is the L2 finalized head read before this poll validated anything.
+    async fn process_candidate(
+        &mut self,
+        candidate: CandidateGame,
+        finalized_l2_block: Option<u64>,
+    ) -> eyre::Result<()> {
         let game_address = candidate.factory.proxy;
 
         if self.proof_manager.is_ignored(game_address) {
@@ -190,16 +212,34 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager> Driver<L2, P, T> {
 
         match candidate.category {
             GameCategory::InvalidTeeProposal => {
-                self.process_invalid_proposal(candidate, DisputeIntent::Challenge, true).await
+                self.process_invalid_proposal(
+                    candidate,
+                    DisputeIntent::Challenge,
+                    true,
+                    finalized_l2_block,
+                )
+                .await
             }
             GameCategory::FraudulentZkChallenge { challenged_index } => {
                 self.process_fraudulent_zk_challenge(candidate, challenged_index).await
             }
             GameCategory::InvalidZkProposal => {
-                self.process_invalid_proposal(candidate, DisputeIntent::Nullify, false).await
+                self.process_invalid_proposal(
+                    candidate,
+                    DisputeIntent::Nullify,
+                    false,
+                    finalized_l2_block,
+                )
+                .await
             }
             GameCategory::InvalidDualProposal => {
-                self.process_invalid_proposal(candidate, DisputeIntent::Nullify, true).await
+                self.process_invalid_proposal(
+                    candidate,
+                    DisputeIntent::Nullify,
+                    true,
+                    finalized_l2_block,
+                )
+                .await
             }
         }
     }
@@ -262,6 +302,7 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager> Driver<L2, P, T> {
         candidate: CandidateGame,
         intent: DisputeIntent,
         try_tee_first: bool,
+        finalized_l2_block: Option<u64>,
     ) -> eyre::Result<()> {
         let game_address = candidate.factory.proxy;
 
@@ -272,18 +313,10 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager> Driver<L2, P, T> {
 
         if result.is_valid {
             debug!(game = %game_address, "game output roots are valid");
-            match self.validator.l2_provider.header_by_number(BlockNumberOrTag::Finalized).await {
-                Ok(finalized) if finalized.number >= candidate.info.l2_block_number => {
-                    self.valid_games.insert(game_address);
-                }
-                Ok(_) => {}
-                Err(e) => {
-                    debug!(
-                        game = %game_address,
-                        error = %e,
-                        "failed to fetch L2 finalized head; game will be revalidated"
-                    );
-                }
+            if finalized_l2_block
+                .is_some_and(|finalized| finalized >= candidate.info.l2_block_number)
+            {
+                self.valid_games.insert(game_address);
             }
             return Ok(());
         }
