@@ -606,11 +606,7 @@ where
         let handle = pipeline.next_payload_to_seal.take().expect("caller checked Some");
         let handle_block_number = handle.block_number();
         let payload_id = handle.payload_id;
-        let trigger = if pipeline.frozen_payload_id.take() == Some(payload_id) {
-            SealTrigger::ReadyHint
-        } else {
-            SealTrigger::Deadline
-        };
+        let trigger = if handle.frozen { SealTrigger::ReadyHint } else { SealTrigger::Deadline };
         let schedule = SealSchedule {
             slot_start: self
                 .block_deadline(handle.attributes_with_parent.parent().block_info.number),
@@ -667,7 +663,9 @@ where
                 Metrics::sequencer_payload_ready_hints_dropped_total(reason.as_str()).increment(1);
             }
             None => {
-                pipeline.frozen_payload_id = Some(ready.payload_id);
+                if let Some(handle) = &mut pipeline.next_payload_to_seal {
+                    handle.frozen = true;
+                }
                 build_ticker.reset_immediately();
             }
         }
@@ -679,18 +677,27 @@ where
         ready: PayloadReady,
         pipeline: &BuildPipelineState,
     ) -> Option<ReadyHintDropReason> {
-        if self.sealer.is_some() || pipeline.sealed_payload_id == Some(ready.payload_id) {
+        if self.sealer.is_some() {
             return Some(ReadyHintDropReason::AlreadySealing);
         }
         if !self.is_active {
             return Some(ReadyHintDropReason::Inactive);
         }
-        let Some(handle) = &pipeline.next_payload_to_seal else {
-            return Some(ReadyHintDropReason::NoBuild);
+        let active_build = pipeline
+            .next_payload_to_seal
+            .as_ref()
+            .filter(|handle| handle.payload_id == ready.payload_id);
+        let Some(handle) = active_build else {
+            // Only a hint that matches no active build can have lost the race to the deadline:
+            // a rebuild of the last sealed block reuses its payload id and must still seal early.
+            return Some(if pipeline.sealed_payload_id == Some(ready.payload_id) {
+                ReadyHintDropReason::AlreadySealing
+            } else if pipeline.next_payload_to_seal.is_none() {
+                ReadyHintDropReason::NoBuild
+            } else {
+                ReadyHintDropReason::PayloadIdMismatch
+            });
         };
-        if ready.payload_id != handle.payload_id {
-            return Some(ReadyHintDropReason::PayloadIdMismatch);
-        }
         if ready.parent_hash != handle.attributes_with_parent.parent().block_info.hash {
             return Some(ReadyHintDropReason::ParentMismatch);
         }
@@ -1366,10 +1373,11 @@ mod tests {
         }
     }
 
-    /// A hint for a build that is discarded as stale must not label the rebuilt block's seal.
+    /// A rebuild of the hinted block reuses its payload id, but seals on its own schedule until
+    /// the execution layer reports the rebuild frozen.
     #[cfg(feature = "metrics")]
     #[tokio::test(start_paused = true)]
-    async fn hint_for_a_discarded_build_does_not_mark_the_next_seal() {
+    async fn hint_for_a_replaced_build_does_not_mark_its_rebuild() {
         let recorder = DebuggingRecorder::new();
         let snapshotter = recorder.snapshotter();
         let _metrics_guard = metrics::set_default_local_recorder(&recorder);
@@ -1381,8 +1389,8 @@ mod tests {
             *pipeline.next_payload_to_seal.as_ref().unwrap().attributes_with_parent.parent();
         let mut ticker = ScheduledTicker::new(Duration::from_secs(2));
         actor.handle_payload_ready(ready, &mut pipeline, &mut ticker);
-        // Another build replaces the hinted one before the woken ticker is serviced.
-        pipeline.next_payload_to_seal.as_mut().unwrap().payload_id = PayloadId::new([9; 8]);
+        // A stop and restart rebuilds the same block before the woken ticker is serviced.
+        pipeline.next_payload_to_seal = ready_build().1.next_payload_to_seal;
         let (sealer, _, _) = valid_sealer();
         let mut engine = MockSequencerEngineClient::new();
         engine.expect_get_unsafe_head().times(1).return_once(move || Ok(parent));
@@ -1414,6 +1422,7 @@ mod tests {
                 None,
                 false,
             ),
+            frozen: false,
         };
         (ready, BuildPipelineState { next_payload_to_seal: Some(handle), ..Default::default() })
     }
@@ -1449,17 +1458,18 @@ mod tests {
     }
 
     #[rstest]
-    #[case("wrong_id", ReadyHintDropReason::PayloadIdMismatch)]
-    #[case("wrong_parent", ReadyHintDropReason::ParentMismatch)]
-    #[case("stopped", ReadyHintDropReason::Inactive)]
-    #[case("already_sealing", ReadyHintDropReason::AlreadySealing)]
-    #[case("already_sealed", ReadyHintDropReason::AlreadySealing)]
-    #[case("pre_denim", ReadyHintDropReason::PreDenim)]
-    #[case("no_build", ReadyHintDropReason::NoBuild)]
+    #[case("wrong_id", "payload_id_mismatch")]
+    #[case("wrong_parent", "parent_mismatch")]
+    #[case("stopped", "inactive")]
+    #[case("already_sealing", "already_sealing")]
+    #[case("sealed_before_next_build", "already_sealing")]
+    #[case("sealed_after_next_build", "already_sealing")]
+    #[case("pre_denim", "pre_denim")]
+    #[case("no_build", "no_build")]
     #[tokio::test(start_paused = true)]
     async fn unrelated_ready_hints_preserve_seal_deadline(
         #[case] scenario: &str,
-        #[case] reason: ReadyHintDropReason,
+        #[case] reason: &str,
     ) {
         #[cfg(feature = "metrics")]
         let recorder = DebuggingRecorder::new();
@@ -1477,9 +1487,13 @@ mod tests {
             "stopped" => actor.is_active = false,
             "already_sealing" => actor.sealer = Some(valid_sealer().0),
             // The seal deadline fetched this payload before its hint was read.
-            "already_sealed" => {
+            "sealed_before_next_build" => {
                 pipeline.sealed_payload_id =
                     pipeline.next_payload_to_seal.take().map(|handle| handle.payload_id);
+            }
+            "sealed_after_next_build" => {
+                pipeline.sealed_payload_id = Some(ready.payload_id);
+                pipeline.next_payload_to_seal.as_mut().unwrap().payload_id = PayloadId::new([9; 8]);
             }
             "pre_denim" => {
                 Arc::make_mut(&mut actor.rollup_config).upgrades.base = BaseUpgradeConfig::default()
@@ -1487,7 +1501,10 @@ mod tests {
             "no_build" => pipeline.next_payload_to_seal = None,
             _ => unreachable!(),
         }
-        assert_eq!(actor.ready_hint_drop_reason(ready, &pipeline), Some(reason));
+        assert_eq!(
+            actor.ready_hint_drop_reason(ready, &pipeline).map(ReadyHintDropReason::as_str),
+            Some(reason)
+        );
         let mut ticker = ScheduledTicker::new(Duration::from_secs(2));
         ticker.reset_at(SystemTime::now() + Duration::from_secs(10));
         actor.handle_payload_ready(ready, &mut pipeline, &mut ticker);
@@ -1508,8 +1525,24 @@ mod tests {
                     (key.key().labels().next().unwrap().value().to_owned(), value)
                 })
                 .collect();
-            assert_eq!(dropped, [(reason.as_str().to_owned(), DebugValue::Counter(1))]);
+            assert_eq!(dropped, [(reason.to_owned(), DebugValue::Counter(1))]);
         }
+    }
+
+    /// Payload ids are derived from the parent and attributes, so rebuilding the block that was
+    /// sealed last, as after an engine reset, reuses its id.
+    #[tokio::test(start_paused = true)]
+    async fn hint_for_a_rebuild_of_the_last_sealed_payload_seals_early() {
+        let mut actor = test_actor();
+        Arc::make_mut(&mut actor.rollup_config).upgrades.base.denim = Some(0);
+        let (ready, mut pipeline) = ready_build();
+        pipeline.sealed_payload_id = Some(ready.payload_id);
+        let mut ticker = ScheduledTicker::new(Duration::from_secs(2));
+        ticker.reset_at(SystemTime::now() + Duration::from_secs(10));
+
+        actor.handle_payload_ready(ready, &mut pipeline, &mut ticker);
+
+        assert!(ticker.tick().now_or_never().is_some());
     }
 
     #[tokio::test(start_paused = true)]

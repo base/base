@@ -44,6 +44,9 @@ pub struct UnsealedPayloadHandle {
     pub payload_id: PayloadId,
     /// The [`AttributesWithParent`] used to start block building.
     pub attributes_with_parent: AttributesWithParent,
+    /// Whether the execution layer reported this payload frozen, waking the seal ticker before
+    /// the seal deadline.
+    pub frozen: bool,
 }
 
 impl UnsealedPayloadHandle {
@@ -128,7 +131,11 @@ impl<A: AttributesBuilder, O: OriginSelector, E: SequencerEngineClient> PayloadB
         Metrics::sequencer_block_building_start_task_duration()
             .record(build_request_start.elapsed());
 
-        Ok(BuildOutcome::Ready(UnsealedPayloadHandle { payload_id, attributes_with_parent }))
+        Ok(BuildOutcome::Ready(UnsealedPayloadHandle {
+            payload_id,
+            attributes_with_parent,
+            frozen: false,
+        }))
     }
 
     /// Determines and validates the L1 origin block for the provided L2 unsafe head.
