@@ -15,10 +15,6 @@ use crate::UnsealedPayloadHandle;
 pub struct BuildPipelineState {
     /// Pre-built payload awaiting sealing.
     pub next_payload_to_seal: Option<UnsealedPayloadHandle>,
-    /// Payload the execution layer reported frozen, waking the seal ticker early. Matched
-    /// against the payload being sealed so a hint for a discarded build cannot mark a later
-    /// seal as hint-triggered.
-    pub frozen_payload_id: Option<PayloadId>,
     /// Payload most recently fetched from the engine for sealing, so a hint that lost the race
     /// to the seal deadline is told apart from one for an unknown payload.
     pub sealed_payload_id: Option<PayloadId>,

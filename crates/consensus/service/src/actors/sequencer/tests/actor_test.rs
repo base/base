@@ -82,6 +82,7 @@ fn handle_with_parent(number: u64, hash: B256) -> UnsealedPayloadHandle {
             None,
             false,
         ),
+        frozen: false,
     }
 }
 
@@ -945,6 +946,7 @@ async fn test_seal_payload_success_returns_sealer() {
     let handle = UnsealedPayloadHandle {
         payload_id: Default::default(),
         attributes_with_parent: dummy_attributes_with_parent(),
+        frozen: false,
     };
     let sealer = actor.seal_payload(&handle).await;
 
@@ -967,6 +969,7 @@ async fn test_shadow_seal_payload_returns_private_sealer() {
     let handle = UnsealedPayloadHandle {
         payload_id: Default::default(),
         attributes_with_parent: dummy_attributes_with_parent(),
+        frozen: false,
     };
     let sealer = actor.seal_payload(&handle).await.unwrap();
 
@@ -989,6 +992,7 @@ async fn isolated_private_sealing_is_not_capped_by_shadow_cycle_limit() {
     let handle = UnsealedPayloadHandle {
         payload_id: Default::default(),
         attributes_with_parent: dummy_attributes_with_parent(),
+        frozen: false,
     };
 
     for _ in 0..private_block_count {
@@ -1011,6 +1015,7 @@ async fn test_seal_payload_failure_propagates() {
     let handle = UnsealedPayloadHandle {
         payload_id: Default::default(),
         attributes_with_parent: dummy_attributes_with_parent(),
+        frozen: false,
     };
     let result = actor.seal_payload(&handle).await;
 
