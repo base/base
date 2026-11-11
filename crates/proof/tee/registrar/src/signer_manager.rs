@@ -40,6 +40,9 @@ pub const DEFAULT_TX_RETRY_DELAY_SECS: u64 = 5;
 const ATTESTATION_NONCE_DOMAIN: &[u8] = b"base-proof-tee-registrar:attestation-nonce:v1";
 const CRL_FETCH_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_TX_RETRY_BACKOFF_DELAY: Duration = Duration::from_secs(60);
+/// Inline retries for transient `isRevoked` read failures; exhausting them fails the attempt closed.
+const MAX_IS_REVOKED_RETRIES: u32 = 3;
+const IS_REVOKED_RETRY_DELAY: Duration = Duration::from_millis(250);
 const DEBUG_MODE_PCR0_HASH: B256 =
     b256!("0xc980e59163ce244bb4bb6211f48c7b46f88a4f40943e84eb99bdc41e129bd293");
 
@@ -482,11 +485,7 @@ where
             .chain(plan.certs.iter().map(|cert| (cert.label.as_str(), cert.revocation_id)));
         for (label, cert_id) in checks {
             RegistrarMetrics::onchain_revocation_checks_total().increment(1);
-            let Some(revoked) = signer_cancel
-                .run_until_cancelled(self.cert_manager.is_revoked(cert_id))
-                .await
-                .transpose()?
-            else {
+            let Some(revoked) = self.is_revoked_with_retry(cert_id, signer_cancel).await? else {
                 return Ok(false);
             };
             if revoked {
@@ -499,6 +498,41 @@ where
             }
         }
         Ok(true)
+    }
+
+    /// Reads `isRevoked`, retrying transient transport failures; `None` means cancelled.
+    async fn is_revoked_with_retry(
+        &self,
+        cert_id: B256,
+        signer_cancel: &CancellationToken,
+    ) -> Result<Option<bool>> {
+        let mut retry = 0;
+        loop {
+            let Some(result) =
+                signer_cancel.run_until_cancelled(self.cert_manager.is_revoked(cert_id)).await
+            else {
+                return Ok(None);
+            };
+            match result {
+                Err(error) if error.is_transient() && retry < MAX_IS_REVOKED_RETRIES => {
+                    let delay = IS_REVOKED_RETRY_DELAY.saturating_mul(1 << retry);
+                    retry += 1;
+                    warn!(
+                        error = %error,
+                        cert_id = %cert_id,
+                        retry,
+                        max_retries = MAX_IS_REVOKED_RETRIES,
+                        delay = ?delay,
+                        "transient isRevoked failure, retrying"
+                    );
+                    if signer_cancel.run_until_cancelled(tokio::time::sleep(delay)).await.is_none()
+                    {
+                        return Ok(None);
+                    }
+                }
+                result => return Ok(Some(result?)),
+            }
+        }
     }
 
     async fn validate_root_cache(
@@ -1174,6 +1208,7 @@ mod tests {
     };
 
     use alloy_primitives::Address;
+    use alloy_transport::TransportErrorKind;
     use async_trait::async_trait;
     use base_proof_contracts::{ContractError, ICertManager, VerifiedCert};
     use base_tx_manager::{SendHandle, TxManagerError};
@@ -1228,6 +1263,7 @@ mod tests {
         outcomes: VecDeque<MockTxOutcome>,
         final_signer: Option<Address>,
         cert_reads: usize,
+        transient_is_revoked_failures: usize,
     }
 
     #[derive(Clone, Debug, Default)]
@@ -1437,6 +1473,13 @@ mod tests {
         async fn is_revoked(&self, cert_id: B256) -> std::result::Result<bool, ContractError> {
             let mut state = self.chain.0.lock().unwrap();
             state.cert_reads += 1;
+            if state.transient_is_revoked_failures > 0 {
+                state.transient_is_revoked_failures -= 1;
+                return Err(ContractError::provider(
+                    "isRevoked failed",
+                    TransportErrorKind::http_error(502, "Bad Gateway".into()),
+                ));
+            }
             Ok(state.revoked.contains(&cert_id))
         }
 
@@ -2141,6 +2184,36 @@ mod tests {
             assert!(matches!(result, Err(RegistrarError::RevokedCertificate { .. })));
             assert!(chain.sent().is_empty());
         }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn transient_is_revoked_failures_retry_inline_and_fail_closed_when_exhausted() {
+        let (attestation, plan) = forged_attestation();
+
+        let (manager, chain) = manager_with_plan(&plan);
+        {
+            let mut state = chain.0.lock().unwrap();
+            state.registered.insert(plan.signer);
+            state.transient_is_revoked_failures = 1;
+        }
+        manager
+            .register_signer(TEST_INSTANCE, plan.signer, &attestation, &CancellationToken::new())
+            .await
+            .expect("a single transient isRevoked failure should be retried inline");
+        assert!(chain.0.lock().unwrap().registered.contains(&plan.signer));
+        assert!(chain.sent().is_empty());
+
+        let (manager, chain) = manager_with_plan(&plan);
+        chain.0.lock().unwrap().transient_is_revoked_failures = usize::MAX;
+        let result = manager
+            .register_signer(TEST_INSTANCE, plan.signer, &attestation, &CancellationToken::new())
+            .await;
+        assert!(
+            matches!(&result, Err(RegistrarError::Contract(error)) if error.is_transient()),
+            "unknown revocation status must fail closed, got {result:?}"
+        );
+        assert!(!chain.0.lock().unwrap().registered.contains(&plan.signer));
+        assert!(chain.sent().is_empty(), "exhausted retries must not submit registerSigner");
     }
 
     #[tokio::test]
