@@ -34,7 +34,9 @@ use base_proof_contracts::{DisputeGameFactoryClient, DisputeGameFactoryContractC
 
 let factory = DisputeGameFactoryContractClient::new(factory_address, provider);
 let count = factory.game_count().await?;
-let latest = factory.game_at_index(count - 1).await?;
+if let Some(last) = count.checked_sub(1) {
+    let latest = factory.game_at_index(last).await?;
+}
 ```
 
 ## License
