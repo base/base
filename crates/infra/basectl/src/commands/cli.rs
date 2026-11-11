@@ -16,7 +16,13 @@ use crate::{MonitoringConfig, ViewId, run_app};
 #[command(about = "Base infrastructure control CLI")]
 pub struct Cli {
     /// Chain configuration (mainnet, sepolia, devnet, or path to config file)
-    #[arg(short = 'c', long = "config", default_value = "mainnet", global = true)]
+    #[arg(
+        short = 'c',
+        long = "config",
+        env = "BASECTL_CONFIG",
+        default_value = "mainnet",
+        global = true
+    )]
     pub config: String,
     /// Bootstrap conductor JSON-RPC URL for runtime cluster discovery.
     ///

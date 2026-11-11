@@ -57,8 +57,8 @@ pub struct MeteredGas {
     /// payer authentication. Equal to the billed gas before the feature activates.
     pub gas_used: u64,
     /// For an EIP-8130 transaction, the payer-authentication gas reserved and
-    /// billed on top of the sender's `gas_limit` (`payer_floor`: the `payer_auth`
-    /// bytes at the EIP-7623 floor rate), so that under gas-limit billing the
+    /// billed on top of the sender's `gas_limit` (`IntrinsicGas::payer_auth_cost`),
+    /// so that under gas-limit billing the
     /// billed gas is exactly `gas_limit + payer_auth_gas_reserved`. `None` for every other
     /// transaction type, whose billed gas is `gas_limit` alone.
     pub payer_auth_gas_reserved: Option<u64>,

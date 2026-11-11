@@ -241,7 +241,7 @@ impl DaArtifacts {
         submission_id: SubmissionId,
     ) -> Option<(BatchSubmission, Vec<ArtifactId>)> {
         let mut artifacts = self.artifacts.iter().enumerate().skip(first_ready);
-        let mut indexes = Vec::new();
+        let mut run = Vec::new();
         let complete = loop {
             let Some((index, artifact)) = artifacts.next() else {
                 break false;
@@ -254,8 +254,8 @@ impl DaArtifacts {
             if artifact.state != ArtifactState::Ready {
                 continue;
             }
-            indexes.push(index);
-            if indexes.len() == maximum || payload.frames().iter().any(|frame| frame.is_last) {
+            run.push((index, payload));
+            if run.len() == maximum || payload.frames().iter().any(|frame| frame.is_last) {
                 break true;
             }
         };
@@ -263,15 +263,8 @@ impl DaArtifacts {
             return None;
         }
 
-        let payloads = indexes
-            .iter()
-            .map(|index| match &self.artifacts[*index].payload {
-                DaArtifactPayload::Blob(payload) => payload.clone(),
-                DaArtifactPayload::Calldata(_) => {
-                    unreachable!("blob lease contains only blob artifacts")
-                }
-            })
-            .collect();
+        let payloads = run.iter().map(|(_, payload)| (*payload).clone()).collect();
+        let indexes: Vec<_> = run.into_iter().map(|(index, _)| index).collect();
         let artifact_ids = indexes.iter().map(|index| self.artifacts[*index].id).collect();
 
         for index in indexes {

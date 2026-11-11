@@ -9,10 +9,11 @@ use std::{
 use audit_archiver_lib::{
     AuditArchiverApiServer, AuditArchiverRpc, DEFAULT_TRANSACTION_EVENT_BATCH_PATH,
     DEFAULT_TRANSACTION_EVENT_MAX_BATCH_SIZE, DEFAULT_TRANSACTION_EVENT_MAX_DATA_BYTES,
-    DEFAULT_TRANSACTION_EVENT_MAX_EVENT_BYTES, DEFAULT_TRANSACTION_EVENT_MAX_REQUEST_BYTES,
-    MAX_TRANSACTION_EVENT_INSERT_BATCH_SIZE, PgTransactionEventSink, RejectedTransactionEventQuery,
-    TransactionEventIngestConfig, TransactionEventRecord, TransactionEventRetentionConfig,
-    TransactionEventSchemaReadinessError, TransactionEventSink,
+    DEFAULT_TRANSACTION_EVENT_MAX_EVENT_BYTES, DEFAULT_TRANSACTION_EVENT_MAX_IN_FLIGHT_REQUESTS,
+    DEFAULT_TRANSACTION_EVENT_MAX_REQUEST_BYTES, MAX_TRANSACTION_EVENT_INSERT_BATCH_SIZE,
+    PgTransactionEventSink, RejectedTransactionEventQuery, TransactionEventIngestConfig,
+    TransactionEventRecord, TransactionEventRetentionConfig, TransactionEventSchemaReadinessError,
+    TransactionEventSink,
 };
 use axum::{
     body::{Body, to_bytes},
@@ -213,6 +214,7 @@ fn default_ingest_config() -> TransactionEventIngestConfig {
         max_event_bytes: DEFAULT_TRANSACTION_EVENT_MAX_EVENT_BYTES,
         max_data_bytes: DEFAULT_TRANSACTION_EVENT_MAX_DATA_BYTES,
         max_request_bytes: DEFAULT_TRANSACTION_EVENT_MAX_REQUEST_BYTES,
+        max_in_flight_requests: DEFAULT_TRANSACTION_EVENT_MAX_IN_FLIGHT_REQUESTS,
     }
 }
 
@@ -354,7 +356,7 @@ async fn postgres_fresh_database_runs_partitioned_migrations() -> anyhow::Result
         sqlx::query_scalar("SELECT version FROM _sqlx_migrations ORDER BY version")
             .fetch_all(&pool)
             .await?;
-    assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7, 8]);
+    assert_eq!(versions, (1..=11).collect::<Vec<i64>>());
 
     Ok(())
 }
@@ -381,7 +383,7 @@ async fn postgres_migrations_skip_io_concurrency_without_database_ownership() ->
         sqlx::query_scalar("SELECT version FROM _sqlx_migrations WHERE success ORDER BY version")
             .fetch_all(&migration)
             .await?;
-    assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7, 8]);
+    assert_eq!(versions, (1..=11).collect::<Vec<i64>>());
     let io_concurrency: String =
         sqlx::query_scalar("SHOW effective_io_concurrency").fetch_one(&migration).await?;
     assert_eq!(io_concurrency, "1");
@@ -623,6 +625,146 @@ async fn postgres_ingested_at_btree_covers_extraction_planning() -> anyhow::Resu
     .await?;
     let plan = plan.join("\n");
     assert!(plan.contains("Index Only Scan"), "planning query is not index-only:\n{plan}");
+
+    Ok(())
+}
+
+/// Migration 009 indexes only empty day partitions, 010 drops the hash-leading
+/// index, and lookups by hash skip the partitions populated before 009.
+#[tokio::test]
+async fn postgres_tx_hash_lookup_uses_hour_leading_index() -> anyhow::Result<()> {
+    const INDEXED_PARTITIONS_SQL: &str = "SELECT c.relname::text FROM pg_index x \
+         JOIN pg_class c ON c.oid = x.indrelid \
+         JOIN pg_inherits i ON i.inhrelid = x.indexrelid \
+         WHERE i.inhparent = 'transaction_events_v2_hot_event_hour_tx_hash_idx'::regclass \
+         ORDER BY 1";
+    const TX_HASH: &str = "0x1111111111111111111111111111111111111111111111111111111111111111";
+
+    let harness = PostgresHarness::new().await?;
+    harness.create_grantee_roles().await?;
+    let pool = PgPoolOptions::new().max_connections(1).connect(&harness.database_url).await?;
+    Migrator::new(migrations_through(8)?).await?.run(&pool).await?;
+    let sink = PgTransactionEventSink::connect(&harness.database_url, 1).await?;
+    let before = unique_event_id();
+    sink.insert_events(&[event(&before)]).await?;
+    let ids = |records: Vec<TransactionEventRecord>| {
+        records.into_iter().map(|record| record.event.event_id).collect::<Vec<_>>()
+    };
+    assert_eq!(
+        ids(sink.events_by_transaction_hash(TX_HASH, 10).await?),
+        vec![before],
+        "before 009 the lookup uses the hash-leading index"
+    );
+
+    let today_partition =
+        format!("transaction_events_v2_hot_{}", Utc::now().date_naive().format("%Y%m%d"));
+    let seeded_partitions = hot_partitions(&pool).await?;
+    assert!(seeded_partitions.contains(&today_partition));
+
+    PgTransactionEventSink::migrate(&harness.database_url).await?;
+    let indexed: Vec<String> = sqlx::query_scalar(INDEXED_PARTITIONS_SQL).fetch_all(&pool).await?;
+    let expected: Vec<String> =
+        seeded_partitions.iter().filter(|name| **name != today_partition).cloned().collect();
+    assert_eq!(indexed, expected, "only empty seeded partitions are indexed");
+    let old_index: Option<String> = sqlx::query_scalar(
+        "SELECT to_regclass('public.transaction_events_v2_tx_hash_event_time_idx')::text",
+    )
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(old_index, None, "010 drops the hash-leading index");
+    assert!(
+        sink.events_by_transaction_hash(TX_HASH, 10).await?.is_empty(),
+        "the lookup skips the partition populated before 009"
+    );
+
+    let new_day = Utc::now().date_naive() + chrono::Duration::days(30);
+    let created: bool =
+        sqlx::query_scalar("SELECT public.transaction_events_v2_create_partition('hot', $1)")
+            .bind(new_day)
+            .fetch_one(&pool)
+            .await?;
+    assert!(created);
+    let new_partition = format!("transaction_events_v2_hot_{}", new_day.format("%Y%m%d"));
+    let indexed: Vec<String> = sqlx::query_scalar(INDEXED_PARTITIONS_SQL).fetch_all(&pool).await?;
+    assert!(indexed.contains(&new_partition), "{new_partition} has no hash index");
+
+    let mut conn = pool.acquire().await?;
+    conn.execute("SET enable_seqscan = off").await?;
+    let hour = new_day.and_hms_opt(5, 0, 0).unwrap().and_utc();
+    let plan: Vec<String> = sqlx::query_scalar(&format!(
+        "EXPLAIN SELECT event_id FROM public.{new_partition} \
+         WHERE tx_hash = '{TX_HASH}' AND event_hour = ANY(ARRAY['{}'::timestamptz])",
+        hour.to_rfc3339()
+    ))
+    .fetch_all(&mut *conn)
+    .await?;
+    let plan = plan.join("\n");
+    assert!(plan.contains("event_hour_tx_hash_idx"), "hash lookup does not use the index:\n{plan}");
+
+    Ok(())
+}
+
+/// Migration 011 builds the `event_seq` btree only on empty day partitions, and
+/// an extraction slice's range query uses it on partitions created afterwards.
+#[tokio::test]
+async fn postgres_event_seq_btree_serves_extraction_slices() -> anyhow::Result<()> {
+    const INDEXED_PARTITIONS_SQL: &str = "SELECT c.relname::text FROM pg_index x \
+         JOIN pg_class c ON c.oid = x.indrelid \
+         JOIN pg_inherits i ON i.inhrelid = x.indexrelid \
+         WHERE i.inhparent = 'transaction_events_v2_hot_event_seq_btree_idx'::regclass \
+         ORDER BY 1";
+
+    let harness = PostgresHarness::new().await?;
+    harness.create_grantee_roles().await?;
+    let pool = PgPoolOptions::new().max_connections(1).connect(&harness.database_url).await?;
+    Migrator::new(migrations_through(10)?).await?.run(&pool).await?;
+    let sink = PgTransactionEventSink::connect(&harness.database_url, 1).await?;
+    sink.insert_events(&[event(&unique_event_id())]).await?;
+    let today_partition =
+        format!("transaction_events_v2_hot_{}", Utc::now().date_naive().format("%Y%m%d"));
+    let seeded_partitions = hot_partitions(&pool).await?;
+    assert!(seeded_partitions.contains(&today_partition));
+
+    PgTransactionEventSink::migrate(&harness.database_url).await?;
+    let indexed: Vec<String> = sqlx::query_scalar(INDEXED_PARTITIONS_SQL).fetch_all(&pool).await?;
+    let expected: Vec<String> =
+        seeded_partitions.iter().filter(|name| **name != today_partition).cloned().collect();
+    assert_eq!(indexed, expected, "only empty seeded partitions are indexed");
+
+    let new_day = Utc::now().date_naive() + chrono::Duration::days(30);
+    let created: bool =
+        sqlx::query_scalar("SELECT public.transaction_events_v2_create_partition('hot', $1)")
+            .bind(new_day)
+            .fetch_one(&pool)
+            .await?;
+    assert!(created);
+    let new_partition = format!("transaction_events_v2_hot_{}", new_day.format("%Y%m%d"));
+    let indexed: Vec<String> = sqlx::query_scalar(INDEXED_PARTITIONS_SQL).fetch_all(&pool).await?;
+    assert!(indexed.contains(&new_partition), "{new_partition} has no event_seq btree");
+    // Attach names the leaf index itself (`<partition>_event_seq_idx1`, since the
+    // BRIN index already has `_event_seq_idx`), so look it up.
+    let btree_index: String = sqlx::query_scalar(
+        "SELECT x.indexrelid::regclass::text FROM pg_index x \
+         JOIN pg_inherits i ON i.inhrelid = x.indexrelid \
+         WHERE i.inhparent = 'transaction_events_v2_hot_event_seq_btree_idx'::regclass \
+           AND x.indrelid = format('public.%I', $1::text)::regclass",
+    )
+    .bind(&new_partition)
+    .fetch_one(&pool)
+    .await?;
+
+    let mut conn = pool.acquire().await?;
+    conn.execute("SET enable_seqscan = off").await?;
+    conn.execute("SET enable_bitmapscan = off").await?;
+    let plan: Vec<String> = sqlx::query_scalar(&format!(
+        "EXPLAIN SELECT event_id FROM public.{new_partition} \
+         WHERE ingested_at >= now() - interval '1 hour' \
+           AND event_seq >= 1000 AND event_seq < 2000"
+    ))
+    .fetch_all(&mut *conn)
+    .await?;
+    let plan = plan.join("\n");
+    assert!(plan.contains(&btree_index), "slice range query does not use {btree_index}:\n{plan}");
 
     Ok(())
 }

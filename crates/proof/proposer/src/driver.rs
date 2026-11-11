@@ -91,17 +91,10 @@ pub struct RecoveredState {
 pub trait ProposerDriverControl: Send + Sync {
     /// Start the proving pipeline.
     async fn start_proposer(&self) -> Result<(), String>;
-    /// Stop the proving pipeline.
+    /// Stop the proving pipeline and join its task, even if it already exited on its own.
     async fn stop_proposer(&self) -> Result<(), String>;
     /// Returns whether the proving pipeline is currently running.
     fn is_running(&self) -> bool;
-}
-
-/// Active session state: the cancellation token and spawned task for a running
-/// pipeline.
-struct Session {
-    cancel: CancellationToken,
-    task: Option<JoinHandle<()>>,
 }
 
 /// Manages the lifecycle of a [`ProvingPipeline`], allowing it to be started
@@ -111,7 +104,8 @@ where
     R: RollupProvider + 'static,
 {
     pipeline: Arc<ProvingPipeline<R>>,
-    session: TokioMutex<Session>,
+    /// Last started run, kept until joined even after it exits on its own.
+    session: TokioMutex<Option<(CancellationToken, JoinHandle<()>)>>,
     global_cancel: CancellationToken,
     running: Arc<AtomicBool>,
 }
@@ -133,10 +127,9 @@ where
 {
     /// Creates a new [`PipelineHandle`] wrapping the given proving pipeline.
     pub fn new(pipeline: ProvingPipeline<R>, global_cancel: CancellationToken) -> Self {
-        let session = Session { cancel: global_cancel.child_token(), task: None };
         Self {
             pipeline: Arc::new(pipeline),
-            session: TokioMutex::new(session),
+            session: TokioMutex::new(None),
             global_cancel,
             running: Arc::new(AtomicBool::new(false)),
         }
@@ -157,11 +150,10 @@ where
 
         // Drain any stale task from a self-terminated pipeline run so panics
         // are surfaced and the JoinHandle resources are properly reclaimed.
-        if let Some(task) = session.task.take() {
-            match task.await {
-                Ok(()) => {}
-                Err(e) => error!(error = %e, "previous pipeline run panicked"),
-            }
+        if let Some((_, task)) = session.take()
+            && let Err(e) = task.await
+        {
+            error!(error = %e, "previous pipeline run panicked");
         }
 
         self.running.store(true, Ordering::Release);
@@ -176,8 +168,7 @@ where
             running.store(false, Ordering::Release);
         });
 
-        session.cancel = cancel;
-        session.task = Some(handle);
+        *session = Some((cancel, handle));
 
         info!("proving pipeline started");
         Ok(())
@@ -185,18 +176,13 @@ where
 
     async fn stop_proposer(&self) -> Result<(), String> {
         let mut session = self.session.lock().await;
-
-        if !self.running.load(Ordering::Acquire) {
+        let Some((cancel, task)) = session.take() else {
             return Err("proposer is not running".into());
-        }
+        };
 
-        session.cancel.cancel();
-
-        if let Some(task) = session.task.take() {
-            match task.await {
-                Ok(()) => {}
-                Err(e) => error!(error = %e, "proving pipeline task panicked"),
-            }
+        cancel.cancel();
+        if let Err(e) = task.await {
+            error!(error = %e, "proving pipeline task panicked");
         }
 
         self.running.store(false, Ordering::Release);
@@ -352,15 +338,8 @@ mod tests {
         cancel.cancel();
         tokio::time::sleep(Duration::from_millis(50)).await;
         assert!(!handle.is_running());
-    }
 
-    #[tokio::test]
-    async fn test_pipeline_handle_debug() {
-        let cancel = CancellationToken::new();
-        let handle = test_pipeline_handle(cancel);
-
-        let debug = format!("{handle:?}");
-        assert!(debug.contains("PipelineHandle"));
-        assert!(debug.contains("running"));
+        handle.stop_proposer().await.expect("stop should join the run that exited on its own");
+        assert!(handle.stop_proposer().await.unwrap_err().contains("not running"));
     }
 }

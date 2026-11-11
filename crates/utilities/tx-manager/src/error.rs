@@ -86,8 +86,8 @@ pub enum TxManagerError {
 
     /// Send response channel closed before a result was delivered.
     ///
-    /// The background send task exited (panicked or was cancelled)
-    /// before completing. Non-retryable.
+    /// The manager was closed, or the background send task exited
+    /// (panicked or was cancelled) before completing. Non-retryable.
     #[error("send response channel closed")]
     ChannelClosed,
 

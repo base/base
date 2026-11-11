@@ -76,17 +76,17 @@ impl NonceManagerStorage<'_> {
     /// reclaimable as long as no more than this many nonce-free transactions are
     /// included within one window.
     ///
-    /// The cheapest nonce-free transaction costs at least 31,000 gas
-    /// (`AA_BASE_COST` 15,000, `NONCE_FREE_COST` 13,000, K1 sender auth 3,000),
-    /// rounded down to 30,000. The buffer is sized for blocks of up to 600M gas
-    /// every 2 s (equivalently 60M gas per 200 ms Denim block, since Denim scales
-    /// the gas limit down with the block interval): 300M gas/s, or 10,000
-    /// nonce-free transactions per second. Over the 30 s window that is
-    /// `10,000 × 30 = 300,000` live entries. Sustained nonce-free throughput above
-    /// 300M gas/s fails with [`INonceManager::ExpiringNonceSetFull`] rather than
-    /// admitting a replay. `replay_buffer_covers_peak_nonce_free_throughput` pins
-    /// this sizing.
-    pub const REPLAY_BUFFER_CAPACITY: u32 = 300_000;
+    /// The cheapest nonce-free transaction costs at least 30,100 gas
+    /// (`AA_BASE_COST` 12,000, `NONCE_FREE_COST` 13,000, k1 sender auth 5,100).
+    /// The buffer is sized for blocks of up to 600M gas every 2 s (equivalently
+    /// 60M gas per 200 ms Denim block, since Denim scales the gas limit down
+    /// with the block interval): 300M gas/s, or about 9,970 nonce-free
+    /// transactions per second. Over the 30 s window that is at most 299,010
+    /// live entries, within the 340,000 capacity. Sustained nonce-free
+    /// throughput above that fails with [`INonceManager::ExpiringNonceSetFull`]
+    /// rather than admitting a replay.
+    /// `replay_buffer_covers_peak_nonce_free_throughput` pins this sizing.
+    pub const REPLAY_BUFFER_CAPACITY: u32 = 340_000;
 
     /// Maximum validity-window span accepted for a nonce-free transaction, in
     /// **milliseconds** (`NONCE_FREE_EXPIRY_WINDOW` in the EIP-8130 constant
@@ -103,6 +103,9 @@ impl NonceManagerStorage<'_> {
 
     /// Nonce key reserved for the protocol nonce, which is held in account state.
     const PROTOCOL_NONCE_KEY: U256 = NonceManagerSlots::PROTOCOL_NONCE_KEY;
+
+    /// Nonce key for nonce-free mode, which has no sequence.
+    const NONCE_FREE_KEY: U256 = NonceManagerSlots::NONCE_FREE_KEY;
 
     /// Returns the current 2D nonce for `account` at `nonce_key`.
     ///
@@ -150,10 +153,11 @@ impl NonceManagerStorage<'_> {
     /// events.
     ///
     /// # Errors
-    /// - [`INonceManager::InvalidNonceKey`] — `nonce_key` is `0` (the protocol nonce).
+    /// - [`INonceManager::InvalidNonceKey`] — `nonce_key` is `0` (the protocol
+    ///   nonce) or `NONCE_KEY_MAX` (nonce-free mode, so `getNonce` always reads `0`).
     /// - [`INonceManager::NonceOverflow`] — the channel nonce is already `u64::MAX`.
     pub fn increment_nonce(&mut self, account: Address, nonce_key: U256) -> Result<u64> {
-        if nonce_key == Self::PROTOCOL_NONCE_KEY {
+        if nonce_key == Self::PROTOCOL_NONCE_KEY || nonce_key == Self::NONCE_FREE_KEY {
             return Err(BasePrecompileError::revert(INonceManager::InvalidNonceKey {}));
         }
 
@@ -168,17 +172,17 @@ impl NonceManagerStorage<'_> {
     }
 
     /// Returns whether `hash` has been recorded and has not yet expired relative
-    /// to `now` (Unix **milliseconds**).
+    /// to `now_ms` (Unix milliseconds).
     ///
-    /// Intended for transaction-pool replay checks. `now` is a caller-supplied
+    /// Intended for transaction-pool replay checks. `now_ms` is a caller-supplied
     /// timestamp (in milliseconds) because the mempool has no block context and
     /// uses wall-clock time, whereas [`Self::check_and_mark_expiring_nonce`] is
     /// given the including block's timestamp. The two clocks can disagree
     /// near an entry's expiry boundary; this getter is an advisory pre-filter and
     /// the block-timestamp check at inclusion is authoritative.
-    pub fn is_expiring_nonce_seen(&self, hash: B256, now: u64) -> Result<bool> {
-        let expiry = self.expiring_nonce_seen.at(&hash).read()?;
-        Ok(expiry != 0 && expiry > now)
+    pub fn is_expiring_nonce_seen(&self, hash: B256, now_ms: u64) -> Result<bool> {
+        let expiry_ms = self.expiring_nonce_seen.at(&hash).read()?;
+        Ok(expiry_ms != 0 && expiry_ms > now_ms)
     }
 
     /// Validates and records an expiring-nonce transaction, providing replay
@@ -192,7 +196,7 @@ impl NonceManagerStorage<'_> {
     /// The hash is recorded in a circular buffer that reclaims expired slots as
     /// the write pointer advances.
     ///
-    /// `valid_before` and `now_ms` are both Unix **milliseconds**. `now_ms` must
+    /// `valid_before_ms` and `now_ms` are both Unix milliseconds. `now_ms` must
     /// be the including block's millisecond timestamp, so this is the
     /// authoritative inclusion-time replay check (cf. the advisory
     /// [`Self::is_expiring_nonce_seen`] used by the mempool).
@@ -201,7 +205,9 @@ impl NonceManagerStorage<'_> {
     /// dispatch.
     ///
     /// # Errors
-    /// - [`INonceManager::InvalidExpiringNonceExpiry`] — `valid_before` is not in
+    /// - [`INonceManager::InvalidReplayId`] — the hash is zero, the ring's
+    ///   empty-slot sentinel.
+    /// - [`INonceManager::InvalidExpiringNonceExpiry`] — `valid_before_ms` is not in
     ///   `(now_ms, now_ms + NONCE_FREE_EXPIRY_WINDOW]`.
     /// - [`INonceManager::ExpiringNonceReplay`] — the hash is already recorded and unexpired.
     /// - [`INonceManager::ExpiringNonceSetFull`] — the ring slot holds an unexpired entry
@@ -209,12 +215,16 @@ impl NonceManagerStorage<'_> {
     pub fn check_and_mark_expiring_nonce(
         &mut self,
         expiring_nonce_hash: B256,
-        valid_before: u64,
+        valid_before_ms: u64,
         now_ms: u64,
     ) -> Result<()> {
-        // 1. Validate the expiry window: must be in (now_ms, now_ms + MAX_EXPIRY_MS].
-        if valid_before <= now_ms
-            || valid_before > now_ms.saturating_add(Self::NONCE_FREE_EXPIRY_WINDOW)
+        if expiring_nonce_hash == B256::ZERO {
+            return Err(BasePrecompileError::revert(INonceManager::InvalidReplayId {}));
+        }
+
+        // 1. Validate the expiry window: must be in (now_ms, now_ms + NONCE_FREE_EXPIRY_WINDOW].
+        if valid_before_ms <= now_ms
+            || valid_before_ms > now_ms.saturating_add(Self::NONCE_FREE_EXPIRY_WINDOW)
         {
             return Err(BasePrecompileError::revert(INonceManager::InvalidExpiringNonceExpiry {}));
         }
@@ -236,8 +246,13 @@ impl NonceManagerStorage<'_> {
 
         self.__initialize()?;
 
-        // 3. Inspect the entry the write pointer currently references.
-        let ptr = self.expiring_nonce_ring_ptr.read()?;
+        // 3. Inspect the entry the write pointer currently references. A pointer
+        // at or past capacity can only come from corrupted state; restart at 0
+        // rather than touch a slot outside the ring.
+        let ptr = match self.expiring_nonce_ring_ptr.read()? {
+            ptr if ptr < Self::REPLAY_BUFFER_CAPACITY => ptr,
+            _ => 0,
+        };
         let old_hash = self.expiring_nonce_ring.at(&ptr).read()?;
 
         // 4. Reclaim the slot only if its occupant has expired (or is empty).
@@ -253,13 +268,10 @@ impl NonceManagerStorage<'_> {
 
         // 5. Record the new entry.
         self.expiring_nonce_ring.at_mut(&ptr).write(expiring_nonce_hash)?;
-        self.expiring_nonce_seen.at_mut(&expiring_nonce_hash).write(valid_before)?;
+        self.expiring_nonce_seen.at_mut(&expiring_nonce_hash).write(valid_before_ms)?;
 
-        // 6. Advance the write pointer, wrapping at capacity (not u32::MAX).
-        // `wrapping_add` is defensive: a corrupted ptr at u32::MAX wraps to 0
-        // (still < capacity) rather than panicking in debug builds.
-        let incremented = ptr.wrapping_add(1);
-        let next = if incremented >= Self::REPLAY_BUFFER_CAPACITY { 0 } else { incremented };
+        // 6. Advance the write pointer, wrapping at capacity.
+        let next = (ptr + 1) % Self::REPLAY_BUFFER_CAPACITY;
         self.expiring_nonce_ring_ptr.write(next)?;
 
         checkpoint.commit();
@@ -270,6 +282,7 @@ impl NonceManagerStorage<'_> {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, B256, U256, address};
+    use base_common_eip8130::Eip8130GasSchedule;
     use base_precompile_storage::{
         BasePrecompileError, Handler, HashMapStorageProvider, StorageCtx, StorageKey,
     };
@@ -341,6 +354,17 @@ mod tests {
             let err =
                 NonceManagerStorage::new(ctx).increment_nonce(ACCOUNT_A, U256::ZERO).unwrap_err();
             assert_eq!(err, BasePrecompileError::revert(INonceManager::InvalidNonceKey {}));
+        });
+    }
+
+    #[test]
+    fn increment_nonce_rejects_nonce_free_key() {
+        let mut storage = HashMapStorageProvider::new(1);
+        StorageCtx::enter(&mut storage, |ctx| {
+            let mut mgr = NonceManagerStorage::new(ctx);
+            let err = mgr.increment_nonce(ACCOUNT_A, U256::MAX).unwrap_err();
+            assert_eq!(err, BasePrecompileError::revert(INonceManager::InvalidNonceKey {}));
+            assert_eq!(mgr.get_nonce(ACCOUNT_A, U256::MAX).unwrap(), 0);
         });
     }
 
@@ -497,6 +521,36 @@ mod tests {
     }
 
     #[test]
+    fn expiring_nonce_ring_pointer_past_capacity_restarts_at_zero() {
+        let mut storage = HashMapStorageProvider::new(1);
+        let now_ms = 1_000_000u64;
+        StorageCtx::enter(&mut storage, |ctx| {
+            let mut mgr = NonceManagerStorage::new(ctx);
+            mgr.expiring_nonce_ring_ptr.write(u32::MAX).unwrap();
+
+            let hash = B256::repeat_byte(0x99);
+            mgr.check_and_mark_expiring_nonce(hash, now_ms + 20_000, now_ms).unwrap();
+
+            assert_eq!(mgr.expiring_nonce_ring.at(&0).read().unwrap(), hash);
+            assert_eq!(mgr.expiring_nonce_ring.at(&u32::MAX).read().unwrap(), B256::ZERO);
+            assert_eq!(mgr.expiring_nonce_ring_ptr.read().unwrap(), 1);
+        });
+    }
+
+    #[test]
+    fn expiring_nonce_rejects_zero_replay_id() {
+        let mut storage = HashMapStorageProvider::new(1);
+        let now_ms = 1_000_000u64;
+        StorageCtx::enter(&mut storage, |ctx| {
+            let mut mgr = NonceManagerStorage::new(ctx);
+            let err =
+                mgr.check_and_mark_expiring_nonce(B256::ZERO, now_ms + 20_000, now_ms).unwrap_err();
+            assert_eq!(err, BasePrecompileError::revert(INonceManager::InvalidReplayId {}));
+            assert_eq!(mgr.expiring_nonce_ring_ptr.read().unwrap(), 0);
+        });
+    }
+
+    #[test]
     fn nonce_slot_matches_handler_chain() {
         let mut storage = HashMapStorageProvider::new(1);
         let nonce_key = U256::from(42);
@@ -575,17 +629,21 @@ mod tests {
     /// `(block_gas_limit / min_tx_gas) * ceil(window / block_time)`, which must
     /// not exceed [`NonceManagerStorage::REPLAY_BUFFER_CAPACITY`].
     ///
-    /// This test pins the throughput ceiling the buffer is sized for (matching
-    /// the "~10k TPS for ~30s" note on `REPLAY_BUFFER_CAPACITY`). Raising
-    /// [`NonceManagerStorage::NONCE_FREE_EXPIRY_WINDOW`] without growing the
-    /// buffer (or shrinking the supported gas limit) breaks the invariant and
-    /// fails here — a deliberate fork-level tripwire.
+    /// This test pins the throughput ceiling the buffer is sized for. Raising
+    /// [`NonceManagerStorage::NONCE_FREE_EXPIRY_WINDOW`] or lowering the
+    /// cheapest nonce-free transaction's gas without growing the buffer (or
+    /// shrinking the supported gas limit) breaks the invariant and fails here —
+    /// a deliberate fork-level tripwire.
     #[test]
     fn replay_buffer_covers_peak_nonce_free_throughput() {
         // Conservative Base worst-case chain parameters.
         const BLOCK_GAS_LIMIT: u64 = 600_000_000;
         const BLOCK_TIME_SECS: u64 = 2;
-        const MIN_TX_GAS: u64 = 30_000;
+        // The cheapest nonce-free transaction, before its payload bytes.
+        const MIN_TX_GAS: u64 = Eip8130GasSchedule::AA_BASE_COST
+            + Eip8130GasSchedule::NONCE_FREE_COST
+            + Eip8130GasSchedule::AUTH_EXEC_K1
+            + Eip8130GasSchedule::COLD_SLOAD;
 
         let max_txs_per_block = BLOCK_GAS_LIMIT / MIN_TX_GAS;
         // NONCE_FREE_EXPIRY_WINDOW is in milliseconds; the block cadence is in

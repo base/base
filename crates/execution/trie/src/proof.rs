@@ -4,7 +4,7 @@ use alloy_primitives::{
     Address, B256, Bytes, keccak256,
     map::{B256Map, HashMap},
 };
-use rayon::iter::{IntoParallelIterator, ParallelIterator};
+use rayon::{iter::ParallelIterator, slice::ParallelSlice};
 use reth_db::DatabaseError;
 use reth_execution_errors::{StateProofError, StateRootError, StorageRootError, TrieWitnessError};
 use reth_trie::{
@@ -27,6 +27,10 @@ use crate::{
     BaseProofsTrieCursorFactory, CachedHashedCursorFactory, CachedTrieCursorFactory,
     CursorResultCache,
 };
+
+/// Witness prewarm jobs per rayon thread. More than one keeps work stealing effective when a few
+/// accounts dominate the prewarm cost; fewer, larger jobs walk shared trie paths fewer times.
+const PREWARM_JOBS_PER_THREAD: usize = 4;
 
 /// Build the trie + hashed cursor factories sharing one read transaction at the given block.
 const fn from_tx<'tx, 'db, S>(
@@ -438,31 +442,34 @@ where
             InMemoryTrieCursorFactory::new(trie_factory.clone(), &nodes_sorted);
         let overlay_hashed_factory =
             HashedPostStateCursorFactory::new(hashed_factory.clone(), &state_sorted);
-        // The witness walk below reads the trie serially. Compute each target account's share of
-        // its initial multiproof in parallel first, with the same proof algorithm, overlay, and
-        // prefix sets, so the serial walk issues the same cursor operations and replays cached
-        // results; proofs are discarded and any error resurfaces from the witness itself.
+        // The witness walk below reads the trie serially. Compute its initial multiproof in
+        // parallel first, with the same proof algorithm, overlay, and prefix sets, so the serial
+        // walk issues the same cursor operations and replays cached results; proofs are discarded
+        // and any error resurfaces from the witness itself. Each job proves a contiguous run of
+        // sorted accounts so the trie paths they share are walked once per job.
         tracing::info_span!("witness_prewarm").in_scope(|| {
-            target.multi_proof_targets().into_iter().collect::<Vec<_>>().into_par_iter().for_each(
-                |(hashed_address, slots)| {
-                    let mut targets = MultiProofTargetsV2 {
-                        account_targets: vec![hashed_address.into()],
-                        ..Default::default()
-                    };
+            let mut accounts = target.multi_proof_targets().into_iter().collect::<Vec<_>>();
+            accounts.sort_unstable_by_key(|(hashed_address, _)| *hashed_address);
+            let jobs = PREWARM_JOBS_PER_THREAD * rayon::current_num_threads();
+            accounts.par_chunks(accounts.len().div_ceil(jobs).max(1)).for_each(|chunk| {
+                let mut targets = MultiProofTargetsV2::default();
+                for (hashed_address, slots) in chunk {
+                    targets.account_targets.push((*hashed_address).into());
                     if !slots.is_empty() {
-                        targets
-                            .storage_targets
-                            .insert(hashed_address, slots.into_iter().map(Into::into).collect());
+                        targets.storage_targets.insert(
+                            *hashed_address,
+                            slots.iter().copied().map(Into::into).collect(),
+                        );
                     }
-                    let _ = MultiProofCalculator::new(
-                        overlay_trie_factory.clone(),
-                        overlay_hashed_factory.clone(),
-                        input.prefix_sets.clone().freeze(),
-                        Default::default(),
-                    )
-                    .multiproof(targets);
-                },
-            );
+                }
+                let _ = MultiProofCalculator::new(
+                    overlay_trie_factory.clone(),
+                    overlay_hashed_factory.clone(),
+                    input.prefix_sets.clone().freeze(),
+                    Default::default(),
+                )
+                .multiproof(targets);
+            });
         });
         let (prewarm_hits, prewarm_misses) = (cache.hits(), cache.misses());
         let witness = TrieWitness::new(overlay_trie_factory, overlay_hashed_factory)

@@ -484,7 +484,7 @@ transactions:
     type: transfer
 ```
 
-Recipient keys are always positioned with a runtime-random seed/offset (never the configured `seed`), so repeated runs never regenerate the same "fresh" addresses. The runner logs `randomized_recipient_seed`/`randomized_recipient_offset` at startup and writes `fresh_recipient_count` to the final summary. Recover recipients from that logged value with `AccountPool::from_mnemonic(mnemonic, fresh_recipient_count, randomized_recipient_offset)` or `AccountPool::with_offset(randomized_recipient_seed, fresh_recipient_count, recipient_offset)`.
+Recipient keys are always positioned with a runtime-random seed/offset (never the configured `seed`), so repeated runs never regenerate the same "fresh" addresses. The runner logs `seed`/`recipient_offset` at startup and writes `fresh_recipient_count` to the final summary. Recover recipients from that logged value with `AccountPool::from_mnemonic(mnemonic, fresh_recipient_count, recipient_offset)` or `AccountPool::with_offset(seed, fresh_recipient_count, recipient_offset)`.
 
 #### Validity (Conditional) Transactions
 
@@ -640,11 +640,12 @@ Read the `by_cohort` output as the payment comparison: under metered billing the
 pays for the gas it used. Under gas-limit billing the reverting arbs' `total_gas` and `total_fee_wei`
 rise to their declared limits. Set `LOAD_TEST_OUTPUT=<path>` to keep the JSON summary.
 
-Inclusion counts need a caveat. Pacing sizes the in-flight window from each payload's calibrated
-(metered) gas, so it counts a reverting arb at ~21-25k gas. Under gas-limit billing the arb reserves
-its full 500k declared limit, so blocks fill with fewer transactions than the pacer assumes. Some
-of the drop in included transactions after activation therefore comes from block space, not
-ordering.
+Inclusion counts need a caveat. Pacing uses one shared gas estimate for every transaction, the
+priority-lead arbs included. It starts from the calibrated receipt gas of the `transactions`
+workload (the storage writes) and is then corrected from observed receipt gas. Under gas-limit
+billing each arb reserves, and is billed, its full 500k declared limit, so blocks fill with fewer
+transactions and the pacing estimate rises only as receipt corrections catch up. Some of the drop
+in included transactions after activation therefore comes from block space, not ordering.
 `priority_lead_payload` takes any transaction type that works without chain preparation and
 submits through the validity path; config validation rejects payloads that need preparation
 (B-20, swaps, x402, token moves, AA bundles, `storage` without an explicit contract) and native
