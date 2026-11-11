@@ -16,6 +16,7 @@ use alloy_rpc_types_engine::PayloadId;
 use base_common_chains::Upgrades;
 use base_common_consensus::{BaseTransaction, CoinbaseTip, Predeploys};
 use base_common_evm::L1BlockInfo;
+use base_common_rpc_types_engine::PayloadReady;
 use base_execution_eip8130::IntrinsicGas;
 use base_execution_txpool::{
     BasePooledTx, GuardMetrics, ParkableTransactionPool, PredicateContext,
@@ -52,6 +53,7 @@ use reth_transaction_pool::{BestTransactionsAttributes, PoolTransaction, Transac
 use reth_trie_common::ExecutionWitnessMode;
 use reth_trie_parallel::state_root_task::PayloadStateRootHandle;
 use revm::context::{Block, BlockEnv};
+use tokio::sync::broadcast;
 use tracing::{debug, debug_span, info, instrument, trace, warn};
 
 use crate::{
@@ -115,6 +117,8 @@ pub struct BasePayloadBuilder<
     pub config: BaseBuilderConfig,
     /// Validity transactions resting from the last block this builder finished.
     pub resting_predicates: RestingPredicateStore,
+    /// Optional, non-blocking notifications for frozen sequencer payloads.
+    pub payload_ready: Option<broadcast::Sender<PayloadReady>>,
     /// Marker for the payload attributes type.
     _pd: PhantomData<Attrs>,
 }
@@ -132,6 +136,7 @@ where
             client: self.client.clone(),
             config: self.config.clone(),
             resting_predicates: self.resting_predicates.clone(),
+            payload_ready: self.payload_ready.clone(),
             _pd: PhantomData,
         }
     }
@@ -166,8 +171,15 @@ impl<Pool, Client, Evm, Attrs> BasePayloadBuilder<Pool, Client, Evm, Attrs> {
             evm_config,
             config,
             resting_predicates: RestingPredicateStore::default(),
+            payload_ready: None,
             _pd: PhantomData,
         }
+    }
+
+    /// Publishes a hint after a sequencer build returns a final, frozen payload.
+    pub fn with_payload_ready(mut self, sender: Option<broadcast::Sender<PayloadReady>>) -> Self {
+        self.payload_ready = sender;
+        self
     }
 
     /// Runs end-of-block maintenance of the resting validity set, such as the unseen sweep, on
@@ -314,14 +326,28 @@ where
         &self,
         args: BuildArguments<Self::Attributes, Self::BuiltPayload>,
     ) -> Result<BuildOutcome<Self::BuiltPayload>, PayloadBuilderError> {
-        self.build_payload(args, |attrs, resting| {
+        let no_tx_pool = args.config.attributes.no_tx_pool();
+        let outcome = self.build_payload(args, |attrs, resting| {
             ParkableBestPayloadTransactions::new(
                 self.pool.best_transactions_with_attributes_and_parking(
                     attrs,
                     resting.map(SharedRestingPredicates::iterator_hold),
                 ),
             )
-        })
+        })?;
+        if !no_tx_pool
+            && let BuildOutcome::Freeze(payload) = &outcome
+            && let Some(sender) = &self.payload_ready
+        {
+            // The payload is fully assembled, including its state root. Reth may still be
+            // installing this result into the job; on_missing_payload awaits that same build.
+            // A missing or lagging consumer must never block payload production.
+            let _ = sender.send(PayloadReady {
+                payload_id: payload.id(),
+                parent_hash: payload.block().parent_hash(),
+            });
+        }
+        Ok(outcome)
     }
 
     fn on_missing_payload(

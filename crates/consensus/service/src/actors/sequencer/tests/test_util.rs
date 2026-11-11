@@ -50,5 +50,6 @@ pub(in crate::actors::sequencer) fn test_actor() -> SequencerActor<
         unsafe_payload_gossip_client,
         sealer: None,
         pending_stop: None,
+        payload_ready: None,
     }
 }

@@ -2,6 +2,7 @@
 
 use std::fmt;
 
+use base_common_rpc_types_engine::PayloadReady;
 use base_execution_payload_builder::{
     RejectionCache,
     config::{BaseDAConfig, GasLimitConfig, ResourceMeteringConfig},
@@ -10,6 +11,7 @@ use base_node_core::args::RollupArgs;
 use eyre::Result;
 use reth_node_builder::{Node, NodeHandle, NodeHandleFor};
 use reth_provider::providers::BlockchainProvider;
+use tokio::sync::broadcast;
 use tracing::info;
 
 use crate::{
@@ -20,11 +22,17 @@ use crate::{
 
 type StartedCallback = Box<dyn FnOnce() -> Result<()> + Send + 'static>;
 
+/// Bounds retained ready hints; consumers fall back to their seal deadline on lag.
+const PAYLOAD_READY_CAPACITY: usize = 16;
+
 /// Handle to a launched Base execution node.
 #[derive(Debug)]
 pub struct LaunchedBaseNode {
     /// The underlying reth node handle.
     pub handle: NodeHandleFor<BaseNode>,
+    /// Frozen sequencer payload hints for the in-process CL. Subscribe before starting builds.
+    /// Lag or closure must fall back to the normal seal deadline; stale hints must be ignored.
+    pub payload_ready: broadcast::Receiver<PayloadReady>,
 }
 
 /// Wraps the Base node configuration and orchestrates builder wiring.
@@ -144,7 +152,7 @@ impl<SB: PayloadServiceBuilder> BaseNodeRunner<SB> {
     /// Applies all Base-specific wiring to the supplied builder, launches the node, and waits for
     /// shutdown.
     pub async fn run(self, builder: BaseNodeBuilder) -> Result<()> {
-        let LaunchedBaseNode { handle: NodeHandle { node: _node, node_exit_future } } =
+        let LaunchedBaseNode { handle: NodeHandle { node: _node, node_exit_future }, .. } =
             self.launch(builder).await?;
         node_exit_future.await?;
         Ok(())
@@ -153,11 +161,6 @@ impl<SB: PayloadServiceBuilder> BaseNodeRunner<SB> {
     /// Applies all Base-specific wiring to the supplied builder and returns a launched node
     /// handle without waiting for shutdown.
     pub async fn launch(self, builder: BaseNodeBuilder) -> Result<LaunchedBaseNode> {
-        let handle = self.launch_node(builder).await?;
-        Ok(LaunchedBaseNode { handle })
-    }
-
-    async fn launch_node(self, builder: BaseNodeBuilder) -> Result<NodeHandleFor<BaseNode>> {
         info!(target: "base-runner", "starting custom Base node");
 
         let Self {
@@ -172,6 +175,8 @@ impl<SB: PayloadServiceBuilder> BaseNodeRunner<SB> {
             started_callbacks,
         } = self;
         let mut base_node = BaseNode::new(rollup_args);
+        let (payload_ready_tx, payload_ready) = broadcast::channel(PAYLOAD_READY_CAPACITY);
+        base_node.payload_ready = Some(payload_ready_tx);
         if let Some(da_config) = da_config {
             base_node = base_node.with_da_config(da_config);
         }
@@ -198,7 +203,8 @@ impl<SB: PayloadServiceBuilder> BaseNodeRunner<SB> {
             .into_iter()
             .fold(hooks, |hooks, callback| hooks.add_node_started_hook(move |_| callback()));
 
-        hooks.apply_to(builder).launch().await
+        let handle = hooks.apply_to(builder).launch().await?;
+        Ok(LaunchedBaseNode { handle, payload_ready })
     }
 }
 

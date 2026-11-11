@@ -47,13 +47,13 @@ alloy-rpc-types-engine = { workspace = true, optional = true, features = [
 ] }
 
 # base-alloy
+base-common-rpc-types-engine.workspace = true
 base-common-rpc-types = { workspace = true, optional = true }
 base-common-network = { workspace = true, optional = true }
 base-common-consensus = { workspace = true, features = ["reth"] }
-base-common-rpc-types-engine = { workspace = true, optional = true }
 
 # tokio
-tokio = { workspace = true, optional = true }
+tokio = { workspace = true, features = ["sync"] }
 
 # rpc
 jsonrpsee = { workspace = true, optional = true }
@@ -91,7 +91,6 @@ test-utils = [
 	"dep:alloy-rpc-types-engine",
 	"dep:base-common-network",
 	"dep:base-common-rpc-types",
-	"dep:base-common-rpc-types-engine",
 	"dep:base-test-utils",
 	"dep:chrono",
 	"dep:jsonrpsee",
@@ -101,7 +100,6 @@ test-utils = [
 	"dep:reth-rpc-layer",
 	"dep:reth-tasks",
 	"dep:reth-tracing",
-	"dep:tokio",
 	"dep:tower",
 	"dep:tracing-subscriber",
 	"dep:url",

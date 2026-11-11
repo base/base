@@ -1,6 +1,7 @@
 //! Base Node types config.
 
 use base_common_consensus::BasePrimitives;
+use base_common_rpc_types_engine::PayloadReady;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_payload_builder::{
     RejectionCache,
@@ -48,6 +49,8 @@ pub struct BaseNode {
     pub resource_metering: ResourceMeteringConfig,
     /// Shared, cross-job cache of permanently rejected transaction hashes.
     pub rejection_cache: RejectionCache,
+    /// Optional notifications for frozen sequencer payloads.
+    pub payload_ready: Option<tokio::sync::broadcast::Sender<PayloadReady>>,
 }
 
 impl Default for BaseNode {
@@ -66,6 +69,7 @@ impl BaseNode {
             manifest_precheck_enabled: true,
             resource_metering: ResourceMeteringConfig::default(),
             rejection_cache: RejectionCache::default(),
+            payload_ready: None,
         }
     }
 
@@ -132,7 +136,8 @@ impl BaseNode {
                     .with_gas_limit_config(self.gas_limit_config.clone())
                     .with_manifest_precheck_enabled(self.manifest_precheck_enabled)
                     .with_resource_metering(self.resource_metering.clone())
-                    .with_rejection_cache(self.rejection_cache.clone()),
+                    .with_rejection_cache(self.rejection_cache.clone())
+                    .with_payload_ready(self.payload_ready.clone()),
             ))
             .network(BaseNetworkBuilder::new(!discovery_v4))
             .consensus(BaseConsensusBuilder::default())

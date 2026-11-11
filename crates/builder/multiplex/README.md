@@ -12,4 +12,7 @@ Runs Base flashblocks and Base basic payload builders in parallel behind a singl
 - with basic-only mode enabled, starts only the basic payload builder for operation after the
   cutover is complete,
 - defaults cutover mode to disabled so startup behavior is identical to plain
-  `FlashblocksServiceBuilder`.
+  `FlashblocksServiceBuilder`,
+- passes the runner's frozen-payload notification channel to the basic payload builder, so a
+  unified sequencer can seal a Denim block as soon as it freezes. Flashblocks builds send no
+  notifications.

@@ -7,6 +7,7 @@ use alloy_rpc_types_engine::JwtSecret;
 use base_cli_utils::{LogConfig, RuntimeManager};
 use base_common_chains::ChainConfig;
 use base_common_genesis::RollupConfig;
+use base_common_rpc_types_engine::PayloadReady;
 use base_consensus_node::{
     EngineConfig, L1ConfigBuilder, NodeMode, NodeOperatingMode, RollupNode, RollupNodeBuilder,
     UpgradeSignalBuilderConfig,
@@ -19,6 +20,7 @@ use clap::Args;
 use eyre::Context;
 use reth_node_core::args::TraceArgs;
 use strum::IntoEnumIterator;
+use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 use url::Url;
@@ -116,7 +118,7 @@ impl ConsensusNodeCommand {
 }
 
 /// Options used to start a consensus rollup node.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct ConsensusNodeStartOptions {
     /// Rollup configuration for the node.
     pub rollup_config: RollupConfig,
@@ -126,6 +128,8 @@ pub struct ConsensusNodeStartOptions {
     pub cancellation: CancellationToken,
     /// Startup behavior for contract-backed upgrade signal application.
     pub upgrade_signal_startup_mode: UpgradeSignalStartupMode,
+    /// Optional frozen-payload hints from an embedded execution node.
+    pub payload_ready: Option<broadcast::Receiver<PayloadReady>>,
 }
 
 impl ConsensusNodeStartOptions {
@@ -136,7 +140,13 @@ impl ConsensusNodeStartOptions {
             overrides: ConsensusNodeOverrides::default(),
             cancellation: CancellationToken::new(),
             upgrade_signal_startup_mode: UpgradeSignalStartupMode::ReadAndApply,
+            payload_ready: None,
         }
+    }
+
+    /// Enables early sealing of matching frozen payloads from embedded execution.
+    pub fn with_payload_ready(self, receiver: broadcast::Receiver<PayloadReady>) -> Self {
+        Self { payload_ready: Some(receiver), ..self }
     }
 
     /// Sets caller-supplied endpoint overrides.
@@ -661,16 +671,17 @@ impl ConsensusNodeArgs {
             overrides,
             cancellation,
             upgrade_signal_startup_mode,
+            payload_ready,
         } = options;
-        self.build_rollup_node_with_overrides_and_upgrade_signal_startup(
-            rollup_config,
-            overrides,
-            upgrade_signal_startup_mode,
-        )
-        .await?
-        .start_with_cancellation(cancellation)
-        .await
-        .map_err(|e| {
+        let mut node = self
+            .build_rollup_node_with_overrides_and_upgrade_signal_startup(
+                rollup_config,
+                overrides,
+                upgrade_signal_startup_mode,
+            )
+            .await?;
+        node.payload_ready = payload_ready;
+        node.start_with_cancellation(cancellation).await.map_err(|e| {
             error!(target: "rollup_node", error = %e, "Failed to start rollup node service");
             eyre::eyre!(e)
         })

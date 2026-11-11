@@ -39,9 +39,9 @@ pub struct SequencerConfig {
     pub l1_conf_delay: u64,
     /// Request timeout for L1 RPC calls on the sequencer block-production hot path.
     pub l1_rpc_timeout: Duration,
-    /// Fixed offset into each subsecond slot at which the sealed payload is requested from
-    /// the engine once Denim is active. Must agree with the builder-side transaction
-    /// cutoff, which defaults from the same constant
+    /// Fallback offset into each subsecond slot for requesting the sealed payload once Denim
+    /// is active. A matching frozen-payload hint may trigger the request sooner. Must agree
+    /// with the builder-side transaction cutoff, which defaults from the same constant
     /// ([`base_protocol::DEFAULT_SEAL_OFFSET`]).
     pub seal_offset: Duration,
 }

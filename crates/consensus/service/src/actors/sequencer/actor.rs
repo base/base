@@ -8,12 +8,13 @@ use std::{
 use alloy_primitives::B256;
 use async_trait::async_trait;
 use base_common_genesis::RollupConfig;
+use base_common_rpc_types_engine::PayloadReady;
 use base_consensus_derive::AttributesBuilder;
 use base_consensus_rpc::SequencerAdminAPIError;
 use base_protocol::{L2BlockInfo, to_system_config_from_payload};
 use tokio::{
     select,
-    sync::{mpsc, oneshot},
+    sync::{broadcast, mpsc, oneshot},
     task::JoinError,
     time::Interval,
 };
@@ -78,8 +79,8 @@ pub struct SequencerActor<
     pub recovery_mode: RecoveryModeGuard,
     /// The rollup configuration.
     pub rollup_config: Arc<RollupConfig>,
-    /// Fixed offset into each subsecond slot at which the sealed payload is requested from
-    /// the engine once Denim is active. See [`SequencerConfig::seal_offset`].
+    /// Fallback offset for requesting a Denim payload if no matching frozen-payload hint arrives.
+    /// See [`SequencerConfig::seal_offset`].
     ///
     /// [`SequencerConfig::seal_offset`]: crate::SequencerConfig::seal_offset
     pub seal_offset: Duration,
@@ -91,6 +92,8 @@ pub struct SequencerActor<
     /// Stashed response sender for a pending `stop_sequencer` call that is waiting
     /// for the in-flight seal pipeline to complete before responding.
     pub pending_stop: Option<PendingStopSender>,
+    /// Optional frozen-payload hints from the embedded EL; the seal ticker remains the fallback.
+    pub payload_ready: Option<broadcast::Receiver<PayloadReady>>,
 }
 
 impl<
@@ -345,9 +348,9 @@ where
             .inspect_err(|_| self.cancellation_token.cancel())
     }
 
-    /// Wall-clock time at which `block_number` should be sealed.
+    /// Wall-clock deadline for sealing `block_number` if it has not already frozen.
     ///
-    /// Denim-active blocks seal at a fixed offset into their 200ms slot, computed as
+    /// Denim-active blocks fall back to a fixed offset into their 200ms slot, computed as
     /// `T_N − (interval − seal_offset)` so the first Denim block still seals relative to
     /// its own timestamp. The target ignores how long the previous seal took: lateness
     /// shrinks the current build window instead of shifting the schedule.
@@ -634,6 +637,29 @@ where
         Ok(())
     }
 
+    /// Wakes the seal ticker only for a frozen payload belonging to the active Denim build.
+    pub fn handle_payload_ready(
+        &self,
+        ready: PayloadReady,
+        pipeline: &BuildPipelineState,
+        build_ticker: &mut ScheduledTicker,
+    ) {
+        if !self.is_active || self.sealer.is_some() {
+            return;
+        }
+        let Some(handle) = &pipeline.next_payload_to_seal else {
+            return;
+        };
+        if ready.payload_id == handle.payload_id
+            && ready.parent_hash == handle.attributes_with_parent.parent().block_info.hash
+            && self
+                .rollup_config
+                .is_denim_active(self.rollup_config.l2_block_timestamp(handle.block_number()))
+        {
+            build_ticker.reset_immediately();
+        }
+    }
+
     /// Dispatches one build-ticker tick to whichever of the three build states is active:
     /// a queued child build gated on its parent's timestamp, an in-flight payload ready to seal,
     /// or neither, in which case a fresh build is started on the current unsafe head.
@@ -753,6 +779,20 @@ where
                         result,
                     ).await?;
                 }
+                ready = async {
+                    match self.payload_ready.as_mut() {
+                        Some(receiver) => receiver.recv().await,
+                        None => std::future::pending().await,
+                    }
+                }, if self.sealer.is_none() => {
+                    match ready {
+                        Ok(ready) => self.handle_payload_ready(ready, &pipeline, &mut build_ticker),
+                        Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                            debug!(target: "sequencer", skipped, "Lagged frozen-payload hints; seal deadline remains active");
+                        }
+                        Err(broadcast::error::RecvError::Closed) => self.payload_ready = None,
+                    }
+                }
                 // Tick is gated on `self.sealer.is_none()` to make the ticker and sealer arms
                 // mutually exclusive. In catch-up mode reset_immediately() fires every tick,
                 // making the ticker Poll::Ready at the same time as the sealer's step().await
@@ -803,21 +843,25 @@ mod tests {
     use alloy_primitives::{B256, Sealed};
     use alloy_rpc_types_engine::{ForkchoiceUpdated, PayloadId, PayloadStatus, PayloadStatusEnum};
     use base_common_consensus::{BaseBlock, BaseTxEnvelope, TxDeposit};
-    use base_common_genesis::{ChainGenesis, RollupConfig, SystemConfig, UpgradeConfig};
+    use base_common_genesis::{
+        BaseUpgradeConfig, ChainGenesis, RollupConfig, SystemConfig, UpgradeConfig,
+    };
     use base_common_rpc_types_engine::{
         BaseExecutionPayload, BaseExecutionPayloadEnvelope, BasePayloadAttributes,
     };
     use base_consensus_derive::test_utils::TestAttributesBuilder;
     use base_consensus_engine::{Engine, test_utils::TestEngineStateBuilder};
-    use base_protocol::{BlockInfo, L1BlockInfoBedrock};
+    use base_protocol::{AttributesWithParent, BlockInfo, L1BlockInfoBedrock};
+    use futures::FutureExt;
     use rstest::rstest;
     use tokio::sync::watch;
 
     use super::*;
     use crate::{
         EngineActorRequest, EngineProcessor, EngineRequestReceiver, MockConductor,
-        MockEngineDerivationClient, MockOriginSelector, MockUnsafePayloadGossipClient,
-        QueuedSequencerEngineClient, SequencerEngineRequestCoordinator,
+        MockEngineDerivationClient, MockOriginSelector, MockSequencerEngineClient,
+        MockUnsafePayloadGossipClient, QueuedSequencerEngineClient,
+        SequencerEngineRequestCoordinator,
         actors::sequencer::tests::test_actor,
         test_utils::{EngineClientCall, FakeEngineClient, ScriptedForkchoiceResponse},
     };
@@ -854,6 +898,7 @@ mod tests {
             unsafe_payload_gossip_client: MockUnsafePayloadGossipClient::new(),
             sealer: None,
             pending_stop: None,
+            payload_ready: None,
         };
         let actor = tokio::spawn(actor.start(()));
         let EngineActorRequest::ResetRequest(reset) =
@@ -1012,6 +1057,7 @@ mod tests {
             unsafe_payload_gossip_client: gossip,
             sealer: None,
             pending_stop: None,
+            payload_ready: None,
         };
         let actor = tokio::spawn(actor.start(()));
         if during_backoff {
@@ -1052,6 +1098,192 @@ mod tests {
                 head.block_info.hash
             );
         }
+    }
+
+    #[rstest]
+    #[case("ready", true)]
+    #[case("lagged", true)]
+    #[case("closed", false)]
+    #[case("missing", false)]
+    #[tokio::test(start_paused = true)]
+    async fn actor_receives_ready_hints_or_uses_deadline(
+        #[case] delivery: &'static str,
+        #[case] early: bool,
+    ) {
+        let mut actor = test_actor();
+        let future = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() + 10;
+        let config = Arc::new(RollupConfig {
+            genesis: ChainGenesis { l2_time: future, ..Default::default() },
+            block_time: 2,
+            upgrades: UpgradeConfig {
+                base: BaseUpgradeConfig { denim: Some(0), ..Default::default() },
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        actor.rollup_config = Arc::clone(&config);
+        actor.builder.rollup_config = config;
+        let mut attributes = BasePayloadAttributes::default();
+        attributes.payload_attributes.timestamp = future;
+        actor.builder.attributes_builder.attributes = vec![Ok(attributes)];
+        actor
+            .builder
+            .origin_selector
+            .expect_next_l1_origin()
+            .times(1)
+            .return_once(|_| Ok(BlockInfo::default()));
+        let (tx, rx) = broadcast::channel(1);
+        actor.payload_ready = Some(rx);
+        let keepalive = (delivery == "missing").then(|| tx.clone());
+        let (built_tx, built_rx) = oneshot::channel();
+        let (sealed_tx, mut sealed_rx) = oneshot::channel();
+        let cancel = actor.cancellation_token.clone();
+        let mut engine = MockSequencerEngineClient::new();
+        engine.expect_reset_engine_forkchoice().times(1).return_once(|_| Ok(()));
+        engine.expect_get_unsafe_head().times(2).returning(|| Ok(L2BlockInfo::default()));
+        engine.expect_start_build_block().times(1).return_once(move |attributes| {
+            let id = PayloadId::new([7; 8]);
+            let ready =
+                PayloadReady { payload_id: id, parent_hash: attributes.parent().block_info.hash };
+            if delivery == "ready" || delivery == "lagged" {
+                tx.send(ready).unwrap();
+                if delivery == "lagged" {
+                    tx.send(ready).unwrap();
+                }
+            }
+            // Notify before FCU returns: the actor must retain this fast-build signal.
+            built_tx.send(()).unwrap();
+            Ok(id)
+        });
+        engine.expect_get_sealed_payload().times(1).return_once(move |id, _| {
+            assert_eq!(id, PayloadId::new([7; 8]));
+            sealed_tx.send(()).unwrap();
+            cancel.cancel();
+            Ok(valid_sealer().0.envelope)
+        });
+        let engine = Arc::new(engine);
+        actor.engine_client = Arc::clone(&engine);
+        actor.builder.engine_client = engine;
+        let task = tokio::spawn(actor.start(()));
+        built_rx.await.unwrap();
+        let first = tokio::time::timeout(Duration::from_secs(1), &mut sealed_rx).await;
+        if early {
+            first.expect("ready hint must fetch before the seal deadline").unwrap();
+        } else {
+            assert!(first.is_err(), "no hint must preserve the scheduled seal");
+            tokio::time::timeout(Duration::from_secs(20), sealed_rx).await.unwrap().unwrap();
+        }
+        task.await.unwrap().unwrap();
+        drop(keepalive);
+    }
+
+    fn ready_build() -> (PayloadReady, BuildPipelineState) {
+        let ready =
+            PayloadReady { payload_id: PayloadId::new([7; 8]), parent_hash: B256::repeat_byte(8) };
+        let parent = L2BlockInfo {
+            block_info: BlockInfo { hash: ready.parent_hash, ..Default::default() },
+            ..Default::default()
+        };
+        let handle = UnsealedPayloadHandle {
+            payload_id: ready.payload_id,
+            attributes_with_parent: AttributesWithParent::new(
+                BasePayloadAttributes::default(),
+                parent,
+                None,
+                false,
+            ),
+        };
+        (ready, BuildPipelineState { next_payload_to_seal: Some(handle), ..Default::default() })
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn frozen_hint_fetches_payload_before_deadline_once() {
+        let mut actor = test_actor();
+        Arc::make_mut(&mut actor.rollup_config).upgrades.base.denim = Some(0);
+        let (ready, mut pipeline) = ready_build();
+        let parent =
+            *pipeline.next_payload_to_seal.as_ref().unwrap().attributes_with_parent.parent();
+        let (sealer, _, _) = valid_sealer();
+        let mut engine = MockSequencerEngineClient::new();
+        engine.expect_get_unsafe_head().times(1).return_once(move || Ok(parent));
+        engine
+            .expect_get_sealed_payload()
+            .times(1)
+            .withf(move |id, _| *id == ready.payload_id)
+            .return_once(move |_, _| Ok(sealer.envelope));
+        actor.engine_client = Arc::new(engine);
+        let mut ticker = ScheduledTicker::new(Duration::from_secs(2));
+        ticker.reset_at(SystemTime::now() + Duration::from_secs(10));
+        assert!(ticker.tick().now_or_never().is_none());
+        actor.handle_payload_ready(ready, &pipeline, &mut ticker);
+        assert!(ticker.tick().now_or_never().is_some());
+        actor.handle_build_tick(&mut pipeline, &mut ticker, None).await.unwrap();
+        assert!(actor.sealer.is_some());
+        assert!(pipeline.next_payload_to_seal.is_none());
+        // A duplicate cannot wake the ticker while the payload is already sealing.
+        ticker.reset_at(SystemTime::now() + Duration::from_secs(10));
+        actor.handle_payload_ready(ready, &pipeline, &mut ticker);
+        assert!(ticker.tick().now_or_never().is_none());
+    }
+
+    #[rstest]
+    #[case("wrong_id")]
+    #[case("wrong_parent")]
+    #[case("stopped")]
+    #[case("already_sealing")]
+    #[case("pre_denim")]
+    #[case("no_build")]
+    #[tokio::test(start_paused = true)]
+    async fn unrelated_ready_hints_preserve_seal_deadline(#[case] scenario: &str) {
+        let mut actor = test_actor();
+        Arc::make_mut(&mut actor.rollup_config).upgrades.base.denim = Some(0);
+        let (mut ready, mut pipeline) = ready_build();
+        match scenario {
+            "wrong_id" => ready.payload_id = PayloadId::new([9; 8]),
+            "wrong_parent" => ready.parent_hash = B256::repeat_byte(9),
+            "stopped" => actor.is_active = false,
+            "already_sealing" => actor.sealer = Some(valid_sealer().0),
+            "pre_denim" => {
+                Arc::make_mut(&mut actor.rollup_config).upgrades.base = BaseUpgradeConfig::default()
+            }
+            "no_build" => pipeline.next_payload_to_seal = None,
+            _ => unreachable!(),
+        }
+        let mut ticker = ScheduledTicker::new(Duration::from_secs(2));
+        ticker.reset_at(SystemTime::now() + Duration::from_secs(10));
+        actor.handle_payload_ready(ready, &pipeline, &mut ticker);
+        assert!(ticker.tick().now_or_never().is_none());
+        tokio::time::advance(Duration::from_secs(10)).await;
+        assert!(ticker.tick().now_or_never().is_some());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn early_insertion_keeps_next_build_at_parent_timestamp() {
+        let mut actor = test_actor();
+        let future = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() + 30;
+        Arc::make_mut(&mut actor.rollup_config).genesis.l2_time = future;
+        Arc::make_mut(&mut actor.rollup_config).upgrades.base.denim = Some(0);
+        let (sealer, head, _) = valid_sealer();
+        actor.sealer = Some(sealer);
+        let mut pipeline = BuildPipelineState::default();
+        let mut ticker = ScheduledTicker::new(Duration::from_secs(2));
+        let mut reconciliation = tokio::time::interval(Duration::from_secs(2));
+        actor
+            .handle_seal_step_result(
+                &mut pipeline,
+                &mut None,
+                &mut reconciliation,
+                &mut ticker,
+                Ok(SealStepOutcome::Inserted(head)),
+            )
+            .await
+            .unwrap();
+        assert_eq!(pipeline.pending_build_parent, Some(head));
+        assert!(ticker.tick().now_or_never().is_none());
+        tokio::time::advance(Duration::from_secs(29)).await;
+        assert!(ticker.tick().now_or_never().is_none());
+        tokio::time::advance(Duration::from_secs(2)).await;
+        assert!(ticker.tick().now_or_never().is_some());
     }
 
     fn valid_sealer() -> (PayloadSealer, L2BlockInfo, SystemConfig) {
