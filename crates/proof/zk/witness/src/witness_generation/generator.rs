@@ -1,6 +1,9 @@
 //! Witness generation for Succinct proof pipelines.
 
-use std::sync::{Arc, Mutex};
+use std::{
+    mem,
+    sync::{Arc, Mutex},
+};
 
 use anyhow::Result;
 use base_proof::{CachingOracle, OracleBlobProvider};
@@ -67,8 +70,8 @@ impl WitnessGenerator {
         let _ = executor.run(boot_info, pipeline, cursor, l2_provider).await?;
 
         Ok(DefaultWitnessData::from_parts(
-            preimage_witness_store.lock().unwrap().clone(),
-            blob_data.lock().unwrap().clone(),
+            mem::take(&mut *preimage_witness_store.lock().unwrap()),
+            mem::take(&mut *blob_data.lock().unwrap()),
         ))
     }
 }

@@ -2,6 +2,10 @@
 
 Native EIP-8130 (Account Abstraction by Account Configuration) validation helpers.
 
+The transaction type itself (`AA_TX_TYPE`, `0x79`), with its gas schedule, nonces and payer
+modes, is specified separately as EIP-8430, the transaction-type half of EIP-8130. These crates
+keep the EIP-8130 name for both.
+
 This crate owns the full reusable EIP-8130 validation pipeline that previously lived
 across several small crates:
 
@@ -50,7 +54,8 @@ The crate keeps the protocol stages explicit while avoiding crate sprawl:
 - **State** reads `AccountConfiguration` storage directly, without EVM calls.
 - **Authorize** binds resolved actors to account config, expiry, scope, and policy.
 - **Transaction auth** applies sender, payer, and config-change operation gates.
-- **Nonce validation** checks protocol, 2D-channel, and nonce-free replay state.
+- **Nonce validation** checks protocol, 2D-channel, and nonce-free replay state,
+  and requires a transaction carrying a delegation to use the protocol nonce.
 - **Gas and fees** compute the EIP-8130 intrinsic gas and validate the fee caps
   and the payer's balance (see below).
 - **Orchestration** composes the final sender/payer signatures with the

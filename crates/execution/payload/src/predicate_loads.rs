@@ -150,7 +150,7 @@ mod tests {
     use crate::ValidityPredicateKey;
 
     fn context() -> PredicateContext {
-        PredicateContext { block_number: 1, flashblock_index: 0 }
+        PredicateContext { block_number: 1 }
     }
 
     /// Builds an in-memory database seeded with one account that has a balance and a single

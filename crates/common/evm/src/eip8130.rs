@@ -429,8 +429,11 @@ impl Eip8130Executor {
         };
 
         // Dispatch `calls` from the resolved sender so `tx.origin` reads correctly
-        // (mirrors `prepay`'s caller overwrite on the execution path).
-        evm.ctx_mut().tx.base.caller = outcome.sender;
+        // and bump its protocol nonce, as the execution path does.
+        if let Err(err) = Self::consume_sender_nonce(evm.ctx_mut(), &outcome) {
+            Self::discard_transaction_state(evm);
+            return Err(err);
+        }
 
         // Warm precompiles/coinbase and set the journal spec id exactly as
         // [`Self::execute`] does, so the simulated `calls` are charged the same
@@ -734,9 +737,9 @@ impl Eip8130Executor {
     /// Bumps the sender's protocol nonce (when the transaction uses the protocol
     /// nonce channel) and overwrites the placeholder `TxEnv` caller with the
     /// resolved sender so `tx.origin` (the `ORIGIN` opcode) reads correctly
-    /// during `calls`. Runs for every included transaction, whether or not fees
-    /// are charged: a fee-free simulation must still observe the nonce bump and
-    /// the real origin.
+    /// during `calls`. Runs for every executed transaction, whether or not fees
+    /// are charged, and in [`Self::simulate`]: a simulation must still observe
+    /// the nonce bump and the real origin.
     fn consume_sender_nonce<DB>(
         ctx: &mut BaseContext<DB>,
         outcome: &Eip8130Outcome,
@@ -1699,6 +1702,51 @@ mod tests {
         );
     }
 
+    /// A call that reads its own 2D nonce during simulation sees the
+    /// post-increment sequence, as it would on inclusion.
+    #[test]
+    fn simulate_calls_see_the_advanced_two_dimensional_nonce() {
+        let key = signing_key(0x2b);
+        let sender = eoa_address(&key);
+        let reader = address!("0x00000000000000000000000000000000000000ab");
+        let nonce_key = 7u8;
+        let current_nonce = 3u8;
+
+        // STATICCALL getNonce(sender, nonce_key) and revert unless it returns
+        // current_nonce + 1.
+        let mut code = vec![0x63];
+        code.extend_from_slice(&keccak256("getNonce(address,uint256)")[..4]);
+        code.extend_from_slice(&[0x60, 0xe0, 0x1b, 0x60, 0x00, 0x52, 0x73]);
+        code.extend_from_slice(sender.as_slice());
+        code.extend_from_slice(&[0x60, 0x04, 0x52, 0x60, nonce_key, 0x60, 0x24, 0x52]);
+        code.extend_from_slice(&[0x60, 0x20, 0x60, 0x00, 0x60, 0x44, 0x60, 0x00, 0x73]);
+        code.extend_from_slice(NonceManagerStorage::ADDRESS.as_slice());
+        code.extend_from_slice(&[0x5a, 0xfa, 0x50, 0x60, 0x00, 0x51, 0x60, current_nonce + 1]);
+        let ok = u8::try_from(code.len() + 8).unwrap();
+        code.extend_from_slice(&[0x14, 0x60, ok, 0x57, 0x60, 0x00, 0x80, 0xfd, 0x5b, 0x00]);
+
+        let mut tx = base_tx();
+        tx.nonce_key = U256::from(nonce_key);
+        tx.nonce_sequence = current_nonce.into();
+        tx.calls = vec![vec![Call { to: reader, value: U256::ZERO, data: Bytes::new() }]];
+        let signed = eoa_signed(tx, &key);
+        let nonce_slot = NonceManagerStorage::nonce_slot(sender, U256::from(nonce_key)).unwrap();
+        let mut evm = evm_with_accounts_and_storage(
+            U256::from(10u64).pow(U256::from(18u64)),
+            sender,
+            &[(reader, code.into())],
+            &[(NonceManagerStorage::ADDRESS, nonce_slot, U256::from(current_nonce))],
+        );
+        let mut call = into_base_tx(&signed);
+        call.base.caller = sender;
+        if let Some(parts) = call.eip8130.as_mut() {
+            parts.mode = Eip8130ExecutionMode::Call;
+        }
+
+        let outcome = evm.transact_raw(call).expect("call simulation runs");
+        assert!(outcome.result.is_success(), "expected success, got {:?}", outcome.result);
+    }
+
     #[test]
     fn transact_raw_rejects_delegation_over_ordinary_sender_code_without_replacing_it() {
         let key = signing_key(0x23);
@@ -1722,6 +1770,71 @@ mod tests {
             "unexpected delegation rejection: {reason}"
         );
         assert_eq!(journal_account_code(&mut evm, sender), ordinary_code);
+    }
+
+    /// Inclusion validates the nonce before authorizing or applying account
+    /// changes, so a stale transaction is rejected for its nonce even when an
+    /// account change would also fail.
+    #[test]
+    fn stale_nonce_is_rejected_before_account_changes() {
+        let key = signing_key(0x25);
+        let sender = eoa_address(&key);
+        let ordinary_code = bytes!("60006000");
+        let mut tx = base_tx();
+        tx.sender = Some(sender);
+        tx.account_changes = vec![AccountChange::Delegation(Delegation {
+            target: address!("0x00000000000000000000000000000000000000dd"),
+        })];
+        let signed = configured_signed(tx, &key);
+        let mut evm = evm_with(U256::from(10u64).pow(U256::from(18u64)), sender);
+        seed_account_code(&mut evm, sender, ordinary_code.clone());
+        let db = evm.ctx_mut().journal_mut().db_mut();
+        let mut info = db.basic(sender).expect("account").unwrap_or_default();
+        info.nonce = 1;
+        db.insert_account_info(sender, info);
+
+        let error = evm.transact_raw(into_base_tx(&signed)).unwrap_err();
+
+        let EVMError::Transaction(BaseTransactionError::Eip8130(reason)) = error else {
+            panic!("a stale nonce must reject inclusion, got {error:?}");
+        };
+        assert!(reason.contains("below the channel nonce"), "unexpected rejection: {reason}");
+        assert_eq!(journal_account_code(&mut evm, sender), ordinary_code);
+    }
+
+    /// A delegation must consume the protocol nonce: inclusion accepts it on
+    /// nonce key 0, leaving the delegated account with a non-zero nonce, and
+    /// rejects it on a 2D nonce lane or nonce-free.
+    #[test]
+    fn delegation_requires_protocol_nonce() {
+        let key = signing_key(0x27);
+        let sender = eoa_address(&key);
+        let target = address!("0x00000000000000000000000000000000000000dd");
+        let transact = |nonce_key: U256| {
+            let mut tx = base_tx();
+            tx.nonce_key = nonce_key;
+            tx.account_changes = vec![AccountChange::Delegation(Delegation { target })];
+            let signed = eoa_signed(tx, &key);
+            let mut evm = evm_with(U256::from(10u64).pow(U256::from(18u64)), sender);
+            evm.transact_raw(into_base_tx(&signed))
+        };
+
+        let outcome = transact(U256::ZERO).expect("delegation on the protocol nonce executes");
+        assert!(outcome.result.is_success());
+        let sender_acc = outcome.state.get(&sender).expect("sender in state");
+        assert_eq!(sender_acc.info.nonce, 1);
+        assert!(!sender_acc.info.is_empty_code_hash(), "delegation indicator must be installed");
+
+        for nonce_key in [U256::from(7), Eip8130Constants::NONCE_KEY_MAX] {
+            let error = transact(nonce_key).unwrap_err();
+            let EVMError::Transaction(BaseTransactionError::Eip8130(reason)) = error else {
+                panic!("a delegation off the protocol nonce must reject inclusion, got {error:?}");
+            };
+            assert!(
+                reason.contains("must use the protocol nonce"),
+                "unexpected rejection: {reason}"
+            );
+        }
     }
 
     #[test]
@@ -2521,21 +2634,15 @@ mod tests {
     fn simulate_estimate_covers_gross_gas_when_sstore_refund_earned() {
         // Proof that the estimate returns the GROSS call spend, not the net
         // billable charge. The target contract clears storage slot 0 (pre-seeded
-        // to 1), earning an EIP-3529 SSTORE_CLEARS refund (~4800 gas). The old
-        // code returned `billable_gas` (call_gas_spent − capped_refund) as the
-        // estimate; using that as gas_limit leaves the call pool one refund-unit
-        // short, causing OOG. The fixed estimate returns the gross amount
-        // (intrinsic + call_gas_spent, no refund subtracted). Assertions:
+        // to 1), earning an EIP-3529 SSTORE_CLEARS refund (~4800 gas). The net
+        // charge `charge_gas` (gross less the refund, raised to the EIP-7623 floor
+        // so the limit is admissible) as gas_limit leaves the call pool one
+        // refund-unit short; the refund swamps any calldata-encoding
+        // variance between the two gas-limit values (~16 gas), so that run
+        // reliably OOGs. Assertions:
         //   - estimate_gas >= the metered gross charge, and > charge_gas
         //   - executing at gas_limit = charge_gas reverts (pool too small)
         //   - executing at gas_limit = estimate_gas succeeds
-        //
-        // Note: `charge_gas` is the net charge the old code wrongly used as the
-        // estimate: the metered gross charge (from the `eth_call` path) less the
-        // EIP-3529 SSTORE_CLEARS refund, raised to the EIP-7623 floor so the
-        // limit is admissible. The refund (4800 gas) swamps any
-        // calldata-encoding variance between the two gas-limit values (~16 gas),
-        // so the `charge_gas` run reliably OOGs.
         //
         // Target bytecode: PUSH1 0, PUSH1 0, SSTORE (slot 0 ← 0), STOP.
         let key = signing_key(0x7b);

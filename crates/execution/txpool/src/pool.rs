@@ -37,8 +37,8 @@ use tokio::{
 use tracing::debug;
 
 use crate::{
-    Admission, BasePooledTx, BaseTransactionValidator, BestTransactionsHold, GuardLimits,
-    GuardMetrics, InvalidationCause, InvalidationKey, LimitRejection, MempoolGuard,
+    Admission, BasePooledTx, BaseTransactionValidator, BaseTxPoolError, BestTransactionsHold,
+    GuardLimits, GuardMetrics, InvalidationCause, InvalidationKey, LimitRejection, MempoolGuard,
     ParkableBestTransactions, ParkableTransactionPool, ParkedBestTransactions, PoolStore,
     StateDiffInvalidation, ValidityPoolLimits, ValidityPoolMetrics,
     best::{BridgedDescendants, MergeBestTransactions},
@@ -538,7 +538,7 @@ where
     /// have moved back (a reorg, or reth's resync of drifted accounts), and a
     /// protocol-nonce lane anchors at the highest nonce reported for it, as
     /// reth does for the sender's standard transactions. Channel lanes and
-    /// pre-canonical (flashblock) nonces always move forward only.
+    /// pre-canonical nonces always move forward only.
     ///
     /// Runs under `protocol_admission_lock`: the target is derived from the
     /// standard stores' state without holding the validity lock, so a
@@ -778,18 +778,11 @@ where
         transaction.transaction().validity_conditions().block().expiry_bound()
     }
 
-    /// Optional flashblock upper bound, paired with the block bound for pool eviction.
-    fn validity_flashblock_expiry_bound(
-        validated: &TransactionValidationOutcome<T>,
-    ) -> Option<u64> {
-        let transaction = validated.as_valid_transaction()?;
-        transaction.transaction().validity_conditions().flashblock().expiry_bound()
-    }
-
     /// Rechecks an EIP-8130 transaction against the pool's block gas limit, which can
     /// move after validation, as reth's protocol pool does for every transaction at
     /// insert. Execution reserves `gas_limit + payer_auth` against the block, and an
-    /// unpriceable payer authentication never fits.
+    /// unpriceable payer authentication never fits. Only a `gas_limit` over the limit
+    /// on its own is a bad transaction: the hash does not cover `payer_auth`.
     fn ensure_eip8130_fits_block_gas_limit(
         &self,
         hash: TxHash,
@@ -802,21 +795,21 @@ where
         let Some(signed) = transaction.as_eip8130() else {
             return Ok(());
         };
+        let gas_limit = transaction.gas_limit();
         let reserved_gas = IntrinsicGas::payer_auth_cost_of(signed)
-            .map_or(u64::MAX, |payer_auth| {
-                FeeCheck::max_chargeable_gas(transaction.gas_limit(), payer_auth)
-            });
+            .map_or(u64::MAX, |payer_auth| FeeCheck::max_chargeable_gas(gas_limit, payer_auth));
         let block_gas_limit = self.protocol_pool.block_info().block_gas_limit;
-        if reserved_gas > block_gas_limit {
-            return Err(PoolError::new(
-                hash,
-                PoolErrorKind::InvalidTransaction(InvalidPoolTransactionError::ExceedsGasLimit(
-                    reserved_gas,
-                    block_gas_limit,
-                )),
-            ));
+        if reserved_gas <= block_gas_limit {
+            return Ok(());
         }
-        Ok(())
+        let error = if gas_limit > block_gas_limit {
+            InvalidPoolTransactionError::ExceedsGasLimit(reserved_gas, block_gas_limit)
+        } else {
+            InvalidPoolTransactionError::other(BaseTxPoolError::Eip8130Authentication {
+                reason: BaseTxPoolError::PAYER_AUTH_EXCEEDS_BLOCK_GAS_LIMIT,
+            })
+        };
+        Err(PoolError::new(hash, PoolErrorKind::InvalidTransaction(error)))
     }
 
     /// Records a transaction's last valid block in the block-expiry index,
@@ -840,7 +833,6 @@ where
         &self,
         hash: TxHash,
         last_valid_block: Option<u64>,
-        last_valid_flashblock: Option<u64>,
         replaced: Option<TxHash>,
     ) {
         if last_valid_block.is_none() && replaced.is_none() {
@@ -851,14 +843,13 @@ where
             block_expiry.remove(&replaced);
         }
         if let Some(last_valid_block) = last_valid_block {
-            block_expiry.insert_with_flashblock(hash, last_valid_block, last_valid_flashblock);
+            block_expiry.insert(hash, last_valid_block);
         }
     }
 
     /// Evicts validity-predicate transactions whose last valid block is at or
     /// before the newly committed `committed_block`, since the next block cannot include them.
     ///
-    /// Flashblock-bounded deadlines expire here too, once their block commits.
     /// Entries removed through inclusion or replacement remain indexed until
     /// their deadline, bounding index growth to the furthest accepted block bound.
     fn expire_by_block(&self, committed_block: u64) {
@@ -1122,7 +1113,6 @@ where
         let pre_admitted = self.pre_admit_protocol_transaction(hash, replaced, &validated)?;
         // Capture the block-expiry bounds before `validated` is consumed below.
         let block_expiry_bound = Self::validity_block_expiry_bound(&validated);
-        let flashblock_expiry_bound = Self::validity_flashblock_expiry_bound(&validated);
         let result = match insert(validated) {
             Ok(result) => result,
             Err(error) => {
@@ -1136,7 +1126,7 @@ where
         if let Some(cross) = cross {
             self.remove_cross_store_replaced(cross, hash);
         }
-        self.register_block_expiry(hash, block_expiry_bound, flashblock_expiry_bound, replaced);
+        self.register_block_expiry(hash, block_expiry_bound, replaced);
         self.share_validity_lane((sender, U256::ZERO));
         self.sync_validity_lanes([((sender, U256::ZERO), None)], false);
         Ok(result)
@@ -1298,7 +1288,6 @@ where
         // a finite 2D-nonce-channel transaction has no time-based expiry, so
         // without this it would linger indefinitely.
         let block_expiry_bound = Self::validity_block_expiry_bound(&validated);
-        let flashblock_expiry_bound = Self::validity_flashblock_expiry_bound(&validated);
         let _admission_guard = self.protocol_admission_lock.lock();
         if let Some(transaction) = validated.as_valid_transaction() {
             let hash = *transaction.transaction().hash();
@@ -1461,12 +1450,7 @@ where
                 if let Some(cross) = cross {
                     self.remove_cross_store_replaced(cross, inserted_hash);
                 }
-                self.register_block_expiry(
-                    inserted_hash,
-                    block_expiry_bound,
-                    flashblock_expiry_bound,
-                    replaced_hash,
-                );
+                self.register_block_expiry(inserted_hash, block_expiry_bound, replaced_hash);
                 match store {
                     PoolStore::Sidecar => {
                         if let Some(lane_id) = lane_id {
@@ -2396,7 +2380,10 @@ where
         hold: Option<Box<dyn BestTransactionsHold<Self::Transaction>>>,
     ) -> Box<dyn ParkableBestTransactions<Self::Transaction>> {
         let base_fee = attributes.basefee;
-        let merged = self.merged_best_transactions(attributes);
+        let mut merged = self.merged_best_transactions(attributes);
+        // Snapshot every store, reth's included, so a transaction that arrives
+        // mid-build waits for the next build instead of joining this one.
+        merged.no_updates();
         Box::new(
             ParkedBestTransactions::new(merged, self.ordering.clone(), base_fee).with_hold(hold),
         )
@@ -2816,7 +2803,10 @@ fn pooled_element<T: BasePooledTx>(
 
 #[cfg(test)]
 mod tests {
-    use std::time::{Duration, Instant};
+    use std::{
+        collections::HashSet,
+        time::{Duration, Instant},
+    };
 
     use alloy_consensus::{
         SignableTransaction, Transaction, TxEip1559, TxEip7702,
@@ -2830,9 +2820,9 @@ mod tests {
     use alloy_signer_local::PrivateKeySigner;
     use base_common_chains::{BaseUpgrade, BaseUpgradeExt, ChainConfig};
     use base_common_consensus::{
-        BaseBlock, BasePooledTransaction as ConsensusPooledTransaction, BasePrimitives,
-        BaseTransactionSigned, BaseTxEnvelope, Call, Eip8130Constants, Eip8130Signed, Predeploys,
-        TxDeposit, TxEip8130,
+        AccountChange, BaseBlock, BasePooledTransaction as ConsensusPooledTransaction,
+        BasePrimitives, BaseTransactionSigned, BaseTxEnvelope, Call, Delegation, Eip8130Constants,
+        Eip8130Signed, Predeploys, TxDeposit, TxEip8130,
     };
     use base_execution_chainspec::BaseChainSpec;
     use base_execution_evm::BaseEvmConfig;
@@ -2843,8 +2833,11 @@ mod tests {
     use reth_tasks::Runtime;
     use reth_transaction_pool::{
         CanonicalStateUpdate, PoolConfig, PoolUpdateKind, PriceBumpConfig, SubPoolLimit,
-        TransactionOrigin, blobstore::InMemoryBlobStore, error::PoolErrorKind,
-        identifier::TransactionId, validate::EthTransactionValidatorBuilder,
+        TransactionOrigin,
+        blobstore::InMemoryBlobStore,
+        error::{Eip7702PoolTransactionError, PoolErrorKind},
+        identifier::TransactionId,
+        validate::EthTransactionValidatorBuilder,
     };
 
     use super::*;
@@ -3959,6 +3952,25 @@ mod tests {
         }
     }
 
+    /// Asserts the rejection for a sponsored transaction whose `gas_limit` fits the block
+    /// gas limit but whose payer authentication gas pushes it over: an authentication
+    /// error that does not mark the hash bad, since the hash does not cover `payer_auth`.
+    fn assert_payer_auth_exceeds_block_gas_limit(
+        error: &reth_transaction_pool::error::PoolError,
+        nonce_key: U256,
+    ) {
+        let InvalidPoolTransactionError::Other(other) = invalid_kind(error) else {
+            panic!("nonce key {nonce_key}: expected a Base pool error, got {error:?}");
+        };
+        assert!(!other.is_bad_transaction(), "nonce key {nonce_key}: {error:?}");
+        match other.as_any().downcast_ref::<BaseTxPoolError>() {
+            Some(BaseTxPoolError::Eip8130Authentication { reason }) => {
+                assert_eq!(*reason, BaseTxPoolError::PAYER_AUTH_EXCEEDS_BLOCK_GAS_LIMIT);
+            }
+            other => panic!("nonce key {nonce_key}: expected Eip8130Authentication, got {other:?}"),
+        }
+    }
+
     #[tokio::test]
     async fn eip8130_routes_enforce_the_minimum_priority_fee() {
         let (pool, client) = build_integration_pool_with_policies(PoolPolicies {
@@ -4085,15 +4097,7 @@ mod tests {
                 .add_transaction(TransactionOrigin::External, transaction)
                 .await
                 .expect_err("gas_limit plus payer authentication exceeds the block gas limit");
-            assert!(
-                matches!(
-                    invalid_kind(&error),
-                    InvalidPoolTransactionError::ExceedsGasLimit(gas, limit)
-                        if *gas == SPONSORED_GAS_LIMIT + payer_auth
-                            && *limit == SPONSORED_GAS_LIMIT
-                ),
-                "nonce key {nonce_key}: {error:?}"
-            );
+            assert_payer_auth_exceeds_block_gas_limit(&error, nonce_key);
         }
     }
 
@@ -4269,14 +4273,7 @@ mod tests {
                 pool.add_transaction(TransactionOrigin::External, transaction).await.expect_err(
                     "gas_limit plus payer authentication exceeds the pool's block gas limit",
                 );
-            assert!(
-                matches!(
-                    invalid_kind(&error),
-                    InvalidPoolTransactionError::ExceedsGasLimit(gas, limit)
-                        if *gas == POLICY_GAS_LIMIT + 1 && *limit == POLICY_GAS_LIMIT
-                ),
-                "nonce key {nonce_key}: {error:?}"
-            );
+            assert_payer_auth_exceeds_block_gas_limit(&error, nonce_key);
             let transaction = sponsored_policy_tx(&signer, &payer, nonce_key, POLICY_GAS_LIMIT);
             pool.add_transaction(TransactionOrigin::External, transaction)
                 .await
@@ -5284,12 +5281,12 @@ mod tests {
         let new_hash = TxHash::repeat_byte(0x22);
 
         // Seed the index with the soon-to-be-replaced transaction.
-        pool.register_block_expiry(replaced, Some(100), None, None);
+        pool.register_block_expiry(replaced, Some(100), None);
         assert_eq!(pool.block_expiry.read().len(), 1);
 
         // A fee-bump replacement must evict the stale entry rather than
         // accumulate it, so the index does not grow per replacement.
-        pool.register_block_expiry(new_hash, Some(200), None, Some(replaced));
+        pool.register_block_expiry(new_hash, Some(200), Some(replaced));
         assert_eq!(pool.block_expiry.read().len(), 1);
 
         // Only the new hash remains, tracked at its own bound.
@@ -5304,16 +5301,16 @@ mod tests {
         let replaced = TxHash::repeat_byte(0x33);
         let new_hash = TxHash::repeat_byte(0x44);
 
-        pool.register_block_expiry(replaced, Some(100), None, None);
+        pool.register_block_expiry(replaced, Some(100), None);
         assert_eq!(pool.block_expiry.read().len(), 1);
 
         // An unbounded replacement still clears the replaced hash's stale entry.
-        pool.register_block_expiry(new_hash, None, None, Some(replaced));
+        pool.register_block_expiry(new_hash, None, Some(replaced));
         assert!(pool.block_expiry.read().is_empty());
     }
 
     #[tokio::test]
-    async fn block_commit_expires_flashblock_bounded_and_block_only_deadlines() {
+    async fn flashblock_index_conditions_expire_at_the_next_block_commit() {
         let (pool, client) = build_integration_pool();
         let signer = signer();
         fund(&client, signer.address());
@@ -5339,15 +5336,15 @@ mod tests {
         let block_only_hash = *block_only.hash();
         pool.add_transaction(TransactionOrigin::Local, block_only).await.unwrap();
 
-        // Both deadlines hold until their last valid block commits.
-        pool.expire_by_block(99);
-        assert!(pool.get(&sidecar_hash).is_some());
+        // A flashblock-index predicate that bypasses ingress never holds, so the next commit
+        // evicts it while a plain block deadline stays live.
+        pool.expire_by_block(0);
+        assert!(pool.get(&sidecar_hash).is_none());
+        assert!(!pool.guard.read().contains(&sidecar_hash));
         assert!(pool.get(&block_only_hash).is_some());
 
         pool.expire_by_block(100);
-        assert!(pool.get(&sidecar_hash).is_none());
         assert!(pool.get(&block_only_hash).is_none());
-        assert!(!pool.guard.read().contains(&sidecar_hash));
 
         // The freed channel slot admits the continuation.
         let continuation = signed_channel_tx(&signer, U256::from(1), 0, 1_000);
@@ -6329,15 +6326,12 @@ mod tests {
         let sidecar = add(&pool, self_paid_eoa_8130(&signer, U256::from(8), 0, 0, 1_000)).await;
         let others_validity = add(&pool, validity_1559(&other, 0, 1_000)).await;
 
-        let removed: std::collections::HashSet<_> = pool
+        let removed: HashSet<_> = pool
             .remove_transactions_by_sender(signer.address())
             .iter()
             .map(|tx| *tx.hash())
             .collect();
-        assert_eq!(
-            removed,
-            std::collections::HashSet::from([standard, validity, channel_validity, sidecar])
-        );
+        assert_eq!(removed, HashSet::from([standard, validity, channel_validity, sidecar]));
         for hash in [standard, validity, channel_validity, sidecar] {
             assert_gone(&pool, hash);
         }
@@ -6387,6 +6381,48 @@ mod tests {
         assert!(yielded.contains(&rich_validity));
         assert!(!yielded.contains(&validity_successor));
         assert!(yielded.contains(&cheap_standard) && yielded.contains(&tipping_standard));
+    }
+
+    /// The builder walks the pool as it stood when the build started: a
+    /// transaction that arrives mid-build waits for the next build in every
+    /// store, however much it outbids what the snapshot holds.
+    #[tokio::test]
+    async fn parking_iterator_snapshots_every_store_at_build_start() {
+        let (pool, client) = build_integration_pool();
+        let signers: [_; 6] = std::array::from_fn(|_| funded_signer(&client));
+        let resting = HashSet::from([
+            add(&pool, signed_1559_with_fees(&signers[0], 0, 1_000, 1)).await,
+            add(&pool, validity_1559(&signers[1], 0, 1_000)).await,
+            add(&pool, self_paid_eoa_8130(&signers[2], U256::from(7), 0, 0, 1_000)).await,
+        ]);
+        let attributes = BestTransactionsAttributes::new(0, None);
+
+        let mut build = pool.best_transactions_with_attributes_and_parking(attributes, None);
+        let late = [
+            add(&pool, signed_1559_with_fees(&signers[3], 0, 1_000, 900)).await,
+            add(
+                &pool,
+                signed_1559_with_fees(&signers[4], 0, 1_000, 900)
+                    .with_validity_predicates(resting_predicates()),
+            )
+            .await,
+            add(&pool, self_paid_eoa_8130(&signers[5], U256::from(7), 0, 0, 1_000)).await,
+        ];
+        for (hash, store) in
+            late.into_iter().zip([PoolStore::Protocol, PoolStore::Validity, PoolStore::Sidecar])
+        {
+            assert_store(&pool, hash, store);
+        }
+
+        let yielded: HashSet<_> =
+            std::iter::from_fn(|| build.next()).map(|transaction| *transaction.hash()).collect();
+        assert_eq!(yielded, resting, "mid-build arrivals must not join the build");
+
+        let next: HashSet<_> = pool
+            .best_transactions_with_attributes_and_parking(attributes, None)
+            .map(|transaction| *transaction.hash())
+            .collect();
+        assert_eq!(next, resting.into_iter().chain(late).collect(), "the next build takes them");
     }
 
     /// The reviewer's case: a validity successor that outbids the standard
@@ -6724,6 +6760,28 @@ mod tests {
         BasePooledTransaction::new(recovered, envelope.encode_2718_len())
     }
 
+    /// A self-paid EIP-8130 transaction on the protocol nonce that delegates its sender.
+    fn delegation_8130(signer: &PrivateKeySigner, nonce: u64) -> BasePooledTransaction {
+        let tx = TxEip8130 {
+            chain_id: test_chain_id(),
+            sender: None,
+            nonce_key: U256::ZERO,
+            nonce_sequence: nonce,
+            valid_after: 0,
+            valid_before: 0,
+            max_priority_fee_per_gas: 0,
+            max_fee_per_gas: 1_000,
+            gas_limit: 1_000_000,
+            account_changes: vec![AccountChange::Delegation(Delegation {
+                target: Address::repeat_byte(0xDE),
+            })],
+            calls: Vec::new(),
+            metadata: Bytes::new(),
+            payer: None,
+        };
+        sign_eoa_8130(signer, tx)
+    }
+
     fn is_delegated_validity_rejection(error: &PoolErrorKind) -> bool {
         matches!(error, PoolErrorKind::InvalidTransaction(_))
             && format!("{error:?}").contains("DelegatedValidityTransaction")
@@ -6753,6 +6811,45 @@ mod tests {
         let error = add_err(&pool, transaction).await;
         assert!(is_delegated_validity_rejection(&error), "{error:?}");
         assert_eq!(pool.validity_pool_occupancy().0, 0);
+    }
+
+    #[tokio::test]
+    async fn an_eip8130_delegation_cannot_carry_validity_predicates() {
+        let (pool, client) = build_integration_pool();
+        let signer = funded_signer(&client);
+        let transaction =
+            delegation_8130(&signer, 0).with_validity_predicates(resting_predicates());
+
+        let error = add_err(&pool, transaction).await;
+        assert!(is_delegated_validity_rejection(&error), "{error:?}");
+        assert_eq!(pool.validity_pool_occupancy().0, 0);
+    }
+
+    /// Reth limits an account with a pending delegation to one in-flight
+    /// transaction. An EIP-8130 delegation reserves its sender as an EIP-7702
+    /// authorization does.
+    #[tokio::test]
+    async fn an_eip8130_delegation_reserves_its_sender_like_an_eip7702_authorization() {
+        let (pool, client) = build_integration_pool();
+        let signer = funded_signer(&client);
+        let delegation = add(&pool, delegation_8130(&signer, 0)).await;
+        assert_store(&pool, delegation, PoolStore::Protocol);
+
+        let error = add_err(&pool, signed_1559(&signer, 1)).await;
+        assert!(
+            matches!(
+                error,
+                PoolErrorKind::InvalidTransaction(InvalidPoolTransactionError::Eip7702(
+                    Eip7702PoolTransactionError::InflightTxLimitReached
+                ))
+            ),
+            "{error:?}"
+        );
+
+        // Without a delegation entry the same sender may stack transactions.
+        let other = funded_signer(&client);
+        add(&pool, self_paid_eoa_8130(&other, U256::ZERO, 0, 0, 1_000)).await;
+        add(&pool, signed_1559(&other, 1)).await;
     }
 
     #[tokio::test]

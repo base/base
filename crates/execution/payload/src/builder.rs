@@ -6,7 +6,8 @@ use std::{
 };
 
 use alloy_consensus::{BlockHeader, Transaction, Typed2718, transaction::TxHashRef};
-use alloy_primitives::{Address, TxHash, U256};
+use alloy_eips::eip2718::Encodable2718;
+use alloy_primitives::{Address, B256, TxHash, U256};
 use alloy_rpc_types_debug::ExecutionWitness;
 use alloy_rpc_types_engine::PayloadId;
 use base_common_chains::{BaseFeature, BaseUpgrade, BaseUpgradeExt, Upgrades};
@@ -319,6 +320,8 @@ where
         args: BuildArguments<Self::Attributes, Self::BuiltPayload>,
     ) -> Result<BuildOutcome<Self::BuiltPayload>, PayloadBuilderError> {
         self.build_payload(args, |attrs, resting| {
+            // The pool snapshots every store here, so mid-build arrivals wait
+            // for the next block.
             ParkableBestPayloadTransactions::new(
                 self.pool.best_transactions_with_attributes_and_parking(
                     attrs,
@@ -461,7 +464,7 @@ impl<Txs> Builder<'_, Txs> {
 
         let mut builder = ctx.block_builder(db)?;
 
-        // Without flashblocks, resting transactions only carry across blocks, from Denim on.
+        // Resting transactions carry across blocks, from Denim on.
         let resting_store = resting_predicates
             .as_ref()
             .filter(|_| !ctx.attributes().no_tx_pool() && ctx.is_one_shot_building_active());
@@ -512,15 +515,16 @@ impl<Txs> Builder<'_, Txs> {
             let cancelled =
                 ctx.execute_best_transactions(&mut info, &mut builder, best_txs, resting.as_ref())?;
             if !info.permanently_rejected_txs.is_empty() {
-                let rejected = std::mem::take(&mut info.permanently_rejected_txs);
+                let (rejected, rejected_encodings): (Vec<_>, Vec<_>) =
+                    std::mem::take(&mut info.permanently_rejected_txs).into_iter().unzip();
                 let count = rejected.len();
-                ctx.builder_config.rejection_cache.mark_rejected(&rejected);
+                ctx.builder_config.rejection_cache.mark_rejected(&rejected_encodings);
                 RejectionCacheMetrics::insertions().increment(count as u64);
                 RejectionCacheMetrics::size()
                     .set(ctx.builder_config.rejection_cache.entry_count() as f64);
                 MeteringProvider::remove(
                     ctx.builder_config.resource_metering.provider.as_ref(),
-                    &rejected,
+                    &rejected_encodings,
                 );
                 evict_permanently_rejected(rejected);
                 info!(
@@ -611,7 +615,7 @@ impl<Txs> Builder<'_, Txs> {
         );
         // `no_tx_pool` builds replay consensus input; the payload-builder cutover also sends one
         // to the unselected builder for every block. Only the builder that composed the block
-        // records its inclusion, matching flashblocks.
+        // records its inclusion.
         if !no_tx_pool {
             BuilderMetrics::record_inclusion(&info.inclusion);
             BuilderMetrics::record_native_build(execution_duration, build_start.elapsed());
@@ -728,9 +732,12 @@ pub struct ExecutionInfo {
     pub inclusion: InclusionTracker,
     /// Cumulative resource-metering units for the current payload, aligned with the snapped schedule.
     pub resource_metering_usage: Vec<u128>,
-    /// Transaction hashes that exceeded a per-transaction resource limit and should be
-    /// permanently removed from the pool and recorded in the shared rejection cache.
-    pub permanently_rejected_txs: Vec<TxHash>,
+    /// Transactions that exceeded a per-transaction resource limit, as
+    /// `(transaction hash, encoding hash)`. The pool evicts them by transaction hash; the shared
+    /// rejection cache and the metering store drop them by the hash of their exact encoding
+    /// ([`Encodable2718::trie_hash`]), so EIP-8130 variants with the same transaction hash are
+    /// not affected.
+    pub permanently_rejected_txs: Vec<(TxHash, B256)>,
 }
 
 impl ExecutionInfo {
@@ -985,11 +992,13 @@ where
 
             let mut pending_resource_usage = None;
             let tx_hash = *sequencer_tx.tx_hash();
+            let encoded_hash = sequencer_tx.trie_hash();
             let gas_output = match builder.execute_transaction_with_commit_condition(
                 sequencer_tx.clone(),
                 |result, changes| {
                     pending_resource_usage = resource_metering.unthrottled_usage(
                         &tx_hash,
+                        &encoded_hash,
                         result.tx_gas_used(),
                         changes.account_changes(),
                     );
@@ -1046,7 +1055,7 @@ where
     /// Transaction-scope resource-throttling excludes are recorded on
     /// [`ExecutionInfo::permanently_rejected_txs`] for the payload job to remove from the
     /// pool and insert into [`crate::config::BaseBuilderConfig::rejection_cache`] after this scan.
-    /// Later jobs sharing that cache skip the hash even if the pool has it again.
+    /// Later jobs sharing that cache skip the same encoding even if the pool has it again.
     /// Nonce-lane descendants are skipped for this scan via `mark_invalid`.
     /// Block-scope excludes only skip the current iterator.
     ///
@@ -1078,7 +1087,7 @@ where
         let block_uncompressed_limit = self.builder_config.max_uncompressed_block_size;
         let base_fee = builder.evm_env().block_base_fee();
         let block_number = block_env.number.try_into().expect("block number must fit in u64");
-        let predicate_context = PredicateContext { block_number, flashblock_index: 0 };
+        let predicate_context = PredicateContext { block_number };
         let mut predicate_index =
             ParkedPredicateIndex::new(self.builder_config.predicate_bucket_ordered_threshold);
         let mut predicate_loads = PredicateLoadTracker::default();
@@ -1132,9 +1141,12 @@ where
             }
 
             let tx_hash = *tx.hash();
+            // Rejections and metering depend on the exact bytes, which the transaction hash does
+            // not identify for EIP-8130.
+            let encoded_hash = tx.consensus_ref().inner().trie_hash();
             let replay_independent = tx.is_eip8130_nonce_free();
             let has_validity_predicates = !tx.validity_conditions().is_empty();
-            if self.builder_config.rejection_cache.is_rejected(&tx_hash) {
+            if self.builder_config.rejection_cache.is_rejected(&encoded_hash) {
                 RejectionCacheMetrics::hits().increment(1);
                 RejectionCacheMetrics::size()
                     .set(self.builder_config.rejection_cache.entry_count() as f64);
@@ -1153,28 +1165,6 @@ where
             // `BUILDER_CONSIDERED`.
             if has_validity_predicates {
                 validity_consideration_index += 1;
-            }
-            if tx.validity_conditions().flashblock().is_present() {
-                evaluation_counters.increment(ValidityEvaluationOutcome::Unsupported, 1);
-                emit_native_validity_event!(
-                    self,
-                    TransactionEventType::BuilderRejected,
-                    tx_hash,
-                    validity_consideration_index,
-                    {
-                        "rejection_reason" => "unsupported_flashblock_index_predicate",
-                        "rejection_detail" =>
-                            "flashblock-index predicates are unsupported by the native builder",
-                        "permanent" => true,
-                    }
-                );
-                trace!(
-                    target: "payload_builder",
-                    tx_hash = ?tx_hash,
-                    "skipping transaction with unsupported flashblock-index predicate"
-                );
-                Self::skip_current(&mut best_txs, tx.sender(), tx.nonce(), replay_independent);
-                continue;
             }
 
             if has_validity_predicates
@@ -1406,15 +1396,18 @@ where
                 continue;
             }
 
-            let (simulated, admission) =
-                resource_metering.check_simulated_usage(&tx_hash, &info.resource_metering_usage);
+            let (simulated, admission) = resource_metering.check_simulated_usage(
+                &tx_hash,
+                &encoded_hash,
+                &info.resource_metering_usage,
+            );
             if admission.should_exclude() {
                 resource_throttled += 1;
                 // Transaction-scope excludes cannot fit any block and are collected for
                 // permanent pool eviction after this scan. Block-scope excludes only skip
                 // the current iterator.
                 if admission.is_permanent() {
-                    info.permanently_rejected_txs.push(tx_hash);
+                    info.permanently_rejected_txs.push((tx_hash, encoded_hash));
                 }
                 trace!(
                     target: "payload_builder",
@@ -1537,7 +1530,7 @@ where
                 Ok(None) => {
                     resource_throttled += 1;
                     if executed_decision.as_ref().is_some_and(|decision| decision.is_permanent()) {
-                        info.permanently_rejected_txs.push(tx_hash);
+                        info.permanently_rejected_txs.push((tx_hash, encoded_hash));
                     }
                     trace!(
                         target: "payload_builder",
@@ -1793,12 +1786,16 @@ mod tests {
         time::{Duration, Instant},
     };
 
-    use alloy_consensus::{Header, SignableTransaction, Transaction, TxEip1559};
+    use alloy_consensus::{
+        Header, SignableTransaction, Transaction, TxEip1559, transaction::Recovered,
+    };
     use alloy_eips::eip2718::Encodable2718;
-    use alloy_primitives::{Address, B256, Signature, StorageKey, TxHash, TxKind, U256};
+    use alloy_primitives::{Address, B256, Bytes, Signature, StorageKey, TxHash, TxKind, U256};
     use base_bundles::{MeterBundleResponse, OpcodeGas, TransactionResult};
     use base_common_chains::BaseUpgrade;
-    use base_common_consensus::{BasePrimitives, BaseTxEnvelope, Predeploys};
+    use base_common_consensus::{
+        BasePrimitives, BaseTxEnvelope, Eip8130Signed, Predeploys, TxEip8130,
+    };
     use base_common_evm2::BaseTime;
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
     use base_execution_evm::BaseEvmConfig;
@@ -2334,7 +2331,7 @@ mod tests {
     fn native_builder_includes_transaction_with_matching_block_predicate() {
         let event_capture = TransactionEventCapture::install();
         // Event capture is process-global, so this transaction must not share a hash with other
-        // tests, such as the flashblock-index rejection test that uses `pool_transaction(0)`.
+        // tests, such as the expired-predicate test that uses `pool_transaction(0)`.
         let transaction = pool_transaction_to(0, Address::repeat_byte(0x4d), U256::ZERO)
             .with_validity_predicates(vec![ValidityPredicate::BlockNumber {
                 op: ValidityOperator::Equal,
@@ -2442,11 +2439,15 @@ mod tests {
     }
 
     #[test]
-    fn native_builder_rejects_flashblock_index_predicates() {
-        let transaction = pool_transaction(0).with_validity_predicates(vec![
-            ValidityPredicate::FlashblockIndex { op: ValidityOperator::Equal, value: U256::ZERO },
-        ]);
+    fn native_builder_expires_flashblock_index_predicates() {
+        let event_capture = TransactionEventCapture::install();
+        let transaction = pool_transaction_to(0, Address::repeat_byte(0x4e), U256::ZERO)
+            .with_validity_predicates(vec![ValidityPredicate::FlashblockIndex {
+                op: ValidityOperator::Equal,
+                value: U256::ZERO,
+            }]);
         let sender = transaction.sender();
+        let transaction_hash = *transaction.hash();
 
         let BuildOutcomeKind::Freeze(payload) = build_parkable_pool_payload(
             pool_payload_context(DENIM_TIMESTAMP),
@@ -2457,6 +2458,13 @@ mod tests {
         };
 
         assert!(payload.block().body().transactions.is_empty());
+        let event_types = event_capture
+            .events()
+            .into_iter()
+            .filter(|event| event.tx_hash == Some(transaction_hash))
+            .map(|event| event.event_type)
+            .collect::<Vec<_>>();
+        assert_eq!(event_types, [TransactionEventType::BuilderExpired]);
     }
 
     #[test]
@@ -2723,7 +2731,7 @@ mod tests {
         assert!(resting.member(*gated.hash(), gated.validity_conditions()).is_some());
     }
 
-    /// Without flashblocks, resting transactions only carry across blocks, which needs Denim.
+    /// Resting transactions carry across blocks, which needs Denim.
     #[test]
     fn native_builder_ignores_the_resting_set_before_denim() {
         let watched_address = Address::repeat_byte(0x4b);
@@ -3165,6 +3173,64 @@ mod tests {
         assert_eq!(included_tx_count(outcome), 0);
         assert!(evicted.lock().unwrap().is_empty());
         assert_eq!(invalid.lock().unwrap().len(), 1);
+    }
+
+    /// EIP-8130 transaction with a named sender, so `sender_auth` changes the encoding but not
+    /// the transaction hash.
+    fn eip8130_pool_transaction(sender_auth: Bytes) -> BasePooledTransaction {
+        let sender = Address::repeat_byte(0x81);
+        let tx = TxEip8130 {
+            chain_id: 8_453,
+            sender: Some(sender),
+            gas_limit: 100_000,
+            max_fee_per_gas: 2_000_000_000,
+            max_priority_fee_per_gas: 1,
+            ..Default::default()
+        };
+        let envelope = BaseTxEnvelope::Eip8130(Eip8130Signed::new(tx, sender_auth, Bytes::new()));
+        let encoded_len = envelope.encode_2718_len();
+        BasePooledTransaction::new(Recovered::new_unchecked(envelope, sender), encoded_len)
+    }
+
+    /// Records the keys the builder looks metering up by.
+    #[derive(Debug, Default)]
+    struct LookupRecorder(Mutex<Vec<B256>>);
+
+    impl MeteringProvider for LookupRecorder {
+        fn get(&self, encoded_hash: &B256) -> Option<Arc<MeterBundleResponse>> {
+            self.0.lock().unwrap().push(*encoded_hash);
+            None
+        }
+    }
+
+    /// Encodings that share a transaction hash are distinct entries in the rejection cache and
+    /// the metering store: rejecting one does not skip the other, and the other's metering is
+    /// looked up by its own encoding.
+    #[test]
+    fn rejection_cache_and_metering_are_keyed_by_exact_encoding() {
+        let rejected = eip8130_pool_transaction(Bytes::from_static(&[0x01]));
+        let variant = eip8130_pool_transaction(Bytes::from_static(&[0x02]));
+        assert_eq!(rejected.hash(), variant.hash());
+        let rejected_encoding = rejected.consensus_ref().inner().trie_hash();
+        let variant_encoding = variant.consensus_ref().inner().trie_hash();
+        assert_ne!(rejected_encoding, variant_encoding);
+
+        let scan = |tx: BasePooledTransaction| {
+            let lookups = Arc::new(LookupRecorder::default());
+            let mut ctx = pool_payload_context(DENIM_TIMESTAMP - 1);
+            ctx.builder_config.rejection_cache.insert(rejected_encoding);
+            ctx.builder_config.resource_metering = metering_config(
+                cpu_schedule(1_000_000, None, false),
+                Arc::clone(&lookups) as SharedMeteringProvider,
+            );
+            let transactions =
+                TestParkableTransactions::recording(vec![tx], Arc::new(Mutex::new(Vec::new())));
+            build_pool_payload_with(ctx, transactions, |_| {});
+            lookups.0.lock().unwrap().clone()
+        };
+
+        assert!(scan(rejected).is_empty(), "the rejected encoding is skipped before metering");
+        assert_eq!(scan(variant), vec![variant_encoding]);
     }
 
     #[test]

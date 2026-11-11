@@ -52,7 +52,9 @@ impl fmt::Display for TransactionEventProducer {
 /// Versioned transaction event vocabulary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, strum::EnumIter)]
 pub enum TransactionEventType {
-    /// Proxyd accepted a transaction request from a client.
+    /// Proxyd accepted a transaction request from a client. Retired: proxyd
+    /// now carries the receive time as `received_at` on its terminal events.
+    /// Retained so historical events remain readable.
     #[serde(rename = "PROXY_RECEIVED")]
     ProxyReceived,
     /// Proxyd rejected a transaction request before backend routing.

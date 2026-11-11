@@ -8,7 +8,7 @@ use base_proof_primitives::Proposal;
 use base_proof_rpc::RollupProvider;
 use base_proof_submission::ProofSubmissionError;
 use futures::{StreamExt, stream};
-use tracing::{debug, info, instrument, warn};
+use tracing::{debug, info, warn};
 
 use crate::{
     Metrics, RecoveredState, driver::DriverConfig, error::ProposerError,
@@ -89,15 +89,6 @@ impl ProofSubmitter {
     /// RPC failures, root mismatches, invalid signers, or contract-level
     /// rejections — is mapped to a [`SubmitAction`] variant that tells the
     /// pipeline how to react.
-    #[instrument(
-        name = "proposer.submit_proof",
-        skip_all,
-        fields(
-            starting_block_number = starting_block_number,
-            target_block = target_block,
-            parent_address = %parent_address,
-        )
-    )]
     pub async fn submit(
         &self,
         aggregate_proposal: &Proposal,

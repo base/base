@@ -4,7 +4,8 @@ use std::{
     time::Instant,
 };
 
-use alloy_primitives::TxHash;
+use alloy_eips::eip2718::Encodable2718;
+use alloy_primitives::{B256, TxHash};
 use base_bundles::MeterBundleResponse;
 use base_observability_events::{
     TransactionEventProducer, TransactionEventType, transaction_event,
@@ -42,10 +43,16 @@ static BUILDER_HOST: LazyLock<String> = LazyLock::new(|| {
 /// individual calls.
 pub const MAX_VALIDATED_INSERT_BATCH: usize = 1024;
 
+/// Inbound metering paired with the hash of the exact encoding it was metered for.
+pub type KeyedMetering = (B256, MeterBundleResponse);
+
 /// Writes inbound `insertValidatedTransaction` metering into the builder cache.
 pub trait InsertMetering: core::fmt::Debug + Send + Sync + 'static {
-    /// Stores metering for `tx_hash`.
-    fn insert_metering(&self, tx_hash: TxHash, metering: MeterBundleResponse);
+    /// Stores metering for the encoding with hash `encoded_hash`
+    /// ([`Encodable2718::trie_hash`]).
+    ///
+    /// [`Encodable2718::trie_hash`]: alloy_eips::eip2718::Encodable2718::trie_hash
+    fn insert_metering(&self, encoded_hash: B256, metering: MeterBundleResponse);
 }
 
 /// RPC interface for submitting pre-validated transactions to a block builder.
@@ -242,10 +249,13 @@ where
 
     /// Checks and decodes one wire transaction into the pool transaction and origin it is
     /// inserted with, plus its metering for [`Self::finish_insert`].
+    ///
+    /// The metering is keyed by the hash of the exact encoding: EIP-8130 encodings that share a
+    /// transaction hash can meter differently.
     fn prepare_insert(
         &self,
         tx: ValidatedTransaction<E>,
-    ) -> RpcResult<(TransactionOrigin, BasePooledTransaction, Option<MeterBundleResponse>)> {
+    ) -> RpcResult<(TransactionOrigin, BasePooledTransaction, Option<KeyedMetering>)> {
         let sender = tx.sender;
         let has_extensions = !tx.extensions.is_empty();
 
@@ -274,8 +284,9 @@ where
                     None::<()>,
                 )
             })?;
-        let metering = tx.metering;
-        if let Some(ref metering) = metering {
+        let metering =
+            tx.metering.map(|metering| (pool_tx.consensus_ref().inner().trie_hash(), metering));
+        if let Some((_, metering)) = &metering {
             pool_tx = pool_tx.with_metering(metering.clone());
         }
         // Attach any extension data carried on the wire. This is a no-op for
@@ -317,15 +328,15 @@ where
         &self,
         tx_hash: TxHash,
         encoded_len: usize,
-        metering: Option<MeterBundleResponse>,
+        metering: Option<KeyedMetering>,
         result: PoolResult<AddedTransactionOutcome>,
     ) -> RpcResult<()> {
         match result {
             Ok(_) => {
-                if let Some(metering) = metering
+                if let Some((encoded_hash, metering)) = metering
                     && let Some(cache) = &self.metering_cache
                 {
-                    cache.insert_metering(tx_hash, metering);
+                    cache.insert_metering(encoded_hash, metering);
                 }
                 self.emit_validated_insert_event(
                     TransactionEventType::TxpoolValidatedInsertAccepted,
@@ -412,7 +423,10 @@ mod tests {
     use alloy_signer::SignerSync;
     use alloy_signer_local::PrivateKeySigner;
     use base_bundles::MeterBundleResponse;
-    use base_common_consensus::{BaseTransactionSigned, BaseTypedTransaction, TxDeposit};
+    use base_common_consensus::{
+        BaseTransactionSigned, BaseTxEnvelope, BaseTypedTransaction, Eip8130Signed, TxDeposit,
+        TxEip8130,
+    };
     use reth_transaction_pool::noop::NoopTransactionPool;
 
     use super::*;
@@ -740,13 +754,31 @@ mod tests {
 
     #[derive(Debug, Default)]
     struct RecordingMetering {
-        inserted: Mutex<Vec<(TxHash, MeterBundleResponse)>>,
+        inserted: Mutex<Vec<(B256, MeterBundleResponse)>>,
     }
 
     impl InsertMetering for RecordingMetering {
-        fn insert_metering(&self, tx_hash: TxHash, metering: MeterBundleResponse) {
-            self.inserted.lock().expect("recording lock").push((tx_hash, metering));
+        fn insert_metering(&self, encoded_hash: B256, metering: MeterBundleResponse) {
+            self.inserted.lock().expect("recording lock").push((encoded_hash, metering));
         }
+    }
+
+    /// EIP-8130 encodings that differ only in authorization share a transaction hash, so inbound
+    /// metering is keyed by the hash of the exact encoding.
+    #[test]
+    fn metering_is_keyed_by_exact_encoding() {
+        let sender = Address::repeat_byte(0x81);
+        let tx = TxEip8130 { chain_id: 8453, sender: Some(sender), ..Default::default() };
+        let signed = Eip8130Signed::new(tx, Bytes::from_static(&[0x01]), Bytes::new());
+        let encoded_hash = signed.encoded_hash();
+        let raw = Bytes::from(BaseTxEnvelope::Eip8130(signed).encoded_2718());
+        let mut tx = validated_transaction(sender, raw, NoExtensions {});
+        tx.metering = Some(MeterBundleResponse::default());
+
+        let (_, pool_tx, metering) = handler().prepare_insert(tx).expect("prepare insert");
+
+        assert_ne!(*pool_tx.hash(), encoded_hash);
+        assert_eq!(metering.map(|(key, _)| key), Some(encoded_hash));
     }
 
     #[tokio::test]

@@ -4,7 +4,8 @@
 //! via [`ProviderBuilder::layer`]. When the layer is applied it spawns a
 //! background task that polls the monitored address's balance immediately,
 //! then every configured interval. Successful reads publish through a
-//! [`tokio::sync::watch`] channel; failed reads only log a warning.
+//! [`tokio::sync::watch`] channel; failed reads only log a warning. Cancelling
+//! the token stops the task, abandoning any balance read in flight.
 //!
 //! The layer is an identity layer — it returns the inner provider unchanged,
 //! so the resulting provider type is the same as if the layer were never
@@ -73,7 +74,12 @@ impl BalanceMonitorLayer {
     /// Default polling interval (12 seconds, matching L1 block time).
     pub const DEFAULT_POLL_INTERVAL: Duration = Duration::from_secs(12);
 
+    /// Shortest polling interval; shorter intervals, including zero, are raised to it.
+    pub const MIN_POLL_INTERVAL: Duration = Duration::from_millis(1);
+
     /// Creates a layer that polls `address` immediately when applied, then every `poll_interval`.
+    ///
+    /// A `poll_interval` below [`Self::MIN_POLL_INTERVAL`] is raised to it.
     ///
     /// The returned [`watch::Receiver`] yields the latest observed balance
     /// (as [`U256`] in wei). The initial [`U256::ZERO`] is a placeholder, not an
@@ -86,6 +92,7 @@ impl BalanceMonitorLayer {
         poll_interval: Duration,
     ) -> (Self, watch::Receiver<U256>) {
         let (tx, rx) = watch::channel(U256::ZERO);
+        let poll_interval = poll_interval.max(Self::MIN_POLL_INTERVAL);
         (Self { address, cancel, poll_interval, tx, spawned: AtomicBool::new(false) }, rx)
     }
 }
@@ -114,16 +121,19 @@ where
             loop {
                 tokio::select! {
                     () = cancel.cancelled() => break,
-                    _ = interval.tick() => {
-                        match provider.get_balance(address).await {
-                            Ok(bal) => {
-                                let _ = tx.send(bal);
-                                debug!(balance = %bal, address = %address, "recorded account balance");
-                            }
-                            Err(e) => {
-                                warn!(error = %e, address = %address, "failed to fetch account balance");
-                            }
-                        }
+                    _ = interval.tick() => {}
+                }
+                let balance = tokio::select! {
+                    () = cancel.cancelled() => break,
+                    balance = provider.get_balance(address) => balance,
+                };
+                match balance {
+                    Ok(bal) => {
+                        let _ = tx.send(bal);
+                        debug!(balance = %bal, address = %address, "recorded account balance");
+                    }
+                    Err(e) => {
+                        warn!(error = %e, address = %address, "failed to fetch account balance");
                     }
                 }
             }
@@ -183,6 +193,53 @@ mod tests {
             .expect("a real zero balance must notify the receiver without waiting for the interval")
             .expect("watch channel closed unexpectedly");
         assert_eq!(*balance_rx.borrow(), U256::ZERO);
+    }
+
+    #[tokio::test]
+    async fn zero_poll_interval_keeps_publishing() {
+        let anvil = alloy_node_bindings::Anvil::new().spawn();
+        let cancel = CancellationToken::new();
+        let (layer, mut balance_rx) =
+            BalanceMonitorLayer::new(anvil.addresses()[0], cancel.clone(), Duration::ZERO);
+        let _provider = ProviderBuilder::new().layer(layer).connect_http(anvil.endpoint_url());
+
+        let updates = tokio::time::timeout(Duration::from_secs(3), async {
+            balance_rx.changed().await?;
+            balance_rx.changed().await
+        })
+        .await;
+        cancel.cancel();
+        updates
+            .expect("a zero poll interval must still poll repeatedly")
+            .expect("polling task must not stop on a zero poll interval");
+    }
+
+    #[tokio::test]
+    async fn cancellation_interrupts_pending_balance_read() {
+        let unresponsive_rpc =
+            tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind listener");
+        let rpc_url = format!("http://{}", unresponsive_rpc.local_addr().expect("local addr"));
+        let cancel = CancellationToken::new();
+        let (layer, mut balance_rx) = BalanceMonitorLayer::new(
+            Address::ZERO,
+            cancel.clone(),
+            BalanceMonitorLayer::DEFAULT_POLL_INTERVAL,
+        );
+        let _provider =
+            ProviderBuilder::new().layer(layer).connect_http(rpc_url.parse().expect("valid url"));
+
+        // Accept the balance request but never answer it.
+        let _connection = tokio::time::timeout(Duration::from_secs(3), unresponsive_rpc.accept())
+            .await
+            .expect("the monitor must send a balance request")
+            .expect("balance request connection");
+        cancel.cancel();
+
+        let closed = tokio::time::timeout(Duration::from_secs(3), balance_rx.changed()).await;
+        assert!(
+            matches!(closed, Ok(Err(_))),
+            "cancellation must stop the task while a balance read is pending"
+        );
     }
 
     #[tokio::test]

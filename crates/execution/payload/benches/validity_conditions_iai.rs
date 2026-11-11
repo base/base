@@ -22,8 +22,6 @@
 //! to four state predicates rotating through balance, nonce, and storage, with the expiry at a
 //! varying wire position. Balance and nonce predicates read the candidate's own accounts; storage
 //! predicates read distinct slots of one shared contract, as watchers of a popular protocol do.
-//! Flashblock-index predicates are omitted because the native builder rejects them before
-//! evaluation.
 //!
 //! The teardowns pin the evaluation outcomes and the predicate read footprint, or the compiled
 //! predicate counts. They are fixed by the workload, so a mismatch means evaluation or
@@ -60,9 +58,7 @@ const NONCE: u64 = 7;
 const BALANCE: u64 = 1_000;
 /// Contract whose slots the storage predicates watch.
 const WATCHED_CONTRACT: Address = Address::repeat_byte(0xc0);
-/// The native builder evaluates every candidate at flashblock index zero.
-const CONTEXT: PredicateContext =
-    PredicateContext { block_number: BLOCK_NUMBER, flashblock_index: 0 };
+const CONTEXT: PredicateContext = PredicateContext { block_number: BLOCK_NUMBER };
 
 /// How a candidate's predicates evaluate against the build state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

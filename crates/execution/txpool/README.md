@@ -9,6 +9,19 @@ Extends Reth's transaction pool with Base-specific validation and ordering for t
 `BaseOrdering` and `TimestampOrdering` provide customizable transaction prioritization strategies.
 Also includes a `BuilderApiImpl` for builder-specific pool management.
 
+### EIP-8130 transaction identity
+
+The EIP-8130 transaction hash covers the body and the resolved sender, not `sender_auth` or
+`payer_auth`. Different valid encodings can therefore share one hash, for example two open
+payers, or two valid `sender_auth` blobs for the same sender that cost different gas. The pool
+keys transactions by hash, so the first variant it sees wins: a later variant with the same
+hash is rejected as already known (`AlreadyImported`, not a bad transaction), and it cannot
+replace the first one, because its fees are the same. Once the first variant leaves the pool
+(mined, evicted, or dropped), another variant is admitted like a new transaction; the pool
+keeps no fallback copy. Rejections that depend only on auth bytes return
+`Eip8130Authentication`, which is also not a bad transaction, so a variant that fails them
+does not blacklist the hash.
+
 ### Pluggable builder wire format
 
 `ValidatedTransaction<E>` is the payload of `base_insertValidatedTransaction`, the endpoint mempool
@@ -94,7 +107,12 @@ ValidityPredicate(uint8 kind,uint8 operator,address account,uint256 slot,uint256
 ValidityAuthorization(bytes32 transactionHash,ValidityPredicate[] validity)
 ```
 
-`transactionHash` hashes the complete signed EIP-2718 transaction envelope.
+`transactionHash` is the transaction hash returned by `eth_sendRawTransaction`.
+For every type except EIP-8130 (`0x79`) it is the hash of the complete signed
+EIP-2718 envelope. The EIP-8130 transaction hash covers the body and the resolved
+sender but not `sender_auth` or `payer_auth`, so it is not `keccak256` of the
+encoding. One signature authorizes every same-hash variant, for example
+different open payers, and a signature over `keccak256` of the encoding is rejected.
 `kind` is balance = 0, storage = 1, block number = 2, flashblock index = 3, nonce = 4.
 Flashblock-index predicates still decode but are rejected at ingress: Base no longer
 builds flashblocks.
@@ -149,12 +167,14 @@ transactions. A burst of conditional transactions therefore cannot push standard
 user transactions out of reth's pending subpool, and reth's own eviction cannot
 drop resting validity transactions.
 
-EIP-7702 delegation and validity predicates do not mix. The validator rejects a
-transaction with validity predicates that is an EIP-7702 transaction or comes
-from a delegated sender, and a state diff that changes an account's code drops
-that account's validity transactions. The validity pool therefore never needs
-reth's in-flight limits for delegated accounts and pending authorizations, which
-apply only inside reth.
+Delegation and validity predicates do not mix. The validator rejects a
+transaction with validity predicates that is an EIP-7702 transaction, carries an
+EIP-8130 delegation entry, or comes from a delegated sender, and a state diff that
+changes an account's code drops that account's validity transactions. The
+validity pool therefore never needs reth's in-flight limits for delegated
+accounts and pending authorizations, which apply only inside reth. An EIP-8130
+delegation always uses the protocol nonce, so it lands in reth, which counts its
+sender as a pending authority, as for an EIP-7702 authorization.
 
 `PoolStore::of` picks the store. A nonce slot `(sender, nonce key, nonce)`, or a
 nonce-free replay id, is held by at most one store at a time: a newcomer bound for

@@ -113,7 +113,8 @@ impl Eip8130Handler {
                     &block,
                 )
             })?;
-            host.ext_mut().tx_origin = outcome.sender;
+            // Bump the protocol nonce as inclusion does; the simulation rolls back to `start`.
+            Self::consume_sender_nonce(host, &outcome)?;
             return Ok(Eip8130Prepared {
                 outcome,
                 settlement: Eip8130Settlement::Simulated { simulation, start },
@@ -212,7 +213,8 @@ impl Eip8130Handler {
     }
 
     /// Publishes the resolved sender as `tx.origin` and bumps its protocol nonce (for
-    /// `nonce_key == 0`). Runs for every verified transaction, whether or not fees are charged.
+    /// `nonce_key == 0`). Runs for every executed transaction, whether or not fees are charged,
+    /// and for simulations, so their `calls` observe the nonce bump and the real origin.
     fn consume_sender_nonce(
         host: &mut Evm<'_, BaseEvmTypes>,
         outcome: &Eip8130Outcome,

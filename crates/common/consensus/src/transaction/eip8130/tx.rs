@@ -50,8 +50,9 @@ pub struct TxEip8130 {
     pub chain_id: ChainId,
     /// Explicit sender account address, or `None` for the EOA path.
     pub sender: Option<Address>,
-    /// High 192 bits of the compound nonce; with `nonce_sequence` forms the
-    /// per-account replay protection key.
+    /// Nonce channel: `0` is the account nonce, `1` through `NONCE_KEY_MAX - 1`
+    /// are Nonce Manager sequences, and `NONCE_KEY_MAX` selects nonce-free mode.
+    /// With `nonce_sequence` it forms the per-account replay protection key.
     pub nonce_key: U256,
     /// Sequence number within the nonce key. Named `nonce` in JSON, like every
     /// other transaction type; `nonceSequence` is also accepted.
@@ -100,12 +101,17 @@ pub struct TxEip8130 {
     /// wire body between `calls` and `payer` and committed to by both the
     /// sender and payer signatures, but otherwise uninterpreted by the protocol.
     pub metadata: Bytes,
-    /// Optional payer; `None` means the resolved sender pays gas, and
+    /// Optional payer; `None` means the resolved sender pays gas,
     /// [`Eip8130Constants::OPEN_PAYER`] means the payer is recovered from
-    /// `payer_auth`.
+    /// `payer_auth`, and any other address is the named payer that `payer_auth`
+    /// must authenticate.
     #[cfg_attr(
         feature = "serde",
-        serde(default, deserialize_with = "super::Eip8130PayerSerde::deserialize")
+        serde(
+            default,
+            serialize_with = "super::Eip8130PayerSerde::serialize",
+            deserialize_with = "super::Eip8130PayerSerde::deserialize"
+        )
     )]
     pub payer: Option<Address>,
 }
@@ -416,16 +422,16 @@ impl TxEip8130 {
         (account_changes, calls, metadata)
     }
 
-    /// Signing-hash preimage for the sender, per [EIP-8130].
+    /// Hash the sender signs, per [EIP-8130].
     ///
-    /// `keccak256(EIP8130_TX_TYPE || rlp([...unsigned body fields...]))`.
+    /// `keccak256(SENDER_SIGNATURE_TYPE || rlp([all body fields through `payer`]))`
+    /// with the wire `sender` slot, which is empty on the EOA path, where the
+    /// sender is recovered from `sender_auth`. `sender_auth` and `payer_auth`
+    /// are excluded.
     ///
     /// [EIP-8130]: https://eips.ethereum.org/EIPS/eip-8130
     pub fn sender_signature_hash(&self) -> B256 {
-        let mut buf = Vec::with_capacity(self.rlp_encoded_length() + 1);
-        buf.put_u8(Eip8130Constants::EIP8130_TX_TYPE);
-        self.rlp_encode(&mut buf);
-        keccak256(&buf)
+        self.domain_hash(&Eip8130Constants::SENDER_SIGNATURE_TYPE, &self.sender)
     }
 
     /// Returns the fee- and signature-invariant replay identifier.
@@ -464,22 +470,45 @@ impl TxEip8130 {
         keccak256(&buf)
     }
 
-    /// Signing-hash preimage for the payer, per [EIP-8130].
+    /// Hash the payer signs, per [EIP-8130].
     ///
-    /// `keccak256(EIP8130_PAYER_TYPE || rlp([all body fields through `payer`]))`
-    /// with the `sender` slot replaced by the recovered sender address. The
+    /// `keccak256(PAYER_SIGNATURE_TYPE || rlp([all body fields through `payer`]))`
+    /// with the `sender` slot replaced by the resolved sender address. The
     /// payer commits to the full transaction body — including the `payer` slot
     /// itself — and only the `sender_auth` / `payer_auth` slots (which live in
     /// the signed wrapper) are excluded.
     ///
     /// [EIP-8130]: https://eips.ethereum.org/EIPS/eip-8130
     pub fn payer_signature_hash(&self, resolved_sender: Address) -> B256 {
-        let sender = Some(resolved_sender);
-        let payload_length = self.rlp_encoded_fields_length_with_sender(&sender);
-        let mut buf = Vec::with_capacity(1 + length_of_length(payload_length) + payload_length);
-        buf.put_u8(Eip8130Constants::EIP8130_PAYER_TYPE);
+        self.domain_hash(&Eip8130Constants::PAYER_SIGNATURE_TYPE, &Some(resolved_sender))
+    }
+
+    /// Transaction hash.
+    ///
+    /// `keccak256(EIP8130_TX_TYPE || rlp([all body fields through `payer`]))`,
+    /// with the `sender` slot replaced by the resolved sender address and
+    /// `payer` kept as its wire value. `sender_auth` and `payer_auth` are
+    /// excluded, so the hash is known before either is signed and does not
+    /// change when either is re-signed. The resolved sender keeps two recovered
+    /// senders signing identical bodies distinct.
+    ///
+    /// It covers the same body as the payer signature hash but sits in its own
+    /// domain, distinct from both signing hashes (see
+    /// [`Eip8130Constants::SENDER_SIGNATURE_TYPE`]), so a signature over a
+    /// transaction hash never authorizes a transaction.
+    pub fn transaction_hash(&self, resolved_sender: Address) -> B256 {
+        self.domain_hash(&[Eip8130Constants::EIP8130_TX_TYPE], &Some(resolved_sender))
+    }
+
+    /// `keccak256(domain || rlp([all body fields through `payer`]))` with
+    /// `sender` in the `sender` slot.
+    fn domain_hash(&self, domain: &[u8], sender: &Option<Address>) -> B256 {
+        let payload_length = self.rlp_encoded_fields_length_with_sender(sender);
+        let mut buf =
+            Vec::with_capacity(domain.len() + length_of_length(payload_length) + payload_length);
+        buf.put_slice(domain);
         Header { list: true, payload_length }.encode(&mut buf);
-        self.rlp_encode_fields_with_sender(&sender, &mut buf);
+        self.rlp_encode_fields_with_sender(sender, &mut buf);
         keccak256(&buf)
     }
 
@@ -714,13 +743,15 @@ impl SignableTransaction<Signature> for TxEip8130 {
         self.chain_id = chain_id;
     }
 
+    /// The sender signature preimage, whose keccak256 is
+    /// [`TxEip8130::sender_signature_hash`].
     fn encode_for_signing(&self, out: &mut dyn BufMut) {
-        out.put_u8(Eip8130Constants::EIP8130_TX_TYPE);
+        out.put_slice(&Eip8130Constants::SENDER_SIGNATURE_TYPE);
         self.rlp_encode(out);
     }
 
     fn payload_len_for_signature(&self) -> usize {
-        1 + self.rlp_encoded_length()
+        Eip8130Constants::SENDER_SIGNATURE_TYPE.len() + self.rlp_encoded_length()
     }
 }
 
@@ -1038,11 +1069,32 @@ mod tests {
         let payer_hash_v1 = tx.payer_signature_hash(resolved);
 
         let tx2 = TxEip8130 { sender: Some(resolved), ..tx };
-        let mut buf = Vec::with_capacity(tx2.rlp_encoded_length() + 1);
-        buf.put_u8(Eip8130Constants::EIP8130_PAYER_TYPE);
+        let mut buf = Vec::with_capacity(tx2.rlp_encoded_length() + 2);
+        buf.put_slice(&Eip8130Constants::PAYER_SIGNATURE_TYPE);
         tx2.rlp_encode(&mut buf);
         let payer_hash_v2 = keccak256(&buf);
         assert_eq!(payer_hash_v1, payer_hash_v2);
+    }
+
+    // Each hash is keccak256 of its domain prefix and the RLP body, and the
+    // domains keep all three apart even when the bodies are identical.
+    #[test]
+    fn hashes_prefix_the_body_with_their_domain() {
+        let tx = sample_tx();
+        let sender = tx.sender.unwrap();
+        let hash_with = |domain: &[u8]| {
+            let mut buf = domain.to_vec();
+            tx.rlp_encode(&mut buf);
+            keccak256(&buf)
+        };
+
+        assert_eq!(tx.sender_signature_hash(), hash_with(&[0x79, 0x00]));
+        assert_eq!(tx.payer_signature_hash(sender), hash_with(&[0x79, 0x01]));
+        assert_eq!(tx.transaction_hash(sender), hash_with(&[0x79]));
+        assert_ne!(tx.transaction_hash(sender), tx.sender_signature_hash());
+        assert_ne!(tx.transaction_hash(sender), tx.payer_signature_hash(sender));
+        assert_ne!(tx.sender_signature_hash(), tx.payer_signature_hash(sender));
+        assert_eq!(tx.signature_hash(), tx.sender_signature_hash());
     }
 
     // `metadata` is committed to by both signatures.
@@ -1123,8 +1175,8 @@ mod tests {
 
     /// The JSON is flat and uses hex quantities for every integer, with the
     /// standard `nonce` / `gas` names and single-call fields generic tooling
-    /// reads. The EIP field names `nonceSequence` / `gasLimit` and a short
-    /// `"0x00"` open payer are also accepted.
+    /// reads. An open payer is `"0x00"`, its wire form. The EIP field names
+    /// `nonceSequence` / `gasLimit` are also accepted.
     #[cfg(feature = "serde")]
     #[test]
     fn eip8130_json_is_a_standard_transaction_shape() {
@@ -1154,6 +1206,7 @@ mod tests {
         assert_eq!(json["value"], "0x0");
         assert_eq!(json["input"], "0x");
         assert_eq!(json["senderAuth"], "0xab");
+        assert_eq!(json["payer"], "0x00");
         assert!(json.get("tx").is_none(), "the transaction fields are not nested");
         assert_eq!(serde_json::from_value::<BaseTxEnvelope>(json.clone()).unwrap(), envelope);
 
@@ -1163,7 +1216,6 @@ mod tests {
         let gas = fields.remove("gas").unwrap();
         fields.insert("nonceSequence".into(), nonce);
         fields.insert("gasLimit".into(), gas);
-        fields.insert("payer".into(), "0x00".into());
         assert_eq!(serde_json::from_value::<BaseTxEnvelope>(eip_names).unwrap(), envelope);
     }
 

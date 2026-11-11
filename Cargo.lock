@@ -2904,7 +2904,6 @@ dependencies = [
  "reth-cli-util",
  "reth-config",
  "reth-node-core",
- "reth-provider",
  "rstest",
  "serde",
  "serde_json",
@@ -6464,7 +6463,9 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.21",
  "tokio",
+ "tokio-util",
  "tracing",
+ "tracing-subscriber",
  "url",
 ]
 
