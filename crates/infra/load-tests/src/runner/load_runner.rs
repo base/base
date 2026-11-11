@@ -1,17 +1,10 @@
 //! Load runner orchestration: construction, handshake, payload prep, and lifecycle controls.
 
-use std::{
-    collections::HashMap,
-    fs,
-    path::Path,
-    sync::Arc,
-    time::{Duration, Instant},
-};
+use std::{fs, path::Path, sync::Arc, time::Duration};
 
 use alloy_network::{EthereumWallet, ReceiptResponse, TransactionBuilder};
-use alloy_primitives::{Address, B256, TxHash, U256};
+use alloy_primitives::{B256, TxHash, U256};
 use alloy_provider::Provider;
-use alloy_signer_local::PrivateKeySigner;
 use base_common_consensus::Eip8130Constants;
 use rand::Rng;
 use tokio_util::sync::CancellationToken;
@@ -37,7 +30,6 @@ use crate::{
 };
 
 const FRESH_RECIPIENT_RNG_SALT: u64 = 0x6672_6573_685f_7263; // "fresh_rc"
-const START_FILE_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// Executes load tests by generating and submitting transactions at a target rate.
 pub struct LoadRunner {
@@ -48,11 +40,8 @@ pub struct LoadRunner {
     pub(super) generator: WorkloadGenerator,
     pub(super) collector: MetricsCollector,
     pub(super) stop: CancellationToken,
-    pub(super) cancel_token: CancellationToken,
-    pub(super) signers: Arc<HashMap<Address, PrivateKeySigner>>,
-    pub(super) submission_batch_rpcs: Arc<Vec<BatchRpcClient>>,
+    pub(super) submission_batch_rpcs: Arc<[BatchRpcClient]>,
     pub(super) validity_router: ValidityRouter,
-    pub(super) base_fee: u128,
     pub(super) display: Option<LoadTestDisplay>,
     /// Per-run salt for deriving each sender's own B-20 token, set during B-20 setup.
     pub(super) b20_run_salt: Option<B256>,
@@ -101,22 +90,19 @@ impl LoadRunner {
             AccountPool::with_offset(config.seed, config.account_count, config.sender_offset)?
         };
 
-        let signers = Arc::new(Self::build_signers(&accounts));
-        let submission_batch_rpcs = Arc::new(
-            config
-                .transaction_submission_rpcs
-                .iter()
-                .cloned()
-                .map(|url| BatchRpcClient::new(url).map(|c| c.with_batch_size(config.batch_size)))
-                .collect::<Result<Vec<_>>>()?,
-        );
+        let submission_batch_rpcs: Arc<[BatchRpcClient]> = config
+            .transaction_submission_rpcs
+            .iter()
+            .cloned()
+            .map(|url| BatchRpcClient::new(url).map(|c| c.with_batch_size(config.batch_size)))
+            .collect::<Result<Vec<_>>>()?
+            .into();
         let workload_config = WorkloadConfig::new("load-test").with_seed(config.seed);
         let generator =
             WorkloadGenerator::from_tx_configs(workload_config, &config.transactions, None)?;
 
         info!(
             account_count = config.account_count,
-            signers_cached = signers.len(),
             submission_rpc_count = submission_batch_rpcs.len(),
             "load runner created"
         );
@@ -171,11 +157,8 @@ impl LoadRunner {
             generator,
             collector: MetricsCollector::new(),
             stop: CancellationToken::new(),
-            cancel_token: CancellationToken::new(),
-            signers,
             submission_batch_rpcs,
             validity_router,
-            base_fee: 0,
             display: None,
             b20_run_salt: None,
             recipient_keys,
@@ -207,10 +190,6 @@ impl LoadRunner {
     /// Returns the number of configured txpool nodes to clear before test startup.
     pub const fn txpool_node_count(&self) -> usize {
         self.config.txpool_nodes.len()
-    }
-
-    pub(super) fn build_signers(accounts: &AccountPool) -> HashMap<Address, PrivateKeySigner> {
-        accounts.accounts().iter().map(|a| (a.address, a.signer.clone())).collect()
     }
 
     /// Probes each submission endpoint for validity-transaction support.
@@ -389,29 +368,6 @@ impl LoadRunner {
             .map_err(|e| BaselineError::Config(format!("failed to publish handshake file: {e}")))
     }
 
-    pub(super) async fn wait_for_start_file(&self) -> Result<()> {
-        let Some(control_dir) = self.config.separate_setup.as_deref() else {
-            return Ok(());
-        };
-        let path = control_dir.join("start");
-        let started = Instant::now();
-        while !path.exists() {
-            if self.stop.is_cancelled() || self.cancel_token.is_cancelled() {
-                return Err(BaselineError::Transaction(
-                    "stopped while waiting for start handshake".into(),
-                ));
-            }
-            if started.elapsed() >= START_FILE_TIMEOUT {
-                return Err(BaselineError::Timeout {
-                    operation: "start handshake file".into(),
-                    duration: START_FILE_TIMEOUT,
-                });
-            }
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        }
-        Ok(())
-    }
-
     /// Prepares configured payloads (B-20 mint, real-token balances, etc.).
     pub async fn prepare_payloads(
         &mut self,
@@ -579,11 +535,9 @@ impl LoadRunner {
 
     /// Signals the load test to stop gracefully.
     ///
-    /// Cancels the stop token and background watcher tasks. The caller must ensure
-    /// [`run()`](Self::run) completes, which handles draining confirmations.
+    /// Submission stops; [`run()`](Self::run) still drains confirmations before returning.
     pub fn stop(&self) {
         self.stop.cancel();
-        self.cancel_token.cancel();
     }
 
     /// Returns the token that stops the run when cancelled.
@@ -627,7 +581,6 @@ impl std::fmt::Debug for LoadRunner {
         f.debug_struct("LoadRunner")
             .field("config", &self.config)
             .field("accounts", &self.accounts.len())
-            .field("signers_cached", &self.signers.len())
             .finish_non_exhaustive()
     }
 }
@@ -679,6 +632,67 @@ mod tests {
 
         let gas = runner.calibrate_avg_gas().await.expect("calibration succeeds");
         assert!(gas < 41_000, "calibrated {gas} gas includes the first-write cost");
+    }
+
+    /// Runs a transfer load test against a 1s-block Anvil with funded senders.
+    async fn run_against_anvil(
+        configure: impl FnOnce(LoadConfig) -> LoadConfig,
+    ) -> crate::MetricsSummary {
+        let anvil = Anvil::new().block_time(1).spawn();
+        let provider: RootProvider = RootProvider::new_http(anvil.endpoint_url());
+        let config = configure(LoadConfig {
+            transaction_submission_rpcs: vec![anvil.endpoint_url()],
+            query_rpc: anvil.endpoint_url(),
+            chain_id: anvil.chain_id(),
+            account_count: 4,
+            block_time: std::time::Duration::from_secs(1),
+            ..LoadConfig::devnet()
+        });
+        let mut runner = LoadRunner::new(config).expect("valid config");
+        for account in runner.accounts.accounts() {
+            let _: () = provider
+                .raw_request(
+                    "anvil_setBalance".into(),
+                    (account.address, U256::from(10u128.pow(20))),
+                )
+                .await
+                .unwrap();
+        }
+        tokio::time::timeout(std::time::Duration::from_secs(60), runner.run())
+            .await
+            .expect("run finishes")
+            .expect("run succeeds")
+    }
+
+    #[tokio::test]
+    async fn run_measures_the_configured_block_window() {
+        let summary = run_against_anvil(|config| LoadConfig {
+            measurement_blocks: Some(3),
+            duration: Some(std::time::Duration::from_secs(30)),
+            ..config
+        })
+        .await;
+
+        assert_eq!(summary.measurement_block_count, 3);
+        assert!(summary.throughput.total_confirmed > 0, "{:?}", summary.throughput);
+        assert_eq!(summary.receipt_coverage.transactions_missing, 0);
+        assert_eq!(summary.pacing.blocks_observed, 3, "{:?}", summary.pacing);
+    }
+
+    #[tokio::test]
+    async fn run_drains_every_submitted_transaction() {
+        let summary = run_against_anvil(|config| LoadConfig {
+            duration: Some(std::time::Duration::from_secs(3)),
+            ..config
+        })
+        .await;
+
+        let throughput = &summary.throughput;
+        assert!(throughput.total_submitted > 0, "{throughput:?}");
+        assert_eq!(throughput.total_failed, 0, "{:?}", summary.top_failure_reasons);
+        assert_eq!(throughput.total_confirmed, throughput.total_submitted, "{throughput:?}");
+        assert_eq!(summary.pacing.undrained_transactions, 0);
+        assert!(summary.gas.total_gas >= 21_000 * throughput.total_confirmed);
     }
 
     #[tokio::test]

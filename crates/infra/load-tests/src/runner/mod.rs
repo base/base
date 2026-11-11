@@ -15,11 +15,14 @@ pub use canonical_head_watcher::CanonicalHeadWatcher;
 mod gas_estimate;
 pub use gas_estimate::GasEstimate;
 
-mod inclusion;
-pub use inclusion::{InclusionPulse, InclusionSource};
+mod events;
+pub use events::{CanonicalBlock, RefillTrigger, RunEvent, TxOutcome, TxResult};
 
 mod refill_ledger;
 pub use refill_ledger::{OpenRefill, RefillLedger, RefillWait};
+
+mod coordinator;
+pub use coordinator::{ProgressReport, REPORT_INTERVAL, RunCoordinator};
 
 mod results_tracker;
 pub use results_tracker::{
@@ -30,10 +33,9 @@ pub use results_tracker::{
 mod submission;
 pub use submission::{
     BatchTxError, FUNDING_MAX_FEE_BASE_FEE_MULTIPLIER, Fees, GasPricer,
-    MAX_FEE_BASE_FEE_MULTIPLIER, MAX_SENDER_WORKER_COUNT, MIN_PRIORITY_FEE, PipelineQueue,
-    PipelineStartConfig, PreparedTransaction, QueuedSubmitFailures, SENDER_WORKERS_PER_RPC,
-    SUBMIT_BATCH_QUEUE_BUFFER, SUBMIT_MAX_ATTEMPTS, SenderContext, SignedBatch, SignedTransaction,
-    SubmissionPipeline, SubmitCohort, SubmitEvent,
+    MAX_FEE_BASE_FEE_MULTIPLIER, MAX_SENDER_WORKER_COUNT, MIN_PRIORITY_FEE, PipelineStartConfig,
+    PreparedTransaction, SENDER_WORKERS_PER_RPC, SUBMIT_BATCH_QUEUE_BUFFER, SUBMIT_MAX_ATTEMPTS,
+    SenderContext, SignedBatch, SignedTransaction, SubmissionPipeline, SubmitCohort,
 };
 
 mod validity_router;
