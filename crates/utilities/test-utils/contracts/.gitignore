@@ -2,9 +2,10 @@
 cache/
 out/
 
-# Ignores development broadcast logs
+# Ignores development broadcast logs (Anvil and the local devnet chain)
 !/broadcast
 /broadcast/*/31337/
+/broadcast/*/84538453/
 /broadcast/**/dry-run/
 
 # Docs

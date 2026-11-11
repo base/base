@@ -43,7 +43,7 @@ impl ActorTxVerifier {
     /// Resolves and scope-gates the transaction's sender and (optional) payer.
     ///
     /// `now` is the timestamp used for actor expiry (block timestamp at
-    /// inclusion, wall-clock in the pool). Returns the authorized [`TxActors`],
+    /// inclusion, the head block's timestamp in the pool). Returns the authorized [`TxActors`],
     /// or the first [`TxAuthError`] encountered (sender checked before payer).
     pub fn verify(
         signed: &Eip8130Signed,

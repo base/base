@@ -9,7 +9,7 @@ strings.
 ## How it works
 
 `BaseChainSpec` wraps reth's `ChainSpec` and adds Base-specific upgrade awareness via the
-`BaseUpgrades` trait. Network specs are converted from `base-common-chains` configs, which own the
+`Upgrades` trait. Network specs are converted from `base-common-chains` configs, which own the
 genesis JSON, upgrade schedule, base fee params, and other chain constants.
 
 The genesis header is derived at startup from the genesis JSON using

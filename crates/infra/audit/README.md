@@ -16,7 +16,16 @@ S3 removal and rollout prerequisites.
 `transaction_events_v2`, which the service reads and writes. `001` and `002`
 created the legacy `transaction_events` tree and `004` drops it; they stay
 because sqlx verifies the checksums of applied migrations. `005` adds the
-function that summarizes v2's BRIN indexes. `schema.sql` is a committed
+function that summarizes v2's BRIN indexes. `006` and `007` tune bitmap-scan
+prefetch and vacuum truncation. `008` adds the btree index on
+`(ingested_at, event_seq)` that `DataPilot`'s extraction planning query scans
+instead of the heap. `009` adds an `(event_hour, tx_hash)` index for lookups
+by transaction hash, whose inserts stay within the current hour's slice of the
+index, and `010` drops the `(tx_hash, event_time)` index it replaces. Day
+partitions that held rows when `009` ran, including that whole day, have no
+hash index, and lookups skip them. `011` adds a btree index on `event_seq` so
+each extraction slice reads only its own `event_seq` range.
+`schema.sql` is a committed
 `pg_dump` of the schema those migrations produce, without dated day partitions.
 The Postgres integration tests fail if a fresh or upgraded database differs
 from it. After changing a migration, regenerate the snapshot and review the

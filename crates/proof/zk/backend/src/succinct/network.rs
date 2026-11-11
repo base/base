@@ -30,8 +30,8 @@ use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 
 use crate::succinct::{
-    L1HeadSource, OpSuccinctWitnessProvider, SuccinctRpcConfig, SuccinctZkProverBuildError,
-    SuccinctZkProverBuilder, WitnessParams,
+    OpSuccinctWitnessProvider, SuccinctRpcConfig, SuccinctZkProverBuildError,
+    SuccinctZkProverBuilder,
 };
 
 macro_rules! backend_error {
@@ -79,12 +79,6 @@ impl fmt::Debug for SuccinctNetworkBackendConfig {
 /// Configuration for [`NetworkZkProver`].
 #[derive(Clone)]
 pub struct NetworkZkProverConfig {
-    /// Base consensus node RPC URL.
-    pub base_consensus_url: String,
-    /// L1 execution node RPC URL.
-    pub l1_node_url: String,
-    /// Default sequence window for L1 head calculations.
-    pub default_sequence_window: u64,
     /// Pre-built SP1 network prover.
     pub network_prover: Arc<NetworkProver>,
     /// Range program proving key.
@@ -109,9 +103,6 @@ impl fmt::Debug for NetworkZkProverConfig {
         let aggregation_pk = self.aggregation_pk.verifying_key().bytes32();
 
         f.debug_struct("NetworkZkProverConfig")
-            .field("base_consensus_url", &self.base_consensus_url)
-            .field("l1_node_url", &self.l1_node_url)
-            .field("default_sequence_window", &self.default_sequence_window)
             .field("range_pk", &range_pk)
             .field("aggregation_pk", &aggregation_pk)
             .field("timeout", &self.timeout)
@@ -158,9 +149,6 @@ impl NetworkZkProver {
             aggregation_cycle_limit,
             aggregation_gas_limit,
         } = config;
-        let base_consensus_url = rpc.base_consensus_rpc.as_str().to_owned();
-        let l1_node_url = rpc.l1_rpc.as_str().to_owned();
-        let default_sequence_window = rpc.default_sequence_window;
 
         info!(backend = "network", "using Succinct SP1 Network backend");
         info!("computing range and aggregation proving keys");
@@ -228,9 +216,6 @@ impl NetworkZkProver {
         let network_prover = Arc::new(network_prover);
 
         let prover_config = NetworkZkProverConfig {
-            base_consensus_url,
-            l1_node_url,
-            default_sequence_window,
             network_prover,
             range_pk: range_pk.into(),
             aggregation_pk: aggregation_pk.into(),
@@ -317,60 +302,16 @@ impl NetworkZkProver {
         request: &ZkProofRequest,
         request_session_id: &str,
     ) -> Result<String, ZkProverError> {
-        let start_block = request.start_block_number;
-        let end_block = start_block
-            .checked_add(request.number_of_blocks_to_prove)
-            .ok_or_else(|| backend_error!("proof range end block overflowed u64"))?;
-        let sequence_window =
-            request.sequence_window.unwrap_or(self.config.default_sequence_window);
-
-        info!(
-            request_session_id = %request_session_id,
-            start_block = start_block,
-            end_block = end_block,
-            number_of_blocks = request.number_of_blocks_to_prove,
-            sequence_window = sequence_window,
-            intermediate_block_interval = request.intermediate_block_interval,
-            l1_head = ?request.l1_head,
-            "starting SP1 Network range proof generation"
-        );
-
-        let witness_start = std::time::Instant::now();
-        let stdin = match self
+        let stdin = self
             .provider
-            .generate_witness(WitnessParams {
-                start_block,
-                end_block,
-                l1_head: request.l1_head.map_or(
-                    L1HeadSource::SequenceWindow {
-                        sequence_window,
-                        l1_node_url: &self.config.l1_node_url,
-                        base_consensus_url: &self.config.base_consensus_url,
-                    },
-                    L1HeadSource::Pinned,
-                ),
-                schedule_l2_block_number: request.schedule_l2_block_number,
-                intermediate_block_interval: request.intermediate_block_interval,
-            })
+            .generate_range_witness(request)
             .await
-        {
-            Ok(stdin) => stdin,
-            Err(e) => {
-                error!(
-                    start_block = start_block,
-                    end_block = end_block,
-                    error = %e,
-                    "witness generation failed"
-                );
-                return Err(backend_error!("witness generation failed: {e}"));
-            }
-        };
+            .map_err(|e| backend_error!("witness generation failed: {e}"))?;
 
         info!(
             request_session_id = %request_session_id,
             range_cycle_limit = self.config.range_cycle_limit,
             range_gas_limit = self.config.range_gas_limit,
-            witness_gen_duration_ms = witness_start.elapsed().as_millis(),
             "witness generated, submitting range proof to SP1 Network"
         );
 
@@ -431,7 +372,6 @@ impl NetworkZkProver {
             )
         })?;
 
-        let witness_start = std::time::Instant::now();
         let stdin = self
             .provider
             .generate_aggregation_witness(
@@ -446,7 +386,6 @@ impl NetworkZkProver {
             request_session_id = %request_session_id,
             aggregation_cycle_limit = self.config.aggregation_cycle_limit,
             aggregation_gas_limit = self.config.aggregation_gas_limit,
-            witness_gen_duration_ms = witness_start.elapsed().as_millis(),
             "aggregation witness generated, submitting PLONK proof to SP1 Network"
         );
 

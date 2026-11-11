@@ -4,7 +4,7 @@ use alloy_consensus::{Eip658Value, Receipt, transaction::Recovered};
 use alloy_eips::eip2718::Typed2718;
 use alloy_primitives::{B256, Bytes};
 use base_common_consensus::{BaseReceiptEnvelope, DepositReceipt};
-use base_common_genesis::BaseUpgrade;
+use base_common_genesis::BaseFeature;
 use evm2::{
     BlockStateAccumulator, Evm, SpecId,
     evm::{BEACON_ROOTS_ADDRESS, HISTORY_STORAGE_ADDRESS, SystemTx},
@@ -63,7 +63,7 @@ impl core::error::Error for PreExecutionError {}
 /// Mirrors the reference `BlockValidationError::TransactionGasLimitMoreThanAvailableBlockGas`: a
 /// transaction whose reserved gas is larger than the block's unused gas cannot be included. The
 /// reserved gas is the transaction's gas limit, plus — for an EIP-8130 transaction — the payer's
-/// worst-case authentication gas ([`IntrinsicGas::max_payer_auth_cost`]), which is metered on top
+/// authentication gas ([`IntrinsicGas::payer_auth_cost_of`]), which is metered on top
 /// of the sender-signed gas limit (matching the reference `reserved_block_gas`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BlockGasLimitExceeded {
@@ -272,21 +272,21 @@ impl<'a> BaseBlockExecutor<'a> {
         let signer = tx.signer();
 
         // Reject a transaction whose reserved gas exceeds the block's remaining gas, before
-        // executing it. For an EIP-8130 transaction the reservation adds the payer's worst-case
+        // executing it. For an EIP-8130 transaction the reservation adds the payer's
         // authentication gas (metered on top of the sender-signed gas limit), matching the
         // reference `reserved_block_gas`. Pre-Regolith deposits are exempt (matching the reference's
         // `is_regolith || !is_deposit` guard); every other transaction is checked.
         let mut reserved_gas = tx.gas_limit();
         if let Some(signed) = tx.as_eip8130() {
             let payer_auth =
-                IntrinsicGas::max_payer_auth_cost(signed).map_err(HandlerError::external)?;
+                IntrinsicGas::payer_auth_cost_of(signed).map_err(HandlerError::external)?;
             reserved_gas = reserved_gas.saturating_add(payer_auth);
         }
         let block_gas_limit = self.evm.block().gas_limit.saturating_to::<u64>();
         let block_available_gas = block_gas_limit.saturating_sub(self.gas_used);
-        let is_regolith =
-            (self.evm.config_spec_id().upgrade() as u8) >= (BaseUpgrade::Regolith as u8);
-        if reserved_gas > block_available_gas && (is_regolith || !is_deposit) {
+        let deposit_gas_accounting =
+            self.evm.config_spec_id().is_feature_enabled(BaseFeature::DepositGasAccounting);
+        if reserved_gas > block_available_gas && (deposit_gas_accounting || !is_deposit) {
             return Err(HandlerError::external(BlockGasLimitExceeded {
                 transaction_gas_limit: reserved_gas,
                 block_available_gas,
@@ -296,8 +296,12 @@ impl<'a> BaseBlockExecutor<'a> {
         // From Jovian, meter each non-deposit transaction's DA footprint against the block's DA
         // footprint budget (the block gas limit less what earlier transactions consumed). Deposits
         // are exempt. Accumulated below into `da_footprint_used` (surfaced as `blob_gas_used`).
-        let is_jovian = (self.evm.config_spec_id().upgrade() as u8) >= (BaseUpgrade::Jovian as u8);
-        let tx_da_footprint = if is_jovian && !is_deposit {
+        let tx_da_footprint = if self
+            .evm
+            .config_spec_id()
+            .is_feature_enabled(BaseFeature::DaFootprint)
+            && !is_deposit
+        {
             let enveloped = tx.enveloped().map(|bytes| bytes.as_ref()).unwrap_or_default();
             let footprint = self.evm.block().ext.jovian_da_footprint(enveloped);
             let available = block_gas_limit.saturating_sub(self.da_footprint_used);
@@ -350,8 +354,11 @@ impl<'a> BaseBlockExecutor<'a> {
         let receipt = Receipt { status: Eip658Value::Eip658(success), cumulative_gas_used, logs };
         let envelope = if is_deposit {
             // The deposit receipt version is set once Canyon is active.
-            let canyon = (self.evm.config_spec_id().upgrade() as u8) >= (BaseUpgrade::Canyon as u8);
-            let deposit_receipt_version = canyon.then_some(1);
+            let deposit_receipt_version = self
+                .evm
+                .config_spec_id()
+                .is_feature_enabled(BaseFeature::DepositReceiptVersion)
+                .then_some(1);
             BaseReceiptEnvelope::Deposit(
                 DepositReceipt { inner: receipt, deposit_nonce, deposit_receipt_version }
                     .with_bloom(),

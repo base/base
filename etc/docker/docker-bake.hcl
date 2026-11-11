@@ -38,7 +38,6 @@ group "rust-services" {
     "basectl",
     "snapshotter",
     "proposer",
-    "websocket-proxy",
     "audit-archiver",
     "sidecrush",
     "prover-service",
@@ -156,16 +155,6 @@ target "proposer" {
     SCCACHE_CACHE_ID = "rust-services-proposer-sccache"
   }
   tags = ["base-proposer:local"]
-}
-
-target "websocket-proxy" {
-  inherits = ["_rust-service-common"]
-  target = "websocket-proxy"
-  args = {
-    CARGO_CHEF_ARGS = "--package websocket-proxy-bin"
-    SCCACHE_CACHE_ID = "rust-services-websocket-proxy-sccache"
-  }
-  tags = ["websocket-proxy:local"]
 }
 
 target "audit-archiver" {

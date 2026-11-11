@@ -4,10 +4,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use alloy_primitives::Bytes;
-use chrono::{DateTime, Local};
-
-use crate::rpc::{L1BlockInfo, TxSummary};
+use crate::rpc::{BlockDaInfo, L1BlockInfo};
 
 /// Size of a single blob in bytes (128 `KiB`).
 pub const BLOB_SIZE: u64 = 128 * 1024;
@@ -25,43 +22,6 @@ pub const RATE_WINDOW_5M: Duration = Duration::from_secs(300);
 /// Number of recent L1 blocks used for blob share and target usage calculations.
 pub const L1_BLOCK_WINDOW: usize = 10;
 
-/// A single flashblock entry displayed in the TUI.
-#[derive(Clone, Debug)]
-pub struct FlashblockEntry {
-    /// L2 block number.
-    pub block_number: u64,
-    /// Flashblock index within the block.
-    pub index: u64,
-    /// Number of transactions in this flashblock.
-    pub tx_count: usize,
-    /// Cumulative gas used up to this flashblock.
-    pub gas_used: u64,
-    /// Block gas limit.
-    pub gas_limit: u64,
-    /// Base fee per gas in wei, if available.
-    pub base_fee: Option<u128>,
-    /// Previous block's base fee for delta display.
-    pub prev_base_fee: Option<u128>,
-    /// Local timestamp when this flashblock was received.
-    pub timestamp: DateTime<Local>,
-    /// Time difference in milliseconds from the previous flashblock.
-    pub time_diff_ms: Option<i64>,
-    /// Raw EIP-2718 encoded transaction bytes, decoded lazily on demand.
-    pub raw_txs: Vec<Bytes>,
-}
-
-impl FlashblockEntry {
-    /// Decodes the raw transaction bytes into summaries on demand.
-    ///
-    /// This avoids the expensive k256 ECDSA signer recovery on the hot path.
-    pub fn decode_txs(&self) -> Vec<TxSummary> {
-        crate::rpc::decode_flashblock_transactions(
-            &self.raw_txs,
-            self.base_fee.and_then(|f| u64::try_from(f).ok()),
-        )
-    }
-}
-
 /// An L2 block's data availability contribution.
 #[derive(Clone, Debug)]
 pub struct BlockContribution {
@@ -71,7 +31,7 @@ pub struct BlockContribution {
     pub da_bytes: u64,
     /// Unix timestamp of the block.
     pub timestamp: u64,
-    /// Total transaction count accumulated from flashblocks.
+    /// Number of transactions in the block, or zero until the full block has been fetched.
     pub tx_count: usize,
 }
 
@@ -319,25 +279,20 @@ impl DaTracker {
         }
     }
 
-    /// Records a new L2 block and adds its DA bytes to the backlog.
-    pub fn add_block(&mut self, block_number: u64, da_bytes: u64, timestamp: u64) {
-        if block_number <= self.safe_l2_block {
-            return;
-        }
-
-        self.da_backlog_bytes = self.da_backlog_bytes.saturating_add(da_bytes);
-        self.growth_tracker.add_sample(da_bytes);
-
-        self.add_backlog_block(block_number, da_bytes, timestamp);
-    }
-
-    /// Updates an existing block's DA bytes with accurate data from a full fetch.
-    pub fn update_block_info(&mut self, block_number: u64, accurate_da_bytes: u64, timestamp: u64) {
+    /// Records a fully fetched L2 block.
+    ///
+    /// Updates the block's DA bytes in place when it is already tracked (for
+    /// example from the initial backlog load); otherwise inserts it in sorted
+    /// position and, when it is still unsafe, adds its bytes to the backlog and
+    /// the growth rate.
+    pub fn update_block_info(&mut self, info: BlockDaInfo) {
+        let BlockDaInfo { block_number, da_bytes, timestamp, tx_count } = info;
         for contrib in &mut self.block_contributions {
             if contrib.block_number == block_number {
-                let diff = accurate_da_bytes as i64 - contrib.da_bytes as i64;
-                contrib.da_bytes = accurate_da_bytes;
+                let diff = da_bytes as i64 - contrib.da_bytes as i64;
+                contrib.da_bytes = da_bytes;
                 contrib.timestamp = timestamp;
+                contrib.tx_count = tx_count;
 
                 if block_number > self.safe_l2_block {
                     if diff > 0 {
@@ -351,12 +306,11 @@ impl DaTracker {
             }
         }
 
-        // Block not found - insert it in sorted position (gap fill)
-        let contribution =
-            BlockContribution { block_number, da_bytes: accurate_da_bytes, timestamp, tx_count: 0 };
+        let contribution = BlockContribution { block_number, da_bytes, timestamp, tx_count };
 
         if block_number > self.safe_l2_block {
-            self.da_backlog_bytes = self.da_backlog_bytes.saturating_add(accurate_da_bytes);
+            self.da_backlog_bytes = self.da_backlog_bytes.saturating_add(da_bytes);
+            self.growth_tracker.add_sample(da_bytes);
         }
 
         let insert_pos = self

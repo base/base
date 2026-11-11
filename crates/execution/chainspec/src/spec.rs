@@ -7,7 +7,7 @@ use alloy_eips::eip7840::BlobParams;
 use alloy_genesis::Genesis;
 use alloy_hardforks::Hardfork;
 use alloy_primitives::{Address, B256, U256};
-use base_common_chains::{BaseUpgradeExt, ChainConfig, Upgrades};
+use base_common_chains::{BaseFeature, BaseUpgradeExt, ChainConfig, Upgrades};
 use base_common_consensus::Predeploys;
 use base_common_genesis::{
     BaseUpgrade, DenimTimestampSchedule, RuntimeUpgradeRegistry, UpgradeActivation,
@@ -284,7 +284,10 @@ impl BaseChainSpec {
         activation_admin_address: Option<Address>,
         chain_id: u64,
     ) -> Result<(), BaseChainSpecError> {
-        let beryl_scheduled = !matches!(upgrades.fork(BaseUpgrade::Beryl), ForkCondition::Never);
+        let beryl_scheduled = !matches!(
+            upgrades.fork(BaseFeature::ActivationRegistry.activation_upgrade()),
+            ForkCondition::Never
+        );
 
         if activation_admin_address.is_none() && beryl_scheduled {
             return Err(BaseChainSpecError::MissingActivationAdminAddress { chain_id });
@@ -305,7 +308,9 @@ impl BaseChainSpec {
     pub fn make_genesis_header(genesis: &Genesis, upgrades: &ChainHardforks) -> Header {
         let mut header = reth_chainspec::make_genesis_header(genesis, upgrades);
 
-        if upgrades.fork(BaseUpgrade::Isthmus).active_at_timestamp(header.timestamp)
+        if upgrades
+            .fork(BaseFeature::L2ToL1MessageRoot.activation_upgrade())
+            .active_at_timestamp(header.timestamp)
             && let Some(storage_root) = Self::l2_to_l1_message_passer_storage_root(genesis)
         {
             header.withdrawals_root = Some(storage_root);
@@ -680,9 +685,12 @@ impl EthChainSpec for BaseChainSpec {
     }
 
     fn next_block_base_fee(&self, parent: &Header, target_timestamp: u64) -> Option<u64> {
-        if Upgrades::is_jovian_active_at_timestamp(self, parent.timestamp()) {
+        if self.is_feature_active_at_timestamp(BaseFeature::DaAwareBaseFee, parent.timestamp()) {
             compute_jovian_base_fee(self, parent, target_timestamp).ok()
-        } else if Upgrades::is_holocene_active_at_timestamp(self, parent.timestamp()) {
+        } else if self.is_feature_active_at_timestamp(
+            BaseFeature::DynamicBaseFeeParameters,
+            parent.timestamp(),
+        ) {
             decode_holocene_base_fee(self, parent, target_timestamp).ok()
         } else {
             self.runtime_chain_spec().next_block_base_fee(parent, target_timestamp)
@@ -744,6 +752,7 @@ impl From<ChainSpec> for BaseChainSpec {
 #[cfg(test)]
 mod tests {
     use alloc::{
+        format,
         string::{String, ToString},
         vec,
         vec::Vec,
@@ -756,7 +765,7 @@ mod tests {
     use alloy_hardforks::Hardfork;
     use alloy_primitives::{Address, B256, U256, address, b256};
     use base_common_chains::{ChainConfig, Upgrades};
-    use base_common_genesis::{BaseUpgrade, RuntimeUpgradeRegistry};
+    use base_common_genesis::{BaseFeature, BaseUpgrade, RuntimeUpgradeRegistry};
     use base_common_rpc_types::FeeInfo;
     use reth_chainspec::{
         BaseFeeParams, BaseFeeParamsKind, ChainSpec, EthChainSpec, EthereumHardforks, test_fork_ids,
@@ -1118,6 +1127,36 @@ mod tests {
             assert!(!spec.is_fork_active_at_timestamp(BaseUpgrade::Zenith, 0));
             assert!(!spec.is_fork_active_at_timestamp(BaseUpgrade::Zenith, u64::MAX));
         }
+    }
+
+    #[test]
+    fn gas_limit_billing_activates_with_everest() {
+        let genesis_with_everest = |everest: Option<u64>| -> BaseChainSpec {
+            let everest =
+                everest.map_or_else(String::new, |time| format!(r#", "everest": {time}"#));
+            let genesis = format!(
+                r#"{{
+                  "config": {{
+                    "bedrockBlock": 0, "regolithTime": 0, "canyonTime": 0, "ecotoneTime": 0,
+                    "fjordTime": 0, "graniteTime": 0, "holoceneTime": 0, "isthmusTime": 0,
+                    "jovianTime": 0,
+                    "base": {{ "v1": 0, "v2": 0, "v3": 0, "denim": 0{everest} }},
+                    "activationAdminAddress": "0xcb00000000000000000000000000000000000000"
+                  }}
+                }}"#
+            );
+            serde_json::from_str::<Genesis>(&genesis).unwrap().into()
+        };
+
+        let without_everest = genesis_with_everest(None);
+        assert!(
+            !without_everest.is_feature_active_at_timestamp(BaseFeature::GasLimitBilling, u64::MAX)
+        );
+
+        let with_everest = genesis_with_everest(Some(100));
+        assert!(!with_everest.is_feature_active_at_timestamp(BaseFeature::GasLimitBilling, 99));
+        assert!(with_everest.is_feature_active_at_timestamp(BaseFeature::GasLimitBilling, 100));
+        assert!(with_everest.is_feature_activation_block(BaseFeature::GasLimitBilling, 100, 99));
     }
 
     #[test]
@@ -1906,8 +1945,8 @@ mod tests {
         let converted = BaseChainSpec::from(parsed.inner.clone());
         for spec in [parsed, built, converted] {
             let schedule = spec.denim_timestamp_schedule().unwrap().unwrap();
-            assert!(!schedule.is_denim_active_at_block(9));
-            assert!(schedule.is_denim_active_at_block(10));
+            assert!(!schedule.is_subsecond_active_at_block(9));
+            assert!(schedule.is_subsecond_active_at_block(10));
             assert_eq!(schedule.block_timestamp_parts(9), (106, 0));
             assert_eq!(schedule.block_timestamp_parts(10), (109, 0));
             assert_eq!(schedule.block_timestamp_parts(11), (109, 200));

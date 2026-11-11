@@ -868,7 +868,6 @@ mod tests {
             docker_conductor: None,
             docker_el: None,
             docker_cl: None,
-            flashblocks_ws: None,
         }
     }
 

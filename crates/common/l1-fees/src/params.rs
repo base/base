@@ -5,7 +5,7 @@ use base_common_flz::{
     NON_ZERO_BYTE_COST, flz_compress_len, tx_estimated_size_fjord,
     tx_estimated_size_fjord_from_fastlz_size,
 };
-use base_common_genesis::BaseUpgrade;
+use base_common_genesis::{BaseFeature, BaseUpgrade};
 
 /// Gas per calldata token (EIP-2028 standard token cost).
 pub const STANDARD_TOKEN_COST: u64 = 4;
@@ -51,13 +51,6 @@ pub struct L1FeeParams {
 }
 
 impl L1FeeParams {
-    /// Returns whether `target` is active at `upgrade`.
-    ///
-    /// Mirrors `BaseSpecId::is_enabled_in`: upgrades are ordered by discriminant.
-    const fn is_enabled(upgrade: BaseUpgrade, target: BaseUpgrade) -> bool {
-        (target as u8) <= (upgrade as u8)
-    }
-
     /// Returns whether `input` is fee-exempt (empty or a deposit transaction).
     fn is_fee_exempt(input: &[u8]) -> bool {
         input.is_empty() || input.first() == Some(&DEPOSIT_TX_TYPE)
@@ -68,7 +61,7 @@ impl L1FeeParams {
     /// Post-Fjord uses the FastLZ-estimated compressed size; earlier forks count
     /// EIP-2028 calldata tokens, with pre-Regolith adding 68 signature bytes.
     pub fn data_gas(input: &[u8], upgrade: BaseUpgrade) -> U256 {
-        if Self::is_enabled(upgrade, BaseUpgrade::Fjord) {
+        if upgrade.is_feature_enabled(BaseFeature::FastLzL1Fees) {
             let estimated_size = U256::from(tx_estimated_size_fjord(input));
             return estimated_size
                 .saturating_mul(U256::from(NON_ZERO_BYTE_COST))
@@ -78,7 +71,7 @@ impl L1FeeParams {
         let mut tokens = input.iter().fold(0u64, |acc, &byte| {
             acc + if byte == 0 { 1 } else { NON_ZERO_BYTE_MULTIPLIER_ISTANBUL }
         });
-        if !Self::is_enabled(upgrade, BaseUpgrade::Regolith) {
+        if !upgrade.is_feature_enabled(BaseFeature::ActualL1SignatureBytes) {
             tokens += PRE_REGOLITH_SIGNATURE_BYTES * NON_ZERO_BYTE_MULTIPLIER_ISTANBUL;
         }
         U256::from(tokens.saturating_mul(STANDARD_TOKEN_COST))
@@ -108,9 +101,9 @@ impl L1FeeParams {
         if Self::is_fee_exempt(input) {
             return U256::ZERO;
         }
-        if Self::is_enabled(upgrade, BaseUpgrade::Fjord) {
+        if upgrade.is_feature_enabled(BaseFeature::FastLzL1Fees) {
             self.calculate_tx_l1_cost_fjord(input)
-        } else if Self::is_enabled(upgrade, BaseUpgrade::Ecotone) {
+        } else if upgrade.is_feature_enabled(BaseFeature::BlobAwareL1Fees) {
             self.calculate_tx_l1_cost_ecotone(input, upgrade)
         } else {
             self.calculate_tx_l1_cost_bedrock(input, upgrade)
@@ -209,7 +202,7 @@ impl L1FeeParams {
         let operator_fee_scalar = self.operator_fee_scalar.unwrap_or_default();
         let operator_fee_constant = self.operator_fee_constant.unwrap_or_default();
 
-        let product = if Self::is_enabled(upgrade, BaseUpgrade::Jovian) {
+        let product = if upgrade.is_feature_enabled(BaseFeature::ScaledOperatorFees) {
             gas.saturating_mul(operator_fee_scalar)
                 .saturating_mul(U256::from(OPERATOR_FEE_JOVIAN_MULTIPLIER))
         } else {

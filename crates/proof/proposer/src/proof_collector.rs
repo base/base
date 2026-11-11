@@ -14,8 +14,8 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
 use crate::{
-    IntervalResolver, Metrics, ProofSubmitter, ProofTarget, ProposerError, ProposerProofAdapter,
-    RecoveredState, SubmitAction,
+    IntervalResolver, Metrics, ProofSubmitter, ProposerError, ProposerProofAdapter, RecoveredState,
+    SubmitAction,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -89,8 +89,16 @@ where
             // Resolved per target: the interval changes at the Denim activation
             // block, so the cursor's own starting block picks the cadence.
             let starting_block = current.l2_block_number;
-            let block_interval = match self.intervals.for_starting_block(starting_block).await {
-                Ok(intervals) => intervals.block_interval,
+            let target = match self.intervals.next_target(starting_block, finalized_head).await {
+                Ok(Some(target)) => target,
+                Ok(None) => {
+                    debug!(
+                        current_block = starting_block,
+                        finalized_head,
+                        "Finalized head below collection target, waiting for L2 head to advance"
+                    );
+                    return false;
+                }
                 Err(error) => {
                     Metrics::errors_total(error.metric_label()).increment(1);
                     warn!(
@@ -101,23 +109,10 @@ where
                     return false;
                 }
             };
-
-            let Some(target_block) = ProofTarget::next_block(starting_block, block_interval) else {
-                return false;
-            };
-
-            if target_block > finalized_head {
-                debug!(
-                    current_block = current.l2_block_number,
-                    target_block,
-                    finalized_head,
-                    "Finalized head below collection target, waiting for L2 head to advance"
-                );
-                return false;
-            }
+            let target_block = target.block;
 
             let Some(claimed_l2_output_root) =
-                ProofTarget::canonical_output_root(self.rollup_client.as_ref(), target_block).await
+                target.canonical_output_root(self.rollup_client.as_ref()).await
             else {
                 return false;
             };
@@ -282,9 +277,14 @@ where
     }
 
     #[tracing::instrument(
-        name = "proposer.collect_submit",
+        name = "proposer.submit_proof",
         skip_all,
-        fields(target_block = target_block, session_id = %session_id)
+        fields(
+            starting_block_number = starting_block,
+            target_block = target_block,
+            parent_address = %parent_address,
+            session_id = %session_id,
+        )
     )]
     async fn submit_proof(
         &self,

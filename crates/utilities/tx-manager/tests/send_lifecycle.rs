@@ -7,7 +7,7 @@
 mod common;
 
 use std::{
-    sync::{Arc, atomic::AtomicBool},
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -24,6 +24,7 @@ use common::{
 };
 use rstest::rstest;
 use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
 
 /// Returns a config with fast polling suitable for tests.
 fn fast_polling_config() -> TxManagerConfig {
@@ -232,7 +233,7 @@ async fn query_receipt_returns_none_when_not_enough_confirmations() {
 async fn wait_mined_returns_confirmed_receipt() {
     let (manager, _anvil) = setup_with_config(fast_polling_config()).await;
     let (tx_hash, send_state, _) = publish_simple_tx(&manager).await;
-    let closed = AtomicBool::new(false);
+    let closed = CancellationToken::new();
 
     let receipt = SimpleTxManager::<RootProvider>::wait_mined(
         &send_state,
@@ -252,7 +253,8 @@ async fn wait_mined_returns_confirmed_receipt() {
 async fn wait_mined_returns_none_on_shutdown() {
     let (manager, _anvil) = setup_with_config(unconfirmable_config()).await;
     let (tx_hash, send_state, _) = publish_simple_tx(&manager).await;
-    let closed = AtomicBool::new(true);
+    let closed = CancellationToken::new();
+    closed.cancel();
 
     let receipt = SimpleTxManager::<RootProvider>::wait_mined(
         &send_state,
@@ -273,7 +275,7 @@ async fn wait_mined_returns_none_on_shutdown() {
 async fn wait_for_tx_delivers_receipt() {
     let (manager, _anvil) = setup_with_config(fast_polling_config()).await;
     let (tx_hash, send_state, _) = publish_simple_tx(&manager).await;
-    let closed = Arc::new(AtomicBool::new(false));
+    let closed = CancellationToken::new();
     let (receipt_tx, mut receipt_rx) = mpsc::channel(1);
 
     let _handle = SimpleTxManager::<RootProvider>::wait_for_tx(
@@ -297,7 +299,8 @@ async fn wait_for_tx_delivers_receipt() {
 async fn wait_for_tx_closes_channel_on_shutdown() {
     let (manager, _anvil) = setup_with_config(unconfirmable_config()).await;
     let (tx_hash, send_state, _) = publish_simple_tx(&manager).await;
-    let closed = Arc::new(AtomicBool::new(true));
+    let closed = CancellationToken::new();
+    closed.cancel();
     let (receipt_tx, mut receipt_rx) = mpsc::channel(1);
 
     let _handle = SimpleTxManager::<RootProvider>::wait_for_tx(
@@ -321,7 +324,7 @@ async fn wait_for_tx_closes_channel_on_shutdown() {
 async fn wait_for_tx_does_not_panic_on_dropped_receiver() {
     let (manager, _anvil) = setup_with_config(fast_polling_config()).await;
     let (tx_hash, send_state, _) = publish_simple_tx(&manager).await;
-    let closed = Arc::new(AtomicBool::new(false));
+    let closed = CancellationToken::new();
     let (receipt_tx, receipt_rx) = mpsc::channel(1);
 
     let handle = SimpleTxManager::<RootProvider>::wait_for_tx(

@@ -50,6 +50,12 @@ pub enum NonceError {
     #[error("nonce sequence is u64::MAX and cannot be consumed")]
     SequenceSaturated,
 
+    /// The transaction carries a delegation account change but does not use the
+    /// protocol nonce (`nonce_key == 0`). A delegation must bump the account
+    /// nonce so the delegated account is never empty under EIP-161.
+    #[error("a transaction carrying a delegation must use the protocol nonce")]
+    DelegationRequiresProtocolNonce,
+
     /// A read against the nonce manager precompile storage failed.
     #[error("nonce-manager read failed: {0}")]
     Storage(#[from] BasePrecompileError),

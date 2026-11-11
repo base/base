@@ -127,10 +127,20 @@ async fn query_receipt_returns_receipt_after_reorg_reinclusion() {
     let original_block_hash = receipt.block_hash.expect("should have block hash");
 
     revert(manager.provider(), snap).await;
+    // Shift the replacement block's timestamp so it hashes differently from the reorged one;
+    // Anvil otherwise rebuilds an identical block.
+    manager
+        .provider()
+        .raw_request::<[u64; 1], i64>("evm_increaseTime".into(), [1])
+        .await
+        .expect("evm_increaseTime should succeed");
 
-    // Anvil may not restore the mempool on revert, so re-submit.
-    let _ =
-        manager.provider().send_raw_transaction(&raw_tx).await.expect("re-submit should succeed");
+    // Older Anvil (Foundry 1.5) drops reverted transactions from the mempool, so re-submit.
+    // Newer Anvil (Foundry 1.8.7) restores them on revert and rejects the re-submit as
+    // already imported; either way the tx is pending again.
+    if let Err(err) = manager.provider().send_raw_transaction(&raw_tx).await {
+        assert!(err.to_string().contains("already imported"), "re-submit failed: {err}");
+    }
 
     mine_block(manager.provider()).await;
     mine_block(manager.provider()).await;

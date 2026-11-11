@@ -30,6 +30,12 @@ pub use storage::StoragePayload;
 mod double_counter;
 pub use double_counter::{DOUBLE_COUNTER_GAS_LIMIT, DoubleCounterPayload};
 
+mod aa_bundle;
+pub use aa_bundle::AaBundlePayload;
+
+mod revert_arb;
+pub use revert_arb::{DEFAULT_REVERT_ARB_GAS_LIMIT, REVERT_ARB_SELECTOR, RevertArbPayload};
+
 mod precompile;
 pub use precompile::PrecompilePayload;
 
@@ -37,7 +43,12 @@ mod looper;
 pub use looper::PrecompileLooper;
 
 mod uniswap;
-pub use uniswap::UniswapV3Payload;
+pub use uniswap::{UniswapV3Hop, UniswapV3Payload};
+
+mod uniswap_liquidity;
+pub use uniswap_liquidity::{
+    LiquidityOps, SenderPosition, UniswapPositions, UniswapV3LiquidityPayload,
+};
 
 mod aerodrome;
 pub use aerodrome::AerodromeClPayload;
@@ -53,6 +64,10 @@ pub use real_token_lifecycle::{encode_erc20_approve, recover_real_tokens};
 
 mod osaka;
 pub use osaka::OsakaPayload;
+
+mod token_move;
+pub(crate) use token_move::{DISPERSE, MAX_TOKEN_MOVE_TRANSFERS_PER_TX};
+pub use token_move::{TokenMoveContext, TokenMovePayload};
 
 /// A transaction payload generator with optional chain preparation.
 #[async_trait]
@@ -71,6 +86,17 @@ pub trait Payload: Send + Sync + std::fmt::Debug {
 
     /// Generates a transaction request.
     fn generate(&self, rng: &mut SeededRng, from: Address, to: Address) -> TransactionRequest;
+
+    /// Returns each request gas calibration measures, with its relative weight. Default: one
+    /// generated request.
+    fn calibration_requests(
+        &self,
+        rng: &mut SeededRng,
+        from: Address,
+        to: Address,
+    ) -> Vec<(TransactionRequest, u32)> {
+        vec![(self.generate(rng, from, to), 1)]
+    }
 
     /// Optional chain preparation before the measured load phase. Default: no-op.
     async fn prepare(&self, ctx: &mut ChainPrepContext<'_>) -> Result<()> {

@@ -8,7 +8,7 @@ use std::{
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types_engine::JwtSecret;
 use alloy_rpc_types_eth::SyncStatus as EthSyncStatus;
-use base_common_genesis::{BaseUpgrade, RollupConfig, SystemConfig};
+use base_common_genesis::{BaseFeature, BaseUpgrade, RollupConfig, SystemConfig};
 use base_common_network::Base;
 use base_consensus_node::StandalonePrefund;
 use base_execution_chainspec::BaseChainSpec;
@@ -90,10 +90,7 @@ impl SnapshotL2Stack {
             ws_port: container.and_then(|value| value.builder_ws_port),
             auth_port: container.and_then(|value| value.builder_auth_port),
             p2p_port: container.and_then(|value| value.builder_p2p_port),
-            flashblocks_port: container.and_then(|value| value.builder_flashblocks_port),
             metrics_port: None,
-            block_time: block_interval.duration(),
-            payload_builder_cutover: block_interval == DevnetBlockInterval::TwoHundredMilliseconds,
             extra_extensions: Vec::new(),
             validity_signature_mode: ValiditySignatureMode::Off,
             persistence_threshold: Some(0),
@@ -139,8 +136,6 @@ impl SnapshotL2Stack {
             datadir: Some(datadir),
             jwt_secret,
             builder_rpc_url,
-            // Snapshot validation replays canonical payloads only after sequencing finishes.
-            builder_flashblocks_url: None,
             builder_p2p_enode: builder.p2p_enode(),
             http_port: container.and_then(|value| value.client_http_port),
             ws_port: container.and_then(|value| value.client_ws_port),
@@ -151,6 +146,7 @@ impl SnapshotL2Stack {
             persistence_backpressure_threshold: Some(
                 block_interval.snapshot_persistence_backpressure_threshold(),
             ),
+            state_root_task_compare_updates: false,
             tx_forwarding_config: None,
             upgrade_signal: None,
             extra_extensions: Vec::new(),
@@ -277,7 +273,10 @@ impl SnapshotL2Stack {
             .ok_or_else(|| eyre::eyre!("snapshot boundary block number overflow"))?;
         if block_interval == DevnetBlockInterval::TwoSeconds {
             ensure!(
-                !config.is_denim_active(config.l2_block_timestamp(boundary_number)),
+                !config.is_feature_active_cascading(
+                    BaseFeature::SubsecondBlocks,
+                    config.l2_block_timestamp(boundary_number)
+                ),
                 "two-second snapshot continuation requires a pre-Denim snapshot head"
             );
         }
@@ -436,11 +435,6 @@ impl SnapshotL2Stack {
         self.client()?.metrics_url()
     }
 
-    /// Returns the builder Flashblocks WebSocket URL.
-    pub fn builder_flashblocks_url(&self) -> Result<Url> {
-        Url::parse(&self.builder.flashblocks_url()).wrap_err("invalid builder Flashblocks URL")
-    }
-
     /// Reads the builder's current head using the same boundary decoder as startup preflight.
     pub async fn current_builder_boundary(&self) -> Result<SnapshotBoundary> {
         SnapshotBoundary::read(
@@ -450,16 +444,6 @@ impl SnapshotL2Stack {
             None,
         )
         .await
-    }
-
-    /// Verifies both ELs currently report the same block number.
-    pub async fn ensure_heads_match(&self) -> Result<()> {
-        let builder = RootProvider::<Base>::new_http(self.builder.rpc_url()?);
-        let client = RootProvider::<Base>::new_http(self.client()?.rpc_url()?);
-        let (builder_head, client_head) =
-            tokio::try_join!(builder.get_block_number(), client.get_block_number())?;
-        ensure!(builder_head == client_head, "builder head {builder_head} != client {client_head}");
-        Ok(())
     }
 
     fn client(&self) -> Result<&InProcessClient> {

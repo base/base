@@ -10,13 +10,16 @@
 mod version;
 pub use version::Version;
 
+mod engine;
+pub use engine::Engine;
+
 mod snapshots;
 pub use snapshots::Snapshots;
 
 mod snapshot_manifest;
 pub use snapshot_manifest::{
-    ChunkFilename, ChunkedArchive, ComponentManifest, DirectoryArchiveSink,
-    ManifestGenerationParams, OutputFileChecksum, ProgressDisplay, SingleArchive,
-    SnapshotArchiveSink, SnapshotArchiveWriter, SnapshotGenerator, SnapshotManifest,
+    ChunkFilename, ChunkedArchive, ComponentManifest, DEFAULT_BLOCKS_PER_FILE,
+    DirectoryArchiveSink, ManifestGenerationParams, OutputFileChecksum, ProgressDisplay,
+    SingleArchive, SnapshotArchiveSink, SnapshotArchiveWriter, SnapshotGenerator, SnapshotManifest,
     SnapshotManifestExt,
 };

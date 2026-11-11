@@ -44,10 +44,9 @@ blocks. Transactions submitted to the builder use its real transaction pool and 
 Interactive `base-devnet` runs the sequencer and validator concurrently.
 
 This is an unsafe-chain development network, not a valid restartable continuation of Base mainnet.
-It has no L1, derivation, batching, or safe/finalized-head advancement. At 200ms it produces full
-canonical blocks with Base/Reth's standard payload service. The 2s case uses the Flashblocks payload
-service, but the 200ms case neither starts nor subscribes to Flashblocks. Treat 200ms results as
-full-block results and do not compare Flashblock latency against the 2s case.
+It has no L1, derivation, batching, or safe/finalized-head advancement. Both cadences produce full
+canonical blocks with the native Base payload builder; only the block interval and the fork
+schedule differ between the 2s and 200ms cases.
 
 ## Prerequisites
 
@@ -131,16 +130,13 @@ cast balance "$FUNDER_ADDRESS" --rpc-url "$BUILDER_RPC"
 ```
 
 The runtime JSON contains `status`, `chain_id`, `boundary_number`, `boundary_hash`,
-`block_interval_ms`, `block_gas_limit`, `builder_rpc_url`, `builder_flashblocks_url`, and
-`client_rpc_url`. Dynamic ports are the default and are safest for automation. `--stable-ports`
+`block_interval_ms`, `block_gas_limit`, `builder_rpc_url`, and `client_rpc_url`. Dynamic ports are the default and are safest for automation. `--stable-ports`
 binds the builder and client RPCs to ports 7545 and 8545, respectively, but fails if those ports are
 occupied.
 
 To pin a run to a known snapshot boundary, pass all three of `--expected-head-number`,
 `--expected-head-hash`, and `--expected-head-timestamp`. Startup fails before load generation if
 the captured boundary differs.
-
-## Run a snapshot benchmark
 
 ## Run a quick local transfer benchmark
 
@@ -196,6 +192,8 @@ Swap workloads can opt into fresh-devnet contract provisioning with
 fresh devnet USDC token plus Uniswap/Aerodrome router shims for each workload,
 then auto-wires swap and real-token setup addresses before execution.
 
+## Run a snapshot benchmark
+
 `base-bench snapshot` owns the process lifecycle around one load test: it generates an ephemeral
 funder, deposits funds to it in the first local descendant, replaces placeholder endpoints in the
 YAML with dynamically allocated builder endpoints, runs the load generator, writes JSON, and shuts
@@ -203,18 +201,17 @@ the stack down. It does not own the caller-provided snapshot datadirs.
 
 Snapshot runs can opt into native-builder state sharing with
 `--engine.share-sparse-trie-with-payload-builder` and
-`--engine.share-execution-cache-with-payload-builder`. Both default to false.
-These settings affect the basic builder selected at Denim for 200 ms runs, not
-the Flashblocks builder. Sparse sharing requires at least five available CPUs;
-an unsupported host fails rather than silently ignoring the option. Host-derived
-worker-pool sizing is unchanged. The options are CLI-only, not load-test YAML keys.
+`--engine.share-execution-cache-with-payload-builder`. Both default to false. Sparse sharing
+requires at least five available CPUs; an unsupported host fails rather than silently ignoring the
+option. Host-derived worker-pool sizing is unchanged. The options are CLI-only, not load-test YAML
+keys.
 
 For the end-to-end workflow, including disposable snapshot restores, report artifact conventions, and
 how `--benchmark-run`, `--scenario`, and `--run-id` select runs in `base/benchmark`, see
 [Snapshot Benchmarking](../../docs/guides/SNAPSHOT_BENCHMARKS.md).
 
 Always use an optimized build for performance measurements. Debug payload execution becomes
-CPU-bound far below the 400M block gas limit.
+CPU-bound far below the snapshot block gas limits.
 
 ```bash
 mkdir -p results
@@ -232,15 +229,14 @@ just devnet bench snapshot \
 ```
 
 The account-create workload uses the adaptive open-loop load generator. Every successful transfer
-targets a runtime-random fresh address, forcing an account-trie insertion. Its 100 senders and
-1,024 in-flight transactions per sender can hold more than five 400M-gas blocks of 21K-gas
-transfers. The cross-cadence example keeps 1M gas outstanding. Larger 20M and 80M fresh-account
-queues overran payload deadlines in local storage: the 2s Flashblocks builder missed subsequent FCUs
-and the 200ms standard builder could remain inside state-root construction without advancing the
-measurement. It measures exactly 500 newly observed canonical blocks. Setup, prefill, and post-run
-confirmation draining are outside the measured block count. Use `duration` instead of (or in
-addition to) `measurement_blocks` in a custom YAML when a time-bounded smoke test is preferable;
-when both are set, the first limit reached stops submissions.
+targets a runtime-random fresh address, forcing an account-trie insertion. Its 100 senders and 1,024
+in-flight transactions per sender can hold about 2.1 Ggas of 21K-gas transfers, more than two
+default 200ms blocks. The cross-cadence example keeps 1M gas outstanding. Larger 20M and 80M
+fresh-account queues overran payload deadlines in local storage: the builder could remain inside
+state-root construction without advancing the measurement. It measures exactly 500 newly observed canonical blocks. Setup, prefill,
+and post-run confirmation draining are outside the measured block count. Use `duration` instead of
+(or in addition to) `measurement_blocks` in a custom YAML when a time-bounded smoke test is
+preferable; when both are set, the first limit reached stops submissions.
 
 The result includes cadence, boundary number/hash, builder/client endpoints, the generated funder
 address (never its private key), explicit measurement boundaries, every measured block's
@@ -264,7 +260,10 @@ run. Put the directory outside the restored datadirs so restoring the snapshot d
 
 `--output-dir` is one self-contained `base/benchmark` run directory. It receives
 `benchmark-result.json`, `metadata.json`, `metrics-sequencer.json`, `load-test-result.json`, and,
-with a client datadir, `metrics-validator.json`. Set `BASE_BENCH_CLIENT_VERSION` to a stable
+with a client datadir, `metrics-validator.json`. When `<config>.targets.json` from
+`etc/scripts/local/mainnet-mix.py` sits beside the load-test config, it also receives
+`calibration.json`: per metric, the mainnet target, the run's value, the relative error, and whether
+it is within tolerance. Set `BASE_BENCH_CLIENT_VERSION` to a stable
 build label when the report should compare commits or releases. The role metrics contain
 `gas/per_block`, `gas/per_second`, `transactions/per_block`, `transactions/per_second`, and selected
 Reth Prometheus diagnostics. `BlockNumber` uses two-second-equivalent measurement units: each 2s
@@ -281,24 +280,22 @@ series are identified by scenario and node role; `--run-id` is only the unique a
 defaults to `<benchmark-run>-<timestamp>` when omitted. Upload the metrics and artifact files before
 `metadata.json` when publishing to the report service because metadata is its completion signal.
 
-Which builder metrics describe the canonical blocks depends on cadence. At 2s the flashblocks
-builder produces them, so read `reth_base_builder_total_block_built_duration_avg` and the other
-flashblocks series. At 200ms the payload-builder cutover selects the native builder after Denim and
-sends the flashblocks builder a no-pool build of each block, so its series describe that discarded
-payload. Read `reth_base_builder_native_payload_{build,execution,state_root}_duration_avg` instead.
+The native builder produces every canonical block at both cadences, so read
+`reth_base_builder_native_payload_{build,execution,state_root}_duration_avg` for build timing.
 `reth_base_builder_txs_included_per_block_flow_*_avg` and
 `reth_base_builder_tx_gas_used_per_block_flow_*_avg` count pool transactions, excluding sequencer
-transactions, in blocks from whichever builder was selected. Like every histogram average they span
+transactions. Like every histogram average they span
 the scrape interval; `transactions/per_block` and `gas/per_block` are exact per block.
 
 For a saturated Blake2f comparison with equal 60-second measured windows, provide separate 2s and
-200ms YAMLs with 30 and 300 measured blocks, respectively. Both should issue one fixed
-50,000-round Blake2f call per transaction with identical sender, in-flight, batching, funding, and
-seed settings. The report labels these runs with `TransactionPayload=blake2f`; use scenarios such
-as `blake2f-2s-run-1` and `blake2f-200ms-run-1` to distinguish repetitions. A
-5,000-transaction global in-flight cap is exactly one 400M-gas block of queue headroom at the
-configured 80,000 gas limit per transaction, which keeps the builder saturated without leaving an
-oversized submission backlog at cutoff.
+200ms YAMLs with 30 and 300 measured blocks, respectively. Both should issue one fixed 50,000-round
+Blake2f call per transaction with identical sender, in-flight, batching, funding, and seed settings.
+The report labels these runs with `TransactionPayload=blake2f`; use scenarios such as
+`blake2f-2s-run-1` and `blake2f-200ms-run-1` to distinguish repetitions. Size the global in-flight
+cap in gas: at the configured 80,000 gas limit per transaction, a 125,000-transaction cap queues 10
+Ggas, one default 2s block. Because both cadence defaults provide 5 Ggas/s, that is 2s of capacity
+at either cadence. A 5,000-transaction cap queues only 400M gas, 4% of a default 2s block and 40% of
+a default 200ms block.
 
 ## Replay exported blocks into a validator
 
@@ -321,6 +318,12 @@ the first block's timestamp, where 200ms runs activate Denim), starts one execut
 return `VALID`. By default blocks are sent as fast as the node accepts them; `--paced` sends each
 block at its recorded offset from the first block and records how late it was.
 
+The node runs with `--engine.state-root-task-compare-updates`: each block's sparse-trie updates
+are checked against a serial state root computation, and differences are logged even when the
+state root matches. `--no-compare-updates` turns the check off; `compareUpdates` in the result
+records which ran. The serial computation runs inside every `newPayload`, so latency and blocks
+per second with the check on are not comparable with runs that have it off.
+
 `<output-dir>/replay-result.json` holds the manifest, mode, block count, wall time, blocks per
 second, `newPayload` and forkchoice latency (mean, p50, p99, max), paced lag, the node's final
 hash and state root, `match`, and per-block timings. A complete replay also writes
@@ -328,6 +331,13 @@ hash and state root, `match`, and per-block timings. A complete replay also writ
 land in one scrape, so its counter deltas are averages across those blocks. The command exits
 nonzero if any block is rejected or the final hash or state root differs from the manifest. The
 replay mutates `--datadir`; restore it again before another run.
+
+When a call returns a status other than `VALID`, the replay also writes
+`<output-dir>/first-divergence.json`: the engine call, the returned status with its validation
+error, the exported block with its engine payload, and the files Reth's witness invalid-block hook
+wrote for that block, copied from `<datadir>/invalid_block_hooks/witness/` to
+`<output-dir>/invalid-block-hooks/`. The hook runs only for blocks the node executed, so a block
+rejected before execution (for example on a hash mismatch) has none.
 
 ## Measure DA bytes for a block range
 
@@ -391,9 +401,6 @@ lingering `base-devnet` or `base-bench` process before changing the datadir life
 - **Port conflict:** omit `--stable-ports` and consume the allocated URLs from runtime JSON.
 - **Unexpected disk growth:** account creation changes state heavily. Monitor available storage
   throughout long runs.
-- **No 200ms Flashblock data:** expected. The 200ms snapshot stack uses Base/Reth's standard payload
-  service and does not publish or subscribe to Flashblocks; the 2s path remains unchanged. Compare
-  canonical blocks, confirmations, gas, and throughput instead.
 
 See the exact supported options at any revision with:
 

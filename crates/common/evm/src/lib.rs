@@ -5,7 +5,7 @@
 
 extern crate alloc;
 
-pub use base_common_genesis::BaseUpgrade;
+pub use base_common_genesis::{BaseFeature, BaseUpgrade};
 
 mod spec;
 pub use spec::BaseSpecId;
@@ -48,6 +48,9 @@ pub use eip8130::{Eip8130Executor, Eip8130Outcome};
 
 mod eip8130_committed_phases;
 pub use eip8130_committed_phases::Eip8130CommittedPhases;
+
+mod metered_gas;
+pub use metered_gas::MeteredGas;
 
 mod factory;
 pub use factory::BaseEvmFactory;

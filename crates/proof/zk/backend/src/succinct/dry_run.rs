@@ -16,12 +16,12 @@ use sp1_sdk::{
     blocking::{LightProver, Prover},
 };
 use tokio_util::sync::CancellationToken;
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 
 use super::utils::get_range_elf_embedded;
 use crate::succinct::{
-    L1HeadSource, OpSuccinctWitnessProvider, SuccinctRpcConfig, SuccinctZkProverBuildError,
-    SuccinctZkProverBuilder, WitnessParams,
+    OpSuccinctWitnessProvider, SuccinctRpcConfig, SuccinctZkProverBuildError,
+    SuccinctZkProverBuilder,
 };
 
 macro_rules! backend_error {
@@ -40,27 +40,15 @@ pub const DRY_RUN_SNARK_PREFIX: &str = "dry-run-snark-";
 #[derive(Clone, Debug)]
 pub struct DryRunZkProver {
     provider: OpSuccinctWitnessProvider,
-    base_consensus_url: String,
-    l1_node_url: String,
-    default_sequence_window: u64,
     range_cycle_limit: u64,
     completed_results: Arc<Mutex<HashMap<String, ProofResult>>>,
 }
 
 impl DryRunZkProver {
-    /// Create a dry-run prover with a witness provider and RPC config.
-    pub fn new(
-        provider: OpSuccinctWitnessProvider,
-        base_consensus_url: String,
-        l1_node_url: String,
-        default_sequence_window: u64,
-        range_cycle_limit: u64,
-    ) -> Self {
+    /// Create a dry-run prover with a witness provider and range cycle limit.
+    pub fn new(provider: OpSuccinctWitnessProvider, range_cycle_limit: u64) -> Self {
         Self {
             provider,
-            base_consensus_url,
-            l1_node_url,
-            default_sequence_window,
             range_cycle_limit,
             completed_results: Arc::new(Mutex::new(HashMap::new())),
         }
@@ -73,10 +61,6 @@ impl DryRunZkProver {
         witness_provider: Option<OpSuccinctWitnessProvider>,
         cancel: &CancellationToken,
     ) -> Result<Option<Arc<dyn ZkProver>>, SuccinctZkProverBuildError> {
-        let base_consensus_url = rpc.base_consensus_rpc.as_str().to_owned();
-        let l1_node_url = rpc.l1_rpc.as_str().to_owned();
-        let default_sequence_window = rpc.default_sequence_window;
-
         info!(backend = "dry_run", "using local SP1 dry-run backend");
         let provider = match witness_provider {
             Some(provider) => provider,
@@ -90,13 +74,7 @@ impl DryRunZkProver {
             }
         };
 
-        Ok(Some(Arc::new(Self::new(
-            provider,
-            base_consensus_url,
-            l1_node_url,
-            default_sequence_window,
-            range_cycle_limit,
-        ))))
+        Ok(Some(Arc::new(Self::new(provider, range_cycle_limit))))
     }
 
     /// Execute the range program with SP1's light prover and return execution statistics.
@@ -146,60 +124,17 @@ impl DryRunZkProver {
         request: &ZkProofRequest,
         request_session_id: &str,
     ) -> Result<ProofResult, ZkProverError> {
-        if request.number_of_blocks_to_prove == 0 {
-            return Err(backend_error!("number_of_blocks_to_prove must be greater than zero"));
-        }
-
-        let start_block = request.start_block_number;
-        let end_block = start_block
-            .checked_add(request.number_of_blocks_to_prove)
-            .ok_or_else(|| backend_error!("proof range end block overflowed u64"))?;
-        let sequence_window = request.sequence_window.unwrap_or(self.default_sequence_window);
-
-        info!(
-            request_session_id = %request_session_id,
-            start_block = start_block,
-            end_block = end_block,
-            number_of_blocks = request.number_of_blocks_to_prove,
-            sequence_window = sequence_window,
-            intermediate_block_interval = request.intermediate_block_interval,
-            range_cycle_limit = self.range_cycle_limit,
-            l1_head = ?request.l1_head,
-            "starting dry-run SP1 execution"
-        );
-
         let witness_start = std::time::Instant::now();
-        let stdin = match self
+        let stdin = self
             .provider
-            .generate_witness(WitnessParams {
-                start_block,
-                end_block,
-                l1_head: request.l1_head.map_or(
-                    L1HeadSource::SequenceWindow {
-                        sequence_window,
-                        l1_node_url: &self.l1_node_url,
-                        base_consensus_url: &self.base_consensus_url,
-                    },
-                    L1HeadSource::Pinned,
-                ),
-                schedule_l2_block_number: request.schedule_l2_block_number,
-                intermediate_block_interval: request.intermediate_block_interval,
-            })
+            .generate_range_witness(request)
             .await
-        {
-            Ok(stdin) => stdin,
-            Err(e) => {
-                error!(
-                    start_block = start_block,
-                    end_block = end_block,
-                    error = %e,
-                    "dry-run witness generation failed"
-                );
-                return Err(backend_error!("witness generation failed: {e}"));
-            }
-        };
+            .map_err(|e| backend_error!("witness generation failed: {e}"))?;
+
         let witness_generation_ms =
             u64::try_from(witness_start.elapsed().as_millis()).unwrap_or(u64::MAX);
+
+        info!(request_session_id = %request_session_id, "starting dry-run SP1 execution");
 
         let mut execution_stats =
             Self::execute_range_program(stdin, self.range_cycle_limit).await?;

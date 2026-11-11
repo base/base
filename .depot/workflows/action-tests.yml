@@ -5,9 +5,14 @@
 # - Rewrote .github/ path references to .depot/
 
 name: Action Tests
+# Runs on every merge-queue entry. On PRs the job is skipped unless a reviewer
+# adds ci:full; a skipped job still satisfies the required check, so PRs can be
+# queued. Labels are read on the next push or reopen, not when added.
 on:
   pull_request:
+    types: [opened, reopened, synchronize]
   merge_group:
+  workflow_dispatch:
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
   cancel-in-progress: true
@@ -19,14 +24,17 @@ permissions:
 jobs:
   action-tests:
     name: Action Tests
+    if: >-
+      github.event_name != 'pull_request' ||
+      contains(github.event.pull_request.labels.*.name, 'ci:full')
     runs-on: depot-ubuntu-24.04-8
     timeout-minutes: 30
     steps:
       - name: Harden the runner (Audit all outbound calls)
-        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
         with:
           egress-policy: audit
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
       - uses: ./.depot/actions/setup

@@ -82,9 +82,8 @@ fn allocations_during<T>(f: impl FnOnce() -> T) -> (T, usize, usize) {
 const EXPIRY_BLOCK: u64 = 1_000;
 const NONCE: u64 = 7;
 const BALANCE: u64 = 1_000;
-const CONTEXT: PredicateContext = PredicateContext { block_number: 500, flashblock_index: 3 };
-const EXPIRED_CONTEXT: PredicateContext =
-    PredicateContext { block_number: EXPIRY_BLOCK + 1, flashblock_index: 3 };
+const CONTEXT: PredicateContext = PredicateContext { block_number: 500 };
+const EXPIRED_CONTEXT: PredicateContext = PredicateContext { block_number: EXPIRY_BLOCK + 1 };
 /// Wire ceiling for one batch.
 const MAX_PREDICATES: usize = 64;
 /// Transactions in the pool-scale evaluation benchmark.
@@ -117,11 +116,11 @@ fn state_predicate(kind: usize, address: Address, satisfied: bool) -> ValidityPr
 }
 
 /// A batch with `state` state predicates rotating through storage, balance, and nonce, and
-/// `timing` timing predicates (one block expiry, then flashblock lower bounds) interleaved
+/// `timing` timing predicates (one block expiry, then block lower bounds) interleaved
 /// among them.
 ///
 /// The block expiry is inserted about two thirds of the way through the state predicates and
-/// the flashblock bounds about one third of the way, both shifted by `rotation`, so the
+/// the lower bounds about one third of the way, both shifted by `rotation`, so the
 /// block-number predicate is never simply first and pool-scale workloads vary the position.
 ///
 /// State addresses start at `address_base` so pool-scale workloads can use distinct accounts.
@@ -152,7 +151,7 @@ fn mixed(
         let at = (state / 3 + rotation) % (predicates.len() + 1);
         predicates.insert(
             at,
-            ValidityPredicate::FlashblockIndex {
+            ValidityPredicate::BlockNumber {
                 op: ValidityOperator::GreaterThanOrEqual,
                 value: U256::ONE,
             },

@@ -20,6 +20,8 @@ confirmation.
   optional blobs).
 - **`PreparedTx`** — signed transaction bytes and the fees, gas limit, nonce, and sidecar
   that were applied.
+- **`ConfirmedTx`** — receipt confirmed to the required depth, with the timestamp of the
+  block that includes it.
 
 ### Fee calculation
 

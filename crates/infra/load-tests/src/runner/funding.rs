@@ -607,13 +607,17 @@ impl LoadRunner {
                 TxType::Transfer
                 | TxType::Eip8430Transfer
                 | TxType::X402 { .. }
+                | TxType::TokenMove { .. }
                 | TxType::Calldata { .. }
                 | TxType::Erc20 { .. }
                 | TxType::Storage { .. }
                 | TxType::DoubleCounter { .. }
+                | TxType::AaBundle { .. }
+                | TxType::RevertArb { .. }
                 | TxType::B20
                 | TxType::Precompile { .. }
-                | TxType::Osaka { .. } => {}
+                | TxType::Osaka { .. }
+                | TxType::UniswapV3Liquidity(_) => {}
             }
         }
         tokens.into_iter().collect()
@@ -627,6 +631,14 @@ impl LoadRunner {
                 TxType::UniswapV3 { router, .. } | TxType::AerodromeCl { router, .. } => {
                     routers.insert(*router);
                 }
+                TxType::UniswapV3Liquidity(payload) => {
+                    routers.insert(payload.position_manager);
+                }
+                // Disperse spends the pair token with `transferFrom`, so it needs the same
+                // real-token setup approval as a router.
+                TxType::TokenMove { .. } => {
+                    routers.insert(crate::workload::DISPERSE);
+                }
                 TxType::Transfer
                 | TxType::Eip8430Transfer
                 | TxType::X402 { .. }
@@ -634,6 +646,8 @@ impl LoadRunner {
                 | TxType::Erc20 { .. }
                 | TxType::Storage { .. }
                 | TxType::DoubleCounter { .. }
+                | TxType::AaBundle { .. }
+                | TxType::RevertArb { .. }
                 | TxType::B20
                 | TxType::Precompile { .. }
                 | TxType::Osaka { .. } => {}

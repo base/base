@@ -22,16 +22,14 @@ use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use axum::{Router, http::HeaderMap};
 use base_common_consensus::{BaseBlock, BaseTxEnvelope};
-use base_common_genesis::{
-    ChainGenesis, RollupConfig, RuntimeUpgradeRegistry, SystemConfig, UpgradeConfig,
-};
+use base_common_genesis::{BaseUpgrade, ChainGenesis, RollupConfig, SystemConfig, UpgradeConfig};
 use base_common_network::{Base, BaseEngineApi};
 use base_common_rpc_types::BaseTransactionRequest;
 use base_consensus_derive::AttributesBuilder;
 use base_consensus_engine::EngineEndpoint;
 use base_consensus_node::{
     EngineConfig, NodeOperatingMode, StandaloneAttributesBuilder, StandaloneDevChain,
-    StandaloneDevError, StandaloneDevState, StandaloneImpersonationQueue,
+    StandaloneDevError, StandaloneImpersonationQueue,
 };
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_txpool::ValiditySignatureMode;
@@ -44,11 +42,10 @@ use base_system_tests::{
     ANVIL_ACCOUNT_1, InProcessBuilder, InProcessBuilderConfig, InProcessNodeRuntime,
 };
 use eyre::{OptionExt, Result};
-use reth_provider::{
-    HeaderProvider, StaticFileProviderFactory, StaticFileSegment, StaticFileWriter,
-};
+use reth_ethereum_forks::ForkCondition;
+use reth_provider::{StaticFileProviderFactory, StaticFileSegment, StaticFileWriter};
 use serde_json::{Value, json};
-use tokio::{task::JoinHandle, time::timeout};
+use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 use url::Url;
 
@@ -72,12 +69,14 @@ impl BaseNodeExtension for ImpersonationRpcExtension {
     }
 }
 
-/// Persists the schedule chosen for a pre-Denim head, restores it after restarts, and sequences
-/// impersonated deposits beside signed transactions.
+/// Rejects heads off the chain's Denim schedule, extends a Denim head with impersonated deposits
+/// beside signed transactions, and resumes after a restart.
 #[tokio::test]
-async fn standalone_dev_chain_persists_and_restores_schedule() -> Result<()> {
+async fn standalone_dev_chain_extends_and_resumes_denim_head() -> Result<()> {
     base_node_runner::test_utils::init_silenced_tracing();
     let genesis_time = (SystemTime::now() - SNAPSHOT_AGE).duration_since(UNIX_EPOCH)?.as_secs();
+    // Denim is active from block 1, as on a chain whose snapshot head is past Denim.
+    let activation = genesis_time + LEGACY_BLOCK_TIME;
     let mut genesis = load_chain_spec().inner.genesis.clone();
     genesis.timestamp = genesis_time;
     // CALLER == OWNER ? sstore(0, calldataload(0)) : revert(0, 0)
@@ -91,7 +90,9 @@ async fn standalone_dev_chain_persists_and_restores_schedule() -> Result<()> {
     ]
     .concat();
     genesis.alloc.insert(GUARDED, GenesisAccount::default().with_code(Some(guarded_code.into())));
-    let chain_spec = Arc::new(BaseChainSpec::from_genesis(genesis));
+    let mut chain_spec = BaseChainSpec::from_genesis(genesis);
+    chain_spec.set_fork(BaseUpgrade::Denim, ForkCondition::Timestamp(activation));
+    let chain_spec = Arc::new(chain_spec);
     let chain_id = chain_spec.inner.chain.id();
     let jwt_secret = JwtSecret::random();
     let queue = StandaloneImpersonationQueue::default();
@@ -105,12 +106,9 @@ async fn standalone_dev_chain_persists_and_restores_schedule() -> Result<()> {
         ws_port: None,
         auth_port: None,
         p2p_port: None,
-        flashblocks_port: None,
         metrics_port: None,
-        payload_builder_cutover: true,
         validity_signature_mode: ValiditySignatureMode::Off,
         extra_extensions: vec![Box::new(ImpersonationRpcExtension(queue.clone()))],
-        block_time: Duration::from_millis(200),
         persistence_threshold: Some(0),
         persistence_backpressure_threshold: None,
         txpool_max_transactions: None,
@@ -141,7 +139,7 @@ async fn standalone_dev_chain_persists_and_restores_schedule() -> Result<()> {
         eip1559_elasticity: Some(6),
         ..Default::default()
     };
-    let canonical = RollupConfig {
+    let mut canonical = RollupConfig {
         l2_chain_id: chain_id.into(),
         block_time: LEGACY_BLOCK_TIME,
         genesis: ChainGenesis {
@@ -163,6 +161,12 @@ async fn standalone_dev_chain_persists_and_restores_schedule() -> Result<()> {
             ..Default::default()
         },
         ..Default::default()
+    };
+    canonical.set_upgrade_activation_timestamp(BaseUpgrade::Denim, activation);
+    let denim_system_config = SystemConfig {
+        gas_limit: system_config.gas_limit
+            / u64::from(RollupConfig::DENIM_GAS_PARAMETER_SCALING_FACTOR),
+        ..system_config
     };
 
     let genesis_hash = canonical.genesis.l2.hash;
@@ -186,8 +190,12 @@ async fn standalone_dev_chain_persists_and_restores_schedule() -> Result<()> {
         l1_info.id(),
         l1_info.sequence_number(),
     );
-    let mut attributes_builder =
-        StandaloneAttributesBuilder::new(Arc::new(canonical.clone()), l1_info, system_config, None);
+    let mut attributes_builder = StandaloneAttributesBuilder::new(
+        Arc::new(canonical.clone()),
+        l1_info,
+        denim_system_config,
+        None,
+    );
     // Move beyond the engine's in-memory buffer so history expiry uses persisted transactions.
     for number in 1..=BOUNDARY_NUMBER {
         let attributes =
@@ -207,7 +215,6 @@ async fn standalone_dev_chain_persists_and_restores_schedule() -> Result<()> {
             &canonical.genesis,
         )?;
     }
-    let boundary_hash = parent.block_info.hash;
 
     // Model a snapshot whose retained transaction history starts after genesis.
     let static_files = builder.provider.static_file_provider();
@@ -293,46 +300,29 @@ async fn standalone_dev_chain_persists_and_restores_schedule() -> Result<()> {
     let engine_url = Url::parse(&format!("http://{}", listener.local_addr()?))?;
     let proxy = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
 
-    let datadir = builder.datadir().to_path_buf();
-    let state_path = datadir.join(StandaloneDevChain::STATE_FILE);
-    let start = |token: CancellationToken| -> Result<JoinHandle<_>> {
-        // Each start models a new process, which has no runtime schedule until it opens the state.
-        RuntimeUpgradeRegistry::clear_chain(chain_id);
-        let chain = StandaloneDevChain::open(&datadir, canonical.clone())?;
-        let headers = builder.provider.clone();
-        Ok(tokio::spawn(chain.run(
+    let start = |rollup_config: RollupConfig, token: CancellationToken| {
+        tokio::spawn(StandaloneDevChain::new(rollup_config).run(
             EngineEndpoint::Url(engine_url.clone()),
             jwt_secret,
-            move |number| headers.header_by_number(number),
             queue.clone(),
             token,
-        )))
+        ))
     };
 
-    // Reject an altered schedule even if the process stopped before its first development block.
-    let activation = genesis_time + (BOUNDARY_NUMBER + 1) * LEGACY_BLOCK_TIME;
-    StandaloneDevState {
-        l2_chain_id: chain_id,
-        genesis_hash,
-        boundary: BlockNumHash { number: BOUNDARY_NUMBER, hash: boundary_hash },
-        denim_timestamp: activation + LEGACY_BLOCK_TIME,
-    }
-    .persist(&state_path)?;
-    let token = CancellationToken::new();
-    let mut altered = start(token.clone())?;
-    let rejected = timeout(Duration::from_secs(20), &mut altered).await;
-    token.cancel();
-    if rejected.is_err() {
-        altered.await??;
-    }
-    assert!(
-        matches!(rejected, Ok(Ok(Err(StandaloneDevError::StateMismatch { .. })))),
-        "altered boundary schedule was accepted: {rejected:?}"
-    );
-    std::fs::remove_file(&state_path)?;
+    // A head before Denim, or off the chain's Denim schedule as after a local activation by an
+    // older `base dev`, is rejected before sequencing.
+    let mut pre_denim = canonical.clone();
+    pre_denim.clear_upgrade_activation_timestamp(BaseUpgrade::Denim);
+    let error = start(pre_denim, CancellationToken::new()).await?.unwrap_err();
+    assert!(matches!(error, StandaloneDevError::PreDenimHead(BOUNDARY_NUMBER)), "{error}");
+    let mut off_schedule = canonical.clone();
+    off_schedule.set_upgrade_activation_timestamp(BaseUpgrade::Denim, genesis_time);
+    let error = start(off_schedule, CancellationToken::new()).await?.unwrap_err();
+    assert!(matches!(error, StandaloneDevError::OffScheduleHead(BOUNDARY_NUMBER)), "{error}");
+    assert_eq!(provider.get_block_number().await?, BOUNDARY_NUMBER);
 
     let token = CancellationToken::new();
-    let first = start(token.clone())?;
+    let first = start(canonical.clone(), token.clone());
     let included = send_transaction(&provider, chain_id).await?;
     // Requests execute in submission order after the system deposits.
     let call = |from: Address, word: u8, gas: &str| {
@@ -391,9 +381,6 @@ async fn standalone_dev_chain_persists_and_restores_schedule() -> Result<()> {
     }
     token.cancel();
     first.await??;
-    let state: StandaloneDevState = serde_json::from_slice(&std::fs::read(&state_path)?)?;
-    assert_eq!(state.boundary, BlockNumHash { number: BOUNDARY_NUMBER, hash: boundary_hash });
-    assert_eq!(state.denim_timestamp, activation);
     let included = block(&provider, included).await?;
     assert!(
         BaseTimeUpdateTx::extract_from_transactions(&included.body.transactions, included.number)
@@ -401,10 +388,10 @@ async fn standalone_dev_chain_persists_and_restores_schedule() -> Result<()> {
     );
     assert_eq!(included.header.gas_limit, system_config.gas_limit / 10);
 
-    // A restart continues the persisted schedule without another activation or gas rescaling.
+    // A restart continues from the head without gas rescaling.
     let head = provider.get_block_number().await?;
     let token = CancellationToken::new();
-    let second = start(token.clone())?;
+    let second = start(canonical.clone(), token.clone());
     wait_for_block(&provider, head + 3).await?;
     token.cancel();
     second.await??;
@@ -419,18 +406,13 @@ async fn standalone_dev_chain_persists_and_restores_schedule() -> Result<()> {
         canonical_millis(activation, head + 1)
     );
 
-    // Without the state, development blocks are detected instead of being treated as a snapshot.
-    std::fs::remove_file(&state_path)?;
-    let error = start(CancellationToken::new())?.await?.unwrap_err();
-    assert!(matches!(error, StandaloneDevError::MissingState { .. }), "{error}");
-
     proxy.abort();
     builder.shutdown().await
 }
 
-/// Timestamp of a block after Denim activates at the snapshot boundary's next slot.
+/// Timestamp of a block when Denim activates at block 1.
 const fn canonical_millis(activation: u64, number: u64) -> u64 {
-    activation * 1_000 + (number - BOUNDARY_NUMBER - 1) * 200
+    activation * 1_000 + (number - 1) * 200
 }
 
 async fn send_transaction(provider: &RootProvider<Base>, chain_id: u64) -> Result<u64> {

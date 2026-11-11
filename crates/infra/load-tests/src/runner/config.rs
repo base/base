@@ -8,6 +8,7 @@ use url::Url;
 use crate::{
     config::{OsakaTarget, ValiditySigningMode},
     utils::{BaselineError, Result},
+    workload::UniswapV3Hop,
 };
 
 /// Source for a validity predicate's address, resolved per transaction at
@@ -125,17 +126,6 @@ pub enum ValidityPredicateTemplate {
         /// Right-hand comparison bound (absolute value or runtime offset).
         bound: BlockNumberBound,
     },
-    /// Flashblock-index comparison template.
-    ///
-    /// Carries no address or slot: the flashblock being built is read from the
-    /// builder's context, so this template resolves to the same predicate for
-    /// every transaction.
-    FlashblockIndex {
-        /// Comparison operator.
-        op: ValidityOperator,
-        /// Right-hand comparison value.
-        value: U256,
-    },
 }
 
 /// Configuration for a single transaction type with its weight.
@@ -179,11 +169,34 @@ pub enum TxType {
         contract: Address,
         /// Number of storage slots to write per transaction.
         slots_per_tx: u32,
+        /// Mean fraction of written slots that are fresh.
+        new_slot_ratio: f64,
     },
     /// Deterministic `DoubleCounter` `increment()` call.
     DoubleCounter {
         /// `DoubleCounter` contract address.
         contract: Address,
+    },
+    /// Batched real-token transfers through Disperse.
+    TokenMove {
+        /// Number of token transfers per transaction.
+        transfers_per_tx: u32,
+        /// Token and recipients shared across calibration and measured generators.
+        context: std::sync::Arc<std::sync::OnceLock<crate::workload::TokenMoveContext>>,
+    },
+    /// ERC-4337 `handleOps` stand-in bundling signed ops.
+    AaBundle {
+        /// Signed ops per bundle transaction.
+        ops_per_bundle: u32,
+        /// Random calldata bytes appended to each bundle.
+        padding_bytes: u32,
+    },
+    /// Call with an unimplemented selector that reverts at dispatch while reserving `gas_limit`.
+    RevertArb {
+        /// Contract whose selector dispatch rejects the call.
+        contract: Address,
+        /// Declared gas limit carried by every reverting arb.
+        gas_limit: u64,
     },
     /// Precompile call.
     Precompile {
@@ -226,6 +239,8 @@ pub enum TxType {
         reverse_max_amount: U256,
         /// Replaces the reverse range with the forward range priced at the pool before the run.
         derive_reverse_amounts: bool,
+        /// Intermediate tokens for a multi-hop route; empty for a single pool.
+        via: Vec<UniswapV3Hop>,
     },
     /// Aerodrome Slipstream (concentrated liquidity) swap.
     AerodromeCl {
@@ -246,6 +261,8 @@ pub enum TxType {
         /// Maximum amount when swapping `token_out` to `token_in`.
         reverse_max_amount: U256,
     },
+    /// Uniswap V3 position-manager operations.
+    UniswapV3Liquidity(crate::workload::UniswapV3LiquidityPayload),
 }
 
 /// Default maximum gas price cap (1000 gwei).
@@ -313,8 +330,6 @@ pub struct LoadConfig {
     pub batch_size: usize,
     /// Maximum gas price cap to prevent overspending during congestion.
     pub max_gas_price: u128,
-    /// Optional builder flashblocks WebSocket used for early inclusion signals.
-    pub flashblocks_ws: Option<Url>,
     /// Optional canonical `newHeads` WebSocket used for lightweight block-boundary pacing.
     pub canonical_heads_ws: Option<Url>,
     /// Fraction of transactions that draw a fresh recipient address instead of cycling through
@@ -332,6 +347,9 @@ pub struct LoadConfig {
     pub validity_priority_lead_multiplier: u128,
     /// Priority-tip divisor for validity-cohort measured transactions.
     pub validity_priority_fee_divisor: u128,
+    /// Payload generated for every priority-lead validity transaction instead of the weighted
+    /// `transactions` mix. `None` keeps the lead cohort on the shared mix.
+    pub validity_priority_lead_payload: Option<TxType>,
 }
 
 impl LoadConfig {
@@ -361,7 +379,6 @@ impl LoadConfig {
             max_concurrent_submit_requests: None,
             batch_size: crate::rpc::MAX_BATCH_RPC_SIZE,
             max_gas_price: DEFAULT_MAX_GAS_PRICE,
-            flashblocks_ws: None,
             canonical_heads_ws: None,
             fresh_recipient_ratio: 0.0,
             validity_ratio: 0.0,
@@ -370,6 +387,7 @@ impl LoadConfig {
             validity_priority_lead_ratio: 0.0,
             validity_priority_lead_multiplier: 1,
             validity_priority_fee_divisor: 1,
+            validity_priority_lead_payload: None,
         }
     }
 
@@ -382,17 +400,20 @@ impl LoadConfig {
 
     /// Validates the configuration, returning an error if invalid.
     pub fn validate(&self) -> Result<()> {
+        let is_native = |tx_type: &TxType| {
+            matches!(tx_type, TxType::Eip8430Transfer | TxType::UniswapV3 { native: true, .. })
+        };
         if self.validity_ratio > 0.0
-            && self.transactions.iter().any(|tx| {
-                tx.weight > 0
-                    && matches!(
-                        tx.tx_type,
-                        TxType::Eip8430Transfer | TxType::UniswapV3 { native: true, .. }
-                    )
-            })
+            && self.transactions.iter().any(|tx| tx.weight > 0 && is_native(&tx.tx_type))
         {
             return Err(BaselineError::Config(
                 "native EIP-8430 workloads cannot be combined with validity submission".into(),
+            ));
+        }
+        // The lead cohort always submits through the validity path.
+        if self.validity_priority_lead_payload.as_ref().is_some_and(is_native) {
+            return Err(BaselineError::Config(
+                "validity_priority_lead_payload cannot be a native EIP-8430 workload".into(),
             ));
         }
         for tx in self.transactions.iter().filter(|tx| tx.weight > 0) {
@@ -485,6 +506,14 @@ impl LoadConfig {
         if self.validity_priority_fee_divisor < 1 {
             return Err(BaselineError::Config("validity_priority_fee_divisor must be >= 1".into()));
         }
+        if self.validity_priority_lead_payload.is_some()
+            && (self.validity_ratio <= 0.0 || self.validity_priority_lead_ratio <= 0.0)
+        {
+            return Err(BaselineError::Config(
+                "validity_priority_lead_payload requires validity_ratio > 0 and validity_priority_lead_ratio > 0"
+                    .into(),
+            ));
+        }
         if self.validity_predicates.len() > base_execution_txpool::DEFAULT_MAX_VALIDITY_PREDICATES {
             return Err(BaselineError::Config(format!(
                 "validity_predicates exceeds the maximum of {}",
@@ -520,9 +549,6 @@ impl LoadConfig {
                     "txpool_nodes must use http:// or https://".into(),
                 ));
             }
-        }
-        if self.flashblocks_ws.as_ref().is_some_and(|url| !matches!(url.scheme(), "ws" | "wss")) {
-            return Err(BaselineError::Config("flashblocks_ws must use ws:// or wss://".into()));
         }
         if self.canonical_heads_ws.as_ref().is_some_and(|url| !matches!(url.scheme(), "ws" | "wss"))
         {
@@ -610,6 +636,27 @@ mod tests {
         let mut config = LoadConfig::devnet();
         config.measurement_blocks = Some(0);
         assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn validate_rejects_lead_payload_without_lead_cohort() {
+        let arb = TxType::RevertArb { contract: Address::repeat_byte(0x11), gas_limit: 1 };
+        let mut config = LoadConfig::devnet();
+        config.validity_priority_lead_payload = Some(arb);
+        assert!(config.validate().is_err(), "no validity senders means no lead cohort");
+
+        config.validity_ratio = 1.0;
+        config.validity_predicates = vec![ValidityPredicateTemplate::BlockNumber {
+            op: ValidityOperator::GreaterThanOrEqual,
+            bound: BlockNumberBound::Absolute(U256::ZERO),
+        }];
+        assert!(config.validate().is_err(), "lead ratio of zero still has no lead cohort");
+
+        config.validity_priority_lead_ratio = 0.5;
+        assert!(config.validate().is_ok());
+
+        config.validity_priority_lead_payload = Some(TxType::Eip8430Transfer);
+        assert!(config.validate().is_err(), "native envelopes cannot carry validity predicates");
     }
 
     #[test]

@@ -57,6 +57,15 @@ impl PreimageStore {
         Ok(())
     }
 
+    /// Returns the stored preimage for `key`, or
+    /// [`PreimageOracleError::InvalidPreimageKey`] if it is missing.
+    pub fn preimage(&self, key: PreimageKey) -> PreimageOracleResult<&[u8]> {
+        self.preimage_map
+            .get(&key)
+            .map(Vec::as_slice)
+            .ok_or(PreimageOracleError::InvalidPreimageKey)
+    }
+
     /// Insert a preimage, rejecting overwrites with different values.
     pub fn save_preimage(&mut self, key: PreimageKey, value: Vec<u8>) -> PreimageOracleResult<()> {
         check_preimage(&key, &value)?;
@@ -74,6 +83,15 @@ impl PreimageStore {
 
         Ok(())
     }
+}
+
+/// Copy `value` into `buf`, which must have exactly the preimage's length.
+pub const fn copy_exact(value: &[u8], buf: &mut [u8]) -> PreimageOracleResult<()> {
+    if value.len() != buf.len() {
+        return Err(PreimageOracleError::BufferLengthMismatch(value.len(), buf.len()));
+    }
+    buf.copy_from_slice(value);
+    Ok(())
 }
 
 /// Check that the preimage matches the expected hash.
@@ -101,15 +119,11 @@ impl HintWriterClient for PreimageStore {
 #[async_trait]
 impl PreimageOracleClient for PreimageStore {
     async fn get(&self, key: PreimageKey) -> PreimageOracleResult<Vec<u8>> {
-        let Some(value) = self.preimage_map.get(&key) else {
-            return Err(PreimageOracleError::InvalidPreimageKey);
-        };
-        Ok(value.clone())
+        self.preimage(key).map(<[u8]>::to_vec)
     }
 
     async fn get_exact(&self, key: PreimageKey, buf: &mut [u8]) -> PreimageOracleResult<()> {
-        buf.copy_from_slice(&self.get(key).await?);
-        Ok(())
+        copy_exact(self.preimage(key)?, buf)
     }
 }
 
@@ -142,6 +156,21 @@ impl WitnessOracle {
     pub const fn new(store: PreimageStore) -> Self {
         Self(store)
     }
+
+    /// Returns the witness preimage for `key`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a non-local key is missing from the witness.
+    pub fn preimage(&self, key: PreimageKey) -> PreimageOracleResult<&[u8]> {
+        if let Some(value) = self.0.preimage_map.get(&key) {
+            return Ok(value);
+        }
+        if key.key_type() == PreimageKeyType::Local {
+            return Err(PreimageOracleError::InvalidPreimageKey);
+        }
+        panic!("requested preimage key not present in witness: {key}");
+    }
 }
 
 #[async_trait]
@@ -154,18 +183,11 @@ impl HintWriterClient for WitnessOracle {
 #[async_trait]
 impl PreimageOracleClient for WitnessOracle {
     async fn get(&self, key: PreimageKey) -> PreimageOracleResult<Vec<u8>> {
-        if let Some(value) = self.0.preimage_map.get(&key) {
-            return Ok(value.clone());
-        }
-        if key.key_type() == PreimageKeyType::Local {
-            return Err(PreimageOracleError::InvalidPreimageKey);
-        }
-        panic!("requested preimage key not present in witness: {key}");
+        self.preimage(key).map(<[u8]>::to_vec)
     }
 
     async fn get_exact(&self, key: PreimageKey, buf: &mut [u8]) -> PreimageOracleResult<()> {
-        buf.copy_from_slice(&self.get(key).await?);
-        Ok(())
+        copy_exact(self.preimage(key)?, buf)
     }
 }
 
@@ -320,6 +342,35 @@ mod tests {
             block_on(oracle.get(PreimageKey::new_local(1))),
             Err(PreimageOracleError::InvalidPreimageKey)
         ));
+    }
+
+    #[test]
+    fn get_exact_rejects_buffer_of_wrong_length() {
+        let key = PreimageKey::new_local(1);
+        let mut store = PreimageStore::default();
+        store.save_preimage(key, vec![0xaa; 8]).unwrap();
+        let oracle = WitnessOracle::new(store.clone());
+
+        let mut buf = [0u8; 4];
+        assert!(matches!(
+            block_on(store.get_exact(key, &mut buf)),
+            Err(PreimageOracleError::BufferLengthMismatch(8, 4))
+        ));
+        assert!(matches!(
+            block_on(oracle.get_exact(key, &mut buf)),
+            Err(PreimageOracleError::BufferLengthMismatch(8, 4))
+        ));
+
+        let mut buf = [0u8; 8];
+        block_on(oracle.get_exact(key, &mut buf)).unwrap();
+        assert_eq!(buf, [0xaa; 8]);
+    }
+
+    #[test]
+    #[should_panic(expected = "requested preimage key not present in witness")]
+    fn witness_oracle_get_exact_panics_on_missing_non_local_key() {
+        let oracle = WitnessOracle::new(PreimageStore::default());
+        let _ = block_on(oracle.get_exact(PreimageKey::new_keccak256([0x22; 32]), &mut [0u8; 32]));
     }
 
     #[test]

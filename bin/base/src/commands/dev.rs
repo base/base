@@ -12,7 +12,6 @@ use base_node_runner::{BaseNodeExtension, BaseNodeRunner, FromExtensionConfig, N
 use clap::Args;
 use eyre::OptionExt;
 use reth_cli_runner::CliRunner;
-use reth_provider::HeaderProvider;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 
@@ -68,7 +67,7 @@ impl DevCommand {
             "{} has no execution database; `base dev` continues an existing snapshot datadir",
             datadir.data_dir().display()
         );
-        let dev_chain = StandaloneDevChain::open(datadir.data_dir(), rollup_config)?;
+        let dev_chain = StandaloneDevChain::new(rollup_config);
         // Graceful shutdown completes the runner before the command future returns, so a
         // consensus failure that triggers it is reported here.
         let (consensus_failure_tx, consensus_failure) = mpsc::channel();
@@ -98,12 +97,10 @@ impl DevCommand {
             let execution_exit = handle.node_exit_future;
 
             let consensus_cancellation = CancellationToken::new();
-            let provider = execution_node.provider.clone();
             // The in-memory transport never sends the secret.
             let consensus_exit = dev_chain.run(
                 engine,
                 JwtSecret::random(),
-                move |number| provider.header_by_number(number),
                 impersonation,
                 consensus_cancellation.clone(),
             );

@@ -13,6 +13,8 @@ use base_cli_utils::{LogConfig, RuntimeManager};
 use base_common_chains::rollup_config;
 #[cfg(any(target_os = "linux", feature = "local"))]
 use base_proof_host::ProverConfig;
+#[cfg(any(target_os = "linux", feature = "local"))]
+use base_proof_tee_nitro_enclave::EnclaveClient;
 #[cfg(feature = "local")]
 use base_proof_tee_nitro_enclave::Server as EnclaveServer;
 #[cfg(target_os = "linux")]
@@ -21,7 +23,7 @@ use base_proof_tee_nitro_enclave::VSOCK_PORT;
 use base_proof_tee_nitro_host::{
     DEFAULT_PROOF_GENERATOR_HEARTBEAT_LOCK_DURATION_SECONDS,
     DEFAULT_PROOF_GENERATOR_MAX_CONSECUTIVE_HEARTBEAT_FAILURES, NitroEnclavePool, NitroHost,
-    NitroProverServer, NitroTransport, ProofGeneratorHeartbeatConfig, RegistrationChecker,
+    NitroProverServer, ProofGeneratorHeartbeatConfig, RegistrationChecker,
     RegistrationHealthConfig,
 };
 #[cfg(any(target_os = "linux", feature = "local"))]
@@ -267,13 +269,13 @@ impl ServerArgs {
         if self.vsock_cid.is_empty() {
             return Err(eyre!("at least one --vsock-cid is required"));
         }
-        let transports = vsock_transports(&self.vsock_cid);
+        let enclave_clients = vsock_enclave_clients(&self.vsock_cid);
 
         info!(cids = ?self.vsock_cid, "configured vsock CIDs");
         run_worker(
             self.runtime,
             self.worker,
-            transports,
+            enclave_clients,
             WorkerTransportMode::Vsock,
             Some(self.listen_addr),
             cancel,
@@ -304,32 +306,39 @@ impl LocalArgs {
             return Err(eyre!("--local-enclave-count must be at least 1"));
         }
 
-        let transports = local_transports(self.local_enclave_count)?;
-        run_worker(self.runtime, self.worker, transports, WorkerTransportMode::Local, None, cancel)
-            .await
+        let enclave_clients = local_enclave_clients(self.local_enclave_count)?;
+        run_worker(
+            self.runtime,
+            self.worker,
+            enclave_clients,
+            WorkerTransportMode::Local,
+            None,
+            cancel,
+        )
+        .await
     }
 }
 
 #[cfg(feature = "local")]
-fn local_transports(count: usize) -> eyre::Result<Vec<Arc<NitroTransport>>> {
+fn local_enclave_clients(count: usize) -> eyre::Result<Vec<Arc<EnclaveClient>>> {
     (0..count)
         .map(|_| {
             let server = Arc::new(EnclaveServer::new_local()?);
-            Ok(Arc::new(NitroTransport::local(server)))
+            Ok(Arc::new(EnclaveClient::in_process(server)))
         })
         .collect::<eyre::Result<Vec<_>>>()
 }
 
 #[cfg(target_os = "linux")]
-fn vsock_transports(cids: &[u32]) -> Vec<Arc<NitroTransport>> {
-    cids.iter().map(|&cid| Arc::new(NitroTransport::vsock(cid, VSOCK_PORT))).collect()
+fn vsock_enclave_clients(cids: &[u32]) -> Vec<Arc<EnclaveClient>> {
+    cids.iter().map(|&cid| Arc::new(EnclaveClient::vsock(cid, VSOCK_PORT))).collect()
 }
 
 #[cfg(any(target_os = "linux", feature = "local"))]
 async fn run_worker(
     runtime: ProverRuntimeArgs,
     worker: WorkerArgs,
-    transports: Vec<Arc<NitroTransport>>,
+    enclave_clients: Vec<Arc<EnclaveClient>>,
     transport_mode: WorkerTransportMode,
     registrar_listen_addr: Option<SocketAddr>,
     cancel: CancellationToken,
@@ -338,10 +347,10 @@ async fn run_worker(
     let registry_configured = registration_health.is_some();
     let config = runtime.prover_config()?;
 
-    if transports.is_empty() {
-        return Err(eyre!("at least one enclave transport is required"));
+    if enclave_clients.is_empty() {
+        return Err(eyre!("at least one enclave client is required"));
     }
-    let enclave_count = transports.len();
+    let enclave_count = enclave_clients.len();
     if enclave_count > 1 && !registry_configured {
         match transport_mode {
             #[cfg(target_os = "linux")]
@@ -360,10 +369,10 @@ async fn run_worker(
         }
     }
 
-    let mut pool = NitroEnclavePool::new_multi(config, transports);
+    let mut pool = NitroEnclavePool::new_multi(config, enclave_clients);
     let registration_checker = if let Some(registration_health) = &registration_health {
         Some(Arc::new(
-            RegistrationChecker::from_health_config(pool.transports(), registration_health)
+            RegistrationChecker::from_health_config(pool.enclave_clients(), registration_health)
                 .map_err(|e| eyre!("registration checker init failed: {e}"))?,
         ))
     } else {
@@ -374,7 +383,7 @@ async fn run_worker(
             .with_registration_checker(Arc::clone(checker))
             .map_err(|e| eyre!("registration checker init failed: {e}"))?;
     }
-    let registrar_transports = pool.transports();
+    let registrar_enclave_clients = pool.enclave_clients();
 
     let prover_service = ProverServiceClientConfig::new(worker.prover_service_endpoint.clone())
         .with_request_timeout(Duration::from_secs(worker.prover_service_request_timeout_secs));
@@ -394,7 +403,7 @@ async fn run_worker(
         Some(
             NitroProverServer::run_registrar_rpc_server(
                 addr,
-                registrar_transports,
+                registrar_enclave_clients,
                 registration_checker,
             )
             .await?,

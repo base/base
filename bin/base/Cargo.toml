@@ -32,10 +32,10 @@ base-consensus-node.workspace = true
 base-upgrade-signal.workspace = true
 base-builder-metering.workspace = true
 base-consensus-engine.workspace = true
-base-builder-multiplex.workspace = true
 base-execution-chainspec.workspace = true
 base-execution-consensus.workspace = true
 base-shadow-indexer.workspace = true
+base-observability-events.workspace = true
 base-cli-utils = { workspace = true, features = ["otlp"] }
 
 # alloy
@@ -44,7 +44,6 @@ alloy-rpc-types-engine = { workspace = true, features = ["jwt"] }
 
 # reth
 reth-config.workspace = true
-reth-provider.workspace = true
 reth-node-core.workspace = true
 reth-cli-runner.workspace = true
 reth-cli-commands.workspace = true

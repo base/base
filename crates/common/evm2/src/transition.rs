@@ -8,7 +8,7 @@
 //! analogue of the reference's `DatabaseCommit::commit`).
 
 use alloy_primitives::{Address, U256};
-use base_common_genesis::{BaseUpgrade, UpgradeConfig};
+use base_common_genesis::{BaseFeature, BaseUpgrade, UpgradeConfig};
 use evm2::{
     AccountInfo, Evm,
     evm::{
@@ -27,6 +27,16 @@ use crate::BaseEvmTypes;
 pub trait BaseForkActivations {
     /// Returns whether `upgrade` is active at `timestamp`.
     fn is_active_at_timestamp(&self, upgrade: BaseUpgrade, timestamp: u64) -> bool;
+
+    /// Whether a behavior is active according to this schedule's existing activation rules.
+    ///
+    /// The [`UpgradeConfig`] implementation checks only explicitly configured timestamps; it
+    /// does not cascade later upgrades into earlier ones. Bedrock features always return false
+    /// because Bedrock has no timestamp slot. This is not interchangeable with rollup cascading
+    /// or resolved EVM-spec feature checks.
+    fn is_feature_active_at_timestamp(&self, feature: BaseFeature, timestamp: u64) -> bool {
+        self.is_active_at_timestamp(feature.activation_upgrade(), timestamp)
+    }
 }
 
 impl BaseForkActivations for UpgradeConfig {
@@ -95,5 +105,44 @@ impl StateChangeSource for IrregularStateChange {
             sink.storage(*change)?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn configured_features_use_explicit_timestamps_without_cascading() {
+        let timestamps = [0, 49, 50, 99, 100, 101, u64::MAX];
+        for (canyon_time, expected_canyon) in [
+            (None, [false; 7]),
+            (Some(0), [true; 7]),
+            (Some(100), [false, false, false, false, true, true, true]),
+        ] {
+            let schedule =
+                UpgradeConfig { canyon_time, delta_time: Some(50), ..Default::default() };
+            for ((timestamp, canyon_active), delta_active) in timestamps
+                .into_iter()
+                .zip(expected_canyon)
+                .zip([false, false, true, true, true, true, true])
+            {
+                assert_eq!(
+                    schedule.is_feature_active_at_timestamp(
+                        BaseFeature::DepositReceiptVersion,
+                        timestamp,
+                    ),
+                    canyon_active,
+                );
+                assert_eq!(
+                    schedule.is_feature_active_at_timestamp(BaseFeature::SpanBatches, timestamp),
+                    delta_active,
+                );
+                assert!(!schedule.is_feature_active_at_timestamp(
+                    BaseFeature::MonotonicBlockTimestamps,
+                    timestamp,
+                ));
+            }
+        }
     }
 }

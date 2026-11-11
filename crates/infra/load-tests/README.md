@@ -27,6 +27,9 @@ just load-test real-token
 # Deploy DoubleCounter and run the 64-predicate validity stress profile
 just load-test validity-stress
 
+# Deploy DoubleCounter and run the gas-limit billing demo (reverting arbs vs regular txs)
+LOAD_TEST_OUTPUT=/tmp/gas-limit-billing.json just load-test gas-limit-billing
+
 # Run real-token swaps against a network with predeployed contracts
 FUNDER_KEY=0x... just load-test real-token sepolia
 
@@ -77,11 +80,11 @@ legacy clients, and use explicit signing before enabling required enforcement.
 
 ## 200ms devnet profile
 
-`examples/denim-devnet.yaml` uses canonical polling at 200ms, without a Flashblocks WebSocket.
-It keeps the `devnet.yaml` transaction mix and 20M gas/s target: 4M gas per 200ms block instead
-of 40M per 2s block. Configure the devnet separately with Denim active and native building;
-use one tenth of the baseline block gas limit to preserve gas/s capacity. The profile does not
-change chain configuration.
+`examples/denim-devnet.yaml` uses canonical polling at 200ms. It keeps the `devnet.yaml`
+transaction mix and 20M gas/s target: 4M gas per 200ms block instead of 40M per 2s block.
+Configure the devnet separately with Denim active and native building; use one tenth of the
+baseline block gas limit to preserve gas/s capacity. The profile does not change chain
+configuration.
 
 ```bash
 # Use a funded local-devnet account, never a production key.
@@ -134,11 +137,9 @@ pools so the configured request concurrency can be reached. The shared semaphore
 authoritative outbound request limit. `batch_size` controls the maximum transactions per JSON-RPC
 batch request and defaults to 100.
 
-During measurement, the runner refills immediately after an inclusion source releases transaction
-inventory. When `flashblocks_ws` is configured, builder broadcasts provide the earliest signal;
-phase-locked canonical polling remains active as an automatic fallback and the authoritative source
-for final metrics. Both sources feed the same idempotent depth controller, so canonical observation
-does not double-release transactions already seen in a flashblock.
+During measurement, the runner refills immediately after phase-locked canonical polling releases
+transaction inventory; canonical blocks are also the authoritative source for final metrics. A
+timer-driven safety cycle refills when no block observation arrives in time.
 
 The controller calibrates expected execution gas before measurement, targets
 `target_gps * block_time` of that estimated gas outstanding, and permits up to twice that depth
@@ -146,13 +147,11 @@ while confirmed gas is behind the run-average target. Transaction gas limits rem
 execution safety, but do not reduce TPS when they conservatively exceed observed gas usage. Refills
 measure depth from transactions accepted by a submission RPC; local submission backlog still counts
 toward sender and aggregate transaction capacity but is not treated as node mempool inventory.
-Refills are capped by the cumulative measured submission budget (`target_gps * elapsed`), so faster
-flashblock inclusion cannot drive offered load above the configured rate. When `target_gps` is
-omitted, the floor is one full block and the ceiling is two full blocks. Capacity and submission
-bottlenecks are reported without failing the run. Omit `flashblocks_ws` to run with canonical
-polling only; removing the flashblock watcher does not change the controller or submission pipeline.
-The final pacing summary reports canonical, flashblock, and safety refill-cycle counts so source
-fallback is visible.
+Refills are capped by the cumulative measured submission budget (`target_gps * elapsed`), so early
+inclusion cannot drive offered load above the configured rate. When `target_gps` is omitted, the
+floor is one full block and the ceiling is two full blocks. Capacity and submission bottlenecks are
+reported without failing the run. The final pacing summary reports canonical and safety refill-cycle
+counts so timer fallback is visible.
 
 ### Logging
 
@@ -188,6 +187,7 @@ delay is measured for logging but is no longer included in the JSON output.
 | `validity-devnet.yaml` | Local devnet | Validity (conditional) workload; routes half the senders through `base_sendRawTransactionValidity`. Run with `FUNDER_KEY=... just load-test run validity-devnet` |
 | `real-token-devnet.yaml.template` | Local devnet | Rendered by `just load-test real-token` after deploying the devnet WETH/USDC harness |
 | `validity-stress.yaml.template` | Local devnet | Rendered by `just load-test validity-stress` with a freshly deployed `DoubleCounter` |
+| `gas-limit-billing.yaml.template` | Local devnet | Rendered by `just load-test gas-limit-billing`; high-tip reverting arbs compete with regular validity transactions |
 | `sepolia.yaml` | Base Sepolia | Requires `FUNDER_KEY` |
 | `real-token-sepolia.yaml` | Base Sepolia | Uses predeployed WETH/USDC and the Uniswap V3 swap router; run with `just load-test real-token sepolia`; recover with `just load-test real-token-recover sepolia` |
 | `real-token-mainnet-snapshot.yaml` | Local/shadow Base mainnet snapshot | Wraps funded ETH into WETH, acquires USDC, then runs random-direction Uniswap V3 and Aerodrome CL swaps; run with `just load-test real-token mainnet-snapshot` |
@@ -305,12 +305,42 @@ Each payment transfers one micro-USDC; other mixed token workloads can still exh
 The mainnet mix generator classifies each transaction emitting canonical USDC
 `AuthorizationUsed` once, before other classes. This is an upper-bound x402 proxy:
 EIP-3009 has other users, and transactions may settle more than one authorization.
-It does not attribute facilitators. The prior sample's relative workload weights are preserved,
-scaled to 978 of 1,000, with x402 inserted at its measured upper-bound share of 22 (2.2%).
-Runtime pacing still calibrates actual receipt gas.
+It does not attribute facilitators. Like every class, x402 is weighted by its measured share of
+transactions (23 of 1,000 in the committed window). Runtime pacing still calibrates actual receipt gas.
 Benchmark mainnet-mix runs selecting `mainnet-mix-mainnet-snapshot.yaml` after this
 change are not comparable with runs using the earlier mix.
 
+#### Batched token transfers
+
+`type: token_move` sends `transfers_per_tx` (default 25) one-unit transfers of the
+`real_token_setup` pair token in one
+[Disperse](https://disperse.app) `disperseTokenSimple` call, which pulls from
+`msg.sender`. It requires the existing `real_token_setup` alongside a swap workload,
+and Disperse deployed at `0xD152f549545093347A162Dce210e7293f1452150` (Base mainnet
+snapshots); setup approves Disperse like a swap router. The first recipient is the
+runner recipient, so `fresh_recipient_ratio` applies to it; the rest are random
+senders. With real USDC on a Base mainnet fork, 25 transfers to funded recipients
+use about 332k gas. `transfers_per_tx` is capped at 477 so the gas limit fits the
+2^24 per-tx cap (EIP-7825, enabled with Azul).
+
+#### ERC-4337 bundle stand-in
+
+`type: aa_bundle` sends one `handleOps` transaction carrying `ops_per_bundle` (default 12)
+ops. Per op, the contract recovers an ECDSA signature over the op, increments the signer's
+nonce slot, credits a fresh recipient slot, and emits one event; `padding_bytes` (default 0)
+appends random calldata. Setup deploys the contract through the CREATE2 deployment proxy
+(`0x4e59…956C`) unless it already exists. On a Base mainnet fork each op costs ~36k gas over a
+~29k base: the default sends ~457k gas, 2,436 calldata bytes and 12 logs per transaction,
+within mainnet's ERC-4337 bundles (390–530k gas, ~2.6 KB, ~12 logs). Each bundle's gas limit
+(`40_000 + 60_000 * ops_per_bundle + 40 * padding_bytes`) must fit the EIP-7825 per-tx cap of
+16,777,216 gas: at most 278 ops without padding, or 416,930 padding bytes with one op.
+
+
+#### Storage writes
+
+`type: storage` writes `slots_per_tx` slots per transaction through `StorageFiller`, a
+`new_slot_ratio` fraction of them fresh. Without `contract`, setup deploys `StorageFiller`
+through the CREATE2 deployment proxy (`0x4e59…956C`) unless it already exists.
 
 #### Precompile Testing
 
@@ -400,6 +430,44 @@ On `uniswap_v3`, `reverse_amounts: auto` instead derives the reverse range befor
     reverse_amounts: auto # USDC raw units at the pool price
 ```
 
+`via` on `uniswap_v3` routes each swap through intermediate tokens with `SwapRouter02` `exactInput`; each entry names a token and the fee of the pool that swaps into it, and `fee` stays the last pool's fee. Reverse swaps take the same pools backwards. Only the router pulls intermediate tokens, so senders need no extra balances or approvals. `reverse_amounts: auto` prices the range through every pool in turn. `via` cannot be combined with `native`, and the gas limit is 250,000 per pool. These Base mainnet routes end at USDC, so they work with the `real_token_setup` above:
+
+```yaml
+  - weight: 100
+    type: uniswap_v3
+    router: "0x2626664c2603336E57B271c5C0b26F421741e481"
+    token_in: "0x4200000000000000000000000000000000000006" # WETH
+    token_out: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" # USDC, gitleaks:allow
+    via:
+      - token: "0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf" # cbBTC, gitleaks:allow
+        fee: 500
+    fee: 500
+    min_amount: "10000000000000"
+    max_amount: "100000000000000"
+    reverse_amounts: auto
+  # Three pools: WETH -> DAI -> USDbC -> USDC.
+  #   via:
+  #     - { token: "0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb", fee: 500 } # DAI, gitleaks:allow
+  #     - { token: "0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA", fee: 100 } # USDbC, gitleaks:allow
+  #   fee: 100
+```
+
+#### Uniswap V3 liquidity testing
+
+`type: uniswap_v3_liquidity` sends Uniswap V3 `NonfungiblePositionManager` transactions on a real pool and requires `real_token_setup` for the pool's two tokens. Setup reads the pool's current tick, fixes a range of 100 tick spacings on each side, and mints each sender one position holding 64 increases' worth of liquidity. The run then mixes, by `ops` weight: `mint` (a new position, new storage), `increase` (adds `amount0`/`amount1` to the sender's setup position), `decrease` (removes a quarter of an increase's worth), `collect` (owed tokens back to the sender), and `multicall` (all four in one transaction). `decrease` may not outweigh `increase`, so setup positions do not empty even if the price drifts to a range edge of a standard fee tier. `amount0` and `amount1` cap the tokens added per mint or increase, and the pool takes them in its current ratio. Mints and the undecreased three quarters of each increase stay in positions, so size `real_token_setup` balances for the run's mint and increase count.
+
+```yaml
+  - weight: 100
+    type: uniswap_v3_liquidity
+    position_manager: "0x03a520b32C04BF3bEEf7BEb72E919cf822Ed34f1" # Base mainnet
+    token0: "0x4200000000000000000000000000000000000006" # WETH; token0 must sort below token1
+    token1: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" # USDC, public token address: gitleaks:allow
+    fee: 500
+    amount0: "10000000000000" # WETH wei
+    amount1: "23000" # USDC raw units
+    ops: {mint: 1, increase: 1, decrease: 1, collect: 1} # default; listed ops only, others 0
+```
+
 #### Running multiple load tests
 
 - Tune `target_gps`, `block_time`, and sender count appropriately. Omit `target_gps` to keep one
@@ -416,7 +484,7 @@ transactions:
     type: transfer
 ```
 
-Recipient keys are always positioned with a runtime-random seed/offset (never the configured `seed`), so repeated runs never regenerate the same "fresh" addresses. The runner logs `randomized_recipient_seed`/`randomized_recipient_offset` at startup and writes `fresh_recipient_count` to the final summary. Recover recipients from that logged value with `AccountPool::from_mnemonic(mnemonic, fresh_recipient_count, randomized_recipient_offset)` or `AccountPool::with_offset(randomized_recipient_seed, fresh_recipient_count, recipient_offset)`.
+Recipient keys are always positioned with a runtime-random seed/offset (never the configured `seed`), so repeated runs never regenerate the same "fresh" addresses. The runner logs `seed`/`recipient_offset` at startup and writes `fresh_recipient_count` to the final summary. Recover recipients from that logged value with `AccountPool::from_mnemonic(mnemonic, fresh_recipient_count, recipient_offset)` or `AccountPool::with_offset(seed, fresh_recipient_count, recipient_offset)`.
 
 #### Validity (Conditional) Transactions
 
@@ -452,10 +520,10 @@ port 8545. Ingress must have forwarding configured as described below.
 
 A configurable fraction of *senders* can route their entire traffic through the
 `base_sendRawTransactionValidity` endpoint, attaching validity predicates to
-every transaction they submit. All five server predicate types are supported:
-the state-based `balance`, `nonce`, and `storage` conditions, and the build-position
-`block_number` and `flashblock_index` conditions (compared against the block and
-flashblock currently being built). This exercises the sequencer and builder
+every transaction they submit. Four server predicate types are supported: the
+state-based `balance`, `nonce`, and `storage` conditions, and the build-position
+`block_number` condition (compared against the block currently being built).
+This exercises the sequencer and builder
 under congestion when validity predicates are in play. Set `validity.ratio` to
 `0.0` (the default) to disable the workload entirely, in which case behavior is
 identical to a plain run.
@@ -499,7 +567,7 @@ validity:
         key: sender
       op: ">="
       value: "0x0"
-    # build-position predicates read the block/flashblock being built:
+    # build-position predicates read the block being built:
     - type: block_number
       op: ">="
       value: "0x0"                # absolute block number
@@ -507,9 +575,6 @@ validity:
     - type: block_number
       op: "<="                  # required block-number expiry bound
       offset: "10"
-    - type: flashblock_index
-      op: ">="
-      value: "1"
 ```
 
 The `nonce` predicate compares the watched account's protocol nonce immediately
@@ -522,18 +587,75 @@ Predicate addresses resolve per transaction: `sender` → the tx `from`,
 `recipient` → the tx `to` (falling back to `from` for contract creation), or a
 fixed `0x` address. Storage slots are either a `fixed` slot or a `mapping`
 slot, which computes the Solidity mapping slot `keccak256(key ++ mapping_slot)`
-so `balanceOf(key)` slots are expressible. The `flashblock_index` predicate
-carries an `op` and `value`, and `block_number` carries an `op` plus exactly one
-of `value` (a fixed absolute block number) or `offset` (resolved to
-`current_block + offset` at prepare time); both read the build position rather
-than any address or slot. Storage predicate values may also be `sender_parity`,
-which resolves to the low bit of each transaction sender's address. Fixed values,
-slots, masks, and offsets accept hex (`0x...`) or decimal strings. At most 64
-predicates may be attached per transaction.
+so `balanceOf(key)` slots are expressible. The `block_number` predicate carries
+an `op` plus exactly one of `value` (a fixed absolute block number) or `offset`
+(resolved to `current_block + offset` at prepare time); it reads the build
+position rather than any address or slot. Storage predicate values may also be
+`sender_parity`, which resolves to the low bit of each transaction sender's
+address. Fixed values, slots, masks, and offsets accept hex (`0x...`) or decimal
+strings. At most 64 predicates may be attached per transaction.
 
 The final summary's `by_cohort` breakdown reports confirmed transactions split
-across the `plain` and `validity_pass` cohorts, so plain traffic can be compared
-against validity traffic when the workload is enabled.
+across the `plain`, `validity_pass`, and `validity_pass_priority_lead` cohorts, so plain
+traffic can be compared against validity traffic when the workload is enabled. Each entry
+carries `confirmed`, `reverted`, `total_gas` (receipt `gas_used`: metered before Everest, the
+billed limit under gas-limit billing), `total_gas_limit` (declared limits), `total_fee_wei`
+(`gas_used * effective_gas_price` summed from receipts: the execution fee, excluding the L1 data
+fee and operator fee), `total_priority_fee_wei`
+(`gas_used * (effective_gas_price - block base fee)`, the tip the sequencer received), and block latency
+percentiles. The CLI prints the same breakdown as one `By cohort:` line per cohort, with the execution
+fee (`exec_fee_eth`) and tip in ETH.
+
+##### Gas-limit billing demo
+
+`just load-test gas-limit-billing [--continuous ...]` drives the scenario described in the
+[gas-limit billing guide](../../../docs/guides/GAS_LIMIT_BILLING.md): it deploys `DoubleCounter` and
+`StorageFiller`, renders `gas-limit-billing.yaml.template`, and runs 200 validity senders (six
+transactions in flight each) for 60 s against the builder RPC on port 7545. Every transaction
+carries 63 always-true storage reads plus the `block_number` expiry bound ingress requires (240
+blocks, 48 s at the devnet's 200 ms cadence), so predicate evaluation always passes. The 10%
+priority-lead cohort uses `validity.priority_lead_payload` to send `revert_arb` calls at a 20x
+tip: a call to `DoubleCounter` with the selector `0xdeadbeef`, which it does not implement, so the
+call reverts after ~21-25k gas while declaring a 500k gas limit. The other 90% are regular
+transactions at the baseline tip: `StorageFiller.fillStorage` writing four fresh slots, which uses
+about 90% of its ~122k declared limit, the shape of an arbitrage that actually executes. The profile
+is sized so that a builder started with `L2_BUILDER_PREDICATE_EVAL_HARD_CUTOFF_MS=2` evaluates the
+reverting arbs first every block and the regular queue outgrows the budget, so some regular
+transactions expire unevaluated.
+
+```yaml
+validity:
+  ratio: 1.0
+  priority_lead_ratio: 0.10
+  priority_lead_multiplier: 20
+  priority_lead_payload:        # overrides `transactions` for the priority-lead cohort only
+    type: revert_arb
+    contract: "0x..."           # DoubleCounter
+    gas_limit: 500000           # defaults to 2,000,000 when omitted
+```
+
+Read the `by_cohort` output as the payment comparison: under metered billing the
+`validity_pass_priority_lead` cohort shows `total_gas` near `21-25k * confirmed` and a
+`total_fee_wei` far below what its `total_gas_limit` would cost at its tip, while `validity_pass`
+pays for the gas it used. Under gas-limit billing the reverting arbs' `total_gas` and `total_fee_wei`
+rise to their declared limits. Set `LOAD_TEST_OUTPUT=<path>` to keep the JSON summary.
+
+Inclusion counts need a caveat. Pacing uses one shared gas estimate for every transaction, the
+priority-lead arbs included. It starts from the calibrated receipt gas of the `transactions`
+workload (the storage writes) and is then corrected from observed receipt gas. Under gas-limit
+billing each arb reserves, and is billed, its full 500k declared limit, so blocks fill with fewer
+transactions and the pacing estimate rises only as receipt corrections catch up. Some of the drop
+in included transactions after activation therefore comes from block space, not ordering.
+`priority_lead_payload` takes any transaction type that works without chain preparation and
+submits through the validity path; config validation rejects payloads that need preparation
+(B-20, swaps, x402, token moves, AA bundles, `storage` without an explicit contract) and native
+EIP-8430 payloads, since the lead cohort is never prepared.
+
+`etc/scripts/devnet/gas-limit-billing-demo.sh` runs this profile twice on one devnet started with
+a late Everest block (before and after activation), snapshots the builder's predicate-budget and
+revenue metrics around each run, and prints the per-cohort comparison;
+`etc/scripts/devnet/gas-limit-billing-settlement-check.sh` is the smaller `cast`-only check that
+padded transfers settle at their declared limit.
 
 ##### Delayed (fixed future) validity spike
 
@@ -584,10 +706,7 @@ predicate; setting both or neither is a configuration error.
 **Required setup for end-to-end evaluation.** If forwarding is used, configure `--enable-tx-forwarding` and `--builder-rpc-urls=<url>` on ingress.
 The submission proxy must also route `base_sendRawTransactionValidity` to that ingress.
 Rejected requests must not be retried as plain `eth_sendRawTransaction`.
-Both build paths evaluate state and block predicates. `flashblock_index` requires the
-flashblocks path; the native/Denim builder permanently rejects that predicate.
-3. The builder runs the flashblocks build path (the only builder path wired in
-   the shipped binaries), which is where predicates are evaluated against state.
+The builder evaluates state and block predicates against state during block building.
 
 If `validity.ratio > 0` but the ingress endpoint does not serve
 `base_sendRawTransactionValidity`, the run fails loudly at startup rather than

@@ -1,4 +1,7 @@
-use std::path::{Path, PathBuf};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+};
 
 use alloy_consensus::constants::EMPTY_WITHDRAWALS;
 use alloy_eips::{BlockNumberOrTag, Encodable2718, eip7685::Requests};
@@ -28,6 +31,9 @@ use super::{EngineApi, Ipc};
 
 const AUTH_CONTAINER_IPC_PATH: &str = "/home/op-reth-shared/auth.ipc";
 const RPC_CONTAINER_IPC_PATH: &str = "/home/op-reth-shared/rpc.ipc";
+/// op-reth's datadir inside the container, mounted as a tmpfs. MDBX cannot open a
+/// database on the container's own filesystem under nested Docker (error 121).
+const CONTAINER_DATADIR: &str = "/home/op-reth-data";
 
 /// This type represents a Base execution client node that is running inside a
 /// docker container. This node is used to validate the correctness of the blocks built
@@ -261,6 +267,7 @@ async fn create_container(
 ) -> eyre::Result<ContainerCreateResponse> {
     let host_config = HostConfig {
         binds: Some(vec![format!("{}:/home/op-reth-shared:rw", tempdir.display())]),
+        tmpfs: Some(HashMap::from([(CONTAINER_DATADIR.to_string(), String::new())])),
         ..Default::default()
     };
 
@@ -288,6 +295,7 @@ async fn create_container(
             vec![
                 "node",
                 "--chain=/home/op-reth-shared/genesis.json",
+                &format!("--datadir={CONTAINER_DATADIR}"),
                 "--auth-ipc",
                 &format!("--auth-ipc.path={AUTH_CONTAINER_IPC_PATH}"),
                 &format!("--ipcpath={RPC_CONTAINER_IPC_PATH}"),
@@ -457,7 +465,7 @@ impl BaseProviderExt for RootProvider<Base> {
             .await?
             .ok_or_else(|| eyre::eyre!("No block found at height {}", number))?;
 
-        let withdrawals = block.withdrawals.clone().unwrap_or_default();
+        let withdrawals = block.withdrawals.unwrap_or_default();
 
         // Calculate the withdrawals root properly
         let withdrawals_root = if withdrawals.is_empty() {
@@ -469,7 +477,7 @@ impl BaseProviderExt for RootProvider<Base> {
             keccak256(&buf)
         };
 
-        let payload = BaseExecutionPayloadV4 {
+        Ok(BaseExecutionPayloadV4 {
             payload_inner: ExecutionPayloadV3 {
                 payload_inner: ExecutionPayloadV2 {
                     payload_inner: ExecutionPayloadV1 {
@@ -495,14 +503,12 @@ impl BaseProviderExt for RootProvider<Base> {
                             .map(|tx| tx.as_ref().encoded_2718().into())
                             .collect(),
                     },
-                    withdrawals: block.withdrawals.unwrap_or_default().to_vec(),
+                    withdrawals: withdrawals.to_vec(),
                 },
                 blob_gas_used: block.header.inner.blob_gas_used.unwrap_or_default(),
                 excess_blob_gas: block.header.inner.excess_blob_gas.unwrap_or_default(),
             },
             withdrawals_root,
-        };
-
-        Ok(payload)
+        })
     }
 }

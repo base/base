@@ -61,17 +61,25 @@ base_metrics::define_metrics! {
     validity_predicate_evaluations_total: counter,
     #[describe("Resting validity transactions carried into a block build from the previous block")]
     resting_predicate_carried: histogram,
-    #[describe("Resting validity transactions released at block start, by reason")]
+    #[describe("Resting validity transactions released from the carried set, by reason")]
     #[label(reason)]
     resting_predicate_carry_released_total: counter,
     #[describe("Block builds that discarded carried resting validity transactions because the parent was not the last block the builder finished")]
     resting_predicate_carry_resets_total: counter,
     #[describe("Resting validity transactions parked in the transaction iterator without reaching the build loop")]
     resting_predicate_parked_total: counter,
-    #[describe("Resting validity transactions whose predicates matched when evaluated in shadow mode")]
-    resting_predicate_shadow_mismatches_total: counter,
+    #[describe("Time one native block build's transaction iterator spent advancing past held resting validity transactions, in seconds")]
+    resting_predicate_hold_duration: histogram,
     #[describe("Of the parked resting validity transactions, those carried over from an earlier block")]
     resting_predicate_carried_parked_total: counter,
+    #[describe("Duration of carrying resting validity transactions into a block build, on the build path before the selection loop, in seconds")]
+    resting_predicate_begin_block_duration: histogram,
+    #[describe("Duration of the periodic sweep of resting validity transactions no build yielded, run off the build path, in seconds")]
+    resting_predicate_sweep_duration: histogram,
+    #[describe("Time a block build waited for the previous block's resting sweep to finish, in seconds")]
+    resting_predicate_sweep_wait_duration: histogram,
+    #[describe("Block builds that stopped waiting for the previous block's resting sweep and started with an empty resting set")]
+    resting_predicate_sweep_wait_timeouts_total: counter,
 }
 
 base_metrics::define_metrics! {
@@ -149,21 +157,46 @@ impl ValidityMetrics {
         Self::predicate_slots_loaded_unique().record(tracker.unique_slots() as f64);
     }
 
-    /// Records what carrying resting validity transactions into a new block did.
-    pub fn record_resting_carry_over(carry_over: &RestingCarryOver) {
+    /// Records what carrying resting validity transactions into a new block did, and how long it
+    /// took.
+    pub fn record_resting_carry_over(carry_over: &RestingCarryOver, duration: Duration) {
+        Self::resting_predicate_begin_block_duration().record(duration.as_secs_f64());
         if carry_over.reset {
             Self::resting_predicate_carry_resets_total().increment(1);
         }
         for (reason, released) in [
             ("pre_block_state", carry_over.released_by_state),
             ("block_number", carry_over.released_by_block_number),
-            ("unseen", carry_over.released_unseen),
         ] {
             if released > 0 {
                 Self::resting_predicate_carry_released_total(reason).increment(released as u64);
             }
         }
         Self::resting_predicate_carried().record(carry_over.carried as f64);
+    }
+
+    /// Records one sweep of resting validity transactions no build yielded.
+    pub fn record_resting_unseen_sweep(released: usize, duration: Duration) {
+        if released > 0 {
+            Self::resting_predicate_carry_released_total("unseen").increment(released as u64);
+        }
+        Self::resting_predicate_sweep_duration().record(duration.as_secs_f64());
+    }
+
+    /// Records the time one native block build's transaction iterator spent advancing past held
+    /// resting validity transactions.
+    pub fn record_resting_hold_duration(duration: Duration) {
+        Self::resting_predicate_hold_duration().record(duration.as_secs_f64());
+    }
+
+    /// Records how long a block build waited for the previous block's resting sweep.
+    pub fn record_resting_sweep_wait(waited: Duration) {
+        Self::resting_predicate_sweep_wait_duration().record(waited.as_secs_f64());
+    }
+
+    /// Records a block build that gave up waiting for the previous block's resting sweep.
+    pub fn record_resting_sweep_wait_timeout() {
+        Self::resting_predicate_sweep_wait_timeouts_total().increment(1);
     }
 
     /// Records validity-predicate index bucket wakeups and depth distribution for one build.
@@ -180,8 +213,7 @@ type CounterHandle = metrics::Counter;
 #[cfg(not(feature = "metrics"))]
 type CounterHandle = base_metrics::NoopMetric;
 
-/// `outcome` label of `validity_predicate_evaluations_total` recorded by the flashblocks and
-/// native build loops.
+/// `outcome` label of `validity_predicate_evaluations_total` recorded by the native build loop.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ValidityEvaluationOutcome {
     /// Primary scan: every predicate held.
@@ -194,8 +226,6 @@ pub enum ValidityEvaluationOutcome {
     BudgetExhausted,
     /// Primary scan: a predicate can no longer be satisfied (native builder).
     Expired,
-    /// Primary scan: rejected unevaluated because of an unsupported predicate (native builder).
-    Unsupported,
     /// Rescan: every predicate held.
     RescanMatched,
     /// Rescan: a predicate did not hold.
@@ -208,13 +238,12 @@ pub enum ValidityEvaluationOutcome {
 
 impl ValidityEvaluationOutcome {
     /// Every variant in declaration order; its length sizes [`ValidityEvaluationCounters`].
-    const ALL: [Self; 10] = [
+    const ALL: [Self; 9] = [
         Self::Matched,
         Self::NotSatisfied,
         Self::ReadError,
         Self::BudgetExhausted,
         Self::Expired,
-        Self::Unsupported,
         Self::RescanMatched,
         Self::RescanNotSatisfied,
         Self::RescanReadError,
@@ -230,7 +259,6 @@ impl ValidityEvaluationOutcome {
             Self::ReadError => "read_error",
             Self::BudgetExhausted => "budget_exhausted",
             Self::Expired => "expired",
-            Self::Unsupported => "unsupported",
             Self::RescanMatched => "rescan_matched",
             Self::RescanNotSatisfied => "rescan_not_satisfied",
             Self::RescanReadError => "rescan_read_error",
@@ -308,6 +336,7 @@ mod tests {
     use metrics_exporter_prometheus::PrometheusBuilder;
 
     use super::*;
+    use crate::InclusionTracker;
 
     #[test]
     fn records_predicate_metrics() {
@@ -409,6 +438,99 @@ mod tests {
     fn evaluation_outcome_variants_index_within_counters() {
         for (index, outcome) in ValidityEvaluationOutcome::ALL.into_iter().enumerate() {
             assert_eq!(outcome as usize, index);
+        }
+    }
+
+    #[test]
+    fn record_tip_per_gas_tags_flow_and_bid() {
+        let recorder = PrometheusBuilder::new().build_recorder();
+        let handle = recorder.handle();
+
+        metrics::with_local_recorder(&recorder, || {
+            // Standard EIP-1559: flow=standard, bid=priority_fee.
+            BuilderMetrics::record_tip_per_gas(false, false, 10.0);
+            BuilderMetrics::record_tip_per_gas(false, false, 30.0);
+            // Pre-8130 validity: flow=validity, bid=priority_fee.
+            BuilderMetrics::record_tip_per_gas(true, false, 50.0);
+            // EIP-8130 with predicates and a static phase-0 tip.
+            BuilderMetrics::record_tip_per_gas(true, true, 80.0);
+            // EIP-8130 without predicates, but with a static phase-0 tip.
+            BuilderMetrics::record_tip_per_gas(false, true, 20.0);
+            // EIP-8130 without a statically-analyzable tip: bid=priority_fee.
+            BuilderMetrics::record_tip_per_gas(false, false, 5.0);
+            BuilderMetrics::record_tip_per_gas(true, false, 15.0);
+        });
+
+        let rendered = handle.render();
+        for expected in [
+            "base_builder_tip_per_gas_count{flow=\"standard\",bid=\"priority_fee\"} 3",
+            "base_builder_tip_per_gas_sum{flow=\"standard\",bid=\"priority_fee\"} 45",
+            "base_builder_tip_per_gas_count{flow=\"validity\",bid=\"priority_fee\"} 2",
+            "base_builder_tip_per_gas_sum{flow=\"validity\",bid=\"priority_fee\"} 65",
+            "base_builder_tip_per_gas_count{flow=\"validity\",bid=\"coinbase_tip\"} 1",
+            "base_builder_tip_per_gas_sum{flow=\"validity\",bid=\"coinbase_tip\"} 80",
+            "base_builder_tip_per_gas_count{flow=\"standard\",bid=\"coinbase_tip\"} 1",
+            "base_builder_tip_per_gas_sum{flow=\"standard\",bid=\"coinbase_tip\"} 20",
+        ] {
+            assert!(rendered.contains(expected), "expected `{expected}`, got: {rendered}");
+        }
+    }
+
+    #[test]
+    fn record_inclusion_emits_per_block_histograms_including_zeros() {
+        let recorder = PrometheusBuilder::new().build_recorder();
+        let handle = recorder.handle();
+
+        let mut tracker = InclusionTracker::default();
+        tracker.record(true, 21_000, 2, 10, U256::from(500));
+        tracker.record(false, 10_000, 4, 10, U256::ZERO);
+        tracker.record(true, 8_000, 9, 10, U256::ZERO);
+
+        metrics::with_local_recorder(&recorder, || {
+            BuilderMetrics::record_inclusion(&tracker);
+        });
+
+        let rendered = handle.render();
+        for expected in [
+            "base_builder_txs_included_per_block_sum{flow=\"standard\"} 1",
+            "base_builder_txs_included_per_block_sum{flow=\"validity\"} 2",
+            "base_builder_tx_gas_used_per_block_sum{flow=\"standard\"} 10000",
+            "base_builder_tx_gas_used_per_block_sum{flow=\"validity\"} 29000",
+            "base_builder_priority_fee_revenue_wei_sum{flow=\"standard\"} 40000",
+            "base_builder_priority_fee_revenue_wei_sum{flow=\"validity\"} 114000",
+            "base_builder_base_fee_revenue_wei_sum{flow=\"standard\"} 100000",
+            "base_builder_base_fee_revenue_wei_sum{flow=\"validity\"} 290000",
+            "base_builder_coinbase_tip_revenue_wei_sum{flow=\"standard\"} 0",
+            "base_builder_coinbase_tip_revenue_wei_sum{flow=\"validity\"} 500",
+        ] {
+            assert!(rendered.contains(expected), "expected `{expected}`, got: {rendered}");
+        }
+    }
+
+    #[test]
+    fn record_inclusion_emits_zero_observations_for_empty_blocks() {
+        let recorder = PrometheusBuilder::new().build_recorder();
+        let handle = recorder.handle();
+
+        metrics::with_local_recorder(&recorder, || {
+            BuilderMetrics::record_inclusion(&InclusionTracker::default());
+        });
+
+        let rendered = handle.render();
+        for metric in [
+            "txs_included_per_block",
+            "tx_gas_used_per_block",
+            "priority_fee_revenue_wei",
+            "base_fee_revenue_wei",
+            "coinbase_tip_revenue_wei",
+        ] {
+            for flow in ["standard", "validity"] {
+                let expected = format!("base_builder_{metric}_count{{flow=\"{flow}\"}} 1");
+                assert!(
+                    rendered.contains(&expected),
+                    "empty blocks must still emit `{expected}`, got: {rendered}"
+                );
+            }
         }
     }
 }

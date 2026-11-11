@@ -187,15 +187,19 @@ fn validate_real_token_pair_matches_swaps(
                 })?;
                 (token_in, token_out)
             }
+            TxTypeConfig::UniswapV3Liquidity(payload) => (payload.token0, payload.token1),
             TxTypeConfig::Transfer
             | TxTypeConfig::Eip8430Transfer
             | TxTypeConfig::Calldata { .. }
             | TxTypeConfig::X402
+            | TxTypeConfig::TokenMove { .. }
             | TxTypeConfig::Erc20 { .. }
             | TxTypeConfig::B20
             | TxTypeConfig::Precompile { .. }
             | TxTypeConfig::Storage { .. }
             | TxTypeConfig::DoubleCounter { .. }
+            | TxTypeConfig::AaBundle { .. }
+            | TxTypeConfig::RevertArb { .. }
             | TxTypeConfig::Osaka { .. } => continue,
         };
         saw_swap = true;
@@ -294,7 +298,6 @@ mod tests {
     fn parse_real_token_setup_for_random_direction_swap_parity() {
         let yaml = r#"
 transaction_submission_rpcs: http://localhost:8545
-flashblocks_ws: ws://localhost:7111
 chain_id: 8453
 real_token_setup:
   enabled: true
@@ -344,7 +347,6 @@ transactions:
     fn real_token_setup_approval_amount_max_sentinel() {
         let yaml = r#"
 transaction_submission_rpcs: http://localhost:8545
-flashblocks_ws: ws://localhost:7111
 chain_id: 8453
 real_token_setup:
   enabled: true
@@ -377,7 +379,6 @@ transactions:
     fn real_token_setup_approval_amount_numeric_literal() {
         let yaml = r#"
 transaction_submission_rpcs: http://localhost:8545
-flashblocks_ws: ws://localhost:7111
 chain_id: 8453
 real_token_setup:
   enabled: true
@@ -410,7 +411,6 @@ transactions:
     fn real_token_setup_requires_mainnet_guard() {
         let yaml = r#"
 transaction_submission_rpcs: http://localhost:8545
-flashblocks_ws: ws://localhost:7111
 real_token_setup:
   enabled: true
   weth: "0x4200000000000000000000000000000000000006"
@@ -440,7 +440,6 @@ transactions:
     fn real_token_setup_rejects_non_pair_swap_tokens() {
         let yaml = r#"
 transaction_submission_rpcs: http://localhost:8545
-flashblocks_ws: ws://localhost:7111
 real_token_setup:
   enabled: true
   allow_chain_id_8453: true
@@ -471,7 +470,6 @@ transactions:
     fn real_token_setup_reports_missing_addresses_for_harnessless_runs() {
         let yaml = r#"
 transaction_submission_rpcs: http://localhost:8545
-flashblocks_ws: ws://localhost:7111
 real_token_setup:
   enabled: true
   weth_amount_per_sender: "800000000000000000"

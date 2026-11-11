@@ -11,6 +11,10 @@ base_metrics::define_metrics! {
     #[describe("Total transactions queued after per-destination deduplication")]
     #[label(builder_url)]
     txs_sent: counter,
+    #[describe("Total transactions queued again after their resend window passed, by transaction kind")]
+    #[label(builder_url)]
+    #[label(kind)]
+    txs_resent: counter,
     #[describe("Total transactions skipped by the validator")]
     #[label(builder_url)]
     txs_ignored: counter,

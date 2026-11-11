@@ -1,6 +1,6 @@
-//! Unified test harness combining node and engine helpers, plus optional flashblocks adapter.
+//! Unified test harness combining node and engine helpers.
 
-use std::{sync::Arc, time::Duration};
+use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use alloy_eips::{BlockHashOrNumber, eip7685::Requests};
 use alloy_primitives::{B64, B256, Bytes};
@@ -48,6 +48,7 @@ pub struct TestHarnessBuilder {
     extensions: Vec<Box<dyn BaseNodeExtension>>,
     chain_spec: Option<Arc<BaseChainSpec>>,
     rpc_gas_cap: Option<u64>,
+    engine_api_store: Option<PathBuf>,
 }
 
 impl TestHarnessBuilder {
@@ -85,6 +86,12 @@ impl TestHarnessBuilder {
         self
     }
 
+    /// Record every engine API message to `dir`, as `--debug.engine-api-store` does.
+    pub fn with_engine_api_store(mut self, dir: PathBuf) -> Self {
+        self.engine_api_store = Some(dir);
+        self
+    }
+
     /// Build and launch the test harness.
     pub async fn build(self) -> Result<TestHarness> {
         init_silenced_tracing();
@@ -94,7 +101,9 @@ impl TestHarnessBuilder {
             Arc::new(BaseChainSpec::from_genesis(genesis))
         });
 
-        let node = LocalNode::new(self.extensions, chain_spec, self.rpc_gas_cap).await?;
+        let node =
+            LocalNode::new(self.extensions, chain_spec, self.rpc_gas_cap, self.engine_api_store)
+                .await?;
         let engine = node.engine_api()?;
 
         sleep(Duration::from_millis(NODE_STARTUP_DELAY_MS)).await;

@@ -13,7 +13,7 @@ workspace = true
 
 [dependencies]
 # workspace
-base-flashblocks.workspace = true
+base-execution-txpool.workspace = true
 base-node-runner.workspace = true
 base-observability-events.workspace = true
 
@@ -42,27 +42,13 @@ derive_more = { workspace = true, features = ["display"] }
 serde_json.workspace = true
 
 [dev-dependencies]
-# workspace
-base-test-utils.workspace = true
-base-node-runner = { workspace = true, features = ["test-utils"] }
-base-flashblocks-node = { workspace = true, features = ["test-utils"] }
-
 # reth
 reth-transaction-pool = { workspace = true, features = ["test-utils"] }
 
-# revm
-revm-database.workspace = true
-
-# alloy
-alloy-eips = { workspace = true, features = ["std"] }
-alloy-consensus = { workspace = true, features = ["std"] }
-alloy-rpc-types-engine = { workspace = true, features = ["std"] }
-
-# base-alloy
-base-common-consensus = { workspace = true, features = ["reth"] }
+# metrics
+metrics-exporter-prometheus.workspace = true
 
 # misc
-eyre.workspace = true
 rstest.workspace = true
 
 [features]

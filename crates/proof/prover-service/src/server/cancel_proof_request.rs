@@ -39,8 +39,7 @@ impl ProverServiceServer {
             }
             Ok(CancelProofRequestOutcome::AlreadyTerminal(status)) => {
                 Err(failed_precondition(format!(
-                    "session_id {session_id}: proof request status is {}, expected a queued or running request",
-                    status.as_str()
+                    "session_id {session_id}: proof request status is {status}, expected a queued or running request"
                 )))
             }
             Err(e) => Err(internal(format!("Database error: {e}"))),

@@ -4,11 +4,9 @@ use std::{
     time::Instant,
 };
 
-use alloy_consensus::transaction::Recovered;
-use alloy_eips::Decodable2718;
-use alloy_primitives::TxHash;
+use alloy_eips::eip2718::Encodable2718;
+use alloy_primitives::{B256, TxHash};
 use base_bundles::MeterBundleResponse;
-use base_common_consensus::BaseTransactionSigned;
 use base_observability_events::{
     TransactionEventProducer, TransactionEventType, transaction_event,
 };
@@ -19,6 +17,7 @@ use jsonrpsee::{
 };
 use reth_transaction_pool::{
     AddedTransactionOutcome, PoolResult, PoolTransaction, TransactionOrigin, TransactionPool,
+    error::{PoolError, PoolErrorKind},
 };
 use serde_json::{Map, json};
 use tracing::debug;
@@ -44,10 +43,16 @@ static BUILDER_HOST: LazyLock<String> = LazyLock::new(|| {
 /// individual calls.
 pub const MAX_VALIDATED_INSERT_BATCH: usize = 1024;
 
+/// Inbound metering paired with the hash of the exact encoding it was metered for.
+pub type KeyedMetering = (B256, MeterBundleResponse);
+
 /// Writes inbound `insertValidatedTransaction` metering into the builder cache.
 pub trait InsertMetering: core::fmt::Debug + Send + Sync + 'static {
-    /// Stores metering for `tx_hash`.
-    fn insert_metering(&self, tx_hash: TxHash, metering: MeterBundleResponse);
+    /// Stores metering for the encoding with hash `encoded_hash`
+    /// ([`Encodable2718::trie_hash`]).
+    ///
+    /// [`Encodable2718::trie_hash`]: alloy_eips::eip2718::Encodable2718::trie_hash
+    fn insert_metering(&self, encoded_hash: B256, metering: MeterBundleResponse);
 }
 
 /// RPC interface for submitting pre-validated transactions to a block builder.
@@ -159,6 +164,9 @@ where
         debug!(sender = %tx.sender, "rpc::insert_validated_transaction");
         let (origin, pool_tx, metering) = self.prepare_insert(tx)?;
         let (tx_hash, encoded_len) = (*pool_tx.hash(), pool_tx.encoded_length());
+        if let Some(result) = self.already_pooled(tx_hash) {
+            return self.finish_insert(tx_hash, encoded_len, metering, result);
+        }
         let start = Instant::now();
         let result = self.pool.add_transaction(origin, pool_tx).await;
         BuilderApiMetrics::insert_duration().record(start.elapsed().as_secs_f64());
@@ -177,7 +185,13 @@ where
         for (index, tx) in txs.into_iter().enumerate() {
             match self.prepare_insert(tx) {
                 Ok((origin, pool_tx, metering)) => {
-                    admitted.push((index, *pool_tx.hash(), pool_tx.encoded_length(), metering));
+                    let (tx_hash, encoded_len) = (*pool_tx.hash(), pool_tx.encoded_length());
+                    if let Some(result) = self.already_pooled(tx_hash) {
+                        results[index] =
+                            self.finish_insert(tx_hash, encoded_len, metering, result).err();
+                        continue;
+                    }
+                    admitted.push((index, tx_hash, encoded_len, metering));
                     batch.push((origin, pool_tx));
                 }
                 Err(error) => results[index] = Some(error),
@@ -193,6 +207,24 @@ where
             results[index] = self.finish_insert(tx_hash, encoded_len, metering, result).err();
         }
         Ok(results)
+    }
+}
+
+impl<P, E> BuilderApiImpl<P, E>
+where
+    P: TransactionPool<Transaction = BasePooledTransaction>,
+{
+    /// Returns the pool's already-imported verdict for a transaction it already holds.
+    ///
+    /// Every mempool node forwards each transaction to every builder, so most inserts a builder
+    /// receives are duplicates. The pool validates a transaction against state before it checks
+    /// whether it holds the hash, so answering duplicates here skips that validation and the pool
+    /// write lock. A pooled duplicate is reported as already imported even when validation would
+    /// now reject it.
+    fn already_pooled(&self, tx_hash: TxHash) -> Option<PoolResult<AddedTransactionOutcome>> {
+        self.pool
+            .contains(&tx_hash)
+            .then(|| Err(PoolError::new(tx_hash, PoolErrorKind::AlreadyImported)))
     }
 }
 
@@ -217,10 +249,13 @@ where
 
     /// Checks and decodes one wire transaction into the pool transaction and origin it is
     /// inserted with, plus its metering for [`Self::finish_insert`].
+    ///
+    /// The metering is keyed by the hash of the exact encoding: EIP-8130 encodings that share a
+    /// transaction hash can meter differently.
     fn prepare_insert(
         &self,
         tx: ValidatedTransaction<E>,
-    ) -> RpcResult<(TransactionOrigin, BasePooledTransaction, Option<MeterBundleResponse>)> {
+    ) -> RpcResult<(TransactionOrigin, BasePooledTransaction, Option<KeyedMetering>)> {
         let sender = tx.sender;
         let has_extensions = !tx.extensions.is_empty();
 
@@ -238,9 +273,10 @@ where
             ErrorObjectOwned::owned(ErrorCode::InvalidParams.code(), e.to_string(), None::<()>)
         })?;
 
-        // Decode the EIP-2718 transaction bytes
-        let consensus_tx =
-            BaseTransactionSigned::decode_2718(&mut tx.raw.as_ref()).map_err(|e| {
+        // Decode the EIP-2718 bytes, keeping them as the pool transaction's cached encoding so
+        // validation and block building do not re-encode the transaction.
+        let mut pool_tx =
+            BasePooledTransaction::decode_2718_with_sender(tx.raw, sender).map_err(|e| {
                 BuilderApiMetrics::decode_errors().increment(1);
                 ErrorObjectOwned::owned(
                     ErrorCode::InvalidParams.code(),
@@ -248,12 +284,9 @@ where
                     None::<()>,
                 )
             })?;
-        let encoded_len = tx.raw.len();
-
-        let recovered = Recovered::new_unchecked(consensus_tx, sender);
-        let mut pool_tx = BasePooledTransaction::new(recovered, encoded_len);
-        let metering = tx.metering;
-        if let Some(ref metering) = metering {
+        let metering =
+            tx.metering.map(|metering| (pool_tx.consensus_ref().inner().trie_hash(), metering));
+        if let Some((_, metering)) = &metering {
             pool_tx = pool_tx.with_metering(metering.clone());
         }
         // Attach any extension data carried on the wire. This is a no-op for
@@ -295,20 +328,20 @@ where
         &self,
         tx_hash: TxHash,
         encoded_len: usize,
-        metering: Option<MeterBundleResponse>,
+        metering: Option<KeyedMetering>,
         result: PoolResult<AddedTransactionOutcome>,
     ) -> RpcResult<()> {
         match result {
             Ok(_) => {
-                if let Some(metering) = metering
+                if let Some((encoded_hash, metering)) = metering
                     && let Some(cache) = &self.metering_cache
                 {
-                    cache.insert_metering(tx_hash, metering);
+                    cache.insert_metering(encoded_hash, metering);
                 }
                 self.emit_validated_insert_event(
                     TransactionEventType::TxpoolValidatedInsertAccepted,
                     tx_hash,
-                    Map::from_iter([("encoded_len".to_string(), json!(encoded_len))]),
+                    || Map::from_iter([("encoded_len".to_string(), json!(encoded_len))]),
                 );
                 debug!(tx_hash = %tx_hash, "inserted validated transaction");
                 BuilderApiMetrics::txs_inserted().increment(1);
@@ -318,11 +351,13 @@ where
                 self.emit_validated_insert_event(
                     TransactionEventType::TxpoolValidatedInsertRejected,
                     tx_hash,
-                    Map::from_iter([
-                        ("rejection_stage".to_string(), json!("pool_insert")),
-                        ("encoded_len".to_string(), json!(encoded_len)),
-                        ("error".to_string(), json!(e.to_string())),
-                    ]),
+                    || {
+                        Map::from_iter([
+                            ("rejection_stage".to_string(), json!("pool_insert")),
+                            ("encoded_len".to_string(), json!(encoded_len)),
+                            ("error".to_string(), json!(e.to_string())),
+                        ])
+                    },
                 );
                 debug!(tx_hash = %tx_hash, error = %e, "pool rejected transaction");
                 BuilderApiMetrics::txs_rejected(PoolRejectionLabel::from_error(&e)).increment(1);
@@ -336,16 +371,30 @@ where
     }
 }
 
+/// End of the message a builder's insert RPC returns for a transaction its pool already holds:
+/// the `Display` of [`PoolErrorKind::AlreadyImported`], which the rejection message ends with.
+const ALREADY_IMPORTED: &str = "already imported";
+
+/// Returns `true` if `error` is a builder insert rejection for a transaction the builder's pool
+/// already holds, which delivered it as surely as an accepted insert.
+///
+/// The insert RPC reports every pool rejection with the same code, so this matches the end of the
+/// message. Tests pin [`ALREADY_IMPORTED`] to the pool error's `Display` and run a real rejection
+/// through this check, so a change on either side fails them.
+pub fn is_already_imported_rejection(error: &ErrorObjectOwned) -> bool {
+    error.message().ends_with(ALREADY_IMPORTED)
+}
+
 impl<P, E> BuilderApiImpl<P, E> {
+    /// Emits a validated-insert event, calling `data` for its fields only when an event writer is
+    /// configured. Every forwarded transaction reaches here, most of them as rejected duplicates,
+    /// and builders with transaction events disabled have no writer.
     fn emit_validated_insert_event(
         &self,
         event_type: TransactionEventType,
         tx_hash: TxHash,
-        mut data: Map<String, serde_json::Value>,
+        data: impl FnOnce() -> Map<String, serde_json::Value>,
     ) {
-        data.entry("rpc_method".to_string())
-            .or_insert_with(|| json!("base_insertValidatedTransaction"));
-
         let _ = transaction_event!(
             producer: TransactionEventProducer::BaseBuilder,
             event_type: event_type,
@@ -354,7 +403,12 @@ impl<P, E> BuilderApiImpl<P, E> {
                 "builder_host" => BUILDER_HOST.as_str(),
                 "tx_hash" => format!("{tx_hash:#x}"),
             },
-            data: data,
+            data: {
+                let mut data = data();
+                data.entry("rpc_method".to_string())
+                    .or_insert_with(|| json!("base_insertValidatedTransaction"));
+                data
+            },
         );
     }
 }
@@ -369,7 +423,10 @@ mod tests {
     use alloy_signer::SignerSync;
     use alloy_signer_local::PrivateKeySigner;
     use base_bundles::MeterBundleResponse;
-    use base_common_consensus::{BaseTransactionSigned, BaseTypedTransaction, TxDeposit};
+    use base_common_consensus::{
+        BaseTransactionSigned, BaseTxEnvelope, BaseTypedTransaction, Eip8130Signed, TxDeposit,
+        TxEip8130,
+    };
     use reth_transaction_pool::noop::NoopTransactionPool;
 
     use super::*;
@@ -697,13 +754,31 @@ mod tests {
 
     #[derive(Debug, Default)]
     struct RecordingMetering {
-        inserted: Mutex<Vec<(TxHash, MeterBundleResponse)>>,
+        inserted: Mutex<Vec<(B256, MeterBundleResponse)>>,
     }
 
     impl InsertMetering for RecordingMetering {
-        fn insert_metering(&self, tx_hash: TxHash, metering: MeterBundleResponse) {
-            self.inserted.lock().expect("recording lock").push((tx_hash, metering));
+        fn insert_metering(&self, encoded_hash: B256, metering: MeterBundleResponse) {
+            self.inserted.lock().expect("recording lock").push((encoded_hash, metering));
         }
+    }
+
+    /// EIP-8130 encodings that differ only in authorization share a transaction hash, so inbound
+    /// metering is keyed by the hash of the exact encoding.
+    #[test]
+    fn metering_is_keyed_by_exact_encoding() {
+        let sender = Address::repeat_byte(0x81);
+        let tx = TxEip8130 { chain_id: 8453, sender: Some(sender), ..Default::default() };
+        let signed = Eip8130Signed::new(tx, Bytes::from_static(&[0x01]), Bytes::new());
+        let encoded_hash = signed.encoded_hash();
+        let raw = Bytes::from(BaseTxEnvelope::Eip8130(signed).encoded_2718());
+        let mut tx = validated_transaction(sender, raw, NoExtensions {});
+        tx.metering = Some(MeterBundleResponse::default());
+
+        let (_, pool_tx, metering) = handler().prepare_insert(tx).expect("prepare insert");
+
+        assert_ne!(*pool_tx.hash(), encoded_hash);
+        assert_eq!(metering.map(|(key, _)| key), Some(encoded_hash));
     }
 
     #[tokio::test]
@@ -863,5 +938,23 @@ mod tests {
         // Decode should succeed, but the txpool is a noop so it will reject the tx
         // This error code should be InternalError
         assert_eq!(err.code(), ErrorCode::InternalError.code());
+    }
+
+    #[test]
+    fn already_imported_matches_the_pool_error_display() {
+        assert_eq!(ALREADY_IMPORTED, PoolErrorKind::AlreadyImported.to_string());
+    }
+
+    /// A duplicate's rejection is recognised as already imported; any other rejection is not.
+    #[test]
+    fn insert_rejections_are_classified_by_is_already_imported_rejection() {
+        let handler = BuilderApiImpl::new(NoopTransactionPool::<BasePooledTransaction>::new());
+        let hash = TxHash::repeat_byte(0x11);
+        let reject = |kind| handler.finish_insert(hash, 0, None, Err(PoolError::new(hash, kind)));
+
+        let duplicate = reject(PoolErrorKind::AlreadyImported).unwrap_err();
+        assert!(is_already_imported_rejection(&duplicate), "{duplicate:?}");
+        let underpriced = reject(PoolErrorKind::ReplacementUnderpriced).unwrap_err();
+        assert!(!is_already_imported_rejection(&underpriced), "{underpriced:?}");
     }
 }

@@ -33,14 +33,7 @@
 //! [`send_tx`]: SimpleTxManager::send_tx
 //! [`TransactionRequest`]: alloy_rpc_types_eth::TransactionRequest
 
-use std::{
-    fmt::Debug,
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
-    time::Duration,
-};
+use std::{fmt::Debug, sync::Arc, time::Duration};
 
 use alloy_consensus::TxEnvelope;
 use alloy_eips::{
@@ -58,6 +51,7 @@ use backon::{ConstantBuilder, Retryable};
 use base_runtime::{Runtime, RuntimeTimeout, TokioRuntime};
 use futures::StreamExt;
 use tokio::sync::{mpsc, oneshot};
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
 use crate::{
@@ -109,6 +103,19 @@ impl PreparedTx {
     pub fn to_envelope(&self) -> Result<TxEnvelope, alloy_eips::eip2718::Eip2718Error> {
         TxEnvelope::decode_2718(&mut self.raw_tx.as_ref())
     }
+}
+
+/// A receipt confirmed to the required depth, with the timestamp of the canonical
+/// block that includes it.
+///
+/// The receipt poller already reads that block to check the receipt is canonical, so
+/// the send loop gets the inclusion time without another RPC call.
+#[derive(Debug)]
+pub struct ConfirmedTx {
+    /// The confirmed receipt.
+    pub receipt: TransactionReceipt,
+    /// Unix timestamp, in seconds, of the block that includes the transaction.
+    pub block_timestamp: u64,
 }
 
 /// Mutable fee-bump state tracked across iterations in the send loop.
@@ -169,11 +176,12 @@ pub struct SimpleTxManager<P, R = TokioRuntime> {
     nonce_manager: NonceManager<P, R>,
     /// Chain ID for transaction construction.
     chain_id: u64,
-    /// Shutdown flag shared across the manager and any spawned background
-    /// tasks. Wrapped in [`Arc`] so that calling [`close`](Self::close)
-    /// on the original manager is observed by tasks spawned via
-    /// [`send_async`](Self::send_async) and [`wait_for_tx`](Self::wait_for_tx).
-    closed: Arc<AtomicBool>,
+    /// Shutdown signal shared by clones of the manager and its spawned
+    /// background tasks: [`close`](Self::close) cancels it, which both sets
+    /// the flag read by [`is_closed`](Self::is_closed) and wakes in-flight
+    /// sends, including those spawned via [`send_async`](Self::send_async)
+    /// and [`wait_for_tx`](Self::wait_for_tx).
+    closed: CancellationToken,
     /// Metrics collector for transaction lifecycle events.
     metrics: Arc<dyn TxMetrics>,
 }
@@ -304,7 +312,7 @@ where
             config,
             nonce_manager,
             chain_id,
-            closed: Arc::new(AtomicBool::new(false)),
+            closed: CancellationToken::new(),
             metrics,
         })
     }
@@ -349,16 +357,21 @@ where
     ///
     /// After calling `close()`, any subsequent call to [`prepare`](Self::prepare)
     /// will immediately return `Err(TxManagerError::ChannelClosed)`.
+    /// In-flight sends waiting for a receipt or the next fee bump return
+    /// `Err(TxManagerError::ChannelClosed)` immediately; a fee bump already in
+    /// progress runs to completion first, because preparation is not
+    /// cancellation-safe. A transaction that was already published may still
+    /// be mined after the send returns.
     /// Background tasks spawned by [`send_async`](Self::send_async) and
     /// receipt polling tasks will also observe the shutdown and exit
-    /// gracefully, since `closed` is shared via [`Arc`].
+    /// gracefully, since they share the manager's cancellation token.
     pub fn close(&self) {
-        self.closed.store(true, Ordering::Release);
+        self.closed.cancel();
     }
 
     /// Returns `true` if the manager has been closed via [`close`](Self::close).
     pub fn is_closed(&self) -> bool {
-        self.closed.load(Ordering::Acquire)
+        self.closed.is_cancelled()
     }
 
     /// Records an RPC error metric and returns a [`TxManagerError::Rpc`].
@@ -854,13 +867,7 @@ where
         )
         .await
         .map_err(|_| self.rpc_error("estimate_gas timed out"))?
-        .map_err(|e| {
-            let err = self.classify_and_record_rpc(&e);
-            if matches!(err, TxManagerError::ExecutionReverted { .. }) {
-                error!(error = %err, "gas estimation reverted");
-            }
-            err
-        })?;
+        .map_err(|e| self.classify_and_record_rpc(&e))?;
         tx_request.sidecar = sidecar_stash;
         let gas_floor = fee_overrides.as_ref().map_or(0, |fo| fo.gas_limit_floor);
         let gas_limit = candidate.gas_limit.max(gas_floor).max(estimated);
@@ -989,6 +996,8 @@ where
         }
 
         let start = self.runtime.now();
+        // Inclusion is measured against an L1 block timestamp, which is wall-clock time.
+        let start_unix_ms = self.runtime.wall_clock_unix_millis();
 
         // Wrap the event loop in a send timeout if configured.
         let result = if self.config.tx_send_timeout.is_zero() {
@@ -1012,8 +1021,11 @@ where
         let latency_ms =
             u64::try_from(self.runtime.now().saturating_sub(start).as_millis()).unwrap_or(u64::MAX);
 
-        if result.is_ok() {
+        if let Ok(confirmed) = &result {
             self.metrics.record_send_latency(latency_ms, SendOutcome::Confirmed);
+            // Recorded with the send latency, so both series cover the same sends.
+            let included_unix_ms = confirmed.block_timestamp.saturating_mul(1_000);
+            self.metrics.record_inclusion_latency(included_unix_ms.saturating_sub(start_unix_ms));
             self.metrics.record_tx_confirmed();
         } else {
             self.metrics.record_send_latency(latency_ms, SendOutcome::Failed);
@@ -1039,7 +1051,7 @@ where
             self.nonce_manager.return_reserved_nonce(n).await;
         }
 
-        result
+        result.map(|confirmed| confirmed.receipt)
     }
 
     fn should_reset_nonce_on_send_error<T>(
@@ -1096,20 +1108,28 @@ where
         candidate: &TxCandidate,
         send_state: &Arc<SendState>,
         nonce_override: Option<u64>,
-    ) -> SendResponse {
+    ) -> TxManagerResult<ConfirmedTx> {
         // Initial transaction preparation. prepare() is NOT cancellation-safe,
         // so it runs to completion before entering the select loop.
         // The returned PreparedTx carries the actual on-wire fees, eliminating
         // the need for a separate suggest_gas_price_caps() call.
-        let prepared =
-            self.prepare_with_initial_caps(candidate, None, None, nonce_override, None).await?;
+        // A revert is only an error here. During a fee bump it usually means a published
+        // version already executed, and `try_fee_bump` reports it as a warning.
+        let prepared = self
+            .prepare_with_initial_caps(candidate, None, None, nonce_override, None)
+            .await
+            .inspect_err(|error| {
+                if matches!(error, TxManagerError::ExecutionReverted { .. }) {
+                    error!(error = %error, "gas estimation reverted");
+                }
+            })?;
         send_state.record_assigned_nonce(prepared.nonce);
         let tx_hash = self.publish_tx_with_nonce_retry(send_state, &prepared.raw_tx).await?;
         let mut bump = BumpState::from_prepared(prepared, tx_hash);
 
         // Receipt delivery channel — mpsc because fee bumps may spawn
         // new wait tasks with different tx hashes.
-        let (receipt_tx, mut receipt_rx) = mpsc::channel::<TransactionReceipt>(1);
+        let (receipt_tx, mut receipt_rx) = mpsc::channel::<ConfirmedTx>(1);
 
         // Spawn background receipt polling for the initial tx hash.
         self.spawn_wait_for_tx(Arc::clone(send_state), bump.tx_hash, receipt_tx.clone());
@@ -1131,14 +1151,14 @@ where
 
             // If a receipt is already waiting, return it immediately
             // instead of performing a wasted fee bump.
-            if let Ok(receipt) = receipt_rx.try_recv() {
+            if let Ok(confirmed) = receipt_rx.try_recv() {
                 info!(
-                    tx_hash = %receipt.transaction_hash,
-                    block = ?receipt.block_number,
-                    status = %receipt.inner.status(),
+                    tx_hash = %confirmed.receipt.transaction_hash,
+                    block = ?confirmed.receipt.block_number,
+                    status = %confirmed.receipt.inner.status(),
                     "transaction receipt received",
                 );
-                return Ok(receipt);
+                return Ok(confirmed);
             }
 
             // Preparation is not cancellation-safe, so fee bump work must run
@@ -1147,14 +1167,14 @@ where
                 biased;
                 result = receipt_rx.recv() => {
                     match result {
-                        Some(receipt) => {
+                        Some(confirmed) => {
                             info!(
-                                tx_hash = %receipt.transaction_hash,
-                                block = ?receipt.block_number,
-                                status = %receipt.inner.status(),
+                                tx_hash = %confirmed.receipt.transaction_hash,
+                                block = ?confirmed.receipt.block_number,
+                                status = %confirmed.receipt.inner.status(),
                                 "transaction receipt received",
                             );
-                            return Ok(receipt);
+                            return Ok(confirmed);
                         }
                         None => {
                             // All senders dropped — should not happen in normal flow.
@@ -1162,6 +1182,7 @@ where
                         }
                     }
                 }
+                () = self.closed.cancelled() => return Err(TxManagerError::ChannelClosed),
                 _ = bump_ticker.next() => {}
             };
 
@@ -1180,14 +1201,14 @@ where
         &self,
         candidate: &TxCandidate,
         send_state: &Arc<SendState>,
-        receipt_tx: &mpsc::Sender<TransactionReceipt>,
+        receipt_tx: &mpsc::Sender<ConfirmedTx>,
         state: &mut BumpState,
     ) {
         // If a receipt-polling task has already detected a published version
         // on-chain, skip the fee bump entirely. This avoids a race where
         // `estimate_gas` on the replacement tx reverts because the
         // calldata has already executed (e.g. `GameAlreadyExists`),
-        // producing noisy error logs even though the proposal will succeed.
+        // producing a noisy warning even though the proposal will succeed.
         if send_state.is_waiting_for_confirmation() {
             info!("skipping fee bump, a published tx is already mined and awaits confirmation");
             return;
@@ -1222,7 +1243,7 @@ where
         &self,
         candidate: &TxCandidate,
         send_state: &Arc<SendState>,
-        receipt_tx: &mpsc::Sender<TransactionReceipt>,
+        receipt_tx: &mpsc::Sender<ConfirmedTx>,
         old: &BumpState,
     ) -> TxManagerResult<BumpState> {
         let bumped =
@@ -1455,7 +1476,7 @@ where
         tx_hash: B256,
         config: TxManagerConfig,
         receipt_tx: mpsc::Sender<TransactionReceipt>,
-        closed: Arc<AtomicBool>,
+        closed: CancellationToken,
     ) -> tokio::task::JoinHandle<()> {
         tokio::spawn(async move {
             debug!(tx_hash = %tx_hash, "starting receipt polling");
@@ -1486,20 +1507,20 @@ where
         &self,
         send_state: Arc<SendState>,
         tx_hash: B256,
-        receipt_tx: mpsc::Sender<TransactionReceipt>,
+        receipt_tx: mpsc::Sender<ConfirmedTx>,
     ) {
         let manager = self.clone();
         self.runtime.spawn(async move {
             debug!(tx_hash = %tx_hash, "starting receipt polling");
 
             // Stop polling once the receiver is dropped. Nobody can consume the receipt then.
-            let receipt = tokio::select! {
+            let confirmed = tokio::select! {
                 biased;
                 () = receipt_tx.closed() => None,
-                receipt = Self::wait_mined_using_runtime(&manager.runtime, &send_state, &manager.provider, tx_hash, &manager.config, &manager.closed) => receipt,
+                confirmed = Self::wait_mined_using_runtime(&manager.runtime, &send_state, &manager.provider, tx_hash, &manager.config, &manager.closed) => confirmed,
             };
-            if let Some(receipt) = receipt {
-                let _ = receipt_tx.send(receipt).await;
+            if let Some(confirmed) = confirmed {
+                let _ = receipt_tx.send(confirmed).await;
             }
 
             debug!(tx_hash = %tx_hash, "receipt polling ended");
@@ -1517,7 +1538,7 @@ where
         provider: &P,
         tx_hash: B256,
         config: &TxManagerConfig,
-        closed: &AtomicBool,
+        closed: &CancellationToken,
     ) -> Option<TransactionReceipt> {
         Self::wait_mined_using_runtime(
             &TokioRuntime::new(),
@@ -1528,6 +1549,7 @@ where
             closed,
         )
         .await
+        .map(|confirmed| confirmed.receipt)
     }
 
     /// Runtime-backed implementation of [`wait_mined`](Self::wait_mined).
@@ -1537,8 +1559,8 @@ where
         provider: &P,
         tx_hash: B256,
         config: &TxManagerConfig,
-        closed: &AtomicBool,
-    ) -> Option<TransactionReceipt>
+        closed: &CancellationToken,
+    ) -> Option<ConfirmedTx>
     where
         Rt: Runtime,
     {
@@ -1563,7 +1585,7 @@ where
             )
             .await
             {
-                Ok(Some(receipt)) => return Some(receipt),
+                Ok(Some(confirmed)) => return Some(confirmed),
                 Ok(None) => {
                     // Not yet confirmed — continue polling.
                 }
@@ -1573,7 +1595,7 @@ where
             }
 
             // Check shutdown state each iteration to support cancellation.
-            if closed.load(Ordering::Acquire) {
+            if closed.is_cancelled() {
                 debug!(tx_hash = %tx_hash, "manager closed, stopping receipt polling");
                 return None;
             }
@@ -1609,6 +1631,7 @@ where
             network_timeout,
         )
         .await
+        .map(|confirmed| confirmed.map(|confirmed| confirmed.receipt))
     }
 
     /// Runtime-backed implementation of [`query_receipt`](Self::query_receipt).
@@ -1619,7 +1642,7 @@ where
         tx_hash: B256,
         num_confirmations: u64,
         network_timeout: Duration,
-    ) -> TxManagerResult<Option<TransactionReceipt>>
+    ) -> TxManagerResult<Option<ConfirmedTx>>
     where
         Rt: Runtime,
     {
@@ -1681,10 +1704,8 @@ where
         .map_err(|_| TxManagerError::Rpc("get_block_by_number timed out".into()))?
         .map_err(|e| RpcErrorClassifier::classify_rpc_error(&e))?;
 
-        let is_canonical =
-            canonical_block.as_ref().is_some_and(|block| block.header.hash == receipt_block_hash);
-
-        if !is_canonical {
+        let Some(block) = canonical_block.filter(|block| block.header.hash == receipt_block_hash)
+        else {
             send_state.tx_not_mined(tx_hash);
             debug!(
                 tx_hash = %tx_hash,
@@ -1693,7 +1714,7 @@ where
                 "receipt block hash does not match canonical chain",
             );
             return Ok(None);
-        }
+        };
 
         // Receipt is on the canonical chain — record as mined.
         send_state.tx_mined(tx_hash);
@@ -1707,7 +1728,7 @@ where
                 num_confirmations = %num_confirmations,
                 "transaction confirmed to required depth",
             );
-            Ok(Some(receipt))
+            Ok(Some(ConfirmedTx { receipt, block_timestamp: block.header.timestamp }))
         } else {
             debug!(
                 tx_hash = %tx_hash,
@@ -1769,7 +1790,11 @@ mod tests {
     //! cannot construct, to reject confirmation under an RPC-supplied hash.
 
     use std::{
-        sync::{Arc, atomic::AtomicBool},
+        sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        },
+        task::Poll,
         time::Duration,
     };
 
@@ -1790,17 +1815,24 @@ mod tests {
         Clock,
         deterministic::{Config, Runner},
     };
+    use mockall::predicate::eq;
     use rstest::rstest;
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
         net::TcpListener,
         sync::mpsc,
     };
+    use tokio_util::sync::CancellationToken;
+    use tracing::{Event, Level, Subscriber};
+    use tracing_subscriber::{
+        Layer, Registry,
+        layer::{Context as LayerContext, SubscriberExt},
+    };
 
     use super::{PreparedTx, SimpleTxManager, TxEnvelope};
     use crate::{
-        BlobTxBuilder, GasPriceCaps, NonceManager, NoopTxMetrics, SendState, TxCandidate,
-        TxManager, TxManagerConfig, TxManagerError,
+        BlobTxBuilder, GasPriceCaps, NonceManager, NoopTxMetrics, SendOutcome, SendState,
+        TxCandidate, TxManager, TxManagerConfig, TxManagerError, metrics::MockTxMetrics,
     };
 
     async fn setup() -> (SimpleTxManager<RootProvider>, alloy_node_bindings::AnvilInstance) {
@@ -1926,7 +1958,7 @@ mod tests {
                 manager.provider(),
                 tx_hash,
                 manager.config(),
-                &AtomicBool::new(false),
+                &CancellationToken::new(),
             ),
         )
         .await
@@ -2281,7 +2313,7 @@ mod tests {
                 config,
                 nonce_manager,
                 chain_id: 1,
-                closed: Arc::new(AtomicBool::new(false)),
+                closed: CancellationToken::new(),
                 metrics: Arc::new(NoopTxMetrics),
             };
 
@@ -2295,7 +2327,10 @@ mod tests {
             )
             .await;
 
-            assert_eq!(confirmed.map(|receipt| receipt.transaction_hash), Some(tx_hash));
+            assert_eq!(
+                confirmed.map(|confirmed| confirmed.receipt.transaction_hash),
+                Some(tx_hash)
+            );
             assert_eq!(ctx.now(), Duration::from_secs(4));
         });
     }
@@ -2367,7 +2402,7 @@ mod tests {
                 config,
                 nonce_manager,
                 chain_id: 1,
-                closed: Arc::new(AtomicBool::new(false)),
+                closed: CancellationToken::new(),
                 metrics: Arc::new(NoopTxMetrics),
             };
             let send_state = Arc::new(SendState::new(3).expect("send state should be valid"));
@@ -2451,6 +2486,193 @@ mod tests {
                 );
                 ctx.sleep(Duration::from_nanos(1)).await;
             }
+        });
+    }
+
+    /// Counts ERROR events, which tracing exporters use to mark the caller's span failed.
+    struct ErrorEventCounter(Arc<AtomicUsize>);
+
+    impl<S: Subscriber> Layer<S> for ErrorEventCounter {
+        fn on_event(&self, event: &Event<'_>, _ctx: LayerContext<'_, S>) {
+            if *event.metadata().level() == Level::ERROR {
+                self.0.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+    }
+
+    /// Gas estimation that reverts on the initial send fails the send with an ERROR. When
+    /// it reverts on a fee bump, because the published version already executed, the send
+    /// still confirms that version and logs no ERROR.
+    #[rstest]
+    #[case::initial_send(false)]
+    #[case::fee_bump(true)]
+    fn gas_estimation_revert_is_an_error_only_on_the_initial_send(#[case] on_fee_bump: bool) {
+        let errors = Arc::new(AtomicUsize::new(0));
+        let subscriber = Registry::default().with(ErrorEventCounter(Arc::clone(&errors)));
+        let result = tracing::subscriber::with_default(subscriber, || {
+            Runner::start(Config::seeded(0), move |ctx| async move {
+                let tx_hash = B256::with_last_byte(1);
+                let (receipt, block) = mined_receipt(tx_hash, 10);
+                let mut latest: Block = Block::default();
+                latest.header.base_fee_per_gas = Some(1_000_000_000);
+                let asserter = Asserter::new();
+                asserter.push_success(&1u64);
+                asserter.push_success(&1_000_000_000u128);
+                asserter.push_success(&Some(&latest));
+                if on_fee_bump {
+                    asserter.push_success(&21_000u64);
+                    asserter.push_success(&0u64);
+                    asserter.push_success(&tx_hash);
+                    // The receipt poller misses the transaction before the bump at 10 s.
+                    asserter.push_success(&9u64);
+                    asserter.push_success(&Option::<TransactionReceipt>::None);
+                    asserter.push_success(&1_000_000_000u128);
+                    asserter.push_success(&Some(&latest));
+                    asserter.push_failure_msg("execution reverted");
+                    // It sees the transaction mined on its next poll at 15 s.
+                    asserter.push_success(&10u64);
+                    asserter.push_success(&Some(&receipt));
+                    asserter.push_success(&Some(&block));
+                } else {
+                    asserter.push_failure_msg("execution reverted");
+                }
+                let manager = SimpleTxManager::from_wallet_with_runtime(
+                    ctx.clone(),
+                    ProviderBuilder::new().connect_mocked_client(asserter.clone()),
+                    EthereumWallet::from(PrivateKeySigner::random()),
+                    TxManagerConfig {
+                        num_confirmations: 1,
+                        resubmission_timeout: Duration::from_secs(10),
+                        receipt_query_interval: Duration::from_secs(15),
+                        ..TxManagerConfig::default()
+                    },
+                    1,
+                    Arc::new(NoopTxMetrics),
+                )
+                .await
+                .expect("should construct manager");
+
+                let result = manager
+                    .send(TxCandidate {
+                        to: Some(Address::with_last_byte(0x42)),
+                        ..Default::default()
+                    })
+                    .await;
+
+                assert!(asserter.read_q().is_empty(), "every mocked response should be used");
+                result.map(|receipt| receipt.transaction_hash)
+            })
+        });
+
+        if on_fee_bump {
+            assert_eq!(result, Ok(B256::with_last_byte(1)));
+            assert_eq!(errors.load(Ordering::Relaxed), 0, "a bump revert must not log an error");
+        } else {
+            assert_eq!(result, Err(TxManagerError::ExecutionReverted { reason: None, data: None }));
+            assert_eq!(errors.load(Ordering::Relaxed), 1, "an initial revert must log an error");
+        }
+    }
+
+    /// Closing the manager ends an in-flight send that is waiting for a receipt or the next
+    /// fee bump right away, instead of after the resubmission timeout.
+    #[test]
+    fn close_ends_a_send_waiting_for_its_receipt() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let mut block: Block = Block::default();
+            block.header.base_fee_per_gas = Some(1_000_000_000);
+            let asserter = Asserter::new();
+            asserter.push_success(&1u64);
+            asserter.push_success(&1_000_000_000u128);
+            asserter.push_success(&Some(&block));
+            asserter.push_success(&21_000u64);
+            asserter.push_success(&0u64);
+            asserter.push_success(&B256::with_last_byte(1));
+            asserter.push_success(&1u64);
+            asserter.push_success(&Option::<TransactionReceipt>::None);
+            let config = TxManagerConfig {
+                resubmission_timeout: Duration::from_secs(48),
+                receipt_query_interval: Duration::from_secs(60),
+                ..TxManagerConfig::default()
+            };
+            let manager = SimpleTxManager::from_wallet_with_runtime(
+                ctx.clone(),
+                ProviderBuilder::new().connect_mocked_client(asserter),
+                EthereumWallet::from(PrivateKeySigner::random()),
+                config,
+                1,
+                Arc::new(NoopTxMetrics),
+            )
+            .await
+            .expect("should construct manager");
+            let mut send = Box::pin(manager.send(TxCandidate {
+                to: Some(Address::with_last_byte(0x42)),
+                ..Default::default()
+            }));
+            assert!(futures::poll!(&mut send).is_pending());
+            ctx.sleep(Duration::from_secs(1)).await;
+            assert!(futures::poll!(&mut send).is_pending());
+
+            manager.close();
+
+            assert_eq!(futures::poll!(&mut send), Poll::Ready(Err(TxManagerError::ChannelClosed)));
+        });
+    }
+
+    /// A confirmed send records its inclusion latency together with its send latency,
+    /// from the timestamp of the canonical block the receipt poller already read: the
+    /// latency runs from the start of the send, in milliseconds of wall-clock time, to
+    /// that timestamp, and no other block is read.
+    #[test]
+    fn confirmed_send_records_inclusion_latency_with_send_latency() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let tx_hash = B256::with_last_byte(1);
+            let (receipt, mut block) = mined_receipt(tx_hash, 10);
+            block.header.inner.timestamp = 1_700_000_020;
+            let mut latest: Block = Block::default();
+            latest.header.base_fee_per_gas = Some(1_000_000_000);
+            let asserter = Asserter::new();
+            asserter.push_success(&1u64);
+            asserter.push_success(&1_000_000_000u128);
+            asserter.push_success(&Some(&latest));
+            asserter.push_success(&21_000u64);
+            asserter.push_success(&0u64);
+            asserter.push_success(&tx_hash);
+            asserter.push_success(&10u64);
+            asserter.push_success(&Some(&receipt));
+            asserter.push_success(&Some(&block));
+            let mut metrics = MockTxMetrics::new();
+            metrics
+                .expect_record_send_latency()
+                .with(eq(0), eq(SendOutcome::Confirmed))
+                .times(1)
+                .return_const(());
+            // The send starts at 1_700_000_000.300 s and the block's timestamp is 1_700_000_020 s.
+            metrics.expect_record_inclusion_latency().with(eq(19_700)).times(1).return_const(());
+            // The send also records fee, nonce and outcome metrics, which this test does not check.
+            metrics.expect_record_basefee().return_const(());
+            metrics.expect_record_tipcap().return_const(());
+            metrics.expect_record_tx_max_fee().return_const(());
+            metrics.expect_record_current_nonce().return_const(());
+            metrics.expect_record_tx_confirmed().return_const(());
+            let manager = SimpleTxManager::from_wallet_with_runtime(
+                ctx.clone(),
+                ProviderBuilder::new().connect_mocked_client(asserter.clone()),
+                EthereumWallet::from(PrivateKeySigner::random()),
+                TxManagerConfig { num_confirmations: 1, ..TxManagerConfig::default() },
+                1,
+                Arc::new(metrics),
+            )
+            .await
+            .expect("should construct manager");
+            ctx.sleep(Duration::from_millis(300)).await;
+
+            let confirmed = manager
+                .send(TxCandidate { to: Some(Address::with_last_byte(0x42)), ..Default::default() })
+                .await
+                .expect("the send should confirm");
+
+            assert_eq!(confirmed.transaction_hash, tx_hash);
+            assert!(asserter.read_q().is_empty(), "every mocked response should be used");
         });
     }
 

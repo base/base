@@ -18,6 +18,12 @@ use crate::{
     reader::DestinationReader,
 };
 
+/// Capacity of each destination's failure-report channel from forwarder to reader.
+///
+/// A report that finds the channel full is dropped, and that transaction is then not resent;
+/// standard transactions are resent on their own schedule regardless.
+const FAILURE_REPORT_CAPACITY: usize = 4096;
+
 /// Why a forwarding destination could not be started.
 #[derive(Debug, thiserror::Error)]
 pub enum ForwardingSetupError {
@@ -95,6 +101,7 @@ impl TxForwardingService {
             };
 
             let (sender, receiver) = mpsc::channel(reader_config.channel_capacity);
+            let (report, failures) = mpsc::channel(FAILURE_REPORT_CAPACITY);
             // `E` is named explicitly: nothing else in this expression pins the queue's item type,
             // since both ends are generic over it.
             let mut reader = DestinationReader::<P, E>::new(
@@ -103,13 +110,15 @@ impl TxForwardingService {
                 sender,
                 reader_cancel.child_token(),
                 builder_url.clone(),
-            );
+            )
+            .with_failure_reports(failures);
             let forwarder = DestinationForwarder::new(
                 builder_url.clone(),
                 client,
                 receiver,
                 Arc::clone(&forwarder_config),
-            );
+            )
+            .with_failure_reports(report);
 
             reader_tasks.push(executor.spawn_blocking_task(Box::pin(async move {
                 reader.run().await;

@@ -22,10 +22,14 @@ pub use block_export::{
 };
 
 mod benchmark_cli;
+mod benchmark_fixtures;
 pub use benchmark_cli::{
     AggregateBenchmarkArgs, BenchmarkCli, BenchmarkCommand, LocalBenchmarkArgs,
     LocalBenchmarkResult, LocalBenchmarkWorkload, LocalBenchmarkWorkloadConfig,
     LocalBenchmarkWorkloadResult, LocalBenchmarkWorkloadResults, SnapshotBenchmarkArgs,
+};
+pub use benchmark_fixtures::{
+    DOUBLE_COUNTER_PLACEHOLDER, DOUBLE_COUNTER_SENTINEL, DeployedFixtures, PendingFixtures,
 };
 
 mod benchmark_report;
@@ -35,13 +39,22 @@ pub use benchmark_report::{
     VisualizerSequencerMetrics, VisualizerValidatorMetrics,
 };
 
+mod calibration;
+pub use calibration::{Calibration, TxProfile};
+
 mod da_cli;
 pub use da_cli::{DA_RESULT_FILE, DaBenchmarkArgs, DaResult};
 
+mod recorded_replay;
+pub use recorded_replay::{
+    RECORDED_REPLAY_RESULT_FILE, RecordedEngineMessage, RecordedMessageOutcome, RecordedReplay,
+    RecordedReplayResult,
+};
+
 mod replay_cli;
 pub use replay_cli::{
-    LatencySummary, REPLAY_METRICS_FILE, REPLAY_RESULT_FILE, ReplayBenchmarkArgs,
-    ReplayBlockTiming, ReplayMode, ReplayResult,
+    FIRST_DIVERGENCE_FILE, FirstDivergence, LatencySummary, REPLAY_METRICS_FILE,
+    REPLAY_RESULT_FILE, ReplayBenchmarkArgs, ReplayBlockTiming, ReplayMode, ReplayResult,
 };
 
 mod replay_proofs;

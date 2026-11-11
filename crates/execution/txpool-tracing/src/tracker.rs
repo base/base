@@ -2,12 +2,10 @@
 
 use std::{
     num::NonZeroUsize,
-    sync::Arc,
     time::{Duration, Instant},
 };
 
 use alloy_primitives::TxHash;
-use base_flashblocks::PendingBlocks;
 use base_observability_events::{
     TransactionEventProducer, TransactionEventType, transaction_event,
 };
@@ -20,7 +18,9 @@ use reth_tracing::tracing::{debug, info};
 use reth_transaction_pool::{FullTransactionEvent, PoolTransaction};
 use serde_json::{Map, Value, json};
 
-use crate::{EventLog, NonceSlot, NonceSummary, Pool, TxEvent, metrics::Metrics};
+use crate::{
+    EventLog, NonceSlot, NonceSummary, Pool, PooledTxInfo, TxEvent, TxFlow, metrics::Metrics,
+};
 
 /// Tracks transactions as they move through the mempool and into blocks.
 #[derive(Debug, Clone)]
@@ -45,8 +45,6 @@ impl Tracker {
 
     /// Block inclusion duration above this threshold increments the slow counter.
     const SLOW_BLOCK_INCLUSION_THRESHOLD: Duration = Duration::from_secs(3);
-    /// Flashblock inclusion duration above this threshold increments the slow counter.
-    const SLOW_FLASHBLOCK_INCLUSION_THRESHOLD: Duration = Duration::from_millis(1000);
     /// Producer-local event source label.
     const EVENT_SOURCE: &'static str = "txpool-tracing";
 
@@ -70,26 +68,26 @@ impl Tracker {
 
     /// Parse [`FullTransactionEvent`]s and update the tracker.
     ///
-    /// `nonce_slot` is populated by the subscription layer for events that only
+    /// `info` is populated by the subscription layer for events that only
     /// carry a [`TxHash`] (Pending, Queued) by looking up the pool.
     pub fn handle_event<T: PoolTransaction>(
         &mut self,
         event: FullTransactionEvent<T>,
-        nonce_slot: Option<NonceSlot>,
+        info: Option<PooledTxInfo>,
     ) {
         match event {
             FullTransactionEvent::Pending(tx_hash) => {
                 self.transaction_inserted(tx_hash, TxEvent::Pending);
                 self.transaction_moved(tx_hash, Pool::Pending);
-                if let Some(slot) = nonce_slot {
-                    self.track_nonce_slot(tx_hash, slot);
+                if let Some(info) = info {
+                    self.track_pooled_tx_info(tx_hash, info);
                 }
             }
             FullTransactionEvent::Queued(tx_hash, _) => {
                 self.transaction_inserted(tx_hash, TxEvent::Queued);
                 self.transaction_moved(tx_hash, Pool::Queued);
-                if let Some(slot) = nonce_slot {
-                    self.track_nonce_slot(tx_hash, slot);
+                if let Some(info) = info {
+                    self.track_pooled_tx_info(tx_hash, info);
                 }
             }
             FullTransactionEvent::Discarded(tx_hash) => {
@@ -118,15 +116,6 @@ impl Tracker {
         self.track_committed_chain(&notification.committed(), received_at);
     }
 
-    /// Parse flashblock updates and track transaction inclusion in flashblocks.
-    pub fn handle_flashblock_notification(
-        &mut self,
-        pending_blocks: Arc<PendingBlocks>,
-        received_at: Instant,
-    ) {
-        self.track_flashblock_transactions(&pending_blocks, received_at);
-    }
-
     fn track_committed_chain<N: NodePrimitives>(&mut self, chain: &Chain<N>, received_at: Instant) {
         for block in chain.blocks().values() {
             for transaction in block.body().transactions() {
@@ -136,17 +125,6 @@ impl Tracker {
                     received_at,
                 );
             }
-        }
-    }
-
-    fn track_flashblock_transactions(
-        &mut self,
-        pending_blocks: &PendingBlocks,
-        received_at: Instant,
-    ) {
-        // Get all transaction hashes from pending blocks
-        for tx_hash in pending_blocks.get_pending_transaction_hashes() {
-            self.transaction_fb_included(tx_hash, received_at);
         }
     }
 
@@ -219,7 +197,6 @@ impl Tracker {
                 // pending subpool, not time spent in queued/basefee.
                 if event == TxEvent::QueuedToPending {
                     event_log.pending_time = Some(Instant::now());
-                    event_log.fb_included = false;
                 }
 
                 event_log.push(Local::now(), event);
@@ -250,6 +227,7 @@ impl Tracker {
         if let Some(mut event_log) = self.txs.pop(&tx_hash) {
             let mempool_time = event_log.mempool_time;
             let time_in_mempool = received_at.duration_since(mempool_time);
+            let flow = event_log.flow;
 
             if self.is_overflowed(&tx_hash, &event_log) {
                 return;
@@ -267,16 +245,17 @@ impl Tracker {
             if event == TxEvent::BlockInclusion
                 && let Some(time_pending_to_inclusion) = time_pending_to_inclusion
             {
-                Metrics::inclusion_duration().record(time_pending_to_inclusion.as_millis() as f64);
+                Metrics::inclusion_duration(flow.as_str())
+                    .record(time_pending_to_inclusion.as_millis() as f64);
 
                 if time_pending_to_inclusion > Self::SLOW_BLOCK_INCLUSION_THRESHOLD {
-                    Metrics::slow_inclusions().increment(1);
+                    Metrics::slow_inclusions(flow.as_str()).increment(1);
                 } else {
-                    Metrics::healthy_inclusions().increment(1);
+                    Metrics::healthy_inclusions(flow.as_str()).increment(1);
                 }
             }
 
-            self.nonce_completed(&tx_hash, &event, received_at);
+            self.nonce_completed(&tx_hash, &event, flow, received_at);
             self.log(&tx_hash, &event_log, &format!("Transaction {event}"));
             // Inclusion is journaled by the builder; tracer emits cover mempool lifecycle only.
             if event != TxEvent::BlockInclusion {
@@ -291,46 +270,6 @@ impl Tracker {
                 );
             }
             Self::record_histogram(time_in_mempool, event);
-        }
-    }
-
-    /// Track a transaction being included in a flashblock. This will not remove
-    /// the tx from the cache.
-    ///
-    /// The `fb_included` flag on [`EventLog`] ensures that the metric is only
-    /// recorded once per transaction, even when [`PendingBlocks`] contains
-    /// transactions from earlier flashblocks that have already been measured.
-    ///
-    /// Flashblock inclusion is not written to the transaction event journal here;
-    /// builder flashblock/inclusion events cover that path.
-    pub fn transaction_fb_included(&mut self, tx_hash: TxHash, received_at: Instant) {
-        // Only track if we have seen this transaction before and it hasn't
-        // already been recorded as included in a flashblock.
-        if let Some(event_log) = self.txs.get_mut(&tx_hash) {
-            if event_log.fb_included {
-                return;
-            }
-
-            if let Some(pending_time) = event_log.pending_time {
-                let time_pending_to_fb_inclusion = received_at.duration_since(pending_time);
-                Metrics::fb_inclusion_duration()
-                    .record(time_pending_to_fb_inclusion.as_millis() as f64);
-
-                if time_pending_to_fb_inclusion > Self::SLOW_FLASHBLOCK_INCLUSION_THRESHOLD {
-                    Metrics::fb_slow_inclusions().increment(1);
-                } else {
-                    Metrics::fb_healthy_inclusions().increment(1);
-                }
-
-                debug!(
-                    target: "tracex",
-                    tx_hash = ?tx_hash,
-                    duration_ms = time_pending_to_fb_inclusion.as_millis(),
-                    "Transaction included in flashblock"
-                );
-            }
-
-            event_log.fb_included = true;
         }
     }
 
@@ -349,7 +288,11 @@ impl Tracker {
             // Reset pending_time so the replacement tx measures its own
             // inclusion duration rather than inheriting from the original.
             event_log.pending_time = Some(Instant::now());
-            event_log.fb_included = false;
+            // The replacement may already be tracked if the pool reported it first; its flow
+            // was resolved from the replacement itself and takes precedence.
+            if let Some(replacement) = self.txs.peek(&replaced_by) {
+                event_log.flow = replacement.flow;
+            }
             self.tx_nonce_slots.pop(&tx_hash);
             self.txs.put(replaced_by, event_log);
 
@@ -367,6 +310,19 @@ impl Tracker {
         }
     }
 
+    /// Records the pool metadata of a pending or queued transaction.
+    fn track_pooled_tx_info(&mut self, tx_hash: TxHash, info: PooledTxInfo) {
+        self.set_flow(tx_hash, info.flow);
+        self.track_nonce_slot(tx_hash, info.nonce_slot);
+    }
+
+    /// Sets the flow used to label the inclusion metrics of a tracked transaction.
+    pub fn set_flow(&mut self, tx_hash: TxHash, flow: TxFlow) {
+        if let Some(event_log) = self.txs.peek_mut(&tx_hash) {
+            event_log.flow = flow;
+        }
+    }
+
     fn track_nonce_slot(&mut self, tx_hash: TxHash, slot: NonceSlot) {
         self.tx_nonce_slots.put(tx_hash, slot);
         if !self.nonce_summaries.contains(&slot) {
@@ -381,7 +337,13 @@ impl Tracker {
         }
     }
 
-    fn nonce_completed(&mut self, tx_hash: &TxHash, event: &TxEvent, received_at: Instant) {
+    fn nonce_completed(
+        &mut self,
+        tx_hash: &TxHash,
+        event: &TxEvent,
+        flow: TxFlow,
+        received_at: Instant,
+    ) {
         let Some(slot) = self.tx_nonce_slots.pop(tx_hash) else {
             return;
         };
@@ -390,7 +352,7 @@ impl Tracker {
         };
         if *event == TxEvent::BlockInclusion {
             let e2e_duration = received_at.duration_since(summary.first_seen);
-            Metrics::e2e_inclusion_duration().record(e2e_duration.as_millis() as f64);
+            Metrics::e2e_inclusion_duration(flow.as_str()).record(e2e_duration.as_millis() as f64);
             Metrics::replacement_count().record(summary.replacement_count as f64);
         }
     }
@@ -517,14 +479,9 @@ fn duration_ms_json(duration: Duration) -> Value {
 
 #[cfg(test)]
 mod tests {
-    use std::ops::Deref;
-
     use alloy_primitives::Address;
-    use base_flashblocks::FlashblocksAPI;
-    use base_flashblocks_node::test_harness::{FlashblockBuilder, FlashblocksBuilderTestHarness};
-    use base_test_utils::Account;
+    use reth_transaction_pool::test_utils::MockTransaction;
     use rstest::rstest;
-    use tokio::time;
 
     use super::*;
 
@@ -709,7 +666,6 @@ mod tests {
 
         // pending_time should be reset, not inherited from original
         assert!(event_log.pending_time.unwrap() > original_pending_time.unwrap());
-        assert!(!event_log.fb_included);
     }
 
     #[test]
@@ -844,26 +800,6 @@ mod tests {
     }
 
     #[test]
-    fn test_fb_included_resets_on_re_promotion() {
-        let mut tracker = Tracker::new(false);
-        let tx_hash = TxHash::random();
-
-        tracker.transaction_inserted(tx_hash, TxEvent::Pending);
-        tracker.transaction_moved(tx_hash, Pool::Pending);
-
-        // Mark as fb-included
-        tracker.transaction_fb_included(tx_hash, Instant::now());
-        assert!(tracker.txs.get(&tx_hash).unwrap().fb_included);
-
-        // Demote to queued, then re-promote
-        tracker.transaction_moved(tx_hash, Pool::Queued);
-        tracker.transaction_moved(tx_hash, Pool::Pending);
-
-        // fb_included should be reset so the new pending stint gets measured
-        assert!(!tracker.txs.get(&tx_hash).unwrap().fb_included);
-    }
-
-    #[test]
     fn test_nonce_tracking_simple_inclusion() {
         let mut tracker = Tracker::new(false);
         let tx_hash = TxHash::random();
@@ -877,7 +813,12 @@ mod tests {
         assert!(tracker.nonce_summaries.contains(&slot));
         assert!(tracker.tx_nonce_slots.contains(&tx_hash));
 
-        tracker.nonce_completed(&tx_hash, &TxEvent::BlockInclusion, Instant::now());
+        tracker.nonce_completed(
+            &tx_hash,
+            &TxEvent::BlockInclusion,
+            TxFlow::Standard,
+            Instant::now(),
+        );
 
         assert!(!tracker.nonce_summaries.contains(&slot));
         assert!(!tracker.tx_nonce_slots.contains(&tx_hash));
@@ -905,126 +846,90 @@ mod tests {
         // Original hash slot mapping should be gone (overwritten by replacement)
         assert_eq!(*tracker.tx_nonce_slots.get(&replacement_hash).unwrap(), slot);
 
-        tracker.nonce_completed(&replacement_hash, &TxEvent::BlockInclusion, Instant::now());
+        tracker.nonce_completed(
+            &replacement_hash,
+            &TxEvent::BlockInclusion,
+            TxFlow::Standard,
+            Instant::now(),
+        );
         assert!(!tracker.nonce_summaries.contains(&slot));
     }
 
-    #[test]
-    fn test_fb_inclusion_recorded_only_once() {
-        let mut tracker = Tracker::new(false);
-        let tx_hash = TxHash::random();
-
-        tracker.transaction_inserted(tx_hash, TxEvent::Pending);
-        let first_received_at = Instant::now();
-
-        // First flashblock notification should mark the tx as fb-included.
-        tracker.transaction_fb_included(tx_hash, first_received_at);
-        let event_log = tracker.txs.get(&tx_hash).expect("tx should still be in cache");
-        assert!(event_log.fb_included, "should be marked as fb-included after first call");
-        assert_eq!(event_log.events.len(), 1);
-        assert_eq!(event_log.events[0].1, TxEvent::Pending);
-
-        // Simulate a later flashblock arriving — received_at is much later.
-        let later_received_at = first_received_at + Duration::from_millis(500);
-        tracker.transaction_fb_included(tx_hash, later_received_at);
-
-        // The tx should still be present and still marked — the second call
-        // must have been a no-op (no duplicate metric recording).
-        let event_log = tracker.txs.get(&tx_hash).expect("tx should still be in cache");
-        assert!(event_log.fb_included);
+    fn render_metrics(f: impl FnOnce()) -> String {
+        let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+        let handle = recorder.handle();
+        metrics::with_local_recorder(&recorder, f);
+        handle.render()
     }
 
-    #[tokio::test]
-    async fn test_fb_inclusion() -> eyre::Result<()> {
-        // Setup
-        let harness = FlashblocksBuilderTestHarness::new().await;
-        let mut tracker = Tracker::new(false);
-        harness.send_flashblock(FlashblockBuilder::new_base(&harness).build()).await;
-
-        // Build transaction & flashblock
-        let tx = harness.build_transaction_to_send_eth_with_nonce(
-            Account::Alice,
-            Account::Bob,
-            1000000000000000000,
-            0,
-        );
-        let tx_hash = *tx.hash();
-        let fb = FlashblockBuilder::new(&harness, 1).with_transactions(vec![tx]).build();
-
-        // Mimic sending a tx to the mpool/builder
-        tracker.transaction_inserted(tx_hash, TxEvent::Pending);
-
-        // Wait a bit to simulate builder picking and building the tx into the pending block
-        time::sleep(Duration::from_millis(10)).await;
-        harness.node.send_flashblock(fb).await?;
-
-        let state = harness.flashblocks.get_pending_blocks();
-        // Verify we have some pending transactions
-        let ptxs = state.as_ref().map(|pb| pb.get_pending_transaction_hashes()).unwrap_or_default();
-        assert_eq!(ptxs.len(), 2); // L1Info + tx
-        assert_eq!(ptxs[1], tx_hash);
-
-        let pb = state.as_ref().unwrap().deref();
-        tracker.track_flashblock_transactions(pb, Instant::now());
-
-        // It should still be in the tracker
-        assert!(tracker.txs.get(&tx_hash).is_some());
-
-        // Wait until its included in canonical block
-        time::sleep(Duration::from_millis(1500)).await;
-        tracker.transaction_completed(tx_hash, TxEvent::BlockInclusion, Instant::now());
-
-        // It should be removed from the tracker
-        assert!(tracker.txs.get(&tx_hash).is_none());
-
-        Ok(())
+    fn pending_event(tx_hash: TxHash) -> FullTransactionEvent<MockTransaction> {
+        FullTransactionEvent::Pending(tx_hash)
     }
 
-    #[tokio::test]
-    async fn test_can_receive_fb() -> eyre::Result<()> {
-        // Setup
-        let harness = FlashblocksBuilderTestHarness::new().await;
-        let mut tracker = Tracker::new(false);
-        harness.send_flashblock(FlashblockBuilder::new_base(&harness).build()).await;
+    #[rstest]
+    #[case::standard(TxFlow::Standard, "standard")]
+    #[case::validity(TxFlow::Validity, "validity")]
+    fn inclusion_metrics_are_labeled_by_flow(#[case] flow: TxFlow, #[case] label: &str) {
+        let rendered = render_metrics(|| {
+            let mut tracker = Tracker::new(false);
+            let tx_hash = TxHash::random();
+            let nonce_slot = NonceSlot::new(Address::random(), 0);
+            tracker.handle_event(pending_event(tx_hash), Some(PooledTxInfo { nonce_slot, flow }));
 
-        // Subscribe to flashblocks
-        let mut stream = harness.flashblocks.subscribe_to_flashblocks();
-        let mut t = tracker.clone();
-
-        // Use a oneshot channel to signal when we receive a flashblock
-        let (tx_signal, rx_signal) = tokio::sync::oneshot::channel();
-        let mut tx_signal = Some(tx_signal);
-
-        tokio::spawn(async move {
-            while let Ok(pending_blocks) = stream.recv().await {
-                t.handle_flashblock_notification(pending_blocks, Instant::now());
-                // Signal that we received a flashblock
-                if let Some(signal) = tx_signal.take() {
-                    let _ = signal.send(());
-                }
-            }
+            tracker.transaction_completed(
+                tx_hash,
+                TxEvent::BlockInclusion,
+                Instant::now() + Duration::from_secs(4),
+            );
         });
 
-        // Create a tx and flashblock
-        let tx = harness.build_transaction_to_send_eth_with_nonce(
-            Account::Alice,
-            Account::Bob,
-            1000000000000000000,
-            0,
+        for metric in [
+            "reth_transaction_tracing_slow_inclusions",
+            "reth_transaction_tracing_inclusion_duration_count",
+            "reth_transaction_tracing_e2e_inclusion_duration_count",
+        ] {
+            assert!(
+                rendered.contains(&format!("{metric}{{flow=\"{label}\"}} 1")),
+                "expected {metric} with flow={label}, got: {rendered}"
+            );
+        }
+    }
+
+    #[test]
+    fn transactions_default_to_standard_flow() {
+        let mut tracker = Tracker::new(false);
+        let tx_hash = TxHash::random();
+        tracker.handle_event(pending_event(tx_hash), None);
+
+        assert_eq!(
+            tracker.txs.peek(&tx_hash).expect("tx should be tracked").flow,
+            TxFlow::Standard
         );
-        let tx_hash = *tx.hash();
-        let fb = FlashblockBuilder::new(&harness, 1).with_transactions(vec![tx]).build();
+    }
 
-        tracker.transaction_inserted(tx_hash, TxEvent::Pending);
-        // Send the flashblock
-        harness.send_flashblock(fb).await;
+    #[rstest]
+    #[case::replacement_reported_first(true)]
+    #[case::replacement_reported_later(false)]
+    fn replacement_uses_its_own_flow(#[case] replacement_reported_first: bool) {
+        let mut tracker = Tracker::new(false);
+        let original = TxHash::random();
+        let replacement = TxHash::random();
+        let nonce_slot = NonceSlot::new(Address::random(), 0);
+        let validity = Some(PooledTxInfo { nonce_slot, flow: TxFlow::Validity });
+        tracker.handle_event(pending_event(original), validity);
 
-        // Verify we received the flashblock by waiting for the signal
-        tokio::time::timeout(std::time::Duration::from_secs(1), rx_signal)
-            .await
-            .expect("timeout waiting for flashblock")
-            .expect("channel closed before receiving flashblock");
+        let standard = Some(PooledTxInfo { nonce_slot, flow: TxFlow::Standard });
+        if replacement_reported_first {
+            tracker.handle_event(pending_event(replacement), standard);
+            tracker.transaction_replaced(original, replacement);
+        } else {
+            tracker.transaction_replaced(original, replacement);
+            tracker.handle_event(pending_event(replacement), standard);
+        }
 
-        Ok(())
+        assert_eq!(
+            tracker.txs.peek(&replacement).expect("replacement should be tracked").flow,
+            TxFlow::Standard
+        );
     }
 }

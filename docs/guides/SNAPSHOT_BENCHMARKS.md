@@ -10,8 +10,8 @@ builder and validator datadirs, so every attempt needs a fresh writable datadir 
 
 ## Prerequisites
 
-- Build an optimized `base-bench` binary. Debug builds are not suitable for a
-  400M-gas performance measurement.
+- Build an optimized `base-bench` binary. Debug builds are not suitable for
+  performance measurements at snapshot block gas limits.
 - Start from an immutable, fully prepared Base datadir snapshot.
 - Restore that exact snapshot into separate writable builder and validator datadirs.
 - Keep the source snapshot immutable for benchmark purposes; only remove or reset

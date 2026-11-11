@@ -6,12 +6,13 @@
 use std::sync::Arc;
 
 use base_builder_cli::Args;
-use base_builder_core::BuilderApiExtension;
+use base_builder_core::{
+    BuilderApiExtension, NativePayloadServiceBuilder, SequencerLeadershipProbe,
+};
 use base_builder_metering::MeteringStoreExtension;
-use base_builder_multiplex::MultiplexingServiceBuilder;
 use base_execution_cli::{Cli, StandardBaseRethNode};
 use base_node_runner::BaseNodeRunner;
-use base_observability_events::GlobalTransactionEventWriter;
+use base_observability_events::{GlobalTransactionEventWriter, TransactionEventGate};
 use base_shadow_indexer::{ShadowIndexerConfig, ShadowIndexerExtension};
 use base_txpool_rpc::{
     SendRawTransactionValidityConfig, SendRawTransactionValidityExtension, TxPoolRpcConfig,
@@ -31,6 +32,7 @@ fn main() {
     base_cli_utils::init_common!();
     base_reth_cli::init_reth!();
     base_reth_cli::init_snapshots!();
+    base_reth_cli::init_engine!();
 
     let cli = base_cli_utils::parse_cli!(BuilderCli);
 
@@ -42,14 +44,22 @@ fn main() {
         let metering_provider: base_builder_core::SharedMeteringProvider =
             Arc::new(builder_args.build_metering_store());
         let transaction_events_enabled = builder_args.transaction_events.enabled;
-        GlobalTransactionEventWriter::init(
+        let transaction_event_gate = TransactionEventGate::default();
+        GlobalTransactionEventWriter::init_gated(
             transaction_events_enabled.then(|| builder_args.transaction_events.writer_config()),
+            transaction_event_gate.clone(),
         )?;
+        // Journals only the active sequencer's events: the probe closes the gate while the
+        // consensus node reports this sequencer as inactive. Lives until the node stops.
+        let _leadership_probe = builder_args
+            .transaction_events
+            .leadership_config(None)
+            .filter(|_| transaction_events_enabled)
+            .map(|config| SequencerLeadershipProbe::spawn(config, transaction_event_gate))
+            .transpose()?;
 
         let builder_api_config = builder_args.builder_api_config();
         let shadow_indexer_config = ShadowIndexerConfig::try_from(&builder_args.shadow_indexer)?;
-        let payload_builder_cutover = builder_args.payload_builder_cutover;
-        let basic_payload_builder = builder_args.basic_payload_builder;
         let builder_config = builder_args.into_builder_config(Arc::clone(&metering_provider))?;
         let da_config = builder_config.da_config.clone();
         let gas_limit_config = builder_config.gas_limit_config.clone();
@@ -59,11 +69,7 @@ fn main() {
             .with_da_config(da_config)
             .with_gas_limit_config(gas_limit_config)
             .with_manifest_precheck_enabled(manifest_precheck_enabled)
-            .with_service_builder(
-                MultiplexingServiceBuilder::new(builder_config)
-                    .with_cutover_enabled(payload_builder_cutover)
-                    .with_basic_only(basic_payload_builder),
-            );
+            .with_service_builder(NativePayloadServiceBuilder::new(builder_config));
         runner.install_ext::<MeteringStoreExtension>(Arc::clone(&metering_provider));
         runner.install_ext::<TxPoolRpcExtension>(TxPoolRpcConfig::default());
         runner.install_ext::<BuilderApiExtension>(

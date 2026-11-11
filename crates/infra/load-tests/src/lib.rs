@@ -28,22 +28,23 @@ pub use rpc::{
 
 mod metrics;
 pub use metrics::{
-    BlockLoadMetrics, BlockRange, CohortMetrics, ConfigSummary, FlashblocksLatencyMetrics,
-    GasMetrics, LatencyMetrics, MetricsAggregator, MetricsCollector, MetricsSummary,
-    PacingCycleObservation, PacingCycleSource, PacingMetrics, ReceiptCoverage, RollingWindow,
-    SubmissionStats, SubmitCohortLabel, ThroughputMetrics, ThroughputPercentiles, ThroughputSample,
-    TransactionMetrics,
+    BlockLoadMetrics, BlockRange, CohortMetrics, ConfigSummary, GasMetrics, LatencyMetrics,
+    MetricsAggregator, MetricsCollector, MetricsSummary, PacingCycleObservation, PacingCycleSource,
+    PacingMetrics, ReceiptCoverage, RollingWindow, SubmissionStats, SubmitCohortLabel,
+    ThroughputMetrics, ThroughputPercentiles, ThroughputSample, TransactionMetrics,
 };
 
 mod workload;
 pub use workload::{
-    AccountPool, AerodromeClPayload, B20TransferPayload, CalldataPayload, ChainPrepContext,
-    ChainPrepOutputs, DOUBLE_COUNTER_GAS_LIMIT, DoubleCounterPayload, EIP8430_TRANSFER_GAS_LIMIT,
-    Eip8430TransferPayload, Erc20Payload, FundedAccount, KeyStream, OsakaPayload, Payload,
-    PrecompileLooper, PrecompilePayload, RealTokenAcquisition, RealTokenPairTokenSetup,
-    RealTokenRecoverySummary, RealTokenSetup, SeededRng, StoragePayload, TransferPayload, USDC,
-    UniswapV3Payload, WorkloadGenerator, X402Context, X402Payload, encode_erc20_approve,
-    recover_real_tokens,
+    AaBundlePayload, AccountPool, AerodromeClPayload, B20TransferPayload, CalldataPayload,
+    ChainPrepContext, ChainPrepOutputs, DEFAULT_REVERT_ARB_GAS_LIMIT, DOUBLE_COUNTER_GAS_LIMIT,
+    DoubleCounterPayload, EIP8430_TRANSFER_GAS_LIMIT, Eip8430TransferPayload, Erc20Payload,
+    FundedAccount, KeyStream, LiquidityOps, OsakaPayload, Payload, PrecompileLooper,
+    PrecompilePayload, REVERT_ARB_SELECTOR, RealTokenAcquisition, RealTokenPairTokenSetup,
+    RealTokenRecoverySummary, RealTokenSetup, RevertArbPayload, SeededRng, SenderPosition,
+    StoragePayload, TokenMoveContext, TokenMovePayload, TransferPayload, USDC, UniswapPositions,
+    UniswapV3Hop, UniswapV3LiquidityPayload, UniswapV3Payload, WorkloadGenerator, X402Context,
+    X402Payload, encode_erc20_approve, recover_real_tokens,
 };
 
 mod runner;
@@ -51,14 +52,13 @@ pub use runner::{
     BatchTxError, BlockClock, BlockMatch, BlockNumberBound, BlockObservation, BlockPulse,
     BlockReceipt, BlockWatcher, CanonicalHeadWatcher, DEFAULT_MAX_GAS_PRICE,
     DEFAULT_MAX_IN_FLIGHT_PER_SENDER, DisplaySnapshot, FUNDING_MAX_FEE_BASE_FEE_MULTIPLIER, Fees,
-    FlashblockInclusion, FlashblockWatcher, GasPricer, InclusionPulse, InclusionSource,
-    InjectLimit, InjectPlan, LoadConfig, LoadRunner, LoadTestDisplay, LoadTestStage,
-    MAX_FEE_BASE_FEE_MULTIPLIER, MAX_SENDER_WORKER_COUNT, MAX_SIGNER_WORKER_COUNT,
-    MIN_PRIORITY_FEE, MeasurementWindow, MempoolDepthController, PipelineQueue,
-    PipelineStartConfig, PredicateAddress, PredicateValue, PreparedBatch, PreparedTransaction,
-    PresignBuffer, QueuedSubmitFailures, ResultsTracker, SENDER_WORKERS_PER_RPC,
-    SIGNER_WORKERS_PER_RPC, SUBMIT_BATCH_QUEUE_BUFFER, SUBMIT_MAX_ATTEMPTS, SenderContext,
-    SentTransaction, SignedBatch, SignedTransaction, SignerContext, SlotTemplate,
+    GasEstimate, GasPricer, InclusionPulse, InclusionSource, InjectLimit, InjectPlan, LoadConfig,
+    LoadRunner, LoadTestDisplay, LoadTestStage, MAX_FEE_BASE_FEE_MULTIPLIER,
+    MAX_SENDER_WORKER_COUNT, MAX_SIGNER_WORKER_COUNT, MIN_PRIORITY_FEE, MeasurementWindow,
+    MempoolDepthController, PipelineQueue, PipelineStartConfig, PredicateAddress, PredicateValue,
+    PreparedBatch, PreparedTransaction, PresignBuffer, QueuedSubmitFailures, ResultsTracker,
+    SENDER_WORKERS_PER_RPC, SIGNER_WORKERS_PER_RPC, SUBMIT_BATCH_QUEUE_BUFFER, SUBMIT_MAX_ATTEMPTS,
+    SenderContext, SentTransaction, SignedBatch, SignedTransaction, SignerContext, SlotTemplate,
     SubmissionPipeline, SubmitCohort, SubmitEvent, TxConfig, TxType, ValidityPredicateTemplate,
     ValidityRouter,
 };

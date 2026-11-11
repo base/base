@@ -28,8 +28,7 @@ impl ProverServiceServer {
             Ok(DeleteProofRequestOutcome::NotFound) => Ok(()),
             Ok(DeleteProofRequestOutcome::NotCompleted(status)) => {
                 Err(failed_precondition(format!(
-                    "session_id {session_id}: proof request status is {}, expected SUCCEEDED or FAILED",
-                    status.as_str()
+                    "session_id {session_id}: proof request status is {status}, expected SUCCEEDED or FAILED"
                 )))
             }
             Err(e) => Err(internal(format!("Database error: {e}"))),

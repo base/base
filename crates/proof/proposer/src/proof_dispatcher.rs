@@ -18,7 +18,6 @@ use crate::{
     driver::RecoveredState,
     error::ProposerError,
     proof_adapter::ProposerProofAdapter,
-    proof_target::ProofTarget,
     proposal_intervals::{IntervalResolver, Intervals},
 };
 
@@ -196,43 +195,37 @@ impl ProofDispatcher {
         loop {
             // Resolved per target: the interval changes at the Denim activation
             // block, so the cursor's own starting block picks the cadence.
-            let intervals = match self.intervals.for_starting_block(current.l2_block_number).await {
-                Ok(intervals) => intervals,
-                Err(error) => {
-                    Metrics::errors_total(error.metric_label()).increment(1);
-                    warn!(
-                        starting_block = current.l2_block_number,
-                        error = %error,
-                        "Failed to resolve proposal intervals, stopping tick at current cursor"
-                    );
-                    break;
-                }
-            };
-
-            let Some(target_block) =
-                ProofTarget::next_block(current.l2_block_number, intervals.block_interval)
-            else {
-                break;
-            };
-
-            if target_block > finalized_head {
-                debug!(
-                    current_block = current.l2_block_number,
-                    target_block,
-                    finalized_head,
-                    "Finalized head below dispatch target, waiting for L2 head to advance"
-                );
-                break;
-            }
+            let target =
+                match self.intervals.next_target(current.l2_block_number, finalized_head).await {
+                    Ok(Some(target)) => target,
+                    Ok(None) => {
+                        debug!(
+                            current_block = current.l2_block_number,
+                            finalized_head,
+                            "Finalized head below dispatch target, waiting for L2 head to advance"
+                        );
+                        break;
+                    }
+                    Err(error) => {
+                        Metrics::errors_total(error.metric_label()).increment(1);
+                        warn!(
+                            starting_block = current.l2_block_number,
+                            error = %error,
+                            "Failed to resolve proposal intervals, stopping tick at current cursor"
+                        );
+                        break;
+                    }
+                };
+            let target_block = target.block;
 
             let Some(claimed_l2_output_root) =
-                ProofTarget::canonical_output_root(self.rollup_client.as_ref(), target_block).await
+                target.canonical_output_root(self.rollup_client.as_ref()).await
             else {
                 break;
             };
 
             let request = match self
-                .build_request(target_block, current, claimed_l2_output_root, intervals)
+                .build_request(target_block, current, claimed_l2_output_root, target.intervals)
                 .await
             {
                 Ok(request) => request,
@@ -427,7 +420,7 @@ mod tests {
                 &recovered,
                 B256::repeat_byte(0xaa),
                 Intervals {
-                    block_interval: 100,
+                    block_interval: NonZeroU64::new(100).unwrap(),
                     intermediate_block_interval: NonZeroU64::new(100).unwrap(),
                 },
             )

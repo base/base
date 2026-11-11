@@ -30,7 +30,9 @@ use crate::transaction::eip8130::{constants::Eip8130Constants, tx::TxEip8130};
 /// Signed [EIP-8130] Account Abstraction transaction envelope.
 ///
 /// Holds the unsigned [`TxEip8130`] body plus the two authentication byte
-/// strings. The transaction hash is computed at construction and cached.
+/// strings. The transaction hash is computed at construction and cached; it
+/// covers the body and the resolved sender, not the authentication strings
+/// (see [`Eip8130Signed::hash`]).
 ///
 /// [EIP-8130]: https://eips.ethereum.org/EIPS/eip-8130
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -56,8 +58,15 @@ pub struct Eip8130Signed {
     ///
     /// When `tx.payer.is_none()` this is empty.
     payer_auth: Bytes,
-    /// Cached EIP-2718 transaction hash (`keccak256(encode_2718(self))`).
+    /// Cached transaction hash (see [`Self::hash`]).
     hash: B256,
+    /// Cached hash of the exact encoding (see [`Self::encoded_hash`]).
+    encoded_hash: B256,
+    /// Length of [`TxEip8130::encode_metered_payload`].
+    metered_payload_len: usize,
+    /// Zero bytes in [`TxEip8130::encode_metered_payload`], counted from the
+    /// hashing encoding so intrinsic gas never re-encodes the payload.
+    metered_payload_zero_bytes: usize,
 }
 
 /// JSON is flat, like every other transaction type: the [`TxEip8130`] fields
@@ -137,9 +146,12 @@ pub enum Eip8130StaticError {
     /// Priority fee exceeds the maximum fee.
     #[error("max priority fee per gas exceeds max fee per gas")]
     TipAboveFeeCap,
-    /// Gas limit or maximum fee is zero.
-    #[error("gas limit and max fee per gas must be non-zero")]
-    ZeroGasOrFee,
+    /// Gas limit is zero.
+    #[error("gas limit must be non-zero")]
+    ZeroGasLimit,
+    /// Maximum fee per gas is zero.
+    #[error("max fee per gas must be non-zero")]
+    ZeroMaxFee,
 }
 
 /// Why an [`Eip8130Signed`] failed the timestamp-sensitive admission rules in
@@ -192,10 +204,31 @@ pub enum Eip8130TimestampError {
 
 impl Eip8130Signed {
     /// Constructs a new [`Eip8130Signed`] from its parts, computing and caching
-    /// the EIP-2718 transaction hash.
+    /// the transaction hash (see [`Self::hash`]) and the encoding hash (see
+    /// [`Self::encoded_hash`]).
     pub fn new(tx: TxEip8130, sender_auth: Bytes, payer_auth: Bytes) -> Self {
-        let mut this = Self { tx, sender_auth, payer_auth, hash: B256::ZERO };
-        this.hash = this.recompute_hash();
+        let mut this = Self {
+            tx,
+            sender_auth,
+            payer_auth,
+            hash: B256::ZERO,
+            encoded_hash: B256::ZERO,
+            metered_payload_len: 0,
+            metered_payload_zero_bytes: 0,
+        };
+        let mut encoded = Vec::with_capacity(this.encode_2718_len());
+        this.encode_2718(&mut encoded);
+        this.encoded_hash = keccak256(&encoded);
+        this.hash = this
+            .recover_sender()
+            .map_or(this.encoded_hash, |sender| this.tx.transaction_hash(sender));
+
+        let start = 1 + this.rlp_header().length() + this.tx.metered_payload_offset();
+        this.metered_payload_len = this.tx.metered_payload_length();
+        this.metered_payload_zero_bytes = encoded[start..start + this.metered_payload_len]
+            .iter()
+            .filter(|byte| **byte == 0)
+            .count();
         this
     }
 
@@ -219,9 +252,41 @@ impl Eip8130Signed {
         &self.payer_auth
     }
 
-    /// Returns the cached EIP-2718 transaction hash.
+    /// Returns the cached transaction hash.
+    ///
+    /// This is [`TxEip8130::transaction_hash`] over the resolved sender, so it
+    /// excludes `sender_auth` and `payer_auth`: for a fixed resolved sender,
+    /// encodings that differ only in those fields share a hash, and at most one
+    /// can be included. This does not identify the exact authorization, open
+    /// payer, or execution result. Use [`Self::encoded_hash`] for exact-byte
+    /// identity; transaction inclusion proofs commit to the full encoding.
+    ///
+    /// When `sender` is empty and `sender_auth` does not recover, the
+    /// transaction has no resolved sender and can never be valid. Its hash
+    /// falls back to [`Self::encoded_hash`], which cannot collide with the hash
+    /// of a valid transaction because the preimages have different list
+    /// lengths.
     pub const fn hash(&self) -> &B256 {
         &self.hash
+    }
+
+    /// Returns the cached `keccak256` of the EIP-2718 encoding, authentication
+    /// fields included.
+    ///
+    /// This is the default [`Encodable2718::trie_hash`] and identifies the exact
+    /// bytes. It is not the transaction hash (see [`Self::hash`]).
+    pub const fn encoded_hash(&self) -> B256 {
+        self.encoded_hash
+    }
+
+    /// Length of the metered payload ([`TxEip8130::encode_metered_payload`]).
+    pub const fn metered_payload_len(&self) -> usize {
+        self.metered_payload_len
+    }
+
+    /// Zero bytes in the metered payload ([`TxEip8130::encode_metered_payload`]).
+    pub const fn metered_payload_zero_bytes(&self) -> usize {
+        self.metered_payload_zero_bytes
     }
 
     /// Validates static admission rules without node-specific dependencies.
@@ -236,8 +301,11 @@ impl Eip8130Signed {
         if tx.max_fee_per_gas < tx.max_priority_fee_per_gas {
             return Err(Eip8130StaticError::TipAboveFeeCap);
         }
-        if tx.gas_limit == 0 || tx.max_fee_per_gas == 0 {
-            return Err(Eip8130StaticError::ZeroGasOrFee);
+        if tx.gas_limit == 0 {
+            return Err(Eip8130StaticError::ZeroGasLimit);
+        }
+        if tx.max_fee_per_gas == 0 {
+            return Err(Eip8130StaticError::ZeroMaxFee);
         }
         Ok(())
     }
@@ -254,20 +322,18 @@ impl Eip8130Signed {
                 Err(InvalidTransactionError::ChainIdMismatch)
             }
             Err(Eip8130StaticError::TipAboveFeeCap) => Err(InvalidTransactionError::TipAboveFeeCap),
-            Err(Eip8130StaticError::ZeroGasOrFee) => {
-                Err(InvalidTransactionError::TxTypeNotSupported)
-            }
+            Err(Eip8130StaticError::ZeroGasLimit) => Err(InvalidTransactionError::GasTooLow),
+            Err(Eip8130StaticError::ZeroMaxFee) => Err(InvalidTransactionError::FeeCapTooLow),
         }
     }
 
     /// Validates the validity-window admission rules for nonce-bearing and
     /// nonce-free transactions against a single caller-supplied `now` value.
     ///
-    /// `now` is a Unix timestamp in **milliseconds**; callers pass
-    /// `block.timestamp * 1000` (or an equivalent millisecond wall clock) so the
-    /// comparison matches the EIP's on-chain `block.timestamp * 1000` evaluation.
-    /// Txpool passes in one head-block snapshot so both branches see the same
-    /// value even if the tip updates concurrently.
+    /// `now` is the block's Unix timestamp in **milliseconds**: from Denim,
+    /// `block.timestamp * 1000` plus the `BaseTime` millisecond part, so it
+    /// matches the execution-path check. Txpool passes in one head-block snapshot
+    /// so both branches see the same value even if the tip updates concurrently.
     ///
     /// The transaction's `valid_after`/`valid_before` may be supplied in seconds
     /// or milliseconds; both are normalized to milliseconds here (via
@@ -316,12 +382,6 @@ impl Eip8130Signed {
         Ok(())
     }
 
-    fn recompute_hash(&self) -> B256 {
-        let mut buf = Vec::with_capacity(self.encode_2718_len());
-        self.encode_2718(&mut buf);
-        keccak256(&buf)
-    }
-
     /// Returns the sender address if it is explicitly provided by the
     /// transaction body (configured-actor path).
     pub const fn explicit_sender(&self) -> Option<Address> {
@@ -343,7 +403,6 @@ impl Eip8130Signed {
     /// Returns `Err(_)` when the EOA payload is malformed (wrong length or
     /// invalid signature). Callers should treat a missing sender + malformed
     /// `sender_auth` as a hard rejection.
-    #[cfg(feature = "k256")]
     pub fn recover_eoa_sender(
         &self,
     ) -> Result<Option<Address>, alloy_consensus::crypto::RecoveryError> {
@@ -357,7 +416,6 @@ impl Eip8130Signed {
     /// dispatchers where the contract guarantees no upper-half-`s` filtering;
     /// using the checked variant from those paths would silently tighten the
     /// validation contract.
-    #[cfg(feature = "k256")]
     pub fn recover_eoa_sender_unchecked(
         &self,
     ) -> Result<Option<Address>, alloy_consensus::crypto::RecoveryError> {
@@ -369,7 +427,6 @@ impl Eip8130Signed {
     /// running checked EOA ecrecover. Flattens the [`Self::recover_eoa_sender`]
     /// `Option` so call sites in the pooled and envelope `SignerRecoverable`
     /// implementations stay one-liners and cannot drift.
-    #[cfg(feature = "k256")]
     pub fn recover_sender(&self) -> Result<Address, alloy_consensus::crypto::RecoveryError> {
         if let Some(addr) = self.explicit_sender() {
             return Ok(addr);
@@ -380,7 +437,6 @@ impl Eip8130Signed {
     /// Same as [`Self::recover_sender`] but uses the unchecked recovery path,
     /// preserving the upper-half-`s`-accepting contract required by the
     /// `recover_signer_unchecked` and `recover_unchecked_with_buf` dispatchers.
-    #[cfg(feature = "k256")]
     pub fn recover_sender_unchecked(
         &self,
     ) -> Result<Address, alloy_consensus::crypto::RecoveryError> {
@@ -395,7 +451,6 @@ impl Eip8130Signed {
     /// Requires `v in {27, 28}` and EIP-2 low-`s`. This is the single checked
     /// recovery for a raw k1 blob: open-payer resolution and
     /// `RecoveredActorId::recover_k1` both go through it.
-    #[cfg(feature = "k256")]
     pub fn recover_raw_k1(
         hash: B256,
         raw: &[u8],
@@ -413,7 +468,6 @@ impl Eip8130Signed {
     /// payer means.
     ///
     /// [`RecoveryError`]: alloy_consensus::crypto::RecoveryError
-    #[cfg(feature = "k256")]
     pub fn resolved_payer(
         &self,
         resolved_sender: Address,
@@ -429,10 +483,8 @@ impl Eip8130Signed {
     }
 
     /// Parses a raw `r || s || v` secp256k1 signature, requiring exactly 65
-    /// bytes and `v in {27, 28}`. The auth blob is not covered by the hash it
-    /// signs, so accepting the alternative `v in {0, 1}` encoding would let a
-    /// relayer mint a second transaction hash for the same signer.
-    #[cfg(feature = "k256")]
+    /// bytes and canonical `v in {27, 28}` per EIP-8430. The alternative
+    /// `v in {0, 1}` encoding is invalid even when it recovers the same signer.
     fn parse_raw_k1_signature(
         raw: &[u8],
     ) -> Result<alloy_primitives::Signature, alloy_consensus::crypto::RecoveryError> {
@@ -443,7 +495,6 @@ impl Eip8130Signed {
             .map_err(|_| alloy_consensus::crypto::RecoveryError::new())
     }
 
-    #[cfg(feature = "k256")]
     fn recover_eoa_sender_with(
         &self,
         recover: impl FnOnce(
@@ -476,139 +527,6 @@ impl Eip8130Signed {
         self.tx.rlp_encode_fields(out);
         self.sender_auth.encode(out);
         self.payer_auth.encode(out);
-    }
-
-    /// EIP-2718 encoding with `payer_auth` replaced by the empty string: the
-    /// bytes `tx_payload_cost` bills to the sender.
-    #[must_use]
-    pub fn encoded_2718_without_payer_auth(&self) -> Vec<u8> {
-        let empty = Bytes::new();
-        let payload_length =
-            self.tx.rlp_encoded_fields_length() + self.sender_auth.length() + empty.length();
-        let mut out = Vec::with_capacity(1 + length_of_length(payload_length) + payload_length);
-        out.put_u8(Eip8130Constants::EIP8130_TX_TYPE);
-        Header { list: true, payload_length }.encode(&mut out);
-        self.tx.rlp_encode_fields(&mut out);
-        self.sender_auth.encode(&mut out);
-        empty.encode(&mut out);
-        out
-    }
-
-    /// Folds `fold_byte` over the sender-billed EIP-2718 encoding: this
-    /// transaction with `payer_auth` replaced by the empty string.
-    ///
-    /// When `encoded_2718` is this transaction's network encoding, the fold
-    /// rewrites only the list header and the `payer_auth` suffix. The
-    /// transaction body is not re-serialized. A mismatched `encoded_2718`
-    /// falls back to [`Self::encoded_2718_without_payer_auth`].
-    pub fn fold_sender_billed_bytes<T>(
-        &self,
-        encoded_2718: &[u8],
-        init: T,
-        mut fold_byte: impl FnMut(T, u8) -> T,
-    ) -> T {
-        if self.payer_auth.is_empty() {
-            return encoded_2718.iter().copied().fold(init, fold_byte);
-        }
-        match self.try_fold_sender_billed(encoded_2718, init, &mut fold_byte) {
-            Ok(total) => total,
-            Err(init) => {
-                self.encoded_2718_without_payer_auth().iter().copied().fold(init, fold_byte)
-            }
-        }
-    }
-
-    /// Sender-billed fold of a verified EIP-2718 encoding. `Err(init)` when
-    /// `encoded_2718` is not this transaction, so the caller can fall back
-    /// without dropping the accumulator.
-    fn try_fold_sender_billed<T>(
-        &self,
-        encoded_2718: &[u8],
-        init: T,
-        fold_byte: &mut impl FnMut(T, u8) -> T,
-    ) -> Result<T, T> {
-        let Some((type_byte, header_buf, header_len, body)) =
-            self.sender_billed_parts(encoded_2718)
-        else {
-            return Err(init);
-        };
-
-        let mut total = fold_byte(init, type_byte);
-        for &byte in &header_buf[..header_len] {
-            total = fold_byte(total, byte);
-        }
-        for &byte in body {
-            total = fold_byte(total, byte);
-        }
-        Ok(fold_byte(total, 0x80))
-    }
-
-    /// Header rewrite and body slice for the sender-billed encoding.
-    /// `None` when `encoded_2718` is not this transaction.
-    fn sender_billed_parts<'a>(
-        &self,
-        encoded_2718: &'a [u8],
-    ) -> Option<(u8, [u8; 9], usize, &'a [u8])> {
-        let (&type_byte, rest) = encoded_2718.split_first()?;
-        if type_byte != Eip8130Constants::EIP8130_TX_TYPE {
-            return None;
-        }
-        let mut payload = rest;
-        let header = Header::decode(&mut payload).ok()?;
-        if !header.list || payload.len() != header.payload_length {
-            return None;
-        }
-        let payer_len = self.payer_auth.length();
-        if payload.len() < payer_len {
-            return None;
-        }
-        let (body, payer_suffix) = payload.split_at(payload.len() - payer_len);
-        if !Self::is_rlp_bytes(self.payer_auth.as_ref(), payer_suffix) {
-            return None;
-        }
-        // Empty `payer_auth` is the one-byte RLP string `0x80`.
-        let new_payload_len = body.len().checked_add(1)?;
-        let mut header_buf = [0u8; 9];
-        let remaining = {
-            let mut cursor: &mut [u8] = &mut header_buf;
-            Header { list: true, payload_length: new_payload_len }.encode(&mut cursor);
-            cursor.len()
-        };
-        let header_len = header_buf.len() - remaining;
-        Some((type_byte, header_buf, header_len, body))
-    }
-
-    /// Whether `encoded` is the canonical RLP string for `raw`.
-    fn is_rlp_bytes(raw: &[u8], encoded: &[u8]) -> bool {
-        if raw.is_empty() {
-            return encoded == [0x80];
-        }
-        if raw.len() == 1 && raw[0] < 0x80 {
-            return encoded == raw;
-        }
-        if raw.len() < 56 {
-            let Ok(len) = u8::try_from(raw.len()) else {
-                return false;
-            };
-            return encoded.len() == raw.len() + 1
-                && encoded[0] == 0x80 + len
-                && &encoded[1..] == raw;
-        }
-        let len_of_len = raw.len().to_be_bytes().iter().skip_while(|&&byte| byte == 0).count();
-        if encoded.len() != 1 + len_of_len + raw.len() {
-            return false;
-        }
-        let Ok(len_of_len_byte) = u8::try_from(len_of_len) else {
-            return false;
-        };
-        if encoded[0] != 0xb7 + len_of_len_byte {
-            return false;
-        }
-        let mut declared = 0usize;
-        for &byte in &encoded[1..1 + len_of_len] {
-            declared = declared.saturating_mul(256).saturating_add(usize::from(byte));
-        }
-        declared == raw.len() && &encoded[1 + len_of_len..] == raw
     }
 
     fn rlp_encoded_signed_length(&self) -> usize {
@@ -734,7 +652,7 @@ impl Encodable2718 for Eip8130Signed {
     }
 
     fn trie_hash(&self) -> B256 {
-        self.hash
+        self.encoded_hash()
     }
 }
 
@@ -753,7 +671,10 @@ impl Decodable2718 for Eip8130Signed {
 
 impl InMemorySize for Eip8130Signed {
     fn size(&self) -> usize {
-        InMemorySize::size(&self.tx) + self.sender_auth.len() + self.payer_auth.len()
+        size_of::<Self>() - size_of::<TxEip8130>()
+            + InMemorySize::size(&self.tx)
+            + self.sender_auth.len()
+            + self.payer_auth.len()
     }
 }
 
@@ -829,13 +750,33 @@ impl Transaction for Eip8130Signed {
 
 #[cfg(test)]
 mod tests {
+    use alloy_consensus::proofs::calculate_transaction_root;
     use alloy_primitives::address;
+    use alloy_signer::SignerSync;
+    use alloy_signer_local::PrivateKeySigner;
     #[cfg(feature = "reth")]
     use reth_codecs::Compact;
     use rstest::rstest;
 
     use super::*;
     use crate::test_utils::sample_signed_8130;
+
+    #[rstest]
+    #[case::self_pay(false)]
+    #[case::sponsored(true)]
+    fn metered_payload_counts_match_its_encoding(#[case] payer_present: bool) {
+        let mut tx = sample_signed_8130(payer_present).into_tx();
+        tx.calls[0][0].data = (0..300u16).map(|i| (i % 3) as u8).collect();
+        let signed = Eip8130Signed::new(tx, Bytes::new(), Bytes::new());
+
+        let mut metered = Vec::new();
+        signed.tx().encode_metered_payload(&mut metered);
+        assert_eq!(signed.metered_payload_len(), metered.len());
+        assert_eq!(
+            signed.metered_payload_zero_bytes(),
+            metered.iter().filter(|byte| **byte == 0).count()
+        );
+    }
 
     #[rstest]
     #[case::self_pay(false)]
@@ -877,11 +818,153 @@ mod tests {
     }
 
     #[test]
-    fn hash_is_keccak_of_eip2718_payload() {
-        let signed = sample_signed_8130(false);
+    fn hash_is_not_keccak_of_eip2718_payload() {
+        let signed = sample_signed_8130(true);
         let mut buf = Vec::new();
         signed.encode_2718(&mut buf);
-        assert_eq!(*signed.hash(), keccak256(&buf));
+        assert_ne!(*signed.hash(), keccak256(&buf));
+        assert_eq!(signed.encoded_hash(), keccak256(&buf));
+        assert_eq!(signed.trie_hash(), keccak256(&buf));
+    }
+
+    #[test]
+    fn named_sender_hash_is_not_a_signing_hash() {
+        let signed = sample_signed_8130(true);
+        let sender = signed.explicit_sender().unwrap();
+        assert_eq!(*signed.hash(), signed.tx().transaction_hash(sender));
+        assert_ne!(*signed.hash(), signed.tx().sender_signature_hash());
+        assert_ne!(*signed.hash(), signed.tx().payer_signature_hash(sender));
+    }
+
+    #[test]
+    fn hash_excludes_authentication_fields() {
+        let signed = sample_signed_8130(true);
+        let resigned = Eip8130Signed::new(
+            signed.tx().clone(),
+            Bytes::from(vec![0xAA; 85]),
+            Bytes::from(vec![0xBB; 85]),
+        );
+        assert_ne!(signed.encoded_hash(), resigned.encoded_hash());
+        assert_eq!(signed.hash(), resigned.hash());
+    }
+
+    #[test]
+    fn hash_covers_fee_fields() {
+        let signed = sample_signed_8130(true);
+        let mut tx = signed.tx().clone();
+        tx.max_fee_per_gas += 1;
+        let bumped =
+            Eip8130Signed::new(tx, signed.sender_auth().clone(), signed.payer_auth().clone());
+        assert_ne!(signed.hash(), bumped.hash());
+    }
+
+    #[test]
+    fn recovered_sender_hash_substitutes_resolved_sender() {
+        use alloy_signer::SignerSync;
+        use alloy_signer_local::PrivateKeySigner;
+
+        let signer = PrivateKeySigner::random();
+        let mut tx = sample_signed_8130(false).into_tx();
+        tx.sender = None;
+        let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
+        let signed = Eip8130Signed::new(
+            tx.clone(),
+            Bytes::from(signature.as_bytes().to_vec()),
+            Bytes::new(),
+        );
+
+        assert_eq!(*signed.hash(), tx.transaction_hash(signer.address()));
+        assert_ne!(*signed.hash(), tx.sender_signature_hash());
+
+        // Another key signing the identical body gets a different hash.
+        let other = PrivateKeySigner::random();
+        let signature = other.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
+        let other_signed =
+            Eip8130Signed::new(tx, Bytes::from(signature.as_bytes().to_vec()), Bytes::new());
+        assert_ne!(signed.hash(), other_signed.hash());
+    }
+
+    #[test]
+    fn open_payer_variants_share_hash_but_not_transaction_root() {
+        let sender = PrivateKeySigner::from_slice(&[1; 32]).unwrap();
+        let payer_a = PrivateKeySigner::from_slice(&[2; 32]).unwrap();
+        let payer_b = PrivateKeySigner::from_slice(&[3; 32]).unwrap();
+        let mut tx = sample_signed_8130(false).into_tx();
+        tx.sender = None;
+        tx.payer = Some(Eip8130Constants::OPEN_PAYER);
+        let sender_auth =
+            Bytes::from(sender.sign_hash_sync(&tx.sender_signature_hash()).unwrap().as_bytes());
+        let payer_hash = tx.payer_signature_hash(sender.address());
+        let a = Eip8130Signed::new(
+            tx.clone(),
+            sender_auth.clone(),
+            Bytes::from(payer_a.sign_hash_sync(&payer_hash).unwrap().as_bytes()),
+        );
+        let b = Eip8130Signed::new(
+            tx,
+            sender_auth,
+            Bytes::from(payer_b.sign_hash_sync(&payer_hash).unwrap().as_bytes()),
+        );
+
+        assert_eq!(a.recover_sender().unwrap(), sender.address());
+        assert_eq!(b.recover_sender().unwrap(), sender.address());
+        assert_eq!(a.resolved_payer(sender.address()).unwrap(), payer_a.address());
+        assert_eq!(b.resolved_payer(sender.address()).unwrap(), payer_b.address());
+        assert_eq!(a.hash(), b.hash());
+        assert_ne!(a.encoded_hash(), b.encoded_hash());
+        assert_ne!(
+            calculate_transaction_root(core::slice::from_ref(&a)),
+            calculate_transaction_root(core::slice::from_ref(&b))
+        );
+
+        // Decode what the block actually included, not a pending variant with the same hash.
+        let included = Eip8130Signed::decode_2718(&mut b.encoded_2718().as_slice()).unwrap();
+        assert_eq!(included.hash(), a.hash());
+        assert_eq!(included.resolved_payer(sender.address()).unwrap(), payer_b.address());
+    }
+
+    #[test]
+    fn sender_forms_share_hash_but_not_transaction_root() {
+        let sender = PrivateKeySigner::from_slice(&[1; 32]).unwrap();
+        let mut tx = sample_signed_8130(false).into_tx();
+        tx.sender = None;
+        let recovered_signature = sender.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
+        let recovered = Eip8130Signed::new(
+            tx.clone(),
+            Bytes::from(recovered_signature.as_bytes()),
+            Bytes::new(),
+        );
+
+        tx.sender = Some(sender.address());
+        let named_signature = sender.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
+        let mut named_auth = Eip8130Constants::K1_AUTHENTICATOR.to_vec();
+        named_auth.extend_from_slice(&named_signature.as_bytes());
+        let named = Eip8130Signed::new(tx, named_auth.into(), Bytes::new());
+
+        assert_eq!(recovered.recover_sender().unwrap(), sender.address());
+        assert_eq!(
+            Eip8130Signed::recover_raw_k1(
+                named.tx().sender_signature_hash(),
+                &named.sender_auth()[20..],
+            )
+            .unwrap(),
+            sender.address()
+        );
+        assert_ne!(recovered_signature, named_signature);
+        assert_eq!(recovered.hash(), named.hash());
+        assert_ne!(recovered.encoded_hash(), named.encoded_hash());
+        assert_ne!(
+            calculate_transaction_root(core::slice::from_ref(&recovered)),
+            calculate_transaction_root(core::slice::from_ref(&named))
+        );
+    }
+
+    #[test]
+    fn unrecoverable_sender_hash_falls_back_to_encoded_hash() {
+        let mut tx = sample_signed_8130(false).into_tx();
+        tx.sender = None;
+        let signed = Eip8130Signed::new(tx, Bytes::from(vec![0u8; 64]), Bytes::new());
+        assert_eq!(*signed.hash(), signed.encoded_hash());
     }
 
     #[test]
@@ -931,11 +1014,19 @@ mod tests {
             Err(Eip8130StaticError::TipAboveFeeCap)
         );
 
-        let mut tx = signed.into_tx();
+        let mut tx = signed.clone().into_tx();
         tx.gas_limit = 0;
         assert_eq!(
             Eip8130Signed::new(tx, Bytes::new(), Bytes::new()).validate_admission_static(8453),
-            Err(Eip8130StaticError::ZeroGasOrFee)
+            Err(Eip8130StaticError::ZeroGasLimit)
+        );
+
+        let mut tx = signed.into_tx();
+        tx.max_fee_per_gas = 0;
+        tx.max_priority_fee_per_gas = 0;
+        assert_eq!(
+            Eip8130Signed::new(tx, Bytes::new(), Bytes::new()).validate_admission_static(8453),
+            Err(Eip8130StaticError::ZeroMaxFee)
         );
     }
 
@@ -1039,7 +1130,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "k256")]
     #[test]
     fn recover_eoa_sender_returns_none_for_configured_actor() {
         let signed = sample_signed_8130(false);
@@ -1047,7 +1137,6 @@ mod tests {
         assert_eq!(signed.recover_eoa_sender().unwrap(), None);
     }
 
-    #[cfg(feature = "k256")]
     #[test]
     fn recover_eoa_sender_recovers_eoa_signer() {
         use alloy_signer::SignerSync;
@@ -1065,7 +1154,6 @@ mod tests {
         assert_eq!(signed.recover_eoa_sender().unwrap(), Some(expected));
     }
 
-    #[cfg(feature = "k256")]
     #[test]
     fn recover_eoa_sender_rejects_noncanonical_v() {
         use alloy_signer::SignerSync;
@@ -1076,10 +1164,9 @@ mod tests {
         tx.sender = None;
         let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
         let mut bytes = signature.as_bytes().to_vec();
-        // Honest tooling emits `v` in 'Electrum' notation (`{27, 28}`). Rewrite it
-        // to the `{0, 1}` encoding of the same parity: it recovers the same signer
-        // but is a distinct byte string (txid malleability), so both the checked
-        // and unchecked recovery paths must reject it.
+        // Honest tooling emits `v` in 'Electrum' notation (`{27, 28}`). The
+        // alternative `{0, 1}` form is not a valid wire encoding, so both the
+        // checked and unchecked recovery paths must reject it.
         assert!(matches!(bytes[64], 27 | 28));
         bytes[64] -= 27;
         let signed = Eip8130Signed::new(tx, Bytes::from(bytes), Bytes::new());
@@ -1087,7 +1174,6 @@ mod tests {
         assert!(signed.recover_eoa_sender_unchecked().is_err());
     }
 
-    #[cfg(feature = "k256")]
     #[test]
     fn recover_eoa_sender_rejects_malformed_payload() {
         let mut tx = sample_signed_8130(false).into_tx();
@@ -1097,7 +1183,6 @@ mod tests {
         assert!(signed.recover_eoa_sender().is_err());
     }
 
-    #[cfg(feature = "k256")]
     #[test]
     fn recover_eoa_sender_unchecked_accepts_high_s_signature() {
         use alloy_primitives::U256;
@@ -1135,7 +1220,6 @@ mod tests {
         assert_eq!(signed.recover_eoa_sender_unchecked().unwrap(), Some(expected));
     }
 
-    #[cfg(feature = "k256")]
     #[test]
     fn recover_eoa_sender_unchecked_returns_none_for_configured_actor() {
         let signed = sample_signed_8130(false);
@@ -1169,5 +1253,18 @@ mod tests {
         let decoded: Eip8130Signed = serde_json::from_value(value).unwrap();
         assert_eq!(*decoded.hash(), *signed.hash());
         assert_ne!(*decoded.hash(), B256::ZERO);
+    }
+
+    #[rstest]
+    #[case::self_paid(false)]
+    #[case::sponsored(true)]
+    fn in_memory_size_counts_every_cached_field(#[case] payer_present: bool) {
+        let signed = sample_signed_8130(payer_present);
+        assert!(
+            InMemorySize::size(&signed)
+                >= size_of::<Eip8130Signed>()
+                    + signed.sender_auth().len()
+                    + signed.payer_auth().len()
+        );
     }
 }

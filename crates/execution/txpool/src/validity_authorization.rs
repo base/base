@@ -73,9 +73,14 @@ impl ValidityAuthorization {
     /// Returns the EIP-712 digest a sender must sign to authorize these predicates.
     ///
     /// The domain is `Base Transaction Validity`, version `1`, with the transaction's
-    /// chain ID. The message binds the complete signed transaction hash and all
+    /// chain ID. The message binds the transaction hash (`tx.hash()`) and all
     /// predicate fields. Sorting by EIP-712 struct hash makes conjunction order
     /// irrelevant, while retaining duplicates and normalizing omitted storage masks.
+    ///
+    /// For every type except EIP-8130 the transaction hash covers the complete signed
+    /// envelope. The EIP-8130 transaction hash covers the body and the resolved sender
+    /// but not `sender_auth` or `payer_auth`, so one signature authorizes every
+    /// same-hash variant, such as different open payers.
     pub fn signing_hash(
         chain_id: u64,
         transaction_hash: B256,
@@ -130,10 +135,13 @@ impl ValidityAuthorization {
 mod tests {
     use alloy_consensus::{SignableTransaction, TxEip1559, TxLegacy};
     use alloy_eips::eip2718::Encodable2718;
-    use alloy_primitives::{Signature, TxKind};
+    use alloy_primitives::{Bytes, Signature, TxKind, keccak256};
     use alloy_signer::SignerSync;
     use alloy_signer_local::PrivateKeySigner;
-    use base_common_consensus::{BaseTransactionSigned, BaseTypedTransaction, TxDeposit};
+    use base_common_consensus::{
+        BaseTransactionSigned, BaseTypedTransaction, Eip8130Constants, Eip8130Signed, TxDeposit,
+        TxEip8130,
+    };
     use reth_transaction_pool::{
         TransactionOrigin, ValidPoolTransaction, identifier::TransactionId,
     };
@@ -288,6 +296,8 @@ mod tests {
         let signer = PrivateKeySigner::random();
         let tx = transaction(&signer, 8453, 0);
         let mut validity = predicates();
+        // Builder ingress rejects the trailing flashblock-index predicate.
+        validity.pop();
         validity.push(ValidityPredicate::Nonce {
             address: Address::repeat_byte(0x44),
             op: ValidityOperator::Equal,
@@ -339,6 +349,48 @@ mod tests {
                 unsigned.validity_signature().as_ref(),
             ),
             Err(ValidityAuthorizationError::MissingSignature)
+        );
+    }
+
+    #[test]
+    fn eip8130_authorization_covers_open_payer_variants_but_not_the_encoding() {
+        let sender = PrivateKeySigner::random();
+        let tx = TxEip8130 {
+            chain_id: 8453,
+            gas_limit: 100_000,
+            max_fee_per_gas: 100,
+            payer: Some(Eip8130Constants::OPEN_PAYER),
+            ..Default::default()
+        };
+        let sender_auth =
+            Bytes::from(sender.sign_hash_sync(&tx.sender_signature_hash()).unwrap().as_bytes());
+        let payer_hash = tx.payer_signature_hash(sender.address());
+        let variant = |payer: &PrivateKeySigner| {
+            let payer_auth = Bytes::from(payer.sign_hash_sync(&payer_hash).unwrap().as_bytes());
+            let signed = Eip8130Signed::new(tx.clone(), sender_auth.clone(), payer_auth);
+            let signed = BaseTransactionSigned::Eip8130(signed);
+            BasePooledTransaction::recover_raw_transaction(&signed.encoded_2718()).unwrap()
+        };
+        let a = variant(&PrivateKeySigner::random());
+        let b = variant(&PrivateKeySigner::random());
+        assert_eq!(a.hash(), b.hash());
+        assert_ne!(a.encoded_2718(), b.encoded_2718());
+
+        let predicates = predicates();
+        let signature = sign(&sender, &a, &predicates);
+        assert_eq!(verify(&a, &predicates, Some(&signature)), Ok(()));
+        assert_eq!(verify(&b, &predicates, Some(&signature)), Ok(()));
+
+        let over_encoding = sender
+            .sign_hash_sync(&ValidityAuthorization::signing_hash(
+                8453,
+                keccak256(a.encoded_2718()),
+                &predicates,
+            ))
+            .unwrap();
+        assert_eq!(
+            verify(&a, &predicates, Some(&over_encoding)),
+            Err(ValidityAuthorizationError::InvalidSignature)
         );
     }
 

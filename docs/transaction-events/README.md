@@ -16,7 +16,7 @@ not the long-term archive. Events are partitioned by retention class and UTC
 day of `event_time`, and a background worker drops whole day partitions once
 they age out: high-volume proxy and builder-decision events default to 3 days,
 ingress and forwarding events default to 7 days, and failures, drops,
-inclusion, and flashblock events default to 30 days. Ingest rejects events
+inclusion, and legacy flashblock events default to 30 days. Ingest rejects events
 whose `event_time` is already outside its window or more than an hour in the
 future. A retried `event_id` dedupes only within the same UTC hour of its
 `event_time`. `TXPOOL_SEND_RAW_TRANSACTION_VALIDITY` uses the same warm window as
@@ -162,7 +162,7 @@ durable journal when `--enable-transaction-event-journal` and
 
 Edge/proxy:
 
-- `PROXY_RECEIVED`
+- `PROXY_RECEIVED` (retired; see below)
 - `PROXY_REJECTED`
 - `PROXY_VALIDATION_ACCEPTED`
 - `PROXY_VALIDATION_REJECTED`
@@ -172,6 +172,19 @@ Edge/proxy:
 - `PROXY_INGRESS_RPC_ATTEMPT` (retired)
 - `PROXY_INGRESS_RPC_SUCCESS` (retired)
 - `PROXY_INGRESS_RPC_FAILURE` (retired)
+
+proxyd terminal events for a decoded `eth_sendRawTransaction`: `PROXY_REJECTED`
+when the address check rejects the transaction; otherwise exactly one of
+`PROXY_BACKEND_SUCCESS` or `PROXY_BACKEND_FAILURE` per request per completed
+`Backend.Forward` call, with `data.attempt` set to the backend index. Failover
+across backends therefore produces one event per backend tried, and a batch
+whose deadline expires before it is forwarded produces no terminal event.
+`PROXY_BACKEND_FAILURE` covers both transport failures and backends that answer
+with a JSON-RPC error (`nonce too low`, `already known`, ...); the latter carry
+`rpc_error_code` and `rpc_error_message_class` in `data`. Terminal events carry
+`received_at` (Unix milliseconds) in `data`, the time proxyd decoded that
+request's transaction, which is why the separate `PROXY_RECEIVED` event was
+retired. It is retained in the vocabulary so historical rows remain readable.
 
 Ingress/audit (retired producer; retained so historical events remain readable):
 
@@ -202,8 +215,9 @@ transaction is decoded and before sequencer forwarding or pool insertion.
 `tx_hash` is the join key. They are distinct from `TXPOOL_PENDING` /
 `TXPOOL_QUEUED`, which record later subpool membership.
 `TXPOOL_SEND_RAW_TRANSACTION_VALIDITY` is the **only** event that records
-`data.validity_predicates` (the serialized `balance`, `storage`,
-`block_number`, and `flashblock_index` list). Downstream lifecycle events —
+`data.validity_predicates` (the serialized `balance`, `storage`, and `block_number`
+list; `flashblock_index` predicates are rejected before this
+event). Downstream lifecycle events —
 including `BUILDER_DEFERRED`, `BUILDER_EXPIRED`, `BUILDER_ACCEPTED`, and
 `BUILDER_INCLUDED` — must not repeat that list; join them back by `tx_hash`. A
 replacement is a fresh admission with its own `tx_hash` and/or predicate list;
@@ -216,25 +230,30 @@ Forwarding:
 - `TXPOOL_BUILDER_CONSUMED` (retired)
 - `TXPOOL_BUILDER_FORWARD_ATTEMPT`
 - `TXPOOL_BUILDER_FORWARD_SUCCESS` (retired)
-- `TXPOOL_BUILDER_FORWARD_FAILURE`
+- `TXPOOL_BUILDER_FORWARD_FAILURE` (retired)
 - `TXPOOL_BUILDER_FORWARD_DROPPED`
 - `TXPOOL_VALIDATED_INSERT_ACCEPTED`
 - `TXPOOL_VALIDATED_INSERT_REJECTED`
 
 A mempool node forwards each pending transaction to every configured builder,
 and forwards it again every `--tx-forwarding-resend-after-ms` while it stays
-pending. Each destination has its own pool reader and queue, so the mempool
+pending. A transaction carrying validity predicates is resent only after its
+forward to that builder failed. Each destination has its own pool reader and queue, so the mempool
 node does not journal the hand-off: it no longer emits
-`TXPOOL_BUILDER_CONSUMED` or `TXPOOL_BUILDER_FORWARD_SUCCESS`. Successful
-delivery is recorded by the receiving builder as
-`TXPOOL_VALIDATED_INSERT_ACCEPTED` or `TXPOOL_VALIDATED_INSERT_REJECTED`,
-whose event ID includes the builder host. A send that fails is recorded by the
-mempool node as `TXPOOL_BUILDER_FORWARD_FAILURE` or
-`TXPOOL_BUILDER_FORWARD_DROPPED`. `TXPOOL_BUILDER_FORWARD_ATTEMPT` is emitted
-only for RPC retries (`data.attempt` >= 1). The time a transaction was queued
-for each destination, its position in the pool iterator, and how many times it
-was resent are not journaled; the reader and forwarder metrics cover them in
-aggregate.
+`TXPOOL_BUILDER_CONSUMED`, `TXPOOL_BUILDER_FORWARD_SUCCESS` or
+`TXPOOL_BUILDER_FORWARD_FAILURE`. A send that reaches a builder is recorded by
+that builder as `TXPOOL_VALIDATED_INSERT_ACCEPTED` or
+`TXPOOL_VALIDATED_INSERT_REJECTED`, whose event ID includes the builder host and
+which only the active sequencer journals. Every builder receives every
+transaction, so a node-side failure row per destination duplicated the leader's
+verdict and added standby and canary verdicts that never decide inclusion; on
+mainnet those were 88% of the rows. Per-builder rejection counts remain in the
+forwarder metrics. A send that never reaches the builder is recorded by the
+mempool node as `TXPOOL_BUILDER_FORWARD_DROPPED`, and
+`TXPOOL_BUILDER_FORWARD_ATTEMPT` is emitted only for RPC retries
+(`data.attempt` >= 1). The time a transaction was queued for each destination,
+its position in the pool iterator, and how many times it was resent are not
+journaled; the reader and forwarder metrics cover them in aggregate.
 
 `TXPOOL_BUILDER_FORWARD_DROPPED` is emitted only for transaction-scoped drops
 where the forwarding task still knows the `tx_hash`, such as final RPC failure
@@ -249,33 +268,78 @@ Builder:
 - `BUILDER_EXPIRED`
 - `BUILDER_INCLUDED`
 - `BUILDER_PAYLOAD_FINALIZED`
-- `BUILDER_FLASHBLOCK_STARTED`
-- `BUILDER_FLASHBLOCK_PUBLISHED`
-- `BUILDER_FLASHBLOCK_BUILD_STOPPED`
+- `BUILDER_FLASHBLOCK_STARTED` (legacy)
+- `BUILDER_FLASHBLOCK_PUBLISHED` (legacy)
+- `BUILDER_FLASHBLOCK_BUILD_STOPPED` (legacy)
+
+The three `BUILDER_FLASHBLOCK_*` types are legacy events from the retired
+Flashblocks builder: they stay in the schema so historical journals still parse,
+and no current builder emits them.
+
+Leader gating: every sequencer runs a builder, and every mempool node forwards
+every transaction to every builder, so without gating each builder journals its
+own `TXPOOL_VALIDATED_INSERT_ACCEPTED` or `TXPOOL_VALIDATED_INSERT_REJECTED`
+verdict for the same transaction (five rows per transaction on mainnet). Only
+the active sequencer builds blocks, so only its journal, verdicts included, is
+kept. The builder polls the local consensus node's
+`admin_sequencerActive` when `--builder.transaction-events.consensus-url` (for
+example `http://localhost:9545`) is set, every
+`--builder.transaction-events.leader-poll-interval-ms` (default 500), and
+journals nothing while the answer is `false`. The unified `base sequencer`
+binary runs the consensus node in the same process and defaults the URL to that
+node's own admin RPC (`--rpc.addr`/`--rpc.port`, requires `--rpc.enable-admin`),
+so it needs no URL, and its gate starts closed until the first `true` answer.
+Leadership is read live rather than configured because it moves between
+sequencers without a redeploy. Until the first answer the standalone builder
+journals; a request that fails or times out keeps
+the last answer and counts in
+`base_builder_sequencer_leadership_poll_errors_total`, and
+`base_builder_sequencer_active` reports the answer in force. Events the gate
+withholds count in `transaction_events_gated_events`. Consequences for readers:
+a builder's events start at the moment it became leader, so a transaction it
+accepted while inactive has `BUILDER_*` events without an earlier
+`TXPOOL_VALIDATED_INSERT_ACCEPTED` from that host, a rejection is journaled
+only when the leader's pool rejects it, and around a transfer, for
+one poll interval plus the request's latency, either both or neither sequencer
+may journal.
 
 Builder caveat: `BUILDER_ACCEPTED`, `BUILDER_REJECTED`, `BUILDER_DEFERRED`,
 and `BUILDER_EXPIRED` are emitted per payload-building attempt and include
-`payload_id`, `block_number`, and `flashblock_index` when applicable. The same
-transaction can therefore produce multiple decision events across flashblocks.
-Neither builder emits `BUILDER_CONSIDERED`: every candidate gets one of the
-decision events above, which carries the same budget and position fields. The
+`payload_id` and `block_number`. The same transaction can therefore produce
+multiple decision events across build attempts. The builder does not emit
+`BUILDER_CONSIDERED`: every candidate gets one of the decision events above. The
 native builder journals only validity-gated candidates; a candidate whose
 predicates pass but which is then skipped (block limits, resource metering,
 coinbase tip, nonce or EVM validation) gets `BUILDER_REJECTED`. A parked
-transaction is parked again on every later flashblock and after every
-promote-and-repark, but both builders emit `BUILDER_DEFERRED` only the first
-time they defer a transaction in a block build and again when the
-`defer_reason` changes; its `flashblock_index` and `ordering_position` are
-those of that deferral. The native builder tracks this per build attempt, so
-pre-Denim rebuilds of the same payload report a deferral again. Reindexing an already-parked
+transaction is parked again on every later build attempt and after every
+promote-and-repark, but the builder emits `BUILDER_DEFERRED` only the first
+time it defers a transaction in a block build and again when the
+`defer_reason` changes. The native builder tracks this per build attempt, so
+rebuilds of the same payload report a deferral again. Reindexing an already-parked
 transaction when its blocker changes does not emit another
 `BUILDER_DEFERRED`. `BUILDER_EXPIRED` is the terminal discard for builder-side
 windows that can never become valid again, such as an expired bundle validity
 window or an expired position predicate. `BUILDER_ACCEPTED` and
 `BUILDER_INCLUDED` are unchanged; correlate a deferral with a later
-accept/include by `tx_hash` within the same `payload_id`/flashblock window. A
+accept/include by `tx_hash` within the same `payload_id`. A
 parking-capacity miss stays `BUILDER_REJECTED` with
 `validity_predicate_not_satisfied`.
+`BUILDER_ACCEPTED` carries three gas figures for the transaction it executed:
+`data.tx_gas_limit` is the declared limit; `data.gas_used` is the gas the
+transaction was billed and its receipt reports; `data.metered_gas_used` is the
+gas it actually consumed, defined as the gas it would have been billed without
+gas-limit billing (gas spent less the EIP-3529-capped refund, raised to the
+EIP-7623 floor; for EIP-8130, sender gas raised to the sender's floor, plus
+payer authentication). Before the gas-limit billing feature (Everest)
+`metered_gas_used == gas_used`; after it, `gas_used` is `tx_gas_limit` for
+standard transactions and `tx_gas_limit + payer_auth_gas_reserved` for EIP-8130, where
+`data.payer_auth_gas_reserved` (`null` for every other transaction type) is the
+payer-authentication gas reserved on top of the sender's limit. The column is
+continuous across the activation, so `tx_gas_limit / metered_gas_used` measures
+how limits relate to consumption on both sides of it. The builder reads the
+metered value from the EVM right after execution; if the EVM published none,
+both metered fields are `null` rather than guessed. No receipt, header, state
+root, or RPC response changes.
 `BUILDER_INCLUDED` is emitted when the builder finalizes the payload it can
 serve via `engine_getPayload` and includes
 `data.inclusion_signal = "builder_finalized_payload"`. The payload loop emits
@@ -285,14 +349,14 @@ built payload and links `payload_id` to the builder's block hash and number even
 when the payload contains no user transactions. It includes `data.parent_hash`,
 `data.transaction_count`, `data.gas_used`, `data.gas_limit`, and
 `data.timestamp`.
-`BUILDER_FLASHBLOCK_STARTED`, `BUILDER_FLASHBLOCK_PUBLISHED`, and
-`BUILDER_FLASHBLOCK_BUILD_STOPPED` are payload/flashblock-scoped events. They
-include top-level `payload_id` and `block_number`, plus `data.parent_hash`,
-`data.flashblock_index`, and `data.target_flashblock_count`. Published events
-also include top-level `block_hash`, `data.transaction_count`, `data.byte_size`,
-and `data.build_duration_ms`. Build-stopped events use `data.reason` to
-distinguish control-flow stops such as payload resolution winning before
-publish.
+The legacy `BUILDER_FLASHBLOCK_STARTED`, `BUILDER_FLASHBLOCK_PUBLISHED`, and
+`BUILDER_FLASHBLOCK_BUILD_STOPPED` events in historical journals are
+payload/flashblock-scoped. They include top-level `payload_id` and
+`block_number`, plus `data.parent_hash`, `data.flashblock_index`, and
+`data.target_flashblock_count`. Published events also include top-level
+`block_hash`, `data.transaction_count`, `data.byte_size`, and
+`data.build_duration_ms`. Build-stopped events use `data.reason` to distinguish
+control-flow stops such as payload resolution winning before publish.
 
 Canonicality caveat: builder events are local payload construction signals, not
 canonical-chain or consensus-finality observations. A builder event with
@@ -320,7 +384,7 @@ producer implementation and include enough fields in `data` for
 
 ## proxyd Examples
 
-Received raw transaction request:
+Backend rejected the transaction with a JSON-RPC error:
 
 ```json
 {
@@ -328,7 +392,7 @@ Received raw transaction request:
   "event_id": "0x1f3f...",
   "event_time": "2026-06-02T00:00:00.000000000Z",
   "producer": "base-routing/proxyd",
-  "event_type": "PROXY_RECEIVED",
+  "event_type": "PROXY_BACKEND_FAILURE",
   "network": "base-mainnet",
   "tx_hash": "0x2222222222222222222222222222222222222222222222222222222222222222",
   "block_hash": null,
@@ -336,7 +400,14 @@ Received raw transaction request:
   "payload_id": null,
   "request_id": "req-abc",
   "data": {
-    "rpc_method": "eth_sendRawTransaction"
+    "rpc_method": "eth_sendRawTransaction",
+    "received_at": 1780358399987,
+    "backend_group": "main",
+    "backend": "reth-mainnet-0",
+    "attempt": 0,
+    "latency_ms": 13,
+    "rpc_error_code": -32000,
+    "rpc_error_message_class": "nonce_too_low"
   }
 }
 ```
@@ -422,7 +493,7 @@ Join later park, expiry, accept, and include events by `tx_hash`:
 }
 ```
 
-Parked (recoverable predicate, held for a later position or flashblock).
+Parked (recoverable predicate, held for a later build attempt).
 Emitted once per block per defer reason, and does not repeat the predicate
 list:
 
@@ -440,9 +511,9 @@ list:
   "payload_id": "0x0102030405060708",
   "request_id": null,
   "data": {
-    "builder_mode": "flashblocks",
-    "flashblock_index": 2,
-    "ordering_position": 4,
+    "builder_mode": "native",
+    "source_queue": "txpool_best",
+    "parent_hash": "0x5555555555555555555555555555555555555555555555555555555555555555",
     "defer_reason": "validity_predicate_not_satisfied",
     "defer_detail": "a validity predicate is not satisfied by the current build state"
   }
@@ -466,11 +537,40 @@ with `validity_predicate_not_satisfied` instead:
   "payload_id": "0x0102030405060708",
   "request_id": null,
   "data": {
-    "builder_mode": "flashblocks",
-    "flashblock_index": 0,
-    "ordering_position": 1,
+    "builder_mode": "native",
+    "source_queue": "txpool_best",
+    "parent_hash": "0x5555555555555555555555555555555555555555555555555555555555555555",
     "expire_reason": "validity_predicate_expired",
-    "expire_detail": "a validity predicate can no longer be satisfied at or after the current build position"
+    "expire_detail": "a validity predicate can no longer be satisfied at or after the current block"
+  }
+}
+```
+
+Accepted under gas-limit billing. `gas_used` is the billed gas (here the
+declared `tx_gas_limit`) and `metered_gas_used` the gas the transfer consumed;
+`payer_auth_gas_reserved` is non-null only for EIP-8130 transactions:
+
+```json
+{
+  "schema_version": "transaction-event/v1",
+  "event_id": "0x7f90...",
+  "event_time": "2026-06-02T00:00:00.600000000Z",
+  "producer": "base-builder",
+  "event_type": "BUILDER_ACCEPTED",
+  "network": "base-mainnet",
+  "tx_hash": "0x3333333333333333333333333333333333333333333333333333333333333333",
+  "block_hash": null,
+  "block_number": 123,
+  "payload_id": "0x0102030405060708",
+  "request_id": null,
+  "data": {
+    "builder_mode": "native",
+    "source_queue": "txpool_best",
+    "parent_hash": "0x5555555555555555555555555555555555555555555555555555555555555555",
+    "tx_gas_limit": 100000,
+    "gas_used": 100000,
+    "metered_gas_used": 21000,
+    "payer_auth_gas_reserved": null
   }
 }
 ```

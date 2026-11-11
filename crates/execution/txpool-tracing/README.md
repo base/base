@@ -12,7 +12,7 @@ This crate provides:
 - **Transaction Tracing**: Subscribes to mempool events and chain notifications to track how long a transaction spends in each stage of the lifecycle before it is included, dropped, or replaced.
 - **Transaction Status RPC**: An RPC API (`txpool_transactionStatus`) to query the current status and lifecycle events of a transaction by hash.
 - **Tracker**: Core tracking logic for recording pending/queued transitions, replacements, drops, and block inclusion.
-- **Metrics**: Histogram metrics for mempool residency by event type to help spot latency regressions.
+- **Metrics**: Histogram metrics for mempool residency by event type to help spot latency regressions. Inclusion latency metrics carry a `flow` label (`standard` or `validity`), because validity transactions can wait in the pool until their predicates hold.
 
 ## Usage
 

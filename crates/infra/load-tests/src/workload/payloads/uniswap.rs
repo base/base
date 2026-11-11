@@ -5,6 +5,7 @@ use alloy_rpc_types::TransactionRequest;
 use alloy_sol_types::{SolCall, sol};
 use async_trait::async_trait;
 use base_common_consensus::Call;
+use serde::{Deserialize, Serialize};
 
 type U24 = Uint<24, 1>;
 
@@ -31,6 +32,17 @@ sol! {
             ExactInputSingleParams calldata params
         ) external payable returns (uint256 amountOut);
 
+        struct ExactInputParams {
+            bytes path;
+            address recipient;
+            uint256 amountIn;
+            uint256 amountOutMinimum;
+        }
+
+        function exactInput(
+            ExactInputParams calldata params
+        ) external payable returns (uint256 amountOut);
+
         function factory() external view returns (address);
     }
 
@@ -51,6 +63,15 @@ sol! {
     }
 }
 
+/// An intermediate token on a multi-hop `uniswap_v3` route.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UniswapV3Hop {
+    /// Intermediate token.
+    pub token: Address,
+    /// Fee tier of the pool that swaps into `token`.
+    pub fee: u32,
+}
+
 /// Generates Uniswap V3 style swap transactions.
 #[derive(Debug, Clone)]
 pub struct UniswapV3Payload {
@@ -63,9 +84,53 @@ pub struct UniswapV3Payload {
     max_amount: U256,
     reverse_min_amount: U256,
     reverse_max_amount: U256,
+    /// Forward and reverse `exactInput` paths and their pool count, for multi-hop routes.
+    paths: Option<(Bytes, Bytes, u64)>,
 }
 
 impl UniswapV3Payload {
+    /// Returns the pools, as `(input, output, fee)`, from `token_in` through each `via` token to
+    /// `token_out`; the last pool uses `fee`.
+    pub fn pools(
+        token_in: Address,
+        via: &[UniswapV3Hop],
+        fee: u32,
+        token_out: Address,
+    ) -> Vec<(Address, Address, u32)> {
+        let mut input = token_in;
+        let mut pools = Vec::with_capacity(via.len() + 1);
+        for hop in via {
+            pools.push((input, hop.token, hop.fee));
+            input = hop.token;
+        }
+        pools.push((input, token_out, fee));
+        pools
+    }
+
+    /// Encodes pools as an `exactInput` path: the first input token, then a 3-byte fee and the
+    /// output token per pool.
+    pub fn encode_path(pools: &[(Address, Address, u32)]) -> Bytes {
+        let mut path = pools[0].0.to_vec();
+        for (_, output, fee) in pools {
+            path.extend_from_slice(&fee.to_be_bytes()[1..]);
+            path.extend_from_slice(output.as_slice());
+        }
+        path.into()
+    }
+
+    /// Routes swaps through `via` with `exactInput`; an empty `via` keeps `exactInputSingle`.
+    pub fn with_via(mut self, via: &[UniswapV3Hop]) -> Self {
+        if via.is_empty() {
+            return self;
+        }
+        let pools = Self::pools(self.token_in, via, self.fee, self.token_out);
+        let reverse: Vec<_> =
+            pools.iter().rev().map(|&(input, output, fee)| (output, input, fee)).collect();
+        self.paths =
+            Some((Self::encode_path(&pools), Self::encode_path(&reverse), pools.len() as u64));
+        self
+    }
+
     /// Expands a native swap request into an exact approval followed by the swap.
     pub fn native_calls(router: Address, data: &Bytes) -> Result<Vec<Call>> {
         let swap = IUniswapV3Router::exactInputSingleCall::abi_decode(data).map_err(|error| {
@@ -185,6 +250,7 @@ impl UniswapV3Payload {
             max_amount,
             reverse_min_amount,
             reverse_max_amount,
+            paths: None,
         }
     }
 }
@@ -210,7 +276,8 @@ impl Payload for UniswapV3Payload {
         // Randomly swap direction to exercise both sides of the pool.
         // V3 pools are keyed by (token0, token1, fee) with token0 < token1,
         // so the fee tier is direction-agnostic and this is safe.
-        let (input, output, min_amount, max_amount) = if rng.random::<bool>() {
+        let forward = rng.random::<bool>();
+        let (input, output, min_amount, max_amount) = if forward {
             (self.token_in, self.token_out, self.min_amount, self.max_amount)
         } else {
             (self.token_out, self.token_in, self.reverse_min_amount, self.reverse_max_amount)
@@ -224,22 +291,35 @@ impl Payload for UniswapV3Payload {
             U256::from(rng.gen_range(min..=max))
         };
 
-        let call = IUniswapV3Router::exactInputSingleCall {
-            params: IUniswapV3Router::ExactInputSingleParams {
-                tokenIn: input,
-                tokenOut: output,
-                fee: U24::from(self.fee),
-                recipient: from,
-                amountIn: amount,
-                amountOutMinimum: U256::ZERO,
-                sqrtPriceLimitX96: U160::ZERO,
-            },
+        let (data, gas_limit) = if let Some((forward_path, reverse_path, pools)) = &self.paths {
+            let call = IUniswapV3Router::exactInputCall {
+                params: IUniswapV3Router::ExactInputParams {
+                    path: if forward { forward_path.clone() } else { reverse_path.clone() },
+                    recipient: from,
+                    amountIn: amount,
+                    amountOutMinimum: U256::ZERO,
+                },
+            };
+            (call.abi_encode(), 250_000 * pools)
+        } else {
+            let call = IUniswapV3Router::exactInputSingleCall {
+                params: IUniswapV3Router::ExactInputSingleParams {
+                    tokenIn: input,
+                    tokenOut: output,
+                    fee: U24::from(self.fee),
+                    recipient: from,
+                    amountIn: amount,
+                    amountOutMinimum: U256::ZERO,
+                    sqrtPriceLimitX96: U160::ZERO,
+                },
+            };
+            (call.abi_encode(), if self.native { 500_000 } else { 250_000 })
         };
 
         let mut request = TransactionRequest::default()
             .with_to(self.router)
-            .with_input(Bytes::from(call.abi_encode()))
-            .with_gas_limit(if self.native { 500_000 } else { 250_000 });
+            .with_input(Bytes::from(data))
+            .with_gas_limit(gas_limit);
         if self.native {
             request.transaction_type =
                 Some(base_common_consensus::Eip8130Constants::EIP8130_TX_TYPE);
@@ -504,6 +584,66 @@ mod tests {
 
         assert!(saw_forward, "expected at least one forward swap");
         assert!(saw_reverse, "expected at least one reverse swap");
+    }
+
+    #[test]
+    fn encode_path_packs_token_fee_token() {
+        let (weth, cbbtc, usdc) =
+            (Address::repeat_byte(0x42), Address::repeat_byte(0xcb), Address::repeat_byte(0x83));
+        let pools =
+            UniswapV3Payload::pools(weth, &[UniswapV3Hop { token: cbbtc, fee: 500 }], 3000, usdc);
+        assert_eq!(pools, vec![(weth, cbbtc, 500), (cbbtc, usdc, 3000)]);
+        let mut expected = weth.to_vec();
+        expected.extend_from_slice(&[0x00, 0x01, 0xf4]);
+        expected.extend_from_slice(cbbtc.as_slice());
+        expected.extend_from_slice(&[0x00, 0x0b, 0xb8]);
+        expected.extend_from_slice(usdc.as_slice());
+        assert_eq!(UniswapV3Payload::encode_path(&pools), Bytes::from(expected));
+    }
+
+    #[test]
+    fn via_generates_exact_input_along_the_route_in_both_directions() {
+        let (router, token_in, token_out) =
+            (Address::repeat_byte(0x10), Address::repeat_byte(0x11), Address::repeat_byte(0x22));
+        let via = [
+            UniswapV3Hop { token: Address::repeat_byte(0x33), fee: 500 },
+            UniswapV3Hop { token: Address::repeat_byte(0x44), fee: 100 },
+        ];
+        let payload = UniswapV3Payload::new(
+            router,
+            token_in,
+            token_out,
+            3000,
+            U256::from(17),
+            U256::from(17),
+            Some((U256::from(29), U256::from(29))),
+        )
+        .with_via(&via);
+        let forward = UniswapV3Payload::encode_path(&UniswapV3Payload::pools(
+            token_in, &via, 3000, token_out,
+        ));
+        let reverse = UniswapV3Payload::encode_path(&[
+            (token_out, via[1].token, 3000),
+            (via[1].token, via[0].token, 100),
+            (via[0].token, token_in, 500),
+        ]);
+        let sender = Address::repeat_byte(0x55);
+        let mut rng = SeededRng::new(42);
+        let mut seen = [false; 2];
+        for _ in 0..32 {
+            let tx = payload.generate(&mut rng, sender, Address::ZERO);
+            assert_eq!(tx.gas, Some(750_000), "gas ceiling scales with pool count");
+            let swap = IUniswapV3Router::exactInputCall::abi_decode(tx.input.input().unwrap())
+                .expect("multi-hop swaps use exactInput")
+                .params;
+            assert_eq!(swap.recipient, sender);
+            assert_eq!(swap.amountOutMinimum, U256::ZERO);
+            let is_forward = swap.path == forward;
+            assert!(is_forward || swap.path == reverse, "unexpected path {}", swap.path);
+            assert_eq!(swap.amountIn, U256::from(if is_forward { 17 } else { 29 }));
+            seen[usize::from(is_forward)] = true;
+        }
+        assert_eq!(seen, [true, true], "both directions are exercised");
     }
 
     /// 18-decimal WETH priced at 2,320 6-decimal USDC, with WETH as either pool token.

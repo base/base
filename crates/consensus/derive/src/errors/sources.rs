@@ -2,6 +2,7 @@
 
 use alloc::string::{String, ToString};
 
+use base_common_blobs::BlobDecodeError;
 use thiserror::Error;
 
 use crate::{PipelineError, PipelineErrorKind, ResetError};
@@ -21,6 +22,17 @@ pub enum BlobDecodingError {
     /// Missing Data
     #[error("Missing data")]
     MissingData,
+}
+
+impl From<BlobDecodeError> for BlobDecodingError {
+    fn from(err: BlobDecodeError) -> Self {
+        match err {
+            BlobDecodeError::InvalidEncodingVersion { .. } => Self::InvalidEncodingVersion,
+            BlobDecodeError::InvalidLength { .. } => Self::InvalidLength,
+            BlobDecodeError::InvalidFieldElement { .. }
+            | BlobDecodeError::NonZeroPadding { .. } => Self::InvalidFieldElement,
+        }
+    }
 }
 
 /// An error returned by the [`BlobProviderError`].

@@ -14,9 +14,7 @@ use base_common_genesis::{BaseUpgrade, ChainGenesis, RollupConfig, SystemConfig,
 use base_common_network::{Base, BaseEngineApi};
 use base_consensus_derive::AttributesBuilder;
 use base_consensus_engine::EngineEndpoint;
-use base_consensus_node::{
-    EngineConfig, NodeOperatingMode, StandaloneAttributesBuilder, StandaloneDenimSchedule,
-};
+use base_consensus_node::{EngineConfig, NodeOperatingMode, StandaloneAttributesBuilder};
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_txpool::ValiditySignatureMode;
 use base_node_runner::test_utils::{L1_BLOCK_INFO_DEPOSIT_TX, load_chain_spec};
@@ -57,12 +55,9 @@ async fn standalone_sequencer_paces_historical_denim_activation() -> Result<()> 
         ws_port: None,
         auth_port: None,
         p2p_port: None,
-        flashblocks_port: None,
         metrics_port: None,
-        payload_builder_cutover: true,
         validity_signature_mode: ValiditySignatureMode::Off,
         extra_extensions: Vec::new(),
-        block_time: Duration::from_millis(200),
         persistence_threshold: None,
         persistence_backpressure_threshold: None,
         txpool_max_transactions: None,
@@ -164,27 +159,33 @@ async fn standalone_sequencer_paces_historical_denim_activation() -> Result<()> 
     legacy.shutdown().await;
     assert_eq!(provider.get_block_number().await?, 1, "EL accepted a mismatched Denim schedule");
 
+    // Schedule Denim at the boundary's next slot and scale gas as derivation does for the first
+    // Denim block.
     let boundary = L2BlockMetadata::from_block(&block(&provider, 1).await?, &canonical)?;
-    let schedule = StandaloneDenimSchedule::new(canonical, &boundary)?;
-    assert_eq!(
-        schedule.rollup_config.denim_timestamp_schedule(),
-        chain_spec.denim_timestamp_schedule()?
-    );
-    assert_eq!(schedule.system_config.gas_limit, boundary.system_config.gas_limit / 10);
+    let mut scheduled = canonical;
+    scheduled.set_upgrade_activation_timestamp(BaseUpgrade::Denim, activation);
+    assert_eq!(scheduled.denim_timestamp_schedule(), chain_spec.denim_timestamp_schedule()?);
+    let scheduled_system_config = SystemConfig {
+        gas_limit: boundary.system_config.gas_limit
+            / u64::from(RollupConfig::DENIM_GAS_PARAMETER_SCALING_FACTOR),
+        eip1559_denominator: boundary
+            .system_config
+            .eip1559_denominator
+            .map(|denominator| denominator * RollupConfig::DENIM_GAS_PARAMETER_SCALING_FACTOR),
+        ..boundary.system_config
+    };
 
     let head_time = UNIX_EPOCH
         + Duration::from_millis(
-            schedule
-                .rollup_config
-                .l2_block_timestamp_millis(boundary.l2_block_info.block_info.number),
+            scheduled.l2_block_timestamp_millis(boundary.l2_block_info.block_info.number),
         );
     let started = Instant::now();
     let paced = InProcessStandaloneSequencer::start(InProcessStandaloneSequencerConfig {
         l2_engine_url: engine_url.clone(),
         jwt_secret,
-        rollup_config: schedule.rollup_config.clone(),
+        rollup_config: scheduled.clone(),
         l1_info,
-        system_config: schedule.system_config,
+        system_config: scheduled_system_config,
         prefund: None,
         schedule_delay: SystemTime::now().duration_since(head_time)?,
     })
@@ -203,31 +204,29 @@ async fn standalone_sequencer_paces_historical_denim_activation() -> Result<()> 
             (block.header.timestamp, u64::from(millis)),
             (activation + offset / DENIM_BLOCKS_PER_SECOND, offset % DENIM_BLOCKS_PER_SECOND * 200)
         );
-        let metadata = L2BlockMetadata::from_block(&block, &schedule.rollup_config)?;
-        assert_eq!(metadata.system_config.gas_limit, schedule.system_config.gas_limit);
+        let metadata = L2BlockMetadata::from_block(&block, &scheduled)?;
+        assert_eq!(metadata.system_config.gas_limit, scheduled_system_config.gas_limit);
         assert_eq!(
             metadata.system_config.eip1559_denominator,
             boundary.system_config.eip1559_denominator.map(|denominator| denominator * 10)
         );
     }
 
-    // A restart resumes from the head without catching up on the downtime or rescaling.
+    // A restart resumes from the head with its parameters, without catching up on the downtime.
     tokio::time::sleep(Duration::from_secs(1)).await;
     let head_number = provider.get_block_number().await?;
     let head_block = block(&provider, head_number).await?;
-    let head = L2BlockMetadata::from_block(&head_block, &schedule.rollup_config)?;
-    let restarted = StandaloneDenimSchedule::new(schedule.rollup_config.clone(), &head)?;
-    assert_eq!(restarted.rollup_config, schedule.rollup_config);
-    assert_eq!(restarted.system_config, head.system_config);
-    let head_time = UNIX_EPOCH
-        + Duration::from_millis(restarted.rollup_config.l2_block_timestamp_millis(head_number));
+    let head = L2BlockMetadata::from_block(&head_block, &scheduled)?;
+    assert_eq!(head.system_config, scheduled_system_config);
+    let head_time =
+        UNIX_EPOCH + Duration::from_millis(scheduled.l2_block_timestamp_millis(head_number));
     let started = Instant::now();
     let resumed = InProcessStandaloneSequencer::start(InProcessStandaloneSequencerConfig {
         l2_engine_url: engine_url.clone(),
         jwt_secret,
-        rollup_config: restarted.rollup_config.clone(),
+        rollup_config: scheduled.clone(),
         l1_info: head.l1_info,
-        system_config: restarted.system_config,
+        system_config: head.system_config,
         prefund: None,
         schedule_delay: SystemTime::now().duration_since(head_time)?,
     })

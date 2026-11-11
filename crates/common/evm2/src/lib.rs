@@ -1,5 +1,7 @@
 #![doc = include_str!("../README.md")]
 
+pub use base_common_genesis::BaseFeature;
+
 mod spec;
 pub use spec::BaseSpecId;
 
@@ -29,9 +31,7 @@ pub use executor::{
 
 mod registry;
 
-pub use base_common_eip8130::{
-    AuthWireForm, Eip8130GasSchedule, IntrinsicGas, IntrinsicGasError, IntrinsicGasInput,
-};
+pub use base_common_eip8130::{AuthWireForm, Eip8130GasSchedule, IntrinsicGas, IntrinsicGasError};
 
 mod nonce_manager;
 pub use nonce_manager::{NonceManager, NonceOverflow};

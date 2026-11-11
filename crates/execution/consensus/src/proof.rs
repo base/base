@@ -6,7 +6,7 @@ use alloy_consensus::ReceiptWithBloom;
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::B256;
 use alloy_trie::root::ordered_trie_root_with_encoder;
-use base_common_chains::Upgrades;
+use base_common_chains::{BaseFeature, Upgrades};
 use base_common_consensus::DepositReceiptExt;
 
 /// Calculates the receipt root for a header.
@@ -20,8 +20,8 @@ pub fn calculate_receipt_root<R: DepositReceiptExt>(
     // encoding. In the Regolith Upgrade, we must strip the deposit nonce from the
     // receipts before calculating the receipt root. This was corrected in the Canyon
     // upgrade.
-    if chain_spec.is_regolith_active_at_timestamp(timestamp)
-        && !chain_spec.is_canyon_active_at_timestamp(timestamp)
+    if chain_spec.is_feature_active_at_timestamp(BaseFeature::DepositNonce, timestamp)
+        && !chain_spec.is_feature_active_at_timestamp(BaseFeature::DepositReceiptVersion, timestamp)
     {
         let receipts = receipts
             .iter()
@@ -53,8 +53,8 @@ pub fn calculate_receipt_root_no_memo<R: DepositReceiptExt>(
     // encoding. In the Regolith Upgrade, we must strip the deposit nonce from the
     // receipts before calculating the receipt root. This was corrected in the Canyon
     // upgrade.
-    if chain_spec.is_regolith_active_at_timestamp(timestamp)
-        && !chain_spec.is_canyon_active_at_timestamp(timestamp)
+    if chain_spec.is_feature_active_at_timestamp(BaseFeature::DepositNonce, timestamp)
+        && !chain_spec.is_feature_active_at_timestamp(BaseFeature::DepositReceiptVersion, timestamp)
     {
         let receipts = receipts
             .iter()

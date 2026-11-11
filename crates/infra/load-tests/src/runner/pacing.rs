@@ -26,16 +26,17 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
 use super::{
-    BlockPulse, BlockWatcher, CanonicalHeadWatcher, DisplaySnapshot, FlashblockWatcher, GasPricer,
+    BlockPulse, BlockWatcher, CanonicalHeadWatcher, DisplaySnapshot, GasEstimate, GasPricer,
     InclusionPulse, InclusionSource, LoadRunner, LoadTestDisplay, LoadTestStage,
     PipelineStartConfig, PreparedTransaction, PresignBuffer, QueuedSubmitFailures, ResultsTracker,
-    SignedBatch, SignedTransaction, SubmissionPipeline, SubmitEvent, TxType, ValidityRouter,
+    SignedBatch, SignedTransaction, SubmissionPipeline, SubmitCohort, SubmitEvent, TxType,
+    ValidityRouter,
 };
 use crate::{
     BaselineError, Result,
     metrics::{MetricsCollector, MetricsSummary, PacingCycleObservation, PacingCycleSource},
     rpc::{BaseFeeExt, QueryProvider},
-    workload::{KeyStream, SeededRng, WorkloadGenerator},
+    workload::{KeyStream, SeededRng, SelectedPayload, WorkloadGenerator},
 };
 
 const NONCE_RPC_TIMEOUT: Duration = Duration::from_secs(10);
@@ -86,6 +87,9 @@ struct SignedSender {
 #[derive(Debug)]
 struct PresignProducerState {
     generator: WorkloadGenerator,
+    /// Fixed payload for the validity priority-lead cohort, built once per run. `None` keeps
+    /// the lead cohort on the weighted mix.
+    lead_payload: Option<SelectedPayload>,
     recipient_keys: Option<KeyStream>,
     recipient_rng: SeededRng,
 }
@@ -103,7 +107,7 @@ struct PresignConfig {
     max_gas_price: u128,
     validity_priority_lead_multiplier: u128,
     validity_priority_fee_divisor: u128,
-    estimated_gas: u64,
+    gas_estimate: GasEstimate,
     fresh_recipient_ratio: f64,
     signed_chunk_tx: mpsc::Sender<Vec<PresignedSenderBatch>>,
     nonce_reset_rx: mpsc::Receiver<SenderNonceReset>,
@@ -165,7 +169,6 @@ impl EnqueueProgressDisplay<'_> {
         collector.sample_throughput(elapsed);
 
         let (p50, p99) = collector.rolling_p50_p99();
-        let (flashblocks_p50, flashblocks_p99) = collector.rolling_flashblocks_p50_p99();
         if should_log {
             info!(
                 stage = self.stage.as_str(),
@@ -200,8 +203,6 @@ impl EnqueueProgressDisplay<'_> {
             target_gps: self.target_gps,
             p50_latency: p50,
             p99_latency: p99,
-            flashblocks_p50_latency: flashblocks_p50,
-            flashblocks_p99_latency: flashblocks_p99,
             gas_price_gwei: self.gas_price_gwei,
         };
         if let Some(display) = self.display {
@@ -229,6 +230,7 @@ struct PresignEnqueueState<'a> {
     buffer: &'a mut PresignBuffer,
     progress: &'a mut EnqueueProgress,
     base_fee_tx: &'a watch::Sender<u128>,
+    gas_estimate: &'a GasEstimate,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -369,6 +371,12 @@ impl MempoolDepthController {
     /// Records when the previous refill cycle ran, for the steady catch-up bound.
     pub const fn with_previous_cycle(mut self, previous_cycle_at: Option<Instant>) -> Self {
         self.previous_cycle_at = previous_cycle_at;
+        self
+    }
+
+    /// Replaces the sender capacity gas, for when the per-transaction gas estimate changes.
+    pub const fn with_capacity_gas(mut self, capacity_gas: u128) -> Self {
+        self.capacity_gas = capacity_gas;
         self
     }
 
@@ -523,8 +531,7 @@ impl LoadRunner {
         const INCLUSION_PULSE_BUFFER: usize = 1_024;
         let (inclusion_pulse_tx, mut inclusion_pulse_rx) =
             mpsc::channel::<InclusionPulse>(INCLUSION_PULSE_BUFFER);
-        let results_tracker =
-            ResultsTracker::new_with_pulse_sender(&sender_addresses, inclusion_pulse_tx.clone());
+        let results_tracker = ResultsTracker::new(&sender_addresses);
 
         let receipt_provider = RootProvider::<Base>::new_http(self.config.query_rpc.clone());
         let watcher_cancel = self.cancel_token.child_token();
@@ -543,22 +550,14 @@ impl LoadRunner {
             CanonicalHeadWatcher::new(ws_url, results_tracker.clone(), watcher_cancel.clone())
                 .start()
         });
-        let flashblock_watcher_task = self.config.flashblocks_ws.clone().map(|ws_url| {
-            FlashblockWatcher::new(
-                ws_url,
-                results_tracker.clone(),
-                inclusion_pulse_tx.clone(),
-                watcher_cancel.clone(),
-            )
-            .start()
-        });
         drop(inclusion_pulse_tx);
 
         let max_in_flight_per_sender = self.config.max_in_flight_per_sender;
 
         let initial_avg_gas = self.calibrate_avg_gas().await?;
-        // Seed the collector so live throughput (rolling GPS) and rate-limiter
-        // feedback have a non-zero gas figure before canonical receipt gas lands.
+        let gas_estimate = GasEstimate::new(initial_avg_gas);
+        // Seed the collector so live throughput (rolling GPS) has a non-zero
+        // gas figure before canonical receipt gas lands.
         self.collector.set_estimated_gas(initial_avg_gas);
         let mut start = Instant::now();
         let account_count = self.accounts.len();
@@ -703,6 +702,11 @@ impl LoadRunner {
             self.b20_run_salt,
         )?;
         let producer_generator = std::mem::replace(&mut self.generator, replacement_generator);
+        let lead_payload = self
+            .config
+            .validity_priority_lead_payload
+            .as_ref()
+            .map(|tx_type| SelectedPayload::from_tx_type(tx_type, self.b20_run_salt));
         let producer_recipient_keys = self.recipient_keys.take();
         let producer_recipient_rng = std::mem::take(&mut self.recipient_rng);
 
@@ -727,6 +731,7 @@ impl LoadRunner {
         let producer_task = tokio::spawn(Self::stream_presigned_transactions(
             PresignProducerState {
                 generator: producer_generator,
+                lead_payload,
                 recipient_keys: producer_recipient_keys,
                 recipient_rng: producer_recipient_rng,
             },
@@ -741,7 +746,7 @@ impl LoadRunner {
                 max_gas_price: self.config.max_gas_price,
                 validity_priority_lead_multiplier: self.config.validity_priority_lead_multiplier,
                 validity_priority_fee_divisor: self.config.validity_priority_fee_divisor,
-                estimated_gas: initial_avg_gas,
+                gas_estimate: gas_estimate.clone(),
                 fresh_recipient_ratio: self.config.fresh_recipient_ratio,
                 signed_chunk_tx,
                 nonce_reset_rx,
@@ -768,6 +773,7 @@ impl LoadRunner {
                 buffer: &mut presign_buffer,
                 progress: &mut progress,
                 base_fee_tx: &pacing_base_fee_tx,
+                gas_estimate: &gas_estimate,
             },
             floor_gas.min(u128::from(capacity as u64).saturating_mul(u128::from(initial_avg_gas))),
             max_in_flight_per_sender,
@@ -888,6 +894,7 @@ impl LoadRunner {
                     buffer: &mut presign_buffer,
                     progress: &mut progress,
                     base_fee_tx: &pacing_base_fee_tx,
+                    gas_estimate: &gas_estimate,
                 },
                 BlockAlignedEnqueueConfig {
                     controller: depth_controller,
@@ -1002,11 +1009,6 @@ impl LoadRunner {
                 &results_tracker,
             );
 
-            // Drain flashblock observations for the rolling window (separate from
-            // confirmed metrics to avoid double-counting in the final summary).
-            for (latency, observed_at) in results_tracker.drain_flashblock_observations() {
-                self.collector.record_flashblock_observed(latency, observed_at);
-            }
             // Drain confirmed metrics non-blocking so the rolling window stays
             // current during the run (not just during the post-run drain).
             for metrics in results_tracker.drain_confirmed_metrics() {
@@ -1075,8 +1077,8 @@ impl LoadRunner {
             self.collector.record_completed_refill_lag(lag);
         }
 
-        // Keep background watchers alive through the drain so late flashblock
-        // inclusions and block observations can still be joined into metrics.
+        // Keep background watchers alive through the drain so late block observations
+        // can still be joined into metrics.
         self.stop_flag.store(true, Ordering::SeqCst);
 
         self.set_display_stage(LoadTestStage::DrainingConfirmations);
@@ -1106,9 +1108,6 @@ impl LoadRunner {
         let mut last_drain_report = Instant::now();
 
         while drain_start.elapsed() < confirmation_drain_timeout {
-            for (latency, observed_at) in results_tracker.drain_flashblock_observations() {
-                self.collector.record_flashblock_observed(latency, observed_at);
-            }
             let metrics = results_tracker.drain_confirmed_metrics();
             let has_confirmed = !metrics.is_empty();
             if has_confirmed {
@@ -1176,9 +1175,6 @@ impl LoadRunner {
             self.collector.record_undrained_inventory(undrained, undrained_gas);
         }
 
-        for (latency, observed_at) in results_tracker.drain_flashblock_observations() {
-            self.collector.record_flashblock_observed(latency, observed_at);
-        }
         for metrics in results_tracker.drain_confirmed_metrics() {
             self.collector.record_confirmed(metrics);
             last_confirmed_at = start.elapsed();
@@ -1197,14 +1193,6 @@ impl LoadRunner {
             match tokio::time::timeout(Duration::from_secs(2), task).await {
                 Ok(Err(error)) if error.is_panic() => {
                     warn!(error = %error, "canonical head watcher panicked");
-                }
-                _ => {}
-            }
-        }
-        if let Some(task) = flashblock_watcher_task {
-            match tokio::time::timeout(Duration::from_secs(2), task).await {
-                Ok(Err(error)) if error.is_panic() => {
-                    warn!(error = %error, "flashblock watcher panicked");
                 }
                 _ => {}
             }
@@ -1313,8 +1301,11 @@ impl LoadRunner {
         Ok(block.header.number)
     }
 
+    /// Prepares `txs_per_sender` requests per sender. Priority-lead validity senders draw from
+    /// `lead_payload` when one is configured; every other sender draws from the weighted mix.
     fn build_sender_jobs(
         generator: &mut WorkloadGenerator,
+        lead_payload: Option<&SelectedPayload>,
         recipient_keys: &mut Option<KeyStream>,
         recipient_rng: &mut SeededRng,
         config: &PresignConfig,
@@ -1346,9 +1337,16 @@ impl LoadRunner {
             let pair_index = Self::b20_partner_index(sender_index, sender_count);
             let pair_recipient = config.sender_addresses[pair_index];
             let cohort = config.validity_router.cohort_for_sender(from);
+            let fixed_payload = match cohort {
+                SubmitCohort::ValidityPassPriorityLead => lead_payload,
+                SubmitCohort::Plain | SubmitCohort::ValidityPass => None,
+            };
             let mut prepared_txs = Vec::with_capacity(txs_per_sender);
             for _ in 0..txs_per_sender {
-                let payload = generator.select_payload()?;
+                let payload = match fixed_payload {
+                    Some(payload) => payload.clone(),
+                    None => generator.select_payload()?,
+                };
                 let sender_pool_recipient =
                     if payload.uses_pair_recipient() { pair_recipient } else { ring_recipient };
                 let to = if payload.uses_runner_recipient() {
@@ -1377,7 +1375,7 @@ impl LoadRunner {
                     value,
                     data,
                     gas_limit,
-                    estimated_gas: config.estimated_gas,
+                    estimated_gas: config.gas_estimate.get(),
                     validity,
                     cohort,
                 });
@@ -1516,6 +1514,7 @@ impl LoadRunner {
             };
             let sender_jobs = Self::build_sender_jobs(
                 &mut producer_state.generator,
+                producer_state.lead_payload.as_ref(),
                 &mut producer_state.recipient_keys,
                 &mut producer_state.recipient_rng,
                 &config,
@@ -1894,11 +1893,25 @@ impl LoadRunner {
         }
 
         let plan_started = Instant::now();
+        let (observed_gas, observed_count) = drain_state.results_tracker.observed_gas();
+        let previous_estimate = enqueue_state.gas_estimate.get();
+        let estimated_gas = enqueue_state.gas_estimate.update(observed_gas, observed_count);
+        if estimated_gas != previous_estimate {
+            drain_state.collector.set_estimated_gas(estimated_gas);
+            info!(
+                estimated_gas,
+                previous_estimate, observed_count, "corrected pacing gas estimate from receipt gas"
+            );
+        }
         let depth_gas = drain_state.mempool_depth_gas();
         let block_gas_limit = canonical.map_or(fallback_block_gas_limit, |block| block.gas_limit);
         let (_, canonical_p99) = drain_state.collector.rolling_p50_p99();
         let plan = config
             .controller
+            .with_capacity_gas(
+                u128::from(config.max_total_in_flight as u64)
+                    .saturating_mul(u128::from(estimated_gas)),
+            )
             .with_confirmation_latency(canonical_p99)
             .with_previous_cycle(enqueue_state.progress.last_cycle_at)
             .plan(
@@ -1990,7 +2003,6 @@ impl LoadRunner {
                 .saturating_duration_since(config.controller.measurement_started_at),
             source: match pulse.source {
                 InclusionSource::Canonical => PacingCycleSource::Canonical,
-                InclusionSource::Flashblock => PacingCycleSource::Flashblock,
                 InclusionSource::Safety => PacingCycleSource::Safety,
             },
             block_observed: canonical.is_some(),
@@ -2155,7 +2167,6 @@ impl LoadRunner {
         stage: LoadTestStage,
     ) -> DisplaySnapshot {
         let (p50, p99) = self.collector.rolling_p50_p99();
-        let (flashblocks_p50, flashblocks_p99) = self.collector.rolling_flashblocks_p50_p99();
         DisplaySnapshot {
             elapsed: start.elapsed(),
             duration: self.config.duration,
@@ -2171,8 +2182,6 @@ impl LoadRunner {
             target_gps: self.config.target_gps,
             p50_latency: p50,
             p99_latency: p99,
-            flashblocks_p50_latency: flashblocks_p50,
-            flashblocks_p99_latency: flashblocks_p99,
             gas_price_gwei: self.base_fee as f64 / 1e9,
         }
     }
@@ -2246,9 +2255,6 @@ impl LoadRunner {
         for metrics in results_tracker.drain_confirmed_metrics() {
             collector.record_confirmed(metrics);
         }
-        for (latency, observed_at) in results_tracker.drain_flashblock_observations() {
-            collector.record_flashblock_observed(latency, observed_at);
-        }
     }
 
     fn apply_queued_submit_failures(
@@ -2278,7 +2284,7 @@ mod tests {
         time::{Duration, Instant},
     };
 
-    use alloy_primitives::{Address, Bytes, TxHash};
+    use alloy_primitives::{Address, Bytes, TxHash, U256};
     use tokio::sync::mpsc;
 
     use super::{
@@ -2292,6 +2298,7 @@ mod tests {
             SUBMIT_BATCH_QUEUE_BUFFER, SignedBatch, SignedTransaction, SubmissionPipeline,
             SubmitCohort, SubmitEvent,
         },
+        workload::SelectedPayload,
     };
 
     /// Native envelope selection and fresh-recipient values survive preparation.
@@ -2322,7 +2329,7 @@ mod tests {
             max_gas_price: config.max_gas_price,
             validity_priority_lead_multiplier: 1,
             validity_priority_fee_divisor: 1,
-            estimated_gas: 50_000,
+            gas_estimate: super::GasEstimate::new(50_000),
             fresh_recipient_ratio: 1.0,
             signed_chunk_tx,
             nonce_reset_rx,
@@ -2332,9 +2339,16 @@ mod tests {
         let mut generator = runner.generator;
         let mut keys = runner.recipient_keys;
         let mut rng = crate::workload::SeededRng::new(42);
-        let jobs =
-            LoadRunner::build_sender_jobs(&mut generator, &mut keys, &mut rng, &presign, 1, 0)
-                .expect("native requests must prepare");
+        let jobs = LoadRunner::build_sender_jobs(
+            &mut generator,
+            None,
+            &mut keys,
+            &mut rng,
+            &presign,
+            1,
+            0,
+        )
+        .expect("native requests must prepare");
         assert_eq!(jobs.len(), 2, "exactly one job per sender must be prepared");
         for (i, job) in jobs.iter().enumerate() {
             assert_eq!(job.start_nonce, [7, 9][i], "existing sender nonce must be retained");
@@ -2351,6 +2365,120 @@ mod tests {
                 "pacing must use calibrated gas rather than ceiling"
             );
         }
+
+        presign.gas_estimate.update(64 * 70_000, 64);
+        let jobs = LoadRunner::build_sender_jobs(
+            &mut generator,
+            None,
+            &mut keys,
+            &mut rng,
+            &presign,
+            1,
+            0,
+        )
+        .expect("native requests must prepare");
+        assert_eq!(
+            jobs[0].prepared_txs[0].estimated_gas, 60_000,
+            "later transactions must carry the receipt-corrected estimate"
+        );
+    }
+
+    /// Priority-lead validity senders send the configured lead payload with its declared gas
+    /// limit; bulk validity senders stay on the weighted mix.
+    #[tokio::test]
+    async fn lead_payload_replaces_the_mix_for_priority_lead_senders_only() {
+        let counter = Address::repeat_byte(0xcc);
+        let config = crate::runner::LoadConfig {
+            account_count: 32,
+            transactions: vec![crate::runner::TxConfig {
+                weight: 100,
+                tx_type: crate::runner::TxType::DoubleCounter { contract: counter },
+            }],
+            validity_ratio: 1.0,
+            validity_predicates: vec![crate::runner::ValidityPredicateTemplate::BlockNumber {
+                op: base_execution_txpool::ValidityOperator::GreaterThanOrEqual,
+                bound: crate::runner::BlockNumberBound::Absolute(U256::ZERO),
+            }],
+            validity_priority_lead_ratio: 0.5,
+            validity_priority_lead_payload: Some(crate::runner::TxType::RevertArb {
+                contract: counter,
+                gas_limit: 2_000_000,
+            }),
+            ..crate::runner::LoadConfig::devnet()
+        };
+        config.validate().expect("lead payload config is valid");
+        let runner = LoadRunner::new(config.clone()).expect("runner must initialize");
+        let addresses: Vec<_> = runner.accounts.accounts().iter().map(|a| a.address).collect();
+        let (_, rx) = tokio::sync::watch::channel(1);
+        let (signed_chunk_tx, _) = mpsc::channel(1);
+        let (_, nonce_reset_rx) = mpsc::channel(1);
+        let presign = super::PresignConfig {
+            sender_addresses: addresses.clone(),
+            sender_next_nonces: vec![0; addresses.len()],
+            sender_generations: vec![0; addresses.len()],
+            signers: Arc::clone(&runner.signers),
+            nonce_managers: Arc::clone(&runner.nonce_managers),
+            chain_id: config.chain_id,
+            base_fee_rx: rx,
+            max_gas_price: config.max_gas_price,
+            validity_priority_lead_multiplier: 20,
+            validity_priority_fee_divisor: 1,
+            gas_estimate: super::GasEstimate::new(50_000),
+            fresh_recipient_ratio: 0.0,
+            signed_chunk_tx,
+            nonce_reset_rx,
+            validity_router: crate::runner::ValidityRouter::new(&config),
+            query_client: runner.client.clone(),
+        };
+        let lead_payload = config
+            .validity_priority_lead_payload
+            .as_ref()
+            .map(|tx_type| SelectedPayload::from_tx_type(tx_type, None));
+        let mut generator = runner.generator;
+        let mut keys = runner.recipient_keys;
+        let mut rng = crate::workload::SeededRng::new(42);
+
+        let jobs = LoadRunner::build_sender_jobs(
+            &mut generator,
+            lead_payload.as_ref(),
+            &mut keys,
+            &mut rng,
+            &presign,
+            2,
+            0,
+        )
+        .expect("requests must prepare");
+
+        let mut lead_txs = 0;
+        let mut bulk_txs = 0;
+        for job in &jobs {
+            for tx in &job.prepared_txs {
+                assert_eq!(tx.to, Some(counter), "both payloads target the counter");
+                assert_eq!(tx.estimated_gas, 50_000, "pacing keeps the calibrated estimate");
+                assert!(!tx.validity.is_empty(), "every sender is on the validity path");
+                match tx.cohort {
+                    SubmitCohort::ValidityPassPriorityLead => {
+                        lead_txs += 1;
+                        assert_eq!(
+                            tx.gas_limit, 2_000_000,
+                            "reverting arb keeps its declared limit"
+                        );
+                        assert_eq!(tx.data.as_ref(), &crate::workload::REVERT_ARB_SELECTOR);
+                    }
+                    SubmitCohort::ValidityPass => {
+                        bulk_txs += 1;
+                        assert_eq!(tx.gas_limit, crate::workload::DOUBLE_COUNTER_GAS_LIMIT);
+                        assert_eq!(
+                            tx.data,
+                            crate::workload::DoubleCounterPayload::encode_increment2()
+                        );
+                    }
+                    SubmitCohort::Plain => panic!("validity_ratio 1.0 leaves no plain senders"),
+                }
+            }
+        }
+        assert!(lead_txs > 0 && bulk_txs > 0, "seeded routing must populate both cohorts");
+        assert_eq!(lead_txs + bulk_txs, 64);
     }
 
     #[test]
@@ -2392,6 +2520,7 @@ mod tests {
                 from,
                 nonce: id,
                 gas_limit: 21_000,
+                priority_fee: 0,
                 estimated_gas: 21_000,
                 validity: Vec::new(),
                 cohort: SubmitCohort::Plain,
@@ -2502,7 +2631,7 @@ mod tests {
         assert_eq!(capped.inject_gas, 4_000_000_000, "sender capacity remains the tighter bound");
     }
 
-    /// Simulates delayed canonical acknowledgements without any flashblock pulses.
+    /// Simulates delayed canonical acknowledgements with no other inclusion pulses.
     fn canonical_simulation(block_time: Duration, adaptive: bool, rpc_stall: bool) -> (u128, u128) {
         let started = Instant::now();
         let controller =
@@ -2815,6 +2944,7 @@ mod tests {
             buffer: &mut presign_buffer,
             progress: &mut progress,
             base_fee_tx: &base_fee_tx,
+            gas_estimate: &super::GasEstimate::new(21_000),
         };
         let mut drain_state = EnqueueDrainState {
             submit_event_rx: &mut submit_event_rx,
@@ -2856,6 +2986,7 @@ mod tests {
                             number: 11,
                             observed_at: first_observed_at,
                             timestamp_ms: None,
+                            base_fee: 0,
                         },
                         Vec::new(),
                     );
@@ -2883,6 +3014,7 @@ mod tests {
                             number: 12,
                             observed_at: second_observed_at,
                             timestamp_ms: None,
+                            base_fee: 0,
                         },
                         Vec::new(),
                     );
@@ -2948,6 +3080,7 @@ mod tests {
                     buffer: &mut presign_buffer,
                     progress: &mut progress,
                     base_fee_tx: &base_fee_tx,
+                    gas_estimate: &super::GasEstimate::new(21_000),
                 },
                 BlockAlignedEnqueueConfig {
                     controller: MempoolDepthController::new(

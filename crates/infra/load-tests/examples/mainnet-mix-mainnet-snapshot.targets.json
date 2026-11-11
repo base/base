@@ -1,0 +1,39 @@
+{
+  "start": 52990042,
+  "end": 53292441,
+  "blocks": 10080,
+  "metrics": {
+    "gas_per_tx": {
+      "target": 179900.0,
+      "tolerance": 0.1
+    },
+    "heavy_tx_share": {
+      "target": 0.09896,
+      "tolerance": 0.1
+    },
+    "heavy_gas_share": {
+      "target": 0.5114,
+      "tolerance": 0.1
+    },
+    "calldata_bytes_per_tx": {
+      "target": 479.0,
+      "tolerance": 0.25
+    },
+    "logs_per_tx": {
+      "target": 3.83,
+      "tolerance": 0.25
+    },
+    "da_bytes_per_gas": {
+      "target": 0.00133,
+      "tolerance": 0.15
+    },
+    "new_accounts_per_gas": {
+      "target": null,
+      "tolerance": 0.25
+    },
+    "new_slots_per_gas": {
+      "target": null,
+      "tolerance": 0.25
+    }
+  }
+}

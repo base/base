@@ -3,9 +3,10 @@
 use std::sync::Arc;
 
 use base_builder_cli::Args as BuilderArgs;
-use base_builder_core::BuilderApiExtension;
+use base_builder_core::{
+    BuilderApiExtension, NativePayloadServiceBuilder, SequencerLeadershipProbe,
+};
 use base_builder_metering::MeteringStoreExtension;
-use base_builder_multiplex::MultiplexingServiceBuilder;
 use base_consensus_cli::{
     CliMetrics, ConsensusNodeArgs, ConsensusNodeConfigArgs, ConsensusNodeOverrides,
     ConsensusNodeStartOptions, EmbeddedSequencerConsensusNodeConfigArgs,
@@ -16,6 +17,7 @@ use base_execution_cli::{
     ExecutionNodeConfigArgs, StandardBaseRethNode, chainspec::chain_value_parser,
 };
 use base_node_runner::BaseNodeRunner;
+use base_observability_events::{GlobalTransactionEventWriter, TransactionEventGate};
 use base_shadow_indexer::{ShadowIndexerConfig, ShadowIndexerExtension};
 use base_txpool_rpc::{
     SendRawTransactionValidityConfig, SendRawTransactionValidityExtension, TxPoolRpcConfig,
@@ -25,6 +27,7 @@ use base_upgrade_signal::UpgradeSignalStartupMode;
 use clap::Args;
 use reth_cli_runner::CliRunner;
 use tokio_util::sync::CancellationToken;
+use tracing::warn;
 
 use crate::config::ResolvedChainConfig;
 
@@ -39,7 +42,7 @@ pub(crate) struct SequencerCommand {
     #[command(flatten)]
     pub(crate) execution: ExecutionNodeConfigArgs,
 
-    /// Embedded builder and Flashblocks arguments.
+    /// Embedded builder arguments.
     #[command(flatten)]
     pub(crate) builder: BuilderArgs,
 
@@ -64,6 +67,23 @@ impl SequencerCommand {
             .upgrade_signal_l1_rpc
             .apply_default_from(&consensus_config.l1_rpc_args.l1_eth_rpc);
         consensus_config.upgrade_signal = builder.rollup_args.upgrade_signal.clone();
+        // The consensus node runs in this process, so its own admin API answers whether this
+        // sequencer is active unless a consensus URL is configured explicitly.
+        let transaction_events = builder.transaction_events.clone();
+        let leadership_config = transaction_events
+            .leadership_config(consensus_config.rpc_flags.local_admin_url())
+            .filter(|_| transaction_events.enabled);
+        if transaction_events.enabled && leadership_config.is_none() {
+            // Journaling must not keep a sequencer from starting, but an ungated journal on a
+            // standby repeats the leader's rows, so say so where the operator will see it.
+            warn!(
+                rpc_disabled = consensus_config.rpc_flags.rpc_disabled,
+                enable_admin = consensus_config.rpc_flags.enable_admin,
+                "transaction event journal is not gated on sequencer leadership: the embedded \
+                 consensus admin RPC is unavailable and no consensus URL is configured; every \
+                 sequencer, standbys included, journals"
+            );
+        }
         let consensus_args = ConsensusNodeArgs::new(consensus_chain, consensus_config);
         let mut rollup_config = consensus_args.load_rollup_config()?;
         Arc::make_mut(&mut execution_chain).block_time = Some(rollup_config.block_time);
@@ -73,18 +93,30 @@ impl SequencerCommand {
         let metering_provider: base_builder_core::SharedMeteringProvider =
             Arc::new(builder.build_metering_store());
         let builder_api_config = builder.builder_api_config();
+        // This command builds its `BaseNodeRunner` directly, so it initializes the builder's
+        // transaction event journal itself. The gate keeps the journal to the active sequencer.
+        // A probed gate starts closed: execution serves RPC before the embedded consensus node
+        // can answer, and a sequencer cannot be active before that, so an open gate would only
+        // let every standby journal during startup.
+        let transaction_event_gate = TransactionEventGate::new(leadership_config.is_none());
+        GlobalTransactionEventWriter::init_gated(
+            transaction_events.enabled.then(|| transaction_events.writer_config()),
+            transaction_event_gate.clone(),
+        )?;
         // Build the shadow-indexer config before `into_builder_config` consumes `builder`. The
         // config carries an `enabled` flag (false unless ENABLE_SHADOW_INDEXER is set), so the
         // ExEx is installed unconditionally and no-ops for non-shadow sequencers.
         let shadow_indexer_config = ShadowIndexerConfig::try_from(&builder.shadow_indexer)?;
-        let payload_builder_cutover = builder.payload_builder_cutover;
-        let basic_payload_builder = builder.basic_payload_builder;
         let builder_config = builder.into_builder_config(Arc::clone(&metering_provider))?;
         let da_config = builder_config.da_config.clone();
         let gas_limit_config = builder_config.gas_limit_config.clone();
         let manifest_precheck_enabled = builder_config.manifest_precheck_enabled;
 
         CliRunner::try_default_runtime()?.run_command_until_exit(|ctx| async move {
+            // Lives until the node stops; dropping it stops the leadership polling.
+            let _leadership_probe = leadership_config
+                .map(|config| SequencerLeadershipProbe::spawn(config, transaction_event_gate))
+                .transpose()?;
             rollup_args
                 .upgrade_signal
                 .apply_startup_to_sinks(
@@ -107,11 +139,7 @@ impl SequencerCommand {
                 .with_da_config(da_config)
                 .with_gas_limit_config(gas_limit_config)
                 .with_manifest_precheck_enabled(manifest_precheck_enabled)
-                .with_service_builder(
-                    MultiplexingServiceBuilder::new(builder_config)
-                        .with_cutover_enabled(payload_builder_cutover)
-                        .with_basic_only(basic_payload_builder),
-                );
+                .with_service_builder(NativePayloadServiceBuilder::new(builder_config));
             runner.install_ext::<MeteringStoreExtension>(Arc::clone(&metering_provider));
             runner.install_ext::<TxPoolRpcExtension>(TxPoolRpcConfig { sequencer_rpc });
             runner.install_ext::<BuilderApiExtension>(
@@ -214,10 +242,8 @@ mod tests {
             "30333",
             "--rpc.port",
             "9546",
-            "--builder.max_gas_per_txn",
-            "30000000",
-            "--flashblocks.port",
-            "1112",
+            "--builder.predicate-eval-hard-cutoff-ms",
+            "25",
             "--rollup.sequencer",
             "http://localhost:8545",
             "--rollup.sequencer-headers",
@@ -235,8 +261,7 @@ mod tests {
 
         assert_eq!(sequencer.execution.network.port, 30333);
         assert_eq!(sequencer.consensus.rpc_flags.listen_port, 9546);
-        assert_eq!(sequencer.builder.max_gas_per_txn, Some(30_000_000));
-        assert_eq!(sequencer.builder.flashblocks.flashblocks_port, 1112);
+        assert_eq!(sequencer.builder.predicate_eval_hard_cutoff_ms, 25);
         assert_eq!(
             sequencer.builder.rollup_args.sequencer.as_deref(),
             Some("http://localhost:8545")

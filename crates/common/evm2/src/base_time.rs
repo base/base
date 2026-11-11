@@ -2,7 +2,7 @@
 
 use alloy_primitives::{Address, B256, Bytes, U256, address, b256, hex, uint};
 use base_common_consensus::Predeploys;
-use base_common_genesis::BaseUpgrade;
+use base_common_genesis::BaseFeature;
 use evm2::{
     AccountInfo, Evm,
     bytecode::Bytecode,
@@ -88,7 +88,7 @@ impl BaseTime {
         evm: &mut Evm<'_, BaseEvmTypes>,
         block_state: &mut BlockStateAccumulator,
     ) -> HandlerResult<()> {
-        if !chain_spec.is_active_at_timestamp(BaseUpgrade::Denim, timestamp) {
+        if !chain_spec.is_feature_active_at_timestamp(BaseFeature::SubsecondBlocks, timestamp) {
             return Ok(());
         }
 

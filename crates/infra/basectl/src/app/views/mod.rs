@@ -15,9 +15,6 @@ pub use da_monitor::DaMonitorView;
 mod factory;
 pub use factory::create_view;
 
-mod flashblocks;
-pub use flashblocks::FlashblocksView;
-
 mod home;
 pub use home::HomeView;
 

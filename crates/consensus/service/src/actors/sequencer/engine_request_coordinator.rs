@@ -31,7 +31,6 @@ use crate::{
     ResetRequestOutcome, actors::engine::ResetOutcome,
 };
 
-const MAX_SEQUENCER_EXTERNAL_UNSAFE_GAP: u64 = 300;
 const SEQUENCER_EL_SYNC_PROBE_INTERVAL: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -104,6 +103,9 @@ where
     sequencer_stopped: bool,
     sequencer_kind: SequencerKind,
     unsafe_head_tx: watch::Sender<base_protocol::L2BlockInfo>,
+    /// Recent canonical payloads retained during catch-up, and the largest gap between the unsafe
+    /// head and external gossip still admitted while regular. Both span the same wall-clock window.
+    catchup_capacity: usize,
 }
 
 impl<EngineClient_, DerivationClient>
@@ -120,10 +122,13 @@ where
         sequencer_stopped: bool,
         unsafe_head_tx: watch::Sender<base_protocol::L2BlockInfo>,
     ) -> Self {
+        let catchup_capacity = CanonicalUnsafeCatchup::max_payloads_for(processor.rollup());
         Self {
             processor,
             sequencer_state: if mode.is_isolated() {
-                SequencerEngineState::CatchingUp { catchup: CanonicalUnsafeCatchup::default() }
+                SequencerEngineState::CatchingUp {
+                    catchup: CanonicalUnsafeCatchup::new(catchup_capacity),
+                }
             } else {
                 SequencerEngineState::Regular
             },
@@ -131,6 +136,7 @@ where
             sequencer_stopped,
             sequencer_kind: mode.into(),
             unsafe_head_tx,
+            catchup_capacity,
         }
     }
 
@@ -363,7 +369,7 @@ where
             match &mut self.sequencer_state {
                 SequencerEngineState::ShadowActive(gate) => gate.reanchor(anchor),
                 SequencerEngineState::CatchingUp { catchup } => {
-                    *catchup = CanonicalUnsafeCatchup::default();
+                    *catchup = CanonicalUnsafeCatchup::new(self.catchup_capacity);
                 }
                 SequencerEngineState::Regular | SequencerEngineState::IsolatedActive => {}
             }
@@ -429,15 +435,22 @@ where
         }
     }
 
-    async fn advance_canonical_catchup(&mut self) -> Result<(), EngineError> {
+    /// Applies one bounded batch of the buffered canonical suffix.
+    ///
+    /// Returns whether more buffered payloads may remain, so the caller can serve queued requests
+    /// between batches instead of blocking on one long run.
+    async fn advance_canonical_catchup(&mut self) -> Result<bool, EngineError> {
         let anchor = self.processor.engine_state().sync_state.unsafe_head();
         let payloads = match &mut self.sequencer_state {
-            SequencerEngineState::CatchingUp { catchup } => catchup.contiguous_payloads(anchor),
-            _ => return Ok(()),
+            SequencerEngineState::CatchingUp { catchup } => {
+                catchup.contiguous_payloads(anchor, CanonicalUnsafeCatchup::MAX_APPLY_BATCH)
+            }
+            _ => return Ok(false),
         };
         if payloads.is_empty() {
-            return Ok(());
+            return Ok(false);
         }
+        let more_pending = payloads.len() == CanonicalUnsafeCatchup::MAX_APPLY_BATCH;
 
         debug!(
             target: "engine",
@@ -459,6 +472,7 @@ where
                 if let SequencerEngineState::CatchingUp { catchup } = &mut self.sequencer_state {
                     catchup.commit(head);
                 }
+                Ok(more_pending)
             }
             Err(error) => {
                 debug!(
@@ -467,15 +481,14 @@ where
                     severity = ?error.severity(),
                     "Ordered canonical unsafe payload application deferred"
                 );
-                return match error.severity() {
+                match error.severity() {
                     EngineTaskErrorSeverity::Temporary | EngineTaskErrorSeverity::Deferred => {
-                        Ok(())
+                        Ok(false)
                     }
                     _ => Err(EngineError::CriticalEngineTask(format!("{error:?}"))),
-                };
+                }
             }
         }
-        Ok(())
     }
 }
 
@@ -523,7 +536,7 @@ where
                     (SequencerKind::Shadow, _, _)
                     | (_, BootstrapRole::ConductorFollower, false) => {
                         SequencerEngineState::CatchingUp {
-                            catchup: CanonicalUnsafeCatchup::default(),
+                            catchup: CanonicalUnsafeCatchup::new(self.catchup_capacity),
                         }
                     }
                     (kind, _, _) => {
@@ -578,11 +591,11 @@ where
                     }
                     if let SequencerEngineState::CatchingUp { catchup } = &mut self.sequencer_state
                     {
-                        *catchup = CanonicalUnsafeCatchup::default();
+                        *catchup = CanonicalUnsafeCatchup::new(self.catchup_capacity);
                     }
                 }
 
-                self.advance_canonical_catchup().await?;
+                let more_catchup_pending = self.advance_canonical_catchup().await?;
 
                 // If the unsafe head has updated, propagate it to the outbound channels.
                 self.unsafe_head_tx.send_if_modified(|val| {
@@ -598,7 +611,18 @@ where
                 let recv_wait_timer = base_metrics::timed!(
                     EngineMetrics::engine_processor_recv_wait_duration_seconds()
                 );
-                let recv_result = if (self.processor.engine_state().el_sync_finished
+                let recv_result = if more_catchup_pending {
+                    // Serve any queued request, then continue the next catch-up batch without
+                    // waiting for new traffic.
+                    match request_channel.try_recv() {
+                        Ok(request) => Some(request),
+                        Err(mpsc::error::TryRecvError::Empty) => {
+                            drop(recv_wait_timer);
+                            continue;
+                        }
+                        Err(mpsc::error::TryRecvError::Disconnected) => None,
+                    }
+                } else if (self.processor.engine_state().el_sync_finished
                     && self.sequencer_kind != SequencerKind::Isolated)
                     || self.is_isolated_active()
                 {
@@ -769,18 +793,19 @@ where
                                 let block_number = envelope.execution_payload.block_number();
                                 let unsafe_head =
                                     self.processor.engine_state().sync_state.unsafe_head();
+                                let max_external_unsafe_gap = self.catchup_capacity as u64;
                                 let block_gap =
                                     block_number.checked_sub(unsafe_head.block_info.number);
-                                if block_gap.is_some_and(|gap| {
-                                    gap > 0 && gap <= MAX_SEQUENCER_EXTERNAL_UNSAFE_GAP
-                                }) {
+                                if block_gap
+                                    .is_some_and(|gap| gap > 0 && gap <= max_external_unsafe_gap)
+                                {
                                     info!(
                                         target: "engine",
                                         block_number,
                                         block_hash = %envelope.execution_payload.block_hash(),
                                         parent_hash = %envelope.execution_payload.parent_hash(),
                                         block_gap = ?block_gap,
-                                        max_external_unsafe_gap = MAX_SEQUENCER_EXTERNAL_UNSAFE_GAP,
+                                        max_external_unsafe_gap,
                                         "Sequencer enqueuing external unsafe payload within gap limit"
                                     );
                                     self.processor
@@ -792,7 +817,7 @@ where
                                         block_hash = %envelope.execution_payload.block_hash(),
                                         parent_hash = %envelope.execution_payload.parent_hash(),
                                         block_gap = ?block_gap,
-                                        max_external_unsafe_gap = MAX_SEQUENCER_EXTERNAL_UNSAFE_GAP,
+                                        max_external_unsafe_gap,
                                         unsafe_head_number = unsafe_head.block_info.number,
                                         unsafe_head_hash = %unsafe_head.block_info.hash,
                                         "Sequencer dropped external unsafe payload outside gap limit"
@@ -998,6 +1023,44 @@ mod tests {
             .await
             .expect("startup timed out")
             .expect("startup response")
+    }
+
+    #[rstest]
+    #[case::beyond_legacy_gap(301, true)]
+    #[case::within_catchup_window(2_999, true)]
+    #[case::beyond_catchup_window(3_001, false)]
+    #[tokio::test]
+    async fn regular_gossip_gap_spans_the_catchup_window(#[case] gap: u64, #[case] admitted: bool) {
+        let coordinator = coordinator(false, false, None);
+        let client = Arc::clone(coordinator.processor.client());
+        let (request_tx, request_rx) = mpsc::channel(8);
+        let handle = coordinator.start(request_rx);
+
+        request_tx
+            .send(EngineActorRequest::ProcessUnsafeL2BlockRequest(Box::new(payload(gap, 1))))
+            .await
+            .expect("gossip request");
+        // Requests are handled in order, so a following barrier means the gossip was handled.
+        let (result_tx, mut result_rx) = mpsc::channel(1);
+        request_tx
+            .send(EngineActorRequest::PrepareSequencerStart {
+                expected_hash: B256::with_last_byte(1),
+                result_tx,
+            })
+            .await
+            .expect("request barrier");
+        // The reply may be deferred while an admitted insert is in flight; only ordering matters.
+        let _ = tokio::time::timeout(Duration::from_millis(500), result_rx.recv()).await;
+        // An admitted insert reaches the engine asynchronously.
+        for _ in 0..300 {
+            if client.last_new_payload_v2().await.is_some() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        handle.abort();
+
+        assert_eq!(client.last_new_payload_v2().await.is_some(), admitted);
     }
 
     #[rstest]

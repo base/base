@@ -5,7 +5,7 @@ use alloy_consensus::Header;
 use alloy_eips::{BlockNumHash, eip7840::BlobParams};
 use alloy_genesis::ChainConfig;
 use alloy_primitives::{Address, B256, Bytes, Sealable, Sealed, TxKind, U256};
-use base_common_genesis::{BaseUpgrade, RollupConfig, SystemConfig};
+use base_common_genesis::{BaseFeature, RollupConfig, SystemConfig};
 
 use crate::{
     BlockInfoError, DecodeError, DepositSourceDomain, L1BlockInfoBedrock, L1BlockInfoEcotone,
@@ -50,8 +50,12 @@ impl L1BlockInfoTx {
         // In the first block of Ecotone, the L1Block contract has not been upgraded yet due to the
         // upgrade transactions being placed after the L1 info transaction. Because of this,
         // for the first block of Ecotone, we send a Bedrock style L1 block info transaction
-        if !rollup_config.is_ecotone_active(l2_block_time)
-            || rollup_config.is_first_ecotone_block(l2_block_time, l2_parent_block_time)
+        if !rollup_config.is_feature_active_cascading(BaseFeature::BlobAwareL1Fees, l2_block_time)
+            || rollup_config.is_feature_activation_block_cascading(
+                BaseFeature::BlobAwareL1Fees,
+                l2_block_time,
+                l2_parent_block_time,
+            )
         {
             return Ok(Self::Bedrock(L1BlockInfoBedrock::new(
                 l1_header.number,
@@ -85,13 +89,14 @@ impl L1BlockInfoTx {
         // parameters.
         let blob_fee_params = l1_config.blob_schedule_blob_params();
 
-        let blob_fee_config =
-            match blob_fee_params.active_scheduled_params_at_timestamp(l1_header.timestamp) {
-                Some(blob_fee_param) => *blob_fee_param,
-                None if l1_config.osaka_time.is_some_and(|time| time <= l1_header.timestamp) => {
-                    BlobParams::osaka()
-                }
-                None if l1_config
+        let blob_fee_config = match blob_fee_params
+            .active_scheduled_params_at_timestamp(l1_header.timestamp)
+        {
+            Some(blob_fee_param) => *blob_fee_param,
+            None if l1_config.osaka_time.is_some_and(|time| time <= l1_header.timestamp) => {
+                BlobParams::osaka()
+            }
+            None if l1_config
                     .prague_time.is_some_and(|time| time <= l1_header.timestamp) &&
                     // There was an incident on the Base Sepolia chain (03-05-2025) when L1 activated pectra,
                     // where the sequencer followed the incorrect chain, using the legacy Cancun blob fee
@@ -102,21 +107,25 @@ impl L1BlockInfoTx {
                     // not present, and L1 has activated pectra, the Prague blob fee schedule is used
                     // immediately.
                     (rollup_config
-                        .upgrade_activation_timestamp(BaseUpgrade::PectraBlobSchedule)
+                        .configured_feature_activation_timestamp(BaseFeature::BlobScheduleCorrection)
                         .is_none() ||
-                        rollup_config.is_pectra_blob_schedule_active(l1_header.timestamp)) =>
-                {
-                    BlobParams::prague()
-                }
-                _ => BlobParams::cancun(),
-            };
+                        rollup_config.is_feature_active_cascading(BaseFeature::BlobScheduleCorrection, l1_header.timestamp)) =>
+            {
+                BlobParams::prague()
+            }
+            _ => BlobParams::cancun(),
+        };
 
         let blob_base_fee = l1_header.blob_fee(blob_fee_config).unwrap_or(1);
         let block_hash = l1_header.hash_slow();
         let base_fee = l1_header.base_fee_per_gas.unwrap_or(0);
 
-        if rollup_config.is_jovian_active(l2_block_time)
-            && !rollup_config.is_first_jovian_block(l2_block_time, l2_parent_block_time)
+        if rollup_config.is_feature_active_cascading(BaseFeature::DaFootprint, l2_block_time)
+            && !rollup_config.is_feature_activation_block_cascading(
+                BaseFeature::DaFootprint,
+                l2_block_time,
+                l2_parent_block_time,
+            )
         {
             let operator_fee_scalar = system_config.operator_fee_scalar.unwrap_or_default();
             let operator_fee_constant = system_config.operator_fee_constant.unwrap_or_default();
@@ -144,8 +153,12 @@ impl L1BlockInfoTx {
             )));
         }
 
-        if rollup_config.is_isthmus_active(l2_block_time)
-            && !rollup_config.is_first_isthmus_block(l2_block_time, l2_parent_block_time)
+        if rollup_config.is_feature_active_cascading(BaseFeature::OperatorFee, l2_block_time)
+            && !rollup_config.is_feature_activation_block_cascading(
+                BaseFeature::OperatorFee,
+                l2_block_time,
+                l2_parent_block_time,
+            )
         {
             let operator_fee_scalar = system_config.operator_fee_scalar.unwrap_or_default();
             let operator_fee_constant = system_config.operator_fee_constant.unwrap_or_default();
@@ -229,7 +242,9 @@ impl L1BlockInfoTx {
 
         // With the regolith upgrade, system transactions were deprecated, and we allocate
         // a constant amount of gas for special transactions like L1 block info.
-        if rollup_config.is_regolith_active(l2_block_time) {
+        if rollup_config
+            .is_feature_active_cascading(BaseFeature::DepositGasAccounting, l2_block_time)
+        {
             deposit_tx.is_system_transaction = false;
             deposit_tx.gas_limit = REGOLITH_SYSTEM_TX_GAS;
         }
@@ -473,7 +488,7 @@ mod tests {
 
     use alloy_primitives::{address, b256};
     use base_common_chains::Sepolia;
-    use base_common_genesis::{RuntimeUpgradeRegistry, UpgradeConfig};
+    use base_common_genesis::{BaseUpgrade, RuntimeUpgradeRegistry, UpgradeConfig};
     use rstest::rstest;
 
     use super::*;

@@ -73,8 +73,8 @@ simulation nodes.
 
 ## `base sequencer`
 
-`base sequencer` starts a sequencing node by launching an embedded execution node, embedded
-Flashblocks builder, and embedded consensus node in the same process. The consensus node calls the
+`base sequencer` starts a sequencing node by launching an embedded execution node, embedded block
+builder, and embedded consensus node in the same process. The consensus node calls the
 execution node's Engine API handlers in memory, with no socket, IPC, or JWT in between. Engine API
 calls also skip JSON-RPC encoding; L2 reads are still dispatched as JSON-RPC into the auth module.
 
@@ -97,7 +97,15 @@ Useful sequencer-specific flags include:
 - `--sequencer.recover` enables recovery mode and forces empty block production.
 - `--conductor.rpc` enables conductor-backed leader checks.
 - `--conductor.binary-commit` uses the conductor binary commit endpoint.
-- `--flashblocks.port` selects the Flashblocks websocket port.
+- `--builder.transaction-events.enabled` journals the builder's transaction events. Because the
+  consensus node runs in the same process, the journal is gated on its own `admin_sequencerActive`
+  (requires `--rpc.enable-admin`) without setting `--builder.transaction-events.consensus-url`.
+  The gate starts closed and opens on the first `true` answer, so a restarted standby journals
+  nothing while its consensus node comes up.
+  With the admin API or RPC server disabled, an ephemeral `--rpc.port 0`, and no explicit URL,
+  startup logs a warning and every sequencer journals, standbys included. The gate covers every
+  event the process journals, including `TXPOOL_SEND_RAW_TRANSACTION*` for transactions submitted
+  to the sequencer directly.
 
 ## `base dev`
 
@@ -116,15 +124,15 @@ Foundry `cast` and `jq`. See [CONTRIBUTING.md](../../CONTRIBUTING.md) for develo
 bare `just devnet snapshot` lists the commands.
 
 **Use disposable data, never a running node's datadir or your only mainnet copy.** Development blocks
-and minted balances permanently diverge from mainnet. To return to mainnet, restore a clean backup;
-deleting `base-dev.json` does not undo execution. Only one process may open the database for writing.
+and minted balances permanently diverge from mainnet. To return to mainnet, restore a clean backup.
+Only one process may open the database for writing.
 
 `base dev` continues an existing snapshot datadir as a local chain: an embedded execution node and
 an L1-free standalone sequencer in one process, connected in memory. It never creates,
 downloads, or reinitializes data. Discovery and peers are disabled, and HTTP and WS RPC listen on
-loopback. A pre-Denim head gets Denim at its next block; the schedule and snapshot head are saved to
-`base-dev.json` in the datadir before the first block and restored on restart. Block timestamps
-continue from the snapshot.
+loopback. The snapshot head must be past Denim; block timestamps continue from it on the chain's
+Denim schedule. Datadirs from an older `base dev` that activated Denim locally cannot be resumed;
+download a current snapshot.
 
 HTTP defaults to `http://127.0.0.1:8545`, WS to `ws://127.0.0.1:8546`; both expose ordinary `eth_*`,
 `debug_*`, and `trace_*` methods. Keep these unauthenticated endpoints private: impersonation can act
@@ -209,11 +217,6 @@ Its receipt has type `0x7e`, `effectiveGasPrice` zero, and `from` set to the imp
 and each request increments that account's nonce. Use signed transactions to test admission and
 fees. The dev chain keeps the snapshot's chain ID, so a transaction signed here is also valid on that
 network: act as real accounts through impersonation and sign only with throwaway keys.
-
-**The receipt's `contractAddress` is wrong for impersonated contract creations.** The code is
-deployed at `create(from, nonce)`, using the sender's nonce before the request, but the receipt
-reports the address for nonce zero. Read the nonce first (`cast nonce <from>`), then compute the
-address with `cast compute-address <from> --nonce <nonce>`.
 
 A returned hash means the request is queued, not mined. Requests are added in order after the
 system deposits of the next block with enough gas, alongside ordinary pool transactions. Poll

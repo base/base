@@ -1,10 +1,11 @@
 //! Stateful 2D nonce validation: resolve the channel implied by `nonce_key` and
 //! compare the transaction's `nonce_sequence` against the live nonce state.
+//! Also enforces that a transaction carrying a delegation uses the protocol nonce.
 
 use core::cmp::Ordering;
 
-use alloy_primitives::{Address, B256, U256};
-use base_common_consensus::{Eip8130Constants, TxEip8130};
+use alloy_primitives::{Address, U256};
+use base_common_consensus::{AccountChange, Eip8130Constants, TxEip8130};
 use base_common_precompiles::NonceManagerStorage;
 
 use crate::NonceError;
@@ -54,7 +55,8 @@ impl NonceValidator {
     ///
     /// Returns [`NonceStatus::Ready`] when the transaction may execute now,
     /// [`NonceStatus::Buffered`] when a pool transaction is ahead of its channel,
-    /// or a [`NonceError`] for a stale, gapped (inclusion), or replayed nonce.
+    /// or a [`NonceError`] for a stale, gapped (inclusion), or replayed nonce, or
+    /// for a delegation off the protocol nonce.
     pub fn validate(
         tx: &TxEip8130,
         account: Address,
@@ -63,6 +65,19 @@ impl NonceValidator {
         mode: NonceMode,
         now: u64,
     ) -> Result<NonceStatus, NonceError> {
+        // A delegation must consume the protocol nonce, so a delegated account
+        // always ends with a non-zero account nonce (as with EIP-7702) and
+        // EIP-161 never treats it as empty. On a 2D channel or nonce-free, the
+        // account nonce would stay untouched.
+        if tx.nonce_key != U256::ZERO
+            && tx
+                .account_changes
+                .iter()
+                .any(|change| matches!(change, AccountChange::Delegation(_)))
+        {
+            return Err(NonceError::DelegationRequiresProtocolNonce);
+        }
+
         if tx.nonce_key == Eip8130Constants::NONCE_KEY_MAX {
             // Nonce-free: no sequence channel, so `nonce_sequence` must be zero.
             // Checked here rather than only in pool admission so inclusion
@@ -72,7 +87,7 @@ impl NonceValidator {
             if tx.nonce_sequence != 0 {
                 return Err(NonceError::NonceFreeSequence { got: tx.nonce_sequence });
             }
-            let replay = Self::replay_hash(tx, account);
+            let replay = tx.replay_id(account);
             if storage.is_expiring_nonce_seen(replay, now)? {
                 return Err(NonceError::Replay);
             }
@@ -112,21 +127,12 @@ impl NonceValidator {
             },
         }
     }
-
-    /// The transaction's signature- and fee-invariant replay identifier.
-    ///
-    /// Public so the execution layer can recompute the identical key when it
-    /// records the nonce via `check_and_mark_expiring_nonce` at block inclusion,
-    /// rather than duplicating the derivation and risking divergence.
-    #[must_use]
-    pub fn replay_hash(tx: &TxEip8130, account: Address) -> B256 {
-        tx.replay_id(account)
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, address};
+    use base_common_consensus::Delegation;
     use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
 
     use super::*;
@@ -262,7 +268,7 @@ mod tests {
     fn nonce_free_replay_is_rejected() {
         let now_secs = 1_000u64;
         let tx = tx_with(Eip8130Constants::NONCE_KEY_MAX, 0);
-        let replay = NonceValidator::replay_hash(&tx, ACCOUNT);
+        let replay = tx.replay_id(ACCOUNT);
         // `valid_before` is milliseconds and must fall in
         // `(now_secs * 1000, now_secs * 1000 + NONCE_FREE_EXPIRY_WINDOW]`.
         let valid_before = now_secs * 1_000 + 20_000;
@@ -279,6 +285,46 @@ mod tests {
             assert_eq!(
                 check(&tx, 0, mode, 1_000, |_| {}),
                 Err(NonceError::NonceFreeSequence { got: 1 })
+            );
+        }
+    }
+
+    fn delegation_tx(nonce_key: U256, nonce_sequence: u64) -> TxEip8130 {
+        TxEip8130 {
+            account_changes: vec![AccountChange::Delegation(Delegation {
+                target: address!("0x2222222222222222222222222222222222222222"),
+            })],
+            ..tx_with(nonce_key, nonce_sequence)
+        }
+    }
+
+    #[test]
+    fn delegation_on_protocol_nonce_is_ready() {
+        for mode in [NonceMode::Pool, NonceMode::Inclusion] {
+            assert_eq!(
+                check(&delegation_tx(U256::ZERO, 0), 0, mode, 0, |_| {}),
+                Ok(NonceStatus::Ready)
+            );
+        }
+    }
+
+    /// A delegation off the protocol nonce is rejected in both modes, even when
+    /// its 2D sequence matches the channel or its nonce-free replay hash is
+    /// unseen.
+    #[test]
+    fn delegation_off_protocol_nonce_is_rejected() {
+        let key = U256::from(7u64);
+        let seed = |mgr: &mut NonceManagerStorage<'_>| {
+            mgr.increment_nonce(ACCOUNT, key).unwrap();
+        };
+        for mode in [NonceMode::Pool, NonceMode::Inclusion] {
+            assert_eq!(
+                check(&delegation_tx(key, 1), 0, mode, 1_000, seed),
+                Err(NonceError::DelegationRequiresProtocolNonce)
+            );
+            assert_eq!(
+                check(&delegation_tx(Eip8130Constants::NONCE_KEY_MAX, 0), 0, mode, 1_000, |_| {}),
+                Err(NonceError::DelegationRequiresProtocolNonce)
             );
         }
     }

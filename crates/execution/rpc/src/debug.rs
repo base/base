@@ -229,7 +229,7 @@ where
                         .await
                         .map_err(PayloadBuilderError::other)?;
 
-                    let builder = Builder::new(|_| {
+                    let builder = Builder::new(|_, _| {
                         NoopPayloadTransactions::<BasePooledTransaction>::default()
                     });
 

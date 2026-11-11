@@ -16,8 +16,6 @@ pub struct L2ContainerConfig {
     pub builder_auth_port: Option<u16>,
     /// L2 Builder P2P port
     pub builder_p2p_port: Option<u16>,
-    /// L2 Builder Flashblocks port
-    pub builder_flashblocks_port: Option<u16>,
 
     /// L2 Client HTTP RPC port
     pub client_http_port: Option<u16>,

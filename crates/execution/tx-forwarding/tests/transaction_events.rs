@@ -71,7 +71,6 @@ async fn mempool(builder_urls: Vec<Url>) -> Result<TestHarness> {
             tracing_enabled: true,
             tracing_logs_enabled: false,
             transaction_event_node_role: None,
-            flashblocks_config: None,
         })
         .with_ext::<SendRawTransactionValidityExtension>(SendRawTransactionValidityConfig::default())
         .with_ext::<TxForwardingExtension>(
@@ -186,7 +185,8 @@ async fn unreachable_builder_journals_each_retry_and_the_drop() -> Result<()> {
 }
 
 /// A builder that already holds the transaction, as after an earlier send, rejects the insert.
-/// The builder journals the rejection and the node journals the failed send.
+/// The builder journals the rejection; the node journals nothing for it, since every builder
+/// receives the transaction and only the builder's own verdict decides inclusion.
 #[tokio::test]
 async fn builder_rejection_is_journaled_by_both_sides() -> Result<()> {
     let (builder, url) = builder().await?;
@@ -205,7 +205,6 @@ async fn builder_rejection_is_journaled_by_both_sides() -> Result<()> {
             "base-reth-node TXPOOL_SEND_RAW_TRANSACTION",
             "base-reth-node TXPOOL_PENDING",
             "base-builder TXPOOL_VALIDATED_INSERT_REJECTED",
-            "base-reth-node TXPOOL_BUILDER_FORWARD_FAILURE attempt=0",
         ],
     )
     .await;

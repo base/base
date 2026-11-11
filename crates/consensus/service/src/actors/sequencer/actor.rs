@@ -7,7 +7,7 @@ use std::{
 
 use alloy_primitives::B256;
 use async_trait::async_trait;
-use base_common_genesis::RollupConfig;
+use base_common_genesis::{BaseFeature, RollupConfig};
 use base_consensus_derive::AttributesBuilder;
 use base_consensus_rpc::SequencerAdminAPIError;
 use base_protocol::{L2BlockInfo, to_system_config_from_payload};
@@ -366,7 +366,10 @@ where
         last_seal_duration: Duration,
     ) -> SystemTime {
         let target = self.block_deadline(block_number);
-        if self.rollup_config.is_denim_active(self.rollup_config.l2_block_timestamp(block_number)) {
+        if self.rollup_config.is_feature_active_cascading(
+            BaseFeature::SubsecondBlocks,
+            self.rollup_config.l2_block_timestamp(block_number),
+        ) {
             let interval =
                 Duration::from_millis(RollupConfig::NATIVE_SUBSECOND_BLOCK_INTERVAL_MILLIS);
             return target - interval.saturating_sub(self.seal_offset);

@@ -1,7 +1,7 @@
 use alloy_evm::precompiles::PrecompilesMap;
 use alloy_primitives::Address;
 use base_common_chains::BaseUpgradeExt;
-use base_common_genesis::BaseUpgrade;
+use base_common_genesis::{BaseFeature, BaseUpgrade};
 use base_precompile_storage::StorageFeatures;
 use revm::{
     handler::EthPrecompiles,
@@ -37,30 +37,38 @@ impl<S: BasePrecompileSpec> BasePrecompiles<S> {
     /// Call [`Self::install`] before using the set for EVM execution.
     #[inline]
     pub fn new_with_spec(spec: S) -> Self {
-        let precompiles = match spec.upgrade() {
-            BaseUpgrade::Bedrock
-            | BaseUpgrade::Regolith
-            | BaseUpgrade::Canyon
-            | BaseUpgrade::Delta
-            | BaseUpgrade::Ecotone => Precompiles::new(Self::eth_spec(spec.upgrade()).into()),
-            BaseUpgrade::Fjord => Self::fjord(),
-            BaseUpgrade::Granite | BaseUpgrade::Holocene | BaseUpgrade::PectraBlobSchedule => {
-                Self::granite()
+        let upgrade = spec.upgrade();
+        // Cache each resolved execution spec once. Feature selection and table cloning stay
+        // out of the per-EVM hot path, while each Base rule remains independently selected.
+        static INSTANCES: [OnceLock<Precompiles>; BaseUpgrade::VARIANTS.len()] =
+            [const { OnceLock::new() }; BaseUpgrade::VARIANTS.len()];
+        let precompiles = INSTANCES[upgrade as usize].get_or_init(|| {
+            let mut precompiles = Precompiles::new(Self::eth_spec(upgrade).into()).clone();
+            if upgrade.is_feature_enabled(BaseFeature::RepricedP256Precompile) {
+                precompiles.extend([secp256r1::P256VERIFY_OSAKA]);
+            } else if upgrade.is_feature_enabled(BaseFeature::Rip7212Precompile) {
+                precompiles.extend([secp256r1::P256VERIFY]);
             }
-            BaseUpgrade::Isthmus => Self::isthmus(),
-            BaseUpgrade::Jovian => Self::jovian(),
-            BaseUpgrade::Azul => Self::azul(),
-            BaseUpgrade::Beryl => Self::beryl(),
-            // Denim, Everest, and Zenith introduce no new precompiles, so they inherit the Cobalt mapping
-            // and evolve with the newest hardfork (keep them grouped with the latest arm).
-            // Activation is governed separately by the genesis upgrade schedule and
-            // execution-code gates — this arm only describes the precompile set.
-            BaseUpgrade::Cobalt
-            | BaseUpgrade::Denim
-            | BaseUpgrade::Everest
-            | BaseUpgrade::Zenith => Self::cobalt(),
-            upgrade => panic!("unsupported Base precompile upgrade: {upgrade}"),
-        };
+            if upgrade.is_feature_enabled(BaseFeature::TightBn254PairingInputLimit) {
+                precompiles.extend([bn254_pair::JOVIAN]);
+            } else if upgrade.is_feature_enabled(BaseFeature::Bn254PairingInputLimit) {
+                precompiles.extend([bn254_pair::GRANITE]);
+            }
+            if upgrade.is_feature_enabled(BaseFeature::TightBlsInputLimits) {
+                precompiles.extend([
+                    bls12_381::JOVIAN_G1_MSM,
+                    bls12_381::JOVIAN_G2_MSM,
+                    bls12_381::JOVIAN_PAIRING,
+                ]);
+            } else if upgrade.is_feature_enabled(BaseFeature::BlsInputLimits) {
+                precompiles.extend([
+                    bls12_381::ISTHMUS_G1_MSM,
+                    bls12_381::ISTHMUS_G2_MSM,
+                    bls12_381::ISTHMUS_PAIRING,
+                ]);
+            }
+            precompiles
+        });
 
         Self {
             inner: EthPrecompiles { precompiles, spec: SpecId::default() },
@@ -211,34 +219,42 @@ impl<S: BasePrecompileSpec> BasePrecompiles<S> {
         O: PrecompileCallObserver,
     {
         let mut precompiles = PrecompilesMap::from_static(self.precompiles());
-        if self.spec.upgrade() >= BaseUpgrade::Beryl {
+        if self.spec.upgrade().is_feature_enabled(BaseFeature::TokenFactoryPrecompile) {
             B20Factory::install_with_observer(
                 &mut precompiles,
                 self.spec.upgrade(),
                 observer.clone(),
             );
+        }
+        if self.spec.upgrade().is_feature_enabled(BaseFeature::TokenPrecompiles) {
             BerylLookup::install_with_observer(
                 &mut precompiles,
                 self.spec.upgrade(),
                 observer.clone(),
             );
+        }
+        if self.spec.upgrade().is_feature_enabled(BaseFeature::PolicyPrecompile) {
             PolicyRegistryPrecompile::install_with_observer(
                 &mut precompiles,
                 self.spec.upgrade(),
                 observer.clone(),
             );
+        }
+        if self.spec.upgrade().is_feature_enabled(BaseFeature::ActivationRegistry) {
             ActivationRegistry::install_with_observer(
                 &mut precompiles,
                 ActivationAdminConfig::new(
                     self.activation_admin_address,
-                    self.spec.upgrade() >= BaseUpgrade::Cobalt,
+                    self.spec.upgrade().is_feature_enabled(BaseFeature::StatefulActivationAdmin),
                 ),
                 self.spec.upgrade(),
                 observer,
             );
         }
-        if self.spec.upgrade() >= BaseUpgrade::Cobalt {
+        if self.spec.upgrade().is_feature_enabled(BaseFeature::TransactionContextPrecompile) {
             TxContext::install(&mut precompiles, self.spec.upgrade());
+        }
+        if self.spec.upgrade().is_feature_enabled(BaseFeature::NonceManagerPrecompile) {
             NonceManager::install(&mut precompiles, self.spec.upgrade());
         }
         precompiles
@@ -472,6 +488,43 @@ mod tests {
     fn test_all_base_upgrades_have_precompile_sets() {
         for upgrade in BaseUpgrade::VARIANTS {
             let _ = BasePrecompiles::new_with_spec(*upgrade);
+        }
+    }
+
+    #[test]
+    fn feature_selected_precompiles_match_historical_execution() {
+        for &upgrade in BaseUpgrade::VARIANTS {
+            let historical = match upgrade {
+                BaseUpgrade::Bedrock
+                | BaseUpgrade::Regolith
+                | BaseUpgrade::Canyon
+                | BaseUpgrade::Delta
+                | BaseUpgrade::Ecotone => {
+                    Precompiles::new(TestPrecompiles::eth_spec(upgrade).into())
+                }
+                BaseUpgrade::Fjord => TestPrecompiles::fjord(),
+                BaseUpgrade::Granite | BaseUpgrade::Holocene | BaseUpgrade::PectraBlobSchedule => {
+                    TestPrecompiles::granite()
+                }
+                BaseUpgrade::Isthmus => TestPrecompiles::isthmus(),
+                BaseUpgrade::Jovian => TestPrecompiles::jovian(),
+                _ => TestPrecompiles::azul(),
+            };
+            let selected = TestPrecompiles::new_with_spec(upgrade);
+            assert_eq!(selected.precompiles().len(), historical.len());
+            for address in historical.addresses() {
+                let expected = historical.get(address).unwrap();
+                let actual = selected.precompiles().get(address).unwrap();
+                for input in [&[][..], &[0u8; 192][..]] {
+                    for gas in [0, 5_000, 1_000_000] {
+                        assert_eq!(
+                            actual.execute(input, gas, 0),
+                            expected.execute(input, gas, 0),
+                            "{upgrade:?} precompile {address} at gas {gas}"
+                        );
+                    }
+                }
+            }
         }
     }
 

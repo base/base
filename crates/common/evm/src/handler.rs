@@ -2,7 +2,7 @@
 use alloc::{boxed::Box, vec::Vec};
 
 use base_common_consensus::Predeploys;
-use base_common_genesis::BaseUpgrade;
+use base_common_genesis::BaseFeature;
 use revm::{
     context::{
         LocalContextTr,
@@ -29,7 +29,7 @@ use revm::{
 };
 
 use crate::{
-    BaseContextTr, BaseHaltReason, L1BlockInfo,
+    BaseContextTr, BaseHaltReason, L1BlockInfo, MeteredGas,
     transaction::{BaseTransactionError, BaseTxTr, DEPOSIT_TRANSACTION_TYPE},
 };
 
@@ -79,6 +79,10 @@ where
     type HaltReason = BaseHaltReason;
 
     fn validate_env(&self, evm: &mut Self::Evm) -> Result<(), Self::Error> {
+        // Discard any metered gas a previous transaction may have leaked into the thread-local
+        // slot, so this transaction's caller can only ever read its own. See [`MeteredGas`].
+        MeteredGas::clear();
+
         // Do not perform any extra validation for deposit transactions, they are pre-verified on L1.
         let ctx = evm.ctx();
         let tx = ctx.tx();
@@ -86,7 +90,7 @@ where
         if tx_type == DEPOSIT_TRANSACTION_TYPE {
             // Do not allow for a system transaction to be processed if Regolith is enabled.
             if tx.is_system_transaction()
-                && evm.ctx().cfg().spec().is_enabled_in(BaseUpgrade::Regolith)
+                && evm.ctx().cfg().spec().is_feature_enabled(BaseFeature::DepositGasAccounting)
             {
                 return Err(BaseTransactionError::DepositSystemTxPostRegolith.into());
             }
@@ -258,6 +262,59 @@ where
         Ok(())
     }
 
+    fn post_execution(
+        &self,
+        evm: &mut Self::Evm,
+        exec_result: &mut <<Self::Evm as EvmTr>::Frame as FrameTr>::FrameResult,
+        init_and_floor_gas: InitialAndFloorGas,
+        eip7702_gas_refund: i64,
+    ) -> Result<ResultGas, Self::Error> {
+        // Same steps as revm-handler 43.0.3's default `post_execution` (re-check this copy on every
+        // revm upgrade: a new or reordered default step does not reach Base otherwise), with the
+        // gas-limit billing hook between the
+        // refund and the result gas. It lives here, not in `refund`, because the metered gas
+        // recorded below needs the EIP-7623 floor, which only this step is handed.
+        self.refund(evm, exec_result, eip7702_gas_refund)?;
+
+        // The gas this transaction metered: what it is charged, and its receipt reports, without
+        // gas-limit billing. Built exactly as revm builds the result gas from the post-refund
+        // state, so it is the pre-feature receipt `gasUsed` to the unit. Published for the
+        // builder's transaction events (see [`MeteredGas`]); nothing on the consensus path
+        // reads it.
+        let is_halt = exec_result.instruction_result().is_halt();
+        MeteredGas::new(
+            post_execution::build_result_gas(is_halt, exec_result.gas(), init_and_floor_gas)
+                .tx_gas_used(),
+        )
+        .set();
+
+        // Gas-limit billing: a non-deposit transaction is billed, and reported, for the whole
+        // `gas_limit` it reserved. Spending the remaining gas and dropping the refund counter
+        // here makes everything downstream (the result gas, the EIP-7623 floor,
+        // `reimburse_caller`, the operator-fee refund and `reward_beneficiary`) observe
+        // `gas_used == gas_limit` without further special cases, so the receipt's
+        // `gasUsed * effectiveGasPrice` stays the fee that was paid. Deposits pay no fee and
+        // keep their metered gas. Fee-charge-disabled simulation (`eth_call`, `eth_estimateGas`)
+        // keeps metered gas so estimation still finds the gas a call needs.
+        let ctx = evm.ctx();
+        let cfg = ctx.cfg();
+        if cfg.spec().is_feature_enabled(BaseFeature::GasLimitBilling)
+            && !cfg.is_fee_charge_disabled()
+            && ctx.tx().tx_type() != DEPOSIT_TRANSACTION_TYPE
+        {
+            let gas = exec_result.gas_mut();
+            gas.spend_all();
+            gas.set_refund(0);
+        }
+
+        let result_gas =
+            post_execution::build_result_gas(is_halt, exec_result.gas(), init_and_floor_gas);
+        self.eip7623_check_gas_floor(evm, exec_result, init_and_floor_gas);
+        self.reimburse_caller(evm, exec_result)?;
+        self.reward_beneficiary(evm, exec_result)?;
+        Ok(result_gas)
+    }
+
     fn reward_beneficiary(
         &self,
         evm: &mut Self::Evm,
@@ -285,7 +342,7 @@ where
         };
 
         let l1_cost = l1_block_info.calculate_tx_l1_cost(enveloped_tx, spec);
-        let operator_fee_cost = if spec.is_enabled_in(BaseUpgrade::Isthmus) {
+        let operator_fee_cost = if spec.is_feature_enabled(BaseFeature::OperatorFee) {
             l1_block_info.operator_fee_charge(
                 enveloped_tx,
                 U256::from(frame_result.gas().used()),
@@ -400,9 +457,12 @@ mod tests {
     use alloy_primitives::uint;
     use base_common_consensus::Predeploys;
     use revm::{
-        InspectEvm,
+        ExecuteEvm, InspectEvm,
         bytecode::Bytecode,
-        context::{BlockEnv, CfgEnv, Context, TxEnv},
+        context::{BlockEnv, CfgEnv, Context, TxEnv, tx::TxEnvBuilder},
+        context_interface::transaction::{
+            Authorization, RecoveredAuthority, RecoveredAuthorization,
+        },
         database::InMemoryDB,
         database_interface::EmptyDB,
         handler::{EthFrame, Handler},
@@ -414,7 +474,9 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
-    use crate::{BaseContext, BaseSpecId, BaseTransaction, Builder, DefaultBase, L1BlockInfo};
+    use crate::{
+        BaseContext, BaseSpecId, BaseTransaction, BaseUpgrade, Builder, DefaultBase, L1BlockInfo,
+    };
 
     /// Creates frame result.
     fn call_last_frame_return(
@@ -1025,6 +1087,376 @@ mod tests {
             dirty_result.result.tx_gas_used(),
             clean_result.result.tx_gas_used(),
             "stale authorizer transaction must not make the next EXTCODESIZE(authorizer) warm"
+        );
+    }
+
+    // ---- Gas-limit billing (BaseFeature::GasLimitBilling) ----
+
+    /// Fee settlement of one transaction, read from the post-transaction state.
+    #[derive(Debug, PartialEq, Eq)]
+    struct FeeFlow {
+        /// What the caller's balance dropped by, including the transferred `value`.
+        caller_paid: U256,
+        coinbase: U256,
+        base_fee_vault: U256,
+        operator_fee_vault: U256,
+        l1_fee_vault: U256,
+        /// The gas the receipt reports.
+        gas_used: u64,
+        /// The gas the transaction metered, as published for the builder's events.
+        metered_gas_used: u64,
+        /// The refund the result reports as applied.
+        final_refunded: u64,
+        success: bool,
+    }
+
+    const FEE_FLOW_CALLER: Address = Address::repeat_byte(0x55);
+    const FEE_FLOW_RECIPIENT: Address = Address::repeat_byte(0x66);
+    const FEE_FLOW_BENEFICIARY: Address = Address::repeat_byte(0x77);
+    /// An account that already exists, so delegating it with EIP-7702 earns a refund.
+    const FEE_FLOW_AUTHORITY: Address = Address::repeat_byte(0x88);
+    const FEE_FLOW_INITIAL_BALANCE: U256 = uint!(1_000_000_000_000_000_000_U256);
+    const FEE_FLOW_GAS_LIMIT: u64 = 100_000;
+    const FEE_FLOW_BASE_FEE: u64 = 1_000;
+    const FEE_FLOW_PRIORITY_FEE: u128 = 500;
+    const FEE_FLOW_EFFECTIVE_GAS_PRICE: u128 = FEE_FLOW_BASE_FEE as u128 + FEE_FLOW_PRIORITY_FEE;
+    const FEE_FLOW_VALUE: U256 = uint!(7_U256);
+    const FEE_FLOW_ENVELOPE: Bytes = bytes!("FACADE");
+    /// Metered gas of a plain value transfer.
+    const TRANSFER_GAS: u64 = 21_000;
+
+    /// `PUSH1 0 PUSH1 0 REVERT`: reverts immediately, leaving most of the gas limit unused. The
+    /// reverting-arb shape from the design doc: a high-tip transaction that checks for an
+    /// opportunity and backs out when it is gone.
+    const REVERTING_CODE: Bytes = bytes!("60006000fd");
+    /// Metered gas of a call into `REVERTING_CODE`: the transfer plus two `PUSH1`s.
+    const REVERT_GAS: u64 = TRANSFER_GAS + 2 * 3;
+    /// `PUSH1 0 PUSH1 0 SSTORE STOP`: clears storage slot 0, earning an EIP-3529 refund when the
+    /// slot was non-zero.
+    const SSTORE_CLEAR_CODE: Bytes = bytes!("600060005500");
+    /// `JUMPDEST PUSH1 0 JUMP`: spins until out of gas.
+    const INFINITE_LOOP_CODE: Bytes = bytes!("5b600056");
+
+    /// Operator fee parameters of the fee-flow chain context. Post-Jovian the operator fee is
+    /// `gas * scalar * 100 + constant` wei, so a charge on metered gas and one on the reserved
+    /// limit differ in every test below.
+    const FEE_FLOW_OPERATOR_FEE_SCALAR: u64 = 2;
+    const FEE_FLOW_OPERATOR_FEE_CONSTANT: u64 = 50;
+
+    /// Chain context shared by the fee-flow fixtures: non-zero L1 fee scalars so the L1 fee is
+    /// observable, and the operator-fee parameters above so the operator fee depends on gas.
+    fn fee_flow_l1_block_info() -> L1BlockInfo {
+        L1BlockInfo {
+            l2_block: Some(U256::ZERO),
+            l1_base_fee: U256::from(1_000),
+            l1_base_fee_scalar: U256::from(1_000),
+            l1_blob_base_fee: Some(U256::from(1)),
+            l1_blob_base_fee_scalar: Some(U256::from(1)),
+            operator_fee_scalar: Some(U256::from(FEE_FLOW_OPERATOR_FEE_SCALAR)),
+            operator_fee_constant: Some(U256::from(FEE_FLOW_OPERATOR_FEE_CONSTANT)),
+            ..Default::default()
+        }
+    }
+
+    /// Executes `tx` under `upgrade` against a recipient deployed with `recipient_code` (empty
+    /// for a plain transfer) whose storage slot 0 holds 1, and reads back where the fees went.
+    fn settle_fee_flow(
+        upgrade: BaseUpgrade,
+        recipient_code: Bytes,
+        fee_charge_disabled: bool,
+        tx: BaseTransaction<TxEnv>,
+    ) -> FeeFlow {
+        let mut db = InMemoryDB::default();
+        db.insert_account_info(
+            FEE_FLOW_CALLER,
+            AccountInfo { balance: FEE_FLOW_INITIAL_BALANCE, ..Default::default() },
+        );
+        db.insert_account_info(
+            FEE_FLOW_AUTHORITY,
+            AccountInfo { balance: U256::from(1), ..Default::default() },
+        );
+        if !recipient_code.is_empty() {
+            db.insert_account_info(
+                FEE_FLOW_RECIPIENT,
+                AccountInfo {
+                    code_hash: alloy_primitives::keccak256(&recipient_code),
+                    code: Some(Bytecode::new_raw(recipient_code)),
+                    ..Default::default()
+                },
+            );
+            db.insert_account_storage(FEE_FLOW_RECIPIENT, U256::ZERO, U256::from(1)).unwrap();
+        }
+
+        let mut cfg = CfgEnv::new_with_spec(BaseSpecId::new(upgrade));
+        cfg.disable_fee_charge = fee_charge_disabled;
+        let mut evm = Context::base()
+            .with_db(db)
+            .with_chain(fee_flow_l1_block_info())
+            .with_block(BlockEnv {
+                basefee: FEE_FLOW_BASE_FEE,
+                beneficiary: FEE_FLOW_BENEFICIARY,
+                ..Default::default()
+            })
+            .with_cfg(cfg)
+            .build_base();
+        let outcome = evm.transact(tx).expect("transaction should execute");
+        let metered = MeteredGas::take().expect("a settled transaction publishes its metered gas");
+        assert_eq!(
+            metered.payer_auth_gas_reserved, None,
+            "only EIP-8130 meters payer authentication"
+        );
+
+        let balance = |address: Address| {
+            outcome.state.get(&address).map(|account| account.info.balance).unwrap_or_default()
+        };
+        FeeFlow {
+            metered_gas_used: metered.gas_used,
+            caller_paid: FEE_FLOW_INITIAL_BALANCE - balance(FEE_FLOW_CALLER),
+            coinbase: balance(FEE_FLOW_BENEFICIARY),
+            base_fee_vault: balance(Predeploys::BASE_FEE_VAULT),
+            operator_fee_vault: balance(Predeploys::OPERATOR_FEE_VAULT),
+            l1_fee_vault: balance(Predeploys::L1_FEE_VAULT),
+            gas_used: outcome.result.tx_gas_used(),
+            final_refunded: outcome.result.gas().final_refunded(),
+            success: outcome.result.is_success(),
+        }
+    }
+
+    /// A priced `FEE_FLOW_CALLER` → `FEE_FLOW_RECIPIENT` call with `FEE_FLOW_GAS_LIMIT`.
+    fn fee_flow_tx_builder() -> TxEnvBuilder {
+        TxEnv::builder()
+            .caller(FEE_FLOW_CALLER)
+            .kind(TxKind::Call(FEE_FLOW_RECIPIENT))
+            .value(FEE_FLOW_VALUE)
+            .gas_limit(FEE_FLOW_GAS_LIMIT)
+            .gas_price(FEE_FLOW_EFFECTIVE_GAS_PRICE)
+            .gas_priority_fee(Some(FEE_FLOW_PRIORITY_FEE))
+    }
+
+    fn fee_flow_tx() -> BaseTransaction<TxEnv> {
+        BaseTransaction::builder()
+            .base(fee_flow_tx_builder())
+            .enveloped_tx(Some(FEE_FLOW_ENVELOPE))
+            .build_fill()
+    }
+
+    /// The fee-flow transaction as an EIP-7702 transaction delegating the pre-existing
+    /// `FEE_FLOW_AUTHORITY`, which earns the existing-account authorization refund.
+    fn fee_flow_eip7702_tx() -> BaseTransaction<TxEnv> {
+        let authorization = RecoveredAuthorization::new_unchecked(
+            Authorization { chain_id: U256::ZERO, address: FEE_FLOW_RECIPIENT, nonce: 0 },
+            RecoveredAuthority::Valid(FEE_FLOW_AUTHORITY),
+        );
+        BaseTransaction::builder()
+            .base(fee_flow_tx_builder().authorization_list_recovered(vec![authorization]))
+            .enveloped_tx(Some(FEE_FLOW_ENVELOPE))
+            .build_fill()
+    }
+
+    /// Runs the priced fee-flow transaction under `upgrade`.
+    fn run_fee_flow(
+        upgrade: BaseUpgrade,
+        recipient_code: Bytes,
+        fee_charge_disabled: bool,
+    ) -> FeeFlow {
+        settle_fee_flow(upgrade, recipient_code, fee_charge_disabled, fee_flow_tx())
+    }
+
+    /// The operator fee owed on `gas` under the fee-flow chain context, computed from the
+    /// post-Jovian rule rather than the node's fee code. Every fee-flow upgrade is post-Jovian.
+    fn fee_flow_operator_fee(gas: u64) -> U256 {
+        U256::from(gas)
+            * U256::from(FEE_FLOW_OPERATOR_FEE_SCALAR)
+            * U256::from(L1BlockInfo::OPERATOR_FEE_JOVIAN_MULTIPLIER)
+            + U256::from(FEE_FLOW_OPERATOR_FEE_CONSTANT)
+    }
+
+    /// The settlement the fee-flow transaction produces when billed for `gas` having metered
+    /// `metered_gas`: every per-gas fee component on `gas`, nothing refunded, and the caller
+    /// debited exactly what the recipients received plus `value` and the L1 data fee.
+    fn fee_flow_billed_for(gas: u64, metered_gas: u64, l1_fee: U256, success: bool) -> FeeFlow {
+        let value_transferred = if success { FEE_FLOW_VALUE } else { U256::ZERO };
+        let coinbase = U256::from(FEE_FLOW_PRIORITY_FEE * u128::from(gas));
+        let base_fee_vault = U256::from(u128::from(FEE_FLOW_BASE_FEE) * u128::from(gas));
+        let operator_fee_vault = fee_flow_operator_fee(gas);
+        FeeFlow {
+            caller_paid: value_transferred
+                + coinbase
+                + base_fee_vault
+                + operator_fee_vault
+                + l1_fee,
+            coinbase,
+            base_fee_vault,
+            operator_fee_vault,
+            l1_fee_vault: l1_fee,
+            gas_used: gas,
+            metered_gas_used: metered_gas,
+            final_refunded: 0,
+            success,
+        }
+    }
+
+    /// Before the feature every fee component is settled on the gas actually used and the
+    /// caller is reimbursed the unused remainder of its gas limit. Pins the pre-activation path.
+    #[rstest]
+    #[case::transfer(Bytes::new(), TRANSFER_GAS, true)]
+    #[case::revert(REVERTING_CODE, REVERT_GAS, false)]
+    fn pre_gas_limit_billing_fees_settle_on_gas_used(
+        #[case] recipient_code: Bytes,
+        #[case] metered_gas: u64,
+        #[case] success: bool,
+    ) {
+        let upgrade = BaseUpgrade::Denim;
+        assert!(!BaseSpecId::new(upgrade).is_feature_enabled(BaseFeature::GasLimitBilling));
+
+        let flow = run_fee_flow(upgrade, recipient_code, false);
+        assert!(flow.l1_fee_vault > U256::ZERO, "fixture must charge an L1 fee");
+        assert_eq!(flow, fee_flow_billed_for(metered_gas, metered_gas, flow.l1_fee_vault, success));
+    }
+
+    /// With the feature on, the caller pays for its full `gas_limit` whether or not the
+    /// transaction uses it: no unused-gas reimbursement, and the coinbase tip, the base fee and
+    /// the operator fee are all computed on `gas_limit`. The L1 data fee is unchanged, and the
+    /// result reports `gas_limit` as the gas used so `gasUsed * effectiveGasPrice` remains the
+    /// fee paid. A reverting arb therefore costs the same as the execution it was sized for. The
+    /// gas it metered is still published, and is what the same transaction was billed pre-feature.
+    #[rstest]
+    #[case::transfer(Bytes::new(), true)]
+    #[case::revert(REVERTING_CODE, false)]
+    fn gas_limit_billing_fees_settle_on_gas_limit(
+        #[case] recipient_code: Bytes,
+        #[case] success: bool,
+    ) {
+        let upgrade = BaseUpgrade::Everest;
+        assert!(BaseSpecId::new(upgrade).is_feature_enabled(BaseFeature::GasLimitBilling));
+
+        let before = run_fee_flow(BaseUpgrade::Denim, recipient_code.clone(), false);
+        let flow = run_fee_flow(upgrade, recipient_code, false);
+
+        assert_eq!(flow.l1_fee_vault, before.l1_fee_vault, "the L1 data fee must not change");
+        assert!(before.gas_used < FEE_FLOW_GAS_LIMIT, "fixture must leave gas unused");
+        assert_eq!(
+            flow,
+            fee_flow_billed_for(FEE_FLOW_GAS_LIMIT, before.gas_used, before.l1_fee_vault, success)
+        );
+        // Billing on the limit neither mints nor burns ETH: everything the caller paid beyond
+        // value and the L1 fee reached a fee recipient.
+        let value_transferred = if success { FEE_FLOW_VALUE } else { U256::ZERO };
+        assert_eq!(
+            flow.caller_paid - value_transferred - flow.l1_fee_vault,
+            flow.coinbase + flow.base_fee_vault + flow.operator_fee_vault,
+        );
+    }
+
+    /// Gas refunds (EIP-3529 storage clearing, the EIP-7702 existing-authority refund) lower the
+    /// metered bill before the feature and have no effect on the bill or the reported gas once
+    /// the limit is billed; the published metered gas stays net of the refund.
+    #[rstest]
+    #[case::eip3529_sstore_clear(SSTORE_CLEAR_CODE, fee_flow_tx())]
+    #[case::eip7702_existing_authority(Bytes::new(), fee_flow_eip7702_tx())]
+    fn gas_limit_billing_ignores_refunds(
+        #[case] recipient_code: Bytes,
+        #[case] tx: BaseTransaction<TxEnv>,
+    ) {
+        let metered =
+            settle_fee_flow(BaseUpgrade::Denim, recipient_code.clone(), false, tx.clone());
+        assert!(metered.success);
+        assert!(metered.final_refunded > 0, "the fixture must earn a refund pre-feature");
+        assert!(metered.gas_used < FEE_FLOW_GAS_LIMIT);
+
+        let billed = settle_fee_flow(BaseUpgrade::Everest, recipient_code, false, tx);
+        assert_eq!(
+            billed,
+            fee_flow_billed_for(FEE_FLOW_GAS_LIMIT, metered.gas_used, billed.l1_fee_vault, true)
+        );
+    }
+
+    /// The EIP-7623 calldata floor is part of metered gas: a data-heavy transfer whose floor
+    /// exceeds what it spent is billed the floor pre-feature, and under the feature the published
+    /// metered gas is that floor, not the raw spend, while the bill is the limit.
+    #[test]
+    fn gas_limit_billing_reports_metered_gas_at_the_eip7623_floor() {
+        const ZERO_CALLDATA_BYTES: usize = 1_000;
+        // EIP-7623 prices a zero calldata byte at 4 gas when executing and 10 at the floor.
+        const SPENT: u64 = TRANSFER_GAS + 4 * ZERO_CALLDATA_BYTES as u64;
+        const FLOOR: u64 = TRANSFER_GAS + 10 * ZERO_CALLDATA_BYTES as u64;
+        const { assert!(SPENT < FLOOR) };
+        let tx = BaseTransaction::builder()
+            .base(fee_flow_tx_builder().data(Bytes::from(vec![0u8; ZERO_CALLDATA_BYTES])))
+            .enveloped_tx(Some(FEE_FLOW_ENVELOPE))
+            .build_fill();
+
+        let metered = settle_fee_flow(BaseUpgrade::Denim, Bytes::new(), false, tx.clone());
+        assert!(metered.success);
+        assert_eq!(metered.gas_used, FLOOR, "the floor must bind pre-feature");
+        assert_eq!(metered.metered_gas_used, FLOOR);
+
+        let billed = settle_fee_flow(BaseUpgrade::Everest, Bytes::new(), false, tx);
+        assert_eq!(
+            billed,
+            fee_flow_billed_for(FEE_FLOW_GAS_LIMIT, FLOOR, billed.l1_fee_vault, true)
+        );
+    }
+
+    /// Running out of gas already bills the full limit (a halt drops EIP-3529 refunds), so the
+    /// worst case is identical with and without the feature; only the success-path discount goes
+    /// away. An EIP-7702 authorization refund survives a halt and would still be billed pre-feature
+    /// but not under the feature, so this case carries no authorizations.
+    #[test]
+    fn gas_limit_billing_out_of_gas_settlement_matches_pre_feature() {
+        let metered = run_fee_flow(BaseUpgrade::Denim, INFINITE_LOOP_CODE, false);
+        let billed = run_fee_flow(BaseUpgrade::Everest, INFINITE_LOOP_CODE, false);
+        assert!(!metered.success && !billed.success);
+        assert_eq!(metered.gas_used, FEE_FLOW_GAS_LIMIT);
+        assert_eq!(metered, billed);
+    }
+
+    /// Fee-charge-disabled simulation (`eth_call`, `eth_estimateGas`) is untouched: the caller is
+    /// debited nothing beyond `value`, the coinbase is paid nothing, and the reported gas stays
+    /// the metered consumption, so gas estimation keeps converging on the real requirement.
+    #[test]
+    fn gas_limit_billing_fee_charge_disabled_simulation_bills_nothing() {
+        let simulated = run_fee_flow(BaseUpgrade::Everest, Bytes::new(), true);
+        assert_eq!(simulated, run_fee_flow(BaseUpgrade::Denim, Bytes::new(), true));
+        assert_eq!(simulated.caller_paid, FEE_FLOW_VALUE);
+        assert_eq!(simulated.coinbase, U256::ZERO);
+        assert_eq!(simulated.gas_used, TRANSFER_GAS);
+    }
+
+    /// Deposits are not ordered by tip and pay no L2 execution fee, so gas-limit billing leaves
+    /// them alone: the depositor's balance only moves by `value`, no fee recipient is paid, and
+    /// the receipt reports metered gas on both sides of the feature.
+    #[rstest]
+    #[case::pre_feature(BaseUpgrade::Denim)]
+    #[case::feature_on(BaseUpgrade::Everest)]
+    fn gas_limit_billing_leaves_deposits_metered_and_unpaid(#[case] upgrade: BaseUpgrade) {
+        // Deposits carry no gas price (`TxEnv::from_recovered_tx(TxDeposit)` leaves it zero).
+        let deposit = BaseTransaction::builder()
+            .base(
+                TxEnv::builder()
+                    .caller(FEE_FLOW_CALLER)
+                    .kind(TxKind::Call(FEE_FLOW_RECIPIENT))
+                    .value(FEE_FLOW_VALUE)
+                    .gas_limit(FEE_FLOW_GAS_LIMIT)
+                    .gas_price(0),
+            )
+            .source_hash(B256::from([1u8; 32]))
+            .build_fill();
+
+        let flow = settle_fee_flow(upgrade, Bytes::new(), false, deposit);
+        assert_eq!(
+            flow,
+            FeeFlow {
+                caller_paid: FEE_FLOW_VALUE,
+                coinbase: U256::ZERO,
+                base_fee_vault: U256::ZERO,
+                operator_fee_vault: U256::ZERO,
+                l1_fee_vault: U256::ZERO,
+                gas_used: TRANSFER_GAS,
+                metered_gas_used: TRANSFER_GAS,
+                final_refunded: 0,
+                success: true,
+            }
         );
     }
 }

@@ -2,7 +2,7 @@ use std::convert::TryFrom;
 
 use base_prover_service_protocol::{
     ProofRequest as ProtocolProofRequest, ProofRequestKind as ProtocolProofRequestKind,
-    ProofResult as ProtocolProofResult, TeeKind as ProtocolTeeKind, ZkBackend,
+    ProofResult as ProtocolProofResult, TeeKind as ProtocolTeeKind, ZkBackend, ZkRangeError,
     ZkVm as ProtocolZkVm,
 };
 use chrono::{DateTime, Utc};
@@ -11,8 +11,20 @@ use sqlx::FromRow;
 use uuid::Uuid;
 
 /// Status of a proof request
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    sqlx::Type,
+    strum::Display,
+    strum::IntoStaticStr,
+)]
 #[sqlx(type_name = "VARCHAR", rename_all = "SCREAMING_SNAKE_CASE")]
+#[strum(serialize_all = "SCREAMING_SNAKE_CASE")]
 pub enum ProofStatus {
     /// Proof request has been created but not yet queued.
     Created,
@@ -26,43 +38,21 @@ pub enum ProofStatus {
     Failed,
 }
 
-impl ProofStatus {
-    /// Convert enum to static string representation
-    pub const fn as_str(&self) -> &'static str {
-        match self {
-            Self::Created => "CREATED",
-            Self::Pending => "PENDING",
-            Self::Running => "RUNNING",
-            Self::Succeeded => "SUCCEEDED",
-            Self::Failed => "FAILED",
-        }
-    }
-}
-
-impl std::fmt::Display for ProofStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.as_str())
-    }
-}
-
-impl TryFrom<&str> for ProofStatus {
-    type Error = String;
-
-    fn try_from(s: &str) -> Result<Self, Self::Error> {
-        match s {
-            "CREATED" => Ok(Self::Created),
-            "PENDING" => Ok(Self::Pending),
-            "RUNNING" => Ok(Self::Running),
-            "SUCCEEDED" => Ok(Self::Succeeded),
-            "FAILED" => Ok(Self::Failed),
-            other => Err(format!("Unknown proof status: {other}")),
-        }
-    }
-}
-
 /// Worker-owned job lifecycle status, distinct from requester [`ProofStatus`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    sqlx::Type,
+    strum::Display,
+    strum::IntoStaticStr,
+)]
 #[sqlx(type_name = "VARCHAR", rename_all = "SCREAMING_SNAKE_CASE")]
+#[strum(serialize_all = "SCREAMING_SNAKE_CASE")]
 pub enum ProofJobStatus {
     /// Job is claimable and not currently owned by any worker.
     Pending,
@@ -74,41 +64,21 @@ pub enum ProofJobStatus {
     Failed,
 }
 
-impl ProofJobStatus {
-    /// Convert enum to static string representation.
-    pub const fn as_str(&self) -> &'static str {
-        match self {
-            Self::Pending => "PENDING",
-            Self::Claimed => "CLAIMED",
-            Self::Succeeded => "SUCCEEDED",
-            Self::Failed => "FAILED",
-        }
-    }
-}
-
-impl std::fmt::Display for ProofJobStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.as_str())
-    }
-}
-
-impl TryFrom<&str> for ProofJobStatus {
-    type Error = String;
-
-    fn try_from(s: &str) -> Result<Self, Self::Error> {
-        match s {
-            "PENDING" => Ok(Self::Pending),
-            "CLAIMED" => Ok(Self::Claimed),
-            "SUCCEEDED" => Ok(Self::Succeeded),
-            "FAILED" => Ok(Self::Failed),
-            other => Err(format!("Unknown proof job status: {other}")),
-        }
-    }
-}
-
 /// Status of an individual proof session (STARK or SNARK)
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    sqlx::Type,
+    strum::Display,
+    strum::IntoStaticStr,
+)]
 #[sqlx(type_name = "VARCHAR", rename_all = "SCREAMING_SNAKE_CASE")]
+#[strum(serialize_all = "SCREAMING_SNAKE_CASE")]
 pub enum SessionStatus {
     /// Reservation placeholder before the backend job has been submitted. The row holds a
     /// synthetic `backend_session_id` so the partial unique index serializes concurrent
@@ -123,78 +93,32 @@ pub enum SessionStatus {
 }
 
 impl SessionStatus {
-    /// Convert enum to static string representation
-    pub const fn as_str(&self) -> &'static str {
-        match self {
-            Self::Submitting => "SUBMITTING",
-            Self::Running => "RUNNING",
-            Self::Completed => "COMPLETED",
-            Self::Failed => "FAILED",
-        }
-    }
-
     /// Whether this status represents a terminal backend session.
     pub const fn is_terminal(&self) -> bool {
         matches!(self, Self::Completed | Self::Failed)
     }
 }
 
-impl std::fmt::Display for SessionStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.as_str())
-    }
-}
-
-impl TryFrom<&str> for SessionStatus {
-    type Error = String;
-
-    fn try_from(s: &str) -> Result<Self, Self::Error> {
-        match s {
-            "SUBMITTING" => Ok(Self::Submitting),
-            "RUNNING" => Ok(Self::Running),
-            "COMPLETED" => Ok(Self::Completed),
-            "FAILED" => Ok(Self::Failed),
-            other => Err(format!("Unknown session status: {other}")),
-        }
-    }
-}
-
 /// Type of proof session
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    sqlx::Type,
+    strum::Display,
+    strum::IntoStaticStr,
+)]
 #[sqlx(type_name = "VARCHAR", rename_all = "SCREAMING_SNAKE_CASE")]
+#[strum(serialize_all = "SCREAMING_SNAKE_CASE")]
 pub enum SessionType {
     /// STARK proof session.
     Stark,
     /// SNARK proof session.
     Snark,
-}
-
-impl SessionType {
-    /// Convert enum to static string representation
-    pub const fn as_str(&self) -> &'static str {
-        match self {
-            Self::Stark => "STARK",
-            Self::Snark => "SNARK",
-        }
-    }
-}
-
-impl std::fmt::Display for SessionType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.as_str())
-    }
-}
-
-impl TryFrom<&str> for SessionType {
-    type Error = String;
-
-    fn try_from(s: &str) -> Result<Self, Self::Error> {
-        match s {
-            "STARK" => Ok(Self::Stark),
-            "SNARK" => Ok(Self::Snark),
-            other => Err(format!("Unknown session type: {other}")),
-        }
-    }
 }
 
 /// Outcome of attempting to retry or fail a stuck proof request.
@@ -299,6 +223,9 @@ pub enum CreateProofRequestError {
 /// Validation errors for protocol-facing proof request creation.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum CreateProofRequestValidationError {
+    /// The ZK proof range violates the protocol constraints.
+    #[error("invalid ZK proof range: {0}")]
+    InvalidZkRange(#[from] ZkRangeError),
     /// A caller supplied an empty protocol session identifier.
     #[error("session_id must not be empty")]
     EmptySessionId,
@@ -346,14 +273,24 @@ pub enum CreateProofRequestValidationError {
 ///
 /// Backend routing uses [`ZkBackend`]; the persisted strings keep their
 /// historical `cluster` names for schema compatibility.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
-#[sqlx(type_name = "VARCHAR")]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    sqlx::Type,
+    strum::Display,
+    strum::IntoStaticStr,
+)]
+#[sqlx(type_name = "VARCHAR", rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
 pub enum ProofType {
     /// Compressed SP1 proof.
-    #[sqlx(rename = "op_succinct_sp1_cluster_compressed")]
     OpSuccinctSp1ClusterCompressed,
     /// PLONK SNARK SP1 proof.
-    #[sqlx(rename = "op_succinct_sp1_cluster_snark_plonk")]
     OpSuccinctSp1ClusterSnarkPlonk,
 }
 
@@ -368,32 +305,6 @@ impl ProofType {
         match self {
             Self::OpSuccinctSp1ClusterCompressed => Self::PROTO_COMPRESSED,
             Self::OpSuccinctSp1ClusterSnarkPlonk => Self::PROTO_SNARK_PLONK,
-        }
-    }
-
-    /// Convert enum to static string representation
-    pub const fn as_str(&self) -> &'static str {
-        match self {
-            Self::OpSuccinctSp1ClusterCompressed => "op_succinct_sp1_cluster_compressed",
-            Self::OpSuccinctSp1ClusterSnarkPlonk => "op_succinct_sp1_cluster_snark_plonk",
-        }
-    }
-}
-
-impl std::fmt::Display for ProofType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.as_str())
-    }
-}
-
-impl TryFrom<&str> for ProofType {
-    type Error = String;
-
-    fn try_from(s: &str) -> Result<Self, Self::Error> {
-        match s {
-            "op_succinct_sp1_cluster_compressed" => Ok(Self::OpSuccinctSp1ClusterCompressed),
-            "op_succinct_sp1_cluster_snark_plonk" => Ok(Self::OpSuccinctSp1ClusterSnarkPlonk),
-            other => Err(format!("Unknown proof type: {other}")),
         }
     }
 }
@@ -412,118 +323,67 @@ impl TryFrom<i32> for ProofType {
 }
 
 /// Protocol-level proof type requested by API callers.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
-#[sqlx(type_name = "VARCHAR")]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    sqlx::Type,
+    strum::Display,
+    strum::IntoStaticStr,
+)]
+#[sqlx(type_name = "VARCHAR", rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
 pub enum ApiProofType {
     /// Compressed ZK proof.
-    #[sqlx(rename = "compressed")]
     Compressed,
     /// PLONK SNARK proof.
-    #[sqlx(rename = "snark_plonk")]
     SnarkPlonk,
     /// Trusted execution environment proof.
-    #[sqlx(rename = "tee")]
     Tee,
 }
 
-impl ApiProofType {
-    /// Convert enum to static string representation.
-    pub const fn as_str(&self) -> &'static str {
-        match self {
-            Self::Compressed => "compressed",
-            Self::SnarkPlonk => "snark_plonk",
-            Self::Tee => "tee",
-        }
-    }
-}
-
-impl std::fmt::Display for ApiProofType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.as_str())
-    }
-}
-
-impl TryFrom<&str> for ApiProofType {
-    type Error = String;
-
-    fn try_from(s: &str) -> Result<Self, Self::Error> {
-        match s {
-            "compressed" => Ok(Self::Compressed),
-            "snark_plonk" => Ok(Self::SnarkPlonk),
-            "tee" => Ok(Self::Tee),
-            other => Err(format!("Unknown API proof type: {other}")),
-        }
-    }
-}
-
 /// Protocol-level ZK virtual machine discriminator.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
-#[sqlx(type_name = "VARCHAR")]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    sqlx::Type,
+    strum::Display,
+    strum::IntoStaticStr,
+)]
+#[sqlx(type_name = "VARCHAR", rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
 pub enum ZkVmKind {
     /// Succinct SP1.
-    #[sqlx(rename = "sp1")]
     Sp1,
 }
 
-impl ZkVmKind {
-    /// Convert enum to static string representation.
-    pub const fn as_str(&self) -> &'static str {
-        match self {
-            Self::Sp1 => "sp1",
-        }
-    }
-}
-
-impl std::fmt::Display for ZkVmKind {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.as_str())
-    }
-}
-
-impl TryFrom<&str> for ZkVmKind {
-    type Error = String;
-
-    fn try_from(s: &str) -> Result<Self, Self::Error> {
-        match s {
-            "sp1" => Ok(Self::Sp1),
-            other => Err(format!("Unknown ZK VM: {other}")),
-        }
-    }
-}
-
 /// Protocol-level TEE implementation discriminator.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
-#[sqlx(type_name = "VARCHAR")]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    sqlx::Type,
+    strum::Display,
+    strum::IntoStaticStr,
+)]
+#[sqlx(type_name = "VARCHAR", rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
 pub enum TeeKind {
     /// AWS Nitro Enclaves.
-    #[sqlx(rename = "aws_nitro")]
     AwsNitro,
-}
-
-impl TeeKind {
-    /// Convert enum to static string representation.
-    pub const fn as_str(&self) -> &'static str {
-        match self {
-            Self::AwsNitro => "aws_nitro",
-        }
-    }
-}
-
-impl std::fmt::Display for TeeKind {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.as_str())
-    }
-}
-
-impl TryFrom<&str> for TeeKind {
-    type Error = String;
-
-    fn try_from(s: &str) -> Result<Self, Self::Error> {
-        match s {
-            "aws_nitro" => Ok(Self::AwsNitro),
-            other => Err(format!("Unknown TEE kind: {other}")),
-        }
-    }
 }
 
 /// A proof request record in the database
@@ -897,30 +757,36 @@ impl DerivedProofRequestFields {
         request: &ProtocolProofRequest,
     ) -> Result<Self, CreateProofRequestValidationError> {
         match &request.request {
-            ProtocolProofRequestKind::Compressed(proof) => Ok(Self {
-                api_proof_type: ApiProofType::Compressed,
-                zk_vm: Some(protocol_zk_vm(proof.zk_vm)),
-                tee_kind: None,
-                zk_backend: Some(proof.zk_backend),
-                proof_type: Some(ProofType::OpSuccinctSp1ClusterCompressed),
-                start_block_number: proof.start_block_number,
-                number_of_blocks_to_prove: proof.number_of_blocks_to_prove,
-                sequence_window: proof.sequence_window,
-                prover_address: None,
-                l1_head: proof.l1_head.map(|hash| format!("{hash:#x}")),
-            }),
-            ProtocolProofRequestKind::SnarkPlonk(request) => Ok(Self {
-                api_proof_type: ApiProofType::SnarkPlonk,
-                zk_vm: Some(protocol_zk_vm(request.proof.zk_vm)),
-                tee_kind: None,
-                zk_backend: Some(request.proof.zk_backend),
-                proof_type: Some(ProofType::OpSuccinctSp1ClusterSnarkPlonk),
-                start_block_number: request.proof.start_block_number,
-                number_of_blocks_to_prove: request.proof.number_of_blocks_to_prove,
-                sequence_window: request.proof.sequence_window,
-                prover_address: Some(format!("{:#x}", request.prover_address)),
-                l1_head: request.proof.l1_head.map(|hash| format!("{hash:#x}")),
-            }),
+            ProtocolProofRequestKind::Compressed(proof) => {
+                proof.validate_range()?;
+                Ok(Self {
+                    api_proof_type: ApiProofType::Compressed,
+                    zk_vm: Some(protocol_zk_vm(proof.zk_vm)),
+                    tee_kind: None,
+                    zk_backend: Some(proof.zk_backend),
+                    proof_type: Some(ProofType::OpSuccinctSp1ClusterCompressed),
+                    start_block_number: proof.start_block_number,
+                    number_of_blocks_to_prove: proof.number_of_blocks_to_prove,
+                    sequence_window: proof.sequence_window,
+                    prover_address: None,
+                    l1_head: proof.l1_head.map(|hash| format!("{hash:#x}")),
+                })
+            }
+            ProtocolProofRequestKind::SnarkPlonk(request) => {
+                request.proof.validate_range()?;
+                Ok(Self {
+                    api_proof_type: ApiProofType::SnarkPlonk,
+                    zk_vm: Some(protocol_zk_vm(request.proof.zk_vm)),
+                    tee_kind: None,
+                    zk_backend: Some(request.proof.zk_backend),
+                    proof_type: Some(ProofType::OpSuccinctSp1ClusterSnarkPlonk),
+                    start_block_number: request.proof.start_block_number,
+                    number_of_blocks_to_prove: request.proof.number_of_blocks_to_prove,
+                    sequence_window: request.proof.sequence_window,
+                    prover_address: Some(format!("{:#x}", request.prover_address)),
+                    l1_head: request.proof.l1_head.map(|hash| format!("{hash:#x}")),
+                })
+            }
             ProtocolProofRequestKind::Tee(request) => Ok(Self {
                 api_proof_type: ApiProofType::Tee,
                 zk_vm: None,
@@ -1215,7 +1081,8 @@ mod tests {
     use std::num::NonZeroU64;
 
     use base_prover_service_protocol::{
-        SnarkPlonkProofResult, ZkBackend, ZkProofRequest, ZkProofResult, ZkVm,
+        SnarkPlonkProofRequest, SnarkPlonkProofResult, ZkBackend, ZkProofRequest, ZkProofResult,
+        ZkVm,
     };
 
     use super::*;
@@ -1261,6 +1128,73 @@ mod tests {
                 zk_vm: ZkVm::Sp1,
                 zk_backend: ZkBackend::Cluster,
             }),
+        }
+    }
+
+    fn range_request(start: u64, count: u64, snark: bool) -> ProtocolProofRequest {
+        let mut request = compressed_protocol_request("range");
+        let ProtocolProofRequestKind::Compressed(proof) = &mut request.request else {
+            unreachable!()
+        };
+        proof.start_block_number = start;
+        proof.number_of_blocks_to_prove = count;
+        if snark {
+            request.request = ProtocolProofRequestKind::SnarkPlonk(SnarkPlonkProofRequest {
+                proof: proof.clone(),
+                prover_address: Default::default(),
+            });
+        }
+        request
+    }
+
+    #[test]
+    fn create_compressed_rejects_empty_range() {
+        let error = CreateProofRequest::new(range_request(100, 0, false)).unwrap_err();
+        assert_eq!(
+            error,
+            CreateProofRequestValidationError::InvalidZkRange(ZkRangeError::EmptyRange)
+        );
+        assert!(std::error::Error::source(&error).is_some());
+    }
+
+    #[test]
+    fn create_snark_rejects_empty_range() {
+        let error = CreateProofRequest::new(range_request(100, 0, true)).unwrap_err();
+        assert_eq!(
+            error,
+            CreateProofRequestValidationError::InvalidZkRange(ZkRangeError::EmptyRange)
+        );
+    }
+
+    #[test]
+    fn create_rejects_misaligned_ranges() {
+        for snark in [false, true] {
+            let error = CreateProofRequest::new(range_request(100, 9, snark)).unwrap_err();
+            assert_eq!(
+                error,
+                CreateProofRequestValidationError::InvalidZkRange(ZkRangeError::MisalignedRange {
+                    number_of_blocks_to_prove: 9,
+                    intermediate_block_interval: NonZeroU64::new(5).unwrap(),
+                })
+            );
+        }
+    }
+
+    #[test]
+    fn create_rejects_overflowing_ranges() {
+        for snark in [false, true] {
+            let error = CreateProofRequest::new(range_request(u64::MAX - 4, 5, snark)).unwrap_err();
+            assert_eq!(
+                error.to_string(),
+                "invalid ZK proof range: start block 18446744073709551611 plus block count 5 overflows u64"
+            );
+        }
+    }
+
+    #[test]
+    fn create_accepts_aligned_range_ending_at_u64_max() {
+        for snark in [false, true] {
+            CreateProofRequest::new(range_request(u64::MAX - 20, 20, snark)).unwrap();
         }
     }
 

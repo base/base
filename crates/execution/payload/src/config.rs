@@ -7,7 +7,7 @@ use std::{
     time::Duration,
 };
 
-use alloy_primitives::TxHash;
+use alloy_primitives::{B256, TxHash};
 use reth_engine_tree::tree::instrumented_state::{InstrumentedStateProvider, StateProviderStats};
 use reth_execution_cache::{
     CachedStateMetrics, CachedStateMetricsSource, CachedStateProvider, ExecutionCache,
@@ -19,8 +19,7 @@ use tracing::{debug, warn};
 use crate::{
     DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD, MeteringProvider, NoopMeteringProvider,
     RejectionCache, ResourceMeteringError, ResourceMeteringMetrics, ResourceMeteringSchedule,
-    ResourceMeteringUsage, ResourceSample, ResourceThrottlingDecision, RestingPredicateMode,
-    SharedMeteringProvider,
+    ResourceMeteringUsage, ResourceSample, ResourceThrottlingDecision, SharedMeteringProvider,
 };
 
 /// Settings for the Base payload builder.
@@ -30,6 +29,11 @@ pub struct BaseBuilderConfig {
     pub da_config: BaseDAConfig,
     /// Gas limit configuration for the Base payload builder.
     pub gas_limit_config: GasLimitConfig,
+    /// Maximum cumulative uncompressed (EIP-2718 encoded) block size in bytes, if any.
+    ///
+    /// Sequencer transactions always count toward the total; pool transactions that would push
+    /// the block over the limit are skipped for this block.
+    pub max_uncompressed_block_size: Option<u64>,
     /// Whether to drop positively stale EIP-8130 transactions using their
     /// captured authorization manifest before execution.
     pub manifest_precheck_enabled: bool,
@@ -44,19 +48,15 @@ pub struct BaseBuilderConfig {
     ///
     /// Native payload jobs skip hashes already in this cache even if the
     /// transaction is re-gossiped into the pool. Nonce-lane descendants are
-    /// skipped for the current scan via `PayloadTransactions::mark_invalid`;
-    /// skipping those descendants across later jobs is Flashblocks-only.
+    /// skipped for the current scan via `PayloadTransactions::mark_invalid`.
     pub rejection_cache: RejectionCache,
     /// Whether to record per-call state fetch latency for the build loop.
     ///
-    /// Mirrors the Flashblocks builder: wraps the payload builder's state provider so account,
+    /// Wraps the payload builder's state provider so account,
     /// storage, and code reads are timed under `sync.state_provider` with a `builder` source
     /// label. Adds overhead to every state read, so it follows reth's
     /// `--engine.state-provider-metrics` and stays off by default.
     pub state_provider_metrics: bool,
-    /// Whether validity transactions whose predicate was found unsatisfied in an earlier block skip
-    /// evaluation until a state change wakes them. Applies from Denim onward.
-    pub resting_predicate_mode: RestingPredicateMode,
 }
 
 impl Default for BaseBuilderConfig {
@@ -64,13 +64,13 @@ impl Default for BaseBuilderConfig {
         Self {
             da_config: BaseDAConfig::default(),
             gas_limit_config: GasLimitConfig::default(),
+            max_uncompressed_block_size: None,
             manifest_precheck_enabled: true,
             predicate_eval_hard_cutoff: Duration::from_millis(10),
             predicate_bucket_ordered_threshold: DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD,
             resource_metering: ResourceMeteringConfig::default(),
             rejection_cache: RejectionCache::default(),
             state_provider_metrics: false,
-            resting_predicate_mode: RestingPredicateMode::Off,
         }
     }
 }
@@ -85,21 +85,14 @@ impl BaseBuilderConfig {
         Self {
             da_config,
             gas_limit_config,
+            max_uncompressed_block_size: None,
             manifest_precheck_enabled,
             predicate_eval_hard_cutoff: Duration::from_millis(10),
             predicate_bucket_ordered_threshold: DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD,
             resource_metering: ResourceMeteringConfig::default(),
             rejection_cache: RejectionCache::default(),
             state_provider_metrics: false,
-            resting_predicate_mode: RestingPredicateMode::Off,
         }
-    }
-
-    /// Sets the mode for validity transactions resting from an earlier block.
-    #[must_use]
-    pub const fn with_resting_predicate_mode(mut self, mode: RestingPredicateMode) -> Self {
-        self.resting_predicate_mode = mode;
-        self
     }
 
     /// Sets whether build-loop state reads are timed.
@@ -202,11 +195,18 @@ impl ResourceMeteringConfig {
     }
 
     /// Looks up the simulated sample for `tx_hash`, if the provider has a matching result.
-    pub fn simulated_sample(&self, tx_hash: &TxHash) -> Option<ResourceSample> {
+    ///
+    /// The provider is keyed by `encoded_hash`, the hash of the exact encoding
+    /// ([`MeteringProvider`]); `tx_hash` selects the transaction's row in the response.
+    pub fn simulated_sample(
+        &self,
+        tx_hash: &TxHash,
+        encoded_hash: &B256,
+    ) -> Option<ResourceSample> {
         if !self.is_active() {
             return None;
         }
-        MeteringProvider::get(self.provider.as_ref(), tx_hash)
+        MeteringProvider::get(self.provider.as_ref(), encoded_hash)
             .and_then(|meter| ResourceSample::from_meter(&meter, tx_hash))
     }
 
@@ -225,12 +225,13 @@ impl ResourceMeteringConfig {
     pub fn check_simulated_usage(
         &self,
         tx_hash: &TxHash,
+        encoded_hash: &B256,
         cumulative: &[u128],
     ) -> (Option<ResourceSample>, ResourceThrottlingDecision) {
         if !self.is_active() {
             return (None, ResourceThrottlingDecision::Allow(ResourceMeteringUsage::zero(0)));
         }
-        let simulated = self.simulated_sample(tx_hash);
+        let simulated = self.simulated_sample(tx_hash, encoded_hash);
         let decision = simulated.as_ref().map_or_else(
             || {
                 ResourceThrottlingDecision::Allow(ResourceMeteringUsage::zero(
@@ -276,13 +277,14 @@ impl ResourceMeteringConfig {
     pub fn unthrottled_usage(
         &self,
         tx_hash: &TxHash,
+        encoded_hash: &B256,
         gas_used: u64,
         state: &EvmState,
     ) -> Option<ResourceMeteringUsage> {
         if !self.is_active() {
             return None;
         }
-        let simulated = self.simulated_sample(tx_hash);
+        let simulated = self.simulated_sample(tx_hash, encoded_hash);
         let sample =
             ResourceSample::from_execution(gas_used, state, simulated.as_ref(), &self.schedule);
         self.schedule.evaluate(sample.gas_used, &sample.operations).map_or_else(
@@ -302,11 +304,12 @@ impl ResourceMeteringConfig {
     pub fn account_unthrottled(
         &self,
         tx_hash: &TxHash,
+        encoded_hash: &B256,
         gas_used: u64,
         state: &EvmState,
         cumulative: &mut Vec<u128>,
     ) {
-        if let Some(usage) = self.unthrottled_usage(tx_hash, gas_used, state) {
+        if let Some(usage) = self.unthrottled_usage(tx_hash, encoded_hash, gas_used, state) {
             self.apply_accounted_usage(tx_hash, &usage, cumulative);
         }
     }
@@ -624,7 +627,7 @@ mod tests {
             schedule: Arc::new(compiled_cpu_schedule()),
             provider: Arc::new(NoopMeteringProvider),
         };
-        let (simulated, decision) = config.check_simulated_usage(&TxHash::ZERO, &[]);
+        let (simulated, decision) = config.check_simulated_usage(&TxHash::ZERO, &TxHash::ZERO, &[]);
         assert!(simulated.is_none());
         assert!(!decision.should_exclude());
     }
@@ -670,7 +673,7 @@ mod tests {
             )])))),
         };
         let usage = config
-            .unthrottled_usage(&tx_hash, 21_000, &EvmState::default())
+            .unthrottled_usage(&tx_hash, &tx_hash, 21_000, &EvmState::default())
             .expect("active config should produce usage");
         assert_eq!(usage.values, vec![21_000 + 30]);
     }
@@ -701,8 +704,15 @@ mod tests {
             schedule: Arc::new(compiled_cpu_schedule()),
             provider: Arc::clone(&provider),
         };
-        let (_, decision) = enforce.check_simulated_usage(&tx_hash, &[]);
+        let (_, decision) = enforce.check_simulated_usage(&tx_hash, &tx_hash, &[]);
         assert!(decision.should_exclude());
+
+        // Metering is keyed by the exact encoding: another encoding with the same transaction
+        // hash (an EIP-8130 authorization variant) does not inherit this sample.
+        let other_encoding = B256::repeat_byte(0x43);
+        let (simulated, decision) = enforce.check_simulated_usage(&tx_hash, &other_encoding, &[]);
+        assert!(simulated.is_none());
+        assert!(!decision.should_exclude());
 
         let dry_run = ResourceMeteringConfig {
             enabled: true,
@@ -720,7 +730,7 @@ mod tests {
             ),
             provider,
         };
-        let (_, decision) = dry_run.check_simulated_usage(&tx_hash, &[]);
+        let (_, decision) = dry_run.check_simulated_usage(&tx_hash, &tx_hash, &[]);
         assert!(!decision.should_exclude());
     }
 
@@ -772,7 +782,9 @@ mod tests {
                 tx_hash, meter,
             )])))),
         };
-        assert!(config.unthrottled_usage(&tx_hash, u64::MAX, &EvmState::default()).is_none());
+        assert!(
+            config.unthrottled_usage(&tx_hash, &tx_hash, u64::MAX, &EvmState::default()).is_none()
+        );
     }
 
     #[test]
@@ -783,7 +795,13 @@ mod tests {
             provider: Arc::new(NoopMeteringProvider),
         };
         let mut cumulative = vec![u128::MAX];
-        config.account_unthrottled(&TxHash::ZERO, 21_000, &EvmState::default(), &mut cumulative);
+        config.account_unthrottled(
+            &TxHash::ZERO,
+            &TxHash::ZERO,
+            21_000,
+            &EvmState::default(),
+            &mut cumulative,
+        );
         assert_eq!(cumulative, vec![u128::MAX]);
     }
 
@@ -818,7 +836,7 @@ mod tests {
                 tx_hash, meter,
             )])))),
         };
-        let (_, decision) = config.check_simulated_usage(&tx_hash, &[]);
+        let (_, decision) = config.check_simulated_usage(&tx_hash, &tx_hash, &[]);
         assert_eq!(decision, ResourceThrottlingDecision::CalculationFailed);
         assert!(!decision.should_exclude());
     }

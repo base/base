@@ -9,7 +9,7 @@
 
 use std::{
     collections::BTreeMap,
-    fs,
+    fmt, fs,
     io::Write as _,
     num::{NonZeroU64, NonZeroUsize},
     path::{Path, PathBuf},
@@ -39,22 +39,28 @@ use tracing::warn;
 use crate::{
     ChainSpecSource, DevnetBlockInterval, ExportedBlock, InProcessClient, InProcessClientConfig,
     InProcessNodeRuntime, LocalBenchmarkArgs, PrometheusBlockCollector, ProofsSummary,
-    ReplayManifest, ReplayProofsProbe, SnapshotBenchmarkArgs, SnapshotBenchmarkReportConfig,
-    SnapshotChainConfig, SnapshotL2Stack, VisualizerBlockMetrics, read_export_manifest,
-    read_exported_blocks,
+    RecordedReplay, ReplayManifest, ReplayProofsProbe, SnapshotBenchmarkArgs,
+    SnapshotBenchmarkReportConfig, SnapshotChainConfig, SnapshotL2Stack, VisualizerBlockMetrics,
+    read_export_manifest, read_exported_blocks,
 };
 
 /// File the replay result is written to inside `--output-dir`.
 pub const REPLAY_RESULT_FILE: &str = "replay-result.json";
 /// File the per-block validator Prometheus metrics are written to inside `--output-dir`.
 pub const REPLAY_METRICS_FILE: &str = "metrics-validator.json";
+/// File the first block the node did not accept is written to inside `--output-dir`.
+pub const FIRST_DIVERGENCE_FILE: &str = "first-divergence.json";
+/// Where Reth's witness invalid-block hook writes inside the datadir.
+const WITNESS_HOOK_DIR: &str = "invalid_block_hooks/witness";
+/// Where the hook's files for the rejected block are copied inside `--output-dir`.
+const WITNESS_COPY_DIR: &str = "invalid-block-hooks";
 
 /// Placeholder trusted peer for the replay node. [`InProcessClient`] always configures one
 /// trusted peer; the replay node must not sync from anyone, so it gets an unreachable one. The
 /// node ID is the secp256k1 generator point, a valid public key that no peer will answer for.
-const UNREACHABLE_PEER_ENODE: &str = "enode://79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798483ada7726a3c4655da4fbfc0e1108a8fd17b448a68554199c47d08ffb10d4b8@127.0.0.1:1";
+pub(crate) const UNREACHABLE_PEER_ENODE: &str = "enode://79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798483ada7726a3c4655da4fbfc0e1108a8fd17b448a68554199c47d08ffb10d4b8@127.0.0.1:1";
 /// Placeholder `rollup.sequencer` URL; the replay node receives no transactions to forward.
-const UNUSED_SEQUENCER_URL: &str = "http://127.0.0.1:1";
+pub(crate) const UNUSED_SEQUENCER_URL: &str = "http://127.0.0.1:1";
 /// Exported blocks decoded ahead of the engine calls, off the async runtime.
 const PREFETCH_BLOCKS: usize = 64;
 
@@ -90,6 +96,15 @@ pub struct ReplayBenchmarkArgs {
     /// history covers while all are busy are skipped.
     #[arg(long, default_value = "2")]
     pub proofs_concurrency: NonZeroUsize,
+    /// Directory a node wrote with `--debug.engine-api-store`. Replays its messages verbatim
+    /// instead of the export's blocks, from the first payload built on the datadir head, and
+    /// writes `recorded-replay-result.json`. The export supplies only the chain spec.
+    #[arg(long, conflicts_with_all = ["paced", "proofs_dir"])]
+    pub engine_store_dir: Option<PathBuf>,
+    /// Skip checking each block's state root task trie updates against a serial computation.
+    /// The check logs differences even when the state root matches; it does not fail the replay.
+    #[arg(long)]
+    pub no_compare_updates: bool,
 }
 
 /// How blocks were scheduled.
@@ -166,6 +181,9 @@ pub struct ReplayBlockTiming {
 pub struct ReplayResult {
     /// The export manifest the replay verified against.
     pub manifest: ReplayManifest,
+    /// Whether trie updates were checked against a serial computation on every block. The check
+    /// runs inside `newPayload`, so it adds to `newPayload` latency.
+    pub compare_updates: bool,
     /// Paced or unpaced scheduling.
     pub mode: ReplayMode,
     /// Blocks inserted and made canonical.
@@ -200,6 +218,60 @@ pub struct ReplayResult {
     pub proofs: Option<ProofsSummary>,
 }
 
+/// The first block the node did not accept, with what is needed to re-execute it offline.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FirstDivergence {
+    /// Engine call that did not return `VALID`.
+    pub call: &'static str,
+    /// Status the node returned, including its validation error.
+    pub status: PayloadStatus,
+    /// The rejected block and its engine payload.
+    pub block: ExportedBlock,
+    /// Copies in the output directory of the files the witness invalid-block hook wrote for the
+    /// block; empty when the node rejected it without executing it.
+    pub invalid_block_hook_files: Vec<PathBuf>,
+}
+
+impl FirstDivergence {
+    /// Copies the witness hook files for the block from `datadir` into `output_dir`, since the
+    /// datadir is restored before the next run, and writes `first-divergence.json` there.
+    pub fn write(&mut self, output_dir: &Path, datadir: &Path) -> Result<PathBuf> {
+        // Reth names every file it writes for a block `<number>_<hash>.*`.
+        let prefix = format!("{}_{}", self.block.number, self.block.hash);
+        let copy_dir = output_dir.join(WITNESS_COPY_DIR);
+        for entry in fs::read_dir(datadir.join(WITNESS_HOOK_DIR)).into_iter().flatten() {
+            let path = entry?.path();
+            let Some(name) = path.file_name() else { continue };
+            if !name.to_string_lossy().starts_with(&prefix) {
+                continue;
+            }
+            fs::create_dir_all(&copy_dir)
+                .wrap_err_with(|| format!("failed to create {}", copy_dir.display()))?;
+            let copy = copy_dir.join(name);
+            fs::copy(&path, &copy)
+                .wrap_err_with(|| format!("failed to copy {}", path.display()))?;
+            self.invalid_block_hook_files.push(copy);
+        }
+        self.invalid_block_hook_files.sort();
+        let path = output_dir.join(FIRST_DIVERGENCE_FILE);
+        LocalBenchmarkArgs::write_json(&path, self, "first divergence")?;
+        Ok(path)
+    }
+}
+
+impl fmt::Display for FirstDivergence {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{} returned {:?} for block {} {}",
+            self.call, self.status.status, self.block.number, self.block.hash
+        )
+    }
+}
+
+impl std::error::Error for FirstDivergence {}
+
 /// Blocks inserted before the replay finished or failed.
 #[derive(Debug)]
 struct ReplayRun {
@@ -231,7 +303,6 @@ impl ReplayBenchmarkArgs {
             datadir: Some(self.datadir.clone()),
             jwt_secret,
             builder_rpc_url: UNUSED_SEQUENCER_URL.to_string(),
-            builder_flashblocks_url: None,
             builder_p2p_enode: UNREACHABLE_PEER_ENODE.to_string(),
             http_port: None,
             ws_port: None,
@@ -243,6 +314,7 @@ impl ReplayBenchmarkArgs {
             persistence_backpressure_threshold: Some(
                 block_interval.snapshot_persistence_backpressure_threshold(),
             ),
+            state_root_task_compare_updates: !self.no_compare_updates,
             tx_forwarding_config: None,
             validity_signature_mode: ValiditySignatureMode::Off,
             upgrade_signal: None,
@@ -261,7 +333,10 @@ impl ReplayBenchmarkArgs {
         .await
         .wrap_err("failed to start replay node")?;
 
-        let output_result = self.execute(&client, manifest, block_interval, jwt_secret).await;
+        let output_result = match &self.engine_store_dir {
+            Some(dir) => RecordedReplay::run(&client, jwt_secret, dir, &self.output_dir).await,
+            None => self.execute(&client, manifest, block_interval, jwt_secret).await,
+        };
         if let Err(error) = &output_result {
             eprintln!("replay failed: {error:?}");
             let _ = std::io::stderr().flush();
@@ -326,9 +401,18 @@ impl ReplayBenchmarkArgs {
             Duration::from_millis(self.metrics_scrape_interval_ms.get()),
         )
         .await?;
-        let run = self
+        let mut run = self
             .replay_blocks(&engine, &manifest, safe, finalized, probe.as_ref().map(|p| &p.head))
             .await;
+        if let Some(divergence) =
+            run.error.as_mut().and_then(|error| error.downcast_mut::<FirstDivergence>())
+        {
+            // Keep going on failure so `replay-result.json` still records the rejection.
+            match divergence.write(&self.output_dir, client.datadir()) {
+                Ok(path) => println!("first divergence: {}", path.display()),
+                Err(error) => warn!(?error, "failed to write first divergence"),
+            }
+        }
         let replayed_all = run.error.is_none();
         let proofs = match probe {
             Some(probe) => {
@@ -350,6 +434,7 @@ impl ReplayBenchmarkArgs {
             };
         let result = ReplayResult {
             proofs,
+            compare_updates: !self.no_compare_updates,
             ..Self::summarize(
                 manifest,
                 if self.paced { ReplayMode::Paced } else { ReplayMode::Unpaced },
@@ -538,15 +623,22 @@ impl ReplayBenchmarkArgs {
         })
     }
 
-    fn ensure_valid(status: &PayloadStatus, call: &str, block: &ExportedBlock) -> Result<()> {
-        ensure!(
-            matches!(status.status, PayloadStatusEnum::Valid),
-            "{call} returned {:?} for block {} {}",
-            status.status,
-            block.number,
-            block.hash
-        );
-        Ok(())
+    /// Fails with a [`FirstDivergence`] unless `status` is `VALID`.
+    fn ensure_valid(
+        status: &PayloadStatus,
+        call: &'static str,
+        block: &ExportedBlock,
+    ) -> Result<()> {
+        if matches!(status.status, PayloadStatusEnum::Valid) {
+            return Ok(());
+        }
+        Err(FirstDivergence {
+            call,
+            status: status.clone(),
+            block: block.clone(),
+            invalid_block_hook_files: Vec::new(),
+        }
+        .into())
     }
 
     /// Builds the result document from the replayed blocks and the node's final head.
@@ -563,6 +655,7 @@ impl ReplayBenchmarkArgs {
         let blocks_replayed = run.blocks.len() as u64;
         ReplayResult {
             mode,
+            compare_updates: false,
             blocks_replayed,
             wall_time_ms: Self::millis(run.wall_time),
             blocks_per_second: if wall_seconds > 0.0 {
@@ -678,12 +771,17 @@ impl ReplayBenchmarkArgs {
         fs::create_dir_all(path).wrap_err_with(|| {
             format!("failed to create replay output directory {}", path.display())
         })?;
-        for file in [REPLAY_RESULT_FILE, REPLAY_METRICS_FILE] {
+        for file in [REPLAY_RESULT_FILE, REPLAY_METRICS_FILE, FIRST_DIVERGENCE_FILE] {
             let stale = path.join(file);
             if stale.exists() {
                 fs::remove_file(&stale)
                     .wrap_err_with(|| format!("failed to remove stale {}", stale.display()))?;
             }
+        }
+        let stale = path.join(WITNESS_COPY_DIR);
+        if stale.exists() {
+            fs::remove_dir_all(&stale)
+                .wrap_err_with(|| format!("failed to remove stale {}", stale.display()))?;
         }
         Ok(())
     }
@@ -695,16 +793,24 @@ impl ReplayBenchmarkArgs {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
+    use std::{fs, time::Duration};
 
-    use alloy_primitives::B256;
+    use alloy_primitives::{Address, B256, Bloom, Bytes, U256};
+    use alloy_rpc_types_engine::{ExecutionPayloadV1, PayloadStatus, PayloadStatusEnum};
     use base_common_chains::Upgrades;
     use base_common_genesis::BaseUpgrade;
+    use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
     use clap::Parser;
     use reth_ethereum_forks::ForkCondition;
+    use tempfile::TempDir;
 
-    use super::{LatencySummary, ReplayBenchmarkArgs, ReplayBlockTiming, ReplayMode, ReplayRun};
-    use crate::{BenchmarkCli, BenchmarkCommand, DevnetBlockInterval, ReplayManifest};
+    use super::{
+        FirstDivergence, LatencySummary, ReplayBenchmarkArgs, ReplayBlockTiming, ReplayMode,
+        ReplayRun,
+    };
+    use crate::{
+        BenchmarkCli, BenchmarkCommand, DevnetBlockInterval, ExportedBlock, ReplayManifest,
+    };
 
     const FIRST_BLOCK_TIMESTAMP: u64 = 2_000_000_000;
 
@@ -757,6 +863,7 @@ mod tests {
         assert!(!args.paced);
         assert_eq!(args.shutdown_timeout_seconds, 0);
         assert!(args.proofs_dir.is_none());
+        assert!(!args.no_compare_updates);
     }
 
     #[test]
@@ -842,6 +949,73 @@ mod tests {
         let mismatch =
             ReplayBenchmarkArgs::summarize(manifest, ReplayMode::Unpaced, run(), wrong_root);
         assert!(!mismatch.matches);
+    }
+
+    #[test]
+    fn rejected_block_writes_first_divergence_with_its_witness_files() {
+        let hash = B256::repeat_byte(7);
+        let block = ExportedBlock {
+            number: 7,
+            hash,
+            timestamp_ms: FIRST_BLOCK_TIMESTAMP * 1_000,
+            state_root: B256::repeat_byte(8),
+            payload_version: 1,
+            envelope: BaseExecutionPayloadEnvelope {
+                parent_beacon_block_root: None,
+                execution_payload: BaseExecutionPayload::V1(ExecutionPayloadV1 {
+                    parent_hash: B256::repeat_byte(6),
+                    fee_recipient: Address::ZERO,
+                    state_root: B256::repeat_byte(8),
+                    receipts_root: B256::ZERO,
+                    logs_bloom: Bloom::ZERO,
+                    prev_randao: B256::ZERO,
+                    block_number: 7,
+                    gas_limit: 30_000_000,
+                    gas_used: 0,
+                    timestamp: FIRST_BLOCK_TIMESTAMP,
+                    extra_data: Bytes::new(),
+                    base_fee_per_gas: U256::from(1),
+                    block_hash: hash,
+                    transactions: Vec::new(),
+                }),
+            },
+        };
+        let valid = PayloadStatus::new(PayloadStatusEnum::Valid, Some(hash));
+        assert!(ReplayBenchmarkArgs::ensure_valid(&valid, "newPayload", &block).is_ok());
+        let invalid = PayloadStatus::new(
+            PayloadStatusEnum::Invalid { validation_error: "state root mismatch".to_string() },
+            None,
+        );
+        let mut error =
+            ReplayBenchmarkArgs::ensure_valid(&invalid, "newPayload", &block).unwrap_err();
+        let divergence = error.downcast_mut::<FirstDivergence>().unwrap();
+
+        let datadir = TempDir::new().unwrap();
+        let hooks = datadir.path().join("invalid_block_hooks/witness");
+        fs::create_dir_all(&hooks).unwrap();
+        let witness = hooks.join(format!("7_{hash}.witness.re_executed.json"));
+        let diff = hooks.join(format!("7_{hash}.bundle_state.diff"));
+        for path in [&witness, &diff, &hooks.join(format!("70_{hash}.bundle_state.diff"))] {
+            fs::write(path, "{}").unwrap();
+        }
+        let output = TempDir::new().unwrap();
+
+        let path = divergence.write(output.path(), datadir.path()).unwrap();
+
+        let written: serde_json::Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+        assert_eq!(written["call"], "newPayload");
+        assert_eq!(written["status"]["status"], "INVALID");
+        assert_eq!(written["status"]["validationError"], "state root mismatch");
+        assert_eq!(written["block"]["number"], 7);
+        assert_eq!(written["block"]["envelope"]["executionPayload"]["blockHash"], hash.to_string());
+        let copies = output.path().join("invalid-block-hooks");
+        let diff_copy = copies.join(diff.file_name().unwrap());
+        let witness_copy = copies.join(witness.file_name().unwrap());
+        assert_eq!(written["invalidBlockHookFiles"], serde_json::json!([diff_copy, witness_copy]));
+        assert_eq!(fs::read_dir(&copies).unwrap().count(), 2);
+        drop(datadir);
+        assert_eq!(fs::read_to_string(witness_copy).unwrap(), "{}");
+        assert!(error.to_string().contains("newPayload returned Invalid"));
     }
 
     #[test]

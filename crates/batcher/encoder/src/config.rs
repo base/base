@@ -1,6 +1,6 @@
 //! Encoder configuration and its validation error type.
 
-use base_common_genesis::RollupConfig;
+use base_common_genesis::{BaseFeature, RollupConfig};
 use base_protocol::{
     BLOB_DERIVATION_PREFIX_SIZE as PROTOCOL_BLOB_DERIVATION_PREFIX_SIZE,
     BLOB_MAX_DATA_SIZE as PROTOCOL_BLOB_MAX_DATA_SIZE, Frame,
@@ -46,8 +46,9 @@ pub struct EncoderConfig {
 
     /// Maximum blobs packed into one L1 transaction.
     ///
-    /// This controls transaction packing and does not close channels. It cannot
-    /// exceed [`Self::MAX_BLOBS_PER_TX`].
+    /// This controls transaction packing and does not close channels: blobs
+    /// that do not hold a channel's last frame wait until this many are ready.
+    /// It cannot exceed [`Self::MAX_BLOBS_PER_TX`].
     ///
     /// Default: 6.
     pub max_blobs_per_tx: usize,
@@ -176,7 +177,9 @@ impl EncoderConfig {
     ) -> Result<(), EncoderConfigError> {
         self.validate()?;
 
-        if !rollup_config.is_fjord_active(next_l2_timestamp) {
+        if !rollup_config
+            .is_feature_active_cascading(BaseFeature::BrotliCompression, next_l2_timestamp)
+        {
             return Err(EncoderConfigError::BrotliRequiresFjord { next_l2_timestamp });
         }
 
