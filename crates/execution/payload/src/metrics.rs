@@ -108,6 +108,11 @@ base_metrics::define_metrics! {
     #[label(name = "flow", default = ["standard", "validity"])]
     #[label(name = "bid", default = ["coinbase_tip", "priority_fee"])]
     tip_per_gas: histogram,
+    #[describe(
+        "Frozen-payload hints published for the consensus layer, by whether a receiver was subscribed"
+    )]
+    #[label(name = "result", default = ["delivered", "no_receiver"])]
+    payload_ready_hints_sent_total: counter,
 }
 
 impl ValidityMetrics {
@@ -214,6 +219,13 @@ impl BuilderMetrics {
         Self::base_fee_revenue_wei(FLOW_VALIDITY).record(tracker.validity.base_fees_f64());
         Self::coinbase_tip_revenue_wei(FLOW_STANDARD).record(tracker.standard.coinbase_tips_f64());
         Self::coinbase_tip_revenue_wei(FLOW_VALIDITY).record(tracker.validity.coinbase_tips_f64());
+    }
+
+    /// Records one frozen-payload hint published for the consensus layer. `delivered` is false
+    /// when no receiver was subscribed, so the hint reached nobody.
+    pub fn record_payload_ready_hint(delivered: bool) {
+        let result = if delivered { "delivered" } else { "no_receiver" };
+        Self::payload_ready_hints_sent_total(result).increment(1);
     }
 
     /// Records one included transaction's tip per gas by flow and bid mechanism.

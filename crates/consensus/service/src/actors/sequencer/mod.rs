@@ -18,8 +18,13 @@ pub use l1_origin::{
 mod recovery;
 pub use recovery::RecoveryModeGuard;
 
+mod ready_hint;
+pub use ready_hint::ReadyHintDropReason;
+
 mod seal;
-pub use seal::{PayloadSealer, SealState, SealStepError, SealStepOutcome};
+pub use seal::{
+    PayloadSealer, SealSchedule, SealState, SealStepError, SealStepOutcome, SealTrigger,
+};
 
 mod shadow_cycle;
 pub use shadow_cycle::{ShadowCycle, ShadowReconciliationTask};
