@@ -4,10 +4,7 @@ use std::{
     collections::HashMap,
     fs,
     path::Path,
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -52,7 +49,7 @@ pub struct LoadRunner {
     pub(super) accounts: AccountPool,
     pub(super) generator: WorkloadGenerator,
     pub(super) collector: MetricsCollector,
-    pub(super) stop_flag: Arc<AtomicBool>,
+    pub(super) stop: CancellationToken,
     pub(super) cancel_token: CancellationToken,
     pub(super) nonce_managers: Arc<HashMap<Address, NonceManager<RootProvider<Ethereum>>>>,
     pub(super) signers: Arc<HashMap<Address, PrivateKeySigner>>,
@@ -176,7 +173,7 @@ impl LoadRunner {
             accounts,
             generator,
             collector: MetricsCollector::new(),
-            stop_flag: Arc::new(AtomicBool::new(false)),
+            stop: CancellationToken::new(),
             cancel_token: CancellationToken::new(),
             nonce_managers: Arc::new(HashMap::new()),
             signers,
@@ -403,7 +400,7 @@ impl LoadRunner {
         let path = control_dir.join("start");
         let started = Instant::now();
         while !path.exists() {
-            if self.stop_flag.load(Ordering::SeqCst) || self.cancel_token.is_cancelled() {
+            if self.stop.is_cancelled() || self.cancel_token.is_cancelled() {
                 return Err(BaselineError::Transaction(
                     "stopped while waiting for start handshake".into(),
                 ));
@@ -589,16 +586,16 @@ impl LoadRunner {
 
     /// Signals the load test to stop gracefully.
     ///
-    /// Sets `stop_flag` and cancels background watcher tasks. The caller must ensure
+    /// Cancels the stop token and background watcher tasks. The caller must ensure
     /// [`run()`](Self::run) completes, which handles draining confirmations.
     pub fn stop(&self) {
-        self.stop_flag.store(true, Ordering::SeqCst);
+        self.stop.cancel();
         self.cancel_token.cancel();
     }
 
-    /// Returns a clone of the stop flag for external coordination.
-    pub fn stop_flag(&self) -> Arc<AtomicBool> {
-        Arc::clone(&self.stop_flag)
+    /// Returns the token that stops the run when cancelled.
+    pub fn stop_token(&self) -> CancellationToken {
+        self.stop.clone()
     }
 
     /// Attaches a live progress-bar display.

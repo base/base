@@ -1,11 +1,6 @@
 //! High-level load-test execution orchestration.
 
-use std::{
-    fmt,
-    panic::AssertUnwindSafe,
-    sync::{Arc, atomic::AtomicBool},
-    time::Duration,
-};
+use std::{fmt, panic::AssertUnwindSafe, time::Duration};
 
 use alloy_primitives::{U256, utils::format_ether};
 use alloy_provider::Provider;
@@ -174,7 +169,7 @@ impl LoadTestExecutor {
         }
         let _signal_guard = options
             .install_signal_handler
-            .then(|| Self::install_signal_handler(runner.stop_flag()));
+            .then(|| Self::install_signal_handler(runner.stop_token()));
 
         let run_result = Self::run_phases(&mut runner, &funding_key, setup, hooks.display).await;
         let (summary, run_error) = match run_result {
@@ -300,19 +295,19 @@ impl LoadTestExecutor {
         summary
     }
 
-    /// Installs SIGINT and SIGTERM handlers that flip the runner stop flag.
+    /// Installs SIGINT and SIGTERM handlers that cancel the runner stop token.
     ///
     /// The returned guard must be held for as long as the handlers should remain
     /// active. Dropping it aborts the background tasks so repeated installs do
     /// not accumulate.
-    pub fn install_signal_handler(stop_flag: Arc<AtomicBool>) -> SignalHandlerGuard {
-        let cancel = CancellationToken::new();
-        let runtime_handle = RuntimeManager::install_signal_handler(cancel.clone());
+    pub fn install_signal_handler(stop: CancellationToken) -> SignalHandlerGuard {
+        let signal = CancellationToken::new();
+        let runtime_handle = RuntimeManager::install_signal_handler(signal.clone());
 
         let stop_handle = tokio::spawn(async move {
-            cancel.cancelled().await;
+            signal.cancelled().await;
             eprintln!("\nReceived signal, stopping gracefully.");
-            stop_flag.store(true, std::sync::atomic::Ordering::SeqCst);
+            stop.cancel();
         });
 
         SignalHandlerGuard { runtime_handle, stop_handle }
