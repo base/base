@@ -2188,20 +2188,32 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn transient_is_revoked_failures_retry_inline_and_fail_closed_when_exhausted() {
-        let plan = synthetic_plan(SIGNER_A);
+        let (attestation, plan) = forged_attestation();
 
         let (manager, chain) = manager_with_plan(&plan);
-        chain.0.lock().unwrap().transient_is_revoked_failures = 1;
-        assert!(manager.check_revocations(&plan, &CancellationToken::new()).await.unwrap());
+        {
+            let mut state = chain.0.lock().unwrap();
+            state.registered.insert(plan.signer);
+            state.transient_is_revoked_failures = 1;
+        }
+        manager
+            .register_signer(TEST_INSTANCE, plan.signer, &attestation, &CancellationToken::new())
+            .await
+            .expect("a single transient isRevoked failure should be retried inline");
+        assert!(chain.0.lock().unwrap().registered.contains(&plan.signer));
+        assert!(chain.sent().is_empty());
 
         let (manager, chain) = manager_with_plan(&plan);
         chain.0.lock().unwrap().transient_is_revoked_failures = usize::MAX;
-        let result = manager.check_revocations(&plan, &CancellationToken::new()).await;
+        let result = manager
+            .register_signer(TEST_INSTANCE, plan.signer, &attestation, &CancellationToken::new())
+            .await;
         assert!(
             matches!(&result, Err(RegistrarError::Contract(error)) if error.is_transient()),
             "unknown revocation status must fail closed, got {result:?}"
         );
-        assert!(chain.sent().is_empty());
+        assert!(!chain.0.lock().unwrap().registered.contains(&plan.signer));
+        assert!(chain.sent().is_empty(), "exhausted retries must not submit registerSigner");
     }
 
     #[tokio::test]
