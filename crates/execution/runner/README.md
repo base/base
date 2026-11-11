@@ -75,8 +75,9 @@ local insertion keep their existing order. The scheduled seal remains the fallba
 the next block's build still waits for its parent's scheduled timestamp. Split EL/CL
 deployments have no IPC/WS subscription and continue using the scheduled seal.
 
-Early sealing is observable through these metrics. Offsets are measured from the block's
-scheduled build start, which is its parent's timestamp.
+Early sealing is observable through these metrics, which the unified sequencer exports with
+a `reth_` prefix. Offsets are measured from the block's scheduled build start, which is its
+parent's timestamp.
 
 | Metric | Type | Labels | Meaning |
 |---|---|---|---|
