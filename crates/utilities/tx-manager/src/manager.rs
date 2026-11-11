@@ -2847,9 +2847,9 @@ mod tests {
 
     /// A blob tx still pending after the resubmission timeout is replaced with doubled fees,
     /// which raises the fees the next blob txs start from. Whichever version lands, the
-    /// replacement or the first version, the next blob tx then starts at 90% of the
-    /// `max_priority_fee_per_gas` per blob that version paid, and the metrics record that
-    /// value and the replacement.
+    /// replacement or the first version, the next blob tx, here with two blobs, is then
+    /// signed at 90% of the `max_priority_fee_per_gas` per blob that version paid, and the
+    /// metrics record that value and the replacement.
     #[rstest]
     #[case::the_replacement_lands(1, 0.02, 18_000_000)]
     #[case::the_first_version_lands(0, 0.01, 10_000_000)]
@@ -2911,11 +2911,20 @@ mod tests {
                 ctx.now(),
                 if landing == 0 { receipt_query_interval } else { BLOB_RESUBMISSION_TIMEOUT }
             );
+
+            push_blob_pricing(&asserter);
+            let next = TxCandidate {
+                blobs: Arc::from(vec![Box::<Blob>::default(), Box::<Blob>::default()]),
+                ..blob_candidate()
+            };
+            let next = manager.craft_tx(&next, None).await.expect("should craft the next blob tx");
+            let next = next.to_envelope().unwrap();
+            let next = next.as_eip4844().expect("should be EIP-4844").tx().tx();
+            let next_max_priority_fee_per_gas = 2 * next_max_priority_fee_per_gas_per_blob;
+            assert_eq!(next.max_priority_fee_per_gas, next_max_priority_fee_per_gas);
+            assert_eq!(next.max_fee_per_gas, next_max_priority_fee_per_gas + 2_000_000_000);
+            assert_eq!(next.max_fee_per_blob_gas, 2_000_000_000);
             assert!(asserter.read_q().is_empty(), "every mocked response should be used");
-            assert_eq!(
-                manager.blob_fee_policy.max_priority_fee_per_gas_per_blob(),
-                next_max_priority_fee_per_gas_per_blob
-            );
         });
     }
 
