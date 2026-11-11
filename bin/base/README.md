@@ -124,15 +124,15 @@ Foundry `cast` and `jq`. See [CONTRIBUTING.md](../../CONTRIBUTING.md) for develo
 bare `just devnet snapshot` lists the commands.
 
 **Use disposable data, never a running node's datadir or your only mainnet copy.** Development blocks
-and minted balances permanently diverge from mainnet. To return to mainnet, restore a clean backup;
-deleting `base-dev.json` does not undo execution. Only one process may open the database for writing.
+and minted balances permanently diverge from mainnet. To return to mainnet, restore a clean backup.
+Only one process may open the database for writing.
 
 `base dev` continues an existing snapshot datadir as a local chain: an embedded execution node and
 an L1-free standalone sequencer in one process, connected in memory. It never creates,
 downloads, or reinitializes data. Discovery and peers are disabled, and HTTP and WS RPC listen on
-loopback. A pre-Denim head gets Denim at its next block; the schedule and snapshot head are saved to
-`base-dev.json` in the datadir before the first block and restored on restart. Block timestamps
-continue from the snapshot.
+loopback. The snapshot head must be past Denim; block timestamps continue from it on the chain's
+Denim schedule. Datadirs from an older `base dev` that activated Denim locally cannot be resumed;
+download a current snapshot.
 
 HTTP defaults to `http://127.0.0.1:8545`, WS to `ws://127.0.0.1:8546`; both expose ordinary `eth_*`,
 `debug_*`, and `trace_*` methods. Keep these unauthenticated endpoints private: impersonation can act

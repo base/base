@@ -37,8 +37,8 @@ use tokio::{
 use tracing::debug;
 
 use crate::{
-    Admission, BasePooledTx, BaseTransactionValidator, BestTransactionsHold, GuardLimits,
-    GuardMetrics, InvalidationCause, InvalidationKey, LimitRejection, MempoolGuard,
+    Admission, BasePooledTx, BaseTransactionValidator, BaseTxPoolError, BestTransactionsHold,
+    GuardLimits, GuardMetrics, InvalidationCause, InvalidationKey, LimitRejection, MempoolGuard,
     ParkableBestTransactions, ParkableTransactionPool, ParkedBestTransactions, PoolStore,
     StateDiffInvalidation, ValidityPoolLimits, ValidityPoolMetrics,
     best::{BridgedDescendants, MergeBestTransactions},
@@ -781,7 +781,8 @@ where
     /// Rechecks an EIP-8130 transaction against the pool's block gas limit, which can
     /// move after validation, as reth's protocol pool does for every transaction at
     /// insert. Execution reserves `gas_limit + payer_auth` against the block, and an
-    /// unpriceable payer authentication never fits.
+    /// unpriceable payer authentication never fits. Only a `gas_limit` over the limit
+    /// on its own is a bad transaction: the hash does not cover `payer_auth`.
     fn ensure_eip8130_fits_block_gas_limit(
         &self,
         hash: TxHash,
@@ -794,21 +795,21 @@ where
         let Some(signed) = transaction.as_eip8130() else {
             return Ok(());
         };
+        let gas_limit = transaction.gas_limit();
         let reserved_gas = IntrinsicGas::payer_auth_cost_of(signed)
-            .map_or(u64::MAX, |payer_auth| {
-                FeeCheck::max_chargeable_gas(transaction.gas_limit(), payer_auth)
-            });
+            .map_or(u64::MAX, |payer_auth| FeeCheck::max_chargeable_gas(gas_limit, payer_auth));
         let block_gas_limit = self.protocol_pool.block_info().block_gas_limit;
-        if reserved_gas > block_gas_limit {
-            return Err(PoolError::new(
-                hash,
-                PoolErrorKind::InvalidTransaction(InvalidPoolTransactionError::ExceedsGasLimit(
-                    reserved_gas,
-                    block_gas_limit,
-                )),
-            ));
+        if reserved_gas <= block_gas_limit {
+            return Ok(());
         }
-        Ok(())
+        let error = if gas_limit > block_gas_limit {
+            InvalidPoolTransactionError::ExceedsGasLimit(reserved_gas, block_gas_limit)
+        } else {
+            InvalidPoolTransactionError::other(BaseTxPoolError::Eip8130Authentication {
+                reason: BaseTxPoolError::PAYER_AUTH_EXCEEDS_BLOCK_GAS_LIMIT,
+            })
+        };
+        Err(PoolError::new(hash, PoolErrorKind::InvalidTransaction(error)))
     }
 
     /// Records a transaction's last valid block in the block-expiry index,
@@ -2379,7 +2380,10 @@ where
         hold: Option<Box<dyn BestTransactionsHold<Self::Transaction>>>,
     ) -> Box<dyn ParkableBestTransactions<Self::Transaction>> {
         let base_fee = attributes.basefee;
-        let merged = self.merged_best_transactions(attributes);
+        let mut merged = self.merged_best_transactions(attributes);
+        // Snapshot every store, reth's included, so a transaction that arrives
+        // mid-build waits for the next build instead of joining this one.
+        merged.no_updates();
         Box::new(
             ParkedBestTransactions::new(merged, self.ordering.clone(), base_fee).with_hold(hold),
         )
@@ -2799,7 +2803,10 @@ fn pooled_element<T: BasePooledTx>(
 
 #[cfg(test)]
 mod tests {
-    use std::time::{Duration, Instant};
+    use std::{
+        collections::HashSet,
+        time::{Duration, Instant},
+    };
 
     use alloy_consensus::{
         SignableTransaction, Transaction, TxEip1559, TxEip7702,
@@ -3946,6 +3953,25 @@ mod tests {
         }
     }
 
+    /// Asserts the rejection for a sponsored transaction whose `gas_limit` fits the block
+    /// gas limit but whose payer authentication gas pushes it over: an authentication
+    /// error that does not mark the hash bad, since the hash does not cover `payer_auth`.
+    fn assert_payer_auth_exceeds_block_gas_limit(
+        error: &reth_transaction_pool::error::PoolError,
+        nonce_key: U256,
+    ) {
+        let InvalidPoolTransactionError::Other(other) = invalid_kind(error) else {
+            panic!("nonce key {nonce_key}: expected a Base pool error, got {error:?}");
+        };
+        assert!(!other.is_bad_transaction(), "nonce key {nonce_key}: {error:?}");
+        match other.as_any().downcast_ref::<BaseTxPoolError>() {
+            Some(BaseTxPoolError::Eip8130Authentication { reason }) => {
+                assert_eq!(*reason, BaseTxPoolError::PAYER_AUTH_EXCEEDS_BLOCK_GAS_LIMIT);
+            }
+            other => panic!("nonce key {nonce_key}: expected Eip8130Authentication, got {other:?}"),
+        }
+    }
+
     #[tokio::test]
     async fn eip8130_routes_enforce_the_minimum_priority_fee() {
         let (pool, client) = build_integration_pool_with_policies(PoolPolicies {
@@ -4072,15 +4098,7 @@ mod tests {
                 .add_transaction(TransactionOrigin::External, transaction)
                 .await
                 .expect_err("gas_limit plus payer authentication exceeds the block gas limit");
-            assert!(
-                matches!(
-                    invalid_kind(&error),
-                    InvalidPoolTransactionError::ExceedsGasLimit(gas, limit)
-                        if *gas == SPONSORED_GAS_LIMIT + payer_auth
-                            && *limit == SPONSORED_GAS_LIMIT
-                ),
-                "nonce key {nonce_key}: {error:?}"
-            );
+            assert_payer_auth_exceeds_block_gas_limit(&error, nonce_key);
         }
     }
 
@@ -4256,14 +4274,7 @@ mod tests {
                 pool.add_transaction(TransactionOrigin::External, transaction).await.expect_err(
                     "gas_limit plus payer authentication exceeds the pool's block gas limit",
                 );
-            assert!(
-                matches!(
-                    invalid_kind(&error),
-                    InvalidPoolTransactionError::ExceedsGasLimit(gas, limit)
-                        if *gas == POLICY_GAS_LIMIT + 1 && *limit == POLICY_GAS_LIMIT
-                ),
-                "nonce key {nonce_key}: {error:?}"
-            );
+            assert_payer_auth_exceeds_block_gas_limit(&error, nonce_key);
             let transaction = sponsored_policy_tx(&signer, &payer, nonce_key, POLICY_GAS_LIMIT);
             pool.add_transaction(TransactionOrigin::External, transaction)
                 .await
@@ -6309,15 +6320,12 @@ mod tests {
         let sidecar = add(&pool, self_paid_eoa_8130(&signer, U256::from(8), 0, 0, 1_000)).await;
         let others_validity = add(&pool, validity_1559(&other, 0, 1_000)).await;
 
-        let removed: std::collections::HashSet<_> = pool
+        let removed: HashSet<_> = pool
             .remove_transactions_by_sender(signer.address())
             .iter()
             .map(|tx| *tx.hash())
             .collect();
-        assert_eq!(
-            removed,
-            std::collections::HashSet::from([standard, validity, channel_validity, sidecar])
-        );
+        assert_eq!(removed, HashSet::from([standard, validity, channel_validity, sidecar]));
         for hash in [standard, validity, channel_validity, sidecar] {
             assert_gone(&pool, hash);
         }
@@ -6367,6 +6375,48 @@ mod tests {
         assert!(yielded.contains(&rich_validity));
         assert!(!yielded.contains(&validity_successor));
         assert!(yielded.contains(&cheap_standard) && yielded.contains(&tipping_standard));
+    }
+
+    /// The builder walks the pool as it stood when the build started: a
+    /// transaction that arrives mid-build waits for the next build in every
+    /// store, however much it outbids what the snapshot holds.
+    #[tokio::test]
+    async fn parking_iterator_snapshots_every_store_at_build_start() {
+        let (pool, client) = build_integration_pool();
+        let signers: [_; 6] = std::array::from_fn(|_| funded_signer(&client));
+        let resting = HashSet::from([
+            add(&pool, signed_1559_with_fees(&signers[0], 0, 1_000, 1)).await,
+            add(&pool, validity_1559(&signers[1], 0, 1_000)).await,
+            add(&pool, self_paid_eoa_8130(&signers[2], U256::from(7), 0, 0, 1_000)).await,
+        ]);
+        let attributes = BestTransactionsAttributes::new(0, None);
+
+        let mut build = pool.best_transactions_with_attributes_and_parking(attributes, None);
+        let late = [
+            add(&pool, signed_1559_with_fees(&signers[3], 0, 1_000, 900)).await,
+            add(
+                &pool,
+                signed_1559_with_fees(&signers[4], 0, 1_000, 900)
+                    .with_validity_predicates(resting_predicates()),
+            )
+            .await,
+            add(&pool, self_paid_eoa_8130(&signers[5], U256::from(7), 0, 0, 1_000)).await,
+        ];
+        for (hash, store) in
+            late.into_iter().zip([PoolStore::Protocol, PoolStore::Validity, PoolStore::Sidecar])
+        {
+            assert_store(&pool, hash, store);
+        }
+
+        let yielded: HashSet<_> =
+            std::iter::from_fn(|| build.next()).map(|transaction| *transaction.hash()).collect();
+        assert_eq!(yielded, resting, "mid-build arrivals must not join the build");
+
+        let next: HashSet<_> = pool
+            .best_transactions_with_attributes_and_parking(attributes, None)
+            .map(|transaction| *transaction.hash())
+            .collect();
+        assert_eq!(next, resting.into_iter().chain(late).collect(), "the next build takes them");
     }
 
     /// The reviewer's case: a validity successor that outbids the standard

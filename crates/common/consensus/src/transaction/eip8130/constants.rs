@@ -10,9 +10,12 @@ use alloy_primitives::{Address, U256, address};
 /// is type-anchored (per repo convention: "the public API exports types, not loose
 /// functions").
 ///
-/// Spec status (as of writing): EIP-8130 is in Draft. The transaction and payer
-/// type bytes below are pinned to the EIP-8130 constant-table values
-/// (`AA_TX_TYPE = 0x79`, `AA_PAYER_TYPE = 0x7A`).
+/// Spec status (as of writing): EIP-8130 is in Draft. The transaction type byte
+/// is the EIP-8130 constant-table value `AA_TX_TYPE = 0x79`. The signing and
+/// replay-id domains are two-byte sub-prefixes of it (`0x7900`, `0x7901`,
+/// `0x7902`), so EIP-8130 claims no other [EIP-2718] type byte.
+///
+/// [EIP-2718]: https://eips.ethereum.org/EIPS/eip-2718
 ///
 /// [EIP-8130]: https://eips.ethereum.org/EIPS/eip-8130
 #[derive(Debug)]
@@ -26,13 +29,26 @@ impl Eip8130Constants {
     /// [EIP-2718]: https://eips.ethereum.org/EIPS/eip-2718
     pub const EIP8130_TX_TYPE: u8 = 0x79;
 
-    /// Magic prefix byte for payer signature domain separation (`EIP8130_PAYER_TYPE`).
+    /// Domain prefix of the sender signature hash
+    /// (`keccak256(SENDER_SIGNATURE_TYPE || rlp([...]))`).
     ///
-    /// Used in the payer signature preimage:
-    /// `keccak256(EIP8130_PAYER_TYPE || rlp([...fields through calls...]))`.
-    ///
-    /// Pinned to the EIP-8130 constant-table value `AA_PAYER_TYPE = 0x7A`.
-    pub const EIP8130_PAYER_TYPE: u8 = 0x7A;
+    /// Every EIP-8130 domain starts with [`Self::EIP8130_TX_TYPE`]. The
+    /// transaction hash hashes that byte followed by an RLP list header, which
+    /// is always `>= 0xc0`, while the two-byte domains append a second byte
+    /// below `0xc0`. No two of these preimages can therefore be equal, and
+    /// in particular a signature over a transaction hash is never a valid
+    /// sender or payer signature.
+    pub const SENDER_SIGNATURE_TYPE: [u8; 2] = [0x79, 0x00];
+
+    /// Domain prefix of the payer signature hash
+    /// (`keccak256(PAYER_SIGNATURE_TYPE || rlp([...]))`). See
+    /// [`Self::SENDER_SIGNATURE_TYPE`] for why the domains cannot collide.
+    pub const PAYER_SIGNATURE_TYPE: [u8; 2] = [0x79, 0x01];
+
+    /// Domain prefix of the nonce-free `replay_id`
+    /// (`keccak256(REPLAY_ID_TYPE || rlp([...]))`). See
+    /// [`Self::SENDER_SIGNATURE_TYPE`] for why the domains cannot collide.
+    pub const REPLAY_ID_TYPE: [u8; 2] = [0x79, 0x02];
 
     /// Sentinel `nonce_key` value selecting nonce-free mode (`NONCE_KEY_MAX`).
     ///
@@ -84,17 +100,6 @@ impl Eip8130Constants {
     // decides whether the sender is gated; OPERATOR overrides POLICY. The
     // Keystore attaches policy by payload length (empty vs 52 bytes) and stores
     // `scope` verbatim. The protocol node gates `sender_auth` on `SCOPE_POLICY`.
-
-    /// Domain-separation prefix for the `replay_id` preimage
-    /// (`keccak256(REPLAY_ID_TYPE || rlp([...])`).
-    ///
-    /// Pinned to the EIP-8130 constant-table value `REPLAY_ID_TYPE = 0x7901`. It
-    /// shares the `AA_TX_TYPE` first byte (`0x79`) but appends `0x01`: the
-    /// sender/payer signing hashes hash `EIP8130_TX_TYPE`/`EIP8130_PAYER_TYPE`
-    /// followed by an RLP list header (always `>= 0xc0`), so the trailing `0x01`
-    /// can never coincide with a valid list header and the preimage spaces cannot
-    /// collide.
-    pub const REPLAY_ID_TYPE: [u8; 2] = [0x79, 0x01];
 
     /// Unrestricted scope value (actor is valid in all contexts).
     pub const SCOPE_UNRESTRICTED: u16 = 0x0000;
@@ -343,12 +348,27 @@ mod tests {
 
     #[test]
     fn type_bytes_are_distinct() {
-        assert_ne!(Eip8130Constants::EIP8130_TX_TYPE, Eip8130Constants::EIP8130_PAYER_TYPE);
         assert_ne!(Eip8130Constants::EIP8130_TX_TYPE, LEGACY_TX_TYPE);
         assert_ne!(Eip8130Constants::EIP8130_TX_TYPE, EIP2930_TX_TYPE);
         assert_ne!(Eip8130Constants::EIP8130_TX_TYPE, EIP1559_TX_TYPE);
         assert_ne!(Eip8130Constants::EIP8130_TX_TYPE, EIP7702_TX_TYPE);
         assert_ne!(Eip8130Constants::EIP8130_TX_TYPE, DEPOSIT_TX_TYPE);
+    }
+
+    #[test]
+    fn domains_are_sub_prefixes_of_the_tx_type() {
+        let domains = [
+            Eip8130Constants::SENDER_SIGNATURE_TYPE,
+            Eip8130Constants::PAYER_SIGNATURE_TYPE,
+            Eip8130Constants::REPLAY_ID_TYPE,
+        ];
+        assert_eq!(domains, [[0x79, 0x00], [0x79, 0x01], [0x79, 0x02]]);
+        for domain in domains {
+            assert_eq!(domain[0], Eip8130Constants::EIP8130_TX_TYPE);
+            // Below every RLP list header, so no domain prefix can be read as
+            // the start of the transaction-hash preimage.
+            assert!(domain[1] < alloy_rlp::EMPTY_LIST_CODE);
+        }
     }
 
     #[test]

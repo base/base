@@ -33,14 +33,7 @@
 //! [`send_tx`]: SimpleTxManager::send_tx
 //! [`TransactionRequest`]: alloy_rpc_types_eth::TransactionRequest
 
-use std::{
-    fmt::Debug,
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
-    time::Duration,
-};
+use std::{fmt::Debug, sync::Arc, time::Duration};
 
 use alloy_consensus::TxEnvelope;
 use alloy_eips::{
@@ -58,6 +51,7 @@ use backon::{ConstantBuilder, Retryable};
 use base_runtime::{Runtime, RuntimeTimeout, TokioRuntime};
 use futures::StreamExt;
 use tokio::sync::{mpsc, oneshot};
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
 use crate::{
@@ -182,11 +176,12 @@ pub struct SimpleTxManager<P, R = TokioRuntime> {
     nonce_manager: NonceManager<P, R>,
     /// Chain ID for transaction construction.
     chain_id: u64,
-    /// Shutdown flag shared across the manager and any spawned background
-    /// tasks. Wrapped in [`Arc`] so that calling [`close`](Self::close)
-    /// on the original manager is observed by tasks spawned via
-    /// [`send_async`](Self::send_async) and [`wait_for_tx`](Self::wait_for_tx).
-    closed: Arc<AtomicBool>,
+    /// Shutdown signal shared by clones of the manager and its spawned
+    /// background tasks: [`close`](Self::close) cancels it, which both sets
+    /// the flag read by [`is_closed`](Self::is_closed) and wakes in-flight
+    /// sends, including those spawned via [`send_async`](Self::send_async)
+    /// and [`wait_for_tx`](Self::wait_for_tx).
+    closed: CancellationToken,
     /// Metrics collector for transaction lifecycle events.
     metrics: Arc<dyn TxMetrics>,
 }
@@ -317,7 +312,7 @@ where
             config,
             nonce_manager,
             chain_id,
-            closed: Arc::new(AtomicBool::new(false)),
+            closed: CancellationToken::new(),
             metrics,
         })
     }
@@ -362,16 +357,21 @@ where
     ///
     /// After calling `close()`, any subsequent call to [`prepare`](Self::prepare)
     /// will immediately return `Err(TxManagerError::ChannelClosed)`.
+    /// In-flight sends waiting for a receipt or the next fee bump return
+    /// `Err(TxManagerError::ChannelClosed)` immediately; a fee bump already in
+    /// progress runs to completion first, because preparation is not
+    /// cancellation-safe. A transaction that was already published may still
+    /// be mined after the send returns.
     /// Background tasks spawned by [`send_async`](Self::send_async) and
     /// receipt polling tasks will also observe the shutdown and exit
-    /// gracefully, since `closed` is shared via [`Arc`].
+    /// gracefully, since they share the manager's cancellation token.
     pub fn close(&self) {
-        self.closed.store(true, Ordering::Release);
+        self.closed.cancel();
     }
 
     /// Returns `true` if the manager has been closed via [`close`](Self::close).
     pub fn is_closed(&self) -> bool {
-        self.closed.load(Ordering::Acquire)
+        self.closed.is_cancelled()
     }
 
     /// Records an RPC error metric and returns a [`TxManagerError::Rpc`].
@@ -1182,6 +1182,7 @@ where
                         }
                     }
                 }
+                () = self.closed.cancelled() => return Err(TxManagerError::ChannelClosed),
                 _ = bump_ticker.next() => {}
             };
 
@@ -1475,7 +1476,7 @@ where
         tx_hash: B256,
         config: TxManagerConfig,
         receipt_tx: mpsc::Sender<TransactionReceipt>,
-        closed: Arc<AtomicBool>,
+        closed: CancellationToken,
     ) -> tokio::task::JoinHandle<()> {
         tokio::spawn(async move {
             debug!(tx_hash = %tx_hash, "starting receipt polling");
@@ -1537,7 +1538,7 @@ where
         provider: &P,
         tx_hash: B256,
         config: &TxManagerConfig,
-        closed: &AtomicBool,
+        closed: &CancellationToken,
     ) -> Option<TransactionReceipt> {
         Self::wait_mined_using_runtime(
             &TokioRuntime::new(),
@@ -1558,7 +1559,7 @@ where
         provider: &P,
         tx_hash: B256,
         config: &TxManagerConfig,
-        closed: &AtomicBool,
+        closed: &CancellationToken,
     ) -> Option<ConfirmedTx>
     where
         Rt: Runtime,
@@ -1594,7 +1595,7 @@ where
             }
 
             // Check shutdown state each iteration to support cancellation.
-            if closed.load(Ordering::Acquire) {
+            if closed.is_cancelled() {
                 debug!(tx_hash = %tx_hash, "manager closed, stopping receipt polling");
                 return None;
             }
@@ -1791,8 +1792,9 @@ mod tests {
     use std::{
         sync::{
             Arc,
-            atomic::{AtomicBool, AtomicUsize, Ordering},
+            atomic::{AtomicUsize, Ordering},
         },
+        task::Poll,
         time::Duration,
     };
 
@@ -1820,6 +1822,7 @@ mod tests {
         net::TcpListener,
         sync::mpsc,
     };
+    use tokio_util::sync::CancellationToken;
     use tracing::{Event, Level, Subscriber};
     use tracing_subscriber::{
         Layer, Registry,
@@ -1955,7 +1958,7 @@ mod tests {
                 manager.provider(),
                 tx_hash,
                 manager.config(),
-                &AtomicBool::new(false),
+                &CancellationToken::new(),
             ),
         )
         .await
@@ -2310,7 +2313,7 @@ mod tests {
                 config,
                 nonce_manager,
                 chain_id: 1,
-                closed: Arc::new(AtomicBool::new(false)),
+                closed: CancellationToken::new(),
                 metrics: Arc::new(NoopTxMetrics),
             };
 
@@ -2399,7 +2402,7 @@ mod tests {
                 config,
                 nonce_manager,
                 chain_id: 1,
-                closed: Arc::new(AtomicBool::new(false)),
+                closed: CancellationToken::new(),
                 metrics: Arc::new(NoopTxMetrics),
             };
             let send_state = Arc::new(SendState::new(3).expect("send state should be valid"));
@@ -2568,6 +2571,51 @@ mod tests {
             assert_eq!(result, Err(TxManagerError::ExecutionReverted { reason: None, data: None }));
             assert_eq!(errors.load(Ordering::Relaxed), 1, "an initial revert must log an error");
         }
+    }
+
+    /// Closing the manager ends an in-flight send that is waiting for a receipt or the next
+    /// fee bump right away, instead of after the resubmission timeout.
+    #[test]
+    fn close_ends_a_send_waiting_for_its_receipt() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let mut block: Block = Block::default();
+            block.header.base_fee_per_gas = Some(1_000_000_000);
+            let asserter = Asserter::new();
+            asserter.push_success(&1u64);
+            asserter.push_success(&1_000_000_000u128);
+            asserter.push_success(&Some(&block));
+            asserter.push_success(&21_000u64);
+            asserter.push_success(&0u64);
+            asserter.push_success(&B256::with_last_byte(1));
+            asserter.push_success(&1u64);
+            asserter.push_success(&Option::<TransactionReceipt>::None);
+            let config = TxManagerConfig {
+                resubmission_timeout: Duration::from_secs(48),
+                receipt_query_interval: Duration::from_secs(60),
+                ..TxManagerConfig::default()
+            };
+            let manager = SimpleTxManager::from_wallet_with_runtime(
+                ctx.clone(),
+                ProviderBuilder::new().connect_mocked_client(asserter),
+                EthereumWallet::from(PrivateKeySigner::random()),
+                config,
+                1,
+                Arc::new(NoopTxMetrics),
+            )
+            .await
+            .expect("should construct manager");
+            let mut send = Box::pin(manager.send(TxCandidate {
+                to: Some(Address::with_last_byte(0x42)),
+                ..Default::default()
+            }));
+            assert!(futures::poll!(&mut send).is_pending());
+            ctx.sleep(Duration::from_secs(1)).await;
+            assert!(futures::poll!(&mut send).is_pending());
+
+            manager.close();
+
+            assert_eq!(futures::poll!(&mut send), Poll::Ready(Err(TxManagerError::ChannelClosed)));
+        });
     }
 
     /// A confirmed send records its inclusion latency together with its send latency,

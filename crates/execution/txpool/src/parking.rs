@@ -114,6 +114,10 @@ where
     Self::Transaction: BasePooledTx,
 {
     /// Returns a parkable best iterator using the supplied fee attributes.
+    ///
+    /// The iterator is a snapshot of every store taken when it is created:
+    /// transactions added afterwards are not yielded, so a block build only
+    /// sees transactions that arrived before it started.
     fn best_transactions_with_attributes_and_parking(
         &self,
         attributes: BestTransactionsAttributes,
