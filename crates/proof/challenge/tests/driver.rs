@@ -396,8 +396,9 @@ async fn test_step_nullifies_fraudulent_zk_challenge_against_cached_valid_game()
     let (l2, factory, root_15, root_20) = finalized_game_mocks(Some(20));
     let valid_proposal = valid_tee_proposal(root_15, root_20);
     let verifier = single_game_verifier(valid_proposal.clone());
+    let tx_manager = default_tx_manager();
     let mut driver =
-        test_driver(factory, Arc::clone(&verifier), l2, default_zk_prover(), default_tx_manager());
+        test_driver(factory, Arc::clone(&verifier), l2, succeeded_zk_prover(), tx_manager.clone());
 
     driver.step().await.unwrap();
     assert!(driver.valid_games.contains(&addr(0)), "first poll should cache the valid game");
@@ -407,13 +408,9 @@ async fn test_step_nullifies_fraudulent_zk_challenge_against_cached_valid_game()
         MockGameState { zk_prover: ZK_PROVER_ADDR, countered_index: 2, ..valid_proposal },
     );
     driver.step().await.unwrap();
-
-    let entry = driver
-        .proof_manager
-        .pending_proofs()
-        .get(&addr(0))
-        .expect("proof should be pending for fraudulent ZK challenge against a cached game");
-    assert_eq!(entry.intent, DisputeIntent::Nullify);
+    assert!(driver.proof_manager.has_pending_proof(addr(0)), "proof should be requested");
+    driver.step().await.unwrap();
+    assert_eq!(sent_disputes(&tx_manager), vec![(addr(0), DisputeKind::Nullify)]);
 }
 
 #[tokio::test]
