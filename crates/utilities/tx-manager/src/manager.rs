@@ -1260,8 +1260,10 @@ where
     /// under its own hash. After an RPC error, such as a network error, the same
     /// signed blob version is sent again every `publish_retry_delay`, up to
     /// `publish_max_retries` times, without raising any fee. Every other error is
-    /// returned. Each published blob replacement raises the fees the next blob
-    /// transactions start from.
+    /// returned. Before each new attempt, a closed manager or a critical error of
+    /// `send_state`, such as an expired mempool deadline, ends the publication. Each
+    /// published blob replacement raises the fees the next blob transactions start
+    /// from.
     async fn publish_version(
         &self,
         candidate: &TxCandidate,
@@ -1271,7 +1273,17 @@ where
     ) -> TxManagerResult<(PreparedTx, B256)> {
         let mut is_replacement = last_tx_hash.is_some();
         let mut remaining_retries = self.config.publish_max_retries;
+        let mut is_retry = false;
         loop {
+            if is_retry {
+                if self.is_closed() {
+                    return Err(TxManagerError::ChannelClosed);
+                }
+                if let Some(err) = send_state.critical_error_at(self.runtime.now()) {
+                    return Err(err);
+                }
+            }
+            is_retry = true;
             let result = match last_tx_hash {
                 Some(_) => self.publish_tx(send_state, &prepared.raw_tx, last_tx_hash).await,
                 None => self.publish_tx_with_nonce_retry(send_state, &prepared.raw_tx).await,
@@ -3113,6 +3125,76 @@ mod tests {
             assert_eq!(polled.len(), 2, "the replacement is polled under its own hash");
             assert_eq!(confirmed.transaction_hash, polled[1]);
             assert!(asserter.read_q().is_empty(), "every mocked response should be used");
+        });
+    }
+
+    /// A first blob tx version whose publication fails on the network is not sent again once
+    /// the mempool deadline expired during the publish retry delay: the send fails.
+    #[test]
+    fn a_blob_tx_is_not_resent_after_the_mempool_deadline() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let asserter = Asserter::new();
+            asserter.push_success(&1u64);
+            push_blob_pricing(&asserter);
+            asserter.push_success(&0u64);
+            asserter.push_failure_msg("connection reset by peer");
+            let mut metrics = blob_send_metrics();
+            metrics.expect_record_tx_failed().times(1).return_const(());
+            let mut manager =
+                blob_manager(&ctx, mocked(&asserter), (10_000_000, 10_000_000_000), metrics).await;
+            manager.config.tx_not_in_mempool_timeout = Duration::from_secs(1);
+            manager.config.publish_retry_delay = Duration::from_secs(2);
+
+            let err = manager.send(blob_candidate()).await.expect_err("the send should fail");
+
+            assert_eq!(err, TxManagerError::MempoolDeadlineExpired);
+            assert_eq!(ctx.now(), Duration::from_secs(2));
+            assert!(asserter.read_q().is_empty(), "every mocked response should be used");
+        });
+    }
+
+    /// A blob tx version whose publication fails on the network is not sent again once the
+    /// manager is closed during the publish retry delay. This holds for a first version and
+    /// for a replacement.
+    #[rstest]
+    #[case::first_version(false)]
+    #[case::replacement(true)]
+    fn a_blob_tx_is_not_resent_after_the_manager_is_closed(#[case] replacement: bool) {
+        Runner::start(Config::seeded(0), move |ctx| async move {
+            let asserter = Asserter::new();
+            asserter.push_success(&1u64);
+            push_blob_pricing(&asserter);
+            asserter.push_success(&0u64);
+            if replacement {
+                asserter.push_success(&B256::with_last_byte(1));
+                asserter.push_success(&1u64);
+                asserter.push_success(&Option::<TransactionReceipt>::None);
+                // The replacement, signed at the resubmission timeout.
+                push_blob_pricing(&asserter);
+            }
+            asserter.push_failure_msg("connection reset by peer");
+            // The answer a resend would get.
+            asserter.push_success(&B256::with_last_byte(2));
+            let mut metrics = blob_send_metrics();
+            metrics.expect_record_gas_bump().never();
+            metrics.expect_record_tx_failed().times(1).return_const(());
+            let manager =
+                blob_manager(&ctx, mocked(&asserter), (10_000_000, 10_000_000_000), metrics).await;
+            let mut send = Box::pin(manager.send(blob_candidate()));
+            assert!(futures::poll!(&mut send).is_pending());
+            if replacement {
+                ctx.sleep(BLOB_RESUBMISSION_TIMEOUT + Duration::from_nanos(1)).await;
+                assert!(futures::poll!(&mut send).is_pending());
+            }
+            assert_eq!(asserter.read_q().len(), 1, "the failed publication should be sent");
+
+            manager.close();
+
+            assert_eq!(
+                send.await.expect_err("the send should fail"),
+                TxManagerError::ChannelClosed
+            );
+            assert_eq!(asserter.read_q().len(), 1, "nothing should be sent again");
         });
     }
 
