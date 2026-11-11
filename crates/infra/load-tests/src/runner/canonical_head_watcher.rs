@@ -2,11 +2,12 @@
 
 use alloy_provider::{Provider, ProviderBuilder};
 use futures::StreamExt;
+use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 use url::Url;
 
-use super::ResultsTracker;
+use super::RunEvent;
 
 /// Observes canonical headers independently of transaction-hash scanning.
 ///
@@ -15,7 +16,7 @@ use super::ResultsTracker;
 #[derive(Debug)]
 pub struct CanonicalHeadWatcher {
     ws_url: Url,
-    results_tracker: ResultsTracker,
+    events: mpsc::Sender<RunEvent>,
     cancel_token: CancellationToken,
 }
 
@@ -23,10 +24,10 @@ impl CanonicalHeadWatcher {
     /// Creates a canonical head watcher.
     pub const fn new(
         ws_url: Url,
-        results_tracker: ResultsTracker,
+        events: mpsc::Sender<RunEvent>,
         cancel_token: CancellationToken,
     ) -> Self {
-        Self { ws_url, results_tracker, cancel_token }
+        Self { ws_url, events, cancel_token }
     }
 
     /// Starts the watcher in a background task.
@@ -70,7 +71,9 @@ impl CanonicalHeadWatcher {
                 continue;
             }
             last_number = Some(number);
-            self.results_tracker.observe_measurement_block(number);
+            if self.events.send(RunEvent::Head(number)).await.is_err() {
+                break;
+            }
         }
     }
 }
