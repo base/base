@@ -4866,7 +4866,6 @@ dependencies = [
  "base-common-network",
  "base-common-precompiles",
  "base-execution-txpool",
- "base-tx-manager",
  "eyre",
  "futures",
  "httpmock",

@@ -8,12 +8,11 @@ use std::{
     time::{Duration, Instant},
 };
 
-use alloy_network::{Ethereum, EthereumWallet, ReceiptResponse, TransactionBuilder};
+use alloy_network::{EthereumWallet, ReceiptResponse, TransactionBuilder};
 use alloy_primitives::{Address, B256, TxHash, U256};
-use alloy_provider::{Provider, RootProvider};
+use alloy_provider::Provider;
 use alloy_signer_local::PrivateKeySigner;
 use base_common_consensus::Eip8130Constants;
-use base_tx_manager::NonceManager;
 use rand::Rng;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, instrument};
@@ -37,7 +36,6 @@ use crate::{
     },
 };
 
-pub(super) const NONCE_RPC_TIMEOUT: Duration = Duration::from_secs(10);
 const FRESH_RECIPIENT_RNG_SALT: u64 = 0x6672_6573_685f_7263; // "fresh_rc"
 const START_FILE_TIMEOUT: Duration = Duration::from_secs(300);
 
@@ -51,7 +49,6 @@ pub struct LoadRunner {
     pub(super) collector: MetricsCollector,
     pub(super) stop: CancellationToken,
     pub(super) cancel_token: CancellationToken,
-    pub(super) nonce_managers: Arc<HashMap<Address, NonceManager<RootProvider<Ethereum>>>>,
     pub(super) signers: Arc<HashMap<Address, PrivateKeySigner>>,
     pub(super) submission_batch_rpcs: Arc<Vec<BatchRpcClient>>,
     pub(super) validity_router: ValidityRouter,
@@ -175,7 +172,6 @@ impl LoadRunner {
             collector: MetricsCollector::new(),
             stop: CancellationToken::new(),
             cancel_token: CancellationToken::new(),
-            nonce_managers: Arc::new(HashMap::new()),
             signers,
             submission_batch_rpcs,
             validity_router,
@@ -437,9 +433,6 @@ impl LoadRunner {
         self.generator.prepare_all(&mut ctx).await?;
         if let Some(salt) = ctx.outputs.b20_run_salt {
             self.b20_run_salt = Some(salt);
-        }
-        if ctx.outputs.needs_sender_refresh {
-            self.refresh_sender_state().await?;
         }
         Ok(())
     }

@@ -6,18 +6,17 @@ use std::{
     time::{Duration, Instant},
 };
 
-use alloy_network::{Ethereum, EthereumWallet, TransactionBuilder};
+use alloy_network::{EthereumWallet, TransactionBuilder};
 use alloy_primitives::{Address, Bytes, U256, utils::format_ether};
-use alloy_provider::{Provider, RootProvider};
+use alloy_provider::Provider;
 use alloy_rpc_types::{BlockNumberOrTag, TransactionRequest};
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::{SolCall, sol};
-use base_tx_manager::NonceManager;
 use futures::{StreamExt, stream};
 use indicatif::{ProgressBar, ProgressStyle};
 use tracing::{debug, error, info, instrument, trace, warn};
 
-use super::{GasPricer, LoadRunner, TxType, load_runner::NONCE_RPC_TIMEOUT};
+use super::{GasPricer, LoadRunner, TxType};
 use crate::{
     BaselineError, Result,
     rpc::{BaseFeeExt, QueryProvider, RpcResultExt, TxpoolAdminClient, create_wallet_provider},
@@ -587,9 +586,6 @@ impl LoadRunner {
         }
         pb_fund.finish_and_clear();
 
-        // Phase 5: Parallel post-funding state refresh.
-        self.refresh_sender_state().await?;
-
         info!(funded = accounts_to_fund.len(), "funding complete");
         Ok(())
     }
@@ -1110,57 +1106,6 @@ impl LoadRunner {
         }
 
         Ok(settled)
-    }
-
-    pub(super) async fn refresh_sender_state(&mut self) -> Result<()> {
-        let total_accounts = self.accounts.len();
-        let client = self.client.clone();
-        let pb_refresh = self.progress_bar(total_accounts as u64, "Refreshing account state");
-
-        let refresh_futs: Vec<_> = self
-            .accounts
-            .accounts()
-            .iter()
-            .map(|a| {
-                let client = client.clone();
-                let addr = a.address;
-                async move {
-                    let balance = client.get_balance(addr).await.rpc("get balance")?;
-                    let nonce =
-                        client.get_transaction_count(addr).await.rpc("get transaction count")?;
-                    Ok::<_, BaselineError>((addr, balance, nonce))
-                }
-            })
-            .collect();
-
-        let refresh_results: Vec<_> = stream::iter(refresh_futs)
-            .buffer_unordered(FUNDING_CONCURRENCY)
-            .inspect(|_| pb_refresh.inc(1))
-            .collect()
-            .await;
-        pb_refresh.finish_and_clear();
-
-        let addr_to_idx: HashMap<Address, usize> =
-            self.accounts.accounts().iter().enumerate().map(|(i, a)| (a.address, i)).collect();
-
-        let refresh_provider = RootProvider::<Ethereum>::new_http(self.config.query_rpc.clone());
-
-        for result in refresh_results {
-            let (addr, balance, account_nonce) = result?;
-            let idx = addr_to_idx[&addr];
-            let account = &mut self.accounts.accounts_mut()[idx];
-            account.balance = balance;
-            account.nonce = account_nonce;
-
-            let nonce_manager =
-                NonceManager::new(refresh_provider.clone(), addr, NONCE_RPC_TIMEOUT)
-                    .with_pending_tag();
-            Arc::make_mut(&mut self.nonce_managers).insert(addr, nonce_manager);
-
-            trace!(address = %addr, balance = %balance, nonce = account_nonce, "account state refreshed");
-        }
-
-        Ok(())
     }
 
     /// Waits for source account balances to drop to the post-drain dust threshold.
