@@ -4,7 +4,7 @@ use std::{
     collections::{HashMap, HashSet},
     sync::{
         Arc,
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        atomic::{AtomicU64, Ordering},
     },
     time::{Duration, Instant},
 };
@@ -494,6 +494,9 @@ impl LoadRunner {
 
     /// Runs the load test and returns metrics summary.
     pub async fn run(&mut self) -> Result<MetricsSummary> {
+        if self.stop.is_cancelled() {
+            return Err(BaselineError::Transaction("stopped before the load test started".into()));
+        }
         if self.b20_run_salt.is_none()
             && self.config.transactions.iter().any(|t| matches!(t.tx_type, TxType::B20))
         {
@@ -504,7 +507,6 @@ impl LoadRunner {
         self.derive_reverse_swap_amounts().await?;
 
         self.collector.reset();
-        self.stop_flag.store(false, Ordering::SeqCst);
         self.cancel_token = CancellationToken::new();
 
         self.base_fee = self.client.get_base_fee().await?;
@@ -779,7 +781,7 @@ impl LoadRunner {
             max_in_flight_per_sender,
             capacity,
             prefill_deadline,
-            &self.stop_flag,
+            &self.stop,
             &mut EnqueueDrainState {
                 submit_event_rx: &mut submit_event_rx,
                 queued_per_sender: &mut queued_per_sender,
@@ -809,6 +811,7 @@ impl LoadRunner {
             let drain_started = Instant::now();
             while submission_pipeline.pending_batches() > 0
                 && drain_started.elapsed() < SUBMIT_DRAIN_TIMEOUT
+                && !self.stop.is_cancelled()
             {
                 Self::drain_run_events(
                     &mut submit_event_rx,
@@ -909,7 +912,7 @@ impl LoadRunner {
                     deadline: enqueue_deadline,
                 },
                 &mut inclusion_pulse_rx,
-                &self.stop_flag,
+                &self.stop,
                 &mut EnqueueDrainState {
                     submit_event_rx: &mut submit_event_rx,
                     queued_per_sender: &mut queued_per_sender,
@@ -984,7 +987,7 @@ impl LoadRunner {
         }
 
         while self.config.duration.is_none_or(|d| start.elapsed() < d)
-            && !self.stop_flag.load(Ordering::SeqCst)
+            && !self.stop.is_cancelled()
             && open_loop_enqueue_error.is_none()
             && !results_tracker.measurement_finished()
         {
@@ -1076,10 +1079,6 @@ impl LoadRunner {
         for lag in results_tracker.drain_completed_refill_lags() {
             self.collector.record_completed_refill_lag(lag);
         }
-
-        // Keep background watchers alive through the drain so late block observations
-        // can still be joined into metrics.
-        self.stop_flag.store(true, Ordering::SeqCst);
 
         self.set_display_stage(LoadTestStage::DrainingConfirmations);
 
@@ -1674,7 +1673,7 @@ impl LoadRunner {
         enqueue_state: &mut PresignEnqueueState<'_>,
         config: BlockAlignedEnqueueConfig,
         inclusion_pulse_rx: &mut mpsc::Receiver<InclusionPulse>,
-        stop_flag: &AtomicBool,
+        stop: &CancellationToken,
         drain_state: &mut EnqueueDrainState<'_>,
     ) -> Result<()> {
         let safety_interval = config.steady_submission_interval.unwrap_or_else(|| {
@@ -1696,7 +1695,7 @@ impl LoadRunner {
 
         loop {
             drain_state.drain_run_events();
-            if stop_flag.load(Ordering::SeqCst)
+            if stop.is_cancelled()
                 || config.deadline.is_some_and(|deadline| Instant::now() >= deadline)
             {
                 return Ok(());
@@ -2062,12 +2061,12 @@ impl LoadRunner {
         max_in_flight_per_sender: usize,
         max_total_in_flight: usize,
         deadline: Instant,
-        stop_flag: &AtomicBool,
+        stop: &CancellationToken,
         drain_state: &mut EnqueueDrainState<'_>,
     ) -> Result<()> {
         while enqueue_state.buffer.buffered_gas() < target_gas {
             drain_state.drain_run_events();
-            if stop_flag.load(Ordering::SeqCst) {
+            if stop.is_cancelled() {
                 return Err(BaselineError::Transaction("stopped during open-loop enqueue".into()));
             }
             if Instant::now() >= deadline {
@@ -2277,15 +2276,13 @@ impl LoadRunner {
 mod tests {
     use std::{
         collections::{HashMap, HashSet},
-        sync::{
-            Arc,
-            atomic::{AtomicBool, AtomicU64},
-        },
+        sync::{Arc, atomic::AtomicU64},
         time::{Duration, Instant},
     };
 
     use alloy_primitives::{Address, Bytes, TxHash, U256};
     use tokio::sync::mpsc;
+    use tokio_util::sync::CancellationToken;
 
     use super::{
         BlockAlignedEnqueueConfig, EnqueueDrainState, EnqueueProgress, InclusionPulse, InjectLimit,
@@ -2930,7 +2927,7 @@ mod tests {
         let mut presign_buffer = PresignBuffer::new(1);
         let pipeline = test_pipeline(&results_tracker, mpsc::channel(1).0);
         let next_submit_batch_id = AtomicU64::new(0);
-        let stop_flag = AtomicBool::new(false);
+        let stop = CancellationToken::new();
         let (pulse_tx, mut pulse_rx) = mpsc::channel(8);
         let (nonce_reset_tx, _nonce_reset_rx) = mpsc::channel(1);
         let sender_indices = HashMap::from([(sender, 0usize)]);
@@ -2976,7 +2973,7 @@ mod tests {
                         deadline: None,
                     },
                     &mut pulse_rx,
-                    &stop_flag,
+                    &stop,
                     &mut drain_state,
                 ),
                 async {
@@ -3063,7 +3060,7 @@ mod tests {
         let mut presign_buffer = PresignBuffer::new(1);
         let pipeline = test_pipeline(&results_tracker, mpsc::channel(1).0);
         let next_submit_batch_id = AtomicU64::new(0);
-        let stop_flag = AtomicBool::new(false);
+        let stop = CancellationToken::new();
         let (_pulse_tx, mut pulse_rx) = mpsc::channel(1);
         let (nonce_reset_tx, _nonce_reset_rx) = mpsc::channel(1);
         let sender_indices = HashMap::from([(sender, 0usize)]);
@@ -3102,7 +3099,7 @@ mod tests {
                     deadline: Some(Instant::now() + Duration::from_millis(210)),
                 },
                 &mut pulse_rx,
-                &stop_flag,
+                &stop,
                 &mut EnqueueDrainState {
                     submit_event_rx: &mut submit_event_rx,
                     queued_per_sender: &mut queued_per_sender,
@@ -3124,5 +3121,15 @@ mod tests {
         // cycle means the periodic refill fired before the deadline.
         assert!(summary.pacing.safety_cycles >= 3);
         assert!(!results_tracker.measurement_finished());
+    }
+
+    #[tokio::test]
+    async fn run_does_not_start_after_an_earlier_stop() {
+        let mut runner =
+            LoadRunner::new(crate::runner::LoadConfig::devnet()).expect("runner must initialize");
+        runner.stop_token().cancel();
+
+        let error = runner.run().await.expect_err("a stopped runner must not start a run");
+        assert!(error.to_string().contains("stopped before the load test started"));
     }
 }
