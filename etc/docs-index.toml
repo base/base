@@ -388,7 +388,7 @@ digest = "2a3542b962"
 
 ["crates/execution/runner/README.md"]
 summary = "base-node-runner: BaseNodeExtension, FromExtensionConfig and NodeHooks for node extensions, plus the frozen-payload notification channel (PayloadReady) the unified sequencer uses to seal early."
-digest = "7e5af44376"
+digest = "029ce212e6"
 
 ["crates/execution/shadow-indexer-db/README.md"]
 summary = "One-line stub: database access layer for shadow indexer block persistence. Little detail beyond that."
