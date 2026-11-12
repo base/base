@@ -84,12 +84,18 @@ parent's timestamp.
 |---|---|---|---|
 | `base_builder_payload_ready_hints_sent_total` | counter | `result`: `delivered`, `no_receiver` | Hints the payload builder published. |
 | `base_node_sequencer_seals_total` | counter | `trigger`: `ready_hint`, `deadline` | Payloads fetched with `getPayload`, by what prompted the request. |
-| `base_node_sequencer_build_start_offset_seconds` | histogram | none | When the block's build was requested from the engine. A Denim build reads the transaction pool once, after this request. |
+| `base_node_sequencer_build_start_offset_seconds` | histogram | none | When the block's build was requested from the engine. |
 | `base_node_sequencer_get_payload_offset_seconds` | histogram | `trigger` | When `getPayload` was requested. |
 | `base_node_sequencer_payload_ready_hints_dropped_total` | counter | `reason`: `already_sealing`, `inactive`, `no_build`, `payload_id_mismatch`, `parent_mismatch`, `pre_denim`, `lagged` | Hints that did not trigger a seal. |
 
 A hint that arrives after the seal deadline has fetched its payload is counted as
 `already_sealing`, so that reason tracks deadline seals rather than a fault.
+
+The two offsets together give roughly how long a searcher has to react to a block and still
+land in the next one: the 200 ms block interval, plus the next block's build start offset,
+minus this block's `getPayload` offset. It is approximate. After `getPayload` the block is
+still committed, signed, and gossiped, and a Denim build reads the transaction pool once,
+shortly after it is requested.
 
 ## License
 
