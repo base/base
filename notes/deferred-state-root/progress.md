@@ -1,6 +1,6 @@
-# Deferred state root implementation checkpoint
+# Deferred state root implementation progress
 
-This note records the baseline and validator-publication feasibility gate for the approved deferred state root design. This is an incomplete, test-only WIP checkpoint, not an implementation of the fork and not correctness or performance acceptance.
+This chronological log records implementation and verification of the approved deferred state root design. The first sections describe the earlier test-only checkpoint; they are historical, not the current implementation status. The latest continuation and remaining acceptance gaps are at the end. No performance acceptance is claimed.
 
 ## Branch and scope
 
@@ -123,3 +123,48 @@ The earlier checkpoint's “no production changes” statement describes that ea
 - `cli-check1.log`: scoped execution CLI cargo check cannot load `libsqlx_macros-691b2016a76e2857.dylib`: macOS `mis-aligned LINKEDIT string pool, fileOffset=0x0066F52C`. No linker workaround or full workspace retry. Runner scoped checks/tests work.
 - Disk reached 609 MiB free. With explicit user approval relayed by parent, verified no cargo/rustc/nextest was running and removed ONLY this worktree `target/ci/incremental` reproducible cache (3.3 GiB). All numbered evidence, immutable archives/binaries and experiments were preserved. No broad clean.
 - `check-reth-pin1.log`: PASS, 69 existing official v2.10.1 git crates, no reth patch/pin drift. `pin-reth-test1.log`: 22 PASS. `check-crate-deps1.log`: PASS.
+
+## Final continuation: real edge cases, detached deadlines and read-only admission
+
+Continuation began at `246d5a420b40dd11479e59081c8d94b2f5023155`, following the historical checkpoint above. Local implementation milestones are `82ff31923`, `7932190c0`, and `1778f1642`; the final safety/test milestone follows this entry. Approved design and reth source/pins remain unchanged.
+
+Implemented beyond the prior continuation:
+
+- Real native builder/Engine tests now cover a pool CommitChanges::Yes transfer, an executed over-budget SSTORE rejected with No, and a forced deposit together. Exact final body, ordered commit/invalidation callbacks, independently calculated current MPT root, actual trie updates and independent validator certification are asserted. Borrowed speculative views never enter the detached job.
+- Additional real fixtures cover reverting storage writes, legacy SELFDESTRUCT, and three blocks deploying/deleting/recreating exactly one CREATE2 address. Each block independently calculates actual roots/updates, validates against builder provenance and persists a delayed header. Roots are pairwise distinct.
+- A cold bounded manager test explicitly misses the accepted parent entry after F was persisted with a delayed header. Both the builder and independent validator recover actual DB MPT state; copying the delayed header would fail its assertions.
+- Memory forks test now also reseals a wrong deferred descendant, rejects that block and its child with exact latestValidHash at the valid branch parent, rejects FCU to the invalid head, and verifies canonical head did not change. The fixture uses `with_unwind_canonical_header(true)` and an unserved persistence handle; full real persistence/Engine plumbing is tested separately by the runner tests.
+- Full ordinary/deferred runner tests reject malformed blockHash and resealed wrong same-block withdrawalsRoot, then accept the valid payload, accept its exact duplicate and canonicalize through FCU. Ordinary public/auth proof responses match exact account/storage proof bytes; D fails closed.
+- Stock malformed-blockHash behavior reports the exact known parent, not None. `final-affected4.log` and `final-semantics3.log` expose an incorrect new test expectation for both ordinary and D. The expectation was corrected to the observed unchanged pinned behavior; production behavior was not changed to satisfy it. These are not must-hold baseline red evidence.
+- Detached builder operations now retain admission deadlines independently of validator waiters. The production runtime monitor checks them while the serial provider is blocked. A late completion checks health before publication, so a timed-out job cannot publish even if no validator ever arrived. An automatic timeout test reaches the runtime fatal channel without manual terminate; the unpreemptible provider remains owned until explicitly released and joined in the test.
+- Local provider errors are explicitly tested against pinned `ensure_validation_error`: exactly engine-fatal Provider handling, never consensus INVALID ancestry. Panic/failure health handling and graceful worker drain remain tested. Runner launch-error paths also drain already-started provider work.
+- Read-only startup guard now requires unpruned snapshots, exact durable Finish checkpoint for non-genesis tips, matching static frontiers, safe/finalized metadata within the tip, no stale genesis RocksDB transaction lookup, and consistent changeset sidecars. It reuses pinned static file checks through an explicitly read-only provider; it never invokes healing through the writable factory. A real interrupted static append is rejected without truncating any bytes. Configured pruning, snap serving and both forward/deep-unwind backfill requests are rejected before dangerous stages.
+- Configured D rejects production CL L1 service startup before any transport, legacy proof-config projection and stateless proof execution even before activation. Upgrade-signal startup guard is centralized so both CLI run and launch paths reject before an L1 call.
+- Accounting distinguishes builder/validator execution attempts, actual current roots by independent owner, root versus sorting wall time, duplicate stock sorts (including wrapper rejection), S trusted insertions, immutable seal and ready validator output. Engine VALID/canonical acceptance and CPU/RSS/persistence accounting remain external harness measurements, not falsely inferred events.
+
+Latest completed checks (numbered evidence remains in `target/deferred-root-gate2/`):
+
+| Evidence | Result | Scope |
+|---|---|---|
+| `final-affected5.log` | 480 PASS, 0 skipped | Five affected library packages plus real semantic tests, original four publication gates and ordinary/deferred full-runner tests; latest production code. |
+| `final-correctness1.log` | 39 PASS, 438 filtered, 1 leaky | Latest semantic/manager/health/admission/runner tests, including the additional cold persisted-parent test. Overlaps the 480-test run; do not add raw counts as unique tests. |
+| `proof-common2.log` | 246 PASS, 0 skipped, 1 leaky | Common chain/genesis, proof primitives and stateless proof executor; includes new fail-closed proof tests. |
+| `service-guard-check1.log` | PASS | All-features base-consensus-node cargo check. |
+| `service-guard-test1.log` | 1 PASS, 427 filtered | Actual production service guard before invalid IPC/L1 transport. |
+| `rpc-regression1.log` | 101 PASS, 1 skipped | Execution RPC and common RPC types; the existing ignored WS test requires localhost:8546. Five other package binaries were excluded by the package filter. |
+| `check-reth-pin2.log` | PASS | 69 official v2.10.1 git crates. |
+| `pin-reth-test2.log` | 22 PASS | Pin-helper tests. |
+| `check-crate-deps2.log` | PASS | Repository dependency placement. |
+
+All Rust runs use `RUST_MIN_STACK=8388608`, `--locked --all-features --cargo-profile ci`, nextest `-P ci --retries 0 --no-fail-fast`, and explicit package/test scope. The Justfile's test-ci recipe is workspace-wide, so these are documented scoped equivalents. No full workspace build, fmt, Clippy or zepter was run. One aggregate shell call timed out while reaching git diff --check under concurrent tests; pin/dependency checks had already passed. A later standalone diff check passed.
+
+## Acceptance and remaining limits
+
+- c1: immutable pre-production exact block/payload/receipt/hashed-state/trie/status digest remains PASS, zero-manager Never/pre-F assertions PASS, and stock/wrapper compatible-hook/prewarm enabled/disabled matrix PASS. Native pre-F exact executed state/trie parity also PASS. **The full requested immutable baseline output/proof RPC golden and populated txpool-cache prewarming matrix are not complete.** The new ordinary proof transport comparison is supplementary, not a fabricated pre-production golden.
+- c2/c3/c4: genuine semantic red evidence is `semantic-baseline7.log` before production changes (c1 PASS, c2-c4 FAIL). Native selectable legacy wiring later independently reproduces c1 PASS/c2-c4 FAIL in `native-legacy-red1.log`; that later run is not mislabeled pre-production. Current real builder/validator/root/ancestry/activation tests PASS.
+- No no-patch feasibility blocker was found. Current roots, actual updates and fully sorted materialization complete before successful validator publication; builder sealing can return while its current root remains blocked. The prototype scripted gate remains publication-only evidence, not MPT proof.
+- CLI compilation remains blocked by the recorded macOS SQLx dylib LINKEDIT failure in `cli-check1.log`; no known-bad linker workaround or full build retry. The CLI and native custom builder-service source changes are not fully package-compiled on this host. The consensus service guard was separately checked/tested successfully.
+- Immutable consistent non-genesis snapshot copy/replay through the full launch path, exhaustive interruption at each MDBX/static/RocksDB boundary, and populated txpool-prewarming behavior still need broader supported-host/system coverage. Static corruption rejection and fresh-genesis runner tests do not substitute for that matrix.
+- General active restart, staged/snap/deep-reorg recovery, proof/output/L1 derivation and settlement are deliberately unsupported and fail closed. No production bridge/proof integration, benchmark, base-metal run, deployment, push or PR was performed.
+- `notes/deferred-state-root/base-metal-inputs.md` records O/S/R/D controls, immutable artifacts and remaining accounting inputs. No standalone immutable baseline node binary or fully built candidate CLI is claimed: the preserved baseline executable is a payload test binary.
+- Full approved acceptance is **not claimed** while these validation/artifact gaps remain. Keep the branch local; do not open a PR or benchmark it as accepted. User handles formatting and lint checks.

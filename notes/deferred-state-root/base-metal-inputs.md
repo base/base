@@ -1,0 +1,51 @@
+# Deferred commitment experiment inputs
+
+This note describes the isolated execution replay inputs and accounting required to compare ordinary, serial and deferred state commitments. It is a handoff specification, not authorization to run a benchmark or deploy a node. Correctness acceptance and a complete Linux build remain prerequisites.
+
+## Immutable source and fixtures
+
+- Reference source: `432d627174bef54e4b39d7ca9b3e4938300c256e` (#6268 baseline). Continuation started from `246d5a420b40dd11479e59081c8d94b2f5023155`.
+- Candidate branch: `poc/deferred-state-root-on-6268`. Record the final local implementation commit and its tree from `candidate-manifest1.txt` in the numbered evidence directory, not a mutable branch name in trial results.
+- Approved design: `docs/design/deferred-state-root.md`, unchanged.
+- Reth: official v2.10.1 `58ebce14ae63dab040beae301e1578cd0dc55e8a`; no patch or pin drift. Record `Cargo.lock` and `etc/upstream-pins/reth.toml` digests from the same manifest.
+- `target/deferred-root-gate1/baseline-fixtures.tar`: SHA256 `294c65f57f1c46c6b2da002e6a7bc2342b63affc86de6bc71322965653ae5a2e`.
+- Preserved baseline payload test executable: `target/deferred-root-gate1/immutable-baseline/base_execution_payload_builder-63863eaa74e4eb84`, SHA256 `cd1b45d016ae4485cb2763dc000bb1d44dc5957de255325bb871009b9df3048d`. This is a test executable, NOT a standalone baseline node binary.
+- `target/deferred-root-gate2/baseline-golden2.txt`: SHA256 `777fc96a5a88224f2eb92aec4237b79d53bb168fc5b8e75d32525598f1dc9f16`; Keccak `12429246b6b6753619b2b0980eec53f7d37b90a21bd0b3a0bdd6ad31e4822e3b`. Covers exact block/payload, receipts, hashed state, trie nodes and Engine status; it is not an immutable baseline output/proof RPC golden.
+- Real execution fixtures live in `crates/execution/node/tests/deferred_state_root_semantics.rs`; the original genesis asset is `crates/execution/node/tests/assets/genesis.json`. Do not use the scripted publication gate as an MPT fixture.
+
+## Matched cohort configuration
+
+Use one custom chain ID, deterministic signed transaction ordering, genesis allocation and immutable strictly pre-fork snapshot. Never use mainnet 8453, Sepolia 84532, bridge contracts, L1 derivation, proposers, challengers, settlement or proof services. Keep Bedrock at genesis and Regolith enabled before activation. D activation must be strictly after genesis. The EL genesis field is `config.base.deferredStateRoot`; the rollup upgrade field is also `deferredStateRoot`.
+
+| Cohort | `--rollup.root-experiment-cohort` | Deferred schedule | Insertion and roots |
+|---|---|---|---|
+| O | `ordinary` | absent | Untouched stock root options and trusted insertion |
+| S | `serial-trusted` | absent | Same-block serial worker root; trusted insertion |
+| R | `serial-reexecution` | absent | Same-block serial worker; builder plus independent validator execution/root |
+| D | `deferred` | activation T | Parent commitment; detached builder root plus independent current validator execution/root |
+
+Explicit common isolated-run inputs: `--rollup.deferred-state-root-disposable`, `--rollup.root-experiment-queue 6`, `--rollup.root-experiment-ready 128`, `--rollup.root-experiment-timeout-ms 30000`. Keep transaction count, offered gas, cadence, parent selection, CPU assignment, memory, DB geometry, persistence thresholds, pruning, cache/prewarm flags and network settings identical. Record all flags and effective environment variables, not only differences. The ordinary reference preserves its default algorithm; an optional sparse arm must be separately named.
+
+For the minimal fresh-genesis replay recipe, choose custom chain ID 900, genesis timestamp 0, Bedrock/Regolith at 0, D activation timestamp 2 and a 30,000,000 gas limit. O/S/R omit the deferred field. Sign workload transactions for chain 900 in every arm and record the resulting immutable transaction bytes; the legacy 8453 golden fixture is correctness evidence, not an interchangeable production-chain input. An external benchmark must first freeze a numbered signed-workload/config bundle and build both standalone node executables. The memory-fork fixture explicitly enables `TreeConfig::with_unwind_canonical_header(true)`; record any corresponding engine flag equally in all tested arms.
+
+The stock default witness diagnostic hook must be explicitly unconfigured for S/R/D (an empty invalid-block-hook selection), not silently dropped. Disable debug root skipping, snap serving/sync, proof history, L1 upgrade reads, sequencer forwarding, metering/indexer/payer/event extensions and any unverified extension. R/D reject trusted bypass. S/R/D reject production proof RPC. The standalone CL production service rejects a configured deferred schedule; only isolated typed/JSON Engine API replay is supported. Do not infer safe derivation support from that replay.
+
+O can use the same extension-free runner with explicit disposable acknowledgement, but ordinary startup/sync defaults remain stock. The additional experimental marker and pre-recovery restrictions apply to S/R/D.
+
+## Disposable store provenance
+
+Select fresh numbered datadirs. S/R/D write a sibling `.<datadir-name>.deferred-state-root-run` marker before reth launch; it remains after success, failure and crashes. Never delete a marker to reuse a run. Restore a new numbered snapshot copy instead.
+
+An optional `--rollup.deferred-state-root-snapshot <manifest>` JSON has `provenance`, `genesis_hash`, `tip_hash`, `tip_number` and an exact `files` map from relative `db/`, `static_files/`, `rocksdb/` filenames to Keccak hashes. Generate this from an offline, unpruned, known-consistent strictly pre-F snapshot. Locks `mdbx.lck` and `LOCK` are excluded; no symlinks. Admission authenticates bytes and rejects active history, checkpoint/Finish lag, partial trie/pipeline/snap recovery, ahead safe/finalized metadata, stale genesis transaction lookup, inconsistent static frontiers and interrupted static data/offset files before writable recovery. Do not advertise general crash recovery.
+
+## Measurements still required on base-metal
+
+Primary comparison D vs R holds serial algorithm and independent re-execution fixed. R vs S isolates re-execution/trusted insertion. S vs O isolates the root-algorithm choice. D vs O is confounded and must not be called an isolated deferral speedup.
+
+The `base_root_experiment` metrics expose builder/validator execution attempts, separate builder/validator current-root starts, worker starts/completions/failures, queue lag, bounded waits, actual root wall time, materialization wall time, preparation-through-execution wall time, trusted insertion attempts, duplicate stock sorting count, immutable seals and ready validator outputs. Off/pre-F paths do not allocate the manager or emit active execution accounting. Metric handles are used per block/job, not per transaction candidate.
+
+A seal is NOT Engine VALID. A ready validator output is NOT canonical FCU acceptance. Measure newPayload response and canonical FCU separately at the caller. The runtime owns and drains redundant stock sorting; there is no cancellation handle and its work must not be subtracted. An indivisible provider calculation cannot be forcibly cancelled; a deadline is an operational stop, not proof the provider thread immediately stopped.
+
+The external harness must still record monotonic per-hash FCU/getPayload/newPayload timing, accepted gas/s and successful included tx/s, transaction/nonce/receipt correctness, submission-to-inclusion latency, actual CPU time, RSS, DB/persistence I/O and lag, queue depth, cache hits/misses, AlreadySeen/trusted paths, all failures/cancellations/fallbacks and missed cadence. Report paired repeated trials with sample counts and p50/p90/p95/p99. Correlate current root, parent commitment and source provenance; do not coalesce builder work into validator certification.
+
+No benchmark, base-metal run, deployment, push or PR was performed. CLI compilation remains host-blocked by the recorded macOS SQLx dylib LINKEDIT error; the native custom builder-service graph is not fully package-compiled here. Build and verify both on a supported host before considering this runnable benchmark input.

@@ -139,9 +139,18 @@ base_metrics::define_metrics! {
     sorting_duration: histogram,
     #[describe("Actual provider MPT calculation wall seconds, excluding sorting")]
     calculation_duration: histogram,
-    #[describe("Successful builder executions in isolated cohorts")]
+    #[describe("Actual current-root computations started independently by execution owner")]
+    #[label(source)]
+    current_roots_started: counter,
+    #[describe("Controlled builder execution wall seconds before finalization")]
+    builder_execution_duration: histogram,
+    #[describe("Controlled validator preparation through finalized execution wall seconds, before current root")]
+    validator_execution_duration: histogram,
+    #[describe("Controlled trusted executed-block insertion attempts (S only)")]
+    trusted_insertions: counter,
+    #[describe("Builder execution attempts admitted in isolated cohorts")]
     builder_executions: counter,
-    #[describe("Successful independent validator executions in isolated cohorts")]
+    #[describe("Independent validator execution attempts admitted in isolated cohorts")]
     validator_executions: counter,
     #[describe("Redundant stock sorting tasks still owned and drained by the reth runtime")]
     redundant_stock_sorts: counter,

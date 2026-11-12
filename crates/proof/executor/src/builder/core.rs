@@ -103,6 +103,9 @@ where
         &mut self,
         attrs: BasePayloadAttributes,
     ) -> ExecutorResult<BlockBuildingOutcome> {
+        if self.config.upgrades.base.deferred_state_root.is_some() {
+            return Err(ExecutorError::DeferredStateRootUnsupported);
+        }
         // Step 1. Set up the execution environment.
         let (base_fee_params, min_base_fee) = Self::active_base_fee_params(
             self.config,
@@ -199,5 +202,22 @@ impl From<(Sealed<Header>, BlockExecutionResult<BaseReceiptEnvelope>)> for Block
         (header, execution_result): (Sealed<Header>, BlockExecutionResult<BaseReceiptEnvelope>),
     ) -> Self {
         Self { header, execution_result }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use base_common_evm::BaseEvmFactory;
+    use alloy_primitives::Sealable;
+    use base_proof_mpt::NoopTrieHinter;
+    use crate::NoopTrieDBProvider;
+
+    /// A future configured fork fails closed before missing attributes, proofs, or hints.
+    #[test]
+    fn deferred_schedule_rejects_stateless_execution_before_trie_access() {
+        let mut config = RollupConfig::default(); config.upgrades.base.deferred_state_root = Some(u64::MAX);
+        let mut builder = StatelessL2Builder::new(&config, BaseEvmFactory::default(), NoopTrieDBProvider, NoopTrieHinter, Header::default().seal_slow());
+        assert!(matches!(builder.build_block(BasePayloadAttributes::default()), Err(ExecutorError::DeferredStateRootUnsupported)), "configured deferred schedules must reject before interpreting missing payload fields or legacy proof state");
     }
 }

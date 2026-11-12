@@ -165,6 +165,7 @@ impl<SB: PayloadServiceBuilder> BaseNodeRunner<SB> {
     pub async fn launch(self, builder: BaseNodeBuilder) -> Result<LaunchedBaseNode> {
         // This must precede reth launch and its automatic multi-store recovery.
         let admission = crate::DeferredStateRootAdmission::preflight(builder.config(), &self.rollup_args, self.extensions.len())?;
+        let root_service = admission.as_ref().map(|admission| admission.service.clone());
         info!(target: "base-runner", "starting custom Base node");
 
         let Self {
@@ -219,7 +220,17 @@ impl<SB: PayloadServiceBuilder> BaseNodeRunner<SB> {
 
         let builder = hooks.apply_to(builder);
         let launcher = builder.engine_api_launcher().with_backfill(crate::DeferredStateRootBackfillBuilder { admission });
-        let handle = builder.launch_with(launcher).await?;
+        let handle = match builder.launch_with(launcher).await {
+            Ok(handle) => handle,
+            Err(error) => {
+                // Launch hooks can fail after component tasks have started. Own any admitted
+                // provider work even when no successful node handle reaches the caller.
+                if let Some(manager) = root_service.and_then(|service| service.manager.get().cloned()) {
+                    manager.drain()?;
+                }
+                return Err(error);
+            }
+        };
         let auth_module = auth_module
             .get()
             .cloned()

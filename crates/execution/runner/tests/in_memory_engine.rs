@@ -165,11 +165,26 @@ async fn seals_one_block(deferred: bool) -> Result<()> {
     if deferred {
         assert_eq!(envelope.execution_payload.clone().into_block_raw()?.header.state_root, parent.header.state_root, "actual guarded runner getPayload F must commit exactly the real legacy parent root");
     }
+    let mut bad_hash = envelope.execution_payload.clone();
+    bad_hash.payload_inner.payload_inner.payload_inner.block_hash = B256::repeat_byte(0x44);
+    let invalid_hash = engine.new_payload_v4(bad_hash, envelope.parent_beacon_block_root).await?;
+    assert!(matches!(invalid_hash.status, alloy_rpc_types_engine::PayloadStatusEnum::Invalid { .. }), "ordinary/deferred Engine must reject a malformed payload blockHash: {invalid_hash:?}");
+    assert_eq!(invalid_hash.latest_valid_hash, Some(parent_hash), "malformed blockHash must retain the pinned engine's exact known valid parent");
+    let mut bad_withdrawals = envelope.execution_payload.clone();
+    bad_withdrawals.withdrawals_root = B256::repeat_byte(0x45);
+    bad_withdrawals.payload_inner.payload_inner.payload_inner.block_hash = bad_withdrawals.clone().into_block_raw()?.header.hash_slow();
+    let invalid_withdrawals = engine.new_payload_v4(bad_withdrawals, envelope.parent_beacon_block_root).await?;
+    assert!(matches!(invalid_withdrawals.status, alloy_rpc_types_engine::PayloadStatusEnum::Invalid { .. }), "same-block withdrawalsRoot validation must remain enabled in every cohort: {invalid_withdrawals:?}");
+    assert_eq!(invalid_withdrawals.latest_valid_hash, Some(parent_hash), "wrong same-block message-passer root must identify exactly the valid parent");
+    let repeated = envelope.execution_payload.clone();
     let status = engine
         .new_payload_v4(envelope.execution_payload, envelope.parent_beacon_block_root)
         .await?;
     assert!(status.status.is_valid(), "payload rejected: {status:?}");
     let hash = status.latest_valid_hash.ok_or_else(|| eyre!("payload status missing hash"))?;
+    let duplicate = engine.new_payload_v4(repeated, envelope.parent_beacon_block_root).await?;
+    assert_eq!(duplicate.status, alloy_rpc_types_engine::PayloadStatusEnum::Valid, "already checked exact payload hash must remain VALID on duplicate import");
+    assert_eq!(duplicate.latest_valid_hash, Some(hash), "duplicate import must return the exact previously validated hash");
     engine
         .fork_choice_updated_v3(
             ForkchoiceState {
@@ -186,6 +201,13 @@ async fn seals_one_block(deferred: bool) -> Result<()> {
         let proof = public.get_proof(alloy_primitives::Address::ZERO, vec![]).await;
         assert!(proof.is_err(), "configured deferred runner must fail closed for public proof RPC");
         assert!(proof.unwrap_err().to_string().contains("proof RPC is unsupported"), "proof RPC must fail at the compatibility guard rather than emit a misanchored proof");
+    } else {
+        let public_proof = public.get_proof(alloy_primitives::Address::ZERO, vec![B256::ZERO]).block_id(hash.into()).await?;
+        let auth_proof = reads.get_proof(alloy_primitives::Address::ZERO, vec![B256::ZERO]).block_id(hash.into()).await?;
+        assert_eq!(public_proof, auth_proof, "Never proof RPC must preserve exact account/storage proof bytes across public and in-memory transports");
+        assert_eq!(public_proof.address, alloy_primitives::Address::ZERO, "proof must identify exactly the requested account");
+        assert_eq!(public_proof.storage_proof.len(), 1, "proof must return exactly the one requested storage slot");
+        assert_eq!(public_proof.storage_proof[0].value, alloy_primitives::U256::ZERO, "zero-account slot zero has exactly zero value in the fixture");
     }
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {

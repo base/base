@@ -60,6 +60,9 @@ pub enum Eip1559ValidationError {
 /// [`StatelessL2Builder`]: crate::StatelessL2Builder
 #[derive(Error, Debug)]
 pub enum ExecutorError {
+    /// No proof adapter or verifier upgrade exists for delayed parent commitments.
+    #[error("proof execution is unsupported with DeferredStateRoot")]
+    DeferredStateRootUnsupported,
     /// Gas limit not provided in the payload attributes.
     ///
     /// This error occurs when the payload attributes are missing the required

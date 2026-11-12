@@ -57,7 +57,7 @@ impl DeferredStateRootState {
                             drop(guard); break;
                         }
                         _ = tokio::time::sleep(std::time::Duration::from_millis(20)) => {
-                            if service.manager.get().is_some_and(|manager| manager.failed.load(std::sync::atomic::Ordering::Acquire)) {
+                            if service.manager.get().is_some_and(|manager| manager.check_health().is_err()) {
                                 if let Some(manager) = service.manager.get().cloned() {
                                     let _ = tokio::task::spawn_blocking(move || manager.drain()).await;
                                 }
@@ -97,7 +97,8 @@ where
         let parent = ctx.parent_header();
         let key = PostStateRootKey { hash: parent.hash(), parent_hash: parent.parent_hash, number: parent.number };
         let factory = OverlayStateProviderFactory::new(self.provider.clone(), self.overlay.overlay_builder(parent.hash()));
-        Ok(PreparedStateRootJob::new(Box::new(DeferredStateRootJob { factory, parent: key, state: self.state.clone(), deferred: self.state.service.active(timestamp, ctx.parent_header().number + 1) }), None))
+        base_execution_payload_builder::PostStateRootMetrics::validator_executions().increment(1);
+        Ok(PreparedStateRootJob::new(Box::new(DeferredStateRootJob { factory, parent: key, state: self.state.clone(), deferred: self.state.service.active(timestamp, ctx.parent_header().number + 1), execution_started: std::time::Instant::now() }), None))
     }
 
     fn prepare_payload_builder(&self, ctx: PayloadStateRootJobContext<'_, BasePrimitives, P>) -> ProviderResult<Option<PayloadStateRootHandle>> {
@@ -112,6 +113,8 @@ pub struct DeferredStateRootJob<P> {
     pub factory: OverlayStateProviderFactory<P, BasePrimitives>,
     /// Exact parent identity, independent of height collisions.
     pub parent: PostStateRootKey,
+    /// Preparation-to-finalization wall-clock anchor, excluding current-root work.
+    pub execution_started: std::time::Instant,
     /// D checks the parent commitment; S/R check the actual current root.
     pub deferred: bool,
     /// Private publication and worker state.
@@ -126,6 +129,7 @@ where
     fn name(&self) -> &'static str { "base-deferred-parent-commitment" }
 
     fn finish(&mut self, block: &RecoveredBlock<BaseBlock>, _output: Arc<BlockExecutionOutput<<BasePrimitives as reth_primitives_traits::NodePrimitives>::Receipt>>, hashed: &LazyHashedPostState) -> ProviderResult<StateRootJobOutcome> {
+        base_execution_payload_builder::PostStateRootMetrics::validator_execution_duration().record(self.execution_started.elapsed().as_secs_f64());
         let manager = self.state.service.manager()?;
         let parent_root = if !self.deferred { block.state_root } else if let Some(parent) = manager.get(self.parent, PostStateRootSource::Validator)? { parent.root } else {
             let factory = self.factory.clone();
@@ -143,6 +147,7 @@ where
         }
         let hashed = hashed.get().clone(); let factory = self.factory.clone();
         let data = manager.enqueue(Box::new(move || {
+            base_execution_payload_builder::PostStateRootMetrics::current_roots_started("validator").increment(1);
             let provider = factory.database_provider_ro()?;
             let start = std::time::Instant::now();
             let (root, updates) = provider.state_root_with_updates((*hashed).clone())?;
@@ -177,6 +182,7 @@ impl<V> DeferredEngineValidator<V> {
         };
         let block = output.executed_block.recovered_block();
         if !self.state.service.controlled(block.timestamp, block.number) { return Ok(output); }
+        base_execution_payload_builder::PostStateRootMetrics::redundant_stock_sorts().increment(1);
         let error = |message: &str| InsertBlockError::new(output.executed_block.sealed_block().clone(), PostStateRootManager::error(message).into());
         let staged = self.state.staged.lock().map_err(|_| error("root staging mutex poisoned"))?.take().ok_or_else(|| error("missing ready current root"))?;
         if staged.key.hash != block.hash() || staged.key.parent_hash != block.parent_hash || staged.key.number != block.number {
@@ -186,8 +192,6 @@ impl<V> DeferredEngineValidator<V> {
             .map_err(|e| InsertBlockError::new(output.executed_block.sealed_block().clone(), e.into()))?;
         // Do not read the stock pending handle. The runtime still owns its redundant sorting task;
         // replacing this handle does not cancel it or remove its cost from measurements.
-        base_execution_payload_builder::PostStateRootMetrics::validator_executions().increment(1);
-        base_execution_payload_builder::PostStateRootMetrics::redundant_stock_sorts().increment(1);
         base_execution_payload_builder::PostStateRootMetrics::validator_ready_outputs().increment(1);
         tracing::info!(target: "base_root_experiment", hash = %block.hash(), number = block.number, commitment_root = %block.state_root, actual_current_root = %staged.data.root, "ready validator output; Engine response and canonical acceptance follow");
         output.executed_block = ExecutedBlock::new(output.executed_block.recovered_block.clone(), output.executed_block.execution_output.clone(), staged.data.sorted)
@@ -207,6 +211,7 @@ where
     fn validate_block(&mut self, block: SealedBlockWithAccessList<BaseBlock>, ctx: TreeCtx<'_, BasePrimitives>) -> ValidationOutcome<BasePrimitives> { let outcome = self.inner.validate_block(block, ctx); self.publish(outcome) }
     fn on_inserted_executed_block(&self, block: BuiltPayloadExecutedBlock<BasePrimitives>) -> ProviderResult<ExecutedBlock<BasePrimitives>> {
         if self.state.service.reexecution(block.recovered_block.timestamp, block.recovered_block.number) { return Err(PostStateRootManager::error("trusted insertion is unsupported for deferred state roots")); }
+        if self.state.service.controlled(block.recovered_block.timestamp, block.recovered_block.number) { base_execution_payload_builder::PostStateRootMetrics::trusted_insertions().increment(1); }
         self.inner.on_inserted_executed_block(block)
     }
     fn on_canonical_head_changed(&self, hash: B256, state: &EngineApiTreeState<BasePrimitives>) { self.inner.on_canonical_head_changed(hash, state); }
@@ -276,6 +281,13 @@ mod tests {
     use super::*;
     use std::time::Duration;
 
+    /// The pinned engine must classify local root failures as fatal, never invalid ancestry.
+    #[test]
+    fn provider_root_failure_is_engine_fatal_not_consensus_invalid() {
+        let kind: reth_engine_tree::tree::error::InsertBlockErrorKind = PostStateRootManager::error("injected provider root failure").into();
+        assert!(matches!(kind.ensure_validation_error(), Err(reth_engine_tree::tree::error::InsertBlockProcessingError::Fatal(reth_engine_tree::tree::error::InsertBlockFatalError::Provider(_)))), "local root errors must reach exactly engine-fatal provider handling, not INVALID ancestry caching");
+    }
+
     /// A real provider-worker panic reaches the runtime's fatal task monitor automatically.
     #[test]
     fn worker_failure_reports_unhealthy_and_drains_without_manual_engine_stop() {
@@ -290,6 +302,24 @@ mod tests {
         assert!(result.is_err(), "root health failure must reach the runtime fatal channel without manual terminate");
         assert!(manager.worker.lock().unwrap().is_none(), "fatal health reporting must account for and join the owned serial worker first");
         assert_eq!(manager.ready.lock().unwrap().entries.len(), 0, "failed root must publish exactly zero ready entries");
+        runtime.shutdown_timeout(Duration::from_secs(2));
+    }
+
+    /// Detached current-root timeouts stop health even if no caller submits newPayload.
+    #[test]
+    fn detached_builder_timeout_automatically_stops_health_without_validator() {
+        let runtime = reth_tasks::Runtime::test(); let fatal = runtime.take_task_manager_handle().unwrap();
+        let state = DeferredStateRootState { service: Arc::new(PostStateRootService { activation: Some(1), limits: base_execution_payload_builder::PostStateRootLimits { timeout: Duration::from_millis(50), ..Default::default() }, ..Default::default() }), ..Default::default() };
+        state.spawn_health_monitor(&runtime); let manager = state.service.manager().unwrap();
+        let (release, blocked) = std::sync::mpsc::channel();
+        let key = PostStateRootKey { hash: B256::repeat_byte(1), parent_hash: B256::ZERO, number: 1 };
+        manager.enqueue_builder(key, Box::new(move || { blocked.recv_timeout(Duration::from_secs(2)).unwrap(); Ok(PostStateRootData::new(B256::ZERO, &Default::default(), Default::default())) })).unwrap();
+        let result = runtime.handle().block_on(async { tokio::time::timeout(Duration::from_secs(2), fatal).await.expect("detached deadline must automatically stop health without a validator waiter").unwrap() });
+        assert!(result.is_err(), "detached provider timeout must reach the runtime fatal channel");
+        assert!(manager.failed.load(std::sync::atomic::Ordering::Acquire), "detached timeout must mark the run terminally unhealthy");
+        release.send(()).unwrap(); manager.drain().unwrap();
+        assert!(manager.worker.lock().unwrap().is_none(), "indivisible provider work must remain owned and join after release, never be described as forcibly cancelled");
+        assert_eq!(manager.ready.lock().unwrap().entries.len(), 0, "late timed-out detached completion must publish exactly zero ready roots");
         runtime.shutdown_timeout(Duration::from_secs(2));
     }
 

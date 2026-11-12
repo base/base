@@ -477,6 +477,7 @@ impl<Txs> Builder<'_, Txs> {
         // the build returns, keeps one.
         let cancel_watch = Arc::new(ctx.cancel.clone());
         let build_start = Instant::now();
+        if ctx.builder_config.deferred_state_root.as_ref().is_some_and(|service| service.controlled(ctx.attributes().timestamp(), ctx.parent().number() + 1)) { crate::metrics::PostStateRootMetrics::builder_executions().increment(1); }
         debug!(target: "payload_builder", id=%ctx.payload_id(), parent_header = ?ctx.parent().hash(), parent_number = ctx.parent().number(), "building new payload");
 
         let mut builder = ctx.block_builder(db)?;
@@ -634,6 +635,7 @@ impl<Txs> Builder<'_, Txs> {
             let snapshot = root_snapshot.as_ref().ok_or_else(|| PayloadBuilderError::other(crate::PostStateRootManager::error("serial builder requires an owned parent snapshot")))?.clone();
             let hashed = hashed_state.clone();
             let data = service.manager()?.enqueue(Box::new(move || {
+                crate::metrics::PostStateRootMetrics::current_roots_started("builder").increment(1);
                 let start = Instant::now();
                 let snapshot = snapshot.lock();
                 let (root, updates) = snapshot.state_root_with_updates(hashed.clone())?;
@@ -656,7 +658,7 @@ impl<Txs> Builder<'_, Txs> {
             BlockExecutionOutput { state: execution_state, result: execution_result };
         let reexecution = serial_control.is_some_and(|service| service.reexecution(ctx.attributes().timestamp(), block_num));
         if serial_control.is_some() {
-            crate::metrics::PostStateRootMetrics::builder_executions().increment(1);
+            crate::metrics::PostStateRootMetrics::builder_execution_duration().record(execution_duration.as_secs_f64());
             crate::metrics::PostStateRootMetrics::payloads_sealed().increment(1);
             crate::metrics::PostStateRootMetrics::finalization_to_seal().record(finalization_start.elapsed().as_secs_f64());
             tracing::info!(target: "base_root_experiment", hash = %sealed_block.hash(), number = block_num, commitment_root = %sealed_block.state_root(), gas = info.cumulative_gas_used, "immutable payload sealed; not Engine acceptance");
@@ -673,6 +675,7 @@ impl<Txs> Builder<'_, Txs> {
             let snapshot = root_snapshot.ok_or_else(|| PayloadBuilderError::other(crate::PostStateRootManager::error("missing owned deferred root snapshot")))?;
             let key = PostStateRootKey { hash: sealed_block.hash(), parent_hash: sealed_block.parent_hash(), number: block_num };
             service.manager()?.enqueue_builder(key, Box::new(move || {
+                crate::metrics::PostStateRootMetrics::current_roots_started("builder").increment(1);
                 // Finalized output is authoritative for committed transactions and all system
                 // transitions. Borrowed speculative commit-condition views never enter this job.
                 let _finalized_output = execution_outcome;

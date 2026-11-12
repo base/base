@@ -116,9 +116,12 @@ impl Default for PerChainConfig {
 impl PerChainConfig {
     /// Create a [`PerChainConfig`] from a [`RollupConfig`].
     ///
-    /// Returns `None` if the rollup config is missing `genesis.system_config`.
+    /// Returns `None` if the rollup config is missing `genesis.system_config` or configures
+    /// an experimental deferred commitment that legacy proof configurations cannot represent.
     #[must_use]
     pub fn from_rollup_config(cfg: &RollupConfig) -> Option<Self> {
+        // Never erase the experimental schedule into a legacy proof-system configuration.
+        if cfg.upgrades.base.deferred_state_root.is_some() { return None; }
         let sc = cfg.genesis.system_config.as_ref()?;
         Some(Self {
             chain_id: U256::from(cfg.l2_chain_id.id()),
@@ -275,6 +278,16 @@ mod tests {
     use alloy_primitives::{Address, B256, U256, address, b256};
 
     use super::*;
+
+    /// Experimental schedules cannot be projected into a proof configuration that omits them.
+    #[test]
+    fn deferred_schedule_rejected_before_proof_configuration_projection() {
+        let mut config = RollupConfig::default();
+        config.genesis.system_config = Some(Default::default());
+        assert!(PerChainConfig::from_rollup_config(&config).is_some(), "ordinary configuration with genesis system config remains supported");
+        config.upgrades.base.deferred_state_root = Some(u64::MAX);
+        assert!(PerChainConfig::from_rollup_config(&config).is_none(), "configured future fork must fail closed rather than silently drop its commitment semantics");
+    }
 
     fn sample_config() -> PerChainConfig {
         PerChainConfig {

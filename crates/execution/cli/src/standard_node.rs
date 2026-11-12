@@ -635,6 +635,10 @@ impl StandardBaseRethNode {
         rollup_args: &RollupArgs,
         startup_mode: UpgradeSignalStartupMode,
     ) -> eyre::Result<BaseNodeBuilder> {
+        if builder.config().chain.validate_deferred_state_root_schedule()?.is_some() || rollup_args.root_experiment_cohort.is_some_and(|cohort| cohort != base_execution_payload_builder::PostStateRootCohort::Ordinary) {
+            eyre::ensure!(rollup_args.deferred_state_root_disposable, "root experiments require disposable-run acknowledgement before any L1 startup call");
+            eyre::ensure!(rollup_args.upgrade_signal.contract_address.is_none() && rollup_args.upgrade_signal_l1_rpc.upgrade_signal_l1_rpc.is_none(), "root experiments forbid L1 startup calls");
+        }
         let Some(config) = Self::upgrade_signal_config(rollup_args)? else {
             return Ok(builder);
         };
@@ -846,10 +850,6 @@ impl StandardBaseRethNode {
 
     /// Launches the node and waits for it to exit.
     pub async fn run(builder: BaseNodeBuilder, args: StandardNodeArgs) -> eyre::Result<()> {
-        if builder.config().chain.validate_deferred_state_root_schedule()?.is_some() || args.rpc.rollup_args.root_experiment_cohort.is_some_and(|cohort| cohort != base_execution_payload_builder::PostStateRootCohort::Ordinary) {
-            eyre::ensure!(args.rpc.rollup_args.deferred_state_root_disposable, "root experiments require disposable-run acknowledgement before any L1 startup call");
-            eyre::ensure!(args.rpc.rollup_args.upgrade_signal.contract_address.is_none() && args.rpc.rollup_args.upgrade_signal_l1_rpc.upgrade_signal_l1_rpc.is_none(), "root experiments forbid L1 startup calls");
-        }
         let builder = Self::apply_initial_upgrade_signal(builder, &args).await?;
 
         Self::runner_with_version_metrics(args)?.run(builder).await

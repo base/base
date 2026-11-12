@@ -3,7 +3,7 @@
 //! Computation does not certify a block. Only the validator wrapper may publish a validated
 //! entry after every inner check succeeds. Builder and validator work never share certification.
 
-use std::{collections::{BTreeMap, BTreeSet, VecDeque}, fmt, io, panic::{AssertUnwindSafe, catch_unwind}, sync::{Arc, Mutex, OnceLock, atomic::{AtomicBool, AtomicUsize, Ordering}, mpsc}, thread::{self, JoinHandle}, time::{Duration, Instant}};
+use std::{collections::{BTreeMap, VecDeque}, fmt, io, panic::{AssertUnwindSafe, catch_unwind}, sync::{Arc, Mutex, OnceLock, atomic::{AtomicBool, AtomicUsize, Ordering}, mpsc}, thread::{self, JoinHandle}, time::{Duration, Instant}};
 use alloy_primitives::B256;
 use reth_storage_api::errors::{ProviderError, ProviderResult};
 use reth_trie_common::{HashedPostState, SortedTrieData, updates::TrieUpdates};
@@ -210,7 +210,7 @@ pub struct PostStateRootManager {
     /// Ready data published only by the relevant successful execution owner.
     pub ready: Mutex<PostStateRootEntries>,
     /// Outstanding builder identities; certification waits for these results.
-    pub builders: Mutex<BTreeSet<PostStateRootKey>>,
+    pub builders: Mutex<BTreeMap<PostStateRootKey, Instant>>,
     /// Exact admitted provider operations for per-run root-work accounting.
     pub admitted: AtomicUsize,
 }
@@ -275,13 +275,16 @@ impl PostStateRootManager {
     pub fn enqueue_builder(self: &Arc<Self>, key: PostStateRootKey, operation: PostStateRootOperation) -> ProviderResult<()> {
         {
             let mut builders = self.builders.lock().map_err(Self::error)?;
-            if builders.len() >= self.limits.queued + 1 || !builders.insert(key) {
+            if builders.len() >= self.limits.queued + 1 || builders.contains_key(&key) {
+                self.failed.store(true, Ordering::Release);
                 return Err(Self::error("builder root admission capacity or duplicate identity"));
             }
+            builders.insert(key, Instant::now() + self.limits.timeout);
         }
         let manager = self.clone();
         match self.enqueue(Box::new(move || {
             let result = operation().and_then(|data| {
+                manager.check_health()?;
                 manager.publish(key, PostStateRootSource::Builder, data.clone())?; Ok(data)
             });
             manager.builders.lock().map_err(Self::error)?.remove(&key);
@@ -292,11 +295,23 @@ impl PostStateRootManager {
         }
     }
 
+    /// Checks detached deadlines even when no validator ever requests the sealed payload.
+    /// The runtime health owner polls this independently of the indivisible provider worker.
+    pub fn check_health(&self) -> ProviderResult<()> {
+        if self.builders.lock().map_err(Self::error)?.values().any(|deadline| Instant::now() >= *deadline) {
+            self.failed.store(true, Ordering::Release);
+            return Err(Self::error("detached builder root completion timed out"));
+        }
+        if self.failed.load(Ordering::Acquire) { return Err(Self::error("post-state root manager is unhealthy")); }
+        Ok(())
+    }
+
     /// Waits for associated builder work before independent validator certification.
     /// Absence means imported data, not permission to coalesce validator computation.
     pub fn wait_builder(&self, key: PostStateRootKey) -> ProviderResult<()> {
         let deadline = Instant::now() + self.limits.timeout;
-        while self.builders.lock().map_err(Self::error)?.contains(&key) {
+        while self.builders.lock().map_err(Self::error)?.contains_key(&key) {
+            self.check_health()?;
             if self.failed.load(Ordering::Acquire) { return Err(Self::error("builder root failed")); }
             if Instant::now() >= deadline {
                 self.failed.store(true, Ordering::Release);

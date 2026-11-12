@@ -1,29 +1,30 @@
-//! Real MDBX/MPT semantic fixtures. Set BASE_DEFERRED_TEST_WIRING=deferred to select the
-//! experimental wiring once installed; the default deliberately exercises the stock baseline.
+//! Real MDBX/MPT semantic fixtures. Set BASE_DEFERRED_TEST_WIRING=legacy to select stock
+//! commitment wiring for the must-hold baseline failures; the default exercises the candidate.
 //! No provider root scalar is scripted. Each block transfers value using real EVM execution.
 
-use std::{io::Write, sync::{Arc, mpsc}, time::Duration};
-use alloy_consensus::{BlockBody, Header, SignableTransaction, TxEip1559, TxReceipt, EMPTY_OMMER_ROOT_HASH};
+use std::{collections::VecDeque, io::Write, sync::{Arc, Mutex, mpsc}, time::{Duration, Instant}};
+use alloy_consensus::{BlockBody, Header, SignableTransaction, Transaction, TxEip1559, TxReceipt, EMPTY_OMMER_ROOT_HASH};
 use alloy_primitives::{Address, B256, TxKind, U256, keccak256};
-use base_common_consensus::{BaseBlock, BasePrimitives, BaseTxEnvelope};
+use base_common_consensus::{BaseBlock, BasePrimitives, BaseTxEnvelope, TxDeposit};
 use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
 use base_execution_consensus::{BaseBeaconConsensus, calculate_receipt_root_no_memo};
 use base_execution_evm::BaseEvmConfig;
-use base_execution_payload_builder::{BasePayloadTypes, BaseBuiltPayload, BasePayloadBuilderAttributes, PostStateRootService, builder::{BasePayloadBuilderCtx, Builder}, config::BaseBuilderConfig, payload::EthPayloadBuilderAttributes};
+use base_execution_payload_builder::{BasePayloadTypes, BaseBuiltPayload, BasePayloadBuilderAttributes, ParkablePayloadTransactions, PostStateRootCohort, PostStateRootService, ResourceMeteringConfig, ResourceMeteringDimension, ResourceMeteringSchedule, builder::{BasePayloadBuilderCtx, Builder}, config::BaseBuilderConfig, payload::EthPayloadBuilderAttributes};
 use base_execution_txpool::BasePooledTransaction;
 use reth_basic_payload_builder::{BuildOutcomeKind, PayloadConfig};
-use reth_payload_util::NoopPayloadTransactions;
+use reth_payload_util::{NoopPayloadTransactions, PayloadTransactions};
+use reth_transaction_pool::{TransactionOrigin, ValidPoolTransaction, identifier::TransactionId};
 use alloy_eips::eip2718::Encodable2718;
 use alloy_rpc_types_engine::PayloadId;
 use base_node_core::{BaseNode, DeferredEngineValidator, DeferredStateRootState, DeferredStateRootStrategy, engine::BaseEngineValidator};
 use reth_chainspec::EthChainSpec;
 use reth_chain_state::CanonicalInMemoryState;
 use reth_db_common::init::init_genesis;
-use reth_engine_tree::{chain::FromOrchestrator, engine::{EngineApiKind, EngineApiRequest, FromEngine}, persistence::PersistenceHandle, tree::{BasicEngineValidator, EngineApiTreeHandler, TreeConfig}};
+use reth_engine_tree::{chain::FromOrchestrator, engine::{EngineApiKind, EngineApiRequest, FromEngine}, persistence::PersistenceHandle, tree::{BasicEngineValidator, EngineApiTreeHandler, EngineValidator, TreeConfig}};
 use reth_evm::{ConfigureEvm, database::StateProviderDatabase, execute::Executor};
 use reth_node_api::{BeaconEngineMessage, NoopInvalidBlockHook, NodeTypesWithDBAdapter};
 use reth_payload_builder::PayloadBuilderHandle;
-use reth_payload_primitives::{BuiltPayload, PayloadTypes};
+use reth_payload_primitives::{BuiltPayload, BuiltPayloadExecutedBlock, PayloadTypes};
 use reth_primitives_traits::{Block, RecoveredBlock, SealedHeader, SignedTransaction, WithEncoded};
 use reth_provider::{BlockExecutionOutput, BlockWriter, ExecutionOutcome, HashedPostStateProvider, LatestStateProviderRef, ProviderFactory, StateProvider, StateProviderFactory, StateRootProvider, providers::BlockchainProvider, test_utils::create_test_provider_factory_with_node_types};
 use reth_storage_overlay::OverlayManager;
@@ -82,6 +83,18 @@ impl Fixture {
         Self::execute(factory, chain, parent, block)
     }
 
+    /// Adds a real genesis contract without changing the immutable stock-golden fixture.
+    pub fn with_contract(code: &str) -> (Self, Address) {
+        let original = Self::new(); let contract = Address::repeat_byte(0x66);
+        let mut genesis = serde_json::to_value(original.chain.genesis()).unwrap();
+        genesis["alloc"][format!("{contract:#x}")] = serde_json::json!({"balance":"0x0", "code":code});
+        let chain = Arc::new(BaseChainSpecBuilder::default().chain(original.chain.chain).genesis(serde_json::from_value(genesis).unwrap()).bedrock_activated().build());
+        let factory = create_test_provider_factory_with_node_types::<BaseNode>(chain.clone()); init_genesis(&factory).unwrap();
+        let parent = SealedHeader::seal_slow(chain.genesis_header().clone());
+        let mut raw = original.block.into_block(); raw.header.parent_hash = parent.hash();
+        (Self::execute(factory, chain, parent, raw.try_into_recovered().unwrap()), contract)
+    }
+
     /// Calculates actual MPT nodes from finalized execution, independently of header.state_root.
     pub fn execute(factory: ProviderFactory<TestTypes>, chain: Arc<BaseChainSpec>, parent: SealedHeader<Header>, mut block: RecoveredBlock<BaseBlock>) -> Self {
         let provider = factory.provider().unwrap();
@@ -99,18 +112,18 @@ impl Fixture {
         Self { factory, chain, block, output, hashed, updates, parent, root }
     }
 
-    /// Persists actual state, then independently executes a second transfer at a different height.
+    /// Persists actual state, then independently executes the next signed transaction at the next height.
     pub fn next(self) -> Self {
         let writer = self.factory.provider_rw().unwrap();
-        let outcome = ExecutionOutcome::new(self.output.state.clone(), vec![self.output.receipts.clone()], 1, vec![self.output.requests.clone()]);
+        let outcome = ExecutionOutcome::new(self.output.state.clone(), vec![self.output.receipts.clone()], self.block.number, vec![self.output.requests.clone()]);
         writer.append_blocks_with_state(vec![self.block.clone()], &outcome, self.hashed.into_sorted()).unwrap();
         writer.commit().unwrap();
         let parent = SealedHeader::seal_slow(self.block.header().clone());
         let mut next = self.block.into_block();
-        next.header.parent_hash = parent.hash(); next.header.number = 2; next.header.timestamp += 2;
+        next.header.parent_hash = parent.hash(); next.header.number += 1; next.header.timestamp += 2;
         next.header.base_fee_per_gas = self.chain.next_block_base_fee(parent.header(), next.header.timestamp);
         if let BaseTxEnvelope::Eip1559(tx) = &next.body.transactions[0] {
-            let mut tx = tx.tx().clone(); tx.nonce = 1;
+            let mut tx = tx.tx().clone(); tx.nonce += 1;
             let signature = reth_primitives_traits::crypto::secp256k1::sign_message(B256::repeat_byte(1), tx.signature_hash()).unwrap();
             next.body.transactions = vec![BaseTxEnvelope::Eip1559(tx.into_signed(signature))];
         }
@@ -120,6 +133,13 @@ impl Fixture {
 
     /// Builds through the production native builder using an owned real parent snapshot.
     pub fn native_payload(&self, service: Arc<PostStateRootService>) -> BaseBuiltPayload {
+        self.native_with_pool(service, NoopPayloadTransactions::<Arc<ValidPoolTransaction<BasePooledTransaction>>>::default(), true, ResourceMeteringConfig::default())
+    }
+
+    /// Runs real candidates through production commit callbacks and an owned parent snapshot.
+    pub fn native_with_pool<Txs>(&self, service: Arc<PostStateRootService>, candidates: Txs, no_tx_pool: bool, resource_metering: ResourceMeteringConfig) -> BaseBuiltPayload
+    where Txs: ParkablePayloadTransactions<Pooled = BasePooledTransaction> + Send + Sync,
+    {
         let provider = BlockchainProvider::new(self.factory.clone()).unwrap();
         let proof = provider.state_by_block_hash(self.parent.hash()).unwrap();
         let snapshot = provider.state_by_block_hash(self.parent.hash()).unwrap();
@@ -127,18 +147,17 @@ impl Fixture {
         let attributes = BasePayloadBuilderAttributes {
             payload_attributes: EthPayloadBuilderAttributes { id, parent: self.parent.hash(), timestamp: self.block.timestamp, ..Default::default() },
             transactions: self.block.body().transactions.iter().map(|tx| WithEncoded::new(tx.encoded_2718().into(), tx.clone())).collect(),
-            no_tx_pool: true, gas_limit: Some(self.block.gas_limit), ..Default::default()
+            no_tx_pool, gas_limit: Some(self.block.gas_limit), ..Default::default()
         };
         let ctx = BasePayloadBuilderCtx {
             evm_config: BaseEvmConfig::<BaseChainSpec, BasePrimitives>::new(self.chain.clone()),
-            builder_config: BaseBuilderConfig { deferred_state_root: Some(service), ..Default::default() },
+            builder_config: BaseBuilderConfig { deferred_state_root: Some(service), resource_metering, ..Default::default() },
             chain_spec: self.chain.clone(), config: PayloadConfig::new(Arc::new(self.parent.clone()), attributes, id),
             cancel: Default::default(), best_payload: None,
         };
-        let outcome = Builder::new(|_, _| NoopPayloadTransactions::<Arc<reth_transaction_pool::ValidPoolTransaction<BasePooledTransaction>>>::default())
+        let outcome = Builder::new(|_, _| candidates)
             .with_root_snapshot(snapshot).build(StateProviderDatabase::new((&proof).into_evm_state_provider()), proof.as_ref(), None, ctx).expect("real native fixture must build");
-        let BuildOutcomeKind::Freeze(payload) = outcome else { panic!("no-pool native fixture must return exactly Freeze"); };
-        payload
+        match outcome { BuildOutcomeKind::Freeze(payload) | BuildOutcomeKind::Better { payload } => payload, other => panic!("real native fixture must complete a payload: {other:?}") }
     }
 
     /// Submits a resealed header through the real BasicEngineValidator and Engine API tree.
@@ -200,6 +219,142 @@ impl Fixture {
     }
 }
 
+/// In-flight callback recording needs one ordered log across commit and invalidation methods.
+/// A static mock cannot own and advance the same candidate queue while those callbacks mutate it.
+#[derive(Debug)]
+pub struct RealCandidates {
+    /// Actual signed and recovered pool transactions.
+    pub queue: VecDeque<Arc<ValidPoolTransaction<BasePooledTransaction>>>,
+    /// Ordered observable decisions from the production commit callbacks.
+    pub decisions: Arc<Mutex<Vec<&'static str>>>,
+}
+impl PayloadTransactions for RealCandidates {
+    type Transaction = Arc<ValidPoolTransaction<BasePooledTransaction>>;
+    fn next(&mut self, _: ()) -> Option<Self::Transaction> { self.queue.pop_front() }
+    fn mark_invalid(&mut self, _: Address, _: u64) { self.decisions.lock().unwrap().push("invalid"); }
+}
+impl ParkablePayloadTransactions for RealCandidates {
+    type Pooled = BasePooledTransaction;
+    fn park_current(&mut self) { panic!("plain signed transactions must not be predicate-parked"); }
+    fn mark_current_committed(&mut self) { self.decisions.lock().unwrap().push("commit"); }
+    fn promote(&mut self, _: B256) -> bool { false }
+    fn discard_parked(&mut self, _: B256) -> bool { false }
+}
+
+/// Actual detached root includes a deposit and CommitChanges::Yes but not speculative SSTORE No.
+#[test]
+fn native_finalized_root_preserves_commit_yes_no_and_forced_deposit() {
+    let (mut fixture, contract) = Fixture::with_contract("0x600160005500");
+    let deposit: BaseTxEnvelope = TxDeposit { from: Address::repeat_byte(0x99), to: Address::repeat_byte(0x88).into(), mint: 100, value: U256::from(7), gas_limit: 30_000, ..Default::default() }.into();
+    let mut raw = fixture.block.clone().into_block(); raw.body.transactions = vec![deposit.clone()]; fixture.block = raw.try_into_recovered().unwrap();
+    let signed = |nonce, to| {
+        let tx = TxEip1559 { chain_id: 8453, nonce, gas_limit: 100_000, max_fee_per_gas: 2_000_000_000, max_priority_fee_per_gas: 1, to: TxKind::Call(to), value: U256::from(1), ..Default::default() };
+        let signature = reth_primitives_traits::crypto::secp256k1::sign_message(B256::repeat_byte(1), tx.signature_hash()).unwrap();
+        BaseTxEnvelope::Eip1559(tx.into_signed(signature))
+    };
+    let accepted = signed(0, Address::repeat_byte(0x42)); let rejected = signed(1, contract);
+    let candidates = [accepted.clone(), rejected.clone()].into_iter().map(|tx| {
+        let transaction = BasePooledTransaction::new(tx.clone().try_into_recovered().unwrap(), tx.encode_2718_len());
+        Arc::new(ValidPoolTransaction { transaction_id: TransactionId::new(0.into(), transaction.nonce()), transaction, propagate: false, timestamp: Instant::now(), origin: TransactionOrigin::External, authority_ids: None })
+    }).collect();
+    let decisions = Arc::new(Mutex::new(Vec::new()));
+    let schedule = ResourceMeteringSchedule::new(vec![ResourceMeteringDimension { name: "gas".into(), block_limit: 1_000_000, transaction_limit: 30_000, base_gas_weight: 1, operations: vec![], dry_run: false }]).compile().unwrap();
+    let service = Arc::new(PostStateRootService { activation: Some(2), ..Default::default() });
+    let payload = fixture.native_with_pool(service.clone(), RealCandidates { queue: candidates, decisions: decisions.clone() }, false, ResourceMeteringConfig { enabled: true, schedule: Arc::new(schedule), ..Default::default() });
+    assert_eq!(*decisions.lock().unwrap(), vec!["commit", "invalid"], "native pool must commit exactly the transfer and reject exactly the executed over-budget SSTORE");
+    assert_eq!(payload.block().body().transactions, vec![deposit, accepted], "final native body must include forced deposit and committed transfer only");
+    assert!(payload.executed_block().is_none(), "deferred pool result must never expose a trusted insertion bypass");
+    let checked = Fixture::execute(fixture.factory.clone(), fixture.chain.clone(), fixture.parent.clone(), payload.block().clone().into_block().try_into_recovered().unwrap());
+    let key = base_execution_payload_builder::PostStateRootKey { hash: payload.block().hash(), parent_hash: payload.block().parent_hash, number: payload.block().number };
+    let manager = service.manager.get().unwrap(); manager.wait_builder(key).unwrap();
+    let built = manager.get(key, base_execution_payload_builder::PostStateRootSource::Builder).unwrap().unwrap();
+    assert_eq!(built.root, checked.root, "detached root must exactly match independent execution of committed transactions plus forced deposit");
+    assert_eq!(*built.updates, checked.updates, "detached trie nodes must exactly match authoritative committed and system/deposit changes");
+    assert_eq!(checked.submit_with_service(fixture.parent.state_root, service.clone(), false).status, alloy_rpc_types_engine::PayloadStatusEnum::Valid, "mixed finalized-state root must pass independent Engine execution and builder equivalence checks");
+    manager.drain().unwrap();
+}
+
+/// Reverted storage writes and legacy SELFDESTRUCT are represented by finalized state, not hooks.
+#[test]
+fn native_finalized_root_handles_revert_and_account_deletion() {
+    for (code, succeeds) in [("0x600160005560006000fd", false), ("0x730000000000000000000000000000000000000077ff", true)] {
+        let (mut fixture, contract) = Fixture::with_contract(code);
+        let BaseTxEnvelope::Eip1559(tx) = &fixture.block.body().transactions[0] else { panic!("fixture must start with a signed EIP1559 transaction"); };
+        let mut tx = tx.tx().clone(); tx.to = contract.into(); tx.gas_limit = 100_000; tx.value = U256::ZERO;
+        let signature = reth_primitives_traits::crypto::secp256k1::sign_message(B256::repeat_byte(1), tx.signature_hash()).unwrap();
+        let mut raw = fixture.block.clone().into_block(); raw.body.transactions = vec![BaseTxEnvelope::Eip1559(tx.into_signed(signature))];
+        fixture.block = raw.try_into_recovered().unwrap();
+        let service = Arc::new(PostStateRootService { activation: Some(2), ..Default::default() });
+        let payload = fixture.native_payload(service.clone());
+        let checked = Fixture::execute(fixture.factory.clone(), fixture.chain.clone(), fixture.parent.clone(), payload.block().clone().into_block().try_into_recovered().unwrap());
+        assert_eq!(checked.output.receipts.len(), 1, "each edge-case block must contain exactly one receipt");
+        assert_eq!(checked.output.receipts[0].status(), succeeds, "receipt status must distinguish reverting SSTORE from successful legacy account deletion");
+        let key = base_execution_payload_builder::PostStateRootKey { hash: payload.block().hash(), parent_hash: payload.block().parent_hash, number: payload.block().number };
+        let manager = service.manager.get().unwrap(); manager.wait_builder(key).unwrap();
+        let built = manager.get(key, base_execution_payload_builder::PostStateRootSource::Builder).unwrap().unwrap();
+        assert_eq!(built.root, checked.root, "detached root must exactly match finalized revert/delete state, including nonce and fee effects");
+        assert_eq!(*built.updates, checked.updates, "detached trie nodes must exactly preserve reverted writes and account deletion");
+        assert_eq!(checked.submit_with_service(fixture.parent.state_root, service.clone(), false).status, alloy_rpc_types_engine::PayloadStatusEnum::Valid, "edge-case finalized state must pass independent Engine validation");
+        manager.drain().unwrap();
+    }
+}
+
+/// Three actual blocks deploy, delete and recreate the same CREATE2 account under delayed headers.
+#[test]
+fn native_finalized_roots_preserve_delete_and_recreate_across_blocks() {
+    let init_code = alloy_primitives::bytes!("6016600c60003960166000f3730000000000000000000000000000000000000077ff");
+    let factory_code = format!("0x602260126000396001602260006000f55000{}", alloy_primitives::hex::encode(&init_code));
+    let (mut fixture, factory_address) = Fixture::with_contract(&factory_code);
+    let child = factory_address.create2_from_code(U256::from(1).to_be_bytes::<32>(), &init_code);
+    let service = Arc::new(PostStateRootService { activation: Some(2), ..Default::default() });
+    let mut roots = Vec::new();
+    for (index, target) in [factory_address, child, factory_address].into_iter().enumerate() {
+        let BaseTxEnvelope::Eip1559(tx) = &fixture.block.body().transactions[0] else { panic!("CREATE2 fixture must use signed EIP1559 transactions"); };
+        let mut tx = tx.tx().clone(); tx.nonce = index as u64; tx.to = target.into(); tx.gas_limit = 300_000; tx.value = U256::ZERO;
+        let signature = reth_primitives_traits::crypto::secp256k1::sign_message(B256::repeat_byte(1), tx.signature_hash()).unwrap();
+        let mut raw = fixture.block.clone().into_block(); raw.body.transactions = vec![BaseTxEnvelope::Eip1559(tx.into_signed(signature))]; fixture.block = raw.try_into_recovered().unwrap();
+        let payload = fixture.native_payload(service.clone());
+        let mut checked = Fixture::execute(fixture.factory.clone(), fixture.chain.clone(), fixture.parent.clone(), payload.block().clone().into_block().try_into_recovered().unwrap());
+        assert_eq!(checked.output.receipts.len(), 1, "each deploy/delete/recreate block must contain exactly one receipt");
+        assert!(checked.output.receipts[0].status(), "outer transaction must succeed at each lifecycle transition");
+        let account = checked.hashed.accounts.get(&keccak256(child)).expect("each lifecycle transition must affect exactly the derived CREATE2 account");
+        assert_eq!(account.is_some(), index != 1, "CREATE2 account must exist after deployment/recreation and be deleted only in the middle block");
+        let key = base_execution_payload_builder::PostStateRootKey { hash: payload.block().hash(), parent_hash: payload.block().parent_hash, number: payload.block().number };
+        let manager = service.manager.get().unwrap(); manager.wait_builder(key).unwrap();
+        let built = manager.get(key, base_execution_payload_builder::PostStateRootSource::Builder).unwrap().unwrap();
+        assert_eq!(built.root, checked.root, "every detached lifecycle root must equal independent actual MPT execution");
+        assert_eq!(*built.updates, checked.updates, "every lifecycle transition must publish exact actual current trie updates");
+        assert_eq!(checked.submit_with_service(payload.block().state_root, service.clone(), false).status, alloy_rpc_types_engine::PayloadStatusEnum::Valid, "delete/recreate execution must independently certify against its branch-correct actual parent");
+        roots.push(checked.root);
+        checked.block.set_state_root(payload.block().state_root);
+        // Persist the delayed header and actual state; the next build cannot trust that header.
+        fixture = checked.next();
+    }
+    assert_eq!(roots.len(), 3, "the lifecycle fixture must produce exactly three post-state roots");
+    assert!(roots[0] != roots[1] && roots[1] != roots[2] && roots[0] != roots[2], "deployment, deletion and recreation must have pairwise distinct actual post-state roots");
+    service.manager.get().unwrap().drain().unwrap();
+}
+
+/// A cold/evicted accepted-parent lookup must recover actual persisted MPT state, not its header.
+#[test]
+fn persisted_parent_cache_miss_uses_actual_root_not_delayed_header() {
+    let mut first = Fixture::new(); let actual_first_root = first.root;
+    let initial = Arc::new(PostStateRootService { activation: Some(2), ..Default::default() });
+    let first_payload = first.native_payload(initial.clone());
+    assert_eq!(first.submit_with_service(first_payload.block().state_root, initial.clone(), false).status, alloy_rpc_types_engine::PayloadStatusEnum::Valid, "first delayed block must independently validate before persistence");
+    first.block.set_state_root(first_payload.block().state_root); initial.manager.get().unwrap().drain().unwrap();
+    let next = first.next();
+    assert_ne!(next.parent.state_root, actual_first_root, "persisted delayed header must demonstrably differ from its actual post-state root");
+    let cold = Arc::new(PostStateRootService { activation: Some(2), limits: base_execution_payload_builder::PostStateRootLimits { ready: 2, ..Default::default() }, ..Default::default() });
+    let payload = next.native_payload(cold.clone());
+    assert_eq!(payload.block().state_root, actual_first_root, "cold native parent recovery must calculate actual DB MPT root rather than copying delayed parent.header.state_root");
+    let parent_key = base_execution_payload_builder::PostStateRootKey { hash: next.parent.hash(), parent_hash: next.parent.parent_hash, number: next.parent.number };
+    let manager = cold.manager.get().unwrap();
+    assert!(manager.get(parent_key, base_execution_payload_builder::PostStateRootSource::Validator).unwrap().is_none(), "validator must genuinely miss the retained parent entry in this bounded cache fixture");
+    assert_eq!(next.submit_with_service(payload.block().state_root, cold.clone(), false).status, alloy_rpc_types_engine::PayloadStatusEnum::Valid, "independent validator must recover the same actual persisted parent root on its own cache miss");
+    manager.drain().unwrap();
+}
+
 /// c1 records deterministic exact payload/header/receipt/state/trie/status bytes on real storage.
 #[test]
 fn c1_stock_golden() {
@@ -241,6 +396,43 @@ fn c3_wrong_deferred_root_resealed() {
     let f = Fixture::new(); let status = f.submit(f.root, true);
     assert!(matches!(status.status, alloy_rpc_types_engine::PayloadStatusEnum::Invalid { .. }), "same-block root is the wrong deferred commitment and must be INVALID, got {status:?}");
     assert_eq!(status.latest_valid_hash, Some(f.parent.hash()), "wrong deferred commitment must identify exactly the valid parent");
+}
+
+/// Local trusted insertion must not bypass independent validator execution in R or D.
+#[test]
+fn deferred_and_reexecution_refuse_trusted_insertion() {
+    for cohort in [PostStateRootCohort::SerialReexecution, PostStateRootCohort::Deferred] {
+        let fixture = Fixture::new(); let runtime = Runtime::test();
+        let provider = BlockchainProvider::new(fixture.factory.clone()).unwrap();
+        let overlay = OverlayManager::new(runtime.state_trie_overlay_worker_pool());
+        let service = Arc::new(PostStateRootService { cohort, activation: (cohort == PostStateRootCohort::Deferred).then_some(2), ..Default::default() });
+        let inner = BasicEngineValidator::new(provider, Arc::new(BaseBeaconConsensus::new(fixture.chain.clone())), BaseEvmConfig::new(fixture.chain.clone()),
+            BaseEngineValidator::<BaseTxEnvelope, _>::new::<KeccakKeyHasher>(fixture.chain.clone()), TreeConfig::default(), Box::new(NoopInvalidBlockHook::default()), overlay, runtime.clone());
+        let validator = DeferredEngineValidator { inner, state: Arc::new(DeferredStateRootState { service: service.clone(), ..Default::default() }) };
+        let block = BuiltPayloadExecutedBlock { recovered_block: Arc::new(fixture.block), execution_output: Arc::new(fixture.output), hashed_state: Arc::new(fixture.hashed), trie_updates: Arc::new(fixture.updates) };
+        let result = <DeferredEngineValidator<_> as EngineValidator<BasePayloadTypes>>::on_inserted_executed_block(&validator, block);
+        assert_eq!(result.unwrap_err().to_string(), "trusted insertion is unsupported for deferred state roots", "{cohort:?} must refuse trusted bypass before stock insertion");
+        assert!(service.manager.get().is_none(), "rejected trusted bypass must allocate exactly zero provider workers");
+        runtime.shutdown_timeout(Duration::from_secs(2));
+    }
+}
+
+/// Deferred commitment equality must not waive ordinary gas or receipt consensus checks.
+#[test]
+fn deferred_non_root_consensus_failures_never_publish_ready_validator_data() {
+    for bad_gas in [false, true] {
+        let mut fixture = Fixture::new();
+        let mut block = fixture.block.clone().into_block();
+        if bad_gas { block.header.gas_used += 1; } else { block.header.receipts_root = B256::ZERO; }
+        fixture.block = block.try_into_recovered().unwrap();
+        let service = Arc::new(PostStateRootService { activation: Some(2), ..Default::default() });
+        let status = fixture.submit_with_service(fixture.parent.state_root, service.clone(), true);
+        assert!(matches!(status.status, alloy_rpc_types_engine::PayloadStatusEnum::Invalid { .. }), "deferred root must preserve exact ordinary gas/receipt rejection (gas={bad_gas}): {status:?}");
+        assert_eq!(status.latest_valid_hash, Some(fixture.parent.hash()), "non-root consensus rejection must identify the exact valid parent");
+        if let Some(manager) = service.manager.get() {
+            assert_eq!(manager.ready.lock().unwrap().entries.len(), 0, "failed inner consensus checks must publish exactly zero certified validator roots");
+        }
+    }
 }
 
 /// c4 activation must commit to the independently computed parent, never the current state.
@@ -411,6 +603,27 @@ fn memory_reorg_crosses_activation_and_preserves_same_height_roots() {
     let a2_hash = send(&a2.block, a1_root); fcu(a2_hash);
     let b_hash = send(&b1, genesis.state_root); let b2_hash = send(&b2.block, b1_root); fcu(b2_hash);
     for hash in [a_hash, b_hash, a2_hash, b2_hash] { fcu(hash); }
+    let mut wrong = a2.block.clone().into_block(); wrong.header.state_root = a2.root;
+    let wrong_hash = wrong.hash_slow();
+    let mut descendant = wrong.clone(); descendant.header.parent_hash = wrong_hash; descendant.header.number += 1; descendant.header.timestamp += 2;
+    descendant.header.base_fee_per_gas = db.chain.next_block_base_fee(&wrong.header, descendant.header.timestamp);
+    let BaseTxEnvelope::Eip1559(tx) = &descendant.body.transactions[0] else { panic!("descendant fixture must be EIP1559"); };
+    let mut tx = tx.tx().clone(); tx.nonce += 1;
+    let signature = reth_primitives_traits::crypto::secp256k1::sign_message(B256::repeat_byte(1), tx.signature_hash()).unwrap();
+    descendant.body.transactions = vec![BaseTxEnvelope::Eip1559(tx.into_signed(signature))];
+    descendant.header.transactions_root = alloy_consensus::proofs::calculate_transaction_root(&descendant.body.transactions);
+    for rejected in [wrong, descendant] {
+        let payload = BasePayloadTypes::<BasePrimitives>::block_to_payload(rejected.seal_slow(), None); let (tx, rx) = oneshot::channel();
+        sender.send(FromEngine::Request(EngineApiRequest::Beacon(BeaconEngineMessage::NewPayload { cause: tracing::Span::none(), payload, tx }))).unwrap();
+        let status = runtime.handle().block_on(async { tokio::time::timeout(Duration::from_secs(10), rx).await.unwrap().unwrap().unwrap() });
+        assert!(status.status.is_invalid(), "wrong deferred commitment and its descendant must both be INVALID, not deferred SYNCING or trusted acceptance");
+        assert_eq!(status.latest_valid_hash, Some(a_hash), "invalid commitment ancestry must retain exactly its last valid branch parent");
+    }
+    let (tx, rx) = oneshot::channel(); sender.send(FromEngine::Request(EngineApiRequest::Beacon(BeaconEngineMessage::ForkchoiceUpdated { cause: tracing::Span::none(), state: alloy_rpc_types_engine::ForkchoiceState { head_block_hash: wrong_hash, safe_block_hash: genesis.hash(), finalized_block_hash: genesis.hash() }, payload_attrs: None, tx }))).unwrap();
+    let invalid_fcu = runtime.handle().block_on(async { tokio::time::timeout(Duration::from_secs(10), async { rx.await.unwrap().unwrap().await.unwrap() }).await.unwrap() });
+    assert!(invalid_fcu.payload_status.status.is_invalid(), "FCU must not canonicalize an invalid deferred commitment");
+    assert_eq!(invalid_fcu.payload_status.latest_valid_hash, Some(a_hash), "invalid FCU must preserve exact valid branch ancestry");
+    assert_eq!(canonical.get_canonical_head().hash(), b2_hash, "invalid descendant/FCU attempts must leave the previously selected valid head unchanged");
     let manager = state.service.manager.get().unwrap();
     for (hash, parent_hash, number, expected) in [(a2_hash, a_hash, 2, a2.root), (b_hash, genesis.hash(), 1, b1_root), (b2_hash, b_hash, 2, b2.root)] {
         let key = base_execution_payload_builder::PostStateRootKey { hash, parent_hash, number };

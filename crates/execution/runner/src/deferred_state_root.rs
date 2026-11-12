@@ -13,7 +13,7 @@ use eyre::{Result, ensure};
 use reth_chainspec::{ChainSpecProvider, EthChainSpec};
 use reth_engine_tree::backfill::{BackfillAction, BackfillEvent, BackfillSync, PipelineSync};
 use reth_node_builder::{NodeConfig, sync::{BackfillContext, BackfillSyncBuilder, PipelineBackfill}};
-use reth_provider::{BlockNumReader, HeaderProvider, LatestStateProviderRef, MetadataProvider, ProviderFactory, StageCheckpointReader, StateRootProvider, StaticFileProviderFactory, StaticFileSegment, providers::ProviderNodeTypes};
+use reth_provider::{BlockNumReader, ChainStateBlockReader, HeaderProvider, LatestStateProviderRef, MetadataProvider, ProviderFactory, PruneCheckpointReader, RocksDBProviderFactory, StageCheckpointReader, StateRootProvider, StaticFileProviderFactory, StaticFileSegment, StorageSettingsCache, providers::{ProviderNodeTypes, StaticFileProviderBuilder}};
 use reth_stages_types::StageId;
 use serde::{Deserialize, Serialize};
 
@@ -85,6 +85,7 @@ impl DeferredStateRootAdmission {
         ensure!(args.deferred_state_root_disposable, "DeferredStateRoot requires --rollup.deferred-state-root-disposable");
         ensure!(!config.debug.skip_state_root, "DeferredStateRoot is incompatible with debug.skip-state-root");
         ensure!(!config.network.snap_v2, "DeferredStateRoot forbids snap serving and snap sync");
+        ensure!(config.prune_config().is_none(), "DeferredStateRoot requires unpruned disposable state");
         ensure!(config.debug.invalid_block_hook.as_ref().is_none_or(|hooks| hooks.is_empty()), "DeferredStateRoot is incompatible with configured invalid-block diagnostic hooks, including witness");
         ensure!(!args.proofs_history && args.proofs_history_storage_path.is_none(), "DeferredStateRoot forbids proof history services");
         ensure!(args.upgrade_signal.contract_address.is_none() && args.upgrade_signal_l1_rpc.upgrade_signal_l1_rpc.is_none(), "DeferredStateRoot forbids L1 upgrade-signal RPC");
@@ -119,6 +120,14 @@ impl DeferredStateRootAdmission {
         ensure!(provider.pipeline_unwind()?.is_none() && provider.snap_attempt()?.is_none(), "experimental store has pending unwind or snap recovery");
         ensure!(provider.get_metadata("partial_state_trie_unwind")?.is_none(), "experimental store has partial-trie unwind recovery");
         let tip = provider.last_block_number()?;
+        ensure!(provider.get_prune_checkpoints()?.is_empty(), "experimental snapshots must be unpruned");
+        ensure!(provider.last_safe_block_number()?.is_none_or(|n| n <= tip) && provider.last_finalized_block_number()?.is_none_or(|n| n <= tip), "experimental snapshot safe/finalized metadata exceeds its tip");
+        if tip == 0 && provider.cached_storage_settings().storage_v2 {
+            ensure!(provider.rocksdb_provider().first::<reth_db::tables::TransactionHashNumbers>()?.is_none(), "experimental genesis has stale RocksDB transaction lookup data");
+        }
+        if tip > 0 {
+            ensure!(provider.get_stage_checkpoint(StageId::Finish)?.is_some_and(|checkpoint| checkpoint.block_number == tip), "experimental snapshot must have an exact durable Finish checkpoint");
+        }
         let header = provider.header_by_number(tip)?;
         let activation = self.service.activation.unwrap_or(u64::MAX);
         if let Some(header) = &header { ensure!(header.timestamp < activation, "unmarked database already contains active history"); }
@@ -129,8 +138,32 @@ impl DeferredStateRootAdmission {
             ensure!(finish.finish_stage_checkpoint().and_then(|c| c.partial_state_trie()).is_none_or(|n| n == tip), "experimental snapshot has partial state trie lag");
         }
         let static_files = factory.static_file_provider();
-        for segment in [StaticFileSegment::Headers, StaticFileSegment::Transactions, StaticFileSegment::Receipts, StaticFileSegment::AccountChangeSets, StaticFileSegment::StorageChangeSets] {
-            ensure!(static_files.get_highest_static_file_block(segment).is_none_or(|height| height <= tip), "experimental snapshot has static files ahead of its checkpoint");
+        // Reuse pinned file checks only through an explicitly read-only view. Calling these
+        // methods on the factory's writable provider would silently heal interrupted writes.
+        let readonly = StaticFileProviderBuilder::read_only(static_files.directory()).with_genesis_block_number(factory.chain_spec().genesis().number.unwrap_or_default()).build::<BasePrimitives>()?;
+        readonly.check_file_consistency(&provider)?;
+        for segment in [StaticFileSegment::Headers, StaticFileSegment::Transactions, StaticFileSegment::Receipts, StaticFileSegment::TransactionSenders, StaticFileSegment::AccountChangeSets, StaticFileSegment::StorageChangeSets] {
+            let frontier = static_files.get_highest_static_file_block(segment);
+            ensure!(frontier.is_none_or(|height| height <= tip), "experimental snapshot has static files ahead of its checkpoint");
+            if provider.cached_storage_settings().storage_v2 || matches!(segment, StaticFileSegment::Headers | StaticFileSegment::Transactions) {
+                ensure!(frontier.unwrap_or_default() == tip, "experimental snapshot static segment {segment:?} lags its checkpoint");
+            }
+            if let Some(height) = frontier {
+                let jar = readonly.get_segment_provider_for_block(segment, height, None)?;
+                if segment.is_change_based() {
+                    let offsets = jar.read_changeset_offsets()?.ok_or_else(|| eyre::eyre!("experimental snapshot lacks committed changeset offsets"))?;
+                    let mut next = 0;
+                    for offset in &offsets {
+                        ensure!(offset.offset() == next, "experimental snapshot changeset offsets are discontinuous");
+                        next = offset.changeset_range().end;
+                    }
+                    ensure!(next == jar.rows() as u64, "experimental snapshot changeset rows disagree with committed offsets");
+                    // Each sidecar record encodes the start offset and change count as two u64s.
+                    let record_bytes = 2 * std::mem::size_of::<u64>() as u64;
+                    let path = jar.data_path().with_extension("csoff");
+                    ensure!(fs::metadata(path).map(|m| m.len()).unwrap_or_default() == offsets.len() as u64 * record_bytes, "experimental snapshot changeset sidecar contains uncommitted or truncated records");
+                }
+            }
         }
         match &self.snapshot {
             Some(snapshot) => {
@@ -206,7 +239,7 @@ mod tests {
     use base_common_genesis::BaseUpgrade;
     use reth_chainspec::{Chain, ForkCondition};
     use reth_node_core::args::DatadirArgs;
-    use reth_provider::{test_utils::create_test_provider_factory_with_node_types, StageCheckpointWriter};
+    use reth_provider::{test_utils::create_test_provider_factory_with_node_types, ChainStateBlockWriter, StageCheckpointWriter, StaticFileWriter};
     use reth_stages_types::StageCheckpoint;
 
     /// Builds a supported custom schedule without activating the experimental rule at genesis.
@@ -258,6 +291,13 @@ mod tests {
         assert!(!DeferredStateRootAdmission::marker_path(config.datadir().data_dir()).unwrap().exists(), "snap rejection must precede any store recovery or marker write");
     }
 
+    /// Pruning cannot silently remove retained state required by disposable replay.
+    #[test]
+    fn pruning_rejected_before_launch() {
+        let directory = tempfile::tempdir().unwrap(); let mut config = config(&directory.path().join("run1")); config.pruning.full = true;
+        assert_eq!(DeferredStateRootAdmission::preflight(&config, &args(), 0).unwrap_err().to_string(), "DeferredStateRoot requires unpruned disposable state", "explicit pruning must reject before recovery or marker creation");
+    }
+
     /// Unmarked existing multi-store data cannot be admitted without immutable provenance.
     #[test]
     fn unmarked_stores_require_snapshot_provenance() {
@@ -277,6 +317,45 @@ mod tests {
         fs::write(directory.path().join("db/mdbx.dat"), b"changed").unwrap();
         let after = DeferredStateRootAdmission::store_digests(directory.path()).unwrap();
         assert_ne!(before, after, "any store-byte change must invalidate the immutable manifest");
+    }
+
+    /// Interrupted static writes must fail read-only admission without stock file healing.
+    #[test]
+    fn interrupted_static_write_is_rejected_without_truncation() {
+        let chain = Arc::new(chain());
+        let factory = create_test_provider_factory_with_node_types::<crate::BaseNode>(chain.clone());
+        let static_files = factory.static_file_provider();
+        let mut writer = static_files.latest_writer(StaticFileSegment::Headers).unwrap();
+        writer.append_header(chain.genesis_header(), &chain.genesis_hash()).unwrap(); writer.commit().unwrap(); drop(writer);
+        let jar = static_files.get_segment_provider_for_block(StaticFileSegment::Headers, 0, None).unwrap();
+        let path = jar.data_path().to_path_buf(); drop(jar);
+        let mut file = fs::OpenOptions::new().append(true).open(&path).unwrap(); file.write_all(b"interrupted").unwrap(); file.sync_all().unwrap(); drop(file);
+        let corrupted_size = fs::metadata(&path).unwrap().len();
+        let admission = DeferredStateRootAdmission { service: Arc::new(PostStateRootService { activation: Some(10), ..Default::default() }), marker: PathBuf::new(), snapshot: None };
+        assert!(admission.verify_before_recovery(&factory).is_err(), "an interrupted static append must reject before writable recovery");
+        assert_eq!(fs::metadata(path).unwrap().len(), corrupted_size, "admission must leave every interrupted byte intact rather than healing/truncating it");
+    }
+
+    /// Long-range sync and deep unwind must stop before a staged pipeline can start.
+    #[test]
+    fn backfill_and_deep_unwind_refused_before_stage_execution() {
+        for target in [reth_stages_types::PipelineTarget::Sync(B256::repeat_byte(1)), reth_stages_types::PipelineTarget::Unwind(0)] {
+            let mut backfill: DeferredStateRootBackfill<reth_node_builder::NodeTypesWithDBAdapter<crate::BaseNode, reth_db::DatabaseEnv>> = DeferredStateRootBackfill::Refuse { requested: false };
+            let mut context = Context::from_waker(std::task::Waker::noop());
+            assert!(backfill.poll(&mut context).is_pending(), "experimental pipeline must be idle before a fallback request");
+            backfill.on_action(BackfillAction::Start(target));
+            let Poll::Ready(BackfillEvent::TaskDropped(message)) = backfill.poll(&mut context) else { panic!("fallback must return exactly a fatal task event, never Started or Finished"); };
+            assert_eq!(message, "DeferredStateRoot forbids staged/snap/backfill/deep-reorg fallback", "both forward and unwind fallback paths must fail before stage execution");
+        }
+    }
+
+    /// Metadata healing must not hide a safe/finalized pointer beyond the disposable snapshot.
+    #[test]
+    fn inconsistent_chain_metadata_rejected_before_recovery() {
+        let factory = create_test_provider_factory_with_node_types::<crate::BaseNode>(Arc::new(chain()));
+        let writer = factory.provider_rw().unwrap(); writer.save_safe_block_number(1).unwrap(); writer.commit().unwrap();
+        let admission = DeferredStateRootAdmission { service: Arc::new(PostStateRootService { activation: Some(10), ..Default::default() }), marker: PathBuf::new(), snapshot: None };
+        assert_eq!(admission.verify_before_recovery(&factory).unwrap_err().to_string(), "experimental snapshot safe/finalized metadata exceeds its tip", "uncertain chain metadata must reject before stock healing writes");
     }
 
     /// Checkpoint disagreement is rejected by our recovery hook before stock healing is invoked.
