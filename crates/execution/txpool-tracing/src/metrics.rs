@@ -18,4 +18,6 @@ base_metrics::define_metrics! {
     replacement_count: histogram,
     #[describe("Total number of nonce-slot replacements observed")]
     nonce_replacements: counter,
+    #[describe("Number of transactions evicted from the tracker's LRU before their lifecycle completed")]
+    tracker_evictions: counter,
 }
