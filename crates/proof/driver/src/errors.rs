@@ -24,9 +24,6 @@ where
     /// An error returned by the conversion from a block to an [`base_protocol::L2BlockInfo`].
     #[error("From block error: {0}")]
     FromBlock(#[from] FromBlockError),
-    /// Error decoding or encoding RLP.
-    #[error("RLP error: {0}")]
-    Rlp(alloy_rlp::Error),
 }
 
 impl<E> From<PipelineErrorKind> for DriverError<E>

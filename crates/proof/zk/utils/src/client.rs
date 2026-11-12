@@ -2,11 +2,9 @@
 
 use std::fmt::Debug;
 
-use alloy_consensus::BlockBody;
 use alloy_primitives::{B256, Bytes};
-use alloy_rlp::Decodable;
 use anyhow::Result;
-use base_common_consensus::{BaseBlock, BaseTxEnvelope, OpTxType};
+use base_common_consensus::OpTxType;
 use base_common_genesis::{BaseFeature, RollupConfig};
 use base_consensus_derive::{Pipeline, PipelineError, PipelineErrorKind, Signal, SignalReceiver};
 use base_proof::{HintType, IntermediateRootSampler, OracleProviderError};
@@ -165,28 +163,13 @@ where
         #[cfg(target_os = "zkvm")]
         println!("cycle-tracker-report-end: block-execution");
 
-        // Construct the block.
-        let block = BaseBlock {
-            header: outcome.header.inner().clone(),
-            body: BlockBody {
-                transactions: attributes
-                    .transactions
-                    .as_ref()
-                    .unwrap_or(&Vec::new())
-                    .iter()
-                    .map(|tx: &Bytes| {
-                        BaseTxEnvelope::decode(&mut tx.as_ref()).map_err(DriverError::Rlp)
-                    })
-                    .collect::<DriverResult<Vec<BaseTxEnvelope>, E::Error>>()?,
-                ommers: Vec::new(),
-                withdrawals: None,
-            },
-        };
-
         // Get the pipeline origin and update the tip cursor.
         let origin = driver.pipeline.origin().ok_or(PipelineError::MissingOrigin.crit())?;
-        let l2_info =
-            L2BlockInfo::from_block_and_genesis(&block, &driver.pipeline.rollup_config().genesis)?;
+        let l2_info = L2BlockInfo::from_header_and_first_tx(
+            &outcome.header,
+            attributes.transactions.as_ref().and_then(|txs| txs.first()),
+            &driver.pipeline.rollup_config().genesis,
+        )?;
         let output_root = driver.executor.compute_output_root().map_err(DriverError::Executor)?;
         intermediate_roots.push(output_root);
         let tip_cursor = TipCursor::new(l2_info, outcome.header, output_root);
@@ -194,9 +177,5 @@ where
         // Advance the derivation pipeline cursor
         drop(pipeline_cursor);
         driver.cursor.write().advance(origin, tip_cursor);
-
-        // Add forget calls to save cycles
-        #[cfg(target_os = "zkvm")]
-        std::mem::forget(block);
     }
 }
