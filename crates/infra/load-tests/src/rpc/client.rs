@@ -291,7 +291,7 @@ pub struct SubmitReply<'a> {
     pub id: Option<u64>,
     /// Transaction hash, when the node accepted the transaction.
     #[serde(default, borrow)]
-    pub result: Option<Cow<'a, str>>,
+    pub result: Option<ReplyStr<'a>>,
     /// Error object, when the node rejected the transaction.
     #[serde(default, borrow)]
     pub error: Option<SubmitErrorReply<'a>>,
@@ -305,11 +305,18 @@ pub struct SubmitErrorReply<'a> {
     pub code: Option<i64>,
     /// Human-readable error message.
     #[serde(default, borrow)]
-    pub message: Option<Cow<'a, str>>,
+    pub message: Option<ReplyStr<'a>>,
     /// Arbitrary JSON, left unparsed; only a string value is a stable rejection reason.
     #[serde(default, borrow)]
     pub data: Option<&'a RawValue>,
 }
+
+/// String field of a [`SubmitReply`], borrowed from the response body unless it contains escapes.
+///
+/// Serde only borrows a `Cow<str>` field declared directly, not one nested in `Option`, so
+/// optional reply strings wrap it in this newtype.
+#[derive(Debug, Deserialize)]
+pub struct ReplyStr<'a>(#[serde(borrow)] pub Cow<'a, str>);
 
 /// Client for JSON-RPC batch requests.
 ///
@@ -497,14 +504,14 @@ impl BatchRpcClient {
             };
 
             if let Some(result) = reply.result {
-                results[id] = match result.parse::<TxHash>() {
+                results[id] = match result.0.parse::<TxHash>() {
                     Ok(hash) => BatchSendResult::Success(hash),
                     Err(e) => BatchSendResult::Error(BatchSendError::client(format!(
                         "invalid tx hash: {e}"
                     ))),
                 };
             } else if let Some(error) = reply.error {
-                let message = error.message.unwrap_or(Cow::Borrowed("unknown error"));
+                let message = error.message.map_or(Cow::Borrowed("unknown error"), |m| m.0);
                 let mut err = error.code.map_or_else(
                     || BatchSendError::client(message.as_ref()),
                     |code| BatchSendError::with_code(code, message.as_ref()),
@@ -669,6 +676,18 @@ mod tests {
             BatchSendResult::Error(e) => assert_eq!(e.message, "missing response"),
             other => panic!("malformed element must only fail its own slot, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn submit_reply_borrows_unescaped_strings() {
+        let body = r#"{"id":0,"result":"0xabc","error":{"message":"m","data":"d"}}"#;
+        let reply: SubmitReply<'_> = serde_json::from_str(body).unwrap();
+        assert!(matches!(reply.result.unwrap().0, Cow::Borrowed("0xabc")));
+        assert!(matches!(reply.error.unwrap().message.unwrap().0, Cow::Borrowed("m")));
+
+        let escaped: SubmitReply<'_> =
+            serde_json::from_str(r#"{"error":{"message":"a\"b"}}"#).unwrap();
+        assert_eq!(escaped.error.unwrap().message.unwrap().0, "a\"b");
     }
 
     #[test]
