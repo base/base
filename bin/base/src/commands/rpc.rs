@@ -577,7 +577,7 @@ mod tests {
             .unwrap_err();
 
         let rendered = err.to_string();
-        assert!(rendered.contains("--builder-rpc-urls"));
+        assert!(rendered.contains("--tx-forwarding.builder-urls"), "{rendered}");
     }
 
     #[test]
