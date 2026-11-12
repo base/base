@@ -12,7 +12,7 @@ use base_prover_service_protocol::{
     ZkProofRequest, ZkProofResult, ZkVm,
 };
 use sp1_sdk::{
-    Elf, SP1Stdin,
+    Elf, ExecutionReport, SP1Stdin,
     blocking::{LightProver, Prover},
 };
 use tokio_util::sync::CancellationToken;
@@ -127,6 +127,23 @@ impl DryRunZkProver {
         .map_err(|e| backend_error!("SP1 execution task failed to join: {e}"))?;
         let (_, report) =
             execution_result.map_err(|e| backend_error!("SP1 execution failed: {e}"))?;
+
+        Self::execution_stats(report, execution_ms)
+    }
+
+    /// Convert an SP1 execution report into [`ExecutionStats`], rejecting failed guest runs.
+    ///
+    /// SP1 returns `Ok` when the guest panics and reports the failure only via the exit code.
+    pub fn execution_stats(
+        report: ExecutionReport,
+        execution_ms: u64,
+    ) -> Result<ExecutionStats, ZkProverError> {
+        if report.exit_code != 0 {
+            return Err(backend_error!(
+                "range program exited with non-zero exit code {}",
+                report.exit_code
+            ));
+        }
 
         Ok(ExecutionStats {
             total_instruction_cycles: report.total_instruction_count(),
@@ -335,6 +352,7 @@ mod tests {
     use std::{collections::HashMap, sync::Mutex};
 
     use base_prover_service_protocol::{ProofResult, SnarkPlonkProofResult, ZkProofResult, ZkVm};
+    use sp1_sdk::ExecutionReport;
 
     use super::{DRY_RUN_SNARK_PREFIX, DRY_RUN_STARK_PREFIX, DryRunZkProver};
 
@@ -382,5 +400,16 @@ mod tests {
 
         assert_eq!(snark_id, snark_key(session));
         assert_eq!(store.lock().unwrap().len(), 1, "store should be unchanged on resume");
+    }
+
+    #[test]
+    fn execution_stats_rejects_non_zero_exit_code() {
+        let mut report = ExecutionReport::default();
+        report.exit_code = 1;
+
+        let err = DryRunZkProver::execution_stats(report, 0)
+            .expect_err("a panicking range program must not report success");
+
+        assert!(format!("{err:?}").contains("non-zero exit code 1"), "unexpected error: {err:?}");
     }
 }
