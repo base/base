@@ -47,6 +47,8 @@ pub struct GossipDriverConfig {
     pub connection_limits_config: ConnectionLimitsConfig,
     /// Whether outbound TCP connections may reuse the listener port.
     pub reuse_listener_port: bool,
+    /// Trusted peer addresses. Each must contain a `/p2p/<peer-id>` component.
+    pub trusted_peers: Vec<Multiaddr>,
 }
 
 /// A driver for a [`Swarm`] instance.
@@ -80,6 +82,9 @@ pub struct GossipDriver<G: ConnectionGate> {
     pub next_topic_retirement: TokioInstant,
     /// Whether outbound TCP connections may reuse the listener port.
     pub reuse_listener_port: bool,
+    /// Trusted peers: protected, exempt from connection limits, redialed while disconnected,
+    /// and pinned as gossipsub explicit peers.
+    pub trusted_peers: Vec<(PeerId, Multiaddr)>,
 }
 
 impl<G> GossipDriver<G>
@@ -108,6 +113,15 @@ where
         gate: G,
         config: GossipDriverConfig,
     ) -> Self {
+        let local_peer_id = *swarm.local_peer_id();
+        let trusted_peers = config
+            .trusted_peers
+            .into_iter()
+            .filter_map(|addr| {
+                let peer_id = ConnectionGater::peer_id_from_addr(&addr)?;
+                (peer_id != local_peer_id).then_some((peer_id, addr))
+            })
+            .collect();
         let driver = Self {
             swarm,
             addr,
@@ -120,6 +134,7 @@ where
             ping: Arc::new(Mutex::new(Default::default())),
             next_topic_retirement: TokioInstant::now(),
             reuse_listener_port: config.reuse_listener_port,
+            trusted_peers,
         };
         #[cfg(feature = "metrics")]
         driver.record_block_topic_metrics();
@@ -177,6 +192,7 @@ where
                     info!(target: "gossip", address = %address, "Listening on address");
 
                     self.addr = address.clone();
+                    self.init_trusted_peers();
 
                     return Ok(address);
                 }
@@ -184,6 +200,42 @@ where
             Err(err) => {
                 error!(target: "gossip", address = %self.addr, error = %err, "Failed to listen on address");
                 Err(err)
+            }
+        }
+    }
+
+    /// Protects a peer: the gater exempts it from redial limits, the score monitor never bans it,
+    /// and the libp2p connection limits do not apply to it.
+    pub fn protect_peer(&mut self, peer_id: PeerId) {
+        self.connection_gate.protect_peer(peer_id);
+        self.swarm.behaviour_mut().connection_limits.bypass_peer_id(&peer_id);
+    }
+
+    /// Reverses [`Self::protect_peer`].
+    pub fn unprotect_peer(&mut self, peer_id: PeerId) {
+        self.connection_gate.unprotect_peer(peer_id);
+        self.swarm.behaviour_mut().connection_limits.remove_peer_id(&peer_id);
+    }
+
+    /// Protects and dials every trusted peer, then pins it as a gossipsub explicit peer.
+    ///
+    /// Dialing first matters: `add_explicit_peer` makes gossipsub dial by peer id alone, which
+    /// has no address; with our dial pending, that attempt is skipped instead of failing.
+    fn init_trusted_peers(&mut self) {
+        for (peer_id, addr) in self.trusted_peers.clone() {
+            self.protect_peer(peer_id);
+            self.dial_multiaddr(addr.clone());
+            self.swarm.behaviour_mut().gossipsub.add_explicit_peer(&peer_id);
+            info!(target: "gossip", peer_id = %peer_id, addr = %addr, "Added trusted peer");
+        }
+    }
+
+    /// Dials every trusted peer that is not connected.
+    pub fn redial_trusted_peers(&mut self) {
+        for (peer_id, addr) in self.trusted_peers.clone() {
+            if !self.swarm.is_connected(&peer_id) {
+                debug!(target: "gossip", peer_id = %peer_id, "Redialing disconnected trusted peer");
+                self.dial_multiaddr(addr);
             }
         }
     }
@@ -611,7 +663,10 @@ mod tests {
     use alloy_rpc_types_engine::{ExecutionPayloadV2, ExecutionPayloadV3};
     use base_common_genesis::UpgradeConfig;
     use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadV4, PayloadHash};
-    use libp2p::gossipsub::{Message, MessageAcceptance};
+    use libp2p::{
+        gossipsub::{Message, MessageAcceptance},
+        multiaddr::Protocol,
+    };
     #[cfg(feature = "metrics")]
     use metrics_exporter_prometheus::PrometheusBuilder;
 
@@ -823,6 +878,102 @@ mod tests {
         .unwrap();
 
         driver
+    }
+
+    /// Drives both swarms until `done` holds.
+    async fn drive_until(
+        a: &mut GossipDriver<ConnectionGater>,
+        b: &mut GossipDriver<ConnectionGater>,
+        done: impl Fn(&GossipDriver<ConnectionGater>, &GossipDriver<ConnectionGater>) -> bool,
+    ) {
+        while !done(a, b) {
+            tokio::select! {
+                event = a.next() => { a.handle_event(event.expect("swarm remains open")); }
+                event = b.next() => { b.handle_event(event.expect("swarm remains open")); }
+            }
+        }
+    }
+
+    /// Drives both swarms for `duration`.
+    async fn drive_for(
+        a: &mut GossipDriver<ConnectionGater>,
+        b: &mut GossipDriver<ConnectionGater>,
+        duration: Duration,
+    ) {
+        let deadline = sleep_until(TokioInstant::now() + duration);
+        tokio::pin!(deadline);
+        loop {
+            tokio::select! {
+                _ = &mut deadline => return,
+                event = a.next() => { a.handle_event(event.expect("swarm remains open")); }
+                event = b.next() => { b.handle_event(event.expect("swarm remains open")); }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn trusted_peers_are_protected_explicit_and_redialed() {
+        tokio::time::timeout(Duration::from_secs(30), async {
+            let mut a = test_driver();
+            let a_id = *a.local_peer_id();
+            let a_addr = a.start().await.unwrap().with(Protocol::P2p(a_id));
+
+            let b_keypair = Keypair::generate_secp256k1();
+            let b_id = b_keypair.public().to_peer_id();
+            let b_self: Multiaddr = format!("/ip4/127.0.0.1/tcp/1/p2p/{b_id}").parse().unwrap();
+            let (mut b, _signer) = GossipDriver::<ConnectionGater>::builder(
+                a.handler.rollup_config.clone(),
+                Address::repeat_byte(0x11),
+                "/ip4/127.0.0.1/tcp/0".parse().unwrap(),
+                b_keypair,
+            )
+            // An immediate redial from the listener port would reuse the closed connection's
+            // TCP 4-tuple, still in TIME_WAIT, and fail with EADDRINUSE.
+            .with_reuse_listener_port(false)
+            .with_trusted_peers(vec![
+                a_addr.clone(),
+                b_self,
+                "/ip4/127.0.0.1/tcp/2".parse().unwrap(),
+            ])
+            .build()
+            .unwrap();
+            // Addresses for the local peer, or without a peer id, are dropped.
+            assert_eq!(b.trusted_peers, vec![(a_id, a_addr)]);
+
+            // `start` dials and pins `a`. Once connected, `a` trusts `b` back, as operators are
+            // told to; trusting earlier would race two dials over reused ports (TCP simultaneous
+            // open), which fails both handshakes.
+            let b_addr = b.start().await.unwrap().with(Protocol::P2p(b_id));
+            drive_until(&mut a, &mut b, |_, b| b.swarm.is_connected(&a_id)).await;
+            a.trusted_peers = vec![(b_id, b_addr)];
+            a.init_trusted_peers();
+
+            let v4 = a.handler.blocks_v4_topic.hash();
+            let knows_topic = |d: &GossipDriver<ConnectionGater>, peer: &PeerId| {
+                d.swarm
+                    .behaviour()
+                    .gossipsub
+                    .all_peers()
+                    .any(|(p, topics)| p == peer && topics.contains(&&v4))
+            };
+            drive_until(&mut a, &mut b, |a, b| knows_topic(a, &b_id) && knows_topic(b, &a_id))
+                .await;
+
+            // Without trust, one heartbeat (500ms) grafts the pair; explicit peers never join.
+            drive_for(&mut a, &mut b, Duration::from_secs(3)).await;
+            for (driver, peer) in [(&a, b_id), (&b, a_id)] {
+                assert!(driver.swarm.is_connected(&peer));
+                assert!(driver.connection_gate.protected_peers.contains(&peer));
+                assert_eq!(driver.swarm.behaviour().gossipsub.mesh_peers(&v4).count(), 0);
+            }
+
+            b.swarm.disconnect_peer_id(a_id).unwrap();
+            drive_until(&mut a, &mut b, |_, b| !b.swarm.is_connected(&a_id)).await;
+            b.redial_trusted_peers();
+            drive_until(&mut a, &mut b, |_, b| b.swarm.is_connected(&a_id)).await;
+        })
+        .await
+        .expect("trusted peers must connect, stay out of the mesh, and reconnect");
     }
 
     #[test]
