@@ -77,15 +77,14 @@ the next block's build still waits for its parent's scheduled timestamp. Split E
 deployments have no IPC/WS subscription and continue using the scheduled seal.
 
 Early sealing is observable through these metrics, which the unified sequencer exports with
-a `reth_` prefix. Offsets are measured from the block's scheduled build start, which is its
-parent's timestamp.
+a `reth_` prefix. The `getPayload` offset is measured from the block's scheduled build start,
+which is its parent's timestamp.
 
 | Metric | Type | Labels | Meaning |
 |---|---|---|---|
 | `base_builder_payload_ready_hints_sent_total` | counter | `result`: `delivered`, `no_receiver` | Hints the payload builder published. |
 | `base_node_sequencer_seals_total` | counter | `trigger`: `ready_hint`, `deadline` | Payloads fetched with `getPayload`, by what prompted the request. |
 | `base_node_sequencer_get_payload_offset_seconds` | histogram | `trigger` | When `getPayload` was requested. |
-| `base_node_sequencer_gossip_offset_seconds` | histogram | `trigger` | When the payload was handed to the network actor for gossip. |
 | `base_node_sequencer_payload_ready_hints_dropped_total` | counter | `reason`: `already_sealing`, `inactive`, `no_build`, `payload_id_mismatch`, `parent_mismatch`, `pre_denim`, `lagged` | Hints that did not trigger a seal. |
 
 A hint that arrives after the seal deadline has fetched its payload is counted as

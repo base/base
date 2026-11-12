@@ -22,9 +22,7 @@ mod ready_hint;
 pub use ready_hint::ReadyHintDropReason;
 
 mod seal;
-pub use seal::{
-    PayloadSealer, SealSchedule, SealState, SealStepError, SealStepOutcome, SealTrigger,
-};
+pub use seal::{PayloadSealer, SealState, SealStepError, SealStepOutcome, SealTrigger};
 
 mod shadow_cycle;
 pub use shadow_cycle::{ShadowCycle, ShadowReconciliationTask};
