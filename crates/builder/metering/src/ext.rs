@@ -14,10 +14,6 @@ use tracing::info;
 #[cfg_attr(test, rpc(server, client, namespace = "base"))]
 pub trait BaseApiExt {
     /// Sets metering information for a transaction.
-    ///
-    /// `tx_hash` is the hash of the exact EIP-2718 encoding that was metered, `keccak256(raw)`.
-    /// That is the transaction hash for every type except EIP-8130, whose transaction hash
-    /// excludes the authorization fields.
     #[method(name = "setMeteringInformation")]
     async fn set_metering_information(
         &self,

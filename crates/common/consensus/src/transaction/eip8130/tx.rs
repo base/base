@@ -483,23 +483,6 @@ impl TxEip8130 {
         self.domain_hash(&Eip8130Constants::PAYER_SIGNATURE_TYPE, &Some(resolved_sender))
     }
 
-    /// Transaction hash.
-    ///
-    /// `keccak256(EIP8130_TX_TYPE || rlp([all body fields through `payer`]))`,
-    /// with the `sender` slot replaced by the resolved sender address and
-    /// `payer` kept as its wire value. `sender_auth` and `payer_auth` are
-    /// excluded, so the hash is known before either is signed and does not
-    /// change when either is re-signed. The resolved sender keeps two recovered
-    /// senders signing identical bodies distinct.
-    ///
-    /// It covers the same body as the payer signature hash but sits in its own
-    /// domain, distinct from both signing hashes (see
-    /// [`Eip8130Constants::SENDER_SIGNATURE_TYPE`]), so a signature over a
-    /// transaction hash never authorizes a transaction.
-    pub fn transaction_hash(&self, resolved_sender: Address) -> B256 {
-        self.domain_hash(&[Eip8130Constants::EIP8130_TX_TYPE], &Some(resolved_sender))
-    }
-
     /// `keccak256(domain || rlp([all body fields through `payer`]))` with
     /// `sender` in the `sender` slot.
     fn domain_hash(&self, domain: &[u8], sender: &Option<Address>) -> B256 {
@@ -1076,8 +1059,8 @@ mod tests {
         assert_eq!(payer_hash_v1, payer_hash_v2);
     }
 
-    // Each hash is keccak256 of its domain prefix and the RLP body, and the
-    // domains keep all three apart even when the bodies are identical.
+    // Each signing hash is keccak256 of its domain prefix and the RLP body, and
+    // the domains keep them apart even when the bodies are identical.
     #[test]
     fn hashes_prefix_the_body_with_their_domain() {
         let tx = sample_tx();
@@ -1090,9 +1073,6 @@ mod tests {
 
         assert_eq!(tx.sender_signature_hash(), hash_with(&[0x79, 0x00]));
         assert_eq!(tx.payer_signature_hash(sender), hash_with(&[0x79, 0x01]));
-        assert_eq!(tx.transaction_hash(sender), hash_with(&[0x79]));
-        assert_ne!(tx.transaction_hash(sender), tx.sender_signature_hash());
-        assert_ne!(tx.transaction_hash(sender), tx.payer_signature_hash(sender));
         assert_ne!(tx.sender_signature_hash(), tx.payer_signature_hash(sender));
         assert_eq!(tx.signature_hash(), tx.sender_signature_hash());
     }

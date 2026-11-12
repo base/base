@@ -90,13 +90,9 @@ impl ConfigChangeAuthorizer {
             &change.signature,
             now,
             Some(state),
-        )
-        .map_err(|error| TxAuthError::ConfigChange(Box::new(error.into())))?;
+        )?;
         if !Operation::Config.is_granted(&resolved) {
-            return Err(TxAuthError::ConfigChange(Box::new(TxAuthError::Scope {
-                operation: Operation::Config,
-                scope: resolved.scope,
-            })));
+            return Err(TxAuthError::Scope { operation: Operation::Config, scope: resolved.scope });
         }
         Ok(resolved)
     }
@@ -317,10 +313,10 @@ mod tests {
                 .unwrap();
             assert_eq!(
                 ConfigChangeAuthorizer::authorize(acc, account, LOCAL, &change, NOW),
-                Err(TxAuthError::ConfigChange(Box::new(TxAuthError::Scope {
+                Err(TxAuthError::Scope {
                     operation: Operation::Config,
                     scope: Eip8130Constants::SCOPE_OPERATOR,
-                }))),
+                }),
             );
         });
     }
@@ -377,12 +373,10 @@ mod tests {
             // The recovered signer is not the account and has no registered actor.
             assert_eq!(
                 ConfigChangeAuthorizer::authorize(acc, account, LOCAL, &change, NOW),
-                Err(TxAuthError::ConfigChange(Box::new(TxAuthError::Authorize(
-                    AuthorizeError::AuthenticatorMismatch {
-                        actor_id: attacker_id,
-                        authenticator: Eip8130Constants::K1_AUTHENTICATOR,
-                    }
-                )))),
+                Err(TxAuthError::Authorize(AuthorizeError::AuthenticatorMismatch {
+                    actor_id: attacker_id,
+                    authenticator: Eip8130Constants::K1_AUTHENTICATOR,
+                })),
             );
         });
     }

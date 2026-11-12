@@ -2,7 +2,7 @@
 
 mod rpc;
 pub use rpc::{
-    BuilderApiImpl, BuilderApiServer, InsertMetering, KeyedMetering, MAX_VALIDATED_INSERT_BATCH,
+    BuilderApiImpl, BuilderApiServer, InsertMetering, MAX_VALIDATED_INSERT_BATCH,
     is_already_imported_rejection,
 };
 
