@@ -120,13 +120,12 @@ impl AuthenticatorDispatch {
     /// `P256Authenticator` requires it to be present (it enforces `length == 129`)
     /// but never reads it — it exists only so the contract wire format matches the
     /// native-authenticator form. Verification is always directly over `hash`.
-    /// The byte sits inside `sender_auth` / `payer_auth`, which neither the
-    /// signature nor the transaction hash covers, so any value other than
-    /// [`P256_CANONICAL_PRE_HASH`] is rejected: otherwise a relayer could change
-    /// it without the key, and in `sender_auth` a non-zero byte costs more
-    /// EIP-2028 payload gas than a zero one. Every result accepted here is still
-    /// byte-identical to the deployed contract's. If the contract ever begins
-    /// interpreting `pre_hash`, this must change in lockstep to preserve parity.
+    /// The byte sits inside `sender_auth` / `payer_auth`, which the signature does
+    /// not cover, so any value other than [`P256_CANONICAL_PRE_HASH`] is rejected:
+    /// otherwise a relayer could re-wrap one signature under 256 different
+    /// transaction hashes. Every result accepted here is still byte-identical to
+    /// the deployed contract's. If the contract ever begins interpreting
+    /// `pre_hash`, this must change in lockstep to preserve parity.
     fn p256(hash: B256, data: &[u8]) -> Result<B256, AuthError> {
         if data.len() != 129 || data[128] != P256_CANONICAL_PRE_HASH {
             return Err(AuthError::MalformedAuth);
@@ -174,12 +173,12 @@ impl AuthenticatorDispatch {
         // not to this outer ABI framing — yet every byte is billed as EIP-2028
         // payload gas. A non-canonical re-encoding (trailing padding or
         // non-minimal dynamic offsets) decodes to the same value and still passes
-        // the P-256 check, but inflates sender-intrinsic gas, letting a relayer
-        // shrink the execution-gas budget without the key. Requiring the input to
-        // equal its canonical ABI re-encoding makes any such mutation invalidate
-        // the transaction. Honest producers (Solidity `abi.encode` / `alloy`
-        // `abi_encode_params`) always emit this canonical form, so this rejects
-        // only malleated blobs.
+        // the P-256 check, but changes the transaction hash and inflates
+        // sender-intrinsic gas, letting a relayer shrink the execution-gas budget
+        // without the key. Requiring the input to equal its canonical ABI
+        // re-encoding makes any such mutation invalidate the transaction. Honest
+        // producers (Solidity `abi.encode` / `alloy` `abi_encode_params`) always
+        // emit this canonical form, so this rejects only malleated blobs.
         if decoded.abi_encode_params() != data {
             return Err(AuthError::MalformedAuth);
         }
@@ -345,7 +344,7 @@ mod tests {
     fn ecrecover_rejects_high_s() {
         // EIP-2 low-s: the malleable upper-half-s counterpart of a valid signature
         // (negate s, flip the recovery parity) recovers the same signer but MUST be
-        // rejected so a relayer cannot re-encode the auth bytes without the key.
+        // rejected so the transaction id cannot be malleated.
         let key = key(0x11);
         let (sig, recid) = key.sign_prehash_recoverable(HASH.as_slice()).unwrap();
         let s_high = -*sig.s();
@@ -396,8 +395,8 @@ mod tests {
     }
 
     /// The reserved `pre_hash` byte is not covered by the signature, so only the
-    /// canonical value authenticates; any other value would let a relayer change
-    /// the billed bytes of the same signed intent.
+    /// canonical value authenticates; any other value would mint a second
+    /// transaction hash for the same signed intent.
     #[test]
     fn p256_rejects_non_canonical_pre_hash() {
         let key = p256_key();
@@ -501,7 +500,8 @@ mod tests {
         // The blob authenticates HASH; appending an unsigned trailing byte leaves
         // the decoded value (and thus the P-256 check and resolved actorId)
         // unchanged, but is non-canonical ABI. It must be rejected so a relayer
-        // cannot inflate payload gas with bytes the signer never covered.
+        // cannot malleate the transaction hash or inflate payload gas with bytes
+        // the signer never covered.
         let key = p256_key();
         let (mut data, _) = webauthn_blob(&key, HASH);
         data.push(0xFF);

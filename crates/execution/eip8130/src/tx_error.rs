@@ -24,14 +24,6 @@ pub enum TxAuthError {
     #[error("EOA sender signature could not be recovered")]
     SenderRecovery,
 
-    /// A signed account-change batch's own `signature` failed authentication or
-    /// lacks the admin scope a config change requires; the inner error is the
-    /// underlying failure. Unlike `sender_auth` and `payer_auth`, the batch
-    /// signature is part of the transaction body, so this failure is a property
-    /// of the hashed transaction.
-    #[error("config change authorization failed: {0}")]
-    ConfigChange(Box<Self>),
-
     /// The open-payer `payer_auth` was malformed or did not recover. Applies
     /// only in open payer mode.
     #[error("open payer signature could not be recovered")]
@@ -43,9 +35,9 @@ pub enum TxAuthError {
     ResolvedSenderMismatch,
 
     /// A self-paid transaction (`payer == None`) carries a non-empty
-    /// `payer_auth`. Neither the sender's signature nor the transaction hash
-    /// covers `payer_auth`, so accepting one would let a relayer raise the
-    /// sender's L1 data fee.
+    /// `payer_auth`. The sender's signature does not cover `payer_auth`, so
+    /// accepting one would let a relayer change the transaction hash and raise
+    /// the sender's L1 data fee.
     #[error("self-paid transaction carries a payer_auth")]
     UnexpectedPayerAuth,
 

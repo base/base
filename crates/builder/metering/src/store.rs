@@ -12,7 +12,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use alloy_primitives::B256;
+use alloy_primitives::TxHash;
 use base_builder_core::{BuilderMetrics, MeteringProvider};
 use base_bundles::MeterBundleResponse;
 use moka::{notification::RemovalCause, policy::EvictionPolicy, sync::Cache};
@@ -25,15 +25,14 @@ pub const DEFAULT_METERING_STORE_TTL_SECS: u64 = 30;
 
 /// Concurrent metering store with LRU eviction.
 pub struct MeteringStore {
-    /// LRU cache mapping the hash of each transaction's exact encoding to its metering data
-    /// (see [`MeteringProvider`]).
-    cache: Cache<B256, Arc<MeterBundleResponse>>,
+    /// LRU cache mapping transaction hash to metering data.
+    cache: Cache<TxHash, Arc<MeterBundleResponse>>,
     /// Records when a transaction was committed without metering data.
     ///
     /// Late-arriving data is only terminal for transactions that were already
     /// included without it. A plain lookup miss is not enough because the
     /// transaction may be skipped for a transient reason and retried later.
-    needed_at: Cache<B256, Instant>,
+    needed_at: Cache<TxHash, Instant>,
     /// Whether resource metering is enabled.
     metering_enabled: AtomicBool,
 }
@@ -91,22 +90,22 @@ impl MeteringStore {
 }
 
 impl MeteringProvider for MeteringStore {
-    fn get(&self, encoded_hash: &B256) -> Option<Arc<MeterBundleResponse>> {
+    fn get(&self, tx_hash: &TxHash) -> Option<Arc<MeterBundleResponse>> {
         if !self.metering_enabled.load(Ordering::Relaxed) {
             return None;
         }
 
-        self.cache.get(encoded_hash)
+        self.cache.get(tx_hash)
     }
 
     fn is_enabled(&self) -> bool {
         self.metering_enabled.load(Ordering::Relaxed)
     }
 
-    fn insert(&self, encoded_hash: B256, metering: MeterBundleResponse) {
+    fn insert(&self, tx_hash: TxHash, metering: MeterBundleResponse) {
         // If the builder needed metering data for this tx but didn't have it,
         // the data arrived late. Record how late and what the values were.
-        if let Some(needed_at) = self.needed_at.remove(&encoded_hash) {
+        if let Some(needed_at) = self.needed_at.remove(&tx_hash) {
             let latency_ms = needed_at.elapsed().as_millis() as f64;
             BuilderMetrics::metering_late_arrival_total().increment(1);
             BuilderMetrics::metering_late_arrival_latency_ms().record(latency_ms);
@@ -115,27 +114,26 @@ impl MeteringProvider for MeteringStore {
             return;
         }
 
-        self.cache.insert(encoded_hash, Arc::new(metering));
+        self.cache.insert(tx_hash, Arc::new(metering));
         BuilderMetrics::metering_store_size().set(self.cache.entry_count() as f64);
     }
 
-    fn mark_included_without_metering(&self, encoded_hash: &B256) {
-        if !self.metering_enabled.load(Ordering::Relaxed) || self.cache.get(encoded_hash).is_some()
-        {
+    fn mark_included_without_metering(&self, tx_hash: &TxHash) {
+        if !self.metering_enabled.load(Ordering::Relaxed) || self.cache.get(tx_hash).is_some() {
             return;
         }
 
         // Atomically record the first unmetered inclusion. Later payload
         // rebuilds must not overwrite the original timestamp.
-        self.needed_at.entry_by_ref(encoded_hash).or_insert(Instant::now());
+        self.needed_at.entry_by_ref(tx_hash).or_insert(Instant::now());
     }
 
-    fn skip(&self, encoded_hash: &B256) {
-        self.needed_at.invalidate(encoded_hash);
+    fn skip(&self, tx_hash: &TxHash) {
+        self.needed_at.invalidate(tx_hash);
     }
 
-    fn remove(&self, encoded_hashes: &[B256]) {
-        for hash in encoded_hashes {
+    fn remove(&self, tx_hashes: &[TxHash]) {
+        for hash in tx_hashes {
             self.cache.invalidate(hash);
         }
         BuilderMetrics::metering_store_size().set(self.cache.entry_count() as f64);

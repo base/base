@@ -2,48 +2,41 @@
 
 use std::{fmt::Debug, sync::Arc};
 
-use alloy_primitives::B256;
+use alloy_primitives::TxHash;
 use base_bundles::MeterBundleResponse;
 
 /// Trait abstracting resource metering data retrieval and management for the builder.
-///
-/// Entries are keyed by the hash of the exact EIP-2718 encoding they were metered for
-/// ([`Encodable2718::trie_hash`]). That is the transaction hash for every type except EIP-8130,
-/// whose encodings that differ only in authorization share a transaction hash but can use
-/// different gas and execution time.
-///
-/// [`Encodable2718::trie_hash`]: alloy_eips::eip2718::Encodable2718::trie_hash
 pub trait MeteringProvider: Debug + Send + Sync + 'static {
-    /// Retrieves the metering data for the encoding with hash `encoded_hash`.
+    /// Retrieves the metering data for a given transaction hash.
     ///
     /// The response is shared rather than copied because lookups run once per
     /// candidate transaction and most callers read only a few scalar fields.
-    fn get(&self, encoded_hash: &B256) -> Option<Arc<MeterBundleResponse>>;
+    fn get(&self, tx_hash: &TxHash) -> Option<Arc<MeterBundleResponse>>;
 
     /// Returns whether resource metering is currently enabled.
     fn is_enabled(&self) -> bool {
         false
     }
 
-    /// Inserts metering information for the encoding with hash `encoded_hash`.
-    fn insert(&self, _encoded_hash: B256, _metering: MeterBundleResponse) {}
+    /// Inserts metering information for a transaction.
+    fn insert(&self, _tx_hash: TxHash, _metering: MeterBundleResponse) {}
 
     /// Signals that a transaction was committed without metering data.
     ///
     /// Implementations can use this to track metering data that arrives after
     /// payload inclusion.
-    fn mark_included_without_metering(&self, _encoded_hash: &B256) {}
+    fn mark_included_without_metering(&self, _tx_hash: &TxHash) {}
 
     /// Signals that a transaction was skipped (e.g. `MeteringDataPending`) and
     /// will be retried later, clearing any pending late-arrival tracking.
-    fn skip(&self, _encoded_hash: &B256) {}
+    fn skip(&self, _tx_hash: &TxHash) {}
 
-    /// Removes metering data for the given encoding hashes.
+    /// Removes metering data for the given transaction hashes.
     ///
     /// Used to eagerly evict entries for transactions that have been included in
     /// a payload or permanently rejected so they don't occupy LRU slots that
     /// should go to pending transactions.
-    fn remove(&self, _encoded_hashes: &[B256]) {}
+    fn remove(&self, _tx_hashes: &[TxHash]) {}
 
     /// Clears all stored metering data.
     fn clear(&self) {}
@@ -57,7 +50,7 @@ pub trait MeteringProvider: Debug + Send + Sync + 'static {
 pub struct NoopMeteringProvider;
 
 impl MeteringProvider for NoopMeteringProvider {
-    fn get(&self, _encoded_hash: &B256) -> Option<Arc<MeterBundleResponse>> {
+    fn get(&self, _tx_hash: &TxHash) -> Option<Arc<MeterBundleResponse>> {
         None
     }
 }
