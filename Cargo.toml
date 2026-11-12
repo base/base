@@ -213,6 +213,8 @@ base-shadow-indexer = { path = "crates/execution/shadow-indexer" }
 base-execution-chainspec = { path = "crates/execution/chainspec" }
 base-execution-consensus = { path = "crates/execution/consensus" }
 base-txpool-tracing = { path = "crates/execution/txpool-tracing" }
+base-history-rpc = { path = "crates/execution/history-rpc" }
+base-history-store = { path = "crates/execution/history-store" }
 base-execution-payload-builder = { path = "crates/execution/payload" }
 base-execution-payer-rpc = { path = "crates/execution/payer-rpc" }
 base-execution-eip8130-rpc = { path = "crates/execution/eip8130-rpc" }
@@ -555,6 +557,8 @@ brotli = { version = "8.0.2", default-features = false }
 redb = "2"
 sqlx = { version = "0.8", default-features = false }
 rocksdb = { version = "0.24", default-features = false }
+slatedb = { version = "=0.18.1", default-features = false }
+object_store = { version = "0.14.2", default-features = false }
 
 # errors
 eyre = "0.6"
@@ -567,6 +571,7 @@ lru = "0.16"
 moka = "0.12"
 rayon = "1.11"
 dashmap = "6.2"
+roaring = "0.11.4"
 parking_lot = "0.12.3"
 crossbeam-channel = "0.5.13"
 either = { version = "1.16.0", default-features = false }

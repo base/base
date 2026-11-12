@@ -8,7 +8,7 @@ use base_execution_chainspec::BaseChainSpec;
 use base_execution_cli::{
     ExecutionUpgradeSignal, ExecutionUpgradeSignalConfig, ExecutionUpgradeSignalRuntimeExtension,
 };
-use base_execution_eip8130_rpc_node::Eip8130RpcExtension;
+use base_execution_eip8130_rpc_node::{Eip8130RpcExtension, TransactionCountOwner};
 use base_execution_txpool::ValiditySignatureMode;
 use base_node_core::args::RollupArgs;
 use base_node_runner::{BaseNode, BaseNodeExtension, FromExtensionConfig, NodeHooks};
@@ -433,7 +433,7 @@ impl InProcessClient {
 
         // EIP-8130 `eth_getTransactionCount`, `eth_estimateGas` and `eth_call` overrides, as the
         // standard node installs them. Plain requests pass through to the default handlers.
-        extensions.push(Box::new(Eip8130RpcExtension::from_config(())));
+        extensions.push(Box::new(Eip8130RpcExtension::from_config(TransactionCountOwner::Eip8130)));
 
         extensions
     }

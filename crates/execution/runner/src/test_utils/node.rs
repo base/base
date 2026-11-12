@@ -13,7 +13,7 @@ use reth_db::{
 };
 use reth_node_builder::{Node, NodeBuilder, NodeConfig, NodeHandle};
 use reth_node_core::{
-    args::{DatadirArgs, DiscoveryArgs, NetworkArgs, RpcServerArgs},
+    args::{DatadirArgs, DiscoveryArgs, NetworkArgs, PruningArgs, RpcServerArgs, StaticFilesArgs},
     dirs::{DataDirPath, MaybePlatformPath},
     exit::NodeExitFuture,
 };
@@ -58,15 +58,29 @@ impl fmt::Debug for LocalNode {
     }
 }
 
+/// Prune and static-file settings for a test node that keeps only recent history.
+///
+/// Static-file segments are pruned a whole file at a time, so a short retention window only
+/// takes effect with small `blocks_per_file_*` values.
+#[derive(Debug, Clone, Default)]
+pub struct LocalNodeRetention {
+    /// `--prune.*` settings.
+    pub pruning: PruningArgs,
+    /// `--static-files.*` settings.
+    pub static_files: StaticFilesArgs,
+}
+
 impl LocalNode {
     /// Launch a new local node with the provided extensions and chain spec, and
     /// `rpc_gas_cap` as its `--rpc.gascap` and `engine_api_store` as its
-    /// `--debug.engine-api-store` when set.
+    /// `--debug.engine-api-store` when set. `retention` replaces the default (archive) prune
+    /// and static-file settings when set.
     pub async fn new(
         extensions: Vec<Box<dyn BaseNodeExtension>>,
         chain_spec: Arc<BaseChainSpec>,
         rpc_gas_cap: Option<u64>,
         engine_api_store: Option<PathBuf>,
+        retention: Option<LocalNodeRetention>,
     ) -> Result<Self> {
         let exec = Runtime::test();
 
@@ -104,6 +118,10 @@ impl LocalNode {
         // that reth 2.3.0 now consults during state-root/proof work.
         node_config.engine.persistence_threshold = 0;
         node_config.debug.engine_api_store = engine_api_store;
+        if let Some(retention) = retention {
+            node_config = node_config.with_pruning(retention.pruning);
+            node_config.static_files = retention.static_files;
+        }
 
         let datadir_path = MaybePlatformPath::<DataDirPath>::from(db_path.clone());
         node_config = node_config
