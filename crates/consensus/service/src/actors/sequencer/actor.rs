@@ -643,16 +643,23 @@ where
             requested_at.duration_since(self.slot_start(&handle)).unwrap_or(Duration::ZERO);
         let build_window =
             requested_at.duration_since(handle.build_requested_at).unwrap_or(Duration::ZERO);
+        // Recovery, sequencer-drift and upgrade-activation blocks skip the pool by design, so
+        // their empty payloads and build windows would dilute the ones these metrics look for.
+        let pool_build = handle.attributes_with_parent.attributes().no_tx_pool != Some(true);
         match self.try_seal_handle(handle).await? {
             Some((new_sealer, dur)) => {
                 Metrics::sequencer_seals_total(trigger.as_str()).increment(1);
                 Metrics::sequencer_get_payload_offset_seconds(trigger.as_str())
                     .record(request_offset);
-                Metrics::record_seal_build_window(
-                    trigger.as_str(),
-                    build_window,
-                    !has_pool_transactions(new_sealer.envelope.execution_payload.transactions()),
-                );
+                if pool_build {
+                    Metrics::record_seal_build_window(
+                        trigger.as_str(),
+                        build_window,
+                        !has_pool_transactions(
+                            new_sealer.envelope.execution_payload.transactions(),
+                        ),
+                    );
+                }
                 pipeline.sealed_payload_id = Some(payload_id);
                 pipeline.last_seal_duration = dur;
                 self.sealer = Some(new_sealer);
@@ -1414,6 +1421,44 @@ mod tests {
             "sequencer_empty_payloads_total",
         ] {
             assert_eq!(recorded(&metrics, name, ("trigger", other)), None);
+        }
+    }
+
+    /// A block built without the pool (recovery, sequencer drift, upgrade activation) is empty by
+    /// design, so its seal is counted but stays out of the build-window and empty-payload metrics.
+    #[cfg(feature = "metrics")]
+    #[tokio::test(start_paused = true)]
+    async fn no_tx_pool_seal_skips_build_window_and_empty_payload_metrics() {
+        let recorder = DebuggingRecorder::new();
+        let snapshotter = recorder.snapshotter();
+        let _metrics_guard = metrics::set_default_local_recorder(&recorder);
+
+        let mut actor = test_actor();
+        let slot_start = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() - 5;
+        let config = Arc::make_mut(&mut actor.rollup_config);
+        config.block_time = 2;
+        config.genesis.l2_time = slot_start;
+        config.upgrades.base.denim = Some(0);
+        let (_, mut pipeline) = ready_build();
+        let handle = pipeline.next_payload_to_seal.as_mut().unwrap();
+        handle.attributes_with_parent.attributes.no_tx_pool = Some(true);
+        let parent = *handle.attributes_with_parent.parent();
+        let (sealer, _, _) = valid_sealer();
+        let mut engine = MockSequencerEngineClient::new();
+        engine.expect_get_unsafe_head().times(1).return_once(move || Ok(parent));
+        engine.expect_get_sealed_payload().times(1).return_once(move |_, _| Ok(sealer.envelope));
+        actor.engine_client = Arc::new(engine);
+        let mut ticker = ScheduledTicker::new(Duration::from_secs(2));
+
+        actor.handle_build_tick(&mut pipeline, &mut ticker, None).await.unwrap();
+
+        let metrics = snapshotter.snapshot().into_vec();
+        assert_eq!(
+            recorded(&metrics, "sequencer_seals_total", ("trigger", "deadline")),
+            Some(&DebugValue::Counter(1))
+        );
+        for name in ["sequencer_build_window_seconds", "sequencer_empty_payloads_total"] {
+            assert_eq!(recorded(&metrics, name, ("trigger", "deadline")), None);
         }
     }
 
