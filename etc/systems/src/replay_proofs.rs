@@ -11,14 +11,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-use alloy_eips::eip2718::Encodable2718;
-use alloy_network::Network;
-use alloy_primitives::B64;
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types_eth::BlockNumberOrTag;
 use base_common_consensus::Predeploys;
 use base_common_network::Base;
-use base_common_rpc_types_engine::BasePayloadAttributes;
 use eyre::{Result, WrapErr};
 use serde::Serialize;
 use serde_json::value::RawValue;
@@ -32,7 +28,7 @@ use url::Url;
 /// Bound on each probe call, so a node that stops answering cannot hold back the result.
 const PROBE_CALL_TIMEOUT: Duration = Duration::from_secs(60);
 
-use crate::LatencySummary;
+use crate::{ExportedBlock, LatencySummary};
 
 /// Nearest-rank percentiles of integer samples.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
@@ -198,10 +194,16 @@ impl ReplayProofsProbe {
             return;
         };
         let (parent_hash, hash) = (block.header.parent_hash, block.header.hash);
-        let witness = provider.client().request::<_, Box<RawValue>>(
-            "debug_executePayload",
-            (parent_hash, Self::payload_attributes(block)),
-        );
+        let attributes = match ExportedBlock::from_rpc_block(block).payload_attributes() {
+            Ok(attributes) => attributes,
+            Err(error) => {
+                warn!(%error, block = number, "proofs probe cannot rebuild payload attributes");
+                return;
+            }
+        };
+        let witness = provider
+            .client()
+            .request::<_, Box<RawValue>>("debug_executePayload", (parent_hash, attributes));
         if let Some(witness) = Self::timed(samples, "debug_executePayload", witness).await {
             samples.lock().unwrap().witness_bytes.push(witness.get().len() as u64);
         }
@@ -233,48 +235,11 @@ impl ReplayProofsProbe {
         }
         result.ok()
     }
-
-    /// Rebuilds a block's payload attributes as the proof host does for `debug_executePayload`.
-    pub fn payload_attributes(block: <Base as Network>::BlockResponse) -> BasePayloadAttributes {
-        let header = &block.header.inner;
-        let mut attributes = BasePayloadAttributes::default();
-        attributes.payload_attributes.timestamp = header.timestamp;
-        attributes.payload_attributes.prev_randao = header.mix_hash;
-        attributes.payload_attributes.suggested_fee_recipient = header.beneficiary;
-        attributes.payload_attributes.parent_beacon_block_root = header.parent_beacon_block_root;
-        attributes.payload_attributes.withdrawals =
-            block.withdrawals.as_ref().map(|withdrawals| withdrawals.0.clone());
-        attributes.no_tx_pool = Some(true);
-        attributes.gas_limit = Some(header.gas_limit);
-        // Replayed blocks are past Holocene, whose extra data is
-        // `version || denominator || elasticity`, the `eip1559Params` bytes; Jovian appends
-        // `minBaseFee`.
-        attributes.eip_1559_params = header.extra_data.get(1..9).map(B64::from_slice);
-        attributes.min_base_fee = header
-            .extra_data
-            .get(9..17)
-            .and_then(|fee| fee.try_into().ok())
-            .map(u64::from_be_bytes);
-        attributes.transactions = Some(
-            block
-                .transactions
-                .into_transactions()
-                .map(|tx| tx.as_ref().encoded_2718().into())
-                .collect(),
-        );
-        attributes
-    }
 }
 
 #[cfg(test)]
 mod tests {
-    use alloy_eips::eip1559::BaseFeeParams;
-    use alloy_network::Network;
-    use alloy_primitives::B64;
-    use base_common_consensus::JovianExtraData;
-    use base_common_network::Base;
-
-    use super::{CountSummary, ProofsSamples, ReplayProofsProbe};
+    use super::{CountSummary, ProofsSamples};
 
     #[test]
     fn count_summary_uses_nearest_rank_percentiles() {
@@ -314,25 +279,5 @@ mod tests {
         );
         assert_eq!(summary.methods["eth_getProof"].errors, 2);
         assert_eq!(summary.methods["eth_getProof"].latency.max_ms, 0.0);
-    }
-
-    #[test]
-    fn payload_attributes_carry_jovian_fee_parameters() {
-        let params = B64::from([0, 0, 0, 250, 0, 0, 0, 6]);
-        let mut block = <Base as Network>::BlockResponse::default();
-        block.header.inner.gas_limit = 200_000_000;
-        block.header.inner.extra_data =
-            JovianExtraData::encode(params, BaseFeeParams::optimism(), 1_000_000).unwrap();
-
-        let attributes = ReplayProofsProbe::payload_attributes(block.clone());
-
-        assert_eq!(attributes.eip_1559_params, Some(params));
-        assert_eq!(attributes.min_base_fee, Some(1_000_000));
-        assert_eq!(attributes.gas_limit, Some(200_000_000));
-        assert_eq!(attributes.no_tx_pool, Some(true));
-
-        block.header.inner.extra_data = Default::default();
-        let attributes = ReplayProofsProbe::payload_attributes(block);
-        assert_eq!((attributes.eip_1559_params, attributes.min_base_fee), (None, None));
     }
 }
