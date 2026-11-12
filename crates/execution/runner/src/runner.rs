@@ -163,6 +163,8 @@ impl<SB: PayloadServiceBuilder> BaseNodeRunner<SB> {
     /// Applies all Base-specific wiring to the supplied builder and returns a launched node
     /// handle without waiting for shutdown.
     pub async fn launch(self, builder: BaseNodeBuilder) -> Result<LaunchedBaseNode> {
+        // This must precede reth launch and its automatic multi-store recovery.
+        let admission = crate::DeferredStateRootAdmission::preflight(builder.config(), &self.rollup_args, self.extensions.len())?;
         info!(target: "base-runner", "starting custom Base node");
 
         let Self {
@@ -177,6 +179,7 @@ impl<SB: PayloadServiceBuilder> BaseNodeRunner<SB> {
             started_callbacks,
         } = self;
         let mut base_node = BaseNode::new(rollup_args);
+        base_node.deferred_state_root = admission.as_ref().map(|admission| admission.service.clone());
         if let Some(da_config) = da_config {
             base_node = base_node.with_da_config(da_config);
         }
@@ -214,7 +217,9 @@ impl<SB: PayloadServiceBuilder> BaseNodeRunner<SB> {
             Ok(())
         });
 
-        let handle = hooks.apply_to(builder).launch().await?;
+        let builder = hooks.apply_to(builder);
+        let launcher = builder.engine_api_launcher().with_backfill(crate::DeferredStateRootBackfillBuilder { admission });
+        let handle = builder.launch_with(launcher).await?;
         let auth_module = auth_module
             .get()
             .cloned()

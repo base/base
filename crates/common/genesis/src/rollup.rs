@@ -219,6 +219,7 @@ impl RollupConfig {
             BaseUpgrade::Denim => self.is_denim_active(timestamp),
             BaseUpgrade::Everest => self.is_everest_active(timestamp),
             BaseUpgrade::Zenith => self.is_zenith_active(timestamp),
+            BaseUpgrade::DeferredStateRoot => self.upgrades.base.deferred_state_root.is_some_and(|at| timestamp >= at),
         }
     }
 
@@ -572,7 +573,7 @@ impl UpgradeActivationSink for RollupConfig {
         upgrade_id: BaseUpgrade,
         activation: UpgradeActivation,
     ) -> Result<bool, Self::Error> {
-        if matches!(upgrade_id, BaseUpgrade::Zenith) {
+        if matches!(upgrade_id, BaseUpgrade::Zenith | BaseUpgrade::DeferredStateRoot) {
             return Ok(false);
         }
 
@@ -702,6 +703,7 @@ mod tests {
                 | BaseFeature::NativeNonceManager
                 | BaseFeature::GasLimitBilling => BaseUpgrade::Everest,
                 BaseFeature::Keystore => BaseUpgrade::Zenith,
+                BaseFeature::ParentPostStateCommitment => BaseUpgrade::DeferredStateRoot,
             };
             assert_eq!(feature.activation_upgrade(), upgrade, "{feature:?}");
             let mut cfg = RollupConfig::default();
@@ -814,6 +816,7 @@ mod tests {
                     denim: None,
                     everest: None,
                     zenith: None,
+                    deferred_state_root: None,
                 },
             },
             block_time: 2,
@@ -897,6 +900,7 @@ mod tests {
                     denim: None,
                     everest: None,
                     zenith: None,
+                    deferred_state_root: None,
                 },
                 ..Default::default()
             },
@@ -1183,6 +1187,7 @@ mod tests {
             denim: None,
             everest: None,
             zenith: None,
+            deferred_state_root: None,
         };
         assert_eq!(
             cfg.ethereum_fork_activation(EthereumHardfork::Osaka),
@@ -1198,6 +1203,7 @@ mod tests {
             denim: None,
             everest: None,
             zenith: None,
+            deferred_state_root: None,
         };
         assert_eq!(
             cfg.ethereum_fork_activation(EthereumHardfork::Osaka),
@@ -1215,6 +1221,7 @@ mod tests {
             denim: None,
             everest: None,
             zenith: None,
+            deferred_state_root: None,
         };
         assert_eq!(cfg.ethereum_fork_activation(EthereumHardfork::Osaka), ForkCondition::Never);
 

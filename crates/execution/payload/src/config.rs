@@ -57,6 +57,8 @@ pub struct BaseBuilderConfig {
     /// label. Adds overhead to every state read, so it follows reth's
     /// `--engine.state-provider-metrics` and stays off by default.
     pub state_provider_metrics: bool,
+    /// Shared custom-chain deferred-root service. None preserves all ordinary defaults.
+    pub deferred_state_root: Option<Arc<crate::PostStateRootService>>,
 }
 
 impl Default for BaseBuilderConfig {
@@ -71,6 +73,7 @@ impl Default for BaseBuilderConfig {
             resource_metering: ResourceMeteringConfig::default(),
             rejection_cache: RejectionCache::default(),
             state_provider_metrics: false,
+            deferred_state_root: None,
         }
     }
 }
@@ -92,6 +95,7 @@ impl BaseBuilderConfig {
             resource_metering: ResourceMeteringConfig::default(),
             rejection_cache: RejectionCache::default(),
             state_provider_metrics: false,
+            deferred_state_root: None,
         }
     }
 

@@ -74,6 +74,7 @@ impl BuilderConfig {
             resource_metering: self.resource_metering.clone(),
             rejection_cache: self.rejection_cache.clone(),
             state_provider_metrics: self.state_provider_metrics,
+            deferred_state_root: None,
         }
     }
 

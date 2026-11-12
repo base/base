@@ -34,6 +34,9 @@ pub enum BaseChainSpecError {
     /// Denim is scheduled without a usable legacy block interval.
     #[error("Denim is scheduled but config.blockTime is missing or zero")]
     InvalidDenimBlockTime,
+    /// Deferred state roots are restricted to supported disposable custom-chain experiments.
+    #[error("unsupported DeferredStateRoot configuration: {0}")]
+    InvalidDeferredStateRoot(&'static str),
     /// Beryl is scheduled but no activation registry admin address is configured.
     #[error("missing activation admin address for Beryl-enabled chain ID: {chain_id}")]
     MissingActivationAdminAddress {
@@ -208,6 +211,7 @@ impl BaseChainSpec {
             (BaseUpgrade::Denim.boxed(), denim_time),
             (BaseUpgrade::Everest.boxed(), everest_time),
             (BaseUpgrade::Zenith.boxed(), zenith_time),
+            (BaseUpgrade::DeferredStateRoot.boxed(), genesis_info.base.deferred_state_root),
         ];
 
         let mut time_upgrades = time_upgrade_opts
@@ -223,7 +227,7 @@ impl BaseChainSpec {
         let genesis_header =
             SealedHeader::seal_slow(Self::make_genesis_header(&genesis, &upgrades));
 
-        Ok(Self {
+        let spec = Self {
             inner: ChainSpec {
                 chain: chain_id.into(),
                 genesis_header,
@@ -235,7 +239,9 @@ impl BaseChainSpec {
             },
             activation_admin_address,
             block_time,
-        })
+        };
+        spec.validate_deferred_state_root_schedule()?;
+        Ok(spec)
     }
 
     /// Tries to convert the given [`ChainSpec`] into a [`BaseChainSpec`].
@@ -250,7 +256,30 @@ impl BaseChainSpec {
         )?;
         let block_time =
             value.genesis.config.extra_fields.get_deserialized("blockTime").transpose()?;
-        Ok(Self { inner: value, activation_admin_address, block_time })
+        let spec = Self { inner: value, activation_admin_address, block_time };
+        spec.validate_deferred_state_root_schedule()?;
+        Ok(spec)
+    }
+
+    /// Rejects experimental commitments on public chains, at genesis, or without OP execution.
+    /// Call again at pre-launch admission because public schedule mutation is supported.
+    pub fn validate_deferred_state_root_schedule(&self) -> Result<Option<u64>, BaseChainSpecError> {
+        let activation = match self.fork(BaseUpgrade::DeferredStateRoot) {
+            ForkCondition::Never => return Ok(None),
+            ForkCondition::Timestamp(at) => at,
+            _ => return Err(BaseChainSpecError::InvalidDeferredStateRoot("activation must be a timestamp")),
+        };
+        if matches!(self.chain.id(), 8453 | 84532) {
+            return Err(BaseChainSpecError::InvalidDeferredStateRoot("mainnet and Sepolia are forbidden"));
+        }
+        if activation <= self.genesis.timestamp {
+            return Err(BaseChainSpecError::InvalidDeferredStateRoot("activation must be strictly after genesis"));
+        }
+        if !self.fork(BaseUpgrade::Bedrock).active_at_block(self.genesis.number.unwrap_or_default())
+            || !self.fork(BaseUpgrade::Regolith).active_at_timestamp(activation) {
+            return Err(BaseChainSpecError::InvalidDeferredStateRoot("Bedrock and Regolith must precede activation"));
+        }
+        Ok(Some(activation))
     }
 
     /// Returns the runtime-aware Denim timestamp schedule, or `Ok(None)` when unscheduled.

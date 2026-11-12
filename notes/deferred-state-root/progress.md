@@ -95,3 +95,17 @@ Evidence directory `target/deferred-root-gate2/` is new; gate1 data was preserve
 - `manager1.log`: 3 new manager lifecycle tests pass, 161 pre-existing payload tests filtered out.
 - `strategy-semantic2.log`: c1 immutable golden replay passes through off wrapper with zero manager construction; c2 correct deferred parent passes real engine validation; c3 wrong deferred commitment returns INVALID with exact parent latestValidHash. c4 remains intentionally failing pending builder work. No no-patch blocker was found.
 - Remaining scope is still substantial: complete manager abandonment/admission/retention tests and builder provenance waiting, production schedule/wiring, owned detached builder snapshots, native builder activation test, pre-launch/storage/sync/service guards, controls/metrics and regression/fault/reorg suites. No benchmark/deployment or external interaction performed.
+
+## Continuation: native builder, custom schedule and guarded runner
+
+The earlier checkpoint's “no production changes” statement describes that earlier commit only; production implementation is now in progress.
+
+- Native builder uses an owned parent StateProviderBox captured by build_payload, finalized authoritative execution output, actual parent MPT fallback, and detached current-root calculation. Active payloads expose no trusted executed block. Yes/No admission callbacks remain unchanged; mixed speculative/system regression coverage remains outstanding.
+- New configuration-only DeferredStateRoot schedule is Never by default and excluded from contract/runtime signaling. Constructors and CLI reject mainnet/Sepolia, genesis activation, non-timestamp activation, or missing Bedrock/Regolith support.
+- Engine builder delegates stock construction directly (preserving hook/prewarm setup), installs captured provider/overlay strategy only for configured experiments, and owns critical health/shutdown drain monitoring.
+- Guarded runner admission precedes reth launch. Durable external marker forbids all reopen attempts. Immutable pre-fork manifests authenticate store bytes. Read-only checkpoint/tip/root checks precede stock consistency recovery; staged/backfill/deep-reorg requests terminate before stage execution. Production extension/L1/proof/output services fail closed. Snapshot consistency and recovery rejection coverage is not yet exhaustive.
+- `native-semantic3.log`: c1-c4 all PASS. c4 builds F/F+1 through the production native builder, independently validates each against shared builder provenance, persists F with its delayed header, then validates F+1 using actual persisted MPT state. Exact current roots/updates are checked after VALID. Pairwise distinct real roots remain required. Immutable c1 digest is now asserted unconditionally.
+- `builder2.log`: payload suite 164 PASS before additional manager tests. `manager3.log`: seven manager lifecycle tests PASS.
+- `runner-guard4.log`: runner all-features library cargo check PASS. `runner-guard-tests1.log`: five guard tests PASS, eleven filtered out. Earlier runner compile failures are setup, not red evidence.
+- `cohorts1.log`: 318 tests PASS across base-node-core, base-execution-chainspec, base-common-genesis and base-common-chains, including original four wrapper gates and real c1-c4. This predates the latest serial control tests/minimal CLI selection.
+- O/S/R/D controls and metrics are being completed; no benchmark/deployment or performance claim. No reth source/pin change.

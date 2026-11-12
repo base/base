@@ -640,6 +640,7 @@ mod tests {
                 denim: None,
                 everest: None,
                 zenith: None,
+                deferred_state_root: None,
             },
             ..Default::default()
         };
@@ -1075,6 +1076,7 @@ mod tests {
                 denim: Some(1_004),
                 everest: None,
                 zenith: Some(1_005),
+                    deferred_state_root: None,
                 ..Default::default()
             },
             ..Default::default()

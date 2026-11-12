@@ -45,17 +45,18 @@ use reth_payload_util::{NoopPayloadTransactions, PayloadTransactions};
 use reth_primitives_traits::{
     HeaderTy, SealedHeader, SealedHeaderFor, SignedTransaction, TxTy, WithEncoded,
 };
-use reth_storage_api::{BlockReader, StateProvider, StateProviderFactory};
+use reth_storage_api::{BlockReader, StateProvider, StateProviderBox, StateProviderFactory};
 use reth_tasks::{CancelOnDrop, Runtime};
 use reth_transaction_pool::{
     BestTransactionsAttributes, PoolTransaction, TransactionPool, ValidPoolTransaction,
 };
-use reth_trie_common::ExecutionWitnessMode;
+use reth_trie_common::{ExecutionWitnessMode, HashedPostState};
 use reth_trie_parallel::state_root_task::PayloadStateRootHandle;
 use tracing::{debug, debug_span, info, instrument, trace, warn};
 
 use crate::{
     Attributes, BasePayloadBuilderAttributes, BlockDeferrals, BuilderMetrics,
+    PostStateRootData, PostStateRootKey, PostStateRootSource,
     CoinbaseTipAffordability, HoldInterrupt, InclusionTracker, MeteringProvider,
     ParkableBestPayloadTransactions, ParkablePayloadTransactions, ParkedPredicateIndex,
     PayloadPrimitives, PredicateLoadTracker, PredicateReadRecorder, RejectionCacheMetrics,
@@ -237,7 +238,7 @@ where
         tracing::Span::current().record("parent_num", ctx.parent().number());
 
         let pool = self.pool.clone();
-        let builder = Builder::new(best)
+        let mut builder = Builder::new(best)
             .with_permanent_eviction(move |hashes| {
                 let _ = pool.remove_transactions(hashes);
             })
@@ -251,6 +252,12 @@ where
         let state = StateProviderDatabase::new(state_provider.provider());
         // Execution decorators expose EVM reads; retain a full parent-state view for proofs.
         let proof_provider = self.client.state_by_block_hash(ctx.parent().hash())?;
+        if self.config.deferred_state_root.as_ref().is_some_and(|service| service.active(ctx.attributes().timestamp(), ctx.parent().number() + 1)) {
+            // Transfer an owned, hash-pinned snapshot to detached work, never the borrowed
+            // provider used by the inner build. Execution and proof views stay unchanged.
+            builder = builder.with_root_snapshot(self.client.state_by_block_hash(ctx.parent().hash())?);
+        }
+
 
         if ctx.attributes().no_tx_pool() {
             builder.build(state, proof_provider.as_ref(), state_root_handle, ctx)
@@ -400,6 +407,9 @@ pub struct Builder<'a, Txs> {
     evict_permanently_rejected: Box<dyn FnOnce(Vec<TxHash>) + 'a>,
     /// Carries resting validity transactions between builds; used from Denim on.
     resting_predicates: Option<RestingPredicateStore>,
+    /// Owned hash-pinned parent snapshot for detached active root computation.
+    #[debug(skip)]
+    root_snapshot: Option<StateProviderBox>,
 }
 
 impl<'a, Txs> Builder<'a, Txs> {
@@ -414,6 +424,7 @@ impl<'a, Txs> Builder<'a, Txs> {
             best: Box::new(best),
             evict_permanently_rejected: Box::new(|_| {}),
             resting_predicates: None,
+            root_snapshot: None,
         }
     }
 
@@ -433,6 +444,11 @@ impl<'a, Txs> Builder<'a, Txs> {
 }
 
 impl<Txs> Builder<'_, Txs> {
+    /// Transfers an owned parent-state snapshot for active post-finalization root work.
+    pub fn with_root_snapshot(mut self, snapshot: StateProviderBox) -> Self {
+        self.root_snapshot = Some(snapshot); self
+    }
+
     /// Builds the payload on top of the state.
     pub fn build<Evm, ChainSpec, N, Attrs>(
         self,
@@ -454,7 +470,7 @@ impl<Txs> Builder<'_, Txs> {
         >,
         Attrs: Attributes<Transaction = N::SignedTx>,
     {
-        let Self { best, evict_permanently_rejected, resting_predicates } = self;
+        let Self { best, evict_permanently_rejected, resting_predicates, root_snapshot } = self;
         // The pool iterator's hold watches the job's cancellation through a weak reference. A
         // dropped `CancelOnDrop` clone cancels the job, so only this owner, dropped with `ctx` when
         // the build returns, keeps one.
@@ -469,6 +485,7 @@ impl<Txs> Builder<'_, Txs> {
             .as_ref()
             .filter(|_| !ctx.attributes().no_tx_pool() && ctx.is_one_shot_building_active());
         let pre_block_changes = resting_store.map(|_| PreBlockChanges::default());
+        if ctx.builder_config.deferred_state_root.as_ref().is_some_and(|service| service.controlled(ctx.attributes().timestamp(), ctx.parent().number() + 1)) { state_root_handle = None; }
         let mut state_root_hook = state_root_handle.as_mut().map(|task| task.take_state_hook());
         if state_root_hook.is_some() || pre_block_changes.is_some() {
             let pre_block_changes = pre_block_changes.clone();
@@ -550,9 +567,22 @@ impl<Txs> Builder<'_, Txs> {
             .map(|(resting, store)| store.finish(resting.take_predicates()));
 
         let block_num = ctx.parent().number().saturating_add(1);
+        let deferred = ctx.builder_config.deferred_state_root.as_ref()
+            .filter(|service| service.active(ctx.attributes().timestamp(), block_num));
+        let parent_root = if let Some(service) = deferred {
+            if root_snapshot.is_none() { return Err(PayloadBuilderError::other(crate::PostStateRootManager::error("active builder requires an owned parent snapshot"))); }
+            let manager = service.manager()?;
+            let parent = ctx.parent();
+            let key = PostStateRootKey { hash: parent.hash(), parent_hash: parent.parent_hash(), number: parent.number() };
+            Some(if let Some(data) = manager.get(key, PostStateRootSource::Validator)? { data.root }
+                else { state_provider.state_root(HashedPostState::default())? })
+        } else { None };
+
         // Finishing drops the executor and its state hook, which closes the update stream so the
         // parallel state-root task can finish before its root is requested.
         let state_root = |_: &BlockExecutionOutput<N::Receipt>| {
+            if let Some(root) = parent_root { return Ok(Some((root, Default::default()))); }
+
             Ok::<_, BlockExecutionError>(state_root_handle.and_then(|mut task| {
                 match task.state_root() {
                     Ok(outcome) => {
@@ -595,14 +625,33 @@ impl<Txs> Builder<'_, Txs> {
 
         let execution_outcome =
             BlockExecutionOutput { state: execution_state, result: execution_result };
+        let serial_control = ctx.builder_config.deferred_state_root.as_ref().filter(|service| service.controlled(ctx.attributes().timestamp(), block_num));
+        let reexecution = serial_control.is_some_and(|service| service.reexecution(ctx.attributes().timestamp(), block_num));
+        if deferred.is_none() {
+            if let Some(service) = serial_control {
+                let key = PostStateRootKey { hash: sealed_block.hash(), parent_hash: sealed_block.parent_hash(), number: block_num };
+                service.manager()?.publish(key, PostStateRootSource::Builder, PostStateRootData::new(sealed_block.state_root(), &hashed_state, trie_updates.clone()))?;
+            }
+        }
 
         // create the executed block data
-        let executed: BuiltPayloadExecutedBlock<N> = BuiltPayloadExecutedBlock {
+        let executed: Option<BuiltPayloadExecutedBlock<N>> = if let Some(service) = deferred {
+            let snapshot = root_snapshot.ok_or_else(|| PayloadBuilderError::other(crate::PostStateRootManager::error("missing owned deferred root snapshot")))?;
+            let key = PostStateRootKey { hash: sealed_block.hash(), parent_hash: sealed_block.parent_hash(), number: block_num };
+            service.manager()?.enqueue_builder(key, Box::new(move || {
+                // Finalized output is authoritative for committed transactions and all system
+                // transitions. Borrowed speculative commit-condition views never enter this job.
+                let _finalized_output = execution_outcome;
+                let (root, updates) = snapshot.state_root_with_updates(hashed_state.clone())?;
+                Ok(PostStateRootData::new(root, &hashed_state, updates))
+            }))?;
+            None
+        } else if reexecution { None } else { Some(BuiltPayloadExecutedBlock {
             recovered_block: Arc::new(block),
             execution_output: Arc::new(execution_outcome),
             hashed_state: Arc::new(hashed_state),
             trie_updates: Arc::new(trie_updates),
-        };
+        }) };
 
         let no_tx_pool = ctx.attributes().no_tx_pool();
 
@@ -610,7 +659,7 @@ impl<Txs> Builder<'_, Txs> {
             ctx.payload_id(),
             sealed_block,
             info.total_fees,
-            Some(executed),
+            executed,
             block_access_list.map(|bal| alloy_rlp::encode(bal).into()),
         );
         // `no_tx_pool` builds replay consensus input; the payload-builder cutover also sends one
@@ -649,6 +698,9 @@ impl<Txs> Builder<'_, Txs> {
         Txs: PayloadTransactions<Transaction: PoolTransaction<Consensus = N::SignedTx>>,
         Attrs: Attributes<Transaction = N::SignedTx>,
     {
+        if ctx.builder_config.deferred_state_root.as_ref().is_some_and(|service| service.activation.is_some() || service.cohort != crate::PostStateRootCohort::Ordinary) {
+            return Err(PayloadBuilderError::other(crate::PostStateRootManager::error("witness generation is unsupported with deferred/root experiment configuration")));
+        }
         if ctx.cancel.is_cancelled() {
             return Err(PayloadBuilderError::other(BasePayloadBuilderError::Cancelled));
         }

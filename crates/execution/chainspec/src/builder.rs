@@ -185,11 +185,13 @@ impl BaseChainSpecBuilder {
             &inner.genesis,
             &inner.hardforks,
         ));
-        Ok(BaseChainSpec {
+        let spec = BaseChainSpec {
             inner,
             activation_admin_address: self.activation_admin_address,
             block_time: self.block_time,
-        })
+        };
+        spec.validate_deferred_state_root_schedule()?;
+        Ok(spec)
     }
 
     /// Build the resulting [`BaseChainSpec`].

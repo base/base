@@ -239,6 +239,7 @@ impl PerChainConfig {
                     denim: None,
                     everest: None,
                     zenith: None,
+                deferred_state_root: None,
                 },
             },
             chain_op_config: FeeConfig::base_mainnet(),

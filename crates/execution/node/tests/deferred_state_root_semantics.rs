@@ -3,13 +3,18 @@
 //! No provider root scalar is scripted. Each block transfers value using real EVM execution.
 
 use std::{io::Write, sync::{Arc, mpsc}, time::Duration};
-use alloy_consensus::{BlockBody, BlockHeader, Header, SignableTransaction, TxEip1559, TxReceipt, EMPTY_OMMER_ROOT_HASH};
+use alloy_consensus::{BlockBody, Header, SignableTransaction, TxEip1559, TxReceipt, EMPTY_OMMER_ROOT_HASH};
 use alloy_primitives::{Address, B256, TxKind, U256, keccak256};
 use base_common_consensus::{BaseBlock, BasePrimitives, BaseTxEnvelope};
 use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
 use base_execution_consensus::{BaseBeaconConsensus, calculate_receipt_root_no_memo};
 use base_execution_evm::BaseEvmConfig;
-use base_execution_payload_builder::BasePayloadTypes;
+use base_execution_payload_builder::{BasePayloadTypes, BaseBuiltPayload, BasePayloadBuilderAttributes, PostStateRootService, builder::{BasePayloadBuilderCtx, Builder}, config::BaseBuilderConfig, payload::EthPayloadBuilderAttributes};
+use base_execution_txpool::BasePooledTransaction;
+use reth_basic_payload_builder::{BuildOutcomeKind, PayloadConfig};
+use reth_payload_util::NoopPayloadTransactions;
+use alloy_eips::eip2718::Encodable2718;
+use alloy_rpc_types_engine::PayloadId;
 use base_node_core::{BaseNode, DeferredEngineValidator, DeferredStateRootState, DeferredStateRootStrategy, engine::BaseEngineValidator};
 use reth_chainspec::EthChainSpec;
 use reth_chain_state::CanonicalInMemoryState;
@@ -18,9 +23,9 @@ use reth_engine_tree::{chain::FromOrchestrator, engine::{EngineApiKind, EngineAp
 use reth_evm::{ConfigureEvm, database::StateProviderDatabase, execute::Executor};
 use reth_node_api::{BeaconEngineMessage, NoopInvalidBlockHook, NodeTypesWithDBAdapter};
 use reth_payload_builder::PayloadBuilderHandle;
-use reth_payload_primitives::PayloadTypes;
-use reth_primitives_traits::{Block, RecoveredBlock, SealedHeader, SignedTransaction};
-use reth_provider::{BlockExecutionOutput, BlockWriter, ExecutionOutcome, HashedPostStateProvider, LatestStateProviderRef, ProviderFactory, StateProvider, StateRootProvider, providers::BlockchainProvider, test_utils::create_test_provider_factory_with_node_types};
+use reth_payload_primitives::{BuiltPayload, PayloadTypes};
+use reth_primitives_traits::{Block, RecoveredBlock, SealedHeader, SignedTransaction, WithEncoded};
+use reth_provider::{BlockExecutionOutput, BlockWriter, ExecutionOutcome, HashedPostStateProvider, LatestStateProviderRef, ProviderFactory, StateProvider, StateProviderFactory, StateRootProvider, providers::BlockchainProvider, test_utils::create_test_provider_factory_with_node_types};
 use reth_storage_overlay::OverlayManager;
 use reth_tasks::Runtime;
 use reth_trie_common::{HashedPostState, KeccakKeyHasher, updates::TrieUpdates};
@@ -113,16 +118,45 @@ impl Fixture {
         Self::execute(self.factory, self.chain, parent, next.try_into_recovered().unwrap())
     }
 
+    /// Builds through the production native builder using an owned real parent snapshot.
+    pub fn native_payload(&self, service: Arc<PostStateRootService>) -> BaseBuiltPayload {
+        let provider = BlockchainProvider::new(self.factory.clone()).unwrap();
+        let proof = provider.state_by_block_hash(self.parent.hash()).unwrap();
+        let snapshot = provider.state_by_block_hash(self.parent.hash()).unwrap();
+        let id = PayloadId::new([0; 8]);
+        let attributes = BasePayloadBuilderAttributes {
+            payload_attributes: EthPayloadBuilderAttributes { id, parent: self.parent.hash(), timestamp: self.block.timestamp, ..Default::default() },
+            transactions: self.block.body().transactions.iter().map(|tx| WithEncoded::new(tx.encoded_2718().into(), tx.clone())).collect(),
+            no_tx_pool: true, gas_limit: Some(self.block.gas_limit), ..Default::default()
+        };
+        let ctx = BasePayloadBuilderCtx {
+            evm_config: BaseEvmConfig::<BaseChainSpec, BasePrimitives>::new(self.chain.clone()),
+            builder_config: BaseBuilderConfig { deferred_state_root: Some(service), ..Default::default() },
+            chain_spec: self.chain.clone(), config: PayloadConfig::new(Arc::new(self.parent.clone()), attributes, id),
+            cancel: Default::default(), best_payload: None,
+        };
+        let outcome = Builder::new(|_, _| NoopPayloadTransactions::<Arc<reth_transaction_pool::ValidPoolTransaction<BasePooledTransaction>>>::default())
+            .with_root_snapshot(snapshot).build(StateProviderDatabase::new((&proof).into_evm_state_provider()), proof.as_ref(), None, ctx).expect("real native fixture must build");
+        let BuildOutcomeKind::Freeze(payload) = outcome else { panic!("no-pool native fixture must return exactly Freeze"); };
+        payload
+    }
+
     /// Submits a resealed header through the real BasicEngineValidator and Engine API tree.
     pub fn submit(&self, commitment: B256, deferred: bool) -> alloy_rpc_types_engine::PayloadStatus {
+        let activation = if deferred && std::env::var("BASE_DEFERRED_TEST_WIRING").as_deref() != Ok("legacy") { Some(2) } else { None };
+        self.submit_with_service(commitment, Arc::new(PostStateRootService { activation, ..Default::default() }), true)
+    }
+
+    /// Validates independently against shared builder provenance without draining between blocks.
+    pub fn submit_with_service(&self, commitment: B256, service: Arc<PostStateRootService>, drain: bool) -> alloy_rpc_types_engine::PayloadStatus {
         let runtime = Runtime::test();
         let provider = BlockchainProvider::new(self.factory.clone()).unwrap();
         let overlay = OverlayManager::new(runtime.state_trie_overlay_worker_pool());
         let config = TreeConfig::default();
         let evm = BaseEvmConfig::new(self.chain.clone());
         let consensus = Arc::new(BaseBeaconConsensus::new(self.chain.clone()));
-        let activation = if deferred && std::env::var("BASE_DEFERRED_TEST_WIRING").as_deref() != Ok("legacy") { Some(2) } else { None };
-        let state = Arc::new(DeferredStateRootState { activation, ..Default::default() });
+        let activation = service.activation;
+        let state = Arc::new(DeferredStateRootState { service, ..Default::default() });
         let inner = BasicEngineValidator::new(provider.clone(), consensus.clone(), evm.clone(),
             BaseEngineValidator::<BaseTxEnvelope, _>::new::<KeccakKeyHasher>(self.chain.clone()),
             config.clone(), Box::new(NoopInvalidBlockHook::default()), overlay.clone(), runtime.clone())
@@ -141,8 +175,17 @@ impl Fixture {
         let (tx, rx) = oneshot::channel(); sender.send(FromEngine::Event(FromOrchestrator::Terminate { tx })).unwrap();
         runtime.handle().block_on(async { tokio::time::timeout(Duration::from_secs(10), rx).await.unwrap().unwrap(); });
         drop(sender);
-        if let Some(manager) = state.manager.get() { manager.drain().expect("owned root worker drains after engine termination"); }
-        if activation.is_none() { assert!(state.manager.get().is_none(), "off path allocates exactly zero root managers"); }
+        if let Some(manager) = state.service.manager.get() {
+            if status.status == alloy_rpc_types_engine::PayloadStatusEnum::Valid {
+                let mut sealed = self.block.clone().into_block(); sealed.header.state_root = commitment;
+                let key = base_execution_payload_builder::PostStateRootKey { hash: sealed.hash_slow(), parent_hash: sealed.header.parent_hash, number: sealed.header.number };
+                let data = manager.get(key, base_execution_payload_builder::PostStateRootSource::Validator).unwrap().expect("VALID must publish actual validator trie data");
+                assert_eq!(data.root, self.root, "VALID must publish the independently computed current MPT root, not the echoed parent commitment");
+                assert_eq!(*data.updates, self.updates, "VALID must publish exact real current trie updates before admission");
+            }
+            if drain { manager.drain().expect("owned root worker drains after engine termination"); }
+        }
+        if activation.is_none() && state.service.cohort == base_execution_payload_builder::PostStateRootCohort::Ordinary { assert!(state.service.manager.get().is_none(), "off path allocates exactly zero root managers"); }
         runtime.shutdown_timeout(Duration::from_secs(10)); status
     }
 }
@@ -164,6 +207,7 @@ fn c1_stock_golden() {
     let storage_nodes = updates.storage_tries_ref().iter().collect::<std::collections::BTreeMap<_, _>>();
     let golden = format!("{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}", a.block, a.output.receipts, hashed.accounts, storages, updates.account_nodes_ref(), storage_nodes, status, BasePayloadTypes::<BasePrimitives>::block_to_payload(a.block.clone().into_block().seal_slow(), None));
     eprintln!("BASELINE_GOLDEN_DIGEST={}", keccak256(golden.as_bytes()));
+    assert_eq!(keccak256(golden.as_bytes()), alloy_primitives::b256!("12429246b6b6753619b2b0980eec53f7d37b90a21bd0b3a0bdd6ad31e4822e3b"), "off execution must retain the immutable pre-production baseline digest");
     if let Ok(path) = std::env::var("BASE_DEFERRED_GOLDEN_PATH") {
         std::fs::OpenOptions::new().write(true).create_new(true).open(path).unwrap().write_all(golden.as_bytes()).unwrap();
     }
@@ -192,13 +236,51 @@ fn c3_wrong_deferred_root_resealed() {
 /// c4 activation must commit to the independently computed parent, never the current state.
 #[test]
 fn c4_activation_parent_post_state() {
-    let f = Fixture::new();
-    assert_ne!(f.parent.state_root, f.root, "activation fixture must distinguish real pre-state from real post-state");
+    let mut f = Fixture::new();
+    let activation = if std::env::var("BASE_DEFERRED_TEST_WIRING").as_deref() == Ok("legacy") { None } else { Some(2) };
+    let service = Arc::new(PostStateRootService { activation, ..Default::default() });
+    let first_payload = f.native_payload(service.clone());
     let genesis_root = f.parent.state_root; let first_root = f.root;
-    let first_header_root = f.block.state_root();
+    assert_ne!(genesis_root, first_root, "F-1 and F actual MPT roots must be distinct");
+    let first_header_root = first_payload.block().state_root;
+    if activation.is_some() { assert!(first_payload.executed_block().is_none(), "active native builds expose zero trusted executed objects"); }
+    if activation.is_some() {
+        assert_eq!(f.submit_with_service(first_header_root, service.clone(), false).status, alloy_rpc_types_engine::PayloadStatusEnum::Valid, "native F must pass independent re-execution and compare builder provenance");
+        f.block.set_state_root(first_header_root);
+    }
     let next = f.next();
+    let next_payload = next.native_payload(service.clone());
     assert_ne!(first_root, next.root, "F and F+1 actual MPT roots must be distinct");
     assert_ne!(genesis_root, next.root, "F-1 and F+1 actual MPT roots must be distinct");
     assert_eq!(first_header_root, genesis_root, "first active header F must commit R(F-1), not R(F)");
-    assert_eq!(next.block.state_root(), first_root, "active header F+1 must commit independent R(F), not delayed header F");
+    assert_eq!(next_payload.block().state_root, first_root, "active header F+1 must commit independent R(F), not delayed header F");
+    assert_eq!(next.submit_with_service(next_payload.block().state_root, service.clone(), false).status, alloy_rpc_types_engine::PayloadStatusEnum::Valid, "native F+1 with persisted delayed parent must validate using actual MPT state");
+    service.manager.get().unwrap().drain().expect("all detached root work drains");
+}
+
+/// The serial cohorts hold commitment/root algorithm fixed and vary only trusted insertion.
+#[test]
+fn serial_controls_preserve_current_root_and_insertion_policy() {
+    for cohort in [base_execution_payload_builder::PostStateRootCohort::SerialTrusted, base_execution_payload_builder::PostStateRootCohort::SerialReexecution] {
+        let fixture = Fixture::new();
+        let service = Arc::new(PostStateRootService { cohort, ..Default::default() });
+        let payload = fixture.native_payload(service.clone());
+        assert_eq!(payload.block().state_root, fixture.root, "S/R must commit the exact same-block independently computed root");
+        assert_eq!(payload.executed_block().is_some(), cohort == base_execution_payload_builder::PostStateRootCohort::SerialTrusted, "only S preserves trusted insertion; R must force independent newPayload execution");
+        let status = fixture.submit_with_service(payload.block().state_root, service.clone(), false);
+        assert_eq!(status.status, alloy_rpc_types_engine::PayloadStatusEnum::Valid, "both serial controls must pass exact current-root validation");
+        service.manager.get().unwrap().drain().unwrap();
+    }
+}
+
+/// A configured but future fork must preserve the native builder's exact legacy payload.
+#[test]
+fn pre_fork_native_payload_parity() {
+    let fixture = Fixture::new();
+    let off = Arc::new(PostStateRootService::default());
+    let future = Arc::new(PostStateRootService { activation: Some(3), ..Default::default() });
+    let ordinary = fixture.native_payload(off.clone()); let pre_fork = fixture.native_payload(future.clone());
+    assert_eq!(ordinary.block(), pre_fork.block(), "pre-F native header/body bytes must equal ordinary off payload exactly");
+    assert_eq!(ordinary.executed_block(), pre_fork.executed_block(), "pre-F finalized receipts/state/trie updates must equal ordinary off exactly");
+    assert!(off.manager.get().is_none() && future.manager.get().is_none(), "Never and pre-F build exactly zero root managers and enqueue zero jobs");
 }

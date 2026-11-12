@@ -280,7 +280,9 @@ mod tests {
         assert!(BaseUpgrade::Everest.is_contract_backed());
         assert!(BaseUpgrade::Everest.is_execution());
         assert_eq!(BaseUpgrade::from_contract_fork_name("everest"), Some(BaseUpgrade::Everest));
-        assert_eq!(BaseUpgrade::EXECUTION_VARIANTS.last(), Some(&BaseUpgrade::Everest));
+        assert_eq!(BaseUpgrade::EXECUTION_VARIANTS[13], BaseUpgrade::Everest, "Everest retains its execution-ladder index");
+        assert_eq!(BaseUpgrade::EXECUTION_VARIANTS[12], BaseUpgrade::Denim, "Everest immediately follows Denim");
+        assert_eq!(BaseUpgrade::EXECUTION_VARIANTS.last(), Some(&BaseUpgrade::DeferredStateRoot), "experimental root upgrade appends without changing existing indices");
         assert_eq!(BaseUpgrade::CONTRACT_VARIANTS.last(), Some(&BaseUpgrade::Everest));
     }
 

@@ -477,6 +477,11 @@ where
         )
     }
 
+    /// Maps the engine validator builder while preserving all existing RPC configuration.
+    pub fn with_engine_validator<T>(self, validator: T) -> BaseAddOns<N, EthB, PVB, EB, T, RpcMiddleware> {
+        BaseAddOns::new(self.rpc_add_ons.with_engine_validator(validator), self.da_config, self.gas_limit_config)
+    }
+
     /// Maps the [`PayloadValidatorBuilder`] builder type.
     pub fn with_payload_validator<T>(
         self,
@@ -1000,6 +1005,8 @@ pub struct BasePayloadBuilder {
     pub resource_metering: ResourceMeteringConfig,
     /// Shared, cross-job cache of permanently rejected transaction hashes.
     pub rejection_cache: RejectionCache,
+    /// Shared deferred-root experiment service, absent on ordinary nodes.
+    pub deferred_state_root: Option<Arc<base_execution_payload_builder::PostStateRootService>>,
 }
 
 impl Default for BasePayloadBuilder {
@@ -1012,6 +1019,7 @@ impl Default for BasePayloadBuilder {
             predicate_bucket_ordered_threshold: DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD,
             resource_metering: ResourceMeteringConfig::default(),
             rejection_cache: RejectionCache::default(),
+            deferred_state_root: None,
         }
     }
 }
@@ -1020,6 +1028,11 @@ impl BasePayloadBuilder {
     /// Create a new instance with the default configuration.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Shares the active root service with the checked validator.
+    pub fn with_deferred_state_root(mut self, service: Option<Arc<base_execution_payload_builder::PostStateRootService>>) -> Self {
+        self.deferred_state_root = service; self
     }
 
     /// Configure the data availability configuration for the payload builder.
@@ -1115,6 +1128,7 @@ where
                     resource_metering: self.resource_metering,
                     rejection_cache: self.rejection_cache,
                     state_provider_metrics: ctx.config().engine.state_provider_metrics,
+                    deferred_state_root: self.deferred_state_root,
                 },
             )
             .with_task_executor(ctx.task_executor().clone());

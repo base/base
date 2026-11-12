@@ -52,6 +52,9 @@ pub enum EngineQueriesError {
     /// The output channel was closed unexpectedly. Impossible to send query response.
     #[error("Output channel closed unexpectedly. Impossible to send query response")]
     OutputChannelClosed,
+    /// Output/config consumers cannot interpret delayed roots without a separate adapter.
+    #[error("output and rollup config queries are unsupported with DeferredStateRoot")]
+    DeferredStateRootUnsupported,
     /// Failed to retrieve the L2 block by label.
     #[error("Failed to retrieve L2 block by label: {0}")]
     BlockRetrievalFailed(#[from] EngineClientError),
@@ -75,6 +78,10 @@ impl EngineQueries {
         client: &Arc<EngineClient_>,
         rollup_config: &Arc<RollupConfig>,
     ) -> Result<(), EngineQueriesError> {
+        if rollup_config.upgrades.base.deferred_state_root.is_some()
+            && matches!(&self, Self::Config(_) | Self::OutputAtBlock { .. }) {
+            return Err(EngineQueriesError::DeferredStateRootUnsupported);
+        }
         let state = *state_recv.borrow();
 
         match self {

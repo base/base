@@ -378,6 +378,7 @@ impl ChainConfig {
                 // Zenith is a genesis-only testing gate and must never enter a canonical chain
                 // schedule. Devnets and tests opt in through custom genesis config instead.
                 zenith: None,
+                deferred_state_root: None,
             },
         }
     }

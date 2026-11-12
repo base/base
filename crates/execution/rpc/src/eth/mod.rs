@@ -19,6 +19,8 @@ use std::{
 };
 
 use alloy_primitives::U256;
+use alloy_eips::BlockId;
+use base_common_chains::BaseUpgrade;
 use base_common_rpc_types::BaseRpcTypes;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_evm::BaseNextBlockEnvAttributes;
@@ -30,15 +32,15 @@ use reth_node_api::{FullNodeComponents, FullNodeTypes, NodeTypes};
 use reth_node_builder::rpc::{EthApiBuilder, EthApiCtx, RpcNodeCoreFor};
 use reth_rpc::eth::core::EthApiInner;
 use reth_rpc_eth_api::{
-    EthApiTypes, FromEvmError, FullEthApiServer, RpcConvert, RpcConverter, RpcNodeCore,
+    EthApiTypes, FromEthApiError, FromEvmError, FullEthApiServer, RpcConvert, RpcConverter, RpcNodeCore,
     RpcNodeCoreExt, RpcTypes,
     helpers::{
         EthApiSpec, EthFees, EthState, GetBlockAccessList, LoadFee, LoadPendingBlock, LoadState,
         SpawnBlocking, Trace,
     },
 };
-use reth_rpc_eth_types::{EthApiSettings, EthStateCache, FeeHistoryCache, GasPriceOracle};
-use reth_storage_api::ProviderHeader;
+use reth_rpc_eth_types::{EthApiError, EthApiSettings, EthStateCache, FeeHistoryCache, GasPriceOracle};
+use reth_storage_api::{ProviderHeader, BlockIdReader};
 use reth_tasks::{
     Runtime,
     pool::{BlockingTaskGuard, BlockingTaskPool},
@@ -248,6 +250,23 @@ where
     Rpc: RpcConvert<Primitives = N::Primitives, Error = BaseEthApiError>,
     Self: LoadPendingBlock,
 {
+    /// Refuses proofs under the experimental schedule before any same-height header assumption.
+    fn ensure_within_proof_window(&self, block_id: BlockId) -> Result<(), Self::Error>
+    where
+        Self: EthApiSpec,
+    {
+        if self.provider().chain_spec().fork(BaseUpgrade::DeferredStateRoot) != reth_chainspec::ForkCondition::Never {
+            return Err(EthApiError::InvalidParams("proof RPC is unsupported with DeferredStateRoot".into()).into());
+        }
+        let chain_info = self.chain_info().map_err(Self::Error::from_eth_err)?;
+        let block_number = self.provider().block_number_for_id(block_id).map_err(Self::Error::from_eth_err)?
+            .ok_or(EthApiError::HeaderNotFound(block_id))?;
+        if chain_info.best_number.saturating_sub(block_number) > self.max_proof_window() {
+            return Err(EthApiError::ExceedsMaxProofWindow.into());
+        }
+        Ok(())
+    }
+
     #[inline]
     fn max_proof_window(&self) -> u64 {
         self.inner.eth_api.eth_proof_window()

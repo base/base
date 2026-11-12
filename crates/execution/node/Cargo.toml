@@ -84,6 +84,8 @@ alloy-genesis = { workspace = true, optional = true }
 reth-e2e-test-utils = { workspace = true, optional = true }
 
 [dev-dependencies]
+reth-payload-util.workspace = true
+reth-basic-payload-builder.workspace = true
 rstest.workspace = true
 reth-rpc.workspace = true
 reth-db-common.workspace = true
