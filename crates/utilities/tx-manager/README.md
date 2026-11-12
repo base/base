@@ -95,7 +95,7 @@ Sending a tx with n blobs:
   max_fee_per_blob_gas     = 2 × blob_base_fee
 
 Replacing it:
-  max_priority_fee_per_gas = 2 × max_priority_fee_per_gas
+  max_priority_fee_per_gas = max(2 × previous value, p × n)
   max_fee_per_gas          = max(2 × previous value, max_priority_fee_per_gas + 2 × base_fee)
   max_fee_per_blob_gas     = max(2 × previous value, 2 × blob_base_fee)
   once published: p        = max(p, max_priority_fee_per_gas / n)

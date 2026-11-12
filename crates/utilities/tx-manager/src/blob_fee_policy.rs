@@ -13,9 +13,11 @@ use crate::{FeeCalculator, FeeOverride, PreparedTx, TxManagerError, TxManagerRes
 ///
 /// A replacement doubles all three fields, the minimum L1 nodes accept to replace a blob
 /// transaction ([`replacement`](Self::replacement)), and is signed with these as a floor
-/// over the fees of a new transaction, so the fee caps follow L1 prices when they rose
-/// further ([`fees`](Self::fees)). Once published, it raises `p` to its
-/// `max_priority_fee_per_gas` per blob ([`record_replacement`](Self::record_replacement)).
+/// over the fees of a new transaction ([`fees`](Self::fees)). So its fee caps follow L1
+/// prices when they rose further, and its `max_priority_fee_per_gas` is `p × n` when
+/// another transaction raised `p` above twice its previous value. Once published, it
+/// raises `p` to its `max_priority_fee_per_gas` per blob
+/// ([`record_replacement`](Self::record_replacement)).
 /// When a transaction lands, `p` becomes 90% of the `max_priority_fee_per_gas` per blob it
 /// paid, and never less than the lower bound ([`record_landed`](Self::record_landed)).
 ///
@@ -80,7 +82,8 @@ impl BlobFeePolicy {
     }
 
     /// Returns the lowest fees that replace `old`, a transaction with `blob_count` blobs:
-    /// twice each of its fees. [`fees`](Self::fees) raises them to the current L1 prices.
+    /// twice each of its fees. [`fees`](Self::fees) raises them to `p` and the current L1
+    /// prices.
     ///
     /// # Errors
     ///
@@ -196,6 +199,19 @@ mod tests {
             fields(&fees),
             (expected_gwei.0 * GWEI, expected_gwei.1 * GWEI, Some(expected_gwei.2 * GWEI))
         );
+    }
+
+    /// A replacement takes `p × n` when another transaction raised `p` above twice its
+    /// previous `max_priority_fee_per_gas` per blob.
+    #[test]
+    fn a_replacement_follows_a_raised_carried_fee() {
+        let old = sent(6 * GWEI, 16 * GWEI, 20 * GWEI);
+        let policy = policy();
+        policy.record_replacement(4 * GWEI, 1);
+
+        let fees = policy.fees(6, GWEI, GWEI, policy.replacement(&old, 6).unwrap());
+
+        assert_eq!(fields(&fees), (24 * GWEI, 32 * GWEI, Some(40 * GWEI)));
     }
 
     /// A replacement up to the upper bound is allowed. Past it, no replacement exists.
