@@ -13,8 +13,13 @@ use reth_trie::LazyTrieData;
 use tokio::sync::Notify;
 use tracing::debug;
 
-/// Maximum number of blocks to cache trie data for.
-const CACHE_CAPACITY: usize = 1024;
+/// Default number of blocks to cache trie data for: about 34 minutes of chain at 200ms blocks.
+///
+/// Blocks produced while the node is down are never cached, so after a restart the sync loop
+/// re-executes that gap while new notifications fill the cache. If the cache evicts entries
+/// before the loop reaches them, those blocks must also be re-executed and the loop may never
+/// catch up, so this bounds the outage the node can recover from on its own.
+pub const DEFAULT_CACHE_CAPACITY: usize = 10_240;
 
 /// Cached trie data for a single block.
 #[derive(Debug)]
@@ -93,6 +98,7 @@ const fn earliest_revert(current: &BlockWithParent, new: BlockWithParent) -> Blo
 /// can still use pre-computed trie data for blocks from earlier notifications.
 pub struct SyncTarget {
     cache: Mutex<BTreeMap<u64, CachedBlockTrieData>>,
+    cache_capacity: usize,
     state: Mutex<Option<SyncTargetState>>,
     notify: Notify,
 }
@@ -104,9 +110,20 @@ impl Default for SyncTarget {
 }
 
 impl SyncTarget {
-    /// Create a new `SyncTarget` with no cached data and no pending state.
+    /// Create a new `SyncTarget` with no cached data, no pending state, and
+    /// [`DEFAULT_CACHE_CAPACITY`].
     pub fn new() -> Self {
-        Self { cache: Mutex::new(BTreeMap::new()), state: Mutex::new(None), notify: Notify::new() }
+        Self::with_cache_capacity(DEFAULT_CACHE_CAPACITY)
+    }
+
+    /// Create a new `SyncTarget` that caches trie data for at most `cache_capacity` blocks.
+    pub fn with_cache_capacity(cache_capacity: usize) -> Self {
+        Self {
+            cache: Mutex::new(BTreeMap::new()),
+            cache_capacity,
+            state: Mutex::new(None),
+            notify: Notify::new(),
+        }
     }
 
     /// Update the sync target state and wake the sync loop.
@@ -178,7 +195,7 @@ impl SyncTarget {
         let mut cache = self.cache.lock().expect("SyncTarget lock poisoned");
         cache.insert(block_number, data);
         let mut evicted = 0u64;
-        while cache.len() > CACHE_CAPACITY {
+        while cache.len() > self.cache_capacity {
             cache.pop_first();
             evicted += 1;
         }
@@ -561,7 +578,7 @@ mod tests {
         let target = SyncTarget::new();
 
         // Fill to capacity + 10
-        for n in 1..=(CACHE_CAPACITY as u64 + 10) {
+        for n in 1..=(DEFAULT_CACHE_CAPACITY as u64 + 10) {
             target.insert(n, dummy_cached_data(n));
         }
 
@@ -572,7 +589,21 @@ mod tests {
 
         // Block 11 onward should still be present
         assert!(target.take(11).is_some());
-        assert!(target.take(CACHE_CAPACITY as u64 + 10).is_some());
+        assert!(target.take(DEFAULT_CACHE_CAPACITY as u64 + 10).is_some());
+    }
+
+    #[test]
+    fn custom_cache_capacity_bounds_cache() {
+        let target = SyncTarget::with_cache_capacity(3);
+        for n in 1..=5 {
+            target.insert(n, dummy_cached_data(n));
+        }
+
+        assert!(target.take(1).is_none());
+        assert!(target.take(2).is_none());
+        for n in 3..=5 {
+            assert!(target.take(n).is_some(), "block {n} should still be cached");
+        }
     }
 
     #[test]

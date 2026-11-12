@@ -24,7 +24,7 @@ use reth_execution_types::Chain;
 use reth_exex::{ExExContext, ExExEvent, ExExNotification, ExExNotificationsStream};
 use reth_node_api::{FullNodeComponents, NodePrimitives, NodeTypes};
 use reth_provider::{BlockNumReader, BlockReader, TransactionVariant};
-pub use sync_target::{CachedBlockTrieData, SyncTarget, SyncTargetState};
+pub use sync_target::{CachedBlockTrieData, DEFAULT_CACHE_CAPACITY, SyncTarget, SyncTargetState};
 use tokio::task;
 use tracing::{debug, error, info};
 
@@ -60,6 +60,7 @@ where
     proofs_history_prune_interval: Duration,
     verification_interval: u64,
     max_prune_blocks_startup: u64,
+    cache_capacity: usize,
 }
 
 impl<Node, Storage> BaseProofsExExBuilder<Node, Storage>
@@ -75,6 +76,7 @@ where
             proofs_history_prune_interval: DEFAULT_PRUNE_INTERVAL,
             verification_interval: DEFAULT_VERIFICATION_INTERVAL,
             max_prune_blocks_startup: DEFAULT_MAX_PRUNE_BLOCKS_STARTUP,
+            cache_capacity: DEFAULT_CACHE_CAPACITY,
         }
     }
 
@@ -103,6 +105,13 @@ where
         self
     }
 
+    /// Sets the number of blocks of notification trie data the sync loop may buffer.
+    /// See [`DEFAULT_CACHE_CAPACITY`].
+    pub const fn with_cache_capacity(mut self, cache_capacity: usize) -> Self {
+        self.cache_capacity = cache_capacity;
+        self
+    }
+
     /// Builds the [`BaseProofsExEx`].
     pub fn build(self) -> BaseProofsExEx<Node, Storage> {
         BaseProofsExEx {
@@ -112,6 +121,7 @@ where
             proofs_history_prune_interval: self.proofs_history_prune_interval,
             verification_interval: self.verification_interval,
             max_prune_blocks_startup: self.max_prune_blocks_startup,
+            cache_capacity: self.cache_capacity,
         }
     }
 }
@@ -203,6 +213,9 @@ where
     /// Maximum blocks the startup check is willing to schedule for auto-prune. See
     /// [`DEFAULT_MAX_PRUNE_BLOCKS_STARTUP`].
     max_prune_blocks_startup: u64,
+    /// Maximum blocks of notification trie data buffered for the sync loop. See
+    /// [`DEFAULT_CACHE_CAPACITY`].
+    cache_capacity: usize,
 }
 
 impl<Node, Storage> BaseProofsExEx<Node, Storage>
@@ -319,7 +332,7 @@ where
     /// the chain tip. Blocks whose trie data was evicted from the cache fall
     /// back to full execution.
     fn spawn_sync_task(&self) -> Arc<SyncTarget> {
-        let sync_target = Arc::new(SyncTarget::new());
+        let sync_target = Arc::new(SyncTarget::with_cache_capacity(self.cache_capacity));
         let task_sync_target = Arc::clone(&sync_target);
 
         let task_storage = self.storage.clone();

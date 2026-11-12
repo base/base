@@ -3,7 +3,7 @@
 use std::{sync::Arc, time::Duration};
 
 use base_execution_chainspec::BaseChainSpec;
-use base_execution_exex::BaseProofsExEx;
+use base_execution_exex::{BaseProofsExEx, DEFAULT_CACHE_CAPACITY};
 use base_execution_rpc::{
     debug::{DebugApiExt, DebugApiOverrideServer},
     eth::proofs::{EthApiExt, EthApiOverrideServer},
@@ -67,6 +67,7 @@ pub async fn launch_node_with_proof_history(
         proofs_history_window,
         proofs_history_prune_interval,
         proofs_history_verification_interval,
+        proofs_history_cache_capacity,
         upgrade_signal,
         upgrade_signal_l1_rpc,
     } = args;
@@ -95,6 +96,7 @@ pub async fn launch_node_with_proof_history(
         proofs_history_window: DEFAULT_PROOFS_HISTORY_WINDOW_BLOCKS,
         proofs_history_prune_interval: Duration::from_secs(15),
         proofs_history_verification_interval: 0,
+        proofs_history_cache_capacity: DEFAULT_CACHE_CAPACITY,
         upgrade_signal,
         upgrade_signal_l1_rpc,
     }));
@@ -121,6 +123,7 @@ pub async fn launch_node_with_proof_history(
                     proofs_history_window,
                     proofs_history_prune_interval,
                     proofs_history_verification_interval,
+                    proofs_history_cache_capacity,
                 );
             }
             ProofsHistoryDbBackend::Mdbx => {
@@ -137,6 +140,7 @@ pub async fn launch_node_with_proof_history(
                     proofs_history_window,
                     proofs_history_prune_interval,
                     proofs_history_verification_interval,
+                    proofs_history_cache_capacity,
                 );
             }
         }
@@ -153,6 +157,7 @@ fn install_proofs_history<S>(
     proofs_history_window: u64,
     proofs_history_prune_interval: Duration,
     proofs_history_verification_interval: u64,
+    proofs_history_cache_capacity: usize,
 ) -> ProofHistoryNodeBuilder
 where
     S: BaseProofsBatchStore + DatabaseMetrics + Send + Sync + 'static,
@@ -174,6 +179,7 @@ where
                 .with_proofs_history_window(proofs_history_window)
                 .with_proofs_history_prune_interval(proofs_history_prune_interval)
                 .with_verification_interval(proofs_history_verification_interval)
+                .with_cache_capacity(proofs_history_cache_capacity)
                 .build()
                 .run()
                 .boxed())

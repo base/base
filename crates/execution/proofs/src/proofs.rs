@@ -45,6 +45,7 @@ impl BaseNodeExtension for ProofsHistoryExtension {
         let proofs_history_window = args.proofs_history_window;
         let proofs_history_prune_interval = args.proofs_history_prune_interval;
         let proofs_history_verification_interval = args.proofs_history_verification_interval;
+        let proofs_history_cache_capacity = args.proofs_history_cache_capacity;
 
         if proofs_history_enabled {
             let Some(path) = args.proofs_history_storage_path else {
@@ -92,6 +93,7 @@ impl BaseNodeExtension for ProofsHistoryExtension {
                         proofs_history_window,
                         proofs_history_prune_interval,
                         proofs_history_verification_interval,
+                        proofs_history_cache_capacity,
                     );
                 }
                 ProofsHistoryDbBackend::Mdbx => {
@@ -115,6 +117,7 @@ impl BaseNodeExtension for ProofsHistoryExtension {
                         proofs_history_window,
                         proofs_history_prune_interval,
                         proofs_history_verification_interval,
+                        proofs_history_cache_capacity,
                     );
                 }
             }
@@ -137,6 +140,7 @@ fn install_proofs_history<S>(
     proofs_history_window: u64,
     proofs_history_prune_interval: Duration,
     proofs_history_verification_interval: u64,
+    proofs_history_cache_capacity: usize,
 ) -> NodeHooks
 where
     S: BaseProofsBatchStore + DatabaseMetrics + Send + Sync + 'static,
@@ -159,6 +163,7 @@ where
                 .with_proofs_history_prune_interval(proofs_history_prune_interval)
                 .with_proofs_history_window(proofs_history_window)
                 .with_verification_interval(proofs_history_verification_interval)
+                .with_cache_capacity(proofs_history_cache_capacity)
                 .build()
                 .run())
         })
