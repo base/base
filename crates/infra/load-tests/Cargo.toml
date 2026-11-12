@@ -48,11 +48,11 @@ tracing.workspace = true
 humantime.workspace = true
 thiserror.workspace = true
 tokio-util.workspace = true
-serde_json.workspace = true
 serde_yaml.workspace = true
 parking_lot.workspace = true
 reqwest = { workspace = true, features = ["json"] }
 tokio = { workspace = true, features = ["signal"] }
+serde_json = { workspace = true, features = ["raw_value"] }
 
 [dev-dependencies]
 alloy-node-bindings.workspace = true

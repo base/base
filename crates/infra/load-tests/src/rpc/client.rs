@@ -1,4 +1,5 @@
 use std::{
+    borrow::Cow,
     fmt::Display,
     sync::{
         Arc,
@@ -16,6 +17,8 @@ use alloy_provider::{
 use base_common_network::Base;
 use base_execution_txpool::{ValidityAuthorizationError, ValidityPredicate};
 use futures::future::join_all;
+use serde::{Deserialize, Serialize};
+use serde_json::value::RawValue;
 use tokio::sync::Semaphore;
 use tracing::{instrument, warn};
 use url::Url;
@@ -192,32 +195,31 @@ const ETH_SEND_RAW_TRANSACTION: &str = "eth_sendRawTransaction";
 /// The `base_sendRawTransactionValidity` JSON-RPC method name.
 const BASE_SEND_RAW_TRANSACTION_VALIDITY: &str = "base_sendRawTransactionValidity";
 
-/// A single transaction to submit within a batch, along with any validity
-/// predicates that determine its submission method.
+/// A single transaction to submit within a batch, borrowed from the signed transaction.
 ///
 /// An empty `validity` list is submitted via `eth_sendRawTransaction`; a
 /// non-empty list is submitted via `base_sendRawTransactionValidity` carrying
 /// the predicates. Mixed batches are supported: the method is selected
 /// per element, and responses are correlated by JSON-RPC `id`.
-#[derive(Debug, Clone)]
-pub struct SubmitItem {
+#[derive(Debug, Clone, Copy)]
+pub struct SubmitItem<'a> {
     /// EIP-2718 encoded signed transaction bytes.
-    pub raw: Bytes,
+    pub raw: &'a Bytes,
     /// State predicates transported alongside the transaction. Empty for a
     /// plain `eth_sendRawTransaction` submission.
-    pub validity: Vec<ValidityPredicate>,
+    pub validity: &'a [ValidityPredicate],
     /// Optional sender authorization for the validity sidecar.
     pub validity_signature: Option<Signature>,
 }
 
-impl SubmitItem {
+impl<'a> SubmitItem<'a> {
     /// Creates a plain submission item with no validity predicates.
-    pub const fn plain(raw: Bytes) -> Self {
-        Self { raw, validity: Vec::new(), validity_signature: None }
+    pub const fn plain(raw: &'a Bytes) -> Self {
+        Self { raw, validity: &[], validity_signature: None }
     }
 
     /// Creates a submission item carrying validity predicates.
-    pub const fn with_validity(raw: Bytes, validity: Vec<ValidityPredicate>) -> Self {
+    pub const fn with_validity(raw: &'a Bytes, validity: &'a [ValidityPredicate]) -> Self {
         Self { raw, validity, validity_signature: None }
     }
 
@@ -226,6 +228,95 @@ impl SubmitItem {
         !self.validity.is_empty()
     }
 }
+
+/// One JSON-RPC request in a submission batch, serialized straight from borrowed transaction
+/// bytes and predicates without building an intermediate JSON value tree.
+#[derive(Debug, Serialize)]
+pub struct SubmitRequest<'a> {
+    /// JSON-RPC protocol version, always `"2.0"`.
+    pub jsonrpc: &'static str,
+    /// Position of the item in its chunk, echoed back by the node.
+    pub id: usize,
+    /// `eth_sendRawTransaction` or `base_sendRawTransactionValidity`.
+    pub method: &'static str,
+    /// Positional parameters for `method`.
+    pub params: SubmitParams<'a>,
+}
+
+/// Positional parameters of a [`SubmitRequest`].
+#[derive(Debug, Serialize)]
+#[serde(untagged)]
+pub enum SubmitParams<'a> {
+    /// `eth_sendRawTransaction` parameters: the raw transaction.
+    Plain((&'a Bytes,)),
+    /// `base_sendRawTransactionValidity` parameters: the raw transaction and its sidecar.
+    Validity((&'a Bytes, ValiditySidecar<'a>)),
+}
+
+/// Borrowed validity sidecar, wire-compatible with `TransactionValidity`.
+#[derive(Debug, Serialize)]
+pub struct ValiditySidecar<'a> {
+    /// State predicates the transaction is valid under.
+    pub validity: &'a [ValidityPredicate],
+    /// Optional sender authorization, omitted from the JSON when absent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub validity_signature: Option<Signature>,
+}
+
+impl<'a> From<(usize, &SubmitItem<'a>)> for SubmitRequest<'a> {
+    fn from((id, item): (usize, &SubmitItem<'a>)) -> Self {
+        let (method, params) = if item.is_validity() {
+            (
+                BASE_SEND_RAW_TRANSACTION_VALIDITY,
+                SubmitParams::Validity((
+                    item.raw,
+                    ValiditySidecar {
+                        validity: item.validity,
+                        validity_signature: item.validity_signature,
+                    },
+                )),
+            )
+        } else {
+            (ETH_SEND_RAW_TRANSACTION, SubmitParams::Plain((item.raw,)))
+        };
+        Self { jsonrpc: "2.0", id, method, params }
+    }
+}
+
+/// One JSON-RPC response in a submission batch, borrowing strings from the response body.
+#[derive(Debug, Deserialize)]
+pub struct SubmitReply<'a> {
+    /// Id of the request this reply answers.
+    #[serde(default)]
+    pub id: Option<u64>,
+    /// Transaction hash, when the node accepted the transaction.
+    #[serde(default, borrow)]
+    pub result: Option<ReplyStr<'a>>,
+    /// Error object, when the node rejected the transaction.
+    #[serde(default, borrow)]
+    pub error: Option<SubmitErrorReply<'a>>,
+}
+
+/// JSON-RPC error object of a [`SubmitReply`].
+#[derive(Debug, Deserialize)]
+pub struct SubmitErrorReply<'a> {
+    /// JSON-RPC error code.
+    #[serde(default)]
+    pub code: Option<i64>,
+    /// Human-readable error message.
+    #[serde(default, borrow)]
+    pub message: Option<ReplyStr<'a>>,
+    /// Arbitrary JSON, left unparsed; only a string value is a stable rejection reason.
+    #[serde(default, borrow)]
+    pub data: Option<&'a RawValue>,
+}
+
+/// String field of a [`SubmitReply`], borrowed from the response body unless it contains escapes.
+///
+/// Serde only borrows a `Cow<str>` field declared directly, not one nested in `Option`, so
+/// optional reply strings wrap it in this newtype.
+#[derive(Debug, Deserialize)]
+pub struct ReplyStr<'a>(#[serde(borrow)] pub Cow<'a, str>);
 
 /// Client for JSON-RPC batch requests.
 ///
@@ -357,7 +448,7 @@ impl BatchRpcClient {
     /// bytes (as produced by `Encodable2718::encoded_2718`).
     pub async fn send_raw_transactions(
         &self,
-        items: &[SubmitItem],
+        items: &[SubmitItem<'_>],
         request_limiter: Option<&Semaphore>,
     ) -> Result<Vec<BatchSendResult>> {
         if items.is_empty() {
@@ -385,66 +476,48 @@ impl BatchRpcClient {
 
     /// Builds the JSON-RPC batch array for a chunk of submission items,
     /// selecting the method per element and assigning sequential ids.
-    fn build_batch_body(chunk: &[SubmitItem]) -> Vec<serde_json::Value> {
-        chunk
-            .iter()
-            .enumerate()
-            .map(|(i, item)| {
-                if item.is_validity() {
-                    let mut options = serde_json::json!({ "validity": item.validity });
-                    if let Some(signature) = item.validity_signature {
-                        options["validity_signature"] = serde_json::json!(signature);
-                    }
-                    serde_json::json!({
-                        "jsonrpc": "2.0",
-                        "id": i,
-                        "method": BASE_SEND_RAW_TRANSACTION_VALIDITY,
-                        "params": [item.raw, options]
-                    })
-                } else {
-                    serde_json::json!({
-                        "jsonrpc": "2.0",
-                        "id": i,
-                        "method": ETH_SEND_RAW_TRANSACTION,
-                        "params": [item.raw]
-                    })
-                }
-            })
-            .collect()
+    fn build_batch_body<'a>(chunk: &[SubmitItem<'a>]) -> Vec<SubmitRequest<'a>> {
+        chunk.iter().enumerate().map(SubmitRequest::from).collect()
     }
 
     /// Correlates a JSON-RPC batch response array back to one
     /// [`BatchSendResult`] per input, keyed by response `id`. Inputs with no
-    /// matching response remain a client-side "missing response" error.
-    fn parse_batch_body(len: usize, body: Vec<serde_json::Value>) -> Vec<BatchSendResult> {
+    /// matching or well-formed response remain a client-side "missing response" error,
+    /// so one malformed element never discards the rest of the chunk.
+    fn parse_batch_body(len: usize, body: Vec<&RawValue>) -> Vec<BatchSendResult> {
         let mut results: Vec<BatchSendResult> = (0..len)
             .map(|_| BatchSendResult::Error(BatchSendError::client("missing response")))
             .collect();
 
-        for item in body {
-            let id = item["id"].as_u64().unwrap_or(u64::MAX) as usize;
-            if id >= results.len() {
-                warn!(id, "batch response contained out-of-range id");
-                continue;
-            }
-
-            if let Some(result) = item.get("result").and_then(|v| v.as_str()) {
-                match result.parse::<TxHash>() {
-                    Ok(hash) => results[id] = BatchSendResult::Success(hash),
-                    Err(e) => {
-                        results[id] = BatchSendResult::Error(BatchSendError::client(format!(
-                            "invalid tx hash: {e}"
-                        )));
-                    }
+        for element in body {
+            let reply = match serde_json::from_str::<SubmitReply<'_>>(element.get()) {
+                Ok(reply) => reply,
+                Err(error) => {
+                    warn!(error = %error, "skipping malformed batch response element");
+                    continue;
                 }
-            } else if let Some(error) = item.get("error") {
-                let msg = error.get("message").and_then(|m| m.as_str()).unwrap_or("unknown error");
-                let mut err = error.get("code").and_then(|c| c.as_i64()).map_or_else(
-                    || BatchSendError::client(msg),
-                    |code| BatchSendError::with_code(code, msg),
+            };
+            let Some(id) = reply.id.and_then(|id| usize::try_from(id).ok()).filter(|id| *id < len)
+            else {
+                warn!(id = ?reply.id, "batch response contained out-of-range id");
+                continue;
+            };
+
+            if let Some(result) = reply.result {
+                results[id] = match result.0.parse::<TxHash>() {
+                    Ok(hash) => BatchSendResult::Success(hash),
+                    Err(e) => BatchSendResult::Error(BatchSendError::client(format!(
+                        "invalid tx hash: {e}"
+                    ))),
+                };
+            } else if let Some(error) = reply.error {
+                let message = error.message.map_or(Cow::Borrowed("unknown error"), |m| m.0);
+                let mut err = error.code.map_or_else(
+                    || BatchSendError::client(message.as_ref()),
+                    |code| BatchSendError::with_code(code, message.as_ref()),
                 );
                 err.reason =
-                    error.get("data").and_then(serde_json::Value::as_str).map(str::to_owned);
+                    error.data.and_then(|data| serde_json::from_str::<String>(data.get()).ok());
                 results[id] = BatchSendResult::Error(err);
             }
         }
@@ -452,7 +525,7 @@ impl BatchRpcClient {
         results
     }
 
-    async fn send_raw_chunk(&self, chunk: &[SubmitItem]) -> Result<Vec<BatchSendResult>> {
+    async fn send_raw_chunk(&self, chunk: &[SubmitItem<'_>]) -> Result<Vec<BatchSendResult>> {
         let batch = Self::build_batch_body(chunk);
 
         let response =
@@ -470,22 +543,24 @@ impl BatchRpcClient {
             })?;
 
         let status = response.status();
-        let body_text = response.text().await.map_err(|error| {
+        let body_bytes = response.bytes().await.map_err(|error| {
             let error_kind = if error.is_timeout() { "timeout" } else { "transport" };
             BaselineError::Rpc(format!("failed to read batch send response body ({error_kind})"))
         })?;
 
         if !status.is_success() {
+            let body_text = String::from_utf8_lossy(&body_bytes);
             let preview = truncate_for_log(&body_text);
             return Err(BaselineError::Rpc(format!(
                 "batch send request returned HTTP {status}: {preview}"
             )));
         }
 
-        let body: Vec<serde_json::Value> = serde_json::from_str(&body_text).map_err(|e| {
+        let body: Vec<&RawValue> = serde_json::from_slice(&body_bytes).map_err(|e| {
+            let body_text = String::from_utf8_lossy(&body_bytes);
             let preview = truncate_for_log(&body_text);
             BaselineError::Rpc(format!(
-                "batch send response is not a JSON array: {e} (body: {preview})"
+                "batch send response is not a JSON-RPC array: {e} (body: {preview})"
             ))
         })?;
 
@@ -524,8 +599,9 @@ mod tests {
             Url::parse(&format!("http://user:secret@{address}")).expect("valid credentialed URL");
         let client = BatchRpcClient::new(url).expect("build batch client");
 
+        let raw = Bytes::from(vec![1]);
         let error = client
-            .send_raw_transactions(&[SubmitItem::plain(Bytes::from(vec![1]))], None)
+            .send_raw_transactions(&[SubmitItem::plain(&raw)], None)
             .await
             .expect_err("closed endpoint should reject request")
             .to_string();
@@ -538,13 +614,14 @@ mod tests {
 
     #[test]
     fn build_batch_body_mixes_methods_and_ids() {
-        let items = vec![
-            SubmitItem::plain(Bytes::from_static(&[0xaa])),
-            SubmitItem::with_validity(Bytes::from_static(&[0xbb]), vec![balance_predicate()]),
-        ];
+        let (plain, validity_raw) = (Bytes::from_static(&[0xaa]), Bytes::from_static(&[0xbb]));
+        let predicates = [balance_predicate()];
+        let items =
+            [SubmitItem::plain(&plain), SubmitItem::with_validity(&validity_raw, &predicates)];
 
-        let body = BatchRpcClient::build_batch_body(&items);
-        assert_eq!(body.len(), 2);
+        let body = serde_json::to_value(BatchRpcClient::build_batch_body(&items)).unwrap();
+        assert_eq!(body.as_array().unwrap().len(), 2);
+        assert_eq!(body[0]["jsonrpc"], "2.0");
 
         // Plain element: eth_sendRawTransaction with a positional raw param.
         assert_eq!(body[0]["id"], 0);
@@ -558,29 +635,59 @@ mod tests {
         assert_eq!(body[1]["params"][0], "0xbb");
         assert_eq!(body[1]["params"][1]["validity"][0]["type"], "balance");
         assert_eq!(body[1]["params"][1]["validity"][0]["params"]["op"], ">=");
+        assert!(body[1]["params"][1].get("validity_signature").is_none());
     }
 
     #[test]
     fn parse_batch_body_correlates_by_id() {
         let hash = "0x".to_string() + &"11".repeat(32);
-        let body = vec![
-            serde_json::json!({ "jsonrpc": "2.0", "id": 1, "result": hash }),
-            serde_json::json!({
+        let body = serde_json::json!([
+            { "jsonrpc": "2.0", "id": 1, "result": hash },
+            {
                 "jsonrpc": "2.0",
                 "id": 0,
-                "error": { "code": -32000, "message": "nonce too low" }
-            }),
-        ];
+                "error": { "code": -32000, "message": "nonce too low", "data": { "nested": 1 } }
+            },
+            { "jsonrpc": "2.0", "id": 2, "error": { "code": -32602, "message": "m", "data": "why" } },
+            { "jsonrpc": "2.0", "id": 3, "result": 7 },
+            { "jsonrpc": "2.0", "id": 9, "result": hash },
+            { "jsonrpc": "2.0", "id": null, "error": { "message": "parse error" } },
+        ])
+        .to_string();
 
-        let results = BatchRpcClient::parse_batch_body(2, body);
+        let results = BatchRpcClient::parse_batch_body(
+            4,
+            serde_json::from_str(&body).expect("valid JSON array"),
+        );
         match &results[0] {
             BatchSendResult::Error(e) => {
                 assert_eq!(e.code, Some(-32000));
                 assert_eq!(e.message, "nonce too low");
+                assert_eq!(e.reason, None, "non-string data is not a reason");
             }
             other => panic!("expected error, got {other:?}"),
         }
         assert!(matches!(results[1], BatchSendResult::Success(_)));
+        match &results[2] {
+            BatchSendResult::Error(e) => assert_eq!(e.reason.as_deref(), Some("why")),
+            other => panic!("expected error, got {other:?}"),
+        }
+        match &results[3] {
+            BatchSendResult::Error(e) => assert_eq!(e.message, "missing response"),
+            other => panic!("malformed element must only fail its own slot, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn submit_reply_borrows_unescaped_strings() {
+        let body = r#"{"id":0,"result":"0xabc","error":{"message":"m","data":"d"}}"#;
+        let reply: SubmitReply<'_> = serde_json::from_str(body).unwrap();
+        assert!(matches!(reply.result.unwrap().0, Cow::Borrowed("0xabc")));
+        assert!(matches!(reply.error.unwrap().message.unwrap().0, Cow::Borrowed("m")));
+
+        let escaped: SubmitReply<'_> =
+            serde_json::from_str(r#"{"error":{"message":"a\"b"}}"#).unwrap();
+        assert_eq!(escaped.error.unwrap().message.unwrap().0, "a\"b");
     }
 
     #[test]

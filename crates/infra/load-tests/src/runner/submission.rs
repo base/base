@@ -1034,12 +1034,12 @@ impl SubmissionPipeline {
                     return submitted;
                 }
             }
-            let submit_items: Vec<SubmitItem> = batch
+            let submit_items: Vec<SubmitItem<'_>> = batch
                 .txs
                 .iter()
                 .map(|signed| SubmitItem {
-                    raw: signed.raw.clone(),
-                    validity: signed.validity.clone(),
+                    raw: &signed.raw,
+                    validity: &signed.validity,
                     validity_signature: signed.validity_signature,
                 })
                 .collect();
