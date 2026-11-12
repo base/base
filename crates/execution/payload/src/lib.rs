@@ -39,7 +39,8 @@ pub use parkable::{
 
 mod metrics;
 pub use metrics::{
-    BuilderMetrics, ValidityEvaluationCounters, ValidityEvaluationOutcome, ValidityMetrics,
+    BuilderMetrics, EmptyBuildReason, ValidityEvaluationCounters, ValidityEvaluationOutcome,
+    ValidityMetrics,
 };
 
 mod deferrals;

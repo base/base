@@ -57,7 +57,7 @@ use tracing::{debug, debug_span, info, instrument, trace, warn};
 
 use crate::{
     Attributes, BasePayloadBuilderAttributes, BlockDeferrals, BuilderMetrics,
-    CoinbaseTipAffordability, HoldInterrupt, InclusionTracker, MeteringProvider,
+    CoinbaseTipAffordability, EmptyBuildReason, HoldInterrupt, InclusionTracker, MeteringProvider,
     ParkableBestPayloadTransactions, ParkablePayloadTransactions, ParkedPredicateIndex,
     PayloadPrimitives, PredicateLoadTracker, PredicateReadRecorder, RejectionCacheMetrics,
     RestingPredicateStore, SharedRestingPredicates, StateChangeEffects, ValidityEvaluationCounters,
@@ -657,6 +657,14 @@ impl<Txs> Builder<'_, Txs> {
                 info.finalization_exit_bound
             };
             BuilderMetrics::record_native_finalization(exit_bound, finish_duration);
+            if ctx.is_one_shot_building_active() {
+                BuilderMetrics::record_one_shot_scan(
+                    info.empty_build_reason(),
+                    info.pool_txs_yielded,
+                    info.finalization_observed_at.map(|at| at.duration_since(build_start)),
+                    info.first_inclusion_at.map(|at| at.duration_since(build_start)),
+                );
+            }
             let exit_bound = exit_bound.unwrap_or_default();
             if ctx.is_one_shot_building_active()
                 && exit_bound + seal_duration >= SLOW_FINALIZATION_THRESHOLD
@@ -785,6 +793,13 @@ pub struct ExecutionInfo {
     /// the scan cannot bound it. The caller bounds it from the build start; any delay before
     /// the build job started is outside both.
     pub finalization_requested_before_scan: bool,
+    /// One-shot builds only: when the scan first saw the finalization request.
+    pub finalization_observed_at: Option<Instant>,
+    /// Pool transactions the scan pulled from the pool iterator, including one it then left
+    /// unprocessed because the job was finalized or cancelled.
+    pub pool_txs_yielded: u64,
+    /// When the build included its first pool transaction.
+    pub first_inclusion_at: Option<Instant>,
 }
 
 impl ExecutionInfo {
@@ -800,15 +815,36 @@ impl ExecutionInfo {
             permanently_rejected_txs: Vec::new(),
             finalization_exit_bound: None,
             finalization_requested_before_scan: false,
+            finalization_observed_at: None,
+            pool_txs_yielded: 0,
+            first_inclusion_at: None,
         }
     }
 
-    /// Records a finalization request seen by the scan, given when the scan last saw none.
-    fn record_finalization(&mut self, last_unrequested: Option<Instant>) {
+    /// Records a finalization request the scan saw at `observed_at`, given when the scan last saw
+    /// none.
+    fn record_finalization(&mut self, last_unrequested: Option<Instant>, observed_at: Instant) {
+        self.finalization_observed_at = Some(observed_at);
         match last_unrequested {
             Some(at) => self.finalization_exit_bound = Some(at.elapsed()),
             None => self.finalization_requested_before_scan = true,
         }
+    }
+
+    /// Returns why the scan included no pool transaction, or `None` if it included one.
+    pub const fn empty_build_reason(&self) -> Option<EmptyBuildReason> {
+        if self.first_inclusion_at.is_some() {
+            return None;
+        }
+        Some(if self.finalization_requested_before_scan {
+            EmptyBuildReason::FinalizedBeforeScan
+        } else if self.finalization_exit_bound.is_some() {
+            EmptyBuildReason::FinalizedMidScan
+        } else if self.pool_txs_yielded == 0 {
+            EmptyBuildReason::PoolExhausted
+        } else {
+            EmptyBuildReason::AllSkipped
+        })
     }
 
     /// Returns true if the transaction would exceed the block limits:
@@ -1177,6 +1213,7 @@ where
         // `getPayload` waited for the scan, including a slow transaction or iterator wait.
         let mut last_unrequested = None;
         while let Some(pooled) = best_txs.next(()) {
+            info.pool_txs_yielded += 1;
             let tx = &pooled.transaction;
             if self.cancel.is_cancelled() {
                 cancelled = true;
@@ -1185,7 +1222,7 @@ where
             if can_finalize_early {
                 let checked_at = Instant::now();
                 if self.cancel.is_finalization_requested() {
-                    info.record_finalization(last_unrequested);
+                    info.record_finalization(last_unrequested, checked_at);
                     break;
                 }
                 last_unrequested = Some(checked_at);
@@ -1742,6 +1779,9 @@ where
                     .and_then(DepositReceiptExt::as_eip8130_receipt)
                     .is_some_and(|receipt| receipt.phase_committed(0))
             });
+            if info.first_inclusion_at.is_none() {
+                info.first_inclusion_at = Some(Instant::now());
+            }
             info.inclusion.record(
                 has_validity_predicates,
                 gas_used,
@@ -1783,7 +1823,7 @@ where
             && !info.finalization_requested_before_scan
             && self.cancel.is_finalization_requested()
         {
-            info.record_finalization(last_unrequested);
+            info.record_finalization(last_unrequested, Instant::now());
         }
 
         if let Some(predicate_eval_duration) = predicate_eval_duration {
@@ -1879,11 +1919,11 @@ mod tests {
         BasePayloadBuilderCtx, Builder, ExecutionInfo, RESTING_SWEEP_WAIT_LIMIT, job_interrupt,
     };
     use crate::{
-        BasePayloadBuilderAttributes, DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD, MeteringProvider,
-        NoopMeteringProvider, ParkablePayloadTransactions, ResourceMeteringConfig,
-        ResourceMeteringDimension, ResourceMeteringOperation, ResourceMeteringSchedule,
-        RestingPredicateStore, SharedMeteringProvider, SharedRestingPredicates,
-        config::BaseBuilderConfig, payload::EthPayloadBuilderAttributes,
+        BasePayloadBuilderAttributes, DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD, EmptyBuildReason,
+        MeteringProvider, NoopMeteringProvider, ParkablePayloadTransactions,
+        ResourceMeteringConfig, ResourceMeteringDimension, ResourceMeteringOperation,
+        ResourceMeteringSchedule, RestingPredicateStore, SharedMeteringProvider,
+        SharedRestingPredicates, config::BaseBuilderConfig, payload::EthPayloadBuilderAttributes,
     };
 
     fn state_root_handle() -> PayloadStateRootHandle {
@@ -2485,6 +2525,107 @@ mod tests {
         let info = scan_execution_info(&ctx, transactions);
 
         assert_eq!(info.finalization_exit_bound, None);
+    }
+
+    #[test]
+    fn finalization_before_scan_classifies_empty_build() {
+        let ctx = pool_payload_context(DENIM_TIMESTAMP);
+        ctx.cancel.request_finalization();
+        let transactions = TestParkableTransactions::new(vec![pool_transaction(0)]);
+
+        let info = scan_execution_info(&ctx, transactions);
+
+        assert_eq!(info.empty_build_reason(), Some(EmptyBuildReason::FinalizedBeforeScan));
+        assert!(info.finalization_observed_at.is_some());
+    }
+
+    #[test]
+    fn finalization_mid_scan_classifies_empty_build() {
+        // The nonce gap leaves the first candidate unexecutable, so the finalization request on
+        // the second pull stops a scan that included nothing.
+        let ctx = pool_payload_context(DENIM_TIMESTAMP);
+        let transactions = FinalizeAfterFirstTransaction {
+            transactions: TestParkableTransactions::new(vec![
+                pool_transaction(5),
+                pool_transaction(6),
+            ]),
+            calls: 0,
+            cancel: ManuallyDrop::new(ctx.cancel.clone()),
+        };
+
+        let info = scan_execution_info(&ctx, transactions);
+
+        assert_eq!(info.empty_build_reason(), Some(EmptyBuildReason::FinalizedMidScan));
+        assert_eq!(info.pool_txs_yielded, 2);
+    }
+
+    #[test]
+    fn empty_pool_classifies_empty_build() {
+        let ctx = pool_payload_context(DENIM_TIMESTAMP);
+
+        let info = scan_execution_info(&ctx, TestParkableTransactions::new(vec![]));
+
+        assert_eq!(info.empty_build_reason(), Some(EmptyBuildReason::PoolExhausted));
+        assert_eq!(info.pool_txs_yielded, 0);
+    }
+
+    #[test]
+    fn skipped_candidates_classify_empty_build() {
+        let ctx = pool_payload_context(DENIM_TIMESTAMP);
+
+        let info =
+            scan_execution_info(&ctx, TestParkableTransactions::new(vec![pool_transaction(5)]));
+
+        assert_eq!(info.empty_build_reason(), Some(EmptyBuildReason::AllSkipped));
+        assert_eq!(info.pool_txs_yielded, 1);
+    }
+
+    #[test]
+    fn included_transaction_leaves_build_unclassified() {
+        let ctx = pool_payload_context(DENIM_TIMESTAMP);
+
+        let info =
+            scan_execution_info(&ctx, TestParkableTransactions::new(vec![pool_transaction(0)]));
+
+        assert_eq!(info.empty_build_reason(), None);
+        assert!(info.first_inclusion_at.is_some());
+    }
+
+    #[cfg(feature = "metrics")]
+    #[test]
+    fn one_shot_builds_record_scan_metrics() {
+        let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+        let handle = recorder.handle();
+
+        metrics::with_local_recorder(&recorder, || {
+            // Pre-Denim builds are not one-shot and record nothing.
+            build_pool_payload(
+                pool_payload_context(DENIM_TIMESTAMP - 1),
+                TestParkableTransactions::new(vec![]),
+            );
+            assert!(!handle.render().contains("native_payload_pool_txs_yielded"));
+
+            build_pool_payload(
+                pool_payload_context(DENIM_TIMESTAMP),
+                TestParkableTransactions::new(vec![]),
+            );
+            build_pool_payload(
+                pool_payload_context(DENIM_TIMESTAMP),
+                TestParkableTransactions::new(vec![pool_transaction(0)]),
+            );
+        });
+
+        let rendered = handle.render();
+        for expected in [
+            r#"base_builder_native_payload_empty_builds_total{reason="pool_exhausted"} 1"#,
+            r#"base_builder_native_payload_pool_txs_yielded_count{empty="true"} 1"#,
+            r#"base_builder_native_payload_pool_txs_yielded_count{empty="false"} 1"#,
+            "base_builder_native_payload_first_tx_offset_duration_count 1",
+        ] {
+            assert!(rendered.contains(expected), "expected `{expected}`, got: {rendered}");
+        }
+        // Neither build saw a finalization request.
+        assert!(!rendered.contains("native_payload_scan_window_duration_count"));
     }
 
     #[test]
