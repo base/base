@@ -384,7 +384,9 @@ where
 
     /// Wall-clock time `handle`'s build was scheduled to start: its parent's timestamp.
     pub fn slot_start(&self, handle: &UnsealedPayloadHandle) -> SystemTime {
-        self.block_deadline(handle.attributes_with_parent.parent().block_info.number)
+        let parent_number = handle.attributes_with_parent.parent().block_info.number;
+        UNIX_EPOCH
+            + Duration::from_millis(self.rollup_config.l2_block_timestamp_millis(parent_number))
     }
 
     /// Records how long after its scheduled start `handle`'s build was requested from the engine.
