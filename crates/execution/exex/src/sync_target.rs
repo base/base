@@ -13,13 +13,13 @@ use reth_trie::LazyTrieData;
 use tokio::sync::Notify;
 use tracing::debug;
 
-/// Default number of blocks to cache trie data for: about 34 minutes of chain at 200ms blocks.
+/// Default number of blocks to cache trie data for: about 17 minutes of chain at 200ms blocks.
 ///
 /// Blocks produced while the node is down are never cached, so after a restart the sync loop
 /// re-executes that gap while new notifications fill the cache. If the cache evicts entries
 /// before the loop reaches them, those blocks must also be re-executed and the loop may never
 /// catch up, so this bounds the outage the node can recover from on its own.
-pub const DEFAULT_CACHE_CAPACITY: usize = 10_240;
+pub const DEFAULT_CACHE_CAPACITY: usize = 5_120;
 
 /// Cached trie data for a single block.
 #[derive(Debug)]

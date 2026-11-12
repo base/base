@@ -515,7 +515,7 @@ pub struct RollupArgs {
     pub proofs_history_verification_interval: u64,
 
     /// Maximum number of blocks of trie data from execution notifications to buffer for the
-    /// proofs history sync loop. Default is about 34 minutes of blocks at 200ms block time.
+    /// proofs history sync loop. Default is about 17 minutes of blocks at 200ms block time.
     ///
     /// Blocks produced while the node is down are always re-executed. While the sync loop works
     /// through that gap, new blocks are buffered here; if they are evicted before the loop
