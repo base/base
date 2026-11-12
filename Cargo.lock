@@ -5019,6 +5019,7 @@ dependencies = [
  "reth-trie",
  "reth-trie-common",
  "reth-trie-db",
+ "reth-trie-parallel",
  "rstest",
  "serde",
  "serde_json",

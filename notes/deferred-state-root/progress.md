@@ -81,3 +81,17 @@ Final passing test counts are 161 existing payload tests, 4 new integration gate
 7. Add matched O/S/R/D controls, accounting and the remaining acceptance/regression/fault/reorg tests. No performance claim or benchmark run is authorized.
 
 Do not push or open a PR from this checkpoint. The implementation is incomplete. Formatting and lint checks remain for the user, as requested.
+
+## Continuation: real-state baseline and active validator adapter
+
+Evidence directory `target/deferred-root-gate2/` is new; gate1 data was preserved.
+
+- Real disposable MDBX/static-file/RocksDB fixtures execute deterministic signed value transfers with BaseEvmConfig and calculate actual MPT roots/updates. No provider scalar is scripted.
+- `semantic-baseline7.log`: c1 passes, c2/c3/c4 fail on semantic assertions. c2 stock rejects the independently computed parent root; c3 stock accepts the wrong deferred same-block root; c4 stock emits current root rather than parent. c4 also computes a second transfer and checks all three actual roots differ before its commitment assertions. This assembly fixture does not yet exercise the native payload builder.
+- `semantic-baseline1.log` through `semantic-baseline4.log` are compile setup failures, not red evidence. `semantic-baseline5.log`/`6.log` also contain genuine assertions but the first Debug-based golden was nondeterministic. It was replaced with deterministic sorted materialization before production edits.
+- Immutable deterministic golden `baseline-golden2.txt`: SHA256 `777fc96a5a88224f2eb92aec4237b79d53bb168fc5b8e75d32525598f1dc9f16`, Keccak `12429246b6b6753619b2b0980eec53f7d37b90a21bd0b3a0bdd6ad31e4822e3b`. Covers block/payload, receipts, hashed state, sorted trie nodes, exact Engine status. It does not cover output/proof services, prewarm/hook matrices or native builder parity.
+- `semantic-golden-replay1.log`: exact immutable golden replay passes before production changes.
+- New production manager and validator adapter are NOT installed on node launch paths yet. Adapter independently resolves actual parent from public OverlayStateProviderFactory and computes current root/updates/sorted inputs with bounded serial work. Wrapper publishes only after inner validation success and constructs ExecutedBlock::new preserving BAL and existing timing allocation without reading stock pending trie data. Stock sorting remains runtime-owned and is not cancelled by this wrapper.
+- `manager1.log`: 3 new manager lifecycle tests pass, 161 pre-existing payload tests filtered out.
+- `strategy-semantic2.log`: c1 immutable golden replay passes through off wrapper with zero manager construction; c2 correct deferred parent passes real engine validation; c3 wrong deferred commitment returns INVALID with exact parent latestValidHash. c4 remains intentionally failing pending builder work. No no-patch blocker was found.
+- Remaining scope is still substantial: complete manager abandonment/admission/retention tests and builder provenance waiting, production schedule/wiring, owned detached builder snapshots, native builder activation test, pre-launch/storage/sync/service guards, controls/metrics and regression/fault/reorg suites. No benchmark/deployment or external interaction performed.
