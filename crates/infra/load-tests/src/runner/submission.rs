@@ -20,7 +20,7 @@ use alloy_signer_local::PrivateKeySigner;
 use base_common_consensus::{Call, Eip8130Signed, TxEip8130};
 use base_execution_txpool::{ValidityAuthorization, ValidityPredicate};
 use tokio::{
-    sync::{Mutex, Semaphore, mpsc},
+    sync::{Semaphore, mpsc},
     task::JoinHandle,
 };
 use tokio_util::sync::CancellationToken;
@@ -356,8 +356,8 @@ pub enum BatchTxError {
 
 /// A bounded queue with pending batch accounting.
 pub struct PipelineQueue<T> {
-    /// Queue receiver shared by workers.
-    pub receiver: Mutex<mpsc::Receiver<T>>,
+    /// Multi-consumer queue receiver shared by workers.
+    pub receiver: async_channel::Receiver<T>,
     /// Number of queued or in-progress batches.
     pub pending_batches: AtomicU64,
 }
@@ -372,8 +372,8 @@ impl<T> fmt::Debug for PipelineQueue<T> {
 
 impl<T> PipelineQueue<T> {
     /// Creates a queue wrapper.
-    pub fn new(receiver: mpsc::Receiver<T>) -> Self {
-        Self { receiver: Mutex::new(receiver), pending_batches: AtomicU64::new(0) }
+    pub const fn new(receiver: async_channel::Receiver<T>) -> Self {
+        Self { receiver, pending_batches: AtomicU64::new(0) }
     }
 
     /// Returns queued plus in-progress batch count.
@@ -415,7 +415,7 @@ impl fmt::Debug for SenderContext {
 
 /// Running submission pipeline.
 pub struct SubmissionPipeline {
-    signed_batch_tx: Option<mpsc::Sender<SignedBatch>>,
+    signed_batch_tx: Option<async_channel::Sender<SignedBatch>>,
     signed_queue: Arc<PipelineQueue<SignedBatch>>,
     shutdown: CancellationToken,
     sender_workers: Vec<JoinHandle<()>>,
@@ -452,8 +452,7 @@ impl SubmissionPipeline {
         submit_event_tx: mpsc::Sender<SubmitEvent>,
         config: PipelineStartConfig,
     ) -> Self {
-        let (signed_batch_tx, signed_batch_rx) =
-            mpsc::channel::<SignedBatch>(SUBMIT_BATCH_QUEUE_BUFFER);
+        let (signed_batch_tx, signed_batch_rx) = async_channel::bounded(SUBMIT_BATCH_QUEUE_BUFFER);
         let signed_queue = Arc::new(PipelineQueue::new(signed_batch_rx));
         let shutdown = CancellationToken::new();
         let sender_worker_count = Self::sender_worker_count(
@@ -524,19 +523,12 @@ impl SubmissionPipeline {
     }
 
     /// Closes the queue and summarizes queued-but-not-started batch failures.
-    pub async fn close_and_fail_queued(&self, reason: &'static str) -> QueuedSubmitFailures {
+    pub fn close_and_fail_queued(&self, reason: &'static str) -> QueuedSubmitFailures {
         self.shutdown.cancel();
         let mut failures = QueuedSubmitFailures::new(reason);
-        let abandoned_signed = {
-            let mut receiver = self.signed_queue.receiver.lock().await;
-            receiver.close();
-            let mut batches = Vec::new();
-            while let Ok(batch) = receiver.try_recv() {
-                batches.push(batch);
-            }
-            batches
-        };
-        for batch in abandoned_signed {
+        let receiver = &self.signed_queue.receiver;
+        receiver.close();
+        while let Ok(batch) = receiver.try_recv() {
             self.signed_queue.pending_batches.fetch_sub(1, Ordering::SeqCst);
             for signed in batch.txs {
                 failures.record(signed.from);
@@ -735,15 +727,12 @@ impl SubmissionPipeline {
         shutdown: CancellationToken,
     ) {
         loop {
-            let batch = {
-                let mut receiver = queue.receiver.lock().await;
-                tokio::select! {
-                    batch = receiver.recv() => batch,
-                    () = shutdown.cancelled() => None,
-                }
+            let batch = tokio::select! {
+                batch = queue.receiver.recv() => batch,
+                () = shutdown.cancelled() => break,
             };
 
-            let Some(batch) = batch else {
+            let Ok(batch) = batch else {
                 break;
             };
 
@@ -1146,7 +1135,7 @@ mod tests {
         ValidityPredicate,
     };
     use httpmock::prelude::*;
-    use tokio::sync::{mpsc, oneshot};
+    use tokio::sync::mpsc;
     use tokio_util::sync::CancellationToken;
 
     use super::{
@@ -1443,7 +1432,7 @@ mod tests {
             .expect("submit event channel open");
 
         let sender = Address::repeat_byte(0x11);
-        let (signed_batch_tx, signed_batch_rx) = mpsc::channel(2);
+        let (signed_batch_tx, signed_batch_rx) = async_channel::bounded(2);
         let signed_queue = Arc::new(PipelineQueue::new(signed_batch_rx));
         signed_queue.pending_batches.fetch_add(1, Ordering::SeqCst);
         signed_batch_tx
@@ -1475,12 +1464,7 @@ mod tests {
             sender_workers: Vec::new(),
         };
 
-        let failures = tokio::time::timeout(
-            Duration::from_millis(100),
-            pipeline.close_and_fail_queued("submit queue abandoned"),
-        )
-        .await
-        .expect("abandoned queue summary should not block on submit events");
+        let failures = pipeline.close_and_fail_queued("submit queue abandoned");
 
         assert_eq!(failures.reason, "submit queue abandoned");
         assert_eq!(failures.failed_count, 1);
@@ -1491,38 +1475,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn close_and_fail_queued_cancels_workers_before_locking_receivers() {
-        let (_signed_tx, signed_rx) = mpsc::channel(1);
-        let signed_queue = Arc::new(PipelineQueue::new(signed_rx));
-        let shutdown = CancellationToken::new();
-        let queue = Arc::clone(&signed_queue);
-        let worker_shutdown = shutdown.clone();
-        let (locked_tx, locked_rx) = oneshot::channel();
-        let holder = tokio::spawn(async move {
-            let _receiver = queue.receiver.lock().await;
-            let _ = locked_tx.send(());
-            worker_shutdown.cancelled().await;
-        });
-        locked_rx.await.expect("receiver holder must start");
-
-        let pipeline = SubmissionPipeline {
-            signed_batch_tx: None,
-            signed_queue,
-            shutdown,
-            sender_workers: Vec::new(),
-        };
-        tokio::time::timeout(
-            Duration::from_millis(100),
-            pipeline.close_and_fail_queued("submit queue abandoned"),
-        )
-        .await
-        .expect("queue close must release receiver holders before acquiring their locks");
-        holder.await.expect("receiver holder must stop cleanly");
-    }
-
-    #[tokio::test]
     async fn shutdown_timeout_is_shared_across_all_workers() {
-        let (_signed_tx, signed_rx) = mpsc::channel(1);
+        let (_signed_tx, signed_rx) = async_channel::bounded(1);
         let blocked_worker = || tokio::spawn(std::future::pending::<()>());
         let mut pipeline = SubmissionPipeline {
             signed_batch_tx: None,

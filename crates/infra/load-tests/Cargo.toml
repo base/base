@@ -49,6 +49,7 @@ thiserror.workspace = true
 tokio-util.workspace = true
 serde_yaml.workspace = true
 parking_lot.workspace = true
+async-channel.workspace = true
 reqwest = { workspace = true, features = ["json"] }
 tokio = { workspace = true, features = ["signal"] }
 serde_json = { workspace = true, features = ["raw_value"] }

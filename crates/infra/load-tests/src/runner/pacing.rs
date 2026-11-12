@@ -1031,8 +1031,7 @@ impl LoadRunner {
                     "timed out waiting for submit queue to drain, closing submit queue"
                 );
             }
-            let failures =
-                submission_pipeline.close_and_fail_queued("submit queue abandoned").await;
+            let failures = submission_pipeline.close_and_fail_queued("submit queue abandoned");
             Self::apply_queued_submit_failures(
                 failures,
                 &mut queued_per_sender,
@@ -2507,7 +2506,7 @@ mod tests {
                 .send(SubmitEvent::Submitted(TxHash::repeat_byte(0xaa)))
                 .await
                 .expect("second send should unblock only after event drain");
-            let _ = submission_pipeline.close_and_fail_queued("test queue close").await;
+            let _ = submission_pipeline.close_and_fail_queued("test queue close");
         };
 
         let (enqueue_result, ()) = {
