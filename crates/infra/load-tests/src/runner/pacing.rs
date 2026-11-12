@@ -1227,8 +1227,9 @@ impl LoadRunner {
 
     /// Bounded by the query client's [`RPC_TIMEOUT`](crate::rpc::RPC_TIMEOUT).
     async fn pending_nonce(client: &QueryProvider, sender: Address) -> Result<u64> {
-        client.get_transaction_count(sender).pending().await.map_err(|e| {
-            BaselineError::Rpc(format!("failed to fetch pending nonce for sender {sender}: {e}"))
+        // The transport error can embed a credential-bearing RPC URL, so it is not formatted.
+        client.get_transaction_count(sender).pending().await.map_err(|_| {
+            BaselineError::Rpc(format!("failed to fetch pending nonce for sender {sender}"))
         })
     }
 
