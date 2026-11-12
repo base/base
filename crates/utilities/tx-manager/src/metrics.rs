@@ -35,6 +35,12 @@ base_metrics::define_metrics! {
     #[describe("Blob fee cap in gwei")]
     #[label(name)]
     blob_fee_cap_gwei: gauge,
+    #[describe("max_priority_fee_per_gas per blob, in gwei, of each landed blob transaction")]
+    #[label(name)]
+    blob_tx_max_priority_fee_per_gas_per_blob_gwei: histogram,
+    #[describe("Number of published replacements of each landed blob transaction")]
+    #[label(name)]
+    blob_tx_replacements: histogram,
     #[describe("Total number of RPC errors")]
     #[label(name)]
     rpc_error_total: counter,
@@ -105,6 +111,11 @@ pub trait TxMetrics: Send + Sync + Debug + 'static {
     /// Record the blob fee cap in gwei (fractional precision preserved).
     fn record_blob_fee_cap(&self, blob_fee_cap_gwei: f64);
 
+    /// Record a landed blob transaction: the `max_priority_fee_per_gas` per blob, in gwei,
+    /// of the version that landed, and the number of replacements published before it
+    /// landed.
+    fn record_blob_tx_landed(&self, max_priority_fee_per_gas_per_blob_gwei: f64, replacements: u64);
+
     /// Record an RPC error.
     fn record_rpc_error(&self);
 
@@ -139,6 +150,12 @@ impl TxMetrics for NoopTxMetrics {
     fn record_basefee(&self, _basefee_gwei: f64) {}
     fn record_tipcap(&self, _tipcap_gwei: f64) {}
     fn record_blob_fee_cap(&self, _blob_fee_cap_gwei: f64) {}
+    fn record_blob_tx_landed(
+        &self,
+        _max_priority_fee_per_gas_per_blob_gwei: f64,
+        _replacements: u64,
+    ) {
+    }
     fn record_rpc_error(&self) {}
     fn record_tx_confirmed(&self) {}
     fn record_tx_failed(&self) {}
@@ -217,6 +234,16 @@ impl TxMetrics for BaseTxMetrics {
         TxManagerMetrics::blob_fee_cap_gwei(self.name).set(blob_fee_cap_gwei);
     }
 
+    fn record_blob_tx_landed(
+        &self,
+        max_priority_fee_per_gas_per_blob_gwei: f64,
+        replacements: u64,
+    ) {
+        TxManagerMetrics::blob_tx_max_priority_fee_per_gas_per_blob_gwei(self.name)
+            .record(max_priority_fee_per_gas_per_blob_gwei);
+        TxManagerMetrics::blob_tx_replacements(self.name).record(replacements as f64);
+    }
+
     fn record_rpc_error(&self) {
         TxManagerMetrics::rpc_error_total(self.name).increment(1);
     }
@@ -246,6 +273,7 @@ mod tests {
         m.record_basefee(30.123);
         m.record_tipcap(2.456);
         m.record_blob_fee_cap(1.0);
+        m.record_blob_tx_landed(0.02, 1);
         m.record_rpc_error();
         m.record_tx_confirmed();
         m.record_tx_failed();

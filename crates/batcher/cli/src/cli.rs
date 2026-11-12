@@ -166,7 +166,8 @@ pub struct BatcherArgs {
     )]
     pub publish_retry_delay: Duration,
 
-    /// Minimum L1 priority fee per gas (in gwei). Accepts decimal strings (e.g. `0.01`).
+    /// Minimum L1 priority fee per gas (in gwei) of calldata transactions. Accepts decimal
+    /// strings (e.g. `0.01`).
     ///
     /// Used in place of the tip the L1 node suggests when that one is lower.
     #[arg(
@@ -177,8 +178,8 @@ pub struct BatcherArgs {
     )]
     pub min_tip_cap: u128,
 
-    /// Minimum L1 base fee (in gwei) the fee cap is computed from. Accepts decimal strings
-    /// (e.g. `0.25`).
+    /// Minimum L1 base fee (in gwei) the fee cap of calldata transactions is computed from.
+    /// Accepts decimal strings (e.g. `0.25`).
     ///
     /// Used in place of the base fee of the latest L1 block when that one is lower.
     #[arg(
@@ -188,6 +189,26 @@ pub struct BatcherArgs {
         value_parser = base_tx_manager::GweiParser::parse_value
     )]
     pub min_basefee: u128,
+
+    /// Lowest `max_priority_fee_per_gas` per blob (in gwei) of blob transactions, which the
+    /// first one starts at. Accepts decimal strings (e.g. `0.01`).
+    #[arg(
+        long = "max-priority-fee-per-gas-per-blob-lower-bound",
+        default_value = "0.01",
+        env = "BASE_BATCHER_MAX_PRIORITY_FEE_PER_GAS_PER_BLOB_LOWER_BOUND",
+        value_parser = base_tx_manager::GweiParser::parse_value
+    )]
+    pub max_priority_fee_per_gas_per_blob_lower_bound: u128,
+
+    /// Highest `max_priority_fee_per_gas` per blob (in gwei) of blob transactions. Accepts
+    /// decimal strings (e.g. `10`).
+    #[arg(
+        long = "max-priority-fee-per-gas-per-blob-upper-bound",
+        default_value = "10",
+        env = "BASE_BATCHER_MAX_PRIORITY_FEE_PER_GAS_PER_BLOB_UPPER_BOUND",
+        value_parser = base_tx_manager::GweiParser::parse_value
+    )]
+    pub max_priority_fee_per_gas_per_blob_upper_bound: u128,
 
     /// DA backlog in estimated compressed bytes from which the batcher throttles, lowering the
     /// DA limits it pushes to the `--sequencer-urls` endpoints.
@@ -404,6 +425,10 @@ impl BatcherArgs {
             publish_retry_delay: self.publish_retry_delay,
             min_tip_cap: self.min_tip_cap,
             min_basefee: self.min_basefee,
+            max_priority_fee_per_gas_per_blob_lower_bound: self
+                .max_priority_fee_per_gas_per_blob_lower_bound,
+            max_priority_fee_per_gas_per_blob_upper_bound: self
+                .max_priority_fee_per_gas_per_blob_upper_bound,
             throttle: if self.no_throttle {
                 None
             } else {
@@ -575,6 +600,8 @@ mod tests {
         assert_eq!(config.network_timeout, Duration::from_secs(10));
         assert_eq!(config.min_tip_cap, 0);
         assert_eq!(config.min_basefee, 0);
+        assert_eq!(config.max_priority_fee_per_gas_per_blob_lower_bound, 10_000_000);
+        assert_eq!(config.max_priority_fee_per_gas_per_blob_upper_bound, 10_000_000_000);
         assert_eq!(config.throttle_strategy, ThrottleStrategy::Quadratic);
 
         assert_eq!(config.encoder_config.da_type, base_batcher_encoder::DaType::Blob);
@@ -639,6 +666,10 @@ mod tests {
             "0.01",
             "--min-basefee",
             "1.5",
+            "--max-priority-fee-per-gas-per-blob-lower-bound",
+            "0.02",
+            "--max-priority-fee-per-gas-per-blob-upper-bound",
+            "5",
             "--max-channel-duration",
             "10",
             "--sub-safety-margin",
@@ -690,6 +721,8 @@ mod tests {
         assert_eq!(config.publish_retry_delay, Duration::from_secs(3));
         assert_eq!(config.min_tip_cap, 10_000_000);
         assert_eq!(config.min_basefee, 1_500_000_000);
+        assert_eq!(config.max_priority_fee_per_gas_per_blob_lower_bound, 20_000_000);
+        assert_eq!(config.max_priority_fee_per_gas_per_blob_upper_bound, 5_000_000_000);
         assert_eq!(config.encoder_config.max_channel_duration, 10);
         assert_eq!(config.encoder_config.sub_safety_margin, 4);
         assert_eq!(config.max_pending_transactions, 4);
