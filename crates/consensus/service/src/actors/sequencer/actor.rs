@@ -324,7 +324,7 @@ where
         *shadow = Some(ShadowSequencingState::new(canonical_head)?);
         if self.is_active {
             let outcome = self.builder.build_on(canonical_head, self.shadow_funding).await?;
-            Self::apply_eager_build_outcome(outcome, pipeline, build_ticker);
+            self.apply_eager_build_outcome(outcome, pipeline, build_ticker);
         } else {
             pipeline.next_payload_to_seal = None;
         }
@@ -394,6 +394,20 @@ where
             + Duration::from_millis(self.rollup_config.l2_block_timestamp_millis(block_number))
     }
 
+    /// Wall-clock time `handle`'s build was scheduled to start: its parent's timestamp.
+    pub fn slot_start(&self, handle: &UnsealedPayloadHandle) -> SystemTime {
+        self.block_deadline(handle.attributes_with_parent.parent().block_info.number)
+    }
+
+    /// Records how long after its scheduled start `handle`'s build was requested from the engine.
+    pub fn record_build_start(&self, handle: &UnsealedPayloadHandle) {
+        let offset = handle
+            .build_requested_at
+            .duration_since(self.slot_start(handle))
+            .unwrap_or(Duration::ZERO);
+        Metrics::sequencer_build_start_offset_seconds().record(offset);
+    }
+
     /// Handles one admin API query received while the main loop is running, applying any
     /// resulting shadow-cycle reset and active-state bookkeeping.
     async fn handle_admin_query_tick(
@@ -452,7 +466,7 @@ where
                     .reconcile(head)?;
                 if self.is_active {
                     let outcome = self.builder.build_on(head, self.shadow_funding).await?;
-                    Self::apply_eager_build_outcome(outcome, pipeline, build_ticker);
+                    self.apply_eager_build_outcome(outcome, pipeline, build_ticker);
                 }
             }
             // The gate is not ready until every canonical P2P payload has arrived. Back off one
@@ -554,12 +568,14 @@ where
     /// Stores a build started outside the normal ticker path, scheduling only outcomes that need
     /// another attempt. A ready payload keeps the ticker target already owned by the caller.
     fn apply_eager_build_outcome(
+        &self,
         outcome: BuildOutcome<UnsealedPayloadHandle>,
         pipeline: &mut BuildPipelineState,
         build_ticker: &mut ScheduledTicker,
     ) {
         match outcome {
             BuildOutcome::Ready(payload) => {
+                self.record_build_start(&payload);
                 build_ticker.reset_l1_origin_retry_budget();
                 pipeline.next_payload_to_seal = Some(payload);
             }
@@ -579,6 +595,7 @@ where
     ) {
         match outcome {
             BuildOutcome::Ready(payload) => {
+                self.record_build_start(&payload);
                 let target =
                     self.block_seal_target(payload.block_number(), pipeline.last_seal_duration);
                 build_ticker.reset_l1_origin_retry_budget();
@@ -619,10 +636,8 @@ where
         let handle_block_number = handle.block_number();
         let payload_id = handle.payload_id;
         let trigger = if handle.frozen { SealTrigger::ReadyHint } else { SealTrigger::Deadline };
-        // The block's build was scheduled to start at its parent's timestamp.
-        let slot_start =
-            self.block_deadline(handle.attributes_with_parent.parent().block_info.number);
-        let request_offset = SystemTime::now().duration_since(slot_start).unwrap_or(Duration::ZERO);
+        let request_offset =
+            SystemTime::now().duration_since(self.slot_start(&handle)).unwrap_or(Duration::ZERO);
         match self.try_seal_handle(handle).await? {
             Some((new_sealer, dur)) => {
                 Metrics::sequencer_seals_total(trigger.as_str()).increment(1);
@@ -927,6 +942,8 @@ mod tests {
     use tokio::sync::watch;
 
     use super::*;
+    #[cfg(feature = "metrics")]
+    use crate::L1OriginSelectorError;
     use crate::{
         EngineActorRequest, EngineProcessor, EngineRequestReceiver, MockConductor,
         MockEngineDerivationClient, MockOriginSelector, MockSequencerEngineClient,
@@ -1368,6 +1385,99 @@ mod tests {
         }
     }
 
+    /// Returns every recorded build start offset, in seconds.
+    #[cfg(feature = "metrics")]
+    fn build_start_offsets(metrics: &[RecordedMetric]) -> Vec<f64> {
+        let mut offsets = Vec::new();
+        for (key, .., value) in metrics {
+            if key.key().name() != "base_node.sequencer_build_start_offset_seconds" {
+                continue;
+            }
+            let DebugValue::Histogram(samples) = value else {
+                panic!("build start offset must be a histogram, got {value:?}");
+            };
+            offsets.extend(samples.iter().map(|sample| sample.into_inner()));
+        }
+        offsets
+    }
+
+    /// Builds block 1 on a parent whose timestamp passed about five seconds ago.
+    #[cfg(feature = "metrics")]
+    #[tokio::test(start_paused = true)]
+    async fn build_records_when_it_was_requested_relative_to_its_parents_timestamp() {
+        let recorder = DebuggingRecorder::new();
+        let snapshotter = recorder.snapshotter();
+        let _metrics_guard = metrics::set_default_local_recorder(&recorder);
+
+        let mut actor = test_actor();
+        let slot_start = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() - 5;
+        let config = Arc::make_mut(&mut actor.rollup_config);
+        config.block_time = 2;
+        config.genesis.l2_time = slot_start;
+        config.upgrades.base.denim = Some(0);
+        actor.builder.rollup_config = Arc::clone(&actor.rollup_config);
+        actor.builder.attributes_builder.attributes = vec![Ok(BasePayloadAttributes::default())];
+        actor
+            .builder
+            .origin_selector
+            .expect_next_l1_origin()
+            .times(1)
+            .return_once(|_| Ok(BlockInfo::default()));
+        let since_slot_start =
+            move || (UNIX_EPOCH + Duration::from_secs(slot_start)).elapsed().unwrap().as_secs_f64();
+        let (at_request_tx, at_request_rx) = std::sync::mpsc::channel();
+        let mut engine = MockSequencerEngineClient::new();
+        engine.expect_start_build_block().times(1).return_once(move |_| {
+            at_request_tx.send(since_slot_start()).unwrap();
+            // Make an offset taken after the engine responds measurably later than the request.
+            std::thread::sleep(Duration::from_millis(2));
+            Ok(PayloadId::new([7; 8]))
+        });
+        actor.builder.engine_client = Arc::new(engine);
+        let mut pipeline = BuildPipelineState {
+            pending_build_parent: Some(L2BlockInfo::default()),
+            ..Default::default()
+        };
+        let mut ticker = ScheduledTicker::new(Duration::from_secs(2));
+
+        let before = since_slot_start();
+        actor.handle_build_tick(&mut pipeline, &mut ticker, None).await.unwrap();
+
+        assert!(pipeline.next_payload_to_seal.is_some());
+        let offsets = build_start_offsets(&snapshotter.snapshot().into_vec());
+        let at_request = at_request_rx.try_recv().unwrap();
+        // The offset counts from the parent's timestamp, 200 ms before the block's own.
+        assert_eq!(offsets.len(), 1);
+        assert!((before..=at_request).contains(&offsets[0]), "build start offset {offsets:?}");
+    }
+
+    /// A tick that cannot start a build, here for want of an L1 origin, has no build to time.
+    #[cfg(feature = "metrics")]
+    #[tokio::test(start_paused = true)]
+    async fn deferred_build_records_no_build_start() {
+        let recorder = DebuggingRecorder::new();
+        let snapshotter = recorder.snapshotter();
+        let _metrics_guard = metrics::set_default_local_recorder(&recorder);
+
+        let mut actor = test_actor();
+        actor
+            .builder
+            .origin_selector
+            .expect_next_l1_origin()
+            .times(1)
+            .return_once(|_| Err(L1OriginSelectorError::NotEnoughData(BlockInfo::default())));
+        let mut pipeline = BuildPipelineState {
+            pending_build_parent: Some(L2BlockInfo::default()),
+            ..Default::default()
+        };
+        let mut ticker = ScheduledTicker::new(Duration::from_secs(2));
+
+        actor.handle_build_tick(&mut pipeline, &mut ticker, None).await.unwrap();
+
+        assert!(pipeline.next_payload_to_seal.is_none());
+        assert_eq!(build_start_offsets(&snapshotter.snapshot().into_vec()), Vec::<f64>::new());
+    }
+
     /// A rebuild of the hinted block reuses its payload id, but seals on its own schedule until
     /// the execution layer reports the rebuild frozen.
     #[cfg(feature = "metrics")]
@@ -1418,6 +1528,7 @@ mod tests {
                 false,
             ),
             frozen: false,
+            build_requested_at: SystemTime::now(),
         };
         (ready, BuildPipelineState { next_payload_to_seal: Some(handle), ..Default::default() })
     }

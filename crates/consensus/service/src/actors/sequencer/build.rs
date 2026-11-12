@@ -5,7 +5,10 @@
 //! why a build could not start, and [`UnsealedPayloadHandle`], which carries the
 //! resulting payload identifier forward to the seal stage.
 
-use std::{sync::Arc, time::Instant};
+use std::{
+    sync::Arc,
+    time::{Instant, SystemTime},
+};
 
 use alloy_rpc_types_engine::PayloadId;
 use base_common_genesis::RollupConfig;
@@ -47,6 +50,9 @@ pub struct UnsealedPayloadHandle {
     /// Whether the execution layer reported this payload frozen, waking the seal ticker before
     /// the seal deadline.
     pub frozen: bool,
+    /// Wall-clock time the build was requested from the engine. A Denim build reads the
+    /// transaction pool once, after this request.
+    pub build_requested_at: SystemTime,
 }
 
 impl UnsealedPayloadHandle {
@@ -124,6 +130,7 @@ impl<A: AttributesBuilder, O: OriginSelector, E: SequencerEngineClient> PayloadB
         Metrics::sequencer_attributes_build_duration().record(attributes_build_start.elapsed());
 
         let build_request_start = Instant::now();
+        let build_requested_at = SystemTime::now();
 
         let payload_id =
             self.engine_client.start_build_block(attributes_with_parent.clone()).await?;
@@ -135,6 +142,7 @@ impl<A: AttributesBuilder, O: OriginSelector, E: SequencerEngineClient> PayloadB
             payload_id,
             attributes_with_parent,
             frozen: false,
+            build_requested_at,
         }))
     }
 
