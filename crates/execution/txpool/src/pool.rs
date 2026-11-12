@@ -2265,7 +2265,10 @@ where
         hold: Option<Box<dyn BestTransactionsHold<Self::Transaction>>>,
     ) -> Box<dyn ParkableBestTransactions<Self::Transaction>> {
         let base_fee = attributes.basefee;
-        let merged = self.merged_best_transactions(attributes);
+        let mut merged = self.merged_best_transactions(attributes);
+        // Snapshot every store, reth's included, so a transaction that arrives
+        // mid-build waits for the next build instead of joining this one.
+        merged.no_updates();
         Box::new(
             ParkedBestTransactions::new(merged, self.ordering.clone(), base_fee).with_hold(hold),
         )
@@ -2684,7 +2687,10 @@ fn pooled_element<T: BasePooledTx>(
 
 #[cfg(test)]
 mod tests {
-    use std::time::{Duration, Instant};
+    use std::{
+        collections::HashSet,
+        time::{Duration, Instant},
+    };
 
     use alloy_consensus::{
         SignableTransaction, Transaction, TxEip1559, TxEip7702,
@@ -4798,15 +4804,12 @@ mod tests {
         let sidecar = add(&pool, self_paid_eoa_8130(&signer, U256::from(8), 0, 0, 1_000)).await;
         let others_validity = add(&pool, validity_1559(&other, 0, 1_000)).await;
 
-        let removed: std::collections::HashSet<_> = pool
+        let removed: HashSet<_> = pool
             .remove_transactions_by_sender(signer.address())
             .iter()
             .map(|tx| *tx.hash())
             .collect();
-        assert_eq!(
-            removed,
-            std::collections::HashSet::from([standard, validity, channel_validity, sidecar])
-        );
+        assert_eq!(removed, HashSet::from([standard, validity, channel_validity, sidecar]));
         for hash in [standard, validity, channel_validity, sidecar] {
             assert_gone(&pool, hash);
         }
@@ -4856,6 +4859,48 @@ mod tests {
         assert!(yielded.contains(&rich_validity));
         assert!(!yielded.contains(&validity_successor));
         assert!(yielded.contains(&cheap_standard) && yielded.contains(&tipping_standard));
+    }
+
+    /// The builder walks the pool as it stood when the build started: a
+    /// transaction that arrives mid-build waits for the next build in every
+    /// store, however much it outbids what the snapshot holds.
+    #[tokio::test]
+    async fn parking_iterator_snapshots_every_store_at_build_start() {
+        let (pool, client) = build_integration_pool();
+        let signers: [_; 6] = std::array::from_fn(|_| funded_signer(&client));
+        let resting = HashSet::from([
+            add(&pool, signed_1559_with_fees(&signers[0], 0, 1_000, 1)).await,
+            add(&pool, validity_1559(&signers[1], 0, 1_000)).await,
+            add(&pool, self_paid_eoa_8130(&signers[2], U256::from(7), 0, 0, 1_000)).await,
+        ]);
+        let attributes = BestTransactionsAttributes::new(0, None);
+
+        let mut build = pool.best_transactions_with_attributes_and_parking(attributes, None);
+        let late = [
+            add(&pool, signed_1559_with_fees(&signers[3], 0, 1_000, 900)).await,
+            add(
+                &pool,
+                signed_1559_with_fees(&signers[4], 0, 1_000, 900)
+                    .with_validity_predicates(resting_predicates()),
+            )
+            .await,
+            add(&pool, self_paid_eoa_8130(&signers[5], U256::from(7), 0, 0, 1_000)).await,
+        ];
+        for (hash, store) in
+            late.into_iter().zip([PoolStore::Protocol, PoolStore::Validity, PoolStore::Sidecar])
+        {
+            assert_store(&pool, hash, store);
+        }
+
+        let yielded: HashSet<_> =
+            std::iter::from_fn(|| build.next()).map(|transaction| *transaction.hash()).collect();
+        assert_eq!(yielded, resting, "mid-build arrivals must not join the build");
+
+        let next: HashSet<_> = pool
+            .best_transactions_with_attributes_and_parking(attributes, None)
+            .map(|transaction| *transaction.hash())
+            .collect();
+        assert_eq!(next, resting.into_iter().chain(late).collect(), "the next build takes them");
     }
 
     /// The reviewer's case: a validity successor that outbids the standard
