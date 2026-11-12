@@ -2,7 +2,7 @@
 //! commitment wiring for the must-hold baseline failures; the default exercises the candidate.
 //! No provider root scalar is scripted. Each block transfers value using real EVM execution.
 
-use std::{collections::VecDeque, io::Write, sync::{Arc, Mutex, mpsc}, time::{Duration, Instant}};
+use std::{collections::VecDeque, future::Future, io::Write, pin::Pin, sync::{Arc, Mutex, mpsc}, task::Poll, time::{Duration, Instant}};
 use alloy_consensus::{BlockBody, Header, SignableTransaction, Transaction, TxEip1559, TxReceipt, EMPTY_OMMER_ROOT_HASH};
 use alloy_primitives::{Address, B256, TxKind, U256, keccak256};
 use base_common_consensus::{BaseBlock, BasePrimitives, BaseTxEnvelope, TxDeposit};
@@ -23,7 +23,7 @@ use reth_db_common::init::init_genesis;
 use reth_engine_tree::{chain::FromOrchestrator, engine::{EngineApiKind, EngineApiRequest, FromEngine}, persistence::PersistenceHandle, tree::{BasicEngineValidator, EngineApiTreeHandler, EngineValidator, TreeConfig}};
 use reth_evm::{ConfigureEvm, database::StateProviderDatabase, execute::Executor};
 use reth_node_api::{BeaconEngineMessage, NoopInvalidBlockHook, NodeTypesWithDBAdapter};
-use reth_payload_builder::PayloadBuilderHandle;
+use reth_payload_builder::{BuildNewPayload, PayloadBuilderHandle, PayloadJob, PayloadJobGenerator};
 use reth_payload_primitives::{BuiltPayload, BuiltPayloadExecutedBlock, PayloadTypes};
 use reth_primitives_traits::{Block, RecoveredBlock, SealedHeader, SignedTransaction, WithEncoded};
 use reth_provider::{BlockExecutionOutput, BlockWriter, ExecutionOutcome, HashedPostStateProvider, LatestStateProviderRef, ProviderFactory, StateProvider, StateProviderFactory, StateRootProvider, providers::BlockchainProvider, test_utils::create_test_provider_factory_with_node_types};
@@ -521,6 +521,161 @@ fn serial_trusted_insertion_survives_ready_retention() {
     assert_eq!(ready.order.len(), 0, "retirement must remove FIFO identities too");
     drop(ready);
     service.manager.get().unwrap().drain().unwrap();
+    runtime.shutdown_timeout(Duration::from_secs(2));
+}
+
+/// Dropped, never-exported native candidates must not consume protected comparison capacity.
+#[test]
+fn native_abandoned_candidates_survive_ready_capacity() {
+    for cohort in [PostStateRootCohort::SerialTrusted, PostStateRootCohort::SerialReexecution, PostStateRootCohort::Deferred] {
+        let mut fixture = Fixture::new();
+        let service = Arc::new(PostStateRootService { cohort, activation: (cohort == PostStateRootCohort::Deferred).then_some(2), limits: base_execution_payload_builder::PostStateRootLimits { ready: 2, ..Default::default() }, ..Default::default() });
+        for candidate in 0..5 {
+            let mut raw = fixture.block.clone().into_block();
+            raw.header.timestamp = 2 + candidate;
+            fixture.block = raw.try_into_recovered().unwrap();
+            let payload = fixture.native_payload(service.clone());
+            let key = base_execution_payload_builder::PostStateRootKey { hash: payload.block().hash(), parent_hash: fixture.parent.hash(), number: 1 };
+            service.manager().unwrap().wait_builder(key).unwrap();
+            drop(payload);
+        }
+        let manager = service.manager().unwrap();
+        manager.check_health().expect("more than twice ready-capacity abandoned candidates must leave a healthy manager");
+        assert_eq!(manager.ready.lock().unwrap().entries.len(), 0, "never-exported native candidates must retire without validator certification");
+        manager.drain().unwrap();
+    }
+}
+
+/// Identical sealed native builds share pending builder work, never validator certification.
+#[test]
+fn native_same_pending_builder_identity_is_idempotent() {
+    let fixture = Fixture::new();
+    let service = Arc::new(PostStateRootService { activation: Some(2), ..Default::default() });
+    let manager = service.manager().unwrap();
+    let parent = base_execution_payload_builder::PostStateRootKey { hash: fixture.parent.hash(), parent_hash: fixture.parent.parent_hash, number: 0 };
+    manager.publish(parent, base_execution_payload_builder::PostStateRootSource::Validator, base_execution_payload_builder::PostStateRootData::new(fixture.parent.state_root, &Default::default(), Default::default())).unwrap();
+    let (entered, started) = mpsc::channel();
+    let (release, blocked) = mpsc::channel();
+    let barrier = manager.enqueue(Box::new(move || { entered.send(()).unwrap(); blocked.recv().unwrap(); Ok(base_execution_payload_builder::PostStateRootData::new(B256::ZERO, &Default::default(), Default::default())) })).unwrap();
+    started.recv_timeout(Duration::from_secs(2)).unwrap();
+    let first = fixture.native_payload(service.clone());
+    let before = manager.admitted.load(std::sync::atomic::Ordering::Acquire);
+    let second = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| fixture.native_payload(service.clone())));
+    release.send(()).unwrap();
+    let _ = barrier.wait();
+    manager.drain().unwrap();
+    assert!(second.is_ok(), "a second native build of the same pending sealed identity must not fail admission");
+    let second = second.unwrap();
+    assert_eq!(second.block().hash(), first.block().hash(), "both native builds must seal the exact same identity");
+    assert_eq!(manager.admitted.load(std::sync::atomic::Ordering::Acquire), before, "identical pending builder identity must enqueue exactly zero additional root operations");
+    assert!(manager.get(base_execution_payload_builder::PostStateRootKey { hash: first.block().hash(), parent_hash: fixture.parent.hash(), number: 1 }, base_execution_payload_builder::PostStateRootSource::Validator).unwrap().is_none(), "builder deduplication must publish no validator certification");
+}
+
+/// Every supported RPC conversion/export pins a real native candidate after last payload drop.
+#[test]
+fn native_supported_exports_keep_comparison_protected() {
+    let fixture = Fixture::new();
+    for export in 0..7 {
+        let service = Arc::new(PostStateRootService { activation: Some(2), ..Default::default() });
+        let payload = fixture.native_payload(service.clone());
+        let key = base_execution_payload_builder::PostStateRootKey { hash: payload.block().hash(), parent_hash: fixture.parent.hash(), number: 1 };
+        service.manager().unwrap().wait_builder(key).unwrap();
+        match export {
+            0 => { let _: alloy_rpc_types_engine::ExecutionPayloadV1 = payload.clone().into(); }
+            1 => { let _: alloy_rpc_types_engine::ExecutionPayloadEnvelopeV2 = payload.clone().into(); }
+            2 => { let _: base_common_rpc_types_engine::BaseExecutionPayloadEnvelopeV3 = payload.clone().into(); }
+            3 => { let _: base_common_rpc_types_engine::BaseExecutionPayloadEnvelopeV4 = payload.clone().into(); }
+            4 => { let _: base_common_rpc_types_engine::BaseExecutionPayloadEnvelopeV5 = payload.clone().into(); }
+            5 => { let _: base_common_rpc_types_engine::ExecutionData = payload.clone().into(); }
+            6 => { let _ = payload.clone().into_sealed_block(); }
+            _ => unreachable!(),
+        }
+        drop(payload);
+        let manager = service.manager().unwrap();
+        assert!(manager.get(key, base_execution_payload_builder::PostStateRootSource::Builder).unwrap().is_some(), "every supported Engine export must protect its actual builder comparison after last payload drop");
+        assert!(manager.get(key, base_execution_payload_builder::PostStateRootSource::Validator).unwrap().is_none(), "export must never synthesize independent validator certification");
+        manager.drain().unwrap();
+    }
+}
+
+/// Exported getPayload candidates abandoned by later FCU remain bounded and fail closed.
+#[test]
+fn native_exported_unmatched_capacity_stays_protected() {
+    let mut fixture = Fixture::new();
+    let service = Arc::new(PostStateRootService { cohort: PostStateRootCohort::SerialReexecution, limits: base_execution_payload_builder::PostStateRootLimits { ready: 2, ..Default::default() }, ..Default::default() });
+    for candidate in 0..2 {
+        let mut raw = fixture.block.clone().into_block(); raw.header.timestamp = 2 + candidate; fixture.block = raw.try_into_recovered().unwrap();
+        let payload = fixture.native_payload(service.clone());
+        let _: base_common_rpc_types_engine::ExecutionData = payload.into();
+    }
+    let mut raw = fixture.block.clone().into_block(); raw.header.timestamp = 4; fixture.block = raw.try_into_recovered().unwrap();
+    let exhausted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| fixture.native_payload(service.clone())));
+    assert!(exhausted.is_err(), "a third exported unmatched identity must fail closed rather than discard either outstanding comparison");
+    let manager = service.manager().unwrap();
+    assert_eq!(manager.ready.lock().unwrap().entries.len(), 2, "both exported unmatched builder roots must remain protected at capacity");
+    assert!(manager.check_health().is_err(), "export capacity exhaustion is an operational stop, not synthetic certification");
+    manager.drain().unwrap();
+}
+
+/// Native execution adapter lets the pinned job own Better replacement and resolve/drop order.
+#[derive(Debug, Clone)]
+pub struct NativeLifecycleBuilder {
+    /// Serialized real MDBX execution fixture and build count.
+    pub state: Arc<Mutex<(Fixture, usize)>>,
+    /// Shared production manager service.
+    pub service: Arc<PostStateRootService>,
+}
+
+impl reth_basic_payload_builder::PayloadBuilder for NativeLifecycleBuilder {
+    type Attributes = BasePayloadBuilderAttributes<BaseTxEnvelope>;
+    type BuiltPayload = BaseBuiltPayload;
+
+    /// Builds distinct native sealed candidates while leaving ownership to BasicPayloadJob.
+    fn try_build(&self, args: reth_basic_payload_builder::BuildArguments<Self::Attributes, Self::BuiltPayload>) -> Result<reth_basic_payload_builder::BuildOutcome<Self::BuiltPayload>, reth_payload_builder::PayloadBuilderError> {
+        let mut state = self.state.lock().unwrap();
+        if state.1 >= 5 { return Ok(reth_basic_payload_builder::BuildOutcome::Aborted { fees: U256::ZERO, cached_reads: args.cached_reads }); }
+        let mut raw = state.0.block.clone().into_block(); raw.header.timestamp = 2 + state.1 as u64;
+        state.0.block = raw.try_into_recovered().unwrap();
+        let payload = state.0.native_payload(self.service.clone());
+        let key = base_execution_payload_builder::PostStateRootKey { hash: payload.block().hash(), parent_hash: state.0.parent.hash(), number: 1 };
+        self.service.manager().unwrap().wait_builder(key).unwrap();
+        state.1 += 1;
+        Ok(reth_basic_payload_builder::BuildOutcome::Better { payload, cached_reads: args.cached_reads })
+    }
+
+    /// Uses the same native execution path if the pinned job requests its empty fallback.
+    fn build_empty_payload(&self, _config: PayloadConfig<Self::Attributes>) -> Result<Self::BuiltPayload, reth_payload_builder::PayloadBuilderError> {
+        Ok(self.state.lock().unwrap().0.native_payload(self.service.clone()))
+    }
+}
+
+/// Real BasicPayloadJob replaces internal Better candidates, then exports only its resolved best.
+#[tokio::test]
+async fn basic_job_native_rebuild_drop_and_get_payload_lifecycle() {
+    let fixture = Fixture::new();
+    let provider = BlockchainProvider::new(fixture.factory.clone()).unwrap();
+    let parent_hash = fixture.parent.hash();
+    let runtime = Runtime::test();
+    let service = Arc::new(PostStateRootService { cohort: PostStateRootCohort::SerialReexecution, limits: base_execution_payload_builder::PostStateRootLimits { ready: 2, ..Default::default() }, ..Default::default() });
+    let state = Arc::new(Mutex::new((fixture, 0)));
+    let generator = reth_basic_payload_builder::BasicPayloadJobGenerator::with_builder(provider, runtime.clone(), reth_basic_payload_builder::BasicPayloadJobGeneratorConfig::default().interval(Duration::from_millis(1)).deadline(Duration::from_secs(10)), NativeLifecycleBuilder { state: state.clone(), service: service.clone() });
+    let mut job = generator.new_payload_job(BuildNewPayload { attributes: BasePayloadBuilderAttributes { payload_attributes: EthPayloadBuilderAttributes { timestamp: 2, ..Default::default() }, ..Default::default() }, parent_hash, resources: Default::default() }, PayloadId::new([0; 8])).unwrap();
+    let rebuilt = tokio::time::timeout(Duration::from_secs(5), futures::future::poll_fn(|cx| {
+        let _ = Pin::new(&mut job).poll(cx);
+        if job.best_payload().is_ok_and(|payload| payload.block().timestamp == 6) { Poll::Ready(()) } else { Poll::Pending }
+    })).await;
+    assert!(rebuilt.is_ok(), "real BasicPayloadJob must replace more than twice ready-capacity native Better candidates without exhausting protected provenance");
+    assert_eq!(state.lock().unwrap().1, 5, "exactly five native rebuilds must complete");
+    let (resolved, _) = job.resolve();
+    drop(job);
+    let payload = resolved.await.unwrap();
+    let key = base_execution_payload_builder::PostStateRootKey { hash: payload.block().hash(), parent_hash, number: 1 };
+    let exported: base_common_rpc_types_engine::ExecutionData = payload.into();
+    drop(exported);
+    let manager = service.manager().unwrap();
+    assert_eq!(manager.ready.lock().unwrap().entries.len(), 1, "only resolved exported candidate stays protected after internal Better replacements and job drop");
+    assert!(manager.get(key, base_execution_payload_builder::PostStateRootSource::Builder).unwrap().is_some(), "exported candidate abandoned before newPayload must retain its independent comparison input");
+    manager.drain().unwrap();
     runtime.shutdown_timeout(Duration::from_secs(2));
 }
 

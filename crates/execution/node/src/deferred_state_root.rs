@@ -188,7 +188,11 @@ impl<V> DeferredEngineValidator<V> {
         if staged.key.hash != block.hash() || staged.key.parent_hash != block.parent_hash || staged.key.number != block.number {
             return Err(error("ready root identity mismatch").into());
         }
-        self.state.service.manager().and_then(|manager| manager.wait_builder(staged.key).and_then(|()| manager.publish(staged.key, PostStateRootSource::Validator, staged.data.clone())))
+        self.state.service.manager().and_then(|manager| {
+            manager.wait_builder(staged.key)?;
+            manager.publish(staged.key, PostStateRootSource::Validator, staged.data.clone())?;
+            manager.complete_candidate(staged.key)
+        })
             .map_err(|e| InsertBlockError::new(output.executed_block.sealed_block().clone(), e.into()))?;
         // Do not read the stock pending handle. The runtime still owns its redundant sorting task;
         // replacing this handle does not cancel it or remove its cost from measurements.
@@ -215,7 +219,9 @@ where
         let key = PostStateRootKey { hash: block.recovered_block.hash(), parent_hash: block.recovered_block.parent_hash, number: block.recovered_block.number };
         let inserted = self.inner.on_inserted_executed_block(block)?;
         if controlled {
-            self.state.service.manager()?.retire_trusted_builder(key)?;
+            let manager = self.state.service.manager()?;
+            manager.retire_trusted_builder(key)?;
+            manager.complete_candidate(key)?;
             base_execution_payload_builder::PostStateRootMetrics::trusted_insertions().increment(1);
         }
         Ok(inserted)

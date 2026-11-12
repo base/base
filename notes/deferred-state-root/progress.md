@@ -250,3 +250,36 @@ Evidence in new `target/deferred-root-fork-fixes1/`; exact commands in `evidence
 | `candidate1.log` | **516 passed, 0 failed, 1 skipped** | Unfiltered six-library/four-integration candidate scope including strengthened offline snapshot copy/replay. |
 
 Targeted counts overlap the full runs and must not be added as unique tests. The existing ignored RPC WebSocket test still requires a localhost node. The unrelated randomized consensus transaction-content test passed this run; its historical flake remains disclosed and its source is untouched. `git diff --check` passes. No fmt, Clippy, zepter, reth/pin or upstream API changes, other-repo writes, new review round, push/PR, deployment or benchmark. Supported-host CLI/custom-builder compilation and the previously documented unsupported recovery/service boundaries remain unchanged. Parent owns final independent verification.
+
+## Native candidate ownership continuation from ba236505ac
+
+This correction starts on draft PR #6591's local HEAD `ba236505ac`. No push or external action was performed. The approved design document remains byte-unchanged. The parent explicitly approved the following implementation ownership boundary for this bench/devnet PoC before production edits.
+
+### Supported selection boundary and residual limitation
+
+- Every controlled native payload carries a clone-shared lease. Replacement of an internal Better candidate, losing resolve candidates, job abandonment and the last never-exported payload drop retire only that identity's Builder provenance. Reading `block()` does not select a candidate; pinned BasicPayloadJob reads it for ordinary build notifications.
+- Engine getPayload envelopes V1-V5, ExecutionData conversion, `into_sealed_block`, and successful `executed_block` extraction select the identity before exporting it. Normal Engine RPC/CL flow uses these boundaries. Merely resolving a job without exporting the result does not pin it.
+- Arbitrary raw `block()` cloning and later import outside those boundaries receives normal independent imported-block validation, but is outside builder cross-comparison ownership coverage. This is an explicit supported-boundary limitation, not a claim that any raw block clone is tracked.
+- An exported getPayload candidate abandoned by a later FCU remains protected. FCU does not prove it can never be imported or become a same-height fork. Configured retention/admission therefore bounds outstanding exported-unmatched comparisons and fails closed at capacity. Unlimited abandoned getPayload support is NOT claimed. The export/drop test models that ownership condition; it is not a live CL FCU-churn test.
+- The manager serializes last-owner retirement with worker publication. Never-exported late completion cannot restore a retired root; provider work and its deadline remain owned until completion/drain. Reacquisition of the same pending identity revives its shared ownership without launching a second builder operation.
+- Duplicate pending Builder identity is idempotent only after exact finalized hashed-state equality at native registration. Different input for the same sealed hash fails closed. Validator execution/root calculation is never coalesced or certified by this ownership mechanism. Existing real R/D root comparison and actual-parent DB fallback are retained.
+- Successful S insertion still retires only after the inner hook succeeds. Failed insertion preserves its exported Builder comparison. Real validator publication releases ownership metadata only after independent comparison. At full retention, a real matching validator may reuse its own compared Builder slot; aging out accepted Validator data cannot strand previously matched Builder data as a new protected comparison.
+- Never/pre-F allocate neither candidate leases nor the manager. No reth patch, schedule change, dependency, unsafe code, or new runtime task was added.
+
+### Failing-first and final verification
+
+New numbered evidence directory: `target/deferred-root-candidate-lifecycle1/`. Exact commands are in `evidence-commands1.txt`; no existing evidence was overwritten. All Rust commands use RUST_MIN_STACK=8388608 and scoped Justfile test-ci equivalents with nextest CI profile, locked/all-features/ci Cargo profile, zero retries and no fail-fast.
+
+| Evidence | Exact result | Interpretation |
+|---|---|---|
+| `red1.log` | **0 passed, 2 failed, 19 skipped by filter** | Original production HEAD with tests only. Real native S/R/D abandoned-candidate test reaches capacity failure in S before the other cohorts; duplicate D native sealed identity fails pending admission and its explicit assertion. |
+| `red2.log` | **0 passed, 1 failed, 20 skipped by filter** | Original production HEAD. Actual pinned BasicPayloadJob replacement of native Better candidates hits protected-ready exhaustion, then fails the rebuild assertion. Follow-on poisoned-fixture panics are consequences of that first real capacity failure, not separate defects. |
+| `green1.log` | **269 passed, 0 skipped** | Initial payload/node libraries plus native semantic integration scope. Overlaps later runs. |
+| `green2.log` | **524 passed, 1 skipped** | Six selected libraries and four integration targets before the final late-builder retention regression. Overlaps green3. |
+| `green3.log` | **525 passed, 0 failed, 1 skipped** | Final six-library/four-integration scope, including all nine added regressions and existing S insert-success/failure, R/D real MPT comparison, same-height forks, actual-parent fallback, Never/pre-F parity, populated prewarm, snapshot replay and real runner Engine flow. No warnings. |
+
+The new native loops use ready=2 and five distinct never-exported same-parent candidates, strictly exceeding twice the configured capacity. This exercises the same configurable capacity boundary as default ready=128 without 129 redundant disk-backed builds. The BasicPayloadJob test uses real native execution with a test adapter that returns Better to drive upstream ownership/replacement; it does not substitute a fake manager. Native pending-identity testing blocks the real worker, seals exactly the same hash twice, and asserts zero additional admitted root operations and zero Validator certification.
+
+Additional new tests cover every supported envelope/export conversion, protected exported capacity exhaustion, late completion after drop/reacquisition, changed finalized duplicate input, comparison at capacity preserving an unmatched same-height fork, and late builder comparison after independent validation. The existing `unmatched_builder_provenance_remains_protected` contract remains unchanged.
+
+Counts overlap and must not be summed. The one skipped pre-existing RPC WebSocket test requires localhost:8546. The unchanged randomized consensus transaction-content test passed this final run; its historical flake remains disclosed. `git diff --check` passes. No fmt, Clippy, zepter, broad clean, extra review round, CLI/custom-builder full package build, production/remote action, push or design-doc change. Supported-host compilation, parent CI/public-thread work and previously documented unsupported recovery/service boundaries remain outstanding.

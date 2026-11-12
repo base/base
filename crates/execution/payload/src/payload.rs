@@ -278,6 +278,8 @@ pub struct BaseBuiltPayload<N: NodePrimitives = BasePrimitives> {
     pub(crate) block_access_list: Option<Bytes>,
     /// The fees of the block
     pub(crate) fees: U256,
+    /// Internal candidate lifetime. Raw block inspection does not export comparison ownership.
+    pub candidate: Option<Arc<crate::PostStateRootCandidateLease>>,
 }
 
 // === impl BuiltPayload ===
@@ -291,7 +293,13 @@ impl<N: NodePrimitives> BaseBuiltPayload<N> {
         executed_block: Option<BuiltPayloadExecutedBlock<N>>,
         block_access_list: Option<Bytes>,
     ) -> Self {
-        Self { id, block, fees, executed_block, block_access_list }
+        Self { id, block, fees, executed_block, block_access_list, candidate: None }
+    }
+
+    /// Selects a supported Engine export, protecting its independent comparison until import.
+    /// Arbitrary raw `block()` clones are outside this builder comparison ownership contract.
+    pub fn select_candidate(&self) {
+        if let Some(candidate) = &self.candidate { candidate.select(); }
     }
 
     /// Returns the identifier of the payload.
@@ -311,6 +319,7 @@ impl<N: NodePrimitives> BaseBuiltPayload<N> {
 
     /// Converts the value into [`SealedBlock`].
     pub fn into_sealed_block(self) -> SealedBlock<N::Block> {
+        self.select_candidate();
         Arc::unwrap_or_clone(self.block)
     }
 }
@@ -327,6 +336,7 @@ impl<N: NodePrimitives> BuiltPayload for BaseBuiltPayload<N> {
     }
 
     fn executed_block(&self) -> Option<BuiltPayloadExecutedBlock<N>> {
+        if self.executed_block.is_some() { self.select_candidate(); }
         self.executed_block.clone()
     }
 
@@ -344,6 +354,7 @@ where
     N::SignedTx: SignedTransaction,
 {
     fn from(value: BaseBuiltPayload<N>) -> Self {
+        value.select_candidate();
         let BaseBuiltPayload { block, block_access_list, .. } = value;
         let block_hash = block.hash();
         let block = Arc::unwrap_or_clone(block).into_block();
@@ -363,6 +374,7 @@ where
     N: NodePrimitives<Block = Block<T>>,
 {
     fn from(value: BaseBuiltPayload<N>) -> Self {
+        value.select_candidate();
         Self::from_block_unchecked(
             value.block().hash(),
             &Arc::unwrap_or_clone(value.block).into_block(),
@@ -377,6 +389,7 @@ where
     N: NodePrimitives<Block = Block<T>>,
 {
     fn from(value: BaseBuiltPayload<N>) -> Self {
+        value.select_candidate();
         let BaseBuiltPayload { block, fees, .. } = value;
 
         Self {
@@ -395,6 +408,7 @@ where
     N: NodePrimitives<Block = Block<T>>,
 {
     fn from(value: BaseBuiltPayload<N>) -> Self {
+        value.select_candidate();
         let BaseBuiltPayload { block, fees, .. } = value;
 
         let parent_beacon_block_root = block.parent_beacon_block_root.unwrap_or_default();

@@ -663,6 +663,10 @@ impl<Txs> Builder<'_, Txs> {
             crate::metrics::PostStateRootMetrics::finalization_to_seal().record(finalization_start.elapsed().as_secs_f64());
             tracing::info!(target: "base_root_experiment", hash = %sealed_block.hash(), number = block_num, commitment_root = %sealed_block.state_root(), gas = info.cumulative_gas_used, "immutable payload sealed; not Engine acceptance");
         }
+        let candidate = serial_control.map(|service| {
+            let key = PostStateRootKey { hash: sealed_block.hash(), parent_hash: sealed_block.parent_hash(), number: block_num };
+            service.manager()?.candidate(key, &hashed_state)
+        }).transpose()?;
         if deferred.is_none() {
             if let Some(service) = serial_control {
                 let key = PostStateRootKey { hash: sealed_block.hash(), parent_hash: sealed_block.parent_hash(), number: block_num };
@@ -696,13 +700,14 @@ impl<Txs> Builder<'_, Txs> {
 
         let no_tx_pool = ctx.attributes().no_tx_pool();
 
-        let payload = BaseBuiltPayload::new(
+        let mut payload = BaseBuiltPayload::new(
             ctx.payload_id(),
             sealed_block,
             info.total_fees,
             executed,
             block_access_list.map(|bal| alloy_rlp::encode(bal).into()),
         );
+        payload.candidate = candidate;
         // `no_tx_pool` builds replay consensus input; the payload-builder cutover also sends one
         // to the unselected builder for every block. Only the builder that composed the block
         // records its inclusion.

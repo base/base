@@ -196,6 +196,64 @@ pub struct PostStateRootEntries {
     pub order: VecDeque<(PostStateRootKey, PostStateRootSource)>,
 }
 
+/// Finalized input and export ownership for one native sealed identity.
+#[derive(Debug)]
+pub struct PostStateRootCandidate {
+    /// Exact authoritative state; duplicate identity may not hide different execution.
+    pub hashed: HashedPostState,
+    /// Shared payload ownership, excluding the worker and manager.
+    pub lease: std::sync::Weak<PostStateRootCandidateLease>,
+    /// Exported payloads remain protected even if a later FCU abandons them.
+    pub selected: bool,
+}
+
+/// Clone-shared ownership of a never-exported native candidate.
+/// Engine conversions and executed/sealed extraction select it; block inspection does not.
+/// Arbitrary raw block clones are outside builder comparison ownership coverage. An exported
+/// candidate remains protected even after a later FCU abandons it; unmatched exports reaching
+/// the configured retention bound stop the experiment rather than losing comparisons.
+#[derive(Debug)]
+pub struct PostStateRootCandidateLease {
+    /// Owning service worker, retained independently by the runtime.
+    pub manager: std::sync::Weak<PostStateRootManager>,
+    /// Exact sealed identity.
+    pub key: PostStateRootKey,
+}
+
+impl PostStateRootCandidateLease {
+    /// Protects an exported candidate until real independent validation or S insertion.
+    pub fn select(&self) {
+        if let Some(manager) = self.manager.upgrade() {
+            match manager.candidates.lock() {
+                Ok(mut candidates) => { if let Some(candidate) = candidates.get_mut(&self.key) { candidate.selected = true; } }
+                Err(_) => { manager.failed.store(true, Ordering::Release); }
+            }
+        }
+    }
+}
+
+impl Drop for PostStateRootCandidateLease {
+    fn drop(&mut self) {
+        if let Some(manager) = self.manager.upgrade() {
+            let retire = || -> ProviderResult<()> {
+                let mut candidates = manager.candidates.lock().map_err(PostStateRootManager::error)?;
+                if let Some(candidate) = candidates.get(&self.key) {
+                    // A fresh owner may have reacquired this identity while this destructor waited.
+                    if candidate.lease.as_ptr() != self as *const Self { return Ok(()); }
+                    if candidate.selected {
+                        if manager.get(self.key, PostStateRootSource::Validator)?.is_some() && !manager.builders.lock().map_err(PostStateRootManager::error)?.contains_key(&self.key) { candidates.remove(&self.key); }
+                        return Ok(());
+                    }
+                    manager.retire_trusted_builder(self.key)?;
+                    if !manager.builders.lock().map_err(PostStateRootManager::error)?.contains_key(&self.key) { candidates.remove(&self.key); }
+                }
+                Ok(())
+            };
+            if retire().is_err() { manager.failed.store(true, Ordering::Release); }
+        }
+    }
+}
+
 /// One serial worker and bounded, branch-indexed ready retention.
 #[derive(Debug)]
 pub struct PostStateRootManager {
@@ -213,6 +271,8 @@ pub struct PostStateRootManager {
     pub builders: Mutex<BTreeMap<PostStateRootKey, Instant>>,
     /// Exact admitted provider operations for per-run root-work accounting.
     pub admitted: AtomicUsize,
+    /// Native candidate ownership; exported unmatched comparisons are never silently evicted.
+    pub candidates: Mutex<BTreeMap<PostStateRootKey, PostStateRootCandidate>>,
 }
 
 impl PostStateRootManager {
@@ -241,7 +301,7 @@ impl PostStateRootManager {
                 }
             }
         }).map_err(Self::error)?;
-        Ok(Self { limits, sender: Mutex::new(Some(sender)), worker: Mutex::new(Some(worker)), failed, ready: Mutex::default(), builders: Mutex::default(), admitted: AtomicUsize::new(0) })
+        Ok(Self { limits, sender: Mutex::new(Some(sender)), worker: Mutex::new(Some(worker)), failed, ready: Mutex::default(), builders: Mutex::default(), admitted: AtomicUsize::new(0), candidates: Mutex::default() })
     }
 
     /// Creates an engine-fatal provider error rather than a consensus-invalid payload error.
@@ -271,11 +331,37 @@ impl PostStateRootManager {
         Ok(PostStateRootCompletion { receiver, cancelled, failed: self.failed.clone(), deadline, detached, completed: false })
     }
 
+    /// Acquires shared native payload ownership and verifies duplicate finalized state exactly.
+    pub fn candidate(self: &Arc<Self>, key: PostStateRootKey, hashed: &HashedPostState) -> ProviderResult<Arc<PostStateRootCandidateLease>> {
+        self.check_health()?;
+        if self.get(key, PostStateRootSource::Builder)?.is_some_and(|data| *data.sorted.hashed_state != hashed.clone_into_sorted()) {
+            self.failed.store(true, Ordering::Release);
+            return Err(Self::error("duplicate builder identity has different finalized state"));
+        }
+        let mut candidates = self.candidates.lock().map_err(Self::error)?;
+        if let Some(candidate) = candidates.get_mut(&key) {
+            if candidate.hashed != *hashed {
+                self.failed.store(true, Ordering::Release);
+                return Err(Self::error("duplicate builder identity has different finalized state"));
+            }
+            if let Some(lease) = candidate.lease.upgrade() { return Ok(lease); }
+            let lease = Arc::new(PostStateRootCandidateLease { manager: Arc::downgrade(self), key });
+            candidate.lease = Arc::downgrade(&lease);
+            return Ok(lease);
+        }
+        let lease = Arc::new(PostStateRootCandidateLease { manager: Arc::downgrade(self), key });
+        candidates.insert(key, PostStateRootCandidate { hashed: hashed.clone(), lease: Arc::downgrade(&lease), selected: false });
+        Ok(lease)
+    }
+
     /// Queues owned builder state without awaiting its current root on the seal path.
     pub fn enqueue_builder(self: &Arc<Self>, key: PostStateRootKey, operation: PostStateRootOperation) -> ProviderResult<()> {
+        self.check_health()?;
         {
             let mut builders = self.builders.lock().map_err(Self::error)?;
-            if builders.len() >= self.limits.queued + 1 || builders.contains_key(&key) {
+            if builders.contains_key(&key) { return Ok(()); }
+            if self.get(key, PostStateRootSource::Builder)?.is_some() { return Ok(()); }
+            if builders.len() >= self.limits.queued + 1 {
                 self.failed.store(true, Ordering::Release);
                 return Err(Self::error("builder root admission capacity or duplicate identity"));
             }
@@ -285,9 +371,17 @@ impl PostStateRootManager {
         match self.enqueue(Box::new(move || {
             let result = operation().and_then(|data| {
                 manager.check_health()?;
-                manager.publish(key, PostStateRootSource::Builder, data.clone())?; Ok(data)
+                // Serialize publication with last-owner retirement; the worker is not a payload owner.
+                let candidates = manager.candidates.lock().map_err(Self::error)?;
+                if candidates.get(&key).is_none_or(|candidate| candidate.selected || candidate.lease.strong_count() != 0) {
+                    manager.publish(key, PostStateRootSource::Builder, data.clone())?;
+                }
+                Ok(data)
             });
             manager.builders.lock().map_err(Self::error)?.remove(&key);
+            let mut candidates = manager.candidates.lock().map_err(Self::error)?;
+            let compared = manager.ready.lock().map_err(Self::error)?.entries.contains_key(&(key, PostStateRootSource::Validator));
+            if candidates.get(&key).is_some_and(|candidate| candidate.lease.strong_count() == 0 && (!candidate.selected || compared)) { candidates.remove(&key); }
             result
         })) {
             Ok(completion) => { completion.detach(); Ok(()) }
@@ -341,10 +435,13 @@ impl PostStateRootManager {
                 }
             }
         }
+        // This builder has already compared its real root with independent accepted execution.
+        if source == PostStateRootSource::Builder && ready.entries.contains_key(&(key, PostStateRootSource::Validator)) { return Ok(()); }
         if !ready.entries.contains_key(&(key, source)) {
             if ready.entries.len() == self.limits.ready {
                 let evict = ready.order.iter().position(|(old_key, old_source)| {
                     *old_source == PostStateRootSource::Validator || ready.entries.contains_key(&(*old_key, PostStateRootSource::Validator))
+                        || (source == PostStateRootSource::Validator && *old_key == key)
                 });
                 let Some(evict) = evict else {
                     self.failed.store(true, Ordering::Release);
@@ -352,6 +449,11 @@ impl PostStateRootManager {
                 };
                 let oldest = ready.order.remove(evict).expect("selected ready entry exists");
                 ready.entries.remove(&oldest);
+                // A matched Builder must not become protected again when its Validator ages out.
+                if oldest.1 == PostStateRootSource::Validator {
+                    ready.entries.remove(&(oldest.0, PostStateRootSource::Builder));
+                    ready.order.retain(|entry| *entry != (oldest.0, PostStateRootSource::Builder));
+                }
             }
             ready.order.push_back((key, source));
         }
@@ -360,10 +462,17 @@ impl PostStateRootManager {
     }
 
     /// Retires S builder provenance after successful trusted insertion, never certifying it.
+    /// The last never-exported native owner also uses this removal; Validator is never removed.
     pub fn retire_trusted_builder(&self, key: PostStateRootKey) -> ProviderResult<()> {
         let mut ready = self.ready.lock().map_err(Self::error)?;
         ready.entries.remove(&(key, PostStateRootSource::Builder));
         ready.order.retain(|entry| *entry != (key, PostStateRootSource::Builder));
+        Ok(())
+    }
+
+    /// Releases ownership metadata only after real validator comparison or successful S insertion.
+    pub fn complete_candidate(&self, key: PostStateRootKey) -> ProviderResult<()> {
+        self.candidates.lock().map_err(Self::error)?.remove(&key);
         Ok(())
     }
 
@@ -482,6 +591,67 @@ mod tests {
         assert!(first.wait().is_err(), "terminal admission failure must prevent success from an earlier operation");
         assert!(second.wait().is_err(), "queued operation must also observe terminal health");
         manager.drain().unwrap();
+    }
+
+    /// A late native rebuild compares against accepted execution without orphaned protection.
+    #[test]
+    fn late_builder_comparison_does_not_outlive_validator_retention() {
+        let manager = PostStateRootManager::new(PostStateRootLimits { ready: 2, ..Default::default() }).unwrap();
+        manager.publish(key(1), PostStateRootSource::Validator, data(1)).unwrap();
+        manager.publish(key(1), PostStateRootSource::Builder, data(1)).unwrap();
+        assert!(manager.get(key(1), PostStateRootSource::Builder).unwrap().is_none(), "already compared late builder needs no unmatched slot");
+        manager.publish(key(2), PostStateRootSource::Validator, data(2)).unwrap();
+        manager.publish(key(3), PostStateRootSource::Validator, data(3)).unwrap();
+        assert!(manager.get(key(1), PostStateRootSource::Validator).unwrap().is_none(), "old compared identity may age out after real validation");
+        assert_eq!(manager.ready.lock().unwrap().entries.len(), 2, "only two accepted current identities remain after eviction");
+        manager.drain().unwrap();
+    }
+
+    /// Independent validation may consume its compared slot at capacity without losing a fork.
+    #[test]
+    fn comparison_at_capacity_preserves_unmatched_fork() {
+        let manager = PostStateRootManager::new(PostStateRootLimits { ready: 2, ..Default::default() }).unwrap();
+        manager.publish(key(1), PostStateRootSource::Builder, data(1)).unwrap();
+        manager.publish(key(2), PostStateRootSource::Builder, data(2)).unwrap();
+        manager.publish(key(1), PostStateRootSource::Validator, data(1)).unwrap();
+        assert_eq!(manager.ready.lock().unwrap().entries.len(), 2, "real comparison must reuse its own capacity slot");
+        assert!(manager.get(key(1), PostStateRootSource::Validator).unwrap().is_some(), "independent validation must certify its exact compared identity");
+        assert!(manager.get(key(2), PostStateRootSource::Builder).unwrap().is_some(), "unmatched same-height fork must remain protected");
+        manager.drain().unwrap();
+    }
+
+    /// Last internal owner may retire late work, but the provider remains owned and drainable.
+    #[test]
+    fn candidate_drop_reacquire_and_late_completion() {
+        let manager = Arc::new(PostStateRootManager::new(PostStateRootLimits::default()).unwrap());
+        let (entered, started) = mpsc::channel();
+        let (release, blocked) = mpsc::channel();
+        let barrier = manager.enqueue(Box::new(move || { entered.send(()).unwrap(); blocked.recv().unwrap(); Ok(data(9)) })).unwrap();
+        started.recv_timeout(Duration::from_secs(2)).unwrap();
+        let candidate = manager.candidate(key(1), &HashedPostState::default()).unwrap();
+        manager.enqueue_builder(key(1), Box::new(|| Ok(data(1)))).unwrap();
+        drop(candidate);
+        let reacquired = manager.candidate(key(1), &HashedPostState::default()).unwrap();
+        manager.enqueue_builder(key(1), Box::new(|| panic!("duplicate operation must not execute"))).unwrap();
+        assert_eq!(manager.admitted.load(Ordering::Acquire), 2, "barrier plus one builder operation only, including reacquisition");
+        drop(reacquired);
+        assert_eq!(manager.builders.lock().unwrap().len(), 1, "discarded candidate work must retain its bounded pending deadline until the worker finishes");
+        release.send(()).unwrap(); barrier.wait().unwrap(); manager.wait_builder(key(1)).unwrap();
+        assert_eq!(manager.ready.lock().unwrap().entries.len(), 0, "late abandoned work must publish neither Builder nor Validator");
+        manager.drain().unwrap();
+        assert_eq!(manager.candidates.lock().unwrap().len(), 0, "drained unselected candidate metadata must retire");
+    }
+
+    /// A sealed identity may not coalesce different authoritative execution state.
+    #[test]
+    fn duplicate_candidate_rejects_changed_finalized_input() {
+        let manager = Arc::new(PostStateRootManager::new(PostStateRootLimits::default()).unwrap());
+        let original = manager.candidate(key(1), &HashedPostState::default()).unwrap();
+        let mut changed = HashedPostState::default();
+        changed.accounts.insert(B256::repeat_byte(1), Some(Default::default()));
+        assert_eq!(manager.candidate(key(1), &changed).unwrap_err().to_string(), "duplicate builder identity has different finalized state", "same sealed identity must compare finalized input before coalescing any work");
+        assert!(manager.check_health().is_err(), "different finalized state for one identity must fail closed");
+        drop(original); manager.drain().unwrap();
     }
 
     /// Detached builder work remains associated until the validator compares an independent root.
