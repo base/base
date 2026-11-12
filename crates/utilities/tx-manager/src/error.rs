@@ -93,14 +93,20 @@ pub enum TxManagerError {
 
     /// Calculated fee exceeds the configured fee-limit ceiling.
     ///
-    /// Returned by [`crate::FeeCalculator::check_limits`] when the proposed fee
-    /// surpasses `fee_limit_multiplier × suggested_fee` and the suggested
-    /// fee is at or above `fee_limit_threshold`. Non-retryable.
+    /// For a regular transaction, returned by
+    /// [`crate::FeeCalculator::check_limits`] when the proposed fee surpasses
+    /// `fee_limit_multiplier × suggested_fee` and the suggested fee is at or
+    /// above `fee_limit_threshold`. For a blob transaction, returned by
+    /// [`crate::BlobFeePolicy::fees`] and [`crate::BlobFeePolicy::replacement`]
+    /// when `max_priority_fee_per_gas` surpasses `upper_bound × blob_count`;
+    /// blob transactions never go through `check_limits`. Non-retryable.
     #[error("fee limit exceeded: fee {fee} exceeds ceiling {ceiling}")]
     FeeLimitExceeded {
         /// The proposed fee that was rejected.
         fee: u128,
-        /// The ceiling that was exceeded (`fee_limit_multiplier × suggested`).
+        /// The ceiling that was exceeded: `fee_limit_multiplier × suggested`
+        /// for a regular transaction, `upper_bound × blob_count` for a blob
+        /// transaction.
         ceiling: u128,
     },
 
