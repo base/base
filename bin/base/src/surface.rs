@@ -292,7 +292,10 @@ impl CliSurface {
             "IP address or DNS hostname advertised to consensus peers. Defaults to \
              `--consensus.p2p.listen.ip`",
         ),
-        ("sequencer.key.path", "File holding the sequencer private key. Conflicts with `--sequencer.key`"),
+        (
+            "sequencer.key.path",
+            "File holding the sequencer private key. Conflicts with `--sequencer.key`",
+        ),
         (
             "sequencer.signer.endpoint",
             "Remote signer URL. Conflicts with `--sequencer.key` and is required by the other \
@@ -544,10 +547,11 @@ impl CliSurface {
                 .map(|help| help.replace(&old_flag, &new_flag))
         };
         let (help, long_help) = (rewrite(arg.get_help()), rewrite(arg.get_long_help()));
-        let mut arg = aliases.into_iter().fold(
-            arg.alias(None).long(new.to_owned()).alias(old.to_owned()),
-            |arg, alias| arg.alias(alias),
-        );
+        let mut arg = aliases
+            .into_iter()
+            .fold(arg.alias(None).long(new.to_owned()).alias(old.to_owned()), |arg, alias| {
+                arg.alias(alias)
+            });
         if let Some(help) = help {
             arg = arg.help(help);
         }
