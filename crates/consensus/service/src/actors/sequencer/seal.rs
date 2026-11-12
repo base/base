@@ -49,12 +49,6 @@ impl SealState {
     }
 }
 
-/// Returns whether a sealed payload's encoded transactions include one beyond the deposits the
-/// protocol and L1 supply, that is, a transaction the builder took from the pool.
-pub(crate) fn has_pool_transactions(transactions: &[Bytes]) -> bool {
-    transactions.iter().any(|tx| tx.first() != Some(&DEPOSIT_TX_TYPE_ID))
-}
-
 /// What prompted the sequencer to request a sealed payload from the engine.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SealTrigger {
@@ -97,6 +91,16 @@ pub struct PayloadSealer {
 }
 
 impl PayloadSealer {
+    /// Returns whether the sealed payload includes a transaction beyond the deposits the protocol
+    /// and L1 supply, that is, a transaction the builder took from the pool.
+    pub fn has_pool_transactions(&self) -> bool {
+        Self::includes_pool_transactions(self.envelope.execution_payload.transactions())
+    }
+
+    fn includes_pool_transactions(transactions: &[Bytes]) -> bool {
+        transactions.iter().any(|tx| tx.first() != Some(&DEPOSIT_TX_TYPE_ID))
+    }
+
     /// Creates a new sealer starting at the [`SealState::Sealed`] stage.
     pub fn new(envelope: BaseExecutionPayloadEnvelope) -> Self {
         let block_hash = envelope.execution_payload.block_hash();
@@ -226,7 +230,7 @@ mod tests {
     use alloy_primitives::Bytes;
     use rstest::rstest;
 
-    use super::has_pool_transactions;
+    use super::PayloadSealer;
 
     #[rstest]
     #[case::no_transactions(vec![], false)]
@@ -238,6 +242,6 @@ mod tests {
         #[case] expected: bool,
     ) {
         let transactions: Vec<Bytes> = encoded.into_iter().map(Bytes::from).collect();
-        assert_eq!(has_pool_transactions(&transactions), expected);
+        assert_eq!(PayloadSealer::includes_pool_transactions(&transactions), expected);
     }
 }

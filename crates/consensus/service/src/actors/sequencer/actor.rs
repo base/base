@@ -33,9 +33,7 @@ use crate::{
             error::SequencerActorError,
             l1_origin::OriginSelector,
             recovery::RecoveryModeGuard,
-            seal::{
-                PayloadSealer, SealStepError, SealStepOutcome, SealTrigger, has_pool_transactions,
-            },
+            seal::{PayloadSealer, SealStepError, SealStepOutcome, SealTrigger},
             shadow_funding::ShadowFunding,
         },
     },
@@ -655,9 +653,7 @@ where
                     Metrics::record_seal_build_window(
                         trigger.as_str(),
                         build_window,
-                        !has_pool_transactions(
-                            new_sealer.envelope.execution_payload.transactions(),
-                        ),
+                        !new_sealer.has_pool_transactions(),
                     );
                 }
                 pipeline.sealed_payload_id = Some(payload_id);
