@@ -5,6 +5,8 @@
 
 use std::time::Instant;
 
+use alloy_primitives::Bytes;
+use base_common_consensus::DEPOSIT_TX_TYPE_ID;
 use base_common_rpc_types_engine::BaseExecutionPayloadEnvelope;
 use base_protocol::L2BlockInfo;
 use tracing::Instrument;
@@ -45,6 +47,12 @@ impl SealState {
             Self::Gossiped | Self::Private => "insert",
         }
     }
+}
+
+/// Returns whether a sealed payload's encoded transactions include one beyond the deposits the
+/// protocol and L1 supply, that is, a transaction the builder took from the pool.
+pub(crate) fn has_pool_transactions(transactions: &[Bytes]) -> bool {
+    transactions.iter().any(|tx| tx.first() != Some(&DEPOSIT_TX_TYPE_ID))
 }
 
 /// What prompted the sequencer to request a sealed payload from the engine.
@@ -211,4 +219,25 @@ pub enum SealStepError {
     /// Engine insertion failed.
     #[error("engine insert failed: {0}")]
     Insert(crate::actors::engine::EngineClientError),
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy_primitives::Bytes;
+    use rstest::rstest;
+
+    use super::has_pool_transactions;
+
+    #[rstest]
+    #[case::no_transactions(vec![], false)]
+    #[case::deposits_only(vec![vec![0x7e, 0x01], vec![0x7e, 0x02]], false)]
+    #[case::pool_transaction(vec![vec![0x7e, 0x01], vec![0x02, 0x01]], true)]
+    #[case::legacy_transaction(vec![vec![0x7e, 0x01], vec![0xf8, 0x01]], true)]
+    fn pool_transactions_are_those_beyond_deposits(
+        #[case] encoded: Vec<Vec<u8>>,
+        #[case] expected: bool,
+    ) {
+        let transactions: Vec<Bytes> = encoded.into_iter().map(Bytes::from).collect();
+        assert_eq!(has_pool_transactions(&transactions), expected);
+    }
 }

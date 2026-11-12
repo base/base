@@ -33,7 +33,9 @@ use crate::{
             error::SequencerActorError,
             l1_origin::OriginSelector,
             recovery::RecoveryModeGuard,
-            seal::{PayloadSealer, SealStepError, SealStepOutcome, SealTrigger},
+            seal::{
+                PayloadSealer, SealStepError, SealStepOutcome, SealTrigger, has_pool_transactions,
+            },
             shadow_funding::ShadowFunding,
         },
     },
@@ -636,13 +638,21 @@ where
         let handle_block_number = handle.block_number();
         let payload_id = handle.payload_id;
         let trigger = if handle.frozen { SealTrigger::ReadyHint } else { SealTrigger::Deadline };
+        let requested_at = SystemTime::now();
         let request_offset =
-            SystemTime::now().duration_since(self.slot_start(&handle)).unwrap_or(Duration::ZERO);
+            requested_at.duration_since(self.slot_start(&handle)).unwrap_or(Duration::ZERO);
+        let build_window =
+            requested_at.duration_since(handle.build_requested_at).unwrap_or(Duration::ZERO);
         match self.try_seal_handle(handle).await? {
             Some((new_sealer, dur)) => {
                 Metrics::sequencer_seals_total(trigger.as_str()).increment(1);
                 Metrics::sequencer_get_payload_offset_seconds(trigger.as_str())
                     .record(request_offset);
+                Metrics::record_seal_build_window(
+                    trigger.as_str(),
+                    build_window,
+                    !has_pool_transactions(new_sealer.envelope.execution_payload.transactions()),
+                );
                 pipeline.sealed_payload_id = Some(payload_id);
                 pipeline.last_seal_duration = dur;
                 self.sealer = Some(new_sealer);
@@ -1386,7 +1396,23 @@ mod tests {
         assert_eq!(requested.len(), 1);
         // The offset counts from the parent's timestamp, 200 ms before the block's own.
         assert!((before..=at_request).contains(&requested[0]), "getPayload offset {requested:?}");
-        for name in ["sequencer_seals_total", "sequencer_get_payload_offset_seconds"] {
+        // The test envelope holds only the L1-info deposit, so the sealed payload is empty.
+        assert_eq!(
+            recorded(&metrics, "sequencer_empty_payloads_total", ("trigger", trigger)),
+            Some(&DebugValue::Counter(1))
+        );
+        let window =
+            recorded_samples(&metrics, "sequencer_build_window_seconds", ("empty", "true"));
+        assert_eq!(window.len(), 1);
+        // The build was requested when the handle was made, moments before the seal.
+        assert!((0.0..1.0).contains(&window[0]), "build window {window:?}");
+        assert_eq!(recorded(&metrics, "sequencer_build_window_seconds", ("empty", "false")), None);
+        for name in [
+            "sequencer_seals_total",
+            "sequencer_get_payload_offset_seconds",
+            "sequencer_build_window_seconds",
+            "sequencer_empty_payloads_total",
+        ] {
             assert_eq!(recorded(&metrics, name, ("trigger", other)), None);
         }
     }
