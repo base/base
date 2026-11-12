@@ -215,3 +215,15 @@ These counts overlap; do not sum them as unique passing tests. The one ignored R
 Current acceptance evidence closes the two safety defects, the immutable output/proof golden gap, the populated txpool snapshot matrix gap and real non-genesis immutable snapshot copy/replay. c2/c3/c4 real MPT/ancestry/activation tests remain green. Exhaustive cross-store crash interruption, general active restart, staged/snap/deep-reorg recovery, external CL/L1/proof/settlement support and performance measurements remain deliberately unsupported or future-system scope.
 
 The latest CLI source call-site changes and custom builder-service graph are still NOT fully package-compiled on this host because of the already recorded macOS SQLx LINKEDIT problem. No repeat long SQLx attempt, full workspace build, fmt, Clippy or zepter was run. Shared admission logic and actual runner graph are compiled/tested. A supported-host CLI build and parent independent review remain required before any PR or runnable standalone benchmark claim. No push, PR, external interaction, benchmark or deployment occurred.
+
+### Final committed-code validation
+
+Implementation commit: `e844d7aeb` (`fix(execution): admit snapshots read-only and retire trusted roots`). After the final source change and this local commit, one last unfiltered scoped run was performed, with no exclusions and `--retries 0`:
+
+- `regression5.log`: **516 passed, 0 failed, 1 skipped**, no leaky label. The one skipped pre-existing RPC WebSocket test needs a localhost node. All six selected library roots and four selected integration targets are included. The source identity is in `regression5-head1.txt`.
+- This is the superset of the original five-library/gates/semantics/runner scope plus execution-RPC library tests and the eight new safety/parity cases. Earlier suite/targeted counts overlap and must not be added to 516. Baseline golden generation is the same logical fixture on the reference, not another unique candidate test.
+- The latest real snapshot replay extension is included: snapshot copy at height 1, admitted read-only validation before writable initialization, actual native build and independent newPayload, canonical FCU at height 2 with exact parent/hash/height assertions.
+- `check-reth-pin2.log`: PASS, 69 official v2.10.1 git crates. `pin-reth-test2.log`: **22 passed**, independent Python pin-helper tests. `crate-deps2.log` and `diff-check2.log`: PASS.
+- The unchanged randomized consensus transaction-content test passed this final unfiltered run. Its prior full-run failures remain evidence of a residual fixture flake; this passing run does not erase them. No unrelated test or production consensus source was changed.
+
+The following commit is documentation-only evidence recording. Parent independent rerun/review and a supported-host CLI/custom-builder package build remain prerequisites to PR readiness; no full-workspace or standalone-binary build, push, PR, deployment or benchmark is claimed.
