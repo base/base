@@ -12,8 +12,9 @@ use crate::{FeeCalculator, FeeOverride, PreparedTx, TxManagerError, TxManagerRes
 /// fee, and a `max_fee_per_blob_gas` of twice the blob base fee ([`fees`](Self::fees)).
 ///
 /// A replacement doubles all three fields, the minimum L1 nodes accept to replace a blob
-/// transaction, and raises the fee caps further when twice the current L1 prices are
-/// higher ([`replacement`](Self::replacement)). Once published, it raises `p` to its
+/// transaction ([`replacement`](Self::replacement)), and is signed with these as a floor
+/// over the fees of a new transaction, so the fee caps follow L1 prices when they rose
+/// further ([`fees`](Self::fees)). Once published, it raises `p` to its
 /// `max_priority_fee_per_gas` per blob ([`record_replacement`](Self::record_replacement)).
 /// When a transaction lands, `p` becomes 90% of the `max_priority_fee_per_gas` per blob it
 /// paid, and never less than the lower bound ([`record_landed`](Self::record_landed)).
@@ -55,33 +56,38 @@ impl BlobFeePolicy {
         *self.max_priority_fee_per_gas_per_blob.lock().expect("BlobFeePolicy mutex poisoned")
     }
 
-    /// Returns the fees of a new transaction with `blob_count` blobs at the current L1
-    /// `base_fee` and `blob_base_fee`.
-    pub fn fees(&self, blob_count: u128, base_fee: u128, blob_base_fee: u128) -> FeeOverride {
-        let max_priority_fee_per_gas =
-            self.max_priority_fee_per_gas_per_blob().saturating_mul(blob_count);
-        FeeOverride::new(
-            max_priority_fee_per_gas,
-            FeeCalculator::calc_gas_fee_cap(base_fee, max_priority_fee_per_gas),
-        )
-        .with_blob_fee_cap(FeeCalculator::calc_blob_fee_cap(blob_base_fee))
+    /// Returns the fees of a transaction with `blob_count` blobs at the current L1
+    /// `base_fee` and `blob_base_fee`, no lower than `floor`, such as the fees of a
+    /// [`replacement`](Self::replacement). A new transaction passes no floor
+    /// ([`FeeOverride::default`]).
+    pub fn fees(
+        &self,
+        blob_count: u128,
+        base_fee: u128,
+        blob_base_fee: u128,
+        floor: FeeOverride,
+    ) -> FeeOverride {
+        let max_priority_fee_per_gas = self
+            .max_priority_fee_per_gas_per_blob()
+            .saturating_mul(blob_count)
+            .max(floor.gas_tip_cap);
+        let max_fee_per_gas = FeeCalculator::calc_gas_fee_cap(base_fee, max_priority_fee_per_gas)
+            .max(floor.gas_fee_cap);
+        let max_fee_per_blob_gas = FeeCalculator::calc_blob_fee_cap(blob_base_fee)
+            .max(floor.blob_fee_cap.unwrap_or_default());
+        FeeOverride::new(max_priority_fee_per_gas, max_fee_per_gas)
+            .with_blob_fee_cap(max_fee_per_blob_gas)
     }
 
-    /// Returns the fees that replace `old`, a transaction with `blob_count` blobs, at the
-    /// current L1 `base_fee` and `blob_base_fee`.
+    /// Returns the lowest fees that replace `old`, a transaction with `blob_count` blobs:
+    /// twice each of its fees. [`fees`](Self::fees) raises them to the current L1 prices.
     ///
     /// # Errors
     ///
     /// Returns [`TxManagerError::FeeLimitExceeded`] when the doubled
     /// `max_priority_fee_per_gas` would pass `upper_bound × blob_count`: no replacement
     /// within the bound would be accepted by L1 nodes.
-    pub fn replacement(
-        &self,
-        old: &PreparedTx,
-        blob_count: u128,
-        base_fee: u128,
-        blob_base_fee: u128,
-    ) -> TxManagerResult<FeeOverride> {
+    pub fn replacement(&self, old: &PreparedTx, blob_count: u128) -> TxManagerResult<FeeOverride> {
         let max_priority_fee_per_gas = FeeCalculator::calc_threshold_value(old.gas_tip_cap, true);
         let ceiling = self.upper_bound.saturating_mul(blob_count);
         if max_priority_fee_per_gas > ceiling {
@@ -90,13 +96,14 @@ impl BlobFeePolicy {
                 ceiling,
             });
         }
-        let max_fee_per_gas = FeeCalculator::calc_threshold_value(old.gas_fee_cap, true)
-            .max(FeeCalculator::calc_gas_fee_cap(base_fee, max_priority_fee_per_gas));
-        let max_fee_per_blob_gas =
-            FeeCalculator::calc_threshold_value(old.blob_fee_cap.unwrap_or_default(), true)
-                .max(FeeCalculator::calc_blob_fee_cap(blob_base_fee));
-        Ok(FeeOverride::new(max_priority_fee_per_gas, max_fee_per_gas)
-            .with_blob_fee_cap(max_fee_per_blob_gas))
+        Ok(FeeOverride::new(
+            max_priority_fee_per_gas,
+            FeeCalculator::calc_threshold_value(old.gas_fee_cap, true),
+        )
+        .with_blob_fee_cap(FeeCalculator::calc_threshold_value(
+            old.blob_fee_cap.unwrap_or_default(),
+            true,
+        )))
     }
 
     /// Records that a replacement with `blob_count` blobs and `max_priority_fee_per_gas` was
@@ -161,7 +168,7 @@ mod tests {
     #[case::one_blob(1)]
     #[case::six_blobs(6)]
     fn a_new_transaction_starts_at_the_lower_bound_per_blob(#[case] blob_count: u128) {
-        let fees = policy().fees(blob_count, 3 * GWEI, 5 * GWEI);
+        let fees = policy().fees(blob_count, 3 * GWEI, 5 * GWEI, FeeOverride::default());
 
         assert_eq!(
             fields(&fees),
@@ -182,7 +189,8 @@ mod tests {
     ) {
         let old = sent(6 * GWEI, 16 * GWEI, 20 * GWEI);
 
-        let fees = policy().replacement(&old, 6, base_fee, blob_base_fee).unwrap();
+        let policy = policy();
+        let fees = policy.fees(6, base_fee, blob_base_fee, policy.replacement(&old, 6).unwrap());
 
         assert_eq!(
             fields(&fees),
@@ -201,7 +209,7 @@ mod tests {
     ) {
         let old = sent(max_priority_fee_per_gas, max_priority_fee_per_gas + GWEI, GWEI);
 
-        let fees = policy().replacement(&old, 6, GWEI, GWEI);
+        let fees = policy().replacement(&old, 6);
 
         assert_eq!(fees.map(|fees| fees.gas_tip_cap), expected);
     }
@@ -212,16 +220,18 @@ mod tests {
     #[test]
     fn a_published_replacement_raises_the_next_transactions() {
         let policy = policy();
-        let replacement =
-            policy.replacement(&sent(6 * GWEI / 100, GWEI, GWEI), 6, GWEI, GWEI).unwrap();
+        let replacement = policy.replacement(&sent(6 * GWEI / 100, GWEI, GWEI), 6).unwrap();
         assert_eq!(policy.max_priority_fee_per_gas_per_blob(), GWEI / 100);
 
         policy.record_replacement(replacement.gas_tip_cap, 6);
         policy.record_replacement(GWEI / 100, 1);
 
         assert_eq!(policy.max_priority_fee_per_gas_per_blob(), 2 * GWEI / 100);
-        assert_eq!(policy.fees(1, GWEI, GWEI).gas_tip_cap, 2 * GWEI / 100);
-        assert_eq!(policy.fees(6, GWEI, GWEI).gas_tip_cap, replacement.gas_tip_cap);
+        assert_eq!(policy.fees(1, GWEI, GWEI, FeeOverride::default()).gas_tip_cap, 2 * GWEI / 100);
+        assert_eq!(
+            policy.fees(6, GWEI, GWEI, FeeOverride::default()).gas_tip_cap,
+            replacement.gas_tip_cap
+        );
     }
 
     /// A landed transaction sets `p` to 90% of what it paid per blob, never below the lower
@@ -247,12 +257,12 @@ mod tests {
     fn a_congestion_climb_then_decay() {
         let policy = policy();
         let mut tx = sent(0, 0, 0);
-        let fees = policy.fees(6, GWEI, GWEI);
+        let fees = policy.fees(6, GWEI, GWEI, FeeOverride::default());
         tx.gas_tip_cap = fees.gas_tip_cap;
         tx.gas_fee_cap = fees.gas_fee_cap;
         tx.blob_fee_cap = fees.blob_fee_cap;
         for _ in 0..9 {
-            let fees = policy.replacement(&tx, 6, GWEI, GWEI).unwrap();
+            let fees = policy.fees(6, GWEI, GWEI, policy.replacement(&tx, 6).unwrap());
             policy.record_replacement(fees.gas_tip_cap, 6);
             tx.gas_tip_cap = fees.gas_tip_cap;
             tx.gas_fee_cap = fees.gas_fee_cap;
@@ -260,11 +270,11 @@ mod tests {
         }
         // 0.01 gwei per blob doubled 9 times, and one more doubling would pass 10 gwei.
         assert_eq!(tx.gas_tip_cap, 6 * 512 * GWEI / 100);
-        assert!(policy.replacement(&tx, 6, GWEI, GWEI).is_err());
+        assert!(policy.replacement(&tx, 6).is_err());
 
         policy.record_landed(tx.gas_tip_cap, 6);
         assert_eq!(policy.max_priority_fee_per_gas_per_blob(), 9 * 512 * GWEI / 1_000);
-        policy.record_landed(policy.fees(6, GWEI, GWEI).gas_tip_cap, 6);
+        policy.record_landed(policy.fees(6, GWEI, GWEI, FeeOverride::default()).gas_tip_cap, 6);
         assert_eq!(policy.max_priority_fee_per_gas_per_blob(), 81 * 512 * GWEI / 10_000);
     }
 

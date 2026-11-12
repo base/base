@@ -152,9 +152,8 @@ impl FeeCalculator {
 /// for each component so the resulting transaction is guaranteed to meet
 /// the override thresholds even if network fees have dropped.
 ///
-/// A blob transaction is signed with the override's fees as they are, since
-/// [`BlobFeePolicy`](crate::BlobFeePolicy) already computed them from current
-/// L1 prices. Without an override, it is priced by that policy.
+/// For a blob transaction, the network fees are those of
+/// [`BlobFeePolicy::fees`](crate::BlobFeePolicy::fees).
 ///
 /// Field names mirror [`GasPriceCaps`] for consistency.
 #[non_exhaustive]
@@ -164,7 +163,7 @@ pub struct FeeOverride {
     pub gas_tip_cap: u128,
     /// Minimum acceptable maximum total fee per gas (base fee + tip).
     pub gas_fee_cap: u128,
-    /// Blob fee cap (for EIP-4844 txs). `None` = no override.
+    /// Minimum acceptable blob fee cap (for EIP-4844 txs). `None` = no override.
     pub blob_fee_cap: Option<u128>,
     /// Minimum gas limit (floor). Used during fee bumps so the gas limit
     /// never decreases across replacement attempts. `0` = no override.

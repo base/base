@@ -29,8 +29,7 @@ confirmation.
   thresholds, fee bumps, and fee limit enforcement.
 - **`GasPriceCaps`** — intermediate fee estimates of a regular transaction, passed between
   estimation and construction.
-- **`FeeOverride`** — optional per-field fee and gas-limit overrides applied as a floor
-  (as they are for a blob transaction).
+- **`FeeOverride`** — optional per-field fee and gas-limit overrides applied as a floor.
 - **`BlobFeePolicy`** — prices blob transactions (see [Blob fee policy](#blob-fee-policy)).
 - **`BumpedFees`** — result of a fee bump calculation.
 

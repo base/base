@@ -418,8 +418,8 @@ where
     /// so the resulting transaction is guaranteed to meet the override
     /// thresholds. Pass `None` for the initial send; pass the bumped fees
     /// during fee-bump iterations to ensure replacement transactions
-    /// satisfy geth's replacement rules. A blob transaction is signed with the
-    /// override's fees as they are (see [`FeeOverride`]).
+    /// satisfy geth's replacement rules. For a blob transaction, the network
+    /// fees are those of [`BlobFeePolicy::fees`].
     ///
     /// # Cancellation safety
     ///
@@ -636,9 +636,9 @@ where
     /// 2. Apply fee overrides as a floor (`max(network_fee, override)`)
     /// 3. Check fee limits via [`FeeCalculator::check_limits`]
     ///
-    ///    A blob transaction replaces steps 1 to 3: it is signed with the fee
-    ///    overrides as they are, or else priced by [`BlobFeePolicy::fees`]
-    ///    from the current base fee and blob base fee.
+    ///    A blob transaction is priced by [`BlobFeePolicy::fees`] from the
+    ///    current base fee and blob base fee instead, with the fee overrides
+    ///    as a floor and no fee limit.
     /// 4. Build a [`TransactionRequest`] with all fields set manually
     /// 5. Estimate gas via the provider; use `max(estimate, candidate.gas_limit)` as floor
     /// 6. Assign nonce via [`NonceManager::next_nonce`]
@@ -705,26 +705,20 @@ where
         }
 
         let (tip_cap, fee_cap, blob_fee_cap) = if is_blob {
-            // Blob transactions: the replacement fees the send loop computed, or the
-            // policy's fees for a new transaction. No fee limit applies: the policy
-            // bounds their `max_priority_fee_per_gas`.
-            let fees = match fee_overrides {
-                Some(fees) => fees,
-                None => {
-                    let (base_fee, blob_base_fee) = self.blob_base_fees().await?;
-                    self.blob_fee_policy.fees(
-                        candidate.blobs.len() as u128,
-                        base_fee,
-                        blob_base_fee,
-                    )
-                }
-            };
-            let blob_fee_cap = fees.blob_fee_cap.ok_or_else(|| {
-                TxManagerError::Unsupported("blob fee override without a blob fee cap".into())
-            })?;
+            // Blob transactions: the policy's fees, with the overrides as a floor,
+            // such as the replacement fees the send loop computed. No fee limit
+            // applies: the policy bounds their `max_priority_fee_per_gas`.
+            let (base_fee, blob_base_fee) = self.blob_base_fees().await?;
+            let fees = self.blob_fee_policy.fees(
+                candidate.blobs.len() as u128,
+                base_fee,
+                blob_base_fee,
+                fee_overrides.unwrap_or_default(),
+            );
             self.metrics.record_tipcap(fees.gas_tip_cap as f64 / WEI_PER_GWEI);
-            self.metrics.record_blob_fee_cap(blob_fee_cap as f64 / WEI_PER_GWEI);
-            (fees.gas_tip_cap, fees.gas_fee_cap, Some(blob_fee_cap))
+            self.metrics
+                .record_blob_fee_cap(fees.blob_fee_cap.unwrap_or_default() as f64 / WEI_PER_GWEI);
+            (fees.gas_tip_cap, fees.gas_fee_cap, fees.blob_fee_cap)
         } else {
             // Step 1: Get fee estimates.
             let caps = match caps {
@@ -1332,26 +1326,20 @@ where
     }
 
     /// Signs the replacement of `old`, a version of the blob transaction
-    /// `candidate`, with the fees of [`BlobFeePolicy::replacement`] at the current
-    /// L1 prices, the same nonce and a gas limit no lower than `old`'s.
+    /// `candidate`, with the fees of [`BlobFeePolicy::replacement`] as a floor over
+    /// the policy's fees at the current L1 prices, the same nonce and a gas limit no
+    /// lower than `old`'s.
     ///
     /// # Errors
     ///
     /// Returns [`TxManagerError::FeeLimitExceeded`] when no replacement exists within
-    /// the upper bound of the policy, or the error of the L1 price read or of the
-    /// preparation.
+    /// the upper bound of the policy, or the error of the preparation.
     async fn replace_blob_tx(
         &self,
         candidate: &TxCandidate,
         old: &PreparedTx,
     ) -> TxManagerResult<PreparedTx> {
-        let (base_fee, blob_base_fee) = self.blob_base_fees().await?;
-        let fees = self.blob_fee_policy.replacement(
-            old,
-            candidate.blobs.len() as u128,
-            base_fee,
-            blob_base_fee,
-        )?;
+        let fees = self.blob_fee_policy.replacement(old, candidate.blobs.len() as u128)?;
         self.prepare_with_initial_caps(
             candidate,
             Some(fees.with_gas_limit_floor(old.gas_limit)),
@@ -2761,19 +2749,13 @@ mod tests {
         }
     }
 
-    /// Pushes the L1 prices a blob tx version is priced from: the latest block, with a 1 gwei
-    /// base fee, and a 1 gwei blob base fee.
-    fn push_blob_prices(asserter: &Asserter) {
+    /// Pushes the responses that price and sign a blob tx version: its L1 prices (the latest
+    /// block, with a 1 gwei base fee, and a 1 gwei blob base fee) and its gas estimate.
+    fn push_blob_pricing(asserter: &Asserter) {
         let mut block: Block = Block::default();
         block.header.base_fee_per_gas = Some(1_000_000_000);
         asserter.push_success(&Some(&block));
         asserter.push_success(&1_000_000_000u128);
-    }
-
-    /// Pushes the responses that price and sign a blob tx version: its L1 prices and its gas
-    /// estimate.
-    fn push_blob_pricing(asserter: &Asserter) {
-        push_blob_prices(asserter);
         asserter.push_success(&21_000u64);
     }
 
@@ -3199,8 +3181,7 @@ mod tests {
     }
 
     /// A blob tx whose doubled `max_priority_fee_per_gas` would pass the upper bound is not
-    /// replaced: each resubmission timeout reads the L1 prices, and nothing is signed or
-    /// published.
+    /// replaced: at each resubmission timeout, nothing is read, signed or published.
     #[test]
     fn a_blob_tx_at_the_upper_bound_is_not_replaced() {
         Runner::start(Config::seeded(0), |ctx| async move {
@@ -3211,12 +3192,8 @@ mod tests {
             asserter.push_success(&B256::with_last_byte(1));
             asserter.push_success(&1u64);
             asserter.push_success(&Option::<TransactionReceipt>::None);
-            // The L1 prices read at each of the three timeouts, and the gas estimate a
-            // replacement would need.
-            for _ in 0..3 {
-                push_blob_prices(&asserter);
-            }
-            asserter.push_success(&21_000u64);
+            // What a replacement would read first.
+            push_blob_pricing(&asserter);
             let mut metrics = blob_send_metrics();
             metrics.expect_record_gas_bump().never();
             let manager =
@@ -3230,7 +3207,7 @@ mod tests {
                 assert!(futures::poll!(&mut send).is_pending());
             }
 
-            assert_eq!(asserter.read_q().len(), 1, "no replacement should be signed");
+            assert_eq!(asserter.read_q().len(), 3, "no replacement should be signed");
             assert_eq!(manager.blob_fee_policy.max_priority_fee_per_gas_per_blob(), 1_000_000_000);
         });
     }
@@ -3245,7 +3222,6 @@ mod tests {
             push_blob_pricing(&asserter);
             asserter.push_success(&0u64);
             asserter.push_failure_msg("replacement transaction underpriced");
-            push_blob_prices(&asserter);
             let mut metrics = blob_send_metrics();
             metrics.expect_record_gas_bump().never();
             metrics.expect_record_blob_tx_landed().never();

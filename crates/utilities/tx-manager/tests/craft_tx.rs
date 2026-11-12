@@ -592,18 +592,7 @@ async fn craft_tx_prices_a_blob_tx_per_blob_from_l1_prices() {
         blobs: Arc::from(vec![Box::<Blob>::default(), Box::<Blob>::default()]),
         ..Default::default()
     };
-    let base_fee = u128::from(
-        manager
-            .provider()
-            .get_block_by_number(BlockNumberOrTag::Latest)
-            .await
-            .unwrap()
-            .unwrap()
-            .header
-            .base_fee_per_gas
-            .unwrap(),
-    );
-    let blob_base_fee = manager.provider().get_blob_base_fee().await.unwrap();
+    let (base_fee, blob_base_fee) = l1_prices(&manager).await;
 
     let prepared = manager.craft_tx(&candidate, None).await.expect("should craft blob tx");
 
@@ -617,22 +606,43 @@ async fn craft_tx_prices_a_blob_tx_per_blob_from_l1_prices() {
     assert_eq!(prepared.blob_fee_cap, Some(tx.max_fee_per_blob_gas));
 }
 
-/// A blob transaction given fees, such as a replacement priced by the send loop, is signed
-/// with them as they are, even below what a new transaction would get.
+/// The fees of a blob transaction are floored by the given fees, such as a replacement
+/// priced by the send loop: a fee the override leaves out or sets lower keeps the policy's
+/// value, the `max_fee_per_gas` covering the raised tip.
 #[tokio::test]
-async fn craft_tx_signs_a_blob_tx_with_the_given_fees() {
-    let (manager, _anvil) = setup().await;
-    let fees = FeeOverride::new(1, 100_000_000_000)
-        .with_blob_fee_cap(50_000_000_000)
-        .with_gas_limit_floor(1_000_000);
+async fn craft_tx_floors_a_blob_tx_by_the_given_fees() {
+    let config = TxManagerConfig {
+        max_priority_fee_per_gas_per_blob_lower_bound: 1_000_000_000,
+        ..TxManagerConfig::default()
+    };
+    let (manager, _anvil) = setup_with_config(config).await;
+    let (base_fee, blob_base_fee) = l1_prices(&manager).await;
+    let fees = FeeOverride::new(3_000_000_000, 1).with_gas_limit_floor(1_000_000);
 
     let prepared =
         manager.craft_tx(&single_blob_candidate(), Some(fees)).await.expect("should craft blob tx");
 
     let signed = prepared.to_envelope().unwrap();
     let tx = signed.as_eip4844().expect("should be EIP-4844").tx().tx();
-    assert_eq!(tx.max_priority_fee_per_gas, 1);
-    assert_eq!(tx.max_fee_per_gas, 100_000_000_000);
-    assert_eq!(tx.max_fee_per_blob_gas, 50_000_000_000);
+    assert_eq!(tx.max_priority_fee_per_gas, 3_000_000_000);
+    assert_eq!(tx.max_fee_per_gas, 3_000_000_000 + 2 * base_fee);
+    assert_eq!(tx.max_fee_per_blob_gas, 2 * blob_base_fee);
     assert_eq!(tx.gas_limit, 1_000_000);
+}
+
+/// The base fee and blob base fee of the latest block.
+async fn l1_prices(manager: &SimpleTxManager<RootProvider>) -> (u128, u128) {
+    let base_fee = u128::from(
+        manager
+            .provider()
+            .get_block_by_number(BlockNumberOrTag::Latest)
+            .await
+            .unwrap()
+            .unwrap()
+            .header
+            .base_fee_per_gas
+            .unwrap(),
+    );
+    let blob_base_fee = manager.provider().get_blob_base_fee().await.unwrap();
+    (base_fee, blob_base_fee)
 }
