@@ -1352,20 +1352,26 @@ mod tests {
         let parent =
             *pipeline.next_payload_to_seal.as_ref().unwrap().attributes_with_parent.parent();
         let (sealer, _, _) = valid_sealer();
+        let since_slot_start =
+            move || (UNIX_EPOCH + Duration::from_secs(slot_start)).elapsed().unwrap().as_secs_f64();
+        let (at_request_tx, at_request_rx) = std::sync::mpsc::channel();
         let mut engine = MockSequencerEngineClient::new();
         engine.expect_get_unsafe_head().times(1).return_once(move || Ok(parent));
-        engine.expect_get_sealed_payload().times(1).return_once(move |_, _| Ok(sealer.envelope));
+        engine.expect_get_sealed_payload().times(1).return_once(move |_, _| {
+            at_request_tx.send(since_slot_start()).unwrap();
+            // Make an offset taken after the engine responds measurably later than the request.
+            std::thread::sleep(Duration::from_millis(2));
+            Ok(sealer.envelope)
+        });
         actor.engine_client = Arc::new(engine);
         let mut ticker = ScheduledTicker::new(Duration::from_secs(2));
-        let since_slot_start =
-            || (UNIX_EPOCH + Duration::from_secs(slot_start)).elapsed().unwrap().as_secs_f64();
 
         let before = since_slot_start();
         if hinted {
             actor.handle_payload_ready(ready, &mut pipeline, &mut ticker);
         }
         actor.handle_build_tick(&mut pipeline, &mut ticker, None).await.unwrap();
-        let after = since_slot_start();
+        let at_request = at_request_rx.try_recv().unwrap();
 
         let metrics = snapshotter.snapshot().into_vec();
         assert_eq!(
@@ -1379,7 +1385,7 @@ mod tests {
         );
         assert_eq!(requested.len(), 1);
         // The offset counts from the parent's timestamp, 200 ms before the block's own.
-        assert!((before..=after).contains(&requested[0]), "getPayload offset {requested:?}");
+        assert!((before..=at_request).contains(&requested[0]), "getPayload offset {requested:?}");
         for name in ["sequencer_seals_total", "sequencer_get_payload_offset_seconds"] {
             assert_eq!(recorded(&metrics, name, ("trigger", other)), None);
         }
@@ -1449,6 +1455,38 @@ mod tests {
         // The offset counts from the parent's timestamp, 200 ms before the block's own.
         assert_eq!(offsets.len(), 1);
         assert!((before..=at_request).contains(&offsets[0]), "build start offset {offsets:?}");
+    }
+
+    /// Builds started outside the ticker, as after a shadow reset, report their start too.
+    #[cfg(feature = "metrics")]
+    #[rstest]
+    #[case::ready(true, vec![0.03])]
+    #[case::deferred(false, vec![])]
+    #[tokio::test(start_paused = true)]
+    async fn eager_build_records_its_start_only_when_requested(
+        #[case] requested: bool,
+        #[case] expected: Vec<f64>,
+    ) {
+        let recorder = DebuggingRecorder::new();
+        let snapshotter = recorder.snapshotter();
+        let _metrics_guard = metrics::set_default_local_recorder(&recorder);
+
+        let mut actor = test_actor();
+        let config = Arc::make_mut(&mut actor.rollup_config);
+        config.block_time = 2;
+        config.genesis.l2_time = 100;
+        let (_, mut pipeline) = ready_build();
+        // The parent is genesis, whose timestamp is 100 s; the build was requested 30 ms later.
+        let mut handle = pipeline.next_payload_to_seal.take().unwrap();
+        handle.build_requested_at = UNIX_EPOCH + Duration::from_millis(100_030);
+        let outcome =
+            if requested { BuildOutcome::Ready(handle) } else { BuildOutcome::AwaitingL1Origin };
+        let mut ticker = ScheduledTicker::new(Duration::from_secs(2));
+
+        actor.apply_eager_build_outcome(outcome, &mut pipeline, &mut ticker);
+
+        assert_eq!(pipeline.next_payload_to_seal.is_some(), requested);
+        assert_eq!(build_start_offsets(&snapshotter.snapshot().into_vec()), expected);
     }
 
     /// A tick that cannot start a build, here for want of an L1 origin, has no build to time.
