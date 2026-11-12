@@ -4,7 +4,7 @@ use alloy_primitives::Address;
 use base_consensus_disc::Discv5Driver;
 use base_consensus_gossip::{
     ConnectionGater, GATER_PRUNE_INTERVAL, GossipDriver, PEER_SCORE_INSPECT_FREQUENCY,
-    PENDING_DIAL_PRUNE_INTERVAL,
+    PENDING_DIAL_PRUNE_INTERVAL, TRUSTED_PEER_REDIAL_INTERVAL,
 };
 use base_consensus_sources::{BlockSigner, BlockSignerStartError};
 use discv5::multiaddr::Protocol;
@@ -90,6 +90,13 @@ impl NetworkDriver {
         let mut pending_dial_pruner = tokio::time::interval(PENDING_DIAL_PRUNE_INTERVAL);
         pending_dial_pruner.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
+        // Trusted peers were dialed when the swarm started; the first redial is one interval later.
+        let mut trusted_peer_redialer = tokio::time::interval_at(
+            tokio::time::Instant::now() + TRUSTED_PEER_REDIAL_INTERVAL,
+            TRUSTED_PEER_REDIAL_INTERVAL,
+        );
+        trusted_peer_redialer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
         // Start the block signer if it is configured.
         let signer =
             OptionFuture::from(self.signer.map(async |s| s.start().await)).await.transpose()?;
@@ -103,6 +110,7 @@ impl NetworkDriver {
             gater_pruner,
             pending_dial_pruner,
             signer,
+            trusted_peer_redialer,
         })
     }
 }

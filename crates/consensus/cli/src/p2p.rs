@@ -6,6 +6,7 @@ use std::{
     num::{NonZeroUsize, ParseIntError},
     ops::Deref,
     path::PathBuf,
+    str::FromStr,
 };
 
 use alloy_primitives::{B256, b256};
@@ -19,13 +20,13 @@ use base_consensus_gossip::{
     DEFAULT_MAX_PENDING_OUTGOING_CONNECTIONS, DEFAULT_PENDING_DIAL_TIMEOUT, GaterConfig,
 };
 use base_consensus_node::NetworkConfig;
-use base_consensus_peers::{BootNode, BootStoreFile, PeerMonitoring, PeerScoreLevel};
+use base_consensus_peers::{BootNode, BootStoreFile, PeerMonitoring, PeerScoreLevel, PeerUtils};
 use base_consensus_providers::{AlloyChainProvider, L1RpcProvider};
 use base_retry::RetryConfig;
 use clap::Parser;
-use discv5::enr::k256;
+use discv5::{Enr, enr::k256};
 use eyre::{Result, WrapErr};
-use libp2p::identity::Keypair;
+use libp2p::{Multiaddr, identity::Keypair, multiaddr::Protocol};
 use tokio::time::Duration;
 use tracing::{error, info, warn};
 use url::Url;
@@ -224,6 +225,16 @@ pub struct P2PNetworkArgs {
         env = "BASE_NODE_P2P_BOOTNODES_FILE"
     )]
     pub bootnodes_file: Option<PathBuf>,
+
+    /// Comma-separated trusted consensus peers, as multiaddrs with a `/p2p/<peer-id>` component
+    /// or ENRs (the `ENR` field of `opp2p_self`).
+    ///
+    /// Trusted peers are dialed at startup, redialed while disconnected, exempt from
+    /// `--p2p.peers.hi` and score bans, and receive every gossiped block as gossipsub explicit
+    /// peers. List each other on both nodes: a node refuses mesh GRAFTs from peers it trusts, so
+    /// a one-sided entry only speeds up one direction and logs warnings on the trusting node.
+    #[arg(long = "p2p.trusted-peers", value_delimiter = ',', env = "BASE_NODE_P2P_TRUSTED_PEERS")]
+    pub trusted_peers: Vec<String>,
 
     /// Optionally enable topic scoring.
     ///
@@ -694,6 +705,7 @@ impl P2PArgs {
             max_identify_peerstore_peers: self.identify_peerstore_size,
             bootnodes,
             rollup_config: config.clone(),
+            trusted_peers: self.trusted_peers()?,
             gossip_signer: self.signer.config(l2_chain_id)?,
         })
     }
@@ -723,6 +735,32 @@ impl P2PArgs {
         };
 
         base_consensus_peers::SecretKeyLoader::load(key_path).map_err(|e| eyre::eyre!(e))
+    }
+
+    /// Parses `--p2p.trusted-peers` into dialable multiaddrs that identify the peer.
+    pub fn trusted_peers(&self) -> Result<Vec<Multiaddr>> {
+        self.trusted_peers
+            .iter()
+            .map(|raw| {
+                let raw = raw.trim();
+                let addr = if raw.starts_with("enr:") {
+                    let enr = Enr::from_str(raw).map_err(|e| {
+                        eyre::eyre!("Failed to parse trusted peer ENR '{raw}': {e}")
+                    })?;
+                    PeerUtils::enr_to_multiaddr(&enr).ok_or_else(|| {
+                        eyre::eyre!("Trusted peer ENR '{raw}' has no TCP address or secp256k1 key")
+                    })?
+                } else {
+                    Multiaddr::from_str(raw).map_err(|e| {
+                        eyre::eyre!("Failed to parse trusted peer multiaddr '{raw}': {e}")
+                    })?
+                };
+                if !addr.iter().any(|p| matches!(p, Protocol::P2p(_))) {
+                    eyre::bail!("Trusted peer '{raw}' must include a /p2p/<peer-id> component");
+                }
+                Ok(addr)
+            })
+            .collect()
     }
 
     fn bootnode_strings(&self) -> Result<Vec<String>> {
@@ -943,6 +981,32 @@ mod tests {
         let args = MockCommand::parse_from(["test", "--p2p.bootnodes-file", "/tmp/bootnodes.txt"]);
 
         assert_eq!(args.p2p.bootnodes_file, Some(PathBuf::from("/tmp/bootnodes.txt")));
+    }
+
+    #[test]
+    fn test_p2p_trusted_peers_accepts_multiaddrs_and_enrs() {
+        let peer_id = Keypair::generate_secp256k1().public().to_peer_id();
+        let multiaddr = format!("/dns4/node-2.internal/tcp/9222/p2p/{peer_id}");
+        const ENR: &str = "enr:-J64QBbwPjPLZ6IOOToOLsSjtFUjjzN66qmBZdUexpO32Klrc458Q24kbty2PdRaLacHM5z-cZQr8mjeQu3pik6jPSOGAYYFIqBfgmlkgnY0gmlwhDaRWFWHb3BzdGFja4SzlAUAiXNlY3AyNTZrMaECmeSnJh7zjKrDSPoNMGXoopeDF4hhpj5I0OsQUUt4u8uDdGNwgiQGg3VkcIIkBg";
+        let args =
+            MockCommand::parse_from(["test", "--p2p.trusted-peers", &format!("{multiaddr},{ENR}")]);
+
+        let expected_enr_addr = PeerUtils::enr_to_multiaddr(&Enr::from_str(ENR).unwrap())
+            .expect("ENR has a TCP socket");
+        assert_eq!(
+            args.p2p.trusted_peers().unwrap(),
+            vec![Multiaddr::from_str(&multiaddr).unwrap(), expected_enr_addr]
+        );
+    }
+
+    #[rstest::rstest]
+    #[case::missing_peer_id("/ip4/10.0.1.5/tcp/9222", "must include a /p2p/<peer-id>")]
+    #[case::bad_multiaddr("10.0.1.5:9222", "Failed to parse trusted peer multiaddr")]
+    #[case::bad_enr("enr:not-an-enr", "Failed to parse trusted peer ENR")]
+    fn test_p2p_trusted_peers_rejects_invalid(#[case] peer: &str, #[case] error: &str) {
+        let args = MockCommand::parse_from(["test", "--p2p.trusted-peers", peer]);
+        let err = args.p2p.trusted_peers().expect_err("invalid trusted peer must fail");
+        assert!(err.to_string().contains(error), "{err}");
     }
 
     #[test]

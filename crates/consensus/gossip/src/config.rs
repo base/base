@@ -89,6 +89,9 @@ pub const DEFAULT_PENDING_DIAL_TIMEOUT: Duration = Duration::from_secs(30);
 /// How often the network actor aborts outbound dials that exceeded their pending timeout.
 pub const PENDING_DIAL_PRUNE_INTERVAL: Duration = Duration::from_secs(5);
 
+/// How often the network actor redials disconnected trusted peers.
+pub const TRUSTED_PEER_REDIAL_INTERVAL: Duration = Duration::from_secs(60);
+
 ////////////////////////////////////////////////////////////////////////////////////////////////
 // Config Building
 ////////////////////////////////////////////////////////////////////////////////////////////////

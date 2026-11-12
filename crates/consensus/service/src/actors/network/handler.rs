@@ -35,6 +35,8 @@ pub struct NetworkHandler {
     pub gater_pruner: tokio::time::Interval,
     /// Periodic pruner for pending outbound dials that have timed out.
     pub pending_dial_pruner: tokio::time::Interval,
+    /// Periodic redial of disconnected trusted peers.
+    pub trusted_peer_redialer: tokio::time::Interval,
     /// A handler for the block signer.
     pub signer: Option<BlockSignerHandler>,
 }
@@ -60,7 +62,10 @@ impl NetworkHandler {
                 // Record the peer score in the metrics.
                 Metrics::peer_scores().record(score);
 
-                if score < ban_peers.ban_threshold {
+                // Protected peers (including trusted peers) are never banned for their score.
+                if score < ban_peers.ban_threshold
+                    && !self.gossip.connection_gate.protected_peers.contains(peer_id)
+                {
                     return Some(*peer_id);
                 }
 
@@ -148,6 +153,7 @@ impl GossipTransport for NetworkHandler {
     async fn next_unsafe_block(&mut self) -> Option<NetworkPayloadEnvelope> {
         loop {
             let has_peer_monitoring = self.gossip.peer_monitoring.as_ref().is_some();
+            let has_trusted_peers = !self.gossip.trusted_peers.is_empty();
             select! {
                 event = self.gossip.next() => {
                     let event = event?;
@@ -167,6 +173,9 @@ impl GossipTransport for NetworkHandler {
                 }
                 _ = self.pending_dial_pruner.tick() => {
                     self.gossip.clear_expired_pending_connections();
+                }
+                _ = self.trusted_peer_redialer.tick(), if has_trusted_peers => {
+                    self.gossip.redial_trusted_peers();
                 }
             }
         }
