@@ -8,7 +8,6 @@ use std::{
 };
 
 use alloy_primitives::Address;
-use base_execution_exex::DEFAULT_CACHE_CAPACITY;
 use base_execution_trie::{MdbxProofsStorageOptions, RocksdbProofsStorageOptions};
 use base_execution_txpool::{
     DEFAULT_ALLOWLISTED_PAYMENT_LIMIT, DEFAULT_PAYMENT_LIMIT, DEFAULT_SIGNATURE_LIMIT,
@@ -514,25 +513,6 @@ pub struct RollupArgs {
     )]
     pub proofs_history_verification_interval: u64,
 
-    /// Maximum number of blocks of trie data from execution notifications to buffer for the
-    /// proofs history sync loop. Default is about 17 minutes of blocks at 200ms block time.
-    ///
-    /// Blocks produced while the node is down are always re-executed. While the sync loop works
-    /// through that gap, new blocks are buffered here; if they are evicted before the loop
-    /// reaches them they are re-executed too, and the loop may never catch up. Size this to
-    /// cover the longest restart the node must recover from, at the cost of memory while the
-    /// sync loop is behind.
-    ///
-    /// CLI: `--proofs-history.cache-capacity 18000`
-    #[arg(
-        long = "proofs-history.cache-capacity",
-        visible_alias = "proofs.cache-capacity",
-        value_name = "PROOFS_HISTORY_CACHE_CAPACITY",
-        default_value_t = DEFAULT_CACHE_CAPACITY,
-        value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..)
-    )]
-    pub proofs_history_cache_capacity: usize,
-
     /// L1 upgrade signal observer arguments.
     #[command(flatten)]
     pub upgrade_signal: UpgradeSignalArgs,
@@ -586,7 +566,6 @@ impl Default for RollupArgs {
             proofs_history_window: DEFAULT_PROOFS_HISTORY_WINDOW_BLOCKS,
             proofs_history_prune_interval: Duration::from_secs(15),
             proofs_history_verification_interval: 0,
-            proofs_history_cache_capacity: DEFAULT_CACHE_CAPACITY,
             upgrade_signal: UpgradeSignalArgs::default(),
             upgrade_signal_l1_rpc: UpgradeSignalL1RpcArgs::default(),
         }
@@ -866,27 +845,6 @@ mod tests {
             "reth",
             "--proofs-history.mdbx.max-read-transaction-duration",
             "0s",
-        ]);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_parse_proofs_history_cache_capacity() {
-        let args = CommandParser::<RollupArgs>::parse_from(["reth"]).args;
-        assert_eq!(args.proofs_history_cache_capacity, DEFAULT_CACHE_CAPACITY);
-
-        let args = CommandParser::<RollupArgs>::parse_from([
-            "reth",
-            "--proofs-history.cache-capacity",
-            "18000",
-        ])
-        .args;
-        assert_eq!(args.proofs_history_cache_capacity, 18_000);
-
-        let result = CommandParser::<RollupArgs>::try_parse_from([
-            "reth",
-            "--proofs-history.cache-capacity",
-            "0",
         ]);
         assert!(result.is_err());
     }
