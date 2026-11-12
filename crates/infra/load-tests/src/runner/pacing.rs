@@ -1820,7 +1820,7 @@ impl LoadRunner {
             let Some(&sender_index) = enqueue_state.sender_indices.get(&sender) else {
                 continue;
             };
-            let Some(generation) = enqueue_state.buffer.reset_sender(sender_index, sender) else {
+            let Some(generation) = enqueue_state.buffer.reset_sender(sender_index) else {
                 continue;
             };
             // Reset is split across the enqueue and producer tasks: the enqueue side owns the
@@ -1877,20 +1877,18 @@ impl LoadRunner {
             );
         enqueue_state.progress.last_cycle_at = Some(cycle_started);
         let buffered_before = enqueue_state.buffer.buffered_gas();
-        let mut sender_slots: HashMap<Address, u64> = drain_state
-            .queued_per_sender
-            .iter()
-            .map(|(from, queued)| {
-                let occupied =
-                    queued.saturating_add(drain_state.results_tracker.in_flight_for(from));
-                (
-                    *from,
-                    u64::try_from(config.max_in_flight_per_sender)
-                        .unwrap_or(u64::MAX)
-                        .saturating_sub(occupied),
-                )
-            })
-            .collect();
+        let max_in_flight_per_sender =
+            u64::try_from(config.max_in_flight_per_sender).unwrap_or(u64::MAX);
+        let mut sender_slots = vec![0u64; enqueue_state.sender_indices.len()];
+        for (from, &sender_index) in enqueue_state.sender_indices {
+            let occupied = drain_state
+                .queued_per_sender
+                .get(from)
+                .copied()
+                .unwrap_or_default()
+                .saturating_add(drain_state.results_tracker.in_flight_for(from));
+            sender_slots[sender_index] = max_in_flight_per_sender.saturating_sub(occupied);
+        }
         let remaining_transaction_slots =
             drain_state.remaining_transaction_slots(config.max_total_in_flight);
         let mut selected = enqueue_state.buffer.take_gas_with_limits(
@@ -2040,11 +2038,10 @@ impl LoadRunner {
             Self::buffer_presigned_chunk(enqueue_state.buffer, enqueue_state.progress, chunk);
         }
 
-        let mut sender_slots: HashMap<Address, u64> = drain_state
-            .queued_per_sender
-            .keys()
-            .map(|from| (*from, u64::try_from(max_in_flight_per_sender).unwrap_or(u64::MAX)))
-            .collect();
+        let mut sender_slots = vec![
+            u64::try_from(max_in_flight_per_sender).unwrap_or(u64::MAX);
+            enqueue_state.sender_indices.len()
+        ];
         let mut selected = enqueue_state.buffer.take_gas_with_limits(
             target_gas,
             &mut sender_slots,
