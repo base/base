@@ -506,6 +506,22 @@ async fn craft_tx_with_fee_overrides_uses_network_when_overrides_below() {
     assert!(prepared.gas_fee_cap > 1, "network fee cap should override the 1-wei override");
 }
 
+/// A blob transaction refuses a priority fee override above the policy's upper bound for
+/// its blob count, instead of signing it.
+#[tokio::test]
+async fn craft_tx_rejects_a_blob_fee_override_above_the_upper_bound() {
+    let (manager, _anvil) = setup().await;
+    let ceiling = TxManagerConfig::default().max_priority_fee_per_gas_per_blob_upper_bound;
+    let overrides = FeeOverride::new(2 * ceiling, 0);
+
+    let err = manager
+        .craft_tx(&single_blob_candidate(), Some(overrides))
+        .await
+        .expect_err("should refuse the override");
+
+    assert_eq!(err, TxManagerError::FeeLimitExceeded { fee: 2 * ceiling, ceiling });
+}
+
 #[test]
 fn simple_tx_manager_is_send_and_sync() {
     fn assert_send_sync<T: Send + Sync>() {}

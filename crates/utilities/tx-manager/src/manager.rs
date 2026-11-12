@@ -14,7 +14,8 @@
 //! re-query gas prices after transaction construction.
 //!
 //! Blob transactions are priced by [`BlobFeePolicy`] instead of the provider's
-//! suggested priority fee, and skip the fee limit check.
+//! suggested priority fee, and skip the fee limit check: the policy's upper bound
+//! limits their priority fee instead.
 //!
 //! The [`send_tx`] method drives a signed transaction from publication through
 //! mempool to onchain confirmation via a `tokio::select!` event loop that
@@ -638,7 +639,7 @@ where
     ///
     ///    A blob transaction is priced by [`BlobFeePolicy::fees`] from the
     ///    current base fee and blob base fee instead, with the fee overrides
-    ///    as a floor and no fee limit.
+    ///    as a floor up to the policy's upper bound.
     /// 4. Build a [`TransactionRequest`] with all fields set manually
     /// 5. Estimate gas via the provider; use `max(estimate, candidate.gas_limit)` as floor
     /// 6. Assign nonce via [`NonceManager::next_nonce`]
@@ -706,15 +707,16 @@ where
 
         let (tip_cap, fee_cap, blob_fee_cap) = if is_blob {
             // Blob transactions: the policy's fees, with the overrides as a floor,
-            // such as the replacement fees the send loop computed. No fee limit
-            // applies: the policy bounds their `max_priority_fee_per_gas`.
+            // such as the replacement fees the send loop computed. The policy's
+            // upper bound limits their `max_priority_fee_per_gas` instead of the
+            // fee limit.
             let (base_fee, blob_base_fee) = self.blob_base_fees().await?;
             let fees = self.blob_fee_policy.fees(
                 candidate.blobs.len() as u128,
                 base_fee,
                 blob_base_fee,
                 fee_overrides.unwrap_or_default(),
-            );
+            )?;
             self.metrics.record_tipcap(fees.gas_tip_cap as f64 / WEI_PER_GWEI);
             self.metrics
                 .record_blob_fee_cap(fees.blob_fee_cap.unwrap_or_default() as f64 / WEI_PER_GWEI);

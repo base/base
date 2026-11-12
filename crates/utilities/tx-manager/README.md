@@ -110,7 +110,8 @@ error, the same signed transaction is sent again every `publish_retry_delay`, up
 `publish_max_retries` times, without raising any fee. Doubling every fee is the minimum L1
 nodes accept to replace a blob transaction, so a transaction whose doubled
 `max_priority_fee_per_gas` would pass `max_priority_fee_per_gas_per_blob_upper_bound × n`
-is not replaced any more, and stays at its last fees. The bounds apply to
+is not replaced any more, and stays at its last fees. A fee override above that bound
+is refused with `FeeLimitExceeded`. The bounds apply to
 `max_priority_fee_per_gas` only: `max_fee_per_gas` and `max_fee_per_blob_gas` follow the
 doubling and L1 prices without a limit. `p` lives in memory, is shared by clones of the
 manager, and starts again from the lower bound after a restart.
