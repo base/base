@@ -109,6 +109,8 @@ fn assert_parity(to: Address, input: Bytes) -> Vec<Outcome> {
     BaseUpgrade::EXECUTION_VARIANTS
         .into_iter()
         .filter(|upgrade| *upgrade >= BaseUpgrade::Azul)
+        // The orthogonal commitment upgrade does not activate native precompiles.
+        .filter(|upgrade| *upgrade != BaseUpgrade::DeferredStateRoot)
         .map(|upgrade| {
             let evm2 = run_evm2(upgrade, to, &input);
             let revm = run_revm(upgrade, to, &input);

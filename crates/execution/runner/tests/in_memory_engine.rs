@@ -137,7 +137,9 @@ async fn seals_one_block(deferred: bool) -> Result<()> {
         datadir: MaybePlatformPath::<DataDirPath>::from(data_path.clone()),
         ..Default::default()
     });
-    let runtime = Runtime::test();
+    // Construct outside Tokio so this node owns a runtime. An attached Runtime::test only
+    // waits graceful guards, not the cancellation/destruction of every provider-owning task.
+    let runtime = std::thread::spawn(Runtime::test).join().expect("node runtime construction must succeed");
     let mut replay_config = node_config.clone();
     let args = RollupArgs { deferred_state_root_disposable: deferred, ..Default::default() };
     let (db, prepared) = base_node_runner::DeferredStateRootPrepared::prepare_database(&node_config, &args, runtime.clone())?;
@@ -301,7 +303,9 @@ async fn seals_one_block(deferred: bool) -> Result<()> {
     drop(engine); drop(reads); drop(public);
     drop(launched);
     assert!(runtime.graceful_shutdown_with_timeout(Duration::from_secs(10)), "runner exit must drain its owned current-root and redundant stock work");
-    drop(runtime);
+    // Join the owned Tokio runtime before snapshotting: cancellation drops async provider
+    // owners, including StaticFileProvider's StorageLock whose Drop deletes static_files/lock.
+    tokio::task::spawn_blocking(move || runtime.shutdown_timeout(Duration::from_secs(10))).await?;
     if !deferred {
         // This ordinary persisted tip is an unmarked immutable pre-F snapshot, not an active restart.
         let mut genesis = replay_config.chain.genesis().clone();
@@ -311,15 +315,19 @@ async fn seals_one_block(deferred: bool) -> Result<()> {
         let restored = tempfile::tempdir()?;
         let destination = restored.path().join("run2");
         let original = replay_config.datadir();
+        assert!(!original.static_files().join("lock").exists(), "offline snapshot requires the static-file writer and its lock to be released");
+        let source_files = base_node_runner::DeferredStateRootAdmission::store_digests(original.data_dir())?;
         let mut pending = ["db", "static_files", "rocksdb"].map(|store| (original.data_dir().join(store), destination.join(store))).to_vec();
         while let Some((source, target)) = pending.pop() {
             if source.is_dir() {
                 std::fs::create_dir_all(&target)?;
                 for entry in std::fs::read_dir(source)? { let entry = entry?; pending.push((entry.path(), target.join(entry.file_name()))); }
-            } else { std::fs::copy(source, target)?; }
+            } else { std::fs::copy(&source, &target).wrap_err_with(|| format!("offline snapshot copy {} to {}", source.display(), target.display()))?; }
         }
         replay_config.datadir.datadir = destination.into();
         let files = base_node_runner::DeferredStateRootAdmission::store_digests(replay_config.datadir().data_dir())?;
+        assert_eq!(files, source_files, "snapshot copy must preserve every immutable store filename and byte");
+        assert_eq!(base_node_runner::DeferredStateRootAdmission::store_digests(original.data_dir())?, source_files, "offline source must remain unchanged throughout snapshot copy");
         let manifest = data_path.with_extension("snapshot.json");
         let snapshot = base_node_runner::DeferredStateRootSnapshot { provenance: "ordinary persisted block1 before activation".into(), genesis_hash: replay_config.chain.genesis_hash(), tip_hash: hash, tip_number: 1, files };
         std::fs::write(&manifest, serde_json::to_vec(&snapshot)?)?;

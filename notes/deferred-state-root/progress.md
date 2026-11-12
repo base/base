@@ -227,3 +227,26 @@ Implementation commit: `e844d7aeb` (`fix(execution): admit snapshots read-only a
 - The unchanged randomized consensus transaction-content test passed this final unfiltered run. Its prior full-run failures remain evidence of a residual fixture flake; this passing run does not erase them. No unrelated test or production consensus source was changed.
 
 The following commit is documentation-only evidence recording. Parent independent rerun/review and a supported-host CLI/custom-builder package build remain prerequisites to PR readiness; no full-workspace or standalone-binary build, push, PR, deployment or benchmark is claimed.
+
+## Verified fork-enumeration and offline-copy corrections
+
+Continuation starts at `f464bed971c4a7c81be9a23d15b123f7db0c205f`. The parent's later independent `target/deferred-root-parent2/affected1.log` reported **515 passed, 1 failed, 1 skipped**, with `in_memory_engine_seals_one_block` failing at recursive copy with OS error 2. This supersedes any inference that the earlier 516-pass result established a reliable snapshot fixture. The old failure remains preserved.
+
+- Parent compile red is `target/deferred-root-fork-enumeration1/red1.log`: two parity fixtures declared 14 forks while schedule enumeration now has 15. Both lengths are now derived. Production schedule storage, enum order, feature semantics and timestamp EVM resolution are unchanged.
+- `spec-red1.log` is an actual pre-fix assertion failure, `DepositNonce at DeferredStateRoot`, false versus ordinal true. The historical ordinal test now explicitly handles the orthogonal marker; a separate regression checks **every** registered feature and permits only ParentPostStateCommitment on the isolated marker.
+- Execution parity matrices exclude the unsupported isolated commitment-only EVM spec, rather than enabling unrelated OP features to satisfy parity. Deposit, fee, block, L1 parameter and native-precompile fixtures retain all actual execution forks. Transition-hook schedule helpers only target historical upgrades; their earlier-upgrade comparisons already exclude the marker. EIP-8130 parity already limits schedule entries through Everest. The handler's Ethereum-spec cap assertion remains valid for all entries and is unchanged.
+- New schedule regression configures Regolith, Fjord and Beryl chains independently, then checks before/at/after commitment activation. It requires the exact unchanged EVM fork, Ethereum mapping, every unrelated scheduled and EVM feature flag, and actual multi-transaction block outcome on both engines. Commitment activation changes only its schedule feature. It does not imply Osaka/latest execution.
+- One requested pre-fix snapshot retry, `snapshot-retry1.log`, passed. That does not erase the parent's intermittent failure. Pinned Runtime::test attaches to the caller's Tokio runtime; graceful shutdown waits registered graceful guards, not destruction of all canceled async tasks. Such tasks retain providers; pinned StaticFileProvider's StorageLock deletes `static_files/lock` on final drop. The old error did not record the vanished filename, so its exact path is not claimed.
+- The fixture now constructs the existing small test runtime outside Tokio so it owns its executor, then explicitly shuts/joins it on a blocking thread after graceful drain and before snapshot copy. The source static writer lock must be absent. Exact immutable source digests are captured before copying, compared with the destination, and rechecked on the source afterward. Copy errors include both paths. No missing files are ignored, lock-copy exemptions introduced, immutable hashes weakened, or arbitrary sleeps added.
+
+Evidence in new `target/deferred-root-fork-fixes1/`; exact commands in `evidence-commands1.txt`. All nextest runs use RUST_MIN_STACK=8388608, all features, locked dependencies, ci cargo/nextest profiles, zero retries and no fail-fast, matching scoped `just test-ci` conventions.
+
+| Evidence | Result | Scope |
+|---|---|---|
+| `spec-red1.log` | 0 passed, 1 failed, 189 filtered | Genuine assertion before correction. |
+| `snapshot-retry1.log` | 1 passed, 493 filtered | Pre-fix retry; intermittent parent failure remains disclosed. |
+| `evm-all1.log` | **291 passed, 0 skipped**, 13 binaries | All common-evm/common-evm2 unit and integration targets, not library-only; includes both new regressions. |
+| `evm-all2.log` | **291 passed, 0 skipped**, 13 binaries | Explicit `--all-targets` confirmation of the same complete common-EVM scope. Overlaps evm-all1 entirely. |
+| `candidate1.log` | **516 passed, 0 failed, 1 skipped** | Unfiltered six-library/four-integration candidate scope including strengthened offline snapshot copy/replay. |
+
+Targeted counts overlap the full runs and must not be added as unique tests. The existing ignored RPC WebSocket test still requires a localhost node. The unrelated randomized consensus transaction-content test passed this run; its historical flake remains disclosed and its source is untouched. `git diff --check` passes. No fmt, Clippy, zepter, reth/pin or upstream API changes, other-repo writes, new review round, push/PR, deployment or benchmark. Supported-host CLI/custom-builder compilation and the previously documented unsupported recovery/service boundaries remain unchanged. Parent owns final independent verification.

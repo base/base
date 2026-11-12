@@ -10,6 +10,8 @@
 //! block that, like every L2 block, opens with a deposit, followed by several transactions from
 //! the same sender.
 
+use alloy_hardforks::ForkCondition;
+use base_common_chains::{ChainUpgrades, Upgrades};
 use alloy_consensus::{TxEip1559, transaction::Recovered};
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256};
 use base_common_consensus::{BaseReceipt, TxDeposit};
@@ -19,7 +21,7 @@ use base_common_evm::{
 use base_common_evm2::{
     BaseBlockExecutionCtx, BaseBlockExecutor, BaseEvmExt, BaseEvmTypes, BaseSpecId, BaseTxEnvelope,
 };
-use base_common_genesis::BaseUpgrade;
+use base_common_genesis::{BaseFeature, BaseUpgrade};
 use base_common_l1_fees::L1FeeParams;
 use evm2::{Evm, Precompiles, env::BlockEnv, ethereum::TxEnvelope, evm::InMemoryDB};
 use revm::{
@@ -47,7 +49,7 @@ const BLOCK_GAS_LIMIT: u64 = 30_000_000;
 const TX_COUNT: u64 = 3;
 
 /// The whole execution fork ladder.
-const FORKS: [BaseUpgrade; 14] = BaseUpgrade::EXECUTION_VARIANTS;
+const FORKS: [BaseUpgrade; BaseUpgrade::EXECUTION_VARIANTS.len()] = BaseUpgrade::EXECUTION_VARIANTS;
 
 fn enveloped() -> Bytes {
     Bytes::from(vec![0x02u8; 120])
@@ -205,9 +207,42 @@ fn run_revm(upgrade: BaseUpgrade) -> BlockOutcome {
     BlockOutcome { successes, cumulative_gas }
 }
 
+/// Commitment activation retains the scheduled EVM era and every unrelated execution feature.
+#[test]
+fn commitment_activation_preserves_scheduled_execution() {
+    for upgrade in [BaseUpgrade::Regolith, BaseUpgrade::Fjord, BaseUpgrade::Beryl] {
+        let forks = FORKS.into_iter()
+            .filter(|fork| *fork <= upgrade)
+            .map(|fork| (fork, ForkCondition::Timestamp(0)));
+        let ordinary = ChainUpgrades::new(forks.clone());
+        let deferred = ChainUpgrades::new(forks.chain([
+            (BaseUpgrade::DeferredStateRoot, ForkCondition::Timestamp(100)),
+        ]));
+        for timestamp in [99, 100, 101] {
+            let spec = RevmBaseSpecId::from_timestamp(&deferred, timestamp);
+            assert_eq!(spec.upgrade(), upgrade, "commitment activation must retain {upgrade:?} at {timestamp}");
+            assert_eq!(spec.into_eth_spec(), RevmBaseSpecId::from_timestamp(&ordinary, timestamp).into_eth_spec(), "commitment must not advance the Ethereum fork");
+            let evm2_spec = BaseSpecId::new(spec.upgrade());
+            for &feature in BaseFeature::ALL {
+                if feature == BaseFeature::ParentPostStateCommitment {
+                    assert_eq!(deferred.is_feature_active_at_timestamp(feature, timestamp), timestamp >= 100, "only the commitment schedule changes at activation");
+                } else {
+                    assert_eq!(deferred.is_feature_active_at_timestamp(feature, timestamp), ordinary.is_feature_active_at_timestamp(feature, timestamp), "scheduled {feature:?} must not change");
+                    assert_eq!(evm2_spec.is_feature_enabled(feature), upgrade.is_feature_enabled(feature), "EVM2 {feature:?} must retain its existing fork flags");
+                    assert_eq!(spec.is_feature_enabled(feature), upgrade.is_feature_enabled(feature), "revm {feature:?} must retain its existing fork flags");
+                }
+            }
+            let evm2 = run_evm2(spec.upgrade());
+            assert_eq!(evm2, run_revm(spec.upgrade()), "scheduled engines must agree across commitment activation");
+            assert_eq!(evm2, run_evm2(upgrade), "commitment activation must preserve the original block outcome");
+        }
+    }
+}
+
 #[test]
 fn block_cumulative_gas_and_success_match_revm() {
-    for upgrade in FORKS {
+    // The commitment-only upgrade is never selected as an isolated EVM spec by a chain schedule.
+    for upgrade in FORKS.into_iter().filter(|upgrade| *upgrade != BaseUpgrade::DeferredStateRoot) {
         let evm2 = run_evm2(upgrade);
         let revm = run_revm(upgrade);
         assert_eq!(evm2.successes.len(), TX_COUNT as usize + 1);

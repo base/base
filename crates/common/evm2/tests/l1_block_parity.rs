@@ -61,7 +61,8 @@ fn revm_fetch(upgrade: BaseUpgrade, scalars: U256) -> L1BlockInfo {
 #[test]
 fn fee_params_match_the_revm_reference_across_forks() {
     for scalars in [ECOTONE_SCALARS, U256::ZERO] {
-        for upgrade in BaseUpgrade::EXECUTION_VARIANTS {
+        // A commitment schedule retains its existing EVM fork, not the isolated commitment-only spec.
+        for upgrade in BaseUpgrade::EXECUTION_VARIANTS.into_iter().filter(|upgrade| *upgrade != BaseUpgrade::DeferredStateRoot) {
             let evm2 = evm2_fetch(upgrade, scalars);
             let revm = revm_fetch(upgrade, scalars);
             let context = format!("{upgrade:?} with scalars {scalars:#x}");

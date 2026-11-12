@@ -45,7 +45,7 @@ const OPERATOR_FEE_CONSTANT: u64 = 7;
 /// The whole execution fork ladder, covering each distinct fee branch: pre-Ecotone (overhead L1
 /// cost), Ecotone (linear L1 cost), Fjord (FastLZ-estimated L1 cost), Isthmus (operator fee), and
 /// Jovian (operator fee × multiplier), plus the Base-specific upgrades after it.
-const FORKS: [BaseUpgrade; 14] = BaseUpgrade::EXECUTION_VARIANTS;
+const FORKS: [BaseUpgrade; BaseUpgrade::EXECUTION_VARIANTS.len()] = BaseUpgrade::EXECUTION_VARIANTS;
 
 /// Arbitrary EIP-2718-shaped bytes priced for the L1 data fee (same on both engines).
 fn enveloped() -> Bytes {
@@ -206,7 +206,8 @@ fn run_revm(upgrade: BaseUpgrade) -> Outcome {
 
 #[test]
 fn standard_transaction_fee_distribution_matches_revm() {
-    for upgrade in FORKS {
+    // The commitment-only upgrade is never selected as an isolated EVM spec by a chain schedule.
+    for upgrade in FORKS.into_iter().filter(|upgrade| *upgrade != BaseUpgrade::DeferredStateRoot) {
         let evm2 = run_evm2(upgrade);
         let revm = run_revm(upgrade);
         assert_eq!(evm2, revm, "standard-tx fee distribution diverged at {upgrade:?}");

@@ -281,6 +281,19 @@ mod tests {
         assert_eq!(BaseSpecId::default().upgrade(), BaseUpgrade::LATEST);
     }
 
+    /// The isolated commitment marker is not an execution fork or an OP feature bundle.
+    #[test]
+    fn deferred_commitment_spec_enables_only_its_own_feature() {
+        let spec = BaseSpecId::new(BaseUpgrade::DeferredStateRoot);
+        for &feature in BaseFeature::ALL {
+            assert_eq!(
+                spec.is_feature_enabled(feature),
+                feature == BaseFeature::ParentPostStateCommitment,
+                "isolated commitment feature at {feature:?}"
+            );
+        }
+    }
+
     #[test]
     fn semantic_features_preserve_execution_order_including_contract_only_specs() {
         let cases = [
@@ -305,7 +318,7 @@ mod tests {
             for (feature, activation) in cases {
                 assert_eq!(
                     spec.is_feature_enabled(feature),
-                    spec.is_enabled_in(activation),
+                    upgrade != BaseUpgrade::DeferredStateRoot && spec.is_enabled_in(activation),
                     "{feature:?} at {upgrade:?}"
                 );
             }
