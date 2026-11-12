@@ -280,6 +280,7 @@ impl RollupNodeBuilder {
             checkpoint_path,
             safedb_path: self.safedb_path,
             upgrade_signal_config,
+            payload_ready: None,
         })
     }
 

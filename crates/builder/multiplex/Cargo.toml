@@ -19,6 +19,7 @@ base-node-runner.workspace = true
 base-common-chains.workspace = true
 base-execution-evm.workspace = true
 base-execution-chainspec.workspace = true
+base-common-rpc-types-engine.workspace = true
 base-execution-payload-builder.workspace = true
 
 # reth
@@ -52,16 +53,25 @@ eyre.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+url.workspace = true
+tempfile.workspace = true
+serde_json.workspace = true
 alloy-provider.workspace = true
 alloy-eips.workspace = true
+alloy-network.workspace = true
+alloy-rpc-client.workspace = true
 alloy-primitives.workspace = true
 alloy-rpc-types-engine.workspace = true
+base-protocol.workspace = true
+base-test-utils.workspace = true
 base-common-genesis.workspace = true
+base-common-rpc-types.workspace = true
+base-consensus-engine.workspace = true
 base-common-consensus = { workspace = true, features = ["reth"] }
 base-common-network.workspace = true
-base-common-rpc-types-engine.workspace = true
 base-execution-chainspec.workspace = true
 base-execution-rpc = { workspace = true, features = ["client"] }
+base-node-runner = { workspace = true, features = ["test-utils"] }
 metrics-exporter-prometheus.workspace = true
 reth-db.workspace = true
 reth-ipc.workspace = true

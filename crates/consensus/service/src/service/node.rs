@@ -13,6 +13,7 @@ use alloy_provider::RootProvider;
 use base_common_chains::ChainConfig;
 use base_common_genesis::RollupConfig;
 use base_common_network::Base;
+use base_common_rpc_types_engine::PayloadReady;
 use base_consensus_derive::{Pipeline, SignalReceiver, StatefulAttributesBuilder};
 use base_consensus_engine::{Engine, EngineClient, EngineState, ForkchoiceCheckpointReader};
 use base_consensus_providers::{
@@ -23,7 +24,7 @@ use base_consensus_rpc::{AdminNetworkAccess, BaseRpc, RpcBuilder};
 use base_consensus_safedb::{DisabledSafeDB, SafeDB, SafeDBReader, SafeHeadListener};
 use base_protocol::L2BlockInfo;
 use base_upgrade_signal::{UpgradeSignalMetricLayer, UpgradeSignalMetrics};
-use tokio::sync::{mpsc, watch};
+use tokio::sync::{broadcast, mpsc, watch};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
@@ -146,6 +147,8 @@ pub struct RollupNode {
     pub safedb_path: Option<PathBuf>,
     /// Optional upgrade signal configuration for the consensus node.
     pub upgrade_signal_config: Option<UpgradeSignalNodeConfig>,
+    /// Optional frozen-payload hints from an embedded execution node.
+    pub payload_ready: Option<broadcast::Receiver<PayloadReady>>,
 }
 
 /// A RollupNode-level derivation actor wrapper.
@@ -631,6 +634,10 @@ impl RollupNode {
                     unsafe_payload_gossip_client: queued_gossip_client,
                     sealer: None,
                     pending_stop: None,
+                    payload_ready: self
+                        .payload_ready
+                        .as_ref()
+                        .map(broadcast::Receiver::resubscribe),
                 }),
                 Some(QueuedSequencerAdminAPIClient::new(sequencer_admin_api_tx)),
             )

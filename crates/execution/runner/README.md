@@ -55,6 +55,48 @@ impl FromExtensionConfig for MyExtension {
 }
 ```
 
+## Frozen payload notifications
+
+`LaunchedBaseNode::payload_ready` is a bounded, in-process EL-to-CL channel carrying
+`PayloadReady { payload_id, parent_hash }`. The default payload builder sends a hint only
+after a sequencer build returns `Freeze`, including completed state-root computation.
+Pre-Denim improvements, failed or cancelled builds, and `no_tx_pool` replay builds do not
+send hints. Custom payload services must explicitly wire `BaseNode::payload_ready` if
+they support this contract.
+
+The receiver exists before node launch so fast builds cannot race subscription. Sending
+never waits for the consumer. The channel retains 16 hints; receivers must handle lag or
+closure by retaining their normal seal deadline, and must match both identifiers against
+the active build before acting. `getPayload` awaits the completed build even if the hint
+arrives just before reth installs its result into the payload job.
+
+The unified sequencer matches these hints against its active Denim build and calls
+`getPayload` through the existing seal path immediately. Conductor commit, gossip, and
+local insertion keep their existing order. The scheduled seal remains the fallback, and
+the next block's build still waits for its parent's scheduled timestamp. Split EL/CL
+deployments have no IPC/WS subscription and continue using the scheduled seal.
+
+Early sealing is observable through these metrics, which the unified sequencer exports with
+a `reth_` prefix. Offsets are measured from the block's scheduled build start, which is its
+parent's timestamp.
+
+| Metric | Type | Labels | Meaning |
+|---|---|---|---|
+| `base_builder_payload_ready_hints_sent_total` | counter | `result`: `delivered`, `no_receiver` | Hints the payload builder published. |
+| `base_node_sequencer_seals_total` | counter | `trigger`: `ready_hint`, `deadline` | Payloads fetched with `getPayload`, by what prompted the request. |
+| `base_node_sequencer_build_start_offset_seconds` | histogram | none | When the block's build was requested from the engine. |
+| `base_node_sequencer_get_payload_offset_seconds` | histogram | `trigger` | When `getPayload` was requested. |
+| `base_node_sequencer_payload_ready_hints_dropped_total` | counter | `reason`: `already_sealing`, `inactive`, `no_build`, `payload_id_mismatch`, `parent_mismatch`, `pre_denim`, `lagged` | Hints that did not trigger a seal. |
+
+A hint that arrives after the seal deadline has fetched its payload is counted as
+`already_sealing`, so that reason tracks deadline seals rather than a fault.
+
+The two offsets together give roughly how long a searcher has to react to a block and still
+land in the next one: the 200 ms block interval, plus the next block's build start offset,
+minus this block's `getPayload` offset. It is approximate. After `getPayload` the block is
+still committed, signed, and gossiped, and a Denim build reads the transaction pool once,
+shortly after it is requested.
+
 ## License
 
 Licensed under the [MIT License](https://github.com/base/base/blob/main/LICENSE).

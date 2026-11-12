@@ -16,6 +16,7 @@ use alloy_rpc_types_engine::PayloadId;
 use base_common_chains::Upgrades;
 use base_common_consensus::{BaseTransaction, CoinbaseTip, Predeploys};
 use base_common_evm::L1BlockInfo;
+use base_common_rpc_types_engine::PayloadReady;
 use base_execution_eip8130::IntrinsicGas;
 use base_execution_txpool::{
     BasePooledTx, GuardMetrics, ParkableTransactionPool, PredicateContext,
@@ -52,6 +53,7 @@ use reth_transaction_pool::{BestTransactionsAttributes, PoolTransaction, Transac
 use reth_trie_common::ExecutionWitnessMode;
 use reth_trie_parallel::state_root_task::PayloadStateRootHandle;
 use revm::context::{Block, BlockEnv};
+use tokio::sync::broadcast;
 use tracing::{debug, debug_span, info, instrument, trace, warn};
 
 use crate::{
@@ -115,6 +117,8 @@ pub struct BasePayloadBuilder<
     pub config: BaseBuilderConfig,
     /// Validity transactions resting from the last block this builder finished.
     pub resting_predicates: RestingPredicateStore,
+    /// Optional, non-blocking notifications for frozen sequencer payloads.
+    pub payload_ready: Option<broadcast::Sender<PayloadReady>>,
     /// Marker for the payload attributes type.
     _pd: PhantomData<Attrs>,
 }
@@ -132,6 +136,7 @@ where
             client: self.client.clone(),
             config: self.config.clone(),
             resting_predicates: self.resting_predicates.clone(),
+            payload_ready: self.payload_ready.clone(),
             _pd: PhantomData,
         }
     }
@@ -166,8 +171,15 @@ impl<Pool, Client, Evm, Attrs> BasePayloadBuilder<Pool, Client, Evm, Attrs> {
             evm_config,
             config,
             resting_predicates: RestingPredicateStore::default(),
+            payload_ready: None,
             _pd: PhantomData,
         }
+    }
+
+    /// Publishes a hint after a sequencer build returns a final, frozen payload.
+    pub fn with_payload_ready(mut self, sender: Option<broadcast::Sender<PayloadReady>>) -> Self {
+        self.payload_ready = sender;
+        self
     }
 
     /// Runs end-of-block maintenance of the resting validity set, such as the unseen sweep, on
@@ -175,6 +187,18 @@ impl<Pool, Client, Evm, Attrs> BasePayloadBuilder<Pool, Client, Evm, Attrs> {
     pub fn with_task_executor(mut self, executor: Runtime) -> Self {
         self.resting_predicates = RestingPredicateStore::new(executor);
         self
+    }
+
+    /// Tells the consensus layer that `payload_id`, built on `parent_hash`, is frozen.
+    ///
+    /// A missing or lagging consumer must never block payload production, so a hint nobody is
+    /// subscribed to is counted and dropped.
+    pub fn notify_payload_ready(&self, payload_id: PayloadId, parent_hash: B256) {
+        let Some(sender) = &self.payload_ready else {
+            return;
+        };
+        let delivered = sender.send(PayloadReady { payload_id, parent_hash }).is_ok();
+        BuilderMetrics::record_payload_ready_hint(delivered);
     }
 }
 
@@ -314,14 +338,21 @@ where
         &self,
         args: BuildArguments<Self::Attributes, Self::BuiltPayload>,
     ) -> Result<BuildOutcome<Self::BuiltPayload>, PayloadBuilderError> {
-        self.build_payload(args, |attrs, resting| {
+        let no_tx_pool = args.config.attributes.no_tx_pool();
+        let outcome = self.build_payload(args, |attrs, resting| {
             ParkableBestPayloadTransactions::new(
                 self.pool.best_transactions_with_attributes_and_parking(
                     attrs,
                     resting.map(SharedRestingPredicates::iterator_hold),
                 ),
             )
-        })
+        })?;
+        if !no_tx_pool && let BuildOutcome::Freeze(payload) = &outcome {
+            // The payload is fully assembled, including its state root. Reth may still be
+            // installing this result into the job; on_missing_payload awaits that same build.
+            self.notify_payload_ready(payload.id(), payload.block().parent_hash());
+        }
+        Ok(outcome)
     }
 
     fn on_missing_payload(
@@ -1776,6 +1807,8 @@ mod tests {
     };
     use revm::{Database, database::TransitionState, state::EvmState};
 
+    #[cfg(feature = "metrics")]
+    use super::{BasePayloadBuilder, PayloadReady, broadcast};
     use super::{
         BasePayloadBuilderCtx, Builder, ExecutionInfo, RESTING_SWEEP_WAIT_LIMIT, job_interrupt,
     };
@@ -1916,6 +1949,38 @@ mod tests {
     #[test]
     fn parallel_state_root_is_used() {
         assert_eq!(build_empty_payload(state_root_handle()), B256::repeat_byte(0x42));
+    }
+
+    #[cfg(feature = "metrics")]
+    #[test]
+    fn frozen_payload_hints_are_counted_by_whether_a_receiver_was_subscribed() {
+        let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+        let handle = recorder.handle();
+        let payload_id = PayloadId::new([7; 8]);
+        let parent_hash = B256::repeat_byte(8);
+        let (sender, mut receiver) = broadcast::channel(4);
+        let builder = BasePayloadBuilder::<(), (), (), ()>::new((), (), ());
+
+        metrics::with_local_recorder(&recorder, || {
+            // Split EL/CL deployments configure no channel and must not report hints.
+            builder.notify_payload_ready(payload_id, parent_hash);
+            assert!(!handle.render().contains("payload_ready_hints_sent_total"));
+
+            let builder = builder.with_payload_ready(Some(sender));
+            builder.notify_payload_ready(payload_id, parent_hash);
+            builder.notify_payload_ready(payload_id, parent_hash);
+            assert_eq!(receiver.try_recv(), Ok(PayloadReady { payload_id, parent_hash }));
+            drop(receiver);
+            builder.notify_payload_ready(payload_id, parent_hash);
+        });
+
+        let rendered = handle.render();
+        for expected in [
+            r#"base_builder_payload_ready_hints_sent_total{result="delivered"} 2"#,
+            r#"base_builder_payload_ready_hints_sent_total{result="no_receiver"} 1"#,
+        ] {
+            assert!(rendered.contains(expected), "expected `{expected}`, got: {rendered}");
+        }
     }
 
     #[cfg(feature = "metrics")]

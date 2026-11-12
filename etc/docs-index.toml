@@ -187,8 +187,8 @@ summary = "base-builder-metering: MeteringStore (DashMap with LRU eviction) impl
 digest = "89c5698c36"
 
 ["crates/builder/multiplex/README.md"]
-summary = "Runs flashblocks and basic payload builders in parallel behind one handle, selecting basic at Denim; cutover mode is off by default and a separate basic-only mode runs just the basic builder."
-digest = "76c9d91a5c"
+summary = "Runs flashblocks and basic payload builders behind one handle, selecting basic at Denim; covers cutover and basic-only modes and passing frozen-payload notifications to the basic builder."
+digest = "4135cd2df3"
 
 ["crates/builder/publish/README.md"]
 summary = "WebSocket broadcast publisher for the block builder (WebSocketPublisher, Listener, BroadcastLoop, metrics traits). Use when changing how serialized payloads are pushed to connected subscribers."
@@ -387,8 +387,8 @@ summary = "base-execution-rpc: BaseEthApi, BaseEngineApi, debug, miner, sequence
 digest = "2a3542b962"
 
 ["crates/execution/runner/README.md"]
-summary = "base-node-runner: BaseNodeExtension and FromExtensionConfig traits plus the NodeHooks accumulator for modular node extensions, with an example custom extension. Use to add node extensions."
-digest = "7b36a6705f"
+summary = "base-node-runner: BaseNodeExtension, FromExtensionConfig and NodeHooks for node extensions, plus the frozen-payload notification channel (PayloadReady) the unified sequencer uses to seal early."
+digest = "029ce212e6"
 
 ["crates/execution/shadow-indexer-db/README.md"]
 summary = "One-line stub: database access layer for shadow indexer block persistence. Little detail beyond that."
@@ -680,7 +680,7 @@ digest = "e87f3373b8"
 
 ["docs/transaction-events/README.md"]
 summary = "Spec for transaction-event/v1, the JSONL business event journal for transaction observability: config fields, envelope, event vocabulary, Vector to audit-archiver ingest, Postgres retention, examples."
-digest = "7a35820370"
+digest = "7e811c1bb5"
 
 ["docs/transaction-events/tips-parity-checklist.md"]
 summary = "Checklist for verifying TIPS UI audit-archiver/Postgres responses match the S3-backed routes (block, txn, bundle, rejected) before switching TIPS_UI_QUERY_BACKEND=audit."

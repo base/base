@@ -145,6 +145,7 @@ impl SequencerCommand {
             let consensus_cancellation = CancellationToken::new();
             let consensus_exit = consensus_args.start_with_options(
                 ConsensusNodeStartOptions::new(rollup_config)
+                    .with_payload_ready(launched.payload_ready)
                     .with_overrides(ConsensusNodeOverrides::embedded_execution(
                         l2_engine_rpc,
                         upgrade_signal_l1_rpc,
