@@ -39,7 +39,10 @@ confirmation.
   fee/replacement (retryable via fee bumps), or infrastructure (transient/retryable).
   `NonceTooHigh` is transient because concurrent publications can reach RPC
   backends out of order; the same signed transaction is retried.
-- **`RpcErrorClassifier`** — classifies alloy `TransportError`s into `TxManagerError` variants.
+  `NoAnswer` means a publish timed out or failed in transport after the request may
+  have reached the node.
+- **`RpcErrorClassifier`** — classifies alloy `TransportError`s into `TxManagerError` variants,
+  and tells with `is_unanswered` whether a failed request may have reached the node.
 - **`RevertDisplay`** — display wrapper for decoded revert reasons.
 - **`TxManagerResult<T>`** — result type alias.
 
@@ -53,7 +56,10 @@ confirmation.
 ### Send state
 
 - **`SendState`** — state machine tracking mined hashes, nonce errors, fee bumps, and
-  mempool deadlines to decide whether to retry, bump, or abort.
+  mempool deadlines to decide whether to retry, bump, or abort. A publish that got no
+  answer counts as published: the send follows that transaction like an accepted one,
+  polls its receipt, replaces it in its fee bumps, and never hands its nonce to another
+  send.
 - **`SendHandle`** — future returned by `send_async` that resolves to a `SendResponse`.
 - **`SendResponse`** — type alias for `TxManagerResult<TransactionReceipt>`.
 
@@ -105,9 +111,10 @@ When it lands:
 ```
 
 A blob transaction is replaced when it is not included after `resubmission_timeout`, or
-right away when the node refuses it for its fees. After an RPC error, such as a network
-error, the same signed transaction is sent again every `publish_retry_delay`, up to
-`publish_max_retries` times, without raising any fee. Doubling every fee is the minimum L1
+right away when the node refuses it for its fees. After an RPC error or no answer, such
+as a network error, the same signed transaction is sent again every `publish_retry_delay`,
+up to `publish_max_retries` times, without raising any fee. Once a publish got no answer,
+that transaction is followed as published even if no resend is accepted. Doubling every fee is the minimum L1
 nodes accept to replace a blob transaction, so a transaction whose doubled
 `max_priority_fee_per_gas` would pass `max_priority_fee_per_gas_per_blob_upper_bound × n`
 is not replaced any more, and stays at its last fees. A fee override above that bound
