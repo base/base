@@ -214,8 +214,7 @@ impl<R, C, T> SignerManager<R, C, T> {
                 "registration plan does not use the pinned Nitro root certificate".into(),
             ));
         }
-        if plan.certs.is_empty() || plan.certs.last().is_none_or(|cert| cert.kind != CertKind::Leaf)
-        {
+        if plan.certs.last().is_none_or(|cert| cert.kind != CertKind::Leaf) {
             return Err(RegistrarError::InvalidAttestationProof(
                 "certificate plan must end in one leaf certificate".into(),
             ));
