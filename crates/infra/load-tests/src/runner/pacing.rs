@@ -225,7 +225,6 @@ struct PresignEnqueueState<'a> {
     sender_indices: &'a HashMap<Address, usize>,
     buffer: &'a mut PresignBuffer,
     progress: &'a mut EnqueueProgress,
-    base_fee_tx: &'a watch::Sender<u128>,
     gas_estimate: &'a GasEstimate,
 }
 
@@ -507,6 +506,7 @@ impl LoadRunner {
 
         self.base_fee = self.client.get_base_fee().await?;
         info!(base_fee = self.base_fee, "fetched current base fee");
+        let (base_fee_tx, base_fee_rx) = watch::channel(self.base_fee);
 
         if !self.validity_router.is_disabled() {
             self.probe_validity_endpoint().await?;
@@ -531,6 +531,7 @@ impl LoadRunner {
                 results_tracker.clone(),
                 self.config.block_time,
                 inclusion_pulse_tx.clone(),
+                base_fee_tx,
                 watcher_cancel.clone(),
             )
             .start(),
@@ -588,11 +589,6 @@ impl LoadRunner {
             self.accounts.accounts().iter().map(|a| (a.address, 0)).collect();
         let mut rejected_senders = HashSet::new();
         let mut queued_gas = 0u128;
-
-        let mut last_base_fee_refresh = Instant::now();
-        // Refresh once per block so the cached base fee tracks the climb the load
-        // test itself induces; a stale fee mints underwater (unincludable) txs.
-        const BASE_FEE_REFRESH_INTERVAL: Duration = Duration::from_secs(2);
 
         let use_live_display = self.display.as_ref().is_some_and(|d| d.is_active());
 
@@ -692,22 +688,6 @@ impl LoadRunner {
 
         let (signed_chunk_tx, mut signed_chunk_rx) = mpsc::channel(PRESIGN_CHANNEL_BUFFER);
         let (nonce_reset_tx, nonce_reset_rx) = mpsc::channel(sender_count.max(1));
-        let (base_fee_tx, base_fee_rx) = watch::channel(self.base_fee);
-        let pacing_base_fee_tx = base_fee_tx.clone();
-        let base_fee_client = self.client.clone();
-        let base_fee_cancel = self.cancel_token.clone();
-        let base_fee_task = tokio::spawn(async move {
-            loop {
-                tokio::select! {
-                    () = base_fee_cancel.cancelled() => break,
-                    () = tokio::time::sleep(Duration::from_secs(1)) => {
-                        if let Ok(base_fee) = base_fee_client.get_base_fee().await {
-                            base_fee_tx.send_replace(base_fee);
-                        }
-                    }
-                }
-            }
-        });
         let producer_task = tokio::spawn(Self::stream_presigned_transactions(
             PresignProducerState {
                 generator: producer_generator,
@@ -721,7 +701,7 @@ impl LoadRunner {
                 sender_generations: vec![0; sender_count],
                 signers: Arc::clone(&self.signers),
                 chain_id: self.config.chain_id,
-                base_fee_rx,
+                base_fee_rx: base_fee_rx.clone(),
                 max_gas_price: self.config.max_gas_price,
                 validity_priority_lead_multiplier: self.config.validity_priority_lead_multiplier,
                 validity_priority_fee_divisor: self.config.validity_priority_fee_divisor,
@@ -751,7 +731,6 @@ impl LoadRunner {
                 sender_indices: &sender_indices,
                 buffer: &mut presign_buffer,
                 progress: &mut progress,
-                base_fee_tx: &pacing_base_fee_tx,
                 gas_estimate: &gas_estimate,
             },
             floor_gas.min(u128::from(capacity as u64).saturating_mul(u128::from(initial_avg_gas))),
@@ -873,7 +852,6 @@ impl LoadRunner {
                     sender_indices: &sender_indices,
                     buffer: &mut presign_buffer,
                     progress: &mut progress,
-                    base_fee_tx: &pacing_base_fee_tx,
                     gas_estimate: &gas_estimate,
                 },
                 BlockAlignedEnqueueConfig {
@@ -945,8 +923,6 @@ impl LoadRunner {
                 }
             }
         }
-        base_fee_task.abort();
-
         if let Err(err) = enqueue_result {
             warn!(
                 error = %err,
@@ -970,15 +946,7 @@ impl LoadRunner {
         {
             // --- Housekeeping (runs once per batch iteration) ---
 
-            if last_base_fee_refresh.elapsed() >= BASE_FEE_REFRESH_INTERVAL {
-                if let Ok(new_base_fee) = self.client.get_base_fee().await
-                    && new_base_fee != self.base_fee
-                {
-                    debug!(old_base_fee = self.base_fee, new_base_fee, "base fee updated");
-                    self.base_fee = new_base_fee;
-                }
-                last_base_fee_refresh = Instant::now();
-            }
+            self.base_fee = *base_fee_rx.borrow();
 
             Self::drain_run_events(
                 &mut submit_event_rx,
@@ -1670,7 +1638,6 @@ impl LoadRunner {
                 let Some(canonical) = pulse.canonical else {
                     continue;
                 };
-                enqueue_state.base_fee_tx.send_replace(canonical.base_fee);
                 Self::record_terminal_canonical_cycle(canonical, &config, drain_state);
                 last_recorded_canonical_block = Some(canonical.number);
                 continue;
@@ -1684,7 +1651,6 @@ impl LoadRunner {
                     };
                     if let Some(canonical) = pulse.canonical {
                         last_block_gas_limit = canonical.gas_limit;
-                        enqueue_state.base_fee_tx.send_replace(canonical.base_fee);
                     }
                     last_pulse_at = pulse.observed_at;
                     if drain_state.results_tracker.measurement_finished() {
@@ -2870,7 +2836,6 @@ mod tests {
         let mut queued_gas = 0u128;
         let (_submit_event_tx, mut submit_event_rx) = mpsc::channel(8);
         let (_signed_chunk_tx, mut signed_chunk_rx) = mpsc::channel(1);
-        let (base_fee_tx, _base_fee_rx) = tokio::sync::watch::channel(1_u128);
         let mut progress =
             EnqueueProgress { presigned_generated: 0, offered_gas: 0, last_cycle_at: None };
         let mut presign_buffer = PresignBuffer::new(1);
@@ -2889,7 +2854,6 @@ mod tests {
             sender_indices: &sender_indices,
             buffer: &mut presign_buffer,
             progress: &mut progress,
-            base_fee_tx: &base_fee_tx,
             gas_estimate: &super::GasEstimate::new(21_000),
         };
         let mut drain_state = EnqueueDrainState {
@@ -3003,7 +2967,6 @@ mod tests {
         let mut queued_gas = 0u128;
         let (_submit_event_tx, mut submit_event_rx) = mpsc::channel(8);
         let (_signed_chunk_tx, mut signed_chunk_rx) = mpsc::channel(1);
-        let (base_fee_tx, _base_fee_rx) = tokio::sync::watch::channel(1_u128);
         let mut progress =
             EnqueueProgress { presigned_generated: 0, offered_gas: 0, last_cycle_at: None };
         let mut presign_buffer = PresignBuffer::new(1);
@@ -3025,7 +2988,6 @@ mod tests {
                     sender_indices: &sender_indices,
                     buffer: &mut presign_buffer,
                     progress: &mut progress,
-                    base_fee_tx: &base_fee_tx,
                     gas_estimate: &super::GasEstimate::new(21_000),
                 },
                 BlockAlignedEnqueueConfig {
