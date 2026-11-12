@@ -41,6 +41,17 @@ use serde_json::json;
 /// Seals one block through the in-memory Engine API and reads it back over both transports.
 #[tokio::test(flavor = "multi_thread")]
 async fn in_memory_engine_seals_one_block() -> Result<()> {
+    seals_one_block(false).await
+}
+
+/// Launch admission, actual native build, independent newPayload and FCU work together.
+#[tokio::test(flavor = "multi_thread")]
+async fn deferred_in_memory_engine_seals_and_accepts_one_block() -> Result<()> {
+    seals_one_block(true).await
+}
+
+/// Exercises identical node/Engine API plumbing with ordinary or configured deferred roots.
+async fn seals_one_block(deferred: bool) -> Result<()> {
     base_node_runner::test_utils::init_silenced_tracing();
 
     let mut genesis = build_test_genesis();
@@ -49,6 +60,9 @@ async fn in_memory_engine_seals_one_block() -> Result<()> {
     // Jovian is active at genesis, so a child of genesis that misses reth's built-payload cache
     // is validated against Jovian-encoded parent extra data.
     genesis.extra_data = JovianExtraData::encode(B64::ZERO, base_fee_params, 0)?;
+    if deferred {
+        genesis.config.extra_fields.insert("base".into(), json!({"deferredStateRoot": genesis.timestamp + BLOCK_TIME_SECONDS}));
+    }
     let chain_spec = Arc::new(BaseChainSpec::from_genesis(genesis));
     let mut rpc = RpcServerArgs::default().with_unused_ports().with_http();
     rpc.http_api = Some("eth,miner".parse().wrap_err("Failed to parse HTTP API modules")?);
@@ -60,6 +74,7 @@ async fn in_memory_engine_seals_one_block() -> Result<()> {
         NodeConfig::new(chain_spec).with_network(network).with_rpc(rpc).with_unused_ports();
     // The next payload's parent header is read back from the database.
     node_config.engine.persistence_threshold = 0;
+    if deferred { node_config.debug.invalid_block_hook = None; }
     let data_path = tempdir_path();
     node_config = node_config.with_datadir_args(DatadirArgs {
         datadir: MaybePlatformPath::<DataDirPath>::from(data_path.clone()),
@@ -73,7 +88,7 @@ async fn in_memory_engine_seals_one_block() -> Result<()> {
     .wrap_err("Failed to create test database")?;
 
     let runtime = Runtime::test();
-    let launched = BaseNodeRunner::new(RollupArgs::default())
+    let launched = BaseNodeRunner::new(RollupArgs { deferred_state_root_disposable: deferred, ..Default::default() })
         .launch(
             NodeBuilder::new(node_config).with_database(db).with_launch_context(runtime.clone()),
         )
@@ -147,6 +162,9 @@ async fn in_memory_engine_seals_one_block() -> Result<()> {
         started.payload_id.ok_or_else(|| eyre!("forkchoice did not start a payload"))?;
     tokio::time::sleep(Duration::from_millis(200)).await;
     let envelope = engine.get_payload_v4(payload_id).await?;
+    if deferred {
+        assert_eq!(envelope.execution_payload.clone().into_block_raw()?.header.state_root, parent.header.state_root, "actual guarded runner getPayload F must commit exactly the real legacy parent root");
+    }
     let status = engine
         .new_payload_v4(envelope.execution_payload, envelope.parent_beacon_block_root)
         .await?;
@@ -164,6 +182,11 @@ async fn in_memory_engine_seals_one_block() -> Result<()> {
         .await?;
 
     let public = http_provider(http_addr)?;
+    if deferred {
+        let proof = public.get_proof(alloy_primitives::Address::ZERO, vec![]).await;
+        assert!(proof.is_err(), "configured deferred runner must fail closed for public proof RPC");
+        assert!(proof.unwrap_err().to_string().contains("proof RPC is unsupported"), "proof RPC must fail at the compatibility guard rather than emit a misanchored proof");
+    }
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
         if is_head(&reads, hash).await? && is_head(&public, hash).await? {
@@ -200,6 +223,7 @@ async fn in_memory_engine_seals_one_block() -> Result<()> {
     assert_eq!((typed.0, &typed.1), (json.0, &json.1));
 
     drop(launched);
+    assert!(runtime.graceful_shutdown_with_timeout(Duration::from_secs(10)), "runner exit must drain its owned current-root and redundant stock work");
     drop(runtime);
     let _ = std::fs::remove_dir_all(data_path);
     Ok(())

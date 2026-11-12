@@ -107,8 +107,8 @@ impl Fixture {
         writer.commit().unwrap();
         let parent = SealedHeader::seal_slow(self.block.header().clone());
         let mut next = self.block.into_block();
-        next.header.parent_hash = parent.hash(); next.header.number = 2; next.header.timestamp = 4;
-        next.header.base_fee_per_gas = self.chain.next_block_base_fee(parent.header(), 4);
+        next.header.parent_hash = parent.hash(); next.header.number = 2; next.header.timestamp += 2;
+        next.header.base_fee_per_gas = self.chain.next_block_base_fee(parent.header(), next.header.timestamp);
         if let BaseTxEnvelope::Eip1559(tx) = &next.body.transactions[0] {
             let mut tx = tx.tx().clone(); tx.nonce = 1;
             let signature = reth_primitives_traits::crypto::secp256k1::sign_message(B256::repeat_byte(1), tx.signature_hash()).unwrap();
@@ -149,24 +149,34 @@ impl Fixture {
 
     /// Validates independently against shared builder provenance without draining between blocks.
     pub fn submit_with_service(&self, commitment: B256, service: Arc<PostStateRootService>, drain: bool) -> alloy_rpc_types_engine::PayloadStatus {
+        self.submit_options(commitment, service, drain, TreeConfig::default(), Box::new(NoopInvalidBlockHook::default()), true)
+    }
+
+    /// Selects stock/wrapped validation with identical hook/prewarming options on real storage.
+    pub fn submit_options(&self, commitment: B256, service: Arc<PostStateRootService>, drain: bool, config: TreeConfig, hook: Box<dyn reth_node_api::InvalidBlockHook<BasePrimitives>>, wrapped: bool) -> alloy_rpc_types_engine::PayloadStatus {
         let runtime = Runtime::test();
         let provider = BlockchainProvider::new(self.factory.clone()).unwrap();
         let overlay = OverlayManager::new(runtime.state_trie_overlay_worker_pool());
-        let config = TreeConfig::default();
         let evm = BaseEvmConfig::new(self.chain.clone());
         let consensus = Arc::new(BaseBeaconConsensus::new(self.chain.clone()));
         let activation = service.activation;
         let state = Arc::new(DeferredStateRootState { service, ..Default::default() });
         let inner = BasicEngineValidator::new(provider.clone(), consensus.clone(), evm.clone(),
             BaseEngineValidator::<BaseTxEnvelope, _>::new::<KeccakKeyHasher>(self.chain.clone()),
-            config.clone(), Box::new(NoopInvalidBlockHook::default()), overlay.clone(), runtime.clone())
+            config.clone(), hook, overlay.clone(), runtime.clone())
             .with_state_root_strategy(Arc::new(DeferredStateRootStrategy { provider: provider.clone(), overlay: overlay.clone(), state: state.clone(), stock: Default::default() }));
-        let validator = DeferredEngineValidator { inner, state: state.clone() };
         let (persistence, _rx) = mpsc::channel(); let (payloads, _prx) = unbounded_channel();
-        let (sender, _events) = EngineApiTreeHandler::spawn_new(provider, consensus, validator,
-            PersistenceHandle::new(persistence), PayloadBuilderHandle::<BasePayloadTypes>::new(payloads),
-            CanonicalInMemoryState::with_head(self.parent.clone(), None, None), overlay, config,
-            EngineApiKind::OpStack, evm, runtime.clone());
+        let (sender, _events) = if wrapped {
+            EngineApiTreeHandler::spawn_new(provider, consensus, DeferredEngineValidator { inner, state: state.clone() },
+                PersistenceHandle::new(persistence), PayloadBuilderHandle::<BasePayloadTypes>::new(payloads),
+                CanonicalInMemoryState::with_head(self.parent.clone(), None, None), overlay, config,
+                EngineApiKind::OpStack, evm, runtime.clone())
+        } else {
+            EngineApiTreeHandler::spawn_new(provider, consensus, inner,
+                PersistenceHandle::new(persistence), PayloadBuilderHandle::<BasePayloadTypes>::new(payloads),
+                CanonicalInMemoryState::with_head(self.parent.clone(), None, None), overlay, config,
+                EngineApiKind::OpStack, evm, runtime.clone())
+        };
         let mut block = self.block.clone().into_block(); block.header.state_root = commitment;
         let payload = BasePayloadTypes::<BasePrimitives>::block_to_payload(block.seal_slow(), None);
         let (tx, rx) = oneshot::channel();
@@ -283,4 +293,133 @@ fn pre_fork_native_payload_parity() {
     assert_eq!(ordinary.block(), pre_fork.block(), "pre-F native header/body bytes must equal ordinary off payload exactly");
     assert_eq!(ordinary.executed_block(), pre_fork.executed_block(), "pre-F finalized receipts/state/trie updates must equal ordinary off exactly");
     assert!(off.manager.get().is_none() && future.manager.get().is_none(), "Never and pre-F build exactly zero root managers and enqueue zero jobs");
+}
+
+/// Blocking the current-root worker delays validation, not immutable native payload assembly.
+#[test]
+fn seal_does_not_wait_for_current_root() {
+    let fixture = Fixture::new();
+    let service = Arc::new(PostStateRootService { activation: Some(2), ..Default::default() });
+    let manager = service.manager().unwrap();
+    let (release, blocked) = mpsc::channel(); let (started, running) = mpsc::channel();
+    let provider = fixture.factory.provider().unwrap();
+    let parent_root = LatestStateProviderRef::new(&provider).state_root(HashedPostState::default()).unwrap();
+    assert_eq!(parent_root, fixture.parent.state_root, "barrier fixture must first independently resolve and release the real parent root");
+    drop(provider);
+    manager.publish(base_execution_payload_builder::PostStateRootKey { hash: fixture.parent.hash(), parent_hash: fixture.parent.parent_hash, number: fixture.parent.number }, base_execution_payload_builder::PostStateRootSource::Validator, base_execution_payload_builder::PostStateRootData::new(parent_root, &HashedPostState::default(), TrieUpdates::default())).unwrap();
+    let barrier = manager.enqueue(Box::new(move || {
+        started.send(()).unwrap(); blocked.recv().unwrap();
+        Ok(base_execution_payload_builder::PostStateRootData::new(B256::ZERO, &HashedPostState::default(), TrieUpdates::default()))
+    })).unwrap();
+    running.recv_timeout(Duration::from_secs(2)).unwrap();
+    let payload = fixture.native_payload(service.clone());
+    assert_eq!(payload.block().state_root, fixture.parent.state_root, "sealing with a blocked current-root worker must still use the independently computed parent root");
+    assert_eq!(manager.builders.lock().unwrap().len(), 1, "exactly the sealed current-root job must remain uncompleted behind the barrier");
+    assert_eq!(manager.ready.lock().unwrap().entries.len(), 1, "sealing alone must publish zero current roots beyond the already released parent");
+    let commitment = payload.block().state_root;
+    let (result, response) = mpsc::channel();
+    let validation = std::thread::spawn(move || { result.send(fixture.submit_with_service(commitment, service, false)).unwrap(); });
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while manager.admitted.load(std::sync::atomic::Ordering::Acquire) < 3 && std::time::Instant::now() < deadline { std::thread::sleep(Duration::from_millis(1)); }
+    assert_eq!(manager.admitted.load(std::sync::atomic::Ordering::Acquire), 3, "barrier, detached builder and independent validator parent/root operation must all be admitted before checking acceptance");
+    assert_eq!(response.try_recv(), Err(mpsc::TryRecvError::Empty), "validator must expose exactly zero Engine VALID responses while its actual root work is blocked");
+    release.send(()).unwrap(); barrier.wait().unwrap();
+    assert_eq!(response.recv_timeout(Duration::from_secs(10)).unwrap().status, alloy_rpc_types_engine::PayloadStatusEnum::Valid, "after release, independent validation may publish complete current trie data");
+    validation.join().unwrap();
+    manager.drain().unwrap();
+}
+
+/// Never/pre-F delegate hooks and prewarming options to stock, including genuine invalid roots.
+#[test]
+fn stock_wrapper_hook_and_prewarm_matrix() {
+    for activation in [None, Some(3)] {
+        for prewarming in [false, true] {
+            for malformed in [false, true] {
+                let stock = Fixture::new(); let candidate = Fixture::new();
+                let stock_calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+                let candidate_calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+                let commitment = if malformed { B256::repeat_byte(0x99) } else { stock.root };
+                let config = TreeConfig::default().without_prewarming(!prewarming);
+                let record = |calls: Arc<std::sync::atomic::AtomicUsize>| Box::new(move |_: &SealedHeader<Header>, _: &RecoveredBlock<BaseBlock>, _: &BlockExecutionOutput<<BasePrimitives as reth_primitives_traits::NodePrimitives>::Receipt>, _: Option<(&TrieUpdates, B256)>| { calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst); }) as Box<dyn reth_node_api::InvalidBlockHook<BasePrimitives>>;
+                let reference = stock.submit_options(commitment, Arc::new(PostStateRootService::default()), true, config.clone(), record(stock_calls.clone()), false);
+                let service = Arc::new(PostStateRootService { activation, ..Default::default() });
+                let observed = candidate.submit_options(commitment, service.clone(), true, config, record(candidate_calls.clone()), true);
+                assert_eq!(observed, reference, "Never/pre-F wrapped engine status and exact latestValidHash must match stock for each hook/prewarm setting");
+                assert_eq!(stock_calls.load(std::sync::atomic::Ordering::SeqCst), usize::from(malformed), "stock invalid-root hook must fire exactly once on malformed commitment and zero times on valid input");
+                assert_eq!(candidate_calls.load(std::sync::atomic::Ordering::SeqCst), usize::from(malformed), "wrapper must preserve exact invalid hook invocation count");
+                assert!(service.manager.get().is_none(), "Never/pre-F hook/prewarm matrix must construct exactly zero managers and root jobs");
+            }
+        }
+    }
+}
+
+/// Deferred mismatches return the independently computed parent to a compatible recording hook.
+#[test]
+fn deferred_invalid_hook_observes_computed_parent_not_echo() {
+    let fixture = Fixture::new();
+    let observed = Arc::new(std::sync::Mutex::new(Vec::new())); let sink = observed.clone();
+    let hook = Box::new(move |_: &SealedHeader<Header>, _: &RecoveredBlock<BaseBlock>, _: &BlockExecutionOutput<<BasePrimitives as reth_primitives_traits::NodePrimitives>::Receipt>, trie: Option<(&TrieUpdates, B256)>| {
+        sink.lock().unwrap().push(trie.map(|(updates, root)| (updates.clone(), root)));
+    });
+    let status = fixture.submit_options(fixture.root, Arc::new(PostStateRootService { activation: Some(2), ..Default::default() }), true, TreeConfig::default(), hook, true);
+    assert!(status.status.is_invalid(), "wrong delayed commitment must be INVALID with compatible diagnostics enabled");
+    assert_eq!(status.latest_valid_hash, Some(fixture.parent.hash()), "compatible diagnostic hook must not alter exact parent latestValidHash");
+    assert_eq!(*observed.lock().unwrap(), vec![Some((TrieUpdates::default(), fixture.parent.state_root))], "exactly one mismatch-only callback must receive computed parent and rejection-only empty updates, never a same-block witness");
+}
+
+/// Competing in-memory branches keep actual roots while FCU crosses the activation boundary.
+#[test]
+fn memory_reorg_crosses_activation_and_preserves_same_height_roots() {
+    let a = Fixture::new(); let genesis = a.parent.clone(); let a1 = a.block.clone(); let a1_root = a.root;
+    let a2 = a.next();
+    let mut b = Fixture::new(); let mut block = b.block.into_block(); block.header.timestamp = 4;
+    let BaseTxEnvelope::Eip1559(tx) = &block.body.transactions[0] else { panic!("fixture must contain EIP1559 transfer"); };
+    let mut tx = tx.tx().clone(); tx.value = U256::from(9);
+    let signature = reth_primitives_traits::crypto::secp256k1::sign_message(B256::repeat_byte(1), tx.signature_hash()).unwrap();
+    block.body.transactions = vec![BaseTxEnvelope::Eip1559(tx.into_signed(signature))];
+    block.header.transactions_root = alloy_consensus::proofs::calculate_transaction_root(&block.body.transactions);
+    b = Fixture::execute(b.factory, b.chain, b.parent, block.try_into_recovered().unwrap());
+    let b1_root = b.root; b.block.set_state_root(genesis.state_root); let b1 = b.block.clone(); let b2 = b.next();
+    assert_ne!(a1_root, b1_root, "same-height branch transfers must have independently distinct actual roots");
+    assert_ne!(a2.root, b2.root, "same-height descendants must preserve their branch-specific actual roots");
+    let db = Fixture::new(); let runtime = Runtime::test();
+    let provider = BlockchainProvider::new(db.factory.clone()).unwrap();
+    let overlay = OverlayManager::new(runtime.state_trie_overlay_worker_pool()); let config = TreeConfig::default().with_unwind_canonical_header(true);
+    let canonical = CanonicalInMemoryState::with_head(genesis.clone(), None, None);
+    let evm = BaseEvmConfig::new(db.chain.clone()); let consensus = Arc::new(BaseBeaconConsensus::new(db.chain.clone()));
+    let state = Arc::new(DeferredStateRootState { service: Arc::new(PostStateRootService { activation: Some(3), ..Default::default() }), ..Default::default() });
+    let inner = BasicEngineValidator::new(provider.clone(), consensus.clone(), evm.clone(), BaseEngineValidator::<BaseTxEnvelope, _>::new::<KeccakKeyHasher>(db.chain.clone()), config.clone(), Box::new(NoopInvalidBlockHook::default()), overlay.clone(), runtime.clone())
+        .with_state_root_strategy(Arc::new(DeferredStateRootStrategy { provider: provider.clone(), overlay: overlay.clone(), state: state.clone(), stock: Default::default() }));
+    let (persistence, _rx) = mpsc::channel(); let (payloads, _prx) = unbounded_channel();
+    let (sender, _events) = EngineApiTreeHandler::spawn_new(provider, consensus, DeferredEngineValidator { inner, state: state.clone() }, PersistenceHandle::new(persistence), PayloadBuilderHandle::<BasePayloadTypes>::new(payloads), canonical.clone(), overlay, config, EngineApiKind::OpStack, evm, runtime.clone());
+    let send = |block: &RecoveredBlock<BaseBlock>, root: B256| {
+        let mut block = block.clone().into_block(); block.header.state_root = root; let block = block.seal_slow(); let hash = block.hash();
+        let payload = BasePayloadTypes::<BasePrimitives>::block_to_payload(block, None); let (tx, rx) = oneshot::channel();
+        sender.send(FromEngine::Request(EngineApiRequest::Beacon(BeaconEngineMessage::NewPayload { cause: tracing::Span::none(), payload, tx }))).unwrap();
+        let status = runtime.handle().block_on(async { tokio::time::timeout(Duration::from_secs(10), rx).await.unwrap().unwrap().unwrap() });
+        assert_eq!(status.status, alloy_rpc_types_engine::PayloadStatusEnum::Valid, "each branch must independently validate against its exact real parent state");
+        assert_eq!(status.latest_valid_hash, Some(hash), "VALID must identify the exact sealed branch hash"); hash
+    };
+    let fcu = |hash| {
+        let (tx, rx) = oneshot::channel(); sender.send(FromEngine::Request(EngineApiRequest::Beacon(BeaconEngineMessage::ForkchoiceUpdated { cause: tracing::Span::none(), state: alloy_rpc_types_engine::ForkchoiceState { head_block_hash: hash, safe_block_hash: genesis.hash(), finalized_block_hash: genesis.hash() }, payload_attrs: None, tx }))).unwrap();
+        let result = runtime.handle().block_on(async { tokio::time::timeout(Duration::from_secs(10), async { rx.await.unwrap().unwrap().await.unwrap() }).await.unwrap() });
+        assert_eq!(result.payload_status.status, alloy_rpc_types_engine::PayloadStatusEnum::Valid, "memory forkchoice must remain VALID across the activation boundary");
+        assert_eq!(result.payload_status.latest_valid_hash, Some(hash), "FCU must identify the exact selected branch head");
+        assert_eq!(canonical.get_canonical_head().hash(), hash, "memory reorg must actually select the requested canonical branch, not merely return VALID");
+    };
+    let a_hash = send(&a1, a1_root); fcu(a_hash);
+    let a2_hash = send(&a2.block, a1_root); fcu(a2_hash);
+    let b_hash = send(&b1, genesis.state_root); let b2_hash = send(&b2.block, b1_root); fcu(b2_hash);
+    for hash in [a_hash, b_hash, a2_hash, b2_hash] { fcu(hash); }
+    let manager = state.service.manager.get().unwrap();
+    for (hash, parent_hash, number, expected) in [(a2_hash, a_hash, 2, a2.root), (b_hash, genesis.hash(), 1, b1_root), (b2_hash, b_hash, 2, b2.root)] {
+        let key = base_execution_payload_builder::PostStateRootKey { hash, parent_hash, number };
+        assert_eq!(manager.get(key, base_execution_payload_builder::PostStateRootSource::Validator).unwrap().unwrap().root, expected, "canonical switches must not replace another branch's independently computed actual root");
+    }
+    // This is a memory-reorg test, not a persistence-service double. Return to genesis so
+    // termination has no canonical data to send to the deliberately unserved persistence handle.
+    fcu(genesis.hash());
+    let (tx, rx) = oneshot::channel(); sender.send(FromEngine::Event(FromOrchestrator::Terminate { tx })).unwrap();
+    runtime.handle().block_on(async { tokio::time::timeout(Duration::from_secs(10), rx).await.unwrap().unwrap(); });
+    drop(sender); manager.drain().unwrap(); runtime.shutdown_timeout(Duration::from_secs(10));
 }

@@ -44,6 +44,7 @@ use reth_payload_primitives::{BuildNextEnv, BuiltPayloadExecutedBlock};
 use reth_payload_util::{NoopPayloadTransactions, PayloadTransactions};
 use reth_primitives_traits::{
     HeaderTy, SealedHeader, SealedHeaderFor, SignedTransaction, TxTy, WithEncoded,
+    Block, RecoveredBlock, header::HeaderMut,
 };
 use reth_storage_api::{BlockReader, StateProvider, StateProviderBox, StateProviderFactory};
 use reth_tasks::{CancelOnDrop, Runtime};
@@ -252,7 +253,7 @@ where
         let state = StateProviderDatabase::new(state_provider.provider());
         // Execution decorators expose EVM reads; retain a full parent-state view for proofs.
         let proof_provider = self.client.state_by_block_hash(ctx.parent().hash())?;
-        if self.config.deferred_state_root.as_ref().is_some_and(|service| service.active(ctx.attributes().timestamp(), ctx.parent().number() + 1)) {
+        if self.config.deferred_state_root.as_ref().is_some_and(|service| service.controlled(ctx.attributes().timestamp(), ctx.parent().number() + 1)) {
             // Transfer an owned, hash-pinned snapshot to detached work, never the borrowed
             // provider used by the inner build. Execution and proof views stay unchanged.
             builder = builder.with_root_snapshot(self.client.state_by_block_hash(ctx.parent().hash())?);
@@ -566,22 +567,32 @@ impl<Txs> Builder<'_, Txs> {
             .zip(resting_predicates.as_ref())
             .map(|(resting, store)| store.finish(resting.take_predicates()));
 
+        let finalization_start = Instant::now();
         let block_num = ctx.parent().number().saturating_add(1);
-        let deferred = ctx.builder_config.deferred_state_root.as_ref()
-            .filter(|service| service.active(ctx.attributes().timestamp(), block_num));
+        let serial_control = ctx.builder_config.deferred_state_root.as_ref()
+            .filter(|service| service.controlled(ctx.attributes().timestamp(), block_num));
+        let deferred = serial_control.filter(|service| service.active(ctx.attributes().timestamp(), block_num));
+        let root_snapshot = root_snapshot.map(|snapshot| Arc::new(Mutex::new(snapshot)));
         let parent_root = if let Some(service) = deferred {
             if root_snapshot.is_none() { return Err(PayloadBuilderError::other(crate::PostStateRootManager::error("active builder requires an owned parent snapshot"))); }
             let manager = service.manager()?;
             let parent = ctx.parent();
             let key = PostStateRootKey { hash: parent.hash(), parent_hash: parent.parent_hash(), number: parent.number() };
             Some(if let Some(data) = manager.get(key, PostStateRootSource::Validator)? { data.root }
-                else { state_provider.state_root(HashedPostState::default())? })
+                else {
+                    let snapshot = root_snapshot.as_ref().expect("active snapshot checked above").clone();
+                    manager.enqueue(Box::new(move || {
+                        let root = snapshot.lock().state_root(HashedPostState::default())?;
+                        Ok(PostStateRootData::new(root, &HashedPostState::default(), Default::default()))
+                    }))?.wait()?.root
+                })
         } else { None };
 
         // Finishing drops the executor and its state hook, which closes the update stream so the
         // parallel state-root task can finish before its root is requested.
         let state_root = |_: &BlockExecutionOutput<N::Receipt>| {
             if let Some(root) = parent_root { return Ok(Some((root, Default::default()))); }
+            if serial_control.is_some() { return Ok(Some((B256::ZERO, Default::default()))); }
 
             Ok::<_, BlockExecutionError>(state_root_handle.and_then(|mut task| {
                 match task.state_root() {
@@ -611,11 +622,29 @@ impl<Txs> Builder<'_, Txs> {
             execution_result,
             execution_state,
             hashed_state,
-            trie_updates,
-            block,
+            mut trie_updates,
+            mut block,
             block_access_list,
         } = debug_span!("finish_payload", block_num)
             .in_scope(|| builder.finish_with_state_root(state_provider, state_root))?;
+
+        // S/R use the same owned serial provider worker and finalized hash input as D. Their
+        // temporary assembly root is never exposed: complete actual data before final sealing.
+        let serial_data = if let Some(service) = serial_control.filter(|_| deferred.is_none()) {
+            let snapshot = root_snapshot.as_ref().ok_or_else(|| PayloadBuilderError::other(crate::PostStateRootManager::error("serial builder requires an owned parent snapshot")))?.clone();
+            let hashed = hashed_state.clone();
+            let data = service.manager()?.enqueue(Box::new(move || {
+                let start = Instant::now();
+                let snapshot = snapshot.lock();
+                let (root, updates) = snapshot.state_root_with_updates(hashed.clone())?;
+                crate::metrics::PostStateRootMetrics::calculation_duration().record(start.elapsed().as_secs_f64());
+                Ok(PostStateRootData::new(root, &hashed, updates))
+            }))?.wait()?;
+            let (unsealed, senders) = block.split();
+            let (mut header, body) = unsealed.split(); header.set_state_root(data.root);
+            block = RecoveredBlock::new_unhashed(N::Block::new(header, body), senders);
+            trie_updates = (*data.updates).clone(); Some(data)
+        } else { None };
 
         let sealed_block = Arc::new(block.sealed_block().clone());
         debug!(target: "payload_builder", id=%ctx.payload_id(), sealed_block_header = ?sealed_block.header(), "sealed built block");
@@ -625,12 +654,17 @@ impl<Txs> Builder<'_, Txs> {
 
         let execution_outcome =
             BlockExecutionOutput { state: execution_state, result: execution_result };
-        let serial_control = ctx.builder_config.deferred_state_root.as_ref().filter(|service| service.controlled(ctx.attributes().timestamp(), block_num));
         let reexecution = serial_control.is_some_and(|service| service.reexecution(ctx.attributes().timestamp(), block_num));
+        if serial_control.is_some() {
+            crate::metrics::PostStateRootMetrics::builder_executions().increment(1);
+            crate::metrics::PostStateRootMetrics::payloads_sealed().increment(1);
+            crate::metrics::PostStateRootMetrics::finalization_to_seal().record(finalization_start.elapsed().as_secs_f64());
+            tracing::info!(target: "base_root_experiment", hash = %sealed_block.hash(), number = block_num, commitment_root = %sealed_block.state_root(), gas = info.cumulative_gas_used, "immutable payload sealed; not Engine acceptance");
+        }
         if deferred.is_none() {
             if let Some(service) = serial_control {
                 let key = PostStateRootKey { hash: sealed_block.hash(), parent_hash: sealed_block.parent_hash(), number: block_num };
-                service.manager()?.publish(key, PostStateRootSource::Builder, PostStateRootData::new(sealed_block.state_root(), &hashed_state, trie_updates.clone()))?;
+                service.manager()?.publish(key, PostStateRootSource::Builder, serial_data.expect("serial current data completed before sealing"))?;
             }
         }
 
@@ -642,7 +676,11 @@ impl<Txs> Builder<'_, Txs> {
                 // Finalized output is authoritative for committed transactions and all system
                 // transitions. Borrowed speculative commit-condition views never enter this job.
                 let _finalized_output = execution_outcome;
+                let start = Instant::now();
+                let snapshot = snapshot.lock();
                 let (root, updates) = snapshot.state_root_with_updates(hashed_state.clone())?;
+                crate::metrics::PostStateRootMetrics::calculation_duration().record(start.elapsed().as_secs_f64());
+                tracing::info!(target: "base_root_experiment", hash = %key.hash, number = key.number, actual_current_root = %root, "builder actual post-state root completed");
                 Ok(PostStateRootData::new(root, &hashed_state, updates))
             }))?;
             None

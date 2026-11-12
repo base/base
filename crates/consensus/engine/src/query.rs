@@ -159,3 +159,38 @@ impl EngineQueries {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_utils::MockEngineClient;
+    use tokio::sync::{oneshot, watch};
+
+    /// Configured experiments reject output/config publication before invoking any client RPC.
+    #[tokio::test]
+    async fn experimental_output_and_config_fail_closed_before_rpc() {
+        let mut config = RollupConfig::default(); config.upgrades.base.deferred_state_root = Some(u64::MAX);
+        let config = Arc::new(config);
+        let client = Arc::new(MockEngineClient::builder().with_config(config.clone()).build());
+        let (_, state) = watch::channel(EngineState::default()); let (_, queue) = watch::channel(0);
+        let (sender, config_response) = oneshot::channel();
+        let result = EngineQueries::Config(sender).handle(&state, &queue, &client, &config).await;
+        assert!(matches!(result, Err(EngineQueriesError::DeferredStateRootUnsupported)), "rollup configuration publication must fail closed even before activation");
+        assert!(config_response.await.is_err(), "unsupported config must publish exactly zero values");
+        let (sender, output_response) = oneshot::channel();
+        let result = EngineQueries::OutputAtBlock { block: BlockNumberOrTag::Latest, sender }.handle(&state, &queue, &client, &config).await;
+        assert!(matches!(result, Err(EngineQueriesError::DeferredStateRootUnsupported)), "output query must fail at the schedule guard, not fetch or interpret a delayed header");
+        assert!(output_response.await.is_err(), "unsupported output must publish exactly zero tuples");
+    }
+
+    /// Never configurations keep their ordinary rollup-config query response byte-for-byte.
+    #[tokio::test]
+    async fn ordinary_config_query_unchanged() {
+        let config = Arc::new(RollupConfig::default());
+        let client = Arc::new(MockEngineClient::builder().with_config(config.clone()).build());
+        let (_, state) = watch::channel(EngineState::default()); let (_, queue) = watch::channel(0);
+        let (sender, response) = oneshot::channel();
+        EngineQueries::Config(sender).handle(&state, &queue, &client, &config).await.unwrap();
+        assert_eq!(response.await.unwrap(), *config, "Never must preserve the exact ordinary config output");
+    }
+}

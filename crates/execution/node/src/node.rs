@@ -660,6 +660,8 @@ pub struct BaseAddOnsBuilder<NetworkT, RpcMiddleware = Identity> {
     /// Sequencer client, configured to forward submitted transactions to sequencer of the given
     /// Base network.
     sequencer_url: Option<String>,
+    /// Disable proof publication in isolated root controls.
+    pub proofs_disabled: bool,
     /// Headers to use for the sequencer client requests.
     sequencer_headers: Vec<String>,
     /// Data availability configuration for the payload builder.
@@ -678,6 +680,7 @@ impl<NetworkT> Default for BaseAddOnsBuilder<NetworkT> {
     fn default() -> Self {
         Self {
             sequencer_url: None,
+            proofs_disabled: false,
             sequencer_headers: Vec::new(),
             da_config: None,
             gas_limit_config: None,
@@ -689,6 +692,11 @@ impl<NetworkT> Default for BaseAddOnsBuilder<NetworkT> {
 }
 
 impl<NetworkT, RpcMiddleware> BaseAddOnsBuilder<NetworkT, RpcMiddleware> {
+    /// Applies the same fail-closed proof policy to every isolated root cohort.
+    pub const fn with_proofs_disabled(mut self, disabled: bool) -> Self {
+        self.proofs_disabled = disabled; self
+    }
+
     /// With a [`SequencerClient`].
     pub fn with_sequencer(mut self, sequencer_client: Option<String>) -> Self {
         self.sequencer_url = sequencer_client;
@@ -723,6 +731,7 @@ impl<NetworkT, RpcMiddleware> BaseAddOnsBuilder<NetworkT, RpcMiddleware> {
     pub fn with_rpc_middleware<T>(self, rpc_middleware: T) -> BaseAddOnsBuilder<NetworkT, T> {
         let Self {
             sequencer_url,
+            proofs_disabled,
             sequencer_headers,
             da_config,
             gas_limit_config,
@@ -732,6 +741,7 @@ impl<NetworkT, RpcMiddleware> BaseAddOnsBuilder<NetworkT, RpcMiddleware> {
         } = self;
         BaseAddOnsBuilder {
             sequencer_url,
+            proofs_disabled,
             sequencer_headers,
             da_config,
             gas_limit_config,
@@ -756,6 +766,7 @@ impl<NetworkT, RpcMiddleware> BaseAddOnsBuilder<NetworkT, RpcMiddleware> {
     {
         let Self {
             sequencer_url,
+            proofs_disabled,
             sequencer_headers,
             da_config,
             gas_limit_config,
@@ -766,7 +777,7 @@ impl<NetworkT, RpcMiddleware> BaseAddOnsBuilder<NetworkT, RpcMiddleware> {
 
         BaseAddOns::new(
             RpcAddOns::new(
-                BaseEthApiBuilder::default()
+                BaseEthApiBuilder::default().with_proofs_disabled(proofs_disabled)
                     .with_sequencer(sequencer_url)
                     .with_sequencer_headers(sequencer_headers)
                     .with_min_suggested_priority_fee(min_suggested_priority_fee),
@@ -1354,7 +1365,17 @@ where
 /// A basic Base consensus builder.
 #[derive(Debug, Default, Clone)]
 #[non_exhaustive]
-pub struct BaseConsensusBuilder;
+pub struct BaseConsensusBuilder {
+    /// Only the disposable runner supplies an admitted shared experimental service.
+    pub deferred_state_root: Option<Arc<base_execution_payload_builder::PostStateRootService>>,
+}
+
+impl BaseConsensusBuilder {
+    /// Carries the disposable runner's shared experimental admission into consensus startup.
+    pub fn with_deferred_state_root(mut self, service: Option<Arc<base_execution_payload_builder::PostStateRootService>>) -> Self {
+        self.deferred_state_root = service; self
+    }
+}
 
 impl<Node> ConsensusBuilder<Node> for BaseConsensusBuilder
 where
@@ -1363,6 +1384,9 @@ where
     type Consensus = Arc<BaseBeaconConsensus>;
 
     async fn build_consensus(self, ctx: &BuilderContext<Node>) -> eyre::Result<Self::Consensus> {
+        if ctx.chain_spec().validate_deferred_state_root_schedule()? != self.deferred_state_root.as_ref().and_then(|service| service.activation) {
+            eyre::bail!("DeferredStateRoot requires guarded disposable runner admission before consensus startup");
+        }
         Ok(Arc::new(BaseBeaconConsensus::new(ctx.chain_spec())))
     }
 }

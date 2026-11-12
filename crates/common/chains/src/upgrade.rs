@@ -17,25 +17,25 @@ pub trait BaseUpgradeExt: Sized {
     fn into_eth_spec(self) -> SpecId;
 
     /// Returns the execution fork ladder with activation conditions for the given chain config.
-    fn forks_for(cfg: &ChainConfig) -> [(BaseUpgrade, ForkCondition); 14];
+    fn forks_for(cfg: &ChainConfig) -> [(BaseUpgrade, ForkCondition); 15];
 
     /// Base mainnet list of execution upgrades.
-    fn mainnet() -> [(BaseUpgrade, ForkCondition); 14] {
+    fn mainnet() -> [(BaseUpgrade, ForkCondition); 15] {
         Self::forks_for(ChainConfig::mainnet())
     }
 
     /// Base Sepolia list of execution upgrades.
-    fn sepolia() -> [(BaseUpgrade, ForkCondition); 14] {
+    fn sepolia() -> [(BaseUpgrade, ForkCondition); 15] {
         Self::forks_for(ChainConfig::sepolia())
     }
 
     /// Devnet list of execution upgrades.
-    fn devnet() -> [(BaseUpgrade, ForkCondition); 14] {
+    fn devnet() -> [(BaseUpgrade, ForkCondition); 15] {
         Self::forks_for(ChainConfig::devnet())
     }
 
     /// Base Zeronet list of execution upgrades.
-    fn zeronet() -> [(BaseUpgrade, ForkCondition); 14] {
+    fn zeronet() -> [(BaseUpgrade, ForkCondition); 15] {
         Self::forks_for(ChainConfig::zeronet())
     }
 
@@ -62,7 +62,7 @@ impl BaseUpgradeExt for BaseUpgrade {
         }
     }
 
-    fn forks_for(cfg: &ChainConfig) -> [(BaseUpgrade, ForkCondition); 14] {
+    fn forks_for(cfg: &ChainConfig) -> [(BaseUpgrade, ForkCondition); 15] {
         let azul = cfg.azul_timestamp.map_or(ForkCondition::Never, ForkCondition::Timestamp);
         let beryl = cfg.beryl_timestamp.map_or(ForkCondition::Never, ForkCondition::Timestamp);
         let cobalt = cfg.cobalt_timestamp.map_or(ForkCondition::Never, ForkCondition::Timestamp);
@@ -83,6 +83,7 @@ impl BaseUpgradeExt for BaseUpgrade {
             (Self::Cobalt, cobalt),
             (Self::Denim, denim),
             (Self::Everest, everest),
+            (Self::DeferredStateRoot, cfg.deferred_state_root_timestamp.map_or(ForkCondition::Never, ForkCondition::Timestamp)),
         ]
     }
 

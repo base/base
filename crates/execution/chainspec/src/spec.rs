@@ -2004,6 +2004,23 @@ mod tests {
         }
     }
 
+    /// All public constructors must reject unsupported experimental schedules before launch.
+    #[test]
+    fn deferred_schedule_is_custom_only_and_post_genesis() {
+        for id in [8453, 84532, 900] {
+            for activation in [0, 10] {
+                let result = BaseChainSpecBuilder::default().chain(id.into()).genesis(Genesis::default())
+                    .regolith_activated().with_fork(BaseUpgrade::DeferredStateRoot, ForkCondition::Timestamp(activation)).try_build();
+                assert_eq!(result.is_ok(), id == 900 && activation == 10, "only a custom post-genesis timestamp may activate DeferredStateRoot: chain={id}, timestamp={activation}");
+            }
+        }
+        let missing = BaseChainSpecBuilder::default().chain(900.into()).genesis(Genesis::default())
+            .bedrock_activated().with_fork(BaseUpgrade::DeferredStateRoot, ForkCondition::Timestamp(10)).try_build();
+        assert!(matches!(missing, Err(BaseChainSpecError::InvalidDeferredStateRoot("Bedrock and Regolith must precede activation"))), "unsupported OP execution schedule must fail closed");
+        assert_eq!(BaseChainSpec::mainnet().validate_deferred_state_root_schedule().unwrap(), None, "ordinary mainnet remains Never");
+        assert_eq!(BaseChainSpec::sepolia().validate_deferred_state_root_schedule().unwrap(), None, "ordinary Sepolia remains Never");
+    }
+
     #[test]
     fn runtime_denim_schedule_requires_block_time_and_observes_changes() {
         let chain_id = 9_100_011;

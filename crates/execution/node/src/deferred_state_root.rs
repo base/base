@@ -40,6 +40,36 @@ pub struct DeferredStateRootState {
     pub staged: Mutex<Option<DeferredStateRootStaged>>,
 }
 
+impl DeferredStateRootState {
+    /// Owns health reporting and bounded worker drain on both shutdown and operational failure.
+    pub fn spawn_health_monitor(&self, runtime: &reth_tasks::Runtime) {
+        let service = self.service.clone();
+        runtime.spawn_critical_with_graceful_shutdown_signal("deferred-state-root-health", async move |shutdown| {
+                tokio::pin!(shutdown);
+                loop {
+                    tokio::select! {
+                        guard = &mut shutdown => {
+                            if let Some(manager) = service.manager.get().cloned() {
+                                tokio::task::spawn_blocking(move || manager.drain()).await
+                                    .expect("root worker drain task must not panic")
+                                    .expect("root worker must drain within its configured deadline");
+                            }
+                            drop(guard); break;
+                        }
+                        _ = tokio::time::sleep(std::time::Duration::from_millis(20)) => {
+                            if service.manager.get().is_some_and(|manager| manager.failed.load(std::sync::atomic::Ordering::Acquire)) {
+                                if let Some(manager) = service.manager.get().cloned() {
+                                    let _ = tokio::task::spawn_blocking(move || manager.drain()).await;
+                                }
+                                panic!("deferred state root operational failure; node advancement stopped");
+                            }
+                        }
+                    }
+                }
+            });
+    }
+}
+
 /// Strategy capturing the same public provider and overlay manager as BasicEngineValidator.
 #[derive(Debug)]
 pub struct DeferredStateRootStrategy<P> {
@@ -114,7 +144,9 @@ where
         let hashed = hashed.get().clone(); let factory = self.factory.clone();
         let data = manager.enqueue(Box::new(move || {
             let provider = factory.database_provider_ro()?;
+            let start = std::time::Instant::now();
             let (root, updates) = provider.state_root_with_updates((*hashed).clone())?;
+            base_execution_payload_builder::PostStateRootMetrics::calculation_duration().record(start.elapsed().as_secs_f64());
             Ok(PostStateRootData::new(root, &hashed, updates))
         }))?.wait()?;
         if !self.deferred && data.root != block.state_root { return Ok(StateRootJobOutcome::new(data.root, data.updates)); }
@@ -154,6 +186,10 @@ impl<V> DeferredEngineValidator<V> {
             .map_err(|e| InsertBlockError::new(output.executed_block.sealed_block().clone(), e.into()))?;
         // Do not read the stock pending handle. The runtime still owns its redundant sorting task;
         // replacing this handle does not cancel it or remove its cost from measurements.
+        base_execution_payload_builder::PostStateRootMetrics::validator_executions().increment(1);
+        base_execution_payload_builder::PostStateRootMetrics::redundant_stock_sorts().increment(1);
+        base_execution_payload_builder::PostStateRootMetrics::validator_ready_outputs().increment(1);
+        tracing::info!(target: "base_root_experiment", hash = %block.hash(), number = block.number, commitment_root = %block.state_root, actual_current_root = %staged.data.root, "ready validator output; Engine response and canonical acceptance follow");
         output.executed_block = ExecutedBlock::new(output.executed_block.recovered_block.clone(), output.executed_block.execution_output.clone(), staged.data.sorted)
             .with_bal(output.executed_block.bal.clone());
         Ok(output)
@@ -207,6 +243,10 @@ where
         tree_config: reth_engine_tree::tree::TreeConfig,
         overlay_manager: OverlayManager<BasePrimitives>,
     ) -> eyre::Result<Self::EngineValidator> {
+        let configured_activation = ctx.config.chain.validate_deferred_state_root_schedule()?;
+        if configured_activation != self.service.as_ref().and_then(|service| service.activation) {
+            eyre::bail!("DeferredStateRoot requires matching builder/validator configuration from the guarded disposable runner");
+        }
         if self.service.as_ref().is_some_and(|service| service.activation.is_some() || service.cohort != base_execution_payload_builder::PostStateRootCohort::Ordinary) {
             if ctx.config.debug.skip_state_root { eyre::bail!("DeferredStateRoot is incompatible with debug.skip-state-root"); }
             if ctx.config.debug.invalid_block_hook.as_ref().is_some_and(|hooks| !hooks.is_empty()) {
@@ -225,28 +265,43 @@ where
             }));
         }
         if state.service.activation.is_some() || state.service.cohort != base_execution_payload_builder::PostStateRootCohort::Ordinary {
-            let service = state.service.clone();
-            ctx.node.task_executor().spawn_critical_with_graceful_shutdown_signal("deferred-state-root-health", async move |shutdown| {
-                tokio::pin!(shutdown);
-                loop {
-                    tokio::select! {
-                        guard = &mut shutdown => {
-                            if let Some(manager) = service.manager.get().cloned() {
-                                tokio::task::spawn_blocking(move || manager.drain()).await
-                                    .expect("root worker drain task must not panic")
-                                    .expect("root worker must drain within its configured deadline");
-                            }
-                            drop(guard); break;
-                        }
-                        _ = tokio::time::sleep(std::time::Duration::from_millis(20)) => {
-                            if service.manager.get().is_some_and(|manager| manager.failed.load(std::sync::atomic::Ordering::Acquire)) {
-                                panic!("deferred state root operational failure; node advancement stopped");
-                            }
-                        }
-                    }
-                }
-            });
+            state.spawn_health_monitor(ctx.node.task_executor());
         }
         Ok(DeferredEngineValidator { inner, state })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    /// A real provider-worker panic reaches the runtime's fatal task monitor automatically.
+    #[test]
+    fn worker_failure_reports_unhealthy_and_drains_without_manual_engine_stop() {
+        let runtime = reth_tasks::Runtime::test();
+        let fatal = runtime.take_task_manager_handle().unwrap();
+        let state = DeferredStateRootState { service: Arc::new(PostStateRootService { activation: Some(1), ..Default::default() }), ..Default::default() };
+        state.spawn_health_monitor(&runtime);
+        let manager = state.service.manager().unwrap();
+        let failed = manager.enqueue(Box::new(|| panic!("injected actual root worker failure"))).unwrap().wait();
+        assert!(failed.is_err(), "actual worker failure must remain an operational error");
+        let result = runtime.handle().block_on(async { tokio::time::timeout(Duration::from_secs(2), fatal).await.expect("health stop must be automatically bounded").unwrap() });
+        assert!(result.is_err(), "root health failure must reach the runtime fatal channel without manual terminate");
+        assert!(manager.worker.lock().unwrap().is_none(), "fatal health reporting must account for and join the owned serial worker first");
+        assert_eq!(manager.ready.lock().unwrap().entries.len(), 0, "failed root must publish exactly zero ready entries");
+        runtime.shutdown_timeout(Duration::from_secs(2));
+    }
+
+    /// Graceful runtime exit owns all serial root work, rather than dropping its join handle.
+    #[test]
+    fn graceful_shutdown_drains_root_worker() {
+        let runtime = reth_tasks::Runtime::test();
+        let state = DeferredStateRootState { service: Arc::new(PostStateRootService { activation: Some(1), ..Default::default() }), ..Default::default() };
+        state.spawn_health_monitor(&runtime);
+        let manager = state.service.manager().unwrap();
+        assert!(runtime.graceful_shutdown_with_timeout(Duration::from_secs(2)), "graceful shutdown must complete within the configured worker drain bound");
+        assert!(manager.worker.lock().unwrap().is_none(), "graceful shutdown must join the serial root worker exactly once");
+        runtime.shutdown_timeout(Duration::from_secs(2));
     }
 }

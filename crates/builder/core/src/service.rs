@@ -29,12 +29,14 @@ use crate::{BuilderConfig, NodeBounds, PoolBounds};
 pub struct NativePayloadServiceBuilder {
     /// Builder configuration shared with the RPC extensions.
     pub builder_config: BuilderConfig,
+    /// Admitted shared service supplied by the disposable runner, never inferred from headers.
+    pub deferred_state_root: Option<std::sync::Arc<base_execution_payload_builder::PostStateRootService>>,
 }
 
 impl NativePayloadServiceBuilder {
     /// Creates a payload service builder from the given builder configuration.
     pub const fn new(builder_config: BuilderConfig) -> Self {
-        Self { builder_config }
+        Self { builder_config, deferred_state_root: None }
     }
 }
 
@@ -56,12 +58,14 @@ where
         let mut builder_config = self.builder_config;
         builder_config.state_provider_metrics = ctx.config().engine.state_provider_metrics;
 
+        let mut payload_builder_config = builder_config.payload_builder_config();
+        payload_builder_config.deferred_state_root = self.deferred_state_root;
         let payload_builder =
             base_execution_payload_builder::BasePayloadBuilder::with_builder_config(
                 pool,
                 ctx.provider().clone(),
                 evm_config,
-                builder_config.payload_builder_config(),
+                payload_builder_config,
             )
             .with_task_executor(ctx.task_executor().clone());
 
@@ -101,7 +105,8 @@ impl BasePayloadServiceBuilder for NativePayloadServiceBuilder {
         BaseConsensusBuilder,
     >;
 
-    fn build_components(self, base_node: &BaseNode) -> Self::ComponentsBuilder {
+    fn build_components(mut self, base_node: &BaseNode) -> Self::ComponentsBuilder {
+        self.deferred_state_root = base_node.deferred_state_root.clone();
         base_node.components::<BaseNodeTypes>().payload(self)
     }
 }

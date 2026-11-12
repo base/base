@@ -43,7 +43,7 @@ pub struct BaseUpgradeConfig {
     )]
     pub zenith: Option<u64>,
     /// Custom bench/devnet-only parent-state commitment timestamp. Unset means Never.
-    #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+    #[cfg_attr(feature = "serde", serde(rename = "deferredStateRoot", alias = "deferred_state_root", skip_serializing_if = "Option::is_none"))]
     pub deferred_state_root: Option<u64>,
 }
 

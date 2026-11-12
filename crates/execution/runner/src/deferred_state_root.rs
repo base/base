@@ -84,6 +84,7 @@ impl DeferredStateRootAdmission {
         ensure!(args.root_experiment_queue > 0 && args.root_experiment_ready >= 2 && args.root_experiment_timeout_ms > 0, "root experiment limits require positive queue/deadline and at least two ready entries");
         ensure!(args.deferred_state_root_disposable, "DeferredStateRoot requires --rollup.deferred-state-root-disposable");
         ensure!(!config.debug.skip_state_root, "DeferredStateRoot is incompatible with debug.skip-state-root");
+        ensure!(!config.network.snap_v2, "DeferredStateRoot forbids snap serving and snap sync");
         ensure!(config.debug.invalid_block_hook.as_ref().is_none_or(|hooks| hooks.is_empty()), "DeferredStateRoot is incompatible with configured invalid-block diagnostic hooks, including witness");
         ensure!(!args.proofs_history && args.proofs_history_storage_path.is_none(), "DeferredStateRoot forbids proof history services");
         ensure!(args.upgrade_signal.contract_address.is_none() && args.upgrade_signal_l1_rpc.upgrade_signal_l1_rpc.is_none(), "DeferredStateRoot forbids L1 upgrade-signal RPC");
@@ -246,6 +247,15 @@ mod tests {
         config.debug.invalid_block_hook = Some(Default::default());
         assert_eq!(DeferredStateRootAdmission::preflight(&config, &args(), 0).unwrap_err().to_string(), "DeferredStateRoot is incompatible with configured invalid-block diagnostic hooks, including witness", "witness rejection is exact even before activation");
         assert!(!DeferredStateRootAdmission::marker_path(config.datadir().data_dir()).unwrap().exists(), "configuration rejection must precede marker creation");
+    }
+
+    /// Snap serving authenticates proofs against same-height headers and is unsupported too.
+    #[test]
+    fn snap_serving_rejected_before_launch() {
+        let directory = tempfile::tempdir().unwrap(); let mut config = config(&directory.path().join("run1"));
+        config.network.snap_v2 = true;
+        assert_eq!(DeferredStateRootAdmission::preflight(&config, &args(), 0).unwrap_err().to_string(), "DeferredStateRoot forbids snap serving and snap sync", "configured snap must reject even before the fork");
+        assert!(!DeferredStateRootAdmission::marker_path(config.datadir().data_dir()).unwrap().exists(), "snap rejection must precede any store recovery or marker write");
     }
 
     /// Unmarked existing multi-store data cannot be admitted without immutable provenance.

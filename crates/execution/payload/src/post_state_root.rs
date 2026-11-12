@@ -3,10 +3,12 @@
 //! Computation does not certify a block. Only the validator wrapper may publish a validated
 //! entry after every inner check succeeds. Builder and validator work never share certification.
 
-use std::{collections::{BTreeMap, BTreeSet, VecDeque}, fmt, io, panic::{AssertUnwindSafe, catch_unwind}, sync::{Arc, Mutex, OnceLock, atomic::{AtomicBool, Ordering}, mpsc}, thread::{self, JoinHandle}, time::{Duration, Instant}};
+use std::{collections::{BTreeMap, BTreeSet, VecDeque}, fmt, io, panic::{AssertUnwindSafe, catch_unwind}, sync::{Arc, Mutex, OnceLock, atomic::{AtomicBool, AtomicUsize, Ordering}, mpsc}, thread::{self, JoinHandle}, time::{Duration, Instant}};
 use alloy_primitives::B256;
 use reth_storage_api::errors::{ProviderError, ProviderResult};
 use reth_trie_common::{HashedPostState, SortedTrieData, updates::TrieUpdates};
+
+use crate::metrics::PostStateRootMetrics;
 
 /// Explicit benchmark controls; ordinary is unchanged and deferred requires a custom fork.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -96,7 +98,9 @@ pub struct PostStateRootData {
 impl PostStateRootData {
     /// Materializes current state and trie nodes before returning a successful completion.
     pub fn new(root: B256, hashed: &HashedPostState, updates: TrieUpdates) -> Self {
+        let start = Instant::now();
         let sorted = SortedTrieData::new(Arc::new(hashed.clone_into_sorted()), Arc::new(updates.clone_into_sorted()));
+        PostStateRootMetrics::sorting_duration().record(start.elapsed().as_secs_f64());
         Self { root, updates: Arc::new(updates), sorted }
     }
 }
@@ -106,7 +110,7 @@ impl PostStateRootData {
 pub struct PostStateRootLimits {
     /// Maximum queued jobs, including a fixed side-branch allowance.
     pub queued: usize,
-    /// Maximum ready entries retained per execution source.
+    /// Maximum ready entries retained across both independent execution sources.
     pub ready: usize,
     /// Maximum admission/completion wait.
     pub timeout: Duration,
@@ -123,6 +127,8 @@ pub type PostStateRootOperation = Box<dyn FnOnce() -> ProviderResult<PostStateRo
 pub struct PostStateRootWork {
     /// Root operation; no borrowed execution/provider state may escape into this closure.
     pub operation: PostStateRootOperation,
+    /// Monotonic admission timestamp for queue lag accounting.
+    pub enqueued: Instant,
     /// Private result, never an unbounded LazyTrieData producer.
     pub result: mpsc::SyncSender<ProviderResult<PostStateRootData>>,
     /// Cooperative cancellation checked before and after the indivisible provider calculation.
@@ -155,9 +161,11 @@ pub struct PostStateRootCompletion {
 impl PostStateRootCompletion {
     /// Returns actual ready data or a terminal operational error within the configured deadline.
     pub fn wait(mut self) -> ProviderResult<PostStateRootData> {
+        let start = Instant::now();
         let mut result = self.receiver.recv_timeout(self.deadline.saturating_duration_since(Instant::now()))
             .map_err(|error| PostStateRootManager::error(format!("post-state root completion failed: {error}")))
             .and_then(|result| result);
+        PostStateRootMetrics::completion_wait().record(start.elapsed().as_secs_f64());
         if self.failed.load(Ordering::Acquire) { result = Err(PostStateRootManager::error("post-state root manager is unhealthy")); }
         if result.is_err() { self.failed.store(true, Ordering::Release); }
         self.completed = true;
@@ -203,6 +211,8 @@ pub struct PostStateRootManager {
     pub ready: Mutex<PostStateRootEntries>,
     /// Outstanding builder identities; certification waits for these results.
     pub builders: Mutex<BTreeSet<PostStateRootKey>>,
+    /// Exact admitted provider operations for per-run root-work accounting.
+    pub admitted: AtomicUsize,
 }
 
 impl PostStateRootManager {
@@ -215,18 +225,23 @@ impl PostStateRootManager {
         let failed = Arc::new(AtomicBool::new(false)); let health = failed.clone();
         let worker = thread::Builder::new().name("base-post-state-root".into()).spawn(move || {
             while let Ok(work) = receiver.recv() {
+                PostStateRootMetrics::jobs_started().increment(1);
+                PostStateRootMetrics::queue_lag().record(work.enqueued.elapsed().as_secs_f64());
+                let start = Instant::now();
                 let result = if health.load(Ordering::Acquire) || work.cancelled.load(Ordering::Acquire) {
                     Err(Self::error("post-state root work cancelled"))
                 } else {
                     catch_unwind(AssertUnwindSafe(work.operation)).unwrap_or_else(|_| Err(Self::error("post-state root worker panicked")))
                 };
-                if result.is_err() { health.store(true, Ordering::Release); }
+                PostStateRootMetrics::job_duration().record(start.elapsed().as_secs_f64());
+                PostStateRootMetrics::jobs_completed().increment(1);
+                if result.is_err() { PostStateRootMetrics::jobs_failed().increment(1); health.store(true, Ordering::Release); }
                 if !work.cancelled.load(Ordering::Acquire) && work.result.send(result).is_err() && !work.detached.load(Ordering::Acquire) {
                     health.store(true, Ordering::Release);
                 }
             }
         }).map_err(Self::error)?;
-        Ok(Self { limits, sender: Mutex::new(Some(sender)), worker: Mutex::new(Some(worker)), failed, ready: Mutex::default(), builders: Mutex::default() })
+        Ok(Self { limits, sender: Mutex::new(Some(sender)), worker: Mutex::new(Some(worker)), failed, ready: Mutex::default(), builders: Mutex::default(), admitted: AtomicUsize::new(0) })
     }
 
     /// Creates an engine-fatal provider error rather than a consensus-invalid payload error.
@@ -237,12 +252,12 @@ impl PostStateRootManager {
         let deadline = Instant::now() + self.limits.timeout;
         let cancelled = Arc::new(AtomicBool::new(false)); let (result, receiver) = mpsc::sync_channel(1);
         let detached = Arc::new(AtomicBool::new(false));
-        let mut work = PostStateRootWork { operation, result, cancelled: cancelled.clone(), detached: detached.clone() };
+        let mut work = PostStateRootWork { operation, result, cancelled: cancelled.clone(), detached: detached.clone(), enqueued: Instant::now() };
         loop {
             if self.failed.load(Ordering::Acquire) { return Err(Self::error("post-state root manager is unhealthy")); }
             let sender = self.sender.lock().map_err(Self::error)?;
             match sender.as_ref().ok_or_else(|| Self::error("post-state root manager stopped"))?.try_send(work) {
-                Ok(()) => break,
+                Ok(()) => { self.admitted.fetch_add(1, Ordering::Release); break; }
                 Err(mpsc::TrySendError::Full(pending)) => work = pending,
                 Err(mpsc::TrySendError::Disconnected(_)) => return Err(Self::error("post-state root worker dropped")),
             }

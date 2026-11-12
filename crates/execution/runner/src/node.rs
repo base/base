@@ -143,12 +143,13 @@ impl BaseNode {
                     .with_deferred_state_root(self.deferred_state_root.clone()),
             ))
             .network(BaseNetworkBuilder::new(!discovery_v4))
-            .consensus(BaseConsensusBuilder::default())
+            .consensus(BaseConsensusBuilder::default().with_deferred_state_root(self.deferred_state_root.clone()))
     }
 
     /// Returns [`BaseAddOnsBuilder`] with configured arguments.
     pub fn add_ons_builder<NetworkT: RpcTypes>(&self) -> BaseAddOnsBuilder<NetworkT> {
         BaseAddOnsBuilder::default()
+            .with_proofs_disabled(self.deferred_state_root.is_some())
             .with_sequencer(self.args.sequencer.clone())
             .with_sequencer_headers(self.args.sequencer_headers.clone())
             .with_da_config(self.da_config.clone())
