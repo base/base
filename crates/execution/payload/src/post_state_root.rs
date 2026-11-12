@@ -359,6 +359,14 @@ impl PostStateRootManager {
         Ok(())
     }
 
+    /// Retires S builder provenance after successful trusted insertion, never certifying it.
+    pub fn retire_trusted_builder(&self, key: PostStateRootKey) -> ProviderResult<()> {
+        let mut ready = self.ready.lock().map_err(Self::error)?;
+        ready.entries.remove(&(key, PostStateRootSource::Builder));
+        ready.order.retain(|entry| *entry != (key, PostStateRootSource::Builder));
+        Ok(())
+    }
+
     /// Closes admission and accounts for all owned work within a bounded drain interval.
     /// A provider call already running cannot be preempted. A drain timeout reports failure.
     pub fn drain(&self) -> ProviderResult<()> {
@@ -410,6 +418,21 @@ mod tests {
         assert!(manager.get(key(1), PostStateRootSource::Validator).unwrap().is_none(), "oldest ready fork evicted");
         assert_eq!(manager.get(key(2), PostStateRootSource::Validator).unwrap().unwrap().root, B256::repeat_byte(2), "same-height forks keep independent roots");
         manager.drain().unwrap();
+    }
+
+    /// Pending R/D builder comparisons must never be evicted like accepted S insertions.
+    #[test]
+    fn unmatched_builder_provenance_remains_protected() {
+        let manager = PostStateRootManager::new(PostStateRootLimits { ready: 2, ..Default::default() }).unwrap();
+        manager.publish(key(1), PostStateRootSource::Builder, data(1)).unwrap();
+        manager.publish(key(2), PostStateRootSource::Builder, data(2)).unwrap();
+        assert_eq!(manager.publish(key(3), PostStateRootSource::Builder, data(3)).unwrap_err().to_string(), "ready retention full with unverified builder results", "unmatched R/D roots must fail capacity admission rather than evict independent comparison inputs");
+        let ready = manager.ready.lock().unwrap();
+        assert_eq!(ready.entries.len(), 2, "both original unmatched builder entries must remain retained");
+        assert!(ready.entries.contains_key(&(key(1), PostStateRootSource::Builder)), "oldest unmatched builder root must not be evicted");
+        assert!(ready.entries.contains_key(&(key(2), PostStateRootSource::Builder)), "second unmatched builder root must not be evicted");
+        assert_eq!(ready.order.len(), 2, "FIFO must contain exactly the protected original entries");
+        drop(ready); manager.drain().unwrap();
     }
 
     /// A producer panic wakes the waiter and terminally stops admission without INVALID ancestry.

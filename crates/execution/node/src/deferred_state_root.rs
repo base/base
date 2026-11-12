@@ -211,8 +211,14 @@ where
     fn validate_block(&mut self, block: SealedBlockWithAccessList<BaseBlock>, ctx: TreeCtx<'_, BasePrimitives>) -> ValidationOutcome<BasePrimitives> { let outcome = self.inner.validate_block(block, ctx); self.publish(outcome) }
     fn on_inserted_executed_block(&self, block: BuiltPayloadExecutedBlock<BasePrimitives>) -> ProviderResult<ExecutedBlock<BasePrimitives>> {
         if self.state.service.reexecution(block.recovered_block.timestamp, block.recovered_block.number) { return Err(PostStateRootManager::error("trusted insertion is unsupported for deferred state roots")); }
-        if self.state.service.controlled(block.recovered_block.timestamp, block.recovered_block.number) { base_execution_payload_builder::PostStateRootMetrics::trusted_insertions().increment(1); }
-        self.inner.on_inserted_executed_block(block)
+        let controlled = self.state.service.controlled(block.recovered_block.timestamp, block.recovered_block.number);
+        let key = PostStateRootKey { hash: block.recovered_block.hash(), parent_hash: block.recovered_block.parent_hash, number: block.recovered_block.number };
+        let inserted = self.inner.on_inserted_executed_block(block)?;
+        if controlled {
+            self.state.service.manager()?.retire_trusted_builder(key)?;
+            base_execution_payload_builder::PostStateRootMetrics::trusted_insertions().increment(1);
+        }
+        Ok(inserted)
     }
     fn on_canonical_head_changed(&self, hash: B256, state: &EngineApiTreeState<BasePrimitives>) { self.inner.on_canonical_head_changed(hash, state); }
     fn payload_builder_resources(&self, parent: B256, header: &Header, timestamp: u64, state: &mut EngineApiTreeState<BasePrimitives>) -> PayloadBuilderResources { self.inner.payload_builder_resources(parent, header, timestamp, state) }
@@ -280,6 +286,39 @@ where
 mod tests {
     use super::*;
     use std::time::Duration;
+    use reth_primitives_traits::Block;
+
+    /// External pinned EngineValidator cannot be annotated with automock; this insertion-only
+    /// double injects the error that the stock implementation currently never returns.
+    #[derive(Debug)]
+    struct FailedTrustedInsertion;
+    impl EngineValidator<base_execution_payload_builder::BasePayloadTypes> for FailedTrustedInsertion {
+        fn validate_payload_attributes_against_header(&self, _: &base_execution_payload_builder::BasePayloadBuilderAttributes<base_common_consensus::BaseTxEnvelope>, _: &Header) -> Result<(), InvalidPayloadAttributesError> { unreachable!("insertion-only fixture") }
+        fn convert_payload_to_block(&self, _: ExecutionData) -> Result<SealedBlock<BaseBlock>, NewPayloadError> { unreachable!("insertion-only fixture") }
+        fn validate_payload(&mut self, _: ExecutionData, _: TreeCtx<'_, BasePrimitives>) -> ValidationOutcome<BasePrimitives> { unreachable!("insertion-only fixture") }
+        fn validate_block(&mut self, _: SealedBlockWithAccessList<BaseBlock>, _: TreeCtx<'_, BasePrimitives>) -> ValidationOutcome<BasePrimitives> { unreachable!("insertion-only fixture") }
+        fn on_inserted_executed_block(&self, _: BuiltPayloadExecutedBlock<BasePrimitives>) -> ProviderResult<ExecutedBlock<BasePrimitives>> { Err(PostStateRootManager::error("injected inner trusted insertion failure")) }
+        fn payload_builder_resources(&self, _: B256, _: &Header, _: u64, _: &mut EngineApiTreeState<BasePrimitives>) -> PayloadBuilderResources { unreachable!("insertion-only fixture") }
+    }
+
+    /// Failed S insertion must retain builder provenance, with no independent certification.
+    #[test]
+    fn failed_trusted_insertion_preserves_builder_provenance() {
+        let block = BaseBlock::new(Header { number: 1, timestamp: 2, ..Default::default() }, Default::default()).try_into_recovered().unwrap();
+        let key = PostStateRootKey { hash: block.hash(), parent_hash: block.parent_hash, number: block.number };
+        let state = Arc::new(DeferredStateRootState { service: Arc::new(PostStateRootService { cohort: base_execution_payload_builder::PostStateRootCohort::SerialTrusted, ..Default::default() }), ..Default::default() });
+        let manager = state.service.manager().unwrap();
+        manager.publish(key, PostStateRootSource::Builder, PostStateRootData::new(B256::ZERO, &Default::default(), Default::default())).unwrap();
+        let validator = DeferredEngineValidator { inner: FailedTrustedInsertion, state };
+        let input = BuiltPayloadExecutedBlock { recovered_block: Arc::new(block), execution_output: Default::default(), hashed_state: Default::default(), trie_updates: Default::default() };
+        let error = <DeferredEngineValidator<_> as EngineValidator<base_execution_payload_builder::BasePayloadTypes>>::on_inserted_executed_block(&validator, input).unwrap_err();
+        assert_eq!(error.to_string(), "injected inner trusted insertion failure", "inner insertion error must propagate unchanged");
+        assert!(manager.get(key, PostStateRootSource::Builder).unwrap().is_some(), "failed trusted insertion must retain the builder root");
+        assert!(manager.get(key, PostStateRootSource::Validator).unwrap().is_none(), "failed trusted insertion must never fabricate independent validator provenance");
+        assert_eq!(manager.ready.lock().unwrap().entries.len(), 1, "exactly the original builder entry remains");
+        assert_eq!(manager.ready.lock().unwrap().order.len(), 1, "failed insertion must preserve the FIFO identity");
+        manager.drain().unwrap();
+    }
 
     /// The pinned engine must classify local root failures as fatal, never invalid ancestry.
     #[test]

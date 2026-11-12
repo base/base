@@ -55,7 +55,9 @@ where
     pub fn run(
         mut self,
         launcher: impl Launcher<crate::chainspec::BaseChainSpecParser, Ext>,
-    ) -> Result<()> {
+    ) -> Result<()>
+    where Ext: base_node_core::HasRollupArgs,
+    {
         let runner = match self.runner.take() {
             Some(runner) => runner,
             None => CliRunner::try_default_runtime()?,
@@ -82,6 +84,7 @@ where
 
         match self.cli.command {
             Commands::Node(command) => {
+                base_node_runner::DeferredStateRootPrepared::ensure_generic_launch_allowed(&command.chain, base_node_core::HasRollupArgs::rollup_args(&command.ext))?;
                 // Validate RPC modules using the configured validator
                 if let Some(http_api) = &command.rpc.http_api {
                     Rpc::validate_selection(http_api, "http.api").map_err(|e| eyre!("{e}"))?;

@@ -14,7 +14,7 @@ mod extension;
 pub use extension::{BaseNodeExtension, FromExtensionConfig};
 
 mod deferred_state_root;
-pub use deferred_state_root::{DeferredStateRootAdmission, DeferredStateRootBackfill, DeferredStateRootBackfillBuilder, DeferredStateRootSnapshot};
+pub use deferred_state_root::{DeferredStateRootAdmission, DeferredStateRootBackfill, DeferredStateRootBackfillBuilder, DeferredStateRootSnapshot, DeferredStateRootPrepared};
 
 mod runner;
 pub use runner::{BaseNodeRunner, LaunchedBaseNode};

@@ -32,6 +32,9 @@ use reth_tasks::Runtime;
 use reth_trie_common::{HashedPostState, KeccakKeyHasher, updates::TrieUpdates};
 use tokio::sync::{mpsc::unbounded_channel, oneshot};
 
+mod prewarm_support;
+pub use prewarm_support::{PopulatedPrewarmSource, SnapshotEvents, SnapshotFields};
+
 /// Concrete disposable Base database used by both independent execution paths.
 pub type TestTypes = NodeTypesWithDBAdapter<BaseNode, Arc<reth_db::test_utils::TempDatabase<reth_db::DatabaseEnv>>>;
 /// A fixture with independently computed roots and finalized EVM output.
@@ -173,6 +176,11 @@ impl Fixture {
 
     /// Selects stock/wrapped validation with identical hook/prewarming options on real storage.
     pub fn submit_options(&self, commitment: B256, service: Arc<PostStateRootService>, drain: bool, config: TreeConfig, hook: Box<dyn reth_node_api::InvalidBlockHook<BasePrimitives>>, wrapped: bool) -> alloy_rpc_types_engine::PayloadStatus {
+        self.submit_pool_options(commitment, service, drain, config, hook, wrapped, None)
+    }
+
+    /// Waits for real populated pool snapshots when requested, before independent validation.
+    pub fn submit_pool_options(&self, commitment: B256, service: Arc<PostStateRootService>, drain: bool, config: TreeConfig, hook: Box<dyn reth_node_api::InvalidBlockHook<BasePrimitives>>, wrapped: bool, pool: Option<(PopulatedPrewarmSource, SnapshotEvents)>) -> alloy_rpc_types_engine::PayloadStatus {
         let runtime = Runtime::test();
         let provider = BlockchainProvider::new(self.factory.clone()).unwrap();
         let overlay = OverlayManager::new(runtime.state_trie_overlay_worker_pool());
@@ -184,6 +192,8 @@ impl Fixture {
             BaseEngineValidator::<BaseTxEnvelope, _>::new::<KeccakKeyHasher>(self.chain.clone()),
             config.clone(), hook, overlay.clone(), runtime.clone())
             .with_state_root_strategy(Arc::new(DeferredStateRootStrategy { provider: provider.clone(), overlay: overlay.clone(), state: state.clone(), stock: Default::default() }));
+        let snapshot_events = pool.as_ref().map(|(_, events)| events.clone());
+        let inner = if let Some((source, _)) = pool { inner.with_txpool_prewarming(source) } else { inner };
         let (persistence, _rx) = mpsc::channel(); let (payloads, _prx) = unbounded_channel();
         let (sender, _events) = if wrapped {
             EngineApiTreeHandler::spawn_new(provider, consensus, DeferredEngineValidator { inner, state: state.clone() },
@@ -196,6 +206,16 @@ impl Fixture {
                 CanonicalInMemoryState::with_head(self.parent.clone(), None, None), overlay, config,
                 EngineApiKind::OpStack, evm, runtime.clone())
         };
+        if let Some(events) = snapshot_events {
+            let (tx, rx) = oneshot::channel();
+            let forkchoice_state = alloy_rpc_types_engine::ForkchoiceState { head_block_hash: self.parent.hash(), safe_block_hash: self.parent.hash(), finalized_block_hash: self.parent.hash() };
+            sender.send(FromEngine::Request(EngineApiRequest::Beacon(BeaconEngineMessage::ForkchoiceUpdated { cause: tracing::Span::none(), state: forkchoice_state, payload_attrs: None, tx }))).unwrap();
+            let fcu = runtime.handle().block_on(async { tokio::time::timeout(Duration::from_secs(10), async { rx.await.unwrap().unwrap().await.unwrap() }).await.unwrap() });
+            assert_eq!(fcu.payload_status.status, alloy_rpc_types_engine::PayloadStatusEnum::Valid, "parent FCU must start warming exactly the valid genesis state");
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while events.0.lock().unwrap().is_empty() && Instant::now() < deadline { std::thread::sleep(Duration::from_millis(1)); }
+            assert_eq!(events.0.lock().unwrap().len(), 1, "real txpool must publish exactly one populated snapshot before validation");
+        }
         let mut block = self.block.clone().into_block(); block.header.state_root = commitment;
         let payload = BasePayloadTypes::<BasePrimitives>::block_to_payload(block.seal_slow(), None);
         let (tx, rx) = oneshot::channel();
@@ -475,6 +495,35 @@ fn serial_controls_preserve_current_root_and_insertion_policy() {
     }
 }
 
+/// Successful S insertion must retire builder-only provenance without validator certification.
+#[test]
+fn serial_trusted_insertion_survives_ready_retention() {
+    let mut fixture = Fixture::new();
+    let runtime = Runtime::test();
+    let service = Arc::new(PostStateRootService { cohort: PostStateRootCohort::SerialTrusted, limits: base_execution_payload_builder::PostStateRootLimits { ready: 2, ..Default::default() }, ..Default::default() });
+    for height in 1..=5 {
+        let payload = fixture.native_payload(service.clone());
+        assert_eq!(payload.block().number, height, "native serial builds must advance through more than twice the retention cap");
+        let provider = BlockchainProvider::new(fixture.factory.clone()).unwrap();
+        let overlay = OverlayManager::new(runtime.state_trie_overlay_worker_pool());
+        let inner = BasicEngineValidator::new(provider, Arc::new(BaseBeaconConsensus::new(fixture.chain.clone())), BaseEvmConfig::new(fixture.chain.clone()),
+            BaseEngineValidator::<BaseTxEnvelope, _>::new::<KeccakKeyHasher>(fixture.chain.clone()), TreeConfig::default(), Box::new(NoopInvalidBlockHook::default()), overlay, runtime.clone());
+        let validator = DeferredEngineValidator { inner, state: Arc::new(DeferredStateRootState { service: service.clone(), ..Default::default() }) };
+        let inserted = <DeferredEngineValidator<_> as EngineValidator<BasePayloadTypes>>::on_inserted_executed_block(&validator, payload.executed_block().unwrap()).unwrap();
+        assert_eq!(inserted.recovered_block.hash(), payload.block().hash(), "trusted insertion must preserve the exact native sealed block");
+        let manager = service.manager.get().unwrap();
+        manager.check_health().expect("successful serial trusted insertion must leave manager healthy");
+        fixture = fixture.next();
+    }
+    let manager = service.manager.get().unwrap();
+    let ready = manager.ready.lock().unwrap();
+    assert_eq!(ready.entries.len(), 0, "accepted S builder provenance must retire instead of exhausting retention");
+    assert_eq!(ready.order.len(), 0, "retirement must remove FIFO identities too");
+    drop(ready);
+    service.manager.get().unwrap().drain().unwrap();
+    runtime.shutdown_timeout(Duration::from_secs(2));
+}
+
 /// A configured but future fork must preserve the native builder's exact legacy payload.
 #[test]
 fn pre_fork_native_payload_parity() {
@@ -519,6 +568,35 @@ fn seal_does_not_wait_for_current_root() {
     assert_eq!(response.recv_timeout(Duration::from_secs(10)).unwrap().status, alloy_rpc_types_engine::PayloadStatusEnum::Valid, "after release, independent validation may publish complete current trie data");
     validation.join().unwrap();
     manager.drain().unwrap();
+}
+
+/// Never/pre-F stock/wrapper validation receives a genuinely populated pool-prewarm snapshot.
+#[test]
+fn populated_txpool_prewarm_stock_wrapper_parity() {
+    let events = SnapshotEvents::default(); tracing::subscriber::set_global_default(events.clone()).unwrap();
+    for activation in [None, Some(3)] {
+        for prewarming in [false, true] {
+            for malformed in [false, true] {
+                let mut observations = Vec::new();
+                for wrapped in [false, true] {
+                    events.0.lock().unwrap().clear();
+                    let fixture = Fixture::new();
+                    let recovered = fixture.block.body().transactions[0].clone().try_into_recovered().unwrap();
+                    let source = PopulatedPrewarmSource(reth_engine_tree::tree::TxPoolPrewarmTransaction { hash: recovered.tx_hash(), sender: recovered.signer(), transaction: recovered });
+                    let service = Arc::new(PostStateRootService { activation, ..Default::default() });
+                    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0)); let counted = calls.clone();
+                    let hook = Box::new(move |_: &SealedHeader<Header>, _: &RecoveredBlock<BaseBlock>, _: &BlockExecutionOutput<<BasePrimitives as reth_primitives_traits::NodePrimitives>::Receipt>, _: Option<(&TrieUpdates, B256)>| { counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst); });
+                    let status = fixture.submit_pool_options(if malformed { B256::repeat_byte(0x99) } else { fixture.root }, service.clone(), true, TreeConfig::default().without_prewarming(!prewarming), hook, wrapped, Some((source, events.clone())));
+                    assert!(service.manager.get().is_none(), "populated Never/pre-F pool must allocate zero managers/jobs");
+                    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), usize::from(malformed), "populated cache must preserve exact invalid hook behavior");
+                    let snapshots = events.0.lock().unwrap().clone();
+                    assert_eq!(snapshots, vec![(7, 2, 0)], "Base transfer prewarming including OP predeploy reads must publish exactly seven accounts, two slots and zero bytecodes before validation");
+                    observations.push((status, snapshots));
+                }
+                assert_eq!(observations[0], observations[1], "stock/wrapper status/latestValidHash and populated snapshot counts must match exactly");
+            }
+        }
+    }
 }
 
 /// Never/pre-F delegate hooks and prewarming options to stock, including genuine invalid roots.

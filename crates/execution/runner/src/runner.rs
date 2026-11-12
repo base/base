@@ -41,6 +41,8 @@ pub struct LaunchedBaseNode {
 pub struct BaseNodeRunner<SB: PayloadServiceBuilder = DefaultPayloadServiceBuilder> {
     /// Rollup-specific arguments forwarded to the Base node implementation.
     rollup_args: RollupArgs,
+    /// One-shot proof that stores were checked before writable MDBX initialization.
+    prepared: Option<crate::DeferredStateRootPrepared>,
     /// Registered builder extensions.
     extensions: Vec<Box<dyn BaseNodeExtension>>,
     /// Payload service builder.
@@ -65,6 +67,7 @@ impl BaseNodeRunner<DefaultPayloadServiceBuilder> {
     pub fn new(rollup_args: RollupArgs) -> Self {
         Self {
             rollup_args,
+            prepared: None,
             extensions: Vec::new(),
             service_builder: DefaultPayloadServiceBuilder,
             da_config: None,
@@ -93,6 +96,11 @@ impl<SB: PayloadServiceBuilder> fmt::Debug for BaseNodeRunner<SB> {
 }
 
 impl<SB: PayloadServiceBuilder> BaseNodeRunner<SB> {
+    /// Carries sealed read-only admission across writable database initialization.
+    pub fn with_prepared_root_admission(mut self, prepared: Option<crate::DeferredStateRootPrepared>) -> Self {
+        self.prepared = prepared; self
+    }
+
     /// Sets the shared DA configuration.
     pub fn with_da_config(mut self, da_config: BaseDAConfig) -> Self {
         self.da_config = Some(da_config);
@@ -127,6 +135,7 @@ impl<SB: PayloadServiceBuilder> BaseNodeRunner<SB> {
     pub fn with_service_builder<SB2: PayloadServiceBuilder>(self, sb: SB2) -> BaseNodeRunner<SB2> {
         BaseNodeRunner {
             rollup_args: self.rollup_args,
+            prepared: self.prepared,
             extensions: self.extensions,
             service_builder: sb,
             da_config: self.da_config,
@@ -164,11 +173,15 @@ impl<SB: PayloadServiceBuilder> BaseNodeRunner<SB> {
     /// handle without waiting for shutdown.
     pub async fn launch(self, builder: BaseNodeBuilder) -> Result<LaunchedBaseNode> {
         // This must precede reth launch and its automatic multi-store recovery.
-        let admission = crate::DeferredStateRootAdmission::preflight(builder.config(), &self.rollup_args, self.extensions.len())?;
+        let admission = match self.prepared {
+            Some(prepared) => Some(prepared.consume(builder.config(), &self.rollup_args, self.extensions.len())?),
+            None => crate::DeferredStateRootAdmission::preflight(builder.config(), &self.rollup_args, self.extensions.len())?,
+        };
         let root_service = admission.as_ref().map(|admission| admission.service.clone());
         info!(target: "base-runner", "starting custom Base node");
 
         let Self {
+            prepared: _,
             rollup_args,
             extensions,
             service_builder,
@@ -205,6 +218,10 @@ impl<SB: PayloadServiceBuilder> BaseNodeRunner<SB> {
             .with_components(components)
             .with_add_ons(add_ons)
             .on_component_initialized(move |_ctx| Ok(()));
+        // The caller already owns MDBX. Admission uses only RO transactions on that environment;
+        // a second MDBX environment for the same path is forbidden by the pinned database.
+        // Static files and RocksDB have not yet been opened writable by reth launch.
+        if let Some(admission) = &admission { admission.verify_before_launch(builder.config(), builder.db().clone(), builder.task_executor().clone())?; }
 
         let hooks = extensions.into_iter().fold(NodeHooks::new(), |hooks, ext| ext.apply(hooks));
         let hooks = started_callbacks

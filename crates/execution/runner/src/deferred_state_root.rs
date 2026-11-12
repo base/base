@@ -10,6 +10,7 @@ use base_execution_chainspec::BaseChainSpec;
 use base_execution_payload_builder::{PostStateRootCohort, PostStateRootLimits, PostStateRootService};
 use base_node_core::args::RollupArgs;
 use eyre::{Result, ensure};
+use reth_db::{Database, Tables, transaction::DbTx, tables_to_generic};
 use reth_chainspec::{ChainSpecProvider, EthChainSpec};
 use reth_engine_tree::backfill::{BackfillAction, BackfillEvent, BackfillSync, PipelineSync};
 use reth_node_builder::{NodeConfig, sync::{BackfillContext, BackfillSyncBuilder, PipelineBackfill}};
@@ -31,6 +32,51 @@ pub struct DeferredStateRootSnapshot {
     pub tip_number: u64,
     /// Exact relative file names and streaming Keccak digests for all three store trees.
     pub files: BTreeMap<String, B256>,
+}
+
+/// Single-use, unforgeable handoff from read-only admission before writable MDBX initialization.
+#[derive(Debug)]
+pub struct DeferredStateRootPrepared {
+    admission: DeferredStateRootAdmission,
+    binding: B256,
+}
+
+impl DeferredStateRootPrepared {
+    /// Binds the one-shot admission to the full chain, arguments, canonical path and manifest bytes.
+    fn binding(config: &NodeConfig<BaseChainSpec>, args: &RollupArgs) -> Result<B256> {
+        let path = fs::canonicalize(config.datadir().data_dir())?;
+        let manifest = args.deferred_state_root_snapshot.as_ref().map(fs::read).transpose()?;
+        let marker = fs::read(DeferredStateRootAdmission::marker_path(config.datadir().data_dir())?)?;
+        Ok(alloy_primitives::keccak256(format!("{:?}{:?}{:?}{:?}{:?}", config.chain, args, path, manifest, marker)))
+    }
+
+    /// Refuses generic upstream CLI initialization, which cannot carry the sealed admission.
+    pub fn ensure_generic_launch_allowed(chain: &BaseChainSpec, args: &RollupArgs) -> Result<()> {
+        ensure!(chain.validate_deferred_state_root_schedule()?.is_none() && args.root_experiment_cohort.is_none_or(|cohort| cohort == PostStateRootCohort::Ordinary) && !args.deferred_state_root_disposable && args.deferred_state_root_snapshot.is_none(), "root experiments require the admitted launch API before writable database initialization");
+        Ok(())
+    }
+
+    /// Authenticates and checks stores before init_db can write; ordinary startup is unchanged.
+    pub fn prepare_database(config: &NodeConfig<BaseChainSpec>, args: &RollupArgs, runtime: reth_tasks::Runtime) -> Result<(reth_db::DatabaseEnv, Option<Self>)> {
+        let admission = DeferredStateRootAdmission::preflight(config, args, 0)?;
+        if let Some(admission) = admission {
+            let datadir = config.datadir();
+            if datadir.db().join("mdbx.dat").exists() {
+                let db = reth_db::open_db_read_only(datadir.db(), config.db.database_args())?;
+                admission.verify_before_launch(config, db, runtime)?;
+            } else { ensure!(admission.snapshot.is_none(), "authenticated snapshot is missing MDBX"); }
+            fs::create_dir_all(datadir.data_dir())?;
+            let binding = Self::binding(config, args)?;
+            let db = reth_db::init_db(datadir.db(), config.db.database_args())?;
+            Ok((db, Some(Self { admission, binding })))
+        } else { Ok((reth_db::init_db(config.datadir().db(), config.db.database_args())?, None)) }
+    }
+
+    /// Rechecks all configuration gates and the snapshot identity without rehashing authorized writes.
+    pub fn consume(self, config: &NodeConfig<BaseChainSpec>, args: &RollupArgs, extensions: usize) -> Result<DeferredStateRootAdmission> {
+        ensure!(self.binding == Self::binding(config, args)?, "prepared root admission does not match chain, datadir, schedule, cohort or snapshot");
+        DeferredStateRootAdmission::preflight_inner(config, args, extensions, Some(self.admission))?.ok_or_else(|| eyre::eyre!("prepared experiment lost its admission"))
+    }
 }
 
 /// Admitted disposable configuration and immutable snapshot provenance.
@@ -76,6 +122,11 @@ impl DeferredStateRootAdmission {
 
     /// Runs before reth launch/recovery. A configured fork rejects even pre-fork incompatible use.
     pub fn preflight(config: &NodeConfig<BaseChainSpec>, args: &RollupArgs, extension_count: usize) -> Result<Option<Self>> {
+        Self::preflight_inner(config, args, extension_count, None)
+    }
+
+    /// Reuses authenticated provenance only for the private, configuration-bound early handoff.
+    fn preflight_inner(config: &NodeConfig<BaseChainSpec>, args: &RollupArgs, extension_count: usize, prepared: Option<Self>) -> Result<Option<Self>> {
         let activation = config.chain.validate_deferred_state_root_schedule()?;
         let cohort = args.root_experiment_cohort.unwrap_or(if activation.is_some() { PostStateRootCohort::Deferred } else { PostStateRootCohort::Ordinary });
         if activation.is_none() && cohort == PostStateRootCohort::Ordinary { return Ok(None); }
@@ -94,6 +145,10 @@ impl DeferredStateRootAdmission {
         let datadir = config.datadir();
         ensure!(datadir.static_files() == datadir.data_dir().join("static_files") && datadir.rocksdb() == datadir.data_dir().join("rocksdb"), "DeferredStateRoot requires all stores under the disposable datadir");
         let marker = Self::marker_path(datadir.data_dir())?;
+        if let Some(prepared) = prepared {
+            ensure!(prepared.marker == marker && marker.exists(), "prepared root admission marker is missing or mismatched");
+            return Ok(Some(prepared));
+        }
         ensure!(!marker.exists(), "DeferredStateRoot datadir has already been used; restore a new numbered snapshot copy, never remove its marker");
         let snapshot = args.deferred_state_root_snapshot.as_ref().map(|path| -> Result<DeferredStateRootSnapshot> {
             let snapshot: DeferredStateRootSnapshot = serde_json::from_slice(&fs::read(path)?)?;
@@ -109,6 +164,26 @@ impl DeferredStateRootAdmission {
         record.sync_all()?;
         if let Some(parent) = marker.parent() { fs::File::open(parent)?.sync_all()?; }
         Ok(Some(Self { service: Arc::new(PostStateRootService { activation, cohort, limits: PostStateRootLimits { queued: args.root_experiment_queue, ready: args.root_experiment_ready, timeout: std::time::Duration::from_millis(args.root_experiment_timeout_ms) }, ..Default::default() }), marker, snapshot }))
+    }
+
+    /// Reads MDBX only through RO provider transactions on the caller-owned environment,
+    /// with explicitly read-only static/Rocks handles before reth opens those stores writable.
+    pub fn verify_before_launch(&self, config: &NodeConfig<BaseChainSpec>, db: reth_db::DatabaseEnv, runtime: reth_tasks::Runtime) -> Result<()> {
+        if self.snapshot.is_none() {
+            let tx = db.tx()?;
+            for table in reth_db::Tables::ALL {
+                // init_db records the executable version even in an otherwise empty database.
+                if matches!(table, Tables::VersionHistory) { continue; }
+                ensure!(tables_to_generic!(table, |T| tx.entries::<T>())? == 0, "unmarked MDBX state requires immutable snapshot provenance");
+            }
+            return Ok(());
+        }
+        let datadir = config.datadir();
+        let static_files = StaticFileProviderBuilder::read_only(datadir.static_files())
+            .with_genesis_block_number(config.chain.genesis().number.unwrap_or_default()).build::<BasePrimitives>()?;
+        let rocksdb = reth_provider::providers::RocksDBProvider::builder(datadir.rocksdb()).with_default_tables().with_read_only(true).build()?;
+        let factory = ProviderFactory::<reth_node_builder::NodeTypesWithDBAdapter<crate::BaseNode, _>>::new(db, config.chain.clone(), static_files, rocksdb, runtime)?;
+        self.verify_before_recovery(&factory)
     }
 
     /// Rejects active/unmarked or inconsistent checkpoint state before stock multi-store recovery.
@@ -256,6 +331,40 @@ mod tests {
     }
     /// Makes the irreversible disposable-run acknowledgement explicit in every admission test.
     fn args() -> RollupArgs { RollupArgs { deferred_state_root_disposable: true, ..Default::default() } }
+
+    /// Legacy generic CLI cannot initialize writable stores for any experimental input.
+    #[test]
+    fn generic_cli_refuses_all_experiments_before_database_initialization() {
+        let ordinary = BaseChainSpecBuilder::default().chain(Chain::from(900u64)).genesis(Default::default()).bedrock_activated().build();
+        DeferredStateRootPrepared::ensure_generic_launch_allowed(&ordinary, &RollupArgs::default()).unwrap();
+        for cohort in [PostStateRootCohort::SerialTrusted, PostStateRootCohort::SerialReexecution, PostStateRootCohort::Deferred] {
+            let args = RollupArgs { root_experiment_cohort: Some(cohort), ..Default::default() };
+            assert_eq!(DeferredStateRootPrepared::ensure_generic_launch_allowed(&ordinary, &args).unwrap_err().to_string(), "root experiments require the admitted launch API before writable database initialization", "generic CLI must reject each explicit cohort before upstream init_db");
+        }
+        for args in [RollupArgs { deferred_state_root_disposable: true, ..Default::default() }, RollupArgs { deferred_state_root_snapshot: Some("snapshot.json".into()), ..Default::default() }] {
+            assert!(DeferredStateRootPrepared::ensure_generic_launch_allowed(&ordinary, &args).is_err(), "generic CLI must reject snapshot/disposable inputs even without a schedule");
+        }
+        assert!(DeferredStateRootPrepared::ensure_generic_launch_allowed(&chain(), &RollupArgs::default()).is_err(), "configured D must reject without relying on rollup CLI arguments");
+    }
+
+    /// The sealed handoff is one-shot and cannot authorize another datadir or cohort.
+    #[test]
+    fn prepared_admission_rejects_rebinding() {
+        for variant in 0..4 {
+            let directory = tempfile::tempdir().unwrap(); let original = config(&directory.path().join("run1"));
+            let runtime = reth_tasks::Runtime::test();
+            let (db, prepared) = DeferredStateRootPrepared::prepare_database(&original, &args(), runtime.clone()).unwrap(); drop(db);
+            let mut config = original.clone(); let mut changed = args();
+            match variant {
+                0 => changed.root_experiment_ready += 1,
+                1 => { config.datadir.datadir = directory.path().join("run2").into(); fs::create_dir_all(config.datadir().data_dir()).unwrap(); fs::write(DeferredStateRootAdmission::marker_path(config.datadir().data_dir()).unwrap(), "other run").unwrap(); },
+                2 => changed.root_experiment_cohort = Some(PostStateRootCohort::SerialTrusted),
+                _ => { fs::write(DeferredStateRootAdmission::marker_path(config.datadir().data_dir()).unwrap(), "replaced marker").unwrap(); },
+            }
+            assert_eq!(prepared.unwrap().consume(&config, &changed, 0).unwrap_err().to_string(), "prepared root admission does not match chain, datadir, schedule, cohort or snapshot", "changed limits, datadir, cohort or marker must invalidate the private preparation binding");
+            runtime.shutdown_timeout(std::time::Duration::from_secs(2));
+        }
+    }
 
     /// Both clean and crashed active runs are permanently non-reopenable through their marker.
     #[test]

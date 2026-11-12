@@ -5064,6 +5064,7 @@ dependencies = [
  "jsonrpsee",
  "reth-chainspec",
  "reth-db",
+ "reth-db-common",
  "reth-engine-tree",
  "reth-exex",
  "reth-ipc",
