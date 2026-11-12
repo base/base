@@ -1145,6 +1145,10 @@ where
     ///
     /// A failed bump is logged and the send keeps waiting, because a version published
     /// earlier may still be mined. Aborting is left to [`SendState::critical_error_at`].
+    ///
+    /// When no replacement exists within the fee limit, the last version is sent again as
+    /// it is: it may never have reached a mempool (its publish got no answer) or may have
+    /// been dropped from it, and nothing else would publish it again.
     async fn try_fee_bump(
         &self,
         candidate: &TxCandidate,
@@ -1164,6 +1168,12 @@ where
 
         match self.handle_fee_bump(candidate, send_state, receipt_tx, state).await {
             Ok((prepared, tx_hash)) => state.replace(prepared, tx_hash),
+            Err(error @ TxManagerError::FeeLimitExceeded { .. }) => {
+                warn!(error = %error, tx_hash = %state.tx_hash, "fee limit reached, resending the last version");
+                // `publish_tx` logs and records the outcome; a failure is retried next tick.
+                let _ =
+                    self.publish_tx(send_state, &state.prepared.raw_tx, Some(state.tx_hash)).await;
+            }
             Err(error) => warn!(error = %error, "fee bump failed, will retry next tick"),
         }
     }
@@ -3478,24 +3488,34 @@ mod tests {
     }
 
     /// A blob tx whose doubled `max_priority_fee_per_gas` would pass the upper bound is not
-    /// replaced: at each resubmission timeout, nothing is read, signed or published.
+    /// replaced: at each resubmission timeout, nothing is read or signed, and the same
+    /// version is sent again. Here its publishes get no answer until the endpoint recovers,
+    /// as in an outage that outlasts the fee bumps, so the resend is what reaches the node.
     #[test]
-    fn a_blob_tx_at_the_upper_bound_is_not_replaced() {
+    fn a_blob_tx_at_the_upper_bound_is_resent_as_it_is() {
         Runner::start(Config::seeded(0), |ctx| async move {
             let asserter = Asserter::new();
             asserter.push_success(&1u64);
             push_blob_pricing(&asserter);
             asserter.push_success(&0u64);
-            asserter.push_success(&B256::with_last_byte(1));
+            // The first publish gets no answer, and the send polls its receipt.
             asserter.push_success(&1u64);
             asserter.push_success(&Option::<TransactionReceipt>::None);
+            // The resends: the first gets no answer, the second is accepted, the third is known.
+            asserter.push_success(&B256::with_last_byte(1));
+            asserter.push_failure_msg("already known");
             // What a replacement would read first.
             push_blob_pricing(&asserter);
             let mut metrics = blob_send_metrics();
             metrics.expect_record_gas_bump().never();
-            let manager =
-                blob_manager(&ctx, mocked(&asserter), (1_000_000_000, 1_000_000_000), metrics)
-                    .await;
+            let mut manager = blob_manager(
+                &ctx,
+                LosingPublishAnswers::provider(&asserter, &[0, 1]),
+                (1_000_000_000, 1_000_000_000),
+                metrics,
+            )
+            .await;
+            manager.config.publish_max_retries = 0;
             let mut send = Box::pin(manager.send(blob_candidate()));
             assert!(futures::poll!(&mut send).is_pending());
 

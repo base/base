@@ -118,7 +118,8 @@ that transaction is followed as published even if no resend is accepted, and a f
 no longer replaces it right away. Doubling every fee is the minimum L1
 nodes accept to replace a blob transaction, so a transaction whose doubled
 `max_priority_fee_per_gas` would pass `max_priority_fee_per_gas_per_blob_upper_bound × n`
-is not replaced any more, and stays at its last fees. A fee override above that bound
+is not replaced any more: it stays at its last fees, and is sent again as it is at each
+`resubmission_timeout`, in case it never reached a mempool or was dropped from it. A fee override above that bound
 is refused with `FeeLimitExceeded`. The bounds apply to
 `max_priority_fee_per_gas` only: `max_fee_per_gas` and `max_fee_per_blob_gas` follow the
 doubling and L1 prices without a limit. `p` lives in memory, is shared by clones of the
