@@ -302,6 +302,8 @@ mod tests {
             persistence_backpressure_threshold: None,
             // Matches the replay CLI default.
             state_root_task_compare_updates: true,
+            reorg_frequency: None,
+            reorg_depth: None,
             tx_forwarding_config: None,
             validity_signature_mode: ValiditySignatureMode::Off,
             upgrade_signal: None,
