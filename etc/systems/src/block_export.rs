@@ -12,10 +12,15 @@ use std::{
 };
 
 use alloy_consensus::{Block, BlockBody};
-use alloy_primitives::B256;
-use base_common_consensus::{BaseBlock, BaseTimeUpdateTx, BaseTxEnvelope};
+use alloy_primitives::{B64, B256};
+use alloy_rpc_types_engine::PayloadAttributes;
+use base_common_consensus::{
+    BaseBlock, BaseTimeUpdateTx, BaseTxEnvelope, HoloceneExtraData, JovianExtraData,
+};
 use base_common_network::Base;
-use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
+use base_common_rpc_types_engine::{
+    BaseExecutionPayload, BaseExecutionPayloadEnvelope, BasePayloadAttributes,
+};
 use eyre::{Result, WrapErr, ensure};
 use serde::{Deserialize, Serialize};
 
@@ -139,6 +144,42 @@ impl ExportedBlock {
             envelope: BaseExecutionPayloadEnvelope { parent_beacon_block_root, execution_payload },
         }
     }
+
+    /// The payload attributes that rebuild this block on its parent: every transaction in block
+    /// order with the transaction pool disabled, plus the header fields attributes set. The
+    /// timestamp is in seconds; a millisecond part rides in the `BaseTime` deposit among the
+    /// transactions.
+    pub fn payload_attributes(&self) -> Result<BasePayloadAttributes> {
+        let payload = &self.envelope.execution_payload;
+        let extra_data = &payload.as_v1().extra_data;
+        // Holocene and Jovian extraData both carry the encoded EIP-1559 parameters in bytes 1..9.
+        let (eip_1559_params, min_base_fee) = if extra_data.is_empty() {
+            (None, None)
+        } else if HoloceneExtraData::decode(extra_data).is_ok() {
+            (Some(B64::from_slice(&extra_data[1..9])), None)
+        } else {
+            let (_, _, min_base_fee) = JovianExtraData::decode(extra_data).wrap_err_with(|| {
+                format!("block {} extraData is neither Holocene nor Jovian", self.number)
+            })?;
+            (Some(B64::from_slice(&extra_data[1..9])), Some(min_base_fee))
+        };
+        Ok(BasePayloadAttributes {
+            payload_attributes: PayloadAttributes {
+                timestamp: payload.timestamp(),
+                prev_randao: payload.prev_randao(),
+                suggested_fee_recipient: payload.fee_recipient(),
+                withdrawals: payload.as_v2().map(|payload| payload.withdrawals.clone()),
+                parent_beacon_block_root: self.envelope.parent_beacon_block_root,
+                slot_number: None,
+                target_gas_limit: None,
+            },
+            transactions: Some(payload.transactions().clone()),
+            no_tx_pool: Some(true),
+            gas_limit: Some(payload.gas_limit()),
+            eip_1559_params,
+            min_base_fee,
+        })
+    }
 }
 
 /// Writes an export directory block by block.
@@ -236,8 +277,11 @@ mod tests {
     use alloy_rpc_types_engine::{CancunPayloadFields, PraguePayloadFields};
     use alloy_rpc_types_eth::BlockTransactions;
     use base_common_consensus::TxDeposit;
+    use base_common_genesis::{RollupConfig, UpgradeConfig};
     use base_common_rpc_types::{BaseHeaderResponse, Transaction};
     use base_common_rpc_types_engine::BaseExecutionPayloadSidecar;
+    use base_consensus_engine::AttributesMatch;
+    use base_protocol::{AttributesWithParent, BlockInfo, L2BlockInfo};
 
     use super::*;
 
@@ -370,6 +414,43 @@ mod tests {
     #[test]
     fn exported_v4_block_round_trips_to_the_same_hash() {
         assert_round_trip(true, 4);
+    }
+
+    #[test]
+    fn payload_attributes_match_the_exported_block_on_its_parent() {
+        let jovian_extra_data =
+            Bytes::from_static(&[1, 0, 0, 0, 250, 0, 0, 0, 6, 0, 0, 0, 0, 0, 0, 0, 100]);
+        // The fixture's Holocene extraData under Isthmus, then Jovian extraData under Jovian.
+        for (upgrades, extra_data) in [
+            (UpgradeConfig { isthmus_time: Some(0), ..Default::default() }, None),
+            (UpgradeConfig { jovian_time: Some(0), ..Default::default() }, Some(jovian_extra_data)),
+        ] {
+            let mut block = rpc_block(101, B256::repeat_byte(0x07), true);
+            if let Some(extra_data) = extra_data {
+                block.header.inner.inner.extra_data = extra_data;
+            }
+            let attributes =
+                ExportedBlock::from_rpc_block(block.clone()).payload_attributes().unwrap();
+            assert_eq!(attributes.no_tx_pool, Some(true));
+
+            let parent = L2BlockInfo {
+                block_info: BlockInfo { hash: block.header.parent_hash, ..Default::default() },
+                ..Default::default()
+            };
+            let check = AttributesMatch::check(
+                &RollupConfig { upgrades, ..Default::default() },
+                &AttributesWithParent::new(attributes, parent, None, false),
+                &block.map_header(|header| header.into_inner()),
+            );
+            assert_eq!(check, AttributesMatch::Match);
+        }
+    }
+
+    #[test]
+    fn payload_attributes_reject_unknown_extra_data() {
+        let mut block = rpc_block(101, B256::repeat_byte(0x07), true);
+        block.header.inner.inner.extra_data = Bytes::from_static(b"reth");
+        assert!(ExportedBlock::from_rpc_block(block).payload_attributes().is_err());
     }
 
     /// `count` linked blocks after `boundary_number`.
