@@ -142,11 +142,20 @@ mod tests {
         assert_eq!(writer.epoch, 1, "first writer holds epoch 1");
         let layout = ArchiveLayout::new("chain");
         for k in [1, 5, 17] {
-            store.put(&layout.segment_object(k, 0, "headers.dat"), b"orphan".to_vec().into()).await.unwrap();
+            store
+                .put(&layout.segment_object(k, 0, "headers.dat"), b"orphan".to_vec().into())
+                .await
+                .unwrap();
         }
-        store.put(&layout.segment_object(2, 1, "headers.dat"), b"own".to_vec().into()).await.unwrap();
+        store
+            .put(&layout.segment_object(2, 1, "headers.dat"), b"own".to_vec().into())
+            .await
+            .unwrap();
         // A stray object under published segment 0 must survive: segments <= H are not scanned.
-        store.put(&layout.segment_object(0, 0, "stray.dat"), b"stray".to_vec().into()).await.unwrap();
+        store
+            .put(&layout.segment_object(0, 0, "stray.dat"), b"stray".to_vec().into())
+            .await
+            .unwrap();
         let gc = OrphanGc::new(writer.catalog.clone(), writer.objects.clone(), writer.epoch);
 
         let young = gc.run(&writer.index, DEFAULT_ORPHAN_MIN_AGE, Utc::now()).await.unwrap();
@@ -161,9 +170,21 @@ mod tests {
             vec!["chain/seg/1/0/headers.dat".to_string(), "chain/seg/5/0/headers.dat".to_string()],
             "exactly the two older-epoch orphans are deleted"
         );
-        assert_eq!(sorted(&old.kept_live), vec!["chain/seg/2/1/headers.dat".to_string()], "own epoch kept");
-        assert_eq!(writer.objects.list(0).await.unwrap().len(), 22, "segment 0 and its stray are untouched");
-        assert_eq!(writer.objects.list(17).await.unwrap().len(), 1, "outside the window is not scanned");
+        assert_eq!(
+            sorted(&old.kept_live),
+            vec!["chain/seg/2/1/headers.dat".to_string()],
+            "own epoch kept"
+        );
+        assert_eq!(
+            writer.objects.list(0).await.unwrap().len(),
+            22,
+            "segment 0 and its stray are untouched"
+        );
+        assert_eq!(
+            writer.objects.list(17).await.unwrap().len(),
+            1,
+            "outside the window is not scanned"
+        );
     }
 
     /// A GC whose epoch was superseded deletes nothing.
@@ -174,14 +195,20 @@ mod tests {
         let writer = fixture_writer(Arc::clone(&store), &fixture, 4).await;
         writer.step().await.unwrap();
         let layout = ArchiveLayout::new("chain");
-        store.put(&layout.segment_object(1, 0, "headers.dat"), b"orphan".to_vec().into()).await.unwrap();
+        store
+            .put(&layout.segment_object(1, 0, "headers.dat"), b"orphan".to_vec().into())
+            .await
+            .unwrap();
         let gc = OrphanGc::new(writer.catalog.clone(), writer.objects.clone(), writer.epoch);
         writer.catalog.claim_at(writer.epoch + 1).await.unwrap();
         let err = gc
             .run(&writer.index, Duration::ZERO, Utc::now() + chrono::Duration::hours(2))
             .await
             .unwrap_err();
-        assert!(matches!(err, HistoryStoreError::Fenced { .. }), "superseded GC is fenced, got {err}");
+        assert!(
+            matches!(err, HistoryStoreError::Fenced { .. }),
+            "superseded GC is fenced, got {err}"
+        );
         assert_eq!(writer.objects.list(1).await.unwrap().len(), 1, "orphan not deleted");
     }
 
@@ -197,7 +224,8 @@ mod tests {
         let orphan = ArchiveLayout::new("chain").segment_object(1, 0, "headers.dat");
         shared.put(&orphan, b"orphan".to_vec().into()).await.unwrap();
         let mut gate = gated.arm(GateOp::List, "chain/seg/1");
-        let gc = OrphanGc::new(collector.catalog.clone(), collector.objects.clone(), collector.epoch);
+        let gc =
+            OrphanGc::new(collector.catalog.clone(), collector.objects.clone(), collector.epoch);
         let epoch = collector.epoch;
         let run = tokio::spawn(async move {
             gc.run(&collector.index, Duration::ZERO, Utc::now() + chrono::Duration::hours(2)).await
@@ -210,7 +238,10 @@ mod tests {
             matches!(err, HistoryStoreError::Fenced { owned, current } if owned == epoch && current == owner.epoch),
             "fenced by the newer owner's claim, got {err}"
         );
-        assert!(shared.head(&orphan).await.is_ok(), "the orphan was not deleted by the superseded GC");
+        assert!(
+            shared.head(&orphan).await.is_ok(),
+            "the orphan was not deleted by the superseded GC"
+        );
     }
 
     /// Review2 P1: a GC that passed its ownership and `H` checks is paused at its DELETE while a
@@ -232,7 +263,8 @@ mod tests {
 
         let collector = fixture_writer(Arc::new(gated.clone()), &fixture, 4).await;
         let mut gate = gated.arm(GateOp::Delete, "chain/seg/1/");
-        let gc = OrphanGc::new(collector.catalog.clone(), collector.objects.clone(), collector.epoch);
+        let gc =
+            OrphanGc::new(collector.catalog.clone(), collector.objects.clone(), collector.epoch);
         let run = tokio::spawn(async move {
             gc.run(&collector.index, Duration::ZERO, Utc::now() + chrono::Duration::hours(2)).await
         });
@@ -246,7 +278,11 @@ mod tests {
         gate.release();
         // After its DELETE the fenced GC may stop on its next ownership or index check.
         match run.await.unwrap() {
-            Ok(report) => assert_eq!(sorted(&report.deleted), vec![orphan.to_string()], "only the orphan is deleted"),
+            Ok(report) => assert_eq!(
+                sorted(&report.deleted),
+                vec![orphan.to_string()],
+                "only the orphan is deleted"
+            ),
             Err(err) => assert!(
                 matches!(err, HistoryStoreError::Fenced { .. } | HistoryStoreError::Slate(_)),
                 "a stale GC can only stop fenced, got {err}"
@@ -259,7 +295,8 @@ mod tests {
 
         let manifest = owner.index.manifest(1).await.unwrap().expect("segment 1 manifest");
         assert_eq!(manifest.epoch, owner.epoch, "segment 1 is published from the owner's epoch");
-        let published = owner.objects.download(&manifest, 4).await.expect("published objects survive");
+        let published =
+            owner.objects.download(&manifest, 4).await.expect("published objects survive");
         manifest.check(1, 4, &published.files).expect("published objects verify");
     }
 
@@ -277,15 +314,35 @@ mod tests {
         );
         drop(old);
         let layout = ArchiveLayout::new("chain");
-        store.put(&layout.segment_object(2, 1, "headers.dat"), b"orphan".to_vec().into()).await.unwrap();
+        store
+            .put(&layout.segment_object(2, 1, "headers.dat"), b"orphan".to_vec().into())
+            .await
+            .unwrap();
         let writer = fixture_writer(Arc::clone(&store), &fixture, 4).await;
-        store.put(&layout.segment_object(2, writer.epoch, "headers.dat"), b"own".to_vec().into()).await.unwrap();
+        store
+            .put(&layout.segment_object(2, writer.epoch, "headers.dat"), b"own".to_vec().into())
+            .await
+            .unwrap();
         let gc = OrphanGc::new(writer.catalog.clone(), writer.objects.clone(), writer.epoch);
 
-        let report =
-            gc.run(&writer.index, Duration::ZERO, Utc::now() + chrono::Duration::hours(2)).await.unwrap();
-        assert_eq!(sorted(&report.deleted), vec!["chain/seg/2/1/headers.dat".to_string()], "unreferenced orphan deleted");
-        assert_eq!(report.kept_live.len(), 22, "21 referenced objects of segment 1 plus the own-epoch object");
-        assert_eq!(writer.objects.list(1).await.unwrap().len(), 21, "the referenced epoch directory is intact");
+        let report = gc
+            .run(&writer.index, Duration::ZERO, Utc::now() + chrono::Duration::hours(2))
+            .await
+            .unwrap();
+        assert_eq!(
+            sorted(&report.deleted),
+            vec!["chain/seg/2/1/headers.dat".to_string()],
+            "unreferenced orphan deleted"
+        );
+        assert_eq!(
+            report.kept_live.len(),
+            22,
+            "21 referenced objects of segment 1 plus the own-epoch object"
+        );
+        assert_eq!(
+            writer.objects.list(1).await.unwrap().len(),
+            21,
+            "the referenced epoch directory is intact"
+        );
     }
 }

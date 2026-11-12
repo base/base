@@ -16,7 +16,6 @@ use reth_provider::{
     providers::{StaticFileProvider, StaticFileProviderBuilder, StaticFileWriter},
     static_file::SegmentRangeInclusive,
 };
-
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -152,7 +151,12 @@ pub struct SegmentManifest {
 impl SegmentManifest {
     /// Checks that this manifest describes segment `k` of `n` blocks and that `files` holds
     /// exactly the listed objects with matching checksums.
-    pub fn check(&self, k: u64, n: u64, files: &BTreeMap<String, Bytes>) -> Result<(), HistoryStoreError> {
+    pub fn check(
+        &self,
+        k: u64,
+        n: u64,
+        files: &BTreeMap<String, Bytes>,
+    ) -> Result<(), HistoryStoreError> {
         let corrupt = |file: &str, reason: String| HistoryStoreError::CorruptSegment {
             segment: k,
             file: file.to_string(),
@@ -175,11 +179,17 @@ impl SegmentManifest {
         for (name, expected) in &self.files {
             let bytes = files.get(name).ok_or_else(|| corrupt(name, "missing".to_string()))?;
             if bytes.len() as u64 != expected.size {
-                return Err(corrupt(name, format!("{} bytes != manifest {}", bytes.len(), expected.size)));
+                return Err(corrupt(
+                    name,
+                    format!("{} bytes != manifest {}", bytes.len(), expected.size),
+                ));
             }
             let actual = B256::from_slice(&Sha256::digest(bytes));
             if actual != expected.sha256 {
-                return Err(corrupt(name, format!("sha256 {actual} != manifest {}", expected.sha256)));
+                return Err(corrupt(
+                    name,
+                    format!("sha256 {actual} != manifest {}", expected.sha256),
+                ));
             }
         }
         Ok(())
@@ -342,21 +352,14 @@ impl SegmentBuilder {
     ) -> Result<SegmentFiles, HistoryStoreError> {
         let first = segment * self.blocks_per_segment;
         let last = first + self.blocks_per_segment - 1;
-        let shape_error = |reason: String| HistoryStoreError::SegmentShape {
-            segment,
-            first,
-            last,
-            reason,
-        };
+        let shape_error =
+            |reason: String| HistoryStoreError::SegmentShape { segment, first, last, reason };
         if blocks.len() as u64 != self.blocks_per_segment {
             return Err(shape_error(format!("{} blocks", blocks.len())));
         }
         for (offset, block) in blocks.iter().enumerate() {
             if block.number() != first + offset as u64 {
-                return Err(shape_error(format!(
-                    "block {} at offset {offset}",
-                    block.number()
-                )));
+                return Err(shape_error(format!("block {} at offset {offset}", block.number())));
             }
         }
 
@@ -490,7 +493,12 @@ mod tests {
         let provider = files.open_provider(dir.path()).expect("read-only provider opens");
         for block in blocks {
             let header = provider.header_by_number(block.number()).unwrap();
-            assert_eq!(header.as_ref(), Some(&block.header), "header {} round trips", block.number());
+            assert_eq!(
+                header.as_ref(),
+                Some(&block.header),
+                "header {} round trips",
+                block.number()
+            );
             for (i, tx) in block.transactions.iter().enumerate() {
                 let tx_num = block.body_indices.first_tx_num + i as u64;
                 assert_eq!(

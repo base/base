@@ -25,6 +25,7 @@ use alloy_primitives::Bytes;
 use base_common_consensus::BasePrimitives;
 use lru::LruCache;
 use reth_provider::providers::{StaticFileProvider, StaticFileProviderBuilder};
+use roaring::RoaringBitmap;
 use tempfile::TempDir;
 
 use crate::{
@@ -96,6 +97,35 @@ pub struct LoadedSegment {
     pub bodies: BodyIndicesFile,
     /// Directory the provider reads from, kept alive as long as the segment.
     pub dir: SegmentDir,
+    /// Blocks whose CPU-heavy checks already passed while this segment is loaded.
+    pub verified: SegmentVerification,
+}
+
+/// Blocks of a loaded segment whose transaction root and senders, or receipt root, were already
+/// checked. Sender recovery and receipt-root hashing dominate archive read CPU, so each runs at
+/// most once per block while the segment stays loaded instead of once per request. Checking a
+/// whole segment at load time would make the first read of a segment pay for every block in it.
+#[derive(Debug, Default)]
+pub struct SegmentVerification {
+    /// Block offsets whose transaction root and senders were checked.
+    pub bodies: Mutex<RoaringBitmap>,
+    /// Block offsets whose receipt root was checked.
+    pub receipts: Mutex<RoaringBitmap>,
+    /// Checks run so far, body and receipt checks counted separately.
+    pub checks: AtomicU64,
+}
+
+impl SegmentVerification {
+    /// Whether `offset` is in `set`.
+    pub fn contains(set: &Mutex<RoaringBitmap>, offset: u32) -> bool {
+        set.lock().unwrap_or_else(PoisonError::into_inner).contains(offset)
+    }
+
+    /// Records a passed check of `offset` in `set`.
+    pub fn record(&self, set: &Mutex<RoaringBitmap>, offset: u32) {
+        set.lock().unwrap_or_else(PoisonError::into_inner).insert(offset);
+        self.checks.fetch_add(1, Ordering::Relaxed);
+    }
 }
 
 impl LoadedSegment {
@@ -117,7 +147,14 @@ impl LoadedSegment {
             file: "static files".to_string(),
             reason: "static file provider panicked while opening".to_string(),
         })??;
-        Ok(Self { segment, first_block: segment * blocks_per_segment, provider, bodies, dir })
+        Ok(Self {
+            segment,
+            first_block: segment * blocks_per_segment,
+            provider,
+            bodies,
+            dir,
+            verified: SegmentVerification::default(),
+        })
     }
 }
 
@@ -359,7 +396,11 @@ impl SegmentCache {
     }
 
     /// Loads segment `k` from the disk tier or the bucket, verified against its manifest.
-    pub async fn load(&self, k: u64, index: &IndexReader) -> Result<LoadedSegment, HistoryStoreError> {
+    pub async fn load(
+        &self,
+        k: u64,
+        index: &IndexReader,
+    ) -> Result<LoadedSegment, HistoryStoreError> {
         let n = self.blocks_per_segment;
         let manifest = index.manifest(k).await?;
         let Some(root) = self.disk_root() else { return self.load_ephemeral(&manifest).await };
@@ -395,7 +436,10 @@ impl SegmentCache {
     }
 
     /// Downloads the objects `manifest` lists and checks them.
-    pub async fn download(&self, manifest: &SegmentManifest) -> Result<SegmentFiles, HistoryStoreError> {
+    pub async fn download(
+        &self,
+        manifest: &SegmentManifest,
+    ) -> Result<SegmentFiles, HistoryStoreError> {
         let n = self.blocks_per_segment;
         self.downloads.fetch_add(1, Ordering::Relaxed);
         let files = self.objects.download(manifest, n).await?;
@@ -404,13 +448,22 @@ impl SegmentCache {
     }
 
     /// Downloads a segment into a temporary directory that is never persisted.
-    pub async fn load_ephemeral(&self, manifest: &SegmentManifest) -> Result<LoadedSegment, HistoryStoreError> {
+    pub async fn load_ephemeral(
+        &self,
+        manifest: &SegmentManifest,
+    ) -> Result<LoadedSegment, HistoryStoreError> {
         let files = self.download(manifest).await?;
         let bodies = files.body_indices()?;
         let temp = tempfile::tempdir()?;
         Self::write(&files, temp.path())?;
         let path = temp.path().to_path_buf();
-        LoadedSegment::open(manifest.segment, self.blocks_per_segment, &path, bodies, SegmentDir::Temp(temp))
+        LoadedSegment::open(
+            manifest.segment,
+            self.blocks_per_segment,
+            &path,
+            bodies,
+            SegmentDir::Temp(temp),
+        )
     }
 
     /// Leases segment `k`'s published entry at `dir` if it exists. Checking and leasing under
@@ -435,7 +488,11 @@ impl SegmentCache {
     /// Admits `bytes` to the disk tier, evicting unleased entries least recently used first.
     /// Returns `None`, evicting nothing, when the fill cannot fit beside leased entries and
     /// other fills' reservations.
-    pub fn reserve(&self, root: &Path, bytes: u64) -> Result<Option<Reservation<'_>>, HistoryStoreError> {
+    pub fn reserve(
+        &self,
+        root: &Path,
+        bytes: u64,
+    ) -> Result<Option<Reservation<'_>>, HistoryStoreError> {
         if bytes > self.config.disk_bytes {
             return Ok(None);
         }
@@ -445,7 +502,9 @@ impl SegmentCache {
         let mut total: u64 = entries.iter().map(|(_, size, _)| size).sum::<u64>() + disk.reserved;
         let evictable: Vec<(u64, PathBuf)> = entries
             .into_iter()
-            .filter(|(_, _, path)| Self::entry_segment(path).is_none_or(|k| disk.live_lease(k).is_none()))
+            .filter(|(_, _, path)| {
+                Self::entry_segment(path).is_none_or(|k| disk.live_lease(k).is_none())
+            })
             .map(|(_, size, path)| (size, path))
             .collect();
         let freeable: u64 = evictable.iter().map(|(size, _)| size).sum();
@@ -465,7 +524,12 @@ impl SegmentCache {
 
     /// Renames a completed fill into place as segment `k`'s entry and leases it, under the disk
     /// lock so no eviction sees the entry unleased.
-    pub fn publish(&self, k: u64, fill: TempDir, dir: &Path) -> Result<Arc<DiskLease>, HistoryStoreError> {
+    pub fn publish(
+        &self,
+        k: u64,
+        fill: TempDir,
+        dir: &Path,
+    ) -> Result<Arc<DiskLease>, HistoryStoreError> {
         let mut disk = self.disk_state();
         let fill = fill.keep();
         if let Err(err) = fs::rename(&fill, dir) {

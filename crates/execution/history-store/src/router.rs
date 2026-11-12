@@ -35,7 +35,7 @@ impl ArchiveSnapshot {
 
     /// Routes a read at block `number`. `local` says whether the node's own database can serve
     /// it; canonicality always comes from the node.
-    pub fn route(&self, number: u64, local: bool) -> Route {
+    pub const fn route(&self, number: u64, local: bool) -> Route {
         if local {
             return Route::Local;
         }
@@ -66,8 +66,7 @@ impl ArchiveSnapshot {
             Some(h) if to > h => Some((from.max(h + 1), to)),
             Some(_) => None,
         };
-        let pruned =
-            (self.h.is_some() && from < self.e).then(|| (from, to.min(self.e - 1)));
+        let pruned = (self.h.is_some() && from < self.e).then(|| (from, to.min(self.e - 1)));
         RangeSplit { archive, local, pruned }
     }
 }

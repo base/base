@@ -53,7 +53,11 @@ impl ArchiveConverter {
     }
 
     /// Recovers an archived block and resolves its `BaseTime` timestamp.
-    pub fn prepare(&self, block: ArchivedBlock, receipts: Vec<BaseReceipt>) -> ArchivedBlockWithReceipts {
+    pub fn prepare(
+        &self,
+        block: ArchivedBlock,
+        receipts: Vec<BaseReceipt>,
+    ) -> ArchivedBlockWithReceipts {
         let block = block.into_recovered();
         let timestamp_ms = self.base_time.insert_from_transactions(
             block.hash(),
@@ -62,6 +66,16 @@ impl ArchiveConverter {
             &block.body().transactions,
         );
         ArchivedBlockWithReceipts { block, receipts, timestamp_ms }
+    }
+
+    /// `BaseTime` millisecond timestamp of an archived block, when it carries one.
+    pub fn timestamp_ms(&self, block: &ArchivedBlock) -> Option<u64> {
+        self.base_time.insert_from_transactions(
+            block.hash,
+            block.header.number,
+            block.header.timestamp,
+            &block.transactions,
+        )
     }
 
     /// Deposit metadata of transaction `index`, read from its archived receipt.
@@ -109,7 +123,11 @@ impl ArchiveConverter {
     }
 
     /// `eth_getTransactionByHash` response for transaction `index` of the block.
-    pub fn transaction(&self, archived: &ArchivedBlockWithReceipts, index: usize) -> Option<Transaction> {
+    pub fn transaction(
+        &self,
+        archived: &ArchivedBlockWithReceipts,
+        index: usize,
+    ) -> Option<Transaction> {
         let block = &archived.block;
         let tx = block.transactions_recovered().nth(index)?.cloned();
         let header = block.header();
@@ -124,7 +142,11 @@ impl ArchiveConverter {
         let deposit_meta = Self::deposit_meta(&archived.receipts, Some(index as u64));
         Some(Transaction::from_transaction(
             tx,
-            BaseTransactionInfo { inner: info, deposit_meta, block_timestamp_ms: archived.timestamp_ms },
+            BaseTransactionInfo {
+                inner: info,
+                deposit_meta,
+                block_timestamp_ms: archived.timestamp_ms,
+            },
         ))
     }
 

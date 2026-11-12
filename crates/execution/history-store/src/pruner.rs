@@ -8,10 +8,10 @@
 //!    regardless of `retired`; readers on an older snapshot still find the index entries and
 //!    objects.
 //! 2. **Sweep** `k` once the grace period (24 h in production) has passed:
-//!    a. if the manifest `m‖k` is still present, recompute the segment's index keys from its
-//!       objects and tombstone them together with `m‖k` in one atomic batch;
-//!    b. delete `seg/<k>/*` under every epoch directory (idempotent);
-//!    c. CAS the catalog to drop `k` from `retired`.
+//!    (a) if the manifest `m‖k` is still present, recompute the segment's index keys from its
+//!    objects and tombstone them together with `m‖k` in one atomic batch; (b) delete
+//!    `seg/<k>/*` under every epoch directory (idempotent); (c) CAS the catalog to drop `k`
+//!    from `retired`.
 //!
 //!    A missing `m‖k` means (a) already ran, because tombstones are flushed before any object
 //!    is deleted. A crash after (a), during (b) or before (c) therefore converges on the next
@@ -27,8 +27,8 @@ use std::time::Duration;
 use tracing::info;
 
 use crate::{
-    Catalog, CatalogStore, HistoryStoreError, IndexKey, IndexWriter, RetiredSegment,
-    SegmentIndex, SegmentObjects,
+    Catalog, CatalogStore, HistoryStoreError, IndexKey, IndexWriter, RetiredSegment, SegmentIndex,
+    SegmentObjects,
 };
 
 /// Production grace period between retirement and deletion.
@@ -78,7 +78,7 @@ impl Pruner {
             let n = current.catalog.blocks_per_segment()?;
             let k = current.catalog.e / n;
             let Some(h) = current.catalog.h else { break };
-            if (k + 1) * n - 1 >= h {
+            if (k + 1) * n > h {
                 break;
             }
             let manifest = index.required_manifest(k).await?;
@@ -105,7 +105,7 @@ impl Pruner {
                 reason: format!("segment {k} is not at E {}", current.catalog.e),
             });
         }
-        if current.catalog.h.is_none_or(|h| (k + 1) * n - 1 >= h) {
+        if current.catalog.h.is_none_or(|h| (k + 1) * n > h) {
             return Err(HistoryStoreError::Catalog {
                 reason: format!("segment {k} is not below the segment at H"),
             });
@@ -170,7 +170,7 @@ impl Pruner {
                     .retired
                     .iter()
                     .filter(|retired| !expired.contains(&retired.segment))
-                    .cloned()
+                    .copied()
                     .collect(),
                 ..current.catalog.clone()
             };
@@ -214,11 +214,17 @@ mod tests {
     }
 
     /// Whether the index still holds segment 0's entries (block 2's hash and the manifest).
-    async fn segment0_indexed(store: &Arc<dyn ObjectStore>, fixture: &ChainFixture) -> (bool, bool) {
-        let reader =
-            IndexReader::open(Arc::clone(store), &ArchiveLayout::new("chain"), test_index_options())
-                .await
-                .unwrap();
+    async fn segment0_indexed(
+        store: &Arc<dyn ObjectStore>,
+        fixture: &ChainFixture,
+    ) -> (bool, bool) {
+        let reader = IndexReader::open(
+            Arc::clone(store),
+            &ArchiveLayout::new("chain"),
+            test_index_options(),
+        )
+        .await
+        .unwrap();
         (
             reader.block_number(fixture.blocks[2].hash, u64::MAX).await.unwrap().is_some(),
             reader.reader.get(IndexKey::manifest(0)).await.unwrap().is_some(),
@@ -232,7 +238,8 @@ mod tests {
         let pruner = pruner(&writer, DEFAULT_MAX_SEGMENTS_PER_PASS);
         // Cut-off equals block 3's timestamp: only segment 0 is old enough.
         let now_ms = fixture.blocks[3].header.timestamp * 1000;
-        let retired = pruner.retire_older_than(&writer.index, Duration::ZERO, now_ms).await.unwrap();
+        let retired =
+            pruner.retire_older_than(&writer.index, Duration::ZERO, now_ms).await.unwrap();
         assert_eq!(retired, vec![0], "only segment 0 is retired");
 
         let catalog = writer.catalog.load_required().await.unwrap().catalog;
@@ -257,16 +264,25 @@ mod tests {
             Vec::<u64>::new(),
             "grace not over"
         );
-        assert_eq!(writer.objects.list(0).await.unwrap().len(), 22, "objects of both epochs kept during grace");
+        assert_eq!(
+            writer.objects.list(0).await.unwrap().len(),
+            22,
+            "objects of both epochs kept during grace"
+        );
         assert_eq!(
             pruner.sweep(&writer.index, grace, now_ms + 10_000).await.unwrap(),
             vec![0],
             "grace over"
         );
-        assert_eq!(writer.objects.list(0).await.unwrap().len(), 0, "objects of every epoch deleted after grace");
+        assert_eq!(
+            writer.objects.list(0).await.unwrap().len(),
+            0,
+            "objects of every epoch deleted after grace"
+        );
         assert_eq!(segment0_indexed(&store, &fixture).await, (false, false), "entries tombstoned");
-        let reader =
-            IndexReader::open(store, &ArchiveLayout::new("chain"), test_index_options()).await.unwrap();
+        let reader = IndexReader::open(store, &ArchiveLayout::new("chain"), test_index_options())
+            .await
+            .unwrap();
         assert_eq!(
             reader.block_number(fixture.blocks[5].hash, 11).await.unwrap(),
             Some(5),
@@ -287,7 +303,8 @@ mod tests {
             pruner.retire(0, 0).await.unwrap();
             // Replay the sweep's steps by hand up to the crash point.
             let manifest = writer.index.required_manifest(0).await.unwrap();
-            let blocks = writer.objects.download(&manifest, 4).await.unwrap().read_blocks().unwrap();
+            let blocks =
+                writer.objects.download(&manifest, 4).await.unwrap().read_blocks().unwrap();
             let mut keys = SegmentIndex::from_blocks(0, 4, &blocks).keys();
             keys.push(IndexKey::manifest(0));
             writer.index.delete_keys(&keys).await.unwrap();
@@ -329,9 +346,21 @@ mod tests {
     async fn retirement_is_capped_per_pass() {
         let (_store, writer, _fixture) = published(5).await;
         let pruner = pruner(&writer, 2);
-        assert_eq!(pruner.retire_older_than(&writer.index, Duration::ZERO, u64::MAX).await.unwrap(), vec![0, 1], "first pass");
-        assert_eq!(writer.catalog.load_required().await.unwrap().catalog.e, 8, "E after first pass");
-        assert_eq!(pruner.retire_older_than(&writer.index, Duration::ZERO, u64::MAX).await.unwrap(), vec![2, 3], "second pass");
+        assert_eq!(
+            pruner.retire_older_than(&writer.index, Duration::ZERO, u64::MAX).await.unwrap(),
+            vec![0, 1],
+            "first pass"
+        );
+        assert_eq!(
+            writer.catalog.load_required().await.unwrap().catalog.e,
+            8,
+            "E after first pass"
+        );
+        assert_eq!(
+            pruner.retire_older_than(&writer.index, Duration::ZERO, u64::MAX).await.unwrap(),
+            vec![2, 3],
+            "second pass"
+        );
         assert_eq!(
             pruner.retire_older_than(&writer.index, Duration::ZERO, u64::MAX).await.unwrap(),
             Vec::<u64>::new(),
@@ -351,7 +380,8 @@ mod tests {
         let pruner = pruner(&writer, DEFAULT_MAX_SEGMENTS_PER_PASS);
         writer.catalog.claim_at(writer.epoch + 1).await.unwrap();
         let before = writer.catalog.load_required().await.unwrap();
-        let err = pruner.retire_older_than(&writer.index, Duration::ZERO, u64::MAX).await.unwrap_err();
+        let err =
+            pruner.retire_older_than(&writer.index, Duration::ZERO, u64::MAX).await.unwrap_err();
         assert!(
             matches!(err, HistoryStoreError::Fenced { owned, current } if owned == writer.epoch && current == writer.epoch + 1),
             "superseded pruner is fenced, got {err}"
@@ -363,7 +393,10 @@ mod tests {
     #[tokio::test]
     async fn never_retires_segment_at_h() {
         let (_store, writer, _fixture) = published(1).await;
-        let retired = pruner(&writer, 4).retire_older_than(&writer.index, Duration::ZERO, u64::MAX).await.unwrap();
+        let retired = pruner(&writer, 4)
+            .retire_older_than(&writer.index, Duration::ZERO, u64::MAX)
+            .await
+            .unwrap();
         assert_eq!(retired, Vec::<u64>::new(), "segment at H stays");
         assert_eq!(writer.catalog.load_required().await.unwrap().catalog.e, 0, "E unchanged");
     }

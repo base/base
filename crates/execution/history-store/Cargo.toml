@@ -21,6 +21,7 @@ base-common-consensus = { workspace = true, features = ["reth", "serde"] }
 reth-codecs.workspace = true
 reth-db-api.workspace = true
 reth-provider.workspace = true
+reth-rpc-layer.workspace = true
 reth-storage-api.workspace = true
 reth-primitives-traits = { workspace = true, features = ["secp256k1"] }
 
@@ -41,12 +42,13 @@ slatedb = { workspace = true, features = ["wal_disable"] }
 object_store = { workspace = true, features = ["fs", "aws"] }
 
 # rpc
+tower.workspace = true
 jsonrpsee = { workspace = true, features = ["macros", "server", "http-client"] }
 
 # async
 futures.workspace = true
 async-trait.workspace = true
-tokio = { workspace = true, features = ["sync", "time"] }
+tokio = { workspace = true, features = ["rt", "sync", "time"] }
 
 # misc
 lru.workspace = true
@@ -76,4 +78,11 @@ harness = false
 required-features = ["test-utils"]
 
 [features]
-test-utils = ["dep:alloy-signer", "dep:alloy-signer-local"]
+test-utils = [
+	"dep:alloy-signer",
+	"dep:alloy-signer-local",
+	"reth-codecs/test-utils",
+	"reth-db-api/test-utils",
+	"reth-primitives-traits/test-utils",
+	"reth-provider/test-utils",
+]

@@ -9,7 +9,8 @@
 
 mod export;
 pub use export::{
-    ArchiveApiImpl, ArchiveExportLimits, ArchiveExportProvider, EXPORTED_PRUNE_SEGMENTS,
+    ArchiveApiImpl, ArchiveExportLimits, ArchiveExportProvider, DEFAULT_MAX_CONCURRENT_RANGES,
+    EXPORTED_PRUNE_SEGMENTS, RangePermits,
 };
 
 mod export_extension;
@@ -20,8 +21,8 @@ pub use convert::{ArchiveConverter, ArchivedBlockWithReceipts};
 
 mod eth;
 pub use eth::{
-    ArchiveEth, ArchiveEthApiServer, ArchiveHandle, ArchiveRpcBoundary, ArchiveSource,
-    LocalEthApi, LocalFilterApi, LocalRetention, MAX_ARCHIVE_LOG_RANGE, StateDomain,
+    ArchiveEth, ArchiveEthApiServer, ArchiveHandle, ArchiveRpcBoundary, ArchiveSource, LocalEthApi,
+    LocalFilterApi, LocalRetention, MAX_ARCHIVE_LOG_RANGE, StateDomain,
 };
 
 mod eth_extension;

@@ -15,9 +15,9 @@
 use std::{sync::Arc, time::Duration};
 
 use base_history_store::{
-    ArchiveReader, ArchiveStore, ArchiveWriter, CacheConfig, Catalog, CatalogStore,
-    ChainIdentity, ChunkVerifier, HistoryStoreError, OrphanGc, Pruner, ReaderConfig,
-    SegmentObjects, SourcePool, StepOutcome, WriterConfig,
+    ArchiveReader, ArchiveStore, ArchiveWriter, CacheConfig, Catalog, CatalogStore, ChainIdentity,
+    ChunkVerifier, HistoryStoreError, OrphanGc, Pruner, ReaderConfig, SegmentObjects, SourcePool,
+    StepOutcome, WriterConfig,
     test_utils::{ChainFixture, FIXTURE_CHAIN_ID, FixtureSource, test_index_options},
 };
 use object_store::{ObjectStoreExt, PutPayload};
@@ -64,7 +64,7 @@ async fn lifecycle(archive: ArchiveStore) {
         archive.layout.clone(),
         chain,
         SourcePool::new(vec![Arc::new(FixtureSource { fixture: fixture.clone() })]),
-        ChunkVerifier::new(fixture.chain_spec.clone()),
+        ChunkVerifier::new(Arc::clone(&fixture.chain_spec)),
         WriterConfig::default(),
         test_index_options(),
     )
@@ -92,9 +92,10 @@ async fn lifecycle(archive: ArchiveStore) {
         ReaderConfig {
             chain_id: FIXTURE_CHAIN_ID,
             genesis_hash: fixture.blocks[0].hash,
-            chain_spec: fixture.chain_spec.clone(),
+            chain_spec: Arc::clone(&fixture.chain_spec),
             cache: CacheConfig::default(),
             index: test_index_options(),
+            snapshot_ttl: Duration::ZERO,
         },
     )
     .await
@@ -155,7 +156,8 @@ async fn lifecycle(archive: ArchiveStore) {
         .await
         .expect("gc");
     assert_eq!(report.deleted, vec![orphan], "only the orphan is deleted");
-    let remaining: Vec<u64> = objects.list_all().await.expect("list").into_iter().map(|(k, _)| k).collect();
+    let remaining: Vec<u64> =
+        objects.list_all().await.expect("list").into_iter().map(|(k, _)| k).collect();
     assert!(
         remaining.iter().all(|k| (1..SEGMENTS).contains(k)),
         "only published, unretired segments remain: {remaining:?}"

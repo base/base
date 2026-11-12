@@ -38,7 +38,11 @@ impl ArchiveLayout {
 
     /// Joins `rest` onto the prefix.
     pub fn join(&self, rest: &str) -> Path {
-        if self.prefix.is_empty() { Path::from(rest) } else { Path::from(format!("{}/{rest}", self.prefix)) }
+        if self.prefix.is_empty() {
+            Path::from(rest)
+        } else {
+            Path::from(format!("{}/{rest}", self.prefix))
+        }
     }
 
     /// Path of `catalog.json`.

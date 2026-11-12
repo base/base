@@ -156,10 +156,7 @@ impl Catalog {
         }
         if next.writer_epoch < self.writer_epoch {
             return Err(HistoryStoreError::Regression {
-                reason: format!(
-                    "writer epoch {} after {}",
-                    next.writer_epoch, self.writer_epoch
-                ),
+                reason: format!("writer epoch {} after {}", next.writer_epoch, self.writer_epoch),
             });
         }
         if next.e < self.e {
@@ -209,8 +206,10 @@ impl CatalogStore {
             Err(object_store::Error::NotFound { .. }) => return Ok(None),
             Err(err) => return Err(err.into()),
         };
-        let version =
-            UpdateVersion { e_tag: result.meta.e_tag.clone(), version: result.meta.version.clone() };
+        let version = UpdateVersion {
+            e_tag: result.meta.e_tag.clone(),
+            version: result.meta.version.clone(),
+        };
         let bytes = result.bytes().await?;
         let catalog = serde_json::from_slice(&bytes)
             .map_err(|err| HistoryStoreError::Catalog { reason: err.to_string() })?;
@@ -219,9 +218,9 @@ impl CatalogStore {
 
     /// Reads the catalog and fails if the archive has not been initialised.
     pub async fn load_required(&self) -> Result<VersionedCatalog, HistoryStoreError> {
-        self.load()
-            .await?
-            .ok_or_else(|| HistoryStoreError::Catalog { reason: "catalog.json missing".to_string() })
+        self.load().await?.ok_or_else(|| HistoryStoreError::Catalog {
+            reason: "catalog.json missing".to_string(),
+        })
     }
 
     /// Creates the catalog if absent (`If-None-Match: *`). If one exists it is returned instead,
@@ -350,20 +349,22 @@ mod tests {
             "a claim below the stored epoch is fenced, got {stale}"
         );
         let current = store.load_required().await.unwrap();
-        let err = store
-            .update_owned(&current, advanced(&current.catalog, 3), old)
-            .await
-            .unwrap_err();
+        let err =
+            store.update_owned(&current, advanced(&current.catalog, 3), old).await.unwrap_err();
         assert!(
             matches!(err, HistoryStoreError::Fenced { owned: 1, current: 2 }),
             "the earlier owner is fenced, got {err}"
         );
         assert_eq!(store.load_required().await.unwrap(), current, "fenced update changes nothing");
-        let updated = store.update_owned(&current, advanced(&current.catalog, 3), new).await.unwrap();
+        let updated =
+            store.update_owned(&current, advanced(&current.catalog, 3), new).await.unwrap();
         assert_eq!(updated.catalog.h, Some(3), "the current owner updates");
         let regress = Catalog { writer_epoch: 1, ..advanced(&updated.catalog, 7) };
         assert!(
-            matches!(store.update(&updated, regress).await, Err(HistoryStoreError::Regression { .. })),
+            matches!(
+                store.update(&updated, regress).await,
+                Err(HistoryStoreError::Regression { .. })
+            ),
             "writer epoch never decreases"
         );
     }
@@ -411,10 +412,8 @@ mod tests {
             store.update(&v0, advanced(&catalog, 3))
         );
         let wins = [a.is_ok(), b.is_ok()].iter().filter(|ok| **ok).count();
-        let conflicts = [&a, &b]
-            .iter()
-            .filter(|r| matches!(r, Err(HistoryStoreError::CasConflict)))
-            .count();
+        let conflicts =
+            [&a, &b].iter().filter(|r| matches!(r, Err(HistoryStoreError::CasConflict))).count();
         assert_eq!(wins, 1, "exactly one CAS must win");
         assert_eq!(conflicts, 1, "exactly one CAS must conflict");
         assert_eq!(store.load_required().await.unwrap().catalog.generation, 1, "generation +1");

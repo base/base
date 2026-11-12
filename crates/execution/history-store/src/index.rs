@@ -238,7 +238,11 @@ impl IndexReader {
     /// Returns the last block whose entries this reader's view holds, or `None` before the
     /// first segment.
     pub async fn watermark(&self) -> Result<Option<u64>, HistoryStoreError> {
-        self.reader.get(WATERMARK_KEY).await?.map(|raw| IndexKey::decode_block_value(&raw)).transpose()
+        self.reader
+            .get(WATERMARK_KEY)
+            .await?
+            .map(|raw| IndexKey::decode_block_value(&raw))
+            .transpose()
     }
 
     /// Fails with `Unavailable` unless this reader's view covers every entry up to `h`, so an
@@ -337,8 +341,8 @@ mod tests {
         let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
         let layout = ArchiveLayout::new("p");
         let fixture = ChainFixture::new(8, 1);
-        let writer = IndexWriter::open(store.clone(), &layout, options()).await.unwrap();
-        let reader = IndexReader::open(store.clone(), &layout, options()).await.unwrap();
+        let writer = IndexWriter::open(Arc::clone(&store), &layout, options()).await.unwrap();
+        let reader = IndexReader::open(Arc::clone(&store), &layout, options()).await.unwrap();
         assert_eq!(reader.watermark().await.unwrap(), None, "empty index has no watermark");
         assert!(
             matches!(reader.ensure_covers(0).await, Err(HistoryStoreError::Unavailable { .. })),
@@ -348,19 +352,24 @@ mod tests {
             .write_segment(&SegmentIndex::from_blocks(0, 4, &fixture.blocks[0..4]), &manifest(0))
             .await
             .unwrap();
-        let reader = IndexReader::open(store.clone(), &layout, options()).await.unwrap();
+        let reader = IndexReader::open(Arc::clone(&store), &layout, options()).await.unwrap();
         assert_eq!(reader.watermark().await.unwrap(), Some(3), "watermark after segment 0");
         reader.ensure_covers(3).await.unwrap();
         let err = reader.ensure_covers(7).await.unwrap_err();
         assert_eq!(
             err.to_string(),
-            HistoryStoreError::Unavailable { reason: "index view at Some(3) trails archive H 7".to_string() }
-                .to_string(),
+            HistoryStoreError::Unavailable {
+                reason: "index view at Some(3) trails archive H 7".to_string()
+            }
+            .to_string(),
             "a view behind H refuses"
         );
         assert_eq!(reader.manifest(0).await.unwrap(), manifest(0), "manifest 0 stored");
         assert!(
-            matches!(reader.manifest(1).await, Err(HistoryStoreError::CorruptSegment { segment: 1, .. })),
+            matches!(
+                reader.manifest(1).await,
+                Err(HistoryStoreError::CorruptSegment { segment: 1, .. })
+            ),
             "a missing manifest is corrupt"
         );
         writer
@@ -377,9 +386,15 @@ mod tests {
         let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
         let layout = ArchiveLayout::new("p");
         let fixture = ChainFixture::new(8, 2);
-        let writer = IndexWriter::open(store.clone(), &layout, options()).await.unwrap();
-        writer.write_segment(&SegmentIndex::from_blocks(0, 4, &fixture.blocks[0..4]), &manifest(0)).await.unwrap();
-        writer.write_segment(&SegmentIndex::from_blocks(1, 4, &fixture.blocks[4..8]), &manifest(1)).await.unwrap();
+        let writer = IndexWriter::open(Arc::clone(&store), &layout, options()).await.unwrap();
+        writer
+            .write_segment(&SegmentIndex::from_blocks(0, 4, &fixture.blocks[0..4]), &manifest(0))
+            .await
+            .unwrap();
+        writer
+            .write_segment(&SegmentIndex::from_blocks(1, 4, &fixture.blocks[4..8]), &manifest(1))
+            .await
+            .unwrap();
         let reader = IndexReader::open(store, &layout, options()).await.unwrap();
 
         let tx = fixture.blocks[5].transactions[1].tx_hash();
@@ -397,7 +412,8 @@ mod tests {
         );
 
         // Storage slot (number % 3) changes in blocks 1..=7: slot 1 changes at 1, 4, 7.
-        let slot = HashedKey::storage(fixture.contract, B256::from(alloy_primitives::U256::from(1)));
+        let slot =
+            HashedKey::storage(fixture.contract, B256::from(alloy_primitives::U256::from(1)));
         assert_eq!(reader.first_change_after(&slot, 0, 4, 7).await.unwrap(), Some(1), "after 0");
         assert_eq!(reader.first_change_after(&slot, 1, 4, 7).await.unwrap(), Some(4), "after 1");
         assert_eq!(reader.first_change_after(&slot, 4, 4, 7).await.unwrap(), Some(7), "after 4");
@@ -420,7 +436,7 @@ mod tests {
         let layout = ArchiveLayout::new("");
         let fixture = ChainFixture::new(4, 1);
         let index = SegmentIndex::from_blocks(0, 4, &fixture.blocks);
-        let writer = IndexWriter::open(store.clone(), &layout, options()).await.unwrap();
+        let writer = IndexWriter::open(Arc::clone(&store), &layout, options()).await.unwrap();
         writer.write_segment(&index, &manifest(0)).await.unwrap();
         writer.delete_keys(&index.keys()).await.unwrap();
         let reader = IndexReader::open(store, &layout, options()).await.unwrap();
@@ -436,9 +452,13 @@ mod tests {
         let layout = ArchiveLayout::new("");
         let fixture = ChainFixture::new(4, 1);
         let index = SegmentIndex::from_blocks(0, 4, &fixture.blocks);
-        let first = IndexWriter::open(store.clone(), &layout, options()).await.unwrap();
+        let first = IndexWriter::open(Arc::clone(&store), &layout, options()).await.unwrap();
         let second = IndexWriter::open(store, &layout, options()).await.unwrap();
-        assert_eq!((first.epoch(), second.epoch()), (1, 2), "each open claims the next SlateDB epoch");
+        assert_eq!(
+            (first.epoch(), second.epoch()),
+            (1, 2),
+            "each open claims the next SlateDB epoch"
+        );
         let err = first.write_segment(&index, &manifest(0)).await.unwrap_err();
         assert!(
             matches!(
@@ -458,8 +478,11 @@ mod tests {
         let layout = ArchiveLayout::new("");
         let fixture = ChainFixture::new(4, 1);
         let opts = IndexOptions { gc_enabled: false, ..options() };
-        let writer = IndexWriter::open(store.clone(), &layout, opts).await.unwrap();
-        writer.write_segment(&SegmentIndex::from_blocks(0, 4, &fixture.blocks), &manifest(0)).await.unwrap();
+        let writer = IndexWriter::open(Arc::clone(&store), &layout, opts).await.unwrap();
+        writer
+            .write_segment(&SegmentIndex::from_blocks(0, 4, &fixture.blocks), &manifest(0))
+            .await
+            .unwrap();
         let reader = IndexReader::open(store, &layout, opts).await.unwrap();
         assert_eq!(
             reader.block_number(fixture.blocks[2].hash, 3).await.unwrap(),

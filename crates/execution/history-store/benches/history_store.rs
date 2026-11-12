@@ -7,7 +7,7 @@
 use std::{hint::black_box, sync::Arc};
 
 use base_history_store::{
-    ArchiveLayout, ArchiveReader, CacheConfig, ReaderConfig, SegmentBuilder,
+    ArchiveLayout, ArchiveReader, CacheConfig, DEFAULT_SNAPSHOT_TTL, ReaderConfig, SegmentBuilder,
     test_utils::{ChainFixture, FIXTURE_CHAIN_ID, fixture_writer, test_index_options},
 };
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
@@ -32,9 +32,10 @@ fn published_reader(rt: &Runtime, fixture: &ChainFixture) -> ArchiveReader {
             ReaderConfig {
                 chain_id: FIXTURE_CHAIN_ID,
                 genesis_hash: fixture.blocks[0].hash,
-                chain_spec: fixture.chain_spec.clone(),
+                chain_spec: Arc::clone(&fixture.chain_spec),
                 cache: CacheConfig::default(),
                 index: test_index_options(),
+                snapshot_ttl: DEFAULT_SNAPSHOT_TTL,
             },
         )
         .await

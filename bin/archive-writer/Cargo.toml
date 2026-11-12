@@ -20,6 +20,9 @@ workspace = true
 base-history-store.workspace = true
 base-execution-chainspec.workspace = true
 
+# reth
+reth-rpc-layer.workspace = true
+
 # alloy
 alloy-genesis = { workspace = true, features = ["std"] }
 

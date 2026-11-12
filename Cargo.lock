@@ -3021,6 +3021,7 @@ dependencies = [
  "clap",
  "eyre",
  "humantime",
+ "reth-rpc-layer",
  "serde_json",
  "tokio",
  "tracing",
@@ -4851,6 +4852,7 @@ dependencies = [
  "reth-prune-types",
  "reth-rpc-eth-api",
  "reth-rpc-eth-types",
+ "reth-rpc-layer",
  "reth-storage-api",
  "serde_json",
  "tokio",
@@ -4883,6 +4885,7 @@ dependencies = [
  "reth-db-api",
  "reth-primitives-traits",
  "reth-provider",
+ "reth-rpc-layer",
  "reth-storage-api",
  "roaring",
  "serde",
@@ -4892,6 +4895,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
+ "tower 0.5.3",
  "tracing",
 ]
 

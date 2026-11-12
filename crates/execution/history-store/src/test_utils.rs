@@ -21,12 +21,12 @@ use alloy_signer_local::PrivateKeySigner;
 use base_common_consensus::{BaseReceipt, BaseTxEnvelope};
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_consensus::calculate_receipt_root_no_memo;
-use reth_db_api::models::{AccountBeforeTx, StorageBeforeTx};
 use futures::{StreamExt, stream::BoxStream};
 use object_store::{
     CopyOptions, GetOptions, GetResult, ListResult, MultipartUpload, ObjectMeta, ObjectStore,
     PutMultipartOptions, PutOptions, PutPayload, PutResult, path::Path,
 };
+use reth_db_api::models::{AccountBeforeTx, StorageBeforeTx};
 use reth_primitives_traits::Account;
 use tokio::sync::oneshot;
 
@@ -89,12 +89,7 @@ impl ChainFixture {
         }
         state.accounts.insert(
             contract,
-            Account {
-                nonce: 1,
-                balance: U256::ZERO,
-                bytecode_hash: Some(keccak256([0x60, 0x00])),
-                ..Default::default()
-            },
+            Account { nonce: 1, balance: U256::ZERO, bytecode_hash: Some(keccak256([0x60, 0x00])) },
         );
 
         let genesis = Self::seal(
@@ -133,8 +128,7 @@ impl ChainFixture {
                     value,
                     ..Default::default()
                 };
-                let signature =
-                    signers[idx].sign_hash_sync(&tx.signature_hash()).expect("signs");
+                let signature = signers[idx].sign_hash_sync(&tx.signature_hash()).expect("signs");
                 transactions.push(BaseTxEnvelope::Eip1559(tx.into_signed(signature)));
                 tx_senders.push(sender);
                 account.nonce += 1;
@@ -216,7 +210,7 @@ impl ChainFixture {
     }
 
     /// Returns the last block number.
-    pub fn tip(&self) -> u64 {
+    pub const fn tip(&self) -> u64 {
         self.blocks.len() as u64 - 1
     }
 }
@@ -294,7 +288,7 @@ pub async fn fixture_writer(
             blocks_per_segment,
         },
         crate::SourcePool::new(vec![Arc::new(FixtureSource { fixture: fixture.clone() })]),
-        crate::ChunkVerifier::new(fixture.chain_spec.clone()),
+        crate::ChunkVerifier::new(Arc::clone(&fixture.chain_spec)),
         crate::WriterConfig::default(),
         test_index_options(),
     )
@@ -303,7 +297,7 @@ pub async fn fixture_writer(
 }
 
 /// Index options with a short manifest poll interval for tests.
-pub fn test_index_options() -> crate::IndexOptions {
+pub const fn test_index_options() -> crate::IndexOptions {
     crate::IndexOptions {
         gc_enabled: true,
         manifest_poll_interval: std::time::Duration::from_millis(20),
@@ -449,7 +443,11 @@ impl ObjectStore for GatedStore {
         self.inner.put_multipart_opts(location, opts).await
     }
 
-    async fn get_opts(&self, location: &Path, options: GetOptions) -> object_store::Result<GetResult> {
+    async fn get_opts(
+        &self,
+        location: &Path,
+        options: GetOptions,
+    ) -> object_store::Result<GetResult> {
         Self::pass(&self.gates, GateOp::Get, location).await;
         self.inner.get_opts(location, options).await
     }
@@ -509,7 +507,12 @@ impl ObjectStore for GatedStore {
         self.inner.list_with_delimiter(prefix).await
     }
 
-    async fn copy_opts(&self, from: &Path, to: &Path, options: CopyOptions) -> object_store::Result<()> {
+    async fn copy_opts(
+        &self,
+        from: &Path,
+        to: &Path,
+        options: CopyOptions,
+    ) -> object_store::Result<()> {
         self.inner.copy_opts(from, to, options).await
     }
 }

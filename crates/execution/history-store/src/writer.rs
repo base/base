@@ -19,12 +19,12 @@ use std::{sync::Arc, time::Duration};
 
 use alloy_primitives::B256;
 use object_store::ObjectStore;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use crate::{
-    ArchiveLayout, Catalog, CatalogStore, ChainTip, ChunkVerifier, HistoryStoreError,
-    IndexOptions, IndexWriter, SegmentBuilder, SegmentIndex, SegmentObjects, SourcePool,
-    UploadReport, VersionedCatalog,
+    ArchiveLayout, Catalog, CatalogStore, ChainTip, ChunkVerifier, HistoryStoreError, IndexOptions,
+    IndexWriter, SegmentBuilder, SegmentIndex, SegmentObjects, SourcePool, UploadReport,
+    VersionedCatalog,
 };
 
 /// A segment uploaded and indexed but not yet published: the state between the index flush and
@@ -45,7 +45,7 @@ pub struct PreparedSegment {
 #[derive(Debug, Clone)]
 pub enum PrepareOutcome {
     /// The segment is ready to publish.
-    Ready(PreparedSegment),
+    Ready(Box<PreparedSegment>),
     /// Nothing to publish this step.
     Skip(StepOutcome),
 }
@@ -177,9 +177,15 @@ impl ArchiveWriter {
                 Ok(StepOutcome::Discarded { segment }) => {
                     info!(segment, "segment already published by another writer");
                 }
-                Ok(StepOutcome::NotReady { .. }) => tokio::time::sleep(self.config.idle_interval).await,
+                Ok(StepOutcome::NotReady { .. }) => {
+                    tokio::time::sleep(self.config.idle_interval).await
+                }
                 Err(err @ (HistoryStoreError::NoSource { .. } | HistoryStoreError::Source(_))) => {
                     warn!(error = %err, "writer stalled; retrying");
+                    tokio::time::sleep(self.config.idle_interval).await;
+                }
+                Err(HistoryStoreError::SourceBusy { .. }) => {
+                    debug!("every source is busy; backing off");
                     tokio::time::sleep(self.config.idle_interval).await;
                 }
                 Err(err) => return Err(err),
@@ -233,11 +239,8 @@ impl ArchiveWriter {
         }
 
         // Never ask for more than every source advertises; halve on a too-large rejection.
-        let mut chunk_blocks = self
-            .config
-            .chunk_blocks
-            .min(status.max_range_blocks.unwrap_or(u64::MAX))
-            .max(1);
+        let mut chunk_blocks =
+            self.config.chunk_blocks.min(status.max_range_blocks.unwrap_or(u64::MAX)).max(1);
         let mut blocks = Vec::with_capacity(n as usize);
         let mut from = first;
         while from <= last {
@@ -245,7 +248,7 @@ impl ArchiveWriter {
             let chunk = match self.sources.fetch_verified(from, to, tip, &self.verifier).await {
                 Ok(chunk) => chunk,
                 Err(HistoryStoreError::SourceRangeTooLarge { .. }) if to > from => {
-                    chunk_blocks = ((to - from + 1) / 2).max(1);
+                    chunk_blocks = (to - from).div_ceil(2).max(1);
                     warn!(from, chunk_blocks, "range too large; halving chunk");
                     continue;
                 }
@@ -269,7 +272,11 @@ impl ArchiveWriter {
         let last_hash = blocks.last().expect("segment has blocks").hash;
         let confirmed = self.sources.fetch_hash(last).await?;
         if confirmed != last_hash {
-            return Err(HistoryStoreError::Halt { block: last, archive: last_hash, node: confirmed });
+            return Err(HistoryStoreError::Halt {
+                block: last,
+                archive: last_hash,
+                node: confirmed,
+            });
         }
 
         let files = SegmentBuilder::new(n).build(segment, &blocks)?;
@@ -283,9 +290,12 @@ impl ArchiveWriter {
         }
         let upload = self.objects.upload(&files, self.epoch).await?;
         self.index
-            .write_segment(&SegmentIndex::from_blocks(segment, n, &blocks), &files.manifest(self.epoch))
+            .write_segment(
+                &SegmentIndex::from_blocks(segment, n, &blocks),
+                &files.manifest(self.epoch),
+            )
             .await?;
-        Ok(PrepareOutcome::Ready(PreparedSegment { current, segment, last, upload }))
+        Ok(PrepareOutcome::Ready(Box::new(PreparedSegment { current, segment, last, upload })))
     }
 
     /// Advances `H` to `last` by compare-and-swap, re-reading on conflict (TDD §4: on 412
@@ -408,7 +418,7 @@ mod tests {
                 blocks_per_segment: N,
             },
             SourcePool::new(sources),
-            ChunkVerifier::new(fixture.chain_spec.clone()),
+            ChunkVerifier::new(Arc::clone(&fixture.chain_spec)),
             WriterConfig { chunk_blocks, idle_interval: Duration::from_millis(10) },
             IndexOptions { gc_enabled: true, manifest_poll_interval: Duration::from_millis(20) },
         )
@@ -437,7 +447,11 @@ mod tests {
         let first = w.step().await.unwrap();
         assert_eq!(
             first,
-            StepOutcome::Published { segment: 0, h: 3, upload: UploadReport { created: 21, already_present: 0 } },
+            StepOutcome::Published {
+                segment: 0,
+                h: 3,
+                upload: UploadReport { created: 21, already_present: 0 }
+            },
             "segment 0 publishes all 21 objects"
         );
         let second = w.step().await.unwrap();
@@ -481,7 +495,8 @@ mod tests {
     async fn published(w: &ArchiveWriter, segments: u64) -> Vec<(u64, String, Vec<u8>)> {
         let mut out = Vec::new();
         for k in 0..segments {
-            let manifest = w.index.manifest(k).await.unwrap().expect("published segment has a manifest");
+            let manifest =
+                w.index.manifest(k).await.unwrap().expect("published segment has a manifest");
             for (name, bytes) in w.objects.download(&manifest, N).await.unwrap().files {
                 out.push((k, name, bytes.to_vec()));
             }
@@ -497,33 +512,47 @@ mod tests {
     async fn restart_after_partial_upload_is_byte_identical() {
         let fixture = ChainFixture::new(8, 3);
         let reference: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-        let w = writer(Arc::clone(&reference), &fixture, vec![Arc::new(node(&fixture, 7))], 4).await;
+        let w =
+            writer(Arc::clone(&reference), &fixture, vec![Arc::new(node(&fixture, 7))], 4).await;
         w.step().await.unwrap();
         w.step().await.unwrap();
 
         let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
         // Simulate a crashed run under epoch 1: segment 0 partially uploaded, never published.
-        let crashed = writer(Arc::clone(&store), &fixture, vec![Arc::new(node(&fixture, 7))], 1).await;
+        let crashed =
+            writer(Arc::clone(&store), &fixture, vec![Arc::new(node(&fixture, 7))], 1).await;
         assert_eq!(crashed.epoch, 1, "the crashed run held epoch 1");
         drop(crashed);
         let files = SegmentBuilder::new(N).build(0, &fixture.blocks[0..4]).unwrap();
         let objects_handle = SegmentObjects::new(Arc::clone(&store), ArchiveLayout::new("chain"));
         for (name, bytes) in files.files.iter().take(5) {
             store
-                .put(&ArchiveLayout::new("chain").segment_object(0, 1, name), bytes.0.clone().into())
+                .put(
+                    &ArchiveLayout::new("chain").segment_object(0, 1, name),
+                    bytes.0.clone().into(),
+                )
                 .await
                 .unwrap();
         }
-        let restarted = writer(Arc::clone(&store), &fixture, vec![Arc::new(node(&fixture, 7))], 1).await;
+        let restarted =
+            writer(Arc::clone(&store), &fixture, vec![Arc::new(node(&fixture, 7))], 1).await;
         assert_eq!(restarted.epoch, 2, "the restart claims a newer epoch");
         let outcome = restarted.step().await.unwrap();
         assert_eq!(
             outcome,
-            StepOutcome::Published { segment: 0, h: 3, upload: UploadReport { created: 21, already_present: 0 } },
+            StepOutcome::Published {
+                segment: 0,
+                h: 3,
+                upload: UploadReport { created: 21, already_present: 0 }
+            },
             "restart uploads all 21 objects under its own epoch"
         );
         restarted.step().await.unwrap();
-        assert_eq!(published(&restarted, 2).await, published(&w, 2).await, "published bytes are identical");
+        assert_eq!(
+            published(&restarted, 2).await,
+            published(&w, 2).await,
+            "published bytes are identical"
+        );
         assert_eq!(
             restarted.index.manifest(0).await.unwrap().map(|manifest| manifest.epoch),
             Some(2),
@@ -532,7 +561,9 @@ mod tests {
         let remaining = objects_handle.list(0).await.unwrap();
         assert_eq!(remaining.len(), 21, "only the 21 published objects remain");
         assert!(
-            remaining.iter().all(|meta| ArchiveLayout::new("chain").parse_object(&meta.location) == Some((0, 2))),
+            remaining.iter().all(
+                |meta| ArchiveLayout::new("chain").parse_object(&meta.location) == Some((0, 2))
+            ),
             "no object of the crashed epoch remains: {remaining:?}"
         );
     }
@@ -545,7 +576,14 @@ mod tests {
         let mut source = MockChainSource::new();
         source.expect_name().return_const("forky".to_string());
         source.expect_status().returning(|| {
-            Ok(ArchiveStatus { head: 7, safe: 7, finalized: 7, earliest_local: 0, max_range_blocks: 10, max_range_bytes: 1 << 20 })
+            Ok(ArchiveStatus {
+                head: 7,
+                safe: 7,
+                finalized: 7,
+                earliest_local: 0,
+                max_range_blocks: 10,
+                max_range_bytes: 1 << 20,
+            })
         });
         let served = fixture.clone();
         source.expect_get_block_range().returning(move |from, to| {
@@ -562,7 +600,11 @@ mod tests {
             "confirm mismatch must halt at block 3, got {err}"
         );
         let catalog = w.catalog.load_required().await.unwrap().catalog;
-        assert_eq!((catalog.generation, catalog.h), (1, None), "only the claim changed the catalog");
+        assert_eq!(
+            (catalog.generation, catalog.h),
+            (1, None),
+            "only the claim changed the catalog"
+        );
         assert!(objects(&store).await.is_empty(), "nothing uploaded after halt");
     }
 
@@ -578,7 +620,14 @@ mod tests {
         let mut source = MockChainSource::new();
         source.expect_name().return_const("reorged".to_string());
         source.expect_status().returning(|| {
-            Ok(ArchiveStatus { head: 7, safe: 7, finalized: 7, earliest_local: 0, max_range_blocks: 10, max_range_bytes: 1 << 20 })
+            Ok(ArchiveStatus {
+                head: 7,
+                safe: 7,
+                finalized: 7,
+                earliest_local: 0,
+                max_range_blocks: 10,
+                max_range_bytes: 1 << 20,
+            })
         });
         let served = fixture.clone();
         source.expect_get_block_range().returning(move |from, to| {
@@ -604,7 +653,14 @@ mod tests {
         let mut bad = MockChainSource::new();
         bad.expect_name().return_const("bad".to_string());
         bad.expect_status().returning(|| {
-            Ok(ArchiveStatus { head: 3, safe: 3, finalized: 3, earliest_local: 0, max_range_blocks: 10, max_range_bytes: 1 << 20 })
+            Ok(ArchiveStatus {
+                head: 3,
+                safe: 3,
+                finalized: 3,
+                earliest_local: 0,
+                max_range_blocks: 10,
+                max_range_bytes: 1 << 20,
+            })
         });
         let served = fixture.clone();
         bad.expect_get_block_range().returning(move |from, to| {
@@ -636,7 +692,14 @@ mod tests {
         let mut bad = MockChainSource::new();
         bad.expect_name().return_const("bad".to_string());
         bad.expect_status().returning(|| {
-            Ok(ArchiveStatus { head: 3, safe: 3, finalized: 3, earliest_local: 0, max_range_blocks: 10, max_range_bytes: 1 << 20 })
+            Ok(ArchiveStatus {
+                head: 3,
+                safe: 3,
+                finalized: 3,
+                earliest_local: 0,
+                max_range_blocks: 10,
+                max_range_bytes: 1 << 20,
+            })
         });
         let served = fixture.clone();
         bad.expect_get_block_range().returning(move |from, to| {
@@ -645,11 +708,75 @@ mod tests {
             Ok(rows)
         });
         let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-        let w = writer(Arc::clone(&store), &fixture, vec![Arc::new(bad), Arc::new(dead_node())], 4).await;
+        let w = writer(Arc::clone(&store), &fixture, vec![Arc::new(bad), Arc::new(dead_node())], 4)
+            .await;
         let err = w.step().await.unwrap_err();
         assert!(
             matches!(err, HistoryStoreError::NoSource { from: 0, to: 3 }),
             "all nodes failing must stall, got {err}"
+        );
+        assert!(objects(&store).await.is_empty(), "nothing uploaded");
+    }
+
+    /// A mock node that answers `archive_status` but rejects every range as busy (`4008`).
+    fn busy_node() -> MockChainSource {
+        let mut source = MockChainSource::new();
+        source.expect_name().return_const("busy".to_string());
+        source.expect_status().returning(|| {
+            Ok(ArchiveStatus {
+                head: 3,
+                safe: 3,
+                finalized: 3,
+                earliest_local: 0,
+                max_range_blocks: 10,
+                max_range_bytes: 1 << 20,
+            })
+        });
+        source.expect_get_block_range().returning(|_, _| {
+            Err(HistoryStoreError::SourceBusy {
+                source_name: "busy".to_string(),
+                reason: "2 ranges in flight".to_string(),
+            })
+        });
+        source
+    }
+
+    /// A busy node is skipped like an unavailable one and the next node serves the segment.
+    #[tokio::test]
+    async fn busy_node_is_skipped_for_the_next_source() {
+        let fixture = ChainFixture::new(4, 2);
+        let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        let w = writer(
+            Arc::clone(&store),
+            &fixture,
+            vec![Arc::new(busy_node()), Arc::new(node(&fixture, 3))],
+            4,
+        )
+        .await;
+        let outcome = w.step().await.unwrap();
+        assert!(
+            matches!(outcome, StepOutcome::Published { segment: 0, h: 3, .. }),
+            "the second node publishes segment 0 past the busy one, got {outcome:?}"
+        );
+    }
+
+    /// When every node is busy the writer reports `SourceBusy` (back off), not `NoSource`, and
+    /// uploads nothing.
+    #[tokio::test]
+    async fn all_busy_nodes_back_off() {
+        let fixture = ChainFixture::new(4, 2);
+        let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        let w = writer(
+            Arc::clone(&store),
+            &fixture,
+            vec![Arc::new(busy_node()), Arc::new(busy_node())],
+            4,
+        )
+        .await;
+        let err = w.step().await.unwrap_err();
+        assert!(
+            matches!(err, HistoryStoreError::SourceBusy { .. }),
+            "only busy nodes must back off, got {err}"
         );
         assert!(objects(&store).await.is_empty(), "nothing uploaded");
     }
@@ -666,21 +793,29 @@ mod tests {
             matches!(err, HistoryStoreError::Fenced { owned: 1, current: 2 }),
             "old writer must be fenced by the catalog epoch, got {err}"
         );
-        let err = old.index.write_segment(&SegmentIndex::default(), &crate::SegmentManifest {
-            segment: 0,
-            first_block: 0,
-            last_block: 3,
-            epoch: 1,
-            files: Default::default(),
-        })
-        .await
-        .unwrap_err();
+        let err = old
+            .index
+            .write_segment(
+                &SegmentIndex::default(),
+                &crate::SegmentManifest {
+                    segment: 0,
+                    first_block: 0,
+                    last_block: 3,
+                    epoch: 1,
+                    files: Default::default(),
+                },
+            )
+            .await
+            .unwrap_err();
         assert!(
             matches!(&err, HistoryStoreError::Slate(e) if e.kind() == ErrorKind::Closed(CloseReason::Fenced)),
             "old writer's index is fenced by SlateDB too, got {err}"
         );
         let stale = new.catalog.load_required().await.unwrap();
-        assert!(matches!(new.step().await.unwrap(), StepOutcome::Published { segment: 0, .. }), "new writer publishes");
+        assert!(
+            matches!(new.step().await.unwrap(), StepOutcome::Published { segment: 0, .. }),
+            "new writer publishes"
+        );
         assert_eq!(
             new.publish(stale, 0, 3, UploadReport::default()).await.unwrap(),
             StepOutcome::Discarded { segment: 0 },
@@ -746,7 +881,11 @@ mod tests {
         assert_eq!((b.epoch, a.epoch), (1, 2), "A opened the index last");
         assert_eq!(functional([&b, &a]).await, 1, "exactly one writer can publish");
         let catalog = a.catalog.load_required().await.unwrap().catalog;
-        assert_eq!((catalog.writer_epoch, catalog.h), (2, Some(3)), "A owns the catalog and published");
+        assert_eq!(
+            (catalog.writer_epoch, catalog.h),
+            (2, Some(3)),
+            "A owns the catalog and published"
+        );
     }
 
     /// Two writers opening concurrently, with A paused after opening the index but before its
@@ -772,7 +911,10 @@ mod tests {
             "A is fenced at open, got {err}"
         );
         assert_eq!(b.epoch, 2, "B opened the index after A");
-        assert!(matches!(b.step().await.unwrap(), StepOutcome::Published { segment: 0, .. }), "B publishes");
+        assert!(
+            matches!(b.step().await.unwrap(), StepOutcome::Published { segment: 0, .. }),
+            "B publishes"
+        );
     }
 
     /// `chunk_blocks = 0` and `N = 0` are rejected when the writer opens.
@@ -785,9 +927,13 @@ mod tests {
                 ArchiveWriter::open(
                     Arc::new(InMemory::new()),
                     ArchiveLayout::new("chain"),
-                    ChainIdentity { chain_id: 1, genesis_hash: fixture.blocks[0].hash, blocks_per_segment },
+                    ChainIdentity {
+                        chain_id: 1,
+                        genesis_hash: fixture.blocks[0].hash,
+                        blocks_per_segment,
+                    },
                     SourcePool::new(Vec::new()),
-                    ChunkVerifier::new(fixture.chain_spec.clone()),
+                    ChunkVerifier::new(Arc::clone(&fixture.chain_spec)),
                     WriterConfig { chunk_blocks, idle_interval: Duration::from_millis(10) },
                     IndexOptions::default(),
                 )
@@ -808,19 +954,29 @@ mod tests {
         );
     }
 
+    /// Block ranges a recording node was asked for, in call order.
+    type RecordedRanges = Arc<std::sync::Mutex<Vec<(u64, u64)>>>;
+
     /// A node that records every range it is asked for, advertises `max_range_blocks`, and
     /// rejects ranges longer than `accept` blocks as too large.
     fn recording_node(
         fixture: &ChainFixture,
         max_range_blocks: u64,
         accept: u64,
-    ) -> (MockChainSource, Arc<std::sync::Mutex<Vec<(u64, u64)>>>) {
+    ) -> (MockChainSource, RecordedRanges) {
         let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
         let mut source = MockChainSource::new();
         source.expect_name().return_const("recording".to_string());
         let tip = fixture.tip();
         source.expect_status().returning(move || {
-            Ok(ArchiveStatus { head: tip, safe: tip, finalized: tip, earliest_local: 0, max_range_blocks, max_range_bytes: 1 << 20 })
+            Ok(ArchiveStatus {
+                head: tip,
+                safe: tip,
+                finalized: tip,
+                earliest_local: 0,
+                max_range_blocks,
+                max_range_bytes: 1 << 20,
+            })
         });
         let served = fixture.clone();
         let seen = Arc::clone(&calls);
@@ -846,7 +1002,10 @@ mod tests {
         let (source, calls) = recording_node(&fixture, 2, u64::MAX);
         let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
         let w = writer(store, &fixture, vec![Arc::new(source)], 1024).await;
-        assert!(matches!(w.step().await.unwrap(), StepOutcome::Published { segment: 0, .. }), "published");
+        assert!(
+            matches!(w.step().await.unwrap(), StepOutcome::Published { segment: 0, .. }),
+            "published"
+        );
         assert_eq!(
             *calls.lock().unwrap(),
             vec![(0, 1), (2, 3), (3, 3)],
@@ -861,7 +1020,10 @@ mod tests {
         let (source, calls) = recording_node(&fixture, 100, 1);
         let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
         let w = writer(store, &fixture, vec![Arc::new(source)], 4).await;
-        assert!(matches!(w.step().await.unwrap(), StepOutcome::Published { segment: 0, .. }), "published");
+        assert!(
+            matches!(w.step().await.unwrap(), StepOutcome::Published { segment: 0, .. }),
+            "published"
+        );
         assert_eq!(
             *calls.lock().unwrap(),
             vec![(0, 3), (0, 1), (0, 0), (1, 1), (2, 2), (3, 3), (3, 3)],
@@ -878,7 +1040,11 @@ mod tests {
         let w = writer(Arc::clone(&store), &fixture, vec![Arc::new(source)], 4).await;
         let err = w.step().await.unwrap_err();
         assert!(matches!(err, HistoryStoreError::RangeTooLarge { block: 0 }), "got {err}");
-        assert_eq!(*calls.lock().unwrap(), vec![(0, 3), (0, 1), (0, 0)], "halves down to one block, once");
+        assert_eq!(
+            *calls.lock().unwrap(),
+            vec![(0, 3), (0, 1), (0, 0)],
+            "halves down to one block, once"
+        );
         assert!(objects(&store).await.is_empty(), "nothing uploaded");
     }
 
@@ -889,7 +1055,14 @@ mod tests {
         let mut garbled = MockChainSource::new();
         garbled.expect_name().return_const("garbled".to_string());
         garbled.expect_status().returning(|| {
-            Ok(ArchiveStatus { head: 3, safe: 3, finalized: 3, earliest_local: 0, max_range_blocks: 10, max_range_bytes: 1 << 20 })
+            Ok(ArchiveStatus {
+                head: 3,
+                safe: 3,
+                finalized: 3,
+                earliest_local: 0,
+                max_range_blocks: 10,
+                max_range_bytes: 1 << 20,
+            })
         });
         let served = fixture.clone();
         garbled.expect_get_block_range().returning(move |from, to| {
@@ -900,7 +1073,11 @@ mod tests {
             Ok(rows)
         });
         let pool = SourcePool::new(vec![Arc::new(garbled), Arc::new(node(&fixture, 3))]);
-        assert_eq!(pool.fetch_hash(3).await.unwrap(), fixture.blocks[3].hash, "second node answers");
+        assert_eq!(
+            pool.fetch_hash(3).await.unwrap(),
+            fixture.blocks[3].hash,
+            "second node answers"
+        );
     }
 
     /// Review2 P2 confirm: a node that answers the confirm fetch for block 3 with block 2's
@@ -911,17 +1088,29 @@ mod tests {
         let mut relabelled = MockChainSource::new();
         relabelled.expect_name().return_const("relabelled".to_string());
         relabelled.expect_status().returning(|| {
-            Ok(ArchiveStatus { head: 3, safe: 3, finalized: 3, earliest_local: 0, max_range_blocks: 10, max_range_bytes: 1 << 20 })
+            Ok(ArchiveStatus {
+                head: 3,
+                safe: 3,
+                finalized: 3,
+                earliest_local: 0,
+                max_range_blocks: 10,
+                max_range_bytes: 1 << 20,
+            })
         });
         let served = fixture.clone();
         relabelled.expect_get_block_range().times(1).returning(move |from, to| {
             let mut rows = served.wire(from, to);
             if from == to && from > 0 {
-                rows[0] = ArchiveBlock { number: from, ..served.wire(from - 1, from - 1).remove(0) };
+                rows[0] =
+                    ArchiveBlock { number: from, ..served.wire(from - 1, from - 1).remove(0) };
             }
             Ok(rows)
         });
         let pool = SourcePool::new(vec![Arc::new(relabelled), Arc::new(node(&fixture, 3))]);
-        assert_eq!(pool.fetch_hash(3).await.unwrap(), fixture.blocks[3].hash, "the second node's hash is used");
+        assert_eq!(
+            pool.fetch_hash(3).await.unwrap(),
+            fixture.blocks[3].hash,
+            "the second node's hash is used"
+        );
     }
 }

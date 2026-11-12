@@ -11,13 +11,15 @@ use std::{
     future::Future,
     panic::AssertUnwindSafe,
     sync::{
-        Arc,
+        Arc, Mutex, PoisonError,
         atomic::{AtomicU64, Ordering},
     },
+    time::{Duration, Instant},
 };
 
 use alloy_consensus::{
-    BlockBody, Header, TxReceipt, proofs::calculate_transaction_root, transaction::SignerRecoverable,
+    BlockBody, Header, TxReceipt, proofs::calculate_transaction_root,
+    transaction::SignerRecoverable,
 };
 use alloy_primitives::{Address, B256, Bytes, Log, U256};
 use alloy_rpc_types_eth::Filter;
@@ -34,7 +36,7 @@ use reth_storage_api::StateProvider;
 use crate::{
     ArchiveLayout, ArchiveSnapshot, BodyIndices, CacheConfig, CatalogStore, HashedKey,
     HistoryStoreError, IndexOptions, IndexReader, LoadedSegment, Route, SegmentCache,
-    SegmentObjects,
+    SegmentObjects, SegmentVerification,
 };
 
 /// Reader configuration.
@@ -50,7 +52,13 @@ pub struct ReaderConfig {
     pub cache: CacheConfig,
     /// Index reader options.
     pub index: IndexOptions,
+    /// How long a resolved [`ArchiveSnapshot`] is reused before the catalog is read again.
+    pub snapshot_ttl: Duration,
 }
+
+/// Default [`ReaderConfig::snapshot_ttl`]. `H` only grows and retired segments outlive a grace
+/// period far longer than this, so a snapshot this old routes every block correctly.
+pub const DEFAULT_SNAPSHOT_TTL: Duration = Duration::from_secs(2);
 
 /// A block read from the archive, checked against its header.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -94,6 +102,15 @@ pub struct ArchivedLog {
     pub log_index: u64,
     /// The log.
     pub log: Log,
+}
+
+/// The matching logs of one archived block, with the block they came from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ArchivedBlockLogs {
+    /// The block, already checked; callers reuse it instead of reading it again.
+    pub block: ArchivedBlock,
+    /// Logs of the block that match the filter, in log-index order.
+    pub logs: Vec<ArchivedLog>,
 }
 
 /// Result of a historical state lookup in the archive.
@@ -165,6 +182,9 @@ pub struct ArchiveReader {
     /// Highest index watermark seen plus one (0: none yet). Watermarks only grow, so a cached
     /// value at or above `H` proves coverage without another index read.
     pub covered: AtomicU64,
+    /// Last resolved snapshot and when it was resolved, reused for
+    /// [`ReaderConfig::snapshot_ttl`].
+    pub snapshot: Mutex<Option<(Instant, ArchiveSnapshot)>>,
 }
 
 impl ArchiveReader {
@@ -186,14 +206,30 @@ impl ArchiveReader {
             SegmentObjects::new(store, layout),
             &current.catalog,
         )?;
-        Ok(Self { catalog, index, cache, config, covered: AtomicU64::new(0) })
+        Ok(Self {
+            catalog,
+            index,
+            cache,
+            config,
+            covered: AtomicU64::new(0),
+            snapshot: Mutex::new(None),
+        })
     }
 
-    /// Resolves the archive bounds for one request.
+    /// Resolves the archive bounds for one request, reading the catalog at most once per
+    /// [`ReaderConfig::snapshot_ttl`].
     pub async fn snapshot(&self) -> Result<ArchiveSnapshot, HistoryStoreError> {
+        if let Some((at, snapshot)) = *self.snapshot.lock().unwrap_or_else(PoisonError::into_inner)
+            && at.elapsed() < self.config.snapshot_ttl
+        {
+            return Ok(snapshot);
+        }
         let current = self.catalog.load_required().await?;
         current.catalog.verify(self.config.chain_id, self.config.genesis_hash)?;
-        ArchiveSnapshot::from_catalog(&current.catalog)
+        let snapshot = ArchiveSnapshot::from_catalog(&current.catalog)?;
+        *self.snapshot.lock().unwrap_or_else(PoisonError::into_inner) =
+            Some((Instant::now(), snapshot));
+        Ok(snapshot)
     }
 
     /// Loads the segment holding `number`, failing unless the snapshot routes it to the archive.
@@ -247,7 +283,11 @@ impl ArchiveReader {
     /// make a stale absence look authoritative. When the view did not cover `h` and the entry
     /// is absent, coverage is checked again and, once it holds, the lookup runs once more on
     /// the covering view.
-    pub async fn covered_lookup<T, F, Fut>(&self, h: u64, lookup: F) -> Result<Option<T>, HistoryStoreError>
+    pub async fn covered_lookup<T, F, Fut>(
+        &self,
+        h: u64,
+        lookup: F,
+    ) -> Result<Option<T>, HistoryStoreError>
     where
         F: Fn() -> Fut,
         Fut: Future<Output = Result<Option<T>, HistoryStoreError>>,
@@ -297,7 +337,10 @@ impl ArchiveReader {
     }
 
     /// Reads a header from a loaded segment and checks its stored hash.
-    pub fn header_in(segment: &LoadedSegment, number: u64) -> Result<(Header, B256), HistoryStoreError> {
+    pub fn header_in(
+        segment: &LoadedSegment,
+        number: u64,
+    ) -> Result<(Header, B256), HistoryStoreError> {
         let sealed = Self::guarded(segment, || segment.provider.sealed_header(number))?
             .ok_or_else(|| Self::corrupt(segment, number, "missing header"))?;
         let hash = sealed.hash();
@@ -325,24 +368,46 @@ impl ArchiveReader {
         number: u64,
     ) -> Result<ArchivedBlock, HistoryStoreError> {
         let segment = self.segment(snapshot, number).await?;
-        let (header, hash) = Self::header_in(&segment, number)?;
-        let body = Self::body_in(&segment, number)?;
+        Self::blocking(move || Self::block_in(&segment, number)).await
+    }
+
+    /// Runs segment reads and their CPU-heavy checks on the blocking pool so archive requests
+    /// do not stall the RPC server's async workers.
+    pub async fn blocking<T: Send + 'static>(
+        work: impl FnOnce() -> Result<T, HistoryStoreError> + Send + 'static,
+    ) -> Result<T, HistoryStoreError> {
+        tokio::task::spawn_blocking(work).await.map_err(std::io::Error::other)?
+    }
+
+    /// Reads block `number` from a loaded segment. The transaction root and senders are checked
+    /// once per block while the segment stays loaded ([`SegmentVerification`]).
+    pub fn block_in(
+        segment: &LoadedSegment,
+        number: u64,
+    ) -> Result<ArchivedBlock, HistoryStoreError> {
+        let (header, hash) = Self::header_in(segment, number)?;
+        let body = Self::body_in(segment, number)?;
         let range = body.first_tx_num..body.next_tx_num();
         let transactions =
-            Self::guarded(&segment, || segment.provider.transactions_by_tx_range(range.clone()))?;
+            Self::guarded(segment, || segment.provider.transactions_by_tx_range(range.clone()))?;
         let senders =
-            Self::guarded(&segment, || segment.provider.senders_by_tx_range(range.clone()))?;
+            Self::guarded(segment, || segment.provider.senders_by_tx_range(range.clone()))?;
         if transactions.len() as u64 != body.tx_count || senders.len() as u64 != body.tx_count {
-            return Err(Self::corrupt(&segment, number, "row count differs from body index"));
+            return Err(Self::corrupt(segment, number, "row count differs from body index"));
         }
-        if calculate_transaction_root(&transactions) != header.transactions_root {
-            return Err(Self::corrupt(&segment, number, "transaction root mismatch"));
-        }
-        // Senders are not covered by any header root; recover them as the writer did.
-        for (tx, sender) in transactions.iter().zip(&senders) {
-            if tx.recover_signer().ok() != Some(*sender) {
-                return Err(Self::corrupt(&segment, number, "sender does not match signature"));
+        let offset = (number - segment.first_block) as u32;
+        let verified = &segment.verified;
+        if !SegmentVerification::contains(&verified.bodies, offset) {
+            if calculate_transaction_root(&transactions) != header.transactions_root {
+                return Err(Self::corrupt(segment, number, "transaction root mismatch"));
             }
+            // Senders are not covered by any header root; recover them as the writer did.
+            for (tx, sender) in transactions.iter().zip(&senders) {
+                if tx.recover_signer().ok() != Some(*sender) {
+                    return Err(Self::corrupt(segment, number, "sender does not match signature"));
+                }
+            }
+            verified.record(&verified.bodies, offset);
         }
         Ok(ArchivedBlock { header, hash, body_indices: body, transactions, senders })
     }
@@ -354,20 +419,32 @@ impl ArchiveReader {
         number: u64,
     ) -> Result<Vec<BaseReceipt>, HistoryStoreError> {
         let segment = self.segment(snapshot, number).await?;
-        let (header, _) = Self::header_in(&segment, number)?;
-        let body = Self::body_in(&segment, number)?;
+        let chain_spec = Arc::clone(&self.config.chain_spec);
+        Self::blocking(move || Self::receipts_in(&segment, &chain_spec, number)).await
+    }
+
+    /// Reads the receipts of block `number` from a loaded segment. The receipt root is checked
+    /// once per block while the segment stays loaded ([`SegmentVerification`]).
+    pub fn receipts_in(
+        segment: &LoadedSegment,
+        chain_spec: &BaseChainSpec,
+        number: u64,
+    ) -> Result<Vec<BaseReceipt>, HistoryStoreError> {
+        let (header, _) = Self::header_in(segment, number)?;
+        let body = Self::body_in(segment, number)?;
         let range = body.first_tx_num..body.next_tx_num();
-        let receipts = Self::guarded(&segment, || segment.provider.receipts_by_tx_range(range))?;
+        let receipts = Self::guarded(segment, || segment.provider.receipts_by_tx_range(range))?;
         if receipts.len() as u64 != body.tx_count {
-            return Err(Self::corrupt(&segment, number, "receipt count differs from body index"));
+            return Err(Self::corrupt(segment, number, "receipt count differs from body index"));
         }
-        let root = calculate_receipt_root_no_memo(
-            &receipts,
-            self.config.chain_spec.as_ref(),
-            header.timestamp,
-        );
-        if root != header.receipts_root {
-            return Err(Self::corrupt(&segment, number, "receipt root mismatch"));
+        let offset = (number - segment.first_block) as u32;
+        let verified = &segment.verified;
+        if !SegmentVerification::contains(&verified.receipts, offset) {
+            let root = calculate_receipt_root_no_memo(&receipts, chain_spec, header.timestamp);
+            if root != header.receipts_root {
+                return Err(Self::corrupt(segment, number, "receipt root mismatch"));
+            }
+            verified.record(&verified.receipts, offset);
         }
         Ok(receipts)
     }
@@ -413,22 +490,27 @@ impl ArchiveReader {
     }
 
     /// Scans header blooms over `from..=to` and reads receipts only for hits (TDD §5 getLogs).
+    /// Fails with [`HistoryStoreError::TooManyLogs`] once more than `max_logs` logs match,
+    /// suggesting the range up to the last block that fit, as reth's `eth_getLogs` does.
     pub async fn logs(
         &self,
         snapshot: &ArchiveSnapshot,
         filter: &Filter,
         from: u64,
         to: u64,
-    ) -> Result<Vec<ArchivedLog>, HistoryStoreError> {
+        max_logs: usize,
+    ) -> Result<Vec<ArchivedBlockLogs>, HistoryStoreError> {
         let mut out = Vec::new();
+        let mut total = 0;
         for number in self.bloom_hits(snapshot, filter, from, to).await? {
             let block = self.block(snapshot, number).await?;
             let receipts = self.receipts(snapshot, number).await?;
+            let mut logs = Vec::new();
             let mut log_index = 0;
             for (tx_index, (tx, receipt)) in block.transactions.iter().zip(&receipts).enumerate() {
                 for log in receipt.logs() {
                     if filter.matches(log) {
-                        out.push(ArchivedLog {
+                        logs.push(ArchivedLog {
                             block_number: number,
                             block_hash: block.hash,
                             tx_hash: tx.tx_hash(),
@@ -440,6 +522,15 @@ impl ArchiveReader {
                     log_index += 1;
                 }
             }
+            if logs.is_empty() {
+                continue;
+            }
+            total += logs.len();
+            if total > max_logs {
+                let to = if number == from { from } else { number - 1 };
+                return Err(HistoryStoreError::TooManyLogs { max: max_logs, from, to });
+            }
+            out.push(ArchivedBlockLogs { block, logs });
         }
         Ok(out)
     }
@@ -515,16 +606,19 @@ impl ArchiveReader {
 
 #[cfg(test)]
 mod tests {
-    use std::num::NonZeroUsize;
+    use std::{
+        num::NonZeroUsize,
+        sync::atomic::{AtomicUsize, Ordering},
+    };
 
     use alloy_primitives::keccak256;
     use object_store::{ObjectStoreExt, memory::InMemory};
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
 
     use super::*;
     use crate::test_utils::{
-        ChainFixture, FIXTURE_CHAIN_ID, FIXTURE_SLOTS, GateOp, GatedStore, fixture_writer, test_index_options,
+        ChainFixture, FIXTURE_CHAIN_ID, FIXTURE_SLOTS, GateOp, GatedStore, fixture_writer,
+        test_index_options,
     };
 
     /// Publishes `segments` segments of 4 blocks and returns the store and fixture.
@@ -544,9 +638,10 @@ mod tests {
         ReaderConfig {
             chain_id: FIXTURE_CHAIN_ID,
             genesis_hash: fixture.blocks[0].hash,
-            chain_spec: fixture.chain_spec.clone(),
+            chain_spec: Arc::clone(&fixture.chain_spec),
             cache,
             index: test_index_options(),
+            snapshot_ttl: Duration::ZERO,
         }
     }
 
@@ -574,11 +669,19 @@ mod tests {
     #[tokio::test]
     async fn reads_blocks_receipts_and_hashes() {
         let (store, fixture) = published(3).await;
-        let reader = ArchiveReader::open(store, ArchiveLayout::new("chain"), config(&fixture, CacheConfig::default()))
-            .await
-            .unwrap();
+        let reader = ArchiveReader::open(
+            store,
+            ArchiveLayout::new("chain"),
+            config(&fixture, CacheConfig::default()),
+        )
+        .await
+        .unwrap();
         let snapshot = reader.snapshot().await.unwrap();
-        assert_eq!(snapshot, ArchiveSnapshot { h: Some(11), e: 0, blocks_per_segment: 4 }, "snapshot");
+        assert_eq!(
+            snapshot,
+            ArchiveSnapshot { h: Some(11), e: 0, blocks_per_segment: 4 },
+            "snapshot"
+        );
         for expected in &fixture.blocks {
             let n = expected.number();
             let block = reader.block(&snapshot, n).await.unwrap();
@@ -586,8 +689,16 @@ mod tests {
             assert_eq!(block.hash, expected.hash, "hash {n}");
             assert_eq!(block.transactions, expected.transactions, "transactions {n}");
             assert_eq!(block.senders, expected.senders, "senders {n}");
-            assert_eq!(reader.receipts(&snapshot, n).await.unwrap(), expected.receipts, "receipts {n}");
-            assert_eq!(reader.block_number(&snapshot, expected.hash).await.unwrap(), Some(n), "b‖ {n}");
+            assert_eq!(
+                reader.receipts(&snapshot, n).await.unwrap(),
+                expected.receipts,
+                "receipts {n}"
+            );
+            assert_eq!(
+                reader.block_number(&snapshot, expected.hash).await.unwrap(),
+                Some(n),
+                "b‖ {n}"
+            );
             for (i, tx) in expected.transactions.iter().enumerate() {
                 assert_eq!(
                     reader.transaction_location(&snapshot, tx.tx_hash()).await.unwrap(),
@@ -597,20 +708,34 @@ mod tests {
             }
         }
         let err = reader.block(&snapshot, 12).await.unwrap_err();
-        assert!(matches!(err, HistoryStoreError::Unavailable { .. }), "above H is unavailable: {err}");
+        assert!(
+            matches!(err, HistoryStoreError::Unavailable { .. }),
+            "above H is unavailable: {err}"
+        );
     }
 
     /// Logs are found through blooms and match a direct scan of the fixture.
     #[tokio::test]
     async fn logs_match_fixture_scan() {
         let (store, fixture) = published(3).await;
-        let reader = ArchiveReader::open(store, ArchiveLayout::new("chain"), config(&fixture, CacheConfig::default()))
-            .await
-            .unwrap();
+        let reader = ArchiveReader::open(
+            store,
+            ArchiveLayout::new("chain"),
+            config(&fixture, CacheConfig::default()),
+        )
+        .await
+        .unwrap();
         let snapshot = reader.snapshot().await.unwrap();
         let topic = B256::with_last_byte(1);
         let filter = Filter::new().address(fixture.contract).event_signature(topic);
-        let logs = reader.logs(&snapshot, &filter, 2, 9).await.unwrap();
+        let blocks = reader.logs(&snapshot, &filter, 2, 9, usize::MAX).await.unwrap();
+        for group in &blocks {
+            assert!(
+                group.logs.iter().all(|log| log.block_number == group.block.header.number),
+                "each group holds only its own block's logs"
+            );
+        }
+        let logs: Vec<_> = blocks.iter().flat_map(|group| &group.logs).collect();
         let mut expected = Vec::new();
         for block in &fixture.blocks[2..=9] {
             for (i, receipt) in block.receipts.iter().enumerate() {
@@ -629,14 +754,93 @@ mod tests {
         assert_eq!(expected.len(), 5, "fixture has 5 matching logs in blocks 2..=9");
     }
 
+    /// Checks run so far across the fixture's three loaded segments.
+    async fn verification_checks(reader: &ArchiveReader, snapshot: &ArchiveSnapshot) -> u64 {
+        let mut total = 0;
+        for k in 0..3 {
+            let segment = reader.segment(snapshot, k * 4).await.unwrap();
+            total += segment.verified.checks.load(Ordering::Relaxed);
+        }
+        total
+    }
+
+    /// Repeated log reads check each hit block's transaction root, senders and receipt root
+    /// once while its segment stays loaded, and later block reads reuse those checks.
+    #[tokio::test]
+    async fn log_reads_verify_each_block_once_per_segment_load() {
+        let (store, fixture) = published(3).await;
+        let reader = ArchiveReader::open(
+            store,
+            ArchiveLayout::new("chain"),
+            config(&fixture, CacheConfig::default()),
+        )
+        .await
+        .unwrap();
+        let snapshot = reader.snapshot().await.unwrap();
+        let filter =
+            Filter::new().address(fixture.contract).event_signature(B256::with_last_byte(1));
+        let first = reader.logs(&snapshot, &filter, 0, 11, usize::MAX).await.unwrap();
+        let hits: Vec<u64> = first.iter().map(|group| group.block.header.number).collect();
+        assert!(!hits.is_empty(), "the fixture has matching logs");
+        assert_eq!(
+            verification_checks(&reader, &snapshot).await,
+            2 * hits.len() as u64,
+            "one body and one receipt check per hit block {hits:?}"
+        );
+        let second = reader.logs(&snapshot, &filter, 0, 11, usize::MAX).await.unwrap();
+        assert_eq!(second, first, "a repeated query returns the same logs");
+        for number in &hits {
+            reader.block(&snapshot, *number).await.unwrap();
+            reader.receipts(&snapshot, *number).await.unwrap();
+        }
+        assert_eq!(
+            verification_checks(&reader, &snapshot).await,
+            2 * hits.len() as u64,
+            "repeated reads of the same blocks run no new checks"
+        );
+    }
+
+    /// More matching logs than the cap fail with reth's retry range: from the requested start
+    /// to the block before the one that crossed the cap.
+    #[tokio::test]
+    async fn logs_over_the_cap_fail_with_a_retry_range() {
+        let (store, fixture) = published(3).await;
+        let reader = ArchiveReader::open(
+            store,
+            ArchiveLayout::new("chain"),
+            config(&fixture, CacheConfig::default()),
+        )
+        .await
+        .unwrap();
+        let snapshot = reader.snapshot().await.unwrap();
+        let filter = Filter::new().address(fixture.contract);
+        let all = reader.logs(&snapshot, &filter, 0, 11, usize::MAX).await.unwrap();
+        let counts: Vec<(u64, usize)> =
+            all.iter().map(|group| (group.block.header.number, group.logs.len())).collect();
+        assert!(counts.len() >= 2, "the fixture has logs in at least two blocks: {counts:?}");
+        let max = counts[0].1;
+        let err = reader.logs(&snapshot, &filter, 0, 11, max).await.unwrap_err();
+        assert!(
+            matches!(err, HistoryStoreError::TooManyLogs { max: m, from: 0, to } if m == max && to == counts[1].0 - 1),
+            "the cap is crossed at block {}, got {err}",
+            counts[1].0
+        );
+        let fits = reader.logs(&snapshot, &filter, 0, counts[1].0 - 1, max).await.unwrap();
+        assert_eq!(fits.len(), 1, "the suggested retry range fits under the cap");
+    }
+
     /// Historical account, storage and code values match the replayed fixture state at every
     /// block, through changesets or the current-state fallback.
     #[tokio::test]
     async fn historical_state_matches_fixture() {
         let (store, fixture) = published(3).await;
-        let reader = ArchiveReader::open(store, ArchiveLayout::new("chain"), config(&fixture, CacheConfig::default()))
-            .await
-            .unwrap();
+        let reader = ArchiveReader::open(
+            store,
+            ArchiveLayout::new("chain"),
+            config(&fixture, CacheConfig::default()),
+        )
+        .await
+        .unwrap();
         let snapshot = reader.snapshot().await.unwrap();
         let state_at_h = state_at(&fixture, 11);
         let mut addresses = fixture.senders.clone();
@@ -645,7 +849,12 @@ mod tests {
             let expected = &fixture.states[block as usize];
             for address in &addresses {
                 assert_eq!(
-                    reader.account_history(&snapshot, *address, block).await.unwrap().or_state(&state_at_h, *address).unwrap(),
+                    reader
+                        .account_history(&snapshot, *address, block)
+                        .await
+                        .unwrap()
+                        .or_state(&state_at_h, *address)
+                        .unwrap(),
                     expected.accounts.get(address).copied(),
                     "account {address} at {block}"
                 );
@@ -681,8 +890,14 @@ mod tests {
     }
 
     /// Opens a reader over `store` with the given cache.
-    async fn open_reader(store: &Arc<dyn ObjectStore>, fixture: &ChainFixture, cache: CacheConfig) -> ArchiveReader {
-        ArchiveReader::open(Arc::clone(store), ArchiveLayout::new("chain"), config(fixture, cache)).await.unwrap()
+    async fn open_reader(
+        store: &Arc<dyn ObjectStore>,
+        fixture: &ChainFixture,
+        cache: CacheConfig,
+    ) -> ArchiveReader {
+        ArchiveReader::open(Arc::clone(store), ArchiveLayout::new("chain"), config(fixture, cache))
+            .await
+            .unwrap()
     }
 
     /// Size in bytes of segment 0's objects.
@@ -723,11 +938,27 @@ mod tests {
             reader.block(&snapshot, n).await.unwrap();
         }
         assert_eq!(reader.cache.memory_len(), 1, "memory tier holds exactly 1 segment");
-        assert_eq!(disk_entries(&reader), vec!["seg-1", "seg-2"], "budget of 2.5 segments keeps the 2 newest");
+        assert_eq!(
+            disk_entries(&reader),
+            vec!["seg-1", "seg-2"],
+            "budget of 2.5 segments keeps the 2 newest"
+        );
         let usage = reader.cache.disk_usage().unwrap();
-        assert!(usage <= size * 2 + size / 2, "disk usage {usage} within budget {}", size * 2 + size / 2);
-        assert_eq!(reader.block(&snapshot, 1).await.unwrap().hash, fixture.blocks[1].hash, "re-fetch after eviction");
-        assert_eq!(reader.cache.downloads.load(Ordering::Relaxed), 4, "three fills plus one re-fetch");
+        assert!(
+            usage <= size * 2 + size / 2,
+            "disk usage {usage} within budget {}",
+            size * 2 + size / 2
+        );
+        assert_eq!(
+            reader.block(&snapshot, 1).await.unwrap().hash,
+            fixture.blocks[1].hash,
+            "re-fetch after eviction"
+        );
+        assert_eq!(
+            reader.cache.downloads.load(Ordering::Relaxed),
+            4,
+            "three fills plus one re-fetch"
+        );
     }
 
     /// A segment larger than the whole budget is served from a temporary directory and never
@@ -739,9 +970,16 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let reader = open_reader(&store, &fixture, disk(&dir, size - 1)).await;
         let snapshot = reader.snapshot().await.unwrap();
-        assert_eq!(reader.block(&snapshot, 2).await.unwrap().hash, fixture.blocks[2].hash, "served");
+        assert_eq!(
+            reader.block(&snapshot, 2).await.unwrap().hash,
+            fixture.blocks[2].hash,
+            "served"
+        );
         assert_eq!(reader.cache.disk_usage().unwrap(), 0, "nothing persisted");
-        assert!(!reader.cache.disk_root().unwrap().join("seg-0").exists(), "no entry for segment 0");
+        assert!(
+            !reader.cache.disk_root().unwrap().join("seg-0").exists(),
+            "no entry for segment 0"
+        );
     }
 
     /// Disk entries are namespaced by archive identity: a reader of another chain id never
@@ -753,7 +991,8 @@ mod tests {
         let reader = open_reader(&store, &fixture, disk(&dir, 1 << 30)).await;
         let snapshot = reader.snapshot().await.unwrap();
         reader.block(&snapshot, 0).await.unwrap();
-        let namespace = format!("{FIXTURE_CHAIN_ID}-{}-f{}-n4", fixture.blocks[0].hash, crate::ARCHIVE_FORMAT);
+        let namespace =
+            format!("{FIXTURE_CHAIN_ID}-{}-f{}-n4", fixture.blocks[0].hash, crate::ARCHIVE_FORMAT);
         assert_eq!(reader.cache.namespace, namespace, "namespace is chain id, genesis, format, N");
         let roots: Vec<String> = std::fs::read_dir(dir.path())
             .unwrap()
@@ -772,7 +1011,8 @@ mod tests {
             wait_get_per_call: std::time::Duration::from_millis(5),
             ..Default::default()
         };
-        let store: Arc<dyn ObjectStore> = Arc::new(object_store::throttle::ThrottledStore::new(store, throttle));
+        let store: Arc<dyn ObjectStore> =
+            Arc::new(object_store::throttle::ThrottledStore::new(store, throttle));
         let dir = tempfile::tempdir().unwrap();
         let reader = open_reader(&store, &fixture, disk(&dir, 1 << 30)).await;
         let snapshot = reader.snapshot().await.unwrap();
@@ -780,7 +1020,11 @@ mod tests {
         for (i, read) in reads.into_iter().enumerate() {
             assert_eq!(read.unwrap().hash, fixture.blocks[i % 4].hash, "read {i}");
         }
-        assert_eq!(reader.cache.downloads.load(Ordering::Relaxed), 1, "eight concurrent misses, one download");
+        assert_eq!(
+            reader.cache.downloads.load(Ordering::Relaxed),
+            1,
+            "eight concurrent misses, one download"
+        );
         assert_eq!(disk_entries(&reader), vec!["seg-0"], "one complete entry, no fill directory");
         assert!(reader.cache.fills.lock().unwrap().is_empty(), "no fill lock left behind");
     }
@@ -798,7 +1042,8 @@ mod tests {
             .unwrap()
             .map(|e| e.unwrap().path())
             .find(|p| {
-                crate::SegmentFile::object_name(&p.file_name().unwrap().to_string_lossy()).as_deref()
+                crate::SegmentFile::object_name(&p.file_name().unwrap().to_string_lossy())
+                    .as_deref()
                     == Some("account_changesets.dat")
             })
             .unwrap_or_else(|| panic!("account changeset file in {entry:?}"));
@@ -807,8 +1052,16 @@ mod tests {
         std::fs::write(&changesets, raw).unwrap();
         // A fresh reader has an empty memory tier, so it reads the disk entry.
         let fresh = open_reader(&store, &fixture, disk(&dir, 1 << 30)).await;
-        assert_eq!(fresh.block(&snapshot, 1).await.unwrap().hash, fixture.blocks[1].hash, "served after refetch");
-        assert_eq!(fresh.cache.downloads.load(Ordering::Relaxed), 1, "corrupt entry was refetched once");
+        assert_eq!(
+            fresh.block(&snapshot, 1).await.unwrap().hash,
+            fixture.blocks[1].hash,
+            "served after refetch"
+        );
+        assert_eq!(
+            fresh.cache.downloads.load(Ordering::Relaxed),
+            1,
+            "corrupt entry was refetched once"
+        );
     }
 
     /// A corrupted changeset object in the bucket is rejected by the manifest before any state
@@ -841,7 +1094,9 @@ mod tests {
         raw[last] ^= 0x01;
         store.put(&path, raw.into()).await.unwrap();
         let objects = SegmentObjects::new(Arc::clone(&store), layout.clone());
-        let index = crate::IndexWriter::open(Arc::clone(&store), &layout, test_index_options()).await.unwrap();
+        let index = crate::IndexWriter::open(Arc::clone(&store), &layout, test_index_options())
+            .await
+            .unwrap();
         let published = index.required_manifest(0).await.unwrap();
         let manifest = objects.download(&published, 4).await.unwrap().manifest(published.epoch);
         index.db.put(crate::IndexKey::manifest(0), manifest.encode()).await.unwrap();
@@ -891,14 +1146,29 @@ mod tests {
                 "{what}"
             );
         };
-        unavailable(reader.block_number(&snapshot, B256::with_last_byte(9)).await.map(|_| ()), "unknown block hash");
+        unavailable(
+            reader.block_number(&snapshot, B256::with_last_byte(9)).await.map(|_| ()),
+            "unknown block hash",
+        );
         // Review2 P2: a number-based read of a segment the view does not cover yet must not
         // reach the cache, where the absent manifest would read as a corrupt segment.
-        unavailable(reader.header(&snapshot, 5).await.map(|_| ()), "header of an uncovered segment");
+        unavailable(
+            reader.header(&snapshot, 5).await.map(|_| ()),
+            "header of an uncovered segment",
+        );
         unavailable(reader.block(&snapshot, 5).await.map(|_| ()), "block of an uncovered segment");
-        unavailable(reader.receipts(&snapshot, 5).await.map(|_| ()), "receipts of an uncovered segment");
-        unavailable(reader.transaction_location(&snapshot, B256::with_last_byte(9)).await.map(|_| ()), "unknown tx hash");
-        unavailable(reader.account_history(&snapshot, fixture.recipient, 1).await.map(|_| ()), "account history");
+        unavailable(
+            reader.receipts(&snapshot, 5).await.map(|_| ()),
+            "receipts of an uncovered segment",
+        );
+        unavailable(
+            reader.transaction_location(&snapshot, B256::with_last_byte(9)).await.map(|_| ()),
+            "unknown tx hash",
+        );
+        unavailable(
+            reader.account_history(&snapshot, fixture.recipient, 1).await.map(|_| ()),
+            "account history",
+        );
         unavailable(
             reader.storage_history(&snapshot, fixture.contract, B256::ZERO, 1).await.map(|_| ()),
             "storage history",
@@ -914,12 +1184,19 @@ mod tests {
         let last = raw.len() - 1;
         raw[last] ^= 0xff;
         store.put(&path, raw.into()).await.unwrap();
-        let reader = ArchiveReader::open(store, ArchiveLayout::new("chain"), config(&fixture, CacheConfig::default()))
-            .await
-            .unwrap();
+        let reader = ArchiveReader::open(
+            store,
+            ArchiveLayout::new("chain"),
+            config(&fixture, CacheConfig::default()),
+        )
+        .await
+        .unwrap();
         let snapshot = reader.snapshot().await.unwrap();
         let err = reader.block(&snapshot, 3).await.unwrap_err();
-        assert!(matches!(err, HistoryStoreError::CorruptSegment { segment: 0, .. }), "corrupt tx is an error: {err}");
+        assert!(
+            matches!(err, HistoryStoreError::CorruptSegment { segment: 0, .. }),
+            "corrupt tx is an error: {err}"
+        );
     }
 
     /// A reader for another chain refuses to open.
@@ -931,14 +1208,19 @@ mod tests {
         let err = ArchiveReader::open(store, ArchiveLayout::new("chain"), cfg).await.unwrap_err();
         assert_eq!(
             err.to_string(),
-            format!("catalog chain_id mismatch: expected {}, got {FIXTURE_CHAIN_ID}", FIXTURE_CHAIN_ID + 1),
+            format!(
+                "catalog chain_id mismatch: expected {}, got {FIXTURE_CHAIN_ID}",
+                FIXTURE_CHAIN_ID + 1
+            ),
             "chain id mismatch is refused"
         );
     }
 
     /// Fill directories left under the cache namespace.
     fn fill_dirs(reader: &ArchiveReader) -> Vec<String> {
-        let Some(root) = reader.cache.disk_root().filter(|root| root.exists()) else { return Vec::new() };
+        let Some(root) = reader.cache.disk_root().filter(|root| root.exists()) else {
+            return Vec::new();
+        };
         std::fs::read_dir(root)
             .unwrap()
             .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
@@ -987,10 +1269,18 @@ mod tests {
         assert!(!abandoned.exists(), "the abandoned fill is removed when the cache opens");
         assert_eq!(fill_dirs(&reader), Vec::<String>::new(), "no fill directory remains");
         let snapshot = reader.snapshot().await.unwrap();
-        assert_eq!(reader.block(&snapshot, 4).await.unwrap().hash, fixture.blocks[4].hash, "segment 1 served");
+        assert_eq!(
+            reader.block(&snapshot, 4).await.unwrap().hash,
+            fixture.blocks[4].hash,
+            "segment 1 served"
+        );
         let measured = measured_bytes(&reader);
         assert!(measured <= budget, "measured filesystem bytes {measured} within budget {budget}");
-        assert_eq!(disk_entries(&reader), vec!["seg-1"], "segment 1 admitted in place of segment 0");
+        assert_eq!(
+            disk_entries(&reader),
+            vec!["seg-1"],
+            "segment 1 admitted in place of segment 0"
+        );
     }
 
     /// Review3 P2: entries persisted under a larger budget are reconciled when the cache opens
@@ -1020,16 +1310,32 @@ mod tests {
 
         let budget = size + size / 2;
         let reader = open_reader(&store, &fixture, disk(&dir, budget)).await;
-        assert_eq!(disk_entries(&reader), vec!["seg-1"], "the least recently used entry is evicted");
+        assert_eq!(
+            disk_entries(&reader),
+            vec!["seg-1"],
+            "the least recently used entry is evicted"
+        );
         let measured = measured_bytes(&reader);
         assert!(measured <= budget, "measured filesystem bytes {measured} within budget {budget}");
         drop(reader);
 
         let reader = open_reader(&store, &fixture, disk(&dir, size - 1)).await;
-        assert_eq!(disk_entries(&reader), Vec::<String>::new(), "an entry larger than the budget is removed");
+        assert_eq!(
+            disk_entries(&reader),
+            Vec::<String>::new(),
+            "an entry larger than the budget is removed"
+        );
         let snapshot = reader.snapshot().await.unwrap();
-        assert_eq!(reader.block(&snapshot, 4).await.unwrap().hash, fixture.blocks[4].hash, "segment 1 served");
-        assert_eq!(measured_bytes(&reader), 0, "segment 1 is served ephemerally, nothing persisted");
+        assert_eq!(
+            reader.block(&snapshot, 4).await.unwrap().hash,
+            fixture.blocks[4].hash,
+            "segment 1 served"
+        );
+        assert_eq!(
+            measured_bytes(&reader),
+            0,
+            "segment 1 is served ephemerally, nothing persisted"
+        );
     }
 
     /// Review2 P2 cache lifetime: a loaded segment whose header jar is open, but whose other
@@ -1044,23 +1350,43 @@ mod tests {
         let reader = open_reader(&store, &fixture, disk(&dir, size + size / 2)).await;
         let snapshot = reader.snapshot().await.unwrap();
         let held = reader.segment(&snapshot, 0).await.unwrap();
-        assert_eq!(ArchiveReader::header_in(&held, 0).unwrap().1, fixture.blocks[0].hash, "header read first");
+        assert_eq!(
+            ArchiveReader::header_in(&held, 0).unwrap().1,
+            fixture.blocks[0].hash,
+            "header read first"
+        );
 
-        assert_eq!(reader.block(&snapshot, 4).await.unwrap().hash, fixture.blocks[4].hash, "segment 1 served");
+        assert_eq!(
+            reader.block(&snapshot, 4).await.unwrap().hash,
+            fixture.blocks[4].hash,
+            "segment 1 served"
+        );
         assert_eq!(reader.cache.memory_len(), 1, "segment 0 left the memory tier");
         assert_eq!(disk_entries(&reader), vec!["seg-0"], "the leased entry was not evicted");
         let usage = reader.cache.disk_usage().unwrap();
         assert!(usage <= size + size / 2, "disk usage {usage} within budget {}", size + size / 2);
 
         let body = ArchiveReader::body_in(&held, 1).unwrap();
-        let txs = held.provider.transactions_by_tx_range(body.first_tx_num..body.next_tx_num()).unwrap();
-        assert_eq!(txs, fixture.blocks[1].transactions, "transactions read after eviction pressure");
+        let txs =
+            held.provider.transactions_by_tx_range(body.first_tx_num..body.next_tx_num()).unwrap();
+        assert_eq!(
+            txs, fixture.blocks[1].transactions,
+            "transactions read after eviction pressure"
+        );
         let mut expected = fixture.blocks[1].account_changes.clone();
         expected.sort_by_key(|change| change.address);
-        assert_eq!(held.provider.account_block_changeset(1).unwrap(), expected, "changesets read after eviction pressure");
+        assert_eq!(
+            held.provider.account_block_changeset(1).unwrap(),
+            expected,
+            "changesets read after eviction pressure"
+        );
 
         drop(held);
-        assert_eq!(reader.block(&snapshot, 0).await.unwrap().hash, fixture.blocks[0].hash, "segment 0 reloads");
+        assert_eq!(
+            reader.block(&snapshot, 0).await.unwrap().hash,
+            fixture.blocks[0].hash,
+            "segment 0 reloads"
+        );
     }
 
     /// Review2 P2 budget: a fill holds a reservation for its manifest size from before its
@@ -1081,7 +1407,11 @@ mod tests {
             gate.reached().await;
             assert_eq!(reader.cache.disk_reserved(), size, "the paused fill holds its reservation");
             let block = reader.block(&snapshot, 4).await.unwrap();
-            assert_eq!(disk_entries(&reader), Vec::<String>::new(), "segment 1 is not admitted beside it");
+            assert_eq!(
+                disk_entries(&reader),
+                Vec::<String>::new(),
+                "segment 1 is not admitted beside it"
+            );
             gate.release();
             block
         };
@@ -1115,7 +1445,11 @@ mod tests {
         assert!(reader.cache.fills.lock().unwrap().is_empty(), "no fill lock left behind");
         assert_eq!(reader.cache.disk_reserved(), 0, "reservation released");
         assert_eq!(fill_dirs(&reader), Vec::<String>::new(), "no fill directory left behind");
-        assert_eq!(reader.block(&snapshot, 0).await.unwrap().hash, fixture.blocks[0].hash, "next read fills");
+        assert_eq!(
+            reader.block(&snapshot, 0).await.unwrap().hash,
+            fixture.blocks[0].hash,
+            "next read fills"
+        );
         assert_eq!(disk_entries(&reader), vec!["seg-0"], "the retry published the entry");
     }
 

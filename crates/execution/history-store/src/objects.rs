@@ -113,7 +113,11 @@ impl SegmentObjects {
     /// Deletes the objects of segment `k` under every epoch older than `epoch`, returning how
     /// many were deleted. Only the owner of `epoch` calls this, for a segment above `H`, so no
     /// published manifest references the deleted directories.
-    pub async fn delete_older_epochs(&self, k: u64, epoch: u64) -> Result<usize, HistoryStoreError> {
+    pub async fn delete_older_epochs(
+        &self,
+        k: u64,
+        epoch: u64,
+    ) -> Result<usize, HistoryStoreError> {
         let mut deleted = 0;
         for meta in self.list(k).await? {
             if self.layout.parse_object(&meta.location).is_some_and(|(_, older)| older < epoch) {

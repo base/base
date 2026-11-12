@@ -158,8 +158,16 @@ impl ArchiveBlock {
                 transactions,
                 senders: self.senders.clone(),
                 receipts: Self::decode_rows(&self.receipts, "receipt", block)?,
-                account_changes: Self::decode_rows(&self.account_changes, "account changeset", block)?,
-                storage_changes: Self::decode_rows(&self.storage_changes, "storage changeset", block)?,
+                account_changes: Self::decode_rows(
+                    &self.account_changes,
+                    "account changeset",
+                    block,
+                )?,
+                storage_changes: Self::decode_rows(
+                    &self.storage_changes,
+                    "storage changeset",
+                    block,
+                )?,
             },
         ))
     }

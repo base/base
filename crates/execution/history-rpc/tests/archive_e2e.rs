@@ -20,23 +20,35 @@ use base_execution_chainspec::BaseChainSpec;
 use base_execution_eip8130_rpc_node::{Eip8130RpcExtension, TransactionCountOwner};
 use base_history_rpc::{
     ArchiveEthConfig, ArchiveEthExtension, ArchiveExportConfig, ArchiveExportExtension,
-    ArchiveExportLimits, ArchiveSource, DEFAULT_STARTUP_CHECK_TIMEOUT,
+    ArchiveExportLimits, ArchiveSource, DEFAULT_MAX_CONCURRENT_RANGES,
+    DEFAULT_STARTUP_CHECK_TIMEOUT,
 };
 use base_history_store::{
     ArchiveLayout, ArchiveWriter, CacheConfig, Catalog, CatalogStore, ChainIdentity, ChunkVerifier,
-    DEFAULT_MAX_RANGE_BLOCKS, DEFAULT_MAX_RANGE_BYTES, RpcChainSource, SourcePool, StepOutcome,
-    WriterConfig, test_utils::test_index_options,
+    DEFAULT_MAX_RANGE_BLOCKS, DEFAULT_MAX_RANGE_BYTES, DEFAULT_SNAPSHOT_TTL, RpcChainSource,
+    SourcePool, StepOutcome, WriterConfig,
+    test_utils::{GateOp, GatedStore, test_index_options},
 };
-use base_node_runner::test_utils::{L1_BLOCK_INFO_DEPOSIT_TX, LocalNodeRetention, TestHarness};
+use base_node_runner::test_utils::{
+    DEFAULT_JWT_SECRET, L1_BLOCK_INFO_DEPOSIT_TX, LocalNodeRetention, TestHarness,
+};
 use base_protocol::BaseTimeUpdateTx;
-use base_test_utils::{Account, build_test_genesis, build_test_genesis_cobalt, build_test_genesis_everest};
+use base_test_utils::{
+    Account, build_test_genesis, build_test_genesis_cobalt, build_test_genesis_everest,
+};
 use object_store::{ObjectStore, RetryConfig, aws::AmazonS3Builder, memory::InMemory};
 use reth_chainspec::EthChainSpec;
 use reth_node_core::args::{PruningArgs, StaticFilesArgs};
+use reth_rpc_layer::JwtSecret;
 use reth_storage_api::{
     AccountReader, BlockNumReader, BlockReader, StateProviderFactory, errors::ProviderError,
 };
 use serde_json::{Value, json};
+
+/// JSON-RPC "method not found".
+const METHOD_NOT_FOUND: i64 = -32601;
+/// EIP-4444 "pruned history" error code.
+const PRUNED_HISTORY: i64 = 4444;
 
 /// Blocks per archive segment.
 const BLOCKS_PER_SEGMENT: u64 = 8;
@@ -50,9 +62,8 @@ const TIP: u64 = 96;
 const E2E_TIMEOUT: Duration = Duration::from_secs(240);
 
 /// Runtime code: `sstore(0, calldataload(0)); log1(0, 0, calldataload(0))`.
-const RUNTIME: [u8; 13] = [
-    0x60, 0x00, 0x35, 0x80, 0x60, 0x00, 0x55, 0x60, 0x00, 0x60, 0x00, 0xa1, 0x00,
-];
+const RUNTIME: [u8; 13] =
+    [0x60, 0x00, 0x35, 0x80, 0x60, 0x00, 0x55, 0x60, 0x00, 0x60, 0x00, 0xa1, 0x00];
 
 /// Init code returning [`RUNTIME`].
 fn init_code() -> Bytes {
@@ -68,7 +79,8 @@ fn init_code() -> Bytes {
 /// pre-pruning answers well defined.
 fn l1_info_deposit(number: u64) -> Bytes {
     let BaseTxEnvelope::Deposit(deposit) =
-        BaseTxEnvelope::decode_2718(&mut L1_BLOCK_INFO_DEPOSIT_TX.as_ref()).expect("deposit decodes")
+        BaseTxEnvelope::decode_2718(&mut L1_BLOCK_INFO_DEPOSIT_TX.as_ref())
+            .expect("deposit decodes")
     else {
         panic!("L1 info transaction must be a deposit");
     };
@@ -160,7 +172,9 @@ async fn drain(writer: &ArchiveWriter) -> u64 {
         match writer.step().await.expect("writer step") {
             StepOutcome::Published { .. } => published += 1,
             StepOutcome::NotReady { .. } => return published,
-            StepOutcome::Discarded { segment } => panic!("single writer discarded segment {segment}"),
+            StepOutcome::Discarded { segment } => {
+                panic!("single writer discarded segment {segment}")
+            }
         }
     }
 }
@@ -189,29 +203,10 @@ async fn unequal_retention_serves_refused_state_from_archive() {
 /// Body of the parity tests: builds a chain on a node with `retention`, archives it, and
 /// compares every request before and after pruning.
 async fn pruned_node_parity(retention: LocalNodeRetention) {
-    let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-    let layout = ArchiveLayout::new("chain");
+    let gated = GatedStore::new(Arc::new(InMemory::new()));
+    let store: Arc<dyn ObjectStore> = Arc::new(gated.clone());
     let chain_spec = Arc::new(BaseChainSpec::from_genesis(build_test_genesis()));
-    let harness = TestHarness::builder()
-        .with_chain_spec(Arc::clone(&chain_spec))
-        .with_retention(retention)
-        .with_ext::<ArchiveExportExtension>(ArchiveExportConfig {
-            enabled: true,
-            limits: ArchiveExportLimits {
-                max_range_blocks: DEFAULT_MAX_RANGE_BLOCKS,
-                max_range_bytes: DEFAULT_MAX_RANGE_BYTES,
-            },
-        })
-        .with_ext::<ArchiveEthExtension>(Some(ArchiveEthConfig {
-            source: ArchiveSource { store: Arc::clone(&store), layout: layout.clone() },
-            cache: CacheConfig::default(),
-            index: test_index_options(),
-            startup_check_timeout: DEFAULT_STARTUP_CHECK_TIMEOUT,
-        }))
-        .with_ext::<Eip8130RpcExtension>(TransactionCountOwner::Archive)
-        .build()
-        .await
-        .expect("node starts");
+    let harness = archive_node(Arc::clone(&store), Arc::clone(&chain_spec), retention).await;
     let client = harness.rpc_client().expect("rpc client");
 
     // Blocks 1..=ACTIVE_BLOCKS: a deployment, value transfers and contract calls that write
@@ -267,23 +262,7 @@ async fn pruned_node_parity(retention: LocalNodeRetention) {
     }
 
     // Archive the chain while it grows past the retention window.
-    let writer = ArchiveWriter::open(
-        Arc::clone(&store),
-        layout,
-        ChainIdentity {
-            chain_id: chain_spec.chain().id(),
-            genesis_hash: chain_spec.genesis_hash(),
-            blocks_per_segment: BLOCKS_PER_SEGMENT,
-        },
-        SourcePool::new(vec![Arc::new(
-            RpcChainSource::new(harness.rpc_url(), Duration::from_secs(10)).expect("source"),
-        )]),
-        ChunkVerifier::new(Arc::clone(&chain_spec)),
-        WriterConfig { chunk_blocks: BLOCKS_PER_SEGMENT, idle_interval: Duration::from_millis(50) },
-        test_index_options(),
-    )
-    .await
-    .expect("writer opens");
+    let writer = archive_writer(Arc::clone(&store), &chain_spec, &harness).await;
     let mut published = drain(&writer).await;
     while harness.latest_block().number < TIP {
         harness.advance_chain(BLOCKS_PER_SEGMENT).await.expect("advance");
@@ -305,7 +284,8 @@ async fn pruned_node_parity(retention: LocalNodeRetention) {
     assert!(
         matches!(
             pruned_state,
-            Err(ProviderError::StateAtBlockPruned(1) | ProviderError::InsufficientChangesets { requested: 1, .. })
+            Err(ProviderError::StateAtBlockPruned(1)
+                | ProviderError::InsufficientChangesets { requested: 1, .. })
         ),
         "state at block 1 must be pruned locally, got {pruned_state:?}"
     );
@@ -322,13 +302,169 @@ async fn pruned_node_parity(retention: LocalNodeRetention) {
 
     // `earliest` means the node's earliest block, not genesis, for archive-served state too.
     let earliest = provider.earliest_block_number().expect("earliest block");
-    assert!(earliest > ACTIVE_BLOCKS, "the active blocks are below the node's earliest block {earliest}");
+    assert!(
+        earliest > ACTIVE_BLOCKS,
+        "the active blocks are below the node's earliest block {earliest}"
+    );
     let alice = Account::Alice.address();
     let by_tag = call(&client, "eth_getBalance", json!([alice, "earliest"])).await;
-    let by_number = call(&client, "eth_getBalance", json!([alice, format!("0x{earliest:x}")])).await;
+    let by_number =
+        call(&client, "eth_getBalance", json!([alice, format!("0x{earliest:x}")])).await;
     let genesis = call(&client, "eth_getBalance", json!([alice, "0x0"])).await;
     assert_eq!(by_tag, by_number, "earliest resolves to block {earliest}");
     assert_ne!(by_tag, genesis, "earliest is not genesis once bodies are pruned");
+
+    // A block above the node's head is never looked up in the archive, even on a pruned node.
+    let mut gate = gated.arm(GateOp::Any, "");
+    gate.release();
+    let head = harness.latest_block().number;
+    let next =
+        call(&client, "eth_getBlockByNumber", json!([format!("0x{:x}", head + 1), false])).await;
+    assert!(next.is_null(), "block {} does not exist yet, got {next}", head + 1);
+    assert!(
+        gate.reached.take().expect("gate receiver").try_recv().is_err(),
+        "a block above the head must not reach the archive"
+    );
+
+    // The export is not served on the public HTTP server.
+    for (method, params) in
+        [("archive_status", json!([])), ("archive_getBlockRange", json!([1, 1]))]
+    {
+        let err = client
+            .request::<_, Value>(method, params)
+            .await
+            .expect_err("archive_ must not be on the public server");
+        assert_eq!(
+            err.as_error_resp().map(|payload| payload.code),
+            Some(METHOD_NOT_FOUND),
+            "{method} on public HTTP must be method-not-found, got {err}"
+        );
+    }
+}
+
+/// Starts a node with the `archive_` export (authenticated server only), `retention`, and the
+/// archive-backed `eth_` reads over `store`.
+async fn archive_node(
+    store: Arc<dyn ObjectStore>,
+    chain_spec: Arc<BaseChainSpec>,
+    retention: LocalNodeRetention,
+) -> TestHarness {
+    TestHarness::builder()
+        .with_chain_spec(chain_spec)
+        .with_retention(retention)
+        .with_ext::<ArchiveExportExtension>(ArchiveExportConfig {
+            enabled: true,
+            limits: ArchiveExportLimits {
+                max_range_blocks: DEFAULT_MAX_RANGE_BLOCKS,
+                max_range_bytes: DEFAULT_MAX_RANGE_BYTES,
+                max_concurrent_ranges: DEFAULT_MAX_CONCURRENT_RANGES,
+            },
+        })
+        .with_ext::<ArchiveEthExtension>(Some(ArchiveEthConfig {
+            source: ArchiveSource { store, layout: ArchiveLayout::new("chain") },
+            cache: CacheConfig::default(),
+            index: test_index_options(),
+            startup_check_timeout: DEFAULT_STARTUP_CHECK_TIMEOUT,
+            snapshot_ttl: DEFAULT_SNAPSHOT_TTL,
+        }))
+        .with_ext::<Eip8130RpcExtension>(TransactionCountOwner::Archive)
+        .build()
+        .await
+        .expect("node starts")
+}
+
+/// Opens a writer that reads the node's export over its JWT-authenticated RPC server.
+async fn archive_writer(
+    store: Arc<dyn ObjectStore>,
+    chain_spec: &Arc<BaseChainSpec>,
+    harness: &TestHarness,
+) -> ArchiveWriter {
+    let secret = JwtSecret::from_hex(DEFAULT_JWT_SECRET.to_string()).expect("test jwt secret");
+    let source = RpcChainSource::with_jwt(harness.auth_url(), Duration::from_secs(10), secret)
+        .expect("source");
+    ArchiveWriter::open(
+        store,
+        ArchiveLayout::new("chain"),
+        ChainIdentity {
+            chain_id: chain_spec.chain().id(),
+            genesis_hash: chain_spec.genesis_hash(),
+            blocks_per_segment: BLOCKS_PER_SEGMENT,
+        },
+        SourcePool::new(vec![Arc::new(source)]),
+        ChunkVerifier::new(Arc::clone(chain_spec)),
+        WriterConfig { chunk_blocks: BLOCKS_PER_SEGMENT, idle_interval: Duration::from_millis(50) },
+        test_index_options(),
+    )
+    .await
+    .expect("writer opens")
+}
+
+/// When archive `H` is older than the node's state history, a read of state unchanged since
+/// the requested block needs the node's state at `H`, which is pruned. The answer is the
+/// EIP-4444 code (`4444`), not an internal error (`-32603`).
+#[tokio::test(flavor = "multi_thread")]
+async fn archive_behind_node_retention_is_pruned_history_not_internal() {
+    tokio::time::timeout(E2E_TIMEOUT, async {
+        let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        let chain_spec = Arc::new(BaseChainSpec::from_genesis(build_test_genesis()));
+        let harness =
+            archive_node(Arc::clone(&store), Arc::clone(&chain_spec), short_retention()).await;
+        harness.advance_chain(BLOCKS_PER_SEGMENT * 2).await.expect("advance");
+        let writer = archive_writer(Arc::clone(&store), &chain_spec, &harness).await;
+        let published = drain(&writer).await;
+        assert_eq!(published, 2, "segments 0 and 1 end at or below finalized block 15");
+        // The node moves on without the writer until its history no longer reaches H.
+        while harness.latest_block().number < TIP {
+            harness.advance_chain(BLOCKS_PER_SEGMENT).await.expect("advance");
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let client = harness.rpc_client().expect("rpc client");
+        let untouched = Address::with_last_byte(0x77);
+        let err = client
+            .request::<_, Value>("eth_getBalance", json!([untouched, "0x1"]))
+            .await
+            .expect_err("state at H is pruned on the node");
+        assert_eq!(
+            err.as_error_resp().map(|payload| payload.code),
+            Some(PRUNED_HISTORY),
+            "an archive lagging the node's retention is pruned history, got {err}"
+        );
+    })
+    .await
+    .expect("e2e run timed out");
+}
+
+/// On a node that pruned nothing, misses (an unmined receipt, an unknown hash, a block above
+/// the head) are answered locally without any archive storage call.
+#[tokio::test(flavor = "multi_thread")]
+async fn unpruned_node_misses_never_reach_the_archive() {
+    tokio::time::timeout(E2E_TIMEOUT, async {
+        let gated = GatedStore::new(Arc::new(InMemory::new()));
+        let chain_spec = Arc::new(BaseChainSpec::from_genesis(build_test_genesis()));
+        let harness =
+            archive_node(Arc::new(gated.clone()), chain_spec, LocalNodeRetention::default()).await;
+        harness.advance_chain(2).await.expect("advance");
+        let client = harness.rpc_client().expect("rpc client");
+        let mut gate = gated.arm(GateOp::Any, "");
+        gate.release();
+        let unknown = B256::repeat_byte(0x42);
+        let head = harness.latest_block().number;
+        for (method, params) in [
+            ("eth_getTransactionReceipt", json!([unknown])),
+            ("eth_getTransactionByHash", json!([unknown])),
+            ("eth_getBlockByHash", json!([unknown, false])),
+            ("eth_getBlockByNumber", json!([format!("0x{:x}", head + 1), false])),
+        ] {
+            let value = call(&client, method, params.clone()).await;
+            assert!(value.is_null(), "{method} {params} must be null locally, got {value}");
+        }
+        assert!(
+            gate.reached.take().expect("gate receiver").try_recv().is_err(),
+            "no miss may reach archive storage on an unpruned node"
+        );
+    })
+    .await
+    .expect("test timed out");
 }
 
 /// Startup identity check: a reachable catalog for another chain fails node start; storage
@@ -341,6 +477,7 @@ async fn startup_refuses_foreign_catalog_and_tolerates_unreachable_storage() {
             cache: CacheConfig::default(),
             index: test_index_options(),
             startup_check_timeout: Duration::from_secs(5),
+            snapshot_ttl: Duration::ZERO,
         };
         let start = |store: Arc<dyn ObjectStore>| {
             TestHarness::builder()
@@ -355,7 +492,7 @@ async fn startup_refuses_foreign_catalog_and_tolerates_unreachable_storage() {
             .init(&Catalog::new(1, B256::with_last_byte(1), BLOCKS_PER_SEGMENT))
             .await
             .expect("foreign catalog");
-        let err = start(foreign).await.err().expect("a foreign catalog must fail node start");
+        let err = start(foreign).await.expect_err("a foreign catalog must fail node start");
         assert!(
             format!("{err:#}").contains("refusing foreign archive: catalog chain_id mismatch"),
             "start fails on the chain id mismatch, got {err:#}"
@@ -412,6 +549,7 @@ async fn node(genesis: Genesis, archive: bool) -> (TestHarness, RpcClient) {
                 cache: CacheConfig::default(),
                 index: test_index_options(),
                 startup_check_timeout: DEFAULT_STARTUP_CHECK_TIMEOUT,
+                snapshot_ttl: Duration::ZERO,
             }))
             .with_ext::<Eip8130RpcExtension>(TransactionCountOwner::Archive)
     } else {
@@ -437,7 +575,10 @@ async fn nonzero_nonce_key_matches_eip8130() {
             let (_plain_node, plain) = node(genesis(), false).await;
             let with_archive = call(&archive, "eth_getTransactionCount", params.clone()).await;
             let eip8130 = call(&plain, "eth_getTransactionCount", params.clone()).await;
-            assert_eq!(with_archive, eip8130, "{label}: archive override must delegate to EIP-8130");
+            assert_eq!(
+                with_archive, eip8130,
+                "{label}: archive override must delegate to EIP-8130"
+            );
             if label == "everest" {
                 assert_eq!(with_archive, json!("0x2a"), "everest: seeded channel nonce 42");
             } else {
@@ -447,7 +588,8 @@ async fn nonzero_nonce_key_matches_eip8130() {
                 );
             }
             let legacy = call(&archive, "eth_getTransactionCount", json!([alice, "latest"])).await;
-            let zero = call(&archive, "eth_getTransactionCount", json!([alice, "latest", "0x0"])).await;
+            let zero =
+                call(&archive, "eth_getTransactionCount", json!([alice, "latest", "0x0"])).await;
             assert_eq!(legacy, zero, "{label}: nonce_key 0 equals the protocol nonce");
         }
     })

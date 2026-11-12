@@ -1,7 +1,11 @@
 //! `archive-writer`: publishes finalized chain history from Base nodes into an object-store
 //! archive, retires old segments and collects orphaned objects.
 
-use std::{path::Path, sync::Arc, time::Duration};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Duration,
+};
 
 use alloy_genesis::Genesis;
 use base_execution_chainspec::BaseChainSpec;
@@ -11,6 +15,7 @@ use base_history_store::{
     RpcChainSource, SourcePool, WriterConfig,
 };
 use clap::{Parser, Subcommand};
+use reth_rpc_layer::{JwtError, JwtSecret};
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 
@@ -34,9 +39,16 @@ pub struct Args {
     #[arg(long = "archive.endpoint", env = "ARCHIVE_ENDPOINT", global = true)]
     pub archive_endpoint: Option<String>,
 
-    /// Node RPC URLs serving `archive_`; requests rotate between them.
+    /// Node authenticated RPC URLs (`--authrpc.addr`/`--authrpc.port`) serving `archive_`;
+    /// requests rotate between them.
     #[arg(long = "source", env = "ARCHIVE_SOURCES", value_delimiter = ',', global = true)]
     pub sources: Vec<String>,
+
+    /// File holding the hex JWT secret the source nodes use for `--authrpc.jwtsecret`. Without
+    /// it requests are unauthenticated, which only nodes exposing `archive_` on IPC-bridged or
+    /// test transports accept.
+    #[arg(long = "archive.jwt-secret", value_name = "PATH", global = true)]
+    pub jwt_secret: Option<PathBuf>,
 
     /// Timeout of one source request.
     #[arg(long, default_value = "30s", value_parser = humantime::parse_duration, global = true)]
@@ -91,7 +103,8 @@ impl Args {
         if let Some(spec) = BaseChainSpec::parse_chain(&self.chain) {
             return Ok(spec);
         }
-        let genesis: Genesis = serde_json::from_str(&std::fs::read_to_string(Path::new(&self.chain))?)?;
+        let genesis: Genesis =
+            serde_json::from_str(&std::fs::read_to_string(Path::new(&self.chain))?)?;
         Ok(Arc::new(BaseChainSpec::try_from_genesis(genesis)?))
     }
 
@@ -106,19 +119,47 @@ impl Args {
         }
     }
 
-    /// Opens the writer service.
-    pub async fn service(&self) -> eyre::Result<ArchiveService> {
-        let url = self.archive_url.as_deref().ok_or_else(|| eyre::eyre!("--archive.url is required"))?;
-        let archive = ArchiveStore::from_url(url, self.archive_endpoint.as_deref())?;
-        let chain_spec = self.chain_spec()?;
+    /// Builds one source per `--source`, signing requests with `--archive.jwt-secret` when set.
+    pub fn sources(&self) -> eyre::Result<Vec<Arc<dyn ChainSource>>> {
+        let secret = match &self.jwt_secret {
+            // Only read failures are described; decode errors can quote secret characters.
+            Some(path) => Some(JwtSecret::from_file(path).map_err(|err| match err {
+                JwtError::Read { source, .. } => {
+                    eyre::eyre!("reading --archive.jwt-secret {}: {source}", path.display())
+                }
+                _ => eyre::eyre!(
+                    "--archive.jwt-secret {} is not a 32-byte hex secret",
+                    path.display()
+                ),
+            })?),
+            None => {
+                warn!("no --archive.jwt-secret; source requests are unauthenticated");
+                None
+            }
+        };
+        let timeout = self.source_timeout;
         let sources = self
             .sources
             .iter()
-            .map(|url| {
-                RpcChainSource::new(url.clone(), self.source_timeout)
-                    .map(|source| Arc::new(source) as Arc<dyn ChainSource>)
+            .map(|url| -> eyre::Result<Arc<dyn ChainSource>> {
+                Ok(match secret {
+                    Some(secret) => {
+                        Arc::new(RpcChainSource::with_jwt(url.clone(), timeout, secret)?)
+                    }
+                    None => Arc::new(RpcChainSource::new(url.clone(), timeout)?),
+                })
             })
-            .collect::<Result<Vec<_>, _>>()?;
+            .collect::<eyre::Result<Vec<_>>>()?;
+        Ok(sources)
+    }
+
+    /// Opens the writer service.
+    pub async fn service(&self) -> eyre::Result<ArchiveService> {
+        let url =
+            self.archive_url.as_deref().ok_or_else(|| eyre::eyre!("--archive.url is required"))?;
+        let archive = ArchiveStore::from_url(url, self.archive_endpoint.as_deref())?;
+        let chain_spec = self.chain_spec()?;
+        let sources = self.sources()?;
         let chain = ChainIdentity {
             chain_id: chain_spec.inner.chain.id(),
             genesis_hash: chain_spec.inner.genesis_hash(),
@@ -156,7 +197,11 @@ async fn main() -> eyre::Result<()> {
         },
         Command::Gc => {
             let report = service.collect_orphans().await?;
-            info!(deleted = report.deleted.len(), kept_young = report.kept_young.len(), "orphan gc");
+            info!(
+                deleted = report.deleted.len(),
+                kept_young = report.kept_young.len(),
+                "orphan gc"
+            );
             Ok(())
         }
         Command::Prune => {
@@ -167,4 +212,51 @@ async fn main() -> eyre::Result<()> {
     };
     service.writer.index.close().await?;
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Writes `contents` to a fresh file under the temp dir and returns its path.
+    fn secret_file(name: &str, contents: &str) -> PathBuf {
+        let path =
+            std::env::temp_dir().join(format!("archive-writer-{}-{name}", std::process::id()));
+        std::fs::write(&path, contents).expect("write secret file");
+        path
+    }
+
+    /// `--archive.jwt-secret` builds authenticated sources; a malformed secret fails without
+    /// quoting the file contents.
+    #[test]
+    fn jwt_secret_flag_builds_sources_and_never_echoes_the_secret() {
+        let good = secret_file("good", &"ab".repeat(32));
+        let args = Args::try_parse_from([
+            "archive-writer",
+            "--source",
+            "http://127.0.0.1:8551,http://127.0.0.1:8552",
+            "--archive.jwt-secret",
+            good.to_str().expect("utf-8 path"),
+            "run",
+        ])
+        .expect("flags parse");
+        assert_eq!(args.sources().expect("sources build").len(), 2, "one source per url");
+
+        let secret = "zz-not-hex-secret-material-zz";
+        let bad = secret_file("bad", secret);
+        let args = Args::try_parse_from([
+            "archive-writer",
+            "--source",
+            "http://127.0.0.1:8551",
+            "--archive.jwt-secret",
+            bad.to_str().expect("utf-8 path"),
+            "run",
+        ])
+        .expect("flags parse");
+        let err = args.sources().err().expect("a malformed secret is rejected").to_string();
+        assert!(err.contains("is not a 32-byte hex secret"), "names the problem: {err}");
+        assert!(!err.contains("zz"), "never quotes the secret: {err}");
+        let _ = std::fs::remove_file(good);
+        let _ = std::fs::remove_file(bad);
+    }
 }

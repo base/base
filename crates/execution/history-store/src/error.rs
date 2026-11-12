@@ -115,6 +115,26 @@ pub enum HistoryStoreError {
         /// Source message.
         reason: String,
     },
+    /// A source is at its concurrent range limit (`4008`); the caller should try another node
+    /// or back off, not count the node as failed.
+    #[error("source {source_name} is busy: {reason}")]
+    SourceBusy {
+        /// Source name.
+        source_name: String,
+        /// Source message.
+        reason: String,
+    },
+    /// An archive log query matched more logs than one response may hold. Mirrors reth's
+    /// `QueryExceedsMaxResults`: `from..=to` is the range a retry can ask for.
+    #[error("query exceeds max results {max}, retry with the range {from}-{to}")]
+    TooManyLogs {
+        /// Response cap.
+        max: usize,
+        /// Start of the suggested retry range.
+        from: u64,
+        /// End of the suggested retry range.
+        to: u64,
+    },
     /// Another writer changed the catalog first (HTTP 412).
     #[error("catalog compare-and-swap lost the race")]
     CasConflict,

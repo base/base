@@ -8,7 +8,7 @@
 use std::time::{Duration, Instant};
 
 use chrono::Utc;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use crate::{
     ArchiveWriter, DEFAULT_MAX_SEGMENTS_PER_PASS, DEFAULT_ORPHAN_MIN_AGE, DEFAULT_RETIREMENT_GRACE,
@@ -86,10 +86,15 @@ impl ArchiveService {
         let now = Utc::now();
         let now_ms = now.timestamp_millis().max(0) as u64;
         let retired = match self.maintenance.retention {
-            Some(retention) => self.pruner.retire_older_than(&self.writer.index, retention, now_ms).await?,
+            Some(retention) => {
+                self.pruner.retire_older_than(&self.writer.index, retention, now_ms).await?
+            }
             None => Vec::new(),
         };
-        let swept = self.pruner.sweep(&self.writer.index, self.maintenance.retirement_grace, now_ms).await?;
+        let swept = self
+            .pruner
+            .sweep(&self.writer.index, self.maintenance.retirement_grace, now_ms)
+            .await?;
         let orphans = self.collect_orphans().await?;
         Ok(MaintenanceReport { retired, swept, orphans_deleted: orphans.deleted.len() })
     }
@@ -116,6 +121,10 @@ impl ArchiveService {
                 Ok(StepOutcome::NotReady { .. }) => true,
                 Err(err @ (HistoryStoreError::NoSource { .. } | HistoryStoreError::Source(_))) => {
                     warn!(error = %err, "writer stalled; retrying");
+                    true
+                }
+                Err(HistoryStoreError::SourceBusy { .. }) => {
+                    debug!("every source is busy; backing off");
                     true
                 }
                 Err(err) => return Err(err),

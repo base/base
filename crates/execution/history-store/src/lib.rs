@@ -18,8 +18,8 @@ pub use layout::ArchiveLayout;
 
 mod keys;
 pub use keys::{
-    ACCOUNT_KIND, BLOCK_TAG, HISTORY_TAG, HashedKey, IndexKey, MANIFEST_TAG, STORAGE_KIND,
-    TX_TAG, WATERMARK_KEY,
+    ACCOUNT_KIND, BLOCK_TAG, HISTORY_TAG, HashedKey, IndexKey, MANIFEST_TAG, STORAGE_KIND, TX_TAG,
+    WATERMARK_KEY,
 };
 
 mod catalog;
@@ -47,16 +47,20 @@ pub use rpc::{
 mod source;
 #[cfg(test)]
 pub use source::MockChainSource;
-pub use source::{ChainSource, DEFAULT_MAX_RESPONSE_BYTES, PoolStatus, RpcChainSource, SourcePool};
+pub use source::{
+    AuthHttpClient, ChainSource, DEFAULT_MAX_RESPONSE_BYTES, PoolStatus, RpcChainSource, SourcePool,
+};
 
 mod store;
-pub use store::ArchiveStore;
+pub use store::{ArchiveStore, StoreOptions};
 
 mod objects;
 pub use objects::{SegmentObjects, UploadReport};
 
 mod writer;
-pub use writer::{ArchiveWriter, ChainIdentity, PrepareOutcome, PreparedSegment, StepOutcome, WriterConfig};
+pub use writer::{
+    ArchiveWriter, ChainIdentity, PrepareOutcome, PreparedSegment, StepOutcome, WriterConfig,
+};
 
 mod gc;
 pub use gc::{DEFAULT_ORPHAN_MIN_AGE, GcReport, ORPHAN_WINDOW, OrphanGc};
@@ -72,11 +76,15 @@ pub use router::{ArchiveSnapshot, RangeSplit, Route};
 
 mod cache;
 pub use cache::{
-    CacheConfig, DiskLease, DiskState, FillShare, LoadedSegment, Reservation, SegmentCache, SegmentDir,
+    CacheConfig, DiskLease, DiskState, FillShare, LoadedSegment, Reservation, SegmentCache,
+    SegmentDir, SegmentVerification,
 };
 
 mod reader;
-pub use reader::{ArchiveReader, ArchivedBlock, ArchivedLog, HistoryLookup, ReaderConfig};
+pub use reader::{
+    ArchiveReader, ArchivedBlock, ArchivedBlockLogs, ArchivedLog, DEFAULT_SNAPSHOT_TTL,
+    HistoryLookup, ReaderConfig,
+};
 
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;

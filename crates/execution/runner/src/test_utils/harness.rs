@@ -165,6 +165,12 @@ impl TestHarness {
         format!("http://{}", self.node.http_api_addr)
     }
 
+    /// HTTP URL of the node's authenticated (engine) RPC server, for clients that sign
+    /// requests with [`crate::test_utils::DEFAULT_JWT_SECRET`].
+    pub fn auth_url(&self) -> String {
+        self.node.auth_url()
+    }
+
     /// Websocket URL for subscribing to JSON-RPC notifications.
     pub fn ws_url(&self) -> String {
         format!("ws://{}", self.node.ws_api_addr)

@@ -15,7 +15,11 @@
 //! `earliest`, `safe` and `finalized` mean what they mean to the node. When the archive cannot
 //! answer (`HistoryPruned`, `Unavailable`), the node's own answer is returned.
 
-use std::{future::Future, sync::Arc};
+use std::{
+    future::Future,
+    sync::{Arc, Mutex, PoisonError},
+    time::Instant,
+};
 
 use alloy_eips::{BlockId, BlockNumberOrTag};
 use alloy_primitives::{Address, B256, Bytes, U256};
@@ -33,14 +37,17 @@ use base_history_store::{
 use jsonrpsee::{
     core::{RpcResult, async_trait},
     proc_macros::rpc,
-    types::{ErrorObjectOwned, error::INTERNAL_ERROR_CODE},
+    types::{
+        ErrorObjectOwned,
+        error::{INTERNAL_ERROR_CODE, INVALID_PARAMS_CODE},
+    },
 };
 use object_store::ObjectStore;
-use reth_rpc_eth_api::{EthApiServer, EthFilterApiServer};
 use reth_prune_types::PruneSegment;
+use reth_rpc_eth_api::{EthApiServer, EthFilterApiServer};
 use reth_rpc_eth_types::EthApiError;
 use reth_storage_api::{
-    BlockIdReader, BlockNumReader, PruneCheckpointReader, StateProviderFactory,
+    BlockIdReader, BlockNumReader, PruneCheckpointReader, StateProvider, StateProviderFactory,
     errors::provider::ProviderError,
 };
 use tokio::sync::OnceCell;
@@ -135,7 +142,10 @@ impl<T> LocalEthApi for T where
 }
 
 /// The node's `eth_getLogs` handler with Base response types.
-pub trait LocalFilterApi: EthFilterApiServer<Transaction, BaseLogResponse> + Send + Sync + 'static {}
+pub trait LocalFilterApi:
+    EthFilterApiServer<Transaction, BaseLogResponse> + Send + Sync + 'static
+{
+}
 
 impl<T> LocalFilterApi for T where
     T: EthFilterApiServer<Transaction, BaseLogResponse> + Send + Sync + 'static
@@ -154,7 +164,8 @@ pub struct ArchiveSource {
 /// Lazily opened archive reader.
 ///
 /// Opening fails while the catalog is missing or unreachable; the node then keeps serving local
-/// data and the next archive-bound request tries again.
+/// data, and archive-bound requests fail fast for [`ReaderConfig::snapshot_ttl`] before the
+/// next one tries to open the reader again.
 #[derive(Debug)]
 pub struct ArchiveHandle {
     /// Archive location.
@@ -163,22 +174,46 @@ pub struct ArchiveHandle {
     pub config: ReaderConfig,
     /// The reader once opened.
     pub reader: OnceCell<ArchiveReader>,
+    /// When opening the reader last failed.
+    pub open_failed_at: Mutex<Option<Instant>>,
 }
 
 impl ArchiveHandle {
     /// Creates a handle that opens the reader on first use.
     pub fn new(source: ArchiveSource, config: ReaderConfig) -> Self {
-        Self { source, config, reader: OnceCell::new() }
+        Self { source, config, reader: OnceCell::new(), open_failed_at: Mutex::new(None) }
     }
 
     /// Startup identity check (TDD §5): reads the catalog once and fails on a reachable
     /// catalog for another chain, genesis or format. A missing catalog or unreachable storage
     /// is not an error; the reader stays lazy and retries on the first archive-bound request.
-    pub async fn check_identity(&self) -> Result<(), HistoryStoreError> {
-        let catalogs = CatalogStore::new(Arc::clone(&self.source.store), self.source.layout.clone());
+    ///
+    /// `state_retention` is the node's shortest account or storage history distance. Reads of
+    /// state unchanged since the requested block come from the node's state at archive `H`,
+    /// and `H` trails the node's head by up to a segment plus the writer's finality lag, so a
+    /// retention under two segments is logged as a misconfiguration.
+    pub async fn check_identity(
+        &self,
+        state_retention: Option<u64>,
+    ) -> Result<(), HistoryStoreError> {
+        let catalogs =
+            CatalogStore::new(Arc::clone(&self.source.store), self.source.layout.clone());
         match catalogs.load().await {
             Ok(Some(current)) => {
-                current.catalog.verify(self.config.chain_id, self.config.genesis_hash)
+                current.catalog.verify(self.config.chain_id, self.config.genesis_hash)?;
+                let blocks_per_segment =
+                    ArchiveSnapshot::from_catalog(&current.catalog)?.blocks_per_segment;
+                if let Some(retention) = state_retention
+                    && retention < 2 * blocks_per_segment
+                {
+                    warn!(
+                        retention,
+                        blocks_per_segment,
+                        "node state history retention is under two archive segments; reads of \
+                         unchanged state may find the node's state at archive H pruned"
+                    );
+                }
+                Ok(())
             }
             Ok(None) => {
                 warn!("archive catalog missing at startup; serving local data until it appears");
@@ -191,9 +226,22 @@ impl ArchiveHandle {
         }
     }
 
-    /// Returns the reader, opening it if needed.
+    /// Returns the reader, opening it if needed. After a failed open, fails with
+    /// `Unavailable` without touching storage until [`ReaderConfig::snapshot_ttl`] has passed.
     pub async fn reader(&self) -> Result<&ArchiveReader, HistoryStoreError> {
-        self.reader
+        if let Some(reader) = self.reader.get() {
+            return Ok(reader);
+        }
+        let ttl = self.config.snapshot_ttl;
+        if let Some(at) = *self.open_failed_at.lock().unwrap_or_else(PoisonError::into_inner)
+            && at.elapsed() < ttl
+        {
+            return Err(HistoryStoreError::Unavailable {
+                reason: format!("archive reader failed to open; retrying after {ttl:?}"),
+            });
+        }
+        let opened = self
+            .reader
             .get_or_try_init(|| {
                 ArchiveReader::open(
                     Arc::clone(&self.source.store),
@@ -201,7 +249,12 @@ impl ArchiveHandle {
                     self.config.clone(),
                 )
             })
-            .await
+            .await;
+        if opened.is_err() {
+            *self.open_failed_at.lock().unwrap_or_else(PoisonError::into_inner) =
+                Some(Instant::now());
+        }
+        opened
     }
 }
 
@@ -221,7 +274,24 @@ impl ArchiveRpcBoundary {
                     None::<()>,
                 )
             }
+            // Same code and message as reth's `QueryExceedsMaxResults`.
+            HistoryStoreError::TooManyLogs { .. } => {
+                ErrorObjectOwned::owned(INVALID_PARAMS_CODE, err.to_string(), None::<()>)
+            }
             err => ErrorObjectOwned::owned(INTERNAL_ERROR_CODE, err.to_string(), None::<()>),
+        }
+    }
+
+    /// Picks the answer for a state read the archive cannot serve. A node refusal of pruned
+    /// state becomes the archive's EIP-4444 error rather than reth's internal
+    /// `StateAtBlockPruned` error; a successful node answer is kept.
+    pub fn state_miss<T>(local: RpcResult<T>, err: HistoryStoreError) -> RpcResult<T> {
+        match (local, err) {
+            (
+                Ok(value),
+                HistoryStoreError::HistoryPruned { .. } | HistoryStoreError::Unavailable { .. },
+            ) => Ok(value),
+            (_, err) => Err(Self::error(err)),
         }
     }
 
@@ -234,7 +304,8 @@ impl ArchiveRpcBoundary {
     /// found that history pruned. reth converts `ProviderError::StateAtBlockPruned` into an
     /// internal error, so the node's answer is compared with that same conversion.
     pub fn is_state_pruned(err: &ErrorObjectOwned, number: u64) -> bool {
-        let expected = ErrorObjectOwned::from(EthApiError::from(ProviderError::StateAtBlockPruned(number)));
+        let expected =
+            ErrorObjectOwned::from(EthApiError::from(ProviderError::StateAtBlockPruned(number)));
         err.code() == expected.code() && err.message() == expected.message()
     }
 }
@@ -291,6 +362,17 @@ impl LocalRetention {
     pub fn answer_incomplete(&self, number: u64) -> bool {
         number < self.earliest_body || self.receipts_pruned.is_some_and(|pruned| number <= pruned)
     }
+
+    /// Whether a local miss may be history the node pruned, so the archive is worth asking.
+    /// A block number qualifies only below what the node fully holds, never above its head; a
+    /// hash (`None`) only when the node pruned any bodies or receipts. Polling for a receipt
+    /// that is not mined yet therefore never reaches the archive on an unpruned node.
+    pub fn archive_may_hold(&self, number: Option<u64>) -> bool {
+        number.map_or_else(
+            || self.earliest_body > 0 || self.receipts_pruned.is_some(),
+            |number| self.answer_incomplete(number),
+        )
+    }
 }
 
 /// Local-first, archive-on-miss implementation of [`ArchiveEthApiServer`].
@@ -308,6 +390,9 @@ pub struct ArchiveEth<Eth, F, N, P> {
     pub archive: Arc<ArchiveHandle>,
     /// Response builder.
     pub converter: ArchiveConverter,
+    /// Most logs one archive `eth_getLogs` response may hold (the node's
+    /// `--rpc.max-logs-per-response`).
+    pub max_logs_per_response: usize,
 }
 
 impl<Eth, F, N, P> ArchiveEth<Eth, F, N, P>
@@ -343,8 +428,10 @@ where
         full: bool,
         local: RpcResult<Option<BaseBlockResponse>>,
     ) -> RpcResult<Option<BaseBlockResponse>> {
+        let retention = LocalRetention::read(&self.provider);
         match &local {
-            Ok(Some(block)) if !self.local_answer_incomplete(Some(block.header.number)) => return local,
+            Ok(Some(block)) if !retention.answer_incomplete(block.header.number) => return local,
+            Ok(None) if !retention.archive_may_hold(number) => return local,
             Err(err) if !ArchiveRpcBoundary::is_pruned(err) => return local,
             _ => {}
         }
@@ -367,9 +454,15 @@ where
     }
 
     /// Whether a local answer for `number` must be replaced by the archive's
-    /// ([`LocalRetention::answer_incomplete`]).
+    /// ([`LocalRetention::answer_incomplete`]); a pending answer (`None`) never is.
     pub fn local_answer_incomplete(&self, number: Option<u64>) -> bool {
         number.is_some_and(|number| LocalRetention::read(&self.provider).answer_incomplete(number))
+    }
+
+    /// Whether a transaction or receipt the node does not know may be in the archive
+    /// ([`LocalRetention::archive_may_hold`]).
+    pub fn archive_may_hold_hash(&self) -> bool {
+        LocalRetention::read(&self.provider).archive_may_hold(None)
     }
 
     /// Picks the answer when the archive cannot serve a request the node missed: the node's
@@ -417,16 +510,18 @@ where
     where
         Fut: Future<Output = RpcResult<T>>,
     {
-        let number = block.and_then(|block| self.provider.block_number_for_id(block).ok().flatten());
-        if let Some(number) =
-            number.filter(|number| LocalRetention::read(&self.provider).state_pruned(*number, domain))
+        let number =
+            block.and_then(|block| self.provider.block_number_for_id(block).ok().flatten());
+        if let Some(number) = number
+            .filter(|number| LocalRetention::read(&self.provider).state_pruned(*number, domain))
         {
             return Err(number);
         }
         let answer = local().await;
         match (&answer, number) {
             (Err(err), Some(number))
-                if ArchiveRpcBoundary::is_pruned(err) || ArchiveRpcBoundary::is_state_pruned(err, number) =>
+                if ArchiveRpcBoundary::is_pruned(err)
+                    || ArchiveRpcBoundary::is_state_pruned(err, number) =>
             {
                 debug!(number, "node refused pruned state; serving from the archive");
                 Err(number)
@@ -440,17 +535,38 @@ where
         &self,
         address: Address,
         number: u64,
-    ) -> Result<(base_history_store::HistoryLookup<Option<reth_primitives_traits::Account>>, u64), HistoryStoreError>
-    {
+    ) -> Result<
+        (base_history_store::HistoryLookup<Option<reth_primitives_traits::Account>>, u64),
+        HistoryStoreError,
+    > {
         let reader = self.archive.reader().await?;
         let snapshot = reader.snapshot().await?;
         let lookup = reader.account_history(&snapshot, address, number).await?;
         Ok((lookup, snapshot.require_h()?))
     }
 
-    /// Opens the node's state at `H` for keys unchanged since the requested block.
-    pub fn state_at(&self, h: u64) -> Result<reth_storage_api::StateProviderBox, HistoryStoreError> {
-        Ok(self.provider.history_by_block_number(h)?)
+    /// Reads `read` from the node's state at `H` for keys unchanged since the requested block.
+    /// When the node's `domain` history no longer reaches `H` (the archive lags the node's
+    /// retention), the read is `Unavailable`, not an internal error.
+    pub fn unchanged_state<T>(
+        &self,
+        h: u64,
+        domain: StateDomain,
+        read: impl FnOnce(&dyn StateProvider) -> Result<T, HistoryStoreError>,
+    ) -> Result<T, HistoryStoreError> {
+        let lagging = || HistoryStoreError::Unavailable {
+            reason: format!("archive H {h} is older than the node's {domain:?} history retention"),
+        };
+        if LocalRetention::read(&self.provider).state_pruned(h, domain) {
+            return Err(lagging());
+        }
+        let state = self.provider.history_by_block_number(h);
+        match state.map_err(HistoryStoreError::from).and_then(|state| read(state.as_ref())) {
+            Err(HistoryStoreError::StaticFile(
+                ProviderError::StateAtBlockPruned(_) | ProviderError::InsufficientChangesets { .. },
+            )) => Err(lagging()),
+            other => other,
+        }
     }
 
     /// Account at `number` from the archive plus the node's state at `H`.
@@ -460,7 +576,7 @@ where
         number: u64,
     ) -> Result<Option<reth_primitives_traits::Account>, HistoryStoreError> {
         let (lookup, h) = self.archived_account(address, number).await?;
-        lookup.or_state(self.state_at(h)?.as_ref(), address)
+        self.unchanged_state(h, StateDomain::Account, |state| lookup.or_state(state, address))
     }
 
     /// Converts a block range bound to a number using the node's view of tags.
@@ -474,20 +590,30 @@ where
 
     /// Serves `eth_getLogs` after the node reported pruned history: `E..=H` from the archive,
     /// anything above `H` from the node.
-    pub async fn archived_logs(&self, filter: Filter) -> Result<Vec<BaseLogResponse>, ErrorObjectOwned> {
+    pub async fn archived_logs(
+        &self,
+        filter: Filter,
+    ) -> Result<Vec<BaseLogResponse>, ErrorObjectOwned> {
         let reader = self.archive.reader().await.map_err(ArchiveRpcBoundary::error)?;
         let snapshot = reader.snapshot().await.map_err(ArchiveRpcBoundary::error)?;
         let (from, to) = match filter.block_option {
             FilterBlockOption::AtBlockHash(hash) => {
-                match reader.block_number(&snapshot, hash).await.map_err(ArchiveRpcBoundary::error)? {
+                match reader
+                    .block_number(&snapshot, hash)
+                    .await
+                    .map_err(ArchiveRpcBoundary::error)?
+                {
                     Some(number) => (number, number),
-                    None => return Err(ArchiveRpcBoundary::error(HistoryStoreError::Unavailable {
-                        reason: format!("block {hash} not in archive"),
-                    })),
+                    None => {
+                        return Err(ArchiveRpcBoundary::error(HistoryStoreError::Unavailable {
+                            reason: format!("block {hash} not in archive"),
+                        }));
+                    }
                 }
             }
             FilterBlockOption::Range { from_block, to_block } => (
-                self.resolve(from_block.or(Some(BlockNumberOrTag::Earliest))).map_err(ArchiveRpcBoundary::error)?,
+                self.resolve(from_block.or(Some(BlockNumberOrTag::Earliest)))
+                    .map_err(ArchiveRpcBoundary::error)?,
                 self.resolve(to_block).map_err(ArchiveRpcBoundary::error)?,
             ),
         };
@@ -502,27 +628,24 @@ where
         if let Some((start, end)) = split.archive {
             if end - start + 1 > MAX_ARCHIVE_LOG_RANGE {
                 return Err(ErrorObjectOwned::owned(
-                    jsonrpsee::types::error::INVALID_PARAMS_CODE,
+                    INVALID_PARAMS_CODE,
                     format!("archive log range exceeds {MAX_ARCHIVE_LOG_RANGE} blocks"),
                     None::<()>,
                 ));
             }
-            let logs = reader.logs(&snapshot, &filter, start, end).await.map_err(ArchiveRpcBoundary::error)?;
-            let mut current: Option<(u64, u64, Option<u64>)> = None;
-            for log in &logs {
-                let (timestamp, timestamp_ms) = match current {
-                    Some((number, timestamp, ms)) if number == log.block_number => (timestamp, ms),
-                    _ => {
-                        let archived = self
-                            .archived_block(reader, &snapshot, log.block_number)
-                            .await
-                            .map_err(ArchiveRpcBoundary::error)?;
-                        let timestamp = archived.block.header().timestamp;
-                        current = Some((log.block_number, timestamp, archived.timestamp_ms));
-                        (timestamp, archived.timestamp_ms)
-                    }
-                };
-                out.push(ArchiveConverter::log(log, timestamp, timestamp_ms));
+            let blocks = reader
+                .logs(&snapshot, &filter, start, end, self.max_logs_per_response)
+                .await
+                .map_err(ArchiveRpcBoundary::error)?;
+            for group in &blocks {
+                let timestamp = group.block.header.timestamp;
+                let timestamp_ms = self.converter.timestamp_ms(&group.block);
+                out.extend(
+                    group
+                        .logs
+                        .iter()
+                        .map(|log| ArchiveConverter::log(log, timestamp, timestamp_ms)),
+                );
             }
         }
         if let Some((start, end)) = split.local {
@@ -566,6 +689,7 @@ where
         let local = EthApiServer::transaction_by_hash(&self.eth, hash).await;
         match &local {
             Ok(Some(tx)) if !self.local_answer_incomplete(tx.block_number) => return local,
+            Ok(None) if !self.archive_may_hold_hash() => return local,
             Err(err) if !ArchiveRpcBoundary::is_pruned(err) => return local,
             _ => {}
         }
@@ -579,7 +703,10 @@ where
     async fn transaction_receipt(&self, hash: B256) -> RpcResult<Option<BaseTransactionReceipt>> {
         let local = EthApiServer::transaction_receipt(&self.eth, hash).await;
         match &local {
-            Ok(Some(receipt)) if !self.local_answer_incomplete(receipt.inner.block_number) => return local,
+            Ok(Some(receipt)) if !self.local_answer_incomplete(receipt.inner.block_number) => {
+                return local;
+            }
+            Ok(None) if !self.archive_may_hold_hash() => return local,
             Err(err) if !ArchiveRpcBoundary::is_pruned(err) => return local,
             _ => {}
         }
@@ -601,7 +728,9 @@ where
 
     async fn balance(&self, address: Address, block: Option<BlockId>) -> RpcResult<U256> {
         let number = match self
-            .local_state(block, StateDomain::Account, || EthApiServer::balance(&self.eth, address, block))
+            .local_state(block, StateDomain::Account, || {
+                EthApiServer::balance(&self.eth, address, block)
+            })
             .await
         {
             Ok(local) => return local,
@@ -609,7 +738,10 @@ where
         };
         match self.account_at(address, number).await {
             Ok(account) => Ok(account.map(|account| account.balance).unwrap_or_default()),
-            Err(err) => Self::miss(EthApiServer::balance(&self.eth, address, block).await, err),
+            Err(err) => ArchiveRpcBoundary::state_miss(
+                EthApiServer::balance(&self.eth, address, block).await,
+                err,
+            ),
         }
     }
 
@@ -634,14 +766,17 @@ where
             let snapshot = reader.snapshot().await?;
             let lookup = reader.storage_history(&snapshot, address, key, number).await?;
             let h = snapshot.require_h()?;
-            lookup.or_state(self.state_at(h)?.as_ref(), address, key)
+            self.unchanged_state(h, StateDomain::Storage, |state| {
+                lookup.or_state(state, address, key)
+            })
         }
         .await;
         match value {
             Ok(value) => Ok(B256::from(value)),
-            Err(err) => {
-                Self::miss(EthApiServer::storage_at(&self.eth, address, slot, block).await, err)
-            }
+            Err(err) => ArchiveRpcBoundary::state_miss(
+                EthApiServer::storage_at(&self.eth, address, slot, block).await,
+                err,
+            ),
         }
     }
 
@@ -671,15 +806,18 @@ where
         };
         match self.account_at(address, number).await {
             Ok(account) => Ok(U256::from(account.map(|account| account.nonce).unwrap_or_default())),
-            Err(err) => {
-                Self::miss(EthApiServer::transaction_count(&self.eth, address, block).await, err)
-            }
+            Err(err) => ArchiveRpcBoundary::state_miss(
+                EthApiServer::transaction_count(&self.eth, address, block).await,
+                err,
+            ),
         }
     }
 
     async fn code(&self, address: Address, block: Option<BlockId>) -> RpcResult<Bytes> {
         let number = match self
-            .local_state(block, StateDomain::Account, || EthApiServer::get_code(&self.eth, address, block))
+            .local_state(block, StateDomain::Account, || {
+                EthApiServer::get_code(&self.eth, address, block)
+            })
             .await
         {
             Ok(local) => return local,
@@ -687,12 +825,17 @@ where
         };
         let code = async {
             let (lookup, h) = self.archived_account(address, number).await?;
-            lookup.code_or_state(self.state_at(h)?.as_ref(), address)
+            self.unchanged_state(h, StateDomain::Account, |state| {
+                lookup.code_or_state(state, address)
+            })
         }
         .await;
         match code {
             Ok(code) => Ok(code),
-            Err(err) => Self::miss(EthApiServer::get_code(&self.eth, address, block).await, err),
+            Err(err) => ArchiveRpcBoundary::state_miss(
+                EthApiServer::get_code(&self.eth, address, block).await,
+                err,
+            ),
         }
     }
 }
@@ -705,13 +848,27 @@ mod tests {
     /// reads local and vice versa.
     #[test]
     fn state_routing_is_per_domain() {
-        let storage_only = LocalRetention { storage_history_pruned: Some(100), ..Default::default() };
+        let storage_only =
+            LocalRetention { storage_history_pruned: Some(100), ..Default::default() };
         assert!(!storage_only.state_pruned(50, StateDomain::Account), "account history is local");
-        assert!(storage_only.state_pruned(50, StateDomain::Storage), "storage history is pruned at 50");
-        assert!(storage_only.state_pruned(100, StateDomain::Storage), "checkpoint block itself is pruned");
-        assert!(!storage_only.state_pruned(101, StateDomain::Storage), "101 is above the checkpoint");
-        let account_only = LocalRetention { account_history_pruned: Some(100), ..Default::default() };
-        assert!(account_only.state_pruned(50, StateDomain::Account), "account history is pruned at 50");
+        assert!(
+            storage_only.state_pruned(50, StateDomain::Storage),
+            "storage history is pruned at 50"
+        );
+        assert!(
+            storage_only.state_pruned(100, StateDomain::Storage),
+            "checkpoint block itself is pruned"
+        );
+        assert!(
+            !storage_only.state_pruned(101, StateDomain::Storage),
+            "101 is above the checkpoint"
+        );
+        let account_only =
+            LocalRetention { account_history_pruned: Some(100), ..Default::default() };
+        assert!(
+            account_only.state_pruned(50, StateDomain::Account),
+            "account history is pruned at 50"
+        );
         assert!(!account_only.state_pruned(50, StateDomain::Storage), "storage history is local");
     }
 
@@ -719,7 +876,8 @@ mod tests {
     /// the receipts carrying deposit fields are pruned.
     #[test]
     fn receipt_only_pruning_makes_local_answers_incomplete() {
-        let receipts_only = LocalRetention { earliest_body: 0, receipts_pruned: Some(40), ..Default::default() };
+        let receipts_only =
+            LocalRetention { earliest_body: 0, receipts_pruned: Some(40), ..Default::default() };
         assert!(receipts_only.answer_incomplete(40), "body local but receipts pruned at 40");
         assert!(!receipts_only.answer_incomplete(41), "receipts kept from 41");
         let bodies = LocalRetention { earliest_body: 10, ..Default::default() };
@@ -731,17 +889,73 @@ mod tests {
     /// requested block only; other internal errors are not.
     #[test]
     fn state_pruned_refusal_is_recognised() {
-        let refusal = ErrorObjectOwned::from(EthApiError::from(ProviderError::StateAtBlockPruned(7)));
+        let refusal =
+            ErrorObjectOwned::from(EthApiError::from(ProviderError::StateAtBlockPruned(7)));
         assert!(ArchiveRpcBoundary::is_state_pruned(&refusal, 7), "refusal at the requested block");
         assert!(!ArchiveRpcBoundary::is_state_pruned(&refusal, 8), "a refusal for another block");
         let other = ErrorObjectOwned::from(EthApiError::from(ProviderError::BestBlockNotFound));
         assert!(!ArchiveRpcBoundary::is_state_pruned(&other, 7), "another internal error");
     }
 
+    /// A miss goes to the archive only for history the node pruned: never for a block above
+    /// what the node fully holds, and for hashes only once the node pruned bodies or receipts.
+    #[test]
+    fn misses_reach_the_archive_only_for_pruned_history() {
+        let unpruned = LocalRetention::default();
+        assert!(!unpruned.archive_may_hold(None), "unknown hash on an unpruned node stays local");
+        assert!(!unpruned.archive_may_hold(Some(1_000)), "head + 1 on an unpruned node");
+        let bodies = LocalRetention { earliest_body: 10, ..Default::default() };
+        assert!(bodies.archive_may_hold(None), "a hash may name a pruned block");
+        assert!(bodies.archive_may_hold(Some(9)), "block 9 is pruned");
+        assert!(!bodies.archive_may_hold(Some(10)), "block 10 is local");
+        assert!(!bodies.archive_may_hold(Some(1_000)), "head + 1 never goes to the archive");
+        let receipts = LocalRetention { receipts_pruned: Some(5), ..Default::default() };
+        assert!(receipts.archive_may_hold(None), "receipt pruning alone qualifies hashes");
+        assert!(receipts.archive_may_hold(Some(5)), "receipts pruned at 5");
+        assert!(!receipts.archive_may_hold(Some(6)), "receipts kept from 6");
+    }
+
+    /// A state read the archive cannot complete because the node's state at `H` is pruned
+    /// answers with the EIP-4444 code, not reth's internal `StateAtBlockPruned` error; a
+    /// successful node answer is kept and other archive failures stay internal.
+    #[test]
+    fn unresolvable_state_reads_are_pruned_history() {
+        let refusal: RpcResult<U256> =
+            Err(ErrorObjectOwned::from(EthApiError::from(ProviderError::StateAtBlockPruned(1))));
+        assert_eq!(refusal.as_ref().unwrap_err().code(), INTERNAL_ERROR_CODE, "reth's refusal");
+        let lagging = || HistoryStoreError::Unavailable { reason: "archive H 15".to_string() };
+        let answer = ArchiveRpcBoundary::state_miss(refusal, lagging()).unwrap_err();
+        assert_eq!(answer.code(), EthRpcErrorCode::PrunedHistory.code(), "becomes 4444");
+        let kept = ArchiveRpcBoundary::state_miss(Ok(U256::from(7)), lagging());
+        assert_eq!(kept.unwrap(), U256::from(7), "a node answer is kept");
+        let corrupt = ArchiveRpcBoundary::state_miss(
+            Ok(U256::from(7)),
+            HistoryStoreError::Index { reason: "bad".to_string() },
+        );
+        assert_eq!(corrupt.unwrap_err().code(), INTERNAL_ERROR_CODE, "corruption is internal");
+    }
+
+    /// The archive log cap keeps reth's `QueryExceedsMaxResults` code and message.
+    #[test]
+    fn too_many_logs_matches_reth() {
+        let err = ArchiveRpcBoundary::error(HistoryStoreError::TooManyLogs {
+            max: 2,
+            from: 100,
+            to: 101,
+        });
+        assert_eq!(err.code(), INVALID_PARAMS_CODE, "invalid params, as reth");
+        assert_eq!(
+            err.message(),
+            "query exceeds max results 2, retry with the range 100-101",
+            "reth's message"
+        );
+    }
+
     /// Only missing-history archive errors keep the EIP-4444 code.
     #[test]
     fn archive_errors_map_once_at_the_boundary() {
-        let pruned = ArchiveRpcBoundary::error(HistoryStoreError::HistoryPruned { block: 1, earliest: 8 });
+        let pruned =
+            ArchiveRpcBoundary::error(HistoryStoreError::HistoryPruned { block: 1, earliest: 8 });
         assert_eq!(pruned.code(), EthRpcErrorCode::PrunedHistory.code(), "pruned keeps 4444");
         assert!(ArchiveRpcBoundary::is_pruned(&pruned), "recognised as pruned");
         let corrupt = ArchiveRpcBoundary::error(HistoryStoreError::CorruptSegment {

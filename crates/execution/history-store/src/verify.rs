@@ -244,7 +244,7 @@ mod tests {
     /// Returns a verifier and a 9-block fixture.
     fn setup() -> (ChunkVerifier, ChainFixture) {
         let fixture = ChainFixture::new(9, 2);
-        (ChunkVerifier::new(fixture.chain_spec.clone()), fixture)
+        (ChunkVerifier::new(Arc::clone(&fixture.chain_spec)), fixture)
     }
 
     /// A correct chunk verifies and decodes to the original blocks.

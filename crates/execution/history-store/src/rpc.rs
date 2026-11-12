@@ -13,10 +13,10 @@ use crate::ArchiveBlock;
 
 /// Default cap on blocks per `archive_getBlockRange` call.
 pub const DEFAULT_MAX_RANGE_BLOCKS: u64 = 8192;
-/// Default cap on payload bytes per `archive_getBlockRange` call (64 MiB).
+/// Default cap on payload bytes per `archive_getBlockRange` call (64 `MiB`).
 ///
 /// Deviation from the TDD's 256 MB: the cap counts raw payload bytes, but the response is hex
-/// JSON (about 2x), and reth's default RPC response limit is 160 MiB. 64 MiB keeps a full range
+/// JSON (about 2x), and reth's default RPC response limit is 160 `MiB`. 64 `MiB` keeps a full range
 /// under that limit.
 pub const DEFAULT_MAX_RANGE_BYTES: u64 = 64 * 1024 * 1024;
 
@@ -103,6 +103,12 @@ pub enum ArchiveRpcError {
         /// Block whose changesets are missing.
         block: u64,
     },
+    /// The node is already serving its concurrent range limit; retry later or elsewhere.
+    #[error("archive export busy: {max} ranges in flight")]
+    Busy {
+        /// Concurrent range limit.
+        max: usize,
+    },
     /// Provider failure.
     #[error("internal error: {0}")]
     Internal(String),
@@ -123,6 +129,8 @@ impl ArchiveRpcError {
     pub const NOT_FOUND: i32 = 4006;
     /// JSON-RPC error code of `ChangesetsUnavailable`.
     pub const CHANGESETS_UNAVAILABLE: i32 = 4007;
+    /// JSON-RPC error code of `Busy`.
+    pub const BUSY: i32 = 4008;
     /// JSON-RPC error code of `Internal`.
     pub const INTERNAL: i32 = -32603;
 
@@ -136,6 +144,7 @@ impl ArchiveRpcError {
             Self::InvalidRange { .. } => Self::INVALID_RANGE,
             Self::NotFound { .. } => Self::NOT_FOUND,
             Self::ChangesetsUnavailable { .. } => Self::CHANGESETS_UNAVAILABLE,
+            Self::Busy { .. } => Self::BUSY,
             Self::Internal(_) => Self::INTERNAL,
         }
     }
@@ -145,7 +154,8 @@ impl From<ArchiveRpcError> for ErrorObjectOwned {
     fn from(err: ArchiveRpcError) -> Self {
         let message = err.to_string();
         match &err {
-            ArchiveRpcError::NotFinalized { bounds, .. } | ArchiveRpcError::Pruned { bounds, .. } => {
+            ArchiveRpcError::NotFinalized { bounds, .. }
+            | ArchiveRpcError::Pruned { bounds, .. } => {
                 ErrorObject::owned(err.code(), message, Some(*bounds))
             }
             _ => ErrorObject::owned::<()>(err.code(), message, None),

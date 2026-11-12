@@ -8,7 +8,7 @@ Both are `BaseNodeExtension`s, installed by `base-execution-cli` from `--archive
 
 ## Export (`archive_`, TDD §3)
 
-`ArchiveExportExtension` is enabled by `--archive.enable`. It serves two methods:
+`ArchiveExportExtension` is enabled by `--archive.enable`. It registers the namespace on the node's authenticated RPC server (`--authrpc.addr`, `--authrpc.port`, JWT from `--authrpc.jwtsecret`) and on IPC, never on the public HTTP or WebSocket servers, where a call gets `-32601` (method not found). Writers connect to the auth port with `archive-writer --archive.jwt-secret`. It serves two methods:
 - `archive_status`, which returns `{head, safe, finalized, earliestLocal, maxRangeBlocks, maxRangeBytes}`.
 - `archive_getBlockRange(from, to)`, which returns reth's own rows for each block, encoded as `ArchiveBlock`.
 
@@ -16,9 +16,13 @@ A range is rejected with a typed code when:
 - It ends above finalized (`4001`).
 - It starts below the node's earliest local block or below a prune checkpoint of an exported segment (`4002`).
 - It exceeds `--archive.max-range-blocks`, default 8192 (`4003`).
-- It exceeds `--archive.max-range-bytes`, default 64 MiB (`4004`). The TDD says 256 MB; see `base-history-store`'s deviations for why it is lower.
+- It exceeds `--archive.max-range-bytes`, default 64 `MiB` (`4004`). The TDD says 256 MB; see `base-history-store`'s deviations for why it is lower.
 
 Other failures are an invalid range (`4005`), a missing block (`4006`) and missing changesets (`4007`). Error data carries `finalized` and `earliestLocal`.
+
+At most `--archive.max-concurrent-ranges` (default 2) range calls run at once. A further call fails immediately with `4008` (busy) instead of queueing; the writer then tries its next source or backs off.
+
+**Auth port trade-off (`PoC` limitation).** The authenticated server is also the Engine API port, and the JWT that lets a writer call `archive_` also grants Engine API access (`engine_forkchoiceUpdated`, `engine_newPayload`). Expose the auth port to writers only on a private network, and treat the writer's copy of the secret like the consensus client's. The follow-up is a dedicated authenticated port for `archive_`.
 
 ## Reader routing (`eth_`, TDD §5)
 
@@ -26,14 +30,17 @@ Other failures are an invalid range (`4005`), a missing block (`4006`) and missi
 
 | Method | Local miss signal | Archive path |
 | --- | --- | --- |
-| `eth_getBlockByNumber`, `eth_getBlockByHash` | `null`, error code 4444, a block below the node's earliest block, or a block at or below the `Receipts` prune checkpoint | `b‖` for hashes, then the segment's header and transactions |
-| `eth_getTransactionByHash`, `eth_getTransactionReceipt` | Same as the block methods | `t‖`, then the segment |
-| `eth_getLogs` | Error code 4444 | The range is split at `H`: blocks at or below `H` come from header blooms and then hit receipts, and blocks above `H` go to the node's filter. The archive part is capped at `MAX_ARCHIVE_LOG_RANGE` (10,000 blocks). |
+| `eth_getBlockByNumber`, `eth_getBlockByHash` | Error code 4444, or a block below the node's earliest block or at or below the `Receipts` prune checkpoint, whether the node returned it or `null`. A `null` for a hash counts only once the node pruned any bodies or receipts. | `b‖` for hashes, then the segment's header and transactions |
+| `eth_getTransactionByHash`, `eth_getTransactionReceipt` | Same as the block methods; a `null` counts only once the node pruned bodies or receipts | `t‖`, then the segment |
+| `eth_getLogs` | Error code 4444 | The range is split at `H`: blocks at or below `H` come from header blooms and then hit receipts, and blocks above `H` go to the node's filter. The archive part is capped at `MAX_ARCHIVE_LOG_RANGE` (10,000 blocks) and at the node's `--rpc.max-logs-per-response` logs, failing like reth (`-32602`, "query exceeds max results …, retry with the range …"). |
 | `eth_getBalance`, `eth_getTransactionCount`, `eth_getCode` | The block id, resolved through the node (`earliest`, `safe`, `finalized`, hashes), is at or below the `AccountHistory` prune checkpoint | `h‖` seek to the changeset. On `Unchanged`, the value is read from the node's state at `H`. Bytecode always comes from the node. |
 | `eth_getStorageAt` | Same, against the `StorageHistory` checkpoint | Same |
 
-Pruned or unavailable archive answers fall back to the node's own answer, for state reads too. Any other archive failure becomes `INTERNAL_ERROR` and is never returned as data. Errors map to transport codes once, in `ArchiveRpcBoundary::error`:
+A miss for a block above what the node fully holds (a block above its head, an unmined receipt on an unpruned node) is answered locally and never reaches the archive. The reader reuses its catalog snapshot for `--archive.catalog-ttl` (default 2 s), fails fast for the same time after it could not open the archive, and gives up on an unreachable bucket within about 15 s (`StoreOptions::reader`).
+
+Pruned or unavailable archive answers fall back to the node's own answer for block, transaction and receipt reads. For state reads, a node refusal is replaced by the archive's 4444; only a successful node answer is kept. An `Unchanged` state read needs the node's state at archive `H`; when the node's history of that domain no longer reaches `H` (the archive lags the node's retention) the read is `Unavailable` (4444), not internal. Startup warns when the node's account or storage history distance is under two segments. Any other archive failure becomes `INTERNAL_ERROR` and is never returned as data. Errors map to transport codes once, in `ArchiveRpcBoundary`:
 - `HistoryPruned` and `Unavailable` map to 4444.
+- `TooManyLogs` maps to `-32602` with reth's message.
 - Everything else maps to internal.
 
 Responses are built by `ArchiveConverter`, using the same Base RPC types the node uses. That includes:
@@ -66,7 +73,7 @@ When the archive is on, `Eip8130RpcExtension` gets `TransactionCountOwner::Archi
 cargo test -p base-history-rpc --lib --test archive_e2e
 ```
 
-The unit tests cover per-domain state routing, receipt-only pruning, the error boundary and recognising a `StateAtBlockPruned` refusal.
+The unit tests cover per-domain state routing, receipt-only pruning, which misses may reach the archive, the error boundary (including the log cap and lagging state reads) and recognising a `StateAtBlockPruned` refusal, and the export's concurrency limit (`range_calls_beyond_the_limit_are_busy`).
 
 - **`pruned_node_serves_history_from_archive`** checks node → writer → reader parity:
   - One node serves the export and the override. Its retention is 64 blocks, with static files of 8 blocks each.
@@ -75,6 +82,10 @@ The unit tests cover per-domain state routing, receipt-only pruning, the error b
   - The test asserts that the node has pruned the block 1 body and the state at block 1.
   - Every response must equal the pre-pruning JSON exactly.
   - Afterwards, `eth_getBalance(alice, "earliest")` must equal the balance at the node's earliest block number and differ from genesis.
+  - The writer reads the export over the JWT auth port; `archive_status` and `archive_getBlockRange` on the public HTTP server return `-32601`.
+  - `eth_getBlockByNumber(head + 1)` makes no archive storage call.
+- **`archive_behind_node_retention_is_pruned_history_not_internal`**: the archive stops at `H = 15` while the node prunes past it; a balance read at block 1 of an untouched account returns 4444.
+- **`unpruned_node_misses_never_reach_the_archive`**: on a node without pruning, an unmined receipt, unknown transaction and block hashes, and `head + 1` are answered `null` with zero archive storage calls.
 - **`unequal_retention_serves_refused_state_from_archive`**: the same parity run with account history retained and storage history pruned. The node refuses account reads at old blocks although their own checkpoint is clear; every response still matches.
 - **`startup_refuses_foreign_catalog_and_tolerates_unreachable_storage`**: a reachable catalog for another chain fails `build()`; an S3 endpoint nobody listens on lets the node start and serve local reads.
 - **`nonzero_nonce_key_matches_eip8130`**: with the archive on, a non-zero `nonce_key` returns the same value as the EIP-8130 override. Before Everest it returns the same `-32602` error.
