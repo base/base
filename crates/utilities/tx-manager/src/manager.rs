@@ -1260,10 +1260,11 @@ where
     /// under its own hash. After an RPC error or no answer, such as a network
     /// error, the same signed blob version is sent again every
     /// `publish_retry_delay`, up to `publish_max_retries` times, without raising any
-    /// fee. Once a publish of a blob version got no answer, every later error but a
-    /// fee refusal returns that version as published. Every other error is
-    /// returned. Before each new attempt, a closed manager or a critical error of
-    /// `send_state`, such as an expired mempool deadline, ends the publication. Each
+    /// fee. Once a publish of a blob version got no answer, that version may be in a
+    /// mempool, so it is not replaced here any more: every later error, a fee refusal
+    /// included, returns it as published, and the send polls its receipt. Every other
+    /// error is returned. Before each new attempt, a closed manager or a critical error
+    /// of `send_state`, such as an expired mempool deadline, ends the publication. Each
     /// published blob replacement raises the fees the next blob transactions start
     /// from.
     async fn publish_version(
@@ -1276,7 +1277,8 @@ where
         let mut is_replacement = last_tx_hash.is_some();
         let mut remaining_retries = self.config.publish_max_retries;
         let mut is_retry = false;
-        // Whether a publish of the current blob version got no answer.
+        // Whether a publish of this blob version got no answer. It may then be in a mempool,
+        // so it is no longer replaced here.
         let mut unanswered = false;
         loop {
             if is_retry {
@@ -1312,11 +1314,10 @@ where
                     send_state.record_publish();
                     info!(tx_hash = %tx_hash, "blob transaction already known in mempool");
                 }
-                Err(error) if error.is_fee_rejection() => {
+                Err(error) if !unanswered && error.is_fee_rejection() => {
                     info!(error = %error, "blob transaction refused for its fees, replacing it");
                     prepared = self.replace_blob_tx(candidate, &prepared).await?;
                     is_replacement = true;
-                    unanswered = false;
                     continue;
                 }
                 Err(error @ (TxManagerError::Rpc(_) | TxManagerError::NoAnswer))
@@ -3282,13 +3283,15 @@ mod tests {
     }
 
     /// A first blob tx version whose publication got no answer is sent again as it is after
-    /// the publish retry delay. Whatever the node then answers but a fee refusal, the send
-    /// follows that version, which may be in the mempool: it confirms when the version
-    /// lands, and no fee is raised.
+    /// the publish retry delay. Whatever the node then answers, the send follows that version,
+    /// which may be in a mempool: it confirms when the version lands, and no fee is raised.
+    /// A fee refusal, as from a load-balanced backend that never saw the version, does not
+    /// replace it, or its receipt would no longer be polled.
     #[rstest]
     #[case::accepted(None)]
     #[case::already_known(Some("already known"))]
     #[case::nonce_too_low(Some("nonce too low"))]
+    #[case::refused_for_its_fees(Some("replacement transaction underpriced"))]
     fn a_blob_tx_whose_publication_got_no_answer_is_resent_and_followed(
         #[case] resend_error: Option<&'static str>,
     ) {

@@ -114,7 +114,8 @@ A blob transaction is replaced when it is not included after `resubmission_timeo
 right away when the node refuses it for its fees. After an RPC error or no answer, such
 as a network error, the same signed transaction is sent again every `publish_retry_delay`,
 up to `publish_max_retries` times, without raising any fee. Once a publish got no answer,
-that transaction is followed as published even if no resend is accepted. Doubling every fee is the minimum L1
+that transaction is followed as published even if no resend is accepted, and a fee refusal
+no longer replaces it right away. Doubling every fee is the minimum L1
 nodes accept to replace a blob transaction, so a transaction whose doubled
 `max_priority_fee_per_gas` would pass `max_priority_fee_per_gas_per_blob_upper_bound × n`
 is not replaced any more, and stays at its last fees. A fee override above that bound
