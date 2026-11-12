@@ -150,9 +150,6 @@ base_metrics::define_metrics! {
     #[describe("Time from a block's scheduled build start (its parent's timestamp) until getPayload was requested, by seal trigger")]
     #[label(name = "trigger", default = ["ready_hint", "deadline"])]
     sequencer_get_payload_offset_seconds: histogram,
-    #[describe("Time from a block's scheduled build start (its parent's timestamp) until its payload was handed to the network actor for gossip, by seal trigger")]
-    #[label(name = "trigger", default = ["ready_hint", "deadline"])]
-    sequencer_gossip_offset_seconds: histogram,
     #[describe("Frozen-payload hints from the execution layer that did not trigger a seal, by reason")]
     #[label(
         name = "reason",

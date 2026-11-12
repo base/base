@@ -33,7 +33,7 @@ use crate::{
             error::SequencerActorError,
             l1_origin::OriginSelector,
             recovery::RecoveryModeGuard,
-            seal::{PayloadSealer, SealSchedule, SealStepError, SealStepOutcome, SealTrigger},
+            seal::{PayloadSealer, SealStepError, SealStepOutcome, SealTrigger},
             shadow_funding::ShadowFunding,
         },
     },
@@ -619,18 +619,15 @@ where
         let handle_block_number = handle.block_number();
         let payload_id = handle.payload_id;
         let trigger = if handle.frozen { SealTrigger::ReadyHint } else { SealTrigger::Deadline };
-        let schedule = SealSchedule {
-            slot_start: self
-                .block_deadline(handle.attributes_with_parent.parent().block_info.number),
-            trigger,
-        };
-        let request_offset = schedule.offset();
+        // The block's build was scheduled to start at its parent's timestamp.
+        let slot_start =
+            self.block_deadline(handle.attributes_with_parent.parent().block_info.number);
+        let request_offset = SystemTime::now().duration_since(slot_start).unwrap_or(Duration::ZERO);
         match self.try_seal_handle(handle).await? {
-            Some((mut new_sealer, dur)) => {
+            Some((new_sealer, dur)) => {
                 Metrics::sequencer_seals_total(trigger.as_str()).increment(1);
                 Metrics::sequencer_get_payload_offset_seconds(trigger.as_str())
                     .record(request_offset);
-                new_sealer.schedule = Some(schedule);
                 pipeline.sealed_payload_id = Some(payload_id);
                 pipeline.last_seal_duration = dur;
                 self.sealer = Some(new_sealer);
@@ -1313,13 +1310,13 @@ mod tests {
     }
 
     /// Seals block 1, whose slot began when its parent's timestamp passed about five seconds
-    /// ago, and drives it through gossip.
+    /// ago.
     #[cfg(feature = "metrics")]
     #[rstest]
     #[case::ready_hint(true, "ready_hint", "deadline")]
     #[case::deadline(false, "deadline", "ready_hint")]
     #[tokio::test(start_paused = true)]
-    async fn seal_records_its_trigger_and_offsets_from_slot_start(
+    async fn seal_records_its_trigger_and_get_payload_offset_from_slot_start(
         #[case] hinted: bool,
         #[case] trigger: &str,
         #[case] other: &str,
@@ -1342,11 +1339,6 @@ mod tests {
         engine.expect_get_unsafe_head().times(1).return_once(move || Ok(parent));
         engine.expect_get_sealed_payload().times(1).return_once(move |_, _| Ok(sealer.envelope));
         actor.engine_client = Arc::new(engine);
-        actor
-            .unsafe_payload_gossip_client
-            .expect_schedule_execution_payload_gossip()
-            .times(1)
-            .return_once(|_| Ok(()));
         let mut ticker = ScheduledTicker::new(Duration::from_secs(2));
         let since_slot_start =
             || (UNIX_EPOCH + Duration::from_secs(slot_start)).elapsed().unwrap().as_secs_f64();
@@ -1356,13 +1348,7 @@ mod tests {
             actor.handle_payload_ready(ready, &mut pipeline, &mut ticker);
         }
         actor.handle_build_tick(&mut pipeline, &mut ticker, None).await.unwrap();
-        let sealer = actor.sealer.as_mut().expect("payload must seal");
-        for _ in ["conductor", "gossip"] {
-            sealer
-                .step(&actor.conductor, &actor.unsafe_payload_gossip_client, &actor.engine_client)
-                .await
-                .unwrap();
-        }
+        let after = since_slot_start();
 
         let metrics = snapshotter.snapshot().into_vec();
         assert_eq!(
@@ -1374,17 +1360,10 @@ mod tests {
             "sequencer_get_payload_offset_seconds",
             ("trigger", trigger),
         );
-        let gossiped =
-            recorded_samples(&metrics, "sequencer_gossip_offset_seconds", ("trigger", trigger));
-        assert_eq!((requested.len(), gossiped.len()), (1, 1));
-        // Both offsets count from the parent's timestamp, 200 ms before the block's own.
-        assert!((before..=gossiped[0]).contains(&requested[0]), "getPayload offset {requested:?}");
-        assert!(gossiped[0] <= since_slot_start(), "gossip offset {gossiped:?}");
-        for name in [
-            "sequencer_seals_total",
-            "sequencer_get_payload_offset_seconds",
-            "sequencer_gossip_offset_seconds",
-        ] {
+        assert_eq!(requested.len(), 1);
+        // The offset counts from the parent's timestamp, 200 ms before the block's own.
+        assert!((before..=after).contains(&requested[0]), "getPayload offset {requested:?}");
+        for name in ["sequencer_seals_total", "sequencer_get_payload_offset_seconds"] {
             assert_eq!(recorded(&metrics, name, ("trigger", other)), None);
         }
     }
