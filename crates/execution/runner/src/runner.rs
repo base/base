@@ -6,6 +6,7 @@ use std::{
 };
 
 use base_common_network::SharedEngineApi;
+use base_common_rpc_types_engine::PayloadReady;
 use base_execution_payload_builder::{
     RejectionCache,
     config::{BaseDAConfig, GasLimitConfig, ResourceMeteringConfig},
@@ -15,6 +16,7 @@ use eyre::{Result, eyre};
 use jsonrpsee::RpcModule;
 use reth_node_builder::{Node, NodeHandle, NodeHandleFor};
 use reth_provider::providers::BlockchainProvider;
+use tokio::sync::broadcast;
 use tracing::info;
 
 use crate::{
@@ -24,6 +26,9 @@ use crate::{
 };
 
 type StartedCallback = Box<dyn FnOnce() -> Result<()> + Send + 'static>;
+
+/// Bounds retained ready hints; consumers fall back to their seal deadline on lag.
+const PAYLOAD_READY_CAPACITY: usize = 16;
 
 /// Handle to a launched Base execution node.
 #[derive(Debug)]
@@ -35,6 +40,9 @@ pub struct LaunchedBaseNode {
     pub auth_module: RpcModule<()>,
     /// The Engine API handler, for in-process callers that want to skip JSON-RPC encoding.
     pub engine_api: SharedEngineApi,
+    /// Frozen sequencer payload hints for the in-process CL. Subscribe before starting builds.
+    /// Lag or closure must fall back to the normal seal deadline; stale hints must be ignored.
+    pub payload_ready: broadcast::Receiver<PayloadReady>,
 }
 
 /// Wraps the Base node configuration and orchestrates builder wiring.
@@ -177,6 +185,8 @@ impl<SB: PayloadServiceBuilder> BaseNodeRunner<SB> {
             started_callbacks,
         } = self;
         let mut base_node = BaseNode::new(rollup_args);
+        let (payload_ready_tx, payload_ready) = broadcast::channel(PAYLOAD_READY_CAPACITY);
+        base_node.payload_ready = Some(payload_ready_tx);
         if let Some(da_config) = da_config {
             base_node = base_node.with_da_config(da_config);
         }
@@ -221,7 +231,7 @@ impl<SB: PayloadServiceBuilder> BaseNodeRunner<SB> {
             .ok_or_else(|| eyre!("auth RPC module was not configured"))?;
         let engine_api =
             engine_api.get().cloned().ok_or_else(|| eyre!("Engine API was not built"))?;
-        Ok(LaunchedBaseNode { handle, auth_module, engine_api })
+        Ok(LaunchedBaseNode { handle, auth_module, engine_api, payload_ready })
     }
 }
 

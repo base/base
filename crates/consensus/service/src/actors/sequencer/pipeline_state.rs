@@ -2,6 +2,7 @@
 
 use std::time::{Duration, Instant};
 
+use alloy_rpc_types_engine::PayloadId;
 use base_protocol::L2BlockInfo;
 
 use crate::UnsealedPayloadHandle;
@@ -14,6 +15,9 @@ use crate::UnsealedPayloadHandle;
 pub struct BuildPipelineState {
     /// Pre-built payload awaiting sealing.
     pub next_payload_to_seal: Option<UnsealedPayloadHandle>,
+    /// Payload most recently fetched from the engine for sealing, so a hint that lost the race
+    /// to the seal deadline is told apart from one for an unknown payload.
+    pub sealed_payload_id: Option<PayloadId>,
     /// Acknowledged parent whose child build is gated on the parent's timestamp.
     pub pending_build_parent: Option<L2BlockInfo>,
     /// Duration of the most recently completed seal, used as the ticker's lead time for
