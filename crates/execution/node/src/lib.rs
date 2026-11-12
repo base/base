@@ -31,6 +31,11 @@ pub use rpc::BaseEngineApiBuilder;
 mod storage;
 pub use storage::BaseStorage;
 
+#[cfg(feature = "test-utils")]
+mod test_runtime;
+#[cfg(feature = "test-utils")]
+pub use test_runtime::TestNodeRuntime;
+
 pub mod version;
 pub use version::CLIENT_NAME;
 
