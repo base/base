@@ -1211,7 +1211,16 @@ where
         // When the scan last saw no finalization request, read before the flag so a request racing
         // the read stays inside the bound. Its age when the scan stops bounds how long
         // `getPayload` waited for the scan, including a slow transaction or iterator wait.
+        // Checked once before the first pull, so a request that arrives while the first `next()`
+        // walks past held resting transactions is bounded from the scan start instead of counted
+        // as predating the scan.
         let mut last_unrequested = None;
+        if can_finalize_early {
+            let scan_start = Instant::now();
+            if !self.cancel.is_finalization_requested() {
+                last_unrequested = Some(scan_start);
+            }
+        }
         while let Some(pooled) = best_txs.next(()) {
             info.pool_txs_yielded += 1;
             let tx = &pooled.transaction;
@@ -2589,6 +2598,61 @@ mod tests {
 
         assert_eq!(info.empty_build_reason(), None);
         assert!(info.first_inclusion_at.is_some());
+    }
+
+    /// Requests finalization while the first pull is in progress and yields nothing, like a
+    /// resting hold walk that finalization interrupts before it reaches a candidate.
+    struct FinalizeDuringFirstPull {
+        transactions: TestParkableTransactions,
+        cancel: ManuallyDrop<CancelOnDrop>,
+    }
+
+    impl PayloadTransactions for FinalizeDuringFirstPull {
+        type Transaction = PooledCandidate;
+
+        fn next(&mut self, _ctx: ()) -> Option<Self::Transaction> {
+            self.cancel.request_finalization();
+            None
+        }
+
+        fn mark_invalid(&mut self, sender: Address, nonce: u64) {
+            self.transactions.mark_invalid(sender, nonce);
+        }
+    }
+
+    impl ParkablePayloadTransactions for FinalizeDuringFirstPull {
+        type Pooled = BasePooledTransaction;
+
+        fn park_current(&mut self) {
+            self.transactions.park_current();
+        }
+
+        fn mark_current_committed(&mut self) {
+            self.transactions.mark_current_committed();
+        }
+
+        fn promote(&mut self, transaction_hash: B256) -> bool {
+            self.transactions.promote(transaction_hash)
+        }
+
+        fn discard_parked(&mut self, transaction_hash: B256) -> bool {
+            self.transactions.discard_parked(transaction_hash)
+        }
+    }
+
+    #[test]
+    fn finalization_during_first_pull_is_bounded_from_scan_start() {
+        let ctx = pool_payload_context(DENIM_TIMESTAMP);
+        let transactions = FinalizeDuringFirstPull {
+            transactions: TestParkableTransactions::new(vec![pool_transaction(0)]),
+            cancel: ManuallyDrop::new(ctx.cancel.clone()),
+        };
+
+        let info = scan_execution_info(&ctx, transactions);
+
+        assert!(!info.finalization_requested_before_scan);
+        assert!(info.finalization_exit_bound.is_some());
+        assert_eq!(info.empty_build_reason(), Some(EmptyBuildReason::FinalizedMidScan));
     }
 
     #[cfg(feature = "metrics")]
