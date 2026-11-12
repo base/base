@@ -233,7 +233,12 @@ pub struct P2PNetworkArgs {
     /// `--p2p.peers.hi` and score bans, and receive every gossiped block as gossipsub explicit
     /// peers. List each other on both nodes: a node refuses mesh GRAFTs from peers it trusts, so
     /// a one-sided entry only speeds up one direction and logs warnings on the trusting node.
-    #[arg(long = "p2p.trusted-peers", value_delimiter = ',', env = "BASE_NODE_P2P_TRUSTED_PEERS")]
+    #[arg(
+        id = "consensus_p2p_trusted_peers",
+        long = "p2p.trusted-peers",
+        value_delimiter = ',',
+        env = "BASE_NODE_P2P_TRUSTED_PEERS"
+    )]
     pub trusted_peers: Vec<String>,
 
     /// Optionally enable topic scoring.
