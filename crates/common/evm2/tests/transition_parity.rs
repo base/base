@@ -55,7 +55,7 @@ fn evm2_executor(upgrade: BaseUpgrade, db: InMemoryDB) -> BaseBlockExecutor<'sta
     let block =
         BlockEnv::<BaseEvmTypes> { timestamp: U256::from(ACTIVATION_TS), ..Default::default() };
     let evm =
-        Evm::new(spec, block, BaseEvmTypes::tx_registry(), db, Precompiles::base(spec.into()));
+        Evm::new(spec, block, BaseEvmTypes::tx_registry(spec), db, Precompiles::base(spec.into()));
     BaseBlockExecutor::new(evm, BaseBlockExecutionCtx::default())
 }
 

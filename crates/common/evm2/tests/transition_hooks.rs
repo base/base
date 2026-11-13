@@ -42,7 +42,7 @@ fn executor(upgrade: BaseUpgrade, timestamp: u64, db: InMemoryDB) -> BaseBlockEx
     let spec = BaseSpecId::new(upgrade);
     let block = BlockEnv::<BaseEvmTypes> { timestamp: U256::from(timestamp), ..Default::default() };
     let evm =
-        Evm::new(spec, block, BaseEvmTypes::tx_registry(), db, Precompiles::base(spec.into()));
+        Evm::new(spec, block, BaseEvmTypes::tx_registry(spec), db, Precompiles::base(spec.into()));
     BaseBlockExecutor::new(evm, BaseBlockExecutionCtx::default())
 }
 
