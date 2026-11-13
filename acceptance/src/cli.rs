@@ -12,8 +12,8 @@ use serde_json::json;
 
 use crate::{
     AcceptanceOptions, AcceptanceRunner, Aggregate, CheckResult, ExpectedManifest,
-    ExpectedScenario, Provisioner, PublishArgs, Report, RunResult, ScenarioConfig, ScenarioResult,
-    StageResult, Status,
+    ExpectedScenario, Provisioner, Report, RunResult, ScenarioConfig, ScenarioResult, StageResult,
+    Status,
 };
 
 /// Process exit classification used by CI.
@@ -135,8 +135,6 @@ pub enum AcceptanceCommand {
         #[arg(long)]
         manifest: PathBuf,
     },
-    /// Publish a trusted, marker-owned `GitHub` PR summary from result artifacts.
-    Publish(PublishArgs),
 }
 
 /// Inputs for one run or read-only check execution.
@@ -236,10 +234,6 @@ impl AcceptanceCli {
             }
             AcceptanceCommand::Cleanup { manifest } => {
                 Provisioner::recover(&manifest).await?;
-                Ok(ExitCode::Passed)
-            }
-            AcceptanceCommand::Publish(args) => {
-                args.execute().await?;
                 Ok(ExitCode::Passed)
             }
         }

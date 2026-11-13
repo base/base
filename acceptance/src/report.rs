@@ -134,7 +134,7 @@ impl Report {
         Ok(out)
     }
 
-    /// Renders the bounded marker-owned Markdown summary used for PR comments.
+    /// Renders the bounded Markdown summary written next to the HTML report.
     pub fn markdown(run: &RunResult) -> Result<String> {
         Self::validate(run)?;
         const LIMIT: usize = 50 * 1024;
