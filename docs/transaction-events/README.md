@@ -256,6 +256,22 @@ mempool node as `TXPOOL_BUILDER_FORWARD_DROPPED`, and
 its position in the pool iterator, and how many times it was resent are not
 journaled; the reader and forwarder metrics cover them in aggregate.
 
+One builder verdict is not journaled: a capacity discard. When a store of the
+builder's pool (validity, standard or EIP-8130 sidecar) is full and evicts the
+newcomer on arrival (`PoolErrorKind::DiscardedOnInsert`), the insert RPC still
+returns the error, but the builder emits no `TXPOOL_VALIDATED_INSERT_REJECTED`,
+whether or not the transaction carries validity predicates. A full pool discards
+on most inserts, and only the aggregate is needed to tell that a pool is full:
+`txpool.builder_rpc.txs_rejected{reason="discarded_on_insert"}`
+counts the discards from all three stores, and `txpool.validity.evicted` and
+`txpool.validity.pool_transactions` give the validity pool's evictions and
+occupancy (in Datadog: `base.reth_txpool_builder_rpc_txs_rejected.count`,
+`base.reth_txpool_validity_evicted.count` and
+`base.reth_txpool_validity_pool_transactions`). Every other rejection reason is
+still journaled. Consequence for readers: a forwarded transaction with neither
+`TXPOOL_VALIDATED_INSERT_ACCEPTED` nor `TXPOOL_VALIDATED_INSERT_REJECTED` from
+the leader was either discarded for capacity or never reached the leader.
+
 `TXPOOL_BUILDER_FORWARD_DROPPED` is emitted only for transaction-scoped drops
 where the forwarding task still knows the `tx_hash`, such as final RPC failure
 after retries. Broadcast lag is intentionally excluded from the transaction

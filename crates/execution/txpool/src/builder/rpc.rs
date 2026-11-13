@@ -313,6 +313,10 @@ where
     }
 
     /// Records the pool's verdict on one prepared transaction and maps it to the RPC result.
+    ///
+    /// A capacity discard ([`PoolErrorKind::DiscardedOnInsert`]) is counted in `txs_rejected` but
+    /// not journaled: a full pool discards on most inserts, and pool occupancy is read from the
+    /// aggregate metrics, not from a row per transaction.
     fn finish_insert(
         &self,
         tx_hash: TxHash,
@@ -337,17 +341,19 @@ where
                 Ok(())
             }
             Err(e) => {
-                self.emit_validated_insert_event(
-                    TransactionEventType::TxpoolValidatedInsertRejected,
-                    tx_hash,
-                    || {
-                        Map::from_iter([
-                            ("rejection_stage".to_string(), json!("pool_insert")),
-                            ("encoded_len".to_string(), json!(encoded_len)),
-                            ("error".to_string(), json!(e.to_string())),
-                        ])
-                    },
-                );
+                if !matches!(e.kind, PoolErrorKind::DiscardedOnInsert) {
+                    self.emit_validated_insert_event(
+                        TransactionEventType::TxpoolValidatedInsertRejected,
+                        tx_hash,
+                        || {
+                            Map::from_iter([
+                                ("rejection_stage".to_string(), json!("pool_insert")),
+                                ("encoded_len".to_string(), json!(encoded_len)),
+                                ("error".to_string(), json!(e.to_string())),
+                            ])
+                        },
+                    );
+                }
                 debug!(tx_hash = %tx_hash, error = %e, "pool rejected transaction");
                 BuilderApiMetrics::txs_rejected(PoolRejectionLabel::from_error(&e)).increment(1);
                 Err(ErrorObjectOwned::owned(
