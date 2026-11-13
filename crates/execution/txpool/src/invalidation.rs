@@ -46,7 +46,8 @@ pub enum InvalidationKey {
     CodeHash(Address),
     /// A raw storage slot `(contract address, slot)` — e.g. an actor-config or
     /// account-state/lock slot in the EIP-8130 `AccountConfiguration` contract,
-    /// or a 2D nonce-manager channel slot. Exact-match semantics.
+    /// a 2D nonce-manager channel slot, or the nonce-manager slot recording a
+    /// nonce-free transaction's `replay_id`. Exact-match semantics.
     Slot {
         /// Contract whose storage slot is watched.
         address: Address,
