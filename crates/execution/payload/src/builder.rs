@@ -56,13 +56,13 @@ use tokio::sync::broadcast;
 use tracing::{debug, debug_span, info, instrument, trace, warn};
 
 use crate::{
-    Attributes, BasePayloadBuilderAttributes, BlockDeferrals, BuilderMetrics,
-    CoinbaseTipAffordability, HoldInterrupt, InclusionTracker, MeteringProvider,
-    ParkableBestPayloadTransactions, ParkablePayloadTransactions, ParkedPredicateIndex,
-    PayloadPrimitives, PredicateLoadTracker, PredicateReadRecorder, RejectionCacheMetrics,
-    RestingPredicateStore, SharedRestingPredicates, StateChangeEffects, ValidityEvaluationCounters,
-    ValidityEvaluationOutcome, ValidityMetrics, ValidityPredicateEvaluation,
-    config::BaseBuilderConfig, error::BasePayloadBuilderError, payload::BaseBuiltPayload,
+    Attributes, BasePayloadBuilderAttributes, BuilderMetrics, CoinbaseTipAffordability,
+    HoldInterrupt, InclusionTracker, MeteringProvider, ParkableBestPayloadTransactions,
+    ParkablePayloadTransactions, ParkedPredicateIndex, PayloadPrimitives, PredicateLoadTracker,
+    PredicateReadRecorder, RejectionCacheMetrics, RestingPredicateStore, SharedRestingPredicates,
+    StateChangeEffects, ValidityEvaluationCounters, ValidityEvaluationOutcome, ValidityMetrics,
+    ValidityPredicateEvaluation, config::BaseBuilderConfig, error::BasePayloadBuilderError,
+    payload::BaseBuiltPayload,
 };
 
 macro_rules! emit_native_validity_event {
@@ -1087,10 +1087,6 @@ where
         let mut predicate_eval_duration = None;
         let mut predicate_bucket_wakeups = 0;
         let mut validity_consideration_index = 0_u64;
-        // `BUILDER_DEFERRED` is journaled once per transaction in a scan. Post-Denim the payload
-        // is built once, so this covers the whole block; pre-Denim rebuilds start a fresh scan
-        // and report deferrals again.
-        let mut deferrals = BlockDeferrals::default();
         let mut validity_candidates_evaluated = 0_u64;
         let mut validity_candidates_deferred = 0_u64;
         let mut predicate_eval_cutoff_hit = false;
@@ -1165,18 +1161,16 @@ where
                     "deferring validity-gated transaction: predicate evaluation budget exhausted"
                 );
                 best_txs.park_current();
-                if deferrals.record(tx_hash, "predicate_eval_budget_exhausted") {
-                    emit_native_validity_event!(
-                        self,
-                        TransactionEventType::BuilderDeferred,
-                        tx_hash,
-                        validity_consideration_index,
-                        {
-                            "defer_reason" => "predicate_eval_budget_exhausted",
-                            "defer_detail" => "validity-predicate evaluation time budget exhausted for this payload build",
-                        }
-                    );
-                }
+                emit_native_validity_event!(
+                    self,
+                    TransactionEventType::BuilderDeferred,
+                    tx_hash,
+                    validity_consideration_index,
+                    {
+                        "defer_reason" => "predicate_eval_budget_exhausted",
+                        "defer_detail" => "validity-predicate evaluation time budget exhausted for this payload build",
+                    }
+                );
                 continue;
             }
 
@@ -2453,14 +2447,14 @@ mod tests {
         let event_capture = TransactionEventCapture::install();
         // Event capture is process-global, so these transactions must not share hashes with other
         // tests.
-        let unsatisfied = pool_transaction_to(0, Address::repeat_byte(0x58), U256::ZERO)
+        let unsatisfied = pool_transaction_to(0, Address::repeat_byte(0x6a), U256::ZERO)
             .with_validity_predicates(vec![ValidityPredicate::Balance {
-                address: Address::repeat_byte(0x47),
+                address: Address::repeat_byte(0x6c),
                 op: ValidityOperator::Equal,
                 value: U256::ONE,
             }]);
-        // Evaluating `unsatisfied` spends the 1 ns budget, so this one is never evaluated.
-        let unevaluated = pool_transaction_to(0, Address::repeat_byte(0x59), U256::ZERO)
+        // With a zero budget only the first candidate is evaluated, so this one never is.
+        let unevaluated = pool_transaction_to(0, Address::repeat_byte(0x6b), U256::ZERO)
             .with_validity_predicates(vec![ValidityPredicate::BlockNumber {
                 op: ValidityOperator::Equal,
                 value: U256::ONE,
@@ -2469,7 +2463,7 @@ mod tests {
         let unsatisfied_hash = *unsatisfied.hash();
         let unevaluated_hash = *unevaluated.hash();
         let mut ctx = pool_payload_context(DENIM_TIMESTAMP);
-        ctx.builder_config.predicate_eval_hard_cutoff = Duration::from_nanos(1);
+        ctx.builder_config.predicate_eval_hard_cutoff = Duration::ZERO;
 
         let BuildOutcomeKind::Freeze(payload) = build_parkable_pool_payload(
             ctx,

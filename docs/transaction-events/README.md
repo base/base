@@ -311,15 +311,16 @@ multiple decision events across build attempts. The builder does not emit
 candidates; a candidate whose
 predicates pass but which is then skipped (block limits, resource metering,
 coinbase tip, nonce or EVM validation) gets `BUILDER_REJECTED`. A candidate
-whose predicate is not satisfied yet is parked for a later build attempt and
-gets no event: parking is the most frequent builder decision and almost never
-precedes an inclusion, so it is only counted, in
+whose predicate is not satisfied is parked and gets no event; a later state
+change in the same or a later build attempt can promote it. Parking is the
+most frequent builder decision and almost never precedes an inclusion, so it
+is only counted, in
 `base_builder_validity_predicate_evaluations_total{outcome="not_satisfied"}`.
-A validity transaction with no builder decision event was therefore either
-parked or never reached in a build; the journal does not tell those apart.
-`BUILDER_DEFERRED` is emitted only with `defer_reason`
-`predicate_eval_budget_exhausted`: the build's time budget for evaluating
-validity predicates ran out before the candidate was evaluated. It is emitted
+A validity transaction with no builder decision event may therefore have been
+parked, skipped or never reached in a build; the journal does not tell those
+apart. `BUILDER_DEFERRED` is emitted only with `defer_reason`
+`predicate_eval_budget_exhausted`: the build had spent its time budget for
+evaluating validity predicates when it reached the candidate. It is emitted
 once per transaction per build attempt, so rebuilds of the same payload report
 it again. `BUILDER_EXPIRED` is the terminal discard for builder-side
 windows that can never become valid again, such as an expired bundle validity
@@ -495,8 +496,9 @@ Join later deferral, expiry, accept, and include events by `tx_hash`:
 }
 ```
 
-Deferred (the build's time budget for evaluating validity predicates ran out
-before this candidate was evaluated, so it is held for a later build attempt).
+Deferred (the build had spent its time budget for evaluating validity
+predicates when it reached this candidate, so it is held for a later build
+attempt).
 Emitted once per transaction per build attempt, and does not repeat the
 predicate list. Parking a candidate whose predicate is not satisfied emits no
 event:
