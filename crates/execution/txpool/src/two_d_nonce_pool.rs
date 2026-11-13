@@ -32,7 +32,7 @@ use crate::{
     PredicateContext, ValidityDormancyMode, ValidityPoolMetrics, ValidityPredicate,
     WokenTransaction, WrittenLocation,
     best::MergeSource,
-    dormancy::{BuildLocal, Dormancy, DormantEntry, DormantSlot, WriteFence},
+    dormancy::{BuildLocal, Dormancy, DormancyMergeGate, DormantEntry, DormantSlot, WriteFence},
 };
 
 /// A finite channel: `(sender, nonce_key)`.
@@ -536,6 +536,47 @@ pub(crate) struct TwoDNoncePool<T: BasePooledTx> {
     /// What the build owning the dormancy index parked and wrote, shared with
     /// its iterator so the build loop parks and wakes without this pool's lock.
     running_build: Option<Arc<Mutex<BuildLocal<T>>>>,
+}
+
+/// Ends the background merge of a sealed build's parks however the merge task
+/// ends. A merge that completed releases the build's ownership of the
+/// dormancy index; one that panicked, or was cancelled before it ran,
+/// discards the build's index instead. Either way it finishes the merge on the
+/// gate, waking the builds waiting for it.
+#[derive(Debug)]
+pub(crate) struct BuildMergeCompletion<T: BasePooledTx> {
+    pool: Arc<RwLock<TwoDNoncePool<T>>>,
+    gate: Arc<DormancyMergeGate>,
+    build: u64,
+    completed: bool,
+}
+
+impl<T: BasePooledTx> BuildMergeCompletion<T> {
+    /// Guards the merge of build `build`'s parks, started on `gate`.
+    pub(crate) const fn new(
+        pool: Arc<RwLock<TwoDNoncePool<T>>>,
+        gate: Arc<DormancyMergeGate>,
+        build: u64,
+    ) -> Self {
+        Self { pool, gate, build, completed: false }
+    }
+
+    /// Records that the merge completed.
+    pub(crate) fn complete(mut self) {
+        self.completed = true;
+    }
+}
+
+impl<T: BasePooledTx> Drop for BuildMergeCompletion<T> {
+    fn drop(&mut self) {
+        let (build, completed) = (self.build, self.completed);
+        let woken = {
+            let mut validity = self.pool.write();
+            if completed { validity.release_build(build) } else { validity.fail_build_merge(build) }
+        };
+        self.gate.finish();
+        TwoDNoncePool::record_build_end(&self.pool, woken);
+    }
 }
 
 /// Dormancy candidates taken for classification, with the state they must be classified for.
@@ -1557,24 +1598,31 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
         Some(self.dormancy.builds)
     }
 
-    /// Records that build `build` sealed `block_hash` and ends its
-    /// ownership. The block becomes the tip and what the build still holds
-    /// parked is merged into the index, unless a discard was deferred during
-    /// the build, which is applied instead. Returns how many transactions the
-    /// build woke, or `None` when `build` does not own the index.
-    pub(crate) fn seal_build(&mut self, build: u64, block_hash: B256) -> Option<usize> {
+    /// Records that build `build` sealed `block_hash`. The block becomes the
+    /// tip, unless a discard was deferred during the build, which is applied
+    /// instead. Returns what the build parked, detached in constant time, for
+    /// the caller to collect after releasing the lock and merge with
+    /// [`Self::merge_build_parks`] before [`Self::release_build`]; the build
+    /// keeps the index until then. When there is nothing to merge (the build
+    /// parked nothing, a deferred discard applied, or `build` does not own
+    /// the index) its ownership has already ended and the error holds what
+    /// [`Self::release_build`] would have returned.
+    pub(crate) fn seal_build(
+        &mut self,
+        build: u64,
+        block_hash: B256,
+    ) -> Result<BuildLocal<T>, Option<usize>> {
         if !self.dormancy.is_running(build) {
-            return None;
+            return Err(None);
         }
-        let woken = self.dormancy.build_wakes;
         let mut local = self
             .running_build
             .take()
             .map(|local| std::mem::replace(&mut *local.lock(), BuildLocal::new(false)));
-        self.dormancy.building = false;
         if let Some(reason) = self.dormancy.deferred_discard.take() {
+            let woken = self.dormancy.build_wakes;
             self.discard_dormancy_now(reason);
-            return Some(woken);
+            return Err(Some(woken));
         }
         self.dormancy.tip = Some(BlockNumHash::new(self.dormancy.height, block_hash));
         if self.dormancy.classifying.is_none() {
@@ -1582,24 +1630,53 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
         } else if let Some(written) = local.as_mut().and_then(|local| local.written.take()) {
             self.dormancy.fence_sealed(written);
         }
-        if let Some(local) = local {
-            self.merge_build_parks(local);
+        match local {
+            Some(local) if !local.parked.is_empty() => Ok(local),
+            _ => Err(self.release_build(build)),
         }
-        Some(woken)
     }
 
-    /// Indexes, on top of the tip just sealed, transactions the sealing build
-    /// left parked: each that is still pooled and a ready root or nonce-free
+    /// Indexes, on top of the tip build `build` sealed, transactions it left
+    /// parked: each that is still pooled and a ready root or nonce-free
     /// transaction becomes dormant under the predicate it failed.
-    fn merge_build_parks(&mut self, local: BuildLocal<T>) {
-        for (transaction, predicate) in local.parked.into_values() {
+    ///
+    /// With `adopted`, the parks are already the index, adopted by
+    /// [`Self::adopt_build_parks`]: each still there is confirmed dormant if
+    /// it qualifies and dropped from the index otherwise, with no index
+    /// insertion.
+    pub(crate) fn merge_build_parks(
+        &mut self,
+        build: u64,
+        parks: &[(Arc<ValidPoolTransaction<T>>, ValidityPredicate)],
+        adopted: bool,
+    ) {
+        if !self.dormancy.is_running(build) || self.dormancy.deferred_discard.is_some() {
+            return;
+        }
+        for (transaction, predicate) in parks {
             let hash = *transaction.hash();
-            if self.dormancy.is_dormant(&hash) {
+            let pending = if adopted {
+                self.dormancy.awaits_confirmation(&hash)
+            } else {
+                !self.dormancy.is_dormant(&hash)
+            };
+            if !pending {
                 continue;
             }
-            if let Some((slot, release_block)) = self.parked_slot(&transaction, &predicate) {
-                self.dormancy.park(hash, slot, predicate, release_block);
-                self.leave_snapshot(slot);
+            let qualifies = self.parked_slot(transaction, predicate);
+            match (qualifies, adopted) {
+                (Some((slot, release_block)), true) => {
+                    self.dormancy.confirm_adopted(hash, slot, release_block);
+                    self.leave_snapshot(slot);
+                }
+                (Some((slot, release_block)), false) => {
+                    self.dormancy.park(hash, slot, predicate.clone(), release_block);
+                    self.leave_snapshot(slot);
+                }
+                (None, true) => {
+                    self.dormancy.index.remove(hash);
+                }
+                (None, false) => {}
             }
         }
     }
@@ -1623,6 +1700,42 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
             _ => None,
         };
         Some((self.eligible_slot(transaction.hash())?, release_block))
+    }
+
+    /// Adopts sealed build `build`'s parks as the index in constant time when
+    /// the index is empty, as on the first seal or after a discard; returns
+    /// whether it did, so the merge only confirms them.
+    pub(crate) fn adopt_build_parks(&mut self, build: u64, local: &mut BuildLocal<T>) -> bool {
+        self.dormancy.is_running(build)
+            && self.dormancy.deferred_discard.is_none()
+            && self.dormancy.adopt_index(&mut local.index)
+    }
+
+    /// Ends build `build`'s ownership after its seal, applying a discard
+    /// deferred meanwhile. Returns how many transactions the build woke, or
+    /// `None` when it does not own the index.
+    pub(crate) fn release_build(&mut self, build: u64) -> Option<usize> {
+        if !self.dormancy.is_running(build) {
+            return None;
+        }
+        let woken = self.dormancy.build_wakes;
+        self.dormancy.building = false;
+        if let Some(reason) = self.dormancy.deferred_discard.take() {
+            self.discard_dormancy_now(reason);
+        }
+        Some(woken)
+    }
+
+    /// Discards the index when the merge of sealed build `build`'s parks
+    /// failed, ending its ownership. Returns how many transactions the build
+    /// woke, or `None` when it no longer owns the index.
+    pub(crate) fn fail_build_merge(&mut self, build: u64) -> Option<usize> {
+        if !self.dormancy.is_running(build) {
+            return None;
+        }
+        let woken = self.dormancy.build_wakes;
+        self.discard_dormancy_now(DormancyDiscardReason::MergeFailed);
+        Some(woken)
     }
 
     /// Discards the index when `build` ends without a seal, with what the
@@ -3431,7 +3544,8 @@ mod tests {
         pool.mark_shared_lane(lane);
         let tip = B256::repeat_byte(1);
         let build = pool.begin_build(B256::ZERO, 1, None).unwrap();
-        pool.seal_build(build, tip);
+        let _ = pool.seal_build(build, tip);
+        pool.release_build(build);
         pool.take_dormancy_batch(tip).unwrap();
 
         let blocker = ValidityPredicate::BlockNumber {
@@ -3499,7 +3613,8 @@ mod tests {
         let park_all_but_first = |pool: &mut TwoDNoncePool<BasePooledTransaction>, block: u8| {
             let tip = B256::repeat_byte(block);
             let build = pool.begin_build(B256::ZERO, 1, None).unwrap();
-            pool.seal_build(build, tip);
+            let _ = pool.seal_build(build, tip);
+            pool.release_build(build);
             pool.take_dormancy_batch(tip).unwrap();
             pool.install_dormancy(
                 roots[1..].iter().map(|root| (Arc::clone(root), dormant.clone())).collect(),
@@ -3533,7 +3648,8 @@ mod tests {
         let root = pool.get(&hash).unwrap();
         let tip = B256::repeat_byte(1);
         let build = pool.begin_build(B256::ZERO, 1, None).unwrap();
-        pool.seal_build(build, tip);
+        let _ = pool.seal_build(build, tip);
+        pool.release_build(build);
         pool.take_dormancy_batch(tip).unwrap();
 
         // A build on the tip writes slots of an account no predicate reads.
@@ -3552,7 +3668,8 @@ mod tests {
         account.mark_touch();
         let state = revm::state::EvmState::from_iter([(Address::repeat_byte(0xdd), account)]);
         pool.begin_snapshot(build).1.lock().wake(&state);
-        pool.seal_build(build, B256::repeat_byte(2));
+        let _ = pool.seal_build(build, B256::repeat_byte(2));
+        pool.release_build(build);
 
         let blocker = ValidityPredicate::BlockNumber {
             op: ValidityOperator::GreaterThanOrEqual,
@@ -3605,7 +3722,7 @@ mod tests {
         }
         let tip = B256::repeat_byte(1);
         let build = pool.begin_build(B256::ZERO, 1, None).unwrap();
-        pool.seal_build(build, tip);
+        let _ = pool.seal_build(build, tip);
         let dormant = DormancyClassification::Dormant {
             predicate: ValidityPredicate::BlockNumber {
                 op: ValidityOperator::GreaterThanOrEqual,
@@ -3648,7 +3765,7 @@ mod tests {
         }
         let tip = B256::repeat_byte(1);
         let build = pool.begin_build(B256::ZERO, 1, None).unwrap();
-        pool.seal_build(build, tip);
+        let _ = pool.seal_build(build, tip);
 
         let mut passes = Vec::new();
         while let Some(batch) = pool.take_dormancy_batch(tip) {
@@ -3709,10 +3826,11 @@ mod tests {
         assert_eq!(pool.dormancy.queued_len(), 2);
     }
 
-    /// A seal merges into the index the parks that can be dormant, such as a
-    /// lane root, and drops the others, such as the member behind it.
+    /// On an empty index a seal's parks are adopted as the index wholesale;
+    /// the merge then confirms the roots and nonce-free transactions dormant
+    /// and drops every other park from the index.
     #[test]
-    fn a_seal_merges_a_parked_root_but_not_the_member_behind_it() {
+    fn an_empty_index_adopts_a_sealed_builds_parks() {
         let signer = signer();
         let mut pool = protocol_lane_pool();
         pool.set_dormancy_mode(ValidityDormancyMode::Enforce);
@@ -3736,7 +3854,11 @@ mod tests {
         }
         drop(local);
 
-        pool.seal_build(build, B256::repeat_byte(1));
+        let mut local = pool.seal_build(build, B256::repeat_byte(1)).unwrap();
+        assert!(pool.adopt_build_parks(build, &mut local));
+        assert!(!pool.dormancy.is_dormant(&root), "adopted parks await confirmation");
+        pool.merge_build_parks(build, &local.into_parks(), true);
+        pool.release_build(build);
 
         assert!(pool.dormancy.is_dormant(&root));
         assert!(!pool.dormancy.is_dormant(&member));
@@ -3744,7 +3866,7 @@ mod tests {
         state.info.balance = U256::from(1);
         state.mark_touch();
         let funded = revm::state::EvmState::from_iter([(Address::repeat_byte(0xbb), state)]);
-        assert_eq!(pool.dormant_affected_by(&funded), vec![root], "the member was not indexed");
+        assert_eq!(pool.dormant_affected_by(&funded), vec![root], "the member left the index");
     }
 
     #[test]
