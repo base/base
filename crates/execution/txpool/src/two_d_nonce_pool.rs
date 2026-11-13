@@ -37,15 +37,15 @@ pub(crate) struct LaneCursor {
     /// The first nonce this lane can execute. Equal to `state_nonce` unless
     /// another store holds the pending run from `state_nonce` up to here.
     pub next_nonce: u64,
-    /// The lowest fee cap in that other store's run, which executes before
-    /// this lane; `None` when no run sits in front.
-    pub run_fee_cap: Option<u128>,
+    /// The [`Bid`] of that other store's run, which executes before this
+    /// lane; `None` when no run sits in front.
+    pub run_bid: Option<Bid>,
 }
 
 impl LaneCursor {
     /// A cursor sitting at the canonical nonce.
     pub(crate) const fn at(state_nonce: u64) -> Self {
-        Self { state_nonce, next_nonce: state_nonce, run_fee_cap: None }
+        Self { state_nonce, next_nonce: state_nonce, run_bid: None }
     }
 }
 
@@ -55,8 +55,8 @@ struct NonceLane<T: BasePooledTx> {
     state_nonce: u64,
     /// First executable nonce; see [`LaneCursor::next_nonce`].
     next_nonce: u64,
-    /// See [`LaneCursor::run_fee_cap`].
-    run_fee_cap: Option<u128>,
+    /// See [`LaneCursor::run_bid`].
+    run_bid: Option<Bid>,
     /// Length of the consecutive pending run from `next_nonce`. Kept in step
     /// by every mutation, so pending and queued splits never walk the lane.
     pending_len: u64,
@@ -76,7 +76,7 @@ impl<T: BasePooledTx> NonceLane<T> {
         let mut lane = Self {
             state_nonce: cursor.state_nonce,
             next_nonce: cursor.next_nonce,
-            run_fee_cap: cursor.run_fee_cap,
+            run_bid: cursor.run_bid,
             pending_len: 0,
             transactions,
         };
@@ -176,11 +176,7 @@ impl<T: BasePooledTx> NonceLane<T> {
     /// What the tail pays once included: the lowest bid among the members and
     /// the run in front of them, all of which are included before it.
     fn bid(&self) -> Option<Bid> {
-        self.transactions
-            .values()
-            .map(|transaction| Bid::of(&transaction.transaction))
-            .chain(self.run_fee_cap.map(Bid::of_fee_cap))
-            .reduce(Bid::min)
+        Bid::of_run(self.transactions.values()).into_iter().chain(self.run_bid).reduce(Bid::min)
     }
 
     /// Whether every live member is in the pending run.
@@ -198,7 +194,7 @@ impl<T: BasePooledTx> NonceLane<T> {
         LaneCursor {
             state_nonce: self.state_nonce,
             next_nonce: self.next_nonce,
-            run_fee_cap: self.run_fee_cap,
+            run_bid: self.run_bid,
         }
     }
 }
@@ -451,8 +447,8 @@ impl SidecarSenderIds {
 /// member ahead of it and the run another store holds in front of them, so it
 /// bids the lowest of their bids ([`Self::min`]). Ranking by its own bid would
 /// let a lane whose head never pays outrank, and push out, lanes that do.
-#[derive(Debug, Clone, Copy)]
-struct Bid {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Bid {
     /// The lowest fee cap: below it the candidate cannot be included.
     fee_cap: u128,
     /// The lowest tip per gas that does not depend on the base fee.
@@ -462,7 +458,7 @@ struct Bid {
 }
 
 impl Bid {
-    fn of<T: BasePooledTx>(transaction: &T) -> Self {
+    pub(crate) fn of<T: BasePooledTx>(transaction: &T) -> Self {
         let fee_cap = transaction.max_fee_per_gas();
         if let Some(tip) = transaction.coinbase_tip().filter(|_| transaction.coinbase_tip_backed())
         {
@@ -477,10 +473,12 @@ impl Bid {
         Self { fee_cap, tip: UnifiedTipPriority::new(tip, 1, 0), tip_fee_cap: fee_cap }
     }
 
-    /// The bid of a run another store holds, of which only the lowest fee cap is
-    /// known: no transaction tips more than its fee cap leaves over the base fee.
-    fn of_fee_cap(fee_cap: u128) -> Self {
-        Self { fee_cap, tip: UnifiedTipPriority::new(U256::MAX, 1, 0), tip_fee_cap: fee_cap }
+    /// The bid of the last of a run of transactions, each included only after
+    /// those before it; `None` for an empty run.
+    pub(crate) fn of_run<'a, T: BasePooledTx + 'a>(
+        run: impl IntoIterator<Item = &'a Arc<ValidPoolTransaction<T>>>,
+    ) -> Option<Self> {
+        run.into_iter().map(|transaction| Self::of(&transaction.transaction)).reduce(Self::min)
     }
 
     /// The bid of a candidate that pays only once both bidders are included.
@@ -1170,7 +1168,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
                 LaneCursor {
                     state_nonce: nonce,
                     next_nonce: lane.next_nonce.max(nonce),
-                    run_fee_cap: lane.run_fee_cap.filter(|_| lane.next_nonce > nonce),
+                    run_bid: lane.run_bid.filter(|_| lane.next_nonce > nonce),
                 },
             ),
             _ => LaneUpdate::default(),
@@ -1199,7 +1197,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
             return update;
         }
         lane.state_nonce = cursor.state_nonce;
-        lane.run_fee_cap = cursor.run_fee_cap;
+        lane.run_bid = cursor.run_bid;
         if lane.next_nonce == cursor.next_nonce {
             self.refresh_lane_indexes(lane_id);
             return update;
@@ -1263,14 +1261,9 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
         self.lanes.get(lane_id).and_then(NonceLane::pending_end)
     }
 
-    /// Returns the lowest fee cap among `lane_id`'s transactions in `nonces`.
-    pub(crate) fn lane_lowest_fee_cap(&self, lane_id: &LaneId, nonces: Range<u64>) -> Option<u128> {
-        self.lanes
-            .get(lane_id)?
-            .transactions
-            .range(nonces)
-            .map(|(_, transaction)| transaction.max_fee_per_gas())
-            .min()
+    /// Returns the [`Bid`] of `lane_id`'s run over `nonces`.
+    pub(crate) fn lane_run_bid(&self, lane_id: &LaneId, nonces: Range<u64>) -> Option<Bid> {
+        Bid::of_run(self.lanes.get(lane_id)?.transactions.range(nonces).map(|(_, tx)| tx))
     }
 
     /// Returns the live transaction at `nonce` in `lane_id`.
@@ -3040,9 +3033,11 @@ mod tests {
         assert!(pool.eviction_order.is_empty() && pool.nonce_free_candidates.is_empty());
     }
 
-    /// A nonce-free transaction that pays `coinbase_tip` to the fee vault.
+    /// A transaction that pays `coinbase_tip` to the fee vault.
     fn signed_coinbase_tip_tx(
         signer: &PrivateKeySigner,
+        nonce_key: U256,
+        nonce_sequence: u64,
         coinbase_tip: u64,
         max_priority_fee_per_gas: u128,
         max_fee_per_gas: u128,
@@ -3051,7 +3046,8 @@ mod tests {
             signer,
             TxEip8130 {
                 chain_id: test_chain_id(),
-                nonce_key: Eip8130Constants::NONCE_KEY_MAX,
+                nonce_key,
+                nonce_sequence,
                 valid_before: 1,
                 max_priority_fee_per_gas,
                 max_fee_per_gas,
@@ -3120,7 +3116,14 @@ mod tests {
         let mut pool = capped_pool(1);
         let tipper = signer();
         // 100 per gas once backed, nothing before.
-        let coinbase = valid_pool_transaction(signed_coinbase_tip_tx(&tipper, 5_000_000, 0, 1_000));
+        let coinbase = valid_pool_transaction(signed_coinbase_tip_tx(
+            &tipper,
+            Eip8130Constants::NONCE_KEY_MAX,
+            0,
+            5_000_000,
+            0,
+            1_000,
+        ));
         let coinbase_hash = *coinbase.hash();
         let cost = *coinbase.transaction.cost();
         let priority = valid_pool_transaction(signed_nonce_free_tx(&signer(), 1, 10, 1_000));
@@ -3133,6 +3136,33 @@ mod tests {
 
         assert_eq!(evicted_hashes(&mut pool), vec![priority_hash]);
         assert!(pool.contains(&coinbase_hash));
+    }
+
+    #[test]
+    fn a_lane_is_re_ranked_when_its_coinbase_tip_backing_changes() {
+        let mut pool = capped_pool(2);
+        let tipper = signer();
+        let channel = U256::from(1);
+        // 100 per gas once backed, nothing before; the member behind it tips 50.
+        let head = valid_pool_transaction(signed_coinbase_tip_tx(
+            &tipper, channel, 0, 5_000_000, 0, 1_000,
+        ));
+        let tail =
+            valid_pool_transaction(signed_channel_tx_with_tip(&tipper, channel, 1, 50, 1_000));
+        let lane_hashes = [*head.hash(), *tail.hash()];
+        let cost = *head.transaction.cost() + *tail.transaction.cost();
+        let priority = valid_pool_transaction(signed_nonce_free_tx(&signer(), 1, 10, 1_000));
+        let priority_hash = *priority.hash();
+        pool.insert_validated(head, 0).unwrap();
+        pool.insert_validated(tail, 0).unwrap();
+        pool.insert_validated(priority, 0).unwrap();
+        assert_eq!(pool.eviction_candidate(), Some(lane_hashes[1]));
+
+        // The lane now bids 50, its tail's tip, the lowest of its members.
+        pool.apply_balance_updates([(tipper.address(), cost)]);
+
+        assert_eq!(evicted_hashes(&mut pool), vec![priority_hash]);
+        assert!(lane_hashes.iter().all(|hash| pool.contains(hash)));
     }
 
     #[test]
@@ -3154,7 +3184,14 @@ mod tests {
             let transaction = if coinbase_tip == 0 {
                 signed_nonce_free_tx(&signer(), 1, priority_fee, fee_cap)
             } else {
-                signed_coinbase_tip_tx(&tipper, coinbase_tip, priority_fee, fee_cap)
+                signed_coinbase_tip_tx(
+                    &tipper,
+                    Eip8130Constants::NONCE_KEY_MAX,
+                    0,
+                    coinbase_tip,
+                    priority_fee,
+                    fee_cap,
+                )
             };
             (transaction, now + std::time::Duration::from_secs(index as u64))
         })
@@ -3373,7 +3410,8 @@ mod tests {
         let signer = signer();
         let lane = (signer.address(), U256::ZERO);
         let mut pool = protocol_lane_pool();
-        let cursor = LaneCursor { state_nonce: 0, next_nonce: 2, run_fee_cap: Some(1_000) };
+        let run_bid = Some(Bid::of(&signed_1559(&signer, 1, 1_000)));
+        let cursor = LaneCursor { state_nonce: 0, next_nonce: 2, run_bid };
 
         let behind = valid_pool_transaction(signed_1559(&signer, 1, 1_000));
         let error = pool.insert_validated_at(behind, cursor).unwrap_err();
@@ -3408,7 +3446,8 @@ mod tests {
         let signer = signer();
         let lane = (signer.address(), U256::ZERO);
         let mut pool = protocol_lane_pool();
-        let ahead = LaneCursor { state_nonce: 0, next_nonce: 2, run_fee_cap: Some(1_000) };
+        let run_bid = Some(Bid::of(&signed_1559(&signer, 1, 1_000)));
+        let ahead = LaneCursor { state_nonce: 0, next_nonce: 2, run_bid };
         let [second, third] =
             [2, 3].map(|nonce| valid_pool_transaction(signed_1559(&signer, nonce, 1_000)));
         let (second_hash, third_hash) = (*second.hash(), *third.hash());
@@ -3430,10 +3469,8 @@ mod tests {
         assert_eq!(pool.lane_cursor(&lane), Some(LaneCursor::at(0)));
 
         // The run in front now reaches nonce 3: nonce 2 can never execute here.
-        let update = pool.set_lane_cursor(
-            lane,
-            LaneCursor { state_nonce: 0, next_nonce: 3, run_fee_cap: Some(1_000) },
-        );
+        let update =
+            pool.set_lane_cursor(lane, LaneCursor { state_nonce: 0, next_nonce: 3, run_bid });
         assert_eq!(hashes(&update.discarded), vec![second_hash]);
         assert_eq!(hashes(&update.promoted), vec![third_hash]);
         assert!(!pool.contains(&second_hash));
@@ -3442,12 +3479,12 @@ mod tests {
         assert!(pool.advance_lane_nonce(lane, 2).discarded.is_empty());
         assert_eq!(
             pool.lane_cursor(&lane),
-            Some(LaneCursor { state_nonce: 2, next_nonce: 3, run_fee_cap: Some(1_000) })
+            Some(LaneCursor { state_nonce: 2, next_nonce: 3, run_bid })
         );
         assert!(pool.advance_lane_nonce(lane, 1).discarded.is_empty());
         assert_eq!(
             pool.lane_cursor(&lane),
-            Some(LaneCursor { state_nonce: 2, next_nonce: 3, run_fee_cap: Some(1_000) })
+            Some(LaneCursor { state_nonce: 2, next_nonce: 3, run_bid })
         );
 
         // Past the lane's last transaction the lane is dropped entirely.
