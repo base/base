@@ -268,6 +268,7 @@ impl ProposalProofSubmitter {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Bytes, address};
+    #[cfg(feature = "proof-submit")]
     use base_proof_submission::test_utils::SnarkReceiptFixture;
     use base_prover_service_protocol::{SnarkPlonkProofResult, ZkProofResult, ZkVm};
 
@@ -285,6 +286,7 @@ mod tests {
         })
     }
 
+    #[cfg(feature = "proof-submit")]
     fn encoded_plonk_receipt() -> Bytes {
         Bytes::from(SnarkReceiptFixture::plonk_receipt_bytes([0x5a, 0x09, 0x3a, 0x2f], "abcd"))
     }
@@ -347,6 +349,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "proof-submit")]
     #[test]
     fn from_response_extracts_plonk_bytes() {
         let response = succeeded_response(Some(plonk_result(encoded_plonk_receipt())));
@@ -407,6 +410,7 @@ mod tests {
         assert!(matches!(error, ProofsCommandError::NotAProposalProof { .. }));
     }
 
+    #[cfg(feature = "proof-submit")]
     #[test]
     fn from_response_rejects_invalid_plonk_receipt() {
         let response =
@@ -414,5 +418,18 @@ mod tests {
         let error = SnarkPlonkProofBytes::from_response("session", &response)
             .expect_err("invalid receipt must fail");
         assert!(matches!(error, ProofsCommandError::InvalidProposalProof { .. }));
+    }
+
+    #[cfg(not(feature = "proof-submit"))]
+    #[test]
+    fn builds_without_proof_submit_reject_submission() {
+        assert!(matches!(
+            SnarkPlonkProofBytes::ensure_supported(),
+            Err(ProofsCommandError::ProofSubmitUnsupported)
+        ));
+        let response = succeeded_response(Some(plonk_result(Bytes::from_static(b"receipt"))));
+        let error = SnarkPlonkProofBytes::from_response("session", &response)
+            .expect_err("receipt decoding is unavailable");
+        assert!(matches!(error, ProofsCommandError::ProofSubmitUnsupported));
     }
 }

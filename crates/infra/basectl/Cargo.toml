@@ -65,7 +65,7 @@ base-proof-submission = { workspace = true, features = ["test-utils"] }
 base-prover-service-protocol = { workspace = true, features = ["rpc-server"] }
 
 [features]
-default = ["proof-submit"]
+default = [ "proof-submit" ]
 # `proofs submit` decodes SP1 PLONK receipts, which links the SP1 prover stack and its
 # gnark Go FFI (needs Go and protoc to build). Builds that never submit proofs can drop it.
-proof-submit = ["base-proof-submission/snark-receipt"]
+proof-submit = [ "base-proof-submission/snark-receipt" ]
