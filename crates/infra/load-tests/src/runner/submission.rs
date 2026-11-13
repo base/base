@@ -10,11 +10,9 @@ use std::{
     time::{Duration, Instant, SystemTime},
 };
 
-use alloy_consensus::transaction::SignableTransaction;
+use alloy_consensus::{TxEip1559, transaction::SignableTransaction};
 use alloy_eips::Encodable2718;
-use alloy_network::TransactionBuilder;
 use alloy_primitives::{Address, Bytes, Signature, TxHash, U256};
-use alloy_rpc_types::TransactionRequest;
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use base_common_consensus::{Call, Eip8130Signed, TxEip8130};
@@ -692,22 +690,17 @@ impl SubmissionPipeline {
                 cohort: prepared.cohort,
             });
         }
-        let mut tx = TransactionRequest::default()
-            .with_from(prepared.from)
-            .with_value(prepared.value)
-            .with_input(prepared.data.clone())
-            .with_nonce(nonce)
-            .with_chain_id(chain_id)
-            .with_max_fee_per_gas(fees.max_fee)
-            .with_max_priority_fee_per_gas(fees.priority_fee)
-            .with_gas_limit(prepared.gas_limit);
-        if let Some(to) = prepared.to {
-            tx = tx.with_to(to);
-        }
-
-        let typed_tx = tx
-            .build_typed_tx()
-            .map_err(|e| BaselineError::Transaction(format!("failed to build typed tx: {e:?}")))?;
+        let typed_tx = TxEip1559 {
+            chain_id,
+            nonce,
+            gas_limit: prepared.gas_limit,
+            max_fee_per_gas: fees.max_fee,
+            max_priority_fee_per_gas: fees.priority_fee,
+            to: prepared.to.into(),
+            value: prepared.value,
+            access_list: Default::default(),
+            input: prepared.data.clone(),
+        };
         let sig_hash = typed_tx.signature_hash();
         let signature = signer
             .sign_hash_sync(&sig_hash)
