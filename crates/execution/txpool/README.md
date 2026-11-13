@@ -226,10 +226,15 @@ stateDiagram-v2
     Discarding --> NoTip: build sealed or dropped (index discarded)
 ```
 
-Discarding the index makes every dormant transaction ready, under the validity
-pool's lock where the discard happens: their lanes' dormant flags are cleared,
-the pending-lane indexes restored and the transactions queued for
-classification.
+Discarding the index makes every dormant transaction ready. A discard takes
+constant time wherever it happens, including on the build path (a parent other
+than the tip, a dropped build, a deferred discard applied at seal or drop): it
+sets the index aside. Until canonical maintenance has made the set-aside
+transactions ready again (clearing their lanes' dormant flags, restoring the
+pending-lane indexes and queueing them for classification, in one lock hold),
+every snapshot and bridging walk offers every pending lane,
+as with `off`, and pending and queued counts may still count those lanes as
+queued.
 
 **Build ownership.** `begin_dormancy_build` returns a `DormancyBuild` token, and
 the build's snapshot, parks and wakes all go through it; nothing resolves "the

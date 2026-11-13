@@ -368,6 +368,22 @@ impl<T: PoolTransaction> BuildLocal<T> {
     }
 }
 
+/// An index a discard set aside, whose transactions are made ready again off the build path.
+#[derive(Debug, Default)]
+pub(crate) struct DiscardedIndex {
+    _index: ParkedPredicateIndex<()>,
+    _block_releases: BTreeMap<u64, B256Set>,
+    _lanes: HashMap<LaneId, TxHash>,
+    entries: B256Map<DormantEntry>,
+}
+
+impl DiscardedIndex {
+    /// Where each discarded transaction sat. Walks the whole index, so call it without locks.
+    pub(crate) fn into_slots(self) -> Vec<(TxHash, DormantSlot)> {
+        self.entries.into_iter().map(|(hash, entry)| (hash, entry.slot)).collect()
+    }
+}
+
 /// The validity pool's predicate index, scoped to the builder's tip, with the classification
 /// queue and the build lifecycle that keeps every entry false on top of the tip.
 ///
@@ -397,6 +413,10 @@ pub(crate) struct Dormancy {
     /// A discard requested while a build was running, applied when that build ends so its
     /// iterator keeps waking what it parked and what its snapshot left out.
     pub deferred_discard: Option<DormancyDiscardReason>,
+    /// Indexes discards set aside whose transactions are not all ready again yet.
+    discarded: Vec<DiscardedIndex>,
+    /// Discarded indexes being made ready again right now.
+    restoring: usize,
     /// Discards so far, so a classification can tell the index it read is gone.
     pub discards: u64,
     /// `discards` when the classification in flight started.
@@ -425,6 +445,8 @@ impl Dormancy {
             snapshots: 0,
             height: 0,
             deferred_discard: None,
+            discarded: Vec::new(),
+            restoring: 0,
             discards: 0,
             classifying: None,
             fence: WriteFence::default(),
@@ -446,14 +468,23 @@ impl Dormancy {
         self.building && self.builds == build
     }
 
-    /// Empties the index, its block releases, its lane roots and the fence, returning the
-    /// transactions that were dormant, which the caller makes ready again.
-    pub(crate) fn take_entries(&mut self) -> B256Map<DormantEntry> {
-        self.index = ParkedPredicateIndex::default();
-        self.block_releases = BTreeMap::new();
-        self.lanes = HashMap::default();
+    /// Whether every transaction a discard set aside is ready again, so the per-lane dormancy
+    /// flags and the pending-lane indexes describe the current index.
+    pub(crate) const fn is_consistent(&self) -> bool {
+        self.discarded.is_empty() && self.restoring == 0
+    }
+
+    /// Sets the index, its block releases and its lane roots aside in constant time, leaving an
+    /// empty index; the transactions it held are made ready again by
+    /// [`Self::take_discarded`]'s caller, off the build path.
+    pub(crate) fn set_index_aside(&mut self) {
+        self.discarded.push(DiscardedIndex {
+            _index: std::mem::take(&mut self.index),
+            _block_releases: std::mem::take(&mut self.block_releases),
+            _lanes: std::mem::take(&mut self.lanes),
+            entries: std::mem::take(&mut self.entries),
+        });
         self.clear_fences();
-        std::mem::take(&mut self.entries)
     }
 
     /// Forgets every location builds wrote.
@@ -465,6 +496,17 @@ impl Dormancy {
     /// flight reads.
     pub(crate) fn fence_sealed(&mut self, written: WriteFence) {
         self.fence.absorb(written);
+    }
+
+    /// Takes one discarded index to make ready again; [`Self::finish_restoring`] ends it.
+    pub(crate) fn take_discarded(&mut self) -> Option<DiscardedIndex> {
+        let discarded = self.discarded.pop()?;
+        self.restoring += 1;
+        Some(discarded)
+    }
+
+    pub(crate) const fn finish_restoring(&mut self) {
+        self.restoring = self.restoring.saturating_sub(1);
     }
 
     pub(crate) fn enqueue(&mut self, hash: TxHash) {

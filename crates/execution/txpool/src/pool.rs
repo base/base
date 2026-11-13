@@ -540,8 +540,24 @@ where
             return;
         }
         self.validity.pool.write().discard_dormancy(reason);
+        self.restore_discarded_dormancy();
         ValidityPoolMetrics::dormant_transactions()
             .set(self.validity.pool.read().dormant_len() as f64);
+    }
+
+    /// Makes ready again the transactions discards set aside in constant
+    /// time on the build path. Walking a discarded index happens without the
+    /// lock.
+    pub fn restore_discarded_dormancy(&self) {
+        loop {
+            let Some(discarded) = self.validity.pool.write().take_discarded_dormancy() else {
+                return;
+            };
+            let slots = discarded.into_slots();
+            let mut validity = self.validity.pool.write();
+            validity.restore_ready(&slots);
+            validity.finish_restoring();
+        }
     }
 
     /// Resolves the watchers of each nonce advance. A watcher survives only when
@@ -1641,7 +1657,8 @@ where
     /// which owns the index, the snapshot is recorded under the same validity
     /// pool lock hold and the build's view of it returned. `offer_dormant`
     /// takes a snapshot that ignores dormancy, as Off takes, for a build that
-    /// runs without the index.
+    /// runs without the index; so does any snapshot while a discarded index
+    /// is still being made ready again.
     fn merged_best_transactions(
         &self,
         attributes: BestTransactionsAttributes,
@@ -1664,7 +1681,8 @@ where
                 |build| {
                     let mut validity = self.validity.pool.write();
                     let (id, local) = validity.begin_snapshot(build);
-                    let snapshot = PoolBuildSnapshot { build, id, local };
+                    let filtered = !offer_dormant && validity.dormancy_is_consistent();
+                    let snapshot = PoolBuildSnapshot { build, id, filtered, local };
                     (RwLockWriteGuard::downgrade(validity), Some(snapshot))
                 },
             );
@@ -1775,6 +1793,7 @@ where
             return;
         };
         self.validity.pool.write().observe_canonical(canonical);
+        self.restore_discarded_dormancy();
         // Runs outside the admission lock: admission inserts ready, and the
         // install re-checks each transaction against the pool as it is then.
         match self.validator().validator().client().state_by_block_hash(head.hash) {
@@ -2600,12 +2619,13 @@ where
     }
 }
 
-/// A build's snapshot of the validity pool: its id and what the build parks
-/// and writes.
+/// A build's snapshot of the validity pool: its id, whether it left dormant
+/// transactions out, and what the build parks and writes.
 #[derive(Debug)]
 pub struct PoolBuildSnapshot<T: PoolTransaction> {
     build: u64,
     id: u64,
+    filtered: bool,
     local: Arc<Mutex<BuildLocal<T>>>,
 }
 
@@ -2649,6 +2669,7 @@ where
             woken.extend(self.pool.validity.pool.write().wake_for_commit(
                 snapshot.build,
                 snapshot.id,
+                snapshot.filtered,
                 &dormant,
             ));
         }
@@ -7886,10 +7907,11 @@ mod tests {
                 .unwrap_or_default()
         }
 
-        /// A discard on the build path makes every dormant transaction ready
-        /// before the build takes its snapshot.
+        /// After a discard on the build path nothing is dormant, and until
+        /// canonical maintenance makes the set-aside transactions ready again
+        /// every snapshot offers every pending lane.
         #[tokio::test]
-        async fn a_discard_on_the_build_path_makes_every_dormant_transaction_ready() {
+        async fn a_discard_offers_every_lane_until_maintenance_restores_them() {
             let (pool, client) = dormancy_pool(ValidityDormancyMode::Enforce);
             let mut roots = Vec::new();
             for _ in 0..3 {
@@ -7904,11 +7926,13 @@ mod tests {
             let build = begin(&pool, fork_hash(1), 2);
 
             assert_eq!(pool.validity.pool.read().dormant_len(), 0);
-            assert_eq!(pool.pool_size().queued, 0, "their lanes are pending again");
             let mut offered = commit_all(&mut build_iterator(&pool, Some(&build)));
             offered.sort();
             roots.sort();
             assert_eq!(offered, roots, "the snapshot offers every pending lane");
+
+            pool.restore_discarded_dormancy();
+            assert_eq!(pool.pool_size().queued, 0, "maintenance made them ready again");
         }
 
         /// An enforcing pool sealed at block 1 that holds a transaction blocked
