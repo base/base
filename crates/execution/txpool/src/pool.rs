@@ -4634,6 +4634,43 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn mined_original_evicts_its_pooled_replacement() {
+        let (pool, client) = build_integration_pool();
+        let signer = signer();
+        fund(&client, signer.address());
+        let expiry = INTEGRATION_POOL_NOW_MS + Eip8130Constants::NONCE_FREE_MAX_EXPIRY_WINDOW;
+        let nonce_free = |max_fee_per_gas| {
+            self_paid_eoa_8130(&signer, Eip8130Constants::NONCE_KEY_MAX, 0, expiry, max_fee_per_gas)
+        };
+        let original = nonce_free(1_000);
+        let replacement = nonce_free(2_000);
+        let replay_id = original.eip8130_replay_id().unwrap();
+        pool.add_transaction(TransactionOrigin::Local, original.clone()).await.unwrap();
+        pool.add_transaction(TransactionOrigin::Local, replacement.clone()).await.unwrap();
+        assert!(pool.get(original.hash()).is_none());
+        assert!(pool.guard.read().contains(replacement.hash()));
+
+        // The original is mined anyway: pruning by mined hash misses the replacement.
+        canonical_update(&pool, 1, Vec::new(), vec![*original.hash()], PoolUpdateKind::Commit);
+        assert!(pool.sidecar.pool.read().contains(replacement.hash()));
+
+        // Its execution records the shared `replay_id`, which evicts the replacement.
+        let removed = pool.apply_state_diff(&[AccountStateDiff {
+            address: NonceManagerStorage::ADDRESS,
+            changed_slots: vec![(
+                B256::from(NonceManagerStorage::expiring_nonce_seen_slot(replay_id)),
+                U256::from(expiry),
+            )],
+            ..Default::default()
+        }]);
+
+        assert_eq!(removed.iter().map(|tx| *tx.hash()).collect::<Vec<_>>(), [*replacement.hash()]);
+        assert!(pool.get(replacement.hash()).is_none());
+        assert!(!pool.sidecar.pool.read().contains(replacement.hash()));
+        assert!(!pool.guard.read().contains(replacement.hash()));
+    }
+
+    #[tokio::test]
     async fn account_update_releases_guard_for_protocol_discard() {
         let (pool, client) = build_integration_pool();
         let signer = signer();
