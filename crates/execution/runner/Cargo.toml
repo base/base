@@ -18,7 +18,6 @@ base-test-utils = { workspace = true, optional = true }
 # reth
 reth-db.workspace = true
 reth-exex.workspace = true
-reth-rpc-api.workspace = true
 reth-provider.workspace = true
 reth-node-builder.workspace = true
 reth-ipc = { workspace = true, optional = true }
@@ -30,7 +29,6 @@ reth-primitives-traits = { workspace = true, optional = true }
 
 # op-reth
 base-node-core.workspace = true
-base-execution-txpool.workspace = true
 base-execution-chainspec.workspace = true
 base-execution-payload-builder.workspace = true
 base-execution-rpc = { workspace = true, features = ["client"] }
