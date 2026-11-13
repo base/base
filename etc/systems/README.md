@@ -327,8 +327,8 @@ per second with the check on are not comparable with runs that have it off.
 `--reorg-every <n>` makes the node reorg its own chain while it replays, through Reth's
 `--debug.reorg-frequency` engine stream: every `n` blocks, after inserting the next block, Reth
 builds one block from a later block's transactions that replaces the last `--reorg-depth <d>`
-(default 1) canonical blocks and makes it canonical; the replay's forkchoice update then returns
-the node to the exported chain, so the final head is still the manifest's. Each
+(default 1, at most `n`) canonical blocks and makes it canonical; the replay's forkchoice update
+then returns the node to the exported chain, so the final head is still the manifest's. Each
 block that carried a reorg gets `reorgDepth` (the blocks the reorg replaced) in the per-block
 timings and is left out of the main latency summaries; `reorgs` in the result records the
 requested interval and depth, how many reorgs ran (Reth skips one, logging an error, when it

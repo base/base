@@ -386,6 +386,7 @@ impl InProcessClient {
                 warn!(error = %error, "forcing client runtime shutdown after graceful timeout");
             }
         }
+        drop(self.canonical_state);
         drop(self._node);
         let runtime = self._runtime;
         tokio::task::spawn_blocking(move || drop(runtime))

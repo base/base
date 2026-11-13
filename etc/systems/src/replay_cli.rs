@@ -113,7 +113,7 @@ pub struct ReplayBenchmarkArgs {
     /// and the next forkchoice update returns to the exported chain.
     #[arg(long)]
     pub reorg_every: Option<NonZeroUsize>,
-    /// Canonical blocks each injected reorg replaces.
+    /// Canonical blocks each injected reorg replaces; at most `--reorg-every`.
     #[arg(long, requires = "reorg_every", default_value = "1")]
     pub reorg_depth: NonZeroUsize,
 }
@@ -335,6 +335,15 @@ struct ReplayRun {
 impl ReplayBenchmarkArgs {
     /// Starts the node, replays the export, writes results, and exits nonzero on a mismatch.
     pub async fn run(self) -> Result<()> {
+        if let Some(every) = self.reorg_every {
+            // A deeper reorg would replace blocks at or below the export boundary, which the safe
+            // and finalized heads must stay ancestors of.
+            ensure!(
+                self.reorg_depth <= every,
+                "--reorg-depth {} exceeds --reorg-every {every}",
+                self.reorg_depth
+            );
+        }
         let manifest = read_export_manifest(&self.export_dir)?;
         let (chain_spec, block_interval) = Self::replay_chain_spec(&manifest)?;
         Self::prepare_output_dir(&self.output_dir)?;
@@ -1027,6 +1036,31 @@ mod tests {
         assert!(
             BenchmarkCli::try_parse_from(base.into_iter().chain(["--reorg-depth", "2"])).is_err()
         );
+    }
+
+    #[tokio::test]
+    async fn rejects_reorg_depth_beyond_reorg_every() {
+        let cli = BenchmarkCli::parse_from([
+            "base-bench",
+            "replay",
+            "--datadir",
+            "/snapshot/restored",
+            "--export-dir",
+            "/boot/export",
+            "--output-dir",
+            "results/replay",
+            "--reorg-every",
+            "1",
+            "--reorg-depth",
+            "2",
+        ]);
+        let Some(BenchmarkCommand::Replay(args)) = cli.command else {
+            panic!("expected replay command");
+        };
+
+        let error = args.run().await.unwrap_err();
+
+        assert!(error.to_string().contains("--reorg-depth 2 exceeds --reorg-every 1"));
     }
 
     #[test]
