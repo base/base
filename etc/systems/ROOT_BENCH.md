@@ -4,6 +4,14 @@ This command benchmarks serialized native payload construction and first import 
 
 ## Commands
 
+Build the dedicated executable from the clean checkout on the operator's Linux host:
+
+```sh
+cargo build --locked --release -p base-system-tests --bin base-bench
+```
+
+The following examples assume `target/release` is on `PATH`. Supply the external manifest for that exact release executable when running a trial.
+
 ```sh
 base-bench root-bench freeze --output workload1.json --blocks 8 --transactions-per-block 10 --warmup 1
 base-bench root-bench run --input workload1.json --cohort r --output trial1 --executable-manifest build1.json
@@ -21,6 +29,10 @@ This first workload is state-changing native ETH transfers, a correctness/latenc
 
 These are deliberate EL-only blocks without an L1-info transaction. Receipt verification uses the launched node's canonical execution provider `receipts_by_block(accepted_hash)`, not Base's `eth_getTransactionReceipt` converter, which requires L1-info calldata. The accepted canonical head hash and native payload transaction bytes/order bind the block; native receipts are positionally associated with that exact block's transactions. Exact receipt count, success status, per-position cumulative-gas delta of 21000 and total header gas are required. Native receipts do not have RPC transaction/block/index metadata. Sender nonce and recipient balance remain exact checks. No receipt verification is skipped and no L1/CL fixtures are inserted.
 
+Nonce and balance verification uses `state_by_block_hash(accepted_hash).basic_account`, on the same explicitly owned runtime blocking job as native receipt verification. The authenticated Engine read transport exposes only the `EngineEthApi` subset, so this command never relies on `eth_getTransactionCount` or `eth_getBalance`. The integration trial explicitly removes both account RPC methods before running.
+
+The deterministic signing key is a well-known synthetic test-only key consisting of 32 repeated `0x01` bytes. It is public, not a credential. Never use this key for real funds or a production account.
+
 ## Cohort launch
 
 All arms use CLI-derived `ExecutionNodeArgs`, typed `ExecutionNodeLaunchConfig::launch_default`, disposable acknowledgement, chain 900, no CL/L1 services, no forwarding, no proof history, no metering/indexer/payer/event extensions, no discovery and no peers. The witness diagnostic hook is explicitly unconfigured. Queue 6, retention 128, root timeout 30000 ms, persistence threshold 0, allow-unwind-canonical-header true, snap-v2 false and unused ports are common. Only D sets `config.base.deferredStateRoot = 2`. O selects `ordinary`, S `serial-trusted`, R `serial-reexecution`, D `deferred`.
@@ -31,15 +43,15 @@ Each build extends its own cohort's last accepted parent, never a frozen parent 
 
 ## Output
 
-`input.json` preserves the canonical input. `launch.json` records effective debug configuration, receipt source, arguments and BASE_/RETH_ environment. Its `runtime_checkout` commit/tree/lock/pin identity describes only the runtime working directory, never the executable's source. Sensitive environment values are hashed. `executable.json` identifies executable and compiled benchmark-module bytes; `executable-source.json` retains the supplied external manifest. See the provenance gate below.
+`input.json` preserves the canonical input. `launch.json` records an allowlist of nonsecret scalar launch settings, receipt/account sources, argument fingerprints and BASE_/RETH_ environment fingerprints. No broad CLI-derived configuration Debug dump is retained. Every captured environment value and every whole argument token is Keccak-hashed, including benign values, endpoints, headers, JWT settings, paths and inline flag values. Its `runtime_checkout` commit/tree/lock/pin identity describes only the runtime working directory, never the executable's source. `executable.json` identifies executable and compiled benchmark-module bytes; `executable-source.json` retains the supplied external manifest. See the provenance gate below.
 
 `samples.jsonl` is flushed after each block cycle or call failure, including raw monotonic start/end nanoseconds, payload ID, parent/block hash, warmup membership, responses/status/latestValidHash, header commitment, error, gas and successful receipt count. Successful Engine responses are retained as typed pending values, then serialized after canonical FCU or on any error/cancellation. No disk writes or response serialization delay successful Engine phases. `metrics-before.txt`, per-block `metricsN-before.txt`/`metricsN-after.txt`, and `metrics-drained.txt` preserve raw `base_root_experiment` Prometheus lines without distributing deltas over blocks.
 
 `result.json` records completion/error, drain status, samples and nearest-rank count/p50/p90/p95/p99 summaries. `drain.json` records graceful guard completion separately from observed healthy, joined root worker state, manager presence, and consumed critical-task result. All active S/R/D trials require the shared manager, closed queue, no retained worker JoinHandle and healthy manager after guards finish. O may have no manager. The runtime critical-task result is consumed during execution or shutdown, but its normal shutdown result alone cannot prove worker completion because the task manager can exit before drain-task panics.
 
-Partial/error artifacts remain on launch, call, validation, Ctrl-C cancellation and drain failure; nonzero exit means incomplete. Abrupt termination can lose the current in-memory block sample. SIGTERM-specific cleanup is not yet verified.
+Partial/error artifacts are best effort on launch, call, validation, Ctrl-C cancellation and drain failure; nonzero exit means incomplete. Serialization, persistence and task JoinErrors are accumulated without replacing the primary trial error or skipping cleanup. After runtime construction, cleanup attempts bounded graceful shutdown, checks actual workers/provider reads, then calls `runtime.shutdown_timeout`, including when the critical monitor is unavailable. Post-cleanup metrics, drain and result writes are attempted independently. A failed output filesystem can prevent any of these artifacts from being written. Abrupt termination can lose the current in-memory block sample. SIGTERM-specific cleanup is not yet verified.
 
-Receipt provider tasks run only on the explicitly owned execution runtime. Their handles remain retained across call and trial cancellation; `drain.json.receipt_reads_completed` is false while any such operation is still running. A timeout does not cancel an indivisible provider read. Runtime shutdown is bounded, and unfinished work makes the trial incomplete.
+Receipt and account provider tasks run only on the explicitly owned execution runtime. Their handles remain retained across call and trial cancellation; `drain.json.receipt_reads_completed` covers both receipt and account checks and is false while any such operation is still running. Completed retained handles are consumed so provider errors and panics cannot be mistaken for successful checks. A timeout does not cancel an indivisible provider read. Runtime shutdown is bounded, and unfinished work makes the trial incomplete.
 
 Run from any directory inside a runtime source checkout. The harness resolves its Git root for diagnostic lock/pin reads. That checkout is not the executable-source attestation.
 
@@ -86,6 +98,28 @@ The command checks schema and executable digest binding and preserves the extern
 The actual typed-launch integration test also requires `ROOT_BENCH_EXECUTABLE_MANIFEST` pointing to an externally generated manifest for that exact test executable, after building it on the supported host. Do not generate an attestation from arbitrary current checkout state simply to make the gate pass.
 
 That integration test is explicitly ignored by default because it needs external provenance and process-global metric isolation. Run unit tests separately, then launch the built test executable in its own process with the supplied manifest, filtering only `root_bench::tests::admitted_nonempty_r_d_engine_trial --ignored --exact --test-threads=1`. Do not combine it with injected worker-failure tests in the same process. The top-level `just test` excludes `base-system-tests`, so targeted package commands are required for this module.
+
+The operator runs Linux validation. From the repository root, run the unit-test filter separately:
+
+```sh
+RUST_MIN_STACK=8388608 cargo test --locked -p base-system-tests --lib root_bench::tests:: -- --test-threads=1
+```
+
+Build the library test executable without running the ignored integration test:
+
+```sh
+cargo test --locked -p base-system-tests --lib --no-run
+```
+
+Use the exact `base_system_tests-<hash>` executable path printed by that command. Have the trusted external build operator attest that executable, then set `TEST_EXECUTABLE` to its path and `EXTERNAL_TEST_MANIFEST` to the supplied manifest path. Run only the ignored R/D test in a new process:
+
+```sh
+ROOT_BENCH_EXECUTABLE_MANIFEST="$EXTERNAL_TEST_MANIFEST" RUST_MIN_STACK=8388608 \
+  "$TEST_EXECUTABLE" root_bench::tests::admitted_nonempty_r_d_engine_trial \
+  --ignored --exact --test-threads=1
+```
+
+Do not rebuild or change the test executable between attestation and this invocation. Successful static checks do not replace these Linux tests.
 
 ## External responsibilities and unverified requirements
 

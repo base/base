@@ -22,8 +22,9 @@ use eyre::{Result, ensure, eyre};
 use metrics_exporter_prometheus::PrometheusHandle;
 use reth_chainspec::EthChainSpec;
 use reth_cli_runner::CliContext;
-use reth_provider::ReceiptProvider;
-use reth_tasks::{RuntimeBuilder, RuntimeConfig};
+use reth_provider::{AccountReader, ReceiptProvider, StateProviderFactory};
+use reth_tasks::{PanickedTaskError, Runtime, RuntimeBuilder, RuntimeConfig};
+use tokio::task::{JoinError, JoinHandle};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -179,6 +180,79 @@ pub struct RootBenchSummary {
     pub p99_ns: Option<u64>,
 }
 
+/// Owns trial shutdown, including provider work retained after cancellation.
+pub struct RootBenchCleanup {
+    /// Explicit execution runtime that must be shut down even after evidence failures.
+    pub runtime: Runtime,
+    /// Critical-task monitor, absent only when acquisition failed.
+    pub critical: Option<JoinHandle<std::result::Result<(), PanickedTaskError>>>,
+    /// Monitor result already consumed during the trial.
+    pub critical_result: Option<std::result::Result<std::result::Result<(), PanickedTaskError>, JoinError>>,
+    /// Shared worker manager observed before releasing the launched node.
+    pub manager: Option<Arc<PostStateRootManager>>,
+    /// Whether the cohort requires an observed worker manager.
+    pub manager_required: bool,
+    /// Blocking receipt and account checks, retained across all deadlines.
+    pub receipt_tasks: Vec<JoinHandle<Result<u64>>>,
+    /// Bound for each shutdown phase.
+    pub timeout: Duration,
+}
+
+impl RootBenchCleanup {
+    /// Keeps the first failure and appends later cleanup or evidence failures.
+    pub fn retain_error(outcome: &mut Result<()>, result: Result<()>) {
+        if let Err(error) = result {
+            *outcome = Err(match outcome.as_ref() {
+                Ok(()) => error,
+                Err(primary) => eyre!("{primary:#}; subsequent failure: {error:#}"),
+            });
+        }
+    }
+
+    /// Attempts graceful drain, checks actual workers/reads, then always shuts down the runtime.
+    pub async fn finish(mut self, last: Option<&mut RootBenchSample>, output: &Path, outcome: &mut Result<()>) -> Value {
+        if let Err(error) = &outcome {
+            if let Some(last) = last {
+                last.error.get_or_insert_with(|| format!("{error:#}"));
+                Self::retain_error(outcome, last.flush_pending());
+                Self::retain_error(outcome, last.persist(output));
+            }
+        }
+        let drain_runtime = self.runtime.clone();
+        let timeout = self.timeout;
+        let guards_completed = match tokio::task::spawn_blocking(move || drain_runtime.graceful_shutdown_with_timeout(timeout)).await {
+            Ok(completed) => completed,
+            Err(error) => { Self::retain_error(outcome, Err(eyre!("graceful shutdown join failed: {error}"))); false }
+        };
+        if !guards_completed { Self::retain_error(outcome, Err(eyre!("shutdown/drain deadline exceeded; trial incomplete"))); }
+        // The task manager can exit before shutdown-task panics. Worker state is required too.
+        if self.critical_result.is_none() {
+            if let Some(critical) = self.critical.as_mut() {
+                match tokio::time::timeout(timeout, critical).await {
+                    Ok(result) => self.critical_result = Some(result),
+                    Err(_) => Self::retain_error(outcome, Err(eyre!("critical-task monitor shutdown deadline exceeded"))),
+                }
+            } else { Self::retain_error(outcome, Err(eyre!("runtime critical-task monitor unavailable"))); }
+        }
+        let worker_result = RootBenchRunArgs::verify_worker(self.manager.as_ref(), self.manager_required);
+        let worker_joined_healthy = worker_result.is_ok();
+        Self::retain_error(outcome, worker_result);
+        let receipt_reads_completed = self.receipt_tasks.iter().all(|task| task.is_finished());
+        for task in &mut self.receipt_tasks {
+            if task.is_finished() {
+                let result = task.await.map_err(|error| eyre!("provider read join failed: {error}")).and_then(|result| result.map(|_| ()));
+                Self::retain_error(outcome, result);
+            }
+        }
+        if !receipt_reads_completed { Self::retain_error(outcome, Err(eyre!("receipt/account provider work remains outstanding after shutdown"))); }
+        if matches!(&self.critical_result, Some(Err(_)) | Some(Ok(Err(_)))) { Self::retain_error(outcome, Err(eyre!("critical task failure: {:?}", self.critical_result))); }
+        let drained = guards_completed && worker_joined_healthy && receipt_reads_completed;
+        let shutdown = tokio::task::spawn_blocking(move || self.runtime.shutdown_timeout(timeout)).await.map_err(|error| eyre!("runtime shutdown join failed: {error}"));
+        Self::retain_error(outcome, shutdown);
+        json!({"drained":drained,"guards_completed":guards_completed,"worker_joined_healthy":worker_joined_healthy,"receipt_reads_completed":receipt_reads_completed,"manager_observed":self.manager.is_some(),"critical_task_result":format!("{:?}", self.critical_result)})
+    }
+}
+
 impl RootBenchArgs {
     /// Dispatches preparation separately from execution.
     pub async fn run(self) -> Result<()> {
@@ -196,6 +270,7 @@ impl RootBenchBundle {
     /// Signs deterministic state-changing transfers outside the timed run.
     pub fn freeze(blocks: u64, transactions: u64, warmup: u64) -> Result<Self> {
         ensure!(blocks >= 4 && blocks <= 10_000 && transactions > 0 && transactions <= 1000 && warmup < blocks, "require 4..10000 blocks, 1..1000 transfers and warmup < blocks");
+        // Well-known synthetic test-only key: 32 repeated 0x01 bytes. Never use for real funds.
         let signer: PrivateKeySigner = B256::repeat_byte(1).to_string().parse()?;
         let genesis = Self::transfer_genesis()?;
         let prepared = PreparedTransaction { native:false, from:signer.address(), to:Some(Address::repeat_byte(2)), value:U256::from(1), data:Bytes::new(), gas_limit:21_000, estimated_gas:21_000, validity:vec![], cohort:SubmitCohort::Plain };
@@ -262,6 +337,7 @@ impl RootBenchBundle {
     }
 
     /// Returns the deterministic disposable workload sender.
+    /// Uses the well-known synthetic test-only key of 32 repeated 0x01 bytes, never real credentials.
     pub fn freeze_identity() -> Result<Address> {
         Ok(B256::repeat_byte(1).to_string().parse::<PrivateKeySigner>()?.address())
     }
@@ -398,12 +474,34 @@ impl RootBenchSample {
         let start_ns = origin.elapsed().as_nanos() as u64;
         let result = tokio::time::timeout(timeout, future).await.map_err(|e| eyre!("{name} timed out: {e}")).and_then(|result| result.map_err(|e| eyre!("{name}: {e}")));
         self.phases.insert(name.into(), RootBenchInterval { start_ns, end_ns:origin.elapsed().as_nanos() as u64 });
-        if let Err(error) = &result { self.error = Some(error.to_string()); self.flush_pending()?; self.persist(output)?; }
+        let mut result = result;
+        if let Err(error) = &result {
+            self.error = Some(error.to_string());
+            let mut evidence = Ok(());
+            RootBenchCleanup::retain_error(&mut evidence, self.flush_pending());
+            RootBenchCleanup::retain_error(&mut evidence, self.persist(output));
+            if let Err(evidence) = evidence { result = Err(eyre!("{error:#}; evidence failure: {evidence:#}")); }
+        }
         result
     }
 }
 
 impl RootBenchRunArgs {
+    /// Fingerprints every captured environment value, including apparently benign settings.
+    pub fn environment_fingerprints(values: impl IntoIterator<Item = (String, String)>) -> BTreeMap<String, String> {
+        values.into_iter().filter(|(name, _)| name.starts_with("RETH_") || name.starts_with("BASE_")).map(|(name, value)| (name, format!("keccak:{}", keccak256(value)))).collect()
+    }
+
+    /// Fingerprints whole argument tokens, including values embedded in flags or paths.
+    pub fn argument_fingerprints(values: impl IntoIterator<Item = std::ffi::OsString>) -> Vec<String> {
+        values.into_iter().map(|arg| format!("keccak:{}", keccak256(arg.as_encoded_bytes()))).collect()
+    }
+
+    /// Records only explicit nonsecret scalar settings, never CLI-derived configuration Debug.
+    pub fn launch_settings(launch: &ExecutionNodeLaunchConfig) -> Value {
+        json!({"queue":launch.standard.rpc.rollup_args.root_experiment_queue,"retention":launch.standard.rpc.rollup_args.root_experiment_ready,"persistence_threshold":launch.node_config.engine.persistence_threshold,"allow_unwind_canonical_header":launch.node_config.engine.allow_unwind_canonical_header,"snap_v2":launch.node_config.network.snap_v2,"disable_discovery":launch.node_config.network.discovery.disable_discovery,"max_inbound_peers":launch.node_config.network.max_inbound_peers,"max_outbound_peers":launch.node_config.network.max_outbound_peers,"witness_hook_configured":launch.node_config.debug.invalid_block_hook.is_some()})
+    }
+
     /// Refuses unverified or mismatched external executable-to-source provenance.
     pub fn verify_manifest(manifest: Option<&Value>, executable: B256) -> Result<()> {
         let manifest = manifest.ok_or_else(|| eyre!("external executable provenance unverified; supply --executable-manifest"))?;
@@ -432,10 +530,11 @@ impl RootBenchRunArgs {
     pub async fn run(self) -> Result<()> {
         RootBenchBundle::numbered(&self.output)?;
         fs::create_dir(&self.output)?;
-        let outcome = self.execute().await;
+        let mut outcome = self.execute().await;
         if let Err(error) = &outcome {
             if !self.output.join("result.json").exists() {
-                RootBenchBundle::write_new(&self.output.join("result.json"), &json!({"complete":false,"drained":false,"error":format!("{error:#}"),"cohort":self.cohort}))?;
+                let fallback = RootBenchBundle::write_new(&self.output.join("result.json"), &json!({"complete":false,"drained":false,"error":format!("{error:#}"),"cohort":self.cohort}));
+                RootBenchCleanup::retain_error(&mut outcome, fallback);
             }
         }
         outcome
@@ -465,17 +564,19 @@ impl RootBenchRunArgs {
         RootBenchBundle::write_new(&self.output.join("executable-source.json"), &json!({"external_manifest":manifest,"verification":"external-attestation-required","executable_keccak":executable_digest}))?;
         Self::verify_manifest(manifest.as_ref(), executable_digest)?;
         RootBenchBundle::write_new(&self.output.join("executable.json"), &json!({"executable_keccak":keccak256(fs::read(std::env::current_exe()?)?),"harness_module_keccak":keccak256(include_bytes!("root_bench.rs"))}))?;
-        let environment: BTreeMap<_, _> = std::env::vars().filter(|(name, _)| name.starts_with("RETH_") || name.starts_with("BASE_")).map(|(name, value)| {
-            let sensitive = ["KEY", "TOKEN", "SECRET", "PASSWORD", "URL"].iter().any(|word| name.contains(word));
-            (name, if sensitive { format!("keccak:{}", keccak256(value)) } else { value })
-        }).collect();
-        RootBenchBundle::write_new(&self.output.join("launch.json"), &json!({"cohort":self.cohort,"transport":"typed-in-memory","receipt_source":"canonical-execution-provider-receipts_by_block","config":format!("{launch:#?}"),"runtime_checkout":{"source":String::from_utf8(source.stdout)?,"cargo_lock_keccak":keccak256(fs::read(checkout.join("Cargo.lock"))?),"reth_pin_keccak":keccak256(fs::read(checkout.join("etc/upstream-pins/reth.toml"))?),"not_executable_provenance":true},"argv":std::env::args().collect::<Vec<_>>(),"environment":environment,"unsupported":["cpu_time","rss","io","cache_hit_miss","persistence_lag","queue_depth","paced_cadence","immutable_6268_baseline"]}))?;
+        let environment = Self::environment_fingerprints(std::env::vars());
+        RootBenchBundle::write_new(&self.output.join("launch.json"), &json!({"cohort":self.cohort,"transport":"typed-in-memory","receipt_source":"canonical-execution-provider-receipts_by_block","account_source":"canonical-execution-provider-state_by_block_hash/basic_account","config":Self::launch_settings(&launch),"runtime_checkout":{"source":String::from_utf8(source.stdout)?,"cargo_lock_keccak":keccak256(fs::read(checkout.join("Cargo.lock"))?),"reth_pin_keccak":keccak256(fs::read(checkout.join("etc/upstream-pins/reth.toml"))?),"not_executable_provenance":true},"argv":Self::argument_fingerprints(std::env::args_os()),"environment":environment,"unsupported":["cpu_time","rss","io","cache_hit_miss","persistence_lag","queue_depth","paced_cadence","immutable_6268_baseline"]}))?;
         // Share Reth's idempotent recorder installation with the admitted node launcher.
         let metrics = reth_node_metrics::recorder::install_prometheus_recorder().handle().clone();
         let origin = Instant::now();
         RootBenchBundle::write_new(&self.output.join("runtime.json"), &json!({"configuration":format!("{:#?}", RuntimeConfig::default())}))?;
         let runtime = std::thread::spawn(|| RuntimeBuilder::new(RuntimeConfig::default()).build()).join().map_err(|_| eyre!("runtime construction panicked"))??;
-        let mut critical = runtime.take_task_manager_handle().ok_or_else(|| eyre!("runtime critical-task monitor unavailable"))?;
+        let Some(mut critical) = runtime.take_task_manager_handle() else {
+            let mut outcome = Err(eyre!("runtime critical-task monitor unavailable"));
+            let drain = RootBenchCleanup { runtime, critical:None, critical_result:None, manager:None, manager_required:self.cohort != RootBenchCohort::O, receipt_tasks:Vec::new(), timeout:Duration::from_millis(self.shutdown_timeout_ms) }.finish(None, &self.output, &mut outcome).await;
+            RootBenchCleanup::retain_error(&mut outcome, RootBenchBundle::write_new(&self.output.join("drain.json"), &drain));
+            return outcome;
+        };
         let mut launched = None;
         let mut samples = Vec::new();
         let mut measurement_start_ns = None;
@@ -487,7 +588,17 @@ impl RootBenchRunArgs {
             result = tokio::time::timeout(Duration::from_millis(self.run_timeout_ms), async {
             launched = Some(tokio::time::timeout(timeout, launch.launch_default(CliContext { task_executor: runtime.clone() })).await.map_err(|_| eyre!("launch timed out"))??);
             let node = launched.as_ref().ok_or_else(|| eyre!("launch handle missing"))?;
-            let reads = RootProvider::<Base>::new(RpcClient::new(InMemoryTransport { module:node.auth_module.clone() }, false));
+            let read_module = node.auth_module.clone();
+            #[cfg(test)]
+            let read_module = {
+                let mut module = read_module;
+                // The integration trial must succeed without the unavailable EngineEthApi methods.
+                module.remove_method("eth_getTransactionCount");
+                module.remove_method("eth_getBalance");
+                assert!(!module.method_names().any(|name| matches!(name, "eth_getTransactionCount" | "eth_getBalance")), "integration read transport must omit both account RPC methods");
+                module
+            };
+            let reads = RootProvider::<Base>::new(RpcClient::new(InMemoryTransport { module:read_module }, false));
             let initial = tokio::time::timeout(timeout, reads.get_block_by_number(alloy_eips::BlockNumberOrTag::Latest)).await??.ok_or_else(|| eyre!("missing genesis"))?;
             ensure!(initial.header.number == 0, "fresh-genesis benchmark cannot resume a database");
             let mut parent = initial.header.hash;
@@ -530,16 +641,22 @@ impl RootBenchRunArgs {
                     ensure!(head.header.hash == hash, "canonical head differs from accepted hash");
                     let transactions = attrs.transactions.as_ref().ok_or_else(|| eyre!("missing transactions"))?;
                     let provider = node.handle.node.provider.clone();
-                    receipt_tasks.push(runtime.spawn_blocking(move || provider.receipts_by_block(hash.into())));
-                    let receipts = tokio::time::timeout(timeout, receipt_tasks.last_mut().expect("retained receipt task")).await???.ok_or_else(|| eyre!("missing canonical native receipts for {hash}"))?;
-                    receipt_tasks.pop();
-                    RootBenchSample::verify_receipts(&receipts, transactions.len(), block.header.gas_used)?;
-                    sample.successful_receipts = receipts.len() as u64;
-                    let sender_nonce = tokio::time::timeout(timeout, reads.get_transaction_count(RootBenchBundle::freeze_identity()?)).await??;
+                    let sender = RootBenchBundle::freeze_identity()?;
                     let expected_nonce: usize = bundle.blocks[..=index].iter().map(|b| b.transactions.as_ref().map_or(0, Vec::len)).sum();
-                    ensure!(sender_nonce == expected_nonce as u64, "accepted sender nonce mismatch");
-                    let recipient_balance = tokio::time::timeout(timeout, reads.get_balance(Address::repeat_byte(2))).await??;
-                    ensure!(recipient_balance == U256::from(expected_nonce), "recipient balance must reflect every accepted signed transfer exactly");
+                    let transaction_count = transactions.len();
+                    receipt_tasks.push(runtime.spawn_blocking(move || -> Result<u64> {
+                        let receipts = provider.receipts_by_block(hash.into())?.ok_or_else(|| eyre!("missing canonical native receipts for {hash}"))?;
+                        RootBenchSample::verify_receipts(&receipts, transaction_count, block.header.gas_used)?;
+                        let state = provider.state_by_block_hash(hash)?;
+                        let sender_nonce = AccountReader::basic_account(&state, &sender)?.unwrap_or_default().nonce;
+                        ensure!(sender_nonce == expected_nonce as u64, "accepted sender nonce mismatch");
+                        let recipient_balance = AccountReader::basic_account(&state, &Address::repeat_byte(2))?.unwrap_or_default().balance;
+                        ensure!(recipient_balance == U256::from(expected_nonce), "recipient balance must reflect every accepted signed transfer exactly");
+                        Ok(receipts.len() as u64)
+                    }));
+                    let checked = tokio::time::timeout(timeout, receipt_tasks.last_mut().expect("retained receipt/account task")).await?;
+                    receipt_tasks.pop();
+                    sample.successful_receipts = checked??;
                     let after = Self::root_metrics(&metrics);
                     RootBenchBundle::write_raw_new(&self.output.join(format!("metrics{}-after.txt", index + 1)), after.as_bytes())?;
                     if self.cohort == RootBenchCohort::R || (self.cohort == RootBenchCohort::D && attrs.payload_attributes.timestamp >= bundle.activation) { self.cohort.check_accounting(&before, &after)?; }
@@ -547,7 +664,7 @@ impl RootBenchRunArgs {
                     parent = hash; parent_root = block.header.state_root;
                     Ok(())
                 }.await;
-                if let Err(error) = result { sample.error = Some(format!("{error:#}")); sample.flush_pending()?; sample.persist(&self.output)?; return Err(error); }
+                if let Err(error) = result { sample.error = Some(format!("{error:#}")); return Err(error); }
                 sample.persist(&self.output)?;
             }
             Ok::<(), eyre::Report>(())
@@ -555,45 +672,24 @@ impl RootBenchRunArgs {
             failure = &mut critical => { let error = eyre!("runtime critical-task monitor ended during trial: {failure:?}"); critical_result = Some(failure); Err(error) },
             _ = tokio::signal::ctrl_c() => Err(eyre!("trial interrupted; in-flight call outcome uncertain")),
         };
-        if let Err(error) = &outcome {
-            if let Some(last) = samples.last_mut() {
-                last.error.get_or_insert_with(|| format!("{error:#}"));
-                last.flush_pending()?;
-                if let Err(persist_error) = last.persist(&self.output) { outcome = Err(eyre!("cannot persist partial sample: {persist_error:#}")); }
-            }
-        }
         // Releasing transports/providers before graceful shutdown is part of the measurement.
         let service = launched.as_ref().and_then(|node| node.root_service.clone());
         drop(launched);
-        let drain_runtime = runtime.clone();
-        let shutdown = Duration::from_millis(self.shutdown_timeout_ms);
-        let guards_completed = tokio::task::spawn_blocking(move || drain_runtime.graceful_shutdown_with_timeout(shutdown)).await?;
-        // The task manager can exit before shutdown-task panics. Worker state is required too.
-        if critical_result.is_none() {
-            match tokio::time::timeout(shutdown, &mut critical).await {
-                Ok(result) => critical_result = Some(result),
-                Err(_) => { if outcome.is_ok() { outcome = Err(eyre!("critical-task monitor shutdown deadline exceeded")); } }
-            }
-        }
-        let worker_result = Self::verify_worker(service.as_ref().and_then(|service| service.manager.get()), self.cohort != RootBenchCohort::O);
-        let worker_joined_healthy = worker_result.is_ok();
-        let receipt_reads_completed = receipt_tasks.iter().all(|task| task.is_finished());
-        if !receipt_reads_completed && outcome.is_ok() { outcome = Err(eyre!("receipt provider work remains outstanding after shutdown")); }
-        let drained = guards_completed && worker_joined_healthy && receipt_reads_completed;
-        if let Err(error) = worker_result { if outcome.is_ok() { outcome = Err(error); } }
-        if matches!(&critical_result, Some(Err(_)) | Some(Ok(Err(_)))) && outcome.is_ok() { outcome = Err(eyre!("critical task failure: {critical_result:?}")); }
-        tokio::task::spawn_blocking(move || runtime.shutdown_timeout(shutdown)).await?;
+        let manager = service.as_ref().and_then(|service| service.manager.get()).cloned();
+        let drain = RootBenchCleanup { runtime, critical:Some(critical), critical_result, manager, manager_required:self.cohort != RootBenchCohort::O, receipt_tasks, timeout:Duration::from_millis(self.shutdown_timeout_ms) }.finish(samples.last_mut(), &self.output, &mut outcome).await;
+        let drained = drain["drained"] == true;
         let end_ns = origin.elapsed().as_nanos() as u64;
         let drained_metrics = Self::root_metrics(&metrics);
-        RootBenchBundle::write_raw_new(&self.output.join("metrics-drained.txt"), drained_metrics.as_bytes())?;
-        if outcome.is_ok() && RootBenchCohort::counter(&drained_metrics, "reth_base_root_experiment_jobs_failed")? != 0.0 { outcome = Err(eyre!("root worker failure observed after drain")); }
+        RootBenchCleanup::retain_error(&mut outcome, RootBenchBundle::write_raw_new(&self.output.join("metrics-drained.txt"), drained_metrics.as_bytes()));
+        let metric_result = RootBenchCohort::counter(&drained_metrics, "reth_base_root_experiment_jobs_failed").and_then(|failures| { ensure!(failures == 0.0, "root worker failure observed after drain"); Ok(()) });
+        RootBenchCleanup::retain_error(&mut outcome, metric_result);
         let phases = ["build_fcu", "get_payload", "payload_available", "new_payload", "canonical_fcu", "cycle"];
         let summaries: BTreeMap<_, _> = phases.into_iter().map(|phase| (phase, RootBenchSummary::phase(&samples, phase))).collect();
         let measured: Vec<_> = samples.iter().filter(|s| !s.warmup && s.error.is_none() && s.phases.contains_key("cycle")).collect();
         let seconds = measurement_start_ns.map(|start| (end_ns - start) as f64 / 1e9);
-        let complete = outcome.is_ok() && drained;
-        RootBenchBundle::write_new(&self.output.join("drain.json"), &json!({"guards_completed":guards_completed,"worker_joined_healthy":worker_joined_healthy,"receipt_reads_completed":receipt_reads_completed,"manager_observed":service.as_ref().is_some_and(|s| s.manager.get().is_some()),"critical_task_result":format!("{critical_result:?}")}))?;
-        RootBenchBundle::write_new(&self.output.join("result.json"), &json!({"complete":complete,"error":outcome.as_ref().err().map(|e| format!("{e:#}")),"drained":drained,"cohort":self.cohort,"input_digest":bundle.digest,"samples":samples,"summaries":summaries,"measurement_start_ns":measurement_start_ns,"drain_end_ns":end_ns,"accepted_gas_per_second":seconds.map(|s| measured.iter().map(|row| row.accepted_gas).sum::<u64>() as f64 / s),"successful_receipts_per_second":seconds.map(|s| measured.iter().map(|row| row.successful_receipts).sum::<u64>() as f64 / s)}))?;
+        RootBenchCleanup::retain_error(&mut outcome, RootBenchBundle::write_new(&self.output.join("drain.json"), &drain));
+        let result = RootBenchBundle::write_new(&self.output.join("result.json"), &json!({"complete":outcome.is_ok() && drained,"error":outcome.as_ref().err().map(|e| format!("{e:#}")),"drained":drained,"cohort":self.cohort,"input_digest":bundle.digest,"samples":samples,"summaries":summaries,"measurement_start_ns":measurement_start_ns,"drain_end_ns":end_ns,"accepted_gas_per_second":seconds.map(|s| measured.iter().map(|row| row.accepted_gas).sum::<u64>() as f64 / s),"successful_receipts_per_second":seconds.map(|s| measured.iter().map(|row| row.successful_receipts).sum::<u64>() as f64 / s)}));
+        RootBenchCleanup::retain_error(&mut outcome, result);
         outcome?; ensure!(drained, "shutdown/drain deadline exceeded; trial incomplete"); Ok(())
     }
 
@@ -616,6 +712,109 @@ mod tests {
     use base_execution_payload_builder::{PostStateRootManager, PostStateRootLimits};
     use super::*;
     use clap::Parser;
+
+    /// All captured values and argv tokens are opaque, and launch settings never copy domains.
+    #[test]
+    fn launch_artifacts_hash_all_environment_and_arguments() -> Result<()> {
+        let values: Vec<_> = ["BASE_L1_RPC", "RETH_AUTH_JWTSECRET", "BASE_SIGNER_HEADER", "RETH_FORWARD_ENDPOINT", "BASE_LOG_LEVEL", "RETH_THREADS"].into_iter().enumerate().map(|(index, name)| (name.to_owned(), format!("distinct-raw-value-{index}"))).collect();
+        let environment = RootBenchRunArgs::environment_fingerprints(values.clone());
+        assert_eq!(environment.len(), 6, "all six captured fields, including benign ones, must be hashed");
+        for (name, value) in &values {
+            assert_eq!(environment[name], format!("keccak:{}", keccak256(value)), "each captured field must contain only its exact fingerprint");
+        }
+        // All credential strings and the reserved .invalid domain below are synthetic test data.
+        let arguments = ["--rpc=https://user:credential@rpc.invalid", "--jwt-secret", "raw-jwt-value", "/path/with-credential"];
+        let argv = RootBenchRunArgs::argument_fingerprints(arguments.map(std::ffi::OsString::from));
+        assert_eq!(argv.len(), 4, "every argument token must be retained only as a hash");
+        for (hashed, raw) in argv.iter().zip(arguments) { assert_eq!(*hashed, format!("keccak:{}", keccak256(raw)), "flag, separate value and path tokens must all be hashed"); }
+        let bundle = RootBenchBundle::freeze(4, 1, 1)?;
+        let directory = tempfile::tempdir()?;
+        let mut launch = RootBenchCohort::R.launch_config(&bundle, &directory.path().join("raw-datadir-secret"))?;
+        launch.standard.rpc.rpc_forwarding_endpoint = Some("https://user:raw-forward-secret@rpc.invalid".parse()?);
+        let artifact = json!({"environment":environment,"argv":argv,"config":RootBenchRunArgs::launch_settings(&launch)});
+        let serialized = serde_json::to_string(&artifact)?;
+        for raw in values.iter().map(|(_, value)| value.as_str()).chain(arguments).chain(["raw-datadir-secret", "raw-forward-secret", "rpc.invalid"]) {
+            assert!(!serialized.contains(raw), "serialized launch artifact must not contain any raw captured value, credential or endpoint");
+        }
+        assert_eq!(artifact["config"]["queue"], 6, "explicit nonsecret queue setting must remain readable");
+        assert_eq!(artifact["config"]["persistence_threshold"], 0, "explicit nonsecret persistence setting must remain readable");
+        Ok(())
+    }
+
+    /// Serialization and persistence errors cannot prevent graceful or actual runtime shutdown.
+    #[tokio::test]
+    async fn evidence_failures_still_shutdown_runtime() -> Result<()> {
+        for serialization in [true, false] {
+            let runtime = std::thread::spawn(|| RuntimeBuilder::new(RuntimeConfig::default()).build()).join().expect("runtime construction must not panic")?;
+            let critical = runtime.take_task_manager_handle();
+            let observer = runtime.clone();
+            let (signalled, observed) = tokio::sync::oneshot::channel();
+            runtime.spawn_with_graceful_shutdown_signal(move |shutdown| async move { let guard = shutdown.await; signalled.send(()).expect("test must observe shutdown"); drop(guard); });
+            let directory = tempfile::tempdir()?;
+            let failure = if serialization {
+                RootBenchBundle::write_new(&directory.path().join("bad1.json"), &BTreeMap::from([((1u8, 2u8), 3u8)]))
+            } else {
+                RootBenchSample::new(1, false).persist(&directory.path().join("missing"))
+            };
+            assert!(failure.is_err(), "fixture must actually fail serialization or persistence");
+            let mut outcome = Err(eyre!("primary trial failure"));
+            RootBenchCleanup::retain_error(&mut outcome, failure);
+            let mut sample = RootBenchSample::new(1, false);
+            let output = if serialization { directory.path().to_path_buf() } else { directory.path().join("missing") };
+            let drain = RootBenchCleanup { runtime, critical, critical_result:None, manager:None, manager_required:false, receipt_tasks:vec![], timeout:Duration::from_secs(2) }.finish(Some(&mut sample), &output, &mut outcome).await;
+            observed.await?;
+            assert_eq!(drain["guards_completed"], true, "evidence failure must not skip graceful shutdown");
+            assert_eq!(drain["receipt_reads_completed"], true, "empty read set must report exact completion");
+            assert!(outcome.unwrap_err().to_string().starts_with("primary trial failure; subsequent failure:"), "cleanup must preserve the primary error and append the evidence failure");
+            assert!(observer.handle().spawn(async {}).await.expect_err("owned runtime must actually be shut down").is_cancelled(), "post-cleanup work must be cancelled, not run on a leaked runtime");
+        }
+        Ok(())
+    }
+
+    /// Provider and monitor JoinErrors remain failures without skipping either shutdown phase.
+    #[tokio::test]
+    async fn join_failures_still_shutdown_runtime() -> Result<()> {
+        for provider_panic in [true, false] {
+            let runtime = std::thread::spawn(|| RuntimeBuilder::new(RuntimeConfig::default()).build()).join().expect("runtime construction must not panic")?;
+            let monitor = runtime.take_task_manager_handle();
+            let observer = runtime.clone();
+            let (signalled, observed) = tokio::sync::oneshot::channel();
+            runtime.spawn_with_graceful_shutdown_signal(move |shutdown| async move { let guard = shutdown.await; signalled.send(()).expect("test must observe shutdown"); drop(guard); });
+            let (critical, receipt_tasks) = if provider_panic {
+                let task = runtime.spawn_blocking(|| -> Result<u64> { panic!("injected provider panic") });
+                while !task.is_finished() { tokio::task::yield_now().await; }
+                (monitor, vec![task])
+            } else {
+                let task = runtime.handle().spawn(async { std::future::pending::<()>().await; Ok(()) });
+                task.abort();
+                (Some(task), vec![])
+            };
+            let mut outcome = Ok(());
+            let drain = RootBenchCleanup { runtime, critical, critical_result:None, manager:None, manager_required:false, receipt_tasks, timeout:Duration::from_secs(2) }.finish(None, Path::new("."), &mut outcome).await;
+            observed.await?;
+            assert_eq!(drain["guards_completed"], true, "join failures must not skip graceful shutdown");
+            let error = outcome.expect_err("join failure must fail the trial").to_string();
+            assert!(error.contains(if provider_panic { "provider read join failed" } else { "critical task failure" }), "the actual provider or critical JoinError must be retained");
+            assert!(observer.handle().spawn(async {}).await.expect_err("owned runtime must actually be shut down").is_cancelled(), "join failure must not leak the owned runtime");
+        }
+        Ok(())
+    }
+
+    /// An unavailable critical monitor still drains graceful work and destroys the owned runtime.
+    #[tokio::test]
+    async fn missing_monitor_still_shutdown_runtime() -> Result<()> {
+        let runtime = std::thread::spawn(|| RuntimeBuilder::new(RuntimeConfig::default()).build()).join().expect("runtime construction must not panic")?;
+        let observer = runtime.clone();
+        let (signalled, observed) = tokio::sync::oneshot::channel();
+        runtime.spawn_with_graceful_shutdown_signal(move |shutdown| async move { let guard = shutdown.await; signalled.send(()).expect("test must observe shutdown"); drop(guard); });
+        let mut outcome = Err(eyre!("runtime critical-task monitor unavailable"));
+        let drain = RootBenchCleanup { runtime, critical:None, critical_result:None, manager:None, manager_required:false, receipt_tasks:vec![], timeout:Duration::from_secs(2) }.finish(None, Path::new("."), &mut outcome).await;
+        observed.await?;
+        assert_eq!(drain["guards_completed"], true, "missing monitor must not skip graceful shutdown");
+        assert!(outcome.unwrap_err().to_string().contains("runtime critical-task monitor unavailable"), "missing monitor must remain the primary failure");
+        assert!(observer.handle().spawn(async {}).await.expect_err("owned runtime must actually be shut down").is_cancelled(), "missing monitor must not leak the owned runtime");
+        Ok(())
+    }
 
     /// Harness capture and node launch share Reth's recorder and exported prefix.
     #[test]
@@ -898,6 +1097,7 @@ mod tests {
             }
             let launch: Value = serde_json::from_slice(&fs::read(dir.path().join("trial1/launch.json"))?)?;
             assert_eq!(launch["receipt_source"], "canonical-execution-provider-receipts_by_block", "EL-only fixture must not depend on L1-info RPC enrichment");
+            assert_eq!(launch["account_source"], "canonical-execution-provider-state_by_block_hash/basic_account", "nonce and balance must use the accepted-hash provider, not unavailable account RPCs");
             let drain: Value = serde_json::from_slice(&fs::read(dir.path().join("trial1/drain.json"))?)?;
             assert_eq!(drain["manager_observed"], true, "active R/D trials must observe the actual shared manager");
             assert_eq!(drain["worker_joined_healthy"], true, "guard completion alone must not establish successful drain");
