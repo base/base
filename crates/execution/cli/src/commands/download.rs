@@ -7,7 +7,6 @@
 use std::{ffi::OsString, path::PathBuf, sync::Arc};
 
 use base_execution_chainspec::BaseChainSpec;
-use base_node_runner::MerkleStageDefaults;
 use clap::Parser;
 use eyre::Result;
 use reth_chainspec::EthChainSpec;
@@ -49,28 +48,26 @@ impl<C: ChainSpecParser<ChainSpec = BaseChainSpec>> BaseDownloadCommand<C> {
     pub async fn execute<N>(self) -> Result<()> {
         let Self { inner, proofs } = self;
 
-        let chain = inner
-            .chain_spec()
-            .ok_or_else(|| eyre::eyre!("download requires a Base chain spec"))?
-            .chain();
-        let data_dir = resolve_datadir_args(std::env::args_os()).resolve_datadir(chain);
-        if proofs {
-            info!(target: "reth::cli", datadir = %data_dir.data_dir().display(), "Resolved datadir for proofs download");
-        }
+        let (data_dir, chain_id) = if proofs {
+            let chain = inner
+                .chain_spec()
+                .ok_or_else(|| eyre::eyre!("--proofs flag is only on Base"))?
+                .chain();
+            let chain_id = chain.id();
+            let dir = resolve_datadir_args(std::env::args_os()).resolve_datadir(chain);
+            info!(target: "reth::cli", datadir = %dir.data_dir().display(), "Resolved datadir for proofs download");
+            (Some(dir), Some(chain_id))
+        } else {
+            (None, None)
+        };
 
         inner.execute::<N>().await?;
 
-        // `--list`, `--print-plan-json` and `--url` downloads write no reth.toml.
-        let config_path = data_dir.config();
-        if config_path.exists() {
-            MerkleStageDefaults::apply(&config_path)?;
-        }
-
-        if proofs {
+        if let (Some(data_dir), Some(chain_id)) = (data_dir, chain_id) {
             let target_dir = data_dir.data_dir().to_path_buf();
             let concurrency = resolve_download_concurrency_arg(std::env::args_os());
             let manifest_url = resolve_manifest_url_arg(std::env::args_os());
-            ProofsDownloader::run(&target_dir, chain.id(), concurrency, manifest_url).await?;
+            ProofsDownloader::run(&target_dir, chain_id, concurrency, manifest_url).await?;
         }
 
         Ok(())
