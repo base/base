@@ -38,7 +38,8 @@ const SOURCE_HASH: B256 = B256::repeat_byte(0xab);
 
 /// Base upgrades the parity fixtures are swept across: the whole execution fork ladder.
 fn forks() -> impl Iterator<Item = BaseUpgrade> {
-    BaseUpgrade::EXECUTION_VARIANTS.into_iter()
+    // A commitment schedule retains its existing EVM fork, not the isolated commitment-only spec.
+    BaseUpgrade::EXECUTION_VARIANTS.into_iter().filter(|upgrade| *upgrade != BaseUpgrade::DeferredStateRoot)
 }
 
 /// An account to seed into both engines before execution.

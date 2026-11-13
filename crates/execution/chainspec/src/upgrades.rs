@@ -89,6 +89,10 @@ impl ChainUpgradesExt for ChainUpgrades {
         }
 
         let everest = self[BaseUpgrade::Everest];
+        let deferred = self[BaseUpgrade::DeferredStateRoot];
+        if !matches!(deferred, ForkCondition::Never) {
+            forks.push((BaseUpgrade::DeferredStateRoot.boxed(), deferred));
+        }
         if !matches!(everest, ForkCondition::Never) {
             forks.push((BaseUpgrade::Everest.boxed(), everest));
         }

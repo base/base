@@ -41,6 +41,8 @@ pub struct LaunchedBaseNode {
 pub struct BaseNodeRunner<SB: PayloadServiceBuilder = DefaultPayloadServiceBuilder> {
     /// Rollup-specific arguments forwarded to the Base node implementation.
     rollup_args: RollupArgs,
+    /// One-shot proof that stores were checked before writable MDBX initialization.
+    prepared: Option<crate::DeferredStateRootPrepared>,
     /// Registered builder extensions.
     extensions: Vec<Box<dyn BaseNodeExtension>>,
     /// Payload service builder.
@@ -65,6 +67,7 @@ impl BaseNodeRunner<DefaultPayloadServiceBuilder> {
     pub fn new(rollup_args: RollupArgs) -> Self {
         Self {
             rollup_args,
+            prepared: None,
             extensions: Vec::new(),
             service_builder: DefaultPayloadServiceBuilder,
             da_config: None,
@@ -93,6 +96,11 @@ impl<SB: PayloadServiceBuilder> fmt::Debug for BaseNodeRunner<SB> {
 }
 
 impl<SB: PayloadServiceBuilder> BaseNodeRunner<SB> {
+    /// Carries sealed read-only admission across writable database initialization.
+    pub fn with_prepared_root_admission(mut self, prepared: Option<crate::DeferredStateRootPrepared>) -> Self {
+        self.prepared = prepared; self
+    }
+
     /// Sets the shared DA configuration.
     pub fn with_da_config(mut self, da_config: BaseDAConfig) -> Self {
         self.da_config = Some(da_config);
@@ -127,6 +135,7 @@ impl<SB: PayloadServiceBuilder> BaseNodeRunner<SB> {
     pub fn with_service_builder<SB2: PayloadServiceBuilder>(self, sb: SB2) -> BaseNodeRunner<SB2> {
         BaseNodeRunner {
             rollup_args: self.rollup_args,
+            prepared: self.prepared,
             extensions: self.extensions,
             service_builder: sb,
             da_config: self.da_config,
@@ -163,9 +172,16 @@ impl<SB: PayloadServiceBuilder> BaseNodeRunner<SB> {
     /// Applies all Base-specific wiring to the supplied builder and returns a launched node
     /// handle without waiting for shutdown.
     pub async fn launch(self, builder: BaseNodeBuilder) -> Result<LaunchedBaseNode> {
+        // This must precede reth launch and its automatic multi-store recovery.
+        let admission = match self.prepared {
+            Some(prepared) => Some(prepared.consume(builder.config(), &self.rollup_args, self.extensions.len())?),
+            None => crate::DeferredStateRootAdmission::preflight(builder.config(), &self.rollup_args, self.extensions.len())?,
+        };
+        let root_service = admission.as_ref().map(|admission| admission.service.clone());
         info!(target: "base-runner", "starting custom Base node");
 
         let Self {
+            prepared: _,
             rollup_args,
             extensions,
             service_builder,
@@ -177,6 +193,7 @@ impl<SB: PayloadServiceBuilder> BaseNodeRunner<SB> {
             started_callbacks,
         } = self;
         let mut base_node = BaseNode::new(rollup_args);
+        base_node.deferred_state_root = admission.as_ref().map(|admission| admission.service.clone());
         if let Some(da_config) = da_config {
             base_node = base_node.with_da_config(da_config);
         }
@@ -201,6 +218,10 @@ impl<SB: PayloadServiceBuilder> BaseNodeRunner<SB> {
             .with_components(components)
             .with_add_ons(add_ons)
             .on_component_initialized(move |_ctx| Ok(()));
+        // The caller already owns MDBX. Admission uses only RO transactions on that environment;
+        // a second MDBX environment for the same path is forbidden by the pinned database.
+        // Static files and RocksDB have not yet been opened writable by reth launch.
+        if let Some(admission) = &admission { admission.verify_before_launch(builder.config(), builder.db().clone(), builder.task_executor().clone())?; }
 
         let hooks = extensions.into_iter().fold(NodeHooks::new(), |hooks, ext| ext.apply(hooks));
         let hooks = started_callbacks
@@ -214,7 +235,19 @@ impl<SB: PayloadServiceBuilder> BaseNodeRunner<SB> {
             Ok(())
         });
 
-        let handle = hooks.apply_to(builder).launch().await?;
+        let builder = hooks.apply_to(builder);
+        let launcher = builder.engine_api_launcher().with_backfill(crate::DeferredStateRootBackfillBuilder { admission });
+        let handle = match builder.launch_with(launcher).await {
+            Ok(handle) => handle,
+            Err(error) => {
+                // Launch hooks can fail after component tasks have started. Own any admitted
+                // provider work even when no successful node handle reaches the caller.
+                if let Some(manager) = root_service.and_then(|service| service.manager.get().cloned()) {
+                    manager.drain()?;
+                }
+                return Err(error);
+            }
+        };
         let auth_module = auth_module
             .get()
             .cloned()

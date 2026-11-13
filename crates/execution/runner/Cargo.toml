@@ -18,12 +18,15 @@ base-test-utils = { workspace = true, optional = true }
 # reth
 reth-db.workspace = true
 reth-exex.workspace = true
+reth-tasks.workspace = true
 reth-rpc-api.workspace = true
 reth-provider.workspace = true
+reth-engine-tree.workspace = true
+reth-stages-types.workspace = true
+reth-chainspec.workspace = true
 reth-node-builder.workspace = true
 reth-ipc = { workspace = true, optional = true }
 reth-tracing = { workspace = true, optional = true }
-reth-tasks = { workspace = true, optional = true }
 reth-node-core = { workspace = true, optional = true }
 reth-rpc-layer = { workspace = true, optional = true }
 reth-primitives-traits = { workspace = true, optional = true }
@@ -38,7 +41,7 @@ base-execution-rpc = { workspace = true, features = ["client"] }
 # alloy
 alloy-provider = { workspace = true, optional = true }
 alloy-rpc-types = { workspace = true, optional = true }
-alloy-primitives = { workspace = true, optional = true }
+alloy-primitives.workspace = true
 alloy-rpc-client = { workspace = true, optional = true }
 alloy-eips = { workspace = true, optional = true, features = ["std"] }
 alloy-genesis = { workspace = true, optional = true, features = ["std"] }
@@ -60,6 +63,8 @@ jsonrpsee.workspace = true
 
 # misc
 eyre.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
 futures.workspace = true
 url = { workspace = true, optional = true }
 tower = { workspace = true, optional = true }
@@ -68,13 +73,14 @@ tracing = { workspace = true, features = ["std"] }
 tracing-subscriber = { workspace = true, optional = true }
 
 [dev-dependencies]
+tempfile.workspace = true
+reth-db-common.workspace = true
 base-protocol.workspace = true
 base-common-evm2.workspace = true
 base-common-genesis.workspace = true
 base-consensus-engine.workspace = true
 base-consensus-providers.workspace = true
 base-node-runner = { path = ".", features = ["test-utils"] }
-serde_json.workspace = true
 tokio-tungstenite.workspace = true
 criterion = { workspace = true, features = ["async_tokio", "html_reports"] }
 
@@ -87,7 +93,6 @@ test-utils = [
 	"base-node-core/test-utils",
 	"dep:alloy-eips",
 	"dep:alloy-genesis",
-	"dep:alloy-primitives",
 	"dep:alloy-provider",
 	"dep:alloy-rpc-client",
 	"dep:alloy-rpc-types",
@@ -100,7 +105,6 @@ test-utils = [
 	"dep:reth-node-core",
 	"dep:reth-primitives-traits",
 	"dep:reth-rpc-layer",
-	"dep:reth-tasks",
 	"dep:reth-tracing",
 	"dep:tokio",
 	"dep:tower",
@@ -110,5 +114,5 @@ test-utils = [
 	"reth-node-builder/test-utils",
 	"reth-primitives-traits?/test-utils",
 	"reth-provider/test-utils",
-	"reth-tasks?/test-utils",
+	"reth-tasks/test-utils",
 ]

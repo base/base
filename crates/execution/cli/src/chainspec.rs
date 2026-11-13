@@ -27,7 +27,9 @@ pub fn chain_value_parser(s: &str) -> eyre::Result<Arc<BaseChainSpec>, eyre::Err
     if let Some(base_chain_spec) = BaseChainSpec::parse_chain(s) {
         Ok(base_chain_spec)
     } else {
-        Ok(Arc::new(BaseChainSpec::try_from_genesis(parse_genesis(s)?)?))
+        let spec = BaseChainSpec::try_from_genesis(parse_genesis(s)?)?;
+        spec.validate_deferred_state_root_schedule()?;
+        Ok(Arc::new(spec))
     }
 }
 

@@ -358,6 +358,25 @@ pub struct RollupArgs {
     #[arg(long, default_value_t = 1_000_000)]
     pub min_suggested_priority_fee: u64,
 
+    /// Acknowledge disposable state, no L1/proof/output services and no active-database restart.
+    #[arg(long = "rollup.deferred-state-root-disposable")]
+    pub deferred_state_root_disposable: bool,
+    /// Immutable consistent pre-fork snapshot manifest with exact store-file digests and provenance.
+    #[arg(long = "rollup.deferred-state-root-snapshot")]
+    pub deferred_state_root_snapshot: Option<PathBuf>,
+    /// Explicit custom-chain benchmark cohort: ordinary, serial-trusted, serial-reexecution, deferred.
+    #[arg(long = "rollup.root-experiment-cohort")]
+    pub root_experiment_cohort: Option<base_execution_payload_builder::PostStateRootCohort>,
+    /// Maximum serial root queue, including side branches.
+    #[arg(long = "rollup.root-experiment-queue", default_value_t = 6, value_parser = clap::value_parser!(usize))]
+    pub root_experiment_queue: usize,
+    /// Maximum retained materialized roots across both independent sources.
+    #[arg(long = "rollup.root-experiment-ready", default_value_t = 128)]
+    pub root_experiment_ready: usize,
+    /// Bounded admission, completion and shutdown timeout in milliseconds.
+    #[arg(long = "rollup.root-experiment-timeout-ms", default_value_t = 30_000)]
+    pub root_experiment_timeout_ms: u64,
+
     /// Transaction ordering strategy for the mempool.
     ///
     /// Determines how transactions are prioritized when building blocks.
@@ -549,6 +568,12 @@ impl Default for RollupArgs {
             sequencer_headers: Vec::new(),
             min_suggested_priority_fee: 1_000_000,
             txpool_ordering: TxpoolOrdering::default(),
+            deferred_state_root_disposable: false,
+            deferred_state_root_snapshot: None,
+            root_experiment_cohort: None,
+            root_experiment_queue: 6,
+            root_experiment_ready: 128,
+            root_experiment_timeout_ms: 30_000,
             max_inflight_delegated_slots: 4,
             mempool_sender_limit: DEFAULT_SIGNATURE_LIMIT,
             mempool_payer_limit: DEFAULT_PAYMENT_LIMIT,

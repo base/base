@@ -42,6 +42,9 @@ pub struct BaseUpgradeConfig {
         serde(alias = "future", skip_serializing_if = "Option::is_none")
     )]
     pub zenith: Option<u64>,
+    /// Custom bench/devnet-only parent-state commitment timestamp. Unset means Never.
+    #[cfg_attr(feature = "serde", serde(rename = "deferredStateRoot", alias = "deferred_state_root", skip_serializing_if = "Option::is_none"))]
+    pub deferred_state_root: Option<u64>,
 }
 
 impl BaseUpgradeConfig {
@@ -53,6 +56,7 @@ impl BaseUpgradeConfig {
             && self.denim.is_none()
             && self.everest.is_none()
             && self.zenith.is_none()
+            && self.deferred_state_root.is_none()
     }
 }
 
@@ -125,6 +129,8 @@ hardfork!(
         Everest,
         /// Zenith: hardfork for future experimental features.
         Zenith,
+        /// Configuration-only experimental one-block deferred state commitment.
+        DeferredStateRoot,
     }
 );
 
@@ -137,7 +143,7 @@ impl BaseUpgrade {
     /// These are the upgrades that participate in the reth/revm hardfork schedule. Excludes the
     /// contract-only [`Delta`](Self::Delta) and [`PectraBlobSchedule`](Self::PectraBlobSchedule)
     /// upgrades, and [`Zenith`](Self::Zenith), which does not yet change EVM execution.
-    pub const EXECUTION_VARIANTS: [Self; 14] = [
+    pub const EXECUTION_VARIANTS: [Self; 15] = [
         Self::Bedrock,
         Self::Regolith,
         Self::Canyon,
@@ -152,6 +158,7 @@ impl BaseUpgrade {
         Self::Cobalt,
         Self::Denim,
         Self::Everest,
+        Self::DeferredStateRoot,
     ];
 
     /// The contract-backed upgrade set, in activation order.
@@ -194,7 +201,7 @@ impl BaseUpgrade {
     /// [`Bedrock`](Self::Bedrock) and for [`Zenith`](Self::Zenith), which is activated via
     /// genesis config only until the L1 upgrade-signal contract is updated.
     pub const fn is_contract_backed(self) -> bool {
-        !matches!(self, Self::Bedrock | Self::Zenith)
+        !matches!(self, Self::Bedrock | Self::Zenith | Self::DeferredStateRoot)
     }
 
     /// Returns this upgrade's index within [`EXECUTION_VARIANTS`](Self::EXECUTION_VARIANTS), or
@@ -215,6 +222,7 @@ impl BaseUpgrade {
             Self::Cobalt => 11,
             Self::Denim => 12,
             Self::Everest => 13,
+            Self::DeferredStateRoot => 14,
             Self::Delta | Self::PectraBlobSchedule | Self::Zenith => return None,
         })
     }
@@ -243,6 +251,7 @@ impl BaseUpgrade {
             Self::Denim => "denim",
             Self::Everest => "everest",
             Self::Zenith => "zenith",
+            Self::DeferredStateRoot => "deferred_state_root",
         }
     }
 
@@ -406,7 +415,7 @@ impl UpgradeActivationOverrides {
     pub fn set_activation(&mut self, upgrade_id: BaseUpgrade, activation: UpgradeActivation) {
         // Zenith is not contract-backed: it must never be set via the L1-signal-driven runtime
         // override path. Its activation comes from genesis config only.
-        if matches!(upgrade_id, BaseUpgrade::Zenith) {
+        if matches!(upgrade_id, BaseUpgrade::Zenith | BaseUpgrade::DeferredStateRoot) {
             return;
         }
         self.activations.insert(upgrade_id, activation);
@@ -673,6 +682,7 @@ impl UpgradeConfig {
             denim: Some(1_793_901_600),
             everest: None,
             zenith: None,
+            deferred_state_root: None,
         },
     };
 
@@ -698,6 +708,7 @@ impl UpgradeConfig {
             denim: Some(1_792_605_600),
             everest: None,
             zenith: None,
+            deferred_state_root: None,
         },
     };
 
@@ -749,6 +760,7 @@ impl UpgradeConfig {
             BaseUpgrade::Denim => self.base.denim = None,
             BaseUpgrade::Everest => self.base.everest = None,
             BaseUpgrade::Zenith => self.base.zenith = None,
+            BaseUpgrade::DeferredStateRoot => self.base.deferred_state_root = None,
         }
     }
 
@@ -790,6 +802,7 @@ impl UpgradeConfig {
             BaseUpgrade::Denim => self.base.denim,
             BaseUpgrade::Everest => self.base.everest,
             BaseUpgrade::Zenith => self.base.zenith,
+            BaseUpgrade::DeferredStateRoot => self.base.deferred_state_root,
         };
 
         UpgradeActivation::from_timestamp(timestamp)
@@ -821,6 +834,7 @@ impl UpgradeConfig {
             BaseUpgrade::Denim => self.base.denim = Some(timestamp),
             BaseUpgrade::Everest => self.base.everest = Some(timestamp),
             BaseUpgrade::Zenith => self.base.zenith = Some(timestamp),
+            BaseUpgrade::DeferredStateRoot => self.base.deferred_state_root = Some(timestamp),
         }
     }
 
@@ -954,6 +968,7 @@ mod tests {
                 denim: Some(14),
                 everest: Some(15),
                 zenith: None,
+                deferred_state_root: None,
             },
         };
 

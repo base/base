@@ -230,6 +230,10 @@ features! {
         /// Enable experimental EIP-8130 keystore support on genesis-configured chains only.
         Keystore,
     },
+    DeferredStateRoot {
+        /// Commit the independently computed parent post-state rather than the current state.
+        ParentPostStateCommitment,
+    },
 }
 
 impl BaseFeature {
@@ -262,6 +266,9 @@ impl BaseUpgrade {
     ///
     /// Timestamp-based consumers must use their rollup or chain schedule adapter instead.
     pub const fn is_feature_enabled(self, feature: BaseFeature) -> bool {
+        if matches!(self, BaseUpgrade::DeferredStateRoot) || matches!(feature, BaseFeature::ParentPostStateCommitment) {
+            return matches!((self, feature), (BaseUpgrade::DeferredStateRoot, BaseFeature::ParentPostStateCommitment));
+        }
         feature.activation_upgrade() as u8 <= self as u8
     }
 }

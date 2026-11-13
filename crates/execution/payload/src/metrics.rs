@@ -120,6 +120,48 @@ base_metrics::define_metrics! {
     native_payload_state_root_duration: histogram,
 }
 
+base_metrics::define_metrics! {
+    base_root_experiment,
+    struct = PostStateRootMetrics,
+    #[describe("Serial provider jobs started, including actual-parent recovery")]
+    jobs_started: counter,
+    #[describe("Serial provider jobs completed, including failures")]
+    jobs_completed: counter,
+    #[describe("Serial provider failures or panic")]
+    jobs_failed: counter,
+    #[describe("Serial provider job wall seconds including current-state materialization")]
+    job_duration: histogram,
+    #[describe("Queue admission and queued wall seconds before provider work starts")]
+    queue_lag: histogram,
+    #[describe("Fallible completion wait wall seconds")]
+    completion_wait: histogram,
+    #[describe("Materializing sorted current hashed-state and trie updates wall seconds")]
+    sorting_duration: histogram,
+    #[describe("Actual provider MPT calculation wall seconds, excluding sorting")]
+    calculation_duration: histogram,
+    #[describe("Actual current-root computations started independently by execution owner")]
+    #[label(source)]
+    current_roots_started: counter,
+    #[describe("Controlled builder execution wall seconds before finalization")]
+    builder_execution_duration: histogram,
+    #[describe("Controlled validator preparation through finalized execution wall seconds, before current root")]
+    validator_execution_duration: histogram,
+    #[describe("Controlled trusted executed-block insertion attempts (S only)")]
+    trusted_insertions: counter,
+    #[describe("Builder execution attempts admitted in isolated cohorts")]
+    builder_executions: counter,
+    #[describe("Independent validator execution attempts admitted in isolated cohorts")]
+    validator_executions: counter,
+    #[describe("Redundant stock sorting tasks still owned and drained by the reth runtime")]
+    redundant_stock_sorts: counter,
+    #[describe("Immutable payloads sealed; not a count of Engine VALID responses")]
+    payloads_sealed: counter,
+    #[describe("Validated ready outputs exposed to the engine tree; not canonical FCU acceptance")]
+    validator_ready_outputs: counter,
+    #[describe("Builder finalized execution to immutable seal wall seconds, including parent wait but excluding detached current root")]
+    finalization_to_seal: histogram,
+}
+
 impl ValidityMetrics {
     /// Records the total validity predicate evaluation time accumulated across one build.
     pub fn record_predicate_eval_duration(duration: Duration) {

@@ -11,6 +11,8 @@ extern crate alloc;
 
 mod affordability;
 pub use affordability::CoinbaseTipAffordability;
+mod post_state_root;
+pub use post_state_root::{PostStateRootCandidate, PostStateRootCandidateLease, PostStateRootCohort, PostStateRootCompletion, PostStateRootData, PostStateRootEntries, PostStateRootKey, PostStateRootLimits, PostStateRootManager, PostStateRootOperation, PostStateRootQueue, PostStateRootService, PostStateRootSource, PostStateRootWork};
 pub mod builder;
 pub use builder::BasePayloadBuilder;
 pub mod config;
@@ -39,6 +41,7 @@ pub use parkable::{
 
 mod metrics;
 pub use metrics::{
+    PostStateRootMetrics,
     BuilderMetrics, ValidityEvaluationCounters, ValidityEvaluationOutcome, ValidityMetrics,
 };
 

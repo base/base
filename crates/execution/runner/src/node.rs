@@ -1,15 +1,17 @@
 //! Base Node types config.
 
+use std::sync::Arc;
+
 use base_common_consensus::BasePrimitives;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_payload_builder::{
-    RejectionCache,
+    PostStateRootService, RejectionCache,
     config::{BaseDAConfig, GasLimitConfig, ResourceMeteringConfig},
 };
 use base_execution_rpc::eth::BaseEthApiBuilder;
 use base_execution_txpool::GuardLimits;
 use base_node_core::{
-    BaseAddOns, BaseAddOnsBuilder, BaseConsensusBuilder, BaseEngineApiBuilder, BaseEngineTypes,
+    BaseDeferredEngineValidatorBuilder, BaseAddOns, BaseAddOnsBuilder, BaseConsensusBuilder, BaseEngineApiBuilder, BaseEngineTypes,
     BaseExecutorBuilder, BaseNetworkBuilder, BaseNodeComponentBuilder, BaseNodeTypes,
     BasePayloadValidatorBuilder, BaseStorage,
     args::RollupArgs,
@@ -19,7 +21,6 @@ use reth_node_builder::{
     Node, NodeAdapter, NodeComponentsBuilder,
     components::ComponentsBuilder,
     node::{FullNodeTypes, NodeTypes},
-    rpc::BasicEngineValidatorBuilder,
 };
 use reth_provider::providers::ProviderFactoryBuilder;
 use reth_rpc_api::eth::RpcTypes;
@@ -48,6 +49,8 @@ pub struct BaseNode {
     pub resource_metering: ResourceMeteringConfig,
     /// Shared, cross-job cache of permanently rejected transaction hashes.
     pub rejection_cache: RejectionCache,
+    /// Shared builder/validator service admitted by the disposable-state preflight.
+    pub deferred_state_root: Option<Arc<PostStateRootService>>,
 }
 
 impl Default for BaseNode {
@@ -66,6 +69,7 @@ impl BaseNode {
             manifest_precheck_enabled: true,
             resource_metering: ResourceMeteringConfig::default(),
             rejection_cache: RejectionCache::default(),
+            deferred_state_root: None,
         }
     }
 
@@ -135,15 +139,17 @@ impl BaseNode {
                     .with_gas_limit_config(self.gas_limit_config.clone())
                     .with_manifest_precheck_enabled(self.manifest_precheck_enabled)
                     .with_resource_metering(self.resource_metering.clone())
-                    .with_rejection_cache(self.rejection_cache.clone()),
+                    .with_rejection_cache(self.rejection_cache.clone())
+                    .with_deferred_state_root(self.deferred_state_root.clone()),
             ))
             .network(BaseNetworkBuilder::new(!discovery_v4))
-            .consensus(BaseConsensusBuilder::default())
+            .consensus(BaseConsensusBuilder::default().with_deferred_state_root(self.deferred_state_root.clone()))
     }
 
     /// Returns [`BaseAddOnsBuilder`] with configured arguments.
     pub fn add_ons_builder<NetworkT: RpcTypes>(&self) -> BaseAddOnsBuilder<NetworkT> {
         BaseAddOnsBuilder::default()
+            .with_proofs_disabled(self.deferred_state_root.is_some())
             .with_sequencer(self.args.sequencer.clone())
             .with_sequencer_headers(self.args.sequencer_headers.clone())
             .with_da_config(self.da_config.clone())
@@ -220,7 +226,7 @@ where
         BaseEthApiBuilder,
         BasePayloadValidatorBuilder,
         BaseEngineApiBuilder<BasePayloadValidatorBuilder>,
-        BasicEngineValidatorBuilder<BasePayloadValidatorBuilder>,
+        BaseDeferredEngineValidatorBuilder<BasePayloadValidatorBuilder>,
     >;
 
     fn components_builder(&self) -> Self::ComponentsBuilder {
@@ -228,7 +234,9 @@ where
     }
 
     fn add_ons(&self) -> Self::AddOns {
-        self.add_ons_builder().build()
+        self.add_ons_builder().build::<_, _, _, BaseDeferredEngineValidatorBuilder<BasePayloadValidatorBuilder>>().with_engine_validator(BaseDeferredEngineValidatorBuilder {
+            payload_validator_builder: BasePayloadValidatorBuilder::default(), service: self.deferred_state_root.clone(),
+        })
     }
 }
 

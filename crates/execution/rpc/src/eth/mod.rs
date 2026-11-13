@@ -19,6 +19,8 @@ use std::{
 };
 
 use alloy_primitives::U256;
+use alloy_eips::BlockId;
+use base_common_chains::BaseUpgrade;
 use base_common_rpc_types::BaseRpcTypes;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_evm::BaseNextBlockEnvAttributes;
@@ -30,15 +32,15 @@ use reth_node_api::{FullNodeComponents, FullNodeTypes, NodeTypes};
 use reth_node_builder::rpc::{EthApiBuilder, EthApiCtx, RpcNodeCoreFor};
 use reth_rpc::eth::core::EthApiInner;
 use reth_rpc_eth_api::{
-    EthApiTypes, FromEvmError, FullEthApiServer, RpcConvert, RpcConverter, RpcNodeCore,
+    EthApiTypes, FromEthApiError, FromEvmError, FullEthApiServer, RpcConvert, RpcConverter, RpcNodeCore,
     RpcNodeCoreExt, RpcTypes,
     helpers::{
         EthApiSpec, EthFees, EthState, GetBlockAccessList, LoadFee, LoadPendingBlock, LoadState,
         SpawnBlocking, Trace,
     },
 };
-use reth_rpc_eth_types::{EthApiSettings, EthStateCache, FeeHistoryCache, GasPriceOracle};
-use reth_storage_api::ProviderHeader;
+use reth_rpc_eth_types::{EthApiError, EthApiSettings, EthStateCache, FeeHistoryCache, GasPriceOracle};
+use reth_storage_api::{ProviderHeader, BlockIdReader};
 use reth_tasks::{
     Runtime,
     pool::{BlockingTaskGuard, BlockingTaskPool},
@@ -86,8 +88,15 @@ impl<N: RpcNodeCore, Rpc: RpcConvert> BaseEthApi<N, Rpc> {
             sequencer_client,
             min_suggested_priority_fee,
             base_time,
+            proofs_disabled: false,
         });
         Self { inner }
+    }
+
+    /// Disables proof RPC before the newly built API is shared with any server.
+    pub fn with_proofs_disabled(mut self, disabled: bool) -> Self {
+        Arc::get_mut(&mut self.inner).expect("newly built API must not be shared").proofs_disabled = disabled;
+        self
     }
 
     /// Build a [`BaseEthApi`] using [`BaseEthApiBuilder`].
@@ -248,6 +257,23 @@ where
     Rpc: RpcConvert<Primitives = N::Primitives, Error = BaseEthApiError>,
     Self: LoadPendingBlock,
 {
+    /// Refuses proofs under the experimental schedule before any same-height header assumption.
+    fn ensure_within_proof_window(&self, block_id: BlockId) -> Result<(), Self::Error>
+    where
+        Self: EthApiSpec,
+    {
+        if self.inner.proofs_disabled || self.provider().chain_spec().fork(BaseUpgrade::DeferredStateRoot) != reth_chainspec::ForkCondition::Never {
+            return Err(EthApiError::InvalidParams("proof RPC is unsupported with DeferredStateRoot".into()).into());
+        }
+        let chain_info = self.chain_info().map_err(Self::Error::from_eth_err)?;
+        let block_number = self.provider().block_number_for_id(block_id).map_err(Self::Error::from_eth_err)?
+            .ok_or(EthApiError::HeaderNotFound(block_id))?;
+        if chain_info.best_number.saturating_sub(block_number) > self.max_proof_window() {
+            return Err(EthApiError::ExceedsMaxProofWindow.into());
+        }
+        Ok(())
+    }
+
     #[inline]
     fn max_proof_window(&self) -> u64 {
         self.inner.eth_api.eth_proof_window()
@@ -301,6 +327,8 @@ pub struct BaseEthApiInner<N: RpcNodeCore, Rpc: RpcConvert> {
     min_suggested_priority_fee: U256,
     /// Shared cache of validated `BaseTime` timestamps.
     base_time: BaseTimeCache,
+    /// Matched experimental cohorts disable proof publication, including the R control.
+    pub proofs_disabled: bool,
 }
 
 impl<N: RpcNodeCore, Rpc: RpcConvert> fmt::Debug for BaseEthApiInner<N, Rpc> {
@@ -327,6 +355,8 @@ pub struct BaseEthApiBuilder<NetworkT = BaseRpcTypes> {
     /// Sequencer client, configured to forward submitted transactions to sequencer of the given
     /// Base network.
     sequencer_url: Option<String>,
+    /// Explicit isolation shared by S/R/D root experiments.
+    pub proofs_disabled: bool,
     /// Headers to use for the sequencer client requests.
     sequencer_headers: Vec<String>,
     /// Minimum suggested priority fee (tip)
@@ -346,10 +376,16 @@ impl<NetworkT> BaseEthApiBuilder<NetworkT> {
     pub const fn new() -> Self {
         Self {
             sequencer_url: None,
+            proofs_disabled: false,
             sequencer_headers: Vec::new(),
             min_suggested_priority_fee: DEFAULT_MIN_SUGGESTED_PRIORITY_FEE,
             _nt: PhantomData,
         }
+    }
+
+    /// Disables proof RPC for matched isolated root cohorts.
+    pub const fn with_proofs_disabled(mut self, disabled: bool) -> Self {
+        self.proofs_disabled = disabled; self
     }
 
     /// With a [`SequencerClient`].
@@ -409,6 +445,6 @@ where
             sequencer_client,
             U256::from(self.min_suggested_priority_fee),
             base_time,
-        ))
+        ).with_proofs_disabled(self.proofs_disabled))
     }
 }

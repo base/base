@@ -175,6 +175,7 @@ impl Upgrades for RollupConfig {
             // Zenith is the genesis-only gate for future hardfork feature testing: the runtime
             // registry drops Zenith writes, so only a genesis-configured timestamp can appear
             // here.
+            | BaseUpgrade::DeferredStateRoot
             | BaseUpgrade::Zenith => self
                 .upgrade_activation_timestamp(fork)
                 .map(ForkCondition::Timestamp)

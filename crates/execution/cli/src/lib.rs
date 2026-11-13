@@ -112,6 +112,7 @@ where
     /// [`NodeCommand`](reth_cli_commands::node::NodeCommand).
     pub fn run<L, Fut>(self, launcher: L) -> eyre::Result<()>
     where
+        Ext: base_node_core::HasRollupArgs,
         L: FnOnce(WithLaunchContext<NodeBuilder<DatabaseEnv, BaseChainSpec>>, Ext) -> Fut,
         Fut: Future<Output = eyre::Result<()>>,
     {
@@ -121,6 +122,7 @@ where
     /// Execute the configured cli command with the provided [`CliRunner`].
     pub fn with_runner<L, Fut>(self, runner: CliRunner, launcher: L) -> eyre::Result<()>
     where
+        Ext: base_node_core::HasRollupArgs,
         L: FnOnce(WithLaunchContext<NodeBuilder<DatabaseEnv, BaseChainSpec>>, Ext) -> Fut,
         Fut: Future<Output = eyre::Result<()>>,
     {

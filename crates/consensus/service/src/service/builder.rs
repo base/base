@@ -172,6 +172,9 @@ impl RollupNodeBuilder {
     /// remains lazy during startup. `file://` URLs still connect eagerly because IPC is an
     /// explicit opt-in transport.
     pub async fn build(self) -> TransportResult<RollupNode> {
+        if self.config.upgrades.base.deferred_state_root.is_some() || self.engine_config.config.upgrades.base.deferred_state_root.is_some() {
+            return Err(TransportErrorKind::non_retryable(std::io::Error::other("DeferredStateRoot forbids production L1 derivation/service startup; use isolated disposable Engine API replay")));
+        }
         let sequencer_config = self.sequencer_config.unwrap_or_default();
         let mut l1_beacon = OnlineBeaconClient::new_http(self.l1_config_builder.beacon.to_string());
         if let Some(l1_slot_duration) = self.l1_config_builder.slot_duration_override {
@@ -273,6 +276,15 @@ mod tests {
 
     use super::*;
     use crate::NodeOperatingMode;
+
+    /// Unsupported L1-connected service startup must fail before even connecting IPC/L1 RPC.
+    #[tokio::test]
+    async fn deferred_schedule_refuses_production_service_before_transport() {
+        let mut builder = test_builder(Url::parse("file:///nonexistent/deferred-root-engine.ipc").unwrap());
+        builder.config.upgrades.base.deferred_state_root = Some(u64::MAX);
+        let error = builder.build().await.unwrap_err();
+        assert!(error.to_string().contains("DeferredStateRoot forbids production L1 derivation/service startup"), "fork compatibility guard must precede any invalid IPC or L1 transport attempt: {error}");
+    }
 
     fn test_builder(l2_url: Url) -> RollupNodeBuilder {
         let rollup_config = RollupConfig::default();

@@ -7,7 +7,6 @@ use base_node_runner::{BaseNodeBuilder, LaunchedBaseNode};
 use base_upgrade_signal::UpgradeSignalStartupMode;
 use clap::{Args, value_parser};
 use reth_cli_runner::CliContext;
-use reth_db::init_db;
 use reth_node_builder::NodeBuilder;
 use reth_node_core::{
     args::{
@@ -232,9 +231,18 @@ impl ExecutionNodeRuntimeConfig {
     }
 
     /// Converts the runtime config into a reth node builder.
-    pub fn into_node_builder<Rpc>(mut self, ctx: CliContext) -> eyre::Result<BaseNodeBuilder>
+    pub fn into_node_builder<Rpc>(self, ctx: CliContext) -> eyre::Result<BaseNodeBuilder>
     where
         Rpc: RpcModuleValidator,
+    {
+        let (builder, prepared) = self.into_prepared_node_builder::<Rpc>(ctx, &base_node_core::args::RollupArgs::default())?;
+        eyre::ensure!(prepared.is_none(), "root experiments require the admitted launch API");
+        Ok(builder)
+    }
+
+    /// Admits immutable stores read-only before init_db and returns a sealed launch handoff.
+    pub fn into_prepared_node_builder<Rpc>(mut self, ctx: CliContext, args: &base_node_core::args::RollupArgs) -> eyre::Result<(BaseNodeBuilder, Option<base_node_runner::DeferredStateRootPrepared>)>
+    where Rpc: RpcModuleValidator,
     {
         if let Some(http_api) = &self.node_config.rpc.http_api {
             Rpc::validate_selection(http_api, "http.api").map_err(|e| eyre::eyre!("{e}"))?;
@@ -257,13 +265,14 @@ impl ExecutionNodeRuntimeConfig {
         let data_dir = self.node_config.datadir();
         let db_path = data_dir.db();
         info!(target: "reth::cli", path = ?db_path, "Opening database");
-        let database = init_db(db_path, self.node_config.db.database_args())?.with_metrics();
+        let (database, prepared) = base_node_runner::DeferredStateRootPrepared::prepare_database(&self.node_config, args, ctx.task_executor.clone())?;
+        let database = database.with_metrics();
 
         let builder = NodeBuilder::new(self.node_config)
             .with_database(database)
             .with_launch_context(ctx.task_executor);
 
-        Ok(builder)
+        Ok((builder, prepared))
     }
 
     /// Converts the runtime config into a reth node builder with the default RPC validator.
@@ -320,12 +329,9 @@ impl ExecutionNodeLaunchConfig {
     {
         let (execution, standard) = self.into_runtime_config();
         let upgrade_signal_startup = execution.upgrade_signal_startup;
-        let builder = execution.into_node_builder::<Rpc>(ctx)?;
-        crate::StandardBaseRethNode::launch_with_upgrade_signal_startup(
-            builder,
-            standard,
-            upgrade_signal_startup,
-        )
+        let (builder, prepared) = execution.into_prepared_node_builder::<Rpc>(ctx, &standard.rpc.rollup_args)?;
+        let builder = crate::StandardBaseRethNode::apply_initial_upgrade_signal_from_rollup_args_with_startup_mode(builder, &standard.rpc.rollup_args, upgrade_signal_startup).await?;
+        crate::StandardBaseRethNode::runner_with_version_metrics(standard)?.with_prepared_root_admission(prepared).launch(builder)
         .await
     }
 

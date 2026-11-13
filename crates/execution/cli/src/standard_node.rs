@@ -635,6 +635,10 @@ impl StandardBaseRethNode {
         rollup_args: &RollupArgs,
         startup_mode: UpgradeSignalStartupMode,
     ) -> eyre::Result<BaseNodeBuilder> {
+        if builder.config().chain.validate_deferred_state_root_schedule()?.is_some() || rollup_args.root_experiment_cohort.is_some_and(|cohort| cohort != base_execution_payload_builder::PostStateRootCohort::Ordinary) {
+            eyre::ensure!(rollup_args.deferred_state_root_disposable, "root experiments require disposable-run acknowledgement before any L1 startup call");
+            eyre::ensure!(rollup_args.upgrade_signal.contract_address.is_none() && rollup_args.upgrade_signal_l1_rpc.upgrade_signal_l1_rpc.is_none(), "root experiments forbid L1 startup calls");
+        }
         let Some(config) = Self::upgrade_signal_config(rollup_args)? else {
             return Ok(builder);
         };
@@ -709,6 +713,13 @@ impl StandardBaseRethNode {
         let rollup_args = args.rpc.rollup_args.clone();
         // Fail fast on an incomplete upgrade-signal configuration before installing extensions.
         Self::validate_upgrade_signal_args(&rollup_args)?;
+        if rollup_args.deferred_state_root_disposable {
+            eyre::ensure!(!args.metering.enable_metering && !args.shadow_indexer.enable_shadow_indexer && !args.rpc.enable_tx_forwarding && args.rpc.payer_upstream().is_none() && !args.rpc.payer_enabled, "root experiments require the isolated runner without metering/indexer/forwarding/payer services");
+            eyre::ensure!(!args.rpc.enable_transaction_tracing && !args.rpc.enable_transaction_tracing_logs && !args.rpc.enable_transaction_event_journal && !TransactionEventEnv::read().enabled, "root experiments forbid transaction-event extensions");
+            // Disposable cohorts deliberately use the same minimal extension-free service set.
+            // Do not silently drop any explicitly requested production extension.
+            return Ok(BaseNodeRunner::new(rollup_args));
+        }
         let mut runner = BaseNodeRunner::new(rollup_args.clone());
         let resource_metering_enabled = args.metering.enable_metering;
         let provider: SharedMeteringProvider = if resource_metering_enabled

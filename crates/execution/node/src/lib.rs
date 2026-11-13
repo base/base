@@ -21,6 +21,8 @@ pub use args::{
 /// trait.
 pub mod engine;
 pub use engine::BaseEngineTypes;
+mod deferred_state_root;
+pub use deferred_state_root::{BaseDeferredEngineValidatorBuilder, DeferredEngineValidator, DeferredStateRootJob, DeferredStateRootStaged, DeferredStateRootState, DeferredStateRootStrategy};
 
 pub mod node;
 pub use node::*;

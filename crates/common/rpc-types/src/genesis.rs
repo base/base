@@ -53,6 +53,9 @@ pub struct UpgradeInfo {
     /// Zenith upgrade timestamp.
     #[serde(alias = "future")]
     pub zenith: Option<u64>,
+    /// Custom bench/devnet-only deferred parent commitment timestamp.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deferred_state_root: Option<u64>,
 }
 
 /// The Base chain-specific genesis block specification.
@@ -173,6 +176,7 @@ mod tests {
                     denim: None,
                     everest: None,
                     zenith: Some(1_000_000),
+            deferred_state_root: None,
                 },
                 activation_admin_address: None,
             }
@@ -253,6 +257,7 @@ mod tests {
                         denim: None,
                         everest: None,
                         zenith: None,
+            deferred_state_root: None,
                     },
                     activation_admin_address: None,
                 }),
