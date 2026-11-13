@@ -207,7 +207,7 @@ impl ExecutionNodeRuntimeConfig {
     /// Configures the embedded execution node auth endpoint used by unified Base binaries.
     ///
     /// Embedded consensus talks to the auth module in memory, so the auth server is only bound to
-    /// an OS-assigned loopback port and auth IPC is left to the `--auth-ipc` flag.
+    /// an OS-assigned loopback port. Auth IPC stays off unless the caller enables it.
     pub fn configure_unified_auth_endpoint(node_config: &mut NodeConfig<BaseChainSpec>) {
         node_config.rpc.auth_port = 0;
         node_config.rpc.auth_addr = Ipv4Addr::LOCALHOST.into();

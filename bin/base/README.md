@@ -2,6 +2,52 @@
 
 Unified Base node binary.
 
+## Flags
+
+`base rpc` and `base sequencer` embed execution, consensus, and (for `sequencer`) the builder in
+one process, but accept only a Base-chosen set of their flags. `-h`/`--help` lists the curated
+flags needed to run a node; `--help-all` adds the advanced flags, such as transaction pool limits,
+transaction forwarding, metering, and upgrade-signal settings. `base sequencer` also supports
+every `--builder.*` flag. Any other execution, consensus, or builder flag is ignored, whether it
+comes from the command line or its environment variable, and the node logs a warning naming it at
+startup. The full lists live in `src/surface.rs`.
+
+Flag names start with the layer or feature they configure, such as `--execution.rpc.*`,
+`--consensus.rpc.*`, `--execution.p2p.*`, `--consensus.p2p.*`, `--sequencer.*`, and `--txpool.*`. On/off switches end
+in `.enabled`. The old spellings are still accepted as hidden aliases, on every node command that
+has the flag:
+
+| Old                                              | New                                                  |
+| ------------------------------------------------ | ---------------------------------------------------- |
+| `--http`, `--http.*`, `--ws`, `--ws.*`, `--ipcpath` | `--execution.rpc.http`, `--execution.rpc.http.*`, `--execution.rpc.ws`, `--execution.rpc.ws.*`, `--execution.rpc.ipc.path` |
+| `--rpc.*` (execution), such as `--rpc.gascap`      | `--execution.rpc.*`, such as `--execution.rpc.gascap` |
+| `--port`, `--addr`, `--nat`, `--bootnodes`, `--trusted-peers`, `--max-peers` | `--execution.p2p.port`, `--execution.p2p.addr`, and so on |
+| `--discovery.*`, `--p2p-secret-key`, `--disable-discovery` | `--execution.p2p.discovery.*`, `--execution.p2p.secret-key`, `--execution.p2p.disable-discovery` |
+| `--metrics`                                      | `--execution.metrics`                                |
+| `--p2p.*`                                        | `--consensus.p2p.*`                                  |
+| `--rpc.addr`, `--rpc.port`, `--rpc.*` (consensus) | `--consensus.rpc.addr`, `--consensus.rpc.port`, `--consensus.rpc.*` |
+| `--p2p.sequencer.*`, `--p2p.signer.*`, `--conductor.*` | `--sequencer.*`, `--sequencer.signer.*`, `--sequencer.conductor.*` |
+| `--rollup.txpool-*`, `--rollup.mempool-*`        | `--txpool.*`                                         |
+| `--rollup.validity-pool-*`                       | `--txpool.validity-pool-*`                           |
+| `--enable-metering`, `--enable-shadow-indexer`, `--enable-tx-forwarding` | `--metering.enabled`, `--shadow-indexer.enabled`, `--tx-forwarding.enabled` |
+| `--builder-rpc-urls`, `--rollup.payer`, `--rollup.payer-enabled` | `--tx-forwarding.builder-urls`, `--payer.url`, `--payer.enabled` |
+| `--validity-*`, `--execution-chain`              | `--validity.*`, `--execution.chain`                  |
+| `--l1-eth-rpc`, `--l1-beacon`, `--l1-*`, `--l2-config-file` | `--l1.rpc`, `--l1.beacon`, `--l1.*`, `--l2.config-file` |
+| `--logs-otlp*`, `--tracing-otlp*`                | `--logs.otlp*`, `--tracing.otlp*`                    |
+
+The execution-layer renames skip `base consensus` and `base bootnode`, whose `--port` and `--nat`
+mean something else.
+
+Supported flags keep their existing environment variables, such as `BASE_NODE_L1_ETH_RPC` for
+`--l1.rpc` and `BASE_CHAIN` for `--chain`. Supported flags without one take `BASE_` plus the flag
+name in upper case, with `.` and `-` turned into `_`, for example `BASE_EXECUTION_RPC_HTTP_API`. Names that
+would end in `_PORT` end in `_PORT_NUMBER` instead, such as `BASE_EXECUTION_RPC_HTTP_PORT_NUMBER`, because
+Kubernetes sets `<SERVICE>_PORT` to `tcp://<ip>:<port>` for every Service.
+
+Consensus calls the embedded execution node's Engine API in memory, so Engine API transport
+flags such as `--authrpc.port`, `--authrpc.jwtsecret`, `--l2-engine-jwt-secret`, and
+`--l2-engine-timeout` are among the ignored flags, with a warning that explains why.
+
 ## OTLP Tracing
 
 Unified commands, including `rpc`, `follow`, and `sequencer`, support the same
@@ -10,12 +56,12 @@ OTLP span-export options as the standalone nodes. Set
 `grpc`), and `OTEL_SERVICE_NAME`, or use their CLI equivalents:
 
 ```text
-base rpc --tracing-otlp=http://localhost:4317 --tracing-otlp-protocol=grpc --tracing-otlp.filter=info,reth=debug
+base rpc --tracing.otlp=http://localhost:4317 --tracing.otlp.protocol=grpc --tracing.otlp.filter=info,reth=debug
 ```
 
-Tracing flags work before or after the subcommand. `--tracing-otlp.filter`
+Tracing flags work before or after the subcommand. `--tracing.otlp.filter`
 controls exported spans independently of stdout/file logging verbosity, and
-`--tracing-otlp.sample-ratio` controls sampling. Export is disabled unless an
+`--tracing.otlp.sample-ratio` controls sampling. Export is disabled unless an
 endpoint is configured; HTTP endpoints use `/v1/traces` and gRPC endpoints use
 the collector address without that path.
 
@@ -52,23 +98,20 @@ sequencer, builder, conductor, and transaction-forwarding options.
 Supported forms:
 
 ```text
-base rpc
-base --chain sepolia rpc
-base -c sepolia rpc
-base --chain zeronet rpc
-base --chain dev rpc
-base --chain ./chain.toml rpc
-base -c ./chain.toml rpc
+base rpc --l1.rpc <url> --l1.beacon <url>
+base rpc --chain sepolia --l1.rpc <url> --l1.beacon <url>
+base rpc -c 84532 --l1.rpc <url> --l1.beacon <url>
+base rpc --chain ./chain.toml --l1.rpc <url> --l1.beacon <url>
 ```
 
-The command also accepts an execution chain override when the root `--chain` selection is used only
+The command also accepts an execution chain override when the `--chain` selection is used only
 for consensus chain resolution:
 
 ```text
-base rpc --execution-chain dev
+base rpc --execution.chain dev
 ```
 
-The command also accepts metering flags such as `--enable-metering` for trusted local devnet
+The command also accepts metering flags such as `--metering.enabled` for trusted local devnet
 simulation nodes.
 
 ## `base sequencer`
@@ -80,29 +123,30 @@ calls also skip JSON-RPC encoding; L2 reads are still dispatched as JSON-RPC int
 
 The command accepts the shared execution flags, builder flags, and sequencer consensus flags. It
 requires L1 execution and beacon RPC endpoints, and sequencer mode requires a signing key provided
-by one of `--p2p.sequencer.key`, `--p2p.sequencer.key.path`, or `--p2p.signer.endpoint`.
+by one of `--sequencer.key`, `--sequencer.key.path`, or `--sequencer.signer.endpoint`.
 
 Supported forms:
 
 ```text
-base sequencer --l1-eth-rpc <url> --l1-beacon <url> --p2p.sequencer.key.path <path>
-base --chain sepolia sequencer --l1-eth-rpc <url> --l1-beacon <url> --p2p.signer.endpoint <url>
-base --chain dev sequencer --l1-eth-rpc <url> --l1-beacon <url> --p2p.sequencer.key.path <path>
-base --chain ./chain.toml sequencer --l1-eth-rpc <url> --l1-beacon <url> --p2p.sequencer.key.path <path>
+base sequencer --l1.rpc <url> --l1.beacon <url> --sequencer.key.path <path>
+base sequencer --chain sepolia --l1.rpc <url> --l1.beacon <url> --sequencer.signer.endpoint <url>
+base sequencer --chain ./chain.toml --l1.rpc <url> --l1.beacon <url> --sequencer.key.path <path>
 ```
 
 Useful sequencer-specific flags include:
 
 - `--sequencer.stopped` starts the process with sequencing disabled until the admin API starts it.
 - `--sequencer.recover` enables recovery mode and forces empty block production.
-- `--conductor.rpc` enables conductor-backed leader checks.
-- `--conductor.binary-commit` uses the conductor binary commit endpoint.
+- `--sequencer.conductor.rpc` enables conductor-backed leader checks.
+- `--sequencer.conductor.binary-commit` uses the conductor binary commit endpoint.
 - `--builder.transaction-events.enabled` journals the builder's transaction events. Because the
   consensus node runs in the same process, the journal is gated on its own `admin_sequencerActive`
-  (requires `--rpc.enable-admin`) without setting `--builder.transaction-events.consensus-url`.
+  (requires `--consensus.rpc.enable-admin`) without setting
+  `--builder.transaction-events.consensus-url`.
   The gate starts closed and opens on the first `true` answer, so a restarted standby journals
   nothing while its consensus node comes up.
-  With the admin API or RPC server disabled, an ephemeral `--rpc.port 0`, and no explicit URL,
+  With the admin API or RPC server disabled, an ephemeral `--consensus.rpc.port 0`, and no
+  explicit URL,
   startup logs a warning and every sequencer journals, standbys included. The gate covers every
   event the process journals, including `TXPOOL_SEND_RAW_TRANSACTION*` for transactions submitted
   to the sequencer directly.
@@ -140,7 +184,7 @@ as any account. Startup prints endpoints and the starting head; database repair 
 rebuilds can take time before sequencing starts.
 
 ```sh
-just devnet snapshot run --dir "$HOME/data/my-devnet" --http.port 9545 --ws.port 9546
+just devnet snapshot run --dir "$HOME/data/my-devnet" --execution.rpc.http.port 9545 --execution.rpc.ws.port 9546
 # Direct binary usage; mainnet is the default.
 target/release/base dev --dir "$HOME/data/my-devnet"
 # For another supported chain, select the same chain for download and run.
@@ -270,7 +314,7 @@ JWT-authenticated Engine API. Base's own fleets use the integrated `rpc` and `se
 `--authrpc.addr`/`--authrpc.port` (default `127.0.0.1:8551`). Pass `--authrpc.jwtsecret <path>`
 to use a shared secret; without it, a secret is generated at `<datadir>/jwt.hex`. A configured
 `--upgrade-signal.contract` requires `--upgrade-signal.l1-rpc`. For chains without a built-in
-chainspec, pass a genesis file with `--execution-chain <genesis.json>`.
+chainspec, pass a genesis file with `--execution.chain <genesis.json>`.
 
 `base consensus` accepts the standalone consensus flags, including `--mode` (default `validator`). It
 requires `--l1-eth-rpc`, `--l1-beacon`, and `--l2-engine-rpc`. Pass the execution client's secret
@@ -305,9 +349,15 @@ base update --update-installer
 
 ## Chain Selection
 
+`--chain`/`-c` (or `BASE_CHAIN`) goes after `rpc`, `sequencer`, or `bootnode`. The older
+`base --chain <chain> <command>` form is still accepted and takes precedence over `BASE_CHAIN`;
+passing `--chain` both before and after the subcommand is an error.
+
 Chain selection supports:
 
 - built-in names: `mainnet`, `sepolia`, `zeronet`, `dev`
+- canonical chain names: `base`, `base-sepolia`, `base-zeronet`
+- built-in L2 chain IDs: `8453`, `84532`, `763360`, `84538453`
 - TOML files for custom chains:
 
 ```toml

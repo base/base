@@ -236,7 +236,7 @@ mod tests {
 
     #[test]
     fn parses_execution_consensus_builder_and_sequencer_args() {
-        let cli = BaseCli::parse_from(sequencer_args(&[
+        let cli = BaseCli::parse_curated(sequencer_args(&[
             "base",
             "sequencer",
             "--port",
@@ -283,7 +283,7 @@ mod tests {
     fn parses_shadow_indexer_args_and_builds_config() {
         use base_shadow_indexer::ShadowIndexerConfig;
 
-        let cli = BaseCli::parse_from(sequencer_args(&[
+        let cli = BaseCli::parse_curated(sequencer_args(&[
             "base",
             "sequencer",
             "--p2p.sequencer.key",
@@ -333,7 +333,7 @@ mod tests {
             SEQUENCER_KEY,
             "--builder.enable-resource-metering",
         ]);
-        let cli = BaseCli::try_parse_from(
+        let cli = BaseCli::try_parse_curated(
             args.into_iter().chain(["--payload.resource-metering-schedule", schedule_path_str]),
         )
         .expect("sequencer command should accept --payload.resource-metering-schedule");
@@ -400,7 +400,7 @@ mod tests {
         ])
         .unwrap()
         .args;
-        let BaseCommand::Sequencer(s_on) = BaseCli::try_parse_from(
+        let BaseCommand::Sequencer(s_on) = BaseCli::try_parse_curated(
             sequencer_args(&[
                 "base",
                 "sequencer",
@@ -434,7 +434,7 @@ mod tests {
         ])
         .unwrap()
         .args;
-        let BaseCommand::Sequencer(s_bad) = BaseCli::try_parse_from(
+        let BaseCommand::Sequencer(s_bad) = BaseCli::try_parse_curated(
             sequencer_args(&[
                 "base",
                 "sequencer",
@@ -465,7 +465,7 @@ mod tests {
 
     #[test]
     fn shadow_indexer_defaults_to_disabled() {
-        let cli = BaseCli::parse_from(sequencer_args(&[
+        let cli = BaseCli::parse_curated(sequencer_args(&[
             "base",
             "sequencer",
             "--p2p.sequencer.key",
@@ -481,7 +481,7 @@ mod tests {
 
     #[test]
     fn parses_without_l2_engine_rpc() {
-        let cli = BaseCli::parse_from(sequencer_args(&[
+        let cli = BaseCli::parse_curated(sequencer_args(&[
             "base",
             "sequencer",
             "--p2p.sequencer.key",
@@ -493,7 +493,7 @@ mod tests {
 
     #[test]
     fn parses_upgrade_signal_args() {
-        let cli = BaseCli::parse_from(sequencer_args(&[
+        let cli = BaseCli::parse_curated(sequencer_args(&[
             "base",
             "sequencer",
             "--p2p.sequencer.key",
@@ -519,7 +519,7 @@ mod tests {
 
     #[test]
     fn preserves_explicit_upgrade_signal_l1_rpc() {
-        let cli = BaseCli::parse_from(sequencer_args(&[
+        let cli = BaseCli::parse_curated(sequencer_args(&[
             "base",
             "sequencer",
             "--p2p.sequencer.key",
@@ -555,7 +555,7 @@ mod tests {
 
     #[test]
     fn rejects_sequencer_mode_arg() {
-        let err = BaseCli::try_parse_from(sequencer_args(&[
+        let err = BaseCli::try_parse_curated(sequencer_args(&[
             "base",
             "sequencer",
             "--mode",
