@@ -199,6 +199,10 @@ pub struct SegmentTip {
     pub last_hash: B256,
     /// First transaction number of the block after the segment.
     pub next_tx_num: u64,
+    /// Timestamp (seconds) of the segment's last block, which retention compares against its
+    /// cutoff. `None` in tips written before the field existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_timestamp: Option<u64>,
 }
 
 impl SegmentManifest {
@@ -400,18 +404,44 @@ impl SegmentFiles {
 }
 
 impl SegmentFiles {
-    /// Reads every block back out of the segment's static files, recomputing block hashes from
-    /// the headers. Used by the pruner (to recompute index keys) and by the writer (to find the
-    /// archive tip).
+    /// Reads every block back out of the segment's in-memory files, recomputing block hashes
+    /// from the headers. Production paths stream instead
+    /// ([`crate::SegmentObjects::read_blocks`]).
     pub fn read_blocks(&self) -> Result<Vec<BlockData>, HistoryStoreError> {
         let dir = tempfile::tempdir()?;
         let provider = self.open_provider(dir.path())?;
-        let bodies = self.body_indices()?;
-        let range = self.range();
+        Self::blocks_from(self.segment, self.range(), &provider, self.body_indices()?)
+    }
+
+    /// Reads every block of segment `segment` (`blocks_per_segment` blocks) from `dir`, which
+    /// holds the segment's checked files under their local names, as
+    /// [`crate::SegmentObjects::download_to`] writes them. Does blocking IO.
+    pub fn read_blocks_in(
+        segment: u64,
+        blocks_per_segment: u64,
+        dir: &Path,
+    ) -> Result<Vec<BlockData>, HistoryStoreError> {
+        let bodies = BodyIndicesFile::read(segment, dir, blocks_per_segment)?;
+        let provider = StaticFileProviderBuilder::read_only(dir)
+            .with_blocks_per_file(blocks_per_segment)
+            .build::<BasePrimitives>()?;
+        let start = segment * blocks_per_segment;
+        let range = SegmentRangeInclusive::new(start, start + blocks_per_segment - 1);
+        Self::blocks_from(segment, range, &provider, bodies)
+    }
+
+    /// Decodes the blocks of `range` from `provider`, recomputing block hashes from the headers
+    /// and checking row counts against `bodies`.
+    pub fn blocks_from(
+        segment: u64,
+        range: SegmentRangeInclusive,
+        provider: &StaticFileProvider<BasePrimitives>,
+        bodies: BodyIndicesFile,
+    ) -> Result<Vec<BlockData>, HistoryStoreError> {
         let mut blocks = Vec::with_capacity(bodies.entries.len());
         for (number, body) in (range.start()..=range.end()).zip(bodies.entries) {
             let corrupt = |reason: &str| HistoryStoreError::CorruptSegment {
-                segment: self.segment,
+                segment,
                 file: format!("block {number}"),
                 reason: reason.to_string(),
             };
@@ -687,7 +717,11 @@ mod tests {
     fn manifest_round_trip_keeps_the_tip() {
         let fixture = ChainFixture::new(8, 2);
         let files = SegmentBuilder::new(4).build(1, &fixture.blocks[4..8]).unwrap();
-        let tip = SegmentTip { last_hash: fixture.blocks[7].hash, next_tx_num: 16 };
+        let tip = SegmentTip {
+            last_hash: fixture.blocks[7].hash,
+            next_tx_num: 16,
+            last_timestamp: Some(fixture.blocks[7].header.timestamp),
+        };
         let manifest = SegmentManifest { tip: Some(tip), ..files.manifest(3) };
         let decoded = SegmentManifest::decode(1, &manifest.encode()).unwrap();
         assert_eq!(decoded, manifest, "every field, including the tip, round-trips");
@@ -706,6 +740,18 @@ mod tests {
         let decoded = SegmentManifest::decode(1, &raw).unwrap();
         assert_eq!(decoded.tip, None, "a legacy manifest decodes with no tip");
         assert_eq!(decoded, legacy, "a legacy manifest round-trips unchanged");
+
+        let untimed = SegmentManifest {
+            tip: Some(SegmentTip { last_timestamp: None, ..tip }),
+            ..files.manifest(3)
+        };
+        let raw = untimed.encode();
+        assert!(
+            !String::from_utf8(raw.clone()).unwrap().contains("last_timestamp"),
+            "a tip without a timestamp encodes exactly as tips did before the field existed"
+        );
+        let decoded = SegmentManifest::decode(1, &raw).unwrap();
+        assert_eq!(decoded, untimed, "a tip written before last_timestamp decodes with None");
     }
 
     /// Archive object names map to and from reth's static file names.

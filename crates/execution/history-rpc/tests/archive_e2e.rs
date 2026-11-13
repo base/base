@@ -27,7 +27,7 @@ use base_history_store::{
     ArchiveLayout, ArchiveWriter, CacheConfig, Catalog, CatalogStore, ChainIdentity, ChunkVerifier,
     DEFAULT_MAX_RANGE_BLOCKS, DEFAULT_MAX_RANGE_BYTES, DEFAULT_SNAPSHOT_TTL, RpcChainSource,
     SourcePool, StepOutcome, WriterConfig,
-    test_utils::{GateOp, GatedStore, test_index_options},
+    test_utils::{Gate, GateOp, GatedStore, test_index_options},
 };
 use base_node_runner::test_utils::{
     DEFAULT_JWT_SECRET, L1_BLOCK_INFO_DEPOSIT_TX, LocalNodeRetention, TestHarness,
@@ -315,16 +315,13 @@ async fn pruned_node_parity(retention: LocalNodeRetention) {
     assert_ne!(by_tag, genesis, "earliest is not genesis once bodies are pruned");
 
     // A block above the node's head is never looked up in the archive, even on a pruned node.
-    let mut gate = gated.arm(GateOp::Any, "");
-    gate.release();
+    // Only segment and catalog reads count: the index reader polls its manifest in the background.
+    let mut gates = archive_lookup_gates(&gated);
     let head = harness.latest_block().number;
     let next =
         call(&client, "eth_getBlockByNumber", json!([format!("0x{:x}", head + 1), false])).await;
     assert!(next.is_null(), "block {} does not exist yet, got {next}", head + 1);
-    assert!(
-        gate.reached.take().expect("gate receiver").try_recv().is_err(),
-        "a block above the head must not reach the archive"
-    );
+    assert!(!gates.any_reached(), "a block above the head must not reach the archive");
 
     // The export is not served on the public HTTP server.
     for (method, params) in
@@ -340,6 +337,34 @@ async fn pruned_node_parity(retention: LocalNodeRetention) {
             "{method} on public HTTP must be method-not-found, got {err}"
         );
     }
+}
+
+/// Released gates on the archive's segment objects and catalog, the paths a request lookup reads.
+struct LookupGates(Vec<Gate>);
+
+impl LookupGates {
+    /// Whether any request reached a segment object or the catalog since the gates were armed.
+    fn any_reached(&mut self) -> bool {
+        self.0.iter_mut().any(|gate| gate.reached.take().expect("gate receiver").try_recv().is_ok())
+    }
+}
+
+/// Arms and releases pass-through gates on `chain/seg/` and `chain/catalog.json`.
+fn archive_lookup_gates(gated: &GatedStore) -> LookupGates {
+    let prefixes = [
+        format!("chain/{}/", ArchiveLayout::SEGMENTS),
+        format!("chain/{}", ArchiveLayout::CATALOG),
+    ];
+    LookupGates(
+        prefixes
+            .iter()
+            .map(|prefix| {
+                let mut gate = gated.arm(GateOp::Any, prefix);
+                gate.release();
+                gate
+            })
+            .collect(),
+    )
 }
 
 /// Starts a node with the `archive_` export (authenticated server only), `retention`, and the
@@ -445,8 +470,7 @@ async fn unpruned_node_misses_never_reach_the_archive() {
             archive_node(Arc::new(gated.clone()), chain_spec, LocalNodeRetention::default()).await;
         harness.advance_chain(2).await.expect("advance");
         let client = harness.rpc_client().expect("rpc client");
-        let mut gate = gated.arm(GateOp::Any, "");
-        gate.release();
+        let mut gates = archive_lookup_gates(&gated);
         let unknown = B256::repeat_byte(0x42);
         let head = harness.latest_block().number;
         for (method, params) in [
@@ -458,10 +482,7 @@ async fn unpruned_node_misses_never_reach_the_archive() {
             let value = call(&client, method, params.clone()).await;
             assert!(value.is_null(), "{method} {params} must be null locally, got {value}");
         }
-        assert!(
-            gate.reached.take().expect("gate receiver").try_recv().is_err(),
-            "no miss may reach archive storage on an unpruned node"
-        );
+        assert!(!gates.any_reached(), "no miss may reach archive storage on an unpruned node");
     })
     .await
     .expect("test timed out");

@@ -25,9 +25,9 @@ use object_store::ObjectStore;
 use tracing::{debug, info, warn};
 
 use crate::{
-    ArchiveLayout, ArchiveReader, Catalog, CatalogStore, ChainTip, ChunkVerifier,
-    HistoryStoreError, IndexOptions, IndexWriter, SegmentBuilder, SegmentIndex, SegmentManifest,
-    SegmentObjects, SegmentTip, SourcePool, UploadReport, VersionedCatalog,
+    ArchiveLayout, Catalog, CatalogStore, ChainTip, ChunkVerifier, HistoryStoreError, IndexOptions,
+    IndexWriter, SegmentBuilder, SegmentIndex, SegmentManifest, SegmentObjects, SegmentTip,
+    SourcePool, UploadReport, VersionedCatalog,
 };
 
 /// A segment uploaded and indexed but not yet published: the state between the index flush and
@@ -293,7 +293,9 @@ impl ArchiveWriter {
             });
         }
 
-        let tip = ChainTip::after(blocks.last().expect("segment has blocks"));
+        let last_block = blocks.last().expect("segment has blocks");
+        let tip = ChainTip::after(last_block);
+        let last_timestamp = last_block.header.timestamp;
         let files = SegmentBuilder::new(n).build(segment, &blocks)?;
         // Uploads a crashed or superseded owner left for this segment are never published (the
         // segment is above `H` and this writer owns the catalog), and GC never revisits the
@@ -308,7 +310,11 @@ impl ArchiveWriter {
             .write_segment(
                 &SegmentIndex::from_blocks(segment, n, &blocks),
                 &SegmentManifest {
-                    tip: Some(SegmentTip { last_hash: tip.hash, next_tx_num: tip.next_tx_num }),
+                    tip: Some(SegmentTip {
+                        last_hash: tip.hash,
+                        next_tx_num: tip.next_tx_num,
+                        last_timestamp: Some(last_timestamp),
+                    }),
                     ..files.manifest(self.epoch)
                 },
             )
@@ -373,12 +379,7 @@ impl ArchiveWriter {
             return Ok(Some(tip));
         }
         debug!(segment = previous, "manifest has no tip; reading the segment back");
-        let files = self.objects.download(&manifest, n).await?;
-        let blocks = ArchiveReader::blocking(move || {
-            manifest.check(previous, n, &files.files)?;
-            files.read_blocks()
-        })
-        .await?;
+        let blocks = self.objects.read_blocks(&manifest, n).await?;
         Ok(blocks.last().map(ChainTip::after))
     }
 }

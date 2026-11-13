@@ -1,15 +1,16 @@
 //! Upload, download and deletion of segment objects under `seg/<k>/<epoch>/`.
 
-use std::{collections::BTreeMap, path::Path, sync::Arc};
+use std::{path::Path, sync::Arc};
 
-use alloy_primitives::{B256, Bytes};
+use alloy_primitives::B256;
 use futures::TryStreamExt;
 use object_store::{ObjectMeta, ObjectStore, ObjectStoreExt, PutMode, PutOptions, PutPayload};
 use sha2::{Digest, Sha256};
 use tokio::io::AsyncWriteExt;
 
 use crate::{
-    ArchiveLayout, HistoryStoreError, ManifestEntry, SegmentFile, SegmentFiles, SegmentManifest,
+    ArchiveLayout, ArchiveReader, BlockData, HistoryStoreError, ManifestEntry, SegmentCache,
+    SegmentFile, SegmentFiles, SegmentManifest,
 };
 
 /// Outcome of uploading one segment.
@@ -83,19 +84,21 @@ impl SegmentObjects {
             .collect())
     }
 
-    /// Downloads the objects `manifest` lists from its epoch directory. A missing object means
-    /// the directory was swept or never completed, so it is `Unavailable`; checksums are left
-    /// to [`SegmentManifest::check`].
+    /// Downloads the objects `manifest` lists from its epoch directory into memory. A missing
+    /// object means the directory was swept or never completed, so it is `Unavailable`;
+    /// checksums are left to [`SegmentManifest::check`]. Test-only: production paths stream
+    /// with [`Self::download_to`] or [`Self::read_blocks`].
+    #[cfg(any(test, feature = "test-utils"))]
     pub async fn download(
         &self,
         manifest: &SegmentManifest,
         blocks_per_segment: u64,
     ) -> Result<SegmentFiles, HistoryStoreError> {
         let k = manifest.segment;
-        let mut files = BTreeMap::new();
+        let mut files = std::collections::BTreeMap::new();
         for name in manifest.files.keys() {
             let path = self.layout.segment_object(k, manifest.epoch, name);
-            let bytes: Bytes = match self.store.get(&path).await {
+            let bytes: alloy_primitives::Bytes = match self.store.get(&path).await {
                 Ok(result) => result.bytes().await?.into(),
                 Err(object_store::Error::NotFound { .. }) => {
                     return Err(HistoryStoreError::Unavailable {
@@ -166,6 +169,27 @@ impl SegmentObjects {
             expected.check(k, name, size, B256::from_slice(&hasher.finalize()))?;
         }
         Ok(())
+    }
+
+    /// Reads every block of the segment `manifest` describes: streams its checked objects into
+    /// a temporary directory ([`Self::download_to`]) and decodes them on the blocking pool, so
+    /// memory holds one chunk per object plus the decoded blocks, never the segment's files.
+    pub async fn read_blocks(
+        &self,
+        manifest: &SegmentManifest,
+        blocks_per_segment: u64,
+    ) -> Result<Vec<BlockData>, HistoryStoreError> {
+        let k = manifest.segment;
+        let dir = ArchiveReader::blocking(|| Ok(tempfile::tempdir()?)).await?;
+        if let Err(err) = self.download_to(manifest, blocks_per_segment, dir.path()).await {
+            return SegmentCache::abandon(dir, err).await;
+        }
+        ArchiveReader::blocking(move || {
+            let blocks = SegmentFiles::read_blocks_in(k, blocks_per_segment, dir.path());
+            dir.close()?;
+            blocks
+        })
+        .await
     }
 
     /// Deletes the objects of segment `k` under every epoch older than `epoch`, returning how

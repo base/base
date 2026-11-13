@@ -24,7 +24,7 @@
 
 use std::time::Duration;
 
-use tracing::info;
+use tracing::{debug, info};
 
 use crate::{
     Catalog, CatalogStore, HistoryStoreError, IndexKey, IndexWriter, RetiredSegment, SegmentIndex,
@@ -82,10 +82,15 @@ impl Pruner {
                 break;
             }
             let manifest = index.required_manifest(k).await?;
-            let files = self.objects.download(&manifest, n).await?;
-            manifest.check(k, n, &files.files)?;
-            let blocks = files.read_blocks()?;
-            let last_timestamp = blocks.last().map_or(u64::MAX, |block| block.header.timestamp);
+            let recorded = manifest.tip.and_then(|tip| tip.last_timestamp);
+            let last_timestamp = match recorded {
+                Some(timestamp) => timestamp,
+                None => {
+                    debug!(segment = k, "manifest has no last timestamp; reading the segment");
+                    let blocks = self.objects.read_blocks(&manifest, n).await?;
+                    blocks.last().map_or(u64::MAX, |block| block.header.timestamp)
+                }
+            };
             if last_timestamp > cutoff_secs {
                 break;
             }
@@ -150,9 +155,7 @@ impl Pruner {
         for &k in &expired {
             let manifest_key = IndexKey::manifest(k);
             if let Some(manifest) = index.manifest(k).await? {
-                let files = self.objects.download(&manifest, n).await?;
-                manifest.check(k, n, &files.files)?;
-                let blocks = files.read_blocks()?;
+                let blocks = self.objects.read_blocks(&manifest, n).await?;
                 let mut keys = SegmentIndex::from_blocks(k, n, &blocks).keys();
                 keys.push(manifest_key);
                 index.delete_keys(&keys).await?;
@@ -187,7 +190,7 @@ impl Pruner {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::sync::{Arc, atomic::Ordering};
 
     use object_store::{ObjectStore, ObjectStoreExt, memory::InMemory};
 
@@ -229,6 +232,124 @@ mod tests {
             reader.block_number(fixture.blocks[2].hash, u64::MAX).await.unwrap().is_some(),
             reader.reader.get(IndexKey::manifest(0)).await.unwrap().is_some(),
         )
+    }
+
+    /// Publishes `segments` segments through a [`crate::test_utils::ChunkedStore`] that serves
+    /// `seg/` reads in `chunk`-byte chunks and counts them.
+    async fn published_counting(
+        segments: u64,
+        chunk: usize,
+    ) -> (Arc<crate::test_utils::ChunkStats>, ArchiveWriter, ChainFixture) {
+        let fixture = ChainFixture::new(segments * 4, 2);
+        let counting =
+            crate::test_utils::ChunkedStore::new(Arc::new(InMemory::new()), "chain/seg/", chunk);
+        let stats = Arc::clone(&counting.stats);
+        let writer = fixture_writer(Arc::new(counting), &fixture, 4).await;
+        for _ in 0..segments {
+            writer.step().await.unwrap();
+        }
+        (stats, writer, fixture)
+    }
+
+    /// Review7 P2 steady state: a maintenance pass whose segment at E is younger than the
+    /// retention cutoff, with nothing retired, reads no segment object.
+    #[tokio::test]
+    async fn steady_state_maintenance_reads_no_segment_objects() {
+        let (stats, writer, fixture) = published_counting(3, usize::MAX).await;
+        assert_eq!(stats.gets.load(Ordering::SeqCst), 0, "publishing reads no seg/ object");
+        let now_ms = fixture.blocks[11].header.timestamp * 1000;
+        let retention = Duration::from_secs(fixture.blocks[11].header.timestamp);
+        let service = crate::ArchiveService::new(
+            writer,
+            crate::MaintenanceConfig { retention: Some(retention), ..Default::default() },
+        );
+        let retired =
+            service.pruner.retire_older_than(&service.writer.index, retention, now_ms).await;
+        assert_eq!(retired.unwrap(), Vec::<u64>::new(), "segment 0 is younger than the cutoff");
+        let report = service.maintain().await.unwrap();
+        assert_eq!(report, crate::MaintenanceReport::default(), "a pass with nothing to do");
+        assert_eq!(
+            stats.gets.load(Ordering::SeqCst),
+            0,
+            "the age check reads segment 0's manifest timestamp, not its objects"
+        );
+    }
+
+    /// Retirement decides by the manifest's recorded timestamp without reading the segment;
+    /// a manifest written before the timestamp was recorded is read back once instead.
+    #[tokio::test]
+    async fn retirement_uses_the_manifest_timestamp() {
+        let (stats, writer, fixture) = published_counting(3, usize::MAX).await;
+        let pruner = pruner(&writer, 1);
+        let manifest = writer.index.required_manifest(0).await.unwrap();
+        assert_eq!(
+            manifest.tip.and_then(|tip| tip.last_timestamp),
+            Some(fixture.blocks[3].header.timestamp),
+            "publish records segment 0's last block timestamp"
+        );
+        let just_before = fixture.blocks[3].header.timestamp * 1000 - 1000;
+        assert_eq!(
+            pruner.retire_older_than(&writer.index, Duration::ZERO, just_before).await.unwrap(),
+            Vec::<u64>::new(),
+            "segment 0 ends after a cutoff one second before its last block"
+        );
+        let at = fixture.blocks[3].header.timestamp * 1000;
+        assert_eq!(
+            pruner.retire_older_than(&writer.index, Duration::ZERO, at).await.unwrap(),
+            vec![0],
+            "segment 0 is retired once its last block is at the cutoff"
+        );
+        assert_eq!(stats.gets.load(Ordering::SeqCst), 0, "retirement read no seg/ object");
+
+        let legacy = crate::SegmentManifest {
+            tip: manifest.tip.map(|tip| crate::SegmentTip { last_timestamp: None, ..tip }),
+            ..writer.index.required_manifest(1).await.unwrap()
+        };
+        writer.index.db.put(IndexKey::manifest(1), legacy.encode()).await.unwrap();
+        writer.index.db.flush().await.unwrap();
+        assert_eq!(
+            pruner.retire_older_than(&writer.index, Duration::ZERO, u64::MAX).await.unwrap(),
+            vec![1],
+            "a legacy manifest falls back to reading the segment"
+        );
+        assert_eq!(stats.gets.load(Ordering::SeqCst), 21, "segment 1's 21 objects read once");
+    }
+
+    /// Review7 P2 sweep memory: the sweep streams the retired segment to a temporary
+    /// directory chunk by chunk to recompute its index keys, never holding its files in memory.
+    #[tokio::test]
+    async fn sweep_streams_the_segment() {
+        const CHUNK: usize = 16;
+        let (stats, writer, fixture) = published_counting(2, CHUNK).await;
+        let pruner = pruner(&writer, DEFAULT_MAX_SEGMENTS_PER_PASS);
+        pruner.retire(0, 0).await.unwrap();
+        let size = writer.index.required_manifest(0).await.unwrap().total_bytes();
+        assert!(size > 100 * CHUNK as u64, "segment 0 of {size} bytes spans many chunks");
+        assert_eq!(pruner.sweep(&writer.index, Duration::ZERO, 1).await.unwrap(), vec![0]);
+        assert_eq!(stats.gets.load(Ordering::SeqCst), 21, "the sweep read segment 0's 21 objects");
+        assert!(
+            stats.chunks.load(Ordering::SeqCst) >= size / CHUNK as u64,
+            "the objects arrived in {CHUNK}-byte chunks"
+        );
+        assert_eq!(
+            stats.peak.load(Ordering::SeqCst),
+            CHUNK as u64,
+            "at most one chunk of the segment was buffered at any time"
+        );
+        assert_eq!(stats.live.load(Ordering::SeqCst), 0, "no chunk outlives the sweep");
+        assert_eq!(writer.objects.list(0).await.unwrap().len(), 0, "segment 0 deleted");
+        let reader = IndexReader::open(
+            Arc::clone(&writer.objects.store),
+            &ArchiveLayout::new("chain"),
+            test_index_options(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            reader.block_number(fixture.blocks[2].hash, u64::MAX).await.unwrap(),
+            None,
+            "the streamed decode produced segment 0's keys, which are tombstoned"
+        );
     }
 
     /// Retirement only advances E; tombstones and deletion wait for the sweep after grace.
