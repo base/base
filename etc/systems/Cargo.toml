@@ -28,6 +28,7 @@ base-txpool-rpc.workspace = true
 base-tx-manager.workspace = true
 base-tx-forwarding.workspace = true
 base-execution-cli.workspace = true
+base-execution-payload-builder.workspace = true
 base-execution-eip8130-rpc-node.workspace = true
 base-txpool-tracing.workspace = true
 base-upgrade-signal.workspace = true

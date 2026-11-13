@@ -35,6 +35,8 @@ pub struct LaunchedBaseNode {
     pub auth_module: RpcModule<()>,
     /// The Engine API handler, for in-process callers that want to skip JSON-RPC encoding.
     pub engine_api: SharedEngineApi,
+    /// Shared experimental root service for observing worker health and join on shutdown.
+    pub root_service: Option<Arc<base_execution_payload_builder::PostStateRootService>>,
 }
 
 /// Wraps the Base node configuration and orchestrates builder wiring.
@@ -254,7 +256,7 @@ impl<SB: PayloadServiceBuilder> BaseNodeRunner<SB> {
             .ok_or_else(|| eyre!("auth RPC module was not configured"))?;
         let engine_api =
             engine_api.get().cloned().ok_or_else(|| eyre!("Engine API was not built"))?;
-        Ok(LaunchedBaseNode { handle, auth_module, engine_api })
+        Ok(LaunchedBaseNode { handle, auth_module, engine_api, root_service })
     }
 }
 

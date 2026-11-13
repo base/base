@@ -6271,6 +6271,7 @@ dependencies = [
  "base-execution-chainspec",
  "base-execution-cli",
  "base-execution-eip8130-rpc-node",
+ "base-execution-payload-builder",
  "base-execution-rpc",
  "base-execution-txpool",
  "base-load-tests",
