@@ -282,6 +282,26 @@ impl ArchiveRpcBoundary {
         }
     }
 
+    /// Picks the answer when the archive cannot serve a request the node missed. Missing
+    /// history and transient storage failures (object store, index, IO) give the node's own
+    /// answer, so a bucket hiccup does not turn a pending-receipt poll into an internal error;
+    /// integrity failures and anything else surface as the archive error.
+    pub fn miss<T>(local: RpcResult<T>, err: HistoryStoreError) -> RpcResult<T> {
+        match err {
+            HistoryStoreError::HistoryPruned { .. } | HistoryStoreError::Unavailable { .. } => {
+                debug!(error = %err, "archive cannot serve request");
+                local
+            }
+            HistoryStoreError::ObjectStore(_)
+            | HistoryStoreError::Slate(_)
+            | HistoryStoreError::Io(_) => {
+                warn!(error = %err, "archive storage failed; serving the node's answer");
+                local
+            }
+            err => Err(Self::error(err)),
+        }
+    }
+
     /// Picks the answer for a state read the archive cannot serve. A node refusal of pruned
     /// state becomes the archive's EIP-4444 error rather than reth's internal
     /// `StateAtBlockPruned` error; a successful node answer is kept.
@@ -506,7 +526,7 @@ where
         match archived.await {
             Ok(Some(archived)) => Ok(Some(self.converter.block(&archived, full))),
             Ok(None) => local,
-            Err(err) => Self::miss(local, err),
+            Err(err) => ArchiveRpcBoundary::miss(local, err),
         }
     }
 
@@ -520,18 +540,6 @@ where
     /// ([`LocalRetention::archive_may_hold`]).
     pub fn archive_may_hold_hash(&self) -> bool {
         self.local_retention().archive_may_hold(None)
-    }
-
-    /// Picks the answer when the archive cannot serve a request the node missed: the node's
-    /// own answer for missing history, the archive error for anything else.
-    pub fn miss<T>(local: RpcResult<T>, err: HistoryStoreError) -> RpcResult<T> {
-        match err {
-            HistoryStoreError::HistoryPruned { .. } | HistoryStoreError::Unavailable { .. } => {
-                debug!(error = %err, "archive cannot serve request");
-                local
-            }
-            err => Err(ArchiveRpcBoundary::error(err)),
-        }
     }
 
     /// Resolves the archived block and transaction index for a transaction hash.
@@ -754,7 +762,7 @@ where
         match self.archived_transaction(hash).await {
             Ok(Some((archived, index))) => Ok(self.converter.transaction(&archived, index)),
             Ok(None) => local,
-            Err(err) => Self::miss(local, err),
+            Err(err) => ArchiveRpcBoundary::miss(local, err),
         }
     }
 
@@ -773,7 +781,7 @@ where
                 self.converter.receipt(&archived, index).map_err(ArchiveRpcBoundary::error)
             }
             Ok(None) => local,
-            Err(err) => Self::miss(local, err),
+            Err(err) => ArchiveRpcBoundary::miss(local, err),
         }
     }
 
@@ -994,6 +1002,36 @@ mod tests {
         assert!(!ArchiveRpcBoundary::is_state_pruned(&refusal, 8), "a refusal for another block");
         let other = ErrorObjectOwned::from(EthApiError::from(ProviderError::BestBlockNotFound));
         assert!(!ArchiveRpcBoundary::is_state_pruned(&other, 7), "another internal error");
+    }
+
+    /// A transient storage failure during a miss serves the node's own answer (a pending
+    /// receipt stays `null`), while an integrity failure is still an error.
+    #[test]
+    fn storage_failures_on_a_miss_serve_the_local_answer() {
+        let local: RpcResult<Option<u64>> = Ok(None);
+        for err in [
+            HistoryStoreError::ObjectStore(object_store::Error::Generic {
+                store: "S3",
+                source: "timeout".into(),
+            }),
+            HistoryStoreError::Io(std::io::Error::other("connection reset")),
+        ] {
+            let shown = err.to_string();
+            assert_eq!(
+                ArchiveRpcBoundary::miss(local.clone(), err).unwrap(),
+                None,
+                "{shown} keeps null"
+            );
+        }
+        let corrupt = HistoryStoreError::HashMismatch {
+            block: 1,
+            expected: B256::ZERO,
+            actual: B256::repeat_byte(1),
+        };
+        assert!(
+            ArchiveRpcBoundary::miss(local, corrupt).is_err(),
+            "an integrity failure is still an error"
+        );
     }
 
     /// A miss goes to the archive only for history the node pruned: never for a block above
