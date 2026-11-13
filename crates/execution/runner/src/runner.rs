@@ -181,7 +181,7 @@ impl<SB: PayloadServiceBuilder> BaseNodeRunner<SB> {
                 target: "base-runner",
                 %error,
                 path = %config_path.display(),
-                "failed to raise merkle stage rebuild threshold"
+                "failed to set merkle stage rebuild threshold"
             );
         }
 
