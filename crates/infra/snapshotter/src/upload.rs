@@ -77,6 +77,13 @@ const UPLOAD_RETRY_DELAY: Duration = Duration::from_secs(5);
 /// Cap for the retry backoff so uploads keep making progress instead of sleeping for minutes.
 const MAX_UPLOAD_RETRY_DELAY: Duration = Duration::from_secs(60);
 
+/// Attempts made for each retryable upload operation before giving up.
+///
+/// With the linear backoff above this waits about 13.5 minutes in total, enough to ride out a
+/// transient storage outage while the node's containers are stopped, without leaving them stopped
+/// indefinitely when the store keeps failing.
+const MAX_UPLOAD_ATTEMPTS: usize = 20;
+
 /// Maximum number of objects per S3-compatible delete batch.
 const DELETE_OBJECT_BATCH_SIZE: usize = 1000;
 
@@ -1632,6 +1639,9 @@ enum UploadAttemptError {
     Fatal(anyhow::Error),
 }
 
+/// Runs `operation` until it succeeds, fails fatally, or exhausts [`MAX_UPLOAD_ATTEMPTS`].
+///
+/// `on_retry` is called before each backoff sleep, so it is not called for the final attempt.
 async fn retry_upload<T, F, Fut, OnRetry, OnSuccess>(
     mut operation: F,
     mut on_retry: OnRetry,
@@ -1651,6 +1661,9 @@ where
                     on_success_after_retry(attempt);
                 }
                 return Ok(value);
+            }
+            Err(UploadAttemptError::Retry(error)) if attempt >= MAX_UPLOAD_ATTEMPTS => {
+                return Err(error.context(format!("upload failed after {attempt} attempts")));
             }
             Err(UploadAttemptError::Retry(error)) => {
                 on_retry(attempt, &error);
@@ -1750,6 +1763,30 @@ mod tests {
             .recv_timeout(Duration::from_secs(1))
             .expect("releasing a slot should unblock another archive");
         blocked.join().expect("blocking archive thread should finish");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn retry_upload_gives_up_after_attempt_budget() {
+        let mut attempts = 0usize;
+        let result = tokio::time::timeout(
+            Duration::from_secs(3600),
+            retry_upload(
+                || {
+                    attempts += 1;
+                    async {
+                        Err::<(), _>(UploadAttemptError::Retry(anyhow::anyhow!("storage down")))
+                    }
+                },
+                |_, _| {},
+                |_| {},
+            ),
+        )
+        .await
+        .expect("persistently retryable failures must not retry forever");
+
+        let error = result.expect_err("exhausted retries must return the last error");
+        assert_eq!(attempts, MAX_UPLOAD_ATTEMPTS);
+        assert!(format!("{error:#}").contains("storage down"));
     }
 
     #[test]
