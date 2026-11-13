@@ -29,8 +29,8 @@ pub use catalog::{
 
 mod segment;
 pub use segment::{
-    BodyIndicesFile, ManifestEntry, SegmentBuilder, SegmentFile, SegmentFiles, SegmentManifest,
-    SegmentTip,
+    BodyIndicesFile, BuiltFile, BuiltSegment, ManifestEntry, SegmentBuild, SegmentBuilder,
+    SegmentFile, SegmentFiles, SegmentManifest, SegmentTip,
 };
 
 mod verify;
@@ -56,7 +56,7 @@ mod store;
 pub use store::{ArchiveStore, StoreOptions};
 
 mod objects;
-pub use objects::{SegmentObjects, UploadReport};
+pub use objects::{DEFAULT_UPLOAD_PART_SIZE, SegmentObjects, UploadReport};
 
 mod writer;
 pub use writer::{

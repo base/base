@@ -6,7 +6,11 @@
 //! machinery. The archive object names drop the block range from reth's file name, because the
 //! range is implied by the segment number.
 
-use std::{collections::BTreeMap, fs, io, path::Path};
+use std::{
+    collections::BTreeMap,
+    fs, io,
+    path::{Path, PathBuf},
+};
 
 use alloy_primitives::{B256, Bytes};
 use base_common_consensus::BasePrimitives;
@@ -18,8 +22,9 @@ use reth_provider::{
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use tempfile::TempDir;
 
-use crate::{BlockData, BlockRows, BodyIndices, ChainTip, HistoryStoreError};
+use crate::{BlockData, BlockRows, BodyIndices, ChainTip, HistoryStoreError, SegmentIndex};
 
 /// Prefix shared by every reth static file name.
 const STATIC_FILE_PREFIX: &str = "static_file_";
@@ -132,6 +137,14 @@ pub struct ManifestEntry {
 }
 
 impl ManifestEntry {
+    /// Size and SHA-256 of everything `reader` yields, hashed as it is read so memory stays
+    /// bounded by the copy buffer. Does blocking IO.
+    pub fn of_reader(reader: &mut impl io::Read) -> io::Result<Self> {
+        let mut hasher = Sha256::new();
+        let size = io::copy(reader, &mut hasher)?;
+        Ok(Self { sha256: B256::from_slice(&hasher.finalize()), size })
+    }
+
     /// Checks the measured `size` and `sha256` of object `file` of segment `segment` against
     /// this entry.
     pub fn check(
@@ -302,9 +315,8 @@ impl SegmentManifest {
                 }
                 Err(err) => return Err(err.into()),
             };
-            let mut hasher = Sha256::new();
-            let size = io::copy(&mut file, &mut hasher)?;
-            expected.check(k, name, size, B256::from_slice(&hasher.finalize()))?;
+            let actual = ManifestEntry::of_reader(&mut file)?;
+            expected.check(k, name, actual.size, actual.sha256)?;
         }
         Ok(())
     }
@@ -472,6 +484,155 @@ impl SegmentFiles {
     }
 }
 
+/// One object of a built segment on local disk, with its checksum and size.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BuiltFile {
+    /// Local file holding the object's bytes.
+    pub path: PathBuf,
+    /// Checksum and size, hashed from the file.
+    pub entry: ManifestEntry,
+}
+
+/// A segment's files built on local disk and hashed, ready to upload, plus the index entries
+/// computed while its blocks were appended. The directory is removed when this is dropped.
+#[derive(Debug)]
+pub struct BuiltSegment {
+    /// Directory holding the files under reth's names.
+    pub dir: TempDir,
+    /// Segment number `k`.
+    pub segment: u64,
+    /// Blocks per segment `N`.
+    pub blocks_per_segment: u64,
+    /// Object name → local file.
+    pub files: BTreeMap<String, BuiltFile>,
+    /// Index entries of the segment's blocks.
+    pub index: SegmentIndex,
+}
+
+impl BuiltSegment {
+    /// The checksum manifest of these files, uploaded under writer epoch `epoch`.
+    pub fn manifest(&self, epoch: u64) -> SegmentManifest {
+        let first = self.segment * self.blocks_per_segment;
+        SegmentManifest {
+            segment: self.segment,
+            first_block: first,
+            last_block: first + self.blocks_per_segment - 1,
+            epoch,
+            tip: None,
+            files: self.files.iter().map(|(name, file)| (name.clone(), file.entry)).collect(),
+        }
+    }
+
+    /// Reads every file into memory. Test helper; production uploads stream from disk.
+    #[cfg(any(test, feature = "test-utils"))]
+    pub fn read_files(&self) -> Result<SegmentFiles, HistoryStoreError> {
+        let mut files = BTreeMap::new();
+        for (name, file) in &self.files {
+            files.insert(name.clone(), Bytes::from(fs::read(&file.path)?));
+        }
+        Ok(SegmentFiles {
+            segment: self.segment,
+            blocks_per_segment: self.blocks_per_segment,
+            files,
+        })
+    }
+}
+
+/// A segment being built chunk by chunk with reth's `StaticFileProviderRW` in a temporary
+/// directory. Blocks go straight to the static-file writers as they are appended; the build
+/// keeps only the body indices and index entries, never the blocks. All methods do blocking IO.
+#[derive(Debug)]
+pub struct SegmentBuild {
+    /// Segment number `k`.
+    pub segment: u64,
+    /// Blocks per segment `N`.
+    pub blocks_per_segment: u64,
+    /// Directory the static files are written to.
+    pub dir: TempDir,
+    /// Read-write provider whose writers stay open across appends.
+    pub provider: StaticFileProvider<BasePrimitives>,
+    /// Next block to append.
+    pub next: u64,
+    /// Body indices of the appended blocks, for `block_bodies.idx`.
+    pub bodies: Vec<BodyIndices>,
+    /// Index entries of the appended blocks.
+    pub index: SegmentIndex,
+}
+
+impl SegmentBuild {
+    /// First block of the segment, `k·N`.
+    pub const fn first(&self) -> u64 {
+        self.segment * self.blocks_per_segment
+    }
+
+    /// A [`HistoryStoreError::SegmentShape`] for this segment.
+    pub const fn shape_error(&self, reason: String) -> HistoryStoreError {
+        let first = self.first();
+        HistoryStoreError::SegmentShape {
+            segment: self.segment,
+            first,
+            last: first + self.blocks_per_segment - 1,
+            reason,
+        }
+    }
+
+    /// Appends the next contiguous blocks to the six static files and the index entries.
+    pub fn append(&mut self, blocks: &[BlockData]) -> Result<(), HistoryStoreError> {
+        let first = self.first();
+        let end = first + self.blocks_per_segment;
+        for (offset, block) in blocks.iter().enumerate() {
+            let expected = self.next + offset as u64;
+            if block.number() != expected || expected >= end {
+                return Err(self.shape_error(format!(
+                    "block {} at offset {}",
+                    block.number(),
+                    expected - first
+                )));
+            }
+        }
+        SegmentBuilder::write_segments(&self.provider, first, blocks)?;
+        self.bodies.extend(blocks.iter().map(|block| block.body_indices));
+        self.index.add_blocks(self.blocks_per_segment, blocks);
+        self.next += blocks.len() as u64;
+        Ok(())
+    }
+
+    /// Commits the static files once all `N` blocks are appended, writes `block_bodies.idx`,
+    /// and hashes every file from disk.
+    pub fn finish(self) -> Result<BuiltSegment, HistoryStoreError> {
+        let appended = self.next - self.first();
+        if appended != self.blocks_per_segment {
+            return Err(self.shape_error(format!("{appended} blocks")));
+        }
+        self.provider.commit()?;
+        drop(self.provider);
+        let bodies = BodyIndicesFile { entries: self.bodies };
+        fs::write(self.dir.path().join(SegmentFile::BODY_INDICES), bodies.encode())?;
+        let mut files = BTreeMap::new();
+        for entry in fs::read_dir(self.dir.path())? {
+            let entry = entry?;
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let object = if name == SegmentFile::BODY_INDICES {
+                name
+            } else if let Some(object) = SegmentFile::object_name(&name) {
+                object
+            } else {
+                continue;
+            };
+            let path = entry.path();
+            let entry = ManifestEntry::of_reader(&mut fs::File::open(&path)?)?;
+            files.insert(object, BuiltFile { path, entry });
+        }
+        Ok(BuiltSegment {
+            dir: self.dir,
+            segment: self.segment,
+            blocks_per_segment: self.blocks_per_segment,
+            files,
+            index: self.index,
+        })
+    }
+}
+
 /// Builds the static files of one segment from verified blocks.
 #[derive(Debug, Clone, Copy)]
 pub struct SegmentBuilder {
@@ -485,47 +646,37 @@ impl SegmentBuilder {
         Self { blocks_per_segment }
     }
 
-    /// Builds segment `segment` from exactly `N` contiguous blocks starting at `segment * N`.
+    /// Starts building segment `segment` in a fresh temporary directory. Does blocking IO.
+    pub fn start(&self, segment: u64) -> Result<SegmentBuild, HistoryStoreError> {
+        let dir = tempfile::tempdir()?;
+        let provider = StaticFileProviderBuilder::read_write(dir.path())
+            .with_blocks_per_file(self.blocks_per_segment)
+            .build::<BasePrimitives>()?;
+        Ok(SegmentBuild {
+            segment,
+            blocks_per_segment: self.blocks_per_segment,
+            dir,
+            provider,
+            next: segment * self.blocks_per_segment,
+            bodies: Vec::with_capacity(self.blocks_per_segment as usize),
+            index: SegmentIndex { segment, ..Default::default() },
+        })
+    }
+
+    /// Builds segment `segment` from exactly `N` contiguous blocks starting at `segment * N`,
+    /// in memory. Test helper; the writer appends chunk by chunk ([`SegmentBuild`]).
+    #[cfg(any(test, feature = "test-utils"))]
     pub fn build(
         &self,
         segment: u64,
         blocks: &[BlockData],
     ) -> Result<SegmentFiles, HistoryStoreError> {
-        let first = segment * self.blocks_per_segment;
-        let last = first + self.blocks_per_segment - 1;
-        let shape_error =
-            |reason: String| HistoryStoreError::SegmentShape { segment, first, last, reason };
+        let mut build = self.start(segment)?;
         if blocks.len() as u64 != self.blocks_per_segment {
-            return Err(shape_error(format!("{} blocks", blocks.len())));
+            return Err(build.shape_error(format!("{} blocks", blocks.len())));
         }
-        for (offset, block) in blocks.iter().enumerate() {
-            if block.number() != first + offset as u64 {
-                return Err(shape_error(format!("block {} at offset {offset}", block.number())));
-            }
-        }
-
-        let dir = tempfile::tempdir()?;
-        {
-            let provider = StaticFileProviderBuilder::read_write(dir.path())
-                .with_blocks_per_file(self.blocks_per_segment)
-                .build::<BasePrimitives>()?;
-            Self::write_segments(&provider, first, blocks)?;
-            provider.commit()?;
-        }
-
-        let mut files = BTreeMap::new();
-        for entry in fs::read_dir(dir.path())? {
-            let entry = entry?;
-            let name = entry.file_name().to_string_lossy().into_owned();
-            if let Some(object) = SegmentFile::object_name(&name) {
-                files.insert(object, Bytes::from(fs::read(entry.path())?));
-            }
-        }
-        let bodies =
-            BodyIndicesFile { entries: blocks.iter().map(|block| block.body_indices).collect() };
-        files.insert(SegmentFile::BODY_INDICES.to_string(), bodies.encode());
-
-        Ok(SegmentFiles { segment, blocks_per_segment: self.blocks_per_segment, files })
+        build.append(blocks)?;
+        build.finish()?.read_files()
     }
 
     /// Appends every block to the six static-file segments through reth's writers.

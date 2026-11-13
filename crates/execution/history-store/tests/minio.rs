@@ -15,9 +15,9 @@
 use std::{sync::Arc, time::Duration};
 
 use base_history_store::{
-    ArchiveReader, ArchiveStore, ArchiveWriter, CacheConfig, Catalog, CatalogStore, ChainIdentity,
-    ChunkVerifier, HistoryStoreError, OrphanGc, Pruner, ReaderConfig, SegmentObjects, SourcePool,
-    StepOutcome, WriterConfig,
+    ArchiveReader, ArchiveStore, ArchiveWriter, BuiltFile, CacheConfig, Catalog, CatalogStore,
+    ChainIdentity, ChunkVerifier, HistoryStoreError, ManifestEntry, OrphanGc, Pruner, ReaderConfig,
+    SegmentObjects, SourcePool, StepOutcome, WriterConfig,
     test_utils::{ChainFixture, FIXTURE_CHAIN_ID, FixtureSource, test_index_options},
 };
 use object_store::{ObjectStoreExt, PutPayload};
@@ -49,6 +49,40 @@ fn minio() -> Option<ArchiveStore> {
 async fn archive_lifecycle_on_minio() {
     let archive = minio().expect("HISTORY_STORE_MINIO_ENDPOINT and _BUCKET must be set");
     tokio::time::timeout(RUN_TIMEOUT, lifecycle(archive)).await.expect("minio run timed out");
+}
+
+/// Part size of the multipart check: `MinIO`, like S3, rejects non-final parts under 5 `MiB`.
+const MINIO_PART: usize = 5 * 1024 * 1024;
+
+/// A segment file larger than one part goes up as a real multipart upload of several parts and
+/// reads back byte for byte; uploading it again finds it present with the same checksum.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "needs MinIO: set HISTORY_STORE_MINIO_ENDPOINT and HISTORY_STORE_MINIO_BUCKET"]
+async fn multipart_upload_on_minio() {
+    let archive = minio().expect("HISTORY_STORE_MINIO_ENDPOINT and _BUCKET must be set");
+    let mut objects = SegmentObjects::new(Arc::clone(&archive.store), archive.layout.clone());
+    objects.part_size = MINIO_PART;
+    let dir = tempfile::tempdir().expect("temp dir");
+    let local = dir.path().join("big.dat");
+    let bytes: Vec<u8> = (0..2 * MINIO_PART + 12_345).map(|i| (i % 251) as u8).collect();
+    std::fs::write(&local, &bytes).expect("write local file");
+    let path = archive.layout.segment_object(0, 1, "big.dat");
+    tokio::time::timeout(RUN_TIMEOUT, objects.upload_file(&local, &path))
+        .await
+        .expect("upload timed out")
+        .expect("three-part multipart upload completes on minio");
+    let stored = archive.store.get(&path).await.expect("get").bytes().await.expect("bytes");
+    assert_eq!(stored.len(), bytes.len(), "the object has every part's bytes");
+    assert!(stored.as_ref() == bytes.as_slice(), "parts are reassembled in order");
+    let built = BuiltFile {
+        path: local.clone(),
+        entry: ManifestEntry::of_reader(&mut std::fs::File::open(&local).expect("open"))
+            .expect("hash"),
+    };
+    objects
+        .check_existing(0, "big.dat", &path, stored.len() as u64, &built)
+        .await
+        .expect("the uploaded object matches its local checksum");
 }
 
 /// Body of [`archive_lifecycle_on_minio`].

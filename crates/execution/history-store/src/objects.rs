@@ -4,14 +4,21 @@ use std::{path::Path, sync::Arc};
 
 use alloy_primitives::B256;
 use futures::TryStreamExt;
-use object_store::{ObjectMeta, ObjectStore, ObjectStoreExt, PutMode, PutOptions, PutPayload};
+use object_store::{
+    MultipartUpload, ObjectMeta, ObjectStore, ObjectStoreExt, path::Path as ObjectPath,
+};
 use sha2::{Digest, Sha256};
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tracing::warn;
 
 use crate::{
-    ArchiveLayout, ArchiveReader, BlockData, HistoryStoreError, ManifestEntry, SegmentCache,
-    SegmentFile, SegmentFiles, SegmentManifest,
+    ArchiveLayout, ArchiveReader, BlockData, BuiltFile, BuiltSegment, HistoryStoreError,
+    ManifestEntry, SegmentCache, SegmentFile, SegmentFiles, SegmentManifest,
 };
+
+/// Default multipart part size for segment uploads (8 `MiB`). S3 requires every part but the
+/// last to be at least 5 `MiB`.
+pub const DEFAULT_UPLOAD_PART_SIZE: usize = 8 * 1024 * 1024;
 
 /// Outcome of uploading one segment.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -29,44 +36,120 @@ pub struct SegmentObjects {
     pub store: Arc<dyn ObjectStore>,
     /// Layout.
     pub layout: ArchiveLayout,
+    /// Multipart part size of segment uploads, in bytes.
+    pub part_size: usize,
 }
 
 impl SegmentObjects {
-    /// Creates a handle.
+    /// Creates a handle with [`DEFAULT_UPLOAD_PART_SIZE`] parts.
     pub const fn new(store: Arc<dyn ObjectStore>, layout: ArchiveLayout) -> Self {
-        Self { store, layout }
+        Self { store, layout, part_size: DEFAULT_UPLOAD_PART_SIZE }
     }
 
-    /// Uploads every file under writer epoch `epoch` with `If-None-Match: *`. An existing object
-    /// counts as success when its bytes equal the new build (builds are deterministic, and only
-    /// this epoch's owner writes under its directory); different bytes are an error.
+    /// Uploads every file of `built` under writer epoch `epoch`, streaming each from disk in
+    /// `part_size` parts. An existing object counts as success when its size and SHA-256 equal
+    /// the new build's (builds are deterministic); a different object is `CorruptSegment`.
+    ///
+    /// `object_store` multipart uploads cannot be conditional (`If-None-Match: *` is not sent on
+    /// completion), so each object is checked with HEAD first and then written unconditionally.
+    /// This is safe because the path lies in this writer's own `seg/<k>/<epoch>/` directory:
+    /// only the owner of `epoch` writes there, a superseded writer can only write into its own
+    /// older epoch directory (never this one), and those older unreferenced directories are
+    /// removed by [`Self::delete_older_epochs`] and orphan GC. A multipart object becomes
+    /// visible only on completion, so a crash mid-upload leaves no partial object, only parts
+    /// that a failed upload aborts on a best-effort basis.
     pub async fn upload(
         &self,
-        files: &SegmentFiles,
+        built: &BuiltSegment,
         epoch: u64,
     ) -> Result<UploadReport, HistoryStoreError> {
         let mut report = UploadReport::default();
-        for (name, bytes) in &files.files {
-            let path = self.layout.segment_object(files.segment, epoch, name);
-            let opts = PutOptions { mode: PutMode::Create, ..Default::default() };
-            match self.store.put_opts(&path, PutPayload::from(bytes.0.clone()), opts).await {
-                Ok(_) => report.created += 1,
-                Err(object_store::Error::AlreadyExists { .. }) => {
-                    let existing = self.store.get(&path).await?.bytes().await?;
-                    if existing != bytes.0 {
-                        return Err(HistoryStoreError::CorruptSegment {
-                            segment: files.segment,
-                            file: name.clone(),
-                            reason: "existing object differs from deterministic rebuild"
-                                .to_string(),
-                        });
-                    }
+        for (name, file) in &built.files {
+            let path = self.layout.segment_object(built.segment, epoch, name);
+            match self.store.head(&path).await {
+                Ok(meta) => {
+                    self.check_existing(built.segment, name, &path, meta.size, file).await?;
                     report.already_present += 1;
+                }
+                Err(object_store::Error::NotFound { .. }) => {
+                    self.upload_file(&file.path, &path).await?;
+                    report.created += 1;
                 }
                 Err(err) => return Err(err.into()),
             }
         }
         Ok(report)
+    }
+
+    /// Checks that the existing object at `path` (of `size` bytes) is the one built: same size
+    /// and the same SHA-256, hashed as its chunks arrive.
+    pub async fn check_existing(
+        &self,
+        segment: u64,
+        name: &str,
+        path: &ObjectPath,
+        size: u64,
+        file: &BuiltFile,
+    ) -> Result<(), HistoryStoreError> {
+        let differs = || HistoryStoreError::CorruptSegment {
+            segment,
+            file: name.to_string(),
+            reason: "existing object differs from deterministic rebuild".to_string(),
+        };
+        if size != file.entry.size {
+            return Err(differs());
+        }
+        let mut chunks = self.store.get(path).await?.into_stream();
+        let mut hasher = Sha256::new();
+        while let Some(chunk) = chunks.try_next().await? {
+            hasher.update(&chunk);
+        }
+        if B256::from_slice(&hasher.finalize()) != file.entry.sha256 {
+            return Err(differs());
+        }
+        Ok(())
+    }
+
+    /// Streams the local file `local` to `location` as a multipart upload of `part_size`
+    /// parts, one part in memory at a time. On failure the upload is aborted (best effort).
+    pub async fn upload_file(
+        &self,
+        local: &Path,
+        location: &ObjectPath,
+    ) -> Result<(), HistoryStoreError> {
+        let mut upload = self.store.put_multipart(location).await?;
+        let sent = match Self::send_parts(upload.as_mut(), local, self.part_size).await {
+            Ok(()) => upload.complete().await.map(drop).map_err(HistoryStoreError::from),
+            Err(err) => Err(err),
+        };
+        if let Err(err) = sent {
+            if let Err(abort) = upload.abort().await {
+                warn!(path = %location, error = %abort, "aborting a failed multipart upload failed");
+            }
+            return Err(err);
+        }
+        Ok(())
+    }
+
+    /// Reads `local` in `part_size` parts and uploads each before reading the next.
+    pub async fn send_parts(
+        upload: &mut dyn MultipartUpload,
+        local: &Path,
+        part_size: usize,
+    ) -> Result<(), HistoryStoreError> {
+        let mut file = tokio::fs::File::open(local).await?;
+        loop {
+            let mut part = Vec::with_capacity(part_size);
+            (&mut file).take(part_size as u64).read_to_end(&mut part).await?;
+            if part.is_empty() {
+                return Ok(());
+            }
+            let full = part.len() == part_size;
+            upload.put_part(part.into()).await?;
+            if !full {
+                return Ok(());
+            }
+        }
     }
 
     /// Lists the objects of segment `k` under every epoch.

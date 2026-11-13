@@ -16,6 +16,7 @@
 //! uploads and a stale garbage collector cannot delete objects this writer publishes.
 
 use std::{
+    fmt,
     sync::{Arc, Mutex, PoisonError},
     time::Duration,
 };
@@ -25,9 +26,9 @@ use object_store::ObjectStore;
 use tracing::{debug, info, warn};
 
 use crate::{
-    ArchiveLayout, Catalog, CatalogStore, ChainTip, ChunkVerifier, HistoryStoreError, IndexOptions,
-    IndexWriter, SegmentBuilder, SegmentIndex, SegmentManifest, SegmentObjects, SegmentTip,
-    SourcePool, UploadReport, VersionedCatalog,
+    ArchiveLayout, ArchiveReader, Catalog, CatalogStore, ChainTip, ChunkVerifier,
+    HistoryStoreError, IndexOptions, IndexWriter, SegmentBuilder, SegmentManifest, SegmentObjects,
+    SegmentTip, SourcePool, UploadReport, VersionedCatalog,
 };
 
 /// A segment uploaded and indexed but not yet published: the state between the index flush and
@@ -108,7 +109,6 @@ pub enum StepOutcome {
 }
 
 /// The archive writer.
-#[derive(Debug)]
 pub struct ArchiveWriter {
     /// Catalog access.
     pub catalog: CatalogStore,
@@ -126,6 +126,26 @@ pub struct ArchiveWriter {
     pub epoch: u64,
     /// Tip of the last segment this writer published, so the next `prepare` reads nothing back.
     pub last_tip: Mutex<Option<ChainTip>>,
+    /// Called with the first block and block count of each chunk once it is written to the
+    /// segment's static files, before the next chunk is fetched; tests use it to check that
+    /// blocks are written chunk by chunk rather than collected.
+    pub after_chunk: Option<Arc<dyn Fn(u64, usize) + Send + Sync>>,
+}
+
+impl fmt::Debug for ArchiveWriter {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ArchiveWriter")
+            .field("catalog", &self.catalog)
+            .field("objects", &self.objects)
+            .field("index", &self.index)
+            .field("sources", &self.sources)
+            .field("verifier", &self.verifier)
+            .field("config", &self.config)
+            .field("epoch", &self.epoch)
+            .field("last_tip", &self.last_tip)
+            .field("after_chunk", &self.after_chunk.is_some())
+            .finish()
+    }
 }
 
 impl ArchiveWriter {
@@ -171,6 +191,7 @@ impl ArchiveWriter {
             config,
             epoch,
             last_tip: Mutex::new(None),
+            after_chunk: None,
         })
     }
 
@@ -255,7 +276,11 @@ impl ArchiveWriter {
         // Never ask for more than every source advertises; halve on a too-large rejection.
         let mut chunk_blocks =
             self.config.chunk_blocks.min(status.max_range_blocks.unwrap_or(u64::MAX)).max(1);
-        let mut blocks = Vec::with_capacity(n as usize);
+        // Each verified chunk goes straight into the segment's static files on the blocking
+        // pool and is then dropped, so at most one chunk of blocks is held at a time.
+        let mut build =
+            ArchiveReader::blocking(move || SegmentBuilder::new(n).start(segment)).await?;
+        let mut last_timestamp = 0;
         let mut from = first;
         while from <= last {
             let to = (from + chunk_blocks - 1).min(last);
@@ -271,32 +296,39 @@ impl ArchiveWriter {
                 }
                 Err(err) => return Err(err),
             };
-            tip = chunk.last().map(ChainTip::after);
-            blocks.extend(chunk);
+            if from == 0 && chunk[0].hash != current.catalog.genesis_hash {
+                return Err(HistoryStoreError::CatalogMismatch {
+                    field: "genesis_hash",
+                    expected: current.catalog.genesis_hash.to_string(),
+                    actual: chunk[0].hash.to_string(),
+                });
+            }
+            let chunk_last = chunk.last().expect("verified chunk is not empty");
+            tip = Some(ChainTip::after(chunk_last));
+            last_timestamp = chunk_last.header.timestamp;
+            let appended;
+            (build, appended) = ArchiveReader::blocking(move || {
+                build.append(&chunk)?;
+                Ok((build, chunk.len()))
+            })
+            .await?;
+            if let Some(after_chunk) = &self.after_chunk {
+                after_chunk(from, appended);
+            }
             from = to + 1;
         }
-        if segment == 0 && blocks[0].hash != current.catalog.genesis_hash {
-            return Err(HistoryStoreError::CatalogMismatch {
-                field: "genesis_hash",
-                expected: current.catalog.genesis_hash.to_string(),
-                actual: blocks[0].hash.to_string(),
-            });
-        }
+        let tip = tip.expect("a segment has at least one block");
 
-        let last_hash = blocks.last().expect("segment has blocks").hash;
         let confirmed = self.sources.fetch_hash(last).await?;
-        if confirmed != last_hash {
+        if confirmed != tip.hash {
             return Err(HistoryStoreError::Halt {
                 block: last,
-                archive: last_hash,
+                archive: tip.hash,
                 node: confirmed,
             });
         }
 
-        let last_block = blocks.last().expect("segment has blocks");
-        let tip = ChainTip::after(last_block);
-        let last_timestamp = last_block.header.timestamp;
-        let files = SegmentBuilder::new(n).build(segment, &blocks)?;
+        let files = ArchiveReader::blocking(move || build.finish()).await?;
         // Uploads a crashed or superseded owner left for this segment are never published (the
         // segment is above `H` and this writer owns the catalog), and GC never revisits the
         // segment once it is published, so they are removed here. A superseded writer still
@@ -308,7 +340,7 @@ impl ArchiveWriter {
         let upload = self.objects.upload(&files, self.epoch).await?;
         self.index
             .write_segment(
-                &SegmentIndex::from_blocks(segment, n, &blocks),
+                &files.index,
                 &SegmentManifest {
                     tip: Some(SegmentTip {
                         last_hash: tip.hash,
@@ -673,6 +705,122 @@ mod tests {
         );
     }
 
+    /// Review8 P2 streamed build: each verified chunk is written to the segment's static files
+    /// before the next is fetched, so `prepare` never holds more than one chunk of blocks.
+    #[tokio::test]
+    async fn prepare_writes_each_chunk_before_fetching_the_next() {
+        let fixture = ChainFixture::new(8, 2);
+        let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        let mut w =
+            writer(Arc::clone(&store), &fixture, vec![Arc::new(node(&fixture, 7))], 1).await;
+        let chunks = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seen = Arc::clone(&chunks);
+        w.after_chunk =
+            Some(Arc::new(move |from, blocks| seen.lock().unwrap().push((from, blocks))));
+        w.step().await.unwrap();
+        w.step().await.unwrap();
+        assert_eq!(
+            *chunks.lock().unwrap(),
+            (0..8).map(|from| (from, 1)).collect::<Vec<_>>(),
+            "every 1-block chunk is written on its own, in order"
+        );
+        let reference: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        let whole =
+            writer(Arc::clone(&reference), &fixture, vec![Arc::new(node(&fixture, 7))], 4).await;
+        whole.step().await.unwrap();
+        whole.step().await.unwrap();
+        assert_eq!(
+            published(&w, 2).await,
+            published(&whole, 2).await,
+            "chunked writes produce the same bytes as whole-segment chunks"
+        );
+    }
+
+    /// Review8 P2 streamed upload: segment files go up from disk in `part_size` parts, one at
+    /// a time, so the upload buffers at most one part whatever the file size.
+    #[tokio::test]
+    async fn upload_buffers_at_most_one_part() {
+        const PART: usize = 64;
+        let fixture = ChainFixture::new(4, 3);
+        let counting = crate::test_utils::ChunkedStore::new(
+            Arc::new(InMemory::new()),
+            "chain/seg/",
+            usize::MAX,
+        );
+        let stats = Arc::clone(&counting.stats);
+        let mut w =
+            writer(Arc::new(counting), &fixture, vec![Arc::new(node(&fixture, 3))], 4).await;
+        w.objects.part_size = PART;
+        assert!(matches!(w.step().await.unwrap(), StepOutcome::Published { segment: 0, .. }));
+        let manifest = w.index.required_manifest(0).await.unwrap();
+        let largest = manifest.files.values().map(|entry| entry.size).max().unwrap();
+        assert!(largest > 4 * PART as u64, "the largest file of {largest} bytes spans parts");
+        let expected_parts: u64 =
+            manifest.files.values().map(|entry| entry.size.div_ceil(PART as u64)).sum();
+        assert_eq!(stats.puts.load(Ordering::SeqCst), 21, "one multipart upload per object");
+        assert_eq!(stats.parts.load(Ordering::SeqCst), expected_parts, "files are cut into parts");
+        assert_eq!(stats.max_part.load(Ordering::SeqCst), PART as u64, "no part exceeds part_size");
+        assert_eq!(
+            stats.peak_parts_in_flight.load(Ordering::SeqCst),
+            PART as u64,
+            "at most one part is in flight at a time"
+        );
+        assert_eq!(stats.gets.load(Ordering::SeqCst), 0, "a fresh upload reads nothing back");
+    }
+
+    /// A retry after objects of this epoch were already uploaded re-sends none of them, and an
+    /// existing object that differs from the deterministic build is corruption.
+    #[tokio::test]
+    async fn upload_retry_is_idempotent_and_rejects_different_objects() {
+        let fixture = ChainFixture::new(4, 2);
+        let inner: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        let counting =
+            crate::test_utils::ChunkedStore::new(Arc::clone(&inner), "chain/seg/", usize::MAX);
+        let stats = Arc::clone(&counting.stats);
+        let store: Arc<dyn ObjectStore> = Arc::new(counting);
+        let w = writer(Arc::clone(&store), &fixture, vec![Arc::new(node(&fixture, 3))], 4).await;
+        let files = SegmentBuilder::new(N).build(0, &fixture.blocks[0..4]).unwrap();
+        let layout = ArchiveLayout::new("chain");
+        for (name, bytes) in files.files.iter().take(5) {
+            inner
+                .put(&layout.segment_object(0, w.epoch, name), bytes.0.clone().into())
+                .await
+                .unwrap();
+        }
+        let outcome = w.step().await.unwrap();
+        assert_eq!(
+            outcome,
+            StepOutcome::Published {
+                segment: 0,
+                h: 3,
+                upload: UploadReport { created: 16, already_present: 5 }
+            },
+            "the 5 objects already uploaded under this epoch count as present"
+        );
+        assert_eq!(stats.puts.load(Ordering::SeqCst), 16, "only the 16 missing objects are put");
+        assert_eq!(stats.gets.load(Ordering::SeqCst), 5, "each present object is hashed once");
+
+        let fixture = ChainFixture::new(4, 2);
+        let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        let w = writer(Arc::clone(&store), &fixture, vec![Arc::new(node(&fixture, 3))], 4).await;
+        let path = layout.segment_object(0, w.epoch, "headers.dat");
+        let mut raw = files.files["headers.dat"].to_vec();
+        raw[0] ^= 0x01;
+        store.put(&path, raw.into()).await.unwrap();
+        let err = w.step().await.unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            HistoryStoreError::CorruptSegment {
+                segment: 0,
+                file: "headers.dat".to_string(),
+                reason: "existing object differs from deterministic rebuild".to_string(),
+            }
+            .to_string(),
+            "a same-size object with different bytes is rejected"
+        );
+        assert_eq!(w.catalog.load_required().await.unwrap().catalog.h, None, "nothing published");
+    }
+
     /// A different confirm hash for the segment's last block halts without publishing.
     #[tokio::test]
     async fn confirm_divergence_halts() {
@@ -901,7 +1049,7 @@ mod tests {
         let err = old
             .index
             .write_segment(
-                &SegmentIndex::default(),
+                &crate::SegmentIndex::default(),
                 &crate::SegmentManifest {
                     segment: 0,
                     first_block: 0,

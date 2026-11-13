@@ -42,27 +42,32 @@ pub struct SegmentIndex {
 impl SegmentIndex {
     /// Computes the entries of segment `segment` from its blocks (hashes recomputed locally).
     pub fn from_blocks(segment: u64, blocks_per_segment: u64, blocks: &[BlockData]) -> Self {
-        let first = segment * blocks_per_segment;
         let mut index = Self { segment, ..Default::default() };
+        index.add_blocks(blocks_per_segment, blocks);
+        index
+    }
+
+    /// Adds the entries of `blocks`, which belong to this segment of `blocks_per_segment`
+    /// blocks, so a segment's entries can be accumulated chunk by chunk.
+    pub fn add_blocks(&mut self, blocks_per_segment: u64, blocks: &[BlockData]) {
+        let first = self.segment * blocks_per_segment;
         for block in blocks {
             let number = block.number();
             let offset = (number - first) as u32;
-            index.blocks.push((block.hash, number));
+            self.blocks.push((block.hash, number));
             for (i, tx) in block.transactions.iter().enumerate() {
-                index.txs.push((tx.tx_hash(), number, i as u32));
+                self.txs.push((tx.tx_hash(), number, i as u32));
             }
             for change in &block.account_changes {
-                index.history.entry(HashedKey::account(change.address)).or_default().insert(offset);
+                self.history.entry(HashedKey::account(change.address)).or_default().insert(offset);
             }
             for change in &block.storage_changes {
-                index
-                    .history
+                self.history
                     .entry(HashedKey::storage(change.address, change.key))
                     .or_default()
                     .insert(offset);
             }
         }
-        index
     }
 
     /// Key/value pairs to write.

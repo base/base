@@ -531,6 +531,52 @@ pub struct ChunkStats {
     pub chunks: AtomicU64,
     /// `get` calls under the tracked prefix.
     pub gets: AtomicU64,
+    /// `put_opts` calls and multipart uploads started under the tracked prefix.
+    pub puts: AtomicU64,
+    /// Multipart parts uploaded under the tracked prefix.
+    pub parts: AtomicU64,
+    /// Largest multipart part, in bytes.
+    pub max_part: AtomicU64,
+    /// Multipart part bytes handed to the store whose upload has not completed yet.
+    pub parts_in_flight: AtomicU64,
+    /// Highest value `parts_in_flight` reached.
+    pub peak_parts_in_flight: AtomicU64,
+}
+
+/// A multipart upload under a [`ChunkedStore`]'s prefix that records part sizes and the part
+/// bytes in flight.
+#[derive(Debug)]
+pub struct TrackedUpload {
+    /// Upload the parts go to.
+    pub inner: Box<dyn MultipartUpload>,
+    /// Stats the parts are counted in.
+    pub stats: Arc<ChunkStats>,
+}
+
+#[async_trait::async_trait]
+impl MultipartUpload for TrackedUpload {
+    fn put_part(&mut self, data: PutPayload) -> object_store::UploadPart {
+        let len = data.content_length() as u64;
+        let stats = Arc::clone(&self.stats);
+        stats.parts.fetch_add(1, Ordering::SeqCst);
+        stats.max_part.fetch_max(len, Ordering::SeqCst);
+        let in_flight = stats.parts_in_flight.fetch_add(len, Ordering::SeqCst) + len;
+        stats.peak_parts_in_flight.fetch_max(in_flight, Ordering::SeqCst);
+        let part = self.inner.put_part(data);
+        Box::pin(async move {
+            let result = part.await;
+            stats.parts_in_flight.fetch_sub(len, Ordering::SeqCst);
+            result
+        })
+    }
+
+    async fn complete(&mut self) -> object_store::Result<PutResult> {
+        self.inner.complete().await
+    }
+
+    async fn abort(&mut self) -> object_store::Result<()> {
+        self.inner.abort().await
+    }
 }
 
 /// One chunk's bytes; returns its length to [`ChunkStats::live`] when the last reference to it
@@ -609,6 +655,9 @@ impl ObjectStore for ChunkedStore {
         payload: PutPayload,
         opts: PutOptions,
     ) -> object_store::Result<PutResult> {
+        if location.as_ref().starts_with(&self.prefix) {
+            self.stats.puts.fetch_add(1, Ordering::SeqCst);
+        }
         self.inner.put_opts(location, payload, opts).await
     }
 
@@ -617,7 +666,12 @@ impl ObjectStore for ChunkedStore {
         location: &Path,
         opts: PutMultipartOptions,
     ) -> object_store::Result<Box<dyn MultipartUpload>> {
-        self.inner.put_multipart_opts(location, opts).await
+        let upload = self.inner.put_multipart_opts(location, opts).await?;
+        if !location.as_ref().starts_with(&self.prefix) {
+            return Ok(upload);
+        }
+        self.stats.puts.fetch_add(1, Ordering::SeqCst);
+        Ok(Box::new(TrackedUpload { inner: upload, stats: Arc::clone(&self.stats) }))
     }
 
     async fn get_opts(
@@ -625,7 +679,11 @@ impl ObjectStore for ChunkedStore {
         location: &Path,
         options: GetOptions,
     ) -> object_store::Result<GetResult> {
+        let head = options.head;
         let result = self.inner.get_opts(location, options).await?;
+        if head {
+            return Ok(result);
+        }
         if !location.as_ref().starts_with(&self.prefix) {
             return Ok(result);
         }

@@ -27,8 +27,8 @@ use tower::ServiceBuilder;
 use tracing::{debug, warn};
 
 use crate::{
-    ArchiveApiClient, ArchiveBlock, ArchiveRpcError, ArchiveStatus, BlockData, ChainTip,
-    ChunkVerifier, HistoryStoreError,
+    ArchiveApiClient, ArchiveBlock, ArchiveReader, ArchiveRpcError, ArchiveStatus, BlockData,
+    ChainTip, ChunkVerifier, HistoryStoreError,
 };
 
 /// Default maximum JSON-RPC response size for range calls (512 `MiB`). Hex JSON roughly doubles
@@ -256,7 +256,12 @@ impl SourcePool {
                     continue;
                 }
             };
-            match verifier.verify(from, tip, &rows) {
+            // Decoding, root checks and sender recovery are CPU work; keep them off the runtime.
+            let chunk_verifier = verifier.clone();
+            let verified =
+                ArchiveReader::blocking(move || Ok(chunk_verifier.verify(from, tip, &rows)))
+                    .await?;
+            match verified {
                 Ok(blocks) if blocks.len() as u64 == to - from + 1 => return Ok(blocks),
                 Ok(blocks) => warn!(
                     source = %source.name(),
