@@ -194,6 +194,8 @@ RUST_MIN_STACK=8388608 \
 | immutable baseline, snapshot, representative load | existing replay/snapshot modules in `etc/systems/src`, workload tooling in `crates/infra/load-tests` | not provided by this fresh-genesis transfer benchmark; separate baseline adapter/parity and workload gates |
 | paired trials and resource/cadence accounting | external operator/base-metal | CPU affinity, OS CPU/RSS/I/O, paired repeats external; queue/cache/persistence/cancellation/paced/missed-cadence unsupported; serialized saturation proves no overlap |
 
+The default `interrupted_measured_build_retains_start` test interrupts a pending measured build and requires its actual start with a null canonical endpoint; `driver_panic_retains_all_buffered_samples` covers the unwind counterpart.
+
 ### Behavioral red-on-revert, operator-owned and unrun
 
 In an operator-owned scratch checkout keep the compileable Engine trait, adapter, driver and tests. Reverse ONLY one correction below, run the named exact test expecting its behavioral assertion failure, restore it and rerun green. Compilation/dependency failure, missing attestation, or reversing the entire extraction is NOT red evidence. Use new numbered logs for every attempt and never overwrite previous evidence.
@@ -222,6 +224,7 @@ Substitute the exact filter from the table. Mandatory observed behavioral red/gr
 ## Changelog
 
 - Add result `schema_version: 1` (including refusal), nullable `loop_start_ns`/`loop_end_ns`, and nullable `engine_saturated` with exact fields `window_ns`, `measured_blocks`, `gas_used`, `transactions`, `gas_per_second`, `transactions_per_second`. Require the full expected measured workload, verification and healthy drain; retain the existing through-drain rate fields unchanged as secondary diagnostics.
+  Preserve the actual first measured build request start even if cancellation or unwind prevents a completed phase interval; never invent a canonical endpoint for the unfinished last measured block.
 - Flush every retained sample independently before verification and on controllable active failure/cancellation/unwinding panic, then attempt cleanup without changing exit categories. The one approved non-additive exception retains `result.samples[].responses.payload` but replaces its contents with a reference object; add the same nullable `payload_reference` metadata. Full envelopes stay unchanged at samples.jsonl `/responses/payload`, selected by last valid row per block number. Keep `schema_version: 1`; all other contract changes are additive. Document reader migration, malformed-row handling, synchronous I/O and loss of ALL buffered samples on abrupt termination.
 - Stream and cache the executable Keccak once per process, including cached errors and parallel callers; add artifact `schema_version: 1` to executable-source, executable, launch, runtime and drain JSON. Keep the strict input bundle version/digest and external manifest fields unchanged.
 - Recommend warmup >= 2 for matched D/R trials to exclude activation at timestamp 2; preserve default warmup 1. Document explicit 10000-block/1000-transfer memory limits without an RSS bound or OOM guarantee.

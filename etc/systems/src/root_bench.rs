@@ -286,6 +286,8 @@ pub struct RootBenchSample {
 /// Typed Engine evidence retained without serialization between successful calls.
 #[derive(Debug, Default, Clone)]
 pub struct RootBenchPending {
+    /// Actual build request start, retained even when cancellation prevents a completed interval.
+    pub build_fcu_start_ns: Option<u64>,
     /// Complete native payload retained for verification after saturation.
     pub envelope: Option<BaseExecutionPayloadEnvelopeV4>,
     /// Build admission and payload ID.
@@ -563,7 +565,7 @@ impl RootBenchSummary {
 
     /// Returns actual measured Engine endpoints; cancellation never invents a canonical end.
     pub fn loop_bounds(samples: &[RootBenchSample]) -> (Option<u64>, Option<u64>) {
-        let start = samples.iter().find(|s| !s.warmup).and_then(|s| s.phases.get("build_fcu")).map(|p| p.start_ns);
+        let start = samples.iter().find(|s| !s.warmup).and_then(|s| s.phases.get("build_fcu").map(|p| p.start_ns).or(s.pending.build_fcu_start_ns));
         let end = samples.iter().rev().find(|s| !s.warmup).filter(|s| s.pending.canonical_fcu.as_ref().is_some_and(|response| response.payload_status.status == PayloadStatusEnum::Valid && response.payload_status.latest_valid_hash == s.block_hash)).and_then(|s| s.phases.get("canonical_fcu")).map(|p| p.end_ns);
         (start, end)
     }
@@ -725,6 +727,7 @@ impl RootBenchSample {
     /// Times one bounded call without serialization or disk I/O between Engine phases.
     pub async fn call<T>(&mut self, name: &str, origin: Instant, timeout: Duration, future: impl Future<Output = Result<T>>) -> Result<T> {
         let start_ns = origin.elapsed().as_nanos() as u64;
+        if name == "build_fcu" { self.pending.build_fcu_start_ns = Some(start_ns); }
         let result = tokio::time::timeout(timeout, future).await.map_err(|_| RootBenchExit::Timeout.attach(eyre!("{name} timed out"))).and_then(|result| result);
         self.phases.insert(name.into(), RootBenchInterval { start_ns, end_ns:origin.elapsed().as_nanos() as u64 });
         if let Err(error) = &result { self.error = Some(format!("{error:#}")); }
@@ -1068,6 +1071,20 @@ mod tests {
         Ok(())
     }
 
+    /// Cancelling the first measured build retains its actual start without inventing an end.
+    #[tokio::test]
+    async fn interrupted_measured_build_retains_start() {
+        let origin = Instant::now();
+        let mut sample = RootBenchSample::new(2, false);
+        let interrupted = tokio::time::timeout(Duration::from_millis(1), sample.call("build_fcu", origin, Duration::from_secs(60), std::future::pending::<Result<()>>())).await;
+        assert!(interrupted.is_err(), "outer cancellation must interrupt a pending build before its call timeout");
+        assert!(sample.phases.get("build_fcu").is_none(), "interrupted call must not invent a completed interval");
+        let retained = RootBenchSummary::loop_bounds(std::slice::from_ref(&sample));
+        assert!(retained.0.is_some(), "the first measured request started before cancellation and must remain observable");
+        assert_eq!(retained.1, None, "an interrupted build has no canonical FCU endpoint");
+        assert_eq!(RootBenchSummary::engine_saturated(&[sample], 1, false), None, "an interrupted measured build cannot publish rates");
+    }
+
     /// Unwinding Engine work is converted to an active typed failure with retained samples.
     #[tokio::test]
     async fn driver_panic_retains_all_buffered_samples() -> Result<()> {
@@ -1077,6 +1094,7 @@ mod tests {
         let mut start = None;
         let result = RootBenchRunArgs::catch_active(RootBenchSample::drive(&engine, vec![RootBenchBundle::attributes(1, vec![])], RootBenchDrive { genesis:B256::ZERO, warmup:0, origin:Instant::now(), timeout:Duration::from_secs(1) }, &mut samples, &mut start)).await;
         assert_eq!(RootBenchExit::code(&result), 3, "caught harness panic must be incomplete, not refused");
+        assert!(RootBenchSummary::loop_bounds(&samples).0.is_some(), "a panic during the first measured request must retain its actual start");
         let directory = tempfile::tempdir()?;
         let mut outcome = result;
         RootBenchSample::flush_all(&mut samples, directory.path(), &mut outcome);
