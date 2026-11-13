@@ -587,7 +587,8 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
     /// never opens a nonce gap. Queued tails (behind a nonce gap) go first: they
     /// cannot execute and cost nothing to hold, so ranking them by fee alone
     /// would let gapped spam push out pending transactions. See [`EvictionKey`]
-    /// for the full order. Each eviction is `O(log n)`.
+    /// for the full order. Each eviction is `O(m + log n)`, where `m` is the
+    /// evicted lane's length: re-ranking the lane walks it for its lowest fee cap.
     pub(crate) fn evict_over_capacity(&mut self) -> Vec<Arc<ValidPoolTransaction<T>>> {
         let mut evicted = Vec::new();
         while self.limits.capacity.is_exceeded(self.hashes.len(), self.usage.size)
