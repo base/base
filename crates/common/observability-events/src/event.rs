@@ -155,6 +155,8 @@ pub enum TransactionEventType {
     #[serde(rename = "TXPOOL_VALIDATED_INSERT_ACCEPTED")]
     TxpoolValidatedInsertAccepted,
     /// A validated txpool insert rejected a transaction.
+    ///
+    /// Not emitted when the pool discards the transaction for capacity; pool metrics count those.
     #[serde(rename = "TXPOOL_VALIDATED_INSERT_REJECTED")]
     TxpoolValidatedInsertRejected,
     /// A transaction was submitted through `eth_sendRawTransaction`.
