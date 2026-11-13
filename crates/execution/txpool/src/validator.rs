@@ -1317,7 +1317,9 @@ where
         } else if nonce_free {
             // Mining any transaction with this `replay_id` (this one, or a twin
             // with other fees or another signature) records it here, after which
-            // this transaction can never be included.
+            // this transaction can never be included. A twin mined after this
+            // validation but before admission writes the slot with no watcher
+            // yet, so the transaction stays pooled until its `valid_before`.
             watch_set.push(InvalidationKey::Slot {
                 address: NonceManagerStorage::ADDRESS,
                 slot: B256::from(NonceManagerStorage::expiring_nonce_seen_slot(

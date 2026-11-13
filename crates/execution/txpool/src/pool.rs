@@ -37,8 +37,8 @@ use tokio::{
 use tracing::debug;
 
 use crate::{
-    Admission, BasePooledTx, BaseTransactionValidator, BaseTxPoolError, BestTransactionsHold,
-    GuardLimits, GuardMetrics, InvalidationCause, InvalidationKey, LimitRejection, MempoolGuard,
+    Admission, BasePooledTx, BaseTransactionValidator, BestTransactionsHold, GuardLimits,
+    GuardMetrics, InvalidationCause, InvalidationKey, LimitRejection, MempoolGuard,
     ParkableBestTransactions, ParkableTransactionPool, ParkedBestTransactions, PoolStore,
     StateDiffInvalidation, ValidityPoolLimits, ValidityPoolMetrics,
     best::{BridgedDescendants, MergeBestTransactions},
@@ -177,14 +177,6 @@ pub struct BaseTransactionPool<
     /// invalidation and guard maintenance, so a same-nonce submission cannot
     /// race a sweep. Validation itself remains outside this lock.
     protocol_admission_lock: Arc<Mutex<()>>,
-    /// The `valid_before` (Unix milliseconds) of every unexpired nonce-free
-    /// `replay_id` a state diff recorded, keyed by its nonce manager slot.
-    /// Validation reads that slot outside `protocol_admission_lock`, so a twin
-    /// mined in between leaves no watcher behind to evict the newcomer;
-    /// admission checks it here instead. A reorg keeps the entries: a reverted
-    /// `replay_id` stays rejected until its `valid_before`, which every
-    /// transaction carrying it shares, so they all expire then anyway.
-    mined_replay_slots: Arc<Mutex<HashMap<B256, u64>>>,
 }
 
 impl<Client, S, Evm, T, O> fmt::Debug for BaseTransactionPool<Client, S, Evm, T, O>
@@ -219,7 +211,6 @@ where
             guard: Arc::clone(&self.guard),
             block_expiry: Arc::clone(&self.block_expiry),
             protocol_admission_lock: Arc::clone(&self.protocol_admission_lock),
-            mined_replay_slots: Arc::clone(&self.mined_replay_slots),
         }
     }
 }
@@ -267,7 +258,6 @@ where
             guard: Arc::new(RwLock::new(MempoolGuard::unlimited())),
             block_expiry: Arc::new(RwLock::new(crate::BlockExpiryIndex::new())),
             protocol_admission_lock: Arc::new(Mutex::new(())),
-            mined_replay_slots: Arc::default(),
         }
     }
 
@@ -377,7 +367,6 @@ where
         let _admission_guard = self.protocol_admission_lock.lock();
         // Advance validator classification generation before dropping guard records.
         self.validator().validator().invalidate_limit_class_cache(diffs);
-        self.record_mined_replay_slots(diffs);
         let mut exact = Vec::new();
         let mut advances = Vec::new();
         for diff in diffs {
@@ -448,62 +437,6 @@ where
             debug!(count = removed.len(), "EIP-8130 transactions invalidated by state diff");
         }
         removed
-    }
-
-    /// Records the nonce-free `replay_id` entries `diffs` write and forgets the
-    /// expired ones. A nonce manager slot set to a future millisecond timestamp
-    /// is a `replay_id` entry: channel nonces and the ring pointer never grow
-    /// that large, and the `replay_id` hashes the ring holds do not fit a `u64`.
-    fn record_mined_replay_slots(&self, diffs: &[AccountStateDiff]) {
-        let now_ms = self.validator().validator().block_timestamp_ms();
-        let mut slots = self.mined_replay_slots.lock();
-        slots.retain(|_, valid_before| *valid_before > now_ms);
-        for (slot, value) in diffs
-            .iter()
-            .filter(|diff| diff.address == NonceManagerStorage::ADDRESS)
-            .flat_map(|diff| &diff.changed_slots)
-        {
-            if let Ok(valid_before) = u64::try_from(*value)
-                && valid_before > now_ms
-            {
-                slots.insert(*slot, valid_before);
-            } else {
-                slots.remove(slot);
-            }
-        }
-    }
-
-    /// Rejects a nonce-free transaction whose `replay_id` a state diff recorded
-    /// after its validation read the replay ring. Runs under
-    /// `protocol_admission_lock`, like `apply_state_diff`, so a diff applied
-    /// later evicts the transaction through the slot it watches instead.
-    fn ensure_replay_id_not_mined(
-        &self,
-        hash: TxHash,
-        validated: &TransactionValidationOutcome<T>,
-    ) -> PoolResult<()> {
-        let Some(replay_id) = validated
-            .as_valid_transaction()
-            .and_then(|valid| valid.transaction().eip8130_replay_id())
-        else {
-            return Ok(());
-        };
-        let slot = B256::from(NonceManagerStorage::expiring_nonce_seen_slot(replay_id));
-        let now_ms = self.validator().validator().block_timestamp_ms();
-        if self
-            .mined_replay_slots
-            .lock()
-            .get(&slot)
-            .is_some_and(|valid_before| *valid_before > now_ms)
-        {
-            return Err(PoolError::new(
-                hash,
-                PoolErrorKind::InvalidTransaction(InvalidPoolTransactionError::other(
-                    BaseTxPoolError::Eip8130Validation { reason: "nonce-free replay detected" },
-                )),
-            ));
-        }
-        Ok(())
     }
 
     /// Clears every guarded transaction, attributing the flush to `cause` for
@@ -1360,7 +1293,6 @@ where
         if let Some(transaction) = validated.as_valid_transaction() {
             let hash = *transaction.transaction().hash();
             self.ensure_eip8130_fits_block_gas_limit(hash, &validated)?;
-            self.ensure_replay_id_not_mined(hash, &validated)?;
         }
         match validated {
             TransactionValidationOutcome::Valid {
@@ -2884,7 +2816,7 @@ mod tests {
     use alloy_eips::{
         eip1559::ETHEREUM_BLOCK_GAS_LIMIT_30M, eip2718::Encodable2718, eip7702::Authorization,
     };
-    use alloy_primitives::{Bytes, TxKind, U256, keccak256};
+    use alloy_primitives::{Bytes, TxKind, U256};
     use alloy_signer::SignerSync;
     use alloy_signer_local::PrivateKeySigner;
     use base_common_chains::ChainConfig;
@@ -4736,64 +4668,6 @@ mod tests {
         assert!(pool.get(replacement.hash()).is_none());
         assert!(!pool.sidecar.pool.read().contains(replacement.hash()));
         assert!(!pool.guard.read().contains(replacement.hash()));
-    }
-
-    #[tokio::test]
-    async fn twin_mined_during_validation_rejects_nonce_free_admission() {
-        let (pool, client) = build_integration_pool();
-        let signer = signer();
-        fund(&client, signer.address());
-        let expiry = INTEGRATION_POOL_NOW_MS + Eip8130Constants::NONCE_FREE_MAX_EXPIRY_WINDOW;
-        let nonce_free = |max_fee_per_gas| {
-            self_paid_eoa_8130(&signer, Eip8130Constants::NONCE_KEY_MAX, 0, expiry, max_fee_per_gas)
-        };
-        let transaction = nonce_free(1_000);
-        let hash = *transaction.hash();
-        let replay_id = transaction.eip8130_replay_id().unwrap();
-        // Recording a `replay_id` also writes it into the ring and advances the
-        // ring pointer: neither value is a `valid_before`.
-        let ring_base = NonceManagerStorage::NONCES_BASE_SLOT + U256::from(2);
-        let ring_slot = keccak256([[0; 32], ring_base.to_be_bytes::<32>()].concat());
-        let ring_ptr_slot = B256::from(ring_base + U256::from(1));
-        let mined_diff = |expiry| AccountStateDiff {
-            address: NonceManagerStorage::ADDRESS,
-            changed_slots: vec![
-                (
-                    B256::from(NonceManagerStorage::expiring_nonce_seen_slot(replay_id)),
-                    U256::from(expiry),
-                ),
-                (ring_slot, U256::from_be_bytes(replay_id.0)),
-                (ring_ptr_slot, U256::from(1)),
-            ],
-            ..Default::default()
-        };
-
-        // Validation reads the replay ring before the twin is mined...
-        let balance_epoch = pool.sidecar.pool.read().balance_epoch();
-        let validated =
-            pool.validator().validate_transaction(TransactionOrigin::Local, transaction).await;
-        assert!(validated.is_valid());
-        // ...and the block mining the twin lands before admission, with no watcher.
-        assert!(pool.apply_state_diff(&[mined_diff(expiry)]).is_empty());
-        assert_eq!(pool.mined_replay_slots.lock().len(), 1);
-
-        let error = pool
-            .add_validated_lane_transaction(
-                PoolStore::Sidecar,
-                validated,
-                TransactionOrigin::Local,
-                balance_epoch,
-            )
-            .expect_err("a replay_id mined after validation must not be admitted");
-        assert!(error.to_string().contains("nonce-free replay detected"));
-        assert!(pool.get(&hash).is_none());
-        assert!(!pool.guard.read().contains(&hash));
-
-        // An expired entry no longer blocks it, and the ring clearing a slot forgets it.
-        pool.apply_state_diff(&[mined_diff(INTEGRATION_POOL_NOW_MS)]);
-        assert!(pool.mined_replay_slots.lock().is_empty());
-        pool.add_transaction(TransactionOrigin::Local, nonce_free(1_000)).await.unwrap();
-        assert!(pool.guard.read().contains(&hash));
     }
 
     #[tokio::test]
