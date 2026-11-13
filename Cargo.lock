@@ -4860,6 +4860,7 @@ dependencies = [
  "alloy-signer 2.5.0",
  "alloy-signer-local 2.5.0",
  "alloy-sol-types",
+ "async-channel",
  "async-trait",
  "base-cli-utils",
  "base-common-consensus",
