@@ -181,7 +181,9 @@ pub struct BaseTransactionPool<
     /// `replay_id` a state diff recorded, keyed by its nonce manager slot.
     /// Validation reads that slot outside `protocol_admission_lock`, so a twin
     /// mined in between leaves no watcher behind to evict the newcomer;
-    /// admission checks it here instead.
+    /// admission checks it here instead. A reorg keeps the entries: a reverted
+    /// `replay_id` stays rejected until its `valid_before`, which every
+    /// transaction carrying it shares, so they all expire then anyway.
     mined_replay_slots: Arc<Mutex<HashMap<B256, u64>>>,
 }
 
@@ -450,7 +452,8 @@ where
 
     /// Records the nonce-free `replay_id` entries `diffs` write and forgets the
     /// expired ones. A nonce manager slot set to a future millisecond timestamp
-    /// is a `replay_id` entry: channel nonces never grow that large.
+    /// is a `replay_id` entry: channel nonces and the ring pointer never grow
+    /// that large, and the `replay_id` hashes the ring holds do not fit a `u64`.
     fn record_mined_replay_slots(&self, diffs: &[AccountStateDiff]) {
         let now_ms = self.validator().validator().block_timestamp_ms();
         let mut slots = self.mined_replay_slots.lock();
@@ -460,8 +463,9 @@ where
             .filter(|diff| diff.address == NonceManagerStorage::ADDRESS)
             .flat_map(|diff| &diff.changed_slots)
         {
-            let valid_before = value.saturating_to::<u64>();
-            if valid_before > now_ms {
+            if let Ok(valid_before) = u64::try_from(*value)
+                && valid_before > now_ms
+            {
                 slots.insert(*slot, valid_before);
             } else {
                 slots.remove(slot);
@@ -2880,7 +2884,7 @@ mod tests {
     use alloy_eips::{
         eip1559::ETHEREUM_BLOCK_GAS_LIMIT_30M, eip2718::Encodable2718, eip7702::Authorization,
     };
-    use alloy_primitives::{Bytes, TxKind, U256};
+    use alloy_primitives::{Bytes, TxKind, U256, keccak256};
     use alloy_signer::SignerSync;
     use alloy_signer_local::PrivateKeySigner;
     use base_common_chains::ChainConfig;
@@ -4746,12 +4750,21 @@ mod tests {
         let transaction = nonce_free(1_000);
         let hash = *transaction.hash();
         let replay_id = transaction.eip8130_replay_id().unwrap();
+        // Recording a `replay_id` also writes it into the ring and advances the
+        // ring pointer: neither value is a `valid_before`.
+        let ring_base = NonceManagerStorage::NONCES_BASE_SLOT + U256::from(2);
+        let ring_slot = keccak256([[0; 32], ring_base.to_be_bytes::<32>()].concat());
+        let ring_ptr_slot = B256::from(ring_base + U256::from(1));
         let mined_diff = |expiry| AccountStateDiff {
             address: NonceManagerStorage::ADDRESS,
-            changed_slots: vec![(
-                B256::from(NonceManagerStorage::expiring_nonce_seen_slot(replay_id)),
-                U256::from(expiry),
-            )],
+            changed_slots: vec![
+                (
+                    B256::from(NonceManagerStorage::expiring_nonce_seen_slot(replay_id)),
+                    U256::from(expiry),
+                ),
+                (ring_slot, U256::from_be_bytes(replay_id.0)),
+                (ring_ptr_slot, U256::from(1)),
+            ],
             ..Default::default()
         };
 
@@ -4762,6 +4775,7 @@ mod tests {
         assert!(validated.is_valid());
         // ...and the block mining the twin lands before admission, with no watcher.
         assert!(pool.apply_state_diff(&[mined_diff(expiry)]).is_empty());
+        assert_eq!(pool.mined_replay_slots.lock().len(), 1);
 
         let error = pool
             .add_validated_lane_transaction(
